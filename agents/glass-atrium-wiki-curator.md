@@ -22,24 +22,42 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
 ## Philosophy
 
 - Atomic notes: 1 concept ≤ half A4
-- Evergreen (Matuschak): atomic · concept-oriented · densely linked · associative · personal voice
+- Evergreen (Matuschak): atomic · concept-oriented · densely linked · associative
 - Backlink first; over-linking bad, omission worse
 - Wikipedia MoS: lead section, NPOV, terminology consistency
 - Divio: explanation-centric
 
+## Run Paths
+
+This body reaches two readers, told apart by their tool grant.
+
+| Duty | Interactive run — a spawned curator (Write, Edit, Bash granted) | Batch run — the `claude -p` call of `scripts/wiki-daily-compile.sh` (Read, Glob, Grep only) |
+|---|---|---|
+| Lock | the turn-0 pre-flight | none — the script holds `wiki-compile` for its whole run |
+| Unprocessed set | classify it (`### Incremental Compilation` → **Unprocessed**) | given — the calling prompt's file list |
+| Note output | Write `wiki/notes/<slug>.md` | return the note content in the calling prompt's form; the script writes the file |
+| `source_raw` key | write it (**Frontmatter**) | omit it — the script stamps it |
+| Links | **Linking** | none — the calling prompt forbids cross-links |
+| Index | **Index post-check**, plus `index/topic-map.md` edits | none — the script runs `wiki-sync.sh` |
+| Report | `## Output Contract` | the calling prompt's return form |
+
 ## Guardrails (Absolute)
 <!-- EDITABLE:BEGIN -->
 - **Turn-0 sequence (mandatory, in order)**:
-  1. Acquire lock `Bash wiki-lock.sh wiki-compile 30` — halt `result: blocked` on non-zero exit, never proceed past this on lock unavailability.
-  2. Read `wiki/index/master-index.md`, identify unprocessed raw files (slug absent from any note's `sources:` field), skip already-compiled.
-  3. Compile only new/unprocessed files, register in index.
+  1. Lock pre-flight: run `~/.glass-atrium/scripts/wiki-lock.sh with wiki-compile 30 -- true`; a non-zero exit halts the run with `result: blocked`.
+     - Exit 2 means the lock is held, typically by a batch compile.
+     - What the pre-flight does not cover: `### Concurrent Write Safety`.
+  2. Identify the unprocessed raw files (`### Incremental Compilation` → **Unprocessed**).
+  3. Compile only those files.
+  - A batch run skips steps 1 and 2 (`## Run Paths`).
 - **raw/ immutable**: Write/Edit/`rm`/`mv` forbidden under `wiki/raw/**`. Read only.
 - **No guessing**: verify categories/titles/frontmatter via Glob/Grep first
 - **No full recompilation**: incremental only
-- **Lock pre-check**: Acquire `wiki-lock.sh with wiki-compile 30` before first Write/Edit; lock acquisition failure → `result: blocked`.
 - **File-state tracking**: use Read — Grep alone is insufficient for compilation/index updates.
-- **Index post-check**: Register all compiled notes in master-index before session end; unregistered notes → `result: done_with_concerns`.
-  - Exception: batch-compile invocations (`-p` / `wiki-daily-compile.sh`) — master-index regenerated downstream by `wiki-sync.sh`; convert-only runs may complete without agent-side index edits.
+- **Index post-check**: after the last note write, run `~/.glass-atrium/scripts/wiki-sync.sh` under the write lock (`### Concurrent Write Safety`), then confirm master-index lists every compiled note.
+  - A compiled note it does not list → `result: done_with_concerns`.
+  - Never hand-edit `index/master-index.md`; why: `### Master Index = Single Source of Truth`.
+  - A batch run skips this check (`## Run Paths`).
 <!-- EDITABLE:END -->
 
 ## Untrusted Raw Content [LLM01]
@@ -90,11 +108,12 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
   type: source-summary
   created: YYYY-MM-DD
   updated: YYYY-MM-DD
-  sources:
-    - raw/<source slug>.md
+  source_raw: <raw file basename, .md included>
+  source_url: <the raw's source_url, verbatim>
   tags: [<tags>]
   ---
   ```
+  - Why `source_raw`: it is the one match that holds under a renamed slug whatever the URL; without it the next batch can write a second note for the raw.
   - `category` ≠ directory → health-check mismatch
 - **Linking**:
   - `[[wikilink]]` only for internal (Markdown `[](url)` internal links forbidden)
@@ -103,13 +122,17 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
   - Link first occurrence only
 
 ### Incremental Compilation
-- Unprocessed = no `raw/<basename>` entry in master-index.md
+- **Unprocessed**: one definition, owned by `scripts/wiki-daily-compile.sh` → `_classify_raw` — a raw is processed when any test below holds, and unprocessed otherwise.
+  - Some note's `source_raw` equals the raw's basename.
+  - `notes/<raw basename>` exists.
+  - Some note's `source_url` equals the raw's `source_url`, and no other raw carries that URL.
+  - These tests mirror the function: where the two differ, the function is right, and the difference is reported in `concerns`.
 - 1 raw file = 1 transaction (no partial artifacts)
-- **1:1 mapping**: one raw → one wiki note (or `[skipped]`)
+- **1:1 mapping**: one raw → one wiki note, or one reported skip
 
 ### Exclusion Criteria
-- Excluded: project code snippets · one-off debugging logs · plain API reference copies
-- Rule: "Remove project name — reusable knowledge remains?" No → exclude → register `[skipped: <reason>]` in master-index
+- Excluded: project code snippets · one-off debugging logs · plain copies of official docs or API reference that a link replaces
+- Rule: "Remove project name — reusable knowledge remains?" No → exclude: write no note, and report the raw as skipped with the reason (`## Run Paths` → Report).
 
 ### 6 Health Checks
 - Missing backlinks
@@ -122,12 +145,15 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
 - Output: `index/healthcheck-YYYY-MM-DD.md`
 
 ### Concurrent Write Safety
-- All wiki/index writes via `~/.glass-atrium/scripts/wiki-lock.sh` (lock: `wiki-compile`).
-- Pattern: `wiki-lock.sh with wiki-compile 30 -- <command>`.
+- A shell command that writes under `wiki/` runs under the write lock: `~/.glass-atrium/scripts/wiki-lock.sh with wiki-compile 30 -- <command>`.
+  - Exit 2 means the lock timed out.
+  - `wiki-dedup.sh` and `wiki-deadlinks.sh` take this lock themselves: run them bare, because the lock is not re-entrant and a wrapped run times out.
+- Write and Edit tool calls run under no lock: the helper covers only the command inside `with`, and a bare `acquire` ends with the Bash call that made it.
+  - So the turn-0 pre-flight detects a batch compile already running; it does not exclude one that starts mid-session.
 
 ### Master Index = Single Source of Truth
-- Register `raw/<basename>` in `index/master-index.md` at compilation end.
-- Grading of a missing registration, and the batch-run exception: Guardrails → Index post-check.
+- `index/master-index.md` is generated: `wiki-sync.sh` rewrites it from `wiki.sqlite` alone, so a hand-written line is erased at the next regeneration.
+- A note is registered by running the sync; the hand-edit ban and the grading of a missing registration: Guardrails → **Index post-check**.
 
 ### Index Regeneration Triggers
 
@@ -136,7 +162,7 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
 - A category restructure affects ≥ 10 notes.
 - `wiki-lock.sh` acquisition fails 3+ consecutive times within a single session (suggests stale lock or split-brain).
 
-- Pattern: `wiki-lock.sh with wiki-compile 120 -- <reindex-cmd>` (extended timeout for full rebuild).
+- Pattern: `~/.glass-atrium/scripts/wiki-lock.sh with wiki-compile 120 -- ~/.glass-atrium/scripts/wiki-sync.sh --force-index` (extended timeout for full rebuild).
 
 ## Output Contract
 
@@ -165,12 +191,13 @@ Incrementally compile `wiki/raw/` → `wiki/notes/<slug>.md` (flat layout), main
 
 Each step builds on the previous:
 
-- **Identify unprocessed**: Glob `wiki/raw/*.md` → diff against master-index
+- **Identify unprocessed**: Glob `wiki/raw/*.md` → classify each (`### Incremental Compilation` → **Unprocessed**)
 - **Per raw file** (transaction):
    - **Precondition — Frontmatter validation**: the raw file carries exactly the fields `source_url`, `collected`, `collector`.
      - Missing or extra fields → mark it Failed in the Output Contract and return it to glass-atrium-intel-researcher.
      - A failed file is not counted as a valid write (per scope-wiki Operational Constraints).
-   - Read → Exclusion check → Category (existing-first) → Author (lead+frontmatter+body+wikilinks) → Write → Update backlinks → Update indices
+   - Read → Exclusion check → Category (existing-first) → Author (lead+frontmatter+body+wikilinks) → Write → Update backlinks → Update `index/topic-map.md`
+- **Register**: Guardrails → **Index post-check**
 - **Health check** (on request): `### 6 Health Checks`
 - **Report** in Output Contract format
 
@@ -185,13 +212,16 @@ Each step builds on the previous:
 |-----------|----------|
 | Write attempt to raw/ | Halt + report violation |
 | Category undeterminable | Request user approval |
-| master-index write failure | Mark Failed + clean partial artifacts |
+| `wiki-sync.sh` failure | Keep the written notes + grade per Guardrails → **Index post-check** |
 | Backlink target missing | Keep wikilink + log as health item |
 | Slug collision | Read existing → merge-update or disambiguate |
 <!-- EDITABLE:END -->
 
 ## Success Criteria
 
-- **Quality gate**: No broken links, slug uniqueness, category governance
+- **Quality gate**:
+  - no broken wikilink left unlogged — a kept link whose target is missing is logged as a health item (`## Error Recovery` → `Backlink target missing`)
+  - slug uniqueness
+  - category governance
 - **Key metric**: metric_pass=true (index consistent + no orphans)
 - **Completion report**: a schema declaring no `completion_block` → the dedicated-turn print is the best-effort fallback; never invent an undeclared key (schema validation fails).
