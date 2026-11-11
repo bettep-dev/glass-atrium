@@ -106,7 +106,7 @@
   - Lifecycle hooks intercept every tool call — hook-backed enforcement.
   - The monitor observes every event — full observability.
   - Outcome records keep every delegation traceable and auditable.
-  - The learning loop is designed to feed those records and correction signals back into instruction patches. Recording and aggregation run today; automatic patch generation and application stay closed until live trials.
+  - The learning loop is designed to feed those records and correction signals back into instruction patches. Recording and aggregation run today; automatic instruction patches apply only after they win a live trial, and risky changes apply only after user approval.
 
 ## How it works, end to end
 
