@@ -2,7 +2,6 @@
 # enforce-harness-critical.sh — PreToolUse(Write|Edit|MultiEdit + Bash) harness-critical file gate.
 # Both arms block agent_id-INDEPENDENT (main session AND every subagent): a per-FILE
 # protection floor, NOT a per-agent tool-grant check (core-security.md LLM06 boundary).
-# Each arm also carries an agent_id gate (AGENT_ID ARMS below) that only adds blocks.
 #
 # Write|Edit|MultiEdit arm (deterministic):
 #   (a) live harness settings — settings.json + settings.local.json of ~/.claude/ and
@@ -112,8 +111,7 @@
 # Write|Edit arm remain the primary gates. The pure-bash hot-path prefilter (raw
 # envelope must contain a ".claude" / ".glass-atrium" dir-name literal, else exit 0
 # with zero python3 spawns) shares the same residual: an envelope hiding those
-# literals behind indirection or JSON \uXXXX escapes skips this gate (an agent_id
-# envelope skips the prefilter itself).
+# literals behind indirection or JSON \uXXXX escapes skips this gate.
 # KNOWN FALSE POSITIVES (over-block — the safe direction, left uncorrected):
 #   - entered-a-protected-dir flag scan-scoped, not paren-scoped → a SUBSHELL cd
 #     into a protected dir keeps a later `cd -`/`popd` conservative outside it
@@ -136,37 +134,6 @@
 #     - workaround: a neutral name in a scratch fixture for the matched protected
 #       segment (root directory or plist label)
 #
-# AGENT_ID ARMS (subagent and Workflow calls; main-session verdicts unchanged). Each runs only
-# where the arms above pass, so it only adds blocks. Exemption: the lib's predicate with the job
-# scratchpad (jobs/<id>/tmp/) and progress files — no BASENAME exception, which is the orchestrator's.
-#   Write|Edit|MultiEdit — the target as written and as resolved (non-strict realpath) blocks when
-#     it sits under a profile root of HOME or of HOME's physical spelling and is not exempt.
-#   Bash — a positive rule: a word naming a path under a profile root adds no block only as a
-#     proven read (an admitted operand of the closed READERS set in a clean command position, or
-#     a `<` source, with no rebinding anywhere in the call); every other such word is judged by the
-#     exemption in both forms, and a non-literal one blocks. Substitution bodies, interpreter code
-#     strings and heredoc bodies are judged too; text past MAX_SCAN_DEPTH fails closed.
-#   Residuals, by target (honor-system):
-#     - classification time: the exemption reads the text and the filesystem when the hook runs,
-#       so a link swapped in afterwards — by a watcher an earlier call of the same agent started —
-#       is not seen
-#     - a reader name rebound outside the call's text (a binary planted earlier in a PATH dir)
-#     - what a reader, or a script run as a reader or interpreter script operand, writes
-#     - a relative spelling with no cd, resolved against the session cwd
-#       (`echo x > .claude-personal/CLAUDE.md` from a $HOME cwd)
-#     - a non-literal word reaching home with no visible home prefix (a glob over the home path,
-#       an operator default, an unrelated variable, a `${X}aude` plant), and a profile path
-#       embedded mid-word outside a code string, a substitution body or a heredoc
-#     - zsh-only expansions the classifier does not model
-#   Main-session gaps (pass today for every caller; follow-up candidates): the quoted command
-#     word, flagged NEUTRAL_PREFIX members (`env -i`, `command -p`, `exec -a`), `coproc`, `eval`,
-#     zsh precommand modifiers, the zsh short `if` and `always`, wrappers (`nice`, `xargs`), zsh
-#     clobber redirects (`>!`, `>>!`, `&>!`, `>&!`, `>>|`, `2>!`) onto a live hook or settings
-#     file, a command substitution inside double quotes, backticks or an unquoted-delimiter
-#     heredoc, a `bash -c` nested past MAX_SCAN_DEPTH, interpreter code fed on stdin, `ln -s` of a
-#     root or of home, and staging through an append to a profile `shell-snapshots/` file, which
-#     the Bash tool sources before every later call.
-#
 # Grant: HARNESS_PROTECTION_APPROVE=1 in the hook's LAUNCH environment → pass
 # (parity with CONFIG_PROTECTION_APPROVE). CAVEAT: an in-session
 # `export HARNESS_PROTECTION_APPROVE=1` via the Bash tool NEVER reaches the hook —
@@ -179,8 +146,7 @@
 # family): an extraction degraded to EMPTY would silently disarm the gate via the
 # empty-target allow. Non-trivial input with python3 missing — or a classifier
 # that exits non-zero, or whose in-band status trailer reads empty or misaligned
-# (a non-numeric triple count or a triple run of the wrong length included) — is a
-# HAR-003 block (exit 2), never a pass.
+# — is a HAR-003 block (exit 2), never a pass.
 # Path matching is CASE-INSENSITIVE on BOTH arms, at every layer (prefilter,
 # protected-path regexes, dispatch globs): the real volume is APFS, which resolves a
 # case-varied spelling onto the protected file. Widening-only — on a case-SENSITIVE
@@ -229,19 +195,9 @@ hook_require_python3_unless_empty "${INPUT}" "HAR-003" \
 #   (b) the `[[ ]]` and parameter-expansion patterns it equally governs — the
 #       PY_STATUS digit literal · the `error:*` / `block:*` verdict arms and the
 #       `${VERDICT#block:}` strip (classifier-generated lowercase) · the TOOL_NAME
-#       comparison (folds wider, harmless) · the TRIPLE_COUNT digit test and the
-#       triple flag literal (classifier-generated) · the agent_id scope tests in
-#       is_agent_form_blocked (fold wider). The ONE collapse it would cause is
+#       comparison (folds wider, harmless). The ONE collapse it would cause is
 #       held out in POSIX test form at write_edit_arm's raw-vs-normalised
 #       inequality, which this option does not govern.
-#   (c) the lib's claude_config_is_exempt_entry, reached through
-#       is_agent_form_blocked — the first allowlist-shaped pass under this option.
-#       A fold there admits only a case variant of a jobs/<id>/tmp, runtime-data or
-#       progress name, which APFS resolves to the same entry; the home prefix is
-#       stripped case-sensitively and membership is anchored at the remainder's
-#       first segment, so a fold never exempts a different file. The Bash reader-set
-#       test sits in the classifier and is case-sensitive: a case-varied reader name
-#       is a non-reader, an over-block.
 # Accepted trades: an over-block on a case-SENSITIVE volume (fail-toward-blocking
 # is the correct direction for a security floor) · folding is locale-dependent, so
 # a Turkish-locale dotless-i spelling still evades — an INCOMPLETE widening
