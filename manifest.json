@@ -1797,7 +1797,7 @@
     "scripts/test/apply-lock.bats": "8acb0ee12ce509a67a84d200e05d12e70a53a2fd432c5b04ed19bf3843f68669",
     "scripts/test/apply-spine.bats": "f3b12f214b5f465be714cf62144c5249afdcbf561a56c3e10db63be68e8b56e6",
     "scripts/test/atrium-config.bats": "007c6eac6d60bc9a11b8e4ee1b19cbe0c7cf295d4e65df5f1dd53d3cd3ec862a",
-    "scripts/test/atrium-queue-accept-launch.bats": "141301aa2616f24cb27153b62030d6cf8e9a9bc48a42bd7dd95abaa6eab3badd",
+    "scripts/test/atrium-queue-accept-launch.bats": "592577e49e5428b3e30cbcefcbffc5188f240d74f0512f330fe314e1047782aa",
     "scripts/test/atrium-queue-setup.bats": "8a571372976b41fc8be02778c0482d310fc719f5ef6e6950ed4803a4d85b8e1e",
     "scripts/test/atrium-queue.bats": "0b4f29185f48dc76664ad0eb5cf189f4edfa16133448a9ba21a950784b84f4c6",
     "scripts/test/audit-absorption.bats": "6fece1547f1e37fe1ea39f50f32340499c4c897b463a0f387871c75f3e3bb4f3",

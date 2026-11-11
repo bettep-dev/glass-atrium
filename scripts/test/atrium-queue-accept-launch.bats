@@ -18,6 +18,7 @@ setup() {
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
     CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT
   export HOME="${BATS_TEST_TMPDIR}/home"
+  export GA_DATA_ROOT="${HOME}/.glass-atrium"
   mkdir -p "${HOME}" "${BATS_TEST_TMPDIR}/bin"
   CALLS="${BATS_TEST_TMPDIR}/claude-calls"
   # stand-in claude: records its argv, its env marker and the --settings file as it sees it, then exits $CLAUDE_STUB_EXIT
