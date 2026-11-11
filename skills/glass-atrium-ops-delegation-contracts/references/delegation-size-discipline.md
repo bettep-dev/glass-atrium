@@ -62,7 +62,8 @@
 | Comparison / multi-source cross-check / independent multi-section work | **2-4 agents** in parallel | "compare 3 libraries", "review these 4 independent modules" |
 | Broad open-ended research sweep | fan out toward the engine's runtime concurrency self-cap | "survey the whole landscape of Y" |
 
-- Deep-but-single-threaded work escalates reasoning depth through the `effort` parameter, not more agents.
+- Deep-but-single-threaded work stays one agent: more agents add no depth to a single line of reasoning.
+  - Its depth lever is the `effort` tier, which this table does not set: the table decides team cardinality only.
 
 ## Analysis-Track Right-Sizing (input-side)
 

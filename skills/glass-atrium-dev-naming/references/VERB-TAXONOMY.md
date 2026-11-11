@@ -78,7 +78,7 @@
 
 ### 7. State change pairs
 
-- Always define as corresponding pairs: `activate↔deactivate` · `enable↔disable` · `publish↔unpublish` · `lock↔unlock` · `archive↔restore` · `suspend↔resume`
+- Name the two directions of a state change as a corresponding pair, so each verb's inverse is predictable: `activate↔deactivate` · `enable↔disable` · `publish↔unpublish` · `lock↔unlock` · `archive↔restore` · `suspend↔resume`
 
 ### 8. Transform/Parse
 

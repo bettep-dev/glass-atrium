@@ -3,6 +3,8 @@
 ## Type Design [DEV]
 
 - **any/dynamic/Object forbidden**
+  - Scope: each one as a declared escape-hatch type, in a language that has it.
+  - Why: such a type switches checking off for every value it types, and the gap spreads to each caller.
 - Nullable → express in function name and type
 
 ## Discriminated Union

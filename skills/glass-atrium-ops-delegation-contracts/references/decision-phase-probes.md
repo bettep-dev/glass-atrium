@@ -1,6 +1,8 @@
 # Decision-phase probes — detail
 
 - **Pointer site**: `skills/glass-atrium-ops-orchestrator-role.md` → `#### Decision-phase probes`.
+- **Who makes a remediation**: ruled at the pointer site → "Treat a failed probe as a deliberate blocker".
+  - That rule covers every remediation in this file that changes a grant or starts a service: an FDA grant · a permission allow · a `chmod` · a `tools:` edit · a daemon start.
 
 ## Permission Probe — detail
 
