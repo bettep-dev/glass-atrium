@@ -858,7 +858,7 @@ Items 1-4 are the co-equal requirements ①-④ of `##### DEV-spawn 4-requiremen
     - A work item gated on an event (a merge, a deploy) lives in the script that performs that event, never only in a document.
     - Grammar: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` · phase: this file → `##### In-script verify-stage (ultracode)`.
 12. **PREVIEW before submit** — run `enforce-workflow-verify-stage.sh --lint <file>` as the final self-check.
-    - It reads the raw script offline through the identical verdict dispatch: `exit 0` = passes the gate · `exit 2` prints the block reason.
+    - It reads the raw script offline through the identical verdict dispatch: `exit 0` = no warning · `exit 1` = a WARNING line names what to fix.
     - `--lint --template` prints the canonical `[AGENT-COMPOSITION]`/entry/`[SIZE-EST]` scaffold.
     - Side-effect-free and a convenience, not a gate — items 1-4 stay primary.
 

@@ -414,8 +414,9 @@ monitor_doc_bodies=()
 
 # advisory_trace — parent-scope accumulator of the advisory tags fired on this invocation, read by
 # emit_trace for the trailing `advisory=` field. Every advisory emitter runs BEFORE the trace emit, so a
-# tag set here is always visible inside emit_trace's subshell and nothing needs to escape it. Empty (no advisory fired, or a path that never reaches the advisory
-# printers such as pass-noscript) records as `none`.
+# tag set here is always visible inside emit_trace's subshell and nothing needs to escape it. Empty
+# (no advisory fired, or a path that never reaches the advisory printers such as pass-noscript)
+# records as `none`.
 advisory_trace=""
 
 # dev_flag / impl_slots — the two instrumentation-only trace fields appended after `advisory=`. Both
