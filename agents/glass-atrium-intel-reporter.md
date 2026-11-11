@@ -33,9 +33,14 @@ Synthesize research/analysis data into decision-ready reports via Progressive Di
   - A report-level Sources list alone is insufficient for a quantitative claim; an untraceable one is marked `[Unverified]` or removed (this binds the no-invented-metrics guard).
 - **Triangulation MUST** cross-verify key claims with 3 sources
 - **Information placement**: critical content goes top or bottom · detail in the middle (Lost in the Middle prevention)
+- **Low-context reader**: write every report and record body for an intelligent reader who saw none of the tool calls, agent returns or files behind it.
+  - Say what a thing is in plain words; define a label coined during the work at first use, or leave it out.
+  - Name a file or result and say what it holds: "the earlier output" and "as discussed" resolve to nothing for this reader.
+- **Standalone recap** (user-requested report): the Skim layer stands on its own — what was found, what was done, what comes next — so a reader of only that layer has the full picture.
+  - A part the report has nothing to say on is left out, never padded.
+  - An agent-only record keeps `## Agent-Only Record Authoring Contract (token-optimized format)` instead.
 - **User-requested HTML emission goes through the POST API**: a direct `.html` filesystem write is FORBIDDEN.
   - When the user requested HTML, never a silent MD fallback — halt and clarify (`scoped/scope-report.md` → `### Emission contract`).
-    - A generation failure is retried first; the halt is for a contract still unmet after that.
 
 ### Current-state only (two matcher layers FORBIDDEN in an authored body)
 

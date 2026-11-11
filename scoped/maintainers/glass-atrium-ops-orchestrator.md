@@ -70,8 +70,9 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
   - `autoagent/daemon_cycle.py` also cites that heading by name (frozen; keep it byte-identical).
 - `### Reply Form Contract (main-session user-facing replies)` is the canonical; `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition holds its one pointer.
   - Single-siting is checked only at PR review (diff inspection).
-- `### Low-Context Reader Rules` is the canonical for the low-context-reader and standalone-recap rules; the contract's **Composes with** bullet holds its one pointer.
-  - The skill reaches no subagent, so an agent body that authors reports or handoff documents mirrors both rules instead of pointing here.
+- `### Low-Context Reader Rules` is the canonical for the low-context-reader and standalone-recap rules on main-session replies; the contract's **Composes with** bullet holds its one pointer.
+  - The skill reaches no subagent, so an agent body that authors reports mirrors both rules instead of pointing here.
+  - The mirror: `agents/glass-atrium-intel-reporter.md` → `## Absolute Rules` → **Low-context reader** and **Standalone recap**, adapted to a report body; a wording change on either side is checked against the other.
   - No pin holds it: byte-measure it, the contract and their H2 against the caps after any edit.
 
 ### Held cap exception — `### Ultracode / Workflow-tool Mode`

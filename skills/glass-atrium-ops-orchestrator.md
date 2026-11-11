@@ -823,16 +823,16 @@ AFTER — same facts, contract shape; the contract fixes the slots, not the mark
 
 ### Low-Context Reader Rules
 
-Bind every main-session reply under the Reply Form Contract above, and every report or handoff document: the reader saw none of the work.
+Bind every main-session reply under the Reply Form Contract above: the reader saw none of the work.
 
 - **Low-context reader**: write for an intelligent reader who saw none of the tool calls, agent returns or files behind the text.
   - Lead with the key points; a first line never leans on something explained only further down.
   - Say what a thing is in plain words; define a label coined during the work at first use, or leave it out.
   - Name a file or result and say what it holds — "as above" and "the earlier output" resolve to nothing for this reader.
 - **Standalone recap**: the last message of a job stands on its own — what was found, what was done, what comes next — so a reader of only that message has the full picture.
-  - In a main-session reply it fills slots 1-3 and adds no slot; a mid-job status reply keeps the Delta form.
+  - It fills slots 1-3 and adds no slot; a mid-job status reply keeps the Delta form.
   - Length still follows `#### Shape constraints (bind every slot)`: keep the context a cold reader needs, drop process narration.
-- **Honest backing**: honor-system; this file reaches no subagent, so a report or handoff author is bound only through its own agent body.
+- **Honest backing**: honor-system; this file reaches no subagent, so it binds no report author — `agents/glass-atrium-intel-reporter.md` → `## Absolute Rules` carries that body's own copy.
 
 ## Workflow-Tool Execution (On-Demand)
 
