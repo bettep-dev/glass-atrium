@@ -123,6 +123,22 @@ assert_summary() {
   }
 }
 
+@test "a scope run missing either scope root is an exit-3 scope error naming that root" {
+  local present="" missing="" root=""
+  for missing in hooks autoagent; do
+    root="${BATS_TEST_TMPDIR}/no-${missing}"
+    present=hooks
+    [[ "${missing}" == hooks ]] && present=autoagent
+    write_fixture "${root}/${present}/clean.sh" '#!/usr/bin/env bash' ':'
+    run bash "${AUDIT_SH}" --root "${root}"
+    [[ "${status}" -eq 3 && "${output}" == *"scope directory missing"*"${root}/${missing}"* ]] || {
+      echo "missing ${missing}: exit ${status}"
+      echo "${output}"
+      return 1
+    }
+  done
+}
+
 @test "a planted site in the outcome recorder or the scope-match library blocks like any other" {
   local root="${BATS_TEST_TMPDIR}/root" file=""
   mkdir -p "${root}/autoagent"
