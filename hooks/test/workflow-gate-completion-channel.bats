@@ -816,8 +816,8 @@ const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { pr
 #
 # The lever exists so an operator can silence ONE cause mid-session without waiting for a release. Its
 # scope is what these rows pin: the property-absent MESSAGE goes quiet, and nothing else moves — not the
-# exit code, not the sibling advisories, and above all not the trace, because the promotion window is
-# adjudicated from the firing log and a rollback period that stopped recording would read as clean.
+# exit code, not the sibling advisories, and above all not the trace, because firings are adjudicated
+# from the firing log and a rollback period that stopped recording would read as clean.
 
 @test "rollback(marker): the marker demotes the property-absent message and never its trace line" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"

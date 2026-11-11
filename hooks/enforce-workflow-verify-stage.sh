@@ -99,52 +99,54 @@
 #             warned earlier carries NO completion-channel tag — the earlier warning is the louder signal.
 # ADDENDUM-ALLOWLIST MEMBERSHIP (decided here, not deferred): EXCLUDED. This is an advisory VALUE on
 # the multiplexed flag line and never reaches print_cause_warning's tag argument, so an entry would be
-# inert; a promotion to a block cause decides membership at that time.
-# KNOWN FALSE POSITIVES — the FULL measured list, not a sample, because this text is what a promotion
-# decision reads (each remediable by declaring the property inline): a schema bound in ANOTHER module
-# (invisible to the scan → site visible, token absent); ANY member read or write of the property
-# (opts.schema); an assignment binding the bare word to undefined or null (the exclusion is key-position
-# only); an import, a destructuring bind, or a parameter named schema; and the bare word inside a REGEX
-# LITERAL. Every one was measured against its candidate exclusion before being left in: the member form
-# is the one case where excluding it would blank a REAL site, the bind forms are cases where excluding
-# them is inert because the bind's USE is itself a site, and the regex-literal form is a lexical-class
-# problem whose fix belongs in the shared _string_mask. Per-shape verdicts sit at the predicate.
+# inert.
+# KNOWN FALSE POSITIVES — the FULL measured list, not a sample, so a firing is adjudicable (each
+# remediable by declaring the property inline): a schema bound in ANOTHER module (invisible to the
+# scan → site visible, token absent); ANY member read or write of the property (opts.schema); an
+# assignment binding the bare word to undefined or null (the exclusion is key-position only); an
+# import, a destructuring bind, or a parameter named schema; and the bare word inside a REGEX
+# LITERAL. Every one was measured against its candidate exclusion before being left in: the member
+# form is the one case where excluding it would blank a REAL site, the bind forms are cases where
+# excluding them is inert because the bind's USE is itself a site, and the regex-literal form is a
+# lexical-class problem whose fix belongs in the shared _string_mask. Per-shape verdicts sit at the
+# predicate.
 # KNOWN FALSE NEGATIVE: a QUOTED schema key, blanked by the mask — fail-open, the safe direction.
 # WHERE THE CLAIM STOPS: this raises the floor from "channel structurally ABSENT" to "channel
 # structurally PRESENT" and no further. It does NOT reach whether the prompt instructs the fill
-# (unfilled → empty string → the same lost signal) or whether a filled block parses. A schema dropped
-# ENTIRELY yields no site at all, so it is out of THIS value's reach and stays out of BLOCKING reach
-# for good — forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit
-# class — and is carried, as a nudge only, by the schema-absent value below. A second bare site behind a
-# compliant one is likewise out of THIS value's reach — one declaration satisfies its token half for the
-# whole file — and is carried by the per-site value below. Above that floor everything stays honor-system.
+# (unfilled → empty string → the same lost signal) or whether a filled block parses. A schema
+# dropped ENTIRELY yields no site at all, so it is out of THIS value's reach for good — forcing
+# schema everywhere would trade the non-emit failure class for the crash-on-non-emit class — and is
+# carried, as a nudge only, by the schema-absent value below. A second bare site behind a compliant
+# one is likewise out of THIS value's reach — one declaration satisfies its token half for the whole
+# file — and is carried by the per-site value below. Above that floor everything stays honor-system.
 #
-# PER-SITE GAP (the SECOND value on the same multiplexed line, advisory — NEVER exit 2, no promotion
-# staging of its own): flags the property declared on ONE schema-mode site and omitted from ANOTHER, the
-# shape no script-wide read can see. PREDICATE (completion_per_site_advisory_needed, verdict-isolated,
-# own except -> False): the same opposite-polarity operands, applied INSIDE a site span, not across the
-# file. ADJUDICABLE SITES ONLY — a site counts only when its own schema is an INLINE OBJECT LITERAL; a
-# constant, builder call, spread or shorthand is SKIPPED rather than judged, so firing needs BOTH halves
-# in-file and a file of only those shapes stays silent (false NEGATIVE, the safe direction). DISJOINT by
-# construction (token absent script-wide vs present on some site); residuals sit at the predicate.
+# PER-SITE GAP (the SECOND value on the same multiplexed line, advisory — NEVER exit 2): flags the
+# property declared on ONE schema-mode site and omitted from ANOTHER, the shape no script-wide read
+# can see. PREDICATE (completion_per_site_advisory_needed, verdict-isolated, own except -> False):
+# the same opposite-polarity operands, applied INSIDE a site span, not across the file. ADJUDICABLE
+# SITES ONLY — a site counts only when its own schema is an INLINE OBJECT LITERAL; a constant,
+# builder call, spread or shorthand is SKIPPED rather than judged, so firing needs BOTH halves
+# in-file and a file of only those shapes stays silent (false NEGATIVE, the safe direction).
+# DISJOINT by construction (token absent script-wide vs present on some site); residuals sit at the
+# predicate.
 #
-# SCHEMA ABSENT (the THIRD value on the same multiplexed line, advisory — NEVER exit 2, and no promotion
-# staging is even available to it): flags an analysis-class NON-DEV spawn in a script carrying NO
-# schema-mode site anywhere. This is THE MEASURED INCIDENT SHAPE — the recorded outage was a schema
-# DROPPED from the spawn call — and it is the one shape neither sibling value can reach, since both
-# require a site to exist. PREDICATE (completion_schema_absent_advisory_needed, verdict-isolated, own
-# except -> False): non-DEV script AND no site (the SHARED site test, _has_schema_site, so the value that
-# fires on a site and the value that fires on none can never disagree about what a site is) AND a spawn
-# literal on the roster the analysis-size advisory already uses (non-DEV BY EXCLUSION from the runtime
-# dev_set, via the shared _non_dev_analysis_spawn_present — never a second roster). DISJOINT from both
-# siblings by the site half alone, so the single-value contract stays structural.
-# ACCEPTED OVER-NUDGE, not a defect to be tuned away: an analysis spawn whose deliverable is GENUINELY
-# prose has no schema to declare and nudges anyway. Whether a deliverable is structured is not statically
-# decidable, so a suppression heuristic here could only re-introduce the false-NEGATIVE direction this
-# value exists to cover; blocking this shape is a stated NON-GOAL, and one ignorable stderr line is the
-# whole cost. DEV scripts are excluded for a measured reason, not for symmetry with the sibling: a
-# canonical DEV workflow carries a reviewer verify-stage that is deliberately text-mode, so including
-# them would fire on nearly every copy-verbatim skeleton.
+# SCHEMA ABSENT (the THIRD value on the same multiplexed line, advisory — NEVER exit 2): flags an
+# analysis-class NON-DEV spawn in a script carrying NO schema-mode site anywhere. This is THE
+# MEASURED INCIDENT SHAPE — the recorded outage was a schema DROPPED from the spawn call — and it is
+# the one shape neither sibling value can reach, since both require a site to exist. PREDICATE
+# (completion_schema_absent_advisory_needed, verdict-isolated, own except -> False): non-DEV script
+# AND no site (the SHARED site test, _has_schema_site, so the value that fires on a site and the
+# value that fires on none can never disagree about what a site is) AND a spawn literal on the
+# roster the analysis-size advisory already uses (non-DEV BY EXCLUSION from the runtime dev_set, via
+# the shared _non_dev_analysis_spawn_present — never a second roster). DISJOINT from both siblings
+# by the site half alone, so the single-value contract stays structural. ACCEPTED OVER-NUDGE, not a
+# defect to be tuned away: an analysis spawn whose deliverable is GENUINELY prose has no schema to
+# declare and nudges anyway. Whether a deliverable is structured is not statically decidable, so a
+# suppression heuristic here could only re-introduce the false-NEGATIVE direction this value exists
+# to cover; blocking this shape is a stated NON-GOAL, and one ignorable stderr line is the whole
+# cost. DEV scripts are excluded for a measured reason, not for symmetry with the sibling: a
+# canonical DEV workflow carries a reviewer verify-stage that is deliberately text-mode, so
+# including them would fire on nearly every copy-verbatim skeleton.
 #
 # SIXTH ADVISORY PASS ([SIZE-EST] plausibility bounds, advisory — NEVER exit 2): bounds the DECLARED
 # DEV-mode tool_uses~ value against the implementation-slot count the gate already computes — below
@@ -227,21 +229,7 @@
 # advisory would stop printing AND stop being traced with no error anywhere — the identical trap
 # recorded for the schema-cap `:R<n>` suffix.
 #
-# PROMOTION CONDITION (verbatim — this header is the referenced SoT; the authoring guidance points here
-# rather than restating it):
-#   Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false
-#   positives across a full rolling firing-log window, the copy-verbatim skeletons in
-#   skills/glass-atrium-ops-orchestrator.md and
-#   skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md passing the
-#   check unmodified, and a named one-edit remediation in the advisory text for each of the three
-#   scoped rules.
-#   Promotion of the completion-channel advisory to blocking requires, verbatim: zero adjudicated false
-#   positives across a full rolling firing-log window; every copy-verbatim declaration-bearing skeleton
-#   in skills/glass-atrium-ops-orchestrator.md and
-#   skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md passing
-#   unmodified; and the remediation round-trip green with a paired negative control.
-#
-# ROLLBACK LEVER (the operator-reversible counterpart of the promotion condition above): while a MARKER
+# ROLLBACK LEVER (operator-reversible): while a MARKER
 # FILE exists at WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER, the completion-channel property-absent value
 # is DEMOTED — its message is not printed. The lever silences one message and moves nothing else.
 # A FILE rather than an environment variable because the hook is a fresh process per tool call yet
@@ -253,7 +241,7 @@
 # and schema-absent values, the schema-cap advisory and the [SIZE-EST]-bounds pass are UNCHANGED by the
 # marker — demoting the whole multiplexed line would silence the schema-absent nudge, which is the only
 # signal on the measured incident shape. And the TRACE is never demoted: the tag is accumulated PAST the
-# message dispatch, so a rollback period keeps recording its firings and the promotion window stays
+# message dispatch, so a rollback period keeps recording its firings and the firing window stays
 # adjudicable instead of going vacuously quiet.
 #
 # HONEST SCOPE — STATIC HEURISTIC (string/pattern scan), NOT a full parse and NOT DEV-verdict
@@ -299,20 +287,17 @@
 # fail-SAFE (a logging error NEVER changes the verdict/exit code — the verdict is decided first).
 #
 # ADVISORY FIELD (presence-only, positioned after the original four fields — append-only, backward
-# compatible): `advisory=` records WHICH advisories
-# fired on that invocation and, for the two suffixed advisories, WHICH value matched — the schema-cap
-# rule (`advisory=schema-cap:R1`) and the multiplexed completion-channel value
-# (`advisory=completion-channel:property-absent`, `:per-site-gap` or `:schema-absent`);
-# the revision-cycle nudge records as `advisory=first-link`, the close-token nudge as
-# `advisory=close-token` and the stage nudge as `advisory=implementing`, all unsuffixed (each carries
-# one decision);
-# several tags join with a comma; none fired →
-# `advisory=none`. This exists so
-# the promotion condition's first clause (zero adjudicated false positives across a rolling firing-log
-# window) is MEASURABLE at all — before it, the record carried no advisory signal of any kind and no
-# window could be constructed. It records only that a firing happened, NEVER whether it was correct:
-# adjudication stays human, and this field neither promotes the advisory nor touches a verdict or exit
-# code. The field is APPENDED after those four so a reader keyed on the existing positions is unaffected
+# compatible): `advisory=` records WHICH advisories fired on that invocation and, for the two
+# suffixed advisories, WHICH value matched — the schema-cap rule (`advisory=schema-cap:R1`) and the
+# multiplexed completion-channel value (`advisory=completion-channel:property-absent`,
+# `:per-site-gap` or `:schema-absent`); the revision-cycle nudge records as `advisory=first-link`,
+# the close-token nudge as `advisory=close-token` and the stage nudge as `advisory=implementing`,
+# all unsuffixed (each carries one decision); several tags join with a comma; none fired →
+# `advisory=none`. This exists so a false-positive count across a rolling firing-log window is
+# MEASURABLE at all — before it, the record carried no advisory signal of any kind and no window
+# could be constructed. It records only that a firing happened, NEVER whether it was correct:
+# adjudication stays human, and this field touches no verdict or exit code. The field is APPENDED
+# after those four so a reader keyed on the existing positions is unaffected
 # (hooks/compliance_telemetry.py parse_gate_log splits on TAB and reads `verdict=` by key).
 #
 # MEASUREMENT FIELDS (`dev=`, `impl_slots=`, appended AFTER `advisory=` — same append-only contract):
@@ -566,15 +551,13 @@ print_analysis_size_advisory() {
 # print_schema_cap_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
 # DECISION fires INSIDE the python3 verdict helper (get_schema_cap_rule) and arrives as a
 # SCHEMA_CAP_ADVISE[:R<n>] / SCHEMA_CAP_SILENT flag on its FIFTH output line. The `:R<n>` suffix is
-# TRACE instrumentation only (it names the matched rule for the per-rule promotion window); the message
-# itself stays PRESENCE-ONLY, enumerating all three rules and their one-edit fixes rather than naming
-# the matched rule or field — deliberate, and stated in the text so silence on a detail is not
-# read as a clean bill. Shipping the per-rule remediations + the published non-flag list from day one
-# is required by the promotion condition in the header (building them at promotion time would block
-# promotion on a message rewrite).
+# TRACE instrumentation only (it names the matched rule, so firings are adjudicable per rule); the
+# message itself stays PRESENCE-ONLY, enumerating all three rules and their one-edit fixes rather
+# than naming the matched rule or field — deliberate, and stated in the text so silence on a detail
+# is not read as a clean bill.
 print_schema_cap_advisory() {
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (schema-cap, non-blocking): this workflow declares a StructuredOutput schema cap matching at least one of three scoped rules. An over-tight cap is the dominant 'StructuredOutput schema retry cap (5) exceeded' cause — told only to emit, the model SHRINKS its prose on each internal retry instead of fixing the shape, so the loop never converges. PRESENCE-ONLY: this nudge does NOT name which rule or field matched, and it NEVER judges whether a cap fits its realistic content. The three rules, each with its ONE-EDIT fix: (R1) a maxLength on a completion-block field — DROP the cap entirely (a real block's length varies several-fold from run to run, so any fixed cap is overrun by some block, and the standing rule mandates the FULL multi-line block, so schema compliance and rule compliance are mutually exclusive under ANY such cap). (R2) a maxLength/maxItems inside an items object — remove the per-element caps and keep a single top-level item-count cap (per-element caps MULTIPLY the constraint count, so shrinking one element re-balances and overflows another). (R3) a maxLength strictly between 64 and 300 — raise the cap to the realistic worst case, or hand the bulk to a FILE and return a path plus a compact summary. DELIBERATE NON-FLAGS (published so silence is not mistaken for a clean bill): maxLength >= 300 on a non-completion non-item field; maxLength <= 64 (enum / verdict / identifier shapes); maxItems on a TOP-LEVEL array (one non-multiplying constraint on inherently multi-item content); the observed 500-char cap on a top-level free-text field; caps of EXACTLY 300 (excluded by R3's strict upper edge, a consistency choice against the guidance's own per-row floor — the largest accepted miss); and any cap notation carrying no numeric literal (a quoted shorthand type descriptor or a chained-builder form). HONEST LIMITS: raw-text scan over a comment-stripped + string-masked operand, no JS parse — a schema assembled by a helper / spread / variable / import, a variable-valued cap, and a fully-quoted JSON-style schema (where the cap TOKEN itself is string-resident) are all invisible; the items span is a brace-scan heuristic. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header.") >&2 || true
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (schema-cap, non-blocking): this workflow declares a StructuredOutput schema cap matching at least one of three scoped rules. An over-tight cap is the dominant 'StructuredOutput schema retry cap (5) exceeded' cause — told only to emit, the model SHRINKS its prose on each internal retry instead of fixing the shape, so the loop never converges. PRESENCE-ONLY: this nudge does NOT name which rule or field matched, and it NEVER judges whether a cap fits its realistic content. The three rules, each with its ONE-EDIT fix: (R1) a maxLength on a completion-block field — DROP the cap entirely (a real block's length varies several-fold from run to run, so any fixed cap is overrun by some block, and the standing rule mandates the FULL multi-line block, so schema compliance and rule compliance are mutually exclusive under ANY such cap). (R2) a maxLength/maxItems inside an items object — remove the per-element caps and keep a single top-level item-count cap (per-element caps MULTIPLY the constraint count, so shrinking one element re-balances and overflows another). (R3) a maxLength strictly between 64 and 300 — raise the cap to the realistic worst case, or hand the bulk to a FILE and return a path plus a compact summary. DELIBERATE NON-FLAGS (published so silence is not mistaken for a clean bill): maxLength >= 300 on a non-completion non-item field; maxLength <= 64 (enum / verdict / identifier shapes); maxItems on a TOP-LEVEL array (one non-multiplying constraint on inherently multi-item content); the observed 500-char cap on a top-level free-text field; caps of EXACTLY 300 (excluded by R3's strict upper edge, a consistency choice against the guidance's own per-row floor — the largest accepted miss); and any cap notation carrying no numeric literal (a quoted shorthand type descriptor or a chained-builder form). HONEST LIMITS: raw-text scan over a comment-stripped + string-masked operand, no JS parse — a schema assembled by a helper / spread / variable / import, a variable-valued cap, and a fully-quoted JSON-style schema (where the cap TOKEN itself is string-resident) are all invisible; the items span is a brace-scan heuristic. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
   return 0
 }
 
@@ -736,16 +719,14 @@ print_implementing_advisory() {
 # print_completion_channel_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit
 # code). The DECISION fires inside the verdict helper (completion_block_advisory_needed) and arrives as
 # the COMPLETION_ADVISE:property-absent value on the multiplexed TENTH output line.
-# Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input, and
-# this text is the one destined to become a block reason if the advisory is ever promoted.
-# Message content is fixed by the promotion condition rather than by taste → the one-edit remediation,
-# the published false-positive list and the honest scope boundary all ship from day one, because
-# building them at promotion time would block promotion on a message rewrite.
+# Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input.
+# The one-edit remediation, the published false-positive list and the honest scope boundary all ship
+# in the text, so a firing is actionable and adjudicable as printed.
 print_completion_channel_advisory() {
   cat <<'EOF' >&2
 [enforce-workflow-verify-stage] ADVISORY (completion channel, non-blocking): this workflow script carries a schema-mode site but never mentions the reserved completion-channel property, so a StructuredOutput payload has nowhere to carry the [COMPLETION] block. A schema-mode emit is engine-guaranteed while the text channel is honor-system — non-emission on the text channel recurs on a share of runs that varies by window (population = outcome rows attributed to the direct hook input or to one of the two synthesis arms; non-emission = the two synthesis arms) — so a schema omitting the property drops the writer signal SILENTLY: the recorder falls to derived synthesis and the run loses the writer's self-assessment. ONE-EDIT FIX — add this property to the schema you already declare:
   completion_block: { type: 'string', description: 'the FULL multi-line [COMPLETION] block: the tag alone on its line, each field on its own line, closed by [/COMPLETION] alone on its line' }
-and instruct the agent in its delegation prompt to FILL it — that half is prompt-side and is NOT checked here (an unfilled property yields an empty string and the same lost signal). WHERE THIS CHECK STOPS: it raises the floor from "channel structurally absent" to "channel structurally present" and no further. It does not reach whether the block is filled, whether a filled block parses, a second bare site behind a compliant one, or a spawn passing no schema at all — that last shape is deliberately out of reach, because forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit class. WHAT COUNTS AS A SITE, stated exactly so this nudge is not read as narrower than it is: the BARE WORD schema anywhere in the comment-stripped, string-masked script — not only a spawn argument. A key-position ABSENT value is the only exclusion (schema: undefined, schema: null, schema: void <anything>); everything else that spells the bare word is a site. KNOWN FALSE POSITIVES, published in FULL so a firing is adjudicable rather than mysterious, each measured against its candidate exclusion rather than assumed: a schema bound in ANOTHER module is invisible to this raw scan (site visible, property absent); ANY member read or write of the property (opts.schema) is a site, and excluding it is the one case that would blank a REAL site, since opts.schema = S followed by agent(t, opts) is a genuine schema-mode configuration; an assignment binding the bare word to undefined or null is a site, because the exclusion covers the key position only; an import, a destructuring bind, or a parameter named schema is a site, and excluding those is inert — the bind gets USED at a spawn and that use is itself a site, so only a bind with no use would fall silent; the bare word inside a REGEX LITERAL is a site, a lexical-class limit of the shared string mask rather than a value one. A quoted schema key is the mirror false NEGATIVE (the string mask blanks it) and fails open by design. MEASUREMENT SoT for the non-emission share quoted above: skills/glass-atrium-ops-orchestrator.md, section "Completion-channel non-emission" — re-derivation recipe and the population stated as attribution-token membership. This message quotes that share's shape, never a figure; re-derive the share there rather than adding a figure here. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header.
+and instruct the agent in its delegation prompt to FILL it — that half is prompt-side and is NOT checked here (an unfilled property yields an empty string and the same lost signal). WHERE THIS CHECK STOPS: it raises the floor from "channel structurally absent" to "channel structurally present" and no further. It does not reach whether the block is filled, whether a filled block parses, a second bare site behind a compliant one, or a spawn passing no schema at all — that last shape is deliberately out of reach, because forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit class. WHAT COUNTS AS A SITE, stated exactly so this nudge is not read as narrower than it is: the BARE WORD schema anywhere in the comment-stripped, string-masked script — not only a spawn argument. A key-position ABSENT value is the only exclusion (schema: undefined, schema: null, schema: void <anything>); everything else that spells the bare word is a site. KNOWN FALSE POSITIVES, published in FULL so a firing is adjudicable rather than mysterious, each measured against its candidate exclusion rather than assumed: a schema bound in ANOTHER module is invisible to this raw scan (site visible, property absent); ANY member read or write of the property (opts.schema) is a site, and excluding it is the one case that would blank a REAL site, since opts.schema = S followed by agent(t, opts) is a genuine schema-mode configuration; an assignment binding the bare word to undefined or null is a site, because the exclusion covers the key position only; an import, a destructuring bind, or a parameter named schema is a site, and excluding those is inert — the bind gets USED at a spawn and that use is itself a site, so only a bind with no use would fall silent; the bare word inside a REGEX LITERAL is a site, a lexical-class limit of the shared string mask rather than a value one. A quoted schema key is the mirror false NEGATIVE (the string mask blanks it) and fails open by design. MEASUREMENT SoT for the non-emission share quoted above: skills/glass-atrium-ops-orchestrator.md, section "Completion-channel non-emission" — re-derivation recipe and the population stated as attribution-token membership. This message quotes that share's shape, never a figure; re-derive the share there rather than adding a figure here. ADVISORY ONLY, this check NEVER blocks.
 EOF
   return 0
 }
@@ -755,8 +736,6 @@ EOF
 # as the COMPLETION_ADVISE:per-site-gap value on the SAME multiplexed TENTH output line — a value, not a
 # line, which is what keeps the output-arity seam paid once.
 # Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input.
-# NO promotion staging of its own: the header records a promotion condition for the property-absent
-# value only, and this shape stays advisory.
 print_completion_per_site_advisory() {
   cat <<'EOF' >&2
 [enforce-workflow-verify-stage] ADVISORY (completion channel per-site, non-blocking): this workflow declares the reserved completion-channel property on one schema-mode site and omits it from another, so the script-wide check reads the file as compliant while a second StructuredOutput payload still has nowhere to carry the [COMPLETION] block. One compliant site MASKS the bare one: a single declaration satisfies the script-wide token half for the whole file, and the run behind the bare site loses the writer's self-assessment because the recorder falls to derived synthesis. ONE-EDIT FIX — add the same property to the schema on the site that omits it:
@@ -770,8 +749,8 @@ EOF
 # code). The DECISION fires inside the verdict helper (completion_schema_absent_advisory_needed) and
 # arrives as the COMPLETION_ADVISE:schema-absent value on the SAME multiplexed TENTH output line.
 # Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input.
-# NO promotion staging is available to this value at all, by design rather than by deferral: the shape
-# is not statically separable from a legitimately prose deliverable, so a nudge is its ceiling.
+# A nudge is this value's ceiling: the shape is not statically separable from a legitimately prose
+# deliverable.
 print_completion_schema_absent_advisory() {
   cat <<'EOF' >&2
 [enforce-workflow-verify-stage] ADVISORY (completion channel absent, non-blocking): this workflow spawns a NON-DEV analysis/research/audit agent (researcher/planner/reporter/reviewer — anything off the DEV roster) but declares NO schema-mode site ANYWHERE in the script, so there is no StructuredOutput payload to carry the [COMPLETION] block at all. THIS IS THE MEASURED INCIDENT SHAPE: the recorded outage was a schema DROPPED from the spawn call, and that shape leaves nothing for the two sibling completion-channel checks to see, since both require a site to exist. WHY IT MATTERS: a schema-mode emit is engine-guaranteed while the text channel is honor-system — non-emission on the text channel recurs on a share of runs that varies by window (population = outcome rows attributed to the direct hook input or to one of the two synthesis arms; non-emission = the two synthesis arms) — so a spawn with no schema at all drops the writer signal SILENTLY: the recorder falls to derived synthesis and the run loses the writer's self-assessment. ONE-EDIT FIX — give the spawn a bounded schema carrying the reserved property, and instruct the agent in its delegation prompt to FILL it (prompt-side, NOT checked here):
@@ -1497,8 +1476,8 @@ COMPLETION_KEY_RE = re.compile(r"completion[_-]?block", re.IGNORECASE)
 
 def get_schema_cap_rule(stripped):
     # Returns the FIRST matched scoped rule tag ("R1" / "R2" / "R3") or "" when none matched — the tag
-    # rides the SCHEMA_CAP_ADVISE flag so the firing trace can name the matched rule and a promotion
-    # window is adjudicable PER RULE rather than in aggregate. The advisory MESSAGE stays presence-only.
+    # rides the SCHEMA_CAP_ADVISE flag so the firing trace can name the matched rule and the firings
+    # are adjudicable PER RULE rather than in aggregate. The advisory MESSAGE stays presence-only.
     # ADVISORY-ONLY presence scan for the StructuredOutput cap shapes that drive the engine-internal
     # "retry cap (5) exceeded" collapse loop. Three scoped rules: R1 a maxLength on a completion-block
     # field (unconditional — the standing rule mandates the FULL block, so schema compliance and rule
@@ -1908,8 +1887,8 @@ ENTRY_CARD_FLAG = "ENTRY_CARD_SILENT"
 # SEPARATE LINE, not a value on the completion-channel multiplex: that line carries completion-channel
 # decisions whose trace tag names that channel, and a sizing value there would mis-report itself; the
 # two can also fire on one invocation, which a single-value multiplex cannot express.
-# ADVISORY ONLY — no verdict, no exit code, promotable later on this file's advisory-then-promote
-# precedent. The two anchors are DERIVED, not maintained here: the per-file floor is the
+# ADVISORY ONLY — the nudge's only effect is stderr: no verdict, no exit code. The two anchors are
+# DERIVED, not maintained here: the per-file floor is the
 # `ceil(files x 4.5)` empirical tool_use calibration and the ceiling is the ~40 split trigger ahead of
 # the measured 46-52 truncation band, both from skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget
 # ("Empirical tool_use calibration" + the HARD SECONDARY split rule).
@@ -2373,8 +2352,8 @@ PY
   # bare SCHEMA_CAP_ADVISE stays admitted so a legacy/short helper output is not silently re-classified.
   # Admitted by SHAPE, never by an enumeration of today's rule tags: a fourth scoped rule added to
   # get_schema_cap_rule would fall through an enumeration to SILENT, so its advisory would stop printing
-  # AND stop being traced with no error anywhere — silently under-counting the very per-rule promotion
-  # window the suffix exists to build. Strictness over the seam is unchanged: an unanchored or
+  # AND stop being traced with no error anywhere — silently under-counting the very per-rule firing
+  # record the suffix exists to build. Strictness over the seam is unchanged: an unanchored or
   # non-`R<digits>` suffix still collapses to SILENT.
   if [[ ! "${schema_cap_flag}" =~ ^SCHEMA_CAP_ADVISE(:R[0-9]+)?$ ]]; then
     schema_cap_flag="SCHEMA_CAP_SILENT"

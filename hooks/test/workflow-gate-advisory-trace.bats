@@ -1,11 +1,9 @@
 #!/usr/bin/env bats
-# workflow-gate-advisory-trace.bats — pins the firing-trace ADVISORY field added to
-#   enforce-workflow-verify-stage.sh so the schema-cap advisory's promotion condition becomes
-#   MEASURABLE. The condition's first clause ("zero adjudicated false positives across a full rolling
-#   firing-log window") was unconstructible: the trace record carried four TAB-separated fields —
-#   timestamp, tool_name, verdict, script_len — and no advisory signal of any kind, so no window
-#   existed to adjudicate. This suite pins that a firing is now RECORDED, per rule, without promoting
-#   the advisory and without touching any verdict or exit code.
+# workflow-gate-advisory-trace.bats — pins the firing-trace ADVISORY field of
+#   enforce-workflow-verify-stage.sh, which makes the schema-cap advisory's false-positive count across
+#   a rolling firing-log window MEASURABLE: without it the record carries only timestamp, tool_name,
+#   verdict and script_len, so no window exists to adjudicate. This suite pins that a firing is
+#   RECORDED, per rule, without touching any verdict or exit code.
 #
 # FROZEN HEAD OBSERVATION (produced by RUNNING the hook at f5c4883 against the R1 fixture below, not
 # derived from the code's shape) — the trace line was exactly:
@@ -132,8 +130,7 @@ print(counts["pass"], counts["trip"], counts["total"])
   }
 }
 
-# FALSE-POSITIVE FLOOR — the same probe that satisfies the promotion condition's second clause. The
-# skill's copy-verbatim skeletons must record NO schema-cap tag.
+# FALSE-POSITIVE FLOOR — the skill's copy-verbatim skeletons must record NO schema-cap tag.
 @test "advisory-trace(floor): the skill's copy-verbatim skeletons record no schema-cap tag" {
   # A pin target that VANISHED is the most complete form of the drift this suite exists to
   # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run

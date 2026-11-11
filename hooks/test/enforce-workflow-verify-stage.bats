@@ -1437,8 +1437,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
 
 # OPERAND PIN — cap words quoted in a delegation goal template literal and in a shorthand type
 # descriptor are INERT (string-masked), and a cap inside a // comment is INERT (comment-stripped).
-# This is the day-one satisfiability of the promotion condition's second conjunct: the repository's own
-# canonical skeletons carry all three shapes, so a raw scan would fire on every copy-verbatim workflow.
+# The repository's own canonical skeletons carry all three shapes, so a raw scan would fire on every
+# copy-verbatim workflow.
 # Regression guard, same negative-assertion note as above.
 @test "schema-cap(operand): canonical-skeleton cap prose in a template literal + comment → PASS, NO advisory" {
   local skeleton
@@ -1501,9 +1501,8 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
   assert_trace block-nodecl || return 1
 }
 
-# ADVISORY TEXT SHIPS COMPLETE (P7) — the promotion condition requires a named one-edit remediation per
-# rule plus the published non-flag list from day one, so building it at promotion time would block
-# promotion on a message rewrite.
+# ADVISORY TEXT SHIPS COMPLETE (P7) — a named one-edit remediation per rule plus the published
+# non-flag list, so a firing is actionable and adjudicable as printed.
 @test "schema-cap(text): advisory names all three rules, their one-edit fixes, and the non-flag list" {
   run_hook_exec "const Out = { type: 'object', properties: { completion_block: { type: 'string', maxLength: 1200 } } };"
   assert_outcome pass || return 1
@@ -1512,18 +1511,6 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
   [[ "${output}" == *"single top-level item-count cap"* ]] || return 1
   [[ "${output}" == *"realistic worst case"* ]] || return 1
   [[ "${output}" == *"DELIBERATE NON-FLAGS"* ]] || return 1
-}
-
-# PROMOTION CONDITION recorded VERBATIM in the hook header (the referenced SoT the guidance points at).
-@test "schema-cap(promotion): the verbatim promotion condition is recorded in the hook header" {
-  local header
-  # The window is the leading contiguous comment block, derived rather than a line number: a fixed
-  # bound makes any later header paragraph break this assertion for a reason unrelated to it.
-  header="$(awk '/^#/ { print; next } { exit }' "${HOOK_SH}" | sed 's/^# \{0,3\}//' | tr '\n' ' ' | tr -s ' ')"
-  [[ "${header}" == *"Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false positives across a full rolling firing-log window, the copy-verbatim skeletons in skills/glass-atrium-ops-orchestrator.md and skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md passing the check unmodified, and a named one-edit remediation in the advisory text for each of the three scoped rules."* ]] || {
-    echo "PROMOTION CONDITION not recorded verbatim in the hook header" >&2
-    return 1
-  }
 }
 
 # LINT PARITY — the offline preview surfaces the same advisory and stays side-effect-free (zero trace).
