@@ -100,7 +100,7 @@
   - 并发上限：由工作流引擎运行时施加。
   - 派生深度：不是靠一个策略数字，而是靠结构约束——没有任何智能体的 frontmatter 被授予再次派生的工具（Agent/Task/Workflow），而这份工具清单在派生时刻即被冻结。
 - **机械层与自律层** — 仓库里的规则文件自己也是这样划分的。
-  - 机械层（真实的代码）：PreToolUse 钩子流水线 · `enforce-harness-critical.sh` 对 harness 临界路径的拦截 · 派生时刻的工具冻结
+  - 机械层（真实的代码）：PreToolUse 钩子流水线 · 将安装版本与发布清单（manifest）比对的 harness 完整性检测（`glass-atrium doctor`——检测而非拦截，恢复用 `glass-atrium update`） · 派生时刻的工具冻结
   - 自律（honor-system）层：委派的重试、回退、上报 · `MAX_DEPTH=2` 这个策略数字及其深度计数
 - **与失控移交系统的区别**
   - 生命周期钩子拦截每一次工具调用——由钩子支撑的强制执行。

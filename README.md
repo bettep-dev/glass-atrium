@@ -100,7 +100,7 @@
   - Concurrency cap: the workflow engine runtime enforces it.
   - Spawn depth: bounded structurally rather than by a policy number — no agent's frontmatter grants a re-spawn tool (Agent/Task/Workflow), and that tool list is frozen at spawn time.
 - **Mechanical layer and discipline layer** — the repository's rule files describe themselves the same way.
-  - Mechanical layer (real code): the PreToolUse hook pipeline · the harness-critical path block in `enforce-harness-critical.sh` · the spawn-time tool freeze
+  - Mechanical layer (real code): the PreToolUse hook pipeline · harness integrity detection that compares the install against the release manifest (`glass-atrium doctor` — it detects rather than blocks; `glass-atrium update` restores) · the spawn-time tool freeze
   - Discipline (honor-system) layer: delegation retry, fallback, and escalation · the `MAX_DEPTH=2` policy number and its depth counting
 - **How it differs from an uncontrolled handoff system**
   - Lifecycle hooks intercept every tool call — hook-backed enforcement.
