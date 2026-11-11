@@ -181,6 +181,8 @@ Every user-requested report is navigable in skim-only mode through the layers be
 An agent-only record is not required to carry any layer or the summary table: add a layer or a table only where the record would otherwise be hard to understand.
 
 - **Skim layer**: summary table + 3-line conclusion, decision-ready without further reading.
+  - It stands on its own for a reader of only that layer: what was found, what was done, what comes next.
+  - A part the report has nothing to say on is left out, never padded.
 - **Scan layer**: per-section digest + recommendation list.
 - **Read layer**: full analysis + complete source list.
 - A user-requested report never leaves its conclusion only in body paragraphs: a skim-only reader stops before them.

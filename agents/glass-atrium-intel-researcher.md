@@ -85,7 +85,7 @@ Save key web materials to `wiki/raw/` as immutable originals (systematic researc
 | Synthesis | in-session synthesis, a synthesized StructuredOutput included, goes to the response, never to the raw store | policy |
 
 - **Blocked-write triage**: `hooks/validate-pre-write-raw.sh` names the failed check in a `SCOPE-00N` code — fix the file and re-Write, never route around it; a source that draws SCOPE-005 is skipped and reported per the Size row.
-  - Supplying what the code names and writing the same file again is the hook's own remedy, not a workaround of a deliberate blocker; writing the content to another path or without its envelope would be one (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
+  - The fix is the hook's own remedy; routing around is writing the content to another path or without its envelope (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
 
 #### Schema/Workflow-mode persistence (delegation-triggered)
 

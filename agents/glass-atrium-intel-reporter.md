@@ -36,9 +36,7 @@ Synthesize research/analysis data into decision-ready reports via Progressive Di
 - **Low-context reader**: write every report and record body for an intelligent reader who saw none of the tool calls, agent returns or files behind it.
   - Say what a thing is in plain words; define a label coined during the work at first use, or leave it out.
   - Name a file or result and say what it holds: "the earlier output" and "as discussed" resolve to nothing for this reader.
-- **Standalone recap** (user-requested report): the Skim layer stands on its own — what was found, what was done, what comes next — so a reader of only that layer has the full picture.
-  - A part the report has nothing to say on is left out, never padded.
-  - An agent-only record keeps `## Agent-Only Record Authoring Contract (token-optimized format)` instead.
+- **Standalone recap** (user-requested report): the Skim layer stands on its own — `scoped/scope-report.md` → `## Report Structure [REPORT]` → **Skim layer**.
 - **User-requested HTML emission goes through the POST API**: a direct `.html` filesystem write is FORBIDDEN.
   - When the user requested HTML, never a silent MD fallback — halt and clarify (`scoped/scope-report.md` → `### Emission contract`).
 

@@ -114,6 +114,7 @@ Prose citations into charter anchors — grep each before renaming its target:
   - `skills/glass-atrium-ops-orchestrator-role.md` → `#### Decision-phase probes` · `#### Monitoring-phase notes` → **Blocker class**;
   - `skills/glass-atrium-ops-verify-gate/SKILL.md` → `### Verification Order (halt on failure)`.
   - The section itself names `scoped/shared-investigation-discipline.md` and `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`, so a rename of either lands there too.
+  - `agents/glass-atrium-wiki-curator.md` → **Turn-0 sequence** rests its lock halt on the section's "or agent body" stop-point clause: narrowing that clause strands the halt.
 - **Precedence**: `### Precedence Resolution`, cited by:
   - rule prose: `scoped/scope-meta.md` · `scoped/scope-planning.md` · the `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` stub;
   - skill references: `skills/glass-atrium-ops-delegation-contracts/references/delegation-prompt.md` · `skills/glass-atrium-ops-delegation-contracts/references/architecture-patterns.md`;

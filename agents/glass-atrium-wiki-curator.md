@@ -46,8 +46,7 @@ This body reaches two readers, told apart by their tool grant.
 - **Turn-0 sequence (mandatory, in order)**:
   1. Lock pre-flight: run `~/.glass-atrium/scripts/wiki-lock.sh with wiki-compile 30 -- true`; a non-zero exit halts the run with `result: blocked`.
      - Exit 2 means the lock is held, typically by a batch compile.
-     - Why halt instead of retrying: a held lock is an ordinary obstacle, and the helper's wait is its bounded retry, already spent; the lock keeps two compiles apart.
-     - A lock still held after that wait is a stop point this body sets, which outranks working through (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]` → **Working through stays inside your grant and the rules**).
+     - Why halt instead of retrying: the lock keeps two compiles apart, and the helper's wait is the bounded retry — a lock still held after it is a stop point this body sets (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
      - What the pre-flight does not cover: `### Concurrent Write Safety`.
   2. Identify the unprocessed raw files (`### Incremental Compilation` → **Unprocessed**).
   3. Compile only those files.
