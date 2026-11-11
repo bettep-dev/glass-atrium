@@ -19,7 +19,7 @@
 - The orchestrator takes a single request, breaks it into pieces for a team of specialist agents, and pulls the results back together.
 - Every cost, outcome, and agent event surfaces on the real-time monitor dashboard, laid bare as if you were looking through a glass wall.
 - The system is designed to revise its own instructions in response to recurring failures — no prompt tweaking on your part.
-  - Automatic instruction patching stays closed until live trials confirm it works (step 8 of [How it works](#how-it-works-end-to-end)).
+  - Automatic instruction patches pass a trial gate: a patch reaches agents only after it wins a live trial against the unchanged instructions (step 8 of [How it works](#how-it-works-end-to-end)).
 
 > [!WARNING]
 > - Once installed, background daemons start running **automatically**.
@@ -62,7 +62,7 @@
   - A **lifecycle hook pipeline** that enforces those rules (secrets, dangerous commands, budgets, deliverables) *mechanically* at every tool boundary
   - A **real-time monitoring dashboard** (the Atrium Monitor) that gathers every cost, outcome, and agent event in one place
   - A **self-improvement loop** designed to turn recurring failures into agent-instruction patches
-    - Automatic patch generation and application stay closed until live trials confirm they work.
+    - Automatic instruction patches apply only after they win a live trial against the unchanged instructions, and risky changes apply only after user approval.
 
 ## Why it was built
 
@@ -124,7 +124,7 @@
    - Every cost, outcome, and agent event streams into PostgreSQL and the Atrium Monitor in real time.
 8. **The system is designed to improve itself.**
    - A background daemon gathers outcome records and correction signals, and flags recurring failure patterns as instruction-improvement candidates.
-   - Automatic generation and application of instruction patches stay closed on every install until live trials confirm they work.
+   - A recurring pattern receives a patch only after the install has accumulated outcome data to test it on. A safe patch auto-applies only when it runs as a live trial and wins; risky changes go to the user-approval queue.
 
 ## Big tasks carefully, small tasks fast
 
@@ -153,7 +153,7 @@
 - **Self-improvement loop** — the autoagent daemon (`autoagent/`) is designed to turn accumulated outcome records and correction signals into agent-instruction patches.
   - It auto-applies only safe patches, keeps the original before each apply, and restores it if verification fails.
   - Risky changes (deletion, external calls, permissions, agent identity, and the like) go to a user-approval queue.
-  - For now, automatic patch generation and application are closed on every install until live trials confirm they work; outcome-record and correction-signal aggregation keep running.
+  - Safe patches auto-apply only after they win a live trial; outcome-record and correction-signal aggregation keep running.
 - **Atrium Monitor** — a 9-screen real-time dashboard built on Fastify 5 + Prisma 7 + React 18 (`http://127.0.0.1:16145`).
   - Every screen uses the same layout atoms: a 4px spacing ladder · a named page header · a single KPI tile structure · a shared table row height
   - Controls follow a shared size scale (32px for buttons, segments, inputs, and filter chips; 24px or more for inline targets), and their size and position do not change when their state does.
@@ -287,7 +287,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 <p align="center"><em>Agents — points out in one line the agents that need action; below KPIs for agents unsafe to route to, failures, over-tool-use-cap runs, and needs-context results come the agent-task pairs that fail most often, runs with no completion record and P95, and a per-agent performance table.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="Learning" width="100%"></p>
-<p align="center"><em>Learning — shows a one-line state of the self-improvement loop, tiles for awaiting approval, applied in the last 7 days, proposable backlog, and held patterns that need a human call, and an instrumentation status line. As on today's installs, where automatic patch generation and application are closed, applied-in-the-last-7-days is 0; the suggestion board keeps the apply history from before the closure, rejections by cause, and proposals closed without a verdict (generation closed until live trials), then leads into the pattern ledger.</em></p>
+<p align="center"><em>Learning — shows a one-line state of the self-improvement loop, tiles for awaiting approval, applied in the last 7 days, proposable backlog, and held patterns that need a human call, and an instrumentation status line. As on the install at capture time, when automatic patch generation and application were closed, applied-in-the-last-7-days is 0; the suggestion board keeps the apply history from before the closure, rejections by cause, and proposals closed without a verdict (generation closed until live trials), then leads into the pattern ledger.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
 <p align="center"><em>System map — puts the parts that need attention and the status-ring legend at the top, overlays per-part status rings on a diagram running through inputs, daemons, orchestrator, agents, safety hooks, the PostgreSQL store, and Chromium document export, and continues into the part-health list below.</em></p>
