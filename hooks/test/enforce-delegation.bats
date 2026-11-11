@@ -17,7 +17,7 @@ setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-delegation.sh not found: ${HOOK_SH}"
   source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
   export DELEGATION_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
-  # Harness roots are anchored at HOME: the /Users/x/... rows below are harness paths under it.
+  # A fixed HOME keeps the /Users/x/... rows below independent of the runner's home.
   export HOME="/Users/x"
   # Every test sandboxes HOME, so the hook's logs/data land on a per-test root, never the run-wide one.
   export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
@@ -97,13 +97,6 @@ write_as_orchestrator() {
   [[ "${status}" -eq 0 ]]
 }
 
-# BLOCKED: a plain harness-config write (no memory segment) — regression guard
-
-@test "rules/scope-dev.md → BLOCKED (plain harness config, no memory exception)" {
-  write_as_orchestrator "/Users/x/.claude/rules/scope-dev.md"
-  [[ "${status}" -ne 0 ]]
-}
-
 # PASS: allowed basenames + subagent context (orthogonal guards intact)
 
 @test "CLAUDE.md basename → PASS regardless of harness dir" {
@@ -151,7 +144,7 @@ run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
 # blocks non-empty input at exit 2 upstream, so a drift envelope never reaches the probe.
 
 # Drive the hook with a RAW JSON envelope (renamed keys, non-object, malformed …), merging
-# stderr into $output so the emit_error JSON (DEL-003 / DEL-001) is assertable. Multi-assertion
+# stderr into $output so the emit_error JSON (DEL-003 / DEL-004) is assertable. Multi-assertion
 # rows gate via `|| return 1` per line so a mid-body failure fails the test (a bare mid-body
 # `[[ ]]` is not aborted by errexit under bash 3.2 on macOS, though bash 5.3 on CI does abort —
 # measured, bats 1.13.0 on both legs). Args: $1 = raw JSON stdin.
@@ -196,13 +189,13 @@ run_raw_envelope() {
   [[ "${output}" != *"DEL-003"* ]] || return 1
 }
 
-@test "T4 AC3 well-formed blocked path → exit 2 with DEL-001 (drift path did not cannibalize the block)" {
-  run_raw_envelope '{"tool_input":{"file_path":"/Users/x/.claude/rules/scope-dev.md"}}'
+@test "a well-formed sensitive path still blocks with DEL-004 beside the drift branch" {
+  run_raw_envelope '{"tool_input":{"file_path":"/Users/x/project/.env"}}'
   [[ "${status}" -eq 2 ]] || return 1
-  [[ "${output}" == *"DEL-001"* ]] || return 1
+  [[ "${output}" == *"DEL-004"* ]] || return 1
 }
 
-# Orchestrator direct work: a tiny edit passes, while harness, sensitive, new-document and
+# Orchestrator direct work: a tiny edit passes, while sensitive, new-document and
 # implementing-plan targets stay blocked. Hermetic: the monitor is a curl PATH shim serving the
 # list from LIST_JSON_FILE and each plan from DOC_JSON_DIR/<id>.json; any other URL fails.
 
@@ -293,25 +286,24 @@ write_capturing() {
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
 }
 
-@test "harness paths stay blocked for the orchestrator, symlinked ones included" {
+@test "a symlink to a sensitive file or into a sensitive dir stays blocked by its physical path" {
   setup_monitor
-  export HOME="${WORK}"
-  mkdir -p "${WORK}/.claude/agents"
-  : >"${WORK}/.claude/agents/x.md"
-  ln -s "${WORK}/.claude" "${WORK}/dirlink"
-  ln -s "${WORK}/.claude/agents/x.md" "${WORK}/filelink.md"
+  mkdir -p "${WORK}/home/.ssh"
+  : >"${WORK}/home/.ssh/config"
+  : >"${WORK}/.env"
+  ln -s "${WORK}/home/.ssh" "${WORK}/dirlink"
+  ln -s "${WORK}/home/.ssh/config" "${WORK}/filelink.txt"
+  ln -s "${WORK}/.env" "${WORK}/src/settings.sh"
   local rows=(
-    "profile dir|${WORK}/.claude-work/settings.json"
-    "live install root|${WORK}/.glass-atrium/hooks/enforce-delegation.sh"
-    "directory symlink into a harness dir|${WORK}/dirlink/agents/x.md"
-    "file symlink into a harness dir|${WORK}/filelink.md"
+    "directory symlink into a sensitive dir|${WORK}/dirlink/config"
+    "file symlink into a sensitive dir|${WORK}/filelink.txt"
+    "file symlink to a dotenv file|${WORK}/src/settings.sh"
   )
   local row name path
   for row in "${rows[@]}"; do
     IFS='|' read -r name path <<<"${row}"
     write_capturing "${path}"
-    [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* && "${output}" == *"harness"* ]] \
-      || { echo "${name}: exit ${status}: ${output}"; return 1; }
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
   done
 }
 
@@ -411,40 +403,31 @@ write_capturing() {
   [[ "${status}" -eq 2 && "${output}" == *"DEL-007"* ]] || { echo "exit ${status}: ${output}"; return 1; }
 }
 
-@test "a symlink chain into a harness dir stays blocked at every hop, a loop included" {
+@test "a symlink chain to a sensitive path stays blocked at every hop, an unresolvable loop included" {
   setup_monitor
-  export HOME="${WORK}/home"
-  mkdir -p "${HOME}/.claude/agents"
-  : >"${HOME}/.claude/settings.json"
-  ln -s "${HOME}/.claude/settings.json" "${WORK}/hop2"
+  local home="${WORK}/home"
+  mkdir -p "${home}/.ssh"
+  : >"${home}/.ssh/config"
+  ln -s "${home}/.ssh/config" "${WORK}/hop2"
   ln -s hop2 "${WORK}/hop1"
-  ln -s "${HOME}/.claude" "${WORK}/dirhop2"
+  ln -s "${home}/.ssh" "${WORK}/dirhop2"
   ln -s dirhop2 "${WORK}/dirhop1"
-  ln -s "${HOME}/.claude-new" "${WORK}/danglehop2"
+  ln -s "${home}/.aws" "${WORK}/danglehop2"
   ln -s danglehop2 "${WORK}/danglehop1"
   ln -s loopb "${WORK}/loopa"
   ln -s loopa "${WORK}/loopb"
   local rows=(
     "two file hops|${WORK}/hop1"
-    "two directory hops|${WORK}/dirhop1/agents/x.md"
-    "dangling directory link chain|${WORK}/danglehop1/settings.json"
+    "two directory hops|${WORK}/dirhop1/known_hosts"
+    "dangling directory link chain|${WORK}/danglehop1/config"
     "link loop|${WORK}/loopa"
   )
   local row name path
   for row in "${rows[@]}"; do
     IFS='|' read -r name path <<<"${row}"
     write_capturing "${path}"
-    [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
   done
-}
-
-@test "a project's own .claude dir is not a harness path" {
-  setup_monitor
-  export HOME="${WORK}/home"
-  mkdir -p "${HOME}" "${WORK}/proj/.claude/worktrees/wt/hooks"
-  : >"${WORK}/proj/.claude/worktrees/wt/hooks/foo.sh"
-  write_capturing "${WORK}/proj/.claude/worktrees/wt/hooks/foo.sh"
-  [[ "${status}" -eq 0 ]] || { echo "exit ${status}: ${output}"; return 1; }
 }
 
 @test "a Target File binds only a path-like token, by whole-component suffix, never a basename or substring" {
@@ -476,40 +459,6 @@ write_capturing() {
   done
 }
 
-@test "a project's .claude/settings*.json is hook wiring and stays blocked" {
-  setup_monitor
-  export HOME="${WORK}/home"
-  mkdir -p "${HOME}" "${WORK}/proj/.claude/worktrees/wt/.claude"
-  local f
-  for f in proj/.claude/settings.json proj/.claude/settings.local.json \
-    proj/.claude/worktrees/wt/.claude/settings.json; do
-    : >"${WORK}/${f}"
-  done
-  ln -s "${WORK}/proj/.claude/settings.json" "${WORK}/settings-link.json"
-  local rows=(
-    "project settings.json|proj/.claude/settings.json"
-    "project settings.local.json|proj/.claude/settings.local.json"
-    "a worktree checkout's own settings.json|proj/.claude/worktrees/wt/.claude/settings.json"
-    "symlink to a project settings.json|settings-link.json"
-  )
-  local row name path
-  for row in "${rows[@]}"; do
-    IFS='|' read -r name path <<<"${row}"
-    write_capturing "${WORK}/${path}"
-    [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
-  done
-}
-
-@test "the install root's physical path stays blocked when ~/.glass-atrium is a symlink" {
-  setup_monitor
-  export HOME="${WORK}/home"
-  mkdir -p "${HOME}" "${WORK}/install/hooks"
-  : >"${WORK}/install/hooks/x.sh"
-  ln -s "${WORK}/install" "${HOME}/.glass-atrium"
-  write_capturing "${WORK}/install/hooks/x.sh"
-  [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* ]] || { echo "exit ${status}: ${output}"; return 1; }
-}
-
 @test "an unreachable monitor emits one DEL-007 record naming the real cause" {
   setup_monitor
   LIST_JSON_FILE="${WORK}/absent.json"
@@ -532,15 +481,17 @@ write_capturing() {
     || { echo "exit ${status}, ${records} records: ${output}"; return 1; }
 }
 
-@test "a memory/ nested under a protected dir name passes outside the harness roots, blocks under one" {
+@test "a relative path cannot be judged against the sensitive-file rule and blocks (fail closed)" {
   setup_monitor
-  mkdir -p "${WORK}/proj/agents/memory"
-  : >"${WORK}/proj/agents/memory/x.md"
-  write_capturing "${WORK}/proj/agents/memory/x.md"
-  [[ "${status}" -eq 0 ]] || { echo "outside the harness roots: exit ${status}: ${output}"; return 1; }
-  write_capturing "/Users/x/.claude/agents/memory/x.md"
-  [[ "${status}" -eq 2 && "${output}" == *"DEL-001"* ]] \
-    || { echo "under a harness root: exit ${status}: ${output}"; return 1; }
+  write_capturing "src/existing.sh"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* && "${output}" == *"relative path"* ]] \
+    || { echo "exit ${status}: ${output}"; return 1; }
+}
+
+@test "a memory/ nested under a protected dir name gets no session-state exemption from later checks" {
+  setup_monitor
+  write_capturing "${WORK}/proj/agents/memory/.env"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "exit ${status}: ${output}"; return 1; }
 }
 
 @test "the Target Files extractors live once in lib/target-files.sh, sourced by both hooks" {

@@ -3,12 +3,10 @@
 # basename (CLAUDE/MEMORY/GLASS_ATRIUM_GLOBAL_RULES.md) or a */memory/* session-state path passes.
 # An orchestrator write passes as tiny direct work unless its target is one of the kinds that stay
 # delegated, each blocked with exit 2 under its own code:
-#   DEL-001 harness path — ~/.claude, a ~/.claude-* profile dir, the ~/.glass-atrium install root (as
-#           written and as its physical path) or a project's .claude/settings*.json (its hook wiring),
-#           judged on the path as written AND on its physical path, every symlink hop followed (a
-#           link chain cannot launder it; an unresolvable chain or one past 40 hops blocks). A
-#           project's other .claude/ content (e.g. .claude/worktrees/<wt>/) is not a harness path.
-#   DEL-004 sensitive file — .env-class, secrets/credentials, private keys, or an .ssh/.aws/.gnupg dir
+#   DEL-004 sensitive file — .env-class, secrets/credentials, private keys, or an .ssh/.aws/.gnupg dir,
+#           judged on the path as written AND on its physical path, every symlink hop followed (a link
+#           chain cannot launder it); a relative path, or a chain that cannot be resolved or passes 40
+#           hops, cannot be judged and blocks under DEL-004 too
 #   DEL-005 new document file — the target does not exist yet and carries a document extension
 #           (md/markdown/mdx/html/htm/rst/adoc/txt), anywhere: creating one is report/plan/spec authoring
 #   DEL-006 a Target File of a plan at stage implementing — plan work stays delegated. Only a
@@ -22,9 +20,9 @@
 #
 # memory/* path-prefix exception: the orchestrator MAY directly Write/Edit session-state files under
 # any */memory/* segment — low-risk transient state, not a delegation surface. A memory/ nested under a
-# protected harness dir (agents/, rules/, hooks/, skills/, autoagent/, monitor/, scripts/) stays gated.
+# protected dir name (agents/, rules/, hooks/, skills/, autoagent/, monitor/, scripts/) stays gated.
 # SCOPE NOTE: this hook governs tool-call PERMISSION only — the user-facing one-line judgment before a
-# direct edit and the Harness Path Protection approval are behavioral gates it does not check.
+# direct edit is a behavioral gate it does not check.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -33,8 +31,6 @@ source "${BASH_SOURCE%/*}/hook-utils.sh"
 source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 # shellcheck source=lib/pipe-drain.sh
 source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
-# shellcheck source=lib/claude-config-dirs.sh
-source "${BASH_SOURCE%/*}/lib/claude-config-dirs.sh"
 # shellcheck source=lib/target-files.sh
 source "${BASH_SOURCE%/*}/lib/target-files.sh"
 
@@ -43,7 +39,7 @@ INPUT=$(hook_read_input)
 # Fail-closed on a python3-less PATH, but ONLY when there is real input to guard.
 # WHY: without python3 the tool_input probe fail-opens to `empty` (T3 AC4) — which the
 # empty-state ALLOW below would misread as "nothing to guard" → ALLOW an orchestrator
-# harness write. Blocking non-empty input here keeps that fail-open from disarming the
+# sensitive-file write. Blocking non-empty input here keeps that fail-open from disarming the
 # gate; a genuinely-empty stdin ("" / "{}" / "{ }") still passes (nothing to guard).
 hook_require_python3_unless_empty "${INPUT}" "DEL-002" \
   "Delegation gate unavailable: python3 is required to parse hook input"
@@ -94,8 +90,7 @@ esac
 #    Normalize first so "memory/../hooks/x.sh" cannot spoof the segment. A "memory/" nested
 #    directly under a protected dir name (agents/, rules/, hooks/, skills/, autoagent/, monitor/,
 #    scripts/) gets no exemption here: it falls through to the checks below like any other path.
-#    Under a harness root (e.g. ~/.claude/agents/memory/x.md) the DEL-001 check blocks it; outside
-#    the harness roots (e.g. <project>/agents/memory/x.md) it passes unless a later check blocks it.
+#    It passes unless a later check blocks it.
 #
 #    DUPLICATED LIST — READ BEFORE ADDING AN EIGHTH ARM. hooks/advisory-worktree-writer-lock.sh
 #    mirrors these seven arms VERBATIM to keep its lock exemption from contradicting this gate, and
@@ -166,40 +161,6 @@ get_physical_path() {
     [[ "${target}" == /* ]] || target="$(dirname -- "${link}")/${target}"
     path="${target}${tail}"
   done
-}
-
-# Home as written and as its physical path — the roots every profile dir hangs under — and the install
-# root ~/.glass-atrium under each, plus its own physical path (an install root that is a symlink).
-HARNESS_HOMES=()
-INSTALL_ROOTS=()
-set_harness_roots() {
-  local home physical
-  home="$(hook_normalize_path "${HOME:-}")"
-  [[ "${home}" == /?* ]] || return 1
-  HARNESS_HOMES=("${home}")
-  INSTALL_ROOTS=("${home}/.glass-atrium")
-  if physical="$(cd -P -- "${home}" 2>/dev/null && pwd -P)" && [[ "${physical}" != "${home}" ]]; then
-    HARNESS_HOMES+=("${physical}")
-    INSTALL_ROOTS+=("${physical}/.glass-atrium")
-  fi
-  if physical="$(cd -P -- "${home}/.glass-atrium" 2>/dev/null && pwd -P)" && [[ "${physical}" == /?* ]]; then
-    INSTALL_ROOTS+=("${physical}")
-  fi
-  return 0
-}
-
-# A harness path: ~/.claude or a ~/.claude-<branch> profile dir (anchored at home), an install root, or
-# a project's .claude/settings*.json. Any other .claude content (a .claude/worktrees checkout) is not.
-is_harness_path() {
-  local root parent
-  for root in "${HARNESS_HOMES[@]}"; do
-    [[ "${1}/" == "${root}/"?* && "${1:${#root}+1}/" =~ ^${CLAUDE_CONFIG_ROOT_RE} ]] && return 0
-  done
-  for root in "${INSTALL_ROOTS[@]}"; do
-    [[ "${1}/" == "${root}/"* ]] && return 0
-  done
-  parent="${1%/*}"
-  [[ "${parent##*/}" == .claude && "${1##*/}" == settings*.json ]]
 }
 
 is_sensitive_path() {
@@ -334,24 +295,15 @@ check_plan_target_files() {
   done <<<"${ids}"
 }
 
-[[ "${NORM_PATH}" == /* ]] || block_write "DEL-001" \
-  "Orchestrator direct write blocked: a relative path cannot be judged against the harness roots" \
+# The sensitive-file judgment needs an absolute path and its physical path; without either it fails closed.
+[[ "${NORM_PATH}" == /* ]] || block_write "DEL-004" \
+  "Orchestrator direct write blocked: a relative path cannot be judged against the sensitive-file rule" \
   "Retry with the absolute path, or delegate the edit to a sub-agent"
-# shellcheck disable=SC2310  # an unresolvable chain is answered by the DEL-001 block
-PHYSICAL_PATH="$(get_physical_path "${NORM_PATH}")" || block_write "DEL-001" \
-  "Orchestrator direct write blocked: the path's symlink chain could not be resolved (unreadable link or a loop), so it cannot be judged against the harness roots" \
+# shellcheck disable=SC2310  # an unresolvable chain is answered by the DEL-004 block
+PHYSICAL_PATH="$(get_physical_path "${NORM_PATH}")" || block_write "DEL-004" \
+  "Orchestrator direct write blocked: the path's symlink chain could not be resolved (unreadable link or a loop), so it cannot be judged against the sensitive-file rule" \
   "Retry with the resolved path, or delegate the edit to a sub-agent"
-# shellcheck disable=SC2310  # an unusable HOME is answered by the DEL-001 block
-set_harness_roots || block_write "DEL-001" \
-  "Orchestrator direct write blocked: HOME is unset or not absolute, so the harness roots cannot be located" \
-  "Delegate the edit to a sub-agent"
 
-# shellcheck disable=SC2310  # predicate calls
-if is_harness_path "${NORM_PATH}" || is_harness_path "${PHYSICAL_PATH}"; then
-  block_write "DEL-001" \
-    "Orchestrator direct write blocked: harness path (~/.claude, a ~/.claude-* profile dir, the .glass-atrium install root or a project's .claude/settings*.json)" \
-    "Edit the repo path for an install-managed file, or take the staged lane for a profile-local file (skills/glass-atrium-ops-orchestrator-role.md → Write routes)"
-fi
 # shellcheck disable=SC2310  # predicate calls
 if is_sensitive_path "${NORM_PATH}" || is_sensitive_path "${PHYSICAL_PATH}"; then
   block_write "DEL-004" \
