@@ -70,7 +70,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
   - `autoagent/daemon_cycle.py` also cites that heading by name (frozen; keep it byte-identical).
 - `### Reply Form Contract (main-session user-facing replies)` is the canonical; `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition holds its one pointer.
   - Single-siting is checked only at PR review (diff inspection).
-- `### Low-Context Reader Rules` is the canonical for the low-context-reader and standalone-recap rules on main-session replies; the contract's **Composes with** bullet holds its one pointer.
+- `### Low-Context Reader Rules` is the canonical for the low-context-reader and standalone-recap rules on main-session replies; its pointers are the contract's **Composes with** bullet and `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition.
   - The skill reaches no subagent, so the report author's side lives where it reaches that author instead of pointing here.
   - The mirror: `agents/glass-atrium-intel-reporter.md` → `## Absolute Rules` → **Low-context reader**, adapted to a report body; a wording change on either side is checked against the other.
   - The report-side recap: `scoped/scope-report.md` → `## Report Structure [REPORT]` → **Skim layer** holds the found / done / next triad, and the reporter body's **Standalone recap** bullet points at it; a change to the skill's triad is checked against the **Skim layer** bullet.
