@@ -15,15 +15,10 @@ hooks/advisory-spawn-cost.sh	25	65	0.3846	1	0	0	0
 hooks/advisory-subagent-budget.sh	113	115	0.9826	1	0	3	0
 hooks/agent-tracker.sh	19	54	0.3519	0	0	0	0
 hooks/block-dangerous-commands.sh	2	14	0.1429	0	0	0	0
-hooks/block-doc-routing-leak.sh	92	177	0.5198	3	0	2	0
-hooks/block-md-creation.sh	18	25	0.7200	1	0	0	0
-hooks/block-no-verify.sh	1	14	0.0714	0	0	0	0
 hooks/cost-tracker.sh	116	570	0.2035	3	0	0	0
 hooks/detect-secret-file-write.sh	109	74	1.4730	0	1	0	0
 hooks/enforce-commit-guard.sh	4	24	0.1667	0	0	0	0
-hooks/enforce-config-protection.sh	40	119	0.3361	0	0	2	4
 hooks/enforce-delegation.sh	40	64	0.6250	2	0	4	0
-hooks/enforce-foreground-harness.sh	111	88	1.2614	0	0	5	0
 hooks/enforce-verification-gate.sh	119	132	0.9015	5	1	7	0
 hooks/enforce-workflow-verify-stage.sh	431	445	0.9685	0	0	7	0
 hooks/hook-utils.sh	46	65	0.7077	0	0	1	0
@@ -86,7 +81,6 @@ hooks/test/advisory-subagent-budget-overage.bats	21	130	0.1615	0	0	0	0
 hooks/test/code-based-grader.bats	43	209	0.2057	0	0	3	8
 hooks/test/cost-tracker-pricing-advisory.bats	136	279	0.4875	2	0	0	13
 hooks/test/enforce-delegation.bats	27	101	0.2673	0	0	0	6
-hooks/test/enforce-foreground-harness.bats	31	99	0.3131	0	0	0	0
 hooks/test/enforce-verification-gate.bats	42	155	0.2710	0	0	0	5
 hooks/test/enforce-workflow-verify-stage.bats	260	564	0.4610	0	0	1	8
 hooks/test/hook-utils.bats	19	69	0.2754	0	0	0	0
@@ -161,4 +155,4 @@ monitor/src/server/types/telemetry.ts	30	69	0.4348	0	0	0	4
 monitor/src/server/types/wiki.ts	62	64	0.9688	0	0	0	5
 monitor/src/server/update-status.ts	66	349	0.1891	0	0	0	5
 monitor/src/server/version.ts	21	60	0.3500	0	0	0	0
-TOTAL	14712	36444	0.4037	174	25	143	390	files=162
+TOTAL	14419	35922	0.4014	170	25	134	386	files=156
