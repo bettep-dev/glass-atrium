@@ -93,7 +93,9 @@ The canonical rule for what language this system writes in.
 
 - File names, class names, symbols, APIs → use only verified references.
 - **Anchor by symbol, never by line** — cite as `<path> → <anchor>`: an identifier, a marker literal, a heading, a table row's first cell, a bullet's bolded lead, or for bare prose a short verbatim quote.
-  - Resolve it by bare-name `grep`/`jq` before citing — no hit means halt, several mean qualify.
+  - Resolve it by bare-name `grep`/`jq` before citing.
+    - No hit → the anchor is unverified: find the real one or report the miss, and do not cite it.
+    - Several hits → qualify it.
   - Why: a stale line still resolves, so it is silently wrong; a renamed symbol resolves to nothing, so it is loudly wrong and stops the reader.
 - **A line number is an observation, never a target**: reporting what a tool returned — diff hunk, stack trace, measured span, a count — is permitted and carries its revision (`parseBody() (L410, @ 7cda954)`).
   - Telling a later actor where to go and edit is not permitted.
@@ -129,14 +131,19 @@ The canonical rule for what language this system writes in.
 
 - **Task-class rule**: a **Task-class targets** line alone never justifies setting or changing a spawn's tier.
   - A tier moves for a task-class reason only through a measured per-class decision, `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
+- **Tiers are per model**: the same level buys a different amount of thinking on each model, so a tier measured on one model is not evidence for another.
+  - When a spawn's model changes, its tier is measured again before it is relied on.
 - **Task-class targets**:
   - Effort buys verification depth and edge-case coverage, so verification and brownfield bug fixing target high or above.
-  - xhigh or max suit autonomous end-to-end builds and other long-horizon reasoning; `max` can overthink, so keep it for the hardest tasks.
+  - Above high the gain is uneven and task-dependent: xhigh suits autonomous end-to-end builds and other long-horizon work where a gain was measured.
+  - `max` can overthink, so keep it for the hardest tasks.
   - Security review and vulnerability hunting carry no charter tier; glass-atrium-sec-guard keeps its frontmatter key.
   - Low is for in-the-loop sketching, which delegated subagents never are.
   - Detailed specs narrow the gap between tiers, so plan-backed implementation is the first candidate for a lower tier.
 - **Thinking is on**: `effort` governs thinking volume, not visible response length — ask for concision explicitly when short output is wanted.
-  - Control thinking through `effort` alone: never write a "do not think" rule or tell an agent that reasoning is off; raise `effort` when reasoning is shallow.
+  - Control thinking through `effort` alone: never write a "do not think" rule or tell an agent that reasoning is off.
+    - Why: a prose line asking for less thinking does not reliably reduce it; `effort` does.
+  - Raise `effort` when reasoning is shallow.
   - Never instruct a model to reproduce its reasoning in its response — the request can be declined as `reasoning_extraction`.
 - **API request facts**: code that builds Claude API requests loads the `claude-api` skill first for its request-surface facts and never relies on remembered values.
   - The facts: thinking and effort parameters, `max_tokens` sizing, prefill, refusal stop reasons, context and output limits, long-request timeouts.
@@ -181,6 +188,33 @@ The canonical rule for what language this system writes in.
 
 - Default: create temporary files and directories with bare `mktemp` / `mktemp -d` — no template path — so they land under the per-user `$TMPDIR`.
 - Trash purge: permanently deleting scratch you moved to `~/.Trash/` follows `### File Deletion Policy [ALL]` → the `~/.Trash/` exception.
+
+## Obstacles and Blockers [ALL]
+
+When something stops a step, classify it before you stop or push on.
+
+| Class | What it is | What to do |
+|---|---|---|
+| ordinary obstacle | a failure nobody placed on purpose | diagnose it, then work through it |
+| deliberate blocker | a control placed to stop this action | leave it in place, report it, and finish what does not depend on it |
+
+- **Ordinary obstacle** — an error, a timeout, a file locked by another process, an empty result, a failing tool or test.
+  - Work through it: wait and retry a call that is safe to repeat, fix the request, or use another tool or source your role already holds.
+  - It is not by itself a reason to end the run, hand the work back or report `blocked`.
+- **Deliberate blocker** — a hook block, a permission or sandbox denial (an `EPERM` on a path you were not granted included), an approval gate, an action a rule forbids, a file marked do-not-touch, withheld access, a safety guardrail.
+  - Report plainly what stopped you and where.
+  - Never retry it in another spelling or route around it: the control is there on purpose.
+  - An approval gate opens only on the approval it names: ask for it, never assume it.
+- **Working through stays inside your grant and the rules**:
+  - It never crosses an approval gate: a high-impact action still waits for the approval `rules/glass-atrium/core-security.md` → `## Agent Tool Authorization [LLM06:2025]` requires.
+  - It never widens your own tools or permissions.
+  - It never does what another rule forbids — finding the monitor by scanning, for example (`## Absolute Rules [ALL]` → **Monitor address**).
+  - Retries stay bounded (`rules/glass-atrium/core-security.md` → **Unbounded consumption [LLM10:2025]**).
+  - A stop point your scope sets for repeated failure outranks it — the DEV · QA second-failure stop (`scoped/shared-investigation-discipline.md`) and the orchestrator's `### Failure Recovery Loop` (`skills/glass-atrium-ops-orchestrator-role.md`).
+- **Diagnosis decides the class**: a message that names a hook, a rule, a permission or an approval marks a deliberate blocker.
+  - Still unsure after diagnosing → treat it as a deliberate blocker and report it.
+- A budget ceiling is neither class: the `Turn Budget & Graceful Exit` section under `## Cross-Session Continuity (progress.md) [ALL]` governs it.
+- Why: stopping at an ordinary obstacle leaves owed work undone, while working around a deliberate blocker defeats the control that placed it.
 
 ## Context Management [ALL]
 

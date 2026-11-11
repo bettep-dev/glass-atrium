@@ -56,6 +56,8 @@ Applies to all agents. [ALL]
 | `needs_context` | information is insufficient | user response needed — not an escalation target |
 | `fail` | the task failed | glass-atrium-qa-debugger escalation target |
 
+- Before selecting `blocked`, apply `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`.
+
 ### Whose outcome `result` describes
 
 - `result` reports the emitting agent's own task outcome.

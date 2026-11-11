@@ -95,6 +95,16 @@ run_guard() {
   [[ "${GUARD_ERR}" == *'"error_code":"GIT-002"'* ]] || return 1
 }
 
+@test "git clean -fd (clean force-delete) is blocked with code GIT-003" {
+  run_guard 'git clean -fd'
+  [[ "${status}" -eq 2 ]] || {
+    echo "${output}"
+    echo "${GUARD_ERR}"
+    return 1
+  }
+  [[ "${GUARD_ERR}" == *'"error_code":"GIT-003"'* ]] || return 1
+}
+
 # --- Discard/restore-all corpus (GIT-004/GIT-005): the $-anchored arms ---
 # These rules embed a '\$' end-anchor inside a DOUBLE-quoted RULES element. A
 # '\$'->'$$' regression compiles as a VALID grep -E regex (the anchor becomes a
