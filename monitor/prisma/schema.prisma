@@ -1251,3 +1251,238 @@ model SkillActivation {
   @@map("skill_activations")
   @@schema("core")
 }
+
+// Owner report / decision queue — session registry, items, deliveries, format-drift checks.
+// Rules the Prisma DSL cannot declare live in migration 20261109000000_add_owner_queue raw SQL only
+//   → a squash MUST carry that SQL: the CHECKs named on each model below
+//   + partial unique index queue_deliveries_resume_item_attempt_key.
+// monitor/test/queue.schema.test.ts runs them against the migrated chain.
+
+enum QueueSessionState {
+  live
+  stale
+  exited
+
+  @@schema("monitor")
+}
+
+enum QueueSessionExitReason {
+  ended
+  dead
+  replaced
+
+  @@schema("monitor")
+}
+
+// Claude Code permission modes, stored as the hook input spells them (display hint only)
+enum QueuePermissionHint {
+  default
+  accept_edits       @map("acceptEdits")
+  auto
+  bypass_permissions @map("bypassPermissions")
+  dont_ask           @map("dontAsk")
+  plan
+
+  @@schema("monitor")
+}
+
+enum QueueLaunchHint {
+  accept_wrapper
+
+  @@schema("monitor")
+}
+
+enum QueueItemKind {
+  report
+  decision
+
+  @@schema("monitor")
+}
+
+/// Terminal: delivered · seen · withdrawn. Transitions are the route layer's.
+enum QueueItemStatus {
+  open
+  answered
+  delivering
+  unacked
+  held
+  expired
+  resume_pending
+  delivered
+  seen
+  withdrawn
+
+  @@schema("monitor")
+}
+
+enum QueueDeliveryRoute {
+  socket
+  resume
+  pull
+
+  @@schema("monitor")
+}
+
+/// aborted = the pre-spawn re-read stopped the spawn (no process, no quota) — still spends the attempt's resume.
+enum QueueDeliveryResult {
+  sent
+  held
+  expired
+  dead_socket
+  acked
+  failed
+  aborted
+
+  @@schema("monitor")
+}
+
+enum QueueDeliveryAbortReason {
+  session_returned
+  shared_worktree
+
+  @@schema("monitor")
+}
+
+enum QueueBundleResult {
+  pass
+  fail
+
+  @@schema("monitor")
+}
+
+enum QueueCanaryResult {
+  pass
+  fail
+  inconclusive
+
+  @@schema("monitor")
+}
+
+/// One row per Claude session that registered with the queue (SessionStart hook / queue CLI).
+/// CHECKs (migration raw SQL only):
+///   - config_dir present ⇔ config_dir_set · config_dir, cwd, worktree_root absolute
+///   - socket_path = /tmp or /private/tmp cc-socks/<pid>.sock → the sender never connects outside it
+///   - exit_reason present ⇔ state = exited · pid > 0 · profile_label, process_start_time non-empty
+/// No relation from items is cascaded → an exited row that still owns items is never pruned.
+model QueueSession {
+  // UUID-only → never readable as a `--resume` option
+  sessionId                String                  @id @map("session_id") @db.Uuid
+  isConfigDirSet           Boolean                 @map("config_dir_set")
+  configDir                String?                 @map("config_dir")
+  // Config dir basename or "default", server-derived — no email (no PII)
+  profileLabel             String                  @map("profile_label") @db.VarChar(64)
+  // Realpath, so /tmp/x and /private/tmp/x are one value
+  cwd                      String
+  // Nearest ancestor-or-self holding a `.git` entry; NULL = outside every worktree → shares none
+  worktreeRoot             String?                 @map("worktree_root")
+  pid                      Int
+  // Raw `ps -o lstart=` under TZ=UTC, server-read → compared as a string, never parsed
+  processStartTime         String                  @map("process_start_time") @db.VarChar(64)
+  // NULL = socket channel off
+  socketPath               String?                 @map("socket_path")
+  permissionHint           QueuePermissionHint?    @map("permission_hint")
+  launchHint               QueueLaunchHint?        @map("launch_hint")
+  state                    QueueSessionState
+  exitReason               QueueSessionExitReason? @map("exit_reason")
+  lastSeenAt               DateTime                @map("last_seen_at") @db.Timestamptz(6)
+  // Session marker: an automatic resume spawned, its register not yet seen → blocks further resumes
+  resumeAwaitingRegisterAt DateTime?               @map("resume_awaiting_register_at") @db.Timestamptz(6)
+  createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  items QueueItem[]
+
+  @@map("queue_sessions")
+  @@schema("monitor")
+}
+
+/// One report or decision a session put in front of the owner.
+/// CHECKs (migration raw SQL only):
+///   - title non-blank · body 1..20000 chars · answer_text ≤ 20000 chars · linked_doc_ids ≤ 20 entries
+///   - decision ⇔ options (2..9-entry JSON array) + recommended_code naming one entry's code; report ⇒ neither
+///   - options serialized text ≤ 20000 chars → the route's per-field caps for 9 entries must fit under it
+///   - answer_code only on a decision, naming one entry's code · next_attempt ≥ 1 · defer_count ≥ 0
+/// Per-entry option shape and unique codes → the post route's Zod schema (a CHECK cannot iterate the array).
+model QueueItem {
+  id                BigInt          @id @default(autoincrement())
+  kind              QueueItemKind
+  sessionId         String          @map("session_id") @db.Uuid
+  title             String          @db.VarChar(200)
+  body              String
+  // clauded-docs ids; existence checked by the post route (an array cannot carry an FK)
+  linkedDocIds      BigInt[]        @default([]) @map("linked_doc_ids")
+  // Ordered [{ code: "R1", label, pros, cons }, …]
+  options           Json?
+  recommendedCode   String?         @map("recommended_code") @db.VarChar(2)
+  isFreeTextAllowed Boolean         @map("free_text_allowed")
+  // Approves a high-impact action → the card says the terminal confirmation is still needed; never auto-resumed
+  isApprovalClass   Boolean         @default(false) @map("approval_class")
+  status            QueueItemStatus @default(open)
+  // Owned sequence queue_items_queue_position_seq → insert default; Later sets nextval() on the same sequence
+  queuePosition     BigInt          @default(autoincrement()) @map("queue_position")
+  deferCount        Int             @default(0) @map("defer_count")
+  answerCode        String?         @map("answer_code") @db.VarChar(2)
+  answerText        String?         @map("answer_text")
+  // Owner Resend adds 1; the claim copies it into the Delivery row
+  nextAttempt       Int             @default(1) @map("next_attempt")
+  askedAt           DateTime        @default(now()) @map("asked_at") @db.Timestamptz(6)
+  answeredAt        DateTime?       @map("answered_at") @db.Timestamptz(6)
+  deliveredAt       DateTime?       @map("delivered_at") @db.Timestamptz(6)
+  updatedAt         DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  session    QueueSession    @relation(fields: [sessionId], references: [sessionId], onDelete: Restrict, onUpdate: Restrict)
+  deliveries QueueDelivery[]
+
+  // FK index; leading session_id + status → a session's items in one state (withdraw, resume claim)
+  @@index([sessionId, status], map: "queue_items_session_status_idx")
+  @@map("queue_items")
+  @@schema("monitor")
+}
+
+/// One delivery attempt of an answer: a socket frame, a pull claim, or an automatic resume spawn.
+/// Raw SQL only (migration 20261109000000_add_owner_queue):
+///   - partial unique index queue_deliveries_resume_item_attempt_key ON (item_id, attempt) WHERE route = 'resume'
+///     → at most one automatic resume per answer attempt; socket and pull rows repeat freely
+///   - CHECKs: attempt ≥ 1 · abort_reason present ⇔ result = aborted, on resume rows only
+///     · bg_id on resume rows only, letters, digits and hyphens, leading letter or digit → never read as a CLI option
+///     · ack_deadline_at > sent_at
+model QueueDelivery {
+  id            BigInt                    @id @default(autoincrement())
+  // Frame identity, ties an ack to its frame — not the dedupe key (item id is)
+  msgId         String                    @unique(map: "queue_deliveries_msg_id_key") @map("msg_id") @db.Uuid
+  itemId        BigInt                    @map("item_id")
+  route         QueueDeliveryRoute
+  attempt       Int
+  result        QueueDeliveryResult
+  abortReason   QueueDeliveryAbortReason? @map("abort_reason")
+  sentAt        DateTime                  @map("sent_at") @db.Timestamptz(6)
+  // In the row, so a monitor restart loses no window
+  ackDeadlineAt DateTime                  @map("ack_deadline_at") @db.Timestamptz(6)
+  receiptAt     DateTime?                 @map("receipt_at") @db.Timestamptz(6)
+  // Short id `claude --bg` printed; every resume row of one spawn carries the same value; NULL = none captured
+  bgId          String?                   @map("bg_id") @db.VarChar(64)
+
+  item QueueItem @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  // FK index; the resume partial unique index covers resume rows only
+  @@index([itemId, attempt], map: "queue_deliveries_item_attempt_idx")
+  @@map("queue_deliveries")
+  @@schema("monitor")
+}
+
+/// Format-drift bundle check, one row per Claude Code version (key: realpath + size + mtime + version).
+/// A changed key for the same version → the row is rewritten in place. canary_result NULL = no canary runs.
+/// CHECKs (migration raw SQL only): binary_realpath absolute · binary_size ≥ 0 · version non-empty.
+model QueueDriftCheck {
+  id               BigInt             @id @default(autoincrement())
+  binaryRealpath   String             @map("binary_realpath")
+  binarySize       BigInt             @map("binary_size")
+  binaryModifiedAt DateTime           @map("binary_mtime") @db.Timestamptz(6)
+  version          String             @unique(map: "queue_drift_checks_version_key") @db.VarChar(64)
+  bundleResult     QueueBundleResult  @map("bundle_result")
+  canaryResult     QueueCanaryResult? @map("canary_result")
+  checkedAt        DateTime           @map("checked_at") @db.Timestamptz(6)
+
+  @@map("queue_drift_checks")
+  @@schema("monitor")
+}

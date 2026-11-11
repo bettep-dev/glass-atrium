@@ -36,13 +36,7 @@ const OPERATOR_ACTOR_CD = "operator";
 // Title-cell lead slot width (a size, not spacing) — the snippet and the Title header indent by it plus the row gap.
 const DOC_LEAD_SLOT_PX_CD = 20;
 
-// Search glyph size — the search field's inline-start gutter is sized from the same value.
-const SEARCH_ICON_PX_CD = 14;
-
 const LEDGER_CD = {
-	// column 구성: checkbox + status + id + title + tags + author + created_at (검색 모드도 동일 — relevance 컬럼 없음).
-	//   · Tags drops out when no row carries a tag of its own → one column fewer.
-	COLUMN_COUNT: 7,
 	// .tbl th/td inline padding per column class (base.css): an edge cell is 16 + 12, an interior cell 12 + 12
 	PADDING: { edge: 28, interior: 24 },
 	/**
@@ -52,9 +46,9 @@ const LEDGER_CD = {
 	 */
 	FLOOR: {
 		select: 44, // 16px checkbox + edge 28 — .doc-checkbox-cell takes this width
-		status: 199, // widest face, the "Implementing" picker, 174.8px uncapped (macOS, 1440, Pretendard 500: shell 2 + 16 · meter 56 · label 81 · caret 12 · gaps 8) + interior 24 — the ledger caps the pill at this floor minus interior and ellipsizes a wider label → font-independent
-		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — slack held there → floor sum 969 + rail 200 fits the 1440 layout's 1170, so the rail shows at 1440
-		title: 434, // a title beside its trailing "rev of #N" pill · the Documents title floor stays
+		status: 168, // widest face, "Implementing" + its row menu, 139.8px natural (glyph 12 · gap 4 · label 87.8 in the e2e's fallback face, wider than Pretendard's 81 · gap 4 · ⋯ 32) + 4.2 slack + interior 24 — the ledger caps the status at this floor minus interior and ellipsizes a wider label → font-independent
+		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — slack held there → floor sum 938 + rail 200 fits the 1440 layout's 1170, so the rail shows at 1440
+		title: 434, // a title beside its trailing "rev of #N" link · the Documents title floor stays
 		tags: 148, // 124 content allowance + interior 24
 		author: 106, // 82 content allowance + interior 24
 		created: 100, // 72 content allowance (a 3-digit age, then the stale glyph inline: gap 4 · glyph 12 — the word rides the glyph's title and sr-only text) + edge 28
@@ -63,11 +57,14 @@ const LEDGER_CD = {
 		get sum() {
 			return this.select + this.status + this.id + this.title + this.author + this.created;
 		},
+		// the narrowest wide ledger (no Tags, narrow title) → a thinner one stacks its rows, never scrolls sideways
+		get stackBelow() {
+			return this.sum - this.title + this.titleNarrow;
+		},
 	},
 };
-const OPEN_SUMMARY_RAIL_WIDTH_CD = 200;
 
-// Open-versus-closed chips. countKey indexes the server's group-unit counts (group_counts);
+// Show filter options. countKey indexes the server's group-unit counts (group_counts);
 // a count the payload does not carry renders as nothing, never as 0.
 const DOC_STATUS_OPTIONS_CD = [
 	{ value: "open", label: "Open", countKey: "open" },
@@ -110,17 +107,6 @@ const DAY_MS_CD = 86_400_000;
 const FRESH_AGE_DAYS_CD = 3;
 // past this many days an open document reads as stale
 const STALE_AGE_DAYS_CD = 7;
-const AGE_BUCKETS_CD = [
-	{ key: "fresh", label: `Under ${FRESH_AGE_DAYS_CD} days` },
-	{ key: "aging", label: `${FRESH_AGE_DAYS_CD}–${STALE_AGE_DAYS_CD} days` },
-	{ key: "stale", label: `Over ${STALE_AGE_DAYS_CD} days` },
-];
-const STAGE_HEADLINE_CD = {
-	doc_review: "awaiting doc review",
-	implementing: "implementing",
-	impl_review: "awaiting impl review",
-	impl_done: "impl done",
-};
 
 function getAgeLabelCD(days) {
 	return days === 0 ? "today" : `${days}d`;
@@ -140,46 +126,6 @@ function getDocAgeCD(iso, nowMs) {
 function getOpenStageEntryCD(row) {
 	const entry = stageEntryCD(rowStageCD(row));
 	return entry != null && entry.value !== TERMINAL_STAGE_CD ? entry : null;
-}
-
-// Open = a known stage short of done · counts are over the rows passed in (the loaded page).
-function getOpenSummaryCD(rows, nowMs) {
-	const stageCounts = new Map();
-	const buckets = { fresh: 0, aging: 0, stale: 0 };
-	let oldest = null;
-	let openCount = 0;
-	for (const row of rows) {
-		const age = getDocAgeCD(row.created_at, nowMs);
-		const entry = getOpenStageEntryCD(row);
-		if (!entry || !age) continue;
-
-		const stage = entry.value;
-		openCount += 1;
-		stageCounts.set(stage, (stageCounts.get(stage) || 0) + 1);
-		buckets[age.bucket] += 1;
-		if (!oldest || age.days > oldest.days) oldest = { id: row.id, days: age.days };
-	}
-	const stages = DOC_STAGES_CD.filter((stage) => stageCounts.has(stage.value)).map((stage) => ({
-		value: stage.value,
-		label: stage.label,
-		count: stageCounts.get(stage.value),
-	}));
-	return { stages, buckets, oldest, openCount };
-}
-
-// isPartial → the summary saw the loaded page only · openTotal (chip count, null when unknown) reconciles the two numbers.
-function getOpenHeadlineCD(summary, isPartial = false, openTotal = null) {
-	const parts = summary.stages.map((stage) => `${formatIntCD(stage.count)} ${STAGE_HEADLINE_CD[stage.value]}`);
-	if (summary.oldest) {
-		const { id, days } = summary.oldest;
-		parts.push(`oldest open ${days === 0 ? "since today" : `${formatIntCD(days)} ${days === 1 ? "day" : "days"}`} (#${id})`);
-	}
-	const headline = parts.join(" · ");
-	if (!isPartial) return headline;
-
-	return typeof openTotal === "number"
-		? `Loaded rows only — ${formatIntCD(summary.openCount)} of ${formatIntCD(openTotal)} open: ${headline}`
-		: `Loaded rows only: ${headline}`;
 }
 
 // format 배지 데이터 — doc.format 실값으로 dual-encode (색 + glyph). html 외 포맷은 agent-only 변종.
@@ -214,6 +160,9 @@ const AUDIENCE_OPTIONS_CD = [
 	{ value: "agent-only", label: "Agent-only" },
 ];
 
+// entry view of the list → the filter bar's reset target and its "applied" test
+const DEFAULT_FILTERS_CD = Object.freeze({ keyword: "", docStatusFilter: "open", audienceFilter: "all" });
+
 const SEARCH_DEBOUNCE_MS_CD = 250;
 
 const LIST_LIMIT_CD = 50;
@@ -246,12 +195,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	} = window.UI;
 
 	// 검색어 / 필터.
-	const [keyword, setKeyword] = useStateCD("");
+	const [keyword, setKeyword] = useStateCD(DEFAULT_FILTERS_CD.keyword);
 	const [debouncedQ, setDebouncedQ] = useStateCD("");
-	// 열림/종료/전체 chip. default 'open' — 운영자의 열린 목록이 화면의 진입 상태.
+	// Show filter · default 'open' — 운영자의 열린 목록이 화면의 진입 상태.
 	//   · /groups endpoint 의 ?doc_status= 송신용 — rows endpoint 는 미지원 (search mode 제외).
-	const [docStatusFilter, setDocStatusFilter] = useStateCD("open")
-	const [audienceFilter, setAudienceFilter] = useStateCD("all");
+	const [docStatusFilter, setDocStatusFilter] = useStateCD(DEFAULT_FILTERS_CD.docStatusFilter);
+	const [audienceFilter, setAudienceFilter] = useStateCD(DEFAULT_FILTERS_CD.audienceFilter);
 
 	// 목록 / 뷰어 / 폼 상태.
 	// region state (stale-while-revalidate) — data = latest page answer · shown rows = loadedRows (Load More append)
@@ -261,7 +210,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const [currentOffset, setCurrentOffset] = useStateCD(0);
 	// server rows consumed so far → next Load More offset (deduped loadedRows runs short of the server position)
 	const [consumedCount, setConsumedCount] = useStateCD(0);
-	const [selectedId, setSelectedId] = useStateCD(null);
+	const [selectedId, setSelectedId] = useStateCD(getHashDocIdCD);
 	const [viewerState, setViewerState] = useStateCD({
 		status: "idle",
 		data: null,
@@ -307,7 +256,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	});
 
 	// 전체화면 토글 — CSS-only position:fixed · 네이티브 Fullscreen API 미사용 (iframe sandbox 우회 방지).
-	const [isFullscreen, setIsFullscreen] = useStateCD(false);
+	const [isFullscreen, setIsFullscreen] = useStateCD(() => getHashDocIdCD() !== null);
 
 	// AbortController — 목록 / 뷰어 fetch 독립 취소.
 	const listAbortRef = useRefCD(null);
@@ -378,7 +327,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		setCurrentOffset(0);
 	}
 
-	// filter / refresh 변경 시 multi-select clear — chip 토글 = "다른 목록 보기" → 이전 선택 의미 소멸.
+	// filter / refresh 변경 시 multi-select clear — Show 필터 변경 = "다른 목록 보기" → 이전 선택 의미 소멸.
 	useEffectCD(() => {
 		setSelectedIds(new Set());
 	}, [debouncedQ, docStatusFilter, refreshTick]);
@@ -442,7 +391,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					typeof managedData?.bigm_enabled === "boolean"
 						? managedData.bigm_enabled
 						: null;
-					// groups 응답 한정 corpus-scoped group 단위 counts — chip 수치의 출처.
+					// groups 응답 한정 corpus-scoped group 단위 counts — Show 메뉴 수치의 출처.
 					const groupCounts =
 						managedData && typeof managedData.group_counts === "object"
 							? managedData.group_counts
@@ -453,7 +402,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					setListState((s) =>
 						putRegionData(s, ctrl, {
 							rows, total, docTotal, hiddenDocTotal, bigmEnabled,
-							// a search response carries none → the last corpus counts stay, so the stage chips keep one width across the mode
+							// a search response carries none → the last corpus counts stay, so the Show menu keeps its counts across the mode
 							groupCounts: groupCounts ?? s.data?.groupCounts ?? null,
 						}),
 					);
@@ -940,16 +889,14 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
            사유 — chevron toggle 이 group-root 행에만 있어 일반/멤버 행은 제목 시작 x 가 어긋남.
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
-        .title-cell .doc-title-row { display: flex; align-items: center; gap: var(--space-1_5); }
+        .doc-title-row { display: flex; align-items: center; gap: var(--space-1_5); }
+        /* spacer slot on the snippet line and the Title header → the title x without the title line's height floor */
+        .doc-title-lead.is-spacer { min-height: 0; }
         .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
-        .doc-title-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
            문자열 전체 폭으로 키워 그 컬럼이 제목 폭을 빼앗는다. */
         .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
-        /* 표 셀 2차 정보 텍스트 (작성자/날짜/랭크) — meta 레벨 토큰 통일 (ad-hoc text-[11/11.5px] 대체). */
-        .doc-meta-text { font-size: var(--fs-meta); }
-        .doc-meta-text-mono { font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
         /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다.
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
@@ -962,7 +909,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
            no row opacity — any fade drops the light empty pip on a checked row below 3:1 (default accent: 0.85 → 2.72; unfaded 3.41) */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot + title row gap → the snippet starts under the title */
-        .doc-snippet { margin-left: calc(${DOC_LEAD_SLOT_PX_CD}px + var(--space-1_5)); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+        .doc-snippet { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
         /* trailing title-line pills never shrink → the title text ellipsizes first */
         button.doc-lineage { flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
         .doc-revision-count { flex: none; }
@@ -989,16 +936,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
            CSS 기하 속성이라 표현 속성을 찍는 타입에서도 이김 — 맵이 같은 이유로 쓰는 기제. */
         .doc-body-isolation pre.mermaid svg :is(.node, .cluster) rect,
         .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
-        .doc-meta-row { display: grid; grid-template-columns: 88px 1fr; gap: 6px; padding: 4px 0; font-size: var(--fs-meta); }
-        .doc-meta-label { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); text-transform: uppercase; letter-spacing: 0.04em; }
-        /* wraps between words; a single over-long token still breaks rather than spill */
-        .doc-meta-value { color: rgb(var(--ink)); word-break: normal; overflow-wrap: break-word; font-size: var(--fs-meta); }
-        /* search on the .field atom → only the inline-start icon gutter is its own: field padding + icon + field padding */
-        .field.doc-search-input { --search-icon: ${SEARCH_ICON_PX_CD}px; padding-inline-start: calc(2 * var(--ctl-pad-x) + var(--search-icon)); }
+        .doc-meta-row { grid-template-columns: 88px 1fr; }
         /* .doc-toast → shared SoT in base.css */
-        .doc-empty { padding: var(--space-6); border: 1px dashed rgb(var(--faint) / 0.5); border-radius: 8px; color: rgb(var(--faint)); text-align: center; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-body); }
-        /* one field padding inside the 1px field border → the gutter above centres the icon between edge and text */
-        .doc-search-icon { position: absolute; left: calc(var(--ctl-pad-x) + 1px); top: 50%; transform: translateY(-50%); pointer-events: none; color: rgb(var(--faint)); }
         .doc-editor-input { width: 100%; padding: var(--space-1_5) var(--space-2); font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
         .doc-editor-input:focus { border-color: rgb(var(--accent)); }
         .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: var(--space-2); font-size: var(--fs-meta); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
@@ -1056,42 +995,46 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .card button.btn.sm,
         .modal-head button.btn.sm,
         .doc-fs-container button.btn.sm { min-height: 24px; min-width: 24px; }
-        /* (retired) .doc-status-badge — 스테이지 pill 이 .doc-stage-pill 로 대체. */
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
         /* the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
-        .doc-checkbox-cell { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
+        .doc-checkbox-cell, .doc-ledger thead th:first-child { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
         /* the edge cell's 16 + 12 split evenly (the same 28) → the checkbox sits on the cell centre */
-        .tbl tr > :is(th, td).doc-checkbox-cell { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
+        .tbl tr > :is(th, td).doc-checkbox-cell, .tbl.doc-ledger thead th:first-child { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
         /* C24 hit area (§7.15) — padding out to 24, the equal negative margin keeps the 16 layout box → the select floor holds */
         .doc-checkbox-hit { padding: var(--space-1); margin: calc(-1 * var(--space-1)); cursor: pointer; }
-        .doc-col-title { min-width: ${LEDGER_CD.FLOOR.title}px; }
-        /* column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
-        .doc-ledger-scroll { container: doc-ledger / inline-size; }
-        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags { display: none; } }
+        /* header floors by position (getLedgerColumnsCD order) — width alone gives way to min-content once the table overflows; Author and Created count from the end, past an absent Tags */
+        .doc-ledger:not(.tbl--stacked) thead th:nth-child(2) { width: ${LEDGER_CD.FLOOR.status}px; min-width: ${LEDGER_CD.FLOOR.status}px; }
+        .doc-ledger:not(.tbl--stacked) thead th:nth-child(3) { width: ${LEDGER_CD.FLOOR.id}px; min-width: ${LEDGER_CD.FLOOR.id}px; }
+        .doc-ledger:not(.tbl--stacked) thead th:nth-child(4) { min-width: ${LEDGER_CD.FLOOR.title}px; }
+        .doc-ledger--tags:not(.tbl--stacked) thead th:nth-child(5) { width: ${LEDGER_CD.FLOOR.tags}px; min-width: ${LEDGER_CD.FLOOR.tags}px; }
+        .doc-ledger:not(.tbl--stacked) thead th:nth-last-child(2) { width: ${LEDGER_CD.FLOOR.author}px; min-width: ${LEDGER_CD.FLOOR.author}px; }
+        .doc-ledger:not(.tbl--stacked) thead th:last-child { width: ${LEDGER_CD.FLOOR.created}px; min-width: ${LEDGER_CD.FLOOR.created}px; }
+        /* Table's measured wrapper hosts the floor steps → they and the stacked switch read one box · column floors + Tags → a narrower ledger drops Tags, the viewer still carries it */
+        .tbl-wrap:has(> .doc-ledger) { container: doc-ledger / inline-size; }
+        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags, .doc-ledger--tags thead th:nth-child(5) { display: none; } }
         /* a ledger under its column floors → the title floor narrows */
-        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-col-title { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
+        @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-ledger:not(.tbl--stacked) thead th:nth-child(4) { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
         /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
         .tbl tbody tr.doc-row.is-multi-selected { background: rgb(var(--accent) / 0.07); }
         .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.11); }
-        /* group action bar — filter chip 행 아래 sticky · zinc-900 코드블록 톤.
+        /* group action bar — filter bar 행 아래 sticky · zinc-900 코드블록 톤.
            height 고정 (44px min) 사유 — hint(텍스트 1줄) vs active(btn.sm 툴바) 두 모드의
            natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing
            border-box + 수직 center 정렬로 양 모드 픽셀 동일. flex-wrap 제거 (좁은 폭에서 2줄
            래핑이 다시 높이 변동 유발 → 단일행 유지 + 버튼이 reserved 높이 초과 차단). */
-        .doc-group-action-bar { box-sizing: border-box; min-height: 44px; padding: 6px 16px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; gap: 12px; }
-        .doc-group-action-bar.is-hint { color: rgb(var(--faint)); font-size: var(--fs-meta); font-family: 'JetBrains Mono', monospace; }
-        .doc-group-action-bar .selection-count { font-size: var(--fs-body); font-weight: 600; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; }
+        .doc-group-action-bar { box-sizing: border-box; min-height: 44px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; }
         /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
         .doc-group-action-bar .btn.sm { max-height: 30px; }
-        .doc-group-action-bar .ml-auto-actions { margin-left: auto; display: flex; gap: 8px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
-        .doc-group-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; background: transparent; border: none; padding: 2px 6px; color: rgb(var(--dim)); font-size: var(--fs-meta); border-radius: var(--radius-badge); }
+        .doc-group-toggle { width: 100%; justify-content: center; cursor: pointer; background: transparent; border: none; color: rgb(var(--dim)); border-radius: var(--radius-badge); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
         /* member rows — indent + 좌측 가는 가이드 선 (group 소속 시각 hint). */
-        tr.doc-row.is-group-member td.title-cell { padding-left: 32px; position: relative; }
-        tr.doc-row.is-group-member td.title-cell::before { content: ''; position: absolute; left: 14px; top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
+        /* one nesting step = the lead slot; --doc-member-inset = the house cell inset per table mode (wide 12 · stacked 0, row owns the padding) */
+        tr.doc-row.is-group-member td.title-cell { --doc-member-inset: var(--space-3); padding-left: calc(var(--doc-member-inset) + ${DOC_LEAD_SLOT_PX_CD}px); position: relative; }
+        .tbl--stacked tr.doc-row.is-group-member td.title-cell { --doc-member-inset: 0px; }
+        tr.doc-row.is-group-member td.title-cell::before { content: ''; position: absolute; left: calc(var(--doc-member-inset) + ${DOC_LEAD_SLOT_PX_CD / 2}px - 0.5px); top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
         /* group divider — root row 위쪽 subtle border (dark base 정합). */
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
@@ -1101,95 +1044,32 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
         tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
-        /* reorder rollback error beside its group — the crit glyph carries the tone, the message stays ink */
-        .doc-reorder-error { color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; }
-        .doc-inline-alert { display: inline-flex; align-items: center; gap: 6px; }
-        /* stage pill — 톤은 meter 채움과 종료 글리프가 운반 · 라벨 텍스트는 중립 유지. */
-        /* header text at the title text's x — lead slot + title row gap */
-        .doc-col-title-text { margin-left: calc(${DOC_LEAD_SLOT_PX_CD}px + var(--space-1_5)); }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
-        .doc-stage-picker { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-        /* stage pill on the shared .pill shell (geometry and type: min-height 24 · inline 8 · gap 4 · --radius-badge · 500 / 1; the picker is .pill--interactive at 32)
-           — only the pill's own face stays here: no fill, ink label */
-        .doc-stage-pill { background: transparent; color: rgb(var(--ink)); }
-        .doc-stage-pill.pill--interactive:hover { background: rgb(var(--line) / 0.4); }
-        .doc-stage-glyph.is-terminal { display: inline-flex; color: rgb(var(--dim)); }
-        .doc-meta-danger { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgb(var(--line)); }
-        .doc-stage-caret { display: inline-flex; color: rgb(var(--dim)); }
-        .doc-stage-meter { display: inline-flex; align-items: center; gap: var(--space-1); }
-        .doc-stage-label { font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
-        /* a max-width caps the pill's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
-        .doc-ledger-scroll .doc-stage-picker, .doc-ledger-scroll .doc-stage-pill { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
-        /* the clip cuts at the label's line box → a control line box, so the shell's line-height 1 never clips a descender */
-        .doc-ledger-scroll .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
+        /* status and its menu share one line (the status track shrinks, the label ellipsizes) → the row keeps its 40 · the note takes a line of its own */
+        .doc-stage-cell { grid-template-columns: minmax(0, auto) auto; }
+        .doc-stage-cell > .doc-stage-note { grid-column: 1 / -1; }
+        /* a max-width caps the status's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
+        .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
+        /* the clip cuts at the label's line box → a control line box, so a tight line-height never clips a descender */
+        .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
         /* numeric columns: ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
         .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-        /* age, then the stale glyph inline on one line, never stacked */
-        .doc-age-line { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-1); }
-        .doc-age-value, .doc-age-flag { flex: none; }
-        /* the Created floor holds no room for the word → glyph-only; "stale" rides the title and sr-only text (relative → the sr-only box resolves here) */
-        .doc-age-flag { position: relative; display: inline-flex; align-items: center; color: rgb(var(--dim)); }
-        /* .card overflow:hidden = a scroll container → traps the rail's sticky in the card · clip trims the corners only, sticky stays viewport-relative */
-        .card.doc-list-card:not(:has(.popover-panel)) { overflow: clip; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
-        .card.doc-list-card { scroll-margin-top: 96px; }
-        /* clip trims an outside ring → the shared handoff ring drawn inset */
-        .card.doc-list-card[data-focus-handoff]:focus { outline-offset: calc(-1 * var(--focus-ring-width)); }
-        .doc-open-summary { border-bottom: 1px solid rgb(var(--line)); }
-        /* rail beside only when the ledger keeps its column floors there → narrower stacks the rail above */
-        .doc-layout { container: doc-layout / inline-size; }
-        @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
-          .doc-layout .doc-layout-row { flex-direction: row-reverse; align-items: flex-start; }
-          .doc-layout .doc-open-summary { flex-direction: column; align-items: stretch; width: ${OPEN_SUMMARY_RAIL_WIDTH_CD}px; flex-shrink: 0; position: sticky; top: 1.5rem; padding-block: 0.75rem; border-bottom: 0; border-left: 1px solid rgb(var(--line)); }
-        }
-        .doc-open-summary-block { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
-        .doc-open-summary-heading { margin: 0; font-size: var(--fs-meta); font-weight: 600; color: rgb(var(--dim)); }
-        .doc-open-summary-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin: 0; font-size: var(--fs-meta); }
-        .doc-open-summary-group dt { display: inline-flex; align-items: center; gap: 4px; color: rgb(var(--ink)); }
-        .doc-open-summary-group dd { margin: 0 8px 0 0; color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
-        @container doc-layout (width >= ${LEDGER_CD.FLOOR.sum + OPEN_SUMMARY_RAIL_WIDTH_CD}px) {
-          .doc-open-summary .doc-open-summary-block { display: block; }
-          .doc-open-summary .doc-open-summary-heading { margin-bottom: 4px; }
-          .doc-open-summary .doc-open-summary-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; }
-          .doc-open-summary .doc-open-summary-group dd { margin: 0; text-align: right; }
-          /* small-button padding kept; the box hangs its padding and 1px ghost border into the rail gutter each side → its label starts at the label edge, on one line */
-          .doc-open-summary .doc-open-oldest { margin-inline: calc(-1 * (var(--space-2) + 1px)); justify-content: flex-start; text-align: left; white-space: nowrap; }
-          .doc-open-summary .doc-open-oldest-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        }
-        .doc-open-summary-note { font-size: var(--fs-meta); color: rgb(var(--faint)); }
-        .doc-stage-note { font-size: var(--fs-meta); color: rgb(var(--dim)); }
-        .doc-stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 148px; padding: 4px; background: rgb(var(--overlay-surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
-        .doc-stage-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 28px; background: transparent; border: none; border-radius: var(--radius-badge); color: rgb(var(--ink)); font-size: var(--fs-meta); text-align: left; cursor: pointer; }
-        .doc-stage-menu-item:hover { background: rgb(var(--line) / 0.6); }
-        /* checked → the one filled selected state + a check mark, not accent text: the accent is user-picked, so no text pair on it is bounded */
-        .doc-stage-menu-item[aria-checked="true"], .doc-stage-menu-item[aria-checked="true"]:hover { background: rgb(var(--selected-fill)); color: rgb(var(--selected-ink)); font-weight: 500; }
-        .doc-stage-menu-rank { font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); }
-        .doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank { color: inherit; }
-        .doc-stage-menu-mark { margin-left: auto; }
-        .doc-filter-label { font-size: var(--fs-meta); color: rgb(var(--faint)); white-space: nowrap; }
-        /* Show | Audience as one unit → the divider never ends a line; a narrow row wraps the chips inside their group instead */
-        .doc-filter-cluster { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
-        /* a label and its chips → one wrap unit, 4 apart; baseline → the label stays on the first chip line when the chips wrap */
-        .doc-filter-group { display: flex; align-items: baseline; gap: var(--space-1); min-width: 0; }
-        /* one grid cell for the stage chips and the search note, both always laid out → the cell is the wider of the two in either mode; baseline → the note reads on the chips' text line */
-        .doc-show-slot { display: grid; min-width: 0; }
-        .doc-show-slot > * { grid-area: 1 / 1; align-self: baseline; }
-        /* the idle one is hidden from sight, focus and the accessibility tree, yet keeps its share of the cell */
-        .doc-show-slot:not(.doc-show-slot--searching) > .doc-search-stage-note, .doc-show-slot--searching > .doc-stage-chips { visibility: hidden; }
-        /* 4 short of the controls' 32 each way → a rule between the groups, not a box edge */
-        .doc-filter-divider { align-self: stretch; width: 1px; margin-block: var(--space-1); background: rgb(var(--line)); }
-        /* trailing meta → its own right-aligned line in every state: the count's length never picks its line nor hands its room to the search; it breaks inside only once it alone outgrows the row */
-        .doc-list-meta { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; column-gap: var(--space-2); }
-        /* number + unit never split (§5.3) */
-        .doc-list-count { white-space: nowrap; }
-        /* chip 안 건수 — 그룹 단위 corpus 집계. 없는 수치는 자리도 만들지 않는다. */
-        .doc-chip-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
+        .doc-list-region { scroll-margin-top: 96px; border-radius: var(--radius-card); }
+        /* clip trims an outside ring → the card ring drawn inset */
+        .doc-list-region:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
+        /* the bar holds full-bleed strips (control row · whole-word note · bulk bar) that own their insets → the slot adds none, only the rule under it */
+        .doc-list-card > .card-bar { padding: 0; border-bottom: 1px solid rgb(var(--line)); }
+        /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
+        .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
+        .doc-trigger-value { display: inline-grid; }
+        .doc-trigger-value > * { grid-area: 1 / 1; }
+        .doc-trigger-value > .is-idle { visibility: hidden; }
         /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
-        /* a section head is a 40 row like the ledger rows (its th takes the td row height) → every section starts at one height */
-        tr.doc-stage-section > th { height: var(--row-h); padding-block: var(--space-3) var(--space-1); text-align: left; font-weight: 600; font-size: var(--fs-meta); color: rgb(var(--dim)); background: rgb(var(--sunken)); border-bottom: 1px solid rgb(var(--line)); }
-        .doc-stage-section-count { margin-left: 8px; font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta); color: rgb(var(--faint)); font-variant-numeric: tabular-nums; }
+        /* a section head = a house body header (40 row, meta face, sunken fill) → only the bottom-anchored label inset and the 600 weight are its own */
+        tr.doc-stage-section > th { padding-block: var(--space-3) var(--space-1); font-weight: 600; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1200,13 +1080,12 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				/>
 			</div>
 
-			{/* single column — search + facets + meta live in the DocListCardCD toolbar header · full height = flex-1 + card-body maxHeight:'none' override */}
+			{/* single column — search + facets + meta live in the DocListCardCD bar · full height = flex-1, card body uncapped */}
 			<div
 				className="flex"
 				style={{ minHeight: 0, flex: "1 1 auto", width: "100%" }}
 			>
 				<DocListCardCD
-					asOf={asOf}
 					state={listState}
 					rows={visibleRows}
 					isSearchMode={isSearchMode}
@@ -1321,11 +1200,10 @@ function ToneGlyphCD({ tone }) {
 }
 
 // before the first read the list placeholder is the one loading label → no stamp, and Refresh is not busy yet
-// the freshness slot: the stamp after a first read, otherwise the page hands the shell its read state itself
+// the freshness slot: the stamp after a first read only
 function DocHeaderFreshnessCD({ asOf, listState }) {
 	const { FreshnessStamp } = window.UI;
-	const freshness = getFreshnessInputCD(asOf, listState);
-	return asOf != null ? <FreshnessStamp {...freshness} /> : <ShellPageStateCD input={freshness} />;
+	return asOf != null ? <FreshnessStamp {...getFreshnessInputCD(asOf, listState)} /> : null;
 }
 
 // the refresh slot: busy only over a held read
@@ -1342,40 +1220,34 @@ function DocHeaderRefreshCD({ asOf, listState, onRefresh }) {
 	);
 }
 
-// no stamp before a first read → the page hands the shell its loading or failed-first-read state itself
-function ShellPageStateCD({ input }) {
-	window.UI.useShellPageState(input);
-	return null;
-}
-
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
-function DocTagsCellCD({ audience, format, commonFormat, commonAudience = null }) {
-	const { Badge } = window.UI;
+function DocTagsCellCD({ view, audience, format, commonFormat, commonAudience = null }) {
+	const { Badge, TableCell } = window.UI;
+	const isAudienceShown = audience === "hidden" && commonAudience !== "hidden";
+	const isFormatShown = Boolean(DOC_FORMAT_BADGE_CD[format]) && format !== commonFormat;
 	return (
-		<td className="doc-tags-cell doc-col-tags">
+		// no chip → no label: a stacked row never prints a bare "Tags"
+		<TableCell view={view} textRole="meta" label={isAudienceShown || isFormatShown ? "Tags" : undefined} className="doc-tags-cell doc-col-tags">
 			{/* nowrap — 칩이 2줄로 접히면 행 높이가 튄다. */}
-			<span className="inline-flex items-center gap-1 whitespace-nowrap">
+			<span className="inline-flex items-center gap-label-inline whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
-				{audience === "hidden" && commonAudience !== "hidden" && (
-					<Badge role="metadata">agent-only</Badge>
-				)}
+				{isAudienceShown && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill. */}
-				{DOC_FORMAT_BADGE_CD[format] && format !== commonFormat && (
-					<Badge role="metadata">{format}</Badge>
-				)}
+				{isFormatShown && <Badge role="metadata">{format}</Badge>}
 			</span>
-		</td>
+		</TableCell>
 	);
 }
 
 // 작성자 셀 — 1줄 클램프. 전체 값은 title= 툴팁이 운반.
-function DocAuthorCellCD({ author }) {
+function DocAuthorCellCD({ view, author }) {
+	const { TableCell, AgentName } = window.UI;
 	return (
-		<td className="doc-meta-text" style={{ color: "rgb(var(--dim))" }}>
+		<TableCell view={view} textRole="meta" label="Author" className="fs-meta text-dim">
 			<span className="doc-cell-clamp" title={author}>
-				<window.UI.AgentName name={author} />
+				<AgentName name={author} />
 			</span>
-		</td>
+		</TableCell>
 	);
 }
 
@@ -1384,7 +1256,6 @@ const DOC_LIST_CARD_ID_CD = "docs-list";
 
 // Center list card — toolbar (search + facets + count) + ledger · ledger scroll = page scroll
 function DocListCardCD({
-	asOf,
 	state,
 	rows,
 	isSearchMode,
@@ -1416,7 +1287,7 @@ function DocListCardCD({
 	onSelect,
 	onRetry,
 }) {
-	const { Icon, Badge, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, PageVerdict, getRegionView } = window.UI;
+	const { Card, Icon, Badge, MachineString, RegionUnavailable, LoadingPlaceholder, ROW_CONTROL_PROPS, getRegionView, Table, TableRow, TableCell } = window.UI;
 	const [focusRowId, setFocusRowId] = useStateCD(null);
 	// load-more keeps its own button spinner → only a first-page read dims the held rows
 	const isHeldBusy = state.busy === true && state.status === "ready" && !isLoadingMore;
@@ -1425,7 +1296,7 @@ function DocListCardCD({
 	// 건수 우측 표기 — groups mode 는 그룹/문서 이중 단위 + 서버 집계 숨김 건 (same rule as hiddenCount, F40) ·
 	// search mode 는 row 단위 '건' + 숨은 건 있으면 "표시/전체" 이중 표기.
 	// 그룹이 기본 단위 · 문서 수는 그룹 수와 다를 때만 (같은 수를 두 번 말하지 않는다).
-	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (chip 과 동일 규칙).
+	// 건수는 아는 경우에만 — loading / error 에서 total 은 0 으로 강등되므로 미수신 수치가 '0 matched' 로 읽힌다 (Show 메뉴와 동일 규칙).
 	// search total = uncollapsed server hits · visible/hidden = collapsed chain rows → the fraction stays in rows, hits get their own unit
 	const rowCount = visibleCount + hiddenCount;
 	const hitsLabel = isSearchMode && total !== rowCount ? ` · ${formatIntCD(total)} hits` : "";
@@ -1449,20 +1320,17 @@ function DocListCardCD({
 	const isPartialSelected =
 		!isAllSelected && allRowIds.some((id) => selectedIds.has(id));
 
-	// 스테이지 섹션 — 열림/전체 필터에서만. 단일 stage 필터에서는 chip 과 같은 말을 두 번 한다.
+	// 스테이지 섹션 — 열림/전체 필터에서만. 단일 stage 필터에서는 Show 값과 같은 말을 두 번 한다.
 	const isSectioned =
 		!isSearchMode &&
 		(inlineFilterProps.docStatusFilter === "" ||
 			inlineFilterProps.docStatusFilter === "open");
 	const orderedRows = isSectioned ? sortRowsByStageCD(rows) : rows;
 	const nowMs = Date.now();
-	const openSummary = isSectioned ? getOpenSummaryCD(orderedRows, nowMs) : null;
-	const hasOpenSummary = openSummary != null && openSummary.openCount > 0;
 	const rovingId = getRovingIdCD(orderedRows.map((r) => r.id), focusRowId, selectedId);
 	const commonFormat = getCommonFormatCD(orderedRows);
 	const commonAudience = getCommonAudienceCD(orderedRows);
 	const hasTagsColumn = orderedRows.some((row) => hasOwnTagCD(row, commonFormat, commonAudience));
-	const columnCount = hasTagsColumn ? LEDGER_CD.COLUMN_COUNT : LEDGER_CD.COLUMN_COUNT - 1;
 	// shared tag values in words → said once beside the count, never per row nor under the header
 	const sharedTagsLabel =
 		commonAudience === "hidden"
@@ -1470,158 +1338,107 @@ function DocListCardCD({
 			: commonFormat
 				? `${commonFormat} format`
 				: "";
-	// 섹션 건수는 page-scoped — chip 의 corpus-scoped 수치와 단위가 다르다.
+	// 섹션 건수는 page-scoped — Show 메뉴의 corpus-scoped 수치와 단위가 다르다.
 	const sectionCounts = new Map();
 	for (const row of orderedRows) {
 		const rank = stageRankCD(rowStageCD(row));
 		sectionCounts.set(rank, (sectionCounts.get(rank) || 0) + 1);
 	}
 	// 섹션 첫 행 앞에만 헤더 — 같은 stage 가 이어지면 null.
-	const renderSectionHead = (row, index) => {
+	const renderSectionHead = (row, index, view) => {
 		if (!isSectioned) return null;
 		const rank = stageRankCD(rowStageCD(row));
 		const previous = index === 0 ? null : orderedRows[index - 1];
 		if (previous && stageRankCD(rowStageCD(previous)) === rank) return null;
 		const entry = stageEntryCD(rowStageCD(row));
 		return (
-			<tr className="doc-stage-section">
-				<th colSpan={columnCount} scope="colgroup">
-					<span role="heading" aria-level={2}>
-						{entry ? entry.label : "stage unavailable"}
-					</span>
-					<span className="doc-stage-section-count">
+			<TableRow view={view} className="doc-stage-section">
+				<TableCell view={view} kind="group-header" level={2}>
+					{entry ? entry.label : "stage unavailable"}
+					<span className="doc-stage-section-count text-faint ml-label-inline fs-meta tabular-nums">
 						{formatIntCD(sectionCounts.get(rank) || 0)}
 					</span>
-				</th>
-			</tr>
+				</TableCell>
+			</TableRow>
 		);
 	};
 
-	return (
-		<div
-			id={DOC_LIST_CARD_ID_CD}
-			className="card doc-list-card flex flex-col min-h-0"
-			style={{ height: "100%", flex: "1 1 auto", width: "100%" }}
-		>
-			<div style={{ borderBottom: "1px solid rgb(var(--line))" }}>
-				{/* one control row — search · the Show and Audience groups, each label wrapping with its chips · the count meta on its own right-aligned line */}
-				<div className="control-row">
-					<div className="relative" style={{ flex: "1 1 200px", minWidth: 180 }}>
-						<span className="doc-search-icon" aria-hidden="true">
-							<Icon name="search" size={SEARCH_ICON_PX_CD} />
-						</span>
-						<input
-							type="search"
-							className="field doc-search-input"
-							placeholder="Search…"
-							value={inlineFilterProps.keyword}
-							onChange={(e) => inlineFilterProps.onKeywordChange(e.target.value)}
-							aria-label="Search documents"
-						/>
+	const bar = (
+		<>
+			{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta on its own right-aligned line */}
+			<div className="control-row">
+				<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
+				{(busyText || totalLabel) && (
+					<div className="doc-list-meta basis-full flex flex-wrap justify-end items-center gap-x-list">
+						{busyText && (
+							<span className="doc-list-busy fs-meta text-dim" role="status">
+								{busyText}
+							</span>
+						)}
+						{totalLabel && (
+							<span className="doc-list-count fs-meta tabular-nums whitespace-nowrap text-dim" title={totalLabel} aria-live="polite">
+								{totalLabel}
+							</span>
+						)}
+						{totalLabel && sharedTagsLabel && (
+							<span className="doc-list-shared fs-meta text-dim">
+								{hasTagsColumn ? `${sharedTagsLabel} unless tagged` : `all ${sharedTagsLabel}`}
+							</span>
+						)}
 					</div>
-					<div className="doc-filter-cluster">
-						<div className="doc-filter-group">
-							<span className="doc-filter-label">Show</span>
-							{/* search reads every stage → the chips step aside rather than show a pressed filter it ignores; chips and note share one cell, so the mode never resizes the group */}
-							<div className={`doc-show-slot${isSearchMode ? " doc-show-slot--searching" : ""}`}>
-								<window.UI.ChipGroup
-									label="Stage filter"
-									className="doc-stage-chips"
-									chips={DOC_STATUS_OPTIONS_CD.map((opt) => ({
-										key: opt.value,
-										isPressed: !isSearchMode && inlineFilterProps.docStatusFilter === opt.value,
-										label: (
-											<>
-												{opt.label}
-												{/* 건수는 아는 경우에만 — 못 받은 수치가 0 으로 읽히면 안 된다. */}
-												{groupCounts && typeof groupCounts[opt.countKey] === "number" && (
-													<span className="doc-chip-count">{formatIntCD(groupCounts[opt.countKey])}</span>
-												)}
-											</>
-										),
-									}))}
-									onToggle={inlineFilterProps.onDocStatusChange}
-								/>
-								<span className="doc-search-stage-note fs-meta" style={{ color: "rgb(var(--dim))" }}>
-									All stages while searching
-								</span>
-							</div>
-						</div>
-						<span className="doc-filter-divider" aria-hidden="true" />
-						<div className="doc-filter-group">
-							<span className="doc-filter-label">Audience</span>
-							<window.UI.ChipGroup
-								label="Audience filter"
-								chips={AUDIENCE_OPTIONS_CD.map((opt) => ({
-									key: opt.value,
-									label: opt.label,
-									isPressed: inlineFilterProps.audienceFilter === opt.value,
-								}))}
-								onToggle={inlineFilterProps.onAudienceChange}
-							/>
-						</div>
-					</div>
-					{(busyText || totalLabel) && (
-						<div className="doc-list-meta">
-							{busyText && (
-								<span className="doc-list-busy fs-meta" role="status" style={{ color: "rgb(var(--dim))" }}>
-									{busyText}
-								</span>
-							)}
-							{totalLabel && (
-								<span className="doc-list-count fs-meta font-mono" style={{ color: "rgb(var(--dim))" }} title={totalLabel} aria-live="polite">
-									{totalLabel}
-								</span>
-							)}
-							{totalLabel && sharedTagsLabel && (
-								<span className="doc-list-shared fs-meta" style={{ color: "rgb(var(--dim))" }}>
-									{hasTagsColumn ? `${sharedTagsLabel} unless tagged` : `all ${sharedTagsLabel}`}
-								</span>
-							)}
-						</div>
-					)}
-				</div>
-				{/* pg_bigm 부재 disclosure (M6) — 서버는 startup warn 로그만 남겨 한글 부분일치
+				)}
+			</div>
+			{/* pg_bigm 부재 disclosure (M6) — 서버는 startup warn 로그만 남겨 한글 부분일치
             저하(tsvector 단어 단위만 매칭)가 사용자에게 비가시 → 검색 모드에서 화면에 명시.
             === false 엄격 비교 — 필드 부재(groups 응답 · 구 서버) 시 미노출. */}
-				{isSearchMode &&
-					state.status === "ready" &&
-					state.data?.bigmEnabled === false && (
-						<div
-							className="px-4 pb-2 fs-meta"
-							style={{ color: "rgb(var(--faint))" }}
-							role="note">
-							Whole-word matches only — Korean partial-word search is unavailable.
-						</div>
-					)}
-				{/* doc_type 필터/배지 서브시스템 전면 제거.
+			{isSearchMode &&
+				state.status === "ready" &&
+				state.data?.bigmEnabled === false && (
+					<div
+						className="px-card-pad mb-label fs-meta text-faint"
+						role="note">
+						Whole-word matches only — Korean partial-word search is unavailable.
+					</div>
+				)}
+			{/* doc_type 필터/배지 서브시스템 전면 제거.
             · 사유: server monitor.documents 의 doc_type 컬럼 DROP → ?doc_type 필터 no-op · GET /:id 응답 키 부재 → 배지 항상 null.
               GOLDEN RULE — 모니터를 시스템(컬럼 부재)에 정합. doc_status(progress/done) 는 별개 live 축으로 유지. */}
-				{/* GroupActionBar (multi-select bulk action).
+			{/* GroupActionBar (multi-select bulk action).
             · selectionSize == 0 → hint bar ("문서 2건 이상 선택 후 그룹 만들기")
             · selectionSize ≥ 1 → 선택 N건 표시 + 그룹 해제 활성 + (≥2 시) 그룹 만들기 활성
             · search mode 에서도 노출 (사용자가 search 결과로 group 의도 가능 — 정합) */}
-				<GroupActionBarCD
-					selectionSize={selectionSize}
-					canGroup={canGroup}
-					canUngroup={canUngroup}
-					onGroup={() => onGroupCreate(Array.from(selectedIds))}
-					onUngroup={() => onUngroup(Array.from(selectedIds))}
-					onExportZip={onExportZip}
-					onClear={onClearSelection}
-				/>
-			</div>
+			<GroupActionBarCD
+				selectionSize={selectionSize}
+				canGroup={canGroup}
+				canUngroup={canUngroup}
+				onGroup={() => onGroupCreate(Array.from(selectedIds))}
+				onUngroup={() => onUngroup(Array.from(selectedIds))}
+				onExportZip={onExportZip}
+				onClear={onClearSelection}
+			/>
+		</>
+	);
+	// Load More — groups mode only, while server groups remain · the label cell keeps its widest value → no width jump on loading
+	const foot = state.status === "ready" && canLoadMore && (
+		<button
+			type="button"
+			className="btn ghost sm mx-auto"
+			onClick={onLoadMore}
+			disabled={isLoadingMore}
+			aria-label={isLoadingMore ? "Loading more" : `Show ${formatIntCD(loadMoreRemaining)} more`}
+		>
+			<DocTriggerValueCD
+				options={[{ value: "idle", label: `Show ${formatIntCD(loadMoreRemaining)} more` }, { value: "busy", label: "Loading…" }]}
+				chosenKey={isLoadingMore ? "busy" : "idle"}
+			/>
+		</button>
+	);
 
-			<div
-				className="card-body flush"
-				style={{
-					maxHeight: "none",
-					flex: "1 1 auto",
-					minHeight: 0,
-					// no scroller here — a scrolling box would pin the sticky rail to it · x-overflow belongs to the table wrapper
-					overflow: "visible",
-				}}
-			>
+	return (
+		// Card takes no id → the region wrapper holds the Retry focus target
+		<div id={DOC_LIST_CARD_ID_CD} className="doc-list-region flex flex-col flex-auto min-h-0 w-full">
+			{/* the list grows with the page → the page scrolls, never this body · x-overflow belongs to the table wrapper */}
+			<Card isFlush bar={bar} foot={foot} className="doc-list-card flex-auto min-h-0 [&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible">
 				{getRegionView(state) === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
 				{state.error != null && (
 					<div role="alert">
@@ -1631,77 +1448,40 @@ function DocListCardCD({
 							onRetry={onRetry}
 							isBusy={state.busy === true}
 							focusTargetId={DOC_LIST_CARD_ID_CD}
-							className="m-4"
+							className="p-card-pad"
 						/>
 					</div>
 				)}
 				{state.status === "ready" && rows.length === 0 && (
-					/* S6 정직한 빈 상태 — 적용 중 필터 echo + reset 제공 (blank 패널 금지). WCAG 4.1.3 announce. */
+					/* WCAG 4.1.3 → the empty state announces itself */
 					<DocEmptyStateCD
 						isSearchMode={isSearchMode}
+						groupCounts={groupCounts}
 						inlineFilterProps={inlineFilterProps}
 					/>
 				)}
-				{state.status === "ready" && hasOpenSummary && (
-					<PageVerdict
-						tone={openSummary.buckets.stale > 0 ? "warn" : "ok"}
-						freshness={getFreshnessInputCD(asOf, state)}
-						className="mx-4 mt-3">
-						{getOpenHeadlineCD(openSummary, canLoadMore, groupCounts ? groupCounts.open : null)}
-					</PageVerdict>
-				)}
 				{state.status === "ready" && rows.length > 0 && (
-					<div className="doc-layout">
-					<div className="doc-layout-row flex flex-col">
-					{hasOpenSummary && (
-						<DocOpenSummaryCD
-							summary={openSummary}
-							isPartial={canLoadMore}
-							isLastKnown={state.error != null}
-							onSelect={onSelect}
-						/>
-					)}
-					{/* own x-scroll → a table wider than its column scrolls here instead of running under the sticky rail */}
-					<div className="doc-ledger-scroll min-w-0 flex-1 overflow-x-auto">
-					<table className={isHeldBusy ? "tbl doc-ledger-busy" : "tbl"} aria-busy={isHeldBusy ? "true" : undefined}>
-						<caption className="sr-only">
-							Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document.
-						</caption>
-						<thead>
-							<tr>
-								{/* DocCheckboxCD (theme-token states · WCAG 2.2 AA).
-                    select-all 3-state cycle: unchecked → checked → indeterminate → checked (단방향 — UX 단순화). */}
-								<th scope="col" className="doc-checkbox-cell">
-									<DocCheckboxCD
-										checked={isAllSelected}
-										indeterminate={isPartialSelected}
-										onChange={() => {
-											if (isAllSelected) onClearSelection();
-											else onSelectAll(allRowIds);
-										}}
-										ariaLabel={isAllSelected ? "Clear selection" : "Select all"}
-									/>
-								</th>
-								{/* doc_status badge 별도 column 분리 (title inline 제거 · 사용자 directive). */}
-								{/* width 는 표가 넘칠 때 min-content 까지 눌린다 → 컬럼마다 min-width 바닥을 같이 준다. */}
-								<th scope="col" style={{ width: LEDGER_CD.FLOOR.status, minWidth: LEDGER_CD.FLOOR.status }}>Status</th>
-								{/* ID — 문서 번호 노출 (그룹 루트 행은 대표 문서 번호). */}
-								<th scope="col" className="doc-col-num" style={{ width: LEDGER_CD.FLOOR.id, minWidth: LEDGER_CD.FLOOR.id }}>ID</th>
-								<th scope="col" className="doc-col-title">
-									<span className="doc-col-title-text">Title</span>
-								</th>
-								{/* 태그 전용 column — 서술 칩을 제목 셀에서 분리. */}
-								{hasTagsColumn && (
-									<th scope="col" className="doc-col-tags" style={{ width: LEDGER_CD.FLOOR.tags, minWidth: LEDGER_CD.FLOOR.tags }}>
-										Tags
-									</th>
-								)}
-								<th scope="col" style={{ width: LEDGER_CD.FLOOR.author, minWidth: LEDGER_CD.FLOOR.author }}>Author</th>
-								<th scope="col" className="doc-col-num" style={{ width: LEDGER_CD.FLOOR.created, minWidth: LEDGER_CD.FLOOR.created }}>Created</th>
-							</tr>
-						</thead>
-						<tbody onKeyDown={moveRowFocusCD}>
-							{orderedRows.map((row, rowIndex) => {
+					<Table
+						caption="Documents ledger. Up and Down move between rows, Right reaches a row's controls, Enter opens the focused document."
+						columns={getLedgerColumnsCD({
+							hasTagsColumn,
+							selectAll: (
+								/* select-all 3-state cycle: unchecked → checked → indeterminate → checked */
+								<DocCheckboxCD
+									checked={isAllSelected}
+									indeterminate={isPartialSelected}
+									onChange={() => {
+										if (isAllSelected) onClearSelection();
+										else onSelectAll(allRowIds);
+									}}
+									ariaLabel={isAllSelected ? "Clear selection" : "Select all"}
+								/>
+							),
+						})}
+						stackBelowPx={LEDGER_CD.FLOOR.stackBelow}
+						className={["doc-ledger", hasTagsColumn && "doc-ledger--tags", isHeldBusy && "doc-ledger-busy"].filter(Boolean).join(" ")}
+						bodies={[{ key: "rows", isBusy: isHeldBusy, onKeyDown: moveRowFocusCD, rows: (view) =>
+							orderedRows.map((row, rowIndex) => {
 								const isSelectedViewer = row.id === selectedId;
 								const isSelectedMulti = selectedIds.has(row.id);
 								const isPending = pendingDelete && pendingDelete.id === row.id;
@@ -1727,14 +1507,15 @@ function DocListCardCD({
 									.join(" ");
 								return (
 									<React.Fragment key={row.id}>
-										{renderSectionHead(row, rowIndex)}
-										<tr
+										{renderSectionHead(row, rowIndex, view)}
+										<TableRow
+											view={view}
 											className={rowClass}
 											onClick={(e) => {
-												// checkbox / action 버튼 클릭은 row click 으로 buble 시키지 않음.
+												// checkbox · buttons · the row menu (its padding too) → never a row select
 												if (
 													e.target.closest(
-														'input[type="checkbox"], button, .doc-group-toggle',
+														'input[type="checkbox"], button, .doc-group-toggle, .row-actions',
 													)
 												)
 													return;
@@ -1758,7 +1539,9 @@ function DocListCardCD({
 											aria-current={isSelectedViewer ? "true" : undefined}
 											aria-busy={isPending ? "true" : undefined}
 										>
-											<td
+											<TableCell
+												view={view}
+												textRole="label"
 												className="doc-checkbox-cell"
 												onClick={(e) => e.stopPropagation()}
 											>
@@ -1768,32 +1551,32 @@ function DocListCardCD({
 													onChange={() => onToggleSelection(row.id)}
 													ariaLabel={`Select ${row.title}`}
 												/>
-											</td>
+											</TableCell>
 											{/* optimisticStatusOverrides 우선 — 서버 refresh 도착 전 고른 stage 즉시 반영. */}
 											{/* last stage actor → the cell tooltip + the viewer rail, so the row stays one line · unknown → no tooltip */}
-											<td title={row.last_status_model ? `Set by ${formatActorCD(row.last_status_model)}` : undefined}>
-													<DocStagePillCD
+											<TableCell view={view} textRole="label" title={row.last_status_model ? `Set by ${formatActorCD(row.last_status_model)}` : undefined}>
+													<DocStageCD
 														isRowControl
 														docStatus={shownStage}
+														docTitle={row.title}
 														onPickStage={(stage) => onPickStage(row.id, stage, null)}
 														isChanging={togglingIds.has(row.id)}
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
-												</td>
-											<td className="doc-meta-text-mono doc-col-num" style={{ color: "rgb(var(--dim))" }}>
-													#{row.id}
-												</td>
-											<td className="title-cell">
+												</TableCell>
+											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
+													<MachineString>#{row.id}</MachineString>
+												</TableCell>
+											<TableCell view={view} className="title-cell">
 												<div
-													className="doc-title-row font-medium fs-body"
-													style={{ color: "rgb(var(--ink))" }}
+													className="doc-title-row font-medium fs-body text-ink"
 												>
 													{/* 고정폭 leading slot — group-root 시 chevron, 그 외 빈칸 (제목 시작 x 통일). */}
 													<span className="doc-title-lead">
 														{isGroupRoot && (
 															<button
 																type="button"
-																className={`doc-group-toggle ${isExpanded ? "is-expanded" : ""}`}
+																className={`doc-group-toggle inline-target gap-label-inline fs-meta ${isExpanded ? "is-expanded" : ""}`}
 																{...ROW_CONTROL_PROPS}
 																onClick={(e) => {
 																	e.stopPropagation();
@@ -1811,7 +1594,7 @@ function DocListCardCD({
 															</button>
 														)}
 													</span>
-													<span className="doc-title-main">
+													<span className="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap gap-label-inline">
 														{isPending && <ToneGlyphCD tone="crit" />}
 														<span className="doc-title-text" title={row.title}>
 															{row.title}
@@ -1820,7 +1603,7 @@ function DocListCardCD({
 														{row.supersedes_id != null && (
 															<button
 																type="button"
-																className="doc-lineage pill pill--interactive pill--count"
+																className="doc-lineage link inline-target fs-meta"
 																{...ROW_CONTROL_PROPS}
 																title={`Open #${row.supersedes_id}, which this replaces`}
 																onClick={(e) => {
@@ -1846,25 +1629,26 @@ function DocListCardCD({
 													</span>
 												</div>
 												{snippetText && (
-													<div
-														className="doc-snippet doc-meta-text mt-1"
-														style={{ color: "rgb(var(--dim))" }}
-													>
-														{parseSnippetCD(snippetText)}
+													<div className="doc-title-row mt-stack">
+														<span className="doc-title-lead is-spacer" />
+														<div className="doc-snippet fs-meta text-dim">
+															{parseSnippetCD(snippetText)}
+														</div>
 													</div>
 												)}
-											</td>
+											</TableCell>
 											{hasTagsColumn && (
 												<DocTagsCellCD
+													view={view}
 													audience={row.audience}
 													format={row.format}
 													commonFormat={commonFormat}
 													commonAudience={commonAudience}
 												/>
 											)}
-											<DocAuthorCellCD author={row.author} />
-											<DocAgeCellCD createdAt={row.created_at} age={age} isStale={isStaleRow} />
-										</tr>
+											<DocAuthorCellCD view={view} author={row.author} />
+											<DocAgeCellCD view={view} createdAt={row.created_at} age={age} isStale={isStaleRow} />
+										</TableRow>
 										{isExpanded && (
 											<GroupMembersRowsCD
 												folderId={row.folder_id}
@@ -1875,6 +1659,7 @@ function DocListCardCD({
 												commonFormat={commonFormat}
 												commonAudience={commonAudience}
 												hasTagsColumn={hasTagsColumn}
+												view={view}
 												selectedId={selectedId}
 												selectedIds={selectedIds}
 												pendingDelete={pendingDelete}
@@ -1887,106 +1672,114 @@ function DocListCardCD({
 										)}
 									</React.Fragment>
 								);
-							})}
-						</tbody>
-					</table>
-					</div>
-					</div>
-					</div>
+							}) }]}
+					/>
 				)}
-				{/* Load More 버튼.
-            · canLoadMore = !isSearchMode AND ready AND consumedCount < total (server groups consumed, not deduped rows)
-            · isLoadingMore = offset>0 진행 중 — 버튼 label 'loading' 으로 전환 + disabled */}
-				{state.status === "ready" && canLoadMore && (
-					<div className="flex justify-center py-3 px-4">
-						<button
-							type="button"
-							className="btn ghost sm"
-							onClick={onLoadMore}
-							disabled={isLoadingMore}
-							aria-label={
-								isLoadingMore
-									? "Loading more"
-									: `Show ${formatIntCD(loadMoreRemaining)} more`
-							}
-							style={{ minHeight: 32, minWidth: 120 }}
-						>
-							{isLoadingMore
-								? "Loading…"
-								: `Show ${formatIntCD(loadMoreRemaining)} more`}
-						</button>
-					</div>
-				)}
-			</div>
+			</Card>
 		</div>
 	);
 }
 
-// Pipeline shape at a glance — a right rail from xl, a one-line strip above the table below it.
-// A failed refresh keeps the held counts → they read as Last known, like the verdict above them.
-function DocOpenSummaryCD({ summary, isPartial, isLastKnown = false, onSelect }) {
-	const { oldest } = summary;
-	const oldestLabel = oldest ? `Oldest open #${oldest.id} · ${getAgeLabelCD(oldest.days)}` : null;
+// Ledger columns in render order; Tags only while a row carries a tag of its own.
+function getLedgerColumnsCD({ hasTagsColumn, selectAll }) {
+	return [
+		{ key: "select", label: selectAll },
+		{ key: "status", label: "Status" },
+		{ key: "id", label: "ID", isNumeric: true },
+		{
+			key: "title",
+			label: (
+				<span className="doc-title-row">
+					<span className="doc-title-lead is-spacer" />
+					<span>Title</span>
+				</span>
+			),
+		},
+		hasTagsColumn && { key: "tags", label: "Tags" },
+		{ key: "author", label: "Author" },
+		{ key: "created", label: "Created", isNumeric: true },
+	].filter(Boolean);
+}
+
+// search → every stage read, so a trailing note says so · note slot kept in list mode → no move or wrap on search · Show value applies once search clears
+function DocFilterBarCD({ isSearchMode, groupCounts, inlineFilterProps }) {
+	const { FilterBar, FilterTrigger, BarSearch } = window.UI;
+	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
 	return (
-		<aside
-			className="doc-open-summary flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2"
-			aria-label={isLastKnown ? "Open documents summary, last known" : "Open documents summary"}>
-			{isLastKnown && <span className="doc-open-summary-note">Last known</span>}
-			<div className="doc-open-summary-block">
-				<h2 className="doc-open-summary-heading">Open by stage</h2>
-				<dl className="doc-open-summary-group">
-					{summary.stages.map((stage) => (
-						<React.Fragment key={stage.value}>
-							<dt>{stage.label}</dt>
-							<dd>{formatIntCD(stage.count)}</dd>
-						</React.Fragment>
-					))}
-				</dl>
-			</div>
-			<div className="doc-open-summary-block">
-				<h2 className="doc-open-summary-heading">Age</h2>
-				<dl className="doc-open-summary-group">
-					{AGE_BUCKETS_CD.map((bucket) => {
-						const isStaleShown = bucket.key === "stale" && summary.buckets.stale > 0;
-						return (
-							<React.Fragment key={bucket.key}>
-								<dt>
-									{isStaleShown && <ToneGlyphCD tone="warn" />}
-									<window.UI.DayTokens>{bucket.label}</window.UI.DayTokens>
-								</dt>
-								<dd>{formatIntCD(summary.buckets[bucket.key])}</dd>
-							</React.Fragment>
-						);
-					})}
-				</dl>
-			</div>
-			{oldest && (
-				<button type="button" className="btn ghost sm doc-open-oldest" title={oldestLabel} onClick={() => onSelect(oldest.id)}>
-					<span className="doc-open-oldest-label">{oldestLabel}</span>
-				</button>
-			)}
-			{isPartial && <span className="doc-open-summary-note">Loaded rows only</span>}
-		</aside>
+		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={() => setDefaultFiltersCD(inlineFilterProps)} className="flex-auto min-w-0">
+			<BarSearch label="Search documents" value={keyword} onChange={inlineFilterProps.onKeywordChange} placeholder="Search…" className="doc-bar-search" />
+			<FilterTrigger axis="Show" value={<DocTriggerValueCD options={DOC_STATUS_OPTIONS_CD} chosenKey={docStatusFilter} />} options={getStageOptionsCD(groupCounts)}
+				chosenKeys={[docStatusFilter]} onPick={inlineFilterProps.onDocStatusChange} />
+			<FilterTrigger axis="Audience" value={<DocTriggerValueCD options={AUDIENCE_OPTIONS_CD} chosenKey={audienceFilter} />}
+				options={AUDIENCE_OPTIONS_CD.map((option) => ({ key: option.value, label: option.label }))}
+				chosenKeys={[audienceFilter]} onPick={inlineFilterProps.onAudienceChange} />
+			{/* idle → invisible, slot kept → starting a search never reflows the bar */}
+			<span className={`doc-show-note fs-meta text-dim whitespace-nowrap${isSearchMode ? "" : " invisible"}`}>All stages while searching</span>
+		</FilterBar>
 	);
 }
 
-// Relative age leads · the absolute KST date stays one hover away.
-function DocAgeCellCD({ createdAt, age, isStale }) {
+function isFilterAppliedCD({ keyword, docStatusFilter, audienceFilter }) {
 	return (
-		<td
-			className="doc-age-cell doc-meta-text-mono doc-col-num"
-			style={{ color: "rgb(var(--dim))" }}
+		keyword.trim() !== DEFAULT_FILTERS_CD.keyword ||
+		docStatusFilter !== DEFAULT_FILTERS_CD.docStatusFilter ||
+		audienceFilter !== DEFAULT_FILTERS_CD.audienceFilter
+	);
+}
+
+function setDefaultFiltersCD(inlineFilterProps) {
+	inlineFilterProps.onKeywordChange(DEFAULT_FILTERS_CD.keyword);
+	inlineFilterProps.onDocStatusChange(DEFAULT_FILTERS_CD.docStatusFilter);
+	inlineFilterProps.onAudienceChange(DEFAULT_FILTERS_CD.audienceFilter);
+}
+
+// every option label in one cell, only the chosen one seen → the trigger keeps its widest value's width, so a pick never moves or wraps the bar
+function DocTriggerValueCD({ options, chosenKey }) {
+	return (
+		<span className="doc-trigger-value">
+			{options.map((option) => option.value === chosenKey
+				? <span key={option.value}>{option.label}</span>
+				: <span key={option.value} className="is-idle" aria-hidden="true">{option.label}</span>)}
+		</span>
+	);
+}
+
+// a count the payload does not carry renders as nothing, never as 0
+function getStageOptionsCD(groupCounts) {
+	return DOC_STATUS_OPTIONS_CD.map((option) => {
+		const count = groupCounts?.[option.countKey];
+		return {
+			key: option.value,
+			label: typeof count === "number" ? <>{option.label} <span className="tabular-nums text-dim">{formatIntCD(count)}</span></> : option.label,
+		};
+	});
+}
+
+// Relative age leads · the absolute KST date stays one hover away.
+function DocAgeCellCD({ view, createdAt, age, isStale }) {
+	const { TableCell } = window.UI;
+	return (
+		<TableCell
+			view={view}
+			textRole="meta"
+			label="Created"
+			isNumeric
+			className="doc-age-cell fs-meta doc-col-num text-dim"
 			title={`Created ${formatDateCD(createdAt)}`}>
-			<div className="doc-age-line">
-				<span className="doc-age-value">{age ? age.label : "—"}</span>
+			{/* age, then the stale glyph inline on one line, never stacked */}
+			<div className="doc-age-line flex justify-end items-center gap-label-inline">
+				<span className="doc-age-value flex-none">{age ? age.label : "—"}</span>
+				{/* the Created floor holds no room for the word → glyph-only; "stale" rides the title and sr-only text (relative → the sr-only box resolves here) */}
 				{isStale && (
-					<span className="doc-age-flag" title={`Stale: open over ${STALE_AGE_DAYS_CD} days`}>
+					<span
+						className="doc-age-flag relative inline-flex items-center flex-none text-dim"
+						title={`Stale: open over ${STALE_AGE_DAYS_CD} days`}>
 						<ToneGlyphCD tone="warn" />
 						<span className="sr-only">stale</span>
 					</span>
 				)}
 			</div>
-		</td>
+		</TableCell>
 	);
 }
 
@@ -2017,11 +1810,11 @@ function GroupActionBarCD({
 	}
 	return (
 		<div
-			className="doc-group-action-bar"
+			className="doc-group-action-bar px-card-pad gap-control"
 			role="toolbar"
 			aria-label="Bulk group actions"
 		>
-			<span className="selection-count">{selectionSize} selected</span>
+			<span className="selection-count text-ink fs-body font-semibold tabular-nums">{selectionSize} selected</span>
 			<button
 				type="button"
 				className="btn ghost sm"
@@ -2058,7 +1851,7 @@ function GroupActionBarCD({
 				<Icon name="download" size={13} />
 				Download as zip
 			</button>
-			<div className="ml-auto-actions">
+			<div className="ml-auto flex gap-control">
 				<button
 					type="button"
 					className="btn ghost sm"
@@ -2084,6 +1877,7 @@ function GroupMembersRowsCD({
 	commonFormat,
 	commonAudience,
 	hasTagsColumn,
+	view,
 	selectedId,
 	selectedIds,
 	pendingDelete,
@@ -2094,7 +1888,7 @@ function GroupMembersRowsCD({
 	togglingIds,
 	optimisticStatusOverrides,
 }) {
-	const { Icon } = window.UI;
+	const { TableRow, TableCell, Icon, MachineString } = window.UI;
 	const [memberState, setMemberState] = useStateCD({
 		status: "loading",
 		data: null,
@@ -2182,7 +1976,6 @@ function GroupMembersRowsCD({
 		[memberState, draggingId, moveMember],
 	);
 
-	const colSpan = hasTagsColumn ? LEDGER_CD.COLUMN_COUNT : LEDGER_CD.COLUMN_COUNT - 1;
 	// 재정렬 affordance 노출 조건: rep 포함 멤버 ≥ 2 (rep 도 행에 포함되므로 2건이면 순서 바꿔 rep 변경 가능)
 	//   AND onReorder 주입됨 AND search mode 아님 (search 는 rank 정렬 — 재정렬 의미 없음).
 	const members = memberState.status === "ready" ? memberState.data || [] : [];
@@ -2191,65 +1984,70 @@ function GroupMembersRowsCD({
 
 	if (memberState.status === "loading") {
 		return (
-			<tr className="doc-row is-group-member" aria-live="polite">
-				<td className="doc-checkbox-cell" />
-				<td
-					colSpan={colSpan - 1}
+			<TableRow view={view} className="doc-row is-group-member" aria-live="polite">
+				<TableCell view={view} textRole="label" className="doc-checkbox-cell" />
+				<TableCell
+					view={view}
+					kind="span"
+					start={1}
 					className="fs-meta"
-					style={{ color: "rgb(var(--faint))", padding: "6px 12px" }}
 				>
-					Loading group members…
-				</td>
-			</tr>
+					<span className="text-faint">Loading group members…</span>
+				</TableCell>
+			</TableRow>
 		);
 	}
 	if (memberState.status === "error") {
 		return (
-			<tr className="doc-row is-group-member" role="alert">
-				<td className="doc-checkbox-cell" />
-				<td
-					colSpan={colSpan - 1}
+			<TableRow view={view} className="doc-row is-group-member" role="alert">
+				<TableCell view={view} textRole="label" className="doc-checkbox-cell" />
+				<TableCell
+					view={view}
+					kind="span"
+					start={1}
 					className="fs-meta"
-					style={{ color: "rgb(var(--ink))", padding: "6px 12px" }}
 				>
-					<span className="doc-inline-alert">
+					<span className="doc-inline-alert inline-flex items-center gap-label-inline text-ink">
 						<ToneGlyphCD tone="crit" />
 						Couldn't load group members — {memberState.error}
 					</span>
-				</td>
-			</tr>
+				</TableCell>
+			</TableRow>
 		);
 	}
 	if (members.length === 0) {
 		return (
-			<tr className="doc-row is-group-member">
-				<td className="doc-checkbox-cell" />
-				<td
-					colSpan={colSpan - 1}
+			<TableRow view={view} className="doc-row is-group-member">
+				<TableCell view={view} textRole="label" className="doc-checkbox-cell" />
+				<TableCell
+					view={view}
+					kind="span"
+					start={1}
 					className="fs-meta"
-					style={{ color: "rgb(var(--faint))", padding: "6px 12px" }}
 				>
-					This group is empty
-				</td>
-			</tr>
+					<span className="text-faint">This group is empty</span>
+				</TableCell>
+			</TableRow>
 		);
 	}
 	// Phase F — inline 재정렬 에러 행 (rollback 발생 시만 노출 · WCAG 4.1.3 role=alert announce).
 	//   · React 는 array fragment 반환 시 각 원소 key 필요 → 에러 행 + 멤버 행 배열을 단일 array 로 concat.
 	const errorRow = reorderError ? (
-		<tr key="reorder-error" className="doc-row is-group-member" role="alert">
-			<td className="doc-checkbox-cell" />
-			<td
-				colSpan={colSpan - 1}
-				className="doc-reorder-error fs-meta"
-				style={{ padding: "4px 12px" }}
+		<TableRow view={view} key="reorder-error" className="doc-row is-group-member" role="alert">
+			<TableCell view={view} textRole="label" className="doc-checkbox-cell" />
+			<TableCell
+				view={view}
+				kind="span"
+				start={1}
+				className="doc-reorder-error fs-meta text-ink"
 			>
-				<span className="doc-inline-alert">
+				{/* the crit glyph carries the tone → the message stays ink */}
+				<span className="doc-inline-alert inline-flex items-center gap-label-inline">
 					<ToneGlyphCD tone="crit" />
 					{reorderError}
 				</span>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	) : null;
 
 	const memberRows = members.map((member) => {
@@ -2268,7 +2066,8 @@ function GroupMembersRowsCD({
 			.filter(Boolean)
 			.join(" ");
 		return (
-			<tr
+			<TableRow
+				view={view}
 				key={member.id}
 				className={rowClass}
 				// 행 전체를 draggable 로 (멤버 ≥ 2 + onReorder + non-search 시).
@@ -2309,7 +2108,7 @@ function GroupMembersRowsCD({
 				onDragEnd={isReorderable ? () => setDraggingId(null) : undefined}
 				onClick={(e) => {
 					if (
-						e.target.closest('input[type="checkbox"], button, .doc-drag-handle')
+						e.target.closest('input[type="checkbox"], button, .doc-drag-handle, .row-actions')
 					)
 						return;
 					onSelect(member.id);
@@ -2325,20 +2124,21 @@ function GroupMembersRowsCD({
 				aria-current={isSelectedViewer ? "true" : undefined}
 				aria-busy={isPending ? "true" : undefined}
 			>
-				<td className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
+				<TableCell view={view} textRole="label" className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
 					<DocCheckboxCD
 						isRowControl
 						checked={isSelectedMulti}
 						onChange={() => onToggleSelection(member.id)}
 						ariaLabel={`Select ${member.title}`}
 					/>
-				</td>
+				</TableCell>
 				{/* doc_status badge 별도 column (GroupMembersRows · 사용자 directive).
             onPickStage 주입 (list-row 와 동일 동작). */}
-				<td>
+				<TableCell view={view} textRole="label">
 					{member.doc_status ? (
-						<DocStagePillCD
+						<DocStageCD
 								isRowControl
+								docTitle={member.title}
 								docStatus={
 									optimisticStatusOverrides.get(member.id) ?? member.doc_status
 								}
@@ -2346,18 +2146,17 @@ function GroupMembersRowsCD({
 								isChanging={togglingIds.has(member.id)}
 							/>
 					) : (
-						<span className="fs-meta" style={{ color: "rgb(var(--faint))" }}>
+						<span className="fs-meta text-faint">
 							—
 						</span>
 					)}
-				</td>
-				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
-					#{member.id}
-				</td>
-				<td className="title-cell">
+				</TableCell>
+				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
+					<MachineString>#{member.id}</MachineString>
+				</TableCell>
+				<TableCell view={view} className="title-cell">
 					<div
-						className="doc-title-row font-medium fs-title"
-						style={{ color: "rgb(var(--ink))" }}
+						className="doc-title-row font-medium fs-title text-ink"
 					>
 						{/* 멤버 행 leading slot — 재정렬 가능 시 drag handle(⠿), 아니면 빈칸 (제목 시작 x 통일). */}
 						<span className="doc-title-lead">
@@ -2372,28 +2171,29 @@ function GroupMembersRowsCD({
 								</span>
 							)}
 						</span>
-						<span className="doc-title-main">
+						<span className="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap gap-label-inline">
 							{isPending && <ToneGlyphCD tone="crit" />}
 							<span className="doc-title-text" title={member.title}>
 								{member.title}
 							</span>
 						</span>
 					</div>
-				</td>
+				</TableCell>
 				{/* 멤버 행 태그 — 서술 속성만. 체인(rev)은 그룹 루트 행이 표시한다. */}
 				{hasTagsColumn && (
 					<DocTagsCellCD
+						view={view}
 						audience={member.audience}
 						format={member.format}
 						commonFormat={commonFormat}
 						commonAudience={commonAudience}
 					/>
 				)}
-				<DocAuthorCellCD author={member.author} />
-				<td className="doc-meta-text-mono" style={{ color: "rgb(var(--dim))" }}>
+				<DocAuthorCellCD view={view} author={member.author} />
+				<TableCell view={view} textRole="meta" label="Created" isNumeric className="fs-meta doc-col-num text-dim">
 					{formatDateCD(member.created_at)}
-				</td>
-			</tr>
+				</TableCell>
+			</TableRow>
 		);
 	});
 
@@ -2442,22 +2242,24 @@ function ViewerPanelCD({
 			/>
 			{/* superseded 배너 — successor 존재 = 구 revision 열람 중 (superseded 행은 server contract 상 done 고정, F34). */}
 			{isReady && state.data.superseded_by_id != null && (
-				<AlertCard
-					tone="warn"
-					surface="inset"
-					className="mx-4 mb-3"
-					title="A newer version exists — you're viewing an old revision"
-					actions={
-						<button
-							type="button"
-							className="btn sm"
-							onClick={() => onNavigate?.(state.data.superseded_by_id)}
-							aria-label={`View latest revision #${state.data.superseded_by_id}`}
-						>
-							View latest → #{state.data.superseded_by_id}
-						</button>
-					}
-				/>
+				<div className="px-card-pad">
+					<AlertCard
+						tone="warn"
+						surface="inset"
+						className="mb-block"
+						title="A newer version exists — you're viewing an old revision"
+						actions={
+							<button
+								type="button"
+								className="btn sm"
+								onClick={() => onNavigate?.(state.data.superseded_by_id)}
+								aria-label={`View latest revision #${state.data.superseded_by_id}`}
+							>
+								View latest → #{state.data.superseded_by_id}
+							</button>
+						}
+					/>
+				</div>
 			)}
 			</div>
 			{isReady ? (
@@ -2502,11 +2304,6 @@ function parseContentDispositionFilenameCD(headerValue) {
 function ViewerActionsCD({ doc, onClose, showToast }) {
 	const { Icon } = window.UI;
 	const [isExporting, setIsExporting] = useStateCD(false);
-	const closeRef = useRefCD(null);
-	// DetailSurface's open effect focuses the first control (Download) → a microtask lands after it, on Close
-	useEffectCD(() => {
-		Promise.resolve().then(() => closeRef.current?.focus());
-	}, []);
 	// 단일 문서 HTML 내려받기 — headless chromium 렌더 대기 구간이 있어 fetch→blob 흐름으로 in-flight 피드백 확보.
 	//   · 네이티브 <a download> 는 완료 시점을 JS 가 못 잡음 → exportSelectionAsZip 의 blob 패턴 mirror.
 	//   · 저장명: Content-Disposition filename 보존 (헤더 부재 시 title/id 폴백) — 모든 포맷(HTML/YAML/JSON/TXT) 지원.
@@ -2549,7 +2346,7 @@ function ViewerActionsCD({ doc, onClose, showToast }) {
 	// HTML 내려받기 + 닫기 (삭제는 메타 레일). 닫기 = fullscreen 종료 (selectedId 해제) = 키보드 F 단축키 동일 동작.
 	//   · 아이콘 전용 바 — 각 버튼은 aria-label(스크린리더) + title(마우스 툴팁) 2채널로 이름을 운반.
 	return (
-		<div className="flex items-center gap-2 flex-wrap">
+		<div className="flex items-center gap-control flex-wrap">
 			<button
 				type="button"
 				className="btn ghost sm icon"
@@ -2568,7 +2365,6 @@ function ViewerActionsCD({ doc, onClose, showToast }) {
 			</button>
 			{onClose && (
 				<button
-					ref={closeRef}
 					type="button"
 					className="btn ghost sm icon"
 					onClick={onClose}
@@ -2844,19 +2640,23 @@ function ViewerBodyCD({ state }) {
 
 	// every state other than the rendered document is viewer chrome → the dark scope (see ViewerPanelCD)
 	if (state.status === "idle") {
-		return <div data-theme="dark" className="doc-empty m-4">Select a document from the list</div>;
+		return (
+			<div data-theme="dark">
+				<window.UI.EmptyState message="Select a document from the list" />
+			</div>
+		);
 	}
 	if (state.status === "loading") {
 		return (
 			<div data-theme="dark">
-				<window.UI.LoadingPlaceholder label="the document" minHeight={260} className="m-4" />
+				<window.UI.LoadingPlaceholder label="the document" minHeight={260} className="p-card-pad" />
 			</div>
 		);
 	}
 	if (state.status === "error") {
 		return (
 			<div data-theme="dark">
-				<window.UI.RegionUnavailable source="this document" error={state.error} className="m-4" />
+				<window.UI.RegionUnavailable source="this document" error={state.error} className="p-card-pad" />
 			</div>
 		);
 	}
@@ -2886,7 +2686,7 @@ function ViewerBodyCD({ state }) {
 	}
 	if (renderError || rendered == null) {
 		return (
-			<div data-theme="dark">
+			<div data-theme="dark" className="p-card-pad">
 				<ErrorBannerCD
 					title="Couldn't render the document body"
 					detail={
@@ -2928,44 +2728,47 @@ function DocMetaPanelCD({
 	optimisticStatusOverrides,
 	onNavigate,
 }) {
-	const { Badge } = window.UI;
+	const { Badge, Stack } = window.UI;
 	return (
-		<div className="flex flex-col gap-2">
-			{/* ID = AUTHOR/CREATED 와 동급 메타 항목 → 배지 행이 아니라 라벨 행이 운반. */}
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">ID</span>
-				<span className="doc-meta-value font-mono">#{doc.id}</span>
-			</div>
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Author</span>
-				<window.UI.AgentName name={doc.author} className="doc-meta-value" />
-			</div>
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Created</span>
-				<span className="doc-meta-value font-mono">
-					{formatDateTimeCD(doc.created_at)}
-				</span>
-			</div>
-			{/* 계보는 늘 보이는 텍스트 — 펼쳐야 보이는 이력과 별개. */}
-			<div className="doc-meta-row">
-				<span className="doc-meta-label">Lineage</span>
-				<span className="doc-meta-value">
-					{doc.supersedes_id != null ? `rev of #${doc.supersedes_id}` : "chain root"}
-					{doc.superseded_by_id != null
-						? ` · superseded by #${doc.superseded_by_id}`
-						: ""}
-				</span>
-			</div>
-			{/* an unrecorded actor is left out, never printed as "unknown" */}
-			{doc.last_status_model && (
-				<div className="doc-meta-row">
-					<span className="doc-meta-label">Last action</span>
-					<span className="doc-meta-value">{formatActorCD(doc.last_status_model)}</span>
+		<Stack gap="block">
+			<Stack gap="list">
+				{/* ID = AUTHOR/CREATED 와 동급 메타 항목 → 배지 행이 아니라 라벨 행이 운반. */}
+				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+					<span className="doc-meta-label text-faint">ID</span>
+					<window.UI.MachineString className="doc-meta-value text-ink break-words">#{doc.id}</window.UI.MachineString>
 				</div>
-			)}
-			<div className="flex items-center gap-2 mt-2 flex-wrap">
-				{/* onPickStage 미주입 → read-only pill · cachedRow=doc → viewer cache 로 GET 스킵. */}
-				<DocStagePillCD
+				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+					<span className="doc-meta-label text-faint">Author</span>
+					<window.UI.AgentName name={doc.author} className="doc-meta-value text-ink break-words" />
+				</div>
+				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+					<span className="doc-meta-label text-faint">Created</span>
+					<span className="doc-meta-value text-ink break-words tabular-nums">
+						{formatDateTimeCD(doc.created_at)}
+					</span>
+				</div>
+				{/* 계보는 늘 보이는 텍스트 — 펼쳐야 보이는 이력과 별개. */}
+				<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+					<span className="doc-meta-label text-faint">Lineage</span>
+					<span className="doc-meta-value text-ink break-words">
+						{doc.supersedes_id != null ? `rev of #${doc.supersedes_id}` : "chain root"}
+						{doc.superseded_by_id != null
+							? ` · superseded by #${doc.superseded_by_id}`
+							: ""}
+					</span>
+				</div>
+				{/* an unrecorded actor is left out, never printed as "unknown" */}
+				{doc.last_status_model && (
+					<div className="doc-meta-row grid gap-x-label-inline fs-meta">
+						<span className="doc-meta-label text-faint">Last action</span>
+						<span className="doc-meta-value text-ink break-words">{formatActorCD(doc.last_status_model)}</span>
+					</div>
+				)}
+			</Stack>
+			<div className="flex items-center gap-control flex-wrap">
+				{/* onPickStage absent → status only · cachedRow=doc → the viewer cache skips the GET */}
+				<DocStageCD
+					docTitle={doc.title}
 					docStatus={optimisticStatusOverrides?.get(doc.id) ?? doc.doc_status}
 					onPickStage={
 						typeof onPickStage === "function"
@@ -2993,7 +2796,7 @@ function DocMetaPanelCD({
 			{typeof onDelete === "function" && (
 				<DocDeleteButtonCD docId={doc.id} pendingDelete={pendingDelete} onDelete={onDelete} />
 			)}
-		</div>
+		</Stack>
 	);
 }
 
@@ -3015,117 +2818,60 @@ function DocDeleteButtonCD({ docId, pendingDelete, onDelete }) {
 	);
 }
 
-// Stage pill — a monotone 5-step meter + the stage label, and the stage menu it opens.
-//   · tone rides on the meter fill and the terminal glyph, never on the label text (39578 §E).
-//   · every stage, 종료 included, renders in the neutral tone; 종료 adds only the check glyph.
+// Stage status — glyph + word, no container; the stage change rides the shared row-action menu.
+//   · every stage reads in the neutral tone (39578 §E): the terminal stage takes a check, the rest an open circle.
+//   · the rank lives in the accessible name, so the word never carries "N of 5" on screen.
 //   · a token no stage covers renders as unavailable — distinct from a stage and from empty.
-//   · onPickStage 미제공 → read-only 표시 · pending 중 메뉴 차단 (중복 PUT 가드).
-function DocStagePillCD({
+//   · onPickStage absent → status only · a pick while changing is dropped (duplicate PUT guard).
+function DocStageCD({
 	docStatus,
+	docTitle,
 	onPickStage,
-	isChanging,
+	isChanging = false,
 	note,
 	isRowControl = false,
 }) {
-	const { Icon, ROW_CONTROL_PROPS } = window.UI;
-	const [menuOpen, setMenuOpen] = useStateCD(false);
+	const { Icon, RowActions } = window.UI;
 	const entry = stageEntryCD(docStatus);
 
 	if (!entry) {
 		return (
 			<span
-				className="fs-meta"
-				style={{ color: "rgb(var(--faint))" }}
+				className="fs-meta text-faint"
 				title={`Stage unavailable — stored '${docStatus ?? "none"}'`}>
 				stage unavailable
 			</span>
 		);
 	}
 
-	const rank = stageRankCD(entry.value);
-	const isTerminal = entry.value === TERMINAL_STAGE_CD;
-	const accessibleName = `${entry.label} — stage ${rank} of ${DOC_STAGES_CD.length}`;
-	const face = (
-		<>
-			<span className="doc-stage-meter" aria-hidden="true">
-				{DOC_STAGES_CD.map((stage, index) => (
-					<span
-						key={stage.value}
-						className={`stage-pip${index < rank ? " is-filled" : ""}`}
-					/>
-				))}
-			</span>
-			{isTerminal && (
-				<span className="doc-stage-glyph is-terminal" aria-hidden="true">
-					<Icon name="check" size={11} />
-				</span>
-			)}
+	const rankText = `stage ${stageRankCD(entry.value)} of ${DOC_STAGES_CD.length}`;
+	const status = (
+		<span className="doc-stage inline-flex items-center gap-label-inline min-w-0 font-sans" title={`${entry.label} — ${rankText}`}>
+			<Icon name={entry.value === TERMINAL_STAGE_CD ? "check" : "circle"} size={12} className="doc-stage-glyph flex-none text-dim" />
 			<span className="doc-stage-label">{isChanging ? "Changing…" : entry.label}</span>
-		</>
+			<span className="sr-only"> — {rankText}</span>
+		</span>
 	);
 
-	if (typeof onPickStage !== "function") {
-		return (
-			<span className="pill doc-stage-pill" title={accessibleName}>
-				{face}
-			</span>
-		);
-	}
+	if (typeof onPickStage !== "function") return status;
 
+	// action items, not a radio set: the shared row menu is action-only, and the current stage reads beside it
+	const items = DOC_STAGES_CD.filter((stage) => stage.value !== entry.value).map((stage) => ({
+		key: stage.value,
+		label: `Move to ${stage.label}`,
+	}));
 	return (
-		<span
-			className="doc-stage-picker"
-			onKeyDown={(e) => {
-				if (e.key === "Escape" && menuOpen) {
-					e.stopPropagation();
-					setMenuOpen(false);
-				}
-			}}
-			onBlur={(e) => {
-				// 포커스가 메뉴 밖으로 나가면 닫는다 — 내부 이동은 유지.
-				if (!e.currentTarget.contains(e.relatedTarget)) setMenuOpen(false);
-			}}>
-			<button
-				type="button"
-				className="pill pill--interactive doc-stage-pill"
-				aria-haspopup="menu"
-				aria-expanded={menuOpen}
-				aria-busy={isChanging || undefined}
-				aria-label={`${accessibleName} — change stage`}
-				{...(isRowControl ? ROW_CONTROL_PROPS : null)}
-				title={isChanging ? "Changing stage…" : accessibleName}
-				onClick={(e) => {
-					// row click bubble 차단 — 행 클릭은 뷰어 진입 (의도 충돌).
-					e.stopPropagation();
-					if (!isChanging) setMenuOpen((open) => !open);
-				}}>
-				{face}
-				<span className="doc-stage-caret" aria-hidden="true">
-					<Icon name="chevron-down" size={12} />
-				</span>
-			</button>
-			{note && <span className="doc-stage-note">{note}</span>}
-			{menuOpen && (
-				<span className="doc-stage-menu" role="menu" aria-label="Set stage">
-					{DOC_STAGES_CD.map((stage, index) => (
-						<button
-							key={stage.value}
-							type="button"
-							role="menuitemradio"
-							aria-checked={stage.value === entry.value}
-							className="doc-stage-menu-item"
-							onClick={(e) => {
-								e.stopPropagation();
-								setMenuOpen(false);
-								if (stage.value !== entry.value) onPickStage(stage.value);
-							}}>
-							<span className="doc-stage-menu-rank">{index + 1}</span>
-							{stage.label}
-							{stage.value === entry.value && <Icon name="check" size={12} stroke={3} className="doc-stage-menu-mark" />}
-						</button>
-					))}
-				</span>
-			)}
+		<span className="doc-stage-cell inline-grid items-center gap-x-label-inline">
+			{status}
+			<RowActions
+				label={`Change stage of ${docTitle}`}
+				items={items}
+				isRowControl={isRowControl}
+				onPick={(stage) => {
+					if (!isChanging) onPickStage(stage);
+				}}
+			/>
+			{note && <span className="doc-stage-note fs-meta text-dim">{note}</span>}
 		</span>
 	);
 }
@@ -3232,20 +2978,16 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 	}, [predecessorId]);
 
 	return (
-		<details
-			className="doc-version-history mt-3 pt-3"
-			style={{ borderTop: "1px solid rgb(var(--line))" }}
-		>
-			<summary className="group disclosure fs-meta font-mono uppercase tracking-wider">
+		<details className="doc-version-history">
+			<summary className="group disclosure fs-meta">
 				<window.UI.DisclosureChevron />
 				<span>Version history</span>
 			</summary>
-			<div className="mt-2 flex flex-col gap-2">
+			<div className="mt-label flex flex-col gap-list">
 				{/* 현재 revision — 강조(--ink) · acked 미적용. */}
 				<div className="doc-revision-current">
 					<span
-						className="fs-meta font-mono uppercase tracking-wider"
-						style={{ color: "rgb(var(--ink))" }}
+						className="fs-meta text-ink"
 					>
 						Current revision
 					</span>
@@ -3256,8 +2998,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 				)}
 				{predState.status === "error" && (
 					<div
-						className="fs-meta doc-inline-alert"
-						style={{ color: "rgb(var(--ink))" }}
+						className="fs-meta doc-inline-alert inline-flex items-center gap-label-inline text-ink"
 						role="alert"
 					>
 						<ToneGlyphCD tone="warn" />
@@ -3268,17 +3009,13 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 					</div>
 				)}
 				{predState.status === "ready" && predState.data && (
-					<div className="doc-revision-predecessor acked flex flex-col gap-1">
-						<div className="flex items-center gap-2 flex-wrap">
-							<span
-								className="fs-meta font-mono"
-								style={{ color: "rgb(var(--dim))" }}
-							>
+					<div className="doc-revision-predecessor acked flex flex-col gap-stack">
+						<div className="flex items-center gap-control flex-wrap">
+							<window.UI.MachineString className="fs-meta text-dim">
 								#{predState.data.id}
-							</span>
+							</window.UI.MachineString>
 							<span
-								className="fs-meta font-mono uppercase tracking-wider"
-								style={{ color: "rgb(var(--faint))" }}
+								className="fs-meta text-faint"
 							>
 								Previous
 							</span>
@@ -3294,14 +3031,12 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 							)}
 						</div>
 						<div
-							className="fs-body mt-1"
-							style={{ color: "rgb(var(--ink))", overflowWrap: "break-word" }}
+							className="fs-body mt-stack text-ink break-words"
 						>
 							{predState.data.title}
 						</div>
 						<div
-							className="fs-meta font-mono"
-							style={{ color: "rgb(var(--faint))" }}
+							className="fs-meta tabular-nums text-faint"
 						>
 							{formatDateTimeCD(predState.data.created_at)} ·{" "}
 							<window.UI.AgentName name={predState.data.author} />
@@ -3389,7 +3124,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 				}}
 			>
 				<div className="modal-head">
-					<div className="font-semibold text-[14px]">
+					<div className="font-semibold fs-title">
 						{`Edit #${seed?.id ?? ""}`}
 					</div>
 					<button
@@ -3403,22 +3138,22 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 				</div>
 				<div className="modal-body">
 					{seedFetchState.status === "loading" && (
-						<div className="doc-empty mb-3">Loading current body…</div>
+						<window.UI.LoadingPlaceholder label="the current body" className="mb-block" />
 					)}
 					{seedFetchState.status === "error" && (
 						<ErrorBannerCD
 							title="Couldn't load the current body"
 							detail={seedFetchState.error}
+							className="mb-block"
 						/>
 					)}
 					<div
-						className="grid gap-3"
+						className="grid gap-block"
 						style={{ gridTemplateColumns: "1fr 140px" }}
 					>
-						<label className="flex flex-col gap-1">
+						<label className="flex flex-col gap-label">
 							<span
-								className="fs-meta font-mono uppercase tracking-wider"
-								style={{ color: "rgb(var(--faint))" }}
+								className="field-label"
 							>
 								Title
 							</span>
@@ -3432,10 +3167,9 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 								aria-label="Document title"
 							/>
 						</label>
-						<label className="flex flex-col gap-1">
+						<label className="flex flex-col gap-label">
 							<span
-								className="fs-meta font-mono uppercase tracking-wider"
-								style={{ color: "rgb(var(--faint))" }}
+								className="field-label"
 							>
 								Author
 							</span>
@@ -3451,10 +3185,9 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 							/>
 						</label>
 					</div>
-					<label className="flex flex-col gap-1 mt-3">
+					<label className="flex flex-col gap-label mt-block">
 						<span
-							className="fs-meta font-mono uppercase tracking-wider"
-							style={{ color: "rgb(var(--faint))" }}
+							className="field-label"
 						>
 							HTML body
 						</span>
@@ -3490,7 +3223,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 	);
 }
 
-function ErrorBannerCD({ title, detail, onRetry }) {
+function ErrorBannerCD({ title, detail, onRetry, className }) {
 	const { AlertCard, Icon } = window.UI;
 	const retry = onRetry && (
 		<button type="button" className="btn sm" onClick={onRetry}>
@@ -3498,7 +3231,7 @@ function ErrorBannerCD({ title, detail, onRetry }) {
 			Retry
 		</button>
 	);
-	return <AlertCard tone="crit" surface="inset" className="m-4" title={title} body={detail} actions={retry || undefined} />;
+	return <AlertCard tone="crit" surface="inset" className={className} title={title} body={detail} actions={retry || undefined} />;
 }
 
 // asOf advances on successful list reads only · the region carries busy and failed → stamp never reads Fresh mid-read
@@ -3506,19 +3239,22 @@ function getFreshnessInputCD(asOf, listState) {
 	return { at: asOf, regions: [listState] };
 }
 
-// 필터마다 다른 빈 상태 문구 — "없음" 하나로 뭉치면 어떤 목록이 비었는지 알 수 없다.
-function emptyHeadlineCD(isSearchMode, docStatusFilter) {
-	if (isSearchMode) return "No documents match this search";
-	// 칩의 한국어 stage 단어만 옮기고 문장은 화면 나머지와 같은 영어 — 한 면 안에서 언어가 갈리지 않게.
-	const option = DOC_STATUS_OPTIONS_CD.find((o) => o.value === docStatusFilter);
-	if (option && option.value) return `No ${option.label} documents`;
-	return "No documents";
-}
-
-// S6 정직한 빈 상태 — 적용 중인 필터(검색어/상태/대상)를 명시 echo + 한 번에 초기화.
-//   · docStatus 기본값은 'open'(종료 문서를 숨기는 필터) · audience 기본값 'all' — 빈 값이 아닌 쪽만 active.
-//   · active 0건(빈 목록 자체) → reset 버튼 미노출 ("초기화할 필터 없음" 정직성).
-function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
+// spec §5 empty states — empty corpus → first use in every view, nothing to narrow · applied (isFilterAppliedCD) → no-results + echo + the bar's reset · entry view → a pointer to Show All while other stages hold documents
+//   docStatus is ignored while searching → never echoed as applied
+function DocEmptyStateCD({ isSearchMode, groupCounts, inlineFilterProps }) {
+	const { EmptyState } = window.UI;
+	if (groupCounts?.total === 0 || !isFilterAppliedCD(inlineFilterProps)) {
+		const hasDocuments = (groupCounts?.total ?? 0) > 0;
+		return (
+			<div role="status" aria-live="polite">
+				{hasDocuments ? (
+					<EmptyState message="No open documents" hint="Pick All in Show to list done documents too." />
+				) : (
+					<EmptyState message="No documents yet" hint="A report or plan appears here once an agent posts it." />
+				)}
+			</div>
+		);
+	}
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
 	const statusLabel = (
 		DOC_STATUS_OPTIONS_CD.find((o) => o.value === docStatusFilter) || {}
@@ -3530,36 +3266,10 @@ function DocEmptyStateCD({ isSearchMode, inlineFilterProps }) {
 	if (keyword && keyword.trim()) activeFilters.push(`“${keyword.trim()}”`);
 	if (docStatusFilter && !isSearchMode) activeFilters.push(`status: ${statusLabel}`);
 	if (audienceFilter !== "all") activeFilters.push(`audience: ${audienceLabel}`);
-	const hasActiveFilters = activeFilters.length > 0;
-
-	const resetFilters = () => {
-		inlineFilterProps.onKeywordChange("");
-		inlineFilterProps.onDocStatusChange("");
-		inlineFilterProps.onAudienceChange("all");
-	};
 
 	return (
-		<div className="doc-empty m-4" role="status" aria-live="polite">
-			<div>{emptyHeadlineCD(isSearchMode, docStatusFilter)}</div>
-			{hasActiveFilters && (
-				<div
-					className="fs-meta mt-2"
-					style={{ color: "rgb(var(--faint))" }}
-				>
-					Filters: {activeFilters.join(" · ")}
-				</div>
-			)}
-			{hasActiveFilters && (
-				<button
-					type="button"
-					className="btn ghost sm mt-3"
-					onClick={resetFilters}
-					style={{ minHeight: 32 }}
-					aria-label="Clear all filters"
-				>
-					Clear filters
-				</button>
-			)}
+		<div role="status" aria-live="polite">
+			<EmptyState kind="no-results" hint={activeFilters.length > 0 ? `Filters: ${activeFilters.join(" · ")}` : undefined} onReset={() => setDefaultFiltersCD(inlineFilterProps)} />
 		</div>
 	);
 }
@@ -3599,6 +3309,13 @@ function getCollapsedSearchRowsCD(hits) {
 		if (hit.id > chain.newest.id) chain.newest = hit;
 	}
 	return Array.from(chains.values(), ({ newest, count }) => ({ ...newest, revision_count: count - 1 }));
+}
+
+// `#clauded-docs?doc=<id>` deep link (Queue report cards) → that document opens in the viewer on mount
+function getHashDocIdCD() {
+	const match = /[?&]doc=(\d+)(?:&|$)/.exec(window.location?.hash ?? "");
+	const id = match === null ? 0 : Number(match[1]);
+	return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 function buildListUrlCD({ q, docStatus, offset = 0 }) {

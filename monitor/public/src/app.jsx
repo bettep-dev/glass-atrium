@@ -12,6 +12,7 @@ const NAV = [
 	{ id: "wiki", label: "Wiki", icon: "brain" },
 	{ id: "architecture", label: "System map", icon: "git" },
 	{ id: "clauded-docs", label: "Documents", icon: "file-text" },
+	{ id: "queue", label: "Queue", icon: "inbox" },
 ];
 
 // EDITMODE 마커 — host 프로토콜이 디스크 위 JSON 블록 재기록
@@ -32,6 +33,7 @@ const Screens = {
 	wiki: window.ScreenWiki,
 	architecture: window.ScreenArchitecture,
 	"clauded-docs": window.ScreenClaudedDocs,
+	queue: window.ScreenQueue,
 };
 
 const NAV_BADGE_POLL_MS = 60_000;
@@ -40,13 +42,36 @@ const MAIN_CONTENT_ID = "main-content";
 const META_TEXT_STYLE = { fontSize: "var(--fs-meta)" };
 // circuit-breaker source for the Agents nav numeral — same cheap one-row read as the Dashboard's
 const AGENT_SUMMARY_URL = "/api/agents/summary?days=7&order=runs&limit=1";
+// queue nav numeral — count-only route, no owner auth
+const QUEUE_COUNT_URL = "/api/queue/count";
+// one sign-in check at shell mount → the lock badge knows the state before the Queue screen opens; the check never renews the session
+const QUEUE_AUTH_PROBE_URL = "/api/queue/owner/session";
+
+// last page input → a route move rings only when a key caused it; a URL-bar or history move sends the page no input
+let lastInputKind = null;
+
+function trackInputKind() {
+	const onKeyDown = () => { lastInputKind = "keyboard"; };
+	const onPointerDown = () => { lastInputKind = "pointer"; };
+	// window-only blur (no capture): leaving for the URL bar or another app ends the page's input
+	const onWindowBlur = () => { lastInputKind = null; };
+	window.addEventListener("keydown", onKeyDown, true);
+	window.addEventListener("pointerdown", onPointerDown, true);
+	window.addEventListener("blur", onWindowBlur);
+	return () => {
+		window.removeEventListener("keydown", onKeyDown, true);
+		window.removeEventListener("pointerdown", onPointerDown, true);
+		window.removeEventListener("blur", onWindowBlur);
+	};
+}
 
 // page h1 → focus target (tabindex -1 = programmatic only, authored value kept); no h1 → the region
+// focusVisible from the input → Chromium otherwise rings a script focus the page got no pointer input before
 function focusRouteHeading(region) {
 	if (!region) return;
 	const target = region.querySelector("h1") || region;
 	if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
-	target.focus();
+	target.focus({ focusVisible: lastInputKind === "keyboard" });
 }
 
 // the hash is the route key → cancel the #main-content navigation, move focus instead
@@ -61,10 +86,9 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
-function Sidebar({ active, onNav, harness, agentsState, pageState }) {
+function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 	const { Icon } = window.UI;
-	const systems = systemsRollup(harness, pageState);
-	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState) };
+	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState), ...queueBadges };
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
 			<div className="shell-brand px-4 py-4 border-b border-line">
@@ -115,6 +139,7 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 									>
 										{/* neutral shell + numeral, tone on the glyph only · description = what AT hears instead of the bare numeral */}
 										{b.glyph && <span aria-hidden="true" className={`text-${b.badgeTone}`}>{`${b.glyph} `}</span>}
+										{b.icon && <Icon name={b.icon} size={12} />}
 										<span aria-hidden={b.description ? "true" : undefined}>{b.badge}</span>
 										{b.description && <span className="sr-only">{`, ${b.description}`}</span>}
 									</span>
@@ -124,20 +149,6 @@ function Sidebar({ active, onNav, harness, agentsState, pageState }) {
 					})}
 				</div>
 			</nav>
-			<div className="p-3 border-t border-line">
-				<div className="bg-sunken rounded-md p-3" style={META_TEXT_STYLE}>
-					<div className="flex items-center gap-1.5 mb-1">
-						{/* 라이브 롤업 파생 — ok 상태만 pulse(live-dot), 그 외 정적 (가짜 상시-green 제거). */}
-						<span className={`w-1.5 h-1.5 rounded-full ${systems.dotClass}${systems.tone === "ok" ? " live-dot" : ""}`}></span>
-						{systems.glyph && (
-							<span aria-hidden="true" className={`rail-hide font-mono text-${systems.tone}`}>
-								{systems.glyph}
-							</span>
-						)}
-						<span className="rail-hide font-mono text-dim">{systems.label}</span>
-					</div>
-				</div>
-			</div>
 		</aside>
 	);
 }
@@ -221,7 +232,7 @@ function harnessToNavBadges(harness) {
 
 /**
  * Agents nav slot = agents unsafe to route now (suspended + on a fail streak), the Agents screen's alarm set.
- * Own store, outside the harness fold → an unread summary never moves the footer or the System map numeral.
+ * Own store, outside the harness fold → an unread summary never moves the System map numeral.
  * Never read → no key · unavailable or zero → null: never a zero that was not loaded.
  */
 function agentsToNavBadges(agentsState) {
@@ -242,40 +253,6 @@ function agentsToNavBadges(agentsState) {
 	return { agents: { badge: String(unsafeCount), badgeTone, glyph, source: "breaker", title, description: title } };
 }
 
-// ALL SYSTEMS 풋터 도트 = 레인/타일과 같은 harness fold 파생. 폴링이 실패한 순간에도
-// 두 표면이 어긋나지 않는다 — 첫 폴 대기는 neutral 'CHECKING…', 읽기 실패는 'STATUS UNKNOWN'.
-// 도트 클래스는 StatusDot(ui.jsx) 어휘 재사용 (미등록 클래스 금지).
-// pageState = the page header stamp's read state (ui.jsx → getShellPageState): outranks only ALL SYSTEMS.
-function systemsRollup(harness, pageState = null) {
-	if (!harness || harness.status === "loading") return getNeutralRollup("CHECKING…");
-
-	const isReady = harness.status === "ready";
-	const downCount = isReady ? harness.downNames.length : 0;
-	// tone = worst alarm severity: a down part is the lane's crit harness alarm
-	if (downCount > 0) {
-		const label = `${downCount} ${downCount === 1 ? "PART" : "PARTS"} DOWN`;
-		return { tone: "crit", dotClass: "bg-crit", glyph: window.UI.TONE_GLYPH.crit, label };
-	}
-	const issues = isReady && (harness.daemonsDown > 0 || harness.failCount1h > 0);
-	if (issues) return { tone: "warn", dotClass: "bg-warn", glyph: window.UI.TONE_GLYPH.warn, label: "ISSUES DETECTED" };
-	// an unread source could hide a fault → unknown, never ALL SYSTEMS
-	if (!isReady || harness.unreadSources?.length > 0) return getNeutralRollup("STATUS UNKNOWN");
-	return getPageRollup(pageState) ?? { tone: "ok", dotClass: "bg-ok", label: "ALL SYSTEMS" };
-}
-
-// page read state in the stamp's own words, neutral tone — a read fact, not a harness verdict; fresh → null
-function getPageRollup(pageState) {
-	const { state, at } = pageState ?? {};
-	if (state === "loading") return getNeutralRollup("CHECKING…");
-	if (state === "not-read") return getNeutralRollup("NOT READ");
-	if (state === "stale" || state === "partial") return getNeutralRollup(`LAST KNOWN ${window.UI.formatKstTime(at)}`);
-	return null;
-}
-
-function getNeutralRollup(label) {
-	return { tone: "neutral", dotClass: "bg-faint", label };
-}
-
 function App() {
 	// tweaks → data-theme / --accent / data-density 동기화
 	const [tweaks, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
@@ -283,13 +260,15 @@ function App() {
 	const [active, setActive] = useS(parseHashScreen);
 
 	// harness 원본 스토어 — 셸이 한 cadence 로 읽고 fold 가 단일 상태로 접는다.
-	// 화면은 이 fold 만 받는다: 스크린이 같은 payload 를 다시 해석하면 풋터와 어긋난다.
+	// 화면은 이 fold 만 받는다: 스크린이 같은 payload 를 다시 해석하면 nav 숫자와 어긋난다.
 	const [kpiState, setKpiState] = useS(HARNESS_STORE_INITIAL);
 	const [liveState, setLiveState] = useS(HARNESS_STORE_INITIAL);
 	const [healthState, setHealthState] = useS(HARNESS_STORE_INITIAL);
 	const [hookState, setHookState] = useS(HARNESS_STORE_INITIAL);
 	const [hookFailState, setHookFailState] = useS(HARNESS_STORE_INITIAL);
 	const [agentsState, setAgentsState] = useS(HARNESS_STORE_INITIAL);
+	const [queueCountState, setQueueCountState] = useS(HARNESS_STORE_INITIAL);
+	const queueAuth = useQueueAuth();
 
 	// density 는 attribute 만 노출, CSS 매핑은 차후
 	useE(() => {
@@ -327,8 +306,8 @@ function App() {
 	const harnessReadRef = useR(null);
 	const pollHarness = useC(() => {
 		if (harnessReadRef.current) return harnessReadRef.current;
-		harnessReadRef.current = Promise.allSettled([readHarnessSources(), fetchJson(AGENT_SUMMARY_URL)])
-			.then(([harnessRead, agentsRead]) => {
+		harnessReadRef.current = Promise.allSettled([readHarnessSources(), fetchJson(AGENT_SUMMARY_URL), fetchJson(QUEUE_COUNT_URL)])
+			.then(([harnessRead, agentsRead, queueCountRead]) => {
 				if (!isHarnessMountedRef.current) return;
 				const settled = harnessRead.value; // readHarnessSources settles every source → never rejects
 				setKpiState((prev) => toStoreState(settled.kpiState, prev));
@@ -337,6 +316,7 @@ function App() {
 				setHookState((prev) => toStoreState(settled.hookState, prev));
 				setHookFailState((prev) => toStoreState(settled.hookFailState, prev));
 				setAgentsState((prev) => toStoreState(agentsRead, prev));
+				setQueueCountState((prev) => toStoreState(queueCountRead, prev));
 			})
 			.finally(() => {
 				harnessReadRef.current = null;
@@ -353,14 +333,15 @@ function App() {
 		};
 	}, [pollHarness]);
 
-	// page read state from the header stamp (ui.jsx → useShellPageState); the stamp clears it on unmount
-	const [pageState, setPageState] = useS(null);
+	// shared Refresh/Retry → the shell's coalesced harness read (ui.jsx → getHarnessRead)
 	useE(() => {
-		window.UI.setShellBridge({ putPageState: setPageState, readHarness: pollHarness });
+		window.UI.setShellBridge({ readHarness: pollHarness });
 		return () => window.UI.setShellBridge();
 	}, [pollHarness]);
 
 	const displayTimezone = useDisplayTimezone(healthState.data?.timezone);
+
+	useE(trackInputKind, []);
 
 	// route change → page heading focus (drill + sidebar + back/forward); first mount excluded
 	const focusedRoute = useR(active);
@@ -381,7 +362,7 @@ function App() {
 		}
 	};
 
-	// 풋터 · nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
+	// nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
 	const harness = getHarness({
 		kpiState,
 		liveState,
@@ -404,11 +385,12 @@ function App() {
 			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
 				Skip to content
 			</a>
-			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState} pageState={pageState} />
+			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState}
+				queueBadges={window.QueueNav?.getQueueNavBadge(queueCountState, queueAuth.state) ?? {}} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
+						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onQueueAuth={queueAuth.setState} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}
@@ -417,6 +399,24 @@ function App() {
 			<TweaksUI tweaks={tweaks} setTweak={setTweak} />
 		</div>
 	);
+}
+
+/**
+ * Owner sign-in state for the queue lock badge: one probe at mount, then every Queue screen answer.
+ * 'unknown' until the probe answers → no lock shown for a state not yet read.
+ */
+function useQueueAuth() {
+	const [state, setState] = useS("unknown");
+	useE(() => {
+		let isMounted = true;
+		fetch(QUEUE_AUTH_PROBE_URL, { headers: { Accept: "application/json" } })
+			.then(async (response) => ({ status: response.status, data: await response.json().catch(() => null) }))
+			.then((answer) => isMounted && setState((prev) => (prev === "unknown" ? window.QueueNav?.getAuthFromAnswerQ(answer) ?? prev : prev)))
+			// no answer → the state stays unknown, so no lock is claimed for a sign-in state never read
+			.catch(() => undefined);
+		return () => { isMounted = false; };
+	}, []);
+	return { state, setState };
 }
 
 /**

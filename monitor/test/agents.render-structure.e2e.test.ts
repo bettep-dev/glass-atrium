@@ -20,7 +20,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const AGENT_NAMES = ["dev-react", "dev-shell", "dev-db"];
 const TASK_TYPES = ["bug-fix", "feature", "refactor", "research", "plan", "review", "diagnosis", "doc", "cleanup"];
-const MATRIX_SELECTOR = '[aria-label^="Success rate per agent"]';
+const MATRIX_SELECTOR = "#agents-success-rates .tbl-wrap";
 // More lifecycle agents than the S slot holds → the no-record card has a remainder to roll up.
 const LIFECYCLE_AGENTS = ["dev-react", "dev-shell", "dev-db", "dev-node", "dev-python", "dev-front", "dev-swift", "dev-rag"];
 const PAIRED_CARD_IDS = ["agents-failing-pairs", "agents-lifecycle"];
@@ -30,7 +30,7 @@ const ROW_PX = 40;
 const META_FLOOR_PX = 13;
 
 const ROW_TABLES = [
-  { name: "ledger", selector: ".agent-table-minibars tr[data-roving-row]" },
+  { name: "ledger", selector: "#agents-summary tr[data-roving-row]" },
   { name: "lifecycle", selector: "#agents-lifecycle tr[data-roving-row]" },
 ];
 
@@ -180,6 +180,8 @@ async function getFocusedRingBox(page: Page) {
 async function openTaskTypeFold(page: Page): Promise<void> {
   const toggle = page.getByRole("button", { name: /By task type/ });
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  const fullMatrix = page.getByRole("button", { name: /Full matrix/ });
+  if ((await fullMatrix.getAttribute("aria-expanded")) !== "true") await fullMatrix.click();
   await page.waitForSelector(MATRIX_SELECTOR, { timeout: 30_000 });
 }
 
@@ -293,7 +295,7 @@ describe("agents screen at 1440px", () => {
     }
   });
 
-  test("the paired tables sit flush on the .tbl cell geometry and keep their own header and body face", async () => {
+  test("the paired tables sit flush on the .tbl cell geometry in the shared sans face", async () => {
     const cards = await ctx.page.evaluate((ids) => ids.map((id) => {
       const card = document.getElementById(id)!.querySelector(".card")!;
       const body = getComputedStyle(card.querySelector(".card-body")!);
@@ -318,38 +320,41 @@ describe("agents screen at 1440px", () => {
       assert.deepEqual(card.edge, ["16px", "16px"], `edge cells carry the card padding — ${label}`);
       assert.ok(card.rowHeights.length > 0 && card.rowHeights.every((h) => h >= ROW_PX), `no row below the 40 line — ${label}`);
       assert.deepEqual(card.lastAlign, ["right", "right"], `the numeric column stays right-aligned — ${label}`);
-      assert.equal(card.headFace[0], "uppercase", `header case kept — ${label}`);
+      assert.equal(card.headFace[0], "none", `header in sentence case — ${label}`);
       assert.doesNotMatch(card.headFace[1], /JetBrains Mono/, `header stays sans — ${label}`);
-      assert.match(card.bodyFont, /JetBrains Mono/, `body stays mono — ${label}`);
+      assert.doesNotMatch(card.bodyFont, /JetBrains Mono/, `body sets sans — ${label}`);
     }
     const lifecycle = cards.find((c) => c.id === "agents-lifecycle")!;
     assert.ok(lifecycle.rowHeights.every((h) => h === ROW_PX), `one-line rows sit on the 40 line — ${JSON.stringify(lifecycle.rowHeights)}`);
   });
 
-  test("the performance card's sort control rides its head: no band between the head and the ledger, centred on the title line", async () => {
+  test("the performance card sorts from its column heads: no select, no band between the head and the ledger, one head sorted", async () => {
     try {
       for (const width of [1440, 1024]) {
         await ctx.page.setViewportSize({ width, height: 900 });
         const geometry = await ctx.page.evaluate((id) => {
           const card = document.getElementById(id)!;
           const head = card.querySelector(".card-head")!;
-          const select = head.querySelector('select[aria-label="Agent sort order"]');
-          // midlines inline: tsx wraps a named const in a __name() helper the page lacks
-          const [selectBox, titleBox] = [select, head.querySelector(".card-title")!].map((el) => el?.getBoundingClientRect());
+          const headRow = card.querySelector("thead tr")!;
           return {
             selectsInCard: card.querySelectorAll("select").length,
-            hasHeadSelect: Boolean(select),
-            band: card.querySelector("thead")!.getBoundingClientRect().top - head.getBoundingClientRect().bottom,
-            centreGap: selectBox ? Math.abs(selectBox.top + selectBox.height / 2 - (titleBox!.top + titleBox!.height / 2)) : null,
+            sorted: [...headRow.querySelectorAll("th[aria-sort]")]
+              .filter((th) => th.getAttribute("aria-sort") !== "none")
+              .map((th) => `${th.getAttribute("aria-sort")}:${th.querySelector("button.tbl-sort")?.textContent?.trim()}`),
+            sortButtons: headRow.querySelectorAll("th[aria-sort] > button.tbl-sort").length,
+            band: headRow.getBoundingClientRect().top - head.getBoundingClientRect().bottom,
+            headRowHeight: headRow.getBoundingClientRect().height,
             headHeight: head.getBoundingClientRect().height,
             headMin: parseFloat(getComputedStyle(head).minHeight),
           };
         }, "agents-summary");
         const label = `${width}: ${JSON.stringify(geometry)}`;
-        assert.ok(geometry.hasHeadSelect, `the sort select is in the card head — ${label}`);
-        assert.equal(geometry.selectsInCard, 1, `no second sort control in the body — ${label}`);
+        assert.equal(geometry.selectsInCard, 0, `no separate sort select — ${label}`);
+        assert.equal(geometry.sortButtons, 5, `every sortable head holds its sort button — ${label}`);
+        assert.equal(geometry.sorted.length, 1, `exactly one head carries the order — ${label}`);
+        assert.match(geometry.sorted[0], /^descending:Failed or blocked/, `the ledger opens on breakages — ${label}`);
+        assert.equal(geometry.headRowHeight, ROW_PX, `the sortable header row sits on the 40 step — ${label}`);
         assert.ok(Math.abs(geometry.band) < 1, `the ledger header starts at the head's bottom edge — ${label}`);
-        assert.ok(geometry.centreGap! <= 1, `the select centres on the title line — ${label}`);
         assert.ok(Math.abs(geometry.headHeight - geometry.headMin) < 1, `the head stays one line at its floor — ${label}`);
       }
     } finally {
@@ -370,8 +375,111 @@ describe("agents screen at 1440px", () => {
 
   test("the task-type matrix shows every column without a sideways scroll", async () => {
     await openTaskTypeFold(ctx.page);
-    const overflow = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => el.scrollWidth - el.clientWidth);
+    const result = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => ({
+      mode: el.getAttribute("data-table-mode"),
+      overflow: (el.querySelector("table") as HTMLElement).getBoundingClientRect().width - el.clientWidth,
+    }));
 
-    assert.ok(overflow <= 1, `matrix overflows its card by ${overflow}px`);
+    assert.equal(result.mode, "wide", "the matrix keeps its sparkline columns at 1440");
+    assert.ok(result.overflow <= 1, `matrix overflows its card by ${result.overflow}px`);
   });
+
+  test("every block in the task-type fold starts on the card's one padding column", async () => {
+    await openTaskTypeFold(ctx.page);
+    const insets = await ctx.page.evaluate(() => {
+      const region = document.querySelector("#agents-success-rates") as HTMLElement;
+      const card = region.closest(".card") as HTMLElement;
+      const edge = card.getBoundingClientRect().left + card.clientLeft;
+      // [name, element, measure its content edge rather than its box edge]
+      const blocks: Array<[string, Element | null | undefined, boolean]> = [
+        ["fold head toggle", card.querySelector(":scope > :first-child button"), false],
+        ["first body block", region.querySelector('[aria-label="Off-target pairs per agent"]') ?? region.querySelector(".px-card-pad p"), false],
+        ["full matrix toggle", Array.from(region.querySelectorAll("button")).find((b) => /Full matrix/.test(b.textContent ?? "")), false],
+        ["matrix head cell", region.querySelector("thead th"), true],
+        ["matrix row cell", region.querySelector("tbody tr > :first-child"), true],
+      ];
+      const lefts = blocks.map(([name, el, isContent]) => [name, el
+        ? el.getBoundingClientRect().left - edge + (isContent ? parseFloat(getComputedStyle(el).paddingLeft) : 0)
+        : Number.NaN] as const);
+      return { pad: parseFloat(getComputedStyle(card).getPropertyValue("--card-pad")), lefts };
+    });
+
+    for (const [name, left] of insets.lefts) {
+      assert.ok(Math.abs(left - insets.pad) < 0.5, `${name} starts ${left}px in, not on the ${insets.pad}px card padding`);
+    }
+  });
+});
+
+// Page-scrolled ledgers: the head sticks to the nearest vertical scroller once the page scrolls into the body.
+const STICKY_TABLES = [
+  { name: "activity ledger", cardId: "agents-summary", isShowAll: false },
+  { name: "most-failing pairs after Show all", cardId: "agents-failing-pairs", isShowAll: true },
+  { name: "no completion record after Show all", cardId: "agents-lifecycle", isShowAll: true },
+  { name: "task-type full matrix", cardId: "agents-success-rates", isShowAll: false, isFold: true },
+];
+
+describe("agents screen at 1024px, task-type matrix", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext(1024);
+  });
+
+  after(() => closeRenderContext(ctx));
+
+  test("the full matrix stacks its rows instead of clipping a column past the fold", async () => {
+    await openTaskTypeFold(ctx.page);
+    const result = await ctx.page.locator(MATRIX_SELECTOR).evaluate((el) => ({
+      mode: el.getAttribute("data-table-mode"),
+      overflow: (el.querySelector("table") as HTMLElement).getBoundingClientRect().width - el.clientWidth,
+    }));
+
+    assert.equal(result.mode, "stacked");
+    assert.ok(result.overflow <= 1, `matrix overflows its fold by ${result.overflow}px`);
+  });
+});
+
+describe("agents screen at 1440px, sticky table heads", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext(1440);
+    // room below the last card → each ledger scrolls half a body past its head, whatever the folds below it hold
+    await ctx.page.evaluate(() => {
+      document.body.style.paddingBottom = "100vh";
+    });
+  });
+
+  after(() => closeRenderContext(ctx));
+
+  for (const row of STICKY_TABLES) {
+    test(`${row.name}: the column head sticks to the top of its scroller after a scroll into the body`, async () => {
+      if (row.isFold) await openTaskTypeFold(ctx.page);
+      if (row.isShowAll) await ctx.page.locator(`#${row.cardId} button`, { hasText: /^Show all/ }).click();
+      const result = await ctx.page.evaluate(({ cardId, rowPx }) => {
+        const head = document.querySelector(`#${cardId} thead th`) as HTMLElement;
+        const body = document.querySelector(`#${cardId} tbody`) as HTMLElement;
+        let scroller: HTMLElement | null = head.parentElement;
+        while (scroller && !(/(auto|scroll)/.test(getComputedStyle(scroller).overflowY) && scroller.scrollHeight > scroller.clientHeight)) scroller = scroller.parentElement;
+        const target = scroller ?? (document.scrollingElement as HTMLElement);
+        // a head the previous case left stuck reads its stuck top → measure its start from an unscrolled view
+        target.scrollTop = 0;
+        const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
+        // half the body under the head: far enough that an unstuck head leaves the view, near enough to stay in its table
+        const offsetPx = body.getBoundingClientRect().height / 2;
+        const headStartPx = head.getBoundingClientRect().top - viewTop + target.scrollTop;
+        const room = target.scrollHeight - target.clientHeight - headStartPx;
+        target.scrollTop = headStartPx + offsetPx;
+        // any scroll container between head and card binds the sticky head, overflowing or not → only the page may hold it
+        const card = document.getElementById(cardId) as HTMLElement;
+        let isPageScroller = true;
+        for (let el = head.parentElement; el && el !== card.parentElement; el = el.parentElement) if (/(auto|scroll|hidden)/.test(getComputedStyle(el).overflowY)) isPageScroller = false;
+        return { canScroll: room > offsetPx && offsetPx >= rowPx, offsetPx: head.getBoundingClientRect().top - viewTop, isPageScroller };
+      }, { cardId: row.cardId, rowPx: ROW_PX });
+
+      assert.equal(result.canScroll, true, `${row.name}: the scroller reaches half a body past the head's start`);
+      assert.equal(result.isPageScroller, true, `${row.name}: the head sticks to the page, not to a scroller inside its card`);
+      assert.ok(Math.abs(result.offsetPx) <= 1, `${row.name}: head ${result.offsetPx}px off the scroller top`);
+    });
+  }
 });

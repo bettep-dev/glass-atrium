@@ -27,7 +27,7 @@ const ATOMS = [
   { name: "a toggle button", id: "btn", markup: `<button type="button" class="btn" data-atom="btn" aria-pressed="false">Normal range</button>` },
   { name: "a small toggle button", id: "btn-sm", markup: `<button type="button" class="btn sm" data-atom="btn-sm" aria-pressed="false">Normal range</button>` },
   { name: "a segmented option", id: "seg",
-    markup: `<div class="seg" data-atom="seg-group"><button type="button" data-atom="seg" aria-pressed="false">30d</button><button type="button" aria-pressed="false">90d</button></div>` },
+    markup: `<div class="seg" data-atom="seg-group"><button type="button" data-atom="seg" aria-pressed="false">30d</button><button type="button" data-atom="seg-thumb" aria-pressed="true">90d</button></div>` },
   { name: "a filter chip", id: "pill",
     markup: `<button type="button" class="pill pill--interactive" data-atom="pill" aria-pressed="false">Open 17</button>` },
 ] as const;
@@ -197,12 +197,12 @@ describe("a control row is one 48 line: every item centred on it, 12 between ite
   });
 });
 
-// the edge each toggle rests on: a bordered atom's border, the .seg group's shadow ring
+// the edge each toggle draws: a bordered atom's resting border · a segmented group has no outer edge → its selected thumb's inset ring
 const RESTING_EDGES = [
   { name: "a toggle button's border", id: "btn", prop: "border-top-color" },
   { name: "a small toggle button's border", id: "btn-sm", prop: "border-top-color" },
   { name: "a filter chip's border", id: "pill", prop: "border-top-color" },
-  { name: "a segmented group's ring", id: "seg-group", prop: "box-shadow" },
+  { name: "a selected segment's thumb ring", id: "seg-thumb", prop: "box-shadow" },
 ] as const;
 const THEMES = ["light", "dark"] as const;
 const UI_CONTRAST = 3;

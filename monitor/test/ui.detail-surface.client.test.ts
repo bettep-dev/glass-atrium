@@ -131,8 +131,7 @@ describe("DetailSurface focus containment", () => {
   const panel = { name: "panel", contains: (node: unknown) => node === panel || focusables.includes(node as typeof first) };
 
   const rows = [
-    { name: "opening moves focus to the first control", args: { focusables, active: null, shiftKey: false }, expected: first },
-    { name: "opening a surface with no control focuses the panel itself", args: { focusables: [], active: null, shiftKey: false }, expected: panel },
+    { name: "Tab with nothing focused enters at the first control", args: { focusables, active: null, shiftKey: false }, expected: first },
     { name: "Tab in an empty panel keeps focus on the panel", args: { focusables: [], active: panel, shiftKey: false }, expected: panel },
     { name: "Tab from outside the panel pulls focus to the first control", args: { focusables, active: outside, shiftKey: false }, expected: first },
     { name: "Shift+Tab from outside the panel pulls focus to the last control", args: { focusables, active: outside, shiftKey: true }, expected: last },
@@ -218,7 +217,7 @@ describe("DetailSurface dismissal", async () => {
   const doc = createFakeDocument();
   const live = await loadScreenModule(UI_SRC, { React: effects.react, document: doc });
 
-  function mountSurface(onClose: () => void) {
+  function mountSurface(onClose: () => void, controls: unknown[] = []) {
     const trigger = { name: "trigger", focus: () => undefined as void };
     const list = createNode("list");
     const overlay = createNode("overlay");
@@ -226,8 +225,8 @@ describe("DetailSurface dismissal", async () => {
     createNode("body", [sidebar, createNode("main", [list, overlay])]);
     const panel = {
       name: "panel",
-      querySelectorAll: () => [],
-      contains: (node: unknown) => node === panel,
+      querySelectorAll: () => controls,
+      contains: (node: unknown) => node === panel || controls.includes(node),
       focus: () => { doc.activeElement = panel; },
     };
     doc.reset();
@@ -238,6 +237,15 @@ describe("DetailSurface dismissal", async () => {
     );
     return { ...mounted, trigger, background: [list, sidebar] };
   }
+
+  test("opening focuses the panel itself, never its first control, so Tab enters at that control", () => {
+    const close = { name: "close", focus: () => { doc.activeElement = close; } };
+    const surface = mountSurface(() => undefined, [close]);
+    const focused = doc.activeElement;
+    surface.unmount();
+
+    assert.equal((focused as { name?: string } | null)?.name, "panel");
+  });
 
   test("Esc on the topmost surface closes it", () => {
     let closes = 0;

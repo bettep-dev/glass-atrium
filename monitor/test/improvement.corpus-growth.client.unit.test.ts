@@ -151,21 +151,34 @@ function isElement(value: unknown): value is RecordedElement {
   return typeof value === "object" && value !== null && "props" in value && "type" in value;
 }
 
-// Flattening walk over every prop value; renders view-local components, never the shared UI atoms or the glyph.
+// a wide view for the rows a card hands its Table as a render prop
+const WIDE_VIEW = { isStacked: false, columnCount: 0 };
+
+// Flattening walk over every prop value, the plain data objects a stat row takes included;
+// renders view-local components, never the shared UI atoms or the glyph.
 function viewTree(node: unknown, out: RecordedElement[] = []): RecordedElement[] {
   if (Array.isArray(node)) {
     for (const child of node) viewTree(child, out);
     return out;
   }
-  if (!isElement(node)) return out;
+  if (!isElement(node)) {
+    if (typeof node === "object" && node !== null) for (const value of Object.values(node)) viewTree(value, out);
+    return out;
+  }
   out.push(node);
   const isViewLocal =
     typeof node.type === "function" &&
     node.type !== GlyphMarker &&
     !Object.values(helpers.window.UI).includes(node.type);
   if (isViewLocal) return viewTree((node.type as Component)(node.props), out);
-  for (const value of Object.values(node.props)) viewTree(value, out);
+  for (const [key, value] of Object.entries(node.props)) viewTree(getRenderedProp(node, key, value), out);
   return out;
+}
+
+// only a Table's children / foot render props are called — any other function prop (a handler) is never fired
+function getRenderedProp(node: RecordedElement, key: string, value: unknown): unknown {
+  const isTableRenderProp = node.type === helpers.window.UI.Table && (key === "children" || key === "foot") && typeof value === "function";
+  return isTableRenderProp ? (value as (view: unknown) => unknown)(WIDE_VIEW) : value;
 }
 
 const READY = { status: "ready" };

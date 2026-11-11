@@ -95,17 +95,18 @@ describe("PageVerdict", () => {
     assert.equal(attributes.get("tabindex"), "-1");
   });
 
-  test("a chip handoff scrolls only as far as needed and rings the card until it loses focus", () => {
+  // the ring follows :focus-visible alone → a mouse-driven handoff draws none, a keyboard one does (ui.shared-states.e2e)
+  test("a chip handoff scrolls only as far as needed and focuses the card without forcing a ring", () => {
     const attributes = new Map<string, string>();
-    const blurListeners: Array<() => void> = [];
     let scrollOptions: unknown = null;
+    let isFocused = false;
     const card = {
       hasAttribute: (name: string) => attributes.has(name),
       setAttribute: (name: string, value: string) => { attributes.set(name, value); },
       removeAttribute: (name: string) => { attributes.delete(name); },
-      addEventListener: (type: string, listener: () => void) => { if (type === "blur") blurListeners.push(listener); },
+      addEventListener: () => undefined,
       scrollIntoView: (options: unknown) => { scrollOptions = options; },
-      focus: () => undefined,
+      focus: () => { isFocused = true; },
     };
     doc.reset();
     doc.elements.set("cost-burn", card);
@@ -113,9 +114,8 @@ describe("PageVerdict", () => {
     (findNodes(tree, (n: RenderedNode) => n.type === "button")[0].props.onClick as () => void)();
 
     assert.equal((scrollOptions as { block?: string } | null)?.block, "nearest", "a card already in view does not jump");
-    assert.ok(attributes.has("data-focus-handoff"), "the handoff marker draws the ring a mouse-driven focus would miss");
-    blurListeners.forEach((listener) => listener());
-    assert.ok(!attributes.has("data-focus-handoff"), "the ring leaves with focus");
+    assert.ok(isFocused, "the card takes focus");
+    assert.deepEqual([...attributes.keys()], ["tabindex"], "only tabindex is set, no marker forces a ring");
   });
 });
 
@@ -173,7 +173,7 @@ describe("freshness-driven verdict", () => {
     });
   }
 
-  test("stale or partial data never raises an all-clear and never hides an alarm, and the stamp agrees on state and busy", () => {
+  test("stale or partial data never raises an all-clear and never hides an alarm, and the stamp agrees on state, visibility and busy", () => {
     for (const row of rows) {
       for (const tone of ["ok", "warn", "crit"]) {
         const input = { ...row.input, now: NOW, staleAfterMs: STALE_MS };
@@ -184,7 +184,9 @@ describe("freshness-driven verdict", () => {
         const isRead = stampState !== "loading" && stampState !== "not-read";
 
         assert.equal(verdict.state, stampState, `${row.name}/${tone}: one state`);
-        assert.equal(stampRoot.props["aria-busy"] === "true", verdict.isBusy, `${row.name}/${tone}: busy agrees`);
+        // a fresh settled read hides the stamp → the stamp shows exactly the reads the verdict annotates
+        assert.equal(stampRoot !== undefined, verdict.note !== null, `${row.name}/${tone}: stamp shown exactly when the verdict carries a note`);
+        assert.equal(stampRoot?.props["aria-busy"] === "true", stampRoot !== undefined && verdict.isBusy, `${row.name}/${tone}: busy agrees`);
         if (verdict.tone === "ok") assert.ok(stampState === "fresh" || stampState === "refreshing", `${row.name}: ok only over a fresh read`);
         if (tone !== "ok" && isRead) assert.equal(verdict.tone, tone, `${row.name}/${tone}: alarm kept`);
       }

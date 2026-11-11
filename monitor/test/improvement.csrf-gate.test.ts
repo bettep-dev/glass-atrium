@@ -1,6 +1,6 @@
 // Integration tests for the mutation request guards (request-guards.ts).
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/improvement.csrf-gate.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.csrf-gate.test.ts
 //
 // Coverage:
 //   - gate leg · sec-fetch-site decision rows (same-origin / none / cross-site / same-site)
@@ -8,26 +8,32 @@
 //   - gate leg · header-absence pass-through (curl + agent paths) and GET exemption
 //   - parser leg · text/plain with a body → 415 (the one row a gate 403 cannot mask)
 //   - body-limit leg · over-limit JSON → 413
-//   - production attachment · main.ts calls registerRequestGuards before registerRoutes
+//   - production assembly · guards ahead of the routes (queue owner route: text/plain → 415) and attached (cross-site → 403)
 //
 // Test infra:
-//   - No DB: the guards are route-agnostic, so two echo routes stand in for the 17 real
-//     mutation routes and keep the assertions about the guards alone.
+//   - Stripped-app rows need no DB: the guards are route-agnostic, so two echo routes stand in for
+//     the real mutation routes and keep the assertions about the guards alone.
+//   - Assembly rows run the real buildApp with a mktemp secrets dir; their fire-and-forget audit
+//     rows land in the test DB, so the file needs the test DB, and after() scrubs only this file's rows.
 //   - App: stripped Fastify + registerRequestGuards() attached exactly as buildApp does,
 //     then app.inject() — no port binding.
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { randomBytes, randomInt, scryptSync } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import "dotenv/config";
 
 import Fastify, { type FastifyInstance } from "fastify";
 
+import { buildApp } from "../src/server/app.js";
+import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { BODY_LIMIT_BYTES, registerRequestGuards } from "../src/server/request-guards.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const MAIN_SRC = resolve(__dirname, "../src/server/main.ts");
 
 const EVIL_ORIGIN = "https://evil.example";
 const LOOPBACK_ORIGIN = "http://127.0.0.1:16145";
@@ -183,21 +189,93 @@ test("bodyLimit: JSON body over the stated limit → 413", async () => {
   assert.strictEqual(status, 413);
 });
 
-// main.ts self-executes main() on import, so no test can import it and exercise buildApp —
-// which leaves the single production attachment of the guards covered by nothing. Every test
-// above would stay green with that one line deleted while all 17 mutation routes went
-// unguarded. Anchor it on the source text instead (same shape as ui.review-flag-reasons.unit).
-// Order is asserted too, not just presence: the body-limit leg rides an onRoute hook, which
-// only sees routes registered after it.
-test("attachment: main.ts registers the guards before the routes", () => {
-  const src = readFileSync(MAIN_SRC, "utf8");
-  const guardsAt = src.search(/registerRequestGuards\(\s*app\s*\)/);
-  const routesAt = src.search(/registerRoutes\(\s*app\s*\)/);
+// Production assembly: the real buildApp, aimed at a queue owner mutation route inside the first
+// encapsulated plugin. A child plugin copies its parent's content-type parsers when it loads, so the
+// text/plain row fails if the guards ever move after registerRoutes; the cross-site row fails if the
+// guards are missing from the assembly.
+// An item id no sequence reaches → its audit rows are this file's alone; both rows stop before the handler
+const ASSEMBLY_ITEM_ID = Number.MAX_SAFE_INTEGER - randomInt(1_000_000_000);
+const ASSEMBLY = {
+  HOST: "127.0.0.1:16145",
+  PASSPHRASE: "csrf-gate assembly passphrase",
+  ANSWER_URL: `/api/queue/owner/items/${ASSEMBLY_ITEM_ID}/answer`,
+  AUDITED_ANSWERS: 2,
+} as const;
+let auditBaselineId = 0n;
 
-  assert.notStrictEqual(guardsAt, -1, "main.ts must call registerRequestGuards(app)");
-  assert.notStrictEqual(routesAt, -1, "main.ts must call registerRoutes(app)");
-  assert.ok(
-    guardsAt < routesAt,
-    `registerRequestGuards(app) must precede registerRoutes(app) (got ${guardsAt} vs ${routesAt})`,
-  );
+before(async () => {
+  const [row] = await getPrisma().$queryRaw<{ maxId: bigint | null }[]>`SELECT MAX(id) AS "maxId" FROM monitor.audit_log`;
+  auditBaselineId = row?.maxId ?? 0n;
 });
+
+async function withOwnerAssembly(run: (assembly: FastifyInstance, cookie: string) => Promise<void>): Promise<void> {
+  const secretsDir = mkdtempSync(path.join(tmpdir(), "csrf-assembly-"));
+  const salt = randomBytes(16);
+  const hash = scryptSync(ASSEMBLY.PASSPHRASE, salt, 32, { N: 16_384, r: 8, p: 1 });
+  const record = { algorithm: "scrypt", N: 16_384, r: 8, p: 1, keyLength: 32, salt: salt.toString("base64"), hash: hash.toString("base64") };
+  writeFileSync(path.join(secretsDir, "owner-passphrase.json"), JSON.stringify(record), { mode: 0o600 });
+  const assembly = await buildApp({ secretsDir });
+  try {
+    const login = await assembly.inject({
+      method: "POST",
+      url: "/api/queue/owner/login",
+      headers: { host: ASSEMBLY.HOST },
+      payload: { passphrase: ASSEMBLY.PASSPHRASE },
+    });
+    const cookie = login.cookies.find((entry) => entry.name === "atrium_queue_owner");
+    assert.ok(cookie !== undefined, `owner login through the assembly failed: ${login.statusCode} ${login.body}`);
+    await run(assembly, `atrium_queue_owner=${cookie.value}`);
+  } finally {
+    await assembly.close();
+    deleteDirectory(secretsDir);
+  }
+}
+
+test("assembly: text/plain with a body to a queue owner route, with a valid owner session → 415", async () => {
+  await withOwnerAssembly(async (assembly, cookie) => {
+    const res = await assembly.inject({
+      method: "POST",
+      url: ASSEMBLY.ANSWER_URL,
+      headers: { host: ASSEMBLY.HOST, cookie, "content-type": "text/plain" },
+      payload: '{"code":"R1"}',
+    });
+    assert.strictEqual(res.statusCode, 415, res.body);
+  });
+});
+
+test("assembly: a cross-site mutation to a queue owner route is refused with 403 before its handler", async () => {
+  await withOwnerAssembly(async (assembly, cookie) => {
+    const res = await assembly.inject({
+      method: "POST",
+      url: ASSEMBLY.ANSWER_URL,
+      headers: { host: ASSEMBLY.HOST, cookie, "content-type": "application/json", "sec-fetch-site": "cross-site", origin: EVIL_ORIGIN },
+      payload: { code: "R1" },
+    });
+    assert.strictEqual(res.statusCode, 403, res.body);
+  });
+});
+
+// Login rows carry no field naming their writer → bounded to rows written since this file began (no test counts them)
+after(async () => {
+  try {
+    await waitForAnswerAuditRows();
+    await getPrisma().$executeRaw`
+      DELETE FROM monitor.audit_log
+      WHERE actor = 'monitor-web' AND id > ${auditBaselineId}
+        AND ((target_table = 'queue-item' AND target_id = ${ASSEMBLY_ITEM_ID}) OR action_kind = 'queue-owner.login')
+    `;
+  } finally {
+    await disconnectPrisma();
+  }
+});
+
+// The audit INSERT is fire-and-forget → let this file's rows land before the scrub reads them
+async function waitForAnswerAuditRows(): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const [row] = await getPrisma().$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*)::bigint AS count FROM monitor.audit_log
+      WHERE target_table = 'queue-item' AND target_id = ${ASSEMBLY_ITEM_ID} AND id > ${auditBaselineId}`;
+    if (Number(row?.count ?? 0n) >= ASSEMBLY.AUDITED_ANSWERS) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}

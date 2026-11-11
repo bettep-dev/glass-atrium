@@ -1,26 +1,22 @@
 // Fastify server entry — single-origin localhost; bind 127.0.0.1 ONLY (never 0.0.0.0 / ::).
-// Static public/ at /, API at /api/*; graceful shutdown SIGINT/SIGTERM -> app.close() + prisma.$disconnect().
+// Static public/ at /, API at /api/*; graceful shutdown SIGINT/SIGTERM -> queue scheduler + receipt listener stop, app.close() + prisma.$disconnect().
 
 import "dotenv/config";
 
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import type { FastifyInstance } from "fastify";
 
-import Fastify, { type FastifyInstance } from "fastify";
-import fastifyStatic from "@fastify/static";
-
+import { buildApp } from "./app.js";
 import { logger } from "./logger.js";
 import { assertSessionTimezoneIsUtc, disconnectPrisma, getPrisma } from "./db.js";
-import { registerRoutes } from "./routes/index.js";
-import { probeBrowserLaunch, registerBrowserShutdownHook } from "./clauded-docs/browser-pool.js";
-import { registerAuditLogHook } from "./middleware/audit-log.js";
+import { probeBrowserLaunch } from "./clauded-docs/browser-pool.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 import { isLoopbackHost } from "./host-guard.js";
-import { registerRequestGuards } from "./request-guards.js";
+import { getMonitorPort } from "./monitor-port.js";
+import { type ReceiptListener, startReceiptListener } from "./queue/receipt-listener.js";
+import { type QueueScheduler, getSweepDeps, startQueueScheduler } from "./queue/scheduler.js";
 
-// Port SoT = config.toml [ports].monitor → 배포 시 ATRIUM_MONITOR_PORT 렌더(render-monitor-env.sh); 미설정 → 16145 default, PORT = generic fallback
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT ?? 16145);
+const PORT = getMonitorPort();
 // Reject a non-bindable port loudly — never silently bind a wrong port.
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   logger.error(
@@ -38,30 +34,8 @@ if (!isLoopbackHost(HOST)) {
   );
   process.exit(1);
 }
-const HERE = dirname(fileURLToPath(import.meta.url));
-const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
-
-async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ loggerInstance: logger, disableRequestLogging: false });
-
-  registerRequestGuards(app);
-
-  await app.register(fastifyStatic, {
-    root: PUBLIC_ROOT,
-    prefix: "/",
-    index: ["index.html"],
-  });
-
-  await registerRoutes(app);
-
-  // audit-trail hook — mutating write 를 monitor.audit_log 에 fire-and-forget 기록(mutation 미차단)
-  registerAuditLogHook(app);
-
-  // onClose 에서 chromium 종료 → SIGTERM 시 zombie chromium 미잔류
-  registerBrowserShutdownHook(app);
-
-  return app;
-}
+let queueScheduler: QueueScheduler | null = null;
+let receiptListener: ReceiptListener | null = null;
 
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
@@ -79,6 +53,8 @@ function attachShutdown(app: FastifyInstance): void {
 
 async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<void> {
   try {
+    await queueScheduler?.stop();
+    await receiptListener?.stop();
     await app.close();
     await disconnectPrisma();
     app.log.info({ signal }, "graceful shutdown complete");
@@ -119,6 +95,10 @@ async function main(): Promise<void> {
   // DB gate + pre-warm 통과 후에만 포트 bind — DB unavailable 은 여기 도달 전 exit
   await app.listen({ host: HOST, port: PORT });
   app.log.info(`listening on http://${HOST}:${PORT}`);
+
+  // after listen → a DB gate failure above exits before any sweep runs; the drift scan runs inside the sweep, off the boot path
+  receiptListener = await startReceiptListener();
+  queueScheduler = startQueueScheduler(getSweepDeps(receiptListener?.replyAddress ?? null));
 
   // boot-stage chromium launch probe — playwright 업그레이드 후 브라우저 바이너리 드리프트를 부팅 시점에 loud 표면화 (/api/health browser 필드 + health 카드).
   await probeStartupBrowser(app);

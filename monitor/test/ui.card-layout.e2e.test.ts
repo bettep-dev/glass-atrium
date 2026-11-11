@@ -266,13 +266,19 @@ describe("card anatomy at real viewports", () => {
     assert.ok(Math.abs(body.left - card.left - 1 - CARD.PAD_PX) < 1, `inset ${body.left - card.left}px`);
   });
 
-  test("a light card rests on its border alone; a dark card keeps its depth", async () => {
-    const shadowOf = () => anatomy.$eval("#head-card", (el) => getComputedStyle(el).boxShadow);
-    assert.equal(await shadowOf(), "none");
-    await anatomy.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-    const dark = await shadowOf();
-    await anatomy.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
-    assert.notEqual(dark, "none");
+  test("a card rests on one hairline in both themes, with no shadow or inset highlight", async () => {
+    const readEdge = () => anatomy.$eval("#head-card", (el) => {
+      const style = getComputedStyle(el);
+      return { shadow: style.boxShadow, width: style.borderTopWidth };
+    });
+    for (const theme of ["light", "dark"]) {
+      await anatomy.evaluate((next) => document.documentElement.setAttribute("data-theme", next), theme);
+      try {
+        assert.deepEqual(await readEdge(), { shadow: "none", width: "1px" }, theme);
+      } finally {
+        await anatomy.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+      }
+    }
   });
 
   test("a stretched row grows with its content instead of scrolling inside a card", async () => {
@@ -289,5 +295,77 @@ describe("card anatomy at real viewports", () => {
   test("table rows are one 40px line", async () => {
     const heights = await anatomy.$$eval("#rows tr", (rows) => rows.map((r) => r.getBoundingClientRect().height));
     for (const height of heights) assert.ok(Math.abs(height - ROW_H_PX) < 1, `row ${height}px`);
+  });
+});
+
+const stickyRows = Array.from({ length: 60 }, (_, i) => `<tr><td>claude-model-${i}</td><td>${1000 + i}</td></tr>`).join("");
+const FLEX_COLUMN_PX = 200;
+const GRID_ROW_PX = 600;
+// a page-scrolled size-M card (cost by model) · a short card with an open head popover · a fixed-height card its body overflows · a card in a fixed-height flex column · a card on a 1fr track
+const CLIP_PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h2, p { margin: 0; }
+  #sticky-card th { position: sticky; top: 0; background: rgb(var(--elev)); }</style></head><body style="margin: 0;">
+  <div style="padding: 24px;">
+    <div class="card card--m" id="sticky-card"><div class="card-body"><table class="tbl"><thead><tr><th>Model</th><th>Runs</th></tr></thead><tbody>${stickyRows}</tbody></table></div></div>
+    <div class="card" id="popover-card" style="width: 300px; margin-top: 24px;">
+      <div class="card-head"><div class="card-head-text"><h2 class="card-title">Spend</h2></div>
+        <div style="position: relative; margin-left: auto;"><button class="btn ghost sm">i</button><div class="popover-panel"><div style="height: 200px;">how this is counted</div></div></div>
+      </div>
+      <div class="card-body">short</div>
+    </div>
+    <div style="height: 400px;"></div>
+    <div class="card card--m" id="overflow-card" style="height: 100px;"><div class="card-body">${tallBody(400)}</div></div>
+    <div style="display: flex; flex-direction: column; height: ${FLEX_COLUMN_PX}px; width: 400px;"><div class="card" id="flex-card"><div class="card-body">${tallBody(2000)}</div></div></div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; width: ${GRID_ROW_PX}px;"><div class="card" id="grid-card"><div class="card-body"><div style="width: 2000px;">wide</div></div></div><div class="card">b</div></div>
+    <div style="height: 2000px;"></div>
+  </div>
+</body></html>`;
+
+describe("a card clips its content without becoming a scroll container", () => {
+  let clip: Page;
+
+  before(async () => {
+    clip = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await clip.setContent(CLIP_PAGE);
+    await clip.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await clip.addStyleTag({ path: resolve(STYLES, "base.css") });
+  });
+
+  test("an overflowing card cannot be scrolled", async () => {
+    const scrollTop = await clip.$eval("#overflow-card", (card) => {
+      card.scrollTop = 40;
+      return card.scrollTop;
+    });
+    assert.equal(scrollTop, 0);
+  });
+
+  test("a size-M card's sticky table head sticks to the viewport after a page scroll", async () => {
+    const headTop = await clip.$eval("#sticky-card", (card) => {
+      window.scrollTo(0, card.getBoundingClientRect().top + window.scrollY + 300);
+      return card.querySelector("th")!.getBoundingClientRect().top;
+    });
+    await clip.evaluate(() => window.scrollTo(0, 0));
+    assert.ok(Math.abs(headTop) < 1, `head top ${headTop}px`);
+  });
+
+  test("an open popover still shows past a short card's bottom edge", async () => {
+    const isPanelHit = await clip.$eval("#popover-card", (card) => {
+      card.scrollIntoView({ block: "start" });
+      const panel = card.querySelector(".popover-panel")!.getBoundingClientRect();
+      const { bottom } = card.getBoundingClientRect();
+      const hit = document.elementFromPoint(panel.left + panel.width / 2, (bottom + panel.bottom) / 2);
+      return panel.bottom > bottom && Boolean(hit?.closest(".popover-panel"));
+    });
+    await clip.evaluate(() => window.scrollTo(0, 0));
+    assert.ok(isPanelHit);
+  });
+
+  test("a card in a fixed-height flex column keeps the column's height", async () => {
+    const { height } = await clip.$eval("#flex-card", (card) => card.getBoundingClientRect().toJSON() as DOMRect);
+    assert.ok(height <= FLEX_COLUMN_PX + 1, `card ${height}px in a ${FLEX_COLUMN_PX}px column`);
+  });
+
+  test("a card on a 1fr track keeps its share of the row against wide content", async () => {
+    const { width } = await clip.$eval("#grid-card", (card) => card.getBoundingClientRect().toJSON() as DOMRect);
+    assert.ok(width <= GRID_ROW_PX / 2 + 1, `card ${width}px on a ${GRID_ROW_PX / 2}px track`);
   });
 });

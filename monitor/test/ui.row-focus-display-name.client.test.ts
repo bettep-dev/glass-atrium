@@ -245,13 +245,13 @@ describe("empty fields are hidden", () => {
     assert.ok(text.includes("File path") && text.includes("hooks/a.sh"), text);
   });
 
-  test("a detail field label sits on the meta type step, never below the meta floor", () => {
-    const tree = rendered("DetailField", { label: "File path", value: "hooks/a.sh" });
-    const [label] = findNodes(tree, (n) => n.type === "div" && collectText(n) === "File path");
-    assert.ok(label, "the label renders");
-    const classes = String(label.props.className).split(/\s+/);
-    assert.ok(classes.includes("fs-meta"), String(label.props.className));
-    assert.ok(!classes.includes("fs-micro"), String(label.props.className));
+  test("a detail field is a description list pairing its label term with its value", () => {
+    const tree = rendered("DetailField", { label: "File path", value: "hooks/a.sh", mono: true });
+    const [list] = findNodes(tree, (n) => n.type === "dl");
+    assert.ok(list, "a dl renders");
+    const terms = findNodes(list, (n) => n.type === "dt").map(collectText);
+    const values = findNodes(list, (n) => n.type === "dd").map(collectText);
+    assert.deepEqual({ terms, values }, { terms: ["File path"], values: ["hooks/a.sh"] });
   });
 
   test("a detail field with a placeholder value renders nothing", () => {

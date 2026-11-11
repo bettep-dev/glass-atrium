@@ -298,7 +298,7 @@ async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
   return page;
 }
 
-// The 13px meta floor covers every rendered text node: the page, the shell's nav rail and footer,
+// The 13px meta floor covers every rendered text node: the page, the shell's nav rail,
 // and the Tweaks panel the shell mounts in edit mode.
 describe("Type floor on the Dashboard page, shell and Tweaks panel included", () => {
   for (const viewport of [{ width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
@@ -315,10 +315,11 @@ describe("Type floor on the Dashboard page, shell and Tweaks panel included", ()
     const sizes = await page.evaluate(() => {
       const control = getComputedStyle(document.documentElement).getPropertyValue("--fs-control").trim();
       const labels = Array.from(document.querySelectorAll(".nav-item .rail-hide")).map((el) => getComputedStyle(el).fontSize);
-      return { control, labels };
+      return { control, labels, itemCount: document.querySelectorAll(".nav-item").length };
     });
     await page.close();
-    assert.equal(sizes.labels.length, 9, "one label per nav item");
+    assert.ok(sizes.itemCount > 0, "the nav rendered its items");
+    assert.equal(sizes.labels.length, sizes.itemCount, "one label per nav item");
     for (const size of sizes.labels) assert.equal(size, sizes.control, `a nav label draws at ${size}, not ${sizes.control}`);
   });
 });

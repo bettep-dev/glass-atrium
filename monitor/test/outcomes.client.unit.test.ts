@@ -63,11 +63,6 @@ interface OutcomesHelpers {
   getDetailValueLabelO: (axis: string, value: unknown) => string;
   splitLessonO: (markdown: string) => { lesson: string; body: string };
   formatToolUseO: (value: string) => string;
-  buildFilterChipsO: (
-    options: Array<{ value: string; label: string }>,
-    value: string,
-  ) => Array<{ key: string; label: string; isPressed: boolean }>;
-  getFilterChipValueO: (key: string) => string;
   getLedgerRowStartsO: (sections: Array<{ rows: unknown[] }>) => number[];
   getBandTileGlyphO: (tone: string) => string | null;
   getGraderTileKeysO: (breakdown: Record<string, unknown>) => string[];
@@ -552,27 +547,6 @@ describe("putSearchFailureO: only a sustained first-load failure reads as an out
   });
 });
 
-describe("buildFilterChipsO: the shared chip toolbar selects the same filter value the option carries", () => {
-  const options = [
-    { value: "", label: "All" },
-    { value: "done", label: "Done" },
-    { value: "fail", label: "Failed" },
-  ];
-
-  test("every chip's key maps back to its option's value, so a toggle sets exactly that filter", () => {
-    const chips = sameRealm(outcomes.buildFilterChipsO(options, ""));
-    assert.deepEqual(chips.map((chip) => outcomes.getFilterChipValueO(chip.key)), options.map((opt) => opt.value));
-    assert.equal(new Set(chips.map((chip) => chip.key)).size, options.length);
-  });
-
-  test("exactly the chip holding the current value is pressed, for every value", () => {
-    for (const option of options) {
-      const pressed = sameRealm(outcomes.buildFilterChipsO(options, option.value)).filter((chip) => chip.isPressed);
-      assert.deepEqual(pressed.map((chip) => chip.label), [option.label], `value "${option.value}"`);
-    }
-  });
-});
-
 describe("getLedgerRowStartsO: ledger rows share one roving sequence across the section headings", () => {
   const rows = [
     { name: "both sections filled", counts: [2, 3] },
@@ -713,7 +687,6 @@ interface WordingSandboxO {
     windowNeedsYou: { rows: Array<Record<string, unknown>>; total: number; windowLabel: string } | null,
     needsYouCap: number | null,
   ) => Array<{ key: string; heading: string; rows: unknown[] }>;
-  getRateVerdictO: (rate: Record<string, unknown>, windowLabel: string) => { chips: Array<{ label: string }> };
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string; label: string }>;
 }
 const wording = rendered as unknown as WordingSandboxO;
@@ -774,19 +747,10 @@ describe("ResultTableCard: the head's 'shown' count is the drawn set the drawer 
   }
 });
 
-describe("getRateVerdictO: the verdict chip names the jump, never a status tile's label again", () => {
-  test("a failing window's chip label differs from every status tile label", () => {
-    const verdict = wording.getRateVerdictO({ status: "ok", tone: "crit", breakage: 20, openCaveats: 5, writerTotal: 100 }, "last 7d");
-    const tileLabels = new Set(wording.buildStatusBandTilesO({ overall: { total: 100 } }, 3).map((tile) => tile.label));
-    assert.ok(verdict.chips.length > 0);
-    for (const chip of verdict.chips) assert.ok(!tileLabels.has(chip.label), chip.label);
-  });
-});
-
 interface DensitySandboxO {
   GraderBreakdownBody: (props: { state: Record<string, unknown> }) => RecordedElementO;
+  GraderBreakdownCard: (props: { state: Record<string, unknown> }) => RecordedElementO;
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string }>;
-  getVolumeTilesO: (tiles: Array<{ key: string }>) => Array<{ key: string }>;
 }
 const density = rendered as unknown as DensitySandboxO;
 
@@ -795,16 +759,41 @@ describe("Task results density: the columns beside a taller card carry their own
     const breakdown = { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 };
     const elements = flattenO(density.GraderBreakdownBody({ state: { status: "ready", data: { overall: { grader_breakdown: breakdown } } } }));
     assert.equal(elements.some((el) => el.props.kind === "detail"), false, "no detail fold");
-    const tileKeys = elements.map((el) => el.props.key).filter((key) => ["verified_pass", "unverified", "verified_fail"].includes(String(key)));
-    assert.equal(tileKeys.length, 3);
+    const stats = elements.find((el) => Array.isArray(el.props.stats))?.props.stats as Array<{ key: string }> | undefined;
+    // vm-realm array → copy into this realm before a deep compare
+    assert.deepEqual(Array.from(stats ?? [], (stat) => stat.key).sort(), ["unverified", "verified_fail", "verified_pass"]);
   });
+});
 
-  test("the volume column beside the hero carries the failed-or-blocked count, never the hero again", () => {
-    const tiles = density.buildStatusBandTilesO({ overall: { total: 100 }, byResultCount: { fail: 2, done: 90 } }, 3);
-    const keys = density.getVolumeTilesO(tiles).map((tile) => tile.key);
-    assert.ok(keys.includes("broken"), keys.join(","));
-    assert.ok(!keys.includes("attention"), keys.join(","));
-  });
+describe("Automatic check results: where each verdict came from is the card's foot, drawn only under a drawn breakdown", () => {
+  const overall = { grader_breakdown: { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 }, downgrade_breakdown: { writer_true_downgraded: 2 } };
+  const rows = [
+    { name: "a landed breakdown ends the card with the foot", state: { status: "ready", data: { overall } }, hasFoot: true },
+    { name: "a loading card draws no foot", state: { status: "loading" }, hasFoot: false },
+    { name: "a landed payload with no breakdown draws no foot", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, hasFoot: false },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const card = (density.GraderBreakdownCard({ state: row.state }).props.children) as RecordedElementO;
+      assert.equal(Boolean(card.props.foot), row.hasFoot);
+    });
+  }
+});
+
+describe("getClampedPageO: a held page never runs past the last page of the current total", () => {
+  const clamp = (rendered as unknown as { getClampedPageO: (page: number, total: number, pageSize: number) => number }).getClampedPageO;
+  const rows = [
+    { name: "a page inside the total stays", page: 2, total: 200, expected: 2 },
+    { name: "the exact last page stays", page: 3, total: 200, expected: 3 },
+    { name: "a total that shrank under the page steps back to its last page", page: 3, total: 120, expected: 2 },
+    { name: "a total one row past a page boundary keeps that extra page", page: 5, total: 101, expected: 2 },
+    { name: "an empty total returns to the first page", page: 4, total: 0, expected: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(clamp(row.page, row.total, 50), row.expected);
+    });
+  }
 });
 
 interface ChartSandboxO {

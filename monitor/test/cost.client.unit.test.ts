@@ -130,12 +130,6 @@ interface CostHelpers {
     session: Record<string, unknown>,
     nowMs: number,
   ) => ReadonlyArray<readonly [string, string]>;
-  getTileVerdictTextC: (hot: HotVerdict) => string;
-  getSpendVerdictC: (input: {
-    hot: HotVerdict;
-    latestOutsideBand: boolean;
-    kpiStatus: string;
-  }) => { tone: string; label: string; text: string };
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
   markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
     actual: number;
@@ -665,31 +659,64 @@ test("the session drawer's task-results link does not promise a session-scoped v
     type,
     props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
   });
-  const collectButtons = (node: unknown, out: DrawerElement[]): DrawerElement[] => {
+  const collectLinks = (node: unknown, out: DrawerElement[]): DrawerElement[] => {
     if (Array.isArray(node)) {
-      for (const child of node) collectButtons(child, out);
+      for (const child of node) collectLinks(child, out);
       return out;
     }
     if (typeof node !== "object" || node === null || !("props" in node)) return out;
     const el = node as DrawerElement;
-    if (el.type === "button") out.push(el);
-    return collectButtons(el.props.children, out);
+    if (typeof el.props.href === "string") out.push(el);
+    return collectLinks(el.props.children, out);
   };
-  const navCalls: unknown[][] = [];
   const session = { session_id: "12345678-9abc-4def-8123-456789abcdef", total_cost_usd: 1 };
-  const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {}, onNav: (...args: unknown[]) => navCalls.push(args) });
+  const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {} });
 
-  const [link] = collectButtons(drawer, []).filter((b) => {
-    const before = navCalls.length;
-    (b.props.onClick as () => void)();
-    return navCalls.length > before;
-  });
+  const links = collectLinks(drawer, []);
+  assert.deepEqual(links.map((l) => l.props.href), ["#outcomes"], "the one destination carries no session scope");
+  const [link] = links;
   assert.ok(link, "the drawer still links to Task results");
-  assert.deepEqual(navCalls, [["outcomes"]], "the destination carries no session scope");
   assert.match(String(link.props.children), /^All task results/, "an unscoped destination is labelled as the whole list");
 });
 
-test("the running-hot sentence is stated once — in the lane when it fires, on tile 1 otherwise", () => {
+test("the session drawer sets only the session id in the machine-string face; every other fact reads in sans", async () => {
+  interface DrawerElement {
+    type: unknown;
+    props: Record<string, unknown>;
+  }
+  interface DrawerSandbox {
+    React: { createElement: unknown };
+    SessionDetailDrawerC: (props: Record<string, unknown>) => DrawerElement;
+  }
+  const sandbox = await buildScreenSandbox<DrawerSandbox>(COST_SRC);
+  sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
+    type,
+    props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
+  });
+  const collect = (node: unknown, isMatch: (el: DrawerElement) => boolean, out: DrawerElement[] = []): DrawerElement[] => {
+    if (Array.isArray(node)) {
+      for (const child of node) collect(child, isMatch, out);
+      return out;
+    }
+    if (typeof node !== "object" || node === null || !("props" in node)) return out;
+    const el = node as DrawerElement;
+    if (isMatch(el)) out.push(el);
+    return collect(el.props.children, isMatch, out);
+  };
+  const isMachine = (el: DrawerElement) => typeof el.type === "function" && el.type.name === "MachineString";
+  const session = {
+    session_id: "12345678-9abc-4def-8123-456789abcdef", top_model: "claude-opus-5-5",
+    total_cost_usd: 1.25, total_tokens: 120_000, event_count: 42,
+  };
+  const facts = collect(sandbox.SessionDetailDrawerC({ session, onClose: () => {} }), (el) => el.type === "dd");
+
+  assert.ok(facts.length >= 4, `the drawer lists the session facts (${facts.length})`);
+  const machineText = facts.map((dd) => collect(dd.props.children, isMachine).map((el) => String(el.props.children)));
+  assert.deepEqual(machineText.filter((texts) => texts.length > 0), [[session.session_id]]);
+  assert.ok(facts.every((dd) => !/font-mono/.test(String(dd.props.className))), "no fact falls back to a mono class");
+});
+
+test("the running-hot sentence is stated once, in the lane, exactly when a hot trigger fires", () => {
   const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
     ["calm", {}, false],
     ["so-far ratio", { isHot: true }, false],
@@ -702,41 +729,8 @@ test("the running-hot sentence is stated once — in the lane when it fires, on 
     const hot = { ...CALM, verdict, ...delta };
     const laneTexts = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
       .map((r) => r.text);
-    const pageVerdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" }).text;
-    assert.ok(!pageVerdict.includes(verdict), `${name}: the page verdict names the state, never the figures`);
-    const places = [...laneTexts, cost.getTileVerdictTextC(hot)].filter((t) => t.includes(verdict)).length;
-    assert.equal(places, 1, name);
-  }
-});
-
-test("the page verdict carries the lane's hot tone when it fires, and reads on pace when nothing fires", () => {
-  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
-    ["calm", {}, false],
-    ["so-far ratio", { isHot: true }, false],
-    ["pace only", { isPaceHot: true }, false],
-    ["outlier day only", {}, true],
-    ["so-far and pace", { isHot: true, isPaceHot: true }, true],
-  ];
-  for (const [name, delta, outsideBand] of cases) {
-    const hot = { ...CALM, ...delta };
-    const hotRow = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
-      .find((r) => r.key === "hot");
-    const verdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" });
-    assert.equal(verdict.tone, hotRow ? hotRow.tone : "ok", name);
-    assert.equal(verdict.label, hotRow ? "Above normal" : "On pace", name);
-  }
-});
-
-test("the page verdict claims no spend state without a measured normal", () => {
-  const rows: ReadonlyArray<{ name: string; hot: HotVerdict; kpiStatus: string }> = [
-    { name: "kpi still loading", hot: CALM, kpiStatus: "loading" },
-    { name: "kpi failed", hot: { ...CALM, isHot: true }, kpiStatus: "error" },
-    { name: "no 7-day normal", hot: { ...CALM, ratio: null, normalDaily: null }, kpiStatus: "ready" },
-  ];
-  for (const row of rows) {
-    const verdict = cost.getSpendVerdictC({ hot: row.hot, latestOutsideBand: true, kpiStatus: row.kpiStatus });
-    assert.equal(verdict.tone, "neutral", row.name);
-    assert.ok(verdict.text.length > 0, `${row.name}: the line still says why there is no verdict`);
+    const places = laneTexts.filter((t) => t.includes(verdict)).length;
+    assert.equal(places, hot.isHot || hot.isPaceHot ? 1 : 0, name);
   }
 });
 
@@ -986,23 +980,41 @@ interface RenderModule {
   [name: string]: unknown;
 }
 
-// the tiles are thin wrappers over the shared KPI anatomy → the real KPI renders, its slots stay stub atoms
+// the spend stats and the ledgers are models over shared atoms → the real stat row, loading row, Stack and table atoms render, other atoms stay stubs
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
-const realKpi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI.KPI;
+const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
+const REAL_ATOMS = new Set(["StatRow", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
 
-// real ui.jsx helpers, with every rendered atom a host element carrying its props (the KPI anatomy itself real)
+// real ui.jsx helpers, with every rendered atom a host element carrying its props (the stat row anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
   const real = cost.window.UI as Record<string, unknown>;
   return new Proxy({}, {
     get: (_target, name: string) => {
       if (name in overrides) return overrides[name];
-      if (name === "KPI") return realKpi;
+      if (REAL_ATOMS.has(name)) return getReactPropsAtom(realUi[name] as (props: Record<string, unknown>) => unknown);
       const value = real[name];
       if (typeof value !== "function" || /^[a-z]/.test(name)) return value;
       return (props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } });
     },
     has: () => true,
   });
+}
+
+// React hands a lone child over as itself, the stub always as an array → a render-function child (Table rows) only runs unwrapped
+function getReactPropsAtom(atom: (props: Record<string, unknown>) => unknown) {
+  return (props: Record<string, unknown>) => {
+    const { children } = props;
+    return atom(Array.isArray(children) && children.length === 1 ? { ...props, children: children[0] } : props);
+  };
+}
+
+const isStat = (n: RenderedNode) => n.type === "div" && n.props.className === "stat";
+
+// the spend card's ⓘ body, rendered — the stub Card holds it as a prop
+function renderSpendNotes(tree: RenderedNode): RenderedNode {
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card" && n.props.title === "Spend");
+  assert.ok(card?.props.info, "the spend card carries an info trigger");
+  return renderScreen(card.props.info) as RenderedNode;
 }
 
 function renderIn(mod: RenderModule, name: string, props: Record<string, unknown>): RenderedNode {
@@ -1016,10 +1028,10 @@ test("a cold-failed region keeps its error card mounted and busy while its Retry
     "CostTrendBody", "TokenStackedBody", "ModelCostBody", "CacheHitBody", "SessionDistributionBody", "ParseErrorBody", "TurnStatsBody",
   ];
   // the ids the page renders on its region wrappers, which stay mounted through any recovery
-  const page = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const page = renderIn(mod, "ScreenCost", {});
   const regionIds = new Set(findNodes(page, (n) => n.type === "div" && typeof n.props.id === "string").map((n) => n.props.id));
   for (const name of bodies) {
-    const tree = renderIn(mod, name, { state: retrying, days: 30, onRetry: () => {}, onNav: () => {} });
+    const tree = renderIn(mod, name, { state: retrying, days: 30, onRetry: () => {} });
     const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
     assert.equal(cards.length, 1, `${name} keeps its error card`);
     assert.equal(findNodes(tree, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${name} never swaps in a loader`);
@@ -1028,7 +1040,7 @@ test("a cold-failed region keeps its error card mounted and busy while its Retry
   }
 });
 
-test("a cold-failed KPI payload retrying reads as failed on its tiles, never a skeleton beside its busy error card", async () => {
+test("a cold-failed KPI payload retrying reads as failed on its stats, never a skeleton beside its busy error card", async () => {
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   const kpiState: PanelState = { status: "loading", data: null, error: "HTTP 500 Internal Server Error", busy: true };
   const settled = ready({ points: [{ day: "2026-01-09", cost_usd: 2 }], rows: [] });
@@ -1039,22 +1051,95 @@ test("a cold-failed KPI payload retrying reads as failed on its tiles, never a s
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
   assert.equal(cards.length, 1, "the KPI error card stays mounted");
   assert.equal(cards[0].props.isBusy, true);
-  const tiles = findNodes(tree, (n) => n.type === "div" && String(n.props.className ?? "").split(/\s+/).includes("kpi"));
-  assert.equal(tiles.length, 4);
-  assert.equal(tiles.filter((t) => t.props["aria-busy"] === "true").length, 0, "no tile reads as loading beside the card");
+  const failedStats = findNodes(tree, isStat).filter((stat) => /Not loaded/.test(collectText(stat)));
+  assert.equal(failedStats.length, 2, "the two stats the KPI payload feeds read as not loaded");
+  assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 0, "no stat reads as loading beside the card");
+});
+
+describe("an instrumentation card sets its figures in one stat row, never a tile grid", () => {
+  const readStats = (tree: RenderedNode) => findNodes(tree, isStat).map((stat) => {
+    const [label] = findNodes(stat, (n) => n.props.className === "stat-label");
+    const [value] = findNodes(stat, (n) => typeof n.props.className === "string" && n.props.className.startsWith("stat-value"));
+    return [collectText(label), collectText(value)];
+  });
+  const rows = [
+    {
+      name: "log integrity with unreadable entries",
+      body: "ParseErrorBody",
+      data: { rows: [
+        { event_date: "2026-01-08", error_count: 0, total_count: 1240 },
+        { event_date: "2026-01-09", error_count: 3, total_count: 1187 },
+      ] },
+      stats: [["Unreadable entries", "3"], ["Last seen", undefined]],
+    },
+    {
+      name: "log integrity with none — Last seen reads None",
+      body: "ParseErrorBody",
+      data: { rows: [{ event_date: "2026-01-09", error_count: 0, total_count: 1187 }] },
+      stats: [["Unreadable entries", "0"], ["Last seen", "None"]],
+    },
+    {
+      name: "turn statistics",
+      body: "TurnStatsBody",
+      data: {
+        stop_reasons: [{ stop_reason: "end_turn", event_count: 1830, session_count: 412 }],
+        stop_reason_session_count: 412,
+        turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
+      },
+      stats: [["Avg turns per logged event", "3.25"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
+    },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: each figure is a stat, label then value`, async () => {
+      const mod = (await loadScreenModule(COST_SRC, {
+        UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+      })) as RenderModule;
+      const stats = readStats(renderIn(mod, row.body, { state: ready(row.data), days: 30, onRetry: () => {} }));
+
+      assert.deepEqual(stats.map(([label]) => label), row.stats.map(([label]) => label));
+      // a relative day count moves with the clock → only its presence is pinned
+      row.stats.forEach(([label, value], i) => {
+        assert.ok(value === undefined ? stats[i][1].length > 0 : stats[i][1] === value, `${label} reads ${value ?? "a value"}`);
+      });
+    });
+  }
 });
 
 test("every cost region error card carries the page Retry, so a region the banner does not cover still offers one", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi({ INITIAL_REGION_STATE: failed }), React: createReactStub(),
   })) as RenderModule;
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const tree = renderIn(mod, "ScreenCost", {});
 
   assert.equal(findNodes(tree, (n) => n.props.atom === "PageErrorBanner").length, 1, "the shared outage shows its banner");
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
   assert.ok(cards.length >= 7, "every payload's region renders its error card");
   for (const card of cards) {
     assert.equal(typeof card.props.onRetry, "function", `${String(card.props.source)} keeps its Retry for RegionFailure to hide or show`);
+  }
+});
+
+describe("the page banner's Retry hands focus to a region card every page state renders", () => {
+  const renderInState = async (state: PanelState) => renderIn((await loadScreenModule(COST_SRC, {
+    UI: getAtomUi({ INITIAL_REGION_STATE: state }), React: createReactStub(),
+  })) as RenderModule, "ScreenCost", {});
+  const rows = [
+    { name: "loading", state: loading },
+    { name: "error", state: failed },
+    { name: "ready", state: ready({ ...getKpiAtRatio(1, 1), points: [], rows: [] }) },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: the fallback card renders once, outside the banner`, async () => {
+      const [banner] = findNodes(await renderInState(failed), (n) => n.props.atom === "PageErrorBanner");
+      const fallbackId = banner.props.focusTargetId;
+      // host nodes and stubbed atoms only — a screen component also carries the id it passes down
+      const targets = findNodes(await renderInState(row.state), (n) => /^[a-z]/.test(n.type) && n.props.id === fallbackId);
+
+      assert.equal(targets.length, 1, `focus target ${String(fallbackId)} is one rendered element`);
+      assert.notEqual(targets[0].props.atom, "PageErrorBanner", "never the banner that unmounts on recovery");
+    });
   }
 });
 
@@ -1067,7 +1152,7 @@ function renderCostWithRegions(regions: PanelState[]): Promise<RenderedNode> {
     useState: (initial: unknown) => [initial === regionInitial ? (queue.shift() ?? loading) : initial, () => undefined],
   };
   return loadScreenModule(COST_SRC, { UI: getAtomUi({ INITIAL_REGION_STATE: regionInitial }), React: react })
-    .then((mod) => renderIn(mod as RenderModule, "ScreenCost", { onNav: () => {} }));
+    .then((mod) => renderIn(mod as RenderModule, "ScreenCost", {}));
 }
 
 describe("the cost banner reads Retrying only while a failed region is re-read", () => {
@@ -1083,7 +1168,7 @@ describe("the cost banner reads Retrying only while a failed region is re-read",
   }
 });
 
-test("the page verdict over a warm error reads Last known, never the all-clear", async () => {
+test("the header stamp over a warm error reads stale, and no page verdict restates it", async () => {
   const ui = cost.window.UI;
   const now = Date.parse(NOON_UTC);
   const readAt = new Date(now - 60_000).toISOString();
@@ -1093,12 +1178,11 @@ test("the page verdict over a warm error reads Last known, never the all-clear",
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi({ INITIAL_REGION_STATE: warmError }), React: react,
   })) as RenderModule;
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
-  const [verdict] = findNodes(tree, (n) => n.props.id === "cost-verdict");
-  const props = verdict.props as { tone: string; label?: string; freshness?: Record<string, unknown> };
-  const shown = ui.getFreshnessVerdict({ ...props.freshness, tone: props.tone, label: props.label, now });
-  assert.match(String(shown.label), /^Last known/, `the verdict reads ${String(shown.label)}`);
-  assert.notEqual(shown.tone, "ok", "a held read under a failure never reads healthy");
+  const tree = renderIn(mod, "ScreenCost", {});
+  const [header] = findNodes(tree, (n) => n.props.atom === "PageHeader");
+  const stamp = header.props.freshness as { props: { at: string | null; regions: readonly PanelState[] } };
+  assert.equal(ui.getFreshnessState({ ...stamp.props, now }), "stale", "a held read under a failure is never fresh");
+  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "PageVerdict"), [], "the stamp is the page's one freshness fact");
 });
 
 // every Recharts part renders as a host node named after it, so a chart's wrapper and data are inspectable
@@ -1175,7 +1259,7 @@ describe("the token volume total compares with the server's prior window, cut at
   }
 });
 
-describe("the cost tile names its prior window in words", () => {
+describe("the window stat names its prior window in words", () => {
   const rows = [
     { name: "a measured change names the window it compares with", prior: 5, spoken: /\bup\s+100\s*%\s*vs the 4 days before 01-03, cut at this time of day/ },
     { name: "a zero prior says the window held no cost", prior: 0, spoken: /No comparison — the 4 days before 01-03 held no cost\./ },
@@ -1193,7 +1277,7 @@ describe("the cost tile names its prior window in words", () => {
   }
 });
 
-test("every KPI hint fits the 40-character KPI-hint cap at the widest realistic figures", async () => {
+test("every stat hint fits the 40-character one-line cap at the widest realistic figures", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
     getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
@@ -1210,12 +1294,13 @@ test("every KPI hint fits the 40-character KPI-hint cap at the widest realistic 
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), modelState: ready({ rows: modelRows }), days: 90, onRetry: () => {},
     trendState: ready({ days: 90, points: Array.from({ length: 90 }, (_, i) => ({ date: `d${i}`, cost_usd: 123_456.78 - i })) }),
   });
-  const hints = findNodes(tree, (n) => /\bkpi-hint\b/.test(String(n.props.className ?? ""))).map((n) => collectText(n));
-  assert.equal(hints.length, 4, "every tile states a hint at these figures");
+  const hints = findNodes(tree, (n) => n.type === "span" && typeof n.props.title === "string" && n.props["aria-hidden"] !== "true")
+    .map((n) => collectText(n));
+  assert.equal(hints.length, 3, "every stat without a delta line states a hint at these figures");
   for (const hint of hints) assert.ok(hint.length <= 40, `"${hint}" is ${hint.length} chars`);
 });
 
-test("the cache tile's list-price note keeps its window (\"30 days\") whole as one DateRange token", async () => {
+test("the cache stat's list-price note keeps its window (\"30 days\") whole as one DateRange token", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
     getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
@@ -1229,9 +1314,7 @@ test("the cache tile's list-price note keeps its window (\"30 days\") whole as o
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: modelRows }), days: 30, onRetry: () => {},
   });
-  const [foot] = findNodes(tree, (n) => n.props.className === "cost-foot");
-  assert.ok(foot, "the cache tile carries its list-price note");
-  const ranges = findNodes(foot, (n) => n.props.atom === "DateRange");
+  const ranges = findNodes(renderSpendNotes(tree), (n) => n.props.atom === "DateRange");
   assert.equal(ranges.length, 1);
   assert.equal(ranges[0].props.range, "30 days");
   assert.match(String(ranges[0].props.children), /, last 30 days\b/, "the sentence carries the token as a plain string");
@@ -1253,17 +1336,18 @@ test("the window delta foot hands its sentence to DayTokens, so \"30 days\" befo
 });
 
 // R-c: every KPI-band sentence carrying a dashed "7-day" token hands it to DayTokens, so the compound never breaks at its hyphen
-test("the KPI band's 7-day sentences (today hint and verdict, per-task hint and foot) each ride one DayTokens", async () => {
+test("the spend card's 7-day sentences (today hint, per-task hint and its window note) each ride one DayTokens", async () => {
   const mod = await loadCostRender();
   const kpi = { ...getKpiAtRatio(0.15, null), cost_per_done_usd: 0.39, done_count_7d: 2_396 };
   const tree = renderIn(mod, "KpiRowC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
-  const sentences = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
+  const sentences = [tree, renderSpendNotes(tree)]
+    .flatMap((root) => findNodes(root, (n) => n.props.atom === "DayTokens"))
+    .map((n) => String(n.props.children));
   for (const sentence of [
     "$10.00 7-day normal/day",
-    "Today is 15% of the 7-day daily normal so far.",
     "7-day cost / 2,396 finished",
     "Fixed 7-day window — the range above does not change it.",
   ]) {
@@ -1271,19 +1355,25 @@ test("the KPI band's 7-day sentences (today hint and verdict, per-task hint and 
   }
 });
 
-test("the window-cost tile keeps its counting rule behind an info trigger described by the tile label", async () => {
+test("each stat with a counting rule keeps it behind the spend card's one info trigger, led by the stat label", async () => {
   const mod = await loadCostRender();
   const kpi = getKpiAtRatio(1, 1);
   const tree = renderIn(mod, "KpiRowC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
-  const infos = findNodes(tree, (n) => n.props.atom === "CardInfo");
-  assert.equal(infos.length, 1, "one tile carries a counting rule");
-  const [info] = infos;
-  const [label] = findNodes(tree, (n) => n.props.id === info.props.describedBy);
-  assert.equal(label ? collectText(label) : null, "Cost, last 30 days");
-  assert.match(collectText(info), /recorded cost/i);
+  const rules = [
+    { label: "Cost, last 30 days", rule: /recorded cost/i },
+    { label: "Cost per finished task", rule: /fixed 7-day window/i },
+  ];
+  const notes = findNodes(renderSpendNotes(tree), (n) => n.type === "p");
+  assert.equal(notes.length, rules.length, "only the stats with a counting rule carry a note");
+  for (const note of notes) {
+    const [lead] = findNodes(note, (n) => n.type === "strong");
+    const row = rules.find((r) => r.label === (lead ? collectText(lead) : null));
+    assert.ok(row, `a note led by ${lead ? collectText(lead) : "nothing"}`);
+    assert.match(collectText(note), row.rule, row.label);
+  }
 });
 
 // one row per chart the page draws
@@ -1338,14 +1428,14 @@ test("a no-data day is a gap in both trend charts and in their names, never $0",
 test("the pace figure is stated once on the page", async () => {
   const state = ready({ ...getKpiAtRatio(1, 1.5), points: (TREND_WITH_GAP.data as { points: unknown[] }).points, rows: [] });
   const mod = await loadCostRender({ INITIAL_REGION_STATE: state });
-  const text = collectText(renderIn(mod, "ScreenCost", { onNav: () => {} }));
+  const text = collectText(renderIn(mod, "ScreenCost", {}));
   assert.equal(text.match(/\bpace\b|heading past/gi)?.length ?? 0, 1, text);
 });
 
 test("the token legend is printed once", async () => {
   const state = ready({ ...getKpiAtRatio(1, 1), points: (TREND_WITH_GAP.data as { points: unknown[] }).points, rows: [] });
   const mod = await loadCostRender({ INITIAL_REGION_STATE: state });
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const tree = renderIn(mod, "ScreenCost", {});
   const [volume] = findNodes(tree, (n) => n.props.atom === "Disclosure" && n.props.title === "Token volume");
   const swatches = findNodes(volume, (n) => String(n.props.className ?? "").includes("rounded-sm") && n.props.style !== undefined);
   const colors = swatches.map((n) => String((n.props.style as { background?: string }).background));
@@ -1356,8 +1446,8 @@ test("the token legend is printed once", async () => {
 test("the trend card names its band in plain words and keeps its live echo off screen", async () => {
   const mod = await loadCostRender();
   const tree = renderIn(mod, "CostTrendCard", { state: TREND_WITH_GAP, days: 30, onRetry: () => {} });
-  const [head] = findNodes(tree, (n) => n.props.atom === "CardHead");
-  const toggle = renderScreen(head.props.right) as RenderedNode;
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const toggle = renderScreen(card.props.right) as RenderedNode;
   assert.doesNotMatch(collectText(toggle) + String(toggle.props.title ?? ""), /σ/);
   const echoes = findNodes(tree, (n) => n.props["aria-live"] === "polite");
   assert.ok(echoes.length > 0);
@@ -1429,7 +1519,7 @@ describe("the card pairs share one edge", () => {
 
   test("every pair stretches as peers, and the one lg override names the same split as its ratio", async () => {
     const mod = await loadCostRender();
-    const rows = findNodes(renderIn(mod, "ScreenCost", { onNav: () => {} }), (n) => n.props.atom === "SplitRow");
+    const rows = findNodes(renderIn(mod, "ScreenCost", {}), (n) => n.props.atom === "SplitRow");
     assert.equal(rows.length, 2, "the decision pair and the instrumentation pair");
     assert.deepEqual(rows.map((row) => row.props.layout), ["equal", "equal"]);
     const overrides = rows.flatMap((row) => {
@@ -1446,7 +1536,7 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
       getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
     })) as RenderModule;
-    const tree = renderIn(mod, name, { state: ready(data), days: 30, onRetry: () => {}, onNav: () => {} });
+    const tree = renderIn(mod, name, { state: ready(data), days: 30, onRetry: () => {} });
     const [card] = findNodes(tree, (n) => n.props.atom === "Card");
     assert.ok(card, `${name} renders the shared Card`);
     return card;
@@ -1487,9 +1577,36 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
   ]) {
     test(`models — ${name} ledger carries no foot`, async () => {
       const mod = await loadCostRender();
-      const [card] = findNodes(renderIn(mod, "ModelCostCard", { state, days: 30, onRetry: () => {}, onNav: () => {} }), (n) => n.props.atom === "Card");
+      const [card] = findNodes(renderIn(mod, "ModelCostCard", { state, days: 30, onRetry: () => {} }), (n) => n.props.atom === "Card");
       assert.ok(card, "ModelCostCard renders the shared Card");
       assert.equal(Boolean(card.props.foot), false, "no foot strip without a rolled-up row");
+    });
+  }
+
+  const tokens = { input_tokens: 10, output_tokens: 10, cache_read_tokens: 10, cache_creation_tokens: 10 };
+  const priced = { model: "claude-opus-5-5", cost_usd: 30, session_count: 4, ...tokens };
+  const unattributedCases = [
+    {
+      name: "both unattributed buckets fold into one row — summed cost, no summed session count",
+      rows: [priced, { model: "unknown", cost_usd: 2.5, session_count: 3, ...tokens }, { model: "<synthetic>", cost_usd: 1.25, session_count: 1, ...tokens }],
+      cost: "3.75", sessions: "None",
+    },
+    {
+      name: "a lone unattributed bucket keeps its own session count",
+      rows: [priced, { model: "unknown", cost_usd: 2.5, session_count: 3, ...tokens }],
+      cost: "2.50", sessions: "3",
+    },
+  ];
+  for (const row of unattributedCases) {
+    test(`models — ${row.name}`, async () => {
+      const card = await getCard("ModelCostCard", { rows: row.rows });
+      const ledgerRows = findNodes(card, (n) => n.type === "tr" && findNodes(n, (c) => c.type === "button").length > 0);
+      const unattributed = ledgerRows.filter((tr) => collectText(tr).includes("Unattributed"));
+      assert.equal(ledgerRows.length, 2, "one priced row plus one Unattributed row");
+      assert.equal(unattributed.length, 1, "Unattributed is stated once");
+      const cells = findNodes(unattributed[0]!, (n) => n.type === "td").map((td) => collectText(td));
+      assert.ok(cells[1]!.includes(row.cost), `cost cell ${cells[1]}`);
+      assert.equal(cells[2], row.sessions);
     });
   }
 
@@ -1532,20 +1649,19 @@ test("every chart tooltip floats on the opaque overlay surface and follows the p
   }
 });
 
-// the tiles load through the shared KPI loading row → its indicator, not a screen-local skeleton, carries the motion
-test("a loading tile's indicator animates only through a motion-safe class, so reduced motion holds it still", async () => {
+// the stats load through the shared loading row → its indicator, not a screen-local skeleton, carries the motion
+test("a loading stat's indicator animates only through a motion-safe class, so reduced motion holds it still", async () => {
   const mod = await loadCostRender();
   const loading: PanelState = { status: "loading", data: null, error: null, busy: false };
   const tree = renderIn(mod, "KpiRowC", {
     kpiState: loading, hot: cost.computeHotVerdict({}), trendState: loading, modelState: loading, days: 30, onRetry: () => {},
   });
-  const isTile = (n: RenderedNode) => n.type === "div" && String(n.props.className ?? "").split(/\s+/).includes("kpi");
-  const tiles = findNodes(tree, isTile);
-  assert.equal(tiles.length, 4);
-  for (const tile of tiles) {
-    assert.equal(tile.props["aria-busy"], "true", "a loading tile says so");
-    const animated = findNodes(tile, (n) => /\banimate-/.test(String(n.props.className ?? "")));
-    assert.ok(animated.length > 0, "each loading tile shows a moving indicator");
+  const stats = findNodes(tree, isStat);
+  assert.equal(stats.length, 4);
+  assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 1, "the loading row says so once");
+  for (const stat of stats) {
+    const animated = findNodes(stat, (n) => /\banimate-/.test(String(n.props.className ?? "")));
+    assert.ok(animated.length > 0, "each loading stat shows a moving indicator");
     for (const node of animated) {
       assert.equal((node.props.style as Record<string, unknown> | undefined)?.animation, undefined, "no inline loop a stylesheet cannot override");
       const loops = String(node.props.className).split(/\s+/).filter((c) => /animate-/.test(c));
