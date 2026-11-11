@@ -1606,20 +1606,17 @@ def agent_nonliteral(word):
 
 
 def agent_judge(word, cwd):
-    """Judge a non-read word in every spelling its references take; a name the call may set another
-    way keeps the word's own judgment, an operator form of a relevant name is unprovable."""
+    """Judge a non-read word in every spelling its variable references may take. A name the call
+    may also set another way keeps the word's own judgment; an operator form of a name whose
+    value may name a profile path is unprovable."""
     names = VAR_USE_RE.findall(word) if "$" in word else []
     if not names:
         judge_word(word, cwd)
         return
     spellings = var_spellings(word, 0)
     operators = list(AGENT["vars"]) if INDIRECT_RE.search(word) else operator_names(word)
-    # Too many spellings (a self-referencing accumulator) is unprovable only where a value may be.
-    if any(is_relevant_name(n, cwd) for n in (names if spellings is None else operators)):
+    if spellings is None or any(is_relevant_name(n, cwd) for n in operators):
         agent_emit("N", word, "")
-        return
-    if spellings is None:
-        judge_word(word, cwd)
         return
     for spelling in spellings:
         judge_word(spelling, cwd)
@@ -1660,19 +1657,13 @@ def operator_names(word):
     return [m.group(1) for m in VAR_USE_RE.finditer(word) if m.start() not in simple]
 
 
-def is_relevant_name(name, cwd, depth=0):
+def is_relevant_name(name, cwd):
     """A name with a value that may name a profile path: home-spelled, an absolute scope
-    candidate, relative to an in-scope or unknown directory, or holding such a name."""
+    candidate, or relative to an in-scope or unknown directory."""
     dirs = cwd if isinstance(cwd, tuple) else (cwd,)
     in_scope_cwd = any(d == UNKNOWN_DIR or (d and is_scope_candidate(d)) for d in dirs)
-    for value in list(AGENT["vars"].get(name, ())) + ["", os.environ.get(name, "")]:
-        if home_split(value) is not None or is_scope_candidate(value) \
-                or (in_scope_cwd and not value.startswith("/")):
-            return True
-        if depth < 3 and any(is_relevant_name(n, cwd, depth + 1)
-                             for n in VAR_USE_RE.findall(value) if n != name):
-            return True
-    return False
+    return any(home_split(v) is not None or is_scope_candidate(v)
+               or (in_scope_cwd and not v.startswith("/")) for v in var_values(name, 0) or [""])
 
 
 def is_known(name):
@@ -1700,7 +1691,8 @@ def for_name_starts():
 
 
 def judge_word(word, cwd):
-    """Route one non-read spelling: home-spelled, literal absolute, or relative to each cwd."""
+    """Route one spelling that is not a proven read: home-spelled, literal absolute, or relative
+    to each directory an earlier cd may have named."""
     if isinstance(cwd, tuple):
         for each in cwd:
             judge_word(word, each)
@@ -2010,8 +2002,9 @@ def agent_flow(plain, ci, eff_idx, eff_name):
 
 
 def agent_assign(toks, exported, mode):
-    """Bind each assignment the shell keeps (`+=` appends, a nameref takes its target's values);
-    judge each value a child sees: exported, allexport, an inherited name, a command prefix."""
+    """Bind each assignment the shell keeps (`+=` appends to every value, a nameref takes its
+    target's values); judge each value a child process sees — exported, under allexport, an
+    inherited name, or a command's prefix."""
     for tok in toks:
         m = ASSIGN_WORD_RE.match(tok[1])
         if not m:
@@ -2021,7 +2014,8 @@ def agent_assign(toks, exported, mode):
         if name == "HOME" and mode != "prefix":
             agent_emit("N", tok[1], "")
         if mode == "bind":
-            for base in (var_values(name, 0) or [""]) if tok[1][m.end() - 2] == "+" else ("",):
+            appended = tok[1][m.end() - 2:m.end()] == "+="
+            for base in (var_values(name, 0) or [""]) if appended else [""]:
                 agent_bind(name, base + value)
         else:
             AGENT["opaque"].add(name)
@@ -2075,9 +2069,12 @@ def agent_nonreads(name, words, cwd):
 
 
 def substitution_bodies(text, quoted_only):
-    """Substitution bodies no segment cut reaches (`$(…)` in double quotes, any backtick outside
-    single quotes); quoted_only False reads an unquoted-delimiter heredoc body, quotes literal."""
-    bodies, i, single, double = [], 0, False, False
+    """Command-substitution bodies the segment cut never reaches: `$(…)` inside double quotes and
+    every backtick body outside single quotes. quoted_only False reads an unquoted-delimiter heredoc
+    body, where quotes are literal and every `$(…)` expands."""
+    bodies = []
+    i = 0
+    single = double = False
     while i < len(text):
         ch = text[i]
         if ch == "\\" and not single:
