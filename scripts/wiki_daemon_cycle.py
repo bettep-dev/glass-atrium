@@ -57,10 +57,10 @@ CLAUDE_BIN = os.environ.get("WIKI_DAEMON_CLAUDE_BIN", "claude")
 
 # Raw-processing cap (per cycle) — 0 = unlimited (process all unprocessed raws).
 # Overridable via WIKI_DAEMON_RAW_LIMIT env (same convention as WIKI_DAEMON_CLAUDE_BIN).
+DEFAULT_RAW_LIMIT = int(os.environ.get("WIKI_DAEMON_RAW_LIMIT", "0") or "0")
 # Batch skip record written by wiki-daily-compile.sh (SKIP_RECORD) — a listed raw with no note is
 # out of the backlog; test_wiki_source_raw.py binds the two paths.
 SKIP_RECORD_RELPATH = "index/compile-skips.tsv"
-DEFAULT_RAW_LIMIT = int(os.environ.get("WIKI_DAEMON_RAW_LIMIT", "0") or "0")
 HAIKU_TIMEOUT_SEC = 90
 # Cost guard — per-CALL `--max-budget-usd` ceiling (not a daily token estimate).
 # Budget ceiling + model id are read from the daemon-config.json SoT (shared loader

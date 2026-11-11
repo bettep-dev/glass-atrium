@@ -399,8 +399,7 @@ _get_body_kind() {
 # set. Primary match = the raw's basename as some note's source_raw: raw basenames are unique
 # (1 URL = 1 file), so it needs NO collision guard and is the only path surviving a slug-rename +
 # source_url drop. The basename match (notes/<basename>) and guarded source_url match are
-# fallbacks for legacy notes lacking source_raw. One `return 0` per curator-body **Unprocessed**
-# bullet — wiki-source-raw.bats binds the two.
+# fallbacks for legacy notes lacking source_raw.
 _is_processed_raw() {
   local _file="$1" _note_urls="$2" _collisions="$3" _note_raws="$4"
   local _base _url

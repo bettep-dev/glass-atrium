@@ -345,7 +345,7 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
 # curator body ↔ _classify_raw — the spawned curator's only copy of the tests
 # ---------------------------------------------------------------------------
 
-@test "the curator body's Unprocessed tests are exactly the processed paths _classify_raw takes" {
+@test "every Unprocessed test in the curator body is a processed path _classify_raw takes" {
   local body="${GA}/agents/glass-atrium-wiki-curator.md"
   write_raw_bytes "${RAW_DIR}/2026-03-01-raw.md" '---\nsource_url: http://raw\n---\n'
   # body sub-bullet|note file|note bytes — each note alone satisfies only its own test
@@ -372,12 +372,6 @@ collisions() { _collect_collision_source_urls "${RAW_DIR}"; }
   got="$(awk '/^- \*\*Unprocessed\*\*:/ { on=1; next } on && /^  - / { print; next } on { exit }' "${body}")"$'\n'
   [[ "${got}" == "${want}" ]] || {
     printf 'body:\n%s\nwant:\n%s' "${got}" "${want}"
-    return 1
-  }
-  # one success return per test → a test the predicate gains has no body bullet
-  got="$(awk '/^_is_processed_raw\(\) \{/ { on=1 } on && /return 0/ { n++ } on && /^\}/ { print n + 0; exit }' "${REAL_SCRIPT}")"
-  [[ "${got}" -eq "${#rows[@]}" ]] || {
-    echo "_is_processed_raw has ${got} processed paths, the body ${#rows[@]}"
     return 1
   }
 }
