@@ -1,17 +1,15 @@
 #!/usr/bin/env bats
 # enforce-verification-gate.bats — Bats suite for the PreToolUse(Agent) verification-gate hook.
-#   Three distinct surfaces, asserted independently:
-#     1) reviewer-miss BLOCK (channel-a: emit_error stderr JSON + exit 2, VGATE-REVIEWER-001) —
-#        orchestrator-origin plan-ref DEV spawn, no qa-code-reviewer recorded. Guarded by
-#        hook_is_subagent, so a nested sub-worker origin keeps only the informational advisory (exit 0).
-#     2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — ORCHESTRATOR-ORIGIN DEV
-#        spawn (agent_id absent) with NO [SIZE-EST] token. Guarded by hook_is_subagent: a nested
-#        sub-worker origin (agent_id present) is NEVER blocked. Applies to every DEV spawn, plan-ref
-#        included, except a simple-task entry — so the other DEV-spawn fixtures below carry a
-#        [SIZE-EST] token to clear this gate.
-#     3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — DEV spawn with NEITHER a
-#        plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). The token is
-#        the escape hatch.
+#   Every surface is advisory: the hook exits 0 on every path.
+#     1) reviewer-miss WARNING (emit_error stderr JSON, severity warn, VGATE-REVIEWER-001) —
+#        orchestrator-origin plan-ref DEV spawn, no qa-code-reviewer recorded. A nested sub-worker
+#        origin gets a plain informational line instead.
+#     2) size-est-miss WARNING (emit_error stderr JSON, severity warn, VGATE-SIZE-001) —
+#        ORCHESTRATOR-ORIGIN DEV spawn (agent_id absent) with NO [SIZE-EST] token; a nested sub-worker
+#        origin is never warned. Applies to every DEV spawn, plan-ref included, except a simple-task
+#        entry — so the other DEV-spawn fixtures below carry a [SIZE-EST] token to clear it.
+#     3) entry-miss WARNING (emit_error stderr JSON, severity warn, VGATE-ENTRY-001) — DEV spawn with
+#        NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss).
 #     4) scope-miss ADVISORY (stderr, exit 0) — an orchestrator-origin DEV spawn carrying no [SCOPE]
 #        declaration, emitted on the PASS paths. Owned by enforce-verification-gate-scope.bats; here
 #        it only means that a plan-referencing case asserting EMPTY output must declare a [SCOPE]
@@ -22,11 +20,10 @@
 #        under a sensitive prefix. Also owned by enforce-verification-gate-scope.bats; here it means
 #        a plan-referencing EMPTY-output case must declare a scope UNDER both thresholds, since a
 #        compliant spawn that happens to declare a hooks/ path is legitimately advised.
-#   Non-DEV / plan-bearing / token-bearing spawns exit 0 (zero false-block for the entry-miss branch).
 #   The hook is FAIL-OPEN on its OWN errors (malformed/empty/non-Agent input → exit 0).
 #
-# Decision channel: surface 1 = STDERR advisory + exit 0; surface 2 = STDERR JSON + exit 2. bats
-#   default `run` MERGES stderr into $output, so both surfaces are asserted via $output.
+# Channel: STDERR only, exit 0 throughout. bats default `run` MERGES stderr into $output, so every
+#   surface is asserted via $output.
 # Input is the real PreToolUse(Agent) envelope:
 #   {"tool_name":"Agent","tool_input":{"subagent_type":"<type>","prompt":"<text>"}}
 #   built with jq so arbitrary quotes/newlines in the prompt are escaped safely.
@@ -228,16 +225,18 @@ mint_bad_sink() {
 
 # (a) BLOCK: dev-* spawn, no plan-ref, no token → entry-miss block (exit 2)
 
-@test "dev spawn, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2 + stderr JSON)" {
+@test "dev spawn, no plan-ref, no token (SIZE-EST present) → entry-miss WARNING (exit 0 + stderr JSON)" {
   run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service-layer auth work"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-ENTRY-001"
   assert_contains "entry-miss"
 }
 
-@test "different dev-* agent, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2)" {
+@test "different dev-* agent, no plan-ref, no token (SIZE-EST present) → entry-miss WARNING (exit 0)" {
   run_hook "glass-atrium-dev-android" "wire up the new settings screen across modules [SIZE-EST] bundles=2 tool_uses~=25 — settings screen wiring"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "entry-miss"
 }
 
@@ -246,15 +245,17 @@ mint_bad_sink() {
 # thereby convert an entry-miss BLOCK into a pass; a real slug (plan-6569) still matches. Keep-in-sync
 # with the enforce-workflow-verify-stage.sh PLAN_REF_RE mirror.
 
-@test "plan-ref word-boundary (#28): 'workplan-2026' does NOT satisfy references_plan → entry-miss BLOCK" {
+@test "plan-ref word-boundary (#28): 'workplan-2026' does NOT satisfy references_plan → entry-miss WARNING" {
   run_hook "glass-atrium-dev-nestjs" "advance the workplan-2026 milestone across the service layer [SIZE-EST] bundles=1 tool_uses~=20 — service work"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "entry-miss"
 }
 
-@test "plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer-miss BLOCK, exit 2" {
+@test "plan-ref word-boundary (#28): real 'plan-6569' slug satisfies references_plan → reviewer-miss WARNING, exit 0" {
   run_hook "glass-atrium-dev-react" "implement per plan-6569 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-REVIEWER-001"
   assert_contains "reviewer-miss"
   assert_not_contains "entry-miss"
@@ -266,9 +267,10 @@ mint_bad_sink() {
 # add/delete + `sync-gate-roster`). This case fails RED if dev-swift is ever dropped from DEV_SET,
 # confirming the gate actually reads the synced list rather than a stale hand-edited copy.
 
-@test "synced member dev-swift, no plan-ref, no token (SIZE-EST present) → entry-miss BLOCK (exit 2)" {
+@test "synced member dev-swift, no plan-ref, no token (SIZE-EST present) → entry-miss WARNING (exit 0)" {
   run_hook "glass-atrium-dev-swift" "implement the SwiftUI settings flow across modules [SIZE-EST] bundles=2 tool_uses~=22 — swiftui settings flow"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "entry-miss"
 }
 
@@ -280,9 +282,10 @@ mint_bad_sink() {
 
 # (b) ALLOW: dev-* spawn WITH plan-ref → reviewer advisory path, exit 0 (NOT blocked)
 
-@test "dev spawn with plan-ref (SIZE-EST present), no reviewer → reviewer-miss BLOCK exit 2 (NOT entry-miss)" {
+@test "dev spawn with plan-ref (SIZE-EST present), no reviewer → reviewer-miss WARNING exit 0 (NOT entry-miss)" {
   run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-REVIEWER-001"
   assert_contains "reviewer-miss"
   assert_not_contains "entry-miss"
@@ -304,9 +307,9 @@ mint_bad_sink() {
   local rows=(
     "simple-task, no other token|[ENTRY-CLASS] simple-task: one-file fix|0|"
     "simple-task, ten-file [SCOPE], no [SIZE-EST]|[ENTRY-CLASS] simple-task: one-file fix\n[SCOPE] files=${ten_files} · deliverable=bug-fix · out=none|0|"
-    "plan-reference, no other token|implement per plan clauded-docs/1234|2|VGATE-SIZE-001"
-    "plan-reference beside simple-task, no other token|implement plan-7001 [ENTRY-CLASS] simple-task: noise|2|VGATE-SIZE-001"
-    "neither entry signal|implement the auth refactor across the service layer|2|VGATE-SIZE-001"
+    "plan-reference, no other token|implement per plan clauded-docs/1234|0|VGATE-SIZE-001"
+    "plan-reference beside simple-task, no other token|implement plan-7001 [ENTRY-CLASS] simple-task: noise|0|VGATE-SIZE-001"
+    "neither entry signal|implement the auth refactor across the service layer|0|VGATE-SIZE-001"
   )
   local row name prompt want_status want_code
   for row in "${rows[@]}"; do
@@ -322,9 +325,10 @@ mint_bad_sink() {
   done
 }
 
-@test "token present AND plan-ref (SIZE-EST present) → plan-ref branch wins (checked first) → reviewer-miss BLOCK exit 2" {
+@test "token present AND plan-ref (SIZE-EST present) → plan-ref branch wins (checked first) → reviewer-miss WARNING exit 0" {
   run_hook "glass-atrium-dev-nestjs" "implement plan-7001 [ENTRY-CLASS] simple-task: noise [SIZE-EST] bundles=1 tool_uses~=5 — small"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-REVIEWER-001"
   assert_contains "reviewer-miss"
   assert_not_contains "entry-miss"
@@ -333,18 +337,20 @@ mint_bad_sink() {
 # (c') SIZE-EST gate: orchestrator-origin DEV spawn MUST carry a [SIZE-EST] token; guarded by
 # hook_is_subagent so a nested sub-worker origin (agent_id present) is never blocked.
 
-@test "orchestrator DEV, plan-ref present but NO [SIZE-EST] → VGATE-SIZE-001 BLOCK (exit 2, size gate reachable for plan-bearing spawns)" {
+@test "orchestrator DEV, plan-ref present but NO [SIZE-EST] → VGATE-SIZE-001 WARNING (exit 0, size gate reachable for plan-bearing spawns)" {
   run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/1234"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-SIZE-001"
   assert_contains "size-est-miss"
   assert_not_contains "entry-miss"
 }
 
 # A spawn with neither entry signal meets this block first, so its message names the simple-task path too.
-@test "orchestrator DEV, plain prompt, NO [SIZE-EST] → VGATE-SIZE-001 BLOCK naming the simple-task path (exit 2)" {
+@test "orchestrator DEV, plain prompt, NO [SIZE-EST] → VGATE-SIZE-001 WARNING naming the simple-task path (exit 0)" {
   run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-SIZE-001"
   assert_contains "size-est-miss"
   assert_contains "[ENTRY-CLASS] simple-task"
@@ -427,9 +433,10 @@ mint_bad_sink() {
   assert_marker_present "glass-atrium-qa-code-reviewer"
 }
 
-@test "DF-5: PreToolUse DEV entry-miss BLOCK (exit 2) leaves NO marker line (no counter inflation)" {
+@test "DF-5: PreToolUse DEV entry-miss WARNING (exit 0) leaves NO marker line (no counter inflation)" {
   run_hook_event "PreToolUse" "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "entry-miss"
   assert_marker_absent "glass-atrium-dev-nestjs"
 }
@@ -442,9 +449,10 @@ mint_bad_sink() {
   assert_empty
 }
 
-@test "DF-5: PreToolUse DEV plan-ref spawn (reviewer-miss BLOCK) does NOT stamp itself (read-only on PreToolUse)" {
+@test "DF-5: PreToolUse DEV plan-ref spawn (reviewer-miss WARNING) does NOT stamp itself (read-only on PreToolUse)" {
   run_hook_event "PreToolUse" "glass-atrium-dev-react" "implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-REVIEWER-001"
   assert_marker_absent "glass-atrium-dev-react"
 }
@@ -454,8 +462,8 @@ mint_bad_sink() {
 # but "a broken sink can never convert a BLOCK into a PASS". Every block path therefore carries BOTH
 # a delta-exactly-1 case and an unwritable-sink exit-2 case.
 
-@test "D06 writer: every block path appends exactly 1 line carrying its own verdict tag" {
-  # One row per block path — the three differ only in (subagent_type, prompt, code, tag).
+@test "D06 writer: every warning path appends exactly 1 line carrying its own verdict tag" {
+  # One row per warning path — the three differ only in (subagent_type, prompt, code, tag).
   local -a table=(
     'glass-atrium-dev-nestjs|implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc|VGATE-ENTRY-001|block-entry'
     'glass-atrium-dev-react|implement per plan clauded-docs/1234 [SIZE-EST] bundles=1 tool_uses~=15 — impl|VGATE-REVIEWER-001|block-reviewer'
@@ -467,7 +475,8 @@ mint_bad_sink() {
     echo "row=${row}"
     if ga_guard_path "${SINK}"; then rm -f -- "${SINK:?}"; fi
     run_hook_trace "${stype}" "${prompt}"
-    assert_status 2
+    assert_status 0
+    assert_contains '"severity":"warn"'
     assert_contains "${code}"
     assert_sink_count 1
     assert_sink_tag "${tag}"
@@ -476,7 +485,8 @@ mint_bad_sink() {
 
 @test "D06 writer: the trace line carries the spawn's subagent_type" {
   run_hook_trace "glass-atrium-dev-android" "implement the settings screen [SIZE-EST] bundles=1 tool_uses~=12 — ui"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   grep -q "subagent_type=glass-atrium-dev-android" "${SINK}" 2>/dev/null || {
     echo "expected the trace line to name the subagent_type; sink: $(cat "${SINK}" 2>/dev/null)" >&2
     return 1
@@ -533,11 +543,10 @@ mint_bad_sink() {
   assert_sink_count 0
 }
 
-# BLOCK PRESERVATION — the sharpest hazard: this gate's ERR trap exits 0, so a trace-write failure
-# reaching the gate's exit status would silently convert a BLOCK into a PASS.
+# WARNING PRESERVATION — a trace-write failure must never swallow the operator-facing warning.
 
-@test "D06 block-preservation: an unwritable sink never converts a block into a pass" {
-  # Three sink shapes over three block paths: each block path meets an unwritable sink, and the two
+@test "D06 warning-preservation: an unwritable sink never drops the warning" {
+  # Three sink shapes over three warning paths: each warning path meets an unwritable sink, and the two
   # further shapes re-run already-covered paths against a different reason the append fails.
   local -a table=(
     'blocker-parent|glass-atrium-dev-nestjs|implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc|VGATE-ENTRY-001|entry-miss'
@@ -553,7 +562,8 @@ mint_bad_sink() {
     n=$((n + 1))
     bad_sink="$(mint_bad_sink "${shape}" "${n}")" || skip "cannot make a ${shape} sink unwritable (root?)"
     run_hook_trace "${stype}" "${prompt}" "${bad_sink}"
-    assert_status 2
+    assert_status 0
+    assert_contains '"severity":"warn"'
     assert_contains "${code}"
     assert_contains "${phrase}"
   done
@@ -566,7 +576,8 @@ mint_bad_sink() {
     printf '2026-01-01T00:00:0%sZ\ttool_name=Agent\tsubagent_type=seed\tverdict=block-entry\n' "0" >>"${SINK}"
   done
   run_hook_trace "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc" "${SINK}" 5
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   after="$(count_sink)"
   [[ "${after}" -le 5 ]] || {
     echo "expected sink bounded at or below cap 5, got ${after}" >&2
@@ -585,7 +596,8 @@ mint_bad_sink() {
   payload="$(mk_payload "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc")"
   run bash -c 'printf "%s" "$1" | PATH="$5:${PATH}" HOOK_DATA_DIR="$2" VGATE_FIRED_LOG="$4" VGATE_FIRED_LOG_CAP=5 bash "$3"' \
     _ "${payload}" "${DATA_DIR}" "${HOOK_SH}" "${SINK}" "${stub_dir}"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   grep -qF "${SINK}.prune." "${mv_log}" || {
     echo "the prune never attempted its swap" >&2
     return 1
@@ -677,7 +689,8 @@ mint_bad_sink() {
 
 @test "D06 default sink: with no VGATE_FIRED_LOG override the trace lands under the data root" {
   run_hook "glass-atrium-dev-nestjs" "implement the auth refactor [SIZE-EST] bundles=1 tool_uses~=20 — svc"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   grep -q 'verdict=block-entry$' "${DATA_DIR}/verification-gate-fired.log" 2>/dev/null || {
     echo "expected the default sink at ${DATA_DIR}/verification-gate-fired.log to carry the block" >&2
     return 1

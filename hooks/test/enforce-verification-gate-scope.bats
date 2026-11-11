@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # enforce-verification-gate-scope.bats — pins the [SCOPE] presence NUDGE (surface 4).
 #
-# ADVISORY ONLY (stderr + exit 0). The nudge is emitted on the PASS paths, after every verdict, so
-# the cases below assert both halves: it appears on a passing spawn, and a spawn that BLOCKS still
-# blocks with the nudge nowhere in sight.
+# ADVISORY ONLY (stderr + exit 0). The nudge is emitted only where surfaces 1-3 stay silent, so the
+# cases below assert both halves: it appears on a clean spawn, and a spawn that draws a surface 1-3
+# warning carries that warning with the nudge nowhere in sight.
 #
 # Fixtures mirror the sibling [PLAN-SUBSET] suite: a [SIZE-EST] attestation and a pre-stamped
 # qa-code-reviewer marker keep the other two surfaces from preempting this one.
@@ -63,17 +63,17 @@ run_gate() {
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "nudged a nested origin -- ${output}" >&2; return 1; }
 }
 
-@test "missing [SCOPE] alongside a real violation: the block still wins, unaccompanied" {
+@test "missing [SCOPE] alongside a real violation: the warning still wins, unaccompanied" {
   run_gate "Implement clauded-docs/3854 with no size attestation."
-  [[ "${status}" -eq 2 ]] || { echo "size-est block lost, status was ${status}" >&2; return 1; }
-  [[ "${output}" == *"VGATE-SIZE-001"* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
-  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "advisory reached a block path -- ${output}" >&2; return 1; }
+  [[ "${status}" -eq 0 ]] || { echo "status was ${status}" >&2; return 1; }
+  [[ "${output}" == *"VGATE-SIZE-001"* && "${output}" == *'"severity":"warn"'* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
+  [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "advisory reached a warning path -- ${output}" >&2; return 1; }
 }
 
-@test "entry-miss blocks unchanged when the declaration is also absent" {
+@test "entry-miss warns unchanged when the declaration is also absent" {
   run_gate "Just do the thing. ${SIZE_EST}"
-  [[ "${status}" -eq 2 ]] || { echo "entry block lost, status was ${status}" >&2; return 1; }
-  [[ "${output}" == *"VGATE-ENTRY-001"* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
+  [[ "${status}" -eq 0 ]] || { echo "status was ${status}" >&2; return 1; }
+  [[ "${output}" == *"VGATE-ENTRY-001"* && "${output}" == *'"severity":"warn"'* ]] || { echo "wrong verdict -- ${output}" >&2; return 1; }
 }
 
 # A read failure is not an absent declaration: the operator is told the declaration could not be read,

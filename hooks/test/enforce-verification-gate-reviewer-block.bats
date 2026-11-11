@@ -1,26 +1,17 @@
 #!/usr/bin/env bats
-# enforce-verification-gate-reviewer-block.bats — T1c fail-at-HEAD coverage for T6
-# (Reviewer-miss becomes a block). This suite is the ACCEPTANCE SPEC the T6 DEV
-# implements against: a plan-referencing DEV spawn with no qa-code-reviewer recorded
-# must be PROMOTED from stderr-advisory-and-exit-0 to a channel-a exit-2 BLOCK,
-# matching its sibling attestation checks (entry-miss VGATE-ENTRY-001,
-# size-est-miss VGATE-SIZE-001).
-#
-# FAIL-AT-HEAD (the behavioral ACs — RED against a627de7, GREEN after T6):
-#   * a plan-ref DEV spawn with no reviewer exits 2 (HEAD exits 0 — line 276).
-#   * the block carries a distinct reviewer-miss code (VGATE-REVIEWER-001) plus a
-#     reviewer-miss reason phrase, distinct from entry-miss / size-est-miss.
-# REGRESSION GUARDS (GREEN at HEAD and after — the no-false-block envelope):
-#   * a reviewer-present plan-ref DEV spawn still exits 0.
-#   * a simple-task-token DEV spawn still exits 0.
-#   * a non-DEV spawn still exits 0.
-#   * fail-open on the hook's own errors still exits 0.
+# enforce-verification-gate-reviewer-block.bats — the reviewer-miss surface: a plan-referencing DEV
+# spawn with no qa-code-reviewer recorded draws a VGATE-REVIEWER-001 warning (exit 0) with a
+# reviewer-miss reason phrase, distinct from entry-miss / size-est-miss.
+# REGRESSION GUARDS — silent exit 0 for:
+#   * a reviewer-present plan-ref DEV spawn.
+#   * a simple-task-token DEV spawn.
+#   * a non-DEV spawn.
+#   * the hook's own errors (fail-open).
 # STRUCTURAL / DOC ACs:
 #   * the hook contains no spawn-depth predicate (dropped, not deferred).
 #   * the header records that nested spawns remain ungated and why.
 #
-# CONTRACT DEFINED HERE (the T6 DEV conforms to these names):
-#   reviewer-miss coded error is VGATE-REVIEWER-001, reason phrase reviewer-miss.
+# Contract: reviewer-miss coded warning is VGATE-REVIEWER-001, reason phrase reviewer-miss.
 #
 # Harness mirrors enforce-verification-gate.bats: the real PreToolUse(Agent)
 # envelope is built with jq, HOOK_DATA_DIR is sandboxed, and every DEV prompt
@@ -36,8 +27,6 @@ bats_require_minimum_version 1.5.0
 
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-verification-gate.sh"
-# shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
-source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-verification-gate.sh not found: ${HOOK_SH}"
@@ -108,26 +97,30 @@ run_hook_sink() {
 
 # --- FAIL-AT-HEAD: reviewer-miss on a plan-ref DEV spawn now BLOCKS (exit 2) ---
 
-@test "plan-ref DEV spawn, no reviewer → reviewer-miss BLOCK (exit 2) [FAIL-AT-HEAD: HEAD exits 0]" {
+@test "plan-ref DEV spawn, no reviewer → reviewer-miss WARNING (exit 0)" {
   run_hook "glass-atrium-dev-react" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
 }
 
-@test "reviewer-miss BLOCK carries the distinct VGATE-REVIEWER-001 code [FAIL-AT-HEAD]" {
+@test "reviewer-miss WARNING carries the distinct VGATE-REVIEWER-001 code" {
   run_hook "glass-atrium-dev-nestjs" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=18 — svc"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-REVIEWER-001"
 }
 
-@test "reviewer-miss BLOCK carries a reviewer-miss reason phrase [FAIL-AT-HEAD]" {
+@test "reviewer-miss WARNING carries a reviewer-miss reason phrase" {
   run_hook "glass-atrium-dev-python" "implement per plan clauded-docs/290 [SIZE-EST] bundles=2 tool_uses~=22 — data layer"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "reviewer-miss"
 }
 
-@test "reviewer-miss BLOCK code is distinct from entry-miss and size-est-miss [FAIL-AT-HEAD]" {
+@test "reviewer-miss WARNING code is distinct from entry-miss and size-est-miss" {
   run_hook "glass-atrium-dev-shell" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=12 — hook"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_not_contains "VGATE-ENTRY-001"
   assert_not_contains "VGATE-SIZE-001"
 }
@@ -187,11 +180,12 @@ run_hook_sink() {
   }
 }
 
-# --- DSH-D06: the reviewer-miss block leaves a durable trace, and never trades the block for it ---
+# --- DSH-D06: the reviewer-miss warning leaves a durable trace, and never trades the warning for it ---
 
-@test "D06: reviewer-miss BLOCK appends exactly one block-reviewer trace line" {
+@test "D06: reviewer-miss WARNING appends exactly one block-reviewer trace line" {
   run_hook_sink "glass-atrium-dev-react"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-REVIEWER-001"
   lines_written="$(grep -c 'verdict=block-reviewer$' "${SINK}" 2>/dev/null || true)"
   [[ "${lines_written}" == "1" ]] || {
@@ -210,31 +204,12 @@ run_hook_sink() {
   }
 }
 
-@test "D06 block-preservation: an unwritable sink must NOT convert the reviewer-miss block into a pass" {
-  # The gate's ERR trap exits ZERO, so an unisolated trace append would fail-open here.
+@test "D06 warning-preservation: an unwritable sink must NOT drop the reviewer-miss warning" {
   blocker="${BATS_TEST_TMPDIR}/blocker"
   : >"${blocker}"
   run_hook_sink "glass-atrium-dev-nestjs" "${blocker}/fired.log"
-  assert_status 2
+  assert_status 0
+  assert_contains '"severity":"warn"'
   assert_contains "VGATE-REVIEWER-001"
   assert_contains "reviewer-miss"
-}
-
-@test "reviewer-miss: a nudge write interrupted ahead of the block still exits 2, nudge and block once each" {
-  local nudge="carries no [PLAN-SUBSET] token" rest trace
-  mk_payload "glass-atrium-dev-react" "implement per plan clauded-docs/290 [SIZE-EST] bundles=1 tool_uses~=15 — impl" \
-    >"${BATS_TEST_TMPDIR}/envelope"
-  run_forced_hook "${HOOK_SH}" "${BATS_TEST_TMPDIR}/envelope" "HOOK_DATA_DIR=${DATA_DIR}" "VGATE_FIRED_LOG=${SINK}"
-  assert_forced_block "VGATE-REVIEWER-001" || return 1
-  rest="${output#*"${nudge}"}"
-  [[ "${output}" == *"${nudge}"* && "${rest}" != *"${nudge}"* ]] || {
-    echo "nudge not exactly once on the block channel: ${output}"
-    return 1
-  }
-  # a held nudge flushed by the trace append would land in the sink ahead of the trace line
-  trace="$(cat -- "${SINK}")"
-  [[ "${trace}" == *"verdict=block-reviewer" && "${trace}" != *$'\n'* && "${trace}" != *"PLAN-SUBSET"* ]] || {
-    echo "trace sink: ${trace}"
-    return 1
-  }
 }

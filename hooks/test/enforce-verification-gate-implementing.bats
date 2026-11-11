@@ -93,7 +93,7 @@ get_nudged_ids() {
   [[ "${output}" != *"internal error"* ]] || { echo "the leg tripped the ERR trap -- ${output}"; return 1; }
 }
 
-@test "a reviewer-less plan spawn still blocks with VGATE-REVIEWER-001 and no nudge, monitor refused or reachable" {
+@test "a reviewer-less plan spawn still warns with VGATE-REVIEWER-001 and no nudge, monitor refused or reachable" {
   local -a rows=(
     "monitor refused|${REFUSED_URL}"
     "monitor citing a planner plan at doc_review|file://${FIXTURE_DIR}"
@@ -103,8 +103,8 @@ get_nudged_ids() {
     IFS='|' read -r name url <<<"${row}"
     VGATE_MONITOR_URL="${url}"
     run_gate "Implement clauded-docs/101. ${ATTESTATIONS}" "" "sess-impl-unreviewed"
-    [[ "${status}" -eq 2 ]] || { echo "${name}: block lost, status ${status} -- ${output}"; return 1; }
-    [[ "${output}" == *"VGATE-REVIEWER-001"* ]] || { echo "${name}: wrong verdict -- ${output}"; return 1; }
-    [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "${name}: the nudge reached a block path -- ${output}"; return 1; }
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} -- ${output}"; return 1; }
+    [[ "${output}" == *"VGATE-REVIEWER-001"* && "${output}" == *'"severity":"warn"'* ]] || { echo "${name}: wrong verdict -- ${output}"; return 1; }
+    [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "${name}: the nudge reached a warning path -- ${output}"; return 1; }
   done
 }
