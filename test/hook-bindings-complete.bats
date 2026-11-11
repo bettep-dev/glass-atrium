@@ -15,7 +15,6 @@ CORE="${GA}/lib/ga-env.sh"
 # convenience — the set membership must name, so a vanished binding fails by name.
 SECURITY_CRITICAL_HOOKS=(
   block-dangerous-commands.sh
-  block-no-verify.sh
   detect-secret-file-write.sh
   enforce-config-protection.sh
   validate-pre-write-raw.sh

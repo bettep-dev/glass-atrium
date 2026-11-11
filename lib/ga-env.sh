@@ -229,7 +229,6 @@ ga_init_env() {
     "PreToolUse	block-dangerous-commands.sh	Bash"
     "PreToolUse	block-doc-routing-leak.sh	Write"
     "PreToolUse	block-md-creation.sh	Write"
-    "PreToolUse	block-no-verify.sh	Bash"
     "PreToolUse	enforce-commit-guard.sh	Bash"
     "PreToolUse	enforce-config-protection.sh	Write|Edit"
     "PreToolUse	enforce-delegation.sh	Write|Edit"

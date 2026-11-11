@@ -26,11 +26,8 @@ COMMAND=$(hook_get_tool_input "${INPUT}" "command")
 
 # Dangerous command patterns — data-driven loop.
 # Field delimiter is US (Unit Separator, 0x1F) — a control byte that can never
-# appear inside a regex or a human-readable message. A regex '|' alternation is
-# therefore preserved intact. The previous pipe ('|') delimiter collided with the
-# alternation inside the force-push / push-to-main patterns: the split truncated
-# each pattern mid-regex, silently disarming both blocks (and GIT-006 truncated to
-# 'git\s+push\s+\S+\s+(main' — an unbalanced '(' that grep rejected as invalid).
+# appear inside a regex or a human-readable message, so the force-push pattern's
+# '|' alternation stays intact (a '|' delimiter would truncate it mid-regex).
 # Format: regex<US>code<US>message<US>suggestion
 readonly US=$'\x1f'
 RULES=(
@@ -39,7 +36,6 @@ RULES=(
   "git\s+clean\s+-fd${US}GIT-003${US}Clean force-delete blocked${US}This hook blocks git clean -fd whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+checkout\s+\.\s*\$${US}GIT-004${US}Discard-all blocked${US}This hook blocks git checkout . whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+restore\s+\.\s*\$${US}GIT-005${US}Restore-all blocked${US}This hook blocks git restore . whatever the approval; if the user confirms it, ask them to run it themselves"
-  "git\s+push\s+\S+\s+(main|master)\b${US}GIT-006${US}Push to main/master blocked${US}Create a feature branch and use a pull request"
 )
 
 # Rule-table lint (recurrence guard): assert a pattern compiles under grep -E

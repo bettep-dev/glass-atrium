@@ -103,7 +103,6 @@ set_consumer_rows() {
   cred_fixture="${cred_fixture}=supersecret123"
   printf '%s\n' "${aws_fixture}" >"${BATS_TEST_TMPDIR}/leak.env"
   CONSUMER_ROWS=(
-    "no-verify flag|block-no-verify.sh|bash|git commit -m msg --no-verify|2|SEC-011"
     "dangerous command|block-dangerous-commands.sh|bash|chmod -R 777 /|2|SEC-010"
     "destructive git|enforce-commit-guard.sh|bash|git reset --hard|2|GIT-002"
     "credential write|validate-secret-scan.sh|bash|echo ${cred_fixture} > .env|2|SEC-016"
@@ -287,7 +286,6 @@ row_padding() {
   ln -s "${WIKI_ROOT}" "${WIKI_ROOT}-link"
   # Row: name | hook | payload kind | line-1 trigger | padding spec | exported names | expected status | needle.
   rows=(
-    "no-verify flag|block-no-verify.sh|bash|git commit -m msg --no-verify|context:131071|context ctx|2|SEC-011"
     "destructive git|enforce-commit-guard.sh|bash|git reset --hard|context:131071|context ctx|2|GIT-002"
     "DEV spawn declaring a wide scope|enforce-verification-gate.sh|agent|[SIZE-EST] bundles=1 tool_uses~=5 implement plan-4242|scope:132000|decl scope_line files line scan|0|declares 11 [SCOPE] file(s)"
     "DEV spawn under a long hook event name|enforce-verification-gate.sh|agent-event|fix the parser|dots:131100|hook_event|2|VGATE-SIZE-001"

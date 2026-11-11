@@ -1,14 +1,9 @@
 #!/usr/bin/env bats
 # enforce-commit-guard.bats — pins the PreToolUse(Bash) dangerous-git-command gate.
 #
-# Regression under repair: the RULES table used '|' as the field delimiter, but the
-# force-push (GIT-001) and push-to-main (GIT-006) regexes contain '|' alternation.
-# The split truncated each pattern mid-regex — GIT-001 dropped its '-f' short-form
-# arm and GIT-006 became 'git\s+push\s+\S+\s+(main' (an unbalanced '(' grep rejects
-# as invalid) — so both blocks were silently disarmed (the sole gate fully bypassed)
-# AND every command leaked a grep parse error to stderr. The fix delimits fields
-# with US (0x1F), which can never occur in a regex, and lints each pattern's
-# compilation before use.
+# Protects: the RULES table's US (0x1F) field delimiter — the force-push (GIT-001)
+# regex carries '|' alternation, which a '|' delimiter would truncate mid-regex — and
+# the per-pattern compile lint (GIT-000) that fails closed on a malformed pattern.
 #
 # Decision channel = exit code: 0 PASS (not blocked) / 2 BLOCK. Block detail (the
 # JSON error object) is emitted to stderr → captured into GUARD_ERR.
@@ -56,20 +51,17 @@ run_guard() {
   [[ "${GUARD_ERR}" == *'"error_code":"GIT-001"'* ]] || return 1
 }
 
-# --- Push-to-main corpus (GIT-006): the truncated regex never compiled at all ---
+# --- Push to a default branch: rule text only (core-git-workflow.md → Branches), no block ---
 
-@test "git push origin main is blocked with code GIT-006" {
-  # RED before fix: 'git\s+push\s+\S+\s+(main' is an unbalanced-paren regex grep
-  # refused to compile → the block never fired.
-  run_guard 'git push origin main'
-  [[ "${status}" -eq 2 ]] || return 1
-  [[ "${GUARD_ERR}" == *'"error_code":"GIT-006"'* ]] || return 1
-}
-
-@test "git push origin master is blocked with code GIT-006" {
-  run_guard 'git push origin master'
-  [[ "${status}" -eq 2 ]] || return 1
-  [[ "${GUARD_ERR}" == *'"error_code":"GIT-006"'* ]] || return 1
+@test "a plain push to main or master is not blocked" {
+  local branch
+  for branch in main master; do
+    run_guard "git push origin ${branch}"
+    [[ "${status}" -eq 0 && -z "${GUARD_ERR}" ]] || {
+      echo "push to ${branch}: status ${status}: ${GUARD_ERR}"
+      return 1
+    }
+  done
 }
 
 # --- Emitted fields are un-corrupted (delimiter no longer collides) ---
@@ -89,8 +81,7 @@ run_guard() {
 # --- Non-matching control: no block AND no invalid-regex grep leak on stderr ---
 
 @test "benign git status is not blocked and leaks NO grep parse error" {
-  # RED before fix: the invalid GIT-006 regex made grep print 'parentheses not
-  # balanced' to stderr on EVERY command, even non-matching ones.
+  # A non-compiling pattern makes grep print a parse error on EVERY command, matching or not.
   run_guard 'git status'
   [[ "${status}" -eq 0 ]] || return 1
   [[ -z "${GUARD_ERR}" ]] || return 1

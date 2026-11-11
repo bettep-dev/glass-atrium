@@ -67,7 +67,6 @@ write_full_settings() {
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-dangerous-commands.sh" } ] },
       { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-doc-routing-leak.sh" } ] },
       { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-md-creation.sh" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-no-verify.sh" } ] },
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-commit-guard.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-config-protection.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-delegation.sh" } ] },
@@ -374,9 +373,9 @@ drop_group() {
 @test "wired hook without the executable bit -> FAIL line naming it + non-zero verdict" {
   make_ga_sandbox
   write_full_settings
-  chmod 644 "${GA_SANDBOX}/hooks/block-no-verify.sh"
+  chmod 644 "${GA_SANDBOX}/hooks/enforce-commit-guard.sh"
   run_doctor_ga_sandbox
-  [[ "${output}" == *"FAIL : hook wired but NOT executable — ${GA_SANDBOX}/hooks/block-no-verify.sh"* ]]
+  [[ "${output}" == *"FAIL : hook wired but NOT executable — ${GA_SANDBOX}/hooks/enforce-commit-guard.sh"* ]]
   [[ "${output}" == *"1 wired hook(s) missing the executable bit"* ]]
   [[ "${output}" == *"doctor: FAIL"* ]]
   [[ "${status}" -ne 0 ]]

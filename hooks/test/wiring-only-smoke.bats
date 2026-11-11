@@ -5,8 +5,8 @@
 # coverage, computed on this branch — the T5 AC's enumerate-before-authoring step):
 #
 #   Roster = 37 unique hook basenames across the 44 EXPECTED_HOOK_BINDINGS leaves.
-#   Verified WIRING-ONLY set (bound in doctor, executed by NO hooks/test suite) = 12:
-#     security six — block-dangerous-commands · block-no-verify · detect-secret-file-write
+#   Verified WIRING-ONLY set (bound in doctor, executed by NO hooks/test suite) = 11:
+#     security five — block-dangerous-commands · detect-secret-file-write
 #                    · validate-secret-scan · enforce-config-protection · inject-session-context
 #     plus       — advisory-preedit-facts · advisory-spawn-budget · block-md-creation
 #                    · post-edit-outcome-sync · validate-compliance-matrix · validate-pre-write-raw
@@ -18,8 +18,8 @@
 #     reference is a prose comment in enforce-verification-gate.bats (never executed),
 #     so it IS wiring-only; the review's 11 evidently classed it covered.
 #
-#   Coverage AFTER this change: the security six each gain a dedicated smoke suite
-#   (block-dangerous-commands.bats · block-no-verify.bats · detect-secret-file-write.bats
+#   Coverage AFTER this change: the security five each gain a dedicated smoke suite
+#   (block-dangerous-commands.bats · detect-secret-file-write.bats
 #   · validate-secret-scan.bats · enforce-config-protection.bats · inject-session-context.bats);
 #   block-md-creation + validate-pre-write-raw gain cheap envelope smokes BELOW (both are
 #   stdin-only with env seams — no fixture cost).
