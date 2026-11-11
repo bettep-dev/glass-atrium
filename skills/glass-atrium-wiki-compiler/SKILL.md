@@ -18,6 +18,7 @@ description: Convert raw/ source materials into wiki/notes/ markdown and sync vi
 
 ### Step 1 — Convert (LLM, batched)
 
+- `batched` in this heading names the run's delta set of raw files, not the scheduled batch (`## Overview` → Scope).
 - **Input**: delta set of `raw/{slug}.md` files (`## Incremental Rules` → `Delta only`).
 - **Output**: `wiki/notes/{slug}.md`, flat; tags are the grouping mechanism.
 - **Work performed**:
@@ -28,7 +29,7 @@ description: Convert raw/ source materials into wiki/notes/ markdown and sync vi
   - Auto-extract tags from content (keywords + domain terms). No predefined tag list.
   - Link: the curator body → **Linking**.
 - **Forbidden in Step 1**:
-  - Hand-editing `index/master-index.md`: it is a build artifact that Step 2 regenerates
+  - Hand-editing `index/master-index.md`: the curator body → **Index post-check**
   - Creating category subdirectories under `notes/`
 - **Tools**: the curator body → `## Path Constraint & Tools`.
 

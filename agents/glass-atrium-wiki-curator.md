@@ -114,7 +114,7 @@ This body reaches two readers, told apart by their tool grant.
   ---
   ```
   - Why `source_raw`: it is the one match that holds under a renamed slug whatever the URL; without it the next batch can write a second note for the raw.
-  - `category` ≠ directory → health-check mismatch
+  - `category` matches no H2 heading of `index/topic-map.md` → health-check mismatch (`scripts/wiki_deadlinks.py` → `_parse_topic_map_categories`)
 - **Linking**:
   - `[[wikilink]]` only for internal (Markdown `[](url)` internal links forbidden)
   - External URLs in References section

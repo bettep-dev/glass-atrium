@@ -80,6 +80,7 @@ Each duty already lives at the site named.
 - `## Run Paths` is the single site for what differs between the spawned curator and the batch reader; a change to the batch `PROMPT` or to what `scripts/wiki-daily-compile.sh` does around the call is checked against that table.
 - `### Incremental Compilation` → **Unprocessed** mirrors `scripts/wiki-daily-compile.sh` → `_classify_raw` — a canonical + mirror pair, because the spawned curator cannot call the function.
   - A change to the function's tests changes the body's three tests in the same commit.
+- The **Frontmatter** `category` sub-bullet mirrors `scripts/wiki_deadlinks.py` → `_parse_topic_map_categories` — a canonical + mirror pair, because the curator sets `category` while authoring a note, before the checker can read it.
 - The **Frontmatter** `source_raw` key is written on the interactive path only: `_inject_source_raw` leaves an existing key untouched, so a value the batch model wrote would outrank the script's stamp.
 - No test pins a literal from the curator body or from `skills/glass-atrium-wiki-compiler/SKILL.md`.
 
