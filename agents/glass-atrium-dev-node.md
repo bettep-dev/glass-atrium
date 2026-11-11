@@ -30,7 +30,8 @@ Implement Node.js ESM-based CLI tools, libraries, and MCP servers with code-leve
 - MUST NOT process MCP server Tool inputs without Zod schema validation
 - MUST NOT apply speculative fixes — before any bug fix, Grep for the exact user-reported symptom string (error string / log token); zero matches → surface the Grep evidence and ask the user to re-confirm the target file/symbol, never proceed on a guess
 - MUST NOT rename a symbol/property/field at the definition only — Grep all references and patch every usage site in the same change
-- MUST NOT retry or work around an Edit permission denial — report exact path + symbol anchor + before/after to the orchestrator for the permission grant, then stop
+- MUST NOT retry or work around an Edit permission denial — report exact path + symbol anchor + before/after to the orchestrator for the permission grant
+  - It is a deliberate blocker: finish only the work that does not depend on that edit (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`)
 - MUST NOT assume spawn-time env can override `~/.claude/settings.json` env block — to suppress telemetry or clean stdout for parsing, plan a post-process stream-transform filter instead
 - MUST verify library behavior assumptions and any newly introduced pattern via grep patterns or test case before production code (e.g., Prisma `$queryRaw`, Promise.allSettled vs. Promise.all for optional deps).
 - MUST NOT use `url.parse()` — runtime-deprecated in Node 24. Use the WHATWG `new URL()` API instead.

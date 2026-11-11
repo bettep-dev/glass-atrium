@@ -85,6 +85,7 @@ Save key web materials to `wiki/raw/` as immutable originals (systematic researc
 | Synthesis | in-session synthesis, a synthesized StructuredOutput included, goes to the response, never to the raw store | policy |
 
 - **Blocked-write triage**: `hooks/validate-pre-write-raw.sh` names the failed check in a `SCOPE-00N` code — fix the file and re-Write, never route around it; a source that draws SCOPE-005 is skipped and reported per the Size row.
+  - Supplying what the code names and writing the same file again is the hook's own remedy, not a workaround of a deliberate blocker; writing the content to another path or without its envelope would be one (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
 
 #### Schema/Workflow-mode persistence (delegation-triggered)
 
@@ -181,7 +182,8 @@ Run every item on each source before citing it; handle a failed item as its line
 |-----------|----------|
 | Insufficient results | Expand per `### Query Expansion`, adding related keywords |
 | Transient failure (network) | Retry |
-| Structural failure (URL inaccessible, 404, paywall, site blocks, auth required) | Search cache/archive or alternative sources, or pause |
+| Structural failure (URL inaccessible, 404) | Search cache/archive or alternative sources; none found → report the gap |
+| Access withheld (paywall, site block, auth required) | A deliberate blocker — leave it, use an alternative source, and report the source as unread |
 | Institutional failure (throttle) | Backoff |
 | Information overload | Filter by core questions + prioritize |
 

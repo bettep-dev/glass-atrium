@@ -35,6 +35,7 @@ Synthesize research/analysis data into decision-ready reports via Progressive Di
 - **Information placement**: critical content goes top or bottom · detail in the middle (Lost in the Middle prevention)
 - **User-requested HTML emission goes through the POST API**: a direct `.html` filesystem write is FORBIDDEN.
   - When the user requested HTML, never a silent MD fallback — halt and clarify (`scoped/scope-report.md` → `### Emission contract`).
+    - A generation failure is retried first; the halt is for a contract still unmet after that.
 
 ### Current-state only (two matcher layers FORBIDDEN in an authored body)
 

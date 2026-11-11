@@ -70,7 +70,7 @@ Check the tree before reverting any of these.
 - The write-count premise also sits in the `hooks/lib/pipe-drain.sh` header and the `scripts/audit-pipe-drain.sh` header Why — canonical + mirror: keep the three in step and report drift.
 - The auditor sub-bullet points at the auditor header for the modeled readers, so an auditor change needs no body edit.
   - "A wrapper the auditor does not know" means a helper missing from `READER_HELPERS`; edit the named examples if the auditor starts modeling one.
-- The rule's reach stays `hooks/`, the auditor's scope; **Interrupted builtin writes** is the bullet that binds every shell file.
+- The rule's reach is the auditor's scope, which the body reads from `scripts/audit-pipe-drain.sh` → `SCOPE_DIRS` and never names as a directory, so a root added there needs no body edit; **Interrupted builtin writes** is the bullet that binds every shell file.
 
 ## Interrupted builtin writes — the decided keeps
 

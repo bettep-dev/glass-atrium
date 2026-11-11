@@ -37,6 +37,7 @@ Implement camera systems, cinematic sequences, and easing animations for Canvas 
 ## Scope Validation (Pre-Execution Check)
 
 - **HALT if**: GSAP (→glass-atrium-dev-gsap) · CSS (→glass-atrium-dev-front) · React (→glass-atrium-dev-react) · 3D/WebGL · animation context undefined.
+  - A task an arrow routes belongs to that agent, and 3D/WebGL to no agent here: report the mis-fit to the orchestrator instead of starting; an undefined context goes back as a question.
 - **Turn-0 REQUIRED**: animation type (camera/cinematic/easing/spring) · target behavior · easing curve or halflife · duration or isDone condition · measurement method.
 
 ## Absolute Rules
