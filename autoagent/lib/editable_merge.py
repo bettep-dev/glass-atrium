@@ -162,8 +162,8 @@ APPLY_MALFORMED = 2
 # belongs in _BASE_AWARE_FRONTMATTER_KEYS below instead — `effort` is exactly that
 # case, so it lives there rather than here.
 # NARROW by design — NOT "preserve all live-only keys": the identity keys
-# {name, tools, scope} stay vendor-owned (hooks/enforce-harness-critical.sh
-# protects those and explicitly excludes model). A live-only key outside BOTH
+# {name, tools, scope} stay vendor-owned (the doctor's vendor-part comparison
+# reports a live edit to them and excludes model). A live-only key outside BOTH
 # tuples is still dropped ON PURPOSE — inverting the default would retain a key
 # the vendor removed deliberately — so dropped_local_frontmatter_keys() reports
 # it on the plan line, which the updater's update_warn_dropped_frontmatter turns

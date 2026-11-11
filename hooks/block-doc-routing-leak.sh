@@ -54,7 +54,7 @@ source "${BASH_SOURCE%/*}/lib/hook-utils.sh"
 monitor_port="$(hook_monitor_port || true)"
 
 # Path normalization: hook_normalize_path (hook-utils.sh) — traversal-safe "."/".."
-# collapse, shared with enforce-delegation.sh / enforce-harness-critical.sh.
+# collapse, shared with enforce-delegation.sh.
 
 # Recover agentType from the .meta.json sidecar — ALGORITHMICALLY EQUIVALENT to
 # track-outcome.sh recover_agent_type_from_sidecar (reimplemented in bash + jq, not copied).

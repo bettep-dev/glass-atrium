@@ -11213,7 +11213,6 @@ AA = SimpleNamespace(
             {
                 "hooks/inject-scope-rules.sh",
                 "hooks/hook-utils.sh",
-                "hooks/enforce-harness-critical.sh",
                 "hooks/track-outcome.sh",
                 "hooks/_outcome_signal.py",
                 "hooks/_pg_learning_dualwrite.py",
@@ -11233,7 +11232,6 @@ AA = SimpleNamespace(
                 "hooks/lib/styleref-roster.sh",
                 "hooks/lib/hook-utils.sh",
                 "hooks/lib/worktree-lock.sh",
-                "hooks/lib/claude-config-dirs.sh",
                 "hooks/lib/style_ref_match.py",
                 "hooks/_learning_log_limits.py",
                 "hooks/ga_paths.py",

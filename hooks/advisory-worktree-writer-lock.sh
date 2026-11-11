@@ -120,7 +120,7 @@ if [[ "${TI_STATE}" == "unrecognized" ]]; then
 fi
 [[ -z "${FILE_PATH}" ]] && exit 0
 
-# Normalize FIRST (enforce-harness-critical.sh precedent): a "../" form must never dodge the
+# Normalize FIRST: a "../" form must never dodge the
 # exemptions below, and a relative path is only meaningful against the envelope cwd.
 case "${FILE_PATH}" in
   /* | '~'*) ;;

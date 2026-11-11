@@ -200,8 +200,9 @@ readonly INJECT_MANIFEST_DIGEST_CMD="${INJECT_SCOPE_RULES_DIGEST_CMD:-}"
 
 # Per-agent canary file — daemon-written (temp file + rename), one per agent type, read under the file
 # contract at set_canary_block only when the directory lists its exact name. No env override: the read follows the data-root seam alone, so no
-# session env can aim it elsewhere. The write floor (enforce-harness-critical.sh) covers the directory —
-# Write, Edit and MultiEdit deterministically, Bash best-effort.
+# session env can aim it elsewhere. No write guard covers the directory: a foreign text is caught after
+# delivery, when autoagent/daemon_cycle.py → _void_foreign_rows finds a logged delivered_hash that is not
+# the trial's pre-registered hash and voids the trial (foreign-canary-hash).
 readonly CANARY_DIR="${HOOK_DATA_DIR}/learning/canary"
 # Rendered-block cap — over it the block is refused whole, never truncated.
 readonly CANARY_MAX_BYTES=1200

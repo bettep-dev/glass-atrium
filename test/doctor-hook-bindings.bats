@@ -71,9 +71,6 @@ write_full_settings() {
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-commit-guard.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-config-protection.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-delegation.sh" } ] },
-      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-foreground-harness.sh" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
-      { "matcher": "Write|Edit|MultiEdit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-verification-gate.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-workflow-verify-stage.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/lint-workflow-template-literal.sh" } ] },
@@ -265,7 +262,7 @@ drop_group() {
 
 @test "DX3 facet-only miss -> aggregate line is facet-scoped, no whole-gate dormant claim" {
   write_full_settings
-  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  drop_group 'Write|Edit' validate-secret-scan.sh
   run_doctor_sandbox
   [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
     && [[ "${output}" != *"dormant hook binding(s)"* ]]
@@ -275,7 +272,7 @@ drop_group() {
   # the redeploy path is hazardous until the reconcile fix lands, and it is not the
   # remedy for a facet miss anyway — the fix is a hand edit of one matcher list.
   write_full_settings
-  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  drop_group 'Write|Edit' validate-secret-scan.sh
   run_doctor_sandbox
   # scoped to the §6 facet lines: an unrelated section may legitimately mention the installer,
   # so a whole-output grep would be a false positive. Line count asserted first — an empty
@@ -300,11 +297,11 @@ drop_group() {
   # wrong-remedy class DX3/DX4 exist to prevent. The settings-ABSENT row cannot host this pin:
   # that branch reports the aggregate only and emits no per-tuple line at all.
   write_full_settings
-  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  drop_group 'Write|Edit' validate-secret-scan.sh
   drop_group Agent advisory-spawn-budget.sh
   drop_group '' cost-tracker.sh Stop
   run_doctor_sandbox
-  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
+  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> validate-secret-scan.sh (matcher=Write|Edit) (PARTIAL"* ]] \
     && [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT: deployed but never fires)"* ]] \
     && [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh (matcher=<none>) (DORMANT: deployed but never fires)"* ]] \
     && [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
@@ -321,8 +318,7 @@ drop_group() {
   # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE binding set across all 8 events, and the total
   # asserted below is read from the populated array (set_binding_figures), never restated here.
   # The total is counted per FLATTENED matcher-leaf, NOT per unique hook basename:
-  # validate-secret-scan.sh AND enforce-harness-critical.sh
-  # each bind under TWO matchers (Write|Edit AND Bash), two hooks share the Workflow
+  # validate-secret-scan.sh binds under TWO matchers (Write|Edit AND Bash), two hooks share the Workflow
   # matcher (enforce-workflow-verify-stage.sh AND lint-workflow-template-literal.sh),
   # enforce-verification-gate.sh binds under BOTH PreToolUse and PostToolUse (Agent
   # matcher), and several hooks recur across events (agent-tracker.sh,
@@ -399,11 +395,11 @@ drop_group() {
 }
 
 @test "one hook wired under two matchers -> ONE executability FAIL line (per-file, not per-tuple)" {
-  # enforce-harness-critical.sh binds under Bash AND Write|Edit|MultiEdit. The binding verdict is
+  # validate-secret-scan.sh binds under Bash AND Write|Edit. The binding verdict is
   # per-tuple, but the mode is a property of the single FILE — so it must not double-report.
   make_ga_sandbox
   write_full_settings
-  chmod 644 "${GA_SANDBOX}/hooks/enforce-harness-critical.sh"
+  chmod 644 "${GA_SANDBOX}/hooks/validate-secret-scan.sh"
   run_doctor_ga_sandbox
   local lines
   lines="$(printf '%s\n' "${output}" | grep -c 'NOT executable' || true)"

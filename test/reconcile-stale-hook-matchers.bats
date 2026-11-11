@@ -76,9 +76,9 @@ count_all_cmd() {
   jq '[ .hooks // {} | to_entries[] | .value[]? | .hooks[]? | .command | select(type == "string") ] | length' "${SETTINGS}"
 }
 
-# CASE 2 — the live shape (fact [5]): enforce-harness-critical.sh is expected under `Bash` and
-# `Write|Edit|MultiEdit`, so its `Write|Edit` row is STALE, and it shares that consolidated group
-# with validate-secret-scan.sh (for which `Write|Edit` IS expected) plus a user-owned hook.
+# CASE 2 — a consolidated group: block-dangerous-commands.sh is expected under `Bash` only, so its
+# `Write|Edit` row is STALE, and it shares that group with validate-secret-scan.sh (for which
+# `Write|Edit` IS expected) plus a user-owned hook.
 write_case2() {
   cat >"${SETTINGS}" <<'JSON'
 {
@@ -87,12 +87,12 @@ write_case2() {
   "hooks": {
     "PreToolUse": [
       { "matcher": "Write|Edit", "customKey": "keepme", "hooks": [
-          { "type": "command", "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh" },
+          { "type": "command", "command": "~/.glass-atrium/hooks/block-dangerous-commands.sh" },
           { "type": "command", "command": "~/.glass-atrium/hooks/validate-secret-scan.sh" },
           { "type": "command", "command": "~/my-hooks/user-owned.sh" }
       ] },
       { "matcher": "Bash", "hooks": [
-          { "type": "command", "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh" }
+          { "type": "command", "command": "~/.glass-atrium/hooks/block-dangerous-commands.sh" }
       ] }
     ]
   }
@@ -106,8 +106,8 @@ JSON
   [[ "${status}" -eq 0 ]] || return 1
   jq -e . "${SETTINGS}" >/dev/null || return 1
   # the stale (event, matcher, basename) row is gone; the EXPECTED Bash row survives
-  [[ "$(count_cmd_matcher PreToolUse 'Write|Edit' enforce-harness-critical.sh)" -eq 0 ]] || return 1
-  [[ "$(count_cmd enforce-harness-critical.sh)" -eq 1 ]] || return 1
+  [[ "$(count_cmd_matcher PreToolUse 'Write|Edit' block-dangerous-commands.sh)" -eq 0 ]] || return 1
+  [[ "$(count_cmd block-dangerous-commands.sh)" -eq 1 ]] || return 1
   # SIBLING COMMANDS in the SAME group survive: the security hook whose matcher IS expected...
   [[ "$(count_cmd_matcher PreToolUse 'Write|Edit' validate-secret-scan.sh)" -eq 1 ]] || return 1
   # ...and the user-owned foreign hook (collateral, not a match target)
@@ -135,7 +135,7 @@ JSON
   [[ -n "${reported}" ]] || return 1
   [[ "${reported}" -eq "${actual}" ]] || return 1
   # the per-drop line also states its command count
-  [[ "${output}" == *"dropped stale matcher: PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit) — 1 command(s)"* ]] || return 1
+  [[ "${output}" == *"dropped stale matcher: PreToolUse -> block-dangerous-commands.sh (matcher=Write|Edit) — 1 command(s)"* ]] || return 1
 }
 
 @test "C2-b2 two stale commands in ONE group: both drop cumulatively, the count sums" {
@@ -279,7 +279,7 @@ JSON
           { "type": "command", "command": "~/my-hooks/user-owned.sh" }
       ] },
       { "matcher": "Bash", "hooks": [
-          { "type": "command", "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh" }
+          { "type": "command", "command": "~/.glass-atrium/hooks/block-dangerous-commands.sh" }
       ] }
     ]
   }

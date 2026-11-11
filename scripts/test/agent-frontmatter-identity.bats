@@ -2,8 +2,8 @@
 # Pins the frontmatter identity — `name`, `tools`, `scope` — of the two intel
 # agent files: what those keys say at the cycle base must be what they say at
 # HEAD, so an edit to either body cannot carry a renamed agent or a widened
-# tool grant along with it. enforce-harness-critical.sh guards the LIVE install
-# paths only, so this suite is the only judge for the repository tree.
+# tool grant along with it. The doctor's manifest comparison judges the LIVE
+# install only, so this suite is the only judge for the repository tree.
 #
 # `tools` folds to a SORTED item set, so the inline-flow and block-list
 # spellings of one grant read alike; an absent key emits no line, so

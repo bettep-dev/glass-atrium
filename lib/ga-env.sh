@@ -215,12 +215,9 @@ ga_init_env() {
   # then exceeds the bindings actually wired. test/hook-matcher-shape-invariant.bats::binding_matchers is the
   # one parser that skips comments. Any note about a row belongs in THIS block, above the array.
   # MATCHER CONVENTION — a Write/Edit-family row is "Write|Edit", NEVER "Write|Edit|MultiEdit". MultiEdit has
-  # ZERO registrations on the recorded host, so adding it to a NEW row registers a token that guards nothing;
-  # test/hook-matcher-shape-invariant.bats pins a ONE-token legacy allowlist (MultiEdit) whose stated purpose is
-  # to stop exactly that set widening, and its row asserts the allowlist stays size 1. The single surviving
-  # Write|Edit|MultiEdit row (enforce-harness-critical.sh) is that grandfathered legacy, kept as forward-compat
-  # insurance and pointed at a deferred rewire — it is NOT a pattern to copy. So: if a design doc or an older
-  # sibling row shows MultiEdit, prefer the invariant's evidence over the design text and leave it out.
+  # ZERO registrations on the recorded host, so a row carrying it registers a token that guards nothing, and
+  # test/hook-matcher-shape-invariant.bats fails on any matcher alternative the recorded host does not emit.
+  # If a design doc or an older sibling row shows MultiEdit, prefer the invariant's evidence and leave it out.
   EXPECTED_HOOK_BINDINGS=(
     "PreToolUse	advisory-context-budget.sh	Agent"
     "PreToolUse	advisory-egress-secret.sh	Bash"
@@ -236,9 +233,6 @@ ga_init_env() {
     "PreToolUse	enforce-commit-guard.sh	Bash"
     "PreToolUse	enforce-config-protection.sh	Write|Edit"
     "PreToolUse	enforce-delegation.sh	Write|Edit"
-    "PreToolUse	enforce-foreground-harness.sh	Agent"
-    "PreToolUse	enforce-harness-critical.sh	Bash"
-    "PreToolUse	enforce-harness-critical.sh	Write|Edit|MultiEdit"
     "PreToolUse	enforce-verification-gate.sh	Agent"
     "PreToolUse	enforce-workflow-verify-stage.sh	Workflow"
     "PreToolUse	lint-workflow-template-literal.sh	Workflow"

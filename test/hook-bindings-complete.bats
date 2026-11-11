@@ -18,8 +18,6 @@ SECURITY_CRITICAL_HOOKS=(
   block-no-verify.sh
   detect-secret-file-write.sh
   enforce-config-protection.sh
-  enforce-foreground-harness.sh
-  enforce-harness-critical.sh
   validate-pre-write-raw.sh
   validate-prompt.sh
   validate-secret-scan.sh

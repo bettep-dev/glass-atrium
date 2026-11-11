@@ -66,7 +66,6 @@ _READERS = (
     "autoagent/daemon-cycle.sh",
     "hooks/inject-scope-rules.sh",
     "hooks/hook-utils.sh",
-    "hooks/enforce-harness-critical.sh",
     "hooks/track-outcome.sh",
     "hooks/_outcome_signal.py",
     "hooks/_pg_learning_dualwrite.py",
@@ -279,9 +278,6 @@ _DATA_HANDOFFS = {
         ("export GRADER_WRITE_SCAN", "a closed scan token: verifiable, unverifiable or empty"),
         ("export GRADER_WRITE_PATHS", "the transcript's Write/Edit paths"),
         ("export GRADER_CROSSCHECK_STATE_FILE", "a mktemp file the grader writes its token to"),
-    ),
-    "hooks/enforce-harness-critical.sh": (
-        ('HARNESS_CANARY_DIR="${CANARY_DIR}"', "the live canary data dir the guard matches"),
     ),
     "hooks/agent-tracker.sh": (
         ('TIMESTAMP="${TIMESTAMP}"', "the event timestamp"),

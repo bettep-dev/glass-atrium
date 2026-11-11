@@ -712,7 +712,6 @@ class AaRestartTest(_AaFixture):
                 (f"spawn- or evidence-path file {path} changes", path, True)
                 for path in (
                     "hooks/hook-utils.sh",
-                    "hooks/enforce-harness-critical.sh",
                     "hooks/track-outcome.sh",
                     "hooks/_outcome_signal.py",
                     "hooks/_pg_learning_dualwrite.py",

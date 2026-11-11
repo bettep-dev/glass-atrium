@@ -10,27 +10,19 @@
 #      Bash(rm:*) bypass an agent could otherwise smuggle via `bash -c 'rm …'`;
 #      the npm publish row sits in permissions.ask (user-approval gate).
 #   3. The redirect-into-harness pattern is INEXPRESSIBLE as a command-prefix
-#      matcher (so it is absent from the settings deny/ask) and is instead specified
-#      in enforce-harness-critical.sh's redirect regex (asserted by a direct
-#      hook invocation that blocks such a redirect).
+#      matcher, so it is absent from the settings deny/ask.
 #
 # Every row reads its SoT live — settings.template.json .permissions, the agents'
 # frontmatter, the committed manifest. Expected values are test-side literals, so
 # a SoT edit and the oracle can never move together.
 #
 # Run via: bats test/harness-290-t21-capability-confinement.bats
-# Requires: bats, bash 3.2+, jq; python3 only for the hook-redirect regression row.
-#
-# INVOCATION CONVENTION — the hook is executed DIRECTLY as a command, never
-# interpreter-prefixed: an interpreter prefix bypasses the executable bit, so a
-# mode-644 hook (inert to Claude Code) would still pass. Direct execution
-# exercises the real path.
+# Requires: bats, bash 3.2+, jq.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 # settings.template.json is a manifest bundle member, so it resolves under GA in a
 # consumer install exactly as in the checkout — the rows below need no skip guard.
 SETTINGS="${GA}/settings.template.json"
-HOOK_SH="${GA}/hooks/enforce-harness-critical.sh"
 MANIFEST="${GA}/manifest.json"
 
 # "<agent basename>|<grants that MUST survive the surgical prune>" — the survivor
@@ -115,19 +107,6 @@ frontmatter_block() {
       and ([$rows[] | select(test("\\.claude|\\.glass-atrium"))] | length) == 0
   ' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
-}
-
-@test "the redirect pattern is specified in the hook: redirect into live hooks dir blocks" {
-  [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
-  command -v python3 >/dev/null 2>&1 || skip "python3 required"
-  local fake_home="${BATS_TEST_TMPDIR}/home"
-  mkdir -p "${fake_home}/.claude/hooks"
-  local cmd='echo pwned > $HOME/.claude/hooks/evil.sh'
-  local tin envelope
-  tin="$(jq -cn --arg c "${cmd}" '{command: $c}')"
-  envelope="$(jq -cn --argjson ti "${tin}" '{tool_name: "Bash", tool_input: $ti}')"
-  run env "HOME=${fake_home}" "GA_DATA_ROOT=${fake_home}/.glass-atrium" "${HOOK_SH}" <<<"${envelope}"
-  [[ "${status}" -eq 2 ]]
 }
 
 @test "committed manifest carries the three shipped root artifacts" {

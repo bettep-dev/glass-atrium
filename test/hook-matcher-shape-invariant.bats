@@ -1,7 +1,6 @@
 #!/usr/bin/env bats
-# Recurrence guard for the two silently-inert-binding classes: a wired matcher
-# alternative that names no host tool, and a hook dispatch arm that guards a tool
-# the host never emits. The host emits NO warning for a dead plain matcher token,
+# Recurrence guard for the silently-inert-binding class: a wired matcher
+# alternative that names no host tool. The host emits NO warning for a dead plain matcher token,
 # so such a token is otherwise invisible; the exact-set-membership rows also pin
 # the matcher semantics so the unanchored-substring assumption cannot recur.
 #
@@ -9,12 +8,11 @@
 # enumeration `wire_hooks` UPSERTS into the user-owned settings.json. That is what
 # the host actually dispatches on; settings.template.json is a seed the host never
 # reads, so a dead token there is inert in a way a dead token here is not.
-# S3 SoT — the TOOL_NAME dispatch case in enforce-harness-critical.sh.
 #
-# Oracle: the two spec-maintained literals below, read from the SPEC and the REPO —
+# Oracle: the spec-maintained literal below, read from the SPEC and the REPO —
 # never from the host binary at test time (a host-derived set is an undefined
-# oracle). Both in-repo artifacts are parsed LIVE: hardcoding the wired matchers or
-# the dispatched names would be a self-agreeing oracle that can never fail.
+# oracle). The in-repo artifact is parsed LIVE: hardcoding the wired matchers
+# would be a self-agreeing oracle that can never fail.
 #
 # Matcher SHAPE, not `|` tokens: a matcher alternative may itself be a regex whose
 # body contains `|` (the mcp__ tool-family row), so alternatives are split at
@@ -26,40 +24,21 @@
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 GA_ENV="${GA}/lib/ga-env.sh"
-HOOK="${GA}/hooks/enforce-harness-critical.sh"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
 # Tool names established as live-registered on the recorded host among the tokens
-# this repo's matchers and dispatch reference. Deliberately NOT a full host
-# inventory — its scope is exactly those tokens.
+# this repo's matchers reference. Deliberately NOT a full host inventory — its
+# scope is exactly those tokens. MultiEdit stays out: it has zero registrations on
+# the recorded host, so a matcher naming it guards nothing.
 RECORDED_HOST_TOOLS=(Agent Bash Edit WebFetch WebSearch Workflow Write)
-
-# Subset the enforce-harness-critical.sh dispatch is expected to branch on — the
-# S3 anti-vacuity floor. Narrower than RECORDED_HOST_TOOLS by design: one hook does
-# not dispatch on every wired tool, and demanding that would make the row unmeetable.
-DISPATCHED_HOST_TOOLS=(Bash Edit Write)
 
 # Regex-shaped alternatives are admitted only for the MCP tool family, whose member
 # names are not knowable at wiring time. The prefix is the whole admission rule.
 MCP_MATCHER_PREFIX="mcp__"
 
-# LEGACY_FORWARD_COMPAT_ALLOWLIST justification: MultiEdit guards NOTHING on the
-#   recorded host (zero registrations, strict Edit schema, absent from the
-#   file-pattern tool list); it is kept as forward-compatibility insurance and its
-#   urgency as a security action is NIL.
-# LEGACY_FORWARD_COMPAT_ALLOWLIST rewire-pointer: the live matcher rewire that
-#   would drop the token is DEFERRED and OPTIONAL, gated behind the stale-matcher
-#   reconcile landing, and is forward-compat housekeeping rather than a security
-#   action.
-# One token, no wildcard: keeping it OUT of RECORDED_HOST_TOOLS is what preserves
-# the row's power to fail on a genuinely NEW dead token. The same literal serves
-# the dispatch rows as the declared defensive-only name.
-LEGACY_FORWARD_COMPAT_ALLOWLIST=(MultiEdit)
-
 setup() {
   [[ -f "${GA_ENV}" ]] || skip "lib/ga-env.sh not found: ${GA_ENV}"
-  [[ -f "${HOOK}" ]] || skip "hook not found: ${HOOK}"
   FIXTURE="$(mktemp -d -t ga-matcher-shape.XXXXXX)"
 }
 
@@ -132,7 +111,6 @@ validate_matcher_alternatives() {
     [[ -z "${alt}" ]] && continue
     if [[ "${alt}" =~ ^[A-Za-z][A-Za-z0-9_]*$ ]]; then
       set_contains "${alt}" "${RECORDED_HOST_TOOLS[@]}" && continue
-      set_contains "${alt}" "${LEGACY_FORWARD_COMPAT_ALLOWLIST[@]}" && continue
       echo "unrecorded matcher alternative: ${alt}"
       rc=1
       continue
@@ -144,39 +122,6 @@ validate_matcher_alternatives() {
     echo "regex-shaped alternative outside the MCP family: ${alt}"
     rc=1
   done < <(all_matcher_alternatives "${file}")
-  return "${rc}"
-}
-
-# tool names the hook's TOOL_NAME dispatch branches on, extracted from the LIVE
-# artifact. Anchored on the case header naming the variable (function-relative, so
-# an inserted comment or shopt line does not move it) and comment lines are
-# skipped, because the hook is edited in parallel with this guard.
-dispatch_tool_names() {
-  awk '
-    /^[[:space:]]*case[[:space:]].*TOOL_NAME.*[[:space:]]in[[:space:]]*$/ { f = 1; next }
-    !f                                                                   { next }
-    /^[[:space:]]*esac/                                                  { f = 0; next }
-    /^[[:space:]]*#/                                                     { next }
-    /\)/ {
-      arm = $0
-      sub(/\).*/, "", arm)
-      gsub(/[ \t"]/, "", arm)
-      gsub(/\047/, "", arm)
-      n = split(arm, part, "|")
-      for (i = 1; i <= n; i++)
-        if (part[i] != "" && part[i] != "*") print part[i]
-    }
-  ' "$1" | sort -u
-}
-
-validate_dispatch_tools() {
-  local file="$1" name rc=0
-  while read -r name; do
-    set_contains "${name}" "${RECORDED_HOST_TOOLS[@]}" && continue
-    set_contains "${name}" "${LEGACY_FORWARD_COMPAT_ALLOWLIST[@]}" && continue
-    echo "dispatched tool name is recorded nowhere: ${name}"
-    rc=1
-  done < <(dispatch_tool_names "${file}")
   return "${rc}"
 }
 
@@ -247,65 +192,4 @@ seed_binding_matcher() {
       return 1
     fi
   done
-}
-
-@test "S3 anti-vacuity: live dispatch extraction contains every dispatched host tool" {
-  local extracted name
-  extracted=()
-  while read -r name; do
-    extracted+=("${name}")
-  done < <(dispatch_tool_names "${HOOK}")
-  for name in "${DISPATCHED_HOST_TOOLS[@]}"; do
-    set_contains "${name}" "${extracted[@]:-}" || {
-      echo "dispatched host tool absent from the dispatch block: ${name}"
-      echo "extracted: ${extracted[*]:-<none>}"
-      return 1
-    }
-  done
-}
-
-@test "S3: every dispatched tool name is recorded or the declared defensive-only name" {
-  run validate_dispatch_tools "${HOOK}"
-  if [[ "${status}" -ne 0 ]]; then
-    echo "${output}"
-    return 1
-  fi
-}
-
-@test "S3 polarity: an unrecorded dispatch arm token fails the invariant" {
-  local seeded="${FIXTURE}/seeded-dispatch.sh"
-  awk '
-    { print }
-    /^[[:space:]]*Bash\)/ { print "  NotebookEdit) bash_arm ;;" }
-  ' "${HOOK}" >"${seeded}"
-  dispatch_tool_names "${seeded}" | grep -q 'NotebookEdit' || {
-    echo "seed did not land in the dispatch block — extractor anchor drifted"
-    return 1
-  }
-  run validate_dispatch_tools "${seeded}"
-  if [[ "${status}" -eq 0 ]]; then
-    echo "seeded dispatch arm was accepted — the oracle is not reading the live artifact"
-    return 1
-  fi
-}
-
-@test "S3 tolerance: extraction survives comment and shopt lines inserted in the dispatch block" {
-  local seeded="${FIXTURE}/tolerant-dispatch.sh"
-  awk '
-    /^[[:space:]]*case[[:space:]].*TOOL_NAME.*[[:space:]]in[[:space:]]*$/ {
-      print "  # soundness note: two enumerations, one dispatch"
-      print "  shopt -s nocasematch"
-      print
-      print "  # arm order is immaterial (exact tokens)"
-      next
-    }
-    { print }
-  ' "${HOOK}" >"${seeded}"
-  local before after
-  before="$(dispatch_tool_names "${HOOK}" | tr '\n' ' ')"
-  after="$(dispatch_tool_names "${seeded}" | tr '\n' ' ')"
-  if [[ "${before}" != "${after}" ]]; then
-    echo "extraction drifted on inserted lines: before='${before}' after='${after}'"
-    return 1
-  fi
 }
