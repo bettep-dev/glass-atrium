@@ -1367,7 +1367,8 @@ button.kpi:hover {
 		justify-content: center;
 	}
 	.shell-sidebar .rail-hide,
-	.shell-sidebar .nav-badge ~ .nav-badge {
+	.shell-sidebar .nav-badge ~ .nav-badge,
+	.shell-sidebar .nav-count ~ .nav-count {
 		position: absolute;
 		width: 1px;
 		height: 1px;
@@ -1380,7 +1381,7 @@ button.kpi:hover {
 		justify-content: center;
 		padding: 8px 0;
 	}
-	.shell-sidebar .nav-badge {
+	.shell-sidebar :is(.nav-badge, .nav-count) {
 		position: absolute;
 		top: 0;
 		right: 0;
@@ -1411,6 +1412,11 @@ button.kpi:hover {
 	background: rgb(var(--sunken));
 	color: rgb(var(--ink));
 	font-weight: 500;
+}
+/* the filled nav numeral (Queue) — the Badge family's solid count, at the row end like the edged one */
+.nav-count {
+	margin-left: auto;
+	flex: none;
 }
 .nav-badge {
 	margin-left: auto;

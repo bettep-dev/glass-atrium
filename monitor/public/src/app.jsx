@@ -1,7 +1,7 @@
 // 앱 셸 — sidebar + screen routing + Tweaks panel
 const { useState: useS, useEffect: useE, useRef: useR, useCallback: useC } = React;
 
-// NAV 메뉴 — id=해시 라우팅 키 · badge=폴링 주입
+// NAV 메뉴 — id=해시 라우팅 키 · badge=폴링 주입 · badgeFill = a filled Badge in place of the edged nav numeral (items waiting for the owner)
 const NAV = [
 	{ id: "dashboard", label: "Dashboard", icon: "dashboard" },
 	{ id: "cost", label: "Cost & usage", icon: "coin" },
@@ -12,7 +12,7 @@ const NAV = [
 	{ id: "wiki", label: "Wiki", icon: "brain" },
 	{ id: "architecture", label: "System map", icon: "git" },
 	{ id: "clauded-docs", label: "Documents", icon: "file-text" },
-	{ id: "queue", label: "Queue", icon: "inbox" },
+	{ id: "queue", label: "Queue", icon: "inbox", badgeFill: "solid" },
 ];
 
 // EDITMODE 마커 — host 프로토콜이 디스크 위 JSON 블록 재기록
@@ -85,7 +85,7 @@ function parseHashScreen() {
 }
 
 function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
-	const { Icon } = window.UI;
+	const { Icon, Badge, getBadgeCount } = window.UI;
 	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState), ...queueBadges };
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
@@ -129,18 +129,24 @@ function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 								<Icon name={n.icon} size={14} />
 								{/* min-w-0 + truncate — 영문 라벨 + 복수 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
 								<span className="rail-hide flex-1 min-w-0 truncate">{n.label}</span>
-								{badges.map((b, i) => (
-									<span
-										key={i}
-										className="nav-badge shrink-0"
-										title={b.title}
-									>
-										{/* neutral shell + numeral, tone on the glyph only · description = what AT hears instead of the bare numeral */}
-										{b.glyph && <span aria-hidden="true" className={`text-${b.badgeTone}`}>{`${b.glyph} `}</span>}
-										<span aria-hidden={b.description ? "true" : undefined}>{b.badge}</span>
-										{b.description && <span className="sr-only">{`, ${b.description}`}</span>}
-									</span>
-								))}
+								{badges.map((b, i) => {
+									// edged shell → tone on the glyph only · filled shell → the glyph in the badge's own text colour, the numeral capped
+									const isFilled = Boolean(n.badgeFill);
+									const numeral = isFilled && /^\d+$/.test(b.badge) ? getBadgeCount(Number(b.badge)) : b.badge;
+									const glyph = b.glyph && <span aria-hidden="true" className={isFilled ? undefined : `text-${b.badgeTone}`}>{`${b.glyph} `}</span>;
+									// description = what AT hears instead of the bare numeral
+									const text = <span aria-hidden={b.description ? "true" : undefined}>{numeral}</span>;
+									const description = b.description && <span className="sr-only">{`, ${b.description}`}</span>;
+									return isFilled ? (
+										<Badge key={i} fill={n.badgeFill} role="count" title={b.title} className="nav-count">
+											{glyph}{text}{description}
+										</Badge>
+									) : (
+										<span key={i} className="nav-badge shrink-0" title={b.title}>
+											{glyph}{text}{description}
+										</span>
+									);
+								})}
 							</button>
 						);
 					})}

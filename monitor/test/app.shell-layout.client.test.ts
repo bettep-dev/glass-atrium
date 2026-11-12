@@ -5,11 +5,12 @@
 //
 // Runner: npx tsx --test test/app.shell-layout.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
+  collectText,
   createReactStub,
   findNodes,
   loadScreenModule,
@@ -378,4 +379,39 @@ test("a page Retry also re-reads the harness, so a recovered harness reaches the
 
   assert.equal(harnessFetch.state.kpiReads - readsBefore, 1, "the Retry starts one harness read");
   assert.deepEqual(findNavBadges(render()), [], "the recovered harness clears the nav badge");
+});
+
+describe("the Queue nav item", () => {
+  const QUEUE_SLOT = { badge: "128", badgeTone: "warn", glyph: "⚠", source: "queue", title: "128 awaiting you, 1 deviation", description: "128 awaiting you, 1 deviation" };
+  // the queue slot from its own read, beside a toned Agents numeral on the same merged nav map
+  async function renderNav(): Promise<RenderedNode> {
+    const getQueueNavBadge = () => ({ queue: { badges: [QUEUE_SLOT] }, agents: { badge: "3", badgeTone: "crit" } });
+    const { render } = await mountShell({ screens: () => ({ QueueNav: { getQueueNavBadge } }) });
+    return render();
+  }
+  const classOf = (n: RenderedNode) => String(n.props.className ?? "");
+  function getNavBadge(tree: RenderedNode, label: string): RenderedNode {
+    const [item] = findNodes(tree, (n) => n.type === "button" && n.props.title === label);
+    assert.ok(item, `the nav renders ${label}`);
+    const [badge] = findNodes(item, (n) => /\b(pill|nav-badge)\b/.test(classOf(n)));
+    assert.ok(badge, `${label} carries a badge`);
+    return badge;
+  }
+
+  test("carries its count as the solid round count badge, capped at 99+, while another item keeps the edged nav badge", async () => {
+    const tree = await renderNav();
+    const [queue, agents] = [getNavBadge(tree, "Queue"), getNavBadge(tree, "Agents")];
+    assert.deepEqual(["pill--solid", "pill--num", "nav-badge"].map((name) => classOf(queue).split(" ").includes(name)), [true, true, false]);
+    assert.match(collectText(queue), /99\+/);
+    assert.deepEqual(["nav-badge", "pill--solid"].map((name) => classOf(agents).split(" ").includes(name)), [true, false]);
+  });
+
+  test("the deviation glyph leads the count inside the badge in the badge's own colour, and assistive tech hears the full description", async () => {
+    const queue = getNavBadge(await renderNav(), "Queue");
+    const [glyph] = findNodes(queue, (n) => n.type === "span" && collectText(n) === "⚠ ");
+    const [description] = findNodes(queue, (n) => classOf(n) === "sr-only");
+    assert.ok(glyph, "the glyph renders inside the badge");
+    assert.deepEqual([glyph.props["aria-hidden"], classOf(glyph)], ["true", ""]);
+    assert.equal(collectText(description), `, ${QUEUE_SLOT.description}`);
+  });
 });
