@@ -296,6 +296,14 @@ describe("register", () => {
     assert.deepEqual([stored.state, stored.exitReason, stored.resumeAwaitingRegisterAt], ["live", null, null]);
     assert.equal(await getStatus(resumePending), "answered");
   });
+
+  test("a row still holding a retired socket path of its old process registers live from a new process and drops the path", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual([stored.state, stored.pid, stored.socketPath], ["live", process.pid, null]);
+  });
 });
 
 describe("deregister", () => {

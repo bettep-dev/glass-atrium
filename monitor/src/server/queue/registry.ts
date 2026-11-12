@@ -190,6 +190,8 @@ async function putLiveSession(tx: Prisma.TransactionClient, body: RegisterBody, 
     worktreeRoot: facts.worktreeRoot,
     pid: body.pid,
     processStartTime: facts.processStartTime,
+    // Retired column → cleared, else a legacy path naming the old pid fails the socket-path CHECK on the new pid
+    socketPath: null,
     permissionHint: body.permissionHint === undefined ? null : PERMISSION_HINT_COLUMN[body.permissionHint],
     state: "live" as const,
     exitReason: null,
