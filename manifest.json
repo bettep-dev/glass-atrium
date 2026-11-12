@@ -705,7 +705,6 @@
     "scripts/agent_lifecycle/subproc.py",
     "scripts/agent_lifecycle/transaction.py",
     "scripts/agent_lifecycle/validation.py",
-    "scripts/atrium-queue-accept-launch.sh",
     "scripts/atrium-queue.sh",
     "scripts/audit-absorption.sh",
     "scripts/audit-context.sh",
@@ -759,7 +758,6 @@
     "scripts/test/apply-lock.bats",
     "scripts/test/apply-spine.bats",
     "scripts/test/atrium-config.bats",
-    "scripts/test/atrium-queue-accept-launch.bats",
     "scripts/test/atrium-queue.bats",
     "scripts/test/audit-absorption.bats",
     "scripts/test/audit-cli.bats",
@@ -1371,7 +1369,7 @@
     "hooks/test/pre-compact-bounded-scan.bats": "bc7e8eec769d6d38310227f305a762e5f23080f5781eaf93a41d80496c003bf7",
     "hooks/test/pre-compact-db-source.bats": "3762d7052f47185c3dba3009e7ee2d9b9f333274998d467be9f8da6ad5b97595",
     "hooks/test/prune-mtime-portable.bats": "841da9c99d3a03a6671ea51ddbeb9af52c25515bbb21bcfd913326c4bfe24e80",
-    "hooks/test/queue-session.bats": "8fd022f996ef0983a1c3c596bed8fbe88c2fde63bfdc0a211904fda7d1a2ab70",
+    "hooks/test/queue-session.bats": "bd023a3e31be0b37e75080b3defbc2957d89a99470898a47700e3044611e92e1",
     "hooks/test/reply-language-resolver.bats": "be3848bb9bde47babab81bd73bba038508b260aeb43e34a77feaeef6377a44c9",
     "hooks/test/schema-cap-authority-single-site.bats": "77166e09098522d9d43690fb87ae33cfa46a544bceced060f4a8bb181df77de7",
     "hooks/test/scope-match-decl-parse.bats": "c33fc5e6e82c5115a7cc78591e536ab8cc7204c7cdb49a5f137c83d5008673f2",
@@ -1742,8 +1740,7 @@
     "scripts/agent_lifecycle/subproc.py": "5c86ee14c844398c2e2f06c7fb7bc4fda030f8784c445b98884b66f8f021cd56",
     "scripts/agent_lifecycle/transaction.py": "d7660a665426ed298d36d3084a737c3a10cca83955e9ceabce1f6cec829302e7",
     "scripts/agent_lifecycle/validation.py": "590ec5952fa13b4745e98ad74b00b30a4c2e4b18446e30b193339a03adad1389",
-    "scripts/atrium-queue-accept-launch.sh": "227a970b6c66dd874819df24dae7c90b1f84ccbbfed3b001c505a947712548ec",
-    "scripts/atrium-queue.sh": "25e218269639436e3e29da09abe79d62a55bed0c0447f58ec109226482d1ab1c",
+    "scripts/atrium-queue.sh": "049b7b526fba0c2ff6d7b5d2b50cbb83f38323209d6b84a2139ce638b745cf71",
     "scripts/audit-absorption.sh": "7105796add74f88e74f35831b5742cea58e507a1840646c9940aa0dc88a1fd7b",
     "scripts/audit-context.sh": "26327c21e0fbaa3e7a570637c562d630b9bbcee9664b2cebae1cb2db438cbf7e",
     "scripts/audit-inert-assert.sh": "e9f625d9f283e7f8d5f3d5dabd9cc6f8a28a1c43ebdcc268526397808951ee26",
@@ -1767,7 +1764,7 @@
     "scripts/lib/mirror-farm.sh": "9727a69b9c28369551c02049698a1a798a7ba41d87db30b4ec03823d3a0297dd",
     "scripts/lib/path-guard.sh": "edd6b88d74214f6adaa2c2519e9bc3d5a18d2c52e6338b8ea9993c43ac10116f",
     "scripts/lib/pg-report-drop.sh": "4604ceba00b1f49867e6c2b6950308ad9ca6e9c18b68f78a4bf2532922444cca",
-    "scripts/lib/queue-session.sh": "6a1e4cff4878d37cccca8b2520cebff6d986aeda31768919edef7f0064239bd6",
+    "scripts/lib/queue-session.sh": "80aa0b55c068eff5aea3708162d778de2ef387191ee2817e4dd5720520f21064",
     "scripts/lib/recovery-repos.sh": "6dad15b792daf1b22eadac007c5fecadbcdc4765a40205b2ebe5ef65c27fd82d",
     "scripts/lib/tracked-paths.sh": "47e7d9be6afca45f950f200bd24c721a308ad7b1b04a1865e67771cdd6ae4ba3",
     "scripts/lib/wiki-compile-lock.sh": "b1565c1265da0c1a5a993cc080c6b027bd5858e4487c6b6cf627684e4eae3ee4",
@@ -1796,8 +1793,7 @@
     "scripts/test/apply-lock.bats": "8acb0ee12ce509a67a84d200e05d12e70a53a2fd432c5b04ed19bf3843f68669",
     "scripts/test/apply-spine.bats": "f3b12f214b5f465be714cf62144c5249afdcbf561a56c3e10db63be68e8b56e6",
     "scripts/test/atrium-config.bats": "007c6eac6d60bc9a11b8e4ee1b19cbe0c7cf295d4e65df5f1dd53d3cd3ec862a",
-    "scripts/test/atrium-queue-accept-launch.bats": "22e3ca9d648867f18ed3cfa1cd2858a21eb9ae13d414d47448fcd13d2fba3001",
-    "scripts/test/atrium-queue.bats": "c60a0d7a98fc010c8ea1bf9c7284f2df9291651bad66eb1a5fa85756b24f742f",
+    "scripts/test/atrium-queue.bats": "4ed18b6275b75e49273af00d3b7f4c103dc3e4059beaf118ac8055416bb713d6",
     "scripts/test/audit-absorption.bats": "6fece1547f1e37fe1ea39f50f32340499c4c897b463a0f387871c75f3e3bb4f3",
     "scripts/test/audit-cli.bats": "ee394050945cb82a62d4f1af3fc71b1c7f0e0d02a827af465af42b43eb4d6a9d",
     "scripts/test/audit-inert-assert.bats": "ec2eea51e8e63a383040853dda4226a9237ff0684445779955502821ba855a2d",
@@ -2779,7 +2775,6 @@
     "scripts/agent_lifecycle/subproc.py": "644",
     "scripts/agent_lifecycle/transaction.py": "644",
     "scripts/agent_lifecycle/validation.py": "644",
-    "scripts/atrium-queue-accept-launch.sh": "755",
     "scripts/atrium-queue.sh": "755",
     "scripts/audit-absorption.sh": "644",
     "scripts/audit-context.sh": "755",
@@ -2833,7 +2828,6 @@
     "scripts/test/apply-lock.bats": "644",
     "scripts/test/apply-spine.bats": "644",
     "scripts/test/atrium-config.bats": "644",
-    "scripts/test/atrium-queue-accept-launch.bats": "644",
     "scripts/test/atrium-queue.bats": "644",
     "scripts/test/audit-absorption.bats": "644",
     "scripts/test/audit-cli.bats": "644",
@@ -3264,6 +3258,9 @@
     "scripts/_pg_push_autoagent_loop_events.py": [
       "4b752b60de329b3317cce0d4e4f0241d7c3f673d05bbb25042f06bc3c9e4e0fc"
     ],
+    "scripts/atrium-queue-accept-launch.sh": [
+      "227a970b6c66dd874819df24dae7c90b1f84ccbbfed3b001c505a947712548ec"
+    ],
     "scripts/atrium-queue-setup.sh": [
       "b1b9bd9bd5244d6a2a6e544e22cc207ff7838e85d3b37134117cc7e5ce70f261"
     ],
@@ -3318,6 +3315,9 @@
     "scripts/test/apply-gate.bats": [
       "8d46b4f339c98ac6deaf81e4e7339fd70060accb8862132c4eb4002bb7654997",
       "f718b750850c7d5df82f3f2edaaa20c0c8e0f9d1b81a8225eb44e660ce83ddca"
+    ],
+    "scripts/test/atrium-queue-accept-launch.bats": [
+      "22e3ca9d648867f18ed3cfa1cd2858a21eb9ae13d414d47448fcd13d2fba3001"
     ],
     "scripts/test/atrium-queue-setup.bats": [
       "8a571372976b41fc8be02778c0482d310fc719f5ef6e6950ed4803a4d85b8e1e"
