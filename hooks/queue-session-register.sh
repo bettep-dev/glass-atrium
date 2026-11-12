@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # queue-session-register.sh — SessionStart hook (startup · resume · fork · clear): registers this session
-# with the Atrium owner queue and, when answered items wait for it, prints one context line naming the
-# count and the CLI pending command — never answer text.
+# with the Atrium owner queue and, when owner answers or messages wait for it, prints one context line naming
+# the count and the CLI pending command — never their text.
 # Disposition noop: fail-open, always exit 0 with nothing printed on any failure (monitor down, slow or
 # refusing). No block channel (SessionStart cannot block).
 
@@ -37,6 +37,6 @@ count="$(queue_register_session "${hint}" "" "${start_dir}" "${session_id}" "" "
 if ((count > 0)); then
   cli_path="$(queue_get_cli_path)"
   # subshell write → no interrupt from an un-waited child reaches it; the exit stays 0 either way
-  (printf '[ATRIUM-QUEUE] %s answered owner queue item(s) wait for this session — fetch them with: %s pending\n' "${count}" "${cli_path}") || true
+  (printf '[ATRIUM-QUEUE] %s owner queue answer(s) or message(s) wait for this session — fetch them with: %s pending\n' "${count}" "${cli_path}") || true
 fi
 exit 0

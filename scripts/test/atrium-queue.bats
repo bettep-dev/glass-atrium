@@ -164,6 +164,33 @@ run_cli() {
   }
 }
 
+@test "get prints one provenance line before an owner message and none before a report or decision" {
+  start_stub
+  local row kind first rest
+  for row in message report decision; do
+    kind="${row}"
+    set_reply 200 "{\"id\":17,\"kind\":\"${kind}\",\"sessionId\":\"${SESSION_ID}\",\"body\":\"Rebase onto main, then rerun the suite.\",\"answer\":{\"code\":null,\"text\":null}}"
+    run_cli get 17
+    first="${lines[0]:-}"
+    rest="$(sed '1d' <<<"${output}")"
+    case "${kind}" in
+      message)
+        [[ "${status}" -eq 0 && "${first}" == "provenance: item 17 is an owner message"* && "${first}" == *"never an approval"* \
+          && "$(jq -r '.kind' <<<"${rest}")" == message ]] || {
+          echo "row ${row}: status=${status} ${output}${stderr}"
+          return 1
+        }
+        ;;
+      *)
+        [[ "${status}" -eq 0 && "$(jq -r '.kind' <<<"${output}")" == "${kind}" ]] || {
+          echo "row ${row}: status=${status} ${output}${stderr}"
+          return 1
+        }
+        ;;
+    esac
+  done
+}
+
 @test "a fetched item naming another session stops with exit 3 and prints none of it" {
   start_stub
   set_reply 200 "{\"id\":17,\"sessionId\":\"${FOREIGN_SESSION_ID}\",\"answer\":{\"code\":\"R2\",\"text\":\"merge-it-now\"}}"
@@ -250,6 +277,26 @@ run_cli() {
   done
 }
 
+@test "pending names answers or messages and never prints item text" {
+  start_stub
+  local row
+  for row in one-claim no-claim; do
+    rm -f "${BATS_TEST_TMPDIR}/reply.1"
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    stop_stub
+    if [[ "${row}" == one-claim ]]; then
+      set_nth_reply 1 200 "{\"items\":[{\"id\":{\"item\":17,\"msg\":\"${MSG_ID}\"},\"kind\":\"message\",\"body\":\"ship-it-on-friday\"}]}"
+    fi
+    set_reply 200 '{"items":[]}'
+    start_stub
+    run_cli pending
+    [[ "${status}" -eq 0 && "${output}" == *"answer or message"* && "${output}" != *"ship-it-on-friday"* ]] || {
+      echo "row ${row}: status=${status} ${output}${stderr}"
+      return 1
+    }
+  done
+}
+
 @test "pending refuses a claim whose ids are malformed and prints no command for it" {
   start_stub
   set_reply 200 '{"items":[{"id":{"item":"17; touch /tmp/x","msg":"not-a-uuid"}}]}'
@@ -322,7 +369,7 @@ run_cli() {
   start_stub
   set_reply 200 '{"answeredWaiting":3}'
   run_cli register
-  [[ "${status}" -eq 0 && "${output}" == *"3 answered"* && "${output}" == *"${GA_ROOT}/scripts/atrium-queue.sh pending"* ]] || {
+  [[ "${status}" -eq 0 && "${output}" == *"3 owner queue answer(s) or message(s) wait"* && "${output}" == *"${GA_ROOT}/scripts/atrium-queue.sh pending"* ]] || {
     echo "status=${status} ${output}${stderr}"
     return 1
   }

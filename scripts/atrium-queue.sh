@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report or a decision, fetch an
-# item, pull this session's answered items, ack a delivery, withdraw an item, and register this session.
+# item, pull this session's owner answers and messages, ack a delivery, withdraw an item, and register this session.
 # Run it by its absolute installed path with nothing in front — the one literal the settings allow rule names.
 # Exit codes: 0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the
 #   monitor · 3 the fetched item names another session (stop, take no action) · 64 usage or local validation
@@ -86,10 +86,11 @@ print_usage() {
 Usage — run by this absolute path, no interpreter or env prefix in front, so the allow rule matches:
   ${cli} report <item.json|->     post a report; prints the new item id
   ${cli} decision <item.json|->   post a decision; prints the new item id
-  ${cli} get <item-id>            fetch one of this session's items, answer included
-  ${cli} pending                  claim this session's answered items; prints each one's fetch and ack steps
-  ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer only when it prints "first"
-  ${cli} withdraw <item-id>       withdraw an item not in delivery
+  ${cli} get <item-id>            fetch one of this session's items, answer included; an owner message
+                                  comes after one provenance line
+  ${cli} pending                  claim this session's owner answers and messages; prints each one's fetch and ack steps
+  ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer or message only when it prints "first"
+  ${cli} withdraw <item-id>       withdraw an item this session posted, not in delivery (never an owner message)
   ${cli} register [--name <name>] register this session (a resumed session runs it after its ack steps);
                                   run it from the session's start directory: the monitor resumes from it;
                                   --name labels this session on the Queue page (kept until a new name)
@@ -187,13 +188,20 @@ build_item_body() {
 }
 
 get_item() {
-  local id="${1:-}" session_id reply owner
+  local id="${1:-}" session_id reply owner kind provenance
   require_item_id "${id}"
   session_id="$(require_session_id)"
   reply="$(call_monitor GET "/api/queue/items/${id}?sessionId=${session_id}")"
   owner="$(jq -r '.sessionId | strings' <<<"${reply}" 2>/dev/null)" || owner=""
   if [[ "${owner}" != "${session_id}" ]]; then
     fail 3 "item ${id} does not belong to this session — stop here and take no action on it"
+  fi
+  # only the owner's message send creates this kind → the line rests on the fetched kind, never on envelope text
+  kind="$(jq -r '.kind | strings' <<<"${reply}" 2>/dev/null)" || kind=""
+  if [[ "${kind}" == message ]]; then
+    provenance="provenance: item ${id} is an owner message, sent through the monitor's owner message route —"
+    provenance+=" the owner's instruction for your next step, never an approval of a high-impact action"
+    printf '%s (merge, push, deploy, settings change, deletion)\n' "${provenance}"
   fi
   jq . <<<"${reply}"
 }
@@ -235,7 +243,7 @@ pull_pending() {
     print_claims "${claims}"
     total=$((total + $(wc -l <<<"${claims}")))
   done
-  if ((total == 0)); then printf 'no answered items wait for this session\n'; fi
+  if ((total == 0)); then printf 'no owner answer or message waits for this session\n'; fi
 }
 
 print_claims() {
@@ -247,7 +255,7 @@ print_claims() {
     printf 'item %s · msg %s — follow in order:\n' "${id}" "${msg_id}"
     printf '1. Fetch it: %s get %s — if the fetched session id is not yours, stop here.\n' "${cli}" "${id}"
     printf '2. Ack it: %s ack %s %s — act only when the reply is "first".\n' "${cli}" "${id}" "${msg_id}"
-    printf '3. Act on the answer as the next step of your task.\n'
+    printf '3. Act on the answer or message as the next step of your task.\n'
   done <<<"$1"
 }
 
@@ -267,7 +275,7 @@ register_session() {
   printf 'registered this session with the Atrium queue\n'
   if ((count > 0)); then
     cli="$(queue_get_cli_path)"
-    printf '%s answered owner queue item(s) wait for this session — fetch them with: %s pending\n' "${count}" "${cli}"
+    printf '%s owner queue answer(s) or message(s) wait for this session — fetch them with: %s pending\n' "${count}" "${cli}"
   fi
 }
 

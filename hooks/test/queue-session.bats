@@ -228,7 +228,7 @@ run_deregister() {
   done
 }
 
-@test "the pointer line names the waiting count and the absolute CLI pending command, never answer text" {
+@test "the pointer line names the waiting count of answers or messages and the absolute CLI pending command, never their text" {
   start_stub
   set_reply 200 '{"answeredWaiting":2,"answerText":"ship-it-on-friday"}'
   run_register
@@ -236,7 +236,7 @@ run_deregister() {
     echo "${output}${stderr}"
     return 1
   }
-  [[ "${#lines[@]}" -eq 1 && "${output}" == *" 2 "* && "${output}" == *"${GA_ROOT}/scripts/atrium-queue.sh pending"* ]] || {
+  [[ "${#lines[@]}" -eq 1 && "${output}" == *" 2 "* && "${output}" == *"answer(s) or message(s)"* && "${output}" == *"${GA_ROOT}/scripts/atrium-queue.sh pending"* ]] || {
     echo "${output}"
     return 1
   }
