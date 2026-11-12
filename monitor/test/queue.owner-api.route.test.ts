@@ -645,6 +645,27 @@ describe("owner message send", () => {
     }
   });
 
+  test("the copies of one send share one send id that no other send carries, returned by the send and the item view", async () => {
+    const targets = [await seedSession(), await seedSession()];
+    const sends = [];
+    for (const text of ["Rebase onto main.", "Rebase onto main."]) {
+      sends.push((await send("POST", "/api/queue/owner/messages/send", { sessionIds: targets, text })).json());
+    }
+
+    const views = await Promise.all(sends.flatMap((sent) => sent.items.map(async (item: { id: number }) => (await send("GET", `/api/queue/owner/items/${item.id}`)).json())));
+
+    const [first, second] = sends.map((sent) => sent.sendId);
+    assert.match(String(first), /^[0-9a-f-]{36}$/);
+    assert.notEqual(first, second, "an equal text sent again is another send");
+    assert.deepEqual(views.map((view) => view.sendId), [first, first, second, second]);
+  });
+
+  test("an item no send created carries no send id", async () => {
+    const detail = (await send("GET", `/api/queue/owner/items/${await seedItem(await seedSession())}`)).json();
+
+    assert.equal(detail.sendId, null);
+  });
+
   test("a send outside the body rules is refused and creates nothing", async () => {
     const target = await seedSession();
     const tooMany = [target, ...Array.from({ length: 20 }, () => randomUUID())];

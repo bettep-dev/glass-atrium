@@ -1,6 +1,8 @@
 // Owner session list and owner message send. A message is one `message` item per target, inserted already answered,
 // so the existing delivery (pull or wait claim, ack, deadline, Resend, automatic resume) carries it unchanged.
 
+import { randomUUID } from "node:crypto";
+
 import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import type { PageOriginSignal } from "../request-guards.js";
@@ -77,11 +79,12 @@ export async function getOwnerSessions(query: OwnerSessionsQuery): Promise<{ ses
 
 /**
  * All or nothing: locks every target's registry row (ascending id, before any item row), then inserts one
- * answered message per target, stamped with the send route and the page-origin signal.
+ * answered message per target, stamped with the send route, the page-origin signal and one send id shared by every copy.
  * @throws QueueRequestError 404 when an id names no session · 409 when a target was replaced
  */
-export async function createMessages(body: MessageBody, signal: PageOriginSignal): Promise<{ items: CreatedMessage[] }> {
+export async function createMessages(body: MessageBody, signal: PageOriginSignal): Promise<{ sendId: string; items: CreatedMessage[] }> {
   const title = getMessageTitle(body.text);
+  const sendId = randomUUID();
   return getPrisma().$transaction(async (tx) => {
     const locked = await lockSessions(tx, body.sessionIds);
     if (locked.length !== body.sessionIds.length) throw new QueueRequestError(404, "unknown_session", "every target must be a registered session");
@@ -98,10 +101,11 @@ export async function createMessages(body: MessageBody, signal: PageOriginSignal
         answeredAt,
         answerRoute: "message" as const,
         answerSignal: signal,
+        sendId,
       })),
       select: { id: true, sessionId: true },
     });
-    return { items: created.map((item) => ({ id: Number(item.id), sessionId: item.sessionId })) };
+    return { sendId, items: created.map((item) => ({ id: Number(item.id), sessionId: item.sessionId })) };
   });
 }
 

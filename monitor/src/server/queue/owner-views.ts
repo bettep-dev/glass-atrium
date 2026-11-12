@@ -100,6 +100,8 @@ export interface OwnerItemView {
   askedAt: string;
   answeredAt: string | null;
   deliveredAt: string | null;
+  /** Shared by every copy of one owner send; null → not a send, or a message sent before send ids existed. */
+  sendId: string | null;
   /** null → never answered, or answered with no record */
   answerRecord: AnswerRecord | null;
   /** Answered, yet no record → written outside the monitor (straight into the database). */
@@ -242,6 +244,7 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     askedAt: item.askedAt.toISOString(),
     answeredAt: item.answeredAt?.toISOString() ?? null,
     deliveredAt: item.deliveredAt?.toISOString() ?? null,
+    sendId: item.sendId,
     ...getAnswerRecordView(item),
     session: toSessionView(item.session, factsById.get(item.sessionId)?.lastResumeBgId ?? null),
     resumes,

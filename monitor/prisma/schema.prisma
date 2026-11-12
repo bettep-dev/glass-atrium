@@ -1456,6 +1456,8 @@ model QueueItem {
   answerRoute       QueueAnswerRoute?  @map("answer_route")
   answerSignal      QueueAnswerSignal? @map("answer_signal")
   deliveredAt       DateTime?       @map("delivered_at") @db.Timestamptz(6)
+  // One id on every copy of one owner send; NULL on other kinds and on messages sent before the column existed
+  sendId            String?         @map("send_id") @db.Uuid
   updatedAt         DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   session    QueueSession    @relation(fields: [sessionId], references: [sessionId], onDelete: Restrict, onUpdate: Restrict)
@@ -1463,6 +1465,8 @@ model QueueItem {
 
   // FK index; leading session_id + status → a session's items in one state (withdraw, resume claim)
   @@index([sessionId, status], map: "queue_items_session_status_idx")
+  // the history read fetches every copy of a paged send
+  @@index([sendId], map: "queue_items_send_id_idx")
   @@map("queue_items")
   @@schema("monitor")
 }
