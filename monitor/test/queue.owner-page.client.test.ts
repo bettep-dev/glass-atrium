@@ -204,17 +204,17 @@ describe("Later", () => {
   }
 });
 
-describe("after Send the focus moves to the next awaiting card", () => {
+describe("after Send the focus moves to the next awaiting row", () => {
   const items = [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" }), buildItem({ id: 3 }), buildItem({ id: 4 })];
   const rows = [
-    { name: "skips a card no longer awaiting", id: 1, expected: 3 },
-    { name: "wraps to the first awaiting card from the last", id: 4, expected: 1 },
-    { name: "no other awaiting card leaves the focus where it is", id: 1, list: [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" })], expected: null },
+    { name: "skips a row no longer awaiting", id: 1, expected: 3 },
+    { name: "wraps to the first awaiting row from the last", id: 4, expected: 1 },
+    { name: "no other awaiting row leaves the focus where it is", id: 1, list: [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" })], expected: null },
   ];
   for (const row of rows) test(row.name, () => assert.equal(call("getNextAwaitingIdQ", row.list ?? items, row.id), row.expected));
 });
 
-test("after Send the focus skips a card the active filter hides", async () => {
+test("after Send the focus skips a row the active filter hides", async () => {
   const module = (await loadScreenModule(QUEUE_SRC, {
     window: { UI: uiStub() },
     fetch: async () => ({ status: 200, json: async () => ({ ok: true }) }),
@@ -289,7 +289,7 @@ describe("receipt words", () => {
   }
 });
 
-describe("card state lines", () => {
+describe("sheet state lines", () => {
 
   // an answered item waits for its session's pull → the owner learns whether a wait takes it, else how to pull it
   const pullRows = [
@@ -338,7 +338,7 @@ describe("card state lines", () => {
   });
 });
 
-describe("card precedence notes", () => {
+describe("sheet precedence notes", () => {
   const occupant = { profileLabel: "personal", cwdTail: "wt/owner-queue", sessionIdPrefix: "9b2e7c41" };
   // a note's parts: a string is prose, { machine } renders through MachineString
   const markedLine = [
