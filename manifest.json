@@ -1879,7 +1879,7 @@
     "scripts/test/wiki-lock.bats": "5e68dd68556b3ea06ad6be24521e407356761b5040abdbd3088b7131cbe08028",
     "scripts/test/wiki-source-raw.bats": "6aa22a1fb0a5f91366c2be302d11a8f4040d95d431bd8998dbff85f201c39ed9",
     "scripts/test/wiki-staleness.bats": "237d45ec13d05f1ef21a4933807f3f8f329a1e1e56eb72494ab835e18d92a787",
-    "scripts/update.sh": "33be5ebdff7976da1e57c531861ce852aaf6c4cbb74b8f0bd16a9ddaaa25e300",
+    "scripts/update.sh": "d0a3e96cd50fbfb1146e67d3a416495d2bd24e7ddb2220d1dbea1f1062216e40",
     "scripts/wiki-daemon-cycle.sh": "2e40ab545f8128b931d650c6e36f8751a82dae91ab57033f95ab5c18833c2e0c",
     "scripts/wiki-daily-compile.sh": "fd7b18710c8a4f78d9cf9eca04a483655dc38f7ed3156f685bc73aca7e3d508f",
     "scripts/wiki-deadlinks.sh": "843e375f60f21e99f70a849a4319257ba7552190b28fa5d70f30226217ddafb8",

@@ -154,9 +154,8 @@
 # and on a monitor whose node_modules were never installed (a recoverable state
 # `npm ci` self-heals, not a broken one worth failing an update over).
 # `glass-atrium doctor` §21 reports any migration left pending.
-# Before it, update_install_monitor_deps runs `npm ci` / `prisma generate` when the
-# apply set changed the monitor's package-lock, package.json, schema or prisma config —
-# the updater's only npm-registry reach, bounded, never `npx`; offline → exit 18.
+# Before it, update_install_monitor_deps refreshes the monitor dependencies and
+# Prisma client when the apply set changed them.
 #
 # core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
 # update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
@@ -204,6 +203,11 @@ update_ga_root() {
 # canonical lock directory.
 update_reports_dir() {
   printf '%s\n' "${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
+}
+
+# The monitor checkout the dependency, migrate and build steps act on.
+update_get_monitor_dir() {
+  printf '%s\n' "${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
 }
 
 # The daemon .apply-lock directory (mkdir-atomic lock, same as daemon-apply.sh).
@@ -305,7 +309,7 @@ _update_workdir=""
 _update_apply_paths=""
 _update_staging=""
 _update_snapshot=""
-# 1 once the monitor dependency step has rewritten node_modules or the generated client
+# 1 once the monitor dependency step has started on node_modules / the generated client
 # this run → a later failure's recovery must rebuild before any restart.
 _update_has_refreshed_deps=0
 
@@ -2886,39 +2890,20 @@ update_wire_hooks_post_apply() {
   update_log "settings.json hook bindings reconciled to the applied release"
 }
 
-# ---------------------------------------------------------------------------
-# Post-apply monitor dependency install + Prisma client generation
-# ---------------------------------------------------------------------------
-#
-# A release can ship a new monitor package-lock or Prisma schema, but never the matching
-# node_modules or generated client (src/generated is git-ignored) → without this step the
-# build's tsc fails on missing modules and exports, and still emits dist/server.
-#
-#   * Trigger — the apply set alone: `npm ci` on monitor/package-lock.json or
-#     monitor/package.json; `prisma generate` after that install, or on
-#     monitor/prisma/schema.prisma or monitor/prisma.config.ts. A monitor whose
-#     dependencies were never installed is not healed here: the migrate step no-ops on it,
-#     but an apply touching monitor/ then fails the build with exit 9, whose recovery names
-#     db-setup (update_die_monitor_build).
-#   * Position — before the migrate step, so a release that bumps Prisma migrates with the
-#     CLI it pins; before the build, which is what stale dependencies break.
-#   * Registry reach — the updater's only one: `npm ci` here, on the trigger above, stdin
-#     closed, fetch timeout and retry count bounded per call, never `npx`. Offline → exit 18.
-#     The bounds do not cover the monitor's postinstall (playwright install chromium); its
-#     failure fails `npm ci` and reports as that sub-step.
-#   * Generate needs no database connection, but prisma.config.ts reads DATABASE_URL and
-#     SHADOW_DATABASE_URL through env(), which throws when either is unset → monitor/.env
-#     (rendered by db-setup) must exist. GA_SKIP_DB_SETUP does not skip it: the build needs
-#     the client either way.
-#   * Failure → exit 18, files stay APPLIED, nothing downstream runs. `npm ci` deletes
-#     node_modules first, so the running monitor keeps working only on modules it already
-#     loaded — a lazy import, or a launchd KeepAlive restart, fails until the recovery line
-#     has run; headless never kickstarts after a failure and CLI never restarts.
+# Post-apply `npm ci` / `prisma generate` on the apply set alone: a release ships a new
+# package-lock or schema but never node_modules or the git-ignored generated client, and the
+# build's tsc fails on them yet still emits dist/server.
+#   * Registry reach — the updater's only one: this `npm ci`, stdin closed, fetch-bounded,
+#     never `npx`; the bounds miss the postinstall (playwright install chromium).
+#   * Never-installed monitor → not healed here: migrate no-ops, the build exits 9 naming db-setup.
+#   * prisma.config.ts reads DATABASE_URL + SHADOW_DATABASE_URL through env(), which throws when
+#     unset → generate needs monitor/.env, though no DB connection; GA_SKIP_DB_SETUP does not skip it.
+#   * `npm ci` deletes node_modules first → after a failure the running monitor survives only on
+#     modules already loaded; a lazy import or a KeepAlive restart fails until recovery.
 update_install_monitor_deps() {
   local paths monitor_dir should_install=0
   paths=$'\n'"${_update_apply_paths}"$'\n'
-  monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
-  # first arm wins → an install always regenerates; a schema/config change alone only regenerates
+  monitor_dir="$(update_get_monitor_dir)"
   case "${paths}" in
     *$'\n'monitor/package-lock.json$'\n'* | *$'\n'monitor/package.json$'\n'*) should_install=1 ;;
     *$'\n'monitor/prisma/schema.prisma$'\n'* | *$'\n'monitor/prisma.config.ts$'\n'*) ;;
@@ -2928,19 +2913,19 @@ update_install_monitor_deps() {
     update_log "deps: monitor dir absent (${monitor_dir}) — skipping the dependency step"
     return 0
   fi
+  _update_has_refreshed_deps=1
   if [[ "${should_install}" -eq 1 ]]; then
     update_monitor_npm_ci "${monitor_dir}"
   fi
   update_monitor_prisma_generate "${monitor_dir}"
 }
 
-# npm ci from the registry, bounded: 60s per fetch, one retry (npm's defaults allow
-# minutes), so offline fails in bounded time rather than hanging the one-shot job.
+# npm's default fetch timeout and retries allow minutes → offline fails in bounded time
+# rather than hanging the one-shot job.
 update_monitor_npm_ci() {
   local monitor_dir="$1" npm rc=0
   npm="${ATRIUM_UPDATE_NPM:-npm}"
   update_log "deps: installing monitor dependencies — npm ci from the npm registry (${monitor_dir})"
-  _update_has_refreshed_deps=1
   update_ticker_start
   (cd -- "${monitor_dir}" && "${npm}" ci --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=1 </dev/null) || rc=$?
   update_ticker_stop
@@ -2950,13 +2935,11 @@ update_monitor_npm_ci() {
   update_log "deps: monitor dependencies installed"
 }
 
-# prisma generate with the monitor's own CLI, from the monitor root so prisma.config.ts is in
-# scope. node_modules absent with no ATRIUM_UPDATE_PRISMA override → the same loud no-op as the
-# migrate step.
+# prisma generate from the monitor root, so prisma.config.ts is in scope.
 update_monitor_prisma_generate() {
   local monitor_dir="$1" prisma_bin rc=0
-  prisma_bin="${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
-  if [[ -z "${ATRIUM_UPDATE_PRISMA:-}" && ! -d "${monitor_dir}/node_modules" ]]; then
+  prisma_bin="$(update_get_prisma_bin "${monitor_dir}")"
+  if [[ -z "${prisma_bin}" ]]; then
     update_log "deps: prisma generate SKIPPED — monitor dependencies not installed (${monitor_dir}/node_modules absent); run 'npm ci' in ${monitor_dir}, then '$(update_ga_root)/glass-atrium db-setup'"
     return 0
   fi
@@ -2964,12 +2947,21 @@ update_monitor_prisma_generate() {
     update_die_monitor_deps "prisma generate" 127 "prisma CLI missing or not executable (${prisma_bin})" "${monitor_dir}"
   fi
   update_log "deps: regenerating the Prisma client (${monitor_dir})"
-  _update_has_refreshed_deps=1
   (cd -- "${monitor_dir}" && "${prisma_bin}" generate </dev/null) || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
     update_die_monitor_deps "prisma generate" "${rc}" "monitor/.env missing or DATABASE_URL / SHADOW_DATABASE_URL unset (prisma.config.ts reads both), or the schema is invalid — see the prisma output above" "${monitor_dir}"
   fi
   update_log "deps: Prisma client regenerated"
+}
+
+# The prisma CLI the generate and migrate steps run: ATRIUM_UPDATE_PRISMA outright, else the
+# monitor's own binary (`npx` would reach the registry unbounded). Empty → dependencies never installed.
+update_get_prisma_bin() {
+  local monitor_dir="$1"
+  if [[ -z "${ATRIUM_UPDATE_PRISMA:-}" && ! -d "${monitor_dir}/node_modules" ]]; then
+    return 0
+  fi
+  printf '%s\n' "${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
 }
 
 # Exit 18 naming the failed sub-step, its likely cause and the full recovery.
@@ -3014,10 +3006,8 @@ update_get_rebuild_note() {
 # monitor root so prisma.config.ts is the config in scope, and let ITS
 # `dotenv/config` + env("DATABASE_URL") supply the connection string (Prisma 7
 # does not auto-load .env). The URL is never read, reconstructed, echoed or
-# logged here — no credential enters this process (core-security.md). The CLI is
-# the monitor's OWN installed binary rather than `npx prisma`: npx reaches the
-# registry unbounded when node_modules is absent; the updater's only registry call
-# is the dependency step's bounded `npm ci` (update_install_monitor_deps).
+# logged here — no credential enters this process (core-security.md). The CLI comes
+# from update_get_prisma_bin.
 #
 # LOUD-FAIL (Precondition Loud-Fail Principle): an unresolvable prisma CLI, an
 # unreachable database, or a failing migration all exit with the NAMED code 15
@@ -3049,16 +3039,15 @@ update_get_rebuild_note() {
 #     as a regenerable artifact. Hard-failing here would brick `glass-atrium update` on
 #     every machine sitting in that state — including one mid-reinstall — while the
 #     migrations directory itself ships with the release, so the state is reached by
-#     updating rather than by breaking anything. An EXPLICIT ATRIUM_UPDATE_PRISMA
-#     override bypasses the branch: naming a binary means use it.
+#     updating rather than by breaking anything.
 # None of the three runs the unadjudicated backfill, and neither does a deploy whose
 # target was overridden (the DB-target skip in update_run_unadjudicated_backfill); the
 # re-arm marker written first leaves each of them to the daemon cycle head.
 update_migrate_deploy_post_apply() {
   local root monitor_dir prisma_bin rc=0
   root="$(update_ga_root)"
-  monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-${root}/monitor}"
-  prisma_bin="${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
+  monitor_dir="$(update_get_monitor_dir)"
+  prisma_bin="$(update_get_prisma_bin "${monitor_dir}")"
 
   update_rearm_unadjudicated_backfill
   if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
@@ -3069,7 +3058,7 @@ update_migrate_deploy_post_apply() {
     update_log "migrate: no migrations directory under ${monitor_dir} — nothing to apply"
     return 0
   fi
-  if [[ -z "${ATRIUM_UPDATE_PRISMA:-}" && ! -d "${monitor_dir}/node_modules" ]]; then
+  if [[ -z "${prisma_bin}" ]]; then
     update_log "migrate: SKIPPED — monitor dependencies not installed (${monitor_dir}/node_modules absent); PENDING migrations stay pending. Run 'npm ci' in ${monitor_dir}, then '${root}/glass-atrium db-setup'; '${root}/glass-atrium doctor' reports what is still pending"
     return 0
   fi
@@ -3571,7 +3560,7 @@ PLIST
 # the previous dist/server + dist/generated pair intact. Non-zero on failure → exit 9.
 update_build_monitor() {
   local monitor_dir npm
-  monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
+  monitor_dir="$(update_get_monitor_dir)"
   npm="${ATRIUM_UPDATE_NPM:-npm}"
   if [[ ! -d "${monitor_dir}" ]]; then
     update_log "post-step: monitor dir absent (${monitor_dir}) — skipping build"
@@ -4167,7 +4156,7 @@ update_build_monitor_cli() {
 # installs them, so the recovery leads with that. Args: $1 = what failed.
 update_die_monitor_build() {
   local monitor_dir recovery
-  monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
+  monitor_dir="$(update_get_monitor_dir)"
   recovery="Fix the cause, then 'npm run build' in ${monitor_dir}"
   if [[ ! -d "${monitor_dir}/node_modules" ]]; then
     recovery="The monitor dependencies are not installed (${monitor_dir}/node_modules absent): run '$(update_ga_root)/glass-atrium db-setup' (npm ci, prisma generate, migrate deploy), then 'npm run build' in ${monitor_dir}"
@@ -4762,9 +4751,8 @@ update_run() {
   # contract is intact and the hook files the bindings point at already exist.
   update_wire_hooks_post_apply
 
-  # Step 8.5 — install the monitor dependencies / regenerate the Prisma client when the
-  # apply set changed them, so migrate runs the pinned CLI and the build sees the new
-  # modules. Loud-fails with the named code 18 — see update_install_monitor_deps.
+  # Step 8.5 — refresh the monitor dependencies / Prisma client BEFORE migrate (so it runs
+  # the CLI the release pins) and before the build — see update_install_monitor_deps.
   update_install_monitor_deps
 
   # Step 9 — apply PENDING Prisma migrations. Position is load-bearing: AFTER the
