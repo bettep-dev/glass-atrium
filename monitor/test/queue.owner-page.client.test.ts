@@ -1740,6 +1740,19 @@ describe("the Orders mode", () => {
     });
   }
 
+  const returns = [
+    { name: "the opener still on the page takes the focus back", stored: { opener: { isConnected: true, name: "New order" }, openerSession: null }, expected: "New order" },
+    { name: "a rail row the mode re-rendered takes it back through its session", stored: { opener: { isConnected: false }, openerSession: OTHER_ID }, expected: "rail main" },
+    { name: "an opener gone with no rail row → the selected row", stored: { opener: { isConnected: false }, openerSession: null }, expected: "row 41" },
+  ];
+  for (const row of returns) {
+    test(`leaving the mode: ${row.name}`, () => {
+      const rail = { getAttribute: () => OTHER_ID, querySelector: (selector: string) => (selector === ".queue-rail-main" ? { name: "rail main" } : null) };
+      const root = { querySelectorAll: () => [{ getAttribute: () => SESSION_ID, querySelector: () => null }, rail], getElementById: (id: string) => (id === "queue-row-41" ? { name: "row 41" } : null) };
+      assert.equal(call<{ name: string }>("getReturnFocusQ", row.stored, root, 41).name, row.expected);
+    });
+  }
+
   test("the list's and the sheet's scroll positions stored on entering are set again on leaving", () => {
     const bodies: Record<string, { scrollTop: number }> = { ".queue-list > .card-body": { scrollTop: 412 }, ".queue-sheet > .card-body": { scrollTop: 96 } };
     const root = { querySelector: (selector: string) => bodies[selector] ?? null };

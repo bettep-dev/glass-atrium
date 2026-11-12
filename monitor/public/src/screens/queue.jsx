@@ -949,7 +949,8 @@ function useOrdersOpenQ(selectedId) {
 	useOrdersFocusQ(isOpen, away, selectedId);
 	const open = useCallbackQ(() => {
 		if (isOpen) return document.getElementById(ORDERS_Q.BOX_ID)?.focus();
-		away.current = { scrolls: getPaneScrollsQ(document), opener: document.activeElement };
+		const opener = document.activeElement;
+		away.current = { scrolls: getPaneScrollsQ(document), opener, openerSession: opener?.closest?.(".queue-rail-row")?.getAttribute("data-session") ?? null };
 		setOpen(true);
 	}, [isOpen]);
 	const openAt = useCallbackQ((id) => { aim.current = id; open(); }, [open]);
@@ -983,9 +984,15 @@ function useOrdersFocusQ(isOpen, away, selectedId) {
 		if (stored === null) return;
 		away.current = null;
 		setPaneScrollsQ(document, stored.scrolls);
-		const target = stored.opener?.isConnected ? stored.opener : document.getElementById(`${ROW_ID_PREFIX_Q}${selected.current}`);
-		target?.focus();
+		getReturnFocusQ(stored, document, selected.current)?.focus();
 	}, [isOpen, away]);
+}
+
+// the opener itself · a rail row the mode re-rendered → that row's button again · else the selected row
+function getReturnFocusQ(stored, root, selectedId) {
+	if (stored.opener?.isConnected) return stored.opener;
+	const row = stored.openerSession ? [...root.querySelectorAll(".queue-rail-row")].find((one) => one.getAttribute("data-session") === stored.openerSession) : null;
+	return row?.querySelector(".queue-rail-main") ?? root.getElementById(`${ROW_ID_PREFIX_Q}${selectedId}`);
 }
 
 function getPaneScrollsQ(root) {

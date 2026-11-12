@@ -863,7 +863,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-row[aria-selected="true"] {
 	background: var(--tint-select);
 }
-.queue-row:focus-visible {
+/* rows the card clips (list rows, rail rows and their band, thread entries) → the ring drawn inside them (spec §11) */
+.queue-row:focus-visible,
+.queue-rail-main:focus-visible,
+.queue-rail-scope:focus-visible,
+.queue-order:focus-visible {
 	outline-offset: calc(-1 * var(--focus-ring-offset));
 }
 .queue-row-title {

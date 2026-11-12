@@ -368,6 +368,45 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(rowHeights, [44]);
   });
 
+  // spec §11: the desk's keys on the real page, and the inset ring on the rows the cards clip
+  test("J / K step the list, Enter goes into the sheet, a digit picks, Esc returns, N opens Orders and Esc gives the focus back", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const active = () => page.evaluate(() => {
+      const element = document.activeElement as HTMLElement;
+      return { id: element.id, tag: element.tagName, inSheet: Boolean(element.closest(".queue-sheet")), offset: getComputedStyle(element).outlineOffset, cls: element.className };
+    });
+    const rowIds = await page.evaluate(() => [...document.querySelectorAll(".queue-row")].map((row) => row.id));
+    await page.locator(".queue-row").first().click();
+    await page.keyboard.press("j");
+    const stepped = await active();
+    await page.keyboard.press("k");
+    await page.keyboard.press("Enter");
+    const entered = await active();
+    await page.keyboard.press("2");
+    const picked = await page.evaluate(() => [...document.querySelectorAll<HTMLInputElement>(".queue-sheet input[type=radio]")].findIndex((radio) => radio.checked));
+    await page.keyboard.press("Escape");
+    const back = await active();
+    await page.focus(".queue-rail-row .queue-rail-main");
+    const rail = await active();
+    await page.keyboard.press("n");
+    const box = await active();
+    await page.focus(".queue-order");
+    const entry = await active();
+    await page.keyboard.press("Escape");
+    const returned = await active();
+    await page.close();
+
+    assert.equal(stepped.id, rowIds[1], "J selects and focuses the next row");
+    assert.deepEqual([entered.tag, entered.inSheet], ["INPUT", true], "Enter moves the focus into the decision's options");
+    assert.equal(picked, 1, "2 picks the second option");
+    assert.deepEqual([back.id, back.offset], [rowIds[0], "-2px"], "Esc gives the focus back to the selected row, its ring inset");
+    assert.equal(rail.offset, "-2px", "a rail row's ring is inset");
+    assert.equal(box.id, "queue-order-text", "N puts the caret in the order box");
+    assert.equal(entry.offset, "-2px", "a thread entry's ring is inset");
+    assert.deepEqual([returned.cls, returned.offset], [rail.cls, "-2px"], "Esc closes Orders and gives the focus back to the rail row that opened it");
+  });
+
   test("rail rows are 68; the Orders mode hides the list and the sheet, keeps one 720 column, and gives both scroll positions back on Close", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[2], getRestReadyText());
