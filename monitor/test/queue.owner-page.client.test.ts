@@ -2082,6 +2082,39 @@ describe("desk keys", () => {
     assert.deepEqual([getPlain(calls), closes], [[["openOrders"]], ["close"]]);
   });
 
+  // the list card's ⓘ holds the key list and the switch
+  const renderKeyList = (isOn: boolean, toggle: () => unknown = () => undefined) => {
+    const { queue } = buildQueue({ keys: { isOn, toggle } });
+    const tree = render("QueueListQ", { queue: withList(queue, [decision]) });
+    const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
+    return { card, info: renderScreen(card?.props.info) as RenderedNode };
+  };
+
+  test("the list head's ⓘ is named for the keys and lists every desk letter", () => {
+    const { card, info } = renderKeyList(true);
+    const listed = findNodes(info, (node) => node.props?.atom === "DetailField").map((node) => String(node.props.label));
+    const letters = Object.keys(getPlain(vm.runInContext("DESK_LETTERS_Q", screen as unknown as vm.Context) as Record<string, string>));
+    assert.equal(card?.props.infoLabel, "Keyboard shortcuts");
+    for (const letter of letters) assert.ok(listed.some((label) => label.split(/[ /]+/).includes(letter.toUpperCase())), `key ${letter.toUpperCase()} is listed`);
+    for (const chord of ["Enter", "Esc", "1 – 9", "Cmd / Ctrl + Enter"]) assert.ok(listed.includes(chord), `${chord} is listed`);
+  });
+
+  const states = [
+    { name: "on shows the switch ticked", isOn: true },
+    { name: "off shows it unticked", isOn: false },
+  ];
+  for (const row of states) {
+    test(`the single-key switch in the key list: ${row.name}, and a press flips it`, () => {
+      const flips: string[] = [];
+      const { info } = renderKeyList(row.isOn, () => flips.push("toggle"));
+      const [box] = findNodes(info, (node) => node.type === "input" && node.props.type === "checkbox");
+      assert.equal(box?.props.checked, row.isOn);
+      assert.match(collectText(info), /Single-key shortcuts/);
+      (box?.props.onChange as () => void)();
+      assert.deepEqual(flips, ["toggle"]);
+    });
+  }
+
   const switches = [
     { name: "nothing stored → on", stored: null, expected: true },
     { name: "stored off → off", stored: "false", expected: false },

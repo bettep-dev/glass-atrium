@@ -74,6 +74,18 @@ const DRAFT_STORE_Q = { ITEMS: "queue.drafts", ORDER: "queue.orderDraft" };
 const KEYS_Q = { STORE: "queue.keys" };
 // the single letters of the desk (spec §11); 1 – 9 pick an option
 const DESK_LETTERS_Q = { j: "next", k: "prev", r: "field", e: "read", l: "later", n: "new", o: "order" };
+const DESK_KEY_LIST_Q = [
+	{ keys: "J / K", does: "Next / previous row; the sheet follows" },
+	{ keys: "Enter", does: "From a row into the sheet; on an order, into the thread" },
+	{ keys: "Esc", does: "From the sheet back to the row; closes Orders" },
+	{ keys: "1 – 9", does: "Pick the option at that position" },
+	{ keys: "R", does: "The sheet's field" },
+	{ keys: "E", does: "Mark as read" },
+	{ keys: "L", does: "Answer later / Read later" },
+	{ keys: "N", does: "New order" },
+	{ keys: "O", does: "Order to the selected item's session" },
+	{ keys: "Cmd / Ctrl + Enter", does: "Send from the pane in focus" },
+];
 // the history read's page and the pane bodies whose scroll the Orders mode keeps (a hidden box does not keep its own)
 // MAX = the history read's own cap (schemas.ts → ORDER_PAGE_LIMIT)
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
@@ -1221,6 +1233,7 @@ function QueueListQ({ queue }) {
 	const offView = useOffViewNewQ(queue.list.newIds, queue.orders.isOpen);
 	return (
 		<Card className="queue-pane queue-list" title={getScopeTitleQ(items, queue.filter)} sub={`${visible.filter((item) => item.status === "open").length} waiting`}
+			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts"
 			bar={isListBarShownQ(items, queue.filter) ? <QueueFilterBarQ items={items} filter={queue.filter} onFilter={queue.setFilter} /> : null}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} visible={visible} />
@@ -1273,6 +1286,21 @@ function putNewRowInViewQ(id) {
 	const row = document.getElementById(`${ROW_ID_PREFIX_Q}${id}`);
 	row?.scrollIntoView({ block: "nearest" });
 	row?.focus({ preventScroll: true });
+}
+
+/** The key list behind the list head's ⓘ (spec §11) and the switch that turns the single keys off (WCAG 2.1.4). */
+function DeskKeysQ({ keys }) {
+	const { DetailField } = window.UI;
+	return (
+		<div className="flex flex-col gap-2">
+			<label className="inline-flex items-center gap-2 font-medium">
+				<span className="inline-target"><CheckboxBoxQ isChecked={keys.isOn} onChange={keys.toggle} ariaLabel="Single-key shortcuts" /></span>
+				Single-key shortcuts
+			</label>
+			<p className="fs-meta text-dim">Letters and digits act while the focus is on the desk and not in a text field. Enter, Esc and Cmd / Ctrl + Enter work either way.</p>
+			<div>{DESK_KEY_LIST_Q.map((row) => <DetailField key={row.keys} label={row.keys} value={row.does} />)}</div>
+		</div>
+	);
 }
 
 function getScopeTitleQ(items, filter) {
