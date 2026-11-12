@@ -6,13 +6,11 @@ import { getPrisma } from "../db.js";
 import type { PageOriginSignal } from "../request-guards.js";
 import { ACKABLE } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
-import { SESSION_ID_PREFIX_LENGTH, getCwdTail } from "./owner-views.js";
+import { SESSION_ID_PREFIX_LENGTH, getCwdBasename, getCwdTail } from "./owner-views.js";
 import { lockSessions } from "./registry.js";
-import type { MessageBody, OwnerSessionsQuery } from "./schemas.js";
+import { ITEM_TITLE_MAX, type MessageBody, type OwnerSessionsQuery } from "./schemas.js";
 
 const LIST_LIMIT = 200;
-// queue_items.title VARCHAR(200): Postgres counts code points → truncated by code point, never mid-surrogate
-const TITLE_MAX = 200;
 
 export interface OwnerSessionRow {
   id: string;
@@ -88,7 +86,7 @@ export async function createMessages(body: MessageBody, signal: PageOriginSignal
   return getPrisma().$transaction(async (tx) => {
     const locked = await lockSessions(tx, body.sessionIds);
     if (locked.length !== body.sessionIds.length) throw new QueueRequestError(404, "unknown_session", "every target must be a registered session");
-    if (locked.some((row) => row.exitReason === "replaced")) throw new QueueRequestError(409, "session_replaced", "a replaced session takes no message");
+    if (!locked.every(isMessageTarget)) throw new QueueRequestError(409, "session_replaced", "a replaced session takes no message");
     const answeredAt = new Date();
     const created = await tx.queueItem.createManyAndReturn({
       data: body.sessionIds.map((sessionId) => ({
@@ -112,7 +110,7 @@ function toSessionRow(row: SessionListRow): OwnerSessionRow {
   return {
     id: row.id,
     sessionIdPrefix: row.id.slice(0, SESSION_ID_PREFIX_LENGTH),
-    name: row.name ?? getBasename(row.cwd),
+    name: row.name ?? getCwdBasename(row.cwd),
     isNameRegistered: row.name !== null,
     profileLabel: row.profileLabel,
     cwd: row.cwd,
@@ -122,17 +120,17 @@ function toSessionRow(row: SessionListRow): OwnerSessionRow {
     lastActivityAt: row.lastActivityAt.toISOString(),
     count: { awaiting: row.awaiting, inDelivery: row.inDelivery },
     markerSetAt: row.markerSetAt?.toISOString() ?? null,
-    isSelectable: row.exitReason !== "replaced",
+    isSelectable: isMessageTarget(row),
   };
 }
 
-// cwd is an absolute realpath (queue_sessions_cwd_check) → "/" alone has no segment, shown as itself
-function getBasename(cwd: string): string {
-  return cwd.split("/").filter((segment) => segment !== "").at(-1) ?? cwd;
+// replaced → its process registered again under another session id, which takes the message instead
+function isMessageTarget(row: { exitReason: string | null }): boolean {
+  return row.exitReason !== "replaced";
 }
 
-// The send schema guarantees a non-blank text → some line survives the trim
+// The send schema guarantees a non-blank text → some line survives the trim; cut by code point, never mid-surrogate
 function getMessageTitle(text: string): string {
   const firstLine = text.split("\n").map((line) => line.trim()).find((line) => line !== "") ?? text.trim();
-  return Array.from(firstLine).slice(0, TITLE_MAX).join("");
+  return Array.from(firstLine).slice(0, ITEM_TITLE_MAX).join("");
 }

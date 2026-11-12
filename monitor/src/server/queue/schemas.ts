@@ -9,6 +9,8 @@ const MAX_LINKED_DOCS = 20;
 const OPTION_TEXT = { label: 200, pros: 800, cons: 800 } as const;
 
 const MAX_TEXT = 20_000;
+// queue_items.title VARCHAR(200) → Postgres counts code points
+export const ITEM_TITLE_MAX = 200;
 // code points, as Zod's max and the VARCHAR(100) column both count → queue.schema.test.ts binds this schema to the column
 const SESSION_NAME_MAX = 100;
 const MAX_LIST_LIMIT = 200;
@@ -16,6 +18,8 @@ const MAX_MESSAGE_TARGETS = 20;
 const RECENT_RESUME_LIMIT = { DEFAULT: 10, MAX: 50 } as const;
 
 const sessionId = z.uuid();
+// profile_label VARCHAR(64)
+const profileLabel = z.string().min(1).max(64);
 const optionCode = z.string().regex(/^R[1-9]$/);
 const pid = z.int().min(1).max(MAX_PID);
 const absolutePath = z
@@ -59,7 +63,7 @@ const optionSchema = z.strictObject({
 
 const itemFields = {
   sessionId,
-  title: requiredText(200),
+  title: requiredText(ITEM_TITLE_MAX),
   body: requiredText(MAX_TEXT),
   linkedDocIds: z
     .array(z.int().min(1).max(Number.MAX_SAFE_INTEGER))
@@ -100,13 +104,13 @@ export const replyBodySchema = z.strictObject({ text: requiredText(MAX_TEXT) });
 
 // Query strings arrive as text → numbers coerced, then bounded
 export const ownerListQuerySchema = z.strictObject({
-  profile: z.string().min(1).max(64).optional(),
+  profile: profileLabel.optional(),
   sessionId: sessionId.optional(),
   after: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIST_LIMIT).default(100),
 });
 
-export const ownerSessionsQuerySchema = z.strictObject({ profile: z.string().min(1).max(64).optional() });
+export const ownerSessionsQuerySchema = z.strictObject({ profile: profileLabel.optional() });
 
 export const messageBodySchema = z.strictObject({
   sessionIds: z

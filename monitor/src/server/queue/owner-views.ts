@@ -319,5 +319,14 @@ function toMarkedOccupant(facts: SessionFacts): MarkedOccupant {
 }
 
 export function getCwdTail(cwd: string): string {
-  return cwd.split("/").filter((segment) => segment !== "").slice(-2).join("/");
+  return getCwdSegments(cwd).slice(-2).join("/");
+}
+
+// cwd is an absolute realpath (queue_sessions_cwd_check) → "/" alone has no segment, shown as itself
+export function getCwdBasename(cwd: string): string {
+  return getCwdSegments(cwd).at(-1) ?? cwd;
+}
+
+function getCwdSegments(cwd: string): string[] {
+  return cwd.split("/").filter((segment) => segment !== "");
 }
