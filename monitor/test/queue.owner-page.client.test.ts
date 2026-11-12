@@ -63,6 +63,7 @@ function buildSession(overrides: Record<string, unknown> = {}) {
     configDir: null,
     state: "exited",
     launchHint: null,
+    isWaiting: false,
     permissionHint: "default",
     marker: null,
     ...overrides,
@@ -191,7 +192,7 @@ test("after Send the focus skips a card the active filter hides", async () => {
   const items = [buildItem({ id: 1 }), buildItem({ id: 2, session: personal }), buildItem({ id: 3 })];
   const focus: unknown[] = [];
   const actions = (module.useQueueActionsQ as (deps: unknown) => { answerItem: (id: number, body: unknown) => Promise<void> })({
-    list: { status: "ready", data: { items, nextCursor: null, isSocketDeliveryOn: true } },
+    list: { status: "ready", data: { items, nextCursor: null } },
     filter: { profile: "work-dev", session: "" },
     setList: () => undefined,
     setDrafts: () => undefined,
@@ -215,14 +216,26 @@ describe("card state lines", () => {
     { name: "held", deviation: "held", expected: "Held" },
     { name: "expired", deviation: "expired", expected: "Expired" },
     { name: "resume pending", deviation: "resume_pending", expected: "Resume pending" },
-    { name: "session not reachable shows the pull command", deviation: "session_not_reachable", expected: "Session not reachable", hasCommand: true },
-    { name: "delivery off shows the pull command", deviation: "delivery_off", expected: "Delivery off — session alive", hasCommand: true },
   ];
   for (const row of rows) {
     test(`deviation label: ${row.name}`, () => {
-      const text = collectText(render("CardStateQ", { item: buildItem({ status: "answered", deviation: row.deviation }), cliPath: CLI_PATH }));
+      const text = collectText(render("CardStateQ", { item: buildItem({ status: row.deviation, deviation: row.deviation }), cliPath: CLI_PATH }));
       assert.ok(text.includes(row.expected), text);
-      assert.equal(text.includes(`${CLI_PATH} pending`), row.hasCommand === true, text);
+    });
+  }
+
+  // an answered item waits for its session's pull → the owner learns whether a wait takes it, else how to pull it
+  const pullRows = [
+    { name: "a live session that is waiting takes the answer at its next poll", status: "answered", session: { state: "live", isWaiting: true }, isWaitNamed: true, hasCommand: false },
+    { name: "a live session that is not waiting shows the pull command", status: "answered", session: { state: "live", isWaiting: false }, isWaitNamed: false, hasCommand: true },
+    { name: "an ended session is resumed, so neither line shows", status: "answered", session: { state: "exited", isWaiting: false }, isWaitNamed: false, hasCommand: false },
+    { name: "an unanswered item has nothing to pull", status: "open", session: { state: "live", isWaiting: false }, isWaitNamed: false, hasCommand: false },
+  ];
+  for (const row of pullRows) {
+    test(`pull line: ${row.name}`, () => {
+      const text = collectText(render("CardStateQ", { item: buildItem({ status: row.status, session: buildSession(row.session) }), cliPath: CLI_PATH }));
+      assert.equal(text.includes("The session is waiting"), row.isWaitNamed, text);
+      assert.equal(text.includes(`${CLI_PATH} pending`), row.hasCommand, text);
     });
   }
 
@@ -249,11 +262,6 @@ describe("card state lines", () => {
   test("an item with no answer carries no answer record line", () => {
     const text = collectText(render("CardStateQ", { item: buildItem({ answerRecord: null, isAnsweredOutside: false }) }));
     assert.doesNotMatch(text, /Answered|Replied|Sent as/);
-  });
-
-  test("a wrapper-launched session's card names the same-uid risk", () => {
-    const text = collectText(render("CardStateQ", { item: buildItem({ session: buildSession({ launchHint: "accept_wrapper" }) }) }));
-    assert.match(text, /any same-uid process can drive this bypass session/);
   });
 
   test("an approval-class decision says the terminal confirmation is still needed", () => {
@@ -345,7 +353,7 @@ describe("card precedence notes", () => {
       const listed = buildItem({ session: { ...markedSession(null), cwd: row.value } });
       const [cwdCommand] = (call<Array<string | { machine: string }>[]>("getCardNotesQ", listed)[0] ?? []).flatMap((part) => (typeof part === "string" ? [] : [part.machine]));
       const captured = call<Array<string | { machine: string }>[]>("getCardNotesQ", buildItem({ session: markedSession(row.value) }))[0] ?? [];
-      const pull = collectText(render("CardStateQ", { item: buildItem({ status: "answered", deviation: "delivery_off" }), cliPath: row.value }));
+      const pull = collectText(render("CardStateQ", { item: buildItem({ status: "answered", session: buildSession({ state: "live" }) }), cliPath: row.value }));
       assert.equal(cwdCommand, `claude agents --json --cwd ${row.shellWord}`);
       assert.ok(listing.some((part) => typeof part !== "string" && part.machine.startsWith(`CLAUDE_CONFIG_DIR=${row.shellWord} claude `)), JSON.stringify(listing));
       assert.ok(captured.some((part) => typeof part !== "string" && part.machine === `claude logs ${row.shellWord}`), JSON.stringify(captured));
@@ -454,12 +462,13 @@ describe("screen", () => {
     assert.ok(atoms.includes("LoadingPlaceholder"), String(atoms));
   });
 
-  test("a loaded list renders one card per item and the degraded banner while socket delivery is off", () => {
+  // the list carries no delivery flag → a page alert here would read as a delivery outage that does not exist
+  test("a loaded list renders one card per item and no page alert", () => {
     const { queue } = buildQueue();
-    const data = { items: [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report", linkedDocIds: [43944] })], nextCursor: null, isSocketDeliveryOn: false };
+    const data = { items: [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report", linkedDocIds: [43944] })], nextCursor: null };
     const tree = render("QueueListQ", { queue: { ...queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } });
     assert.equal(findNodes(tree, (node) => node.type === "QueueCardQ").length, 2);
-    assert.equal(findNodes(tree, (node) => node.type === "DegradedBannerQ").length, 1);
+    assert.equal(findNodes(tree, (node) => node.props?.atom === "AlertCard").length, 0);
     const [link] = findNodes(tree, (node) => node.props.atom === "Link");
     assert.equal(link?.props.href, "#clauded-docs?doc=43944");
   });
@@ -569,14 +578,19 @@ const NUMERIC_SPACING_CLASS = /(^|\s)-?(p|m|gap|space)(x|y|t|r|b|l|s|e)?-(\d|\[)
 describe("the queue page spaces on role keys only", () => {
   const data = {
     items: [
-      buildItem({ id: 1, isApprovalClass: true, deviation: "delivery_off", resumes: [{ attempt: 1, sentAt: "2026-11-10T06:20:11.204Z", result: "sent", abortReason: null, bgId: null }] }),
-      buildItem({ id: 2, kind: "report", linkedDocIds: [43944], session: buildSession({ launchHint: "accept_wrapper", marker: { setAt: "2026-11-10T06:20:11.204Z", bgId: null } }) }),
+      buildItem({
+        id: 1,
+        status: "answered",
+        isApprovalClass: true,
+        session: buildSession({ state: "live" }),
+        resumes: [{ attempt: 1, sentAt: "2026-11-10T06:20:11.204Z", result: "sent", abortReason: null, bgId: null }],
+      }),
+      buildItem({ id: 2, kind: "report", linkedDocIds: [43944], status: "unacked", deviation: "unacked", session: buildSession({ marker: { setAt: "2026-11-10T06:20:11.204Z", bgId: null } }) }),
     ],
     nextCursor: 9,
-    isSocketDeliveryOn: false,
   };
   const states = [
-    { name: "a loaded list with cards, the banner and Show more", node: () => render("QueueListQ", { queue: { ...buildQueue().queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } }) },
+    { name: "a loaded list with cards, the pull command, a deviation and Show more", node: () => render("QueueListQ", { queue: { ...buildQueue().queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } }) },
     { name: "a card with a refusal", node: () => render("QueueCardQ", { item: data.items[0], queue: buildQueue({ busy: { id: null, error: { id: 1, message: "Refused: x." } } }).queue }) },
     {
       name: "the sessions region with a ticked row, the composer and a refusal",
@@ -726,10 +740,10 @@ describe("Show more", () => {
       window: { UI: uiStub() },
       fetch: async (url: string) => {
         urls.push(url);
-        return { status: 200, json: async () => ({ items: [buildItem({ id: 3 })], nextCursor: null, isSocketDeliveryOn: true }) };
+        return { status: 200, json: async () => ({ items: [buildItem({ id: 3 })], nextCursor: null }) };
       },
     })) as ScreenModule;
-    let list: Record<string, unknown> = { status: "ready", data: { items: [buildItem({ id: 1 }), buildItem({ id: 2 })], nextCursor: 12, isSocketDeliveryOn: true } };
+    let list: Record<string, unknown> = { status: "ready", data: { items: [buildItem({ id: 1 }), buildItem({ id: 2 })], nextCursor: 12 } };
     const setList = (next: unknown) => {
       list = typeof next === "function" ? (next as (prev: unknown) => Record<string, unknown>)(list) : (next as Record<string, unknown>);
     };
@@ -756,7 +770,7 @@ describe("list read", () => {
   };
 
   test("an answer carrying the item list is ready", async () => {
-    assert.equal((await read(200, { items: [], nextCursor: null, isSocketDeliveryOn: true })).status, "ready");
+    assert.equal((await read(200, { items: [], nextCursor: null })).status, "ready");
   });
 
   test("a 2xx answer without an item list is a read failure, never a list to render", async () => {
@@ -879,6 +893,7 @@ function buildSessionRow(overrides: Record<string, unknown> = {}) {
     cwdTail: "git/glass-atrium",
     state: "live",
     exitReason: null,
+    isWaiting: false,
     lastActivityAt: "2026-11-12T03:41:09.336Z",
     count: { awaiting: 1, inDelivery: 0 },
     markerSetAt: null,
@@ -929,12 +944,20 @@ describe("sessions region rows", () => {
 
   const states = [
     { name: "a live session", row: { state: "live" }, label: "Live" },
-    { name: "a session that stopped answering probes", row: { state: "stale" }, label: "Not reachable" },
     { name: "a session that ended", row: { state: "exited", exitReason: "ended" }, label: "Ended" },
     { name: "a session whose process is gone", row: { state: "exited", exitReason: "dead" }, label: "Ended · process gone" },
     { name: "a session another took over", row: { state: "exited", exitReason: "replaced" }, label: "Replaced" },
   ];
   for (const row of states) test(`state label: ${row.name}`, () => assert.equal(call("getSessionStateLabelQ", buildSessionRow(row.row)), row.label));
+
+  test("the State cell says a session is waiting for its answers only while its wait polls", () => {
+    const stateCell = (isWaiting: boolean) => {
+      const [cell] = findNodes(renderSessionRows([buildSessionRow({ isWaiting })]), (node) => node.props?.label === "State");
+      return collectText(cell as RenderedNode);
+    };
+    assert.match(stateCell(true), /^Live.*waiting for answers/);
+    assert.doesNotMatch(stateCell(false), /waiting/);
+  });
 
   test("a replaced row's checkbox is disabled and every other row's is not", () => {
     const tree = renderSessionRows(SESSION_ROWS);
@@ -1116,7 +1139,7 @@ describe("sessions region", () => {
 
   test("the region sits after the item cards and before the recent resumes", () => {
     const { queue } = buildQueue();
-    const data = { items: [buildItem({ id: 1 })], nextCursor: null, isSocketDeliveryOn: true };
+    const data = { items: [buildItem({ id: 1 })], nextCursor: null };
     const tree = render("QueueListQ", { queue: { ...queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } });
     const order = findNodes(tree, (node) => ["QueueCardQ", "SessionsRegionQ", "RecentResumesQ"].includes(node.type)).map((node) => node.type);
     assert.deepEqual(order, ["QueueCardQ", "SessionsRegionQ", "RecentResumesQ"]);

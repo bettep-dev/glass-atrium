@@ -22,11 +22,7 @@ const DEVIATION_LABEL_Q = {
 	held: "Held",
 	expired: "Expired",
 	resume_pending: "Resume pending",
-	session_not_reachable: "Session not reachable",
-	delivery_off: "Delivery off — session alive",
 };
-// owner runs the pull command in the session itself for these two
-const PULL_DEVIATIONS_Q = new Set(["session_not_reachable", "delivery_off"]);
 
 const RESUME_RESULT_LABEL_Q = {
 	sent: "spawned",
@@ -63,7 +59,7 @@ const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor hol
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null, sentCount: null });
-const SESSION_STATE_LABEL_Q = { live: "Live", stale: "Not reachable" };
+const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
 const SESSION_COLUMNS_Q = [
 	{ key: "select", label: <span className="sr-only">Selected</span> },
@@ -77,8 +73,6 @@ const SESSION_COLUMNS_Q = [
 ];
 
 const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
-const WRAPPER_RISK_NOTE_Q =
-	"Started through the accept wrapper: on macOS the socket token is optional, so any same-uid process can drive this bypass session with no prompt.";
 
 /**
  * Queue nav slot: awaiting count plus a deviation glyph when any deviation is open.
@@ -522,7 +516,6 @@ function QueueListQ({ queue }) {
 	const visible = getVisibleItemsQ(data.items, queue.filter);
 	return (
 		<div className="flex flex-col gap-section">
-			{!data.isSocketDeliveryOn && <DegradedBannerQ />}
 			<QueueFilterBarQ items={data.items} filter={queue.filter} onFilter={queue.setFilter} />
 			{data.items.length === 0 && <EmptyState message="Nothing waiting for you" hint="Sessions post decisions and reports here; the nav badge counts them." />}
 			{data.items.length > 0 && visible.length === 0 && (
@@ -533,14 +526,6 @@ function QueueListQ({ queue }) {
 			<SessionsRegionQ sessions={queue.sessions} onSent={queue.reload} />
 			<RecentResumesQ region={queue.resumes} onRetry={queue.readResumes} />
 		</div>
-	);
-}
-
-function DegradedBannerQ() {
-	const { AlertCard } = window.UI;
-	return (
-		<AlertCard tone="warn" title="Socket delivery is off"
-			body="The format check turned socket delivery off: live sessions get answers when they pull, and exited sessions still resume." />
 	);
 }
 
@@ -677,23 +662,29 @@ function DraftFieldQ({ id, label, value, onChange }) {
 }
 
 /**
- * Answer record, deviation word, the pull command where the owner must act in the session, precedence notes and the wrapper risk.
+ * Answer record, deviation word, how a live session takes its answer, and precedence notes.
  * @param cliPath - the installed queue CLI the server resolved (GA_ROOT-aware)
  */
 function CardStateQ({ item, cliPath }) {
-	const { Stack, MachineString } = window.UI;
+	const { Stack } = window.UI;
 	const notes = getCardNotesQ(item);
 	return (
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
 			{item.deviation && <ToneLineQ tone="warn">{DEVIATION_LABEL_Q[item.deviation] ?? item.deviation}</ToneLineQ>}
-			{PULL_DEVIATIONS_Q.has(item.deviation) && cliPath && (
-				<p className="fs-meta text-dim">Run in that session: <MachineString>{`${getShellWordQ(cliPath)} pending`}</MachineString></p>
-			)}
+			<PullLineQ item={item} cliPath={cliPath} />
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
-			{item.session.launchHint === "accept_wrapper" && <p className="fs-meta text-dim">{WRAPPER_RISK_NOTE_Q}</p>}
 		</Stack>
 	);
+}
+
+// an answered item waits for its live session's pull: a waiting session claims it at its next poll, any other one needs the owner to run the pull
+function PullLineQ({ item, cliPath }) {
+	const { MachineString } = window.UI;
+	if (item.status !== "answered" || item.session.state !== "live") return null;
+	if (item.session.isWaiting) return <p className="fs-meta text-dim">The session is waiting: its next poll takes this answer.</p>;
+	if (!cliPath) return null;
+	return <p className="fs-meta text-dim">Run in that session: <MachineString>{`${getShellWordQ(cliPath)} pending`}</MachineString></p>;
 }
 
 /** Answer record line `{ text, isOutside }`; an item with no answer → null. */
@@ -865,6 +856,7 @@ function SessionStateQ({ row }) {
 	return (
 		<>
 			{getSessionStateLabelQ(row)}
+			{row.isWaiting && <span className="block fs-meta text-dim">waiting for answers</span>}
 			{row.markerSetAt && <span className="block fs-meta text-dim">automatic resume not yet registered</span>}
 		</>
 	);
