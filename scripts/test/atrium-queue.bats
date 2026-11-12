@@ -1,11 +1,11 @@
 #!/usr/bin/env bats
-# shellcheck disable=SC2154,SC2249,SC2312  # BATS_* and run results are set by bats; each case arm is a row; a masked status fails its comparison
+# shellcheck disable=SC2030,SC2031,SC2154,SC2249,SC2312  # each test is a subshell → its exports are its own; BATS_* and run results are set by bats; each case arm is a row; a masked status fails its comparison
 # The owner queue CLI against a stand-in monitor. Protects local validation before any request, the
 # session id taken from the env, the foreign-item stop, the ack verdict lines, the pull loop's printed
 # commands, the register step it shares with the SessionStart hook, and the absolute-path help literal.
 #
 # Run via: bats scripts/test/atrium-queue.bats
-# Requires: bats, bash 3.2+, jq, curl, python3
+# Requires: bats, bash 3.2+, jq, curl, perl, python3
 
 bats_require_minimum_version 1.5.0
 
@@ -54,11 +54,11 @@ teardown() {
 # every background wait and stand-in Claude process this test started
 stop_waiters() {
   local pid
-  for pid in ${WAITER_PID:-} ${OWNER_PIDS:-}; do
+  for pid in ${WAITER_PIDS:-} ${OWNER_PIDS:-}; do
     kill "${pid}" 2>/dev/null || true
     wait "${pid}" 2>/dev/null || true
   done
-  WAITER_PID=""
+  WAITER_PIDS=""
   OWNER_PIDS=""
 }
 
@@ -75,9 +75,57 @@ use_fast_wait() {
   export ATRIUM_QUEUE_WAIT_POLL_S=1 ATRIUM_QUEUE_WAIT_BOUND_S="$1"
 }
 
+# [label] → a background wait writing waiter[.label].out/.err → WAITER_PID
 start_waiter() {
-  "${CLI}" wait >"${BATS_TEST_TMPDIR}/waiter.out" 2>"${BATS_TEST_TMPDIR}/waiter.err" 3>&- &
+  local log="${BATS_TEST_TMPDIR}/waiter${1:+.$1}"
+  "${CLI}" wait >"${log}.out" 2>"${log}.err" 3>&- &
   WAITER_PID=$!
+  WAITER_PIDS="${WAITER_PIDS:-} ${WAITER_PID}"
+}
+
+# blocks until file $1 exists or process $2 has ended (at most 10 s)
+await_file_or_exit() {
+  local tries=0
+  while [[ ! -e "$1" ]] && kill -0 "$2" 2>/dev/null && ((tries < 200)); do
+    sleep 0.05
+    tries=$((tries + 1))
+  done
+}
+
+# mv and ln shims → the real tool runs first; then a process exporting QUEUE_TEST_PAUSE=<tool> pauses once, at its
+# first call whose source operand is the lock, until the stub logs QUEUE_TEST_PAUSE_POLLS more requests (at most 5 s);
+# a process exporting QUEUE_TEST_TRACE logs each call naming the lock and the lock name's target, or ABSENT, after it
+install_lock_step_shims() {
+  local tool lock="$1" t="${BATS_TEST_TMPDIR}"
+  for tool in mv ln; do
+    cat >"${t}/bin/${tool}" <<SHIM
+#!/usr/bin/env bash
+"$(command -v "${tool}")" "\$@"
+status=\$?
+if [[ "\${QUEUE_TEST_PAUSE:-}" == ${tool} && "\$1" == -- && "\$2" == "${lock}" && ! -e "${t}/in-gap" ]]; then
+  : >"${t}/in-gap"
+  base=\$(wc -l <"${t}/requests.log")
+  tries=0
+  while ((\$(wc -l <"${t}/requests.log") < base + \${QUEUE_TEST_PAUSE_POLLS:-2} && tries < 100)); do
+    sleep 0.05
+    tries=\$((tries + 1))
+  done
+fi
+if [[ -n "\${QUEUE_TEST_TRACE:-}" && "\$*" == *"${lock}"* ]]; then
+  printf '%s %s → %s\n' ${tool} "\$*" "\$("$(command -v readlink)" "${lock}" || echo ABSENT)" >>"${t}/trace.log"
+fi
+exit "\${status}"
+SHIM
+    chmod 755 "${t}/bin/${tool}"
+  done
+}
+
+# the start time the CLI records for pid $1
+get_recorded_start() {
+  local started
+  started="$(LC_ALL=C ps -p "$1" -o lstart=)"
+  started="${started#"${started%%[![:space:]]*}"}"
+  printf '%s\n' "${started%"${started##*[![:space:]]}"}"
 }
 
 # blocks until the stub has logged $1 requests (at most 10 s)
@@ -478,26 +526,167 @@ run_cli() {
   done
 }
 
-@test "a wait that ends as another wait takes its lock over leaves the newcomer's lock in place" {
+@test "a wait that ends after another wait took its lock over neither moves nor re-creates the newcomer's lock" {
   start_stub
   start_owner
   use_fast_wait 20
   set_reply 200 "{\"items\":[{\"id\":{\"item\":17,\"msg\":\"${MSG_ID}\"}}]}"
   local lock="${GA_ROOT}/data/queue/waits/${SESSION_ID}" newcomer="31337|Thu Nov 12 21:30:07 2026|5151|Thu Nov 12 21:29:58 2026"
-  # readlink shim: after the claiming poll, the first read of a wait-lock path → a newcomer replaces the lock
-  cat >"${BATS_TEST_TMPDIR}/bin/readlink" <<SHIM
+  local t="${BATS_TEST_TMPDIR}"
+  # curl shim: the claiming poll → a newcomer of another Claude process renames its record onto the lock first
+  cat >"${t}/bin/curl" <<SHIM
+#!/usr/bin/env bash
+if [[ ! -e "${t}/swapped" ]]; then
+  : >"${t}/swapped"
+  "$(command -v ln)" -sn -- '${newcomer}' "${lock}.newcomer"
+  "$(command -v mv)" -f -- "${lock}.newcomer" "${lock}"
+  printf 'SWAP\n' >>"${t}/trace.log"
+fi
+exec "$(PATH="${PATH#"${t}/bin:"}" command -v curl)" "\$@"
+SHIM
+  install_lock_step_shims "${lock}"
+  export QUEUE_TEST_TRACE=1
+  run_cli wait
+  local after_swap
+  after_swap="$(sed -n '/^SWAP$/,$p' "${t}/trace.log")"
+  [[ "${status}" -eq 0 && "$(readlink "${lock}")" == "${newcomer}" && "${after_swap}" == SWAP ]] || {
+    echo "status=${status} lock=$(readlink "${lock}") ${stderr}"
+    cat "${t}/trace.log"
+    return 1
+  }
+}
+
+@test "a wait of another Claude process keeps the lock it took over while the wait it displaced ends" {
+  start_stub
+  set_reply 200 '{"items":[]}'
+  local t="${BATS_TEST_TMPDIR}" lock="${GA_ROOT}/data/queue/waits/${SESSION_ID}"
+  install_lock_step_shims "${lock}"
+  local row old_pid new_pid leftover
+  # each row → what happens while the displaced wait releases (its lock-moving step paused until two newcomer polls)
+  for row in release-completes third-wait-in-gap releaser-killed-in-gap; do
+    stop_waiters
+    for leftover in "${t}/in-gap" "${t}/trace.log" "${lock}"; do
+      if ga_guard_path "${leftover}"; then rm -f -- "${leftover:?}"; fi
+    done
+    start_owner
+    use_fast_wait 30
+    export QUEUE_TEST_PAUSE=mv
+    start_waiter old
+    unset QUEUE_TEST_PAUSE
+    old_pid="${WAITER_PID}"
+    await_requests "$(($(wc -l <"${t}/requests.log") + 1))"
+    start_owner
+    use_fast_wait 6
+    export QUEUE_TEST_TRACE=1
+    start_waiter new
+    unset QUEUE_TEST_TRACE
+    new_pid="${WAITER_PID}"
+    await_file_or_exit "${t}/in-gap" "${old_pid}"
+    case "${row}" in
+      third-wait-in-gap)
+        use_fast_wait 2
+        run_cli wait
+        [[ "${status}" -eq 5 && "${stderr}" == *"already runs"* ]] || {
+          echo "row ${row}: third wait status=${status} ${stderr}"
+          return 1
+        }
+        ;;
+      releaser-killed-in-gap) kill -KILL "${old_pid}" 2>/dev/null || true ;;
+    esac
+    await_exit "${old_pid}"
+    kill -0 "${new_pid}" 2>/dev/null && [[ "$(readlink "${lock}")" == "${new_pid}|"* ]] || {
+      echo "row ${row}: newcomer alive=$(kill -0 "${new_pid}" 2>/dev/null && echo yes) lock=$(readlink "${lock}")"
+      cat "${t}/waiter.new.err"
+      return 1
+    }
+    await_exit "${new_pid}"
+    [[ "${AWAITED_STATUS}" == 4 ]] || {
+      echo "row ${row}: newcomer status=${AWAITED_STATUS} $(cat "${t}/waiter.new.err")"
+      return 1
+    }
+    [[ -z "$(find "${lock%/*}" -name '*.drop.*')" ]] || {
+      echo "row ${row}: private names left: $(ls "${lock%/*}")"
+      return 1
+    }
+    ! grep -q 'ABSENT' "${t}/trace.log" || {
+      echo "row ${row}: the takeover left the lock name empty"
+      cat "${t}/trace.log"
+      return 1
+    }
+  done
+}
+
+@test "two waits reclaiming one dead record leave one running and the other ends as already running" {
+  start_stub
+  set_reply 200 '{"items":[]}'
+  start_owner
+  use_fast_wait 10
+  local t="${BATS_TEST_TMPDIR}" lock="${GA_ROOT}/data/queue/waits/${SESSION_ID}" dead_pid stale
+  true &
+  dead_pid=$!
+  wait "${dead_pid}"
+  stale="${dead_pid}|Thu Nov 12 21:30:07 2026|${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")"
+  mkdir -p "${lock%/*}"
+  ln -sn -- "${stale}" "${lock}"
+  install_lock_step_shims "${lock}"
+  # readlink shim: the first wait's read of the dead record holds until the second wait has polled (at most 3 s)
+  cat >"${t}/bin/readlink" <<SHIM
 #!/usr/bin/env bash
 held="\$("$(command -v readlink)" "\$@")" || exit
-if [[ -s "${BATS_TEST_TMPDIR}/requests.log" && "\$1" == "${lock%/*}/"* && ! -e "${BATS_TEST_TMPDIR}/taken" ]]; then
-  : >"${BATS_TEST_TMPDIR}/taken"
-  ln -sfn -- '${newcomer}' "${lock}"
+if [[ -n "\${QUEUE_TEST_HOLD_READ:-}" && "\${held}" == '${stale}' && ! -e "${t}/read-held" ]]; then
+  : >"${t}/read-held"
+  tries=0
+  while [[ ! -s "${t}/requests.log" ]] && ((tries < 60)); do
+    sleep 0.05
+    tries=\$((tries + 1))
+  done
 fi
 printf '%s\n' "\${held}"
 SHIM
-  chmod 755 "${BATS_TEST_TMPDIR}/bin/readlink"
+  chmod 755 "${t}/bin/readlink"
+  export QUEUE_TEST_HOLD_READ=1 QUEUE_TEST_PAUSE=mv QUEUE_TEST_PAUSE_POLLS=1
+  start_waiter first
+  unset QUEUE_TEST_HOLD_READ QUEUE_TEST_PAUSE QUEUE_TEST_PAUSE_POLLS
+  local first_pid="${WAITER_PID}" second_pid ended="" survivor tries=0
+  await_file_or_exit "${t}/read-held" "${first_pid}"
+  start_waiter second
+  second_pid="${WAITER_PID}"
+  while [[ -z "${ended}" ]] && ((tries < 200)); do
+    kill -0 "${first_pid}" 2>/dev/null || ended=first
+    kill -0 "${second_pid}" 2>/dev/null || ended=second
+    sleep 0.05
+    tries=$((tries + 1))
+  done
+  survivor="$([[ "${ended}" == first ]] && echo "${second_pid}" || echo "${first_pid}")"
+  await_requests "$(($(wc -l <"${t}/requests.log") + 2))"
+  await_exit "$([[ "${ended}" == first ]] && echo "${first_pid}" || echo "${second_pid}")"
+  [[ -n "${ended}" && "${AWAITED_STATUS}" == 5 && "$(cat "${t}/waiter.${ended}.err")" == *"already runs"* ]] || {
+    echo "ended=${ended:-none} status=${AWAITED_STATUS} $(cat "${t}/waiter.first.err" "${t}/waiter.second.err")"
+    return 1
+  }
+  kill -0 "${survivor}" 2>/dev/null && [[ "$(readlink "${lock}")" == "${survivor}|"* ]] || {
+    echo "survivor ${survivor} alive=$(kill -0 "${survivor}" 2>/dev/null && echo yes) lock=$(readlink "${lock}")"
+    return 1
+  }
+}
+
+@test "a wait ended by a signal exits 143 and the next wait of the session starts" {
+  start_stub
+  start_owner
+  use_fast_wait 30
+  set_reply 200 '{"items":[]}'
+  start_waiter
+  await_requests 1
+  kill -TERM "${WAITER_PID}"
+  await_exit "${WAITER_PID}"
+  [[ "${AWAITED_STATUS}" == 143 ]] || {
+    echo "status=${AWAITED_STATUS} $(cat "${BATS_TEST_TMPDIR}/waiter.err")"
+    return 1
+  }
+  use_fast_wait 1
   run_cli wait
-  [[ "${status}" -eq 0 && -e "${BATS_TEST_TMPDIR}/taken" && "$(readlink "${lock}")" == "${newcomer}" ]] || {
-    echo "status=${status} taken=$([[ -e "${BATS_TEST_TMPDIR}/taken" ]] && echo yes) lock=$(readlink "${lock}") ${stderr}"
+  [[ "${status}" -eq 4 ]] || {
+    echo "status=${status} ${stderr}"
     return 1
   }
 }

@@ -28,10 +28,12 @@ readonly PULL_ROUNDS_MAX=10
 readonly WAIT_POLL_S=5
 readonly WAIT_BACKOFF_MAX_S=60
 readonly WAIT_MINUTES_DEFAULT=60
-# a 73-minute background command observed surviving; longer bounds rest on a probe still running
-# → only an explicit --max-minutes reaches that unproven range
+# a background command was observed surviving 73 minutes; survival past that is unverified
+# → only an explicit --max-minutes reaches beyond it
 readonly WAIT_MINUTES_MAX=240
 readonly WAIT_MINUTES_SHAPE='^[1-9][0-9]{0,2}$'
+# 50 ms apart → a wait gives up on the waits mutex after 10 s
+readonly WAIT_MUTEX_TRIES=200
 readonly ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
   "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
 
@@ -297,7 +299,7 @@ wait_for_claims() {
   WAIT_LOCK="$(queue_get_root)/data/queue/waits/${session_id}"
   WAIT_RECORD="$$|$(get_start_time "$$")|${owner_pid}|${owner_start}"
   take_wait_lock
-  trap 'drop_wait_lock "${WAIT_RECORD}"' EXIT
+  trap drop_wait_lock EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -329,19 +331,45 @@ get_start_time() {
   printf '%s\n' "${started%"${started##*[![:space:]]}"}"
 }
 
-# The lock is a symlink whose target is the holder record "waiter pid|its start|owner pid|its start" → one atomic
-# create; a held record is reclaimed once its waiter is gone or it names another Claude process.
+# The lock is a symlink whose target is the holder record "waiter pid|its start|owner pid|its start". Every lock
+# change but a holder's own create-if-absent runs under the waits mutex; a takeover renames a pre-built record onto the
+# name in one step → the name is never empty mid-takeover, and only a holder ever removes its own record.
 take_wait_lock() {
-  local held
+  local state
   mkdir -p -- "${WAIT_LOCK%/*}" || fail 1 "cannot create the wait lock directory ${WAIT_LOCK%/*}"
+  # shellcheck disable=SC2310  # a mutex held past its bound → the named exit
+  take_waits_mutex || fail 1 "could not take this session's wait lock — the waits mutex stayed held"
   for _ in 1 2 3; do
-    if ln -sn "${WAIT_RECORD}" "${WAIT_LOCK}" 2>/dev/null; then return 0; fi
-    held="$(readlink "${WAIT_LOCK}")" || continue
-    # shellcheck disable=SC2310  # a live holder → the named exit
-    if is_wait_live "${held}"; then fail 5 "another wait already runs for this session — nothing to do"; fi
-    drop_wait_lock "${held}"
+    state="$(get_wait_lock_state)"
+    case "${state}" in
+      mine) break ;;
+      live) fail 5 "another wait already runs for this session — nothing to do" ;;
+      stale)
+        ln -sfn -- "${WAIT_RECORD}" "${WAIT_LOCK}.take" || fail 1 "cannot build the replacement wait lock record"
+        mv -f -- "${WAIT_LOCK}.take" "${WAIT_LOCK}" || fail 1 "cannot replace the stale wait lock ${WAIT_LOCK}"
+        ;;
+      *) ln -sn -- "${WAIT_RECORD}" "${WAIT_LOCK}" 2>/dev/null || continue ;;
+    esac
   done
-  fail 1 "could not take this session's wait lock"
+  drop_waits_mutex
+  [[ "${state}" == mine ]] || fail 1 "could not take this session's wait lock"
+}
+
+# → mine · none · live (another running wait of this Claude process) · stale (its waiter is gone, or it names another
+# Claude process); the one reader of the lock name
+get_wait_lock_state() {
+  local held
+  held="$(readlink "${WAIT_LOCK}" 2>/dev/null)" || held=""
+  # shellcheck disable=SC2310  # liveness is the last branch
+  if [[ "${held}" == "${WAIT_RECORD}" ]]; then
+    printf 'mine\n'
+  elif [[ -z "${held}" ]]; then
+    printf 'none\n'
+  elif is_wait_live "${held}"; then
+    printf 'live\n'
+  else
+    printf 'stale\n'
+  fi
 }
 
 # <held record> → 0 while its waiter still runs and its owner is this wait's own Claude process
@@ -353,17 +381,34 @@ is_wait_live() {
   [[ "${started}" == "${waiter_start}" ]]
 }
 
-# <record> → removes the lock only while it holds that record; rename to a private name first → no takeover lands
-# between the read and the remove; another record goes back under the lock name unless a newcomer already took it
+# Removes the lock only while it holds this wait's record; any other record stays untouched, and a mutex held past its
+# bound leaves this record behind as a dead one the next wait reclaims
 drop_wait_lock() {
-  local held private="${WAIT_LOCK}.drop.$$"
-  mv -- "${WAIT_LOCK}" "${private}" 2>/dev/null || return 0
-  held="$(readlink "${private}")" || {
-    mv -n -- "${private}" "${WAIT_LOCK}" || true
+  local state
+  # shellcheck disable=SC2310  # no mutex → the lock stays, reclaimable once this wait is gone
+  take_waits_mutex || return 0
+  state="$(get_wait_lock_state)"
+  if [[ "${state}" == mine ]]; then
+    if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
+  fi
+  drop_waits_mutex
+}
+
+# fd 9 → the waits mutex file, flocked through perl (stock macOS ships no flock(1)); the kernel releases it once fd 9
+# closes or the process dies → a crash never leaves the mutex held
+take_waits_mutex() {
+  exec 9>>"${WAIT_LOCK%/*}.mutex" || return 1
+  # shellcheck disable=SC2016  # a perl program, not a shell expansion
+  if perl -MFcntl=:flock -e 'for (1 .. $ARGV[0]) { exit 0 if flock STDIN, LOCK_EX | LOCK_NB; select undef, undef, undef, 0.05 }
+    exit 1' "${WAIT_MUTEX_TRIES}" <&9; then
     return 0
-  }
-  if [[ "${held}" != "$1" ]]; then ln -sn -- "${held}" "${WAIT_LOCK}" 2>/dev/null || true; fi
-  if ga_guard_path "${private}"; then rm -f -- "${private:?}"; fi
+  fi
+  exec 9>&-
+  return 1
+}
+
+drop_waits_mutex() {
+  exec 9>&-
 }
 
 # <body> <bound s> <owner pid> <owner start> → never returns; failures back off up to WAIT_BACKOFF_MAX_S
@@ -383,13 +428,17 @@ run_wait_loop() {
   done
 }
 
-# <owner pid> <owner start> → exits 4 silently once the owner is gone (nobody is left to read it), 5 once the lock is lost
+# <owner pid> <owner start> → exits 4 silently once the owner is gone (nobody is left to read it), 5 once another record
+# holds the lock; an empty lock name is no loss → this wait puts its record back
 check_wait_owner() {
-  local started held
+  local started state
   started="$(get_start_time "$1")"
   [[ "${started}" == "$2" ]] || exit 4
-  held="$(readlink "${WAIT_LOCK}" 2>/dev/null)" || held=""
-  [[ "${held}" == "${WAIT_RECORD}" ]] || fail 5 "another wait took over this session — this one ends"
+  state="$(get_wait_lock_state)"
+  if [[ "${state}" == none ]]; then
+    ln -sn -- "${WAIT_RECORD}" "${WAIT_LOCK}" 2>/dev/null || state="$(get_wait_lock_state)"
+  fi
+  [[ "${state}" == mine || "${state}" == none ]] || fail 5 "another wait took over this session — this one ends"
 }
 
 # <body> → 0 claimed and printed · 1 no reply or a 5xx · 3 nothing claimed; a refusal exits 2
