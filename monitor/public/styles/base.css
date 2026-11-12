@@ -554,6 +554,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-rail-name-text > span {
 	font-size: var(--fs-meta);
 }
+/* a flex box → the 20 count badge sets the line, never the text strut around an inline badge */
+.queue-rail-count {
+	display: flex;
+	align-items: center;
+}
 .queue-rail-line {
 	grid-column: 1 / -1;
 	display: flex;

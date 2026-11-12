@@ -359,6 +359,41 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(rowHeights, [44]);
   });
 
+  test("rail rows are 68; the Orders mode hides the list and the sheet, keeps one 720 column, and gives both scroll positions back on Close", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[2], getRestReadyText());
+    await selectRow(page, 101);
+    const stored = await page.evaluate(() => [".queue-list > .card-body", ".queue-sheet > .card-body"].map((selector) => {
+      const body = document.querySelector(selector) as HTMLElement;
+      body.scrollTop = 40;
+      return body.scrollTop;
+    }));
+    const railRows = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-rail-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
+    await page.getByRole("button", { name: "New order", exact: true }).click();
+    await page.locator(".queue-order").first().waitFor();
+    const mode = await page.evaluate(() => {
+      const card = (document.querySelector(".queue-orders-card") as HTMLElement).getBoundingClientRect();
+      const inset = (selector: string, side: "left" | "right") => {
+        const box = (document.querySelector(selector) as HTMLElement).getBoundingClientRect();
+        return Math.round(side === "left" ? box.left - card.left : card.right - box.right);
+      };
+      const orders = [...document.querySelectorAll(".queue-order")];
+      return {
+        isAwayShown: [".queue-list", ".queue-sheet"].some((selector) => (document.querySelector(selector) as HTMLElement).getClientRects().length > 0),
+        column: Math.round(card.width - 2 * inset(".queue-orders-card > .card-head h2, .queue-orders-card > .card-head .card-title", "left")),
+        insets: [inset(".queue-orders-card > .card-head .btn", "right"), Math.round(card.right - (orders[orders.length - 1] as HTMLElement).getBoundingClientRect().right)],
+        pad: Math.round((card.width - 720) / 2),
+      };
+    });
+    await page.getByRole("button", { name: "Close" }).click();
+    const restored = await page.evaluate(() => [".queue-list > .card-body", ".queue-sheet > .card-body"].map((selector) => (document.querySelector(selector) as HTMLElement).scrollTop));
+    await page.close();
+
+    assert.deepEqual(railRows, [68]);
+    assert.deepEqual({ isAwayShown: mode.isAwayShown, column: mode.column, insets: mode.insets }, { isAwayShown: false, column: 720, insets: [mode.pad, mode.pad] });
+    assert.deepEqual(restored, stored);
+  });
+
   test("each named state is captured at every desktop width as a viewport-sized PNG named for the mockup", async (t) => {
     const dir = await getShotsDir();
     t.diagnostic(`captures: ${dir}`);
