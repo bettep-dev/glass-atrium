@@ -233,7 +233,8 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 - 번들은 **삭제에 대해서도 권한을 갖습니다**.
   - 매니페스트의 `retired` 목록에 오른 파일은 휴지통으로 옮겨집니다.
   - 벤더가 배포한 적 없는 해시라면 사용자 편집으로 보고 그대로 둡니다.
-- 모니터 의존성(`package-lock.json`)이나 Prisma 스키마가 바뀐 릴리스는 **npm 레지스트리에서 의존성을 설치**하고 Prisma 클라이언트를 다시 만든 뒤 빌드합니다.
+- 모니터의 `package-lock.json` 이나 `package.json` 이 바뀐 릴리스는 **npm 레지스트리에서 의존성을 설치**하고 Prisma 클라이언트를 다시 만든 뒤 빌드합니다.
+  - Prisma 스키마(`schema.prisma`)나 `prisma.config.ts` 만 바뀐 릴리스는 레지스트리에 닿지 않고 Prisma 클라이언트만 다시 만듭니다.
   - 오프라인이면 이 단계에서 이름 붙은 종료 코드로 멈추고, 복구 순서(`glass-atrium db-setup` → 모니터 `npm run build` → 재시작)를 알려 줍니다.
   - 빌드가 실패해도 0이 아닌 종료 코드로 멈추며, 타입 오류일 때는 이전 빌드 결과를 그대로 둡니다.
 

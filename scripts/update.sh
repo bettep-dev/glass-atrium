@@ -151,11 +151,12 @@
 # PENDING migrations between the apply and the monitor restart (named exit 15 on
 # failure, never a silent skip, never a rollback of the applied files). It no-ops —
 # loudly, naming the remedy — under GA_SKIP_DB_SETUP, with no migrations directory,
-# and on a monitor whose node_modules were never installed (a recoverable state
-# `npm ci` self-heals, not a broken one worth failing an update over).
+# and on a monitor whose node_modules are still absent when it runs (recoverable:
+# db-setup's `npm ci` installs them, so it is no state worth failing an update over).
 # `glass-atrium doctor` §21 reports any migration left pending.
-# Before it, update_install_monitor_deps refreshes the monitor dependencies and
-# Prisma client when the apply set changed them.
+# Before it, update_install_monitor_deps runs `npm ci` and/or `prisma generate` when
+# the apply set holds one of its trigger paths, so a node_modules still absent at
+# migrate means no install trigger shipped in this release.
 #
 # core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
 # update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
@@ -2895,7 +2896,9 @@ update_wire_hooks_post_apply() {
 # build's tsc fails on them yet still emits dist/server.
 #   * Registry reach — the updater's only one: this `npm ci`, stdin closed, fetch-bounded,
 #     never `npx`; the bounds miss the postinstall (playwright install chromium).
-#   * Never-installed monitor → not healed here: migrate no-ops, the build exits 9 naming db-setup.
+#   * Never-installed monitor (no node_modules) → installed here only by a package-lock or
+#     package.json trigger; otherwise a triggered generate and then migrate skip loudly, and the
+#     build exits 9 naming db-setup.
 #   * prisma.config.ts reads DATABASE_URL + SHADOW_DATABASE_URL through env(), which throws when
 #     unset → generate needs monitor/.env, though no DB connection; GA_SKIP_DB_SETUP does not skip it.
 #   * `npm ci` deletes node_modules first → after a failure the running monitor survives only on

@@ -2130,6 +2130,51 @@ read_calls() {
   done
 }
 
+@test "headless: a failing dependency step closes the job row failed with exit 18" {
+  # Every post-step effect is seamed, so a run that wrongly walks past the failure
+  # cannot restart the live monitor or reach launchd.
+  write_mock_psql "${WORK}/psql"
+  write_mock_claude "${WORK}/claude"
+  write_mock_npm "${WORK}/npm"
+  write_mock_prisma "${WORK}/prisma"
+  write_mock_launchctl "${WORK}/launchctl"
+  mkdir -p "${WORK}/monitor"
+  seed_file "${INSTALL}" "monitor/package-lock.json" "old"
+  seed_file "${NEWSRC}" "monitor/package-lock.json" "new content"
+  write_manifest "${WORK}/manifest.json" "monitor/package-lock.json"
+
+  run env -u GA_SKIP_DB_SETUP -u DATABASE_URL \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_BACKFILL_PY="${WORK}/absent-backfill.py" \
+    ATRIUM_UPDATE_PSQL="${WORK}/psql" \
+    PSQL_LOG="${WORK}/psql.log" \
+    ATRIUM_UPDATE_CLAUDE_BIN="${WORK}/claude" \
+    ATRIUM_UPDATE_MONITOR_PLIST="${WORK}/nonexistent-monitor.plist" \
+    ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist" \
+    ATRIUM_UPDATE_MONITOR_DIR="${WORK}/monitor" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
+    NPM_LOG="${WORK}/calls.log" \
+    NPM_RC_ci=3 \
+    ATRIUM_UPDATE_PRISMA="${WORK}/prisma" \
+    PRISMA_LOG="${WORK}/calls.log" \
+    ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
+    LAUNCHCTL_LOG="${WORK}/launchctl.log" \
+    ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/nonexistent-render-launchd.sh" \
+    ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/nonexistent-render-env.sh" \
+    bash "${SKILL}" --headless
+
+  [ "${status}" -eq 18 ] || { echo "${output}"; return 1; }
+  grep -q "fr=aborted (exit=18)" "${WORK}/psql.log" || { cat "${WORK}/psql.log"; return 1; }
+  ! grep -q "status = 'completed'" "${WORK}/psql.log" || { cat "${WORK}/psql.log"; return 1; }
+  read_calls
+  [[ "${CALLS}" == "ci " ]] || { echo "ran past the failure: ${CALLS}"; return 1; }
+  [ ! -e "${WORK}/launchctl.log" ] || { cat "${WORK}/launchctl.log"; return 1; }
+}
+
 @test "prisma generate skips an uninstalled monitor loudly and exits 18 on a broken install" {
   local row label seed want_rc want_text
   local -a rows=(
