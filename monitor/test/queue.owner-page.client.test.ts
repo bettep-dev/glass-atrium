@@ -1144,7 +1144,7 @@ function buildOrders(overrides: Record<string, unknown> = {}) {
   return {
     isOpen: true, open: () => undefined, close: () => undefined, showEarlier: () => undefined, resend: () => undefined,
     thread: { status: "ready", items: [], nextCursor: null, error: null },
-    composer: { text: "", isBusy: false, error: null }, setText: () => undefined, send: () => undefined, ...overrides,
+    composer: { text: "", isBusy: false, error: null }, setText: () => undefined, send: () => undefined, reply: null, linkReply: () => undefined, read: () => undefined, ...overrides,
   };
 }
 
@@ -1329,6 +1329,40 @@ describe("order composer", () => {
     { name: "the cap itself", targets: targetsOf(MAX_TARGETS), text: "rebase on main", invalid: null },
   ];
   for (const row of invalids) test(`a send press: ${row.name}`, () => assert.deepEqual(call("getOrderInvalidQ", row.targets, row.text), row.invalid));
+
+  // spec §9.2 → The Re: line: a reply while the report's session is the one tick; a second tick or the ✕ makes it a plain order
+  const REPORT = buildItem({ id: 61, kind: "report", title: "Nightly sweep done", options: [], session: buildSession({ name: "atrium" }) });
+  const replyComposer = (reply: unknown, ids: string[]) => {
+    const { queue, calls } = buildQueue({ drafts: { 61: { text: "ship it" } }, orders: buildOrders({ reply, composer: { text: "typed order", isBusy: false, error: null }, send: (...args: unknown[]) => calls.push(["orderSend", ...args]), dropReply: () => calls.push(["dropReply"]) }) });
+    const targets = { ids, names: ids.map((id) => (id === SESSION_ID ? "atrium" : "yoaida")), endedCount: 0 };
+    return { tree: render("OrderComposerQ", { queue: withList(queue, []), targets }), calls };
+  };
+  const replies = [
+    { name: "the report's session alone → the Re: line, the report's draft and its own Send order", reply: { item: REPORT, isDropped: false }, ids: [SESSION_ID], line: true, text: "ship it", note: "Sends this to atrium and closes the report.", sent: ["settle", 61, "reply", { text: "ship it" }] },
+    { name: "a second tick → a plain order, the report stays open", reply: { item: REPORT, isDropped: false }, ids: [SESSION_ID, ENDED_ID], line: false, text: "ship it", note: "Not a reply any more: the report stays open.", sent: ["orderSend", { sessionIds: [SESSION_ID, ENDED_ID], text: "ship it" }] },
+    { name: "the ✕ pressed → a plain order from the order box", reply: { item: REPORT, isDropped: true }, ids: [SESSION_ID], line: false, text: "typed order", note: "Not a reply any more: the report stays open.", sent: ["orderSend", { sessionIds: [SESSION_ID], text: "typed order" }] },
+    { name: "no report → the order box", reply: null, ids: [SESSION_ID], line: false, text: "typed order", note: "Goes to atrium.", sent: ["orderSend", { sessionIds: [SESSION_ID], text: "typed order" }] },
+  ];
+  for (const row of replies) {
+    test(`an order from a report: ${row.name}`, () => {
+      const { tree, calls } = replyComposer(row.reply, row.ids);
+      const text = collectText(tree);
+      assert.equal(text.includes("Re: Nightly sweep done"), row.line, text);
+      assert.equal(findNodes(tree, (node) => node.props?.["aria-label"] === "Do not link this order to the report").length, row.line ? 1 : 0);
+      assert.equal(findNodes(tree, (node) => node.type === "textarea")[0]?.props.value, row.text);
+      assert.ok(text.includes(row.note), text);
+      const [send] = findNodes(tree, (node) => node.type === "button" && String(node.props.className).includes("primary"));
+      (send?.props.onClick as () => void)();
+      assert.deepEqual(getPlain(calls.filter((one) => ["settle", "orderSend"].includes(String(one[0])))[0]?.slice(0, row.sent.length)), row.sent);
+    });
+  }
+
+  test("the ✕ on the Re: line drops the link", () => {
+    const { tree, calls } = replyComposer({ item: REPORT, isDropped: false }, [SESSION_ID]);
+    const [drop] = findNodes(tree, (node) => node.props?.["aria-label"] === "Do not link this order to the report");
+    (drop?.props.onClick as () => void)();
+    assert.deepEqual(getPlain(calls.filter((one) => one[0] === "dropReply")), [["dropReply"]]);
+  });
 
   const notes = [
     { name: "none ticked", count: 0, note: "Tick sessions in the rail." },

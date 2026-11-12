@@ -405,9 +405,10 @@ function useQueueStateQ({ onRetryHarness }) {
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const selectRow = useCallbackQ((id) => { selectItem(id); setFocus({ id }); }, [selectItem]);
 	const openOrderRow = useOrderRowQ({ list, selectItem, sessions, orders });
+	const openReplyOrder = useReplyOrderQ({ sessions, orders });
 	return {
 		list, resumes, readResumes, sessions, orders, drafts, setDraft, filter, setFilter, reload, loadMore,
-		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, status, ...actions,
+		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, openReplyOrder, status, ...actions,
 	};
 }
 
@@ -420,6 +421,17 @@ function useOrderRowQ({ list, selectItem, sessions, orders }) {
 		setSelectedIds(getOrderRecipientIdsQ(list.data?.items ?? [], row.id));
 		openAt(row.id);
 	}, [list, selectItem, setSelectedIds, openAt]);
+}
+
+// `O` on a report (P5 binds the key) → its session the one tick, its draft in the box under the Re: line
+function useReplyOrderQ({ sessions, orders }) {
+	const { setSelectedIds } = sessions;
+	const { linkReply, open } = orders;
+	return useCallbackQ((item) => {
+		setSelectedIds([item.session.id]);
+		linkReply(item);
+		open();
+	}, [setSelectedIds, linkReply, open]);
 }
 
 // every session the send went to, from the whole loaded list → a scope that shows one copy still ticks them all
@@ -563,11 +575,23 @@ function getSendErrorQ(answer) {
  * Entering stores the list's and the sheet's scroll and the opener; leaving sets them again (useOrdersFocusQ).
  */
 function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) {
+	const { isOpen, open, openAt, aim, close } = useOrdersOpenQ(selectedId);
+	const replyLink = useReplyLinkQ(isOpen);
+	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
+	const { thread, read, showEarlier } = useThreadQ(isOpen, selectedIds);
+	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
+	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
+	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
+	const send = useCallbackQ((body, names) => sendMessageQ({ body, names, setComposer, setStatus, onSent }), [setStatus, onSent]);
+	const resend = useCallbackQ((ids) => putResendsQ(ids, sendAction, read), [sendAction, read]);
+	return { isOpen, open, openAt, aim, close, thread, read, showEarlier, composer, setText, putError, send, resend, ...replyLink };
+}
+
+// `openAt(id)` aims the thread at the order holding that copy (useThreadAimQ); the aim goes with the mode
+function useOrdersOpenQ(selectedId) {
 	const [isOpen, setOpen] = useStateQ(() => getHashStateQ().view === "orders");
 	const away = useRefQ(null);
 	const aim = useRefQ(null);
-	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
-	const { thread, read, showEarlier } = useThreadQ(isOpen, selectedIds);
 	useEffectQ(() => { setHashStateQ({ view: isOpen ? "orders" : "" }); }, [isOpen]);
 	useOrdersFocusQ(isOpen, away, selectedId);
 	const open = useCallbackQ(() => {
@@ -577,12 +601,16 @@ function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) 
 	}, [isOpen]);
 	const openAt = useCallbackQ((id) => { aim.current = id; open(); }, [open]);
 	const close = useCallbackQ(() => { aim.current = null; setOpen(false); }, []);
-	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
-	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
-	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
-	const send = useCallbackQ((body, names) => sendMessageQ({ body, names, setComposer, setStatus, onSent }), [setStatus, onSent]);
-	const resend = useCallbackQ((ids) => putResendsQ(ids, sendAction, read), [sendAction, read]);
-	return { isOpen, open, openAt, aim, close, thread, read, showEarlier, composer, setText, putError, send, resend };
+	return { isOpen, open, openAt, aim, close };
+}
+
+/** The report an order from the mode answers (`O` on a report): `{ item, isDropped }`, dropped by the ✕, gone when the mode closes. */
+function useReplyLinkQ(isOpen) {
+	const [reply, setReply] = useStateQ(null);
+	useEffectQ(() => { if (!isOpen) setReply(null); }, [isOpen]);
+	const linkReply = useCallbackQ((item) => setReply(item ? { item, isDropped: false } : null), []);
+	const dropReply = useCallbackQ(() => setReply((prev) => prev && { ...prev, isDropped: true }), []);
+	return { reply, linkReply, dropReply };
 }
 
 // one after another → one busy state and one refusal line at a time; the thread re-reads once
@@ -726,12 +754,14 @@ function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatu
 	const items = getVisibleItemsQ(list.data?.items ?? [], filter);
 	const settle = useCallbackQ(async (id, action, body) => {
 		const nextId = getNextAwaitingIdQ(items, id);
-		if (!(await send(id, action, body))) return;
+		if (!(await send(id, action, body))) return false;
 		setStatus(getActionStatusQ(items.find((item) => item.id === id), action));
 		// a later item is still open → it stays on the sheet; any other act with nothing open left → all handled
-		if (nextId === null) return action === "later" ? undefined : selectItem(null);
-		selectItem(nextId);
-		setFocus({ id: nextId });
+		if (nextId !== null) {
+			selectItem(nextId);
+			setFocus({ id: nextId });
+		} else if (action !== "later") selectItem(null);
+		return true;
 	}, [send, items, setFocus, setStatus, selectItem]);
 	const later = useCallbackQ((id) => {
 		setList((prev) => (prev.data ? { ...prev, data: { ...prev.data, items: putLaterQ(prev.data.items, id) } } : prev));
@@ -1302,7 +1332,7 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 	};
 	return (
 		<div className="queue-composer">
-			{field && <label htmlFor={field.id} className="field-label">{field.label}</label>}
+			{field && (field.aside ? <div className="queue-compose-label">{getFieldLabelQ(field)}{field.aside}</div> : getFieldLabelQ(field))}
 			<div className="queue-compose-row">
 				{field && (
 					<div className="queue-compose-box">
@@ -1324,6 +1354,10 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 			</div>
 		</div>
 	);
+}
+
+function getFieldLabelQ(field) {
+	return <label htmlFor={field.id} className="field-label">{field.label}</label>;
 }
 
 // one line: a refusal or a missing control (crit alert), else the approval reminder (info), else the line at rest
@@ -1563,7 +1597,7 @@ function OrdersViewQ({ queue }) {
 	return (
 		<section className="queue-orders" aria-label="Orders">
 			<Card className="queue-orders-card" title="Orders" right={close} bar={<ToBarQ rows={rows} selectedIds={sessions.selectedIds} onClear={sessions.clear} />}
-				foot={<OrderComposerQ orders={orders} targets={getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds)} />} isFlush>
+				foot={<OrderComposerQ queue={queue} targets={getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds)} />} isFlush>
 				<ThreadQ orders={orders} names={rows.filter((row) => sessions.selectedIds.includes(row.id)).map((row) => row.name)} />
 			</Card>
 		</section>
@@ -1752,19 +1786,72 @@ function RecipientRowQ({ copy, onResend }) {
 }
 
 // the composer in its order use: the send carries the ink once the box holds text; a press with something missing says what and moves focus
-function OrderComposerQ({ orders, targets }) {
-	const { composer } = orders;
+function OrderComposerQ({ queue, targets }) {
+	const { orders } = queue;
+	const box = getOrderBoxQ(queue);
+	const isLinked = isReplyLinkedQ(orders.reply, targets.ids);
 	const onSend = () => {
-		const invalid = getOrderInvalidQ(targets, composer.text);
-		if (invalid === null) return orders.send({ sessionIds: targets.ids, text: composer.text }, targets.names);
+		const invalid = getOrderInvalidQ(targets, box.text);
+		if (invalid === null) return isLinked ? sendReplyOrderQ(queue, box.text) : sendPlainOrderQ(queue, targets, box.text);
 		orders.putError(invalid.message);
 		const selector = invalid.focus === "box" ? `#${ORDERS_Q.BOX_ID}` : ".queue-sessions .ctl-checkbox";
 		window.document?.querySelector(selector)?.focus();
 	};
+	const onDrop = () => { orders.setText(box.text); queue.setDraft(orders.reply.item.id, { text: "" }); orders.dropReply(); };
 	return (
-		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: "Order" }} text={composer.text} onText={orders.setText} isBusy={composer.isBusy}
-			buttons={[{ label: getSendLabelQ(targets), isInk: composer.text.trim() !== "", onPress: onSend }]}
-			note={<ComposerNoteQ error={composer.error} rest={getOrderNoteQ(targets)} />} />
+		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: "Order", aside: isLinked ? <ReLineQ title={orders.reply.item.title} onDrop={onDrop} /> : null }}
+			text={box.text} onText={box.setText} isBusy={box.isBusy}
+			buttons={[{ label: getSendLabelQ(targets), isInk: box.text.trim() !== "", onPress: onSend }]}
+			note={<ComposerNoteQ error={box.error} rest={getReplyNoteQ(orders.reply, isLinked, targets)} />} />
+	);
+}
+
+// a reply while its report's session is the one tick; any other tick set → a plain order, the report stays open
+function isReplyLinkedQ(reply, ids) {
+	return Boolean(reply) && !reply.isDropped && ids.length === 1 && ids[0] === reply.item.session.id;
+}
+
+/** The box's text, busy state and refusal: the report's own draft while a reply is linked and not dropped, else the order composer's. */
+function getOrderBoxQ(queue) {
+	const { orders, drafts, busy } = queue;
+	const { reply, composer } = orders;
+	if (!reply || reply.isDropped) return { text: composer.text, setText: orders.setText, isBusy: composer.isBusy, error: composer.error };
+	const { id } = reply.item;
+	const draft = drafts[id] ?? {};
+	const refusal = busy.error?.id === id ? busy.error.message : null;
+	return {
+		text: draft.text ?? "", setText: (text) => queue.setDraft(id, { text, error: null }),
+		isBusy: busy.id === id || composer.isBusy, error: refusal ?? draft.error ?? composer.error,
+	};
+}
+
+function getReplyNoteQ(reply, isLinked, targets) {
+	if (isLinked) return `Sends this to ${targets.names[0]} and closes the report.`;
+	if (reply) return "Not a reply any more: the report stays open.";
+	return getOrderNoteQ(targets);
+}
+
+// the report's own Send order: it closes and leaves the queue, the next open item selected (settle) → the link goes, the thread re-reads
+async function sendReplyOrderQ(queue, text) {
+	const { orders } = queue;
+	if (!(await queue.settle(orders.reply.item.id, "reply", { text }))) return;
+	orders.linkReply(null);
+	orders.read();
+}
+
+// a plain order typed in the report's draft → sent, so the draft empties and the report never gets it twice
+async function sendPlainOrderQ(queue, targets, text) {
+	const { orders } = queue;
+	const isSent = await orders.send({ sessionIds: targets.ids, text }, targets.names);
+	if (isSent && orders.reply && !orders.reply.isDropped) queue.setDraft(orders.reply.item.id, { text: "" });
+}
+
+function ReLineQ({ title, onDrop }) {
+	return (
+		<>
+			<span className="queue-compose-re" title={title}><span aria-hidden="true">{"· "}</span>{`Re: ${title}`}</span>
+			<button type="button" className="btn ghost sm" aria-label="Do not link this order to the report" onClick={onDrop}><span aria-hidden="true">✕</span></button>
+		</>
 	);
 }
 
