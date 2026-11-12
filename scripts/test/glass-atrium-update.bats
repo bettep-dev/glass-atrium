@@ -1526,12 +1526,18 @@ MOCK
 # A mock npm: logs "$*" to $NPM_LOG and exits $NPM_RC_<sub> for its subcommand (`ci`, or
 # the script name after `run`), else $NPM_RC (default 0). NPM_BUILD_EMIT=1 makes `run build`
 # rewrite dist/server/app.js before its exit, the way tsc emits even on a type error.
+# STDIN_LOG set → appends "<sub> stdin=open|closed": open when a line could be read from stdin.
 write_mock_npm() {
   cat >"$1" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${NPM_LOG:-/dev/null}"
 sub="$1"
 [[ "$1" == run ]] && sub="$2"
+if [[ -n "${STDIN_LOG:-}" ]]; then
+  stdin=closed
+  IFS= read -r -t 1 _ && stdin=open
+  printf '%s stdin=%s\n' "${sub}" "${stdin}" >>"${STDIN_LOG}"
+fi
 if [[ "${sub}" == build && -n "${NPM_BUILD_EMIT:-}" ]]; then
   mkdir -p dist/server && printf 'rebuilt\n' >dist/server/app.js
 fi
@@ -1542,10 +1548,16 @@ MOCK
 }
 
 # A mock prisma CLI: logs "prisma $*" to $PRISMA_LOG, exits $PRISMA_RC_<subcommand> (default 0).
+# STDIN_LOG set → appends "prisma <subcommand> stdin=open|closed", as the mock npm does.
 write_mock_prisma() {
   cat >"$1" <<'MOCK'
 #!/usr/bin/env bash
 printf 'prisma %s\n' "$*" >>"${PRISMA_LOG:-/dev/null}"
+if [[ -n "${STDIN_LOG:-}" ]]; then
+  stdin=closed
+  IFS= read -r -t 1 _ && stdin=open
+  printf 'prisma %s stdin=%s\n' "$1" "${stdin}" >>"${STDIN_LOG}"
+fi
 rc_var="PRISMA_RC_$1"
 exit "${!rc_var:-0}"
 MOCK
@@ -1950,7 +1962,8 @@ MOCK
 # CLI (non-headless) apply of the release files "$@", npm + prisma + launchctl seamed, both
 # CLIs logging in call order to ${WORK}/calls.log. NPM_RC_<sub> / PRISMA_RC_<sub> pick a
 # sub-step's exit. The install's monitor dir exists in every case, so a build skipped for
-# an absent dir can never pass for a build the apply set did not ask for.
+# an absent dir can never pass for a build the apply set did not ask for. The updater's
+# stdin is $CLI_STDIN (default /dev/null), and STDIN_LOG passes through to both mocks.
 run_cli_apply() {
   local rel
   write_mock_npm "${WORK}/npm"
@@ -1981,7 +1994,8 @@ run_cli_apply() {
     PRISMA_RC_migrate="${PRISMA_RC_migrate:-}" \
     ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
     LAUNCHCTL_LOG="${WORK}/launchctl.log" \
-    bash "${SKILL}"
+    STDIN_LOG="${STDIN_LOG:-}" \
+    bash "${SKILL}" <"${CLI_STDIN:-/dev/null}"
 }
 
 # The call log with the npm ci flags folded to a bare `ci`, so a row states the call order.
@@ -2073,12 +2087,24 @@ read_calls() {
   done
 }
 
-@test "npm ci runs non-interactively with a bounded fetch timeout and retry count" {
+@test "npm ci and prisma generate read nothing from the updater's stdin" {
+  printf 'y\n%.0s' {1..20} >"${WORK}/operator-input"
+  CLI_STDIN="${WORK}/operator-input" STDIN_LOG="${WORK}/stdin.log" run_cli_apply "monitor/package-lock.json"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  grep -qx 'ci stdin=closed' "${WORK}/stdin.log" || { cat "${WORK}/stdin.log"; return 1; }
+  grep -qx 'prisma generate stdin=closed' "${WORK}/stdin.log" || { cat "${WORK}/stdin.log"; return 1; }
+}
+
+@test "npm ci bounds a fetch's worst-case wait to two minutes across its retries" {
+  local timeout_ms retries
   run_cli_apply "monitor/package-lock.json"
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
-  grep -Eq '^ci .*--fetch-timeout=[0-9]+' "${WORK}/calls.log" || { cat "${WORK}/calls.log"; return 1; }
-  grep -Eq '^ci .*--fetch-retries=[0-9]+' "${WORK}/calls.log" || { cat "${WORK}/calls.log"; return 1; }
+  timeout_ms="$(sed -n 's/^ci .*--fetch-timeout=\([0-9][0-9]*\).*/\1/p' "${WORK}/calls.log")"
+  retries="$(sed -n 's/^ci .*--fetch-retries=\([0-9][0-9]*\).*/\1/p' "${WORK}/calls.log")"
+  [[ -n "${timeout_ms}" && -n "${retries}" ]] || { cat "${WORK}/calls.log"; return 1; }
+  (( timeout_ms >= 1 && timeout_ms * (retries + 1) <= 120000 )) || { cat "${WORK}/calls.log"; return 1; }
 }
 
 @test "a failing dependency sub-step exits 18 naming it and the recovery, and never reaches migrate or the build" {
