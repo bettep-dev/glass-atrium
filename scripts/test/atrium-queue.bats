@@ -24,7 +24,7 @@ DECISION='{"title":"Pick the retention window","body":"Backups now take 40 GB a 
 setup() {
   # the ambient session's own CLAUDE_* values must never reach the CLI under test
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
-    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
+    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
@@ -310,14 +310,12 @@ run_cli() {
   }
 }
 
-@test "the CLI register sends the same body as the SessionStart hook and copies the token the same way" {
+@test "the CLI register sends the same body as the SessionStart hook and neither writes a token file" {
   start_stub
   set_reply 200 '{"answeredWaiting":0}'
   run --separate-stderr "${REGISTER_HOOK}" <<<'{"hook_event_name":"SessionStart","source":"resume"}'
   local hook_body cli_body
   hook_body="$(request_body /api/queue/sessions/register | jq -Sc .)"
-  # a second token value → the file can only hold it if the CLI itself rewrote it
-  printf -v CLAUDE_CODE_MESSAGING_TOKEN '%s' "${SOCKET_AUTH}-rotated"
   : >"${BATS_TEST_TMPDIR}/requests.log"
   run_cli register
   cli_body="$(request_body /api/queue/sessions/register | jq -Sc .)"
@@ -325,8 +323,8 @@ run_cli() {
     echo "status=${status} ${stderr} hook=${hook_body} cli=${cli_body}"
     return 1
   }
-  [[ "$(cat "${GA_ROOT}/data/queue/tokens/${SESSION_ID}")" == "${SOCKET_AUTH}-rotated" ]] || {
-    ls -la "${GA_ROOT}/data/queue/tokens"
+  [[ ! -e "${GA_ROOT}/data/queue/tokens" ]] || {
+    ls -laR "${GA_ROOT}/data/queue"
     return 1
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # queue-session.sh — the owner queue's session-side wire steps, shared by the SessionStart / SessionEnd
 # hooks and the queue CLI so their register fields cannot drift. Sourced, not executable.
-# Never puts the messaging token on argv, stdout or a request body; sends a pid, never a start time.
+# Never reads the messaging token; sends a pid, never a start time.
 
 if [[ -n "${_QUEUE_SESSION_LOADED:-}" ]]; then
   return 0
@@ -17,9 +17,6 @@ readonly QUEUE_CONNECT_TIMEOUT_S=1
 readonly QUEUE_MAX_TIME_S=2
 readonly QUEUE_UUID_SHAPE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 readonly QUEUE_PID_SHAPE='^[1-9][0-9]{0,9}$'
-# with the length cap: the monitor's TOKEN_SHAPE (socket-channel.ts); macOS regex caps a bound at 255
-readonly QUEUE_MESSAGING_AUTH_SHAPE='^[!-~]+$'
-readonly QUEUE_MESSAGING_AUTH_MAX=512
 readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions dontAsk plan '
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
@@ -100,24 +97,6 @@ queue_post() {
   printf '%s\n' "${reply%$'\n'*}"
 }
 
-# Copies the messaging token to its 0600 per-session file in the 0700 token dir; the sender reads it there.
-queue_put_messaging_auth() {
-  local session_id="$1" dir file tmp
-  [[ "${CLAUDE_CODE_MESSAGING_TOKEN:-}" =~ ${QUEUE_MESSAGING_AUTH_SHAPE} ]] || return 0
-  ((${#CLAUDE_CODE_MESSAGING_TOKEN} <= QUEUE_MESSAGING_AUTH_MAX)) || return 0
-  dir="$(queue_get_token_dir)"
-  (umask 077 && mkdir -p -- "${dir}") || return 1
-  # a pre-existing link or foreign-owned entry is never written through
-  [[ -d "${dir}" && ! -L "${dir}" && -O "${dir}" ]] || return 1
-  chmod 700 "${dir}" || return 1
-  file="${dir}/${session_id}"
-  tmp="$(umask 077 && mktemp "${dir}/.${session_id}.XXXXXX")" || return 1
-  if ! printf '%s' "${CLAUDE_CODE_MESSAGING_TOKEN}" >"${tmp}" || ! mv -f -- "${tmp}" "${file}"; then
-    if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
-    return 1
-  fi
-}
-
 # <text> → the name the monitor accepts: control characters as spaces, trimmed, cut to QUEUE_NAME_MAX; nothing when blank
 queue_get_shown_name() {
   jq -rn --arg name "$1" --argjson max "${QUEUE_NAME_MAX}" "${QUEUE_NAME_JQ}"
@@ -148,20 +127,18 @@ queue_get_transcript_title() {
       // (map(select(.type == "ai-title") | .aiTitle | strings) | last) // empty' 2>/dev/null || return 0
 }
 
-# The register step: the token copy, then the register POST → the answered-waiting count on stdout.
+# The register step: the register POST → the answered-waiting count on stdout.
 # All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
 # $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks) ·
 # $5 an explicit session name, already in shown form (queue_get_shown_name), sent as name ·
 # else $6 a transcript path → queue_get_derived_name, sent as derivedName
 # (the monitor lets only an explicit name replace an explicit one)
 queue_register_session() {
-  local hint="${1:-}" max_time="${2:-}" cwd session_id pid socket name="" derived_name="" body reply count
+  local hint="${1:-}" max_time="${2:-}" cwd session_id pid name="" derived_name="" body reply count
   session_id="$(queue_get_session_id "${4:-}")"
   pid="$(queue_get_pid)"
   [[ -n "${session_id}" && -n "${pid}" ]] || return 1
   [[ "${QUEUE_PERMISSION_HINTS}" == *" ${hint} "* ]] || hint=""
-  queue_put_messaging_auth "${session_id}" || true
-  socket="$(queue_get_socket_path)"
   cwd="$(queue_get_cwd "${3:-}")"
   if [[ -n "${5:-}" ]]; then
     name="$5"
@@ -169,10 +146,9 @@ queue_register_session() {
     derived_name="$(queue_get_derived_name "${6:-}" "${session_id}")" || derived_name=""
   fi
   body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg cwd "${cwd}" \
-    --arg configDir "${CLAUDE_CONFIG_DIR:-}" --arg socketPath "${socket}" --arg permissionHint "${hint}" \
-    --arg launchHint "${ATRIUM_QUEUE_ACCEPT_WRAPPER:+accept_wrapper}" --arg name "${name}" \
+    --arg configDir "${CLAUDE_CONFIG_DIR:-}" --arg permissionHint "${hint}" --arg name "${name}" \
     --arg derivedName "${derived_name}" \
-    '{$sessionId, $pid, $cwd, $configDir, $socketPath, $permissionHint, $launchHint, $name, $derivedName}
+    '{$sessionId, $pid, $cwd, $configDir, $permissionHint, $name, $derivedName}
       | with_entries(select(.value != ""))')" || return 1
   reply="$(queue_post /api/queue/sessions/register "${body}" "${max_time}")" || return 1
   count="$(jq -r '.answeredWaiting // 0' <<<"${reply}" 2>/dev/null)" || return 1

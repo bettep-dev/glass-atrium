@@ -18,7 +18,7 @@ SOCKET_AUTH="tok-81f3c2e9d0b7a6f5"
 setup() {
   # the ambient session's own CLAUDE_* values must never reach a hook under test
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
-    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
+    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
@@ -90,7 +90,7 @@ run_deregister() {
   run --separate-stderr "${DEREGISTER_HOOK}" <<<"${payload}"
 }
 
-@test "register sends the session id, pid, cwd and socket path, and no start time" {
+@test "register sends the session id, pid and cwd, and no socket path or start time" {
   start_stub
   run_register
   [[ "${status}" -eq 0 ]] || {
@@ -99,7 +99,7 @@ run_deregister() {
   }
   local body
   body="$(request_body /api/queue/sessions/register)"
-  [[ "$(jq -c '{sessionId, pid, socketPath}' <<<"${body}")" == "{\"sessionId\":\"${SESSION_ID}\",\"pid\":4242,\"socketPath\":\"/tmp/cc-socks/4242.sock\"}" ]] || {
+  [[ "$(jq -c '{sessionId, pid, hasSocketPath: has("socketPath")}' <<<"${body}")" == "{\"sessionId\":\"${SESSION_ID}\",\"pid\":4242,\"hasSocketPath\":false}" ]] || {
     echo "${body}"
     return 1
   }
@@ -142,31 +142,6 @@ run_deregister() {
     if [[ -n "${set_value}" ]]; then export CLAUDE_CONFIG_DIR="${set_value}"; else unset CLAUDE_CONFIG_DIR; fi
     run_register
     [[ "$(request_body /api/queue/sessions/register | jq -r '.configDir')" == "${expected}" ]] || {
-      echo "row ${row%%|*}"
-      return 1
-    }
-  done
-}
-
-@test "a session with no messaging socket still registers, with no socketPath" {
-  unset CLAUDE_CODE_MESSAGING_SOCKET
-  start_stub
-  run_register
-  [[ "$(request_body /api/queue/sessions/register | jq -c 'has("socketPath"), .pid')" == $'false\n4242' ]] || {
-    cat "${BATS_TEST_TMPDIR}/requests.log"
-    return 1
-  }
-}
-
-@test "register sends the accept-wrapper launch hint only under the wrapper's env marker" {
-  start_stub
-  local row marker expected
-  for row in "marked|1|accept_wrapper" "unmarked||null"; do
-    IFS='|' read -r _ marker expected <<<"${row}"
-    : >"${BATS_TEST_TMPDIR}/requests.log"
-    if [[ -n "${marker}" ]]; then export ATRIUM_QUEUE_ACCEPT_WRAPPER="${marker}"; else unset ATRIUM_QUEUE_ACCEPT_WRAPPER; fi
-    run_register
-    [[ "$(request_body /api/queue/sessions/register | jq -r '.launchHint')" == "${expected}" ]] || {
       echo "row ${row%%|*}"
       return 1
     }
@@ -256,16 +231,11 @@ run_deregister() {
   }
 }
 
-@test "register copies the messaging token to a 0600 file in a 0700 directory and nowhere else" {
+@test "register writes no token file, and the token reaches neither the hook output nor the wire" {
   start_stub
   run_register
-  local dir="${GA_ROOT}/data/queue/tokens"
-  [[ "$(cat "${dir}/${SESSION_ID}")" == "${SOCKET_AUTH}" ]] || {
-    ls -la "${dir}"
-    return 1
-  }
-  [[ "$(stat -f '%Lp' "${dir}") $(stat -f '%Lp' "${dir}/${SESSION_ID}")" == "700 600" ]] || {
-    ls -la "${dir}"
+  [[ "${status}" -eq 0 && ! -e "${GA_ROOT}/data/queue/tokens" ]] || {
+    ls -laR "${GA_ROOT}/data/queue"
     return 1
   }
   [[ "${output}${stderr}" != *"${SOCKET_AUTH}"* ]] || {
