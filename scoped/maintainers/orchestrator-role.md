@@ -262,7 +262,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The section restates no command list or item JSON: their home is `scripts/atrium-queue.sh` → `print_usage`.
   - Its `wait` exit rows are the one exit-code list it carries: a mirror of `print_usage` → `On a wait's exit`, canonical there, so both stay.
   - The wait's bound is named, never quoted: its values live in `scripts/atrium-queue.sh` → `WAIT_MINUTES_DEFAULT` · `WAIT_MINUTES_MAX`.
-  - The section's `"Again once"` bullet reads `once` as one restart, then stop: `print_usage` states no second failure.
+  - The section's `"again once"` restart row reads `once` as one restart, then stop: `print_usage` states no second failure.
 - `### Envelopes and authority` is a split point holding `### Answers and messages` under the 3 KB H3 cap: cite `## Owner Queue`, never the split.
 - The posting table defines a background job session by how it started, never by `CLAUDE_JOB_DIR`.
   - Why: a process started inside a job inherits that variable (`scripts/lib/queue-session.sh` → `queue_get_job_name`).
