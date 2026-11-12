@@ -19,11 +19,10 @@ export function buildHostAllowlistHook(port: number): onRequestAsyncHookHandler 
  * Owner-mutation hook: 403 unless the request carries the monitor page's own origin signal.
  * Safe only behind the Host allowlist — a DNS-rebound page sends same-origin fetch metadata and is stopped by the Host check.
  */
-export function buildPageOriginHook(port: number): onRequestAsyncHookHandler {
-  const allowedOrigins = getPageOrigins(port);
+export function buildPageOriginHook(pageOrigins: ReadonlySet<string>): onRequestAsyncHookHandler {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (!MUTATION_METHODS.has(request.method)) return;
-    if (getPageOriginSignal(request.headers, allowedOrigins) === null) {
+    if (getPageOriginSignal(request.headers, pageOrigins) === null) {
       request.log.warn({ route: request.routeOptions?.url ?? request.url, method: request.method }, "owner mutation refused: not from the monitor page");
       return reply.code(403).send({ error: "not_page_origin" });
     }

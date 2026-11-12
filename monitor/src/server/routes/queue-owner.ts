@@ -1,12 +1,14 @@
 // Owner routes of the queue (/api/queue/owner/*): no sign-in; every state change must come from the monitor's own page.
 // A child of the queue plugin → the Host allowlist runs before the page-origin hook, which a DNS-rebound page would pass.
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 
+import { QueueRequestError } from "../queue/errors.js";
 import { putAnswer, putLater, putReply, putResend, putSeen } from "../queue/owner-items.js";
 import { getOwnerItemOrThrow, getOwnerItems, getRecentResumes } from "../queue/owner-views.js";
-import { buildPageOriginHook } from "../queue/request-gate.js";
+import { buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
 import { answerBodySchema, emptyBodySchema, ownerListQuerySchema, recentResumesQuerySchema, replyBodySchema } from "../queue/schemas.js";
+import { type PageOriginSignal, getPageOriginSignal } from "../request-guards.js";
 import type { QueueRouteOptions } from "./queue.js";
 import { type IdParams, handleItemRequest, handleParsed } from "./queue-request.js";
 
@@ -16,10 +18,11 @@ const OWNER_ROUTE_OPTIONS = { bodyLimit: 96 * 1024 } as const;
 type ItemTransition = (id: number) => Promise<void>;
 
 export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
-  app.addHook("onRequest", buildPageOriginHook(options.port));
+  const pageOrigins = getPageOrigins(options.port);
+  app.addHook("onRequest", buildPageOriginHook(pageOrigins));
   registerReadRoutes(app, options.cliPath);
   registerRecentResumesRoute(app);
-  registerAnswerRoutes(app);
+  registerAnswerRoutes(app, pageOrigins);
   registerTransitionRoute(app, "later", putLater);
   registerTransitionRoute(app, "seen", putSeen);
   registerTransitionRoute(app, "resend", putResend);
@@ -56,13 +59,13 @@ function registerRecentResumesRoute(app: FastifyInstance): void {
   );
 }
 
-function registerAnswerRoutes(app: FastifyInstance): void {
+function registerAnswerRoutes(app: FastifyInstance, pageOrigins: ReadonlySet<string>): void {
   app.post<{ Params: IdParams }>("/api/queue/owner/items/:id/answer", OWNER_ROUTE_OPTIONS, async (request, reply) =>
     handleItemRequest(request, reply, {
       route: "/api/queue/owner/items/:id/answer",
       schema: answerBodySchema,
       input: request.body,
-      work: (id, body) => putAnswer(id, body).then(() => ({ ok: true })),
+      work: (id, body) => putAnswer(id, body, getPageOriginSignalOrThrow(request, pageOrigins)).then(() => ({ ok: true })),
     }),
   );
   app.post<{ Params: IdParams }>("/api/queue/owner/items/:id/reply", OWNER_ROUTE_OPTIONS, async (request, reply) =>
@@ -70,7 +73,7 @@ function registerAnswerRoutes(app: FastifyInstance): void {
       route: "/api/queue/owner/items/:id/reply",
       schema: replyBodySchema,
       input: request.body,
-      work: (id, body) => putReply(id, body).then(() => ({ ok: true })),
+      work: (id, body) => putReply(id, body, getPageOriginSignalOrThrow(request, pageOrigins)).then(() => ({ ok: true })),
     }),
   );
 }
@@ -85,4 +88,11 @@ function registerTransitionRoute(app: FastifyInstance, action: "later" | "seen" 
       work: (id) => transition(id).then(() => ({ ok: true })),
     }),
   );
+}
+
+// The page-origin hook already refused a request with no signal → null here is a wiring fault, still refused, never stamped
+function getPageOriginSignalOrThrow(request: FastifyRequest, pageOrigins: ReadonlySet<string>): PageOriginSignal {
+  const signal = getPageOriginSignal(request.headers, pageOrigins);
+  if (signal === null) throw new QueueRequestError(403, "not_page_origin", "the request is not from the monitor page");
+  return signal;
 }

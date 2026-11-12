@@ -3,6 +3,7 @@
 
 import type { Prisma, QueueItem, QueueItemStatus } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import type { PageOriginSignal } from "../request-guards.js";
 import { QueueRequestError } from "./errors.js";
 import { canResend } from "./owner-views.js";
 import { lockSession } from "./registry.js";
@@ -10,7 +11,8 @@ import type { AnswerBody, ReplyBody } from "./schemas.js";
 
 const RESENDABLE: QueueItemStatus[] = ["unacked", "expired", "resume_pending"];
 
-export async function putAnswer(id: number, body: AnswerBody): Promise<void> {
+/** Answer + its record (route, page-origin signal) in one guarded write. */
+export async function putAnswer(id: number, body: AnswerBody, signal: PageOriginSignal): Promise<void> {
   const item = await getOpenItemOrThrow(id, "decision");
   if (body.code !== undefined && !getOptionCodes(item.options).includes(body.code)) {
     throw new QueueRequestError(400, "unknown_option", "the code is not one of this item's options");
@@ -18,13 +20,20 @@ export async function putAnswer(id: number, body: AnswerBody): Promise<void> {
   if (body.text !== undefined && !item.isFreeTextAllowed) {
     throw new QueueRequestError(400, "free_text_not_allowed", "this item takes an option code only");
   }
-  await putOpenTransition(id, { status: "answered", answerCode: body.code ?? null, answerText: body.text ?? null, answeredAt: new Date() });
+  await putOpenTransition(id, {
+    status: "answered",
+    answerCode: body.code ?? null,
+    answerText: body.text ?? null,
+    answeredAt: new Date(),
+    answerRoute: "answer",
+    answerSignal: signal,
+  });
 }
 
-export async function putReply(id: number, body: ReplyBody): Promise<void> {
+export async function putReply(id: number, body: ReplyBody, signal: PageOriginSignal): Promise<void> {
   const item = await getOpenItemOrThrow(id, "report");
   if (!item.isFreeTextAllowed) throw new QueueRequestError(400, "free_text_not_allowed", "this report takes no reply");
-  await putOpenTransition(id, { status: "answered", answerText: body.text, answeredAt: new Date() });
+  await putOpenTransition(id, { status: "answered", answerText: body.text, answeredAt: new Date(), answerRoute: "reply", answerSignal: signal });
 }
 
 export async function putSeen(id: number): Promise<void> {

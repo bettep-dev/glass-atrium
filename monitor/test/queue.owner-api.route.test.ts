@@ -191,6 +191,60 @@ describe("page origin", () => {
   });
 });
 
+describe("answer record", () => {
+  test("an answer and a reply stamp the route and the page-origin signal in the same write as the answer", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      { name: "answer, fetch metadata", itemId: await seedDecision(sessionId), action: "answer", body: { code: "R1" }, headers: SAME_ORIGIN, route: "answer", signal: "fetch_metadata" },
+      { name: "answer, Origin only", itemId: await seedDecision(sessionId), action: "answer", body: { code: "R2" }, headers: { origin: `http://localhost:${PORT}` }, route: "answer", signal: "origin" },
+      { name: "reply, fetch metadata", itemId: await seedItem(sessionId), action: "reply", body: { text: "merge it" }, headers: SAME_ORIGIN, route: "reply", signal: "fetch_metadata" },
+      { name: "reply, Origin only", itemId: await seedItem(sessionId), action: "reply", body: { text: "hold it" }, headers: { origin: `http://127.0.0.1:${PORT}` }, route: "reply", signal: "origin" },
+    ];
+    for (const row of rows) {
+      const response = await send("POST", `/api/queue/owner/items/${row.itemId}/${row.action}`, row.body, { headers: row.headers });
+      assert.equal(response.statusCode, 200, `${row.name}: ${response.body}`);
+      const item = await getItemRow(row.itemId);
+      assert.deepEqual([item.status, item.answerRoute, item.answerSignal], ["answered", row.route, row.signal], row.name);
+      assert.ok(item.answeredAt !== null, `${row.name}: answered time set`);
+    }
+  });
+
+  test("a refused answer leaves no stamp", async () => {
+    const itemId = await seedDecision(await seedSession());
+    await send("POST", `/api/queue/owner/items/${itemId}/answer`, { code: "R9" });
+    const item = await getItemRow(itemId);
+    assert.deepEqual([item.status, item.answerRoute, item.answerSignal], ["open", null, null]);
+  });
+
+  test("the item view carries the record and flags an answered item with no stamp as answered outside the Queue page", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    const answeredAt = new Date("2026-11-12T04:05:06.789Z");
+    const stamped = { answerCode: "R1", answeredAt, answerRoute: "answer" as const, answerSignal: "fetch_metadata" as const };
+    const unstamped = { answerCode: "R1", answeredAt };
+    const rows = [
+      { name: "stamped answered", seed: { status: "answered" as const, ...stamped }, record: { route: "answer", signal: "fetch_metadata" }, isOutside: false },
+      { name: "backfilled before the record", seed: { status: "unacked" as const, ...stamped, answerSignal: "before_record" as const }, record: { route: "answer", signal: "before_record" }, isOutside: false },
+      ...(["answered", "delivering", "unacked", "held", "expired", "resume_pending", "delivered"] as const).map((status) => (
+        { name: `unstamped ${status}`, seed: { status, ...unstamped }, record: null, isOutside: true }
+      )),
+      { name: "open, never answered", seed: { status: "open" as const }, record: null, isOutside: false },
+      { name: "withdrawn by its session", seed: { status: "withdrawn" as const }, record: null, isOutside: false },
+    ];
+    for (const row of rows) {
+      const itemId = await seedDecision(sessionId, row.seed);
+      const detail = (await send("GET", `/api/queue/owner/items/${itemId}`)).json();
+      assert.deepEqual([detail.answerRecord, detail.isAnsweredOutside], [row.record, row.isOutside], row.name);
+    }
+  });
+
+  test("a report closed with Seen carries no answer and is never flagged as answered outside", async () => {
+    const itemId = await seedItem(await seedSession());
+    await send("POST", `/api/queue/owner/items/${itemId}/seen`);
+    const detail = (await send("GET", `/api/queue/owner/items/${itemId}`)).json();
+    assert.deepEqual([detail.status, detail.answerRecord, detail.isAnsweredOutside], ["seen", null, false]);
+  });
+});
+
 describe("answer, reply, seen", () => {
   test("an answer is accepted only as the item allows it", async () => {
     const sessionId = await seedSession();

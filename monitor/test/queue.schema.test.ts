@@ -253,6 +253,36 @@ describe("monitor.queue_* enum limits", () => {
   }
 });
 
+describe("monitor.queue_items answer record", () => {
+  // Raw SQL → the enum types and the pairing CHECK reach Postgres, not the typed client's own checks.
+  const rows: readonly { name: string; route: string | null; signal: string | null; isAccepted: boolean; error?: RegExp }[] = [
+    { name: "accepts the answer route with fetch metadata", route: "answer", signal: "fetch_metadata", isAccepted: true },
+    { name: "accepts the reply route with an Origin-only signal", route: "reply", signal: "origin", isAccepted: true },
+    { name: "accepts the message route with fetch metadata", route: "message", signal: "fetch_metadata", isAccepted: true },
+    { name: "accepts a backfilled row from before the record", route: "answer", signal: "before_record", isAccepted: true },
+    { name: "accepts an unstamped answer, which the page lists as outside", route: null, signal: null, isAccepted: true },
+    { name: "rejects a route with no signal", route: "answer", signal: null, isAccepted: false, error: /queue_items_answer_record_check/ },
+    { name: "rejects a signal with no route", route: null, signal: "origin", isAccepted: false, error: /queue_items_answer_record_check/ },
+    { name: "rejects a route outside answer, reply and message", route: "cli", signal: "origin", isAccepted: false, error: /invalid input value for enum/ },
+    { name: "rejects a signal outside the recorded signals", route: "answer", signal: "cookie", isAccepted: false, error: /invalid input value for enum/ },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41011);
+        await tx.$executeRaw`
+          UPDATE "monitor"."queue_items"
+          SET "status" = 'answered', "answer_code" = 'R1', "answered_at" = ${SENT_AT},
+              "answer_route" = ${row.route}::"monitor"."QueueAnswerRoute", "answer_signal" = ${row.signal}::"monitor"."QueueAnswerSignal"
+          WHERE "id" = ${itemId}`;
+      });
+      if (row.isAccepted) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error ?? /./);
+    });
+  }
+});
+
 describe("monitor.queue_* length and shape limits", () => {
   const rejectedRows: readonly {
     name: string;

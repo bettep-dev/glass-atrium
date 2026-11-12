@@ -1315,6 +1315,23 @@ enum QueueItemStatus {
   @@schema("monitor")
 }
 
+enum QueueAnswerRoute {
+  answer
+  reply
+  message
+
+  @@schema("monitor")
+}
+
+// before_record = backfill of answers given before the record existed
+enum QueueAnswerSignal {
+  fetch_metadata
+  origin
+  before_record
+
+  @@schema("monitor")
+}
+
 enum QueueDeliveryRoute {
   socket
   resume
@@ -1427,6 +1444,9 @@ model QueueItem {
   nextAttempt       Int             @default(1) @map("next_attempt")
   askedAt           DateTime        @default(now()) @map("asked_at") @db.Timestamptz(6)
   answeredAt        DateTime?       @map("answered_at") @db.Timestamptz(6)
+  // Answer record: both set in the answer's own write, or both null (CHECK queue_items_answer_record_check)
+  answerRoute       QueueAnswerRoute?  @map("answer_route")
+  answerSignal      QueueAnswerSignal? @map("answer_signal")
   deliveredAt       DateTime?       @map("delivered_at") @db.Timestamptz(6)
   updatedAt         DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 

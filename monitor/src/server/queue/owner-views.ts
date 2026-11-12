@@ -2,7 +2,15 @@
 // sweep skip reason (Item states → Card precedence) and whether Resend is allowed.
 // The skip reason is derived from stored rows at read time, by the same rules the sweep in sweep.ts / resume-claim.ts applies.
 
-import { Prisma, type QueueDelivery, type QueueItem, type QueueItemStatus, type QueueSession } from "../../generated/prisma/client.js";
+import {
+  Prisma,
+  type QueueAnswerRoute,
+  type QueueAnswerSignal,
+  type QueueDelivery,
+  type QueueItem,
+  type QueueItemStatus,
+  type QueueSession,
+} from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { isSocketDeliveryOn } from "./drift-guard.js";
 import { QueueRequestError } from "./errors.js";
@@ -11,6 +19,8 @@ import type { OwnerListQuery, RecentResumesQuery } from "./schemas.js";
 
 const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
 const DEVIATION_STATUSES = new Set<QueueItemStatus>(["unacked", "held", "expired", "resume_pending"]);
+// Every state an answer leads to; open, seen and withdrawn carry no answer → never "answered outside"
+const ANSWERED_STATUSES = new Set<QueueItemStatus>(["answered", "delivering", "unacked", "held", "expired", "resume_pending", "delivered"]);
 const SESSION_ID_PREFIX_LENGTH = 8;
 
 export type Deviation = "unacked" | "held" | "expired" | "resume_pending" | "session_not_reachable" | "delivery_off";
@@ -58,6 +68,12 @@ export interface RecentResume extends ResumeRecord {
   session: { profileLabel: string; cwdTail: string };
 }
 
+/** How the owner's answer was made; its time is the item's `answeredAt`. */
+export interface AnswerRecord {
+  route: QueueAnswerRoute;
+  signal: QueueAnswerSignal;
+}
+
 export interface OwnerItemView {
   id: number;
   kind: string;
@@ -76,6 +92,10 @@ export interface OwnerItemView {
   askedAt: string;
   answeredAt: string | null;
   deliveredAt: string | null;
+  /** null → never answered, or answered with no record */
+  answerRecord: AnswerRecord | null;
+  /** Answered, yet no record → written outside the monitor (straight into the database). */
+  isAnsweredOutside: boolean;
   session: OwnerSessionView;
   /** Newest first. */
   resumes: ResumeRecord[];
@@ -215,12 +235,21 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     askedAt: item.askedAt.toISOString(),
     answeredAt: item.answeredAt?.toISOString() ?? null,
     deliveredAt: item.deliveredAt?.toISOString() ?? null,
+    ...getAnswerRecordView(item),
     session: toSessionView(item.session, factsById.get(item.sessionId)?.lastResumeBgId ?? null),
     resumes,
     deviation: getDeviation(item.status, item.session),
     skipReason: item.status === "resume_pending" ? getSkipReason(item, factsById) : null,
     canResend: canResend({ status: item.status, nextAttempt: item.nextAttempt, isSessionMarked, resumeAttempts: resumes.map((resume) => resume.attempt) }),
   };
+}
+
+// CHECK queue_items_answer_record_check pairs the two columns → one null means both are
+function getAnswerRecordView(item: QueueItem): Pick<OwnerItemView, "answerRecord" | "isAnsweredOutside"> {
+  if (item.answerRoute !== null && item.answerSignal !== null) {
+    return { answerRecord: { route: item.answerRoute, signal: item.answerSignal }, isAnsweredOutside: false };
+  }
+  return { answerRecord: null, isAnsweredOutside: ANSWERED_STATUSES.has(item.status) };
 }
 
 function toSessionView(session: QueueSession, lastResumeBgId: string | null): OwnerSessionView {
