@@ -116,6 +116,9 @@
   --surface-raised-2: var(--elev);            /* light: 순백 유지, 떠오름은 shadow */
   --surface-overlay:  var(--overlay-surface);
   --control-edge:     var(--pip-empty);       /* resting toggle and field edge — ≥3:1 on every opaque surface, under the --faint hover edge (§4.1) */
+  --tint-select: rgb(var(--ink) / 0.08);      /* here, or mine — a selected or scoped row, a picked option (§12.4) */
+  --tint-fill:   rgb(var(--ink) / 0.10);      /* a filled shell — the tag badge, the owner's order bubble (§7.3) */
+  --tint-warn:   rgb(var(--warn) / 0.16);     /* did not arrive — the amber badge, always with ⚠ and a word (§4.2) */
 }
 :root {
   /* shadow (kind B box-shadow list) */
@@ -133,6 +136,7 @@
 
 - **dark 휘도 서열**: `base(--surface 12) < sunken(24) < raised(--elev 28) < raised-2(--elev-2 36)` → z 가 오를수록 R 값 단조 증가, 휘도 step 단독으로 elevation 성립.
 - **light raised-2 인버전 회피**: `--elev` 255 가 천장이라 `--elev-2` 252 는 raised 보다 어둡다 → light raised-2 는 fill 을 바꾸지 않고 `--shadow-raised-2` 로만 표현. `--elev-2` fill 은 dark 전용.
+- **The three tints**: an existing colour at a fixed alpha, declared in the alias rule so a nested dark scope re-tints them; text on a tint is always ink. No colour token is added.
 - shadow 의 내부 `rgba()` 농도는 의도적으로 alpha-비합성 — box-shadow 는 `<alpha-value>` 보간 대상이 아니므로 테마별 값에 baked-in.
 
 ### 3.2a 토큰 종류 2종 (Dual Token Convention)
@@ -303,6 +307,7 @@
     - ok 는 링 없음 · unverified = `--faint` dashed 링 · focus = 그 바깥 `rect.arch-ring-focus` `--focus-ring`.
     - 명암비 (`--surface` · `--elev` 위): light warn ≥ 3.29 · crit ≥ 4.83 (UI 3:1) · dark ≥ 6.32.
   - **System map 범례 swatch** (`.arch-legend-swatch-warn` / `-crit` / `-count`) = 링의 key: 2px tone border + mark (`!` · `!!` · `!!×N`) + `--dim` 라벨 ("Ring needs attention" · "Ring critical" · "N parts in this box need attention"). page `--surface` 위 → light warn 3.29 · crit 4.83 · dark ≥ 7.14.
+  - **Amber badge** (`.pill--warn`, §7.3): `--tint-warn` shell + `⚠` + word, both in ink — the tint alone is 1.43 (dark) / 1.20 (light) on `--elev`, so the glyph shape and the word carry it; ink on it ≥ 9.33 / 12.64. `--warn` on its own tint is 2.87 in light → the glyph is never toned there.
 - **범위 밖 — destructive action** (severity 아닌 action role, 단어 = 버튼 라벨): `.btn.danger` · red-outline 버튼 (`DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) — §7.4.
 - **Badge 3 role** (`ui.jsx` → `Badge`):
   - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone, 라벨 `--dim`. `glyph` false 면 tone 없음 (라벨도 neutral). tone 있는 `Pill` → glyph 가 있는 status `Badge`.
@@ -314,7 +319,7 @@
 - **finder** (merged tree 기준): hit 마다 읽고 아래 분류에 넣는다. 분류 밖 hit = 새 위반.
   - finder 1 (alpha tint · inset stripe): `grep -rnE "var\(--(crit|warn|ok|info|[$]\{[^}]+\})\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
     - 보간 tone (`var(--${…})`) 도 잡는다.
-    - 허용 hit: 차트 data mark (`cost.jsx` outlier 범례 · `Cell` · `critBar` · `improvement.jsx` reject spark stroke · `agents.jsx` `bg-crit/70` 막대 · warn `Bar`).
+    - 허용 hit: 차트 data mark (`cost.jsx` outlier 범례 · `Cell` · `critBar` · `improvement.jsx` reject spark stroke · `agents.jsx` `bg-crit/70` 막대 · warn `Bar`) · the amber badge tint (`tokens.css` → `--tint-warn`, 위 Amber badge).
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
     - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) · 차트 (`agents.jsx` quality-health crit `Line` 과 그 tooltip key swatch).
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
@@ -514,6 +519,9 @@
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
 - 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (mono tabular — retiring → §12.2 / §12.3 Count, S2c; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes · pressed = ink edge + ink text, no fill inversion).
+- **fill** (`Badge fill`): `quiet` (default — the neutral shell above) · `solid` = `.pill--solid`, `--ink` shell + `--surface` text — waits for the owner · `tag` = `.pill--tag`, `--tint-fill` + ink — a fact worth a glance · `warn` = `.pill--warn`, `--tint-warn` + ink, led by an ink `⚠` the atom draws — did not arrive. Every fill is 13 / 600, line 1, 20 high, no border.
+  - **Count shape** (`role="count"` with a fill): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
+  - Never two solid badges on one row; a badge always holds a word or a number. The accent never fills a badge — it is the owner's run-time choice, so text on it has no guaranteed contrast.
 - glass 위에 올리지 않는다 (AP-6).
 
 ### 7.4 Button — `.btn`
@@ -558,6 +566,7 @@
 - 폭 220px. **< 1200px 에서 56px icon rail**: 라벨은 제거하지 않고 clip (`.rail-hide`) → 접근 이름 유지. 첫 배지는 우상단, 나머지 배지는 clip.
 - 면: `bg-elev` 불투명 · `border-r` · sticky, glass 금지.
 - `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · hover/active = `--sunken` + `--ink`, active 500.
+- A nav entry with `badgeFill` (`app.jsx` → `NAV`, the Queue) renders its numeral as the filled count `Badge` (`.nav-count`): solid, `99+` cap, its glyph in the badge's own text colour. Every other entry keeps `.nav-badge`.
 - `.nav-badge`: mono `--fs-meta` · `--sunken` · 1px `--line` · pill radius (mono and border retiring → §12.2 sans + §12.3 Badge fill only, S2c) — tone 과 무관한 neutral shell. 내용 = tone glyph (`text-<tone>`, aria-hidden, tone 있는 배지는 모두) + 값 + sr-only 설명 (`title` 동반).
 
 ### 7.8 DetailSurface — drawer · fullscreen · confirm (`.detail-*`)
@@ -695,15 +704,18 @@
 | C32 interactive pill · `.pill--interactive` (filter chip, stage picker, lineage, file-count disclosure) | 32 | 0 / 8 | 13 / 1 / 500 | transparent 1px edge, constant; pressed = ink edge + ink text |
 | C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
 | C32 tab | 32 | 6 / 8 | 14 / 18 / 500 | label only; selected = ink + 2px ink underline, constant thickness |
+| C40 button · `.btn.lg` (a composer's buttons only) | 40 (`--ctl-h-lg`) | 8 / 16 | 14 / 22 (`--lh-ctl-lg`) / 500 | as C32 button |
+| C40 composer box · `.queue-compose-box` + `.queue-compose-text` | 40 at rest; the text grows to 8 lines (194), then scrolls | text 8 / 12 | 14 / 22 / 400 | the field family's 1px `--control-edge` on the box, the text borderless; hover `--faint`; focus = `--accent` edge + global outline on the box through `:has(:focus-visible)`; invalid (`.is-invalid`) = `--crit` edge |
 | C24 static pill · `.pill`, `--meta`, `--count` (never on a button) | 24 (`.pill--ctl-h` deprecated) | 0 / 8 | 13 / 1 / 500 | no border, fill only |
-| C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16: `.ctl-checkbox` — `--elev` box, 1.5px `--faint` edge, `--radius-inline`; checked or mixed = `--selected-fill` with a `--selected-ink` `.ctl-checkbox-mark`) | 0 | inherits size and weight / `--lh-row` 20 | no border; global focus outline |
+| C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16: `.ctl-checkbox` — `--elev` box, 1.5px `--faint` edge, `--radius-inline`; checked or mixed = `--selected-fill` with a `--selected-ink` `.ctl-checkbox-mark`; radio visual 16: `.ctl-radio` — the same box drawn round in rules of its own, checked = `--selected-fill` with an inset `--elev` ring drawing the dot) | 0 | inherits size and weight / `--lh-row` 20 | no border; global focus outline |
 
 - Row mapping: a 40 `.tbl` row holds a 24 target (7.5 + 24 + 7.5 + 1) or a 32 control through the control-cell rule. Card-head, `.control-row` and the overlay head are min 48. A card-foot is 40. A 32 compact row holds no control and no target.
 - A new 32 class joins the `.tbl` control-cell `:has` list, the 32 floor in `test/styles.shared-atoms.unit.test.ts` and the controls selectors in `test/model-config.card-ends.e2e.test.ts` in the change that creates it.
 - `.inline-target` is opt-in, never a global link rule: prose links sit under WCAG 2.5.8's inline exception. It is middle-aligned, so a 24 box keeps a 40 row and its text on the line.
 - A control that centres its text by flex takes a `--lh-*` token, never a type-scale ratio, including one on the same element: the engine floors the half-leading to a whole pixel, so a fractional line box (`.fs-meta` 13 × 1.4) puts an odd-height face 0.59 off the centre line.
 - A checkbox label in a block group (the Task results Record scope) is `.inline-target` inside a flex row: a flex item has no line box, so the 24 target keeps the group's 4 label step.
-- Regression tests: `test/ui.row-geometry.e2e.test.ts` (40 rows per control and target) · `test/ui.control-state.e2e.test.ts` (state boxes, resting edge, the control row).
+- The 40 tier is a pane's composer only — its box and the buttons beside it, one height for both; every other control stays 32. `--lh-ctl-lg` is derived like `--lh-ctl`: 40 − 2 × 8 − 2 borders = 22.
+- Regression tests: `test/ui.row-geometry.e2e.test.ts` (40 rows per control and target) · `test/ui.control-state.e2e.test.ts` (state boxes, resting edge, the control row, the 40 tier, the radio).
 
 ### 7.16 State invariance · control rows
 
@@ -971,7 +983,7 @@
 | Segmented control | a page-wide window (range 7d/30d/90d) — not a list filter | sunken track, no outer edge, h32, items 14/500 dim; selected = raised thumb + 1px `--control-edge` + ink text |
 | Tab | switch between distinct views (Operator / Instrumentation; drawer sections) | label only, 14/500 dim; selected ink + 2px ink underline; no box, no icon; below the page header |
 | Form input / select | a field in a form (model-config, doc editor) | elev fill, 1px `--control-edge`, h32, radius 6, sans 14 value; label above |
-| Badge | a count on a nav item; a removable filter chip | fill only (sunken), no border, radius 4, h20, 13/500 dim — never height-matched to a control |
+| Badge | a count on a nav item; a removable filter chip; on the Queue, what waits, a fact, what did not arrive | fill only, no border, h20 — never height-matched to a control: quiet = sunken, radius 4, 13/500 dim; filled (§7.3) = solid ink · tag tint · warn tint, 13/600, ink or surface text, a word at radius 4, a count round |
 | Count | a quantity in prose or a row | plain sans tnum number in ink; never boxed |
 | Status | state of a thing (Done, Down, Healthy) | glyph + word inline, tone on the glyph only, no container |
 | Status pill | the state of the record a drawer or page shows | one, beside its title only — never in a table cell |
@@ -1065,6 +1077,7 @@
 - No blink or pulse on a status mark; loading marks follow §8.
 - Surfaces are flat: no gradient, glow, glass or blur; the overlay scrim is solid `rgb(0 0 0 / 0.42)`.
 - A card is one hairline border on the page ground — no shadow, no inset highlight; shadows only on floating layers (popover, dialog, toast, scrolled table header).
+- Inside a master list, a category row may take the page ground: `.queue-band` — 32 (`--row-h-compact`), `--surface`, a hairline above and below edge to edge, 13 / 600 dim, its count a tag count badge 6 after the label, on the card's inset.
 
 ### 12.10 Admin-console map
 
@@ -1111,7 +1124,8 @@
   - bar search → the faint search icon (≥ 4.89:1); filter trigger → the faint chevron (≥ 5.33:1) + dim label;
   - selected row → the checked checkbox; current page → ink label at 500 vs dim at 400.
 - Every selected state also carries a non-colour cue (edge, ✓ glyph, checkbox or weight).
-- Regression: `test/tokens.contrast.unit.test.ts` (base-look pairs on every surface, ring on surface).
+- Tints (composited on `--elev`): ink on `--tint-select` 13.47 (dark) / 14.89 (light) · dim 9.44 / 6.50 · ink on `--tint-fill` 12.64 / 14.28 · dim 8.87 / 6.23 · ink on `--tint-warn` 11.74 / 14.60 · surface on ink (solid badge) 18.92 / 16.74. Faint on `--tint-fill` is 4.35 in light → a tinted shell holds no faint text.
+- Regression: `test/tokens.contrast.unit.test.ts` (base-look pairs on every surface, ring on surface, the tints and badge fills on every ground they stand on).
 
 ---
 
