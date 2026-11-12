@@ -78,6 +78,21 @@ const COMPOSER_ERROR_Q = {
 	noTick: "Tick at least one session in the rail.",
 	unsentOrder: "Unsent order in the field. Send it, or clear it first.",
 };
+// the upload route's limits (queue/schemas.ts, queue/images.ts): the page checks before it uploads, the server stays the judge
+const IMAGES_Q = {
+	MAX: 8,
+	BYTES_MAX: 10 * 1024 * 1024,
+	NAME_MAX: 255,
+	MB: 1024 * 1024,
+	ACCEPT: "image/png,image/jpeg,image/webp,image/gif",
+	TYPES_LINE: "only PNG, JPEG, WebP or GIF images",
+	PASTED: "Pasted image",
+	EXTENSION: { png: "png", jpeg: "jpg", webp: "webp", gif: "gif" },
+};
+const PNG_SIGNATURE_Q = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+// shot key → its upload's promise, so a send waits for the uploads still running
+const UPLOADS_Q = new Map();
+let shotSeqQ = 0;
 
 /**
  * Queue nav slot: awaiting count plus a deviation glyph when any deviation is open.
@@ -339,6 +354,7 @@ function ScreenQueue({ onRetryHarness }) {
  */
 function QueueDeskQ({ queue }) {
 	const { orders } = queue;
+	usePageDropGuardQ();
 	const onKeyDown = (event) => {
 		if (!isOrdersCloseKeyQ(event, orders.isOpen)) return;
 		event.preventDefault();
@@ -403,11 +419,12 @@ function useQueueStateQ({ onRetryHarness }) {
 	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatus, selectItem, reload, onRetryHarness });
 	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, selectedId: sheet.id, sendAction: actions.send, setStatus, reload });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
+	const setImages = useCallbackQ((id, update) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], images: update(prev[id]?.images ?? []) } })), []);
 	const selectRow = useCallbackQ((id) => { selectItem(id); setFocus({ id }); }, [selectItem]);
 	const openOrderRow = useOrderRowQ({ list, selectItem, sessions, orders });
 	const openReplyOrder = useReplyOrderQ({ sessions, orders });
 	return {
-		list, resumes, readResumes, sessions, orders, drafts, setDraft, filter, setFilter, reload, loadMore,
+		list, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, loadMore,
 		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, openReplyOrder, status, ...actions,
 	};
 }
@@ -553,9 +570,14 @@ function getSessionStateLabelQ(row) {
  * @param onSent - re-reads the list and the thread, so the new order shows
  * @returns true once the server took the send
  */
-async function sendMessageQ({ body, names, setComposer, setStatus, onSent }) {
+async function sendMessageQ({ body, names, shots = [], setComposer, setStatus, onSent }) {
 	setComposer((prev) => ({ ...prev, isBusy: true, error: null }));
-	const answer = await sendOwnerRequestQ("/messages/send", body);
+	const ids = await getStoredIdsQ(shots);
+	if (ids === null) {
+		setComposer((prev) => ({ ...prev, isBusy: false }));
+		return false;
+	}
+	const answer = await sendOwnerRequestQ("/messages/send", getImageBodyQ(body, ids));
 	if (answer.status >= 200 && answer.status < 300) {
 		setComposer(() => EMPTY_COMPOSER_Q);
 		setStatus(getOrderSentStatusQ(names));
@@ -581,10 +603,11 @@ function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) 
 	const { thread, read, showEarlier } = useThreadQ(isOpen, selectedIds);
 	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
 	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
+	const setImages = useCallbackQ((update) => setComposer((prev) => ({ ...prev, images: update(prev.images ?? []) })), []);
 	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
-	const send = useCallbackQ((body, names) => sendMessageQ({ body, names, setComposer, setStatus, onSent }), [setStatus, onSent]);
+	const send = useCallbackQ((body, names, shots) => sendMessageQ({ body, names, shots, setComposer, setStatus, onSent }), [setStatus, onSent]);
 	const resend = useCallbackQ((ids) => putResendsQ(ids, sendAction, read), [sendAction, read]);
-	return { isOpen, open, openAt, aim, close, thread, read, showEarlier, composer, setText, putError, send, resend, ...replyLink };
+	return { isOpen, open, openAt, aim, close, thread, read, showEarlier, composer, setText, putError, setImages, send, resend, ...replyLink };
 }
 
 // `openAt(id)` aims the thread at the order holding that copy (useThreadAimQ); the aim goes with the mode
@@ -1291,21 +1314,26 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	);
 }
 
-// Mark as read carries the ink while the box is empty, Send order once it holds text; order, labels and widths never change
+// Mark as read carries the ink while the box is empty, Send order once it holds text or an image; order, labels and widths never change
 function ReportComposerQ({ item, draft, queue, isBusy, error }) {
 	const name = getSessionNameQ(item.session);
 	const fieldId = `queue-reply-${item.id}`;
 	const text = draft.text ?? "";
 	const hasText = text.trim() !== "";
-	const markRead = () => (hasText ? putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.unsentOrder, fieldId) : queue.settle(item.id, "seen"));
-	const sendOrder = () => (hasText ? queue.settle(item.id, "reply", { text }) : putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noOrder, fieldId));
-	const order = item.isFreeTextAllowed ? [{ label: "Send order", isInk: hasText, onPress: sendOrder }] : [];
-	const rest = hasText ? `Send order delivers this to ${name} and closes the report.` : `Mark as read closes this report. ${name} hears nothing.`;
+	const box = { shots: draft.images ?? [], setShots: (update) => queue.setImages(item.id, update), putError: (next) => queue.setDraft(item.id, { error: next }) };
+	const hasContent = hasText || box.shots.length > 0;
+	const zone = useDropZoneQ((files) => getTrayQ({ fieldId, box }).onFiles(files, false));
+	const tray = getTrayQ({ fieldId, box, isOver: zone.isOver });
+	const sendReply = (ids) => queue.settle(item.id, "reply", getImageBodyQ({ text }, ids));
+	const markRead = () => (hasContent ? putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.unsentOrder, fieldId) : queue.settle(item.id, "seen"));
+	const sendOrder = () => (hasText ? sendWithImagesQ(box.shots, sendReply, (isWaiting) => queue.setDraft(item.id, { isWaiting })) : putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noOrder, fieldId));
+	const order = item.isFreeTextAllowed ? [{ label: "Send order", isInk: hasContent, onPress: sendOrder }] : [];
+	const rest = hasContent ? `Send order delivers this to ${name} and closes the report.` : `Mark as read closes this report. ${name} hears nothing.`;
 	return (
-		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: `Order to ${name} (optional)` } : null}
-			text={text} onText={(next) => queue.setDraft(item.id, { text: next, error: null })} isBusy={isBusy}
-			buttons={[{ label: "Mark as read", isInk: !hasText, onPress: markRead }, ...order]}
-			note={<ComposerNoteQ error={error ?? draft.error} rest={rest} />}
+		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: `Order to ${name} (optional)` } : null} tray={item.isFreeTextAllowed ? tray : null} zone={zone.handlers}
+			text={text} onText={(next) => queue.setDraft(item.id, { text: next, error: null })} isBusy={isBusy || Boolean(draft.isWaiting)}
+			buttons={[{ label: "Mark as read", isInk: !hasContent, onPress: markRead }, ...order]}
+			note={<ComposerNoteQ error={error ?? draft.error} tray={tray} fieldId={fieldId} rest={rest} />}
 			later={{ label: "Read later", onPress: () => queue.later(item.id) }} />
 	);
 }
@@ -1323,7 +1351,7 @@ function putInvalidQ(queue, id, message, targetId) {
  * @param buttons - `{ label, isInk, onPress }` in order, the ink one last
  * @param later - the quiet button at the end of the note line
  */
-function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later }) {
+function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null }) {
 	const ink = buttons.find((button) => button.isInk);
 	const onKeyDown = (event) => {
 		if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || !ink || isBusy) return;
@@ -1331,14 +1359,10 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 		ink.onPress();
 	};
 	return (
-		<div className="queue-composer">
+		<div className="queue-composer" {...(tray ? zone : null)}>
 			{field && (field.aside ? <div className="queue-compose-label">{getFieldLabelQ(field)}{field.aside}</div> : getFieldLabelQ(field))}
 			<div className="queue-compose-row">
-				{field && (
-					<div className="queue-compose-box">
-						<textarea id={field.id} rows={1} className="queue-compose-text" value={text} onChange={(event) => onText(event.target.value)} onKeyDown={onKeyDown} />
-					</div>
-				)}
+				{field && <ComposeBoxQ field={field} text={text} onText={onText} onKeyDown={onKeyDown} tray={tray} />}
 				<div className="queue-compose-buttons">
 					{buttons.map((button) => (
 						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} aria-disabled={isBusy || undefined}
@@ -1360,11 +1384,86 @@ function getFieldLabelQ(field) {
 	return <label htmlFor={field.id} className="field-label">{field.label}</label>;
 }
 
-// one line: a refusal or a missing control (crit alert), else the approval reminder (info), else the line at rest
-function ComposerNoteQ({ error, info = null, rest }) {
+/** The bordered box: the thumbnails row while images are attached, the text, and `Add images` where the use takes images. */
+function ComposeBoxQ({ field, text, onText, onKeyDown, tray }) {
+	// a pasted file is an image to add; pasted text stays text
+	const onPaste = (event) => {
+		const files = Array.from(event.clipboardData?.files ?? []);
+		if (!tray || files.length === 0) return;
+		event.preventDefault();
+		tray.onFiles(files, true);
+	};
+	return (
+		<div className={`queue-compose-box${tray ? " has-images" : ""}${tray?.isOver ? " is-drop" : ""}`}>
+			{tray && tray.shots.length > 0 && <ThumbsQ fieldId={field.id} tray={tray} />}
+			<textarea id={field.id} rows={1} className="queue-compose-text" value={text} onChange={(event) => onText(event.target.value)} onKeyDown={onKeyDown} onPaste={onPaste} />
+			{tray && <AddImagesQ fieldId={field.id} onFiles={tray.onFiles} />}
+		</div>
+	);
+}
+
+function AddImagesQ({ fieldId, onFiles }) {
+	const { Icon } = window.UI;
+	const inputId = `${fieldId}-files`;
+	const onChange = (event) => {
+		onFiles(Array.from(event.target.files ?? []), false);
+		event.target.value = "";
+	};
+	return (
+		<>
+			<button type="button" className="btn ghost icon queue-compose-add" aria-label="Add images" title="Add images" onClick={() => window.document?.getElementById(inputId)?.click()}>
+				<Icon name="image-plus" size={16} />
+			</button>
+			<input id={inputId} type="file" accept={IMAGES_Q.ACCEPT} multiple hidden onChange={onChange} />
+		</>
+	);
+}
+
+// the thumbnails wrap with the count after the last one; each remove button is always shown
+function ThumbsQ({ fieldId, tray }) {
+	return (
+		<div className="queue-thumbs">
+			<ul className="queue-thumb-list" aria-label="Attached images">
+				{tray.shots.map((shot) => <ThumbQ key={shot.key} shot={shot} removeId={getRemoveIdQ(fieldId, shot.key)} onRemove={() => tray.onRemove(shot.key)} />)}
+			</ul>
+			<span className="queue-thumbs-count">{getImageCountLineQ(tray.shots)}</span>
+		</div>
+	);
+}
+
+function ThumbQ({ shot, removeId, onRemove }) {
+	const isBusy = shot.status === "uploading";
+	return (
+		<li className={`queue-thumb${isBusy ? " is-busy" : ""}`} aria-busy={isBusy || undefined} title={`${shot.name} · ${getSizeTextQ(shot.bytes)}`}>
+			{shot.status === "failed"
+				? <span className="queue-thumb-failed" role="img" aria-label={`${shot.name}: not uploaded`}>✕</span>
+				: <img src={shot.src} alt={shot.name} />}
+			<button id={removeId} type="button" className="queue-thumb-remove" aria-label={`Remove ${shot.name}`} onClick={onRemove}><span aria-hidden="true">✕</span></button>
+		</li>
+	);
+}
+
+function getRemoveIdQ(fieldId, key) {
+	return `${fieldId}-remove-${key}`;
+}
+
+// one line: a refusal or a missing control (crit alert), else what the images need, else the approval reminder (info), else the line at rest
+function ComposerNoteQ({ error, info = null, rest, tray = null, fieldId = "" }) {
 	if (error) return <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ>;
+	const image = tray ? getImageNoteQ(tray.shots, tray.isOver) : null;
+	if (image?.tone === "crit") return <ImageFailureLineQ text={image.text} retryId={`${fieldId}-retry`} onRetry={() => tray.onRetry(image.retryKey)} />;
+	if (image) return <p className="fs-meta" aria-live="polite">{image.text}</p>;
 	if (info) return <ToneLineQ tone="info">{info}</ToneLineQ>;
 	return <p className="fs-meta">{rest}</p>;
+}
+
+function ImageFailureLineQ({ text, retryId, onRetry }) {
+	return (
+		<span className="queue-note-failure">
+			<ToneLineQ tone="crit" role="alert" isTextToned>{text}</ToneLineQ>
+			<button id={retryId} type="button" className="btn ghost sm" onClick={onRetry}>Try again</button>
+		</span>
+	);
 }
 
 // one-line note led by its tone glyph → the tone survives without colour; an error line is toned whole
@@ -1593,11 +1692,13 @@ function OrdersViewQ({ queue }) {
 	const { Card } = window.UI;
 	const { orders, sessions } = queue;
 	const rows = sessions.region.data?.sessions ?? [];
+	// a file dropped anywhere on the card joins the order box
+	const zone = useDropZoneQ((files) => getTrayQ({ fieldId: ORDERS_Q.BOX_ID, box: getOrderBoxQ(queue) }).onFiles(files, false));
 	const close = <button type="button" className="btn ghost" title="Esc" onClick={orders.close}><span aria-hidden="true">{"✕ "}</span>Close</button>;
 	return (
-		<section className="queue-orders" aria-label="Orders">
+		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
 			<Card className="queue-orders-card" title="Orders" right={close} bar={<ToBarQ rows={rows} selectedIds={sessions.selectedIds} onClear={sessions.clear} />}
-				foot={<OrderComposerQ queue={queue} targets={getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds)} />} isFlush>
+				foot={<OrderComposerQ queue={queue} targets={getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds)} isOver={zone.isOver} />} isFlush>
 				<ThreadQ orders={orders} names={rows.filter((row) => sessions.selectedIds.includes(row.id)).map((row) => row.name)} />
 			</Card>
 		</section>
@@ -1786,23 +1887,30 @@ function RecipientRowQ({ copy, onResend }) {
 }
 
 // the composer in its order use: the send carries the ink once the box holds text; a press with something missing says what and moves focus
-function OrderComposerQ({ queue, targets }) {
+function OrderComposerQ({ queue, targets, isOver = false }) {
 	const { orders } = queue;
 	const box = getOrderBoxQ(queue);
+	const tray = getTrayQ({ fieldId: ORDERS_Q.BOX_ID, box, isOver });
 	const isLinked = isReplyLinkedQ(orders.reply, targets.ids);
 	const onSend = () => {
 		const invalid = getOrderInvalidQ(targets, box.text);
-		if (invalid === null) return isLinked ? sendReplyOrderQ(queue, box.text) : sendPlainOrderQ(queue, targets, box.text);
+		if (invalid === null) return isLinked ? sendReplyOrderQ(queue, box) : sendPlainOrderQ(queue, targets, box);
 		orders.putError(invalid.message);
 		const selector = invalid.focus === "box" ? `#${ORDERS_Q.BOX_ID}` : ".queue-sessions .ctl-checkbox";
 		window.document?.querySelector(selector)?.focus();
 	};
-	const onDrop = () => { orders.setText(box.text); queue.setDraft(orders.reply.item.id, { text: "" }); orders.dropReply(); };
+	// the text and images move from the report's draft to the order box
+	const onDrop = () => {
+		orders.setText(box.text);
+		orders.setImages(() => box.shots);
+		queue.setDraft(orders.reply.item.id, { text: "", images: [] });
+		orders.dropReply();
+	};
 	return (
-		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: "Order", aside: isLinked ? <ReLineQ title={orders.reply.item.title} onDrop={onDrop} /> : null }}
+		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: "Order", aside: isLinked ? <ReLineQ title={orders.reply.item.title} onDrop={onDrop} /> : null }} tray={tray}
 			text={box.text} onText={box.setText} isBusy={box.isBusy}
 			buttons={[{ label: getSendLabelQ(targets), isInk: box.text.trim() !== "", onPress: onSend }]}
-			note={<ComposerNoteQ error={box.error} rest={getReplyNoteQ(orders.reply, isLinked, targets)} />} />
+			note={<ComposerNoteQ error={box.error} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getReplyNoteQ(orders.reply, isLinked, targets)} />} />
 	);
 }
 
@@ -1815,13 +1923,16 @@ function isReplyLinkedQ(reply, ids) {
 function getOrderBoxQ(queue) {
 	const { orders, drafts, busy } = queue;
 	const { reply, composer } = orders;
-	if (!reply || reply.isDropped) return { text: composer.text, setText: orders.setText, isBusy: composer.isBusy, error: composer.error };
+	if (!reply || reply.isDropped) {
+		return { text: composer.text, setText: orders.setText, isBusy: composer.isBusy, error: composer.error, shots: composer.images ?? [], setShots: orders.setImages, putError: orders.putError };
+	}
 	const { id } = reply.item;
 	const draft = drafts[id] ?? {};
 	const refusal = busy.error?.id === id ? busy.error.message : null;
 	return {
 		text: draft.text ?? "", setText: (text) => queue.setDraft(id, { text, error: null }),
-		isBusy: busy.id === id || composer.isBusy, error: refusal ?? draft.error ?? composer.error,
+		isBusy: busy.id === id || composer.isBusy || Boolean(draft.isWaiting), error: refusal ?? draft.error ?? composer.error,
+		shots: draft.images ?? [], setShots: (update) => queue.setImages(id, update), putError: (error) => queue.setDraft(id, { error }),
 	};
 }
 
@@ -1832,18 +1943,234 @@ function getReplyNoteQ(reply, isLinked, targets) {
 }
 
 // the report's own Send order: it closes and leaves the queue, the next open item selected (settle) → the link goes, the thread re-reads
-async function sendReplyOrderQ(queue, text) {
+async function sendReplyOrderQ(queue, box) {
 	const { orders } = queue;
-	if (!(await queue.settle(orders.reply.item.id, "reply", { text }))) return;
+	const { id } = orders.reply.item;
+	const send = (ids) => queue.settle(id, "reply", getImageBodyQ({ text: box.text }, ids));
+	if (!(await sendWithImagesQ(box.shots, send, (isWaiting) => queue.setDraft(id, { isWaiting })))) return;
 	orders.linkReply(null);
 	orders.read();
 }
 
 // a plain order typed in the report's draft → sent, so the draft empties and the report never gets it twice
-async function sendPlainOrderQ(queue, targets, text) {
+async function sendPlainOrderQ(queue, targets, box) {
 	const { orders } = queue;
-	const isSent = await orders.send({ sessionIds: targets.ids, text }, targets.names);
-	if (isSent && orders.reply && !orders.reply.isDropped) queue.setDraft(orders.reply.item.id, { text: "" });
+	const isSent = await orders.send({ sessionIds: targets.ids, text: box.text }, targets.names, box.shots);
+	if (isSent && orders.reply && !orders.reply.isDropped) queue.setDraft(orders.reply.item.id, { text: "", images: [] });
+}
+
+/**
+ * What a composer's images do: add (button, drop, paste) with the limits, remove, try an upload again.
+ * Focus: an image added → the box · removed → the next remove button, else the box.
+ * @param box - `{ shots, setShots, putError }` of the draft or order box the images belong to
+ */
+function getTrayQ({ fieldId, box, isOver = false }) {
+	const { shots, setShots, putError } = box;
+	const focus = (id) => window.document?.getElementById(id)?.focus();
+	return {
+		shots,
+		isOver,
+		onFiles: (files, isPasted) => {
+			focus(fieldId);
+			return putFilesQ({ files, shots, setShots, putError, isPasted });
+		},
+		onRemove: (key) => {
+			const index = shots.findIndex((shot) => shot.key === key);
+			deleteShotQ(shots[index], setShots);
+			focus(shots[index + 1] ? getRemoveIdQ(fieldId, shots[index + 1].key) : fieldId);
+		},
+		onRetry: (key) => putRetryQ(shots.find((shot) => shot.key === key), setShots),
+	};
+}
+
+/** Checks the files, adds the ones that pass with one line for the rest, then uploads each as it is added. */
+async function putFilesQ({ files, shots, setShots, putError, isPasted = false }) {
+	const candidates = await Promise.all(files.map(getCandidateQ));
+	const { added, refusal } = getAddPlanQ(shots.length, candidates);
+	putError(refusal);
+	const fresh = added.map((candidate, index) => getShotQ(candidate, isPasted ? getPastedNameQ(shots, index, candidate.type) : candidate.name));
+	setShots((prev) => [...prev, ...fresh]);
+	await Promise.all(fresh.map((shot) => putUploadQ(shot, setShots)));
+}
+
+async function getCandidateQ(file) {
+	const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+	return { file, name: file.name, bytes: file.size, type: getImageTypeQ(head) };
+}
+
+// the signature only: the server reads the whole header and stays the judge → the page may refuse less, never more
+function getImageTypeQ(bytes) {
+	const text = (start, end) => String.fromCharCode(...bytes.slice(start, end));
+	if (bytes.length >= PNG_SIGNATURE_Q.length && PNG_SIGNATURE_Q.every((byte, index) => bytes[index] === byte)) return "png";
+	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
+	if (text(0, 6) === "GIF87a" || text(0, 6) === "GIF89a") return "gif";
+	if (text(0, 4) === "RIFF" && text(8, 12) === "WEBP") return "webp";
+	return null;
+}
+
+/** The files that fit the type, the size and the count of one order `{ added }`, and the one line naming the rest (null when none). */
+function getAddPlanQ(count, candidates) {
+	const fitting = candidates.filter((candidate) => candidate.type !== null && candidate.bytes <= IMAGES_Q.BYTES_MAX);
+	const added = fitting.slice(0, Math.max(0, IMAGES_Q.MAX - count));
+	const refused = candidates.filter((candidate) => !fitting.includes(candidate));
+	return { added, refusal: getRefusalLineQ(refused, fitting.length - added.length) };
+}
+
+function getRefusalLineQ(refused, overflow) {
+	const megabytes = IMAGES_Q.BYTES_MAX / IMAGES_Q.MB;
+	if (refused.length === 0) return overflow === 0 ? null : `Up to ${IMAGES_Q.MAX} images per order: ${overflow} ${overflow === 1 ? "was" : "were"} not added.`;
+	if (refused.length === 1 && overflow === 0) {
+		const [file] = refused;
+		return `${file.name} was not added: ${file.type === null ? IMAGES_Q.TYPES_LINE : `over ${megabytes} MB`}.`;
+	}
+	const cap = overflow > 0 ? ` and ${IMAGES_Q.MAX} per order` : "";
+	return `${refused.length + overflow} files were not added: ${IMAGES_Q.TYPES_LINE}, up to ${megabytes} MB each${cap}.`;
+}
+
+function getPastedNameQ(shots, index, type) {
+	const pasted = shots.filter((shot) => shot.name.startsWith(`${IMAGES_Q.PASTED} `)).length;
+	return `${IMAGES_Q.PASTED} ${pasted + index + 1}.${IMAGES_Q.EXTENSION[type]}`;
+}
+
+// uploading → the picture from the browser's own memory until the server holds it
+function getShotQ(candidate, name) {
+	shotSeqQ += 1;
+	return { key: `shot-${shotSeqQ}`, name, bytes: candidate.bytes, status: "uploading", src: URL.createObjectURL(candidate.file), file: candidate.file, id: null, cause: null };
+}
+
+function putUploadQ(shot, setShots) {
+	const upload = sendImageQ(shot.file, shot.name).then((answer) => {
+		const result = getUploadResultQ(answer);
+		setShots((prev) => prev.map((one) => (one.key === shot.key ? { ...one, ...result } : one)));
+		if (result.status === "stored") URL.revokeObjectURL(shot.src);
+		return result;
+	});
+	UPLOADS_Q.set(shot.key, upload);
+	return upload;
+}
+
+function putRetryQ(shot, setShots) {
+	if (!shot) return;
+	setShots((prev) => prev.map((one) => (one.key === shot.key ? { ...one, status: "uploading", cause: null } : one)));
+	putUploadQ(shot, setShots);
+}
+
+function deleteShotQ(shot, setShots) {
+	if (!shot) return;
+	UPLOADS_Q.delete(shot.key);
+	if (shot.src.startsWith("blob:")) URL.revokeObjectURL(shot.src);
+	setShots((prev) => prev.filter((one) => one.key !== shot.key));
+}
+
+// one image per request as the raw body under one fixed type → the server's byte check alone decides; the name is a label only
+async function sendImageQ(file, name) {
+	try {
+		const response = await fetch(`${OWNER_API_Q}/images?name=${encodeURIComponent(getUploadNameQ(name))}`, {
+			method: "POST",
+			headers: { Accept: "application/json", "Content-Type": "application/octet-stream" },
+			body: file,
+		});
+		return { status: response.status, data: await response.json().catch(() => null) };
+	} catch {
+		return { status: 0, data: null };
+	}
+}
+
+// the upload's label is one line of at most NAME_MAX characters
+function getUploadNameQ(name) {
+	return name.replace(/\p{Cc}/gu, " ").trim().slice(0, IMAGES_Q.NAME_MAX).trim() || "image";
+}
+
+function getUploadResultQ(answer) {
+	const id = answer.data?.id;
+	if (answer.status >= 200 && answer.status < 300 && typeof id === "string") return { status: "stored", id, src: `${OWNER_API_Q}/images/${id}`, cause: null };
+	return { status: "failed", cause: getUploadCauseQ(answer) };
+}
+
+function getUploadCauseQ(answer) {
+	if (answer.status === 0) return "the monitor did not answer";
+	const reason = answer.data?.reason;
+	return typeof reason === "string" && reason !== "" ? reason : `the monitor answered ${answer.status}`;
+}
+
+// every image already stored → sent at once; one still uploading → the send waits for it (Sending…)
+function sendWithImagesQ(shots, send, setWaiting) {
+	if (shots.every((shot) => shot.status === "stored")) return send(shots.map((shot) => shot.id));
+	return sendAfterUploadsQ(shots, send, setWaiting);
+}
+
+async function sendAfterUploadsQ(shots, send, setWaiting) {
+	setWaiting(true);
+	const ids = await getStoredIdsQ(shots);
+	setWaiting(false);
+	return ids === null ? false : send(ids);
+}
+
+/** The ids of the images in their order once every upload settled; any image not stored → null and nothing is sent. */
+async function getStoredIdsQ(shots) {
+	const results = await Promise.all(shots.map((shot) => UPLOADS_Q.get(shot.key) ?? shot));
+	return results.every((result) => result.status === "stored") ? results.map((result) => result.id) : null;
+}
+
+function getImageBodyQ(body, ids) {
+	return ids.length > 0 ? { ...body, attachmentIds: ids } : body;
+}
+
+function getImageCountLineQ(shots) {
+	const bytes = shots.reduce((sum, shot) => sum + shot.bytes, 0);
+	return `${shots.length} ${shots.length === 1 ? "image" : "images"} · ${getSizeTextQ(bytes)}`;
+}
+
+function getSizeTextQ(bytes) {
+	return bytes >= IMAGES_Q.MB ? `${(bytes / IMAGES_Q.MB).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
+}
+
+/** What the note slot says about the images `{ tone, text, retryKey }`: a hanging file, else a failed upload, else uploads running; else null. */
+function getImageNoteQ(shots, isOver) {
+	if (isOver) return { tone: "info", text: "Drop to add images.", retryKey: null };
+	const failed = shots.find((shot) => shot.status === "failed");
+	if (failed) return { tone: "crit", text: `${failed.name} could not be uploaded: ${failed.cause}.`, retryKey: failed.key };
+	const uploading = shots.filter((shot) => shot.status === "uploading").length;
+	if (uploading > 0) return { tone: "info", text: `Uploading ${uploading} ${uploading === 1 ? "image" : "images"}…`, retryKey: null };
+	return null;
+}
+
+// a file over the zone → the box shows the drop state; leaving it for a child of the zone is no leave
+function useDropZoneQ(onFiles) {
+	const [isOver, setOver] = useStateQ(false);
+	const hasFiles = (event) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+	const handlers = {
+		onDragOver: (event) => {
+			if (!hasFiles(event)) return;
+			event.preventDefault();
+			setOver(true);
+		},
+		onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOver(false); },
+		onDrop: (event) => {
+			if (!hasFiles(event)) return;
+			event.preventDefault();
+			setOver(false);
+			onFiles(Array.from(event.dataTransfer.files));
+		},
+	};
+	return { isOver, handlers };
+}
+
+// a file dropped outside a composer does nothing, never replacing the page with the file
+function usePageDropGuardQ() {
+	useEffectQ(() => {
+		const stop = (event) => {
+			if (event.defaultPrevented || !Array.from(event.dataTransfer?.types ?? []).includes("Files")) return;
+			event.preventDefault();
+			event.dataTransfer.dropEffect = "none";
+		};
+		window.addEventListener("dragover", stop);
+		window.addEventListener("drop", stop);
+		return () => {
+			window.removeEventListener("dragover", stop);
+			window.removeEventListener("drop", stop);
+		};
+	}, []);
 }
 
 function ReLineQ({ title, onDrop }) {

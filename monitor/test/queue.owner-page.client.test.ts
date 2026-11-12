@@ -9,7 +9,9 @@ import { randomUUID } from "node:crypto";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { messageBodySchema } from "../src/server/queue/schemas.js";
+import { imageUploadQuerySchema, messageBodySchema, replyBodySchema } from "../src/server/queue/schemas.js";
+import { getImageFacts } from "../src/server/queue/image-format.js";
+import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1144,7 +1146,7 @@ function buildOrders(overrides: Record<string, unknown> = {}) {
   return {
     isOpen: true, open: () => undefined, close: () => undefined, showEarlier: () => undefined, resend: () => undefined,
     thread: { status: "ready", items: [], nextCursor: null, error: null },
-    composer: { text: "", isBusy: false, error: null }, setText: () => undefined, send: () => undefined, reply: null, linkReply: () => undefined, read: () => undefined, ...overrides,
+    composer: { text: "", isBusy: false, error: null }, setText: () => undefined, setImages: () => undefined, send: () => undefined, reply: null, linkReply: () => undefined, read: () => undefined, ...overrides,
   };
 }
 
@@ -1679,4 +1681,173 @@ test("a row's age carries no verb", () => {
     const text = collectText(render("QueueRowQ", { row, isSelected: false, view: { isNameShown: true, isAccountShown: false }, onSelect: () => undefined }));
     assert.doesNotMatch(text, /\b(asked|sent)\b/, text);
   }
+});
+
+// Real 3 × 2 files, the same bytes the upload route's own tests store; WebP is a real 1 × 1 lossless file
+const SAMPLE_IMAGE = {
+  png: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGP4z8AAQQxwFgBB0gX7h/C5SAAAAABJRU5ErkJggg==", "base64"),
+  gif: Buffer.from("R0lGODdhAwACAJEAAAAAAP8AAP///wAAACH5BAQAAAAALAAAAAADAAIAAAICjF8AOw==", "base64"),
+  webp: Buffer.from("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "base64"),
+  jpeg: Buffer.from("/9j/4AAQSkZJRgABAQAASABIAAD/wAARCAACAAMDASIAAhEBAxEB/9oADAMBAAIRAxEAPwD4vooor+Uz/fw//9k=", "base64"),
+} as const;
+const IMAGE_ID = ["0b6f3c1e-7a2d-4e8b-9c5f-1d2e3f4a5b6c", "1c7a4d2f-8b3e-4f9c-8d6a-2e3f4a5b6c7d", "2d8b5e3a-9c4f-4a0d-9e7b-3f4a5b6c7d8e"];
+const shot = (index: number, fields: Record<string, unknown> = {}) => ({ key: `s${index}`, name: `shot-${index + 1}.png`, bytes: 1258291, status: "stored", id: IMAGE_ID[index], src: `/api/queue/owner/images/${IMAGE_ID[index]}`, ...fields });
+
+describe("images in a composer", () => {
+  const IMAGES = vm.runInContext("IMAGES_Q", screen) as { MAX: number; BYTES_MAX: number; NAME_MAX: number };
+
+  // the page checks a file before it uploads it → it may refuse less than the server, never more
+  const sniffs = [
+    ...Object.entries(SAMPLE_IMAGE).map(([type, bytes]) => ({ name: `a real ${type}`, bytes })),
+    { name: "a PDF renamed .png", bytes: Buffer.from("%PDF-1.7\n1 0 obj << >> endobj\n") },
+    { name: "an SVG", bytes: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>') },
+    { name: "an empty file", bytes: Buffer.alloc(0) },
+  ];
+  for (const row of sniffs) {
+    test(`the page reads the type from the bytes as the server does: ${row.name}`, () => {
+      assert.equal(call("getImageTypeQ", new Uint8Array(row.bytes)), getImageFacts(row.bytes)?.type ?? null);
+    });
+  }
+
+  test("the page's limits are the server's: 8 ids pass a reply and 9 do not, 10 MB is the upload cap, a long or two-line name still passes", () => {
+    const ids = (count: number) => Array.from({ length: count }, () => randomUUID());
+    assert.equal(replyBodySchema.safeParse({ text: "see the shots", attachmentIds: ids(IMAGES.MAX) }).success, true);
+    assert.equal(replyBodySchema.safeParse({ text: "see the shots", attachmentIds: ids(IMAGES.MAX + 1) }).success, false);
+    assert.equal(IMAGES.BYTES_MAX, IMAGE_BYTES_MAX);
+    for (const name of [`${"화면".repeat(200)}.png`, "line one\nline two.png", "\t"]) {
+      assert.equal(imageUploadQuerySchema.safeParse({ name: call("getUploadNameQ", name) }).success, true, JSON.stringify(name));
+    }
+  });
+
+  const file = (name: string, type: string | null, bytes = 1258291) => ({ name, type, bytes });
+  // spec §9.8 → Limits: the files that pass are still added; one line says what was not
+  const plans = [
+    { name: "three images to an empty box are all added", count: 0, files: [file("a.png", "png"), file("b.jpg", "jpeg"), file("c.webp", "webp")], added: ["a.png", "b.jpg", "c.webp"], line: null },
+    { name: "past eight the rest are counted", count: 6, files: [file("a.png", "png"), file("b.png", "png"), file("c.png", "png"), file("d.png", "png")], added: ["a.png", "b.png"], line: "Up to 8 images per order: 2 were not added." },
+    { name: "a PDF is named", count: 0, files: [file("plan.pdf", null), file("a.png", "png")], added: ["a.png"], line: "plan.pdf was not added: only PNG, JPEG, WebP or GIF images." },
+    { name: "a file over 10 MB is named", count: 0, files: [file("shot-12.png", "png", 10 * 1024 * 1024 + 1)], added: [], line: "shot-12.png was not added: over 10 MB." },
+    { name: "exactly 10 MB passes", count: 0, files: [file("big.png", "png", 10 * 1024 * 1024)], added: ["big.png"], line: null },
+    { name: "several refused at once are counted", count: 0, files: [file("plan.pdf", null), file("logo.svg", null), file("huge.png", "png", 11 * 1024 * 1024)], added: [], line: "3 files were not added: only PNG, JPEG, WebP or GIF images, up to 10 MB each." },
+    { name: "a refused type and the cap together are counted", count: 7, files: [file("plan.pdf", null), file("a.png", "png"), file("b.png", "png")], added: ["a.png"], line: "2 files were not added: only PNG, JPEG, WebP or GIF images, up to 10 MB each and 8 per order." },
+  ];
+  for (const row of plans) {
+    test(`adding files: ${row.name}`, () => {
+      const plan = call<{ added: Array<{ name: string }>; refusal: string | null }>("getAddPlanQ", row.count, row.files);
+      assert.deepEqual([plan.added.map((one) => one.name), plan.refusal], [row.added, row.line]);
+    });
+  }
+
+  const counts = [
+    { name: "three images in MB", shots: [shot(0), shot(1), shot(2, { bytes: 1258292 })], line: "3 images · 3.6 MB" },
+    { name: "one small image in KB", shots: [shot(0, { bytes: 300 * 1024 })], line: "1 image · 300 KB" },
+  ];
+  for (const row of counts) test(`the count after the thumbnails: ${row.name}`, () => assert.equal(call("getImageCountLineQ", row.shots), row.line));
+
+  // spec §9.8 / §10: what the note slot says about the images, when nothing else is said there
+  const notes = [
+    { name: "a file hangs over the box", shots: [shot(0)], isOver: true, note: { tone: "info", text: "Drop to add images.", retryKey: null } },
+    { name: "a failed upload names the file and its cause, with Try again", shots: [shot(0), shot(2, { status: "failed", id: undefined, cause: "the monitor did not answer" })], isOver: false, note: { tone: "crit", text: "shot-3.png could not be uploaded: the monitor did not answer.", retryKey: "s2" } },
+    { name: "uploads still running are counted", shots: [shot(0, { status: "uploading" }), shot(1, { status: "uploading" }), shot(2)], isOver: false, note: { tone: "info", text: "Uploading 2 images…", retryKey: null } },
+    { name: "every image stored says nothing", shots: [shot(0)], isOver: false, note: null },
+  ];
+  for (const row of notes) test(`the image note: ${row.name}`, () => assert.deepEqual(call("getImageNoteQ", row.shots, row.isOver), row.note));
+
+  const upload = async (status: number, answer: unknown) => {
+    const requests: Array<{ url: string; method: string; type: string; body: unknown }> = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      URL: { createObjectURL: () => "blob:queue/1", revokeObjectURL: () => undefined },
+      fetch: async (url: string, init: { method: string; headers: Record<string, string>; body: unknown }) => {
+        requests.push({ url, method: init.method, type: init.headers["Content-Type"], body: init.body });
+        return { status, json: async () => answer };
+      },
+    })) as ScreenModule;
+    const png = new File([SAMPLE_IMAGE.png], "shot 1.png", { type: "image/heic" });
+    let shots: unknown[] = [];
+    const errors: unknown[] = [];
+    await (module.putFilesQ as (deps: unknown) => Promise<void>)({
+      files: [png], shots: [], setShots: (next: (prev: unknown[]) => unknown[]) => { shots = next(shots); }, putError: (error: unknown) => errors.push(error),
+    });
+    return { requests, shots: getPlain(shots) as Array<Record<string, unknown>>, errors, png };
+  };
+
+  test("an added image is uploaded as raw bytes under a fixed type with its name as a label, and its thumbnail then shows the stored copy", async () => {
+    const result = await upload(201, { id: IMAGE_ID[0], name: "shot 1.png", type: "png", bytes: 76, width: 3, height: 2 });
+    assert.deepEqual(result.requests.map(({ url, method, type }) => [url, method, type]), [["/api/queue/owner/images?name=shot%201.png", "POST", "application/octet-stream"]]);
+    assert.equal(result.requests[0]?.body, result.png);
+    assert.deepEqual(result.shots.map(({ name, status, id, src }) => ({ name, status, id, src })), [{ name: "shot 1.png", status: "stored", id: IMAGE_ID[0], src: `/api/queue/owner/images/${IMAGE_ID[0]}` }]);
+    assert.deepEqual(result.errors, [null]);
+  });
+
+  test("a refused upload keeps the thumbnail as failed with the server's cause", async () => {
+    const result = await upload(415, { error: "unsupported_image", reason: "only PNG, JPEG, WebP or GIF images are taken" });
+    assert.deepEqual(result.shots.map(({ status, cause }) => ({ status, cause })), [{ status: "failed", cause: "only PNG, JPEG, WebP or GIF images are taken" }]);
+  });
+
+  const report = (draft: Record<string, unknown>) => {
+    const { calls, queue } = buildQueue();
+    return { calls, tree: render("SheetFootQ", { item: buildItem({ kind: "report" }), draft, queue, isBusy: false, error: null }) };
+  };
+
+  test("a report's box shows each image with its remove button and the count, and takes more by its Add images button", () => {
+    const { tree } = report({ text: "", images: [shot(0), shot(1)] });
+    assert.deepEqual(findNodes(tree, (node) => node.type === "img").map((node) => [node.props.alt, node.props.src]), [["shot-1.png", shot(0).src], ["shot-2.png", shot(1).src]]);
+    assert.deepEqual(findNodes(tree, (node) => /^Remove /.test(String(node.props?.["aria-label"]))).map((node) => node.props["aria-label"]), ["Remove shot-1.png", "Remove shot-2.png"]);
+    assert.ok(collectText(tree).includes("2 images · 2.4 MB"), collectText(tree));
+    assert.equal(findNodes(tree, (node) => node.props?.["aria-label"] === "Add images").length, 1);
+    const [input] = findNodes(tree, (node) => node.type === "input" && node.props.type === "file");
+    assert.deepEqual([input?.props.accept, input?.props.multiple], ["image/png,image/jpeg,image/webp,image/gif", true]);
+  });
+
+  test("a decision's box takes no images", () => {
+    const tree = render("SheetFootQ", { item: buildItem(), draft: {}, queue: buildQueue().queue, isBusy: false, error: null });
+    assert.equal(findNodes(tree, (node) => node.props?.["aria-label"] === "Add images").length, 0);
+  });
+
+  // spec §8: an image counts as content for the ink and for Mark as read; an order is text, so images alone are refused
+  const reportRows = [
+    { name: "images alone put the ink on Send order", draft: { images: [shot(0)] }, press: null, ink: "Send order", calls: [] },
+    { name: "Mark as read with an image in the box says the order is unsent", draft: { images: [shot(0)] }, press: "Mark as read", ink: "Send order", calls: [["setDraft", 41, { error: "Unsent order in the field. Send it, or clear it first." }]] },
+    { name: "Send order with images and no text asks for the order", draft: { images: [shot(0)] }, press: "Send order", ink: "Send order", calls: [["setDraft", 41, { error: "Write the order, then send." }]] },
+    { name: "Send order with text and stored images sends their ids in order", draft: { text: "see the red box", images: [shot(1), shot(0)] }, press: "Send order", ink: "Send order", calls: [["settle", 41, "reply", { text: "see the red box", attachmentIds: [IMAGE_ID[1], IMAGE_ID[0]] }]] },
+  ];
+  for (const row of reportRows) {
+    test(`a report with images: ${row.name}`, () => {
+      const { calls, tree } = report(row.draft);
+      const buttons = findNodes(tree, (node) => node.type === "button" && /\bbtn lg\b/.test(String(node.props.className)));
+      assert.deepEqual(buttons.filter((node) => /\bprimary\b/.test(String(node.props.className))).map((node) => collectText(node)), [row.ink]);
+      if (row.press) (buttonLabelled(tree, row.press)[0]?.props.onClick as () => void)();
+      assert.deepEqual(getPlain(calls), row.calls);
+    });
+  }
+
+  test("an order send with stored images posts their ids beside the text", async () => {
+    const posts: unknown[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      fetch: async (_url: string, init: { body: string }) => { posts.push(JSON.parse(init.body)); return { status: 201, json: async () => ({ items: [] }) }; },
+    })) as ScreenModule;
+    let composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null, images: [shot(0)] };
+    await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
+      body: { sessionIds: [SESSION_ID], text: "rebase on main" }, names: ["gersona"], shots: [shot(0)],
+      setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); }, setStatus: () => undefined, onSent: () => undefined,
+    });
+    assert.deepEqual(getPlain(posts), [{ sessionIds: [SESSION_ID], text: "rebase on main", attachmentIds: [IMAGE_ID[0]] }]);
+    assert.deepEqual(getPlain(composer), { text: "", isBusy: false, error: null });
+  });
+
+  test("an order send with an image that failed to upload posts nothing and keeps the box", async () => {
+    const posts: unknown[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      fetch: async (_url: string, init: { body: string }) => { posts.push(JSON.parse(init.body)); return { status: 201, json: async () => ({ items: [] }) }; },
+    })) as ScreenModule;
+    const failed = shot(0, { status: "failed", id: undefined, cause: "the monitor did not answer" });
+    let composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null, images: [failed] };
+    const isDone = await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
+      body: { sessionIds: [SESSION_ID], text: "rebase on main" }, names: ["gersona"], shots: [failed],
+      setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); }, setStatus: () => undefined, onSent: () => undefined,
+    });
+    assert.deepEqual([isDone, posts.length, (getPlain(composer) as { text: string; isBusy: boolean }).text, (getPlain(composer) as { isBusy: boolean }).isBusy], [false, 0, "rebase on main", false]);
+  });
 });

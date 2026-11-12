@@ -1047,6 +1047,102 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: 1 1 auto;
 	min-width: 0;
 }
+/* a box that takes images (§9.8): Add images on its last line at its end, 4 from the edge; the text keeps that 40 free */
+.queue-compose-box.has-images {
+	position: relative;
+}
+.queue-compose-box.has-images > .queue-compose-text {
+	padding-inline-end: calc(var(--ctl-min-h) + 2 * var(--space-1));
+}
+.queue-compose-add {
+	position: absolute;
+	inset-inline-end: var(--space-1);
+	inset-block-end: var(--space-1);
+}
+/* a file hanging over the composer (or the order card) → ink edge + the selection tint */
+.queue-compose-box.is-drop {
+	border-color: rgb(var(--ink));
+	background: var(--tint-select);
+}
+/* the thumbnails row inside the box, above the text; the count follows the last thumbnail on the same wrapping line */
+.queue-thumbs {
+	--queue-thumb: 56px;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-2) 0;
+}
+.queue-thumb-list {
+	display: contents;
+}
+.queue-thumb {
+	position: relative;
+	flex: none;
+	width: var(--queue-thumb);
+	height: var(--queue-thumb);
+}
+.queue-thumb > img,
+.queue-thumb-failed {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--radius-control);
+}
+.queue-thumb-failed {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: rgb(var(--crit));
+}
+.queue-thumb.is-busy > img {
+	opacity: 0.5;
+}
+/* a 24 target holding the 20 square, at the thumbnail's top end corner; always shown, never on hover only */
+.queue-thumb-remove {
+	position: absolute;
+	top: calc(-1 * var(--space-1) / 2);
+	inset-inline-end: calc(-1 * var(--space-1) / 2);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+}
+.queue-thumb-remove > span {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	background: rgb(var(--elev));
+	border-radius: var(--radius-inline);
+	color: rgb(var(--ink));
+	font-size: var(--fs-meta);
+	line-height: 1;
+}
+.queue-thumb-remove:focus-visible {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: 0;
+	border-radius: var(--radius-inline);
+}
+.queue-thumbs-count {
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+.queue-note-failure {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+}
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
    발산하던 idiom(드로어 hairline · DetailMetric ring 타일 · i-card-shadow)을 단일 수렴점으로.
