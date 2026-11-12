@@ -1403,7 +1403,7 @@ model QueueSession {
   // Raw `ps -o lstart=` under TZ=UTC, server-read → compared as a string, never parsed
   processStartTime         String                  @map("process_start_time") @db.VarChar(64)
   // Retired column, kept for history rows → no channel reads it; register clears it to NULL
-  socketPath              String?                 @map("socket_path")
+  socketPath               String?                 @map("socket_path")
   permissionHint           QueuePermissionHint?    @map("permission_hint")
   launchHint               QueueLaunchHint?        @map("launch_hint")
   state                    QueueSessionState
