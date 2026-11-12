@@ -221,6 +221,31 @@ describe("card state lines", () => {
     });
   }
 
+  const ANSWERED_AT = "2026-11-12T04:05:17.482Z";
+  const answered = (overrides: Record<string, unknown>) => buildItem({ status: "delivered", answeredAt: ANSWERED_AT, isAnsweredOutside: false, ...overrides });
+  // the line names when, by which route and on which request signal; only an unrecorded answer is flagged
+  const answerRows = [
+    { name: "an answer on fetch metadata", item: answered({ answerRecord: { route: "answer", signal: "fetch_metadata" } }), words: ["Answered", "same-origin request"], isFlagged: false },
+    { name: "a reply on the Origin header alone", item: answered({ kind: "report", answerRecord: { route: "reply", signal: "origin" } }), words: ["Replied", "Origin header"], isFlagged: false },
+    { name: "an owner message", item: answered({ answerRecord: { route: "message", signal: "fetch_metadata" } }), words: ["Sent as a message"], isFlagged: false },
+    { name: "an answer from before the record", item: answered({ answerRecord: { route: "answer", signal: "before_record" } }), words: ["Answered", "before answers were recorded"], isFlagged: false },
+    { name: "an answer with no record", item: answered({ answerRecord: null, isAnsweredOutside: true }), words: ["Answered outside the Queue page"], isFlagged: true },
+  ];
+  for (const row of answerRows) {
+    test(`answer record line: ${row.name}`, () => {
+      const tree = render("CardStateQ", { item: row.item });
+      const text = collectText(tree);
+      for (const word of row.words) assert.ok(text.includes(word), text);
+      assert.ok(text.includes((realUi.formatKstDateTime as (iso: string) => string)(ANSWERED_AT)), text);
+      assert.equal(findNodes(tree, (node) => /\btext-warn\b/.test(String(node.props?.className ?? ""))).length, row.isFlagged ? 1 : 0, text);
+    });
+  }
+
+  test("an item with no answer carries no answer record line", () => {
+    const text = collectText(render("CardStateQ", { item: buildItem({ answerRecord: null, isAnsweredOutside: false }) }));
+    assert.doesNotMatch(text, /Answered|Replied|Sent as/);
+  });
+
   test("a wrapper-launched session's card names the same-uid risk", () => {
     const text = collectText(render("CardStateQ", { item: buildItem({ session: buildSession({ launchHint: "accept_wrapper" }) }) }));
     assert.match(text, /any same-uid process can drive this bypass session/);

@@ -49,6 +49,16 @@ const SKIP_TEXT_Q = {
 // outage words come from the shared copy owner (ui.jsx → getErrorCopy) → one outage reads one way across card, region and actions
 const OUTAGE_KINDS_Q = new Set(["network", "database", "server"]);
 
+// answer record: the route that answered, and the request signal the page-origin gate saw
+const ANSWER_ROUTE_LABEL_Q = { answer: "Answered", reply: "Replied", message: "Sent as a message" };
+// the gate proves a same-origin request, not which monitor page sent it → the line claims only that
+const ANSWER_SIGNAL_LABEL_Q = {
+	fetch_metadata: "through the monitor (same-origin request)",
+	origin: "through the monitor (same-origin by its Origin header)",
+	before_record: "before answers were recorded",
+};
+const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor holds no record of this answer";
+
 const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
 const WRAPPER_RISK_NOTE_Q =
 	"Started through the accept wrapper: on macOS the socket token is optional, so any same-uid process can drive this bypass session with no prompt.";
@@ -540,7 +550,7 @@ function DraftFieldQ({ id, label, value, onChange }) {
 }
 
 /**
- * Deviation word, the pull command where the owner must act in the session, precedence notes and the wrapper risk.
+ * Answer record, deviation word, the pull command where the owner must act in the session, precedence notes and the wrapper risk.
  * @param cliPath - the installed queue CLI the server resolved (GA_ROOT-aware)
  */
 function CardStateQ({ item, cliPath }) {
@@ -548,6 +558,7 @@ function CardStateQ({ item, cliPath }) {
 	const notes = getCardNotesQ(item);
 	return (
 		<Stack gap="label">
+			<AnswerLineQ item={item} />
 			{item.deviation && (
 				<p className="fs-meta">
 					<span aria-hidden="true" className="text-warn">{`${window.UI.TONE_GLYPH.warn} `}</span>
@@ -560,6 +571,28 @@ function CardStateQ({ item, cliPath }) {
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
 			{item.session.launchHint === "accept_wrapper" && <p className="fs-meta text-dim">{WRAPPER_RISK_NOTE_Q}</p>}
 		</Stack>
+	);
+}
+
+/** Answer record line `{ text, isOutside }`; an item with no answer → null. */
+function getAnswerLineQ(item) {
+	const time = item.answeredAt ? window.UI.formatKstDateTime(item.answeredAt) : null;
+	if (item.isAnsweredOutside) return { text: [OUTSIDE_ANSWER_LABEL_Q, time].filter(Boolean).join(" · "), isOutside: true };
+	const record = item.answerRecord;
+	if (!record) return null;
+	const route = ANSWER_ROUTE_LABEL_Q[record.route] ?? record.route;
+	return { text: [route, time, ANSWER_SIGNAL_LABEL_Q[record.signal] ?? record.signal].filter(Boolean).join(" "), isOutside: false };
+}
+
+function AnswerLineQ({ item }) {
+	const line = getAnswerLineQ(item);
+	if (line === null) return null;
+	if (!line.isOutside) return <p className="fs-meta text-dim">{line.text}</p>;
+	return (
+		<p className="fs-meta">
+			<span aria-hidden="true" className="text-warn">{`${window.UI.TONE_GLYPH.warn} `}</span>
+			{line.text}
+		</p>
 	);
 }
 
