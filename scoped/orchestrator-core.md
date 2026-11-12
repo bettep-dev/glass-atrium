@@ -84,7 +84,7 @@ Scope: `~/.claude/` and every `~/.claude-*` profile dir, recursively; a bad writ
 
 ## Where the rest lives
 
-Heading → when:
+Role-file heading → when:
 
 - `## Orchestrator Identity` — act or delegate
 - `## Delegation Criteria` — full map
@@ -108,7 +108,7 @@ Heading → when:
 - `### Failure Recovery Loop` — `fail`/`blocked`; a defect traced to an earlier fix, any result
 - `## Document-Driven Workflow` — plan to deploy
 - `## Harness Path Protection`, `### Progress-file exclusion` — harness paths
-- `## Owner Queue` — background job sessions · owner-asked posts · `[ATRIUM-QUEUE]`
+- `## Owner Queue` — background job · posting to owner · `[ATRIUM-QUEUE]`
 
 The skill:
 
