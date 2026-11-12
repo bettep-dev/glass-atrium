@@ -2897,8 +2897,9 @@ update_wire_hooks_post_apply() {
 #   * Trigger — the apply set alone: `npm ci` on monitor/package-lock.json or
 #     monitor/package.json; `prisma generate` after that install, or on
 #     monitor/prisma/schema.prisma or monitor/prisma.config.ts. A monitor whose
-#     dependencies were never installed is not healed here — the migrate step's documented
-#     no-op covers that state.
+#     dependencies were never installed is not healed here: the migrate step no-ops on it,
+#     but an apply touching monitor/ then fails the build with exit 9, whose recovery names
+#     db-setup (update_die_monitor_build).
 #   * Position — before the migrate step, so a release that bumps Prisma migrates with the
 #     CLI it pins; before the build, which is what stale dependencies break.
 #   * Registry reach — the updater's only one: `npm ci` here, on the trigger above, stdin
@@ -4162,11 +4163,16 @@ update_build_monitor_cli() {
   update_log "monitor not restarted by a CLI update — restart the monitor to load a server-side change"
 }
 
-# Exit 9 with the rebuild recovery. Args: $1 = what failed.
+# Exit 9 with the rebuild recovery; node_modules absent → the build cannot run until db-setup
+# installs them, so the recovery leads with that. Args: $1 = what failed.
 update_die_monitor_build() {
-  local monitor_dir
+  local monitor_dir recovery
   monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
-  update_die_code 9 "$1 (see the npm output above) — update files APPLIED but the monitor was NOT restarted; a type error leaves the previous dist in place. Fix the cause, then 'npm run build' in ${monitor_dir} before restarting the monitor"
+  recovery="Fix the cause, then 'npm run build' in ${monitor_dir}"
+  if [[ ! -d "${monitor_dir}/node_modules" ]]; then
+    recovery="The monitor dependencies are not installed (${monitor_dir}/node_modules absent): run '$(update_ga_root)/glass-atrium db-setup' (npm ci, prisma generate, migrate deploy), then 'npm run build' in ${monitor_dir}"
+  fi
+  update_die_code 9 "$1 (see the npm output above) — update files APPLIED but the monitor was NOT restarted; a type error leaves the previous dist in place. ${recovery} before restarting the monitor"
 }
 
 # ---------------------------------------------------------------------------

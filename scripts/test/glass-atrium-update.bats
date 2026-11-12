@@ -2025,6 +2025,26 @@ read_calls() {
   [[ "${output}" != *"update complete"* ]] || { echo "${output}"; return 1; }
 }
 
+@test "an exit-9 recovery names the dependency install exactly when the monitor's node_modules are absent" {
+  local row label state want_install modules="${INSTALL}/monitor/node_modules"
+  local -a rows=(
+    "dependencies never installed|absent|1"
+    "dependencies installed|present|0"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label state want_install <<<"${row}"
+    if ga_guard_path "${modules}"; then rm -rf -- "${modules:?}"; fi
+    [[ "${state}" == absent ]] || mkdir -p "${modules}/.bin"
+    NPM_RC_typecheck=1 run_cli_apply "monitor/src/server/app.ts"
+    [[ "${status}" -eq 9 ]] || { echo "${label}: ${output}"; return 1; }
+    if [[ "${want_install}" -eq 1 ]]; then
+      [[ "${output}" == *"node_modules absent"*"glass-atrium db-setup"*"npm run build"* ]] || { echo "${label}: ${output}"; return 1; }
+    else
+      [[ "${output}" != *"glass-atrium db-setup"* ]] || { echo "${label}: ${output}"; return 1; }
+    fi
+  done
+}
+
 @test "CLI apply that touches no monitor/ path never reaches the monitor build" {
   run_cli_apply "scripts/tool.sh"
 
