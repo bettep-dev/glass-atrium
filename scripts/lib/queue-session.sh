@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # queue-session.sh — the owner queue's session-side wire steps, shared by the SessionStart / SessionEnd
 # hooks and the queue CLI so their register fields cannot drift. Sourced, not executable.
-# Never puts the queue key or the messaging token on argv, stdout or a request body; sends a pid, never a start time.
+# Never puts the messaging token on argv, stdout or a request body; sends a pid, never a start time.
 
 if [[ -n "${_QUEUE_SESSION_LOADED:-}" ]]; then
   return 0
@@ -15,7 +15,6 @@ source "${BASH_SOURCE[0]%/*}/path-guard.sh"
 
 readonly QUEUE_CONNECT_TIMEOUT_S=1
 readonly QUEUE_MAX_TIME_S=2
-readonly QUEUE_KEY_SHAPE='^[A-Za-z0-9_-]{16,255}$'
 readonly QUEUE_UUID_SHAPE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 readonly QUEUE_PID_SHAPE='^[1-9][0-9]{0,9}$'
 # with the length cap: the monitor's TOKEN_SHAPE (socket-channel.ts); macOS regex caps a bound at 255
@@ -65,33 +64,20 @@ queue_get_socket_path() {
   if [[ "${socket}" == /* ]]; then printf '%s\n' "${socket}"; fi
 }
 
-# The queue key from its 0600 file → stdout (callers hand it to curl's stdin config only); non-zero when unprovisioned.
-queue_get_key() {
-  local key_file key
-  key_file="$(queue_get_root)/secrets/queue-key"
-  [[ -f "${key_file}" && -r "${key_file}" ]] || return 1
-  key="$(head -c 512 -- "${key_file}")"
-  key="${key%%[[:space:]]*}"
-  [[ "${key}" =~ ${QUEUE_KEY_SHAPE} ]] || return 1
-  printf '%s\n' "${key}"
-}
-
 # <method> <route> [json body] [max seconds] → the reply body, then a last line holding the HTTP status;
-# non-zero only with no reply at all (unprovisioned, unreachable or slow).
+# non-zero only with no reply at all (unreachable or slow).
 queue_send() {
-  local method="$1" route="$2" body="${3:-}" max_time="${4:-${QUEUE_MAX_TIME_S}}" key port
-  key="$(queue_get_key)" || return 1
+  local method="$1" route="$2" body="${3:-}" max_time="${4:-${QUEUE_MAX_TIME_S}}" port
   port="$(atrium_monitor_port 2>/dev/null)" || return 1
-  local -a args=(--silent --config - --connect-timeout "${QUEUE_CONNECT_TIMEOUT_S}" --max-time "${max_time}"
+  local -a args=(--silent --connect-timeout "${QUEUE_CONNECT_TIMEOUT_S}" --max-time "${max_time}"
     --request "${method}" --write-out '\n%{http_code}')
   if [[ -n "${body}" ]]; then
     args+=(--header 'content-type: application/json' --data-binary "${body}")
   fi
-  # key → curl's stdin config, never argv
-  printf 'header = "x-atrium-queue-key: %s"\n' "${key}" | curl "${args[@]}" "http://127.0.0.1:${port}${route}" 2>/dev/null
+  curl "${args[@]}" "http://127.0.0.1:${port}${route}" 2>/dev/null
 }
 
-# POST <route> <json body> [max seconds] → reply body on stdout; non-zero when unprovisioned, unreachable, slow or refused.
+# POST <route> <json body> [max seconds] → reply body on stdout; non-zero when unreachable, slow or refused.
 queue_post() {
   local reply status
   # shellcheck disable=SC2310  # no reply → this function's own failure, never an errexit

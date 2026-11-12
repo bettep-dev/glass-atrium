@@ -2,7 +2,7 @@
 # atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report or a decision, fetch an
 # item, pull this session's answered items, ack a delivery, withdraw an item, and register this session.
 # Run it by its absolute installed path with nothing in front — the one literal the settings allow rule names.
-# Exit codes: 0 done · 1 monitor unreachable, unprovisioned, failing or replying malformed · 2 refused by the
+# Exit codes: 0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the
 #   monitor · 3 the fetched item names another session (stop, take no action) · 64 usage or local validation
 
 set -Eeuo pipefail
@@ -95,7 +95,7 @@ Usage — run by this absolute path, no interpreter or env prefix in front, so t
   ${cli} help
 Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
-The session id comes from CLAUDE_CODE_SESSION_ID and the queue key from its 0600 file — pass neither.
+The session id comes from CLAUDE_CODE_SESSION_ID — never pass it.
 Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monitor · 3 item of another session · 64 usage
 Prompt-free in default permission mode, through this allow rule in the shared user settings:
   Bash(${cli}:*)
@@ -129,7 +129,7 @@ call_monitor() {
   local route="$2" reply status body reason
   # shellcheck disable=SC2310  # no reply → the named exit below
   reply="$(queue_send "$1" "${route}" "${3:-}" "${CLI_MAX_TIME_S}")" \
-    || fail 1 "no reply from the monitor on ${route} (down, slow, or the queue key is not provisioned)"
+    || fail 1 "no reply from the monitor on ${route} (down or slow)"
   status="${reply##*$'\n'}"
   body="${reply%$'\n'*}"
   case "${status}" in
@@ -257,7 +257,7 @@ register_session() {
   [[ -n "${pid}" ]] || fail 64 "CLAUDE_PID is unset or not a pid — run this inside a Claude Code session"
   # shellcheck disable=SC2310  # a failed register → the named exit below
   count="$(queue_register_session "" "${CLI_MAX_TIME_S}")" \
-    || fail 1 "register failed (monitor down, slow, refusing, or the queue key is not provisioned)"
+    || fail 1 "register failed (monitor down, slow or refusing)"
   printf 'registered this session with the Atrium queue\n'
   if ((count > 0)); then
     cli="$(queue_get_cli_path)"

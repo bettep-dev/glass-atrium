@@ -15,7 +15,6 @@ REGISTER_HOOK="${GA}/hooks/queue-session-register.sh"
 SESSION_ID="3f1c2b9a-7d4e-4f5a-9b6c-0e1d2c3b4a59"
 FOREIGN_SESSION_ID="0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 MSG_ID="6b0e7c1a-2f3d-4e5b-8a9c-1d2e3f4a5b6c"
-QUEUE_AUTH="k3yV4lue_0123456789abcdefABCDEF-xyz"
 SOCKET_AUTH="tok-81f3c2e9d0b7a6f5"
 REPORT='{"title":"Nightly backup failed twice","body":"The 02:00 run hit a full disk; rerun after cleanup?","isFreeTextAllowed":true,"linkedDocIds":[43944]}'
 DECISION='{"title":"Pick the retention window","body":"Backups now take 40 GB a week.","isFreeTextAllowed":false,"options":[{"code":"R1","label":"Keep 14 days","pros":"cheap","cons":"short history"},{"code":"R2","label":"Keep 30 days","pros":"longer history","cons":"twice the disk"}],"recommendedCode":"R1"}'
@@ -25,10 +24,8 @@ setup() {
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
     CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
-  mkdir -p "${GA_ROOT}/secrets" "${BATS_TEST_TMPDIR}/bin"
-  chmod 700 "${GA_ROOT}/secrets"
-  printf '%s\n' "${QUEUE_AUTH}" >"${GA_ROOT}/secrets/queue-key"
-  chmod 600 "${GA_ROOT}/secrets/queue-key"
+  # no secrets dir: a session needs nothing provisioned
+  mkdir -p "${BATS_TEST_TMPDIR}/bin"
   export CLAUDE_CODE_SESSION_ID="${SESSION_ID}"
   export CLAUDE_PID=4242
   export CLAUDE_CODE_MESSAGING_SOCKET="/tmp/cc-socks/4242.sock"
@@ -294,36 +291,35 @@ run_cli() {
   }
 }
 
-@test "the queue key and the messaging token never reach curl's argv" {
+@test "requests carry no queue key header and the messaging token never reaches curl's argv" {
   start_stub
   set_reply 200 '{"answeredWaiting":0}'
   run_cli register
   run_cli get 17
-  [[ -s "${BATS_TEST_TMPDIR}/curl-argv.log" ]] && ! grep -qF -e "${QUEUE_AUTH}" -e "${SOCKET_AUTH}" "${BATS_TEST_TMPDIR}/curl-argv.log" || {
+  [[ -s "${BATS_TEST_TMPDIR}/curl-argv.log" ]] && ! grep -qF "${SOCKET_AUTH}" "${BATS_TEST_TMPDIR}/curl-argv.log" || {
     cat "${BATS_TEST_TMPDIR}/curl-argv.log"
     return 1
   }
-  [[ "$(jq -r '.headers["x-atrium-queue-key"]' "${BATS_TEST_TMPDIR}/requests.log" | sort -u)" == "${QUEUE_AUTH}" ]] || {
+  [[ "$(jq -c '[.path, (.headers | has("x-atrium-queue-key"))]' "${BATS_TEST_TMPDIR}/requests.log")" == "$(printf '%s\n' '["/api/queue/sessions/register",false]' "[\"/api/queue/items/17?sessionId=${SESSION_ID}\",false]")" ]] || {
     cat "${BATS_TEST_TMPDIR}/requests.log"
     return 1
   }
 }
 
-@test "a monitor that is down, slow or unprovisioned fails with exit 1 and a message, within the timeout" {
+@test "a monitor that is down or slow fails with exit 1 and a message naming no provisioning, within the timeout" {
   local row condition started elapsed
-  for row in down slow unprovisioned; do
+  for row in down slow; do
     condition="${row}"
     stop_stub
     case "${condition}" in
       down) export ATRIUM_MONITOR_PORT=1 ;;
       slow) set_reply hang '' && start_stub ;;
-      unprovisioned) mv "${GA_ROOT}/secrets/queue-key" "${BATS_TEST_TMPDIR}/key.aside" && start_stub ;;
     esac
     : >"${BATS_TEST_TMPDIR}/requests.log"
     started=${SECONDS}
     run_cli get 17
     elapsed=$((SECONDS - started))
-    [[ "${status}" -eq 1 && -n "${stderr}" && -z "${output}" && "${elapsed}" -le 15 ]] || {
+    [[ "${status}" -eq 1 && -n "${stderr}" && "${stderr}" != *provision* && -z "${output}" && "${elapsed}" -le 15 ]] || {
       echo "row ${row}: status=${status} elapsed=${elapsed}s ${output}${stderr}"
       return 1
     }
@@ -360,6 +356,10 @@ run_cli() {
   # the settings proposal copies this rule → its prefix is the literal the pointer line and pending print
   grep -qxF "  Bash(${cli_path}:*)" <<<"${output}" || {
     echo "allow rule: ${output}"
+    return 1
+  }
+  [[ "${output}" != *"queue key"* && "${output}" != *provision* ]] || {
+    echo "help still names a provisioning step: ${output}"
     return 1
   }
 }

@@ -3,7 +3,7 @@
 # with the Atrium owner queue and, when answered items wait for it, prints one context line naming the
 # count and the CLI pending command — never answer text.
 # Disposition noop: fail-open, always exit 0 with nothing printed on any failure (monitor down, slow or
-# not provisioned). No block channel (SessionStart cannot block).
+# refusing). No block channel (SessionStart cannot block).
 
 set -Eeuo pipefail
 IFS=$'\n\t'

@@ -2,7 +2,7 @@
 # shellcheck disable=SC2154,SC2249,SC2312  # BATS_* and run results are set by bats; a masked status fails its comparison; each case arm is a row
 # The owner queue's session side: the SessionStart register hook and the SessionEnd deregister hook
 # against a stand-in monitor. Protects the wire fields (pid only, never a start time), the secrecy of
-# the queue key and the messaging token, the pointer line, and the fail-open exit.
+# the messaging token, the pointer line, and the fail-open exit.
 #
 # Run via: bats hooks/test/queue-session.bats
 # Requires: bats, bash 3.2+, jq, curl, python3
@@ -13,7 +13,6 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REGISTER_HOOK="${GA}/hooks/queue-session-register.sh"
 DEREGISTER_HOOK="${GA}/hooks/queue-session-deregister.sh"
 SESSION_ID="3f1c2b9a-7d4e-4f5a-9b6c-0e1d2c3b4a59"
-QUEUE_AUTH="k3yV4lue_0123456789abcdefABCDEF-xyz"
 SOCKET_AUTH="tok-81f3c2e9d0b7a6f5"
 
 setup() {
@@ -21,10 +20,8 @@ setup() {
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
     CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
-  mkdir -p "${GA_ROOT}/secrets" "${BATS_TEST_TMPDIR}/bin"
-  chmod 700 "${GA_ROOT}/secrets"
-  printf '%s\n' "${QUEUE_AUTH}" >"${GA_ROOT}/secrets/queue-key"
-  chmod 600 "${GA_ROOT}/secrets/queue-key"
+  # no secrets dir: a session needs nothing provisioned
+  mkdir -p "${BATS_TEST_TMPDIR}/bin"
   export CLAUDE_CODE_SESSION_ID="${SESSION_ID}"
   export CLAUDE_PID=4242
   export CLAUDE_CODE_MESSAGING_SOCKET="/tmp/cc-socks/4242.sock"
@@ -239,15 +236,12 @@ run_deregister() {
   }
 }
 
-@test "the queue key reaches the monitor as its header and never on curl's argv" {
+@test "both hooks reach the monitor with no queue key header" {
   start_stub
   run_register
-  [[ "$(jq -r 'select(.path == "/api/queue/sessions/register") | .headers["x-atrium-queue-key"]' "${BATS_TEST_TMPDIR}/requests.log")" == "${QUEUE_AUTH}" ]] || {
+  run_deregister
+  [[ "$(jq -c '[.path, (.headers | has("x-atrium-queue-key"))]' "${BATS_TEST_TMPDIR}/requests.log")" == $'["/api/queue/sessions/register",false]\n["/api/queue/sessions/deregister",false]' ]] || {
     cat "${BATS_TEST_TMPDIR}/requests.log"
-    return 1
-  }
-  [[ -s "${BATS_TEST_TMPDIR}/curl-argv.log" ]] && ! grep -qF "${QUEUE_AUTH}" "${BATS_TEST_TMPDIR}/curl-argv.log" || {
-    cat "${BATS_TEST_TMPDIR}/curl-argv.log"
     return 1
   }
 }
@@ -263,16 +257,15 @@ run_deregister() {
   }
 }
 
-@test "both hooks exit 0 silently within the timeout when the monitor is down, slow, refusing or not provisioned" {
+@test "both hooks exit 0 silently within the timeout when the monitor is down, slow or refusing" {
   local row condition hook started elapsed
-  for row in "down|register" "down|deregister" "slow|register" "slow|deregister" "refusing|register" "unprovisioned|register" "unprovisioned|deregister"; do
+  for row in "down|register" "down|deregister" "slow|register" "slow|deregister" "refusing|register"; do
     IFS='|' read -r condition hook <<<"${row}"
     stop_stub
     case "${condition}" in
       down) export ATRIUM_MONITOR_PORT=1 ;;
       slow) set_reply hang '' && start_stub ;;
-      refusing) set_reply 401 '{"error":"unauthorized"}' && start_stub ;;
-      unprovisioned) mv "${GA_ROOT}/secrets/queue-key" "${BATS_TEST_TMPDIR}/key.aside" 2>/dev/null || true && start_stub ;;
+      refusing) set_reply 403 '{"error":"forbidden_host"}' && start_stub ;;
     esac
     started=${SECONDS}
     if [[ "${hook}" == register ]]; then run_register; else run_deregister; fi
@@ -281,12 +274,6 @@ run_deregister() {
       echo "row ${row}: status=${status} elapsed=${elapsed}s ${output}${stderr}"
       return 1
     }
-    if [[ "${condition}" == unprovisioned ]]; then
-      [[ ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
-        echo "row ${row}: sent a request with no key"
-        return 1
-      }
-    fi
   done
 }
 

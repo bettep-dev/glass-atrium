@@ -123,8 +123,6 @@ calls_field() {
 
 @test "a session launched through the wrapper registers with the accept-wrapper launch hint" {
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
-  mkdir -p "${GA_ROOT}/secrets"
-  printf 'k3yV4lue_0123456789abcdefABCDEF-xyz\n' >"${GA_ROOT}/secrets/queue-key"
   printf '200\n{"answeredWaiting":0}' >"${BATS_TEST_TMPDIR}/reply"
   python3 -I "${GA}/hooks/test/lib/queue-monitor-stub.py" "${BATS_TEST_TMPDIR}/port" \
     "${BATS_TEST_TMPDIR}/requests.log" "${BATS_TEST_TMPDIR}/reply" &
