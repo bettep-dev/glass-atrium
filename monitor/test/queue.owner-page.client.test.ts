@@ -229,19 +229,53 @@ test("a draft held in page state reappears when its item is selected again", () 
   assert.equal(field?.props.value, "keep the shadow DB");
 });
 
-describe("card state lines", () => {
+// one word per recipient: received, not yet, or — only when the queue recorded it did not get there — not received
+describe("receipt words", () => {
+  // the facts render as a list of siblings → held in one host element, as the letterhead's slot holds them
+  const factsText = (item: unknown) => collectText(renderScreen(screen.React.createElement("p", null, screen.React.createElement(screen.LetterheadFactsQ as Component, { item }))) as RenderedNode);
   const rows = [
-    { name: "unacked", deviation: "unacked", expected: "Unacked" },
-    { name: "held", deviation: "held", expected: "Held" },
-    { name: "expired", deviation: "expired", expected: "Expired" },
-    { name: "resume pending", deviation: "resume_pending", expected: "Resume pending" },
+    { name: "an acknowledged order is received", item: { status: "delivered", deliveredAt: "2026-11-12T12:28:04.311Z" }, word: "Received" },
+    { name: "an answer waiting for its pull is not yet received", item: { status: "answered" }, word: "Not yet" },
+    { name: "an order handed over and not acknowledged yet is not yet received", item: { status: "delivering" }, word: "Not yet" },
+    { name: "a held order is not yet received", item: { status: "held", deviation: "held" }, word: "Not yet" },
+    { name: "an order whose automatic resume is still to come is not yet received", item: { status: "resume_pending", deviation: "resume_pending" }, word: "Not yet" },
+    { name: "an order its session never acknowledged is not received", item: { status: "unacked", deviation: "unacked", canResend: true }, word: "Not received" },
+    { name: "an unacknowledged order is not received while its session is marked for a resume", item: { status: "unacked", deviation: "unacked" }, word: "Not received" },
+    { name: "an expired order is not received", item: { status: "expired", deviation: "expired", canResend: true }, word: "Not received" },
+    { name: "an order whose automatic resume is used is not received", item: { status: "resume_pending", deviation: "resume_pending", canResend: true }, word: "Not received" },
   ];
   for (const row of rows) {
-    test(`deviation label: ${row.name}`, () => {
-      const text = collectText(render("CardStateQ", { item: buildItem({ status: row.deviation, deviation: row.deviation }), cliPath: CLI_PATH }));
-      assert.ok(text.includes(row.expected), text);
+    test(row.name, () => {
+      const item = buildItem({ kind: "message", answeredAt: "2026-11-12T12:26:40.118Z", ...row.item });
+      const text = factsText(item);
+      assert.ok(text.includes(row.word) && !(row.word === "Not yet" && text.includes("received")), text);
     });
   }
+
+  test("no surface names a deviation by its queue status", () => {
+    const words = /Unacked|Held|Expired|Resume pending|Session not reachable|Delivery off/;
+    for (const status of ["unacked", "held", "expired", "resume_pending"]) {
+      const item = buildItem({ kind: "message", status, deviation: status, answeredAt: "2026-11-12T12:26:40.118Z" });
+      const text = `${factsText(item)} ${collectText(render("CardStateQ", { item, cliPath: CLI_PATH }))}`;
+      assert.doesNotMatch(text, words, text);
+    }
+  });
+
+  const rollUps = [
+    { name: "some copies received counts them", statuses: ["delivered", "answered", "delivering"], facts: ["1 of 3 received"] },
+    { name: "every copy waiting reads not yet", statuses: ["answered", "delivering", "held"], facts: ["Not yet"] },
+    { name: "a copy not received follows the count as its own warning", statuses: ["delivered", "unacked", "answered"], facts: ["1 of 3 received", "1 not received"] },
+  ];
+  for (const row of rollUps) {
+    test(`an order to several sessions rolls up its receipts: ${row.name}`, () => {
+      const copies = row.statuses.map((status, index) => buildItem({ id: 90 + index, kind: "message", status, sendId: "send-1", answeredAt: "2026-11-12T12:26:40.118Z" }));
+      const facts = call<Array<{ text: string }>>("getRowFactsQ", { item: copies[0], copies }, false).map((fact) => fact.text);
+      assert.deepEqual(facts, ["Order", ...row.facts]);
+    });
+  }
+});
+
+describe("card state lines", () => {
 
   // an answered item waits for its session's pull → the owner learns whether a wait takes it, else how to pull it
   const pullRows = [

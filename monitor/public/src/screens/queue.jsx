@@ -24,12 +24,8 @@ const LIST_GROUPS_Q = {
 	inDelivery: { key: "inDelivery", label: "In delivery" },
 };
 
-const DEVIATION_LABEL_Q = {
-	unacked: "Unacked",
-	held: "Held",
-	expired: "Expired",
-	resume_pending: "Resume pending",
-};
+// one vocabulary on every surface (spec §9.4): whether a recipient has the order, never why it waits
+const RECEIPT_Q = { received: "Received", notYet: "Not yet", notReceived: "Not received" };
 
 const RESUME_RESULT_LABEL_Q = {
 	sent: "spawned",
@@ -761,11 +757,18 @@ function getSessionNameQ(session) {
 	return session.name ?? session.cwdTail;
 }
 
+// a settled receipt is a mark and a word, no shell (spec §9.4) → the mark rides the text, hidden from screen readers
 function RowFactsQ({ facts }) {
-	const { Badge } = window.UI;
-	return facts.map((fact, index) => (fact.badge
+	const { Badge, TONE_GLYPH } = window.UI;
+	return <>{facts.map((fact, index) => (fact.badge
 		? <Badge key={fact.text} fill={fact.badge}>{fact.text}</Badge>
-		: <span key={fact.text}>{index > 0 && !facts[index - 1].badge ? ` · ${fact.text}` : fact.text}</span>));
+		: (
+			<span key={fact.text}>
+				{index > 0 && !facts[index - 1].badge && " · "}
+				{fact.mark && <span aria-hidden="true" className={`text-${fact.mark}`}>{`${TONE_GLYPH[fact.mark]} `}</span>}
+				{fact.text}
+			</span>
+		)))}</>;
 }
 
 /**
@@ -783,14 +786,35 @@ function getRowFactsQ(row, isAccountShown) {
 	return [...account, ...getDeliveryFactsQ(item, copies)];
 }
 
-// ponytail: the deviation word stands for the receipt until the three receipt words land (spec §9.4, unit D)
 function getDeliveryFactsQ(item, copies) {
 	const images = item.attachments?.length ?? 0;
 	const route = item.kind === "decision" ? ["Answer", item.answer?.code].filter(Boolean).join(" ") : `Order${images > 0 ? ` · ${images} ${images === 1 ? "image" : "images"}` : ""}`;
-	const received = copies.length > 1 ? [{ text: `${copies.filter((copy) => copy.deliveredAt !== null).length} of ${copies.length} received` }] : [];
-	const deviations = copies.filter((copy) => copy.deviation);
-	const warn = deviations.length > 0 ? [{ text: DEVIATION_LABEL_Q[deviations[0].deviation] ?? deviations[0].deviation, badge: "warn" }] : [];
-	return [{ text: route }, ...received, ...warn];
+	return [{ text: route }, ...getReceiptFactsQ(copies)];
+}
+
+// one copy → its word · several → `2 of 3 received` (all waiting → Not yet), any not received → its own warning after the count
+function getReceiptFactsQ(copies) {
+	const receipts = copies.map(getReceiptQ);
+	if (receipts.length === 1) return [getReceiptFactQ(receipts[0])];
+	const received = receipts.filter((receipt) => receipt === "received").length;
+	const failed = receipts.filter((receipt) => receipt === "notReceived").length;
+	const count = received === 0 && failed === 0 ? getReceiptFactQ("notYet") : { text: `${received} of ${receipts.length} received` };
+	return [count, ...(failed > 0 ? [{ text: `${failed} not received`, badge: "warn" }] : [])];
+}
+
+function getReceiptFactQ(receipt) {
+	if (receipt === "received") return { text: RECEIPT_Q.received, mark: "ok" };
+	return { text: RECEIPT_Q[receipt], badge: receipt === "notYet" ? "tag" : "warn" };
+}
+
+/**
+ * The receipt of one copy: `received` once its session acknowledged it; `notReceived` once the queue recorded it did not get there
+ * (unacked, expired, or the set canResend names); every other state → `notYet`.
+ */
+function getReceiptQ(item) {
+	if (item.status === "delivered") return "received";
+	if (item.canResend || item.status === "unacked" || item.status === "expired") return "notReceived";
+	return "notYet";
 }
 
 // kind + session + title + facts + age → `Decision from gersona: <title>, 3 options, posted 9m ago`
@@ -1011,7 +1035,6 @@ function CardStateQ({ item, cliPath }) {
 	return (
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
-			{item.deviation && <ToneLineQ tone="warn">{DEVIATION_LABEL_Q[item.deviation] ?? item.deviation}</ToneLineQ>}
 			<PullLineQ item={item} cliPath={cliPath} />
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
 		</Stack>
