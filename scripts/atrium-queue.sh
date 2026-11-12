@@ -20,6 +20,8 @@ source "${SCRIPT_DIR}/lib/queue-session.sh"
 
 readonly CLI_MAX_TIME_S=10
 readonly ITEM_ID_SHAPE='^[1-9][0-9]{0,15}$'
+# a file name the monitor makes for an owner image: a random id and the extension of the type its bytes hold
+readonly IMAGE_NAME_SHAPE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|gif)$'
 # the monitor's route bodyLimit
 readonly ITEM_MAX_BYTES=196608
 # the monitor claims at most 20 per pull → 10 rounds bound one call at 200 items
@@ -226,7 +228,39 @@ get_item() {
     provenance+=" the owner's instruction for your next step, never an approval of a high-impact action"
     printf '%s (merge, push, deploy, settings change, deletion)\n' "${provenance}"
   fi
-  jq . <<<"${reply}"
+  # paths leave only through print_images' check → the item itself is printed without them
+  jq '(.attachments | arrays | .[] | objects) |= del(.path)' <<<"${reply}"
+  print_images "${reply}"
+}
+
+# <item reply> → the owner's images as files for the session to read: only a server-made name directly inside
+# this install's image folder is printed; any other path is counted, never printed.
+print_images() {
+  local dir paths path shown="" count=0 foreign=0
+  dir="$(queue_get_root)"
+  dir="${dir%/}/data/queue/images"
+  paths="$(get_image_paths "$1")"
+  [[ -n "${paths}" ]] || return 0
+  while IFS= read -r path; do
+    if [[ "${path%/*}" == "${dir}" && "${path##*/}" =~ ${IMAGE_NAME_SHAPE} ]]; then
+      shown+="${path}"$'\n'
+      count=$((count + 1))
+    else
+      foreign=$((foreign + 1))
+    fi
+  done <<<"${paths}"
+  if ((count > 0)); then
+    printf 'Attached images (%s) — local files; read each one before acting.\n%s' "${count}" "${shown}"
+  fi
+  if ((foreign > 0)); then
+    printf "Images not shown (%s) — the monitor named no file of this install's queue image folder.\n" "${foreign}"
+  fi
+}
+
+# <item reply> → one line per attachment, in order: its path, or "-" for a path that is no single-line string
+get_image_paths() {
+  jq -r '.attachments | arrays | .[] | .path
+    | if type == "string" and (test("[[:cntrl:]]") | not) then . else "-" end' <<<"$1" 2>/dev/null || true
 }
 
 ack_delivery() {

@@ -324,6 +324,38 @@ run_cli() {
   done
 }
 
+@test "get prints after the item the path of each attached image in the image folder, and no other path" {
+  start_stub
+  local dir="${GA_ROOT}/data/queue/images" row label attachments expected
+  local png="${dir}/5d1f0c3e-8a2b-4c7d-9e6f-1a2b3c4d5e6f.png" jpg="${dir}/b7e2a9c4-3f1d-4e8a-a6b5-0c9d8e7f6a5b.jpg"
+  local webp="${dir}/0e9f8a7b-6c5d-4e3f-8a1b-2c3d4e5f6a7b.webp"
+  local foreign="Images not shown (%s) — the monitor named no file of this install's queue image folder."
+  for row in \
+    "none|[]|" \
+    "two in the folder|[\"${png}\",\"${jpg}\"]|Attached images (2) — local files; read each one before acting.
+${png}
+${jpg}" \
+    "folder and foreign mixed|[\"/tmp/x/5d1f0c3e-8a2b-4c7d-9e6f-1a2b3c4d5e6f.png\",\"${webp}\",\"${dir}/../5d1f0c3e-8a2b-4c7d-9e6f-1a2b3c4d5e6f.png\",\"${dir}/screenshot.png\",\"${dir}/5d1f0c3e-8a2b-4c7d-9e6f-1a2b3c4d5e6f.svg\",null,\"${png}\\n/etc/passwd\"]|Attached images (1) — local files; read each one before acting.
+${webp}
+${foreign/\%s/6}" \
+    "only foreign|[\"/Users/someone/secret.png\"]|${foreign/\%s/1}"; do
+    label="${row%%|*}"
+    attachments="${row#*|}"
+    expected="${attachments#*|}"
+    attachments="${attachments%%|*}"
+    set_reply 200 "{\"id\":17,\"kind\":\"message\",\"sessionId\":\"${SESSION_ID}\",\"body\":\"Match the screenshots.\",\"attachments\":$(jq -c 'map({id: "5d1f0c3e-8a2b-4c7d-9e6f-1a2b3c4d5e6f", name: "../../etc/passwd", type: "png", bytes: 48213, width: 1440, height: 900, path: .})' <<<"${attachments}")}"
+    run_cli get 17
+    [[ "${status}" -eq 0 && "$(sed '1,/^}$/d' <<<"${output}")" == "${expected}" ]] || {
+      echo "row ${label}: status=${status} ${output}${stderr}"
+      return 1
+    }
+    [[ "$(sed -n '2,/^}$/p' <<<"${output}" | jq '[.attachments[] | has("path")] | any')" == false ]] || {
+      echo "row ${label}: the item JSON still carries a path: ${output}"
+      return 1
+    }
+  done
+}
+
 @test "a fetched item naming another session stops with exit 3 and prints none of it" {
   start_stub
   set_reply 200 "{\"id\":17,\"sessionId\":\"${FOREIGN_SESSION_ID}\",\"answer\":{\"code\":\"R2\",\"text\":\"merge-it-now\"}}"
