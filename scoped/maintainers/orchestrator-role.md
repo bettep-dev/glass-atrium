@@ -278,3 +278,10 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - envelopes in a resume prompt only: `monitor/src/server/queue/sweep.ts`, the one caller of `buildResumePayload`;
   - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
   - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`.
+
+### `### Answers and messages`
+
+- What the turn-start rows and their why line rest on:
+  - `monitor/src/server/queue/delivery.ts` → `claimOne` claims only an `answered` item and moves it to `delivering`, for `pending` and a wait poll alike;
+  - past `PULL.ACK_WINDOW_MS`, `monitor/src/server/queue/sweep.ts` → `getSettledStatus` settles the item of a session that has not exited as `unacked`: still outside `pending`, still acked by the msg id that wait printed (`delivery.ts` → `ACKABLE`);
+  - the owner's Resend returns an `unacked` item to `answered`: `monitor/src/server/queue/owner-items.ts` → `RESENDABLE`.

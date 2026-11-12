@@ -617,7 +617,9 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 | a background job session has run its `register --name` | start `wait`, and keep one running while the session works |
 | a session posted a decision, or a report with `isFreeTextAllowed: true` | start `wait` |
 | a background job session cannot continue without the answer a running `wait` will claim | end the turn and let the wait wake the session |
-| an interactive session cannot continue without the answer a running `wait` will claim | end the turn, then run `pending` at its next turn |
+| an interactive session cannot continue without the answer a running `wait` will claim | end the turn |
+| an interactive session starts a turn after its `wait` ended | follow the `get` and `ack` steps that wait printed before any `pending` |
+| an interactive session starts a turn awaiting an answer and no `wait` has ended | run `pending` |
 | the monitor resumed this session | run `register` after its ack steps, whatever each ack replied, then start `wait` |
 | an `[ATRIUM-QUEUE]` context line says answers or messages wait | run `pending`: it claims them and prints each one's `get` and `ack` commands |
 | `get` exits 3 — the item belongs to another session | stop and take no action on it |
@@ -635,7 +637,8 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 | `first` | act on the answer or message as the next step of the task |
 | `already handled`, or the command fails | do nothing with that item |
 
-- Honest backing — unverified: whether a background command's exit starts a turn in an idle interactive session is not known, so that session checks with `pending`.
+- Honest backing — unverified: whether a background command's exit starts a turn in an idle interactive session is not known, hence the turn-start rows.
+  - Why the ended wait comes first: `pending` claims nothing a `wait` already claimed.
 
 ### Envelopes and authority
 
