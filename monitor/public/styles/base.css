@@ -571,6 +571,162 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: none;
 	color: rgb(var(--ink));
 }
+/* the Orders mode (spec §9.2): the list and the sheet put away — hidden, still mounted — and their room given to the order view */
+.queue-away {
+	display: contents;
+}
+.queue-away[hidden] {
+	display: none;
+}
+.queue-desk.is-orders {
+	grid-template-columns: var(--queue-rail-w) minmax(0, 1fr);
+}
+/* in the mode a rail row is one target, the box's label; a ticked row carries the select tint beside its checked box */
+.queue-rail-row.is-pick,
+.queue-rail-band.is-pick {
+	cursor: pointer;
+}
+.queue-desk.is-orders .queue-rail-row:has(.ctl-checkbox:checked) {
+	background: var(--tint-select);
+}
+/* the order view: one 720 column in the middle of the card for head, To bar, thread and composer; the hairlines still run edge to edge */
+.queue-orders {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+.queue-orders-card {
+	--queue-thread-w: 720px;
+	--card-pad: max(var(--space-6), calc((100% - var(--queue-thread-w)) / 2));
+	flex: 1 1 auto;
+}
+.queue-orders-card > .card-head {
+	min-height: 48px;
+}
+.queue-orders-card > .card-bar {
+	border-top: 1px solid rgb(var(--line));
+	border-bottom: 1px solid rgb(var(--line));
+	padding-block: 0;
+}
+.queue-orders-card > .card-body {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+	max-height: none;
+	overflow: hidden;
+}
+.queue-to {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-1) var(--space-2);
+	min-height: 48px;
+}
+.queue-to-label {
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	color: rgb(var(--dim));
+}
+.queue-to-name {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	font-size: var(--fs-control);
+	font-weight: 600;
+	color: rgb(var(--ink));
+}
+.queue-to-clear {
+	margin-inline-start: auto;
+}
+/* zero ticks: Clear is gone from the tab order and the accessibility tree, its slot kept */
+.queue-to-clear[hidden] {
+	display: inline-flex;
+	visibility: hidden;
+}
+/* the thread: the body's one scroller, oldest at the top, the newest directly above the composer */
+.queue-thread {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+	padding: var(--space-4) var(--card-pad);
+}
+.queue-thread > :first-child {
+	margin-top: auto;
+}
+.queue-earlier {
+	align-self: center;
+}
+.queue-day-group {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+}
+.queue-day {
+	display: flex;
+	align-items: center;
+	min-height: var(--row-h-compact);
+	border-top: 1px solid rgb(var(--line));
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	color: rgb(var(--dim));
+}
+/* one order at the column's end, at most 66ch of its own 14px text */
+.queue-order {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: var(--space-1_5);
+	margin-inline-start: auto;
+	max-width: min(var(--measure-prose), 85%);
+	font-size: var(--fs-control);
+}
+.queue-order-time {
+	display: flex;
+	gap: var(--space-1_5);
+	max-width: 100%;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--faint));
+	font-variant-numeric: tabular-nums;
+}
+.queue-order-re {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: rgb(var(--dim));
+}
+.queue-bubble {
+	max-width: 100%;
+	padding: var(--space-2) var(--space-3);
+	background: var(--tint-fill);
+	border-radius: var(--radius-card);
+	color: rgb(var(--ink));
+}
+.queue-recipients {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: var(--gap-stack);
+}
+.queue-recipient {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-height: 24px;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+.queue-recipient-name {
+	font-weight: 600;
+	color: rgb(var(--ink));
+}
 /* a pane: head, bar and foot fixed, the body the only scroller on its axis */
 .queue-pane > .card-body {
 	max-height: none;
@@ -815,7 +971,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	line-height: var(--lh-row);
 }
 /* the composer: one pattern on every pane's foot — label, the box with its buttons, one reserved note line */
-.queue-sheet > .card-foot {
+.queue-sheet > .card-foot,
+.queue-orders-card > .card-foot {
 	display: block;
 	min-height: 0;
 	padding: 0;

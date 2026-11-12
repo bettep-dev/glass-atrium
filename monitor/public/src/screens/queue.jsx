@@ -6,6 +6,7 @@ const {
 	useEffect: useEffectQ,
 	useCallback: useCallbackQ,
 	useRef: useRefQ,
+	useLayoutEffect: useLayoutEffectQ,
 } = React;
 
 const OWNER_API_Q = "/api/queue/owner";
@@ -61,7 +62,10 @@ const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor hol
 // targets per send: the send route refuses more (schemas.ts → messageBodySchema; the page test binds the two)
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
-const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null, sentCount: null });
+const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null });
+// the history read's page and the pane bodies whose scroll the Orders mode keeps (a hidden box does not keep its own)
+const ORDERS_Q = { PAGE: 30, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
+const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null });
 // the sheet holds no item and the owner has not handled everything
 const EMPTY_HOLD_Q = Object.freeze({ item: null, isHandled: false });
 const SESSION_STATE_LABEL_Q = { live: "Live" };
@@ -70,6 +74,7 @@ const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", rep
 const COMPOSER_ERROR_Q = {
 	noAnswer: "Pick an option or write an answer, then send.",
 	noOrder: "Write the order, then send.",
+	noTick: "Tick at least one session in the rail.",
 	unsentOrder: "Unsent order in the field. Send it, or clear it first.",
 };
 
@@ -327,15 +332,32 @@ function ScreenQueue({ onRetryHarness }) {
 	);
 }
 
-// DOM order Sessions → list → sheet; the panes are fixed-role columns that never stack
+/**
+ * DOM order Sessions → list → sheet; the panes are fixed-role columns that never stack.
+ * The Orders mode puts the list and the sheet away, mounted and unchanged, and gives their room to the order view; Esc on the desk leaves it.
+ */
 function QueueDeskQ({ queue }) {
+	const { orders } = queue;
+	const onKeyDown = (event) => {
+		if (!isOrdersCloseKeyQ(event, orders.isOpen)) return;
+		event.preventDefault();
+		orders.close();
+	};
 	return (
-		<div className="queue-desk">
+		<div className={orders.isOpen ? "queue-desk is-orders" : "queue-desk"} onKeyDown={onKeyDown}>
 			<SessionsRegionQ queue={queue} />
-			<QueueListQ queue={queue} />
-			<QueueSheetQ queue={queue} />
+			<div className="queue-away" hidden={orders.isOpen || undefined}>
+				<QueueListQ queue={queue} />
+				<QueueSheetQ queue={queue} />
+			</div>
+			{orders.isOpen && <OrdersViewQ queue={queue} />}
 		</div>
 	);
+}
+
+// an open drawer or dialog takes the Esc first
+function isOrdersCloseKeyQ(event, isOpen) {
+	return isOpen && event.key === "Escape" && !event.defaultPrevented && !event.target?.closest?.('[role="dialog"]');
 }
 
 // stamp and Refresh read one region summary → a failed resume re-read beside a good list read shows Partial, never Fresh
@@ -378,10 +400,11 @@ function useQueueStateQ({ onRetryHarness }) {
 	useEffectQ(() => { reload(); }, [reload]);
 	useFocusRowQ(focus);
 	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatus, selectItem, reload, onRetryHarness });
+	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, selectedId: sheet.id, sendAction: actions.send, setStatus, reload });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const selectRow = useCallbackQ((id) => { selectItem(id); setFocus({ id }); }, [selectItem]);
 	return {
-		list, resumes, readResumes, sessions, drafts, setDraft, filter, setFilter, reload, loadMore,
+		list, resumes, readResumes, sessions, orders, drafts, setDraft, filter, setFilter, reload, loadMore,
 		groups, sheet, selectedId: sheet.id, selectRow, status, ...actions,
 	};
 }
@@ -407,22 +430,16 @@ function useSheetQ(groups) {
 	return { sheet, selectItem };
 }
 
-/** Session list region, the ticked rows, Show ended and the message composer; the list follows the Account filter. */
+/** Session list region, the ticked rows and Show ended; the list follows the Account filter. */
 function useSessionsStateQ(profile) {
 	const [region, setRegion] = useStateQ(window.UI.INITIAL_REGION_STATE);
 	const [selectedIds, setSelectedIds] = useStateQ(getTicksFromHashQ);
 	useEffectQ(() => { setHashStateQ({ to: selectedIds.join(",") }); }, [selectedIds]);
 	const [isEndedShown, setEndedShown] = useStateQ(false);
-	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
 	const read = useCallbackQ(() => getSessionsQ({ profile, setRegion, setSelectedIds }), [profile]);
-	const toggle = useCallbackQ((id) => {
-		setSelectedIds((ids) => putToggledIdQ(ids, id));
-		setComposer((prev) => ({ ...prev, sentCount: null }));
-	}, []);
+	const toggle = useCallbackQ((id) => setSelectedIds((ids) => putToggledIdQ(ids, id)), []);
 	const clear = useCallbackQ(() => setSelectedIds([]), []);
-	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
-	const send = useCallbackQ((body, onSent) => sendMessageQ({ body, setComposer, setSelectedIds, onSent }), []);
-	return { region, read, selectedIds, setSelectedIds, toggle, clear, isEndedShown, setEndedShown, composer, setText, send };
+	return { region, read, selectedIds, setSelectedIds, toggle, clear, isEndedShown, setEndedShown };
 }
 
 // #queue?to=<ids> → the recipients survive a reload; a read then drops the ones no longer taking a message (getKeptSelectionQ)
@@ -457,23 +474,40 @@ function getShownSessionsQ(sessions, isEndedShown) {
 	return isEndedShown ? sessions : sessions.filter((row) => row.state !== "exited");
 }
 
-/** Send targets `{ ids, endedCount }`: ticked rows on show that take a message → a hidden ended row or a replaced row is never sent to. */
+/** Send targets `{ ids, names, endedCount }`: ticked rows on show that take a message → a hidden ended row or a replaced row is never sent to. */
 function getSendTargetsQ(shownRows, selectedIds) {
 	const rows = shownRows.filter((row) => row.isSelectable && selectedIds.includes(row.id));
-	return { ids: rows.map((row) => row.id), endedCount: rows.filter((row) => row.state === "exited").length };
+	return { ids: rows.map((row) => row.id), names: rows.map((row) => row.name), endedCount: rows.filter((row) => row.state === "exited").length };
 }
 
-// an ended target is resumed to take the message → the label says how many before the owner sends
-function getSendLabelQ({ ids, endedCount }) {
-	const label = `Send to ${ids.length} ${ids.length === 1 ? "session" : "sessions"}`;
+// one target by name, several by count · an ended target is resumed to take the order → the label says how many before the owner sends
+function getSendLabelQ({ ids, names, endedCount }) {
+	if (ids.length === 0) return "Send order";
+	const label = ids.length === 1 ? `Send to ${names[0]}` : `Send to ${ids.length} sessions`;
 	return endedCount > 0 ? `${label} · resumes ${endedCount} ended` : label;
 }
 
-// targets within the per-send cap and non-blank text; anything else → null (Send stays disabled)
-function getSendBodyQ(targets, text) {
+/** What a send press lacks `{ message, focus }` — `focus` names the control that fixes it (`rail` / `box`); nothing missing → null. */
+function getOrderInvalidQ(targets, text) {
 	const count = targets.ids.length;
-	if (count === 0 || count > MESSAGE_Q.MAX_TARGETS || !text.trim()) return null;
-	return { sessionIds: targets.ids, text };
+	if (count === 0) return { message: COMPOSER_ERROR_Q.noTick, focus: "rail" };
+	if (!text.trim()) return { message: COMPOSER_ERROR_Q.noOrder, focus: "box" };
+	if (count > MESSAGE_Q.MAX_TARGETS) return { message: `Up to ${MESSAGE_Q.MAX_TARGETS} sessions per order: untick ${count - MESSAGE_Q.MAX_TARGETS}.`, focus: "rail" };
+	return null;
+}
+
+function getOrderNoteQ({ ids, names }) {
+	if (ids.length === 0) return "Tick sessions in the rail.";
+	return ids.length === 1 ? `Goes to ${names[0]}.` : "Each ticked session gets its own copy.";
+}
+
+function getOrderSentStatusQ(names) {
+	return `${window.UI.TONE_GLYPH.ok} Order sent to ${getNameListQ(names)}`;
+}
+
+// `a` · `a and b` · `a, b and c`
+function getNameListQ(names) {
+	return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 function getSessionStateLabelQ(row) {
@@ -482,16 +516,18 @@ function getSessionStateLabelQ(row) {
 }
 
 /**
- * One message to every target, all or nothing: a refusal keeps the text and the ticks and shows in the composer.
- * @param onSent - re-reads the page, so the new message cards and the delivery counts show
+ * One order to every target, all or nothing: a taken send empties the box and keeps the ticks, so the next line goes to the same sessions;
+ * a refusal keeps the text and shows in the note slot.
+ * @param names - the targets' names, for the list's status line
+ * @param onSent - re-reads the list and the thread, so the new order shows
  * @returns true once the server took the send
  */
-async function sendMessageQ({ body, setComposer, setSelectedIds, onSent }) {
-	setComposer((prev) => ({ ...prev, isBusy: true, error: null, sentCount: null }));
+async function sendMessageQ({ body, names, setComposer, setStatus, onSent }) {
+	setComposer((prev) => ({ ...prev, isBusy: true, error: null }));
 	const answer = await sendOwnerRequestQ("/messages/send", body);
 	if (answer.status >= 200 && answer.status < 300) {
-		setComposer(() => ({ ...EMPTY_COMPOSER_Q, sentCount: body.sessionIds.length }));
-		setSelectedIds([]);
+		setComposer(() => EMPTY_COMPOSER_Q);
+		setStatus(getOrderSentStatusQ(names));
 		onSent();
 		return true;
 	}
@@ -500,7 +536,103 @@ async function sendMessageQ({ body, setComposer, setSelectedIds, onSent }) {
 }
 
 function getSendErrorQ(answer) {
-	return getOutageStepQ(answer) ?? getRefusalReasonQ(answer) ?? "The monitor refused this message. Refresh the session list and try again.";
+	return getOutageStepQ(answer) ?? getRefusalReasonQ(answer) ?? "The monitor refused this order. Refresh the session list and try again.";
+}
+
+/**
+ * The Orders mode (spec §9.2): open state (`view=orders` in the hash), the thread of the ticked sessions' orders, and the order composer.
+ * Entering stores the list's and the sheet's scroll and the opener; leaving sets them again (useOrdersFocusQ).
+ */
+function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) {
+	const [isOpen, setOpen] = useStateQ(() => getHashStateQ().view === "orders");
+	const away = useRefQ(null);
+	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
+	const { thread, read, showEarlier } = useThreadQ(isOpen, selectedIds);
+	useEffectQ(() => { setHashStateQ({ view: isOpen ? "orders" : "" }); }, [isOpen]);
+	useOrdersFocusQ(isOpen, away, selectedId);
+	const open = useCallbackQ(() => {
+		if (isOpen) return document.getElementById(ORDERS_Q.BOX_ID)?.focus();
+		away.current = { scrolls: getPaneScrollsQ(document), opener: document.activeElement };
+		setOpen(true);
+	}, [isOpen]);
+	const close = useCallbackQ(() => setOpen(false), []);
+	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
+	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
+	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
+	const send = useCallbackQ((body, names) => sendMessageQ({ body, names, setComposer, setStatus, onSent }), [setStatus, onSent]);
+	const resend = useCallbackQ(async (id) => { if (await sendAction(id, "resend")) read(); }, [sendAction, read]);
+	return { isOpen, open, close, thread, read, showEarlier, composer, setText, putError, send, resend };
+}
+
+// entering → the caret in the box · leaving → both scrolls set again, focus back to the opener, else the selected row
+function useOrdersFocusQ(isOpen, away, selectedId) {
+	const selected = useRefQ(selectedId);
+	selected.current = selectedId;
+	useLayoutEffectQ(() => {
+		if (isOpen) return void document.getElementById(ORDERS_Q.BOX_ID)?.focus();
+		const stored = away.current;
+		if (stored === null) return;
+		away.current = null;
+		setPaneScrollsQ(document, stored.scrolls);
+		const target = stored.opener?.isConnected ? stored.opener : document.getElementById(`${ROW_ID_PREFIX_Q}${selected.current}`);
+		target?.focus();
+	}, [isOpen, away]);
+}
+
+function getPaneScrollsQ(root) {
+	return ORDERS_Q.PANE_BODIES.map((selector) => root.querySelector(selector)?.scrollTop ?? 0);
+}
+
+function setPaneScrollsQ(root, scrolls) {
+	ORDERS_Q.PANE_BODIES.forEach((selector, index) => {
+		const body = root.querySelector(selector);
+		if (body) body.scrollTop = scrolls[index];
+	});
+}
+
+// first page on opening and on every tick change; a read for ticks since changed is dropped
+// ponytail: a re-read (a send, a resend, a tick) reads the first page again → loaded earlier pages go; upgrade = the 15 s re-read of loaded entries (P4)
+function useThreadQ(isOpen, selectedIds) {
+	const [thread, setThread] = useStateQ(EMPTY_THREAD_Q);
+	const key = selectedIds.join(",");
+	const latest = useRefQ(key);
+	latest.current = key;
+	const ids = key ? key.split(",") : [];
+	const isCurrent = () => latest.current === key;
+	const read = useCallbackQ(() => getThreadQ({ ids, before: null, setThread, isCurrent }), [key]);
+	useEffectQ(() => { if (isOpen) read(); }, [isOpen, read]);
+	const showEarlier = useCallbackQ(() => getThreadQ({ ids, before: thread.nextCursor, setThread, isCurrent }), [key, thread.nextCursor]);
+	return { thread, read, showEarlier };
+}
+
+/** One page of the history read: a first page replaces the thread, an earlier one joins it with a copy on both kept once. */
+async function getThreadQ({ ids, before, setThread, isCurrent = () => true }) {
+	setThread((prev) => ({ ...prev, status: "loading" }));
+	const answer = await sendOwnerRequestQ(`/orders?${getOrdersQueryQ(ids, before)}`);
+	if (!isCurrent()) return;
+	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
+		const { items, nextCursor } = answer.data;
+		return setThread((prev) => ({ status: "ready", items: before === null ? items : putEarlierPageQ(prev.items, items), nextCursor: nextCursor ?? null, error: null }));
+	}
+	setThread((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
+}
+
+// no tick → the orders to every session
+function getOrdersQueryQ(ids, before) {
+	const query = new URLSearchParams({ limit: String(ORDERS_Q.PAGE) });
+	if (ids.length > 0) query.set("sessionIds", ids.join(","));
+	if (before) query.set("before", before);
+	return query.toString();
+}
+
+function putEarlierPageQ(items, page) {
+	const ids = new Set(items.map((item) => item.id));
+	return [...items, ...page.filter((item) => !ids.has(item.id))];
+}
+
+// the read comes newest order first, each order's copies together → folded as the list folds them, then read oldest first
+function getThreadEntriesQ(items) {
+	return getFoldedRowsQ(items).reverse();
 }
 
 // page-level resume record in its own region → a failed read leaves the list in place
@@ -1215,7 +1347,7 @@ function SessionsRegionQ({ queue }) {
 	const endedCount = rows.filter((row) => row.state === "exited").length;
 	return (
 		<Card className="queue-pane queue-sessions" title="Sessions" sub={`${rows.length - endedCount} live · ${endedCount} ended`}
-			right={<button type="button" className="btn" onClick={() => queue.openOrders?.()}>New order</button>}
+			right={<button type="button" className="btn" onClick={queue.orders.open}>New order</button>}
 			foot={<RailFootQ queue={queue} />} isFlush>
 			{view === "loading" && <LoadingPlaceholder label="Loading sessions" />}
 			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={sessions.region.error} isBusy={sessions.region.busy} onRetry={sessions.read} />}
@@ -1230,42 +1362,41 @@ function SessionsBodyQ({ queue, rows }) {
 	const live = rows.filter((row) => row.state !== "exited");
 	const ended = rows.filter((row) => row.state === "exited");
 	const shown = getShownSessionsQ(rows, sessions.isEndedShown);
-	const targets = getSendTargetsQ(shown, sessions.selectedIds);
-	const view = { collidingNames: getCollidingNamesQ(shown), notReceived: getNotReceivedBySessionQ(queue.list.data?.items ?? []), scope: queue.filter.session };
+	const isOrders = queue.orders.isOpen;
+	const view = { collidingNames: getCollidingNamesQ(shown), notReceived: getNotReceivedBySessionQ(queue.list.data?.items ?? []), scope: isOrders ? null : queue.filter.session, isOrders };
 	const scope = (session) => queue.setFilter({ ...queue.filter, session });
 	return (
 		<>
-			<AllSessionsBandQ rows={rows} sessions={sessions} isCurrent={!view.scope} notReceived={[...view.notReceived.values()].reduce((sum, count) => sum + count, 0)} onScope={() => scope("")} />
+			<AllSessionsBandQ rows={rows} sessions={sessions} view={view} notReceived={[...view.notReceived.values()].reduce((sum, count) => sum + count, 0)} onScope={() => scope("")} />
 			{live.length === 0 && <EmptyState message="No connected sessions" hint="A session appears here once it registers or posts to the queue." />}
 			{live.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} onScope={scope} />)}
 			{ended.length > 0 && <EndedBandQ count={ended.length} isOpen={sessions.isEndedShown} onToggle={() => sessions.setEndedShown(!sessions.isEndedShown)} />}
 			{sessions.isEndedShown && ended.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} onScope={scope} />)}
-			{/* ponytail: the composer sits under the rail until the Orders mode holds it (spec §9.2, this stream's next unit) */}
-			{targets.ids.length > 0 && (
-				<MessageComposerQ targets={targets} composer={sessions.composer} onText={sessions.setText}
-					onSend={(body) => sessions.send(body, queue.reload)} onClear={sessions.clear} />
-			)}
-			{sessions.composer.sentCount !== null && <SentNoticeQ count={sessions.composer.sentCount} />}
 		</>
 	);
 }
 
-// the head of the roster: All sessions clears the scope, the master box ticks every live session that takes a message
-function AllSessionsBandQ({ rows, sessions, isCurrent, notReceived, onScope }) {
+/**
+ * The head of the roster: on the desk All sessions clears the scope and the master box ticks every live session that takes a message;
+ * in the Orders mode the whole band is the master box's label.
+ */
+function AllSessionsBandQ({ rows, sessions, view, notReceived, onScope }) {
 	const { Badge, Icon } = window.UI;
 	const master = getMasterTickQ(sessions.selectedIds, rows);
 	const waiting = rows.reduce((sum, row) => sum + row.count.awaiting, 0);
+	const isCurrent = view.scope === "";
+	const box = <CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Order to all live sessions" />;
+	const face = <>All sessions<Badge role="count" fill="tag">{waiting}</Badge></>;
+	const warn = notReceived > 0 && <Badge fill="warn">{`${notReceived} not received`}</Badge>;
+	if (view.isOrders) return <label className="queue-band queue-rail-band is-pick">{face}{warn}<span className="queue-rail-box">{box}</span></label>;
 	return (
 		<div className="queue-band queue-rail-band">
 			<button type="button" className="queue-rail-scope" aria-current={isCurrent ? "true" : undefined} onClick={onScope}>
-				All sessions
-				<Badge role="count" fill="tag">{waiting}</Badge>
+				{face}
 				{isCurrent && <Icon name="chevR" size={16} className="queue-rail-chevron" />}
 			</button>
-			{notReceived > 0 && <Badge fill="warn">{`${notReceived} not received`}</Badge>}
-			<span className="queue-rail-box">
-				<CheckboxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Order to all live sessions" />
-			</span>
+			{warn}
+			<span className="queue-rail-box"><label className="inline-target">{box}</label></span>
 		</div>
 	);
 }
@@ -1313,28 +1444,46 @@ function getNotReceivedBySessionQ(items) {
 	return counts;
 }
 
-/** One session: the row button (name, waiting count, line 2) scopes the list; the box at its end ticks it as a recipient. */
+/**
+ * One session. On the desk the row button (name, waiting count, line 2) scopes the list and the box at its end ticks it as a recipient;
+ * in the Orders mode the whole row is the box's label, so a press anywhere ticks it, and the scope cue is not shown.
+ */
 function SessionRailRowQ({ row, view, sessions, onScope }) {
-	const { Badge, Icon } = window.UI;
-	const isCurrent = view.scope === row.id;
 	const where = [row.profileLabel, row.cwd, row.id].filter(Boolean).join(" · ");
+	const box = row.isSelectable && <CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Order to ${row.name}`} />;
+	if (view.isOrders) {
+		const Row = row.isSelectable ? "label" : "div";
+		return (
+			<Row className="queue-rail-row is-pick" data-session={row.id} title={where}>
+				<span className="queue-rail-main"><RailRowFaceQ row={row} view={view} isCurrent={false} where={where} /></span>
+				{box && <span className="queue-rail-box">{box}</span>}
+			</Row>
+		);
+	}
+	const isCurrent = view.scope === row.id;
 	return (
 		<div className="queue-rail-row" data-session={row.id}>
 			<button type="button" className="queue-rail-main" title={where} aria-current={isCurrent ? "true" : undefined} onClick={() => onScope(row.id)}>
-				<span className="queue-rail-name">
-					<SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} />
-					{isCurrent && <Icon name="chevR" size={16} className="queue-rail-chevron" />}
-				</span>
-				{row.count.awaiting > 0 && <span className="queue-rail-count"><Badge role="count" fill="solid">{row.count.awaiting}</Badge><span className="sr-only">{" waiting"}</span></span>}
-				<span className="queue-rail-line"><RowFactsQ facts={getSessionLineQ(row, view.notReceived.get(row.id) ?? 0)} /></span>
-				<span className="sr-only">{`, ${where}`}</span>
+				<RailRowFaceQ row={row} view={view} isCurrent={isCurrent} where={where} />
 			</button>
-			{row.isSelectable && (
-				<span className="queue-rail-box">
-					<CheckboxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Order to ${row.name}`} />
-				</span>
-			)}
+			{box && <span className="queue-rail-box"><label className="inline-target">{box}</label></span>}
 		</div>
+	);
+}
+
+// name, waiting count and line 2 of a rail row
+function RailRowFaceQ({ row, view, isCurrent, where }) {
+	const { Badge, Icon } = window.UI;
+	return (
+		<>
+			<span className="queue-rail-name">
+				<SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} />
+				{isCurrent && <Icon name="chevR" size={16} className="queue-rail-chevron" />}
+			</span>
+			{row.count.awaiting > 0 && <span className="queue-rail-count"><Badge role="count" fill="solid">{row.count.awaiting}</Badge><span className="sr-only">{" waiting"}</span></span>}
+			<span className="queue-rail-line"><RowFactsQ facts={getSessionLineQ(row, view.notReceived.get(row.id) ?? 0)} /></span>
+			<span className="sr-only">{`, ${where}`}</span>
+		</>
 	);
 }
 
@@ -1364,53 +1513,165 @@ function getSessionLineQ(row, notReceived) {
 	return [{ text: getSessionStateLabelQ(row), badge: "tag" }, age];
 }
 
-// base.css → .ctl-checkbox visual: the mark drawn over the 16 box, the label the 24 hit area; mixed → the DOM's indeterminate state
-function CheckboxQ({ isChecked, isMixed = false, isDisabled = false, onChange, ariaLabel, children }) {
+// base.css → .ctl-checkbox visual: the mark drawn over the 16 box; the caller's label is the hit area; mixed → the DOM's indeterminate state
+function CheckboxBoxQ({ isChecked, isMixed = false, onChange, ariaLabel }) {
 	const { Icon } = window.UI;
 	const setMixed = (input) => { if (input) input.indeterminate = isMixed; };
 	return (
-		<label className="inline-target gap-label-inline">
-			<span className="relative inline-flex items-center justify-center">
-				<input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} disabled={isDisabled} onChange={onChange} aria-label={ariaLabel} />
-				{isChecked && <Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
-			</span>
-			{children}
-		</label>
+		<span className="relative inline-flex items-center justify-center">
+			<input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} onChange={onChange} aria-label={ariaLabel} />
+			{isChecked && <Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
+		</span>
 	);
 }
 
-function MessageComposerQ({ targets, composer, onText, onSend, onClear }) {
-	const { Stack, Cluster } = window.UI;
-	const body = getSendBodyQ(targets, composer.text);
-	const overCap = targets.ids.length - MESSAGE_Q.MAX_TARGETS;
+/** The order view (spec §9.2): head Orders + Close, the To bar, the thread of the owner's orders, the composer in its order use. */
+function OrdersViewQ({ queue }) {
+	const { Card } = window.UI;
+	const { orders, sessions } = queue;
+	const rows = sessions.region.data?.sessions ?? [];
+	const close = <button type="button" className="btn ghost" title="Esc" onClick={orders.close}><span aria-hidden="true">{"✕ "}</span>Close</button>;
 	return (
-		<Stack gap="stack">
-			<DraftFieldQ id="queue-message-text" label="Message to the ticked sessions" value={composer.text} onChange={onText} />
-			{overCap > 0 && <p className="fs-meta text-dim">{`Up to ${MESSAGE_Q.MAX_TARGETS} sessions per message: untick ${overCap}.`}</p>}
-			<Cluster gap="control">
-				<button type="button" className="btn primary" disabled={composer.isBusy || body === null} onClick={() => onSend(body)}>{getSendLabelQ(targets)}</button>
-				<button type="button" className="btn ghost" disabled={composer.isBusy} onClick={onClear}>Clear selection</button>
-			</Cluster>
-			{composer.error && <ToneLineQ tone="crit" role="alert" isTextToned>{composer.error}</ToneLineQ>}
-		</Stack>
+		<section className="queue-orders" aria-label="Orders">
+			<Card className="queue-orders-card" title="Orders" right={close} bar={<ToBarQ rows={rows} selectedIds={sessions.selectedIds} onClear={sessions.clear} />}
+				foot={<OrderComposerQ orders={orders} targets={getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds)} />} isFlush>
+				<ThreadQ orders={orders} names={rows.filter((row) => sessions.selectedIds.includes(row.id)).map((row) => row.name)} />
+			</Card>
+		</section>
 	);
 }
 
-function DraftFieldQ({ id, label, value, onChange }) {
-	const { Stack } = window.UI;
+// who the next order goes to and whose orders are shown; the rail's boxes edit it, the bar only clears
+function ToBarQ({ rows, selectedIds, onClear }) {
+	const { Badge } = window.UI;
+	const ticked = rows.filter((row) => selectedIds.includes(row.id));
 	return (
-		<Stack gap="label">
-			<label htmlFor={id} className="field-label">{label}</label>
-			<textarea id={id} rows={3} className="field" value={value} onChange={(event) => onChange(event.target.value)} />
-		</Stack>
+		<div className="queue-to">
+			<span className="queue-to-label">To</span>
+			{ticked.length === 0 && <span className="text-dim">No session ticked</span>}
+			{ticked.map((row, index) => (
+				<span key={row.id} className="queue-to-name">
+					{`${row.name}${index < ticked.length - 1 ? "," : ""}`}
+					{row.state === "exited" && <Badge fill="tag">Ended</Badge>}
+				</span>
+			))}
+			<button type="button" className="btn ghost sm queue-to-clear" hidden={ticked.length === 0 || undefined} onClick={onClear}>Clear</button>
+		</div>
 	);
 }
 
-function SentNoticeQ({ count }) {
+/** The owner's orders oldest first under day labels, `Show earlier` at the top; it opens at its end (useThreadScrollQ). */
+function ThreadQ({ orders, names }) {
+	const { EmptyState, LoadingPlaceholder } = window.UI;
+	const { thread } = orders;
+	const entries = getThreadEntriesQ(thread.items);
+	const scroll = useThreadScrollQ(entries);
 	return (
-		<ToneLineQ tone="ok" role="status">
-			{`Sent to ${count} ${count === 1 ? "session" : "sessions"}: each message is a card in the queue, with its delivery state.`}
-		</ToneLineQ>
+		<div ref={scroll.ref} onScroll={scroll.onScroll} role="log" aria-label={names.length > 0 ? `Orders to ${getNameListQ(names)}` : "All orders"} tabIndex={0} className="queue-thread">
+			{thread.nextCursor !== null && <button type="button" className="btn ghost sm queue-earlier" disabled={thread.status === "loading"} onClick={orders.showEarlier}>Show earlier</button>}
+			{thread.status === "error" && <QueueFailureQ failure={thread.error} onRetry={orders.read} />}
+			{thread.status === "loading" && entries.length === 0 && <LoadingPlaceholder label="Loading orders…" />}
+			{thread.status === "ready" && entries.length === 0 && <EmptyState message="No orders yet" hint="An order you send shows here, with whether each session received it." />}
+			{getDayGroupsQ(entries).map((group) => (
+				<div key={group.day} className="queue-day-group">
+					<p className="queue-day">{group.label}</p>
+					{group.entries.map((entry) => <OrderEntryQ key={entry.id} entry={entry} onResend={orders.resend} />)}
+				</div>
+			))}
+		</div>
+	);
+}
+
+// opens at its end · stays there as orders are added only if it was there · an earlier page keeps the entries on screen where they are
+function useThreadScrollQ(entries) {
+	const ref = useRefQ(null);
+	const last = useRefQ({ firstId: null, height: 0, isAtEnd: true });
+	const signature = entries.map((entry) => entry.id).join(",");
+	useLayoutEffectQ(() => {
+		const log = ref.current;
+		if (!log) return;
+		const prev = last.current;
+		const firstId = signature.split(",")[0];
+		if (prev.isAtEnd) log.scrollTop = log.scrollHeight;
+		else if (firstId !== prev.firstId) log.scrollTop += log.scrollHeight - prev.height;
+		last.current = { firstId, height: log.scrollHeight, isAtEnd: prev.isAtEnd };
+	}, [signature]);
+	const onScroll = () => {
+		const log = ref.current;
+		last.current.isAtEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 2;
+	};
+	return { ref, onScroll };
+}
+
+// consecutive entries of one KST day under one label
+function getDayGroupsQ(entries, now = new Date()) {
+	const groups = [];
+	for (const entry of entries) {
+		const day = window.UI.formatKstDate(entry.item.answeredAt);
+		if (groups[groups.length - 1]?.day !== day) groups.push({ day, label: getDayLabelQ(day, now), entries: [] });
+		groups[groups.length - 1].entries.push(entry);
+	}
+	return groups;
+}
+
+function getDayLabelQ(day, now) {
+	const { formatKstDate } = window.UI;
+	if (day === formatKstDate(now.toISOString())) return "Today";
+	if (day === formatKstDate(new Date(now.getTime() - ORDERS_Q.DAY_MS).toISOString())) return "Yesterday";
+	return day;
+}
+
+/** One order: the time line (`Re:` + the report's title for a reply), the bubble, a row per recipient with its receipt. */
+function OrderEntryQ({ entry, onResend }) {
+	const { ProseText, formatKstTime } = window.UI;
+	const { item, copies } = entry;
+	return (
+		<article className="queue-order">
+			<p className="queue-order-time" title={getAnswerLineQ(item)?.text}>
+				{item.kind === "report" && <span className="queue-order-re">{`Re: ${item.title}`}</span>}
+				<time dateTime={item.answeredAt}>{formatKstTime(item.answeredAt)}</time>
+			</p>
+			<div className="queue-bubble"><ProseText text={getOrderTextQ(item)} isCompact /></div>
+			<ul className="queue-recipients" aria-label="Recipients">
+				{copies.map((copy) => <RecipientRowQ key={copy.id} copy={copy} onResend={onResend} />)}
+			</ul>
+		</article>
+	);
+}
+
+// an order on a report's sheet is the report's answer text; a standalone order is the message's body
+function getOrderTextQ(item) {
+	return item.kind === "report" ? (item.answer?.text ?? "") : item.body;
+}
+
+// the session name and its receipt, and nothing else; Resend only where the queue names it (canResend)
+function RecipientRowQ({ copy, onResend }) {
+	const { formatKstTime } = window.UI;
+	const receipt = getReceiptQ(copy);
+	const time = receipt === "received" && copy.deliveredAt ? [{ text: formatKstTime(copy.deliveredAt) }] : [];
+	return (
+		<li className="queue-recipient">
+			<span className="queue-recipient-name"><ItemSessionNameQ session={copy.session} /></span>
+			<RowFactsQ facts={[getReceiptFactQ(receipt), ...time]} />
+			{copy.canResend && <button type="button" className="btn ghost sm" onClick={() => onResend(copy.id)}>Resend</button>}
+		</li>
+	);
+}
+
+// the composer in its order use: the send carries the ink once the box holds text; a press with something missing says what and moves focus
+function OrderComposerQ({ orders, targets }) {
+	const { composer } = orders;
+	const onSend = () => {
+		const invalid = getOrderInvalidQ(targets, composer.text);
+		if (invalid === null) return orders.send({ sessionIds: targets.ids, text: composer.text }, targets.names);
+		orders.putError(invalid.message);
+		const selector = invalid.focus === "box" ? `#${ORDERS_Q.BOX_ID}` : ".queue-sessions .ctl-checkbox";
+		window.document?.querySelector(selector)?.focus();
+	};
+	return (
+		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: "Order" }} text={composer.text} onText={orders.setText} isBusy={composer.isBusy}
+			buttons={[{ label: getSendLabelQ(targets), isInk: composer.text.trim() !== "", onPress: onSend }]}
+			note={<ComposerNoteQ error={composer.error} rest={getOrderNoteQ(targets)} />} />
 	);
 }
 
