@@ -117,7 +117,8 @@ export const messageBodySchema = z.strictObject({
     .array(sessionId)
     .min(1)
     .max(MAX_MESSAGE_TARGETS)
-    .refine((ids) => new Set(ids).size === ids.length, "session ids must be unique"),
+    // Postgres uuid ignores letter case → compare lower-cased
+    .refine((ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length, "session ids must be unique"),
   text: requiredText(MAX_TEXT),
 });
 

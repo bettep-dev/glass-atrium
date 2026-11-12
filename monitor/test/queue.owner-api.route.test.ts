@@ -648,6 +648,7 @@ describe("owner message send", () => {
       { name: "no target", body: { sessionIds: [], text: "Rebase onto main." } },
       { name: "21 targets", body: { sessionIds: tooMany, text: "Rebase onto main." } },
       { name: "a repeated id", body: { sessionIds: [target, target], text: "Rebase onto main." } },
+      { name: "one id repeated in another letter case", body: { sessionIds: [target, target.toUpperCase()], text: "Rebase onto main." } },
       { name: "blank text", body: { sessionIds: [target], text: " \n " } },
       { name: "text past 20000 characters", body: { sessionIds: [target], text: "t".repeat(20_001) } },
       { name: "an unknown key", body: { sessionIds: [target], text: "Rebase onto main.", isApprovalClass: true } },

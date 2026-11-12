@@ -1,5 +1,5 @@
-// Queue screen — the owner's decision and report queue: cards in queue order,
-// answer / reply / Seen / Later / Resend, deviation and automatic-resume state per card.
+// Queue screen — decision, report and sent-message cards in queue order (answer / reply / Seen / Later / Resend,
+// deviation and automatic-resume state per card), the recent resumes, and the Sessions region whose composer sends one message to the ticked sessions.
 // Every server field renders as React text, never as HTML.
 const {
 	useState: useStateQ,
@@ -76,7 +76,7 @@ const SESSION_COLUMNS_Q = [
 	{ key: "delivery", label: "In delivery", isNumeric: true },
 ];
 
-const APPROVAL_NOTE_Q ="Approval: the terminal confirmation is still needed after you answer here.";
+const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
 const WRAPPER_RISK_NOTE_Q =
 	"Started through the accept wrapper: on macOS the socket token is optional, so any same-uid process can drive this bypass session with no prompt.";
 
