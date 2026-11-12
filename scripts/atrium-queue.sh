@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report or a decision, fetch an
-# item, pull this session's owner answers and messages, ack a delivery, withdraw an item, and register this session.
-# Run it by its absolute installed path with nothing in front — the one literal the settings allow rule names.
+# item, pull or wait for this session's owner answers and messages, ack a delivery, withdraw an item, and register
+# this session. Run it by its absolute installed path with nothing in front — the one literal the allow rule names.
 # Exit codes: 0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the
-#   monitor · 3 the fetched item names another session (stop, take no action) · 64 usage or local validation
+#   monitor · 3 the fetched item names another session (stop, take no action) · 4 the wait's bound passed with
+#   nothing claimed, or its owning Claude process is gone · 5 another wait holds this session · 64 usage or local validation
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -23,6 +24,12 @@ readonly ITEM_ID_SHAPE='^[1-9][0-9]{0,15}$'
 readonly ITEM_MAX_BYTES=196608
 # the monitor claims at most 20 per pull → 10 rounds bound one call at 200 items
 readonly PULL_ROUNDS_MAX=10
+# the monitor's waiting-fact freshness window is two of these
+readonly WAIT_POLL_S=5
+readonly WAIT_BACKOFF_MAX_S=60
+readonly WAIT_MINUTES_DEFAULT=60
+readonly WAIT_MINUTES_MAX=240
+readonly WAIT_MINUTES_SHAPE='^[1-9][0-9]{0,2}$'
 readonly ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
   "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
 
@@ -71,6 +78,7 @@ main() {
     report | decision) post_item "${cmd}" "$@" ;;
     get) get_item "$@" ;;
     pending) pull_pending "$@" ;;
+    wait) wait_for_claims "$@" ;;
     ack) ack_delivery "$@" ;;
     withdraw) withdraw_item "$@" ;;
     register) register_session "$@" ;;
@@ -89,6 +97,8 @@ Usage — run by this absolute path, no interpreter or env prefix in front, so t
   ${cli} get <item-id>            fetch one of this session's items, answer included; an owner message
                                   comes after one provenance line
   ${cli} pending                  claim this session's owner answers and messages; prints each one's fetch and ack steps
+  ${cli} wait [--max-minutes N]   run as a background command: blocks until a poll claims this session's answers or
+                                  messages, then prints the same steps; bound ${WAIT_MINUTES_DEFAULT} minutes by default, at most ${WAIT_MINUTES_MAX}
   ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer or message only when it prints "first"
   ${cli} withdraw <item-id>       withdraw an item this session posted, not in delivery (never an owner message)
   ${cli} register [--name <name>] register this session (a resumed session runs it after its ack steps);
@@ -99,6 +109,9 @@ Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision add
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
 The session id comes from CLAUDE_CODE_SESSION_ID — never pass it.
 Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monitor · 3 item of another session · 64 usage
+On a wait's exit: 0 follow the printed steps, then wait again · 1 wait again once · 2 after an unknown-session
+  refusal run register and wait again, otherwise stop waiting · 4 wait again · 5 nothing, another wait runs ·
+  any other code wait again once
 Prompt-free in default permission mode, through this allow rule in the shared user settings:
   Bash(${cli}:*)
 USAGE
@@ -237,13 +250,18 @@ pull_pending() {
   body="$(jq -nc --arg sessionId "${session_id}" '{$sessionId}')"
   for ((round = 1; round <= PULL_ROUNDS_MAX; round++)); do
     reply="$(call_monitor POST /api/queue/pending "${body}")"
-    claims="$(jq -r '.items[] | "\(.id.item)\t\(.id.msg)"' <<<"${reply}" 2>/dev/null)" \
-      || fail 1 "the monitor's pending reply is malformed"
+    # shellcheck disable=SC2310  # a malformed reply → the named exit
+    claims="$(get_claims "${reply}")" || fail 1 "the monitor's pending reply is malformed"
     [[ -n "${claims}" ]] || break
     print_claims "${claims}"
     total=$((total + $(wc -l <<<"${claims}")))
   done
   if ((total == 0)); then printf 'no owner answer or message waits for this session\n'; fi
+}
+
+# <pending reply body> → one "<item id>\t<msg id>" line per claim; non-zero when malformed
+get_claims() {
+  jq -r '.items[] | "\(.id.item)\t\(.id.msg)"' <<<"$1" 2>/dev/null
 }
 
 print_claims() {
@@ -257,6 +275,134 @@ print_claims() {
     printf '2. Ack it: %s ack %s %s — act only when the reply is "first".\n' "${cli}" "${id}" "${msg_id}"
     printf '3. Act on the answer or message as the next step of your task.\n'
   done <<<"$1"
+}
+
+# One wait: the lock, then polls until a claim, a refusal, the bound or the owning Claude process ending.
+wait_for_claims() {
+  local bound_s session_id owner_pid owner_start body
+  bound_s="$(get_wait_bound_s "$@")"
+  session_id="$(require_session_id)"
+  owner_pid="$(queue_get_pid)"
+  [[ -n "${owner_pid}" ]] || fail 64 "CLAUDE_PID is unset or not a pid — run this inside a Claude Code session"
+  owner_start="$(get_start_time "${owner_pid}")"
+  [[ -n "${owner_start}" ]] || fail 64 "CLAUDE_PID ${owner_pid} names no running process"
+  WAIT_LOCK="$(queue_get_root)/data/queue/waits/${session_id}"
+  WAIT_RECORD="$$|$(get_start_time "$$")|${owner_pid}|${owner_start}"
+  take_wait_lock
+  trap 'drop_wait_lock "${WAIT_RECORD}"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${owner_pid}" '{$sessionId, $pid, wait: true}')"
+  run_wait_loop "${body}" "${bound_s}" "${owner_pid}" "${owner_start}"
+}
+
+# [--max-minutes N] → the bound in seconds; ATRIUM_QUEUE_WAIT_BOUND_S, a test seam, overrides it
+get_wait_bound_s() {
+  local minutes="${WAIT_MINUTES_DEFAULT}"
+  if (($# > 0)); then
+    if [[ "$1" != --max-minutes || $# -ne 2 || ! "$2" =~ ${WAIT_MINUTES_SHAPE} ]] || (($2 > WAIT_MINUTES_MAX)); then
+      fail_usage "wait takes no argument but --max-minutes <1-${WAIT_MINUTES_MAX}>"
+    fi
+    minutes="$2"
+  fi
+  if [[ "${ATRIUM_QUEUE_WAIT_BOUND_S:-}" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' "${ATRIUM_QUEUE_WAIT_BOUND_S}"
+  else
+    printf '%s\n' "$((minutes * 60))"
+  fi
+}
+
+# <pid> → its process start time, the recycled-pid guard; nothing when the pid is gone
+get_start_time() {
+  local started
+  started="$(LC_ALL=C ps -p "$1" -o lstart= 2>/dev/null)" || return 0
+  started="${started#"${started%%[![:space:]]*}"}"
+  printf '%s\n' "${started%"${started##*[![:space:]]}"}"
+}
+
+# The lock is a symlink whose target is the holder record "waiter pid|its start|owner pid|its start" → one atomic
+# create; a held record is reclaimed once its waiter is gone or it names another Claude process.
+take_wait_lock() {
+  local held
+  mkdir -p -- "${WAIT_LOCK%/*}" || fail 1 "cannot create the wait lock directory ${WAIT_LOCK%/*}"
+  for _ in 1 2 3; do
+    if ln -sn "${WAIT_RECORD}" "${WAIT_LOCK}" 2>/dev/null; then return 0; fi
+    held="$(readlink "${WAIT_LOCK}")" || continue
+    # shellcheck disable=SC2310  # a live holder → the named exit
+    if is_wait_live "${held}"; then fail 5 "another wait already runs for this session — nothing to do"; fi
+    drop_wait_lock "${held}"
+  done
+  fail 1 "could not take this session's wait lock"
+}
+
+# <held record> → 0 while its waiter still runs and its owner is this wait's own Claude process
+is_wait_live() {
+  local waiter_pid waiter_start owner started
+  IFS='|' read -r waiter_pid waiter_start owner <<<"$1"
+  [[ "${owner}" == "${WAIT_RECORD#*|*|}" && "${waiter_pid}" =~ ${QUEUE_PID_SHAPE} && -n "${waiter_start}" ]] || return 1
+  started="$(get_start_time "${waiter_pid}")"
+  [[ "${started}" == "${waiter_start}" ]]
+}
+
+# <record> → removes the lock only while it still holds that record
+drop_wait_lock() {
+  local held
+  held="$(readlink "${WAIT_LOCK}" 2>/dev/null)" || return 0
+  [[ "${held}" == "$1" ]] || return 0
+  if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
+}
+
+# <body> <bound s> <owner pid> <owner start> → never returns; failures back off up to WAIT_BACKOFF_MAX_S
+run_wait_loop() {
+  local body="$1" deadline=$((SECONDS + $2)) poll_s="${WAIT_POLL_S}" delay outcome
+  if [[ "${ATRIUM_QUEUE_WAIT_POLL_S:-}" =~ ^[1-9][0-9]*$ ]]; then poll_s="${ATRIUM_QUEUE_WAIT_POLL_S}"; fi
+  delay="${poll_s}"
+  while true; do
+    check_wait_owner "$3" "$4"
+    outcome=0
+    # shellcheck disable=SC2310  # each outcome is branched on below
+    poll_wait "${body}" || outcome=$?
+    ((outcome != 0)) || exit 0
+    delay=$((outcome != 1 ? poll_s : delay * 2 > WAIT_BACKOFF_MAX_S ? WAIT_BACKOFF_MAX_S : delay * 2))
+    if ((SECONDS >= deadline)); then end_wait_at_bound "${outcome}"; fi
+    sleep "$((delay < deadline - SECONDS ? delay : deadline - SECONDS))"
+  done
+}
+
+# <owner pid> <owner start> → exits 4 silently once the owner is gone (nobody is left to read it), 5 once the lock is lost
+check_wait_owner() {
+  local started held
+  started="$(get_start_time "$1")"
+  [[ "${started}" == "$2" ]] || exit 4
+  held="$(readlink "${WAIT_LOCK}" 2>/dev/null)" || held=""
+  [[ "${held}" == "${WAIT_RECORD}" ]] || fail 5 "another wait took over this session — this one ends"
+}
+
+# <body> → 0 claimed and printed · 1 no reply or a 5xx · 3 nothing claimed; a refusal exits 2
+poll_wait() {
+  local reply status claims reason
+  # shellcheck disable=SC2310  # no reply → the backoff outcome
+  reply="$(queue_send POST /api/queue/pending "$1" "${CLI_MAX_TIME_S}")" || return 1
+  status="${reply##*$'\n'}"
+  case "${status}" in
+    2??) ;;
+    4??)
+      reason="$(describe_error "${reply%$'\n'*}")"
+      fail 2 "refused (${status}) on /api/queue/pending: ${reason}"
+      ;;
+    *) return 1 ;;
+  esac
+  # shellcheck disable=SC2310  # a malformed reply → the named exit
+  claims="$(get_claims "${reply%$'\n'*}")" || fail 1 "the monitor's pending reply is malformed"
+  [[ -n "${claims}" ]] || return 3
+  print_claims "${claims}"
+}
+
+end_wait_at_bound() {
+  if (($1 == 1)); then fail 1 "no reply from the monitor by the wait's bound — start the wait again once"; fi
+  printf 'nothing arrived for this session within the bound — start the wait again\n'
+  exit 4
 }
 
 register_session() {

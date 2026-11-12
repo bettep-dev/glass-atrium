@@ -24,7 +24,7 @@ DECISION='{"title":"Pick the retention window","body":"Backups now take 40 GB a 
 setup() {
   # the ambient session's own CLAUDE_* values must never reach the CLI under test
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
-    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
+    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR ATRIUM_QUEUE_WAIT_POLL_S ATRIUM_QUEUE_WAIT_BOUND_S
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
@@ -47,7 +47,59 @@ SHIM
 }
 
 teardown() {
+  stop_waiters
   stop_stub
+}
+
+# every background wait and stand-in Claude process this test started
+stop_waiters() {
+  local pid
+  for pid in ${WAITER_PID:-} ${OWNER_PIDS:-}; do
+    kill "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+  done
+  WAITER_PID=""
+  OWNER_PIDS=""
+}
+
+# a live stand-in for this session's Claude process → CLAUDE_PID
+start_owner() {
+  sleep 300 3>&- &
+  OWNER_PID=$!
+  OWNER_PIDS="${OWNER_PIDS:-} ${OWNER_PID}"
+  export CLAUDE_PID="${OWNER_PID}"
+}
+
+# a one-second poll and a bound of $1 seconds, through the CLI's test seams
+use_fast_wait() {
+  export ATRIUM_QUEUE_WAIT_POLL_S=1 ATRIUM_QUEUE_WAIT_BOUND_S="$1"
+}
+
+start_waiter() {
+  "${CLI}" wait >"${BATS_TEST_TMPDIR}/waiter.out" 2>"${BATS_TEST_TMPDIR}/waiter.err" 3>&- &
+  WAITER_PID=$!
+}
+
+# blocks until the stub has logged $1 requests (at most 10 s)
+await_requests() {
+  local tries=0
+  while (($(wc -l <"${BATS_TEST_TMPDIR}/requests.log") < $1)) && ((tries < 200)); do
+    sleep 0.05
+    tries=$((tries + 1))
+  done
+}
+
+# the exit status of background process $1 once it ends (at most 10 s) → AWAITED_STATUS, else "running"
+await_exit() {
+  local tries=0
+  while kill -0 "$1" 2>/dev/null && ((tries < 200)); do
+    sleep 0.05
+    tries=$((tries + 1))
+  done
+  AWAITED_STATUS=running
+  if kill -0 "$1" 2>/dev/null; then return 0; fi
+  AWAITED_STATUS=0
+  wait "$1" || AWAITED_STATUS=$?
 }
 
 stop_stub() {
@@ -310,6 +362,154 @@ run_cli() {
   }
 }
 
+@test "wait polls with this session's id, its pid and the wait flag, and prints the fetch and ack steps once a poll claims" {
+  start_stub
+  start_owner
+  use_fast_wait 20
+  set_nth_reply 1 200 '{"items":[]}'
+  set_reply 200 "{\"items\":[{\"id\":{\"item\":17,\"msg\":\"${MSG_ID}\"}}]}"
+  run_cli wait
+  local cli_path="${GA_ROOT}/scripts/atrium-queue.sh"
+  [[ "${status}" -eq 0 && "${output}" == *"${cli_path} get 17"* && "${output}" == *"${cli_path} ack 17 ${MSG_ID}"* ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+  [[ "$(request_body /api/queue/pending | jq -Sc .)" == "$(printf '{"pid":%s,"sessionId":"%s","wait":true}\n' "${OWNER_PID}" "${SESSION_ID}" "${OWNER_PID}" "${SESSION_ID}")" ]] || {
+    cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
+}
+
+@test "wait ends with exit 4 and a start-again line when the bound passes with nothing claimed" {
+  start_stub
+  start_owner
+  use_fast_wait 2
+  set_reply 200 '{"items":[]}'
+  run_cli wait
+  [[ "${status}" -eq 4 && "${output}" == *"start the wait again"* && -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+}
+
+@test "wait retries a failing or unreachable monitor and exits 1 only when the bound passes with no reply" {
+  start_owner
+  local row name expected
+  for row in "failing-then-claims|0" "unreachable|1"; do
+    IFS='|' read -r name expected <<<"${row}"
+    stop_stub
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    if [[ "${name}" == unreachable ]]; then
+      use_fast_wait 2
+      export ATRIUM_MONITOR_PORT=1
+    else
+      use_fast_wait 20
+      set_nth_reply 1 503 '{"error":"restarting"}'
+      set_reply 200 "{\"items\":[{\"id\":{\"item\":17,\"msg\":\"${MSG_ID}\"}}]}"
+      start_stub
+    fi
+    run_cli wait
+    [[ "${status}" -eq "${expected}" ]] || {
+      echo "row ${name}: status=${status} ${output}${stderr}"
+      return 1
+    }
+  done
+}
+
+@test "a refusal ends the wait at once with exit 2 and the monitor's reason" {
+  start_stub
+  start_owner
+  use_fast_wait 20
+  set_reply 409 '{"error":"session_not_live","reason":"the session row is not live for this pid"}'
+  run_cli wait
+  [[ "${status}" -eq 2 && "${stderr}" == *"session_not_live"* && "$(wc -l <"${BATS_TEST_TMPDIR}/requests.log" | tr -d ' ')" == 1 ]] || {
+    echo "status=${status} ${output}${stderr}"
+    cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
+}
+
+@test "a second wait of the same Claude process exits 5 while the first runs" {
+  start_stub
+  start_owner
+  use_fast_wait 30
+  set_reply 200 '{"items":[]}'
+  start_waiter
+  await_requests 1
+  run_cli wait
+  [[ "${status}" -eq 5 && "${stderr}" == *"another wait"* ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+}
+
+@test "a wait takes over a lock whose waiter is gone or whose owner is another Claude process" {
+  start_stub
+  set_reply 200 '{"items":[]}'
+  local row name
+  for row in waiter-killed owner-replaced; do
+    name="${row}"
+    start_owner
+    use_fast_wait 30
+    start_waiter
+    await_requests 1
+    if [[ "${name}" == waiter-killed ]]; then
+      kill -KILL "${WAITER_PID}"
+      wait "${WAITER_PID}" 2>/dev/null || true
+    else
+      start_owner
+    fi
+    use_fast_wait 2
+    run_cli wait
+    [[ "${status}" -eq 4 ]] || {
+      echo "row ${name}: second wait status=${status} ${stderr}"
+      return 1
+    }
+    if [[ "${name}" == owner-replaced ]]; then
+      await_exit "${WAITER_PID}"
+      [[ "${AWAITED_STATUS}" == 5 ]] || {
+        echo "row ${name}: first wait status=${AWAITED_STATUS} $(cat "${BATS_TEST_TMPDIR}/waiter.err")"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "a wait ends silently once its owning Claude process is gone" {
+  start_stub
+  start_owner
+  use_fast_wait 30
+  set_reply 200 '{"items":[]}'
+  start_waiter
+  await_requests 1
+  kill "${OWNER_PID}"
+  await_exit "${WAITER_PID}"
+  [[ "${AWAITED_STATUS}" == 4 && ! -s "${BATS_TEST_TMPDIR}/waiter.out" && ! -s "${BATS_TEST_TMPDIR}/waiter.err" ]] || {
+    echo "status=${AWAITED_STATUS} $(cat "${BATS_TEST_TMPDIR}/waiter.out" "${BATS_TEST_TMPDIR}/waiter.err")"
+    return 1
+  }
+}
+
+@test "wait refuses any argument but --max-minutes 1 to 240, or a missing pid, with exit 64 and no request" {
+  start_stub
+  start_owner
+  local row name pid_mode
+  local -a rows=("session-id|${SESSION_ID}" "zero|--max-minutes|0" "over-max|--max-minutes|241"
+    "not-a-number|--max-minutes|abc" "no-value|--max-minutes" "extra|--max-minutes|5|extra" "no-pid")
+  for row in "${rows[@]}"; do
+    IFS='|' read -r -a argv <<<"${row}"
+    name="${argv[0]}"
+    pid_mode=set
+    if [[ "${name}" == no-pid ]]; then pid_mode=unset; fi
+    if [[ "${pid_mode}" == unset ]]; then unset CLAUDE_PID; else export CLAUDE_PID="${OWNER_PID}"; fi
+    run_cli wait "${argv[@]:1}"
+    [[ "${status}" -eq 64 && ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+      echo "row ${name}: status=${status} ${stderr}"
+      return 1
+    }
+  done
+}
+
 @test "the CLI register sends the same body as the SessionStart hook and neither writes a token file" {
   start_stub
   set_reply 200 '{"answeredWaiting":0}'
@@ -415,7 +615,7 @@ run_cli() {
   unset CLAUDE_CODE_SESSION_ID
   start_stub
   local row
-  for row in "get 17" "pending" "withdraw 17" "ack 17 ${MSG_ID}" "register"; do
+  for row in "get 17" "pending" "wait" "withdraw 17" "ack 17 ${MSG_ID}" "register"; do
     IFS=' ' read -r -a argv <<<"${row}"
     run_cli "${argv[@]}"
     [[ "${status}" -eq 64 && ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
@@ -432,7 +632,7 @@ run_cli() {
     echo "status=${status} ${stderr}"
     return 1
   }
-  for cmd in report decision get pending ack withdraw register; do
+  for cmd in report decision get pending wait ack withdraw register; do
     grep -qE "^  ${cli_path//./[.]} ${cmd}( |\$)" <<<"${output}" || {
       echo "command ${cmd}: ${output}"
       return 1
