@@ -1,18 +1,28 @@
-// Owner routes of the queue (/api/queue/owner/*): no sign-in; every state change must come from the monitor's own page.
+// Owner routes of the queue (/api/queue/owner/*): no sign-in; every state change (message send included) must come from the monitor's own page.
 // A child of the queue plugin → the Host allowlist runs before the page-origin hook, which a DNS-rebound page would pass.
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
+import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import { QueueRequestError } from "../queue/errors.js";
 import { putAnswer, putLater, putReply, putResend, putSeen } from "../queue/owner-items.js";
 import { getOwnerItemOrThrow, getOwnerItems, getRecentResumes } from "../queue/owner-views.js";
+import { createMessages, getOwnerSessions } from "../queue/owner-sessions.js";
 import { buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
-import { answerBodySchema, emptyBodySchema, ownerListQuerySchema, recentResumesQuerySchema, replyBodySchema } from "../queue/schemas.js";
+import {
+  answerBodySchema,
+  emptyBodySchema,
+  messageBodySchema,
+  ownerListQuerySchema,
+  ownerSessionsQuerySchema,
+  recentResumesQuerySchema,
+  replyBodySchema,
+} from "../queue/schemas.js";
 import { type PageOriginSignal, getPageOriginSignal } from "../request-guards.js";
 import type { QueueRouteOptions } from "./queue.js";
 import { type IdParams, handleItemRequest, handleParsed } from "./queue-request.js";
 
-/** Answer or reply text 20000 chars at up to 4 UTF-8 bytes each, plus JSON framing. */
+/** Answer, reply or message text 20000 chars at up to 4 UTF-8 bytes each, plus 20 session ids and JSON framing. */
 const OWNER_ROUTE_OPTIONS = { bodyLimit: 96 * 1024 } as const;
 
 type ItemTransition = (id: number) => Promise<void>;
@@ -23,6 +33,7 @@ export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRout
   registerReadRoutes(app, options.cliPath);
   registerRecentResumesRoute(app);
   registerAnswerRoutes(app, pageOrigins);
+  registerSessionRoutes(app, pageOrigins);
   registerTransitionRoute(app, "later", putLater);
   registerTransitionRoute(app, "seen", putSeen);
   registerTransitionRoute(app, "resend", putResend);
@@ -74,6 +85,30 @@ function registerAnswerRoutes(app: FastifyInstance, pageOrigins: ReadonlySet<str
       schema: replyBodySchema,
       input: request.body,
       work: (id, body) => putReply(id, body, getPageOriginSignalOrThrow(request, pageOrigins)).then(() => ({ ok: true })),
+    }),
+  );
+}
+
+function registerSessionRoutes(app: FastifyInstance, pageOrigins: ReadonlySet<string>): void {
+  app.get("/api/queue/owner/sessions", async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/owner/sessions",
+      schema: ownerSessionsQuerySchema,
+      input: request.query,
+      work: (query) => getOwnerSessions(query),
+    }),
+  );
+  app.post("/api/queue/owner/messages/send", OWNER_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/owner/messages/send",
+      schema: messageBodySchema,
+      input: request.body,
+      work: async (body) => {
+        const created = await createMessages(body, getPageOriginSignalOrThrow(request, pageOrigins));
+        (request as FastifyRequest & AuditChangeCarrier).auditChange = { itemIds: created.items.map((item) => item.id) };
+        reply.code(201);
+        return created;
+      },
     }),
   );
 }

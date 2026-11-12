@@ -41,6 +41,8 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/queue/owner/items/:id/seen", "queue-item"],
   ["/api/queue/owner/items/:id/reply", "queue-item"],
   ["/api/queue/owner/items/:id/resend", "queue-item"],
+  // Owner message send: one row per send; the handler attaches the created item ids, never the text.
+  ["/api/queue/owner/messages/send", "queue-message"],
 ]);
 
 // Single-writer enrichment seam: a covered handler may attach a curated old→new diff — never the raw request body (PII/secret guard).

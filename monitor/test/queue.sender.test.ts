@@ -20,6 +20,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { buildClaudeChildEnv } from "../src/server/queue/child-env.js";
 import { BUNDLE_LITERALS, createDriftGuard } from "../src/server/queue/drift-guard.js";
 import { getProcessStartTime } from "../src/server/queue/process-start-time.js";
+import { createMessages } from "../src/server/queue/owner-sessions.js";
 import { registerSession } from "../src/server/queue/registry.js";
 import { startQueueScheduler } from "../src/server/queue/scheduler.js";
 import { type SweepDeps, deleteOrphanTokenFiles, runSweepPass } from "../src/server/queue/sweep.js";
@@ -198,6 +199,23 @@ async function waitForUserFrames(pid: number, count: number): Promise<string[]> 
 }
 
 describe("socket delivery of an answered item", () => {
+  test("an owner message to a live row goes out as one user frame under the message header, never with its text", async () => {
+    const sessionId = await seedSession({ socket: "served" });
+    writeFileSync(path.join(dir.tokens, sessionId), `${authValue}\n`, { mode: 0o600 });
+    const { items: [message] } = await createMessages({ sessionIds: [sessionId], text: "Rebase onto main before the review." }, "origin");
+    assert.ok(message !== undefined);
+
+    await runSweepPass(buildDeps([sessionId]));
+
+    const [delivery] = await getDeliveries(BigInt(message.id));
+    const frame = JSON.parse(received.get(confinedSocketPath(livePid.pid))?.at(-1) ?? "null");
+    assert.ok(delivery !== undefined, "one Delivery row inserted");
+    assert.equal(frame.msg_id, delivery.msgId);
+    assert.ok(frame.message.content.startsWith(`[ATRIUM-MESSAGE v1] item ${message.id} · msg ${delivery.msgId}`), frame.message.content);
+    assert.ok(!frame.message.content.includes("Rebase onto main"), "the message text is fetched, never framed");
+    assert.equal(await getStatus(BigInt(message.id)), "delivering");
+  });
+
   test("a live row's answered item goes out as an auth line then one user frame naming the session and the Delivery msg id", async () => {
     const sessionId = await seedSession({ socket: "served" });
     writeFileSync(path.join(dir.tokens, sessionId), `${authValue}\n`, { mode: 0o600 });

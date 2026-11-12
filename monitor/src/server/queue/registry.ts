@@ -30,6 +30,11 @@ export interface LockedSession {
   state: string;
 }
 
+export interface LockedSessionRow {
+  sessionId: string;
+  exitReason: string | null;
+}
+
 interface SessionFacts {
   cwd: string;
   worktreeRoot: string | null;
@@ -176,9 +181,10 @@ async function findReplacedSessionIds(tx: Prisma.TransactionClient, sessionId: s
   return rows.map((row) => row.sessionId);
 }
 
-async function lockSessions(tx: Prisma.TransactionClient, sessionIds: string[]): Promise<void> {
-  await tx.$queryRaw`
-    SELECT "session_id" FROM "monitor"."queue_sessions"
+/** Locks the registry rows in ascending session id (the shared lock order); unknown ids are simply absent. */
+export async function lockSessions(tx: Prisma.TransactionClient, sessionIds: string[]): Promise<LockedSessionRow[]> {
+  return tx.$queryRaw<LockedSessionRow[]>`
+    SELECT "session_id"::text AS "sessionId", "exit_reason"::text AS "exitReason" FROM "monitor"."queue_sessions"
     WHERE "session_id" = ANY(${sessionIds}::uuid[]) ORDER BY "session_id" FOR UPDATE`;
 }
 

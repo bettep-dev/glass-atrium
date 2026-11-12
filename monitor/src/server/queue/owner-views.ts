@@ -21,7 +21,7 @@ const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
 const DEVIATION_STATUSES = new Set<QueueItemStatus>(["unacked", "held", "expired", "resume_pending"]);
 // Every state an answer leads to; open, seen and withdrawn carry no answer → never "answered outside"
 const ANSWERED_STATUSES = new Set<QueueItemStatus>(["answered", "delivering", "unacked", "held", "expired", "resume_pending", "delivered"]);
-const SESSION_ID_PREFIX_LENGTH = 8;
+export const SESSION_ID_PREFIX_LENGTH = 8;
 
 export type Deviation = "unacked" | "held" | "expired" | "resume_pending" | "session_not_reachable" | "delivery_off";
 
@@ -317,6 +317,6 @@ function toMarkedOccupant(facts: SessionFacts): MarkedOccupant {
   return { profileLabel: facts.profileLabel, cwdTail: getCwdTail(facts.cwd), sessionIdPrefix: facts.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH) };
 }
 
-function getCwdTail(cwd: string): string {
+export function getCwdTail(cwd: string): string {
   return cwd.split("/").filter((segment) => segment !== "").slice(-2).join("/");
 }

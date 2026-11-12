@@ -12,6 +12,7 @@ const MAX_TEXT = 20_000;
 // queue_sessions.name VARCHAR(100) + queue_sessions_name_check; Zod counts UTF-16 units ≥ Postgres code points → never past the column
 const SESSION_NAME_MAX = 100;
 const MAX_LIST_LIMIT = 200;
+const MAX_MESSAGE_TARGETS = 20;
 const RECENT_RESUME_LIMIT = { DEFAULT: 10, MAX: 50 } as const;
 
 const sessionId = z.uuid();
@@ -104,6 +105,17 @@ export const ownerListQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(MAX_LIST_LIMIT).default(100),
 });
 
+export const ownerSessionsQuerySchema = z.strictObject({ profile: z.string().min(1).max(64).optional() });
+
+export const messageBodySchema = z.strictObject({
+  sessionIds: z
+    .array(sessionId)
+    .min(1)
+    .max(MAX_MESSAGE_TARGETS)
+    .refine((ids) => new Set(ids).size === ids.length, "session ids must be unique"),
+  text: requiredText(MAX_TEXT),
+});
+
 export const recentResumesQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(RECENT_RESUME_LIMIT.MAX).default(RECENT_RESUME_LIMIT.DEFAULT),
 });
@@ -116,3 +128,5 @@ export type AnswerBody = z.infer<typeof answerBodySchema>;
 export type ReplyBody = z.infer<typeof replyBodySchema>;
 export type OwnerListQuery = z.infer<typeof ownerListQuerySchema>;
 export type RecentResumesQuery = z.infer<typeof recentResumesQuerySchema>;
+export type OwnerSessionsQuery = z.infer<typeof ownerSessionsQuerySchema>;
+export type MessageBody = z.infer<typeof messageBodySchema>;

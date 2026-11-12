@@ -537,10 +537,14 @@ describe("recent automatic resumes", () => {
     await seedResumeDelivery(delivered, 1, "bg-41", { result: "acked" });
     const pending = await seedDecision(sessionId, { title: "Pick the lock order", status: "resume_pending", answerCode: "R2", answeredAt: new Date() });
     await seedResumeDelivery(pending, 1, null, { result: "aborted", abortReason: "session_returned" });
-    const response = await send("GET", "/api/queue/owner/resumes?limit=2");
+    // the resume suite writes resume rows in parallel under the same shared lock → read a window, keep this test's rows
+    const response = await send("GET", "/api/queue/owner/resumes?limit=50");
     assert.equal(response.statusCode, 200, response.body);
     const session = { profileLabel: ".claude-work", cwdTail: "atrium/hooks" };
-    const resumes = (response.json().resumes as Array<Record<string, unknown>>).map(({ sentAt: _sentAt, ...rest }) => rest);
+    const ownIds = new Set([Number(pending), Number(delivered)]);
+    const resumes = (response.json().resumes as Array<{ sentAt: string; item: { id: number } }>)
+      .filter((resume) => ownIds.has(resume.item.id))
+      .map(({ sentAt: _sentAt, ...rest }) => rest);
     assert.deepEqual(resumes, [
       { attempt: 1, result: "aborted", abortReason: "session_returned", bgId: null, item: { id: Number(pending), title: "Pick the lock order" }, session },
       { attempt: 1, result: "acked", abortReason: null, bgId: "bg-41", item: { id: Number(delivered), title: "Pick the index" }, session },
@@ -559,5 +563,142 @@ describe("recent automatic resumes", () => {
 
   test("the record takes a bounded limit", async () => {
     assert.equal((await send("GET", "/api/queue/owner/resumes?limit=51")).statusCode, 400);
+  });
+});
+
+describe("session list", () => {
+  test("lists live, stale and item-owning exited sessions of an account, live first then by last activity, with name, state and counts", async () => {
+    const profileLabel = `.claude-list-${randomUUID().slice(0, 8)}`;
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+    const id = {
+      liveOld: await seedSession({ profileLabel, name: "queue-sessions M2", lastSeenAt: minutesAgo(30) }),
+      liveNew: await seedSession({ profileLabel, cwd: "/Users/owner/Desktop/git/library", lastSeenAt: minutesAgo(1) }),
+      stale: await seedSession({ profileLabel, state: "stale", lastSeenAt: minutesAgo(5) }),
+      exitedWithItems: await seedSession({ profileLabel, state: "exited", exitReason: "ended", lastSeenAt: minutesAgo(60), resumeAwaitingRegisterAt: minutesAgo(2) }),
+      replaced: await seedSession({ profileLabel, state: "exited", exitReason: "replaced", lastSeenAt: minutesAgo(70) }),
+      exitedBare: await seedSession({ profileLabel, state: "exited", exitReason: "dead", lastSeenAt: minutesAgo(3) }),
+    };
+    await seedItem(id.liveOld, { status: "open", askedAt: minutesAgo(40) });
+    await seedDecision(id.liveOld, { status: "unacked", answerCode: "R1", answeredAt: minutesAgo(35), askedAt: minutesAgo(40) });
+    await seedItem(id.exitedWithItems, { status: "delivered", askedAt: minutesAgo(10) });
+    await seedItem(id.replaced, { status: "open", askedAt: minutesAgo(70) });
+    await seedSession({ name: "another account" });
+
+    const response = await send("GET", `/api/queue/owner/sessions?profile=${profileLabel}`, undefined, { headers: {} });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const { sessions, hasMore } = response.json();
+    assert.equal(hasMore, false);
+    assert.deepEqual(
+      sessions.map((row: { id: string }) => row.id),
+      [id.liveNew, id.liveOld, id.stale, id.exitedWithItems, id.replaced],
+      "exited without items left out; live first, then newest activity",
+    );
+    const [liveNew, liveOld, , exitedWithItems, replaced] = sessions;
+    assert.deepEqual([liveNew.name, liveNew.isNameRegistered], ["library", false], "start-directory fallback");
+    assert.deepEqual([liveOld.name, liveOld.isNameRegistered], ["queue-sessions M2", true]);
+    assert.deepEqual(liveOld.count, { awaiting: 1, inDelivery: 1 });
+    assert.deepEqual([liveOld.profileLabel, liveOld.cwdTail, liveOld.sessionIdPrefix], [profileLabel, "glass-atrium/monitor", id.liveOld.slice(0, 8)]);
+    assert.equal(exitedWithItems.lastActivityAt, new Date(exitedWithItems.lastActivityAt).toISOString());
+    assert.ok(new Date(exitedWithItems.lastActivityAt) > minutesAgo(11), "an item asked after the last register counts as activity");
+    assert.deepEqual([exitedWithItems.state, exitedWithItems.exitReason, exitedWithItems.isSelectable], ["exited", "ended", true]);
+    assert.ok(exitedWithItems.markerSetAt !== null, "the resume-marker note");
+    assert.deepEqual([replaced.exitReason, replaced.isSelectable], ["replaced", false]);
+  });
+
+  test("rejects an unknown query key", async () => {
+    const response = await send("GET", "/api/queue/owner/sessions?state=live");
+    assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"]);
+  });
+});
+
+describe("owner message send", () => {
+  const getMessages = (sessionIds: string[]) =>
+    getPrisma().queueItem.findMany({ where: { sessionId: { in: sessionIds }, kind: "message" }, orderBy: { id: "asc" } });
+
+  test("one send puts one answered message item per target, stamped with the send route and the page-origin signal", async () => {
+    const targets = [await seedSession(), await seedSession({ state: "exited", exitReason: "ended" }), await seedSession({ state: "stale" })];
+    const firstLine = "Rebase onto main before the review " + "x".repeat(200);
+    const text = `\n   \n  ${firstLine}  \nthen rerun the suite.`;
+    const rows = [
+      { name: "fetch metadata", headers: SAME_ORIGIN as Record<string, string>, signal: "fetch_metadata" },
+      { name: "Origin only", headers: { origin: `http://localhost:${PORT}` }, signal: "origin" },
+    ];
+    for (const row of rows) {
+      const before = (await getMessages(targets)).length;
+      const response = await send("POST", "/api/queue/owner/messages/send", { sessionIds: targets, text }, { headers: row.headers });
+      assert.equal(response.statusCode, 201, `${row.name}: ${response.body}`);
+      const created = (await getMessages(targets)).slice(before);
+      assert.deepEqual(created.map((item) => item.sessionId).sort(), [...targets].sort(), row.name);
+      assert.deepEqual(response.json().items.map((item: { id: number }) => item.id).sort(), created.map((item) => Number(item.id)).sort(), row.name);
+      for (const item of created) {
+        assert.deepEqual(
+          [item.status, item.answerRoute, item.answerSignal, item.body, item.title, item.isFreeTextAllowed, item.answeredAt !== null],
+          ["answered", "message", row.signal, text, firstLine.trim().slice(0, 200), false, true],
+          row.name,
+        );
+      }
+    }
+  });
+
+  test("a send outside the body rules is refused and creates nothing", async () => {
+    const target = await seedSession();
+    const tooMany = [target, ...Array.from({ length: 20 }, () => randomUUID())];
+    const rows = [
+      { name: "no target", body: { sessionIds: [], text: "Rebase onto main." } },
+      { name: "21 targets", body: { sessionIds: tooMany, text: "Rebase onto main." } },
+      { name: "a repeated id", body: { sessionIds: [target, target], text: "Rebase onto main." } },
+      { name: "blank text", body: { sessionIds: [target], text: " \n " } },
+      { name: "text past 20000 characters", body: { sessionIds: [target], text: "t".repeat(20_001) } },
+      { name: "an unknown key", body: { sessionIds: [target], text: "Rebase onto main.", isApprovalClass: true } },
+    ];
+    for (const row of rows) {
+      const response = await send("POST", "/api/queue/owner/messages/send", row.body);
+      assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"], row.name);
+    }
+    assert.equal((await getMessages([target])).length, 0);
+  });
+
+  test("one unknown or replaced target refuses the whole send", async () => {
+    const live = await seedSession();
+    const replaced = await seedSession({ state: "exited", exitReason: "replaced" });
+    const rows = [
+      { name: "an unknown session id", sessionIds: [live, randomUUID()], status: 404, error: "unknown_session" },
+      { name: "a replaced session", sessionIds: [live, replaced], status: 409, error: "session_replaced" },
+    ];
+    for (const row of rows) {
+      const response = await send("POST", "/api/queue/owner/messages/send", { sessionIds: row.sessionIds, text: "Rebase onto main." });
+      assert.deepEqual([response.statusCode, response.json().error], [row.status, row.error], row.name);
+    }
+    assert.equal((await getMessages([live, replaced])).length, 0);
+  });
+
+  test("a send without the monitor page's origin is refused and creates nothing", async () => {
+    const target = await seedSession();
+    const refused: Array<Record<string, string>> = [{}, { "sec-fetch-site": "cross-site" }, { origin: "https://evil.example" }];
+    for (const headers of refused) {
+      const response = await send("POST", "/api/queue/owner/messages/send", { sessionIds: [target], text: "Rebase onto main." }, { headers });
+      assert.equal(response.statusCode, 403, JSON.stringify(headers));
+    }
+    assert.equal((await getMessages([target])).length, 0);
+  });
+
+  test("a sent message reaches its session through pending, get and ack, and no other session can read it", async () => {
+    const target = await seedSession();
+    const other = await seedSession();
+    const sent = await send("POST", "/api/queue/owner/messages/send", { sessionIds: [target], text: "Rebase onto main." });
+    const [item] = sent.json().items;
+
+    const pending = await send("POST", "/api/queue/pending", { sessionId: target }, { headers: {} });
+    const [claim] = pending.json().items;
+    const fetched = await send("GET", `/api/queue/items/${item.id}?sessionId=${target}`, undefined, { headers: {} });
+    const foreign = await send("GET", `/api/queue/items/${item.id}?sessionId=${other}`, undefined, { headers: {} });
+    const ack = await send("POST", `/api/queue/items/${item.id}/ack`, { sessionId: target, msgId: claim.id.msg }, { headers: {} });
+
+    assert.equal(claim.id.item, item.id);
+    assert.deepEqual([fetched.statusCode, fetched.json().kind, fetched.json().body], [200, "message", "Rebase onto main."]);
+    assert.equal(foreign.statusCode, 404);
+    assert.deepEqual(ack.json(), { result: "first" });
+    assert.equal((await getItemRow(BigInt(item.id))).status, "delivered");
   });
 });

@@ -19,6 +19,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { ackItem } from "../src/server/queue/delivery.js";
 import { buildResumePayload } from "../src/server/queue/envelope.js";
 import { putResend } from "../src/server/queue/owner-items.js";
+import { createMessages } from "../src/server/queue/owner-sessions.js";
 import { getOwnerItemOrThrow } from "../src/server/queue/owner-views.js";
 import { getProcessStartTime } from "../src/server/queue/process-start-time.js";
 import { deregisterSession, findWorktreeRoot, registerSession } from "../src/server/queue/registry.js";
@@ -271,6 +272,21 @@ describe("automatic resume of an exited session", () => {
     assert.equal(row.sentAt.getTime(), harness.clock.ms);
     assert.equal(await getStatus(itemId), "delivering");
     assert.equal(await isMarked(sessionId), true);
+  });
+
+  test("an owner message to an exited session is resumed exactly once, under the message header", async () => {
+    const sessionId = await seedSession({ cwd: newFixtureDir("message") });
+    const { items: [message] } = await createMessages({ sessionIds: [sessionId], text: "Rebase onto main before the review." }, "fetch_metadata");
+    assert.ok(message !== undefined);
+    const harness = buildHarness([sessionId]);
+
+    await runPasses(harness, 3);
+
+    const [call] = harness.fake.calls;
+    assert.equal(harness.fake.calls.length, 1);
+    assert.ok(call?.args[3]?.includes(`[ATRIUM-MESSAGE v1] item ${message.id}`), "the resume payload carries the message envelope");
+    assert.ok(!call?.args[3]?.includes("Rebase onto main"), "the message text is fetched, never put in the payload");
+    assert.equal((await getResumeRows(BigInt(message.id))).length, 1);
   });
 
   const neverResumed: Array<{ name: string; state: QueueSessionState }> = [
