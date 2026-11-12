@@ -21,7 +21,7 @@ import { chromium } from "playwright";
 import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
-  FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW, FIXTURE_SESSION_IDS, getNotReceivedFixture, getRestFixture, type QueueFixture,
+  FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW, FIXTURE_SESSION_IDS, getArrivalFixture, getNotReceivedFixture, getRestFixture, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -176,12 +176,15 @@ function isOrderBefore(order: { at: bigint; id: bigint }, bound: { at: bigint; i
   return order.at < bound.at || (order.at === bound.at && order.id < bound.id);
 }
 
-/** A fresh page on the pinned clock, opened on #queue once the fixture's text and the web fonts are in. */
-async function openQueuePage(harness: Harness, viewport: { width: number; height: number }, readyText: string): Promise<Page> {
+/**
+ * A fresh page on the pinned clock, opened on #queue once the fixture's text and the web fonts are in.
+ * @param isClockDriven - the page's timers run on the test's clock (`page.clock.fastForward`), time still flowing from the pinned start
+ */
+async function openQueuePage(harness: Harness, viewport: { width: number; height: number }, readyText: string, isClockDriven = false): Promise<Page> {
   const page = await harness.browser.newPage({ viewport });
   // tsx keeps function names through an injected __name helper → the evaluated fact readers need it on the page
   await page.addInitScript("globalThis.__name = (fn) => fn");
-  await page.clock.setFixedTime(FIXTURE_NOW);
+  await (isClockDriven ? page.clock.install({ time: FIXTURE_NOW }) : page.clock.setFixedTime(FIXTURE_NOW));
   await page.goto(`${harness.url}/#queue`, { waitUntil: "load" });
   await page.getByText(readyText).first().waitFor({ timeout: READY_TIMEOUT_MS });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
@@ -398,6 +401,26 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(railRows, [68]);
     assert.deepEqual({ isAwayShown: mode.isAwayShown, column: mode.column, insets: mode.insets }, { isAwayShown: false, column: 720, insets: [mode.pad, mode.pad] });
     assert.deepEqual(restored, stored);
+  });
+
+  // spec §18.4 row 20: the arrival reaches the row, the rail and the nav on the same tick, and moves nothing the owner holds
+  test("the page's own 15 s read marks an arrival New and raises its session's and the nav's counts, the selection unmoved", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
+    try {
+      const selected = () => page.locator('[role="option"][aria-selected="true"]').getAttribute("id");
+      const before = await selected();
+      harness.fixture = getArrivalFixture();
+      await page.clock.fastForward(15_000);
+      await page.locator("#queue-row-150").waitFor({ timeout: READY_TIMEOUT_MS });
+      const rail = page.locator(`[data-session="${FIXTURE_SESSION_IDS.yoaida}"] .queue-rail-count .pill`);
+      await assert.doesNotReject(rail.filter({ hasText: /^2$/ }).waitFor({ timeout: READY_TIMEOUT_MS }), "yoaida's rail count reads 2");
+      await assert.doesNotReject(page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS }), "the nav count reads 8");
+      assert.deepEqual(await page.locator("#queue-row-150 .queue-row-who .pill--solid").allTextContents(), ["New"]);
+      assert.equal(await selected(), before);
+    } finally {
+      await page.close();
+    }
   });
 
   test("an order's images are 96 squares in its bubble, an added one is a 56 thumbnail in a 104 box, and the viewer fits one in the window and steps", async () => {
