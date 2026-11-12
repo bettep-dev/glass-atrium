@@ -5,8 +5,11 @@
 
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { messageBodySchema } from "../src/server/queue/schemas.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -111,6 +114,8 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       later: record("later"),
       send: record("send"),
       answerItem: record("answerItem"),
+      sessions: buildSessions(),
+      reload: record("reload"),
       ...overrides,
     },
   };
@@ -573,6 +578,14 @@ describe("the queue page spaces on role keys only", () => {
   const states = [
     { name: "a loaded list with cards, the banner and Show more", node: () => render("QueueListQ", { queue: { ...buildQueue().queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } }) },
     { name: "a card with a refusal", node: () => render("QueueCardQ", { item: data.items[0], queue: buildQueue({ busy: { id: null, error: { id: 1, message: "Refused: x." } } }).queue }) },
+    {
+      name: "the sessions region with a ticked row, the composer and a refusal",
+      node: () =>
+        render("SessionsRegionQ", {
+          sessions: buildSessions({ selectedIds: [SESSION_ID], isEndedShown: true, composer: { text: "rebase on main", isBusy: false, error: "Refused: x.", sentCount: null } }),
+          onSent: () => undefined,
+        }),
+    },
   ];
   for (const row of states) {
     test(row.name, () => {
@@ -803,7 +816,7 @@ describe("page header freshness", () => {
   const list = (overrides: Record<string, unknown> = {}) => ({ status: "ready", data: { items: [] }, error: null, readAt: readAt(), ...overrides });
   const resumes = (overrides: Record<string, unknown> = {}) => ({ ...READY_RESUMES, ...overrides });
   const getHeader = (queue: Record<string, unknown>) => {
-    const [header] = findNodes(render("QueueHeaderQ", { queue: { reload: () => undefined, ...queue } }), (node) => node.props?.atom === "PageHeader");
+    const [header] = findNodes(render("QueueHeaderQ", { queue: { reload: () => undefined, sessions: buildSessions(), ...queue } }), (node) => node.props?.atom === "PageHeader");
     const freshness = header?.props.freshness as { props: Record<string, unknown> };
     const refresh = header?.props.refresh as { props: Record<string, unknown> };
     const stamp = collectText(renderScreen(realUiReact.createElement(realUi.FreshnessStamp, freshness.props)) as RenderedNode);
@@ -823,4 +836,269 @@ describe("page header freshness", () => {
       assert.equal(isBusy, row.isBusy);
     });
   }
+});
+
+const ENDED_ID = "3d8a5f20-7c41-4b9e-8e2d-5a1c6b0f9e37";
+const REPLACED_ID = "c41e9b07-2f6d-4a83-9b15-7e0d3c8a2f64";
+
+function buildSessionRow(overrides: Record<string, unknown> = {}) {
+  const id = String(overrides.id ?? SESSION_ID);
+  return {
+    id,
+    sessionIdPrefix: id.slice(0, 8),
+    name: "nightly-docs-sweep",
+    isNameRegistered: true,
+    profileLabel: "work-dev",
+    cwd: "/Users/owner/Desktop/git/glass-atrium",
+    cwdTail: "git/glass-atrium",
+    state: "live",
+    exitReason: null,
+    lastActivityAt: "2026-11-12T03:41:09.336Z",
+    count: { awaiting: 1, inDelivery: 0 },
+    markerSetAt: null,
+    isSelectable: true,
+    ...overrides,
+  };
+}
+
+const SESSION_ROWS = [
+  buildSessionRow(),
+  buildSessionRow({ id: ENDED_ID, name: "atrium-hooks", isNameRegistered: false, state: "exited", exitReason: "ended" }),
+  buildSessionRow({ id: REPLACED_ID, state: "exited", exitReason: "replaced", isSelectable: false }),
+];
+
+function buildSessions(overrides: Record<string, unknown> = {}) {
+  return {
+    region: { status: "ready", data: { sessions: SESSION_ROWS, hasMore: false }, error: null, busy: false },
+    read: () => undefined,
+    selectedIds: [],
+    toggle: () => undefined,
+    clear: () => undefined,
+    isEndedShown: false,
+    setEndedShown: () => undefined,
+    composer: { text: "", isBusy: false, error: null, sentCount: null },
+    setText: () => undefined,
+    send: () => undefined,
+    ...overrides,
+  };
+}
+
+// the table's rows as the shipped Table renders them: its body callback, called with a wide view
+function renderSessionRows(rows: unknown[], onToggle: (id: string) => void = () => undefined): RenderedNode {
+  const [table] = findNodes(render("SessionsTableQ", { rows, selectedIds: [], onToggle }), (node) => node.props.atom === "Table");
+  const [body] = table?.props.bodies as Array<{ rows: (view: unknown) => unknown[] }>;
+  const view = { isStacked: false, columnCount: 8 };
+  return renderScreen(screen.React.createElement("tbody", null, ...(body?.rows(view) ?? []))) as RenderedNode;
+}
+
+describe("sessions region rows", () => {
+  const rowText = (row: unknown) => collectText(renderSessionRows([row]));
+
+  test("a row shows the registered name, and a nameless row shows its start-directory name marked as such", () => {
+    const named = rowText(buildSessionRow());
+    const nameless = rowText(buildSessionRow({ name: "glass-atrium", isNameRegistered: false }));
+    assert.ok(named.includes("nightly-docs-sweep") && !named.includes("start directory"), named);
+    assert.ok(nameless.includes("glass-atrium") && nameless.includes("start directory"), nameless);
+  });
+
+  const states = [
+    { name: "a live session", row: { state: "live" }, label: "Live" },
+    { name: "a session that stopped answering probes", row: { state: "stale" }, label: "Not reachable" },
+    { name: "a session that ended", row: { state: "exited", exitReason: "ended" }, label: "Ended" },
+    { name: "a session whose process is gone", row: { state: "exited", exitReason: "dead" }, label: "Ended · process gone" },
+    { name: "a session another took over", row: { state: "exited", exitReason: "replaced" }, label: "Replaced" },
+  ];
+  for (const row of states) test(`state label: ${row.name}`, () => assert.equal(call("getSessionStateLabelQ", buildSessionRow(row.row)), row.label));
+
+  test("a replaced row's checkbox is disabled and every other row's is not", () => {
+    const tree = renderSessionRows(SESSION_ROWS);
+    const boxes = findNodes(tree, (node) => node.type === "input" && node.props.type === "checkbox");
+    assert.deepEqual(boxes.map((box) => box.props.disabled === true), [false, false, true]);
+  });
+
+  test("ticking a row calls the toggle with that row's id", () => {
+    const toggled: unknown[] = [];
+    const tree = renderSessionRows(SESSION_ROWS, (id) => toggled.push(id));
+    const [, endedBox] = findNodes(tree, (node) => node.type === "input" && node.props.type === "checkbox");
+    (endedBox?.props.onChange as () => void)();
+    assert.deepEqual(toggled, [ENDED_ID]);
+  });
+
+  test("ticking adds a row and ticking it again removes it, keeping the other ticks", () => {
+    assert.deepEqual(call("putToggledIdQ", [SESSION_ID], ENDED_ID), [SESSION_ID, ENDED_ID]);
+    assert.deepEqual(call("putToggledIdQ", [SESSION_ID, ENDED_ID], SESSION_ID), [ENDED_ID]);
+  });
+
+  test("ended rows stay hidden until Show ended is on", () => {
+    const ids = (isEndedShown: boolean) => call<Array<{ id: string }>>("getShownSessionsQ", SESSION_ROWS, isEndedShown).map((row) => row.id);
+    assert.deepEqual(ids(false), [SESSION_ID]);
+    assert.deepEqual(ids(true), [SESSION_ID, ENDED_ID, REPLACED_ID]);
+  });
+});
+
+describe("message composer", () => {
+  const shown = SESSION_ROWS;
+  test("the targets are the ticked rows on show, never a hidden ended row or a replaced row", () => {
+    const ticked = [SESSION_ID, ENDED_ID, REPLACED_ID];
+    assert.deepEqual(call("getSendTargetsQ", shown, ticked), { ids: [SESSION_ID, ENDED_ID], endedCount: 1 });
+    assert.deepEqual(call("getSendTargetsQ", [shown[0]], ticked), { ids: [SESSION_ID], endedCount: 0 });
+  });
+
+  const labels = [
+    { name: "one live target", targets: { ids: [SESSION_ID], endedCount: 0 }, label: "Send to 1 session" },
+    { name: "two live targets", targets: { ids: [SESSION_ID, ENDED_ID], endedCount: 0 }, label: "Send to 2 sessions" },
+    { name: "an ended target among them", targets: { ids: [SESSION_ID, ENDED_ID], endedCount: 1 }, label: "Send to 2 sessions · resumes 1 ended" },
+  ];
+  for (const row of labels) test(`the Send label names the target and ended counts: ${row.name}`, () => assert.equal(call("getSendLabelQ", row.targets), row.label));
+
+  const MAX_TARGETS = vm.runInContext("MESSAGE_Q.MAX_TARGETS", screen) as number;
+  const bodies = [
+    { name: "no ticked row", ids: [], text: "rebase on main", isSendable: false },
+    { name: "blank text", ids: [SESSION_ID], text: "", isSendable: false },
+    { name: "whitespace-only text", ids: [SESSION_ID], text: " \n\t ", isSendable: false },
+    { name: "more targets than one send takes", ids: Array.from({ length: MAX_TARGETS + 1 }, () => randomUUID()), text: "rebase on main", isSendable: false },
+    { name: "ticked rows and text", ids: [SESSION_ID, ENDED_ID], text: "rebase on main", isSendable: true },
+  ];
+  for (const row of bodies) {
+    test(`Send is enabled only for ticked rows and non-blank text: ${row.name}`, () => {
+      const sent: unknown[] = [];
+      const tree = render("MessageComposerQ", {
+        targets: { ids: row.ids, endedCount: 0 },
+        composer: { text: row.text, isBusy: false, error: null, sentCount: null },
+        onText: () => undefined,
+        onSend: (body: unknown) => sent.push(body),
+        onClear: () => undefined,
+      });
+      const [send] = findNodes(tree, (node) => node.type === "button" && collectText(node).startsWith("Send to"));
+      assert.equal(send?.props.disabled, !row.isSendable);
+      if (row.isSendable) (send?.props.onClick as () => void)();
+      assert.deepEqual(getPlain(sent), row.isSendable ? [{ sessionIds: row.ids, text: row.text }] : []);
+    });
+  }
+
+  test("the page's per-send target cap is the send route's: the cap passes and one more is refused", () => {
+    const text = "rebase on main";
+    const ids = (count: number) => Array.from({ length: count }, () => randomUUID());
+    assert.equal(messageBodySchema.safeParse({ sessionIds: ids(MAX_TARGETS), text }).success, true);
+    assert.equal(messageBodySchema.safeParse({ sessionIds: ids(MAX_TARGETS + 1), text }).success, false);
+  });
+});
+
+describe("a message send's answer", () => {
+  const run = async (status: number, answer: unknown) => {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      fetch: async (url: string, init: { body: string }) => {
+        posts.push({ url, body: JSON.parse(init.body) });
+        return { status, json: async () => answer };
+      },
+    })) as ScreenModule;
+    let composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null, sentCount: null };
+    let selectedIds: string[] = [SESSION_ID, ENDED_ID];
+    const counts = { sent: 0 };
+    const isDone = await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
+      body: { sessionIds: [SESSION_ID, ENDED_ID], text: "rebase on main" },
+      setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); },
+      setSelectedIds: (next: string[]) => { selectedIds = next; },
+      onSent: () => { counts.sent += 1; },
+    });
+    return { isDone, posts: getPlain(posts), composer: getPlain(composer), selectedIds: getPlain(selectedIds), sent: counts.sent };
+  };
+
+  test("a taken send posts every ticked id with the text, then clears the text and the ticks and re-reads the page", async () => {
+    const result = await run(201, { items: [{ id: 81, sessionId: SESSION_ID }, { id: 82, sessionId: ENDED_ID }] });
+    assert.deepEqual(result.posts, [{ url: "/api/queue/owner/messages/send", body: { sessionIds: [SESSION_ID, ENDED_ID], text: "rebase on main" } }]);
+    assert.equal(result.isDone, true);
+    assert.deepEqual(result.composer, { text: "", isBusy: false, error: null, sentCount: 2 });
+    assert.deepEqual(result.selectedIds, []);
+    assert.equal(result.sent, 1);
+  });
+
+  const refusals = [
+    { name: "a replaced target names the server's reason", status: 409, answer: { error: "session_replaced", reason: "a replaced session takes no message" }, error: "Refused: a replaced session takes no message." },
+    { name: "an unknown target names the server's reason", status: 404, answer: { error: "unknown_session", reason: "every target must be a registered session" }, error: "Refused: every target must be a registered session." },
+    { name: "a refusal with no reason shows fixed copy", status: 403, answer: { error: "forbidden" }, error: "The monitor refused this message. Refresh the session list and try again." },
+  ];
+  for (const row of refusals) {
+    test(`a refused send keeps the text and the ticks: ${row.name}`, async () => {
+      const result = await run(row.status, row.answer);
+      assert.equal(result.isDone, false);
+      assert.deepEqual(result.composer, { text: "rebase on main", isBusy: false, error: row.error, sentCount: null });
+      assert.deepEqual(result.selectedIds, [SESSION_ID, ENDED_ID]);
+      assert.equal(result.sent, 0);
+    });
+  }
+
+  test("a send during an outage gives the page's outage step", async () => {
+    const result = await run(503, { error: "database_unavailable" });
+    assert.equal(result.composer.error, call("getActionErrorQ", { status: 503, data: { error: "database_unavailable" } }));
+  });
+});
+
+describe("sessions region", () => {
+  test("the list read follows the Account filter and drops ticks on rows no longer listed or selectable", async () => {
+    const urls: string[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      URLSearchParams,
+      window: { UI: realUi },
+      fetch: async (url: string) => {
+        urls.push(url);
+        return { status: 200, json: async () => ({ sessions: SESSION_ROWS, hasMore: false }) };
+      },
+    })) as ScreenModule;
+    let region: unknown = realUi.INITIAL_REGION_STATE;
+    let selectedIds = ["9b2e7c41-0d3a-4c55-8e1f-2a6b9c4d7e10", SESSION_ID, REPLACED_ID];
+    await (module.getSessionsQ as (deps: unknown) => Promise<void>)({
+      profile: "work dev",
+      setRegion: (next: (prev: unknown) => unknown) => { region = next(region); },
+      setSelectedIds: (next: (prev: string[]) => string[]) => { selectedIds = next(selectedIds); },
+    });
+    assert.deepEqual(urls, ["/api/queue/owner/sessions?profile=work+dev"]);
+    assert.equal((getPlain(region) as { data: { sessions: unknown[] } }).data.sessions.length, 3);
+    assert.deepEqual(getPlain(selectedIds), [SESSION_ID]);
+  });
+
+  const views = [
+    { name: "a failed read shows the shared region failure with Retry", region: { status: "error", data: null, error: "HTTP 503 database_unavailable", busy: false }, atom: "RegionUnavailable" },
+    { name: "no session at all shows the empty state", region: { status: "ready", data: { sessions: [], hasMore: false }, error: null, busy: false }, atom: "EmptyState" },
+    { name: "a loaded list shows the table", region: buildSessions().region, atom: "Table" },
+  ];
+  for (const view of views) {
+    test(view.name, () => {
+      const tree = render("SessionsRegionQ", { sessions: buildSessions({ region: view.region }), onSent: () => undefined });
+      assert.equal(findNodes(tree, (node) => node.props?.atom === view.atom).length, 1);
+    });
+  }
+
+  const composerRows = [
+    { name: "no tick shows no composer", selectedIds: [], fields: 0 },
+    { name: "a tick shows the composer", selectedIds: [SESSION_ID], fields: 1 },
+  ];
+  for (const row of composerRows) {
+    test(row.name, () => {
+      const tree = render("SessionsRegionQ", { sessions: buildSessions({ selectedIds: row.selectedIds }), onSent: () => undefined });
+      assert.equal(findNodes(tree, (node) => node.type === "MessageComposerQ").length, row.fields);
+    });
+  }
+
+  test("a taken send says how many sessions it went to once the composer is gone", () => {
+    const tree = render("SessionsRegionQ", { sessions: buildSessions({ composer: { text: "", isBusy: false, error: null, sentCount: 2 } }), onSent: () => undefined });
+    const [notice] = findNodes(tree, (node) => node.props?.role === "status");
+    assert.match(collectText(notice as RenderedNode), /Sent to 2 sessions/);
+  });
+
+  test("the region sits after the item cards and before the recent resumes", () => {
+    const { queue } = buildQueue();
+    const data = { items: [buildItem({ id: 1 })], nextCursor: null, isSocketDeliveryOn: true };
+    const tree = render("QueueListQ", { queue: { ...queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } });
+    const order = findNodes(tree, (node) => ["QueueCardQ", "SessionsRegionQ", "RecentResumesQ"].includes(node.type)).map((node) => node.type);
+    assert.deepEqual(order, ["QueueCardQ", "SessionsRegionQ", "RecentResumesQ"]);
+  });
+});
+
+test("a message card says when it was sent, not asked", () => {
+  const text = collectText(render("CardMetaQ", { item: buildItem({ kind: "message" }) }));
+  assert.match(text, /· sent /);
+  assert.doesNotMatch(text, /asked/);
 });

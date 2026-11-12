@@ -59,7 +59,24 @@ const ANSWER_SIGNAL_LABEL_Q = {
 };
 const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor holds no record of this answer";
 
-const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
+// targets per send: the send route refuses more (schemas.ts → messageBodySchema; the page test binds the two)
+const MESSAGE_Q = { MAX_TARGETS: 20 };
+const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
+const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null, sentCount: null });
+const SESSION_STATE_LABEL_Q = { live: "Live", stale: "Not reachable" };
+const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
+const SESSION_COLUMNS_Q = [
+	{ key: "select", label: <span className="sr-only">Selected</span> },
+	{ key: "session", label: "Session" },
+	{ key: "account", label: "Account" },
+	{ key: "directory", label: "Start directory" },
+	{ key: "state", label: "State" },
+	{ key: "activity", label: "Last activity" },
+	{ key: "awaiting", label: "Awaiting you", isNumeric: true },
+	{ key: "delivery", label: "In delivery", isNumeric: true },
+];
+
+const APPROVAL_NOTE_Q ="Approval: the terminal confirmation is still needed after you answer here.";
 const WRAPPER_RISK_NOTE_Q =
 	"Started through the accept wrapper: on macOS the socket token is optional, so any same-uid process can drive this bypass session with no prompt.";
 
@@ -260,9 +277,9 @@ function QueueHeaderQ({ queue }) {
 	);
 }
 
-// list read as a region summary input + the resume region
-function getShownRegionsQ({ list, resumes }) {
-	return [{ busy: list.status === "loading", error: list.status === "error" ? list.error : null }, resumes];
+// list read as a region summary input + the resume and session regions
+function getShownRegionsQ({ list, resumes, sessions }) {
+	return [{ busy: list.status === "loading", error: list.status === "error" ? list.error : null }, resumes, sessions.region];
 }
 
 function QueueBodyQ({ queue }) {
@@ -279,16 +296,109 @@ function useQueueStateQ({ onRetryHarness }) {
 	const [drafts, setDrafts] = useStateQ({});
 	const [filter, setFilter] = useFilterQ();
 	const [focus, setFocus] = useStateQ(null);
+	const sessions = useSessionsStateQ(filter.profile);
+	// sessions.read changes with the Account filter → a filter change re-reads the page
 	const reload = useCallbackQ(() => {
 		getListQ({ setList });
 		readResumes();
-	}, [readResumes]);
+		sessions.read();
+	}, [readResumes, sessions.read]);
 	const loadMore = useCallbackQ(() => getMoreQ({ list, setList }), [list]);
 	useEffectQ(() => { reload(); }, [reload]);
 	useFocusCardQ(focus);
 	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, reload, onRetryHarness });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
-	return { list, resumes, readResumes, drafts, setDraft, filter, setFilter, reload, loadMore, ...actions };
+	return { list, resumes, readResumes, sessions, drafts, setDraft, filter, setFilter, reload, loadMore, ...actions };
+}
+
+/** Session list region, the ticked rows, Show ended and the message composer; the list follows the Account filter. */
+function useSessionsStateQ(profile) {
+	const [region, setRegion] = useStateQ(window.UI.INITIAL_REGION_STATE);
+	const [selectedIds, setSelectedIds] = useStateQ([]);
+	const [isEndedShown, setEndedShown] = useStateQ(false);
+	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
+	const read = useCallbackQ(() => getSessionsQ({ profile, setRegion, setSelectedIds }), [profile]);
+	const toggle = useCallbackQ((id) => {
+		setSelectedIds((ids) => putToggledIdQ(ids, id));
+		setComposer((prev) => ({ ...prev, sentCount: null }));
+	}, []);
+	const clear = useCallbackQ(() => setSelectedIds([]), []);
+	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
+	const send = useCallbackQ((body, onSent) => sendMessageQ({ body, setComposer, setSelectedIds, onSent }), []);
+	return { region, read, selectedIds, toggle, clear, isEndedShown, setEndedShown, composer, setText, send };
+}
+
+// a read drops the ticks on rows it no longer lists or that turned unselectable
+async function getSessionsQ({ profile, setRegion, setSelectedIds }) {
+	const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
+	const request = {};
+	setRegion((state) => putRegionRequest(state, profile, request));
+	const query = profile ? `?${new URLSearchParams({ profile })}` : "";
+	const answer = await sendOwnerRequestQ(`/sessions${query}`);
+	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.sessions)) {
+		setSelectedIds((ids) => getKeptSelectionQ(ids, answer.data.sessions));
+		return setRegion((state) => putRegionData(state, request, answer.data));
+	}
+	setRegion((state) => putRegionFailure(state, request, answer.status === 0 ? answer.error : new Error(getAnswerDetailQ(answer))));
+}
+
+function getKeptSelectionQ(ids, sessions) {
+	const selectable = new Set(sessions.filter((row) => row.isSelectable).map((row) => row.id));
+	return ids.filter((id) => selectable.has(id));
+}
+
+function putToggledIdQ(ids, id) {
+	return ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id];
+}
+
+function getShownSessionsQ(sessions, isEndedShown) {
+	return isEndedShown ? sessions : sessions.filter((row) => row.state !== "exited");
+}
+
+/** Send targets `{ ids, endedCount }`: ticked rows on show that take a message → a hidden ended row or a replaced row is never sent to. */
+function getSendTargetsQ(shownRows, selectedIds) {
+	const rows = shownRows.filter((row) => row.isSelectable && selectedIds.includes(row.id));
+	return { ids: rows.map((row) => row.id), endedCount: rows.filter((row) => row.state === "exited").length };
+}
+
+// an ended target is resumed to take the message → the label says how many before the owner sends
+function getSendLabelQ({ ids, endedCount }) {
+	const label = `Send to ${ids.length} ${ids.length === 1 ? "session" : "sessions"}`;
+	return endedCount > 0 ? `${label} · resumes ${endedCount} ended` : label;
+}
+
+// targets within the per-send cap and non-blank text; anything else → null (Send stays disabled)
+function getSendBodyQ(targets, text) {
+	const count = targets.ids.length;
+	if (count === 0 || count > MESSAGE_Q.MAX_TARGETS || !text.trim()) return null;
+	return { sessionIds: targets.ids, text };
+}
+
+function getSessionStateLabelQ(row) {
+	if (row.state !== "exited") return SESSION_STATE_LABEL_Q[row.state] ?? row.state;
+	return EXIT_REASON_LABEL_Q[row.exitReason] ?? EXIT_REASON_LABEL_Q.ended;
+}
+
+/**
+ * One message to every target, all or nothing: a refusal keeps the text and the ticks and shows in the composer.
+ * @param onSent - re-reads the page, so the new message cards and the delivery counts show
+ * @returns true once the server took the send
+ */
+async function sendMessageQ({ body, setComposer, setSelectedIds, onSent }) {
+	setComposer((prev) => ({ ...prev, isBusy: true, error: null, sentCount: null }));
+	const answer = await sendOwnerRequestQ("/messages/send", body);
+	if (answer.status >= 200 && answer.status < 300) {
+		setComposer(() => ({ ...EMPTY_COMPOSER_Q, sentCount: body.sessionIds.length }));
+		setSelectedIds([]);
+		onSent();
+		return true;
+	}
+	setComposer((prev) => ({ ...prev, isBusy: false, error: getSendErrorQ(answer) }));
+	return false;
+}
+
+function getSendErrorQ(answer) {
+	return getOutageStepQ(answer) ?? getRefusalReasonQ(answer) ?? "The monitor refused this message. Refresh the session list and try again.";
 }
 
 // page-level resume record in its own region → a failed read leaves the list in place
@@ -392,8 +502,13 @@ function getActionErrorQ(answer) {
 	const outage = getOutageStepQ(answer);
 	if (outage !== null) return outage;
 	if (answer.status === 409) return "Refused: the item changed state. Refresh to see where it is now.";
+	return getRefusalReasonQ(answer) ?? "The monitor refused this action. Refresh and try again.";
+}
+
+// the server's worded cause → one refusal sentence · none → null (the caller words it)
+function getRefusalReasonQ(answer) {
 	const reason = answer.data?.reason;
-	return typeof reason === "string" && reason !== "" ? `Refused: ${reason}.` : "The monitor refused this action. Refresh and try again.";
+	return typeof reason === "string" && reason !== "" ? `Refused: ${reason}.` : null;
 }
 
 function QueueFailureQ({ failure, onRetry }) {
@@ -415,6 +530,7 @@ function QueueListQ({ queue }) {
 			)}
 			{visible.map((item) => <QueueCardQ key={item.id} item={item} queue={queue} cliPath={data.cliPath} />)}
 			{data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
+			<SessionsRegionQ sessions={queue.sessions} onSent={queue.reload} />
 			<RecentResumesQ region={queue.resumes} onRetry={queue.readResumes} />
 		</div>
 	);
@@ -480,7 +596,8 @@ function QueueCardQ({ item, queue, cliPath }) {
 function CardMetaQ({ item }) {
 	const { formatRelativeTime } = window.UI;
 	const { session } = item;
-	return <span>{`${session.profileLabel} · ${session.cwdTail} · asked ${formatRelativeTime(item.askedAt)}`}</span>;
+	const verb = item.kind === "message" ? "sent" : "asked";
+	return <span>{`${session.profileLabel} · ${session.cwdTail} · ${verb} ${formatRelativeTime(item.askedAt)}`}</span>;
 }
 
 function DecisionBodyQ({ item, draft, onDraft }) {
@@ -656,6 +773,141 @@ function ResumeLineQ({ resume, profileLabel }) {
 	const { formatKstDateTime } = window.UI;
 	const account = profileLabel ? ` · ${profileLabel}` : "";
 	return <span>{`Automatic resume ${formatKstDateTime(resume.sentAt)}${account} · attempt ${resume.attempt} · ${getResumeResultLabelQ(resume)}`}</span>;
+}
+
+/** Sessions the owner can message: a checkbox table, Show ended, and the composer once a shown row is ticked. */
+function SessionsRegionQ({ sessions, onSent }) {
+	const { Card, RegionUnavailable, LoadingPlaceholder, getRegionView } = window.UI;
+	const { region } = sessions;
+	const view = getRegionView(region);
+	const rows = view === "ready" ? region.data.sessions : [];
+	return (
+		<Card title="Sessions" right={<EndedToggleQ sessions={sessions} rows={rows} />}>
+			{view === "loading" && <LoadingPlaceholder label="Loading sessions" />}
+			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={region.error} isBusy={region.busy} onRetry={sessions.read} />}
+			{view === "ready" && <SessionsBodyQ sessions={sessions} rows={rows} onSent={onSent} />}
+		</Card>
+	);
+}
+
+function EndedToggleQ({ sessions, rows }) {
+	const endedCount = rows.filter((row) => row.state === "exited").length;
+	return (
+		<CheckboxQ isChecked={sessions.isEndedShown} onChange={() => sessions.setEndedShown(!sessions.isEndedShown)}>
+			<span className="fs-meta">{`Show ended (${endedCount})`}</span>
+		</CheckboxQ>
+	);
+}
+
+function SessionsBodyQ({ sessions, rows, onSent }) {
+	const { Stack, EmptyState } = window.UI;
+	const shown = getShownSessionsQ(rows, sessions.isEndedShown);
+	const targets = getSendTargetsQ(shown, sessions.selectedIds);
+	const hiddenCount = rows.length - shown.length;
+	return (
+		<Stack gap="stack">
+			{shown.length === 0
+				? <EmptyState message="No connected sessions" hint={hiddenCount > 0 ? `${hiddenCount} ended: Show ended lists them.` : "A session appears here once it registers or posts to the queue."} />
+				: <SessionsTableQ rows={shown} selectedIds={sessions.selectedIds} onToggle={sessions.toggle} />}
+			{sessions.region.data.hasMore && <p className="fs-meta text-dim">{`Showing the ${rows.length} most recently active sessions.`}</p>}
+			{targets.ids.length > 0 && (
+				<MessageComposerQ targets={targets} composer={sessions.composer} onText={sessions.setText}
+					onSend={(body) => sessions.send(body, onSent)} onClear={sessions.clear} />
+			)}
+			{sessions.composer.sentCount !== null && <SentNoticeQ count={sessions.composer.sentCount} />}
+		</Stack>
+	);
+}
+
+function SessionsTableQ({ rows, selectedIds, onToggle }) {
+	const { Table } = window.UI;
+	const getRows = (view) => rows.map((row) => <SessionRowQ key={row.id} row={row} view={view} isChecked={selectedIds.includes(row.id)} onToggle={onToggle} />);
+	return (
+		<Table caption="Sessions connected to the queue or that posted to it. Tick the sessions to write one message to."
+			columns={SESSION_COLUMNS_Q} stackBelowPx={SESSIONS_Q.STACK_BELOW_PX} bodies={[{ key: "sessions", rows: getRows }]} />
+	);
+}
+
+function SessionRowQ({ row, view, isChecked, onToggle }) {
+	const { TableRow, TableCell, formatRelativeTime } = window.UI;
+	return (
+		<TableRow view={view}>
+			<TableCell view={view} textRole="label"><SessionCheckboxQ row={row} isChecked={isChecked} onToggle={onToggle} /></TableCell>
+			<TableCell view={view} kind="row-header"><SessionNameQ row={row} /></TableCell>
+			<TableCell view={view} textRole="meta" label="Account">{row.profileLabel}</TableCell>
+			<TableCell view={view} textRole="meta" label="Start directory" title={row.cwd}>{row.cwdTail}</TableCell>
+			<TableCell view={view} textRole="meta" label="State"><SessionStateQ row={row} /></TableCell>
+			<TableCell view={view} textRole="meta" label="Last activity">{formatRelativeTime(row.lastActivityAt)}</TableCell>
+			<TableCell view={view} textRole="meta" label="Awaiting you" isNumeric>{row.count.awaiting}</TableCell>
+			<TableCell view={view} textRole="meta" label="In delivery" isNumeric>{row.count.inDelivery}</TableCell>
+		</TableRow>
+	);
+}
+
+// a replaced row stays listed with a disabled box → its accessible name says why it takes no message
+function SessionCheckboxQ({ row, isChecked, onToggle }) {
+	const label = row.isSelectable ? `Select ${row.name}` : `${row.name}: ${getSessionStateLabelQ(row)}, takes no message`;
+	return <CheckboxQ isChecked={isChecked} isDisabled={!row.isSelectable} onChange={() => onToggle(row.id)} ariaLabel={label} />;
+}
+
+// no registered name → the server's start-directory name, marked so it never reads as one the session chose
+function SessionNameQ({ row }) {
+	const { MachineString } = window.UI;
+	return (
+		<>
+			<span className="block">{row.name}{!row.isNameRegistered && <span className="fs-meta text-dim">{" · start directory"}</span>}</span>
+			<MachineString className="fs-meta">{row.sessionIdPrefix}</MachineString>
+		</>
+	);
+}
+
+function SessionStateQ({ row }) {
+	return (
+		<>
+			{getSessionStateLabelQ(row)}
+			{row.markerSetAt && <span className="block fs-meta text-dim">automatic resume not yet registered</span>}
+		</>
+	);
+}
+
+// the one checkbox visual (base.css → .ctl-checkbox): the mark drawn over the 16 box, the label the 24 hit area
+function CheckboxQ({ isChecked, isDisabled = false, onChange, ariaLabel, children }) {
+	const { Icon } = window.UI;
+	return (
+		<label className="inline-target gap-label-inline">
+			<span className="relative inline-flex items-center justify-center">
+				<input type="checkbox" className="ctl-checkbox" checked={isChecked} disabled={isDisabled} onChange={onChange} aria-label={ariaLabel} />
+				{isChecked && <Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
+			</span>
+			{children}
+		</label>
+	);
+}
+
+function MessageComposerQ({ targets, composer, onText, onSend, onClear }) {
+	const { Stack, Cluster } = window.UI;
+	const body = getSendBodyQ(targets, composer.text);
+	const overCap = targets.ids.length - MESSAGE_Q.MAX_TARGETS;
+	return (
+		<Stack gap="stack">
+			<DraftFieldQ id="queue-message-text" label="Message to the ticked sessions" value={composer.text} onChange={onText} />
+			{overCap > 0 && <p className="fs-meta text-dim">{`Up to ${MESSAGE_Q.MAX_TARGETS} sessions per message: untick ${overCap}.`}</p>}
+			<Cluster gap="control">
+				<button type="button" className="btn primary" disabled={composer.isBusy || body === null} onClick={() => onSend(body)}>{getSendLabelQ(targets)}</button>
+				<button type="button" className="btn ghost" disabled={composer.isBusy} onClick={onClear}>Clear selection</button>
+			</Cluster>
+			{composer.error && <div className="fs-meta text-crit" role="alert"><span aria-hidden="true">✕ </span>{composer.error}</div>}
+		</Stack>
+	);
+}
+
+function SentNoticeQ({ count }) {
+	return (
+		<p className="fs-meta" role="status">
+			<span aria-hidden="true" className="text-ok">{`${window.UI.TONE_GLYPH.ok} `}</span>
+			{`Sent to ${count} ${count === 1 ? "session" : "sessions"}: each message is a card in the queue, with its delivery state.`}
+		</p>
+	);
 }
 
 /** Page-level record: recent automatic resumes newest first → quota spent without a click stays visible. */
