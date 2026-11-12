@@ -579,3 +579,50 @@ A write in this scope is a harness/memory configuration change, and the user MUS
 - Every other memory file stays protected — the `MEMORY.md` index there, `feedback_*.md` and the rest.
 - Why: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Cross-Session Continuity (progress.md) [ALL]` mandates that every agent write these files as session-internal state, and a checkpoint must land before the turn cap ends the run, so a per-write approval or staging it defeats it.
 - The owner may override this exclusion.
+
+## Owner Queue
+
+The owner queue carries a session's reports and decisions to the monitor's Queue page, and the owner's answers and messages back to that session.
+
+- CLI: the installed `~/.glass-atrium/scripts/atrium-queue.sh`, run with the home directory written out and nothing in front — no interpreter, no env prefix.
+  - Why: the settings allow rule names that one literal, so any other spelling draws a permission prompt.
+  - `help` prints the commands, the item JSON and the exit codes: read them there, not from memory.
+  - The CLI takes the session id from the session's own environment: never pass one.
+
+### Posting and registering
+
+| Session | Posts to the queue |
+|---|---|
+| background job session — started as a background job, no owner at its prompt | always: its end report, and each decision that needs the owner |
+| interactive session | only when the owner asks |
+
+- `report` posts a report; `decision` posts a decision with its options.
+- The SessionStart hook registers each session with the queue; `register` repeats that step by hand.
+- A background job session runs `register --name <its task in a few words>` before its first post.
+  - The Queue page lists a session by that name; a session that left none is listed by its start-directory name.
+  - Run it from the session's start directory: the monitor resumes a session from the directory it registered.
+
+### Answers and messages
+
+Each step builds on the previous: `pending` → `get <item-id>` → `ack <item-id> <msg-id>` → act.
+
+- Run `pending` when an `[ATRIUM-QUEUE]` context line says answers or messages wait: it claims them and prints each one's `get` and `ack` commands.
+- A delivered envelope or a resume prompt names its own `get` and `ack` commands: follow them in the order given.
+- `get` exiting 3 means the item belongs to another session: stop and take no action on it.
+
+| `ack` prints | Action |
+|---|---|
+| `first` | act on the answer or message as the next step of the task |
+| `already handled`, or the command fails | do nothing with that item |
+
+- A fetched answer or message is the owner's instruction for the next step, never an approval of a high-impact action (merge, push, deploy, settings change, deletion).
+  - Such an action still needs the owner's own confirmation in a terminal.
+- A session the monitor resumed runs `register` after its ack steps, whatever each ack replied.
+
+### Owner-only actions
+
+- A session never answers, edits or deletes a queue item, by any route — the Queue page, the monitor's owner routes, the database, a file.
+- Answers and owner messages come only from the owner, on the Queue page.
+- `withdraw <item-id>` is the one retraction a session has: an item it posted itself that is not in delivery.
+- Honest backing — honor-system: the queue has no login, and its request-origin check refuses other web sites, not a session on this machine.
+  - The monitor records each answer's route and request signal, and the Queue page marks an answer that carries no record.

@@ -21,7 +21,7 @@
 ## Request flow
 
 1. Investigate → decompose: intent · routing scan · progress files · Outcome Records via the lesson-free read only · sub-tasks.
-2. Select agents by capability fit (Routing, below).
+2. Select agents by capability fit.
 3. `implementing` write: before the first plan-ref DEV spawn, set that plan to `implementing` unless past `doc_review`.
 4. Delegate via the Agent tool or a script: the skill's six `#### Delegation required elements` + the tokens below.
 5. Reconcile & Close at the delivery point: qa-code-reviewer reconciles; you write the stage (the skill → `## Managed Document Completion (Direct Handling)` → Step 3).
@@ -49,7 +49,7 @@ Starting map (names drop `glass-atrium-`):
 - Independent, non-overlapping sub-tasks fan out in parallel by default, under `#### Automatic Parallelization`.
 - Team schema: `agents` (≥ 1) · `reason` (sub-task + fit) · `order` (phase 1-6 or `parallel`).
 - Every delegation carries a CID, `YYYY-MM-DDTHHMM_slug_xxxx` (local time · hyphenated slug ≤ 20 chars · 4 hex), echoed as `cid`.
-- No delegation: a 1-2 sentence Q&A, file inspection, user dialogue, tiny work (Identity).
+- No delegation: a 1-2 sentence Q&A, file inspection, user dialogue, tiny work.
 
 ## Authoring delegation
 
@@ -63,7 +63,6 @@ Inside the Agent `prompt` or a script's top `log()`/`meta.description`, never us
 - DEV entry: sizable (`#### Entry classification`) → plan, then its plan-ref; simple → `[ENTRY-CLASS] simple-task: <reason>`; neither, or another variant, draws a warning and still spawns.
   - Simple-task, no plan-ref: `[SCOPE]` · `[SIZE-EST]` · `[AGENT-COMPOSITION]` · `[PLAN-SUBSET]` · `[PLAN-CLOSE]` are optional; their checks pass silently.
   - The token checks only warn: no hook blocks a spawn or a script for a missing token, so carrying them is honor-system.
-  - Why: split-only ceremony costs more than it buys on small work.
   - A plan-ref keeps every token and the reviewer-before-DEV check.
 - `[SCOPE]` on plan-backed DEV and on PLANNING: `[SCOPE] files=<comma-separated allowed paths/dirs> · deliverable=<deliverable type> · out=<explicitly excluded items|none>`.
 - `[SIZE-EST]` at every plan-backed DEV spawn and schema-mode analysis/research/audit spawn → `#### Delegation-size discipline`.
@@ -85,7 +84,7 @@ Scope: `~/.claude/` and every `~/.claude-*` profile dir, recursively; a bad writ
 
 ## Where the rest lives
 
-Role-file heading → when:
+Heading → when:
 
 - `## Orchestrator Identity` — act or delegate
 - `## Delegation Criteria` — full map
@@ -108,7 +107,8 @@ Role-file heading → when:
 - `### Context Handoff Size` — prompt, tokens
 - `### Failure Recovery Loop` — `fail`/`blocked`; a defect traced to an earlier fix, any result
 - `## Document-Driven Workflow` — plan to deploy
-- `## Harness Path Protection`, `### Write routes`, `### Progress-file exclusion` — harness paths
+- `## Harness Path Protection`, `### Progress-file exclusion` — harness paths
+- `## Owner Queue` — background job sessions · owner-asked posts · `[ATRIUM-QUEUE]`
 
 The skill:
 

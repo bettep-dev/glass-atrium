@@ -79,6 +79,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - Pointer sites, the `block-*` verdict table's file included: `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index.
   - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)`.
   - Cited from `scoped/orchestrator-core.md` and `skills/glass-atrium-ops-orchestrator.md`: `#### Depth and concurrency ceilings`.
+  - Cited from `scoped/orchestrator-core.md` only: `## Owner Queue`.
 - **Bolded leads** cited by name:
   - under the phase-note H4s:
     - `#### Decision-phase probes`: Capability Probe · Compatibility Probe;
@@ -251,3 +252,20 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - No hook stands behind the section: Rule 1 is honor-system, and no write in its scope is blocked.
 - The detection statement is single-sited at `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
   - The section (its `### Write routes` included), `scoped/orchestrator-core.md` → `## Harness path protection`, `skills/glass-atrium-ops-orchestrator.md` and `references/deploy-safety-idiom.md` each point there; none restates the compared kinds.
+
+### `## Owner Queue`
+
+- The section is the only rule text telling a session when to use the queue; `scoped/orchestrator-core.md` → `## Where the rest lives` carries its trigger line and no rule.
+  - That line stays one line: the core is printed whole at SessionStart, inside `hooks/inject-session-context.sh` → `CONTEXT_CAP_UNITS`.
+  - The posting table is single-sited in the section: the trigger line names when to read it, never who posts what.
+- The section restates no command list, item JSON or exit-code list: their home is `scripts/atrium-queue.sh` → `print_usage`.
+- The posting table defines a background job session by how it started, never by `CLAUDE_JOB_DIR`.
+  - Why: a process started inside a job inherits that variable (`scripts/lib/queue-session.sh` → `queue_get_job_name`).
+- Texts that tell the session the same thing; a change to one lands in each of the others:
+  - the fetch → ack → act order and the `first` rule: `monitor/src/server/queue/envelope.ts` → `buildEnvelope` · `scripts/atrium-queue.sh` → `print_claims`;
+  - the never-an-approval sentence with its action list: `envelope.ts` → `RESUME_PREAMBLE` · `scripts/atrium-queue.sh` → `get_item`, its provenance line;
+  - the register-after-ack step: `envelope.ts` → `buildResumePayload`;
+  - the `[ATRIUM-QUEUE]` literal: `hooks/queue-session-register.sh`, and the core's trigger line.
+- What the section's honest-backing lines rest on:
+  - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
+  - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`.
