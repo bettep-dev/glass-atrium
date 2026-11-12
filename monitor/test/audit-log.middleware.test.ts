@@ -331,6 +331,8 @@ const NON_AUDITED_MUTATIONS: ReadonlySet<string> = new Set([
   "/api/queue/pending",
   "/api/queue/items/:id/ack",
   "/api/queue/items/:id/withdraw",
+  // an upload decides nothing on an item; the send or reply that claims it is audited
+  "/api/queue/owner/images",
 ]);
 
 const MUTATING_METHOD_SET: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
