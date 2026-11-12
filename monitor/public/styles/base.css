@@ -719,6 +719,70 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	max-height: calc(var(--queue-clamp-lines) * 1lh);
 	overflow: hidden;
 }
+/* an order's images inside its bubble, under its text (§9.8): 96 squares, wrapping */
+.queue-bubble-images {
+	--queue-thumb: 96px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	margin-top: var(--space-2);
+}
+.queue-bubble-image {
+	flex: none;
+	width: var(--queue-thumb);
+	height: var(--queue-thumb);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	border-radius: var(--radius-control);
+	cursor: zoom-in;
+}
+.queue-bubble-image:focus-visible {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
+}
+.queue-bubble-image > img,
+.queue-bubble-broken {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	border-radius: var(--radius-control);
+}
+.queue-bubble-broken {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-1);
+	padding: var(--space-1);
+	border: 1px solid rgb(var(--line));
+}
+.queue-bubble-broken-name {
+	max-width: 100%;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+/* the image viewer: one picture at its natural size, fitted to the window; no zoom, no download */
+.queue-viewer-figure {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-2);
+	margin: 0;
+	min-height: 0;
+}
+.queue-viewer-figure > img {
+	display: block;
+	max-width: 100%;
+	max-height: calc(100vh - 12rem);
+	width: auto;
+	height: auto;
+	object-fit: contain;
+}
 .queue-roll-up {
 	text-align: end;
 }

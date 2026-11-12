@@ -1851,3 +1851,43 @@ describe("images in a composer", () => {
     assert.deepEqual([isDone, posts.length, (getPlain(composer) as { text: string; isBusy: boolean }).text, (getPlain(composer) as { isBusy: boolean }).isBusy], [false, 0, "rebase on main", false]);
   });
 });
+
+describe("images in an order's bubble", () => {
+  const images = [0, 1, 2].map((index) => ({ id: IMAGE_ID[index], name: `shot-${index + 1}.png`, type: "png", bytes: 1258291, width: 2880, height: 1800 }));
+  const order = buildItem({ id: 81, kind: "message", title: "Order", body: "see the red box", options: [], status: "delivered", answeredAt: "2026-11-13T05:40:00.000Z", attachments: images });
+
+  test("the images sit inside the bubble under the text, each a button naming its place and file that opens the viewer at it", () => {
+    const opened: unknown[] = [];
+    const tree = render("OrderEntryQ", { entry: { id: 81, item: order, copies: [order] }, onResend: () => undefined, onOpenImage: (...args: unknown[]) => opened.push(args) });
+    const [bubble] = findNodes(tree, (node) => String(node.props?.className).startsWith("queue-bubble"));
+    assert.ok(bubble, "bubble rendered");
+    const buttons = findNodes(bubble as RenderedNode, (node) => node.type === "button" && /^Open image /.test(String(node.props["aria-label"])));
+    assert.deepEqual(buttons.map((node) => node.props["aria-label"]), ["Open image 1 of 3: shot-1.png", "Open image 2 of 3: shot-2.png", "Open image 3 of 3: shot-3.png"]);
+    assert.deepEqual(findNodes(bubble as RenderedNode, (node) => node.type === "img").map((node) => node.props.src), images.map((image) => `/api/queue/owner/images/${image.id}`));
+    (buttons[1]?.props.onClick as () => void)();
+    assert.deepEqual(getPlain(opened), [[images, 1]]);
+  });
+
+  test("an order with no images draws no image row", () => {
+    const tree = render("OrderEntryQ", { entry: { id: 82, item: { ...order, attachments: [] }, copies: [order] }, onResend: () => undefined, onOpenImage: () => undefined });
+    assert.equal(findNodes(tree, (node) => node.type === "img").length, 0);
+  });
+
+  test("the viewer shows one image fitted in the fullscreen surface with its name, size and place", () => {
+    const tree = render("ImageViewerQ", { images, index: 1, onStep: () => undefined, onClose: () => undefined });
+    const [surface] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
+    assert.equal(surface?.props.variant, "fullscreen");
+    assert.deepEqual(findNodes(tree, (node) => node.type === "img").map((node) => [node.props.src, node.props.alt]), [[`/api/queue/owner/images/${IMAGE_ID[1]}`, "shot-2.png"]]);
+    assert.ok(collectText(tree).includes("shot-2.png · 1.2 MB · 2 of 3"), collectText(tree));
+  });
+
+  // spec §9.8 → Opening one large: Left / Right step through one order's images and stop at its ends
+  const steps = [
+    { name: "Right moves to the next", index: 0, key: "ArrowRight", next: 1 },
+    { name: "Left moves to the previous", index: 2, key: "ArrowLeft", next: 1 },
+    { name: "Right on the last stays", index: 2, key: "ArrowRight", next: null },
+    { name: "Left on the first stays", index: 0, key: "ArrowLeft", next: null },
+    { name: "another key does not step", index: 1, key: "ArrowDown", next: null },
+  ];
+  for (const row of steps) test(`viewer keys: ${row.name}`, () => assert.equal(call("getSteppedIndexQ", row.index, 3, row.key), row.next));
+});

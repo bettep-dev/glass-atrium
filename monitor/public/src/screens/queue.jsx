@@ -1728,6 +1728,7 @@ function ToBarQ({ rows, selectedIds, onClear }) {
 function ThreadQ({ orders, names }) {
 	const { EmptyState, LoadingPlaceholder } = window.UI;
 	const { thread } = orders;
+	const [viewer, setViewer] = useStateQ(null);
 	const entries = getThreadEntriesQ(thread.items);
 	const scroll = useThreadScrollQ(entries);
 	useThreadAimQ(entries, orders.aim);
@@ -1740,9 +1741,10 @@ function ThreadQ({ orders, names }) {
 			{getDayGroupsQ(entries).map((group) => (
 				<div key={group.day} className="queue-day-group">
 					<p className="queue-day">{group.label}</p>
-					{group.entries.map((entry) => <OrderEntryQ key={entry.id} entry={entry} onResend={orders.resend} />)}
+					{group.entries.map((entry) => <OrderEntryQ key={entry.id} entry={entry} onResend={orders.resend} onOpenImage={(images, index) => setViewer({ images, index })} />)}
 				</div>
 			))}
+			{viewer && <ImageViewerQ images={viewer.images} index={viewer.index} onStep={(index) => setViewer((prev) => ({ ...prev, index }))} onClose={() => setViewer(null)} />}
 		</div>
 	);
 }
@@ -1804,7 +1806,7 @@ function getDayLabelQ(day, now) {
 }
 
 /** One order: the time line (`Re:` + the report's title for a reply), the bubble, a row per recipient with its receipt. */
-function OrderEntryQ({ entry, onResend }) {
+function OrderEntryQ({ entry, onResend, onOpenImage }) {
 	const { formatKstTime } = window.UI;
 	const { item, copies } = entry;
 	return (
@@ -1813,21 +1815,28 @@ function OrderEntryQ({ entry, onResend }) {
 				{item.kind === "report" && <span className="queue-order-re">{`Re: ${item.title}`}</span>}
 				<time dateTime={item.answeredAt}>{formatKstTime(item.answeredAt)}</time>
 			</p>
-			<OrderBubbleQ text={getOrderTextQ(item)} />
+			<OrderBubbleQ text={getOrderTextQ(item)} images={item.attachments ?? []} onOpenImage={onOpenImage} />
 			<RecipientsQ copies={copies} onResend={onResend} />
 		</article>
 	);
 }
 
-// more than 12 written lines → clamped under `Show all N lines`; a long line that only wraps is not counted
-function OrderBubbleQ({ text }) {
+// more than 12 written lines → clamped under `Show all N lines`; a long line that only wraps is not counted; the images stay in view under the clamp
+function OrderBubbleQ({ text, images = [], onOpenImage }) {
 	const { ProseText, DisclosureChevron } = window.UI;
 	const [isFull, setFull] = useStateQ(false);
 	const count = text.split("\n").length;
 	const isLong = count > ORDERS_Q.CLAMP_LINES;
 	return (
 		<>
-			<div className={`queue-bubble${isLong && !isFull ? " is-clamped" : ""}`} style={{ "--queue-clamp-lines": ORDERS_Q.CLAMP_LINES }}><ProseText text={text} isCompact /></div>
+			<div className={`queue-bubble${isLong && !isFull ? " is-clamped" : ""}`} style={{ "--queue-clamp-lines": ORDERS_Q.CLAMP_LINES }}>
+				<ProseText text={text} isCompact />
+				{images.length > 0 && (
+					<div className="queue-bubble-images">
+						{images.map((image, index) => <BubbleImageQ key={image.id} image={image} label={`Open image ${index + 1} of ${images.length}: ${image.name}`} onOpen={() => onOpenImage(images, index)} />)}
+					</div>
+				)}
+			</div>
 			{isLong && (
 				<details className="queue-order-more" onToggle={(event) => setFull(event.currentTarget.open)}>
 					<summary className="group disclosure fs-meta"><DisclosureChevron /><span>{`Show all ${count} lines`}</span></summary>
@@ -1835,6 +1844,52 @@ function OrderBubbleQ({ text }) {
 			)}
 		</>
 	);
+}
+
+// an image that cannot be loaded → a tile with ✕ and its file name; the order and its receipts stand
+function BubbleImageQ({ image, label, onOpen }) {
+	const [isBroken, setBroken] = useStateQ(false);
+	return (
+		<button type="button" className="queue-bubble-image" aria-label={label} title={`${image.name} · ${getSizeTextQ(image.bytes)}`} onClick={onOpen}>
+			{isBroken
+				? <span className="queue-bubble-broken"><span aria-hidden="true" className="text-crit">✕</span><span className="queue-bubble-broken-name">{image.name}</span></span>
+				: <img src={getImageUrlQ(image.id)} alt="" onError={() => setBroken(true)} />}
+		</button>
+	);
+}
+
+function getImageUrlQ(id) {
+	return `${OWNER_API_Q}/images/${id}`;
+}
+
+/** One order's images, one at a time, fitted to the window; Left / Right step, Esc or Close closes and focus goes back to the thumbnail (DetailSurface). */
+function ImageViewerQ({ images, index, onStep, onClose }) {
+	const { DetailSurface } = window.UI;
+	const image = images[index];
+	useEffectQ(() => {
+		const onKey = (event) => {
+			const next = getSteppedIndexQ(index, images.length, event.key);
+			if (next === null) return;
+			event.preventDefault();
+			onStep(next);
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [index, images.length, onStep]);
+	return (
+		<DetailSurface open variant="fullscreen" title={image.name} onClose={onClose} panelClassName="queue-viewer" footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
+			<figure className="queue-viewer-figure">
+				<img src={getImageUrlQ(image.id)} alt={image.name} width={image.width} height={image.height} />
+				<figcaption className="fs-meta text-dim">{`${image.name} · ${getSizeTextQ(image.bytes)} · ${index + 1} of ${images.length}`}</figcaption>
+			</figure>
+		</DetailSurface>
+	);
+}
+
+// one step within the order's images; an end or another key → null
+function getSteppedIndexQ(index, count, key) {
+	const next = key === "ArrowRight" ? index + 1 : key === "ArrowLeft" ? index - 1 : index;
+	return next === index || next < 0 || next >= count ? null : next;
 }
 
 /** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received stay listed under it. */
@@ -2083,7 +2138,7 @@ function getUploadNameQ(name) {
 
 function getUploadResultQ(answer) {
 	const id = answer.data?.id;
-	if (answer.status >= 200 && answer.status < 300 && typeof id === "string") return { status: "stored", id, src: `${OWNER_API_Q}/images/${id}`, cause: null };
+	if (answer.status >= 200 && answer.status < 300 && typeof id === "string") return { status: "stored", id, src: getImageUrlQ(id), cause: null };
 	return { status: "failed", cause: getUploadCauseQ(answer) };
 }
 
