@@ -167,6 +167,7 @@ queue_deregister_session() {
   [[ -n "${pid}" ]] || socket="$(queue_get_socket_path)"
   body="$(jq -nc --arg sessionId "${session_id}" --arg pid "${pid}" --arg socketPath "${socket}" \
     '{$sessionId, pid: ($pid | if . == "" then null else tonumber end), $socketPath} | with_entries(select(.value != "" and .value != null))')" || return 1
+  # retired messaging token → also deleted here, not only by the monitor sweep, so a down monitor leaves none behind
   token_file="$(queue_get_token_dir)/${session_id}"
   if ga_guard_path "${token_file}"; then rm -f -- "${token_file:?}"; fi
   queue_post /api/queue/sessions/deregister "${body}" >/dev/null

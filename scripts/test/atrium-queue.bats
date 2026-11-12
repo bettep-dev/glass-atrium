@@ -374,7 +374,10 @@ run_cli() {
     echo "status=${status} ${output}${stderr}"
     return 1
   }
-  [[ "$(request_body /api/queue/pending | jq -Sc .)" == "$(printf '{"pid":%s,"sessionId":"%s","wait":true}\n' "${OWNER_PID}" "${SESSION_ID}" "${OWNER_PID}" "${SESSION_ID}")" ]] || {
+  local poll poll_body expected_bodies="" poll_count=2
+  poll_body="$(printf '{"pid":%s,"sessionId":"%s","wait":true}' "${OWNER_PID}" "${SESSION_ID}")"
+  for ((poll = 1; poll <= poll_count; poll++)); do expected_bodies+="${poll_body}"$'\n'; done
+  [[ "$(request_body /api/queue/pending | jq -Sc .)" == "${expected_bodies%$'\n'}" ]] || {
     cat "${BATS_TEST_TMPDIR}/requests.log"
     return 1
   }
