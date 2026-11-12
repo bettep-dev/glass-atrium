@@ -1173,6 +1173,59 @@ describe("the page re-reads itself", () => {
   });
 });
 
+describe("drafts kept in session storage", () => {
+  // a Map-backed sessionStorage; `failing` makes every call throw as a full or blocked store does
+  const buildStorage = (seed: Record<string, string> = {}, failing = false) => {
+    const values = new Map(Object.entries(seed));
+    const guard = () => { if (failing) throw new Error("QuotaExceededError"); };
+    return {
+      values,
+      getItem: (key: string) => { guard(); return values.get(key) ?? null; },
+      setItem: (key: string, value: string) => { guard(); values.set(key, String(value)); },
+    };
+  };
+  const storedShot = { key: "shot-3", id: "9b2f4c1e-7a10-4d3b-8e5f-2c6a1d0b9e47", name: "Pasted image 1.png", bytes: 482_311, status: "stored", src: "/api/queue/owner/images/9b2f4c1e-7a10-4d3b-8e5f-2c6a1d0b9e47", cause: null };
+
+  test("a kept draft holds the picked option, the text and the images the server stores; nothing a reload cannot resume", () => {
+    const draft = {
+      code: "B",
+      text: "Run the shadow migration first",
+      error: "✕ Write an order",
+      isWaiting: true,
+      images: [
+        { ...storedShot, file: { size: 482_311 } },
+        { key: "shot-4", id: null, name: "Pasted image 2.png", bytes: 120_004, status: "uploading", src: "blob:http://127.0.0.1:16145/1f0e", cause: null },
+        { key: "shot-5", id: null, name: "diagram.webp", bytes: 98_101, status: "failed", src: "blob:http://127.0.0.1:16145/2a7c", cause: "outage" },
+      ],
+    };
+    assert.deepEqual(call("getKeptDraftQ", draft), { code: "B", text: "Run the shadow migration first", images: [storedShot] });
+  });
+
+  test("an item whose kept draft is empty leaves the store", () => {
+    const drafts = { 41: { text: "", images: [], error: null }, 42: { text: "Ship it" }, 43: undefined };
+    assert.deepEqual(call("getKeptDraftsQ", drafts), { 42: { text: "Ship it", images: [] } });
+  });
+
+  test("what is set in the store is what a reload gets back", () => {
+    const storage = buildStorage();
+    const drafts = { 42: { code: "A", text: "Ship it", images: [storedShot] } };
+    (screen.setStoredQ as (storage: unknown, key: string, value: unknown) => void)(storage, "queue.drafts", drafts);
+    assert.deepEqual(getPlain((screen.getStoredQ as (storage: unknown, key: string, fallback: unknown) => unknown)(storage, "queue.drafts", {})), drafts);
+  });
+
+  const unreadable = [
+    { name: "nothing stored yet", storage: buildStorage() },
+    { name: "a value that is not JSON", storage: buildStorage({ "queue.drafts": "{not json" }) },
+    { name: "a store that refuses to be read", storage: buildStorage({ "queue.drafts": "{}" }, true) },
+    { name: "no store at all", storage: undefined },
+  ];
+  for (const row of unreadable) {
+    test(`a store that cannot give a draft back gives the empty value: ${row.name}`, () => {
+      assert.deepEqual(getPlain((screen.getStoredQ as (storage: unknown, key: string, fallback: unknown) => unknown)(row.storage, "queue.drafts", {})), {});
+    });
+  }
+});
+
 describe("one outage reads one way across the page", () => {
   const outages = [
     { name: "no answer at all", answer: { status: 0, data: null, error: new TypeError("Failed to fetch") } },

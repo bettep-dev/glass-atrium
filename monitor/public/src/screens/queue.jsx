@@ -69,6 +69,8 @@ const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor hol
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null });
+// per tab: each item's draft by id, and the order view's draft under its own key
+const DRAFT_STORE_Q = { ITEMS: "queue.drafts", ORDER: "queue.orderDraft" };
 // the history read's page and the pane bodies whose scroll the Orders mode keeps (a hidden box does not keep its own)
 // MAX = the history read's own cap (schemas.ts → ORDER_PAGE_LIMIT)
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
@@ -432,7 +434,7 @@ function getShownRegionsQ({ list, resumes, sessions }) {
 function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const [list, setList] = useStateQ(EMPTY_LIST_Q);
 	const [resumes, readResumes] = useRecentResumesQ();
-	const [drafts, setDrafts] = useStateQ({});
+	const [drafts, setDrafts] = useStoredStateQ(DRAFT_STORE_Q.ITEMS, {}, getKeptDraftsQ);
 	const [filter, setFilter] = useFilterQ();
 	const [focus, setFocus] = useStateQ(null);
 	const [status, setStatus] = useStateQ("");
@@ -467,6 +469,55 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 		list, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, loadMore,
 		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, openReplyOrder, status, ...actions, ...ticks,
 	};
+}
+
+/**
+ * State seeded from the tab's session store and written back on each change, so a reload loses no draft (spec §4.3, §4.5).
+ * @param getKept - the part of the state a reload can resume
+ */
+function useStoredStateQ(key, fallback, getKept) {
+	const [value, setValue] = useStateQ(() => ({ ...fallback, ...getStoredQ(getSessionStoreQ(), key, {}) }));
+	useEffectQ(() => { setStoredQ(getSessionStoreQ(), key, getKept(value)); }, [key, value, getKept]);
+	return [value, setValue];
+}
+
+// every item's kept draft; an empty one leaves the store
+function getKeptDraftsQ(drafts) {
+	const kept = Object.entries(drafts).map(([id, draft]) => [id, getKeptDraftQ(draft)]);
+	return Object.fromEntries(kept.filter(([, draft]) => draft.code !== undefined || draft.text || draft.images.length > 0));
+}
+
+// the picked option, the text, the images the server holds · an upload in flight or failed lives only in this page's memory
+function getKeptDraftQ(draft) {
+	const images = (draft?.images ?? []).filter((shot) => shot.status === "stored").map(({ file, ...shot }) => shot);
+	return { ...(draft?.code === undefined ? {} : { code: draft.code }), ...(draft?.text ? { text: draft.text } : {}), images };
+}
+
+// a blocked store throws on the property read itself
+function getSessionStoreQ() {
+	try {
+		return window.sessionStorage;
+	} catch {
+		return undefined;
+	}
+}
+
+// absent, blocked or unreadable → the fallback: a draft is a convenience, never a reason for the page to fail
+function getStoredQ(storage, key, fallback) {
+	try {
+		const raw = storage.getItem(key);
+		return raw === null ? fallback : JSON.parse(raw);
+	} catch {
+		return fallback;
+	}
+}
+
+function setStoredQ(storage, key, value) {
+	try {
+		storage.setItem(key, JSON.stringify(value));
+	} catch {
+		// a full or blocked store → the draft stays in page state only, until the tab closes
+	}
 }
 
 // one list read at a time (getJoinedReadQ), merged into the list as it stands when the answer lands
@@ -744,7 +795,7 @@ function getSendErrorQ(answer) {
 function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) {
 	const { isOpen, open, openAt, aim, close } = useOrdersOpenQ(selectedId);
 	const replyLink = useReplyLinkQ(isOpen);
-	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
+	const [composer, setComposer] = useStoredStateQ(DRAFT_STORE_Q.ORDER, EMPTY_COMPOSER_Q, getKeptDraftQ);
 	const { thread, read, showEarlier, reread } = useThreadQ(isOpen, selectedIds);
 	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
 	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
