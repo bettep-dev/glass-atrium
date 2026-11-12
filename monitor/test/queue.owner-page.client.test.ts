@@ -2520,6 +2520,12 @@ describe("the Orders mode after a send", () => {
     assert.deepEqual([getPlain(statuses), focused], [[{ text: "✓ Order sent to yoaida", orderId: 77 }], ["queue-order-text"]]);
   });
 
+  test("of the sheet's acts only a sent report's line names an order, the report itself, so its Show opens it", () => {
+    const report = buildItem({ id: 61, kind: "report", session: buildSession({ name: "yoaida" }) });
+    const lines = ["seen", "reply", "later"].map((action) => call("getActionStatusQ", report, action));
+    assert.deepEqual(lines, ["Marked as read", { text: "✓ Order sent to yoaida", orderId: 61 }, "Moved to the end of Reports"]);
+  });
+
   test("the arrival sits in the head's sub slot with no separator left hanging", () => {
     const text = collectText(render("OrdersArrivalQ", { arrived: [buildItem({ kind: "report", session: buildSession({ name: "yoaida" }) })], onShow: () => undefined }));
     assert.equal(text.replace(/\s+/g, " ").trim(), "New Report from yoaida Show");

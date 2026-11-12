@@ -683,6 +683,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-thread > :first-child {
 	margin-top: auto;
 }
+/* the thread already pads to the 720 column → its empty state adds no inset of its own */
+.queue-thread > .placeholder {
+	padding: 0;
+}
 .queue-day-group:not(.queue-day-group ~ .queue-day-group) > .queue-day {
 	border-top-color: transparent;
 }

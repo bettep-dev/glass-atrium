@@ -1182,11 +1182,11 @@ function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatu
 	return { busy, send, settle, later, answerItem };
 }
 
-// the list's status line after a taken act; an unknown item (gone from the list) → the act alone
+// the list's status line after a taken act; an unknown item (gone from the list) → the act alone · a reply's order is the report itself → its id backs Show
 function getActionStatusQ(item, action) {
 	const name = item ? getSessionNameQ(item.session) : "the session";
 	if (action === "seen") return "Marked as read";
-	if (action === "reply") return `${window.UI.TONE_GLYPH.ok} Order sent to ${name}`;
+	if (action === "reply") return { text: `${window.UI.TONE_GLYPH.ok} Order sent to ${name}`, orderId: item?.id ?? null };
 	if (action === "answer") return `${window.UI.TONE_GLYPH.ok} Answer sent to ${name}`;
 	if (action === "later") return `Moved to the end of ${item?.kind === "report" ? "Reports" : "Decisions"}`;
 	return "";

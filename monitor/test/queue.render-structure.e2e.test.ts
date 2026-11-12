@@ -798,6 +798,19 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(restored, stored);
   });
 
+  // spec §10: the thread's empty state is text on the order view's 720 column, never indented off it
+  test("the empty thread's line starts on the order view's column, where the Orders title starts", async () => {
+    harness.fixture = getEmptyFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(getEmptyFixture()));
+    await openOrdersTo(page, ["aidl"]);
+    await page.getByText("No orders to aidl yet").waitFor();
+    const lefts = await page.evaluate(() => [".queue-orders-card > .card-head .card-title", ".queue-thread > .placeholder > div"]
+      .map((selector) => Math.round((document.querySelector(selector) as HTMLElement).getBoundingClientRect().left)));
+    await page.close();
+
+    assert.equal(lefts[1], lefts[0]);
+  });
+
   // spec §18.4 row 20: the arrival reaches the row, the rail and the nav on the same tick, and moves nothing the owner holds
   test("the page's own 15 s read marks an arrival New and raises its session's and the nav's counts, the selection unmoved", async () => {
     harness.fixture = getRestFixture();
