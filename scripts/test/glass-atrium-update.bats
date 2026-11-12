@@ -1523,12 +1523,31 @@ MOCK
   chmod +x "$1"
 }
 
-# A mock npm: logs "$*" to $NPM_LOG, exits $NPM_RC (default 0).
+# A mock npm: logs "$*" to $NPM_LOG and exits $NPM_RC_<sub> for its subcommand (`ci`, or
+# the script name after `run`), else $NPM_RC (default 0). NPM_BUILD_EMIT=1 makes `run build`
+# rewrite dist/server/app.js before its exit, the way tsc emits even on a type error.
 write_mock_npm() {
   cat >"$1" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${NPM_LOG:-/dev/null}"
-exit "${NPM_RC:-0}"
+sub="$1"
+[[ "$1" == run ]] && sub="$2"
+if [[ "${sub}" == build && -n "${NPM_BUILD_EMIT:-}" ]]; then
+  mkdir -p dist/server && printf 'rebuilt\n' >dist/server/app.js
+fi
+rc_var="NPM_RC_${sub}"
+exit "${!rc_var:-${NPM_RC:-0}}"
+MOCK
+  chmod +x "$1"
+}
+
+# A mock prisma CLI: logs "prisma $*" to $PRISMA_LOG, exits $PRISMA_RC_<subcommand> (default 0).
+write_mock_prisma() {
+  cat >"$1" <<'MOCK'
+#!/usr/bin/env bash
+printf 'prisma %s\n' "$*" >>"${PRISMA_LOG:-/dev/null}"
+rc_var="PRISMA_RC_$1"
+exit "${!rc_var:-0}"
 MOCK
   chmod +x "$1"
 }
@@ -1928,29 +1947,47 @@ MOCK
   grep -q "bootstrap" "${WORK}/lc.log"                            # unloaded → bootstrap
 }
 
-# CLI (non-headless) apply of the one release file $1, npm + launchctl seamed; NPM_RC
-# picks the build's exit. The install's monitor dir exists in every case, so a build
-# skipped for an absent dir can never pass for a build the apply set did not ask for.
+# CLI (non-headless) apply of the release files "$@", npm + prisma + launchctl seamed, both
+# CLIs logging in call order to ${WORK}/calls.log. NPM_RC_<sub> / PRISMA_RC_<sub> pick a
+# sub-step's exit. The install's monitor dir exists in every case, so a build skipped for
+# an absent dir can never pass for a build the apply set did not ask for.
 run_cli_apply() {
-  local rel="$1"
+  local rel
   write_mock_npm "${WORK}/npm"
+  write_mock_prisma "${WORK}/prisma"
   write_mock_launchctl "${WORK}/launchctl"
   mkdir -p "${INSTALL}/monitor"
-  seed_file "${INSTALL}" "${rel}" "old"
-  seed_file "${NEWSRC}" "${rel}" "new content"
-  write_manifest "${WORK}/manifest.json" "${rel}"
-  run env \
+  for rel in "$@"; do
+    seed_file "${INSTALL}" "${rel}" "old"
+    seed_file "${NEWSRC}" "${rel}" "new content"
+  done
+  write_manifest "${WORK}/manifest.json" "$@"
+  run env -u GA_SKIP_DB_SETUP -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_BACKFILL_PY="${WORK}/absent-backfill.py" \
     ATRIUM_UPDATE_NPM="${WORK}/npm" \
-    NPM_LOG="${WORK}/npm.log" \
-    NPM_RC="${NPM_RC:-0}" \
+    NPM_LOG="${WORK}/calls.log" \
+    NPM_RC_ci="${NPM_RC_ci:-}" \
+    NPM_RC_typecheck="${NPM_RC_typecheck:-}" \
+    NPM_RC_build="${NPM_RC_build:-}" \
+    NPM_BUILD_EMIT="${NPM_BUILD_EMIT:-}" \
+    ATRIUM_UPDATE_PRISMA="${WORK}/prisma" \
+    PRISMA_LOG="${WORK}/calls.log" \
+    PRISMA_RC_generate="${PRISMA_RC_generate:-}" \
+    PRISMA_RC_migrate="${PRISMA_RC_migrate:-}" \
     ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
     LAUNCHCTL_LOG="${WORK}/launchctl.log" \
     bash "${SKILL}"
+}
+
+# The call log with the npm ci flags folded to a bare `ci`, so a row states the call order.
+# Sets CALLS rather than printing, so an assertion reads it without a masked substitution.
+read_calls() {
+  CALLS="$(sed 's/^ci .*/ci/' "${WORK}/calls.log" | tr '\n' ' ')"
 }
 
 @test "CLI apply touching monitor/ rebuilds the monitor and names the restart it does not do" {
@@ -1958,19 +1995,34 @@ run_cli_apply() {
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "$(<"${INSTALL}/monitor/src/server/app.ts")" == "new content" ]] || return 1
-  [[ -f "${WORK}/npm.log" && "$(<"${WORK}/npm.log")" == "run build" ]] || { echo "${output}"; return 1; }
+  read_calls
+  [[ "${CALLS}" == "run typecheck run build " ]] || { echo "${output}"; return 1; }
   [[ "${output}" == *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
   [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
 }
 
-@test "CLI apply whose monitor build fails warns and still exits 0 with the files applied" {
-  NPM_RC=1 run_cli_apply "monitor/public/src/ui.jsx"
+@test "CLI apply whose monitor typecheck fails exits 9 with the files applied and the old dist untouched" {
+  mkdir -p "${INSTALL}/monitor/dist/server"
+  printf 'compiled before the update\n' >"${INSTALL}/monitor/dist/server/app.js"
+  NPM_RC_typecheck=1 NPM_RC_build=1 NPM_BUILD_EMIT=1 run_cli_apply "monitor/src/server/app.ts"
 
-  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
-  [[ "$(<"${INSTALL}/monitor/public/src/ui.jsx")" == "new content" ]] || return 1
-  [[ -f "${WORK}/npm.log" && "$(<"${WORK}/npm.log")" == "run build" ]] || { echo "${output}"; return 1; }
-  [[ "${output}" == *"WARN: monitor build failed"* ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 9 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/monitor/src/server/app.ts")" == "new content" ]] || return 1
+  [[ "$(<"${INSTALL}/monitor/dist/server/app.js")" == "compiled before the update" ]] || { echo "dist rewritten"; return 1; }
+  read_calls
+  [[ "${CALLS}" == "run typecheck " ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"monitor build failed"*"npm run build"* ]] || { echo "${output}"; return 1; }
   [[ "${output}" != *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "CLI apply whose monitor build fails after a passing typecheck exits 9" {
+  NPM_RC_build=1 run_cli_apply "monitor/public/src/ui.jsx"
+
+  [[ "${status}" -eq 9 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/monitor/public/src/ui.jsx")" == "new content" ]] || return 1
+  read_calls
+  [[ "${CALLS}" == "run typecheck run build " ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"update complete"* ]] || { echo "${output}"; return 1; }
 }
 
 @test "CLI apply that touches no monitor/ path never reaches the monitor build" {
@@ -1978,7 +2030,99 @@ run_cli_apply() {
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "$(<"${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1
-  [[ ! -e "${WORK}/npm.log" ]] || { echo "${output}"; return 1; }
+  [[ ! -e "${WORK}/calls.log" ]] || { echo "${output}"; return 1; }
+}
+
+@test "the dependency step installs on a dependency-manifest change and regenerates on a schema change, before migrate and build" {
+  local row label rel want
+  local -a rows=(
+    "lockfile|monitor/package-lock.json|ci prisma generate prisma migrate deploy run typecheck run build "
+    "package manifest|monitor/package.json|ci prisma generate prisma migrate deploy run typecheck run build "
+    "prisma schema|monitor/prisma/schema.prisma|prisma generate prisma migrate deploy run typecheck run build "
+    "prisma config|monitor/prisma.config.ts|prisma generate prisma migrate deploy run typecheck run build "
+    "server source only|monitor/src/server/app.ts|prisma migrate deploy run typecheck run build "
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label rel want <<<"${row}"
+    : >"${WORK}/calls.log"
+    mkdir -p "${INSTALL}/monitor/prisma/migrations/20260101000000_probe"
+    run_cli_apply "${rel}"
+    [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
+    read_calls
+    [[ "${CALLS}" == "${want}" ]] || { echo "${label}: got '${CALLS}'"; return 1; }
+  done
+}
+
+@test "npm ci runs non-interactively with a bounded fetch timeout and retry count" {
+  run_cli_apply "monitor/package-lock.json"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  grep -Eq '^ci .*--fetch-timeout=[0-9]+' "${WORK}/calls.log" || { cat "${WORK}/calls.log"; return 1; }
+  grep -Eq '^ci .*--fetch-retries=[0-9]+' "${WORK}/calls.log" || { cat "${WORK}/calls.log"; return 1; }
+}
+
+@test "a failing dependency sub-step exits 18 naming it and the recovery, and never reaches migrate or the build" {
+  local row label rc_env rel substep
+  local -a rows=(
+    "install fails|NPM_RC_ci|monitor/package-lock.json|npm ci"
+    "generate fails|PRISMA_RC_generate|monitor/prisma/schema.prisma|prisma generate"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label rc_env rel substep <<<"${row}"
+    : >"${WORK}/calls.log"
+    mkdir -p "${INSTALL}/monitor/prisma/migrations/20260101000000_probe"
+    export "${rc_env}=3"
+    run_cli_apply "${rel}"
+    unset "${rc_env}"
+    [[ "${status}" -eq 18 ]] || { echo "${label}: ${output}"; return 1; }
+    [[ "$(<"${INSTALL}/${rel}")" == "new content" ]] || { echo "${label}: not applied"; return 1; }
+    [[ "${output}" == *"${substep} failed"* ]] || { echo "${label}: ${output}"; return 1; }
+    [[ "${output}" == *"db-setup"*"npm run build"* ]] || { echo "${label}: ${output}"; return 1; }
+    read_calls
+    [[ "${CALLS}" != *"migrate"* && "${CALLS}" != *"run "* ]] \
+      || { echo "${label}: ran past the failure: ${CALLS}"; return 1; }
+  done
+}
+
+@test "prisma generate skips an uninstalled monitor loudly and exits 18 on a broken install" {
+  local row label seed want_rc want_text
+  local -a rows=(
+    "no node_modules|none|0|prisma generate SKIPPED"
+    "node_modules without the prisma CLI|node_modules|18|prisma CLI missing or not executable"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label seed want_rc want_text <<<"${row}"
+    mkdir -p "${WORK}/${label}"
+    [[ "${seed}" == none ]] || mkdir -p "${WORK}/${label}/${seed}"
+    run bash -c '
+      '"$(declare -f load_skill)"'
+      INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+      load_skill
+      unset ATRIUM_UPDATE_PRISMA
+      update_monitor_prisma_generate "$1"
+    ' _ "${WORK}/${label}"
+    [[ "${status}" -eq "${want_rc}" ]] || { echo "${label}: ${output}"; return 1; }
+    [[ "${output}" == *"${want_text}"* ]] || { echo "${label}: ${output}"; return 1; }
+  done
+}
+
+@test "a migrate failure after the dependency step ran names the rebuild before any restart" {
+  local row label rel want
+  local -a rows=(
+    "dependencies installed this run|monitor/package-lock.json|yes"
+    "no dependency step this run|monitor/src/server/app.ts|no"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label rel want <<<"${row}"
+    mkdir -p "${INSTALL}/monitor/prisma/migrations/20260101000000_probe"
+    PRISMA_RC_migrate=4 run_cli_apply "${rel}"
+    [[ "${status}" -eq 15 ]] || { echo "${label}: ${output}"; return 1; }
+    if [[ "${want}" == yes ]]; then
+      [[ "${output}" == *"npm run build"*"before restarting the monitor"* ]] || { echo "${label}: ${output}"; return 1; }
+    else
+      [[ "${output}" != *"before restarting the monitor"* ]] || { echo "${label}: ${output}"; return 1; }
+    fi
+  done
 }
 
 @test "P3: the decoupled one-shot launchd plist renders with the update-oneshot label + --headless args" {
