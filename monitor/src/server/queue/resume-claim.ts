@@ -11,7 +11,7 @@ import type { EnvelopeItem } from "./envelope.js";
 import { findWorktreeRoot, lockSession } from "./registry.js";
 
 const RESUME = {
-  // A resume boots a whole session before its first tool call → a wider window than the socket route
+  // A resume boots a whole session before its first tool call → a wider window than the pull route (delivery.ts → PULL)
   ACK_WINDOW_MS: 30 * 60_000,
   BATCH_LIMIT: 200,
   // A waiting claim queues on the worktree lock inside its transaction → above the 5 s interactive default
@@ -125,7 +125,7 @@ export async function getRereadOutcome(claim: ResumeClaim): Promise<RereadOutcom
 }
 
 /**
- * - session returned → items back to answered (the next sweep delivers over the socket)
+ * - session returned → items back to answered, for that session's own `wait` or `pending` to claim
  * - shared worktree → items back to resume-pending; the aborted row uses the attempt (no re-claim loop)
  */
 export async function putSpawnAborted(claim: ResumeClaim, reason: QueueDeliveryAbortReason): Promise<void> {
