@@ -1140,6 +1140,28 @@ describe("the page re-reads itself", () => {
   ];
   for (const row of turns) test(`Not received note: ${row.name}`, () => assert.equal(call("getNotReceivedNoteQ", row.turned), row.expected));
 
+  // the list body spans 180–820 on screen; rows are 68 high (spec §4.2)
+  const listBody = { top: 180, bottom: 820 };
+  const rowAt = (id: number, top: number) => ({ id, top, bottom: top + 68 });
+  const offViews = [
+    { name: "a New row inside the visible part needs no note", rows: [rowAt(7, 400)], expected: null },
+    { name: "a New row cut by an edge still shows, so needs no note", rows: [rowAt(7, 790)], expected: null },
+    { name: "a New row under the visible part is one new below", rows: [rowAt(7, 820)], expected: { count: 1, direction: "below", id: 7 } },
+    { name: "New rows over the visible part are counted, and Show goes to the nearest", rows: [rowAt(3, -200), rowAt(4, 112)], expected: { count: 2, direction: "above", id: 4 } },
+    { name: "New rows on both sides name the side below, nearest first", rows: [rowAt(3, 40), rowAt(9, 1200), rowAt(8, 900)], expected: { count: 2, direction: "below", id: 8 } },
+    { name: "a list put away by the Orders mode has no visible part to leave", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: null },
+  ];
+  for (const row of offViews) test(`off-view note: ${row.name}`, () => assert.deepEqual(call("getOffViewQ", row.body ?? listBody, row.rows), row.expected));
+
+  test("the off-view note says how many New rows sit on which side, and its Show moves to the nearest", () => {
+    const shown: number[] = [];
+    const queue = { ...withList(buildQueue(), [buildItem()]), status: "New report from yoaida: Nightly sweep done" };
+    const tree = render("ListFootQ", { queue, offView: { count: 1, direction: "below", id: 7 }, onShowNew: (id: number) => shown.push(id) });
+    assert.match(collectText(tree).replace(/\s+/g, " "), /^New report from yoaida: Nightly sweep done 1 new below Show$/);
+    for (const button of buttonLabelled(tree, "Show")) (button.props.onClick as () => void)();
+    assert.deepEqual(shown, [7]);
+  });
+
   const footRows = [
     { name: "a line naming an order carries Show, which opens the order view at that order", status: { text: "⚠ yoaida has not received an order", orderId: 7 }, opened: [7] },
     { name: "a plain line carries no Show", status: "Marked as read", opened: [] },

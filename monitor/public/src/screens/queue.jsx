@@ -1109,13 +1109,61 @@ function QueueListQ({ queue }) {
 	const { Card } = window.UI;
 	const items = queue.list.data?.items ?? [];
 	const visible = getVisibleItemsQ(items, queue.filter);
+	const offView = useOffViewNewQ(queue.list.newIds, queue.orders.isOpen);
 	return (
 		<Card className="queue-pane queue-list" title={getScopeTitleQ(items, queue.filter)} sub={`${visible.filter((item) => item.status === "open").length} waiting`}
 			bar={isListBarShownQ(items, queue.filter) ? <QueueFilterBarQ items={items} filter={queue.filter} onFilter={queue.setFilter} /> : null}
-			foot={<ListFootQ queue={queue} />} isFlush>
+			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} visible={visible} />
 		</Card>
 	);
+}
+
+/**
+ * The New rows outside the list body's visible part (spec §4.4), measured when the marks change, on scroll and when the list returns from the Orders mode.
+ * @returns `{ count, direction, id }` as getOffViewQ, null while every New row shows
+ */
+function useOffViewNewQ(newIds, isHidden) {
+	const [offView, setOffView] = useStateQ(null);
+	useEffectQ(() => {
+		const body = document.querySelector(ORDERS_Q.PANE_BODIES[0]);
+		if (!body || isHidden || newIds.length === 0) return void setOffView(null);
+		const measure = () => {
+			const next = getOffViewQ(body.getBoundingClientRect(), getRowBoxesQ(newIds));
+			setOffView((prev) => (prev?.count === next?.count && prev?.direction === next?.direction && prev?.id === next?.id ? prev : next));
+		};
+		measure();
+		body.addEventListener("scroll", measure, { passive: true });
+		return () => body.removeEventListener("scroll", measure);
+	}, [newIds, isHidden]);
+	return offView;
+}
+
+function getRowBoxesQ(ids) {
+	return ids.flatMap((id) => {
+		const box = document.getElementById(`${ROW_ID_PREFIX_Q}${id}`)?.getBoundingClientRect();
+		return box ? [{ id, top: box.top, bottom: box.bottom }] : [];
+	});
+}
+
+/**
+ * A row cut by an edge still shows; only one wholly past an edge is off view. Both sides → the side below, where arrivals land.
+ * @param view - the list body's box; zero high while the Orders mode puts the list away
+ * @returns `{ count, direction, id }` — `id` the off-view New row nearest the visible part · null when none
+ */
+function getOffViewQ(view, rows) {
+	if (view.bottom <= view.top) return null;
+	const below = rows.filter((row) => row.top >= view.bottom).sort((a, b) => a.top - b.top);
+	const above = rows.filter((row) => row.bottom <= view.top).sort((a, b) => b.bottom - a.bottom);
+	const [side, direction] = below.length > 0 ? [below, "below"] : [above, "above"];
+	return side.length === 0 ? null : { count: side.length, direction, id: side[0].id };
+}
+
+// Show on the off-view note → the row in view and focused; the selection stays where it is
+function putNewRowInViewQ(id) {
+	const row = document.getElementById(`${ROW_ID_PREFIX_Q}${id}`);
+	row?.scrollIntoView({ block: "nearest" });
+	row?.focus({ preventScroll: true });
 }
 
 function getScopeTitleQ(items, filter) {
@@ -1302,7 +1350,8 @@ function getKindWordQ(item) {
 }
 
 // the status line: the last act's result or a read's note · a line naming an order carries a quiet Show that opens the order view at it
-function ListFootQ({ queue }) {
+// the off-view note follows the scroll, so it stays out of the live region: only reads and acts are announced
+function ListFootQ({ queue, offView = null, onShowNew }) {
 	const data = queue.list.data;
 	const { text, orderId = null } = typeof queue.status === "string" ? { text: queue.status } : queue.status;
 	return (
@@ -1310,6 +1359,8 @@ function ListFootQ({ queue }) {
 			<span className="queue-status-line">
 				<span role="status" className="queue-status">{text}</span>
 				{orderId !== null && <button type="button" className="btn ghost sm" onClick={() => queue.openOrderRow({ id: orderId })}>Show</button>}
+				{offView && <span className="queue-status-new fs-meta text-dim">{`${offView.count} new ${offView.direction}`}</span>}
+				{offView && <button type="button" className="btn ghost sm" aria-label={`Show the new item ${offView.direction}`} onClick={() => onShowNew(offView.id)}>Show</button>}
 			</span>
 			{data && data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
 		</>

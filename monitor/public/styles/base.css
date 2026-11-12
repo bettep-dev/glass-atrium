@@ -834,6 +834,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+.queue-status-new {
+	flex: none;
+	white-space: nowrap;
+}
 .queue-listbox .queue-band {
 	position: sticky;
 	top: 0;
