@@ -71,6 +71,9 @@ const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null });
 // per tab: each item's draft by id, and the order view's draft under its own key
 const DRAFT_STORE_Q = { ITEMS: "queue.drafts", ORDER: "queue.orderDraft" };
+const KEYS_Q = { STORE: "queue.keys" };
+// the single letters of the desk (spec §11); 1 – 9 pick an option
+const DESK_LETTERS_Q = { j: "next", k: "prev", r: "field", e: "read", l: "later", n: "new", o: "order" };
 // the history read's page and the pane bodies whose scroll the Orders mode keeps (a hidden box does not keep its own)
 // MAX = the history read's own cap (schemas.ts → ORDER_PAGE_LIMIT)
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
@@ -378,9 +381,10 @@ function QueueDeskQ({ queue }) {
 	const { orders } = queue;
 	usePageDropGuardQ();
 	const onKeyDown = (event) => {
-		if (!isOrdersCloseKeyQ(event, orders.isOpen)) return;
+		const action = getDeskKeyQ(event, { isOrdersOpen: orders.isOpen, isKeysOn: queue.keys?.isOn ?? true });
+		if (action === null) return;
 		event.preventDefault();
-		orders.close();
+		putDeskKeyQ(action, { queue, target: event.target, root: window.document });
 	};
 	return (
 		<div className={orders.isOpen ? "queue-desk is-orders" : "queue-desk"} onKeyDown={onKeyDown}>
@@ -394,9 +398,101 @@ function QueueDeskQ({ queue }) {
 	);
 }
 
-// an open drawer or dialog takes the Esc first
-function isOrdersCloseKeyQ(event, isOpen) {
-	return isOpen && event.key === "Escape" && !event.defaultPrevented && !event.target?.closest?.('[role="dialog"]');
+/**
+ * The desk's key (spec §11) as `{ name, index? }`, null when the key is not the desk's.
+ * An open dialog (the key list, the viewer, the drawer) takes every key first; Enter, Esc and Cmd / Ctrl + Enter work in a field and with the switch off,
+ * the single letters and digits (WCAG 2.1.4) only outside a text field and with it on.
+ */
+function getDeskKeyQ(event, { isOrdersOpen, isKeysOn }) {
+	const { key, target } = event;
+	if (event.defaultPrevented || target?.closest?.('[role="dialog"]')) return null;
+	if (key === "Escape") return getEscKeyQ(target, isOrdersOpen);
+	if (key === "Enter" && (event.metaKey || event.ctrlKey)) return target?.closest?.(".queue-sheet, .queue-orders") ? { name: "send" } : null;
+	if (event.metaKey || event.ctrlKey || event.altKey) return null;
+	if (key === "Enter") return !isOrdersOpen && target?.closest?.('[role="option"]') ? { name: "enter" } : null;
+	if (!isKeysOn || isTextFieldQ(target)) return null;
+	return getSingleKeyQ(key.toLowerCase(), isOrdersOpen);
+}
+
+// in the Orders mode Esc closes it from anywhere on the desk; on the desk it leaves the sheet for the selected row
+function getEscKeyQ(target, isOrdersOpen) {
+	if (isOrdersOpen) return { name: "close" };
+	return target?.closest?.(".queue-sheet") ? { name: "back" } : null;
+}
+
+// the Orders mode hides the list and the sheet → only N of the single keys is live there
+function getSingleKeyQ(letter, isOrdersOpen) {
+	if (isOrdersOpen) return letter === "n" ? { name: "new" } : null;
+	if (/^[1-9]$/.test(letter)) return { name: "pick", index: Number(letter) - 1 };
+	const name = DESK_LETTERS_Q[letter];
+	return name ? { name } : null;
+}
+
+// a checkbox, a radio or a button takes a letter as a key; a field the owner types in takes it as text
+function isTextFieldQ(target) {
+	if (!target) return false;
+	if (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return true;
+	return target.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "reset", "file"].includes(target.type);
+}
+
+/**
+ * Carries out a desk key's action (getDeskKeyQ).
+ * @param target - the focused element the key was pressed on
+ * @param root - the document the sheet's controls are looked up in
+ */
+function putDeskKeyQ(action, { queue, target, root }) {
+	DESK_KEY_ACTS_Q[action.name]?.({ queue, target, root, index: action.index });
+}
+
+// each act presses or focuses what the owner would, so a busy or refusing control answers the key as it answers a press
+const DESK_KEY_ACTS_Q = {
+	close: ({ queue }) => queue.orders.close(),
+	new: ({ queue }) => queue.orders.open(),
+	next: ({ queue }) => putSteppedRowQ(queue, "ArrowDown"),
+	prev: ({ queue }) => putSteppedRowQ(queue, "ArrowUp"),
+	back: ({ queue, root }) => root?.getElementById(`${ROW_ID_PREFIX_Q}${queue.selectedId}`)?.focus(),
+	enter: putSheetEntryQ,
+	pick: putPickedOptionQ,
+	field: ({ root }) => root?.querySelector(".queue-sheet .queue-compose-text")?.focus(),
+	read: ({ root }) => root?.querySelector('.queue-sheet [data-key="e"]')?.click(),
+	later: ({ root }) => root?.querySelector('.queue-sheet [data-key="l"]')?.click(),
+	send: ({ target }) => target?.closest?.(".queue-sheet, .queue-orders")?.querySelector(".queue-composer .btn.primary")?.click(),
+	order: putOrderKeyQ,
+};
+
+function putSteppedRowQ(queue, key) {
+	const id = getKeyedRowIdQ(queue.groups.flatMap((group) => group.rows), queue.selectedId, key);
+	if (id !== null) queue.selectRow(id);
+}
+
+// a decision → its option group (the picked radio, else the first) · a report → its primary button · an order → the Orders mode at its entry
+function putSheetEntryQ({ queue, root }) {
+	const row = queue.groups.flatMap((group) => group.rows).find((one) => one.id === queue.selectedId);
+	if (!row) return;
+	if (getKindWordQ(row.item) === "Order") return queue.openOrderRow(row);
+	const entry = root?.querySelector(".queue-sheet input[type=radio]:checked") ?? root?.querySelector(".queue-sheet input[type=radio]") ?? root?.querySelector(".queue-sheet .queue-composer .btn.primary");
+	entry?.focus();
+}
+
+function putPickedOptionQ({ queue, index }) {
+	const item = getSheetOpenItemQ(queue.sheet);
+	const option = item?.kind === "decision" ? (item.options ?? [])[index] : undefined;
+	if (option) queue.setDraft(item.id, { code: option.code, error: null });
+}
+
+function getSheetOpenItemQ(sheet) {
+	return sheet.kind === "item" && sheet.item.status === "open" ? sheet.item : null;
+}
+
+// a rail row's own session, else the selected item's · an open report keeps its Re: line and its draft (useReplyOrderQ)
+function putOrderKeyQ({ queue, target }) {
+	const railId = target?.closest?.("[data-session]")?.getAttribute("data-session");
+	const item = queue.sheet.kind === "item" ? queue.sheet.item : null;
+	if (!railId && item?.kind === "report" && item.status === "open") return queue.openReplyOrder(item);
+	const id = railId || item?.session.id;
+	const isTakingOrders = (queue.sessions.region.data?.sessions ?? []).some((row) => row.id === id && row.isSelectable);
+	if (isTakingOrders) queue.sessions.setSelectedIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
+	queue.orders.open();
 }
 
 // Refresh is busy while any region reads; a failed resume or session read shows in its own region, not here
@@ -441,6 +537,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const groups = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter));
 	const { sheet, selectItem } = useSheetQ(groups);
 	const sessions = useSessionsStateQ(filter.profile);
+	const keys = useKeysSwitchQ();
 	const readList = useListReadQ(list, setList);
 	// sessions.read changes with the Account filter → a filter change re-reads the page; an owner act's read runs after any read in flight
 	const reload = useCallbackQ(() => {
@@ -467,7 +564,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const openReplyOrder = useReplyOrderQ({ sessions, orders });
 	return {
 		list, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, loadMore,
-		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, openReplyOrder, status, ...actions, ...ticks,
+		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, openReplyOrder, status, keys, ...actions, ...ticks,
 	};
 }
 
@@ -476,8 +573,8 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
  * @param getKept - the part of the state a reload can resume
  */
 function useStoredStateQ(key, fallback, getKept) {
-	const [value, setValue] = useStateQ(() => ({ ...fallback, ...getStoredQ(getSessionStoreQ(), key, {}) }));
-	useEffectQ(() => { setStoredQ(getSessionStoreQ(), key, getKept(value)); }, [key, value, getKept]);
+	const [value, setValue] = useStateQ(() => ({ ...fallback, ...getStoredQ(getWebStoreQ(), key, {}) }));
+	useEffectQ(() => { setStoredQ(getWebStoreQ(), key, getKept(value)); }, [key, value, getKept]);
 	return [value, setValue];
 }
 
@@ -494,12 +591,24 @@ function getKeptDraftQ(draft) {
 }
 
 // a blocked store throws on the property read itself
-function getSessionStoreQ() {
+function getWebStoreQ(name = "sessionStorage") {
 	try {
-		return window.sessionStorage;
+		return window[name];
 	} catch {
 		return undefined;
 	}
+}
+
+/** The single-key switch (spec §11, WCAG 2.1.4): on unless the owner turned it off, kept in the browser's local store across tabs. */
+function useKeysSwitchQ() {
+	const [isOn, setOn] = useStateQ(() => getKeysOnQ(getWebStoreQ("localStorage")));
+	useEffectQ(() => { setStoredQ(getWebStoreQ("localStorage"), KEYS_Q.STORE, isOn); }, [isOn]);
+	const toggle = useCallbackQ(() => setOn((prev) => !prev), []);
+	return { isOn, toggle };
+}
+
+function getKeysOnQ(storage) {
+	return getStoredQ(storage, KEYS_Q.STORE, true) !== false;
 }
 
 // absent, blocked or unreadable → the fallback: a draft is a convenience, never a reason for the page to fail
@@ -649,7 +758,7 @@ function useOrderRowQ({ list, selectItem, sessions, orders }) {
 	}, [list, selectItem, setSelectedIds, openAt]);
 }
 
-// `O` on a report (P5 binds the key) → its session the one tick, its draft in the box under the Re: line
+// `O` on a report → its session the one tick, its draft in the box under the Re: line
 function useReplyOrderQ({ sessions, orders }) {
 	const { setSelectedIds } = sessions;
 	const { linkReply, open } = orders;
@@ -674,7 +783,7 @@ function useSheetQ(groups) {
 	const [hashItemId, setHashItemId] = useStateQ(() => getHashStateQ().item);
 	const [hold, setHold] = useStateQ(EMPTY_HOLD_Q);
 	const sheet = getSheetStateQ(groups, hashItemId, hold);
-	const shown = sheet.kind === "item" && sheet.item.status === "open" ? sheet.item : null;
+	const shown = getSheetOpenItemQ(sheet);
 	useEffectQ(() => {
 		if (shown !== null) setHold((prev) => (prev.item === shown ? prev : { item: shown, isHandled: false }));
 	}, [shown]);
@@ -1630,7 +1739,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 			text={draft.text ?? ""} onText={(text) => queue.setDraft(item.id, { text, error: null })} isBusy={isBusy}
 			buttons={[...resend, { label: "Send answer", isInk: true, onPress: onSend }]}
 			note={<ComposerNoteQ error={error ?? draft.error} info={item.isApprovalClass ? `Approval: after you answer here, confirm once more in ${name}'s terminal.` : null} rest={rest} />}
-			later={{ label: "Answer later", onPress: () => queue.later(item.id) }} />
+			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} />
 	);
 }
 
@@ -1652,9 +1761,9 @@ function ReportComposerQ({ item, draft, queue, isBusy, error }) {
 	return (
 		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: `Order to ${name} (optional)` } : null} tray={item.isFreeTextAllowed ? tray : null} zone={zone.handlers}
 			text={text} onText={(next) => queue.setDraft(item.id, { text: next, error: null })} isBusy={isBusy || Boolean(draft.isWaiting)}
-			buttons={[{ label: "Mark as read", isInk: !hasContent, onPress: markRead }, ...order]}
+			buttons={[{ label: "Mark as read", isInk: !hasContent, keyName: "e", onPress: markRead }, ...order]}
 			note={<ComposerNoteQ error={error ?? draft.error} tray={tray} fieldId={fieldId} rest={rest} />}
-			later={{ label: "Read later", onPress: () => queue.later(item.id) }} />
+			later={{ label: "Read later", keyName: "l", onPress: () => queue.later(item.id) }} />
 	);
 }
 
@@ -1668,8 +1777,8 @@ function putInvalidQ(queue, id, message, targetId) {
  * One composer for every field the owner writes in: label, the box and its buttons on one row, the reserved note line.
  * Buttons are always enabled; while sending they read `Sending…` and carry aria-disabled. Cmd / Ctrl + Enter presses the ink button.
  * @param field - `{ id, label }` of the box; null → buttons alone
- * @param buttons - `{ label, isInk, onPress }` in order, the ink one last
- * @param later - the quiet button at the end of the note line
+ * @param buttons - `{ label, isInk, keyName, onPress }` in order, the ink one last; `keyName` = the desk letter that presses it (getDeskKeyQ)
+ * @param later - the quiet button at the end of the note line, `{ label, keyName, onPress }`
  */
 function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null }) {
 	const ink = buttons.find((button) => button.isInk);
@@ -1685,7 +1794,7 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 				{field && <ComposeBoxQ field={field} text={text} onText={onText} onKeyDown={onKeyDown} tray={tray} />}
 				<div className="queue-compose-buttons">
 					{buttons.map((button) => (
-						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} aria-disabled={isBusy || undefined}
+						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined}
 							aria-busy={(isBusy && button.isInk) || undefined} onClick={isBusy ? undefined : button.onPress}>
 							{isBusy && button.isInk ? "Sending…" : button.label}
 						</button>
@@ -1694,7 +1803,7 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 			</div>
 			<div className="queue-note">
 				<div className="queue-note-text">{note}</div>
-				{later && <button type="button" className="btn ghost sm" disabled={isBusy} onClick={later.onPress}>{later.label}</button>}
+				{later && <button type="button" className="btn ghost sm" data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>}
 			</div>
 		</div>
 	);

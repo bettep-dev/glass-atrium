@@ -1740,18 +1740,6 @@ describe("the Orders mode", () => {
     });
   }
 
-  const dialog = { closest: (selector: string) => (selector === '[role="dialog"]' ? {} : null) };
-  const desk = { closest: () => null };
-  const keys = [
-    { name: "Esc while open closes", key: "Escape", isOpen: true, target: desk, isClose: true },
-    { name: "Esc while closed does nothing", key: "Escape", isOpen: false, target: desk, isClose: false },
-    { name: "another key does nothing", key: "Enter", isOpen: true, target: desk, isClose: false },
-    { name: "an open drawer takes the Esc first", key: "Escape", isOpen: true, target: dialog, isClose: false },
-  ];
-  for (const row of keys) {
-    test(`a desk key: ${row.name}`, () => assert.equal(call("isOrdersCloseKeyQ", { key: row.key, defaultPrevented: false, target: row.target }, row.isOpen), row.isClose));
-  }
-
   test("the list's and the sheet's scroll positions stored on entering are set again on leaving", () => {
     const bodies: Record<string, { scrollTop: number }> = { ".queue-list > .card-body": { scrollTop: 412 }, ".queue-sheet > .card-body": { scrollTop: 96 } };
     const root = { querySelector: (selector: string) => bodies[selector] ?? null };
@@ -1912,6 +1900,200 @@ describe("the Orders mode", () => {
     assert.deepEqual(toggled, [SESSION_ID]);
     assert.equal(findNodes(tree, (node) => node.props?.["aria-current"] === "true").length, 0);
   });
+});
+
+// a focused element on the desk: `inside` = the selectors it sits within, `session` = the rail row it sits in
+function buildKeyTarget({ tag = "DIV", type = "", inside = [] as string[], session = "" } = {}) {
+  return {
+    tagName: tag,
+    type,
+    isContentEditable: false,
+    closest: (selector: string) => {
+      if (selector === "[data-session]") return session ? { getAttribute: () => session } : null;
+      return selector.split(",").some((part) => inside.includes(part.trim())) ? { querySelector: (inner: string) => keyRoot.querySelector(inner) } : null;
+    },
+  };
+}
+
+// document stand-in: each element the handlers reach records what was done to it
+const keyActs: string[] = [];
+const keyElement = (name: string) => ({ focus: () => keyActs.push(`focus ${name}`), click: () => keyActs.push(`click ${name}`) });
+const keyRoot = {
+  elements: {} as Record<string, unknown>,
+  querySelector(selector: string) { return this.elements[selector] ?? null; },
+  getElementById(id: string) { return this.elements[`#${id}`] ?? null; },
+};
+
+describe("desk keys", () => {
+  const OTHER_TICK_ID = "8c41e7d2-5b9a-4f06-b3e1-7d2a6c9f0e58";
+  const desk = buildKeyTarget();
+  const sheet = buildKeyTarget({ inside: [".queue-sheet"] });
+  const rows = [
+    { name: "J selects the next row", key: "j", expected: { name: "next" } },
+    { name: "K selects the previous row", key: "k", expected: { name: "prev" } },
+    { name: "a capital letter is its key", key: "J", expected: { name: "next" } },
+    { name: "a digit picks the option at its position", key: "3", expected: { name: "pick", index: 2 } },
+    { name: "zero picks nothing", key: "0", expected: null },
+    { name: "R goes to the sheet's field", key: "r", expected: { name: "field" } },
+    { name: "E marks as read", key: "e", expected: { name: "read" } },
+    { name: "L puts it later", key: "l", expected: { name: "later" } },
+    { name: "N starts a new order", key: "n", expected: { name: "new" } },
+    { name: "O orders the selected item's session", key: "o", expected: { name: "order" } },
+    { name: "a letter with Cmd is the browser's", key: "j", metaKey: true, expected: null },
+    { name: "a letter with Alt is the browser's", key: "n", altKey: true, expected: null },
+    { name: "a letter typed in a text field is text", key: "j", target: buildKeyTarget({ tag: "TEXTAREA", inside: [".queue-sheet"] }), expected: null },
+    { name: "a letter typed in a text input is text", key: "e", target: buildKeyTarget({ tag: "INPUT", type: "text" }), expected: null },
+    { name: "a letter on a radio is a key", key: "2", target: buildKeyTarget({ tag: "INPUT", type: "radio", inside: [".queue-sheet"] }), expected: { name: "pick", index: 1 } },
+    { name: "the switch off leaves letters alone", key: "j", isKeysOn: false, expected: null },
+    { name: "the switch off leaves digits alone", key: "1", isKeysOn: false, expected: null },
+    { name: "the switch off keeps Esc", key: "Escape", target: sheet, isKeysOn: false, expected: { name: "back" } },
+    { name: "Esc in the sheet goes back to the selected row", key: "Escape", target: sheet, expected: { name: "back" } },
+    { name: "Esc in the sheet's field goes back too", key: "Escape", target: buildKeyTarget({ tag: "TEXTAREA", inside: [".queue-sheet"] }), expected: { name: "back" } },
+    { name: "Esc on the list does nothing", key: "Escape", expected: null },
+    { name: "Esc in the Orders mode closes it from anywhere on the desk", key: "Escape", isOrdersOpen: true, expected: { name: "close" } },
+    { name: "an open dialog takes the Esc first", key: "Escape", isOrdersOpen: true, target: buildKeyTarget({ inside: ['[role="dialog"]'] }), expected: null },
+    { name: "an open dialog takes the letters too", key: "j", target: buildKeyTarget({ inside: ['[role="dialog"]'] }), expected: null },
+    { name: "a key another handler took is left alone", key: "Escape", isOrdersOpen: true, defaultPrevented: true, expected: null },
+    { name: "Enter on a row goes into the sheet", key: "Enter", target: buildKeyTarget({ inside: ['[role="option"]'] }), expected: { name: "enter" } },
+    { name: "Enter elsewhere is the control's own", key: "Enter", target: sheet, expected: null },
+    { name: "Cmd+Enter in the sheet presses its send", key: "Enter", metaKey: true, target: sheet, expected: { name: "send" } },
+    { name: "Ctrl+Enter in the order view presses its send", key: "Enter", ctrlKey: true, isOrdersOpen: true, target: buildKeyTarget({ inside: [".queue-orders"] }), expected: { name: "send" } },
+    { name: "Cmd+Enter on the list does nothing", key: "Enter", metaKey: true, target: buildKeyTarget({ inside: ['[role="option"]'] }), expected: null },
+    { name: "the Orders mode keeps N", key: "n", isOrdersOpen: true, expected: { name: "new" } },
+    { name: "the Orders mode leaves the list's letters", key: "j", isOrdersOpen: true, expected: null },
+    { name: "the Orders mode leaves the option digits", key: "1", isOrdersOpen: true, expected: null },
+  ];
+  for (const row of rows) {
+    test(`a desk key: ${row.name}`, () => {
+      const event = { key: row.key, metaKey: row.metaKey ?? false, ctrlKey: row.ctrlKey ?? false, altKey: row.altKey ?? false, defaultPrevented: row.defaultPrevented ?? false, target: row.target ?? desk };
+      assert.deepEqual(call("getDeskKeyQ", event, { isOrdersOpen: row.isOrdersOpen ?? false, isKeysOn: row.isKeysOn ?? true }), row.expected);
+    });
+  }
+
+  const decision = buildItem({ id: 3 });
+  const report = buildItem({ id: 5, kind: "report", options: [] });
+  const order = buildItem({ id: 9, kind: "message", status: "answered", sendId: "s", options: [], session: buildSession({ id: ENDED_ID }) });
+  // the desk with `selected` on the sheet; `calls` records every queue act a key makes
+  const deskWith = (selected: number, sessions: Record<string, unknown> = {}) => {
+    const built = buildQueue({ sessions: buildSessions(sessions), openOrderRow: (row: { id: number }) => built.calls.push(["openOrderRow", row.id]), openReplyOrder: (item: { id: number }) => built.calls.push(["openReplyOrder", item.id]) });
+    const listed = withList(built.queue, [decision, report, order]);
+    const groups = listed.groups as Array<{ rows: Array<{ id: number }> }>;
+    return { calls: built.calls, queue: { ...listed, sheet: getSheet(groups, String(selected)), selectedId: selected } };
+  };
+  const press = (name: string, selected: number, extra: Record<string, unknown> = {}) => {
+    keyActs.length = 0;
+    const { calls, queue } = deskWith(selected, extra.sessions as Record<string, unknown>);
+    (screen.putDeskKeyQ as (a: unknown, c: unknown) => void)({ name, index: extra.index }, { queue, target: extra.target ?? desk, root: keyRoot });
+    return { calls: getPlain(calls), acts: [...keyActs] };
+  };
+
+  const steps = [
+    { name: "J on a decision selects the report after it", action: "next", selected: 3, expected: 5 },
+    { name: "K on the report selects the decision before it", action: "prev", selected: 5, expected: 3 },
+    { name: "J on the last row stays on it", action: "next", selected: 9, expected: 9 },
+  ];
+  for (const row of steps) test(`a key's act: ${row.name}`, () => assert.deepEqual(press(row.action, row.selected).calls, [["selectRow", row.expected]]));
+
+  test("Enter on a decision's row focuses its picked option, else its first", () => {
+    keyRoot.elements = { ".queue-sheet input[type=radio]": keyElement("first option") };
+    assert.deepEqual(press("enter", 3).acts, ["focus first option"]);
+    keyRoot.elements = { ".queue-sheet input[type=radio]:checked": keyElement("picked option"), ".queue-sheet input[type=radio]": keyElement("first option") };
+    assert.deepEqual(press("enter", 3).acts, ["focus picked option"]);
+  });
+
+  test("Enter on a report's row focuses the sheet's primary button", () => {
+    keyRoot.elements = { ".queue-sheet .queue-composer .btn.primary": keyElement("Mark as read") };
+    assert.deepEqual(press("enter", 5).acts, ["focus Mark as read"]);
+  });
+
+  test("Enter on an order's row opens the Orders mode at its entry", () => assert.deepEqual(press("enter", 9).calls, [["openOrderRow", 9]]));
+
+  const picks = [
+    { name: "a digit on an open decision picks that option", selected: 3, index: 1, expected: [["setDraft", 3, { code: "R2", error: null }]] },
+    { name: "a digit past the last option picks nothing", selected: 3, index: 4, expected: [] },
+    { name: "a digit on a report picks nothing", selected: 5, index: 0, expected: [] },
+  ];
+  for (const row of picks) test(`a key's act: ${row.name}`, () => assert.deepEqual(press("pick", row.selected, { index: row.index }).calls, row.expected));
+
+  const presses = [
+    { name: "E presses the sheet's Mark as read", action: "read", selector: '.queue-sheet [data-key="e"]' },
+    { name: "L presses the sheet's later button", action: "later", selector: '.queue-sheet [data-key="l"]' },
+  ];
+  for (const row of presses) {
+    test(`a key's act: ${row.name}`, () => {
+      keyRoot.elements = { [row.selector]: keyElement(row.action) };
+      assert.deepEqual(press(row.action, 5).acts, [`click ${row.action}`]);
+    });
+  }
+
+  test("R puts the caret in the sheet's field", () => {
+    keyRoot.elements = { ".queue-sheet .queue-compose-text": keyElement("field") };
+    assert.deepEqual(press("field", 5).acts, ["focus field"]);
+  });
+
+  test("Esc from the sheet focuses the selected row", () => {
+    keyRoot.elements = { "#queue-row-5": keyElement("row 5") };
+    assert.deepEqual(press("back", 5).acts, ["focus row 5"]);
+  });
+
+  test("Cmd+Enter presses the primary button of the pane holding the focus", () => {
+    keyRoot.elements = { ".queue-composer .btn.primary": keyElement("Send answer") };
+    assert.deepEqual(press("send", 3, { target: sheet }).acts, ["click Send answer"]);
+  });
+
+  const named = [
+    { name: "a report's Mark as read answers E and its Read later L", item: report, keys: { "Mark as read": "e", "Read later": "l" } },
+    { name: "a decision's Answer later answers L", item: decision, keys: { "Answer later": "l" } },
+  ];
+  for (const row of named) {
+    test(`the sheet's buttons: ${row.name}`, () => {
+      const tree = renderSheet({ item: row.item, queue: buildQueue().queue });
+      for (const [label, key] of Object.entries(row.keys)) assert.equal(buttonLabelled(tree, label)[0]?.props["data-key"], key, label);
+    });
+  }
+
+  test("N opens the Orders mode and keeps the ticks", () => assert.deepEqual(press("new", 3).calls, [["openOrders"]]));
+
+  test("O on an open report opens the mode with the Re: line", () => assert.deepEqual(press("order", 5).calls, [["openReplyOrder", 5]]));
+
+  const ticks = [
+    { name: "O on a decision adds its session to the ticks, then opens the mode", selected: 3, target: desk, ticked: [OTHER_TICK_ID], expected: [OTHER_TICK_ID, SESSION_ID] },
+    { name: "O on a rail row adds that row's session", selected: 3, target: buildKeyTarget({ session: ENDED_ID }), ticked: [], expected: [ENDED_ID] },
+    { name: "O on a session already ticked keeps the ticks as they are", selected: 3, target: desk, ticked: [SESSION_ID], expected: [SESSION_ID] },
+    { name: "O on a session that takes no message ticks nothing", selected: 3, target: buildKeyTarget({ session: REPLACED_ID }), ticked: [], expected: [] },
+  ];
+  for (const row of ticks) {
+    test(`a key's act: ${row.name}`, () => {
+      let ticked = row.ticked;
+      const setSelectedIds = (update: (ids: string[]) => string[]) => { ticked = update(ticked); };
+      const { calls } = press("order", row.selected, { target: row.target, sessions: { selectedIds: row.ticked, setSelectedIds } });
+      assert.deepEqual([getPlain(ticked), calls], [row.expected, [["openOrders"]]]);
+    });
+  }
+
+  test("a key pressed on the desk reaches the queue, and the desk's Esc still closes the mode", () => {
+    const { calls, queue } = deskWith(3);
+    const closes: string[] = [];
+    const tree = render("QueueDeskQ", { queue: { ...queue, orders: { ...buildOrders({ isOpen: true, close: () => closes.push("close") }), open: () => calls.push(["openOrders"]) }, keys: { isOn: true } } });
+    const event = (key: string) => ({ key, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, target: desk, preventDefault: () => undefined });
+    const [root] = findNodes(tree, (node) => typeof node.props?.className === "string" && node.props.className.startsWith("queue-desk"));
+    (root?.props.onKeyDown as (e: unknown) => void)(event("n"));
+    (root?.props.onKeyDown as (e: unknown) => void)(event("Escape"));
+    assert.deepEqual([getPlain(calls), closes], [[["openOrders"]], ["close"]]);
+  });
+
+  const switches = [
+    { name: "nothing stored → on", stored: null, expected: true },
+    { name: "stored off → off", stored: "false", expected: false },
+    { name: "stored on → on", stored: "true", expected: true },
+    { name: "an unreadable store → on", stored: "{", expected: true },
+  ];
+  for (const row of switches) {
+    test(`the single-key switch: ${row.name}`, () => {
+      const storage = { getItem: (key: string) => (key === "queue.keys" ? row.stored : null) };
+      assert.equal(call("getKeysOnQ", storage), row.expected);
+    });
+  }
 });
 
 describe("sessions region", () => {
