@@ -47,6 +47,10 @@ const fills = renderToStaticMarkup(h("div", null,
   h(UI.Badge, { fill: "solid", role: "count" }, 7),
   h(UI.Badge, { fill: "tag", role: "count" }, 128),
 ));
+// a band inside a card body: the label row above a group of rows, its count a tag count badge
+const band = renderToStaticMarkup(h("div", { className: "card", style: { width: 480 } },
+  h("div", { className: "queue-band", id: "band" }, h("span", { id: "band-label" }, "Decisions"), h(UI.Badge, { fill: "tag", role: "count" }, 5)),
+  h("div", { id: "band-row", style: { padding: "12px 16px" } }, "row")));
 const fact = renderToStaticMarkup(h(UI.DetailField, { label: "File path", value: "hooks/track-outcome-with-a-very-long-name-that-has-to-wrap.sh", mono: true }));
 const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", { id }, h(UI.PageHeader, {
   title,
@@ -63,7 +67,7 @@ const empties = renderToStaticMarkup(h("div", null,
 ));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -278,6 +282,26 @@ describe("a filled badge", () => {
       assert.ok(look.width >= 20, `${look.text} is ${look.width}px wide`);
     }
     assert.deepEqual([small.text, large.text], ["7", "99+"]);
+  });
+});
+
+describe("a band", () => {
+  test("is a 32px row on the page ground, hairlines above and below, its 13/600 dim label on the card's inset and the count 6px after it", async () => {
+    const look = await page.$eval("#band", (el) => {
+      const style = getComputedStyle(el);
+      return { height: el.getBoundingClientRect().height, background: style.backgroundColor, top: `${style.borderTopWidth} ${style.borderTopColor}`,
+        bottom: `${style.borderBottomWidth} ${style.borderBottomColor}`, type: [style.fontSize, style.fontWeight, style.color] };
+    });
+    const ground = await page.$eval("body", (el) => {
+      const probe = el.appendChild(document.createElement("span"));
+      probe.style.cssText = "background: rgb(var(--surface)); color: rgb(var(--dim)); border-color: rgb(var(--line));";
+      const style = getComputedStyle(probe);
+      return { surface: style.backgroundColor, dim: style.color, line: style.borderTopColor };
+    });
+    const [card, label, count] = await Promise.all([boxOf(".card:has(#band)"), boxOf("#band-label"), boxOf("#band .pill")]);
+    assert.deepEqual(look, { height: 32, background: ground.surface, top: `1px ${ground.line}`, bottom: `1px ${ground.line}`, type: ["13px", "600", ground.dim] });
+    assert.equal(label.left - card.left, CARD_PAD_PX + 1);
+    assert.equal(count.left - label.right, 6);
   });
 });
 

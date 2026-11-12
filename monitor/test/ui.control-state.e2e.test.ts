@@ -79,6 +79,17 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
     <span data-probe="faint" style="color: rgb(var(--faint));">faint</span>
     <span data-probe="accent" style="color: rgb(var(--accent));">accent</span>
   </div>
+  <div class="card" data-card="large-tier" style="width: 560px; padding: 16px; margin-top: 24px; display: flex; flex-direction: row; align-items: flex-end; gap: 8px;">
+    <div class="queue-compose-box" data-atom="compose-box" style="flex: 1 1 220px;"><textarea class="queue-compose-text" rows="1" aria-label="Order to yoaida"></textarea></div>
+    <button type="button" class="btn lg" data-atom="btn-lg">Mark as read</button>
+    <button type="button" class="btn lg primary" data-atom="btn-lg-primary">Send order</button>
+  </div>
+  <div class="card" data-card="radios" style="width: 320px; padding: 16px; margin-top: 24px;">
+    <label class="inline-target"><input type="radio" class="ctl-radio" name="option" data-atom="radio" aria-label="R1 · build from mockup v5"></label>
+    <label class="inline-target"><input type="radio" class="ctl-radio" name="option" data-atom="radio-checked" checked aria-label="R2 · keep the live page"></label>
+    <span data-probe="selected-fill" style="color: rgb(var(--selected-fill));">selected</span>
+    <span data-probe="control-edge" style="color: rgb(var(--control-edge));">edge</span>
+  </div>
 </body></html>`;
 
 // each state is applied to the one measured element and undone after reading; hover and focus-visible are forced through CDP,
@@ -318,4 +329,67 @@ describe("an errored field-family control keeps its error edge under hover", () 
       }
     });
   }
+});
+
+const readProbe = (token: string) => probe.readStyle(`[data-probe="${token}"]`, "color");
+
+describe("the 40 tier: a composer box and its buttons share one height", () => {
+  test("a large button is 40 high, 14/500 on 16px inline insets, and keeps that box in every state", async () => {
+    const rest = await readBox("btn-lg");
+    const type = await Promise.all(["font-size", "font-weight", "padding-inline-start"].map((prop) => readStyle("btn-lg", prop)));
+    assert.deepEqual([rest.height, ...type], [40, "14px", "500", "16px"]);
+    for (const state of STATES) {
+      const box = await readBoxInState("btn-lg", state);
+      assert.ok(isSameBox(box, rest), `${state.name} ${box.width}x${box.height} vs resting ${rest.width}x${rest.height}`);
+    }
+  });
+
+  test("the composer box at rest holds one 14/22 line on 8/12 insets and stands as tall as its buttons", async () => {
+    const [box, send] = await Promise.all([readBox("compose-box"), readBox("btn-lg-primary")]);
+    const text = await Promise.all(["font-size", "line-height", "padding-top", "padding-inline-start", "border-top-width"]
+      .map((prop) => probe.readStyle(".queue-compose-text", prop)));
+    assert.deepEqual([box.height, send.height], [40, 40]);
+    assert.deepEqual(text, ["14px", "22px", "8px", "12px", "0px"]);
+  });
+
+  test("the composer box rests on the control edge, lifts to --faint on hover, and draws --crit while invalid", async () => {
+    const edgeOf = () => readStyle("compose-box", "border-top-color");
+    for (const theme of THEMES) {
+      const [rest, hover, invalid, tokens] = await withTheme(theme, async () => {
+        const resting = await edgeOf();
+        await forcePseudo("compose-box", ["hover"]);
+        const hovered = await edgeOf().finally(() => forcePseudo("compose-box", []));
+        await page.$eval(getAtomSelector("compose-box"), (el) => el.classList.add("is-invalid"));
+        const errored = await edgeOf().finally(() => page.$eval(getAtomSelector("compose-box"), (el) => el.classList.remove("is-invalid")));
+        return [resting, hovered, errored, await Promise.all(["control-edge", "faint", "crit"].map(readProbe))] as const;
+      });
+      assert.deepEqual([rest, hover, invalid], tokens, theme);
+    }
+  });
+
+  test("keyboard focus on its text paints the box --accent and rings the box, not the bare text", async () => {
+    await probe.forcePseudo(".queue-compose-text", ["focus-visible"]);
+    try {
+      const [edge, outline, textOutline, accent] = await Promise.all([
+        readStyle("compose-box", "border-top-color"), readStyle("compose-box", "outline-style"),
+        probe.readStyle(".queue-compose-text", "outline-style"), readProbe("accent"),
+      ]);
+      assert.deepEqual([edge, outline, textOutline], [accent, "solid", "none"]);
+    } finally {
+      await probe.forcePseudo(".queue-compose-text", []);
+    }
+  });
+});
+
+describe("a radio", () => {
+  test("is a 16px round box on a --faint edge at rest and a --selected-fill when checked, in both themes", async () => {
+    const box = await readBox("radio");
+    assert.deepEqual([box.width, box.height, await readStyle("radio", "border-top-left-radius")], [16, 16, "50%"]);
+    for (const theme of THEMES) {
+      const [restEdge, checkedFill, faint, selected] = await withTheme(theme, () => Promise.all([
+        readStyle("radio", "border-top-color"), readStyle("radio-checked", "background-color"), readProbe("faint"), readProbe("selected-fill"),
+      ]));
+      assert.deepEqual([restEdge, checkedFill], [faint, selected], theme);
+    }
+  });
 });

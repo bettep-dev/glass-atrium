@@ -64,6 +64,26 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .ctl-checkbox-mark {
 	color: rgb(var(--selected-ink));
 }
+/* the one radio visual (C24 inline target, §7.15) — the checkbox's box drawn round, in rules of its own.
+   Checked = the selected fill; an inset ring of the box's own --elev draws the dot (a drawing, not depth) */
+.ctl-radio {
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	border: 1.5px solid rgb(var(--faint));
+	border-radius: 50%;
+	background: rgb(var(--elev));
+	cursor: pointer;
+}
+.ctl-radio:hover {
+	border-color: rgb(var(--dim));
+}
+.ctl-radio:checked {
+	background: rgb(var(--selected-fill));
+	border-color: rgb(var(--selected-fill));
+	box-shadow: inset 0 0 0 3px rgb(var(--elev));
+}
 
 /* page header — one line box: the h1 line is one control height, so back link, status and the cluster center on it.
    Too narrow → the cluster wraps to a second line, its auto start margin keeping it right-aligned. */
@@ -270,6 +290,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	height: var(--ctl-min-h);
 	justify-content: center;
 }
+/* the 40 tier (§7.15) — a composer's buttons only, beside its 40 box; the type stays the control's 14/500 */
+.btn.lg {
+	min-height: var(--ctl-h-lg);
+	padding: var(--space-2) var(--space-4);
+	line-height: var(--lh-ctl-lg);
+}
 .btn:disabled,
 .btn[aria-disabled="true"] {
 	opacity: 0.5;
@@ -360,6 +386,66 @@ details[open] > summary.disclosure > .disclosure-chevron {
 /* a toggle chip rests on the control edge → its box reads at rest, not only once selected */
 .pill--interactive[aria-pressed] {
 	border-color: rgb(var(--control-edge));
+}
+
+/* a level above the rows of a list inside a card (§12.9) — the one row of a card body on the page ground, dim 13/600, its count a tag count badge.
+   Edge to edge with hairlines above and below; the label starts on the card's inset, where the rows' titles start */
+.queue-band {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-height: var(--row-h-compact);
+	padding: 0 var(--card-pad);
+	background: rgb(var(--surface));
+	border-block: 1px solid rgb(var(--line));
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+
+/* the composer's box (§7.15, 40 tier) — the one bordered field of a pane: the field family's edge, hover and focus, worn by the box around a borderless text.
+   At rest one 14/22 line (40); the text grows with its content to 8 lines, then scrolls inside */
+.queue-compose-box {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: var(--ctl-h-lg);
+	background: rgb(var(--elev));
+	border: 1px solid rgb(var(--control-edge));
+	border-radius: var(--radius-control);
+}
+.queue-compose-box:hover {
+	border-color: rgb(var(--faint));
+}
+/* the ring sits on the box, where the edge is — the text inside draws none */
+.queue-compose-box:has(:focus-visible) {
+	border-color: rgb(var(--accent));
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
+}
+.queue-compose-box.is-invalid {
+	border-color: rgb(var(--crit));
+}
+.queue-compose-text {
+	display: block;
+	width: 100%;
+	max-height: calc(8 * var(--lh-ctl-lg) + 2 * var(--space-2));
+	margin: 0;
+	padding: var(--space-2) var(--space-3);
+	border: 0;
+	background: transparent;
+	color: rgb(var(--ink));
+	font: inherit;
+	font-size: var(--fs-control);
+	font-weight: 400;
+	line-height: var(--lh-ctl-lg);
+	resize: none;
+	field-sizing: content;
+	overflow-y: auto;
+}
+.queue-compose-text:focus-visible {
+	outline: none;
 }
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
