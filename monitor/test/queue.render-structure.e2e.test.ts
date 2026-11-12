@@ -1,0 +1,286 @@
+// E2E chromium harness for the Queue page (screens/queue.jsx): the page's real bundle on mockup v5's fixture data,
+// the frame-independent facts every page stream keeps, and the named-state captures the owner compares to the mockup.
+//
+// Runner: npx tsx --test test/queue.render-structure.e2e.test.ts
+// Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network (React and the fonts).
+// Captures: QUEUE_SHOTS_DIR (absolute) names the folder; unset → a fresh mktemp folder, its path printed as a diagnostic.
+// App: stripped Fastify serving test/lib/queue-render-fixtures.ts; a queue read with no fixture route answers 404 and is recorded.
+
+import test, { after, before, describe } from "node:test";
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import Fastify, { type FastifyInstance } from "fastify";
+import fastifyStatic from "@fastify/static";
+import type { Browser, Page } from "playwright";
+import { chromium } from "playwright";
+
+import type { OwnerItemView } from "../src/server/queue/owner-views.js";
+import { ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
+import {
+  FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW, FIXTURE_SESSION_IDS, getNotReceivedFixture, getRestFixture, type QueueFixture,
+} from "./lib/queue-render-fixtures.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PUBLIC_ROOT = resolve(HERE, "..", "public");
+const QUEUE_API_PREFIX = "/api/queue/";
+const READY_TIMEOUT_MS = 30_000;
+
+/** The owner's desktop sizes the captures are compared at (spec 44063 §18.4). */
+const VIEWPORTS = [
+  { width: 1440, height: 900 },
+  { width: 1728, height: 1117 },
+  { width: 1920, height: 1080 },
+] as const;
+type Viewport = (typeof VIEWPORTS)[number];
+
+/**
+ * One named page state: `nn` and `name` follow the mockup's capture names (`<width>x<height>-<nn>-<name>.png`).
+ * `setUp` drives the page as it is built today → each page stream rewrites the steps its change moves.
+ */
+interface QueueState {
+  nn: string;
+  name: string;
+  getFixture?: () => QueueFixture;
+  setUp?: (page: Page) => Promise<void>;
+}
+
+const QUEUE_STATES: QueueState[] = [
+  { nn: "01", name: "rest" },
+  {
+    nn: "02", name: "decision-picked",
+    setUp: async (page) => {
+      await page.locator("#queue-option-103-R2").check();
+      await page.locator("#queue-text-103").fill("R2로 가되, 비교 평가 결과는 다음 보고에 붙여 주세요.");
+    },
+  },
+  { nn: "03", name: "report", setUp: (page) => scrollToCard(page, 101) },
+  {
+    nn: "04", name: "rail-ticked",
+    setUp: async (page) => {
+      await page.getByLabel("Select gersona").check();
+      await page.getByLabel("Select yoaida").check();
+      await page.getByLabel("Select yoaida").scrollIntoViewIfNeeded();
+    },
+  },
+  { nn: "09", name: "not-received", getFixture: getNotReceivedFixture, setUp: (page) => scrollToCard(page, 210) },
+  { nn: "18", name: "answered-not-yet", setUp: (page) => scrollToCard(page, 108) },
+];
+
+// Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
+const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
+const MARKUP_BODY = "- 본문 <img data-markup-probe src=\"/markup-probe.png\" onerror=\"window.__markupRan = true\">";
+
+interface Harness {
+  app: FastifyInstance;
+  url: string;
+  browser: Browser;
+  fixture: QueueFixture;
+  /** Queue reads no fixture route answered, as "METHOD /path". */
+  missedReads: string[];
+}
+
+async function openHarness(): Promise<Harness> {
+  const app = Fastify({ logger: false });
+  const harness: Harness = { app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [] };
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  registerFixtureRoutes(app, harness);
+  app.all("/api/*", async (request, reply) => {
+    if (!request.url.startsWith(QUEUE_API_PREFIX)) return { rows: [] };
+    harness.missedReads.push(`${request.method} ${request.url}`);
+    return reply.code(404).send({ error: "no_fixture_route" });
+  });
+  await app.ready();
+  harness.url = await app.listen({ host: "127.0.0.1", port: 0 });
+  return harness;
+}
+
+async function closeHarness(harness: Harness | undefined): Promise<void> {
+  await harness?.browser?.close();
+  await harness?.app?.close();
+}
+
+// the owner reads, the count and the image serve route, each answering in the server's response shape
+function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
+  app.get<{ Querystring: { after?: string } }>("/api/queue/owner/items", async (request) => ({
+    items: request.query.after === undefined ? harness.fixture.items : [], nextCursor: null, cliPath: FIXTURE_CLI_PATH,
+  }));
+  app.get<{ Params: { id: string } }>("/api/queue/owner/items/:id", async (request, reply) => {
+    const item = harness.fixture.items.find((candidate) => String(candidate.id) === request.params.id);
+    return item ?? reply.code(404).send({ error: "unknown_item" });
+  });
+  app.get("/api/queue/owner/sessions", async () => ({ sessions: harness.fixture.sessions, hasMore: false }));
+  app.get("/api/queue/owner/resumes", async () => ({ resumes: harness.fixture.resumes }));
+  app.get("/api/queue/owner/orders", async (request) => getOrderPage(harness.fixture.orders, ownerOrdersQuerySchema.parse(request.query)));
+  app.get<{ Params: { id: string } }>("/api/queue/owner/images/:id", async (request, reply) => {
+    const image = FIXTURE_IMAGES.get(request.params.id);
+    if (image === undefined) return reply.code(404).send({ error: "unknown_image" });
+    return reply.headers({ "content-type": image.mime, "x-content-type-options": "nosniff" }).send(image.bytes);
+  });
+  app.get("/api/queue/count", async () => ({
+    awaiting: harness.fixture.items.filter((item) => item.status === "open").length,
+    deviations: harness.fixture.items.filter((item) => item.deviation !== null).length,
+    oldestAgeSeconds: null,
+  }));
+}
+
+/** `id` = its lowest copy id → the cursor's tie-break, as on the server. */
+interface FixtureOrder {
+  at: bigint;
+  id: bigint;
+  copies: OwnerItemView[];
+}
+
+/**
+ * The history read's observable contract (owner-views.ts → getOwnerOrders), modelled on the fixture copies:
+ * newest order first, paged by order, every copy of an order any ticked session received, cursor `<µs>:<first id>`.
+ */
+function getOrderPage(copies: OwnerItemView[], query: OwnerOrdersQuery): { items: OwnerItemView[]; nextCursor: string | null } {
+  const { sessionIds, before, limit } = query;
+  const orders = getFixtureOrders(copies)
+    .filter((order) => sessionIds === undefined || order.copies.some((copy) => sessionIds.includes(copy.session.id)))
+    .filter((order) => before === undefined || isOrderBefore(order, before));
+  const page = orders.slice(0, limit);
+  const last = page.at(-1);
+  return { items: page.flatMap((order) => order.copies), nextCursor: orders.length > limit && last ? `${last.at}:${last.id}` : null };
+}
+
+// fold key: the send id, else equal answer time and text; an order's time is its newest copy's, its id its lowest
+function getFixtureOrders(copies: OwnerItemView[]): FixtureOrder[] {
+  const byKey = new Map<string, OwnerItemView[]>();
+  for (const copy of copies) {
+    const key = copy.sendId ?? `${copy.answeredAt}|${copy.body}`;
+    byKey.set(key, [...(byKey.get(key) ?? []), copy]);
+  }
+  return [...byKey.values()]
+    .map((group) => group.sort((left, right) => left.id - right.id))
+    .map((group) => ({ at: getMaxMicros(group), id: BigInt(group[0]!.id), copies: group }))
+    .sort((left, right) => (isOrderBefore(left, right) ? 1 : -1));
+}
+
+function getMaxMicros(group: OwnerItemView[]): bigint {
+  return group.map((copy) => BigInt(Date.parse(copy.answeredAt ?? "")) * 1000n).reduce((max, at) => (at > max ? at : max));
+}
+
+function isOrderBefore(order: { at: bigint; id: bigint }, bound: { at: bigint; id: bigint }): boolean {
+  return order.at < bound.at || (order.at === bound.at && order.id < bound.id);
+}
+
+/** A fresh page on the pinned clock, opened on #queue once the fixture's text and the web fonts are in. */
+async function openQueuePage(harness: Harness, viewport: Viewport, readyText: string): Promise<Page> {
+  const page = await harness.browser.newPage({ viewport });
+  await page.clock.setFixedTime(FIXTURE_NOW);
+  await page.goto(`${harness.url}/#queue`, { waitUntil: "load" });
+  await page.getByText(readyText).first().waitFor({ timeout: READY_TIMEOUT_MS });
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  return page;
+}
+
+function scrollToCard(page: Page, id: number): Promise<void> {
+  return page.locator(`#queue-item-${id}`).scrollIntoViewIfNeeded();
+}
+
+/** Every state at every desktop width, each on a fresh page, as `<dir>/<width>x<height>-<nn>-<name>.png`. */
+async function captureQueueStates(harness: Harness, dir: string): Promise<void> {
+  for (const viewport of VIEWPORTS) {
+    for (const state of QUEUE_STATES) await captureQueueState(harness, dir, viewport, state);
+  }
+}
+
+async function captureQueueState(harness: Harness, dir: string, viewport: Viewport, state: QueueState): Promise<void> {
+  harness.fixture = state.getFixture?.() ?? getRestFixture();
+  const page = await openQueuePage(harness, viewport, getRestReadyText());
+  try {
+    await state.setUp?.(page);
+    await page.screenshot({ path: join(dir, getShotName(viewport, state)) });
+  } finally {
+    await page.close();
+  }
+}
+
+function getShotName(viewport: Viewport, state: QueueState): string {
+  return `${viewport.width}x${viewport.height}-${state.nn}-${state.name}.png`;
+}
+
+async function getShotsDir(): Promise<string> {
+  const named = process.env.QUEUE_SHOTS_DIR;
+  if (named === undefined || named === "") return mkdtemp(join(tmpdir(), "queue-shots-"));
+  if (!isAbsolute(named)) throw new Error(`QUEUE_SHOTS_DIR must be an absolute path, got "${named}"`);
+  await mkdir(named, { recursive: true });
+  return named;
+}
+
+// PNG IHDR: width and height as big-endian words at bytes 16 and 20
+async function getPngSize(file: string): Promise<{ width: number; height: number }> {
+  const bytes = await readFile(file);
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+function getRestReadyText(): string {
+  return getRestFixture().items[0]!.title;
+}
+
+describe("queue page on the mockup fixtures", () => {
+  let harness: Harness;
+
+  before(async () => {
+    harness = await openHarness();
+  });
+
+  after(() => closeHarness(harness));
+
+  test("every queue read the page makes at rest is answered by a fixture route", async () => {
+    harness.fixture = getRestFixture();
+    harness.missedReads.length = 0;
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await page.close();
+
+    assert.deepEqual(harness.missedReads, []);
+  });
+
+  test("text a session wrote renders as text: its markup shows literally and adds no element", async () => {
+    const rest = getRestFixture();
+    const [report] = rest.items;
+    harness.fixture = { ...rest, items: [{ ...report!, title: MARKUP_TITLE, body: MARKUP_BODY }] };
+    const page = await openQueuePage(harness, VIEWPORTS[0], MARKUP_TITLE);
+    const found = await page.evaluate(() => ({
+      probes: document.querySelectorAll("[data-markup-probe]").length,
+      hasRun: (window as unknown as { __markupRan?: boolean }).__markupRan === true,
+      hasBodyText: document.body.innerText.includes("<img data-markup-probe"),
+    }));
+    await page.close();
+
+    assert.deepEqual(found, { probes: 0, hasRun: false, hasBodyText: true });
+  });
+
+  test("the history read pages by order and returns every copy of an order one ticked session received", async () => {
+    harness.fixture = getRestFixture();
+    const first = await harness.app.inject({ url: `/api/queue/owner/orders?sessionIds=${FIXTURE_SESSION_IDS.aidl}&limit=1` });
+    const all = await harness.app.inject({ url: "/api/queue/owner/orders?limit=2" });
+    const { nextCursor } = all.json<{ nextCursor: string }>();
+    const rest = await harness.app.inject({ url: `/api/queue/owner/orders?limit=30&before=${nextCursor}` });
+    const getSendIds = (body: { items: Array<{ sendId: string }> }) => [...new Set(body.items.map((item) => item.sendId))];
+
+    assert.deepEqual(first.json<{ items: Array<{ session: { name: string } }> }>().items.map((item) => item.session.name), ["gersona", "aidl"], "both recipients of the order to aidl");
+    const pages = [...getSendIds(all.json()), ...getSendIds(rest.json())];
+    assert.equal(new Set(pages).size, pages.length, "no order on two pages");
+    assert.equal(pages.length, new Set(getRestFixture().orders.map((order) => order.sendId)).size, "every order on some page");
+  });
+
+  test("each named state is captured at every desktop width as a viewport-sized PNG named for the mockup", async (t) => {
+    const dir = await getShotsDir();
+    t.diagnostic(`captures: ${dir}`);
+
+    await captureQueueStates(harness, dir);
+
+    for (const viewport of VIEWPORTS) {
+      for (const state of QUEUE_STATES) {
+        const name = getShotName(viewport, state);
+        assert.deepEqual(await getPngSize(join(dir, name)), { width: viewport.width, height: viewport.height }, name);
+      }
+    }
+  });
+});
