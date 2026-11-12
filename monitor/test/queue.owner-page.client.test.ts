@@ -839,6 +839,33 @@ describe("selection", () => {
   ];
   for (const row of rows) test(row.name, () => assert.equal(call("getSelectedIdQ", groups, row.hashId), row.expected));
   test("an empty list selects nothing", () => assert.equal(call("getSelectedIdQ", [], ""), null));
+
+  const presses = [
+    { name: "an order to a session opens the Orders mode at it", item: { kind: "message", status: "answered", sendId: "s" }, opens: 1 },
+    { name: "an order written on a report opens the Orders mode at it", item: { kind: "report", status: "answered", answer: { code: null, text: "ship it" } }, opens: 1 },
+    { name: "an answered decision opens on the sheet", item: { status: "answered", answer: { code: "R1", text: null } }, opens: 0 },
+    { name: "an open decision opens on the sheet", item: {}, opens: 0 },
+  ];
+  for (const row of presses) {
+    test(`pressing a list row: ${row.name}`, () => {
+      const calls: string[] = [];
+      const listed = call<Array<{ rows: unknown[] }>>("getGroupsQ", [buildItem({ id: 7, ...row.item })]).flatMap((group) => group.rows)[0];
+      const tree = render("QueueRowQ", { row: listed, isSelected: false, view: { isNameShown: true, isAccountShown: false }, onSelect: () => calls.push("select"), onOrder: () => calls.push("order") });
+      const [option] = findNodes(tree, (node) => node.props?.role === "option");
+      (option?.props.onClick as () => void)();
+      assert.deepEqual(calls, [row.opens ? "order" : "select"]);
+    });
+  }
+
+  test("an order's recipients are every session its send went to, also those the list's scope leaves out", () => {
+    const items = [buildItem({ id: 8, kind: "message", status: "answered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" }), buildItem({ id: 9, kind: "message", status: "answered", sendId: "t", session: buildSession({ id: "c3" }) })];
+    assert.deepEqual(call("getOrderRecipientIdsQ", items, 8), [SESSION_ID, "b2"]);
+  });
+
+  test("the thread entry an opened order aims at is the one holding any of its copies; one not loaded → none", () => {
+    const entries = call<unknown[]>("getThreadEntriesQ", [buildItem({ id: 8, kind: "message", status: "answered", sendId: "s" }), buildItem({ id: 7, kind: "message", status: "answered", sendId: "s" })]);
+    assert.deepEqual([call("getAimedEntryIdQ", entries, 8), call("getAimedEntryIdQ", entries, 40)], [7, null]);
+  });
 });
 
 describe("what the sheet shows", () => {

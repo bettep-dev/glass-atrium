@@ -13,6 +13,7 @@ const OWNER_API_Q = "/api/queue/owner";
 const LIST_Q = { LIMIT: 100, SOURCE: "the queue" };
 const SESSION_PREFIX_LENGTH_Q = 8;
 const ROW_ID_PREFIX_Q = "queue-row-";
+const ORDER_ID_PREFIX_Q = "queue-order-";
 // characters a POSIX shell never treats as syntax in an unquoted word
 const SHELL_SAFE_Q = /^[A-Za-z0-9_@%+=:,./-]+$/;
 const FILTER_AXES_Q = ["profile", "session"];
@@ -403,10 +404,28 @@ function useQueueStateQ({ onRetryHarness }) {
 	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, selectedId: sheet.id, sendAction: actions.send, setStatus, reload });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const selectRow = useCallbackQ((id) => { selectItem(id); setFocus({ id }); }, [selectItem]);
+	const openOrderRow = useOrderRowQ({ list, selectItem, sessions, orders });
 	return {
 		list, resumes, readResumes, sessions, orders, drafts, setDraft, filter, setFilter, reload, loadMore,
-		groups, sheet, selectedId: sheet.id, selectRow, status, ...actions,
+		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, status, ...actions,
 	};
+}
+
+// an order's row → the row selected for the return, its recipients ticked, the mode open at its entry
+function useOrderRowQ({ list, selectItem, sessions, orders }) {
+	const { setSelectedIds } = sessions;
+	const { openAt } = orders;
+	return useCallbackQ((row) => {
+		selectItem(row.id);
+		setSelectedIds(getOrderRecipientIdsQ(list.data?.items ?? [], row.id));
+		openAt(row.id);
+	}, [list, selectItem, setSelectedIds, openAt]);
+}
+
+// every session the send went to, from the whole loaded list → a scope that shows one copy still ticks them all
+function getOrderRecipientIdsQ(items, id) {
+	const row = getFoldedRowsQ(items).find((one) => one.copies.some((copy) => copy.id === id));
+	return [...new Set((row?.copies ?? []).map((copy) => copy.session.id))];
 }
 
 /**
@@ -546,6 +565,7 @@ function getSendErrorQ(answer) {
 function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) {
 	const [isOpen, setOpen] = useStateQ(() => getHashStateQ().view === "orders");
 	const away = useRefQ(null);
+	const aim = useRefQ(null);
 	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
 	const { thread, read, showEarlier } = useThreadQ(isOpen, selectedIds);
 	useEffectQ(() => { setHashStateQ({ view: isOpen ? "orders" : "" }); }, [isOpen]);
@@ -555,13 +575,14 @@ function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) 
 		away.current = { scrolls: getPaneScrollsQ(document), opener: document.activeElement };
 		setOpen(true);
 	}, [isOpen]);
-	const close = useCallbackQ(() => setOpen(false), []);
+	const openAt = useCallbackQ((id) => { aim.current = id; open(); }, [open]);
+	const close = useCallbackQ(() => { aim.current = null; setOpen(false); }, []);
 	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
 	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
 	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
 	const send = useCallbackQ((body, names) => sendMessageQ({ body, names, setComposer, setStatus, onSent }), [setStatus, onSent]);
 	const resend = useCallbackQ((ids) => putResendsQ(ids, sendAction, read), [sendAction, read]);
-	return { isOpen, open, close, thread, read, showEarlier, composer, setText, putError, send, resend };
+	return { isOpen, open, openAt, aim, close, thread, read, showEarlier, composer, setText, putError, send, resend };
 }
 
 // one after another → one busy state and one refusal line at a time; the thread re-reads once
@@ -845,18 +866,19 @@ function QueueGroupQ({ group, queue, view }) {
 				{group.label}
 				<Badge role="count" fill="tag" title={hasMore ? `${count} loaded, more not loaded yet` : undefined}>{hasMore ? `${count}+` : count}</Badge>
 			</div>
-			{group.rows.map((row) => <QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} view={view} onSelect={queue.selectRow} />)}
+			{group.rows.map((row) => <QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} />)}
 		</div>
 	);
 }
 
-function QueueRowQ({ row, isSelected, view, onSelect }) {
+// an order's row opens the Orders mode at it (spec §9.2); every other row opens on the sheet
+function QueueRowQ({ row, isSelected, view, onSelect, onOrder }) {
 	const { Icon, formatRelativeTime, formatKstDateTime } = window.UI;
 	const { item } = row;
 	const facts = getRowFactsQ(row, view.isAccountShown);
 	return (
 		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={row.id === view.tabStopId ? 0 : -1}
-			aria-label={getRowLabelQ(row, facts, view.isNameShown)} className="queue-row" onClick={() => onSelect(row.id)}>
+			aria-label={getRowLabelQ(row, facts, view.isNameShown)} className="queue-row" onClick={() => (getKindWordQ(item) === "Order" ? onOrder(row) : onSelect(row.id))}>
 			<span className="queue-row-title" title={item.title}>{item.title}</span>
 			<span className="queue-row-meta">
 				<span className="queue-row-who">{view.isNameShown && <RowWhoQ row={row} />}</span>
@@ -1573,6 +1595,7 @@ function ThreadQ({ orders, names }) {
 	const { thread } = orders;
 	const entries = getThreadEntriesQ(thread.items);
 	const scroll = useThreadScrollQ(entries);
+	useThreadAimQ(entries, orders.aim);
 	return (
 		<div ref={scroll.ref} onScroll={scroll.onScroll} role="log" aria-label={names.length > 0 ? `Orders to ${getNameListQ(names)}` : "All orders"} tabIndex={0} className="queue-thread">
 			{thread.nextCursor !== null && <button type="button" className="btn ghost sm queue-earlier" disabled={thread.status === "loading"} onClick={orders.showEarlier}>Show earlier</button>}
@@ -1610,6 +1633,23 @@ function useThreadScrollQ(entries) {
 	return { ref, onScroll };
 }
 
+// an order opened from its list row → its entry centred and focused once a read holds it; the aim goes with the mode
+function useThreadAimQ(entries, aim) {
+	const signature = entries.map((entry) => entry.id).join(",");
+	useLayoutEffectQ(() => {
+		const id = aim?.current == null ? null : getAimedEntryIdQ(entries, aim.current);
+		if (id === null) return;
+		aim.current = null;
+		const entry = document.getElementById(`${ORDER_ID_PREFIX_Q}${id}`);
+		entry?.scrollIntoView({ block: "center" });
+		entry?.focus({ preventScroll: true });
+	}, [signature]);
+}
+
+function getAimedEntryIdQ(entries, copyId) {
+	return entries.find((entry) => entry.copies.some((copy) => copy.id === copyId))?.id ?? null;
+}
+
 // consecutive entries of one KST day under one label
 function getDayGroupsQ(entries, now = new Date()) {
 	const groups = [];
@@ -1633,7 +1673,7 @@ function OrderEntryQ({ entry, onResend }) {
 	const { formatKstTime } = window.UI;
 	const { item, copies } = entry;
 	return (
-		<article className="queue-order">
+		<article id={`${ORDER_ID_PREFIX_Q}${entry.id}`} tabIndex={-1} className="queue-order">
 			<p className="queue-order-time" title={getAnswerLineQ(item)?.text}>
 				{item.kind === "report" && <span className="queue-order-re">{`Re: ${item.title}`}</span>}
 				<time dateTime={item.answeredAt}>{formatKstTime(item.answeredAt)}</time>
