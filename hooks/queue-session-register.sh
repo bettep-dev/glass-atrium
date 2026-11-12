@@ -30,9 +30,10 @@ get_payload_field() {
 hint="$(get_payload_field permission_mode)"
 start_dir="$(get_payload_field cwd)"
 session_id="$(get_payload_field session_id)"
+transcript="$(get_payload_field transcript_path)"
 
 # shellcheck disable=SC2310  # a failed register is the fail-open exit, never an errexit
-count="$(queue_register_session "${hint}" "" "${start_dir}" "${session_id}" 2>/dev/null)" || exit 0
+count="$(queue_register_session "${hint}" "" "${start_dir}" "${session_id}" "" "${transcript}" 2>/dev/null)" || exit 0
 if ((count > 0)); then
   cli_path="$(queue_get_cli_path)"
   # subshell write → no interrupt from an un-waited child reaches it; the exit stays 0 either way

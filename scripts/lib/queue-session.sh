@@ -21,6 +21,23 @@ readonly QUEUE_PID_SHAPE='^[1-9][0-9]{0,9}$'
 readonly QUEUE_MESSAGING_AUTH_SHAPE='^[!-~]+$'
 readonly QUEUE_MESSAGING_AUTH_MAX=512
 readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions dontAsk plan '
+# in UTF-16 units, as the monitor's register schema counts a session name
+readonly QUEUE_NAME_MAX=100
+# space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
+QUEUE_NAME_JQ="$(
+  cat <<'JQ'
+def units: if . >= 65536 then 2 else 1 end;
+def space: "[\\s\\p{Zs}\\x{FEFF}\\x{2028}\\x{2029}]";
+$name | explode | map(if . < 32 or (. >= 127 and . < 160) then 32 else . end) | implode
+| sub("^\(space)+"; "")
+| reduce explode[] as $code ({units: 0, codes: [], full: false};
+    if .full or .units + ($code | units) > $max then .full = true
+    else .units += ($code | units) | .codes += [$code] end)
+| .codes | implode | sub("\(space)+$"; "")
+| select(test("[^" + (space | .[1:-1]) + "]"))
+JQ
+)"
+readonly QUEUE_NAME_JQ
 
 queue_get_root() {
   printf '%s\n' "${GA_ROOT:-${HOME}/.glass-atrium}"
@@ -105,11 +122,42 @@ queue_put_messaging_auth() {
   fi
 }
 
+# <text> → the name the monitor accepts: control characters as spaces, trimmed, cut to QUEUE_NAME_MAX; nothing when blank
+queue_get_shown_name() {
+  jq -rn --arg name "$1" --argjson max "${QUEUE_NAME_MAX}" "${QUEUE_NAME_JQ}"
+}
+
+# This session's name → stdout, shown form; nothing when no source holds one. Sources in order: $1 an explicit name ·
+# the background job's state when it names session $3 · the last custom title, else the last AI title, in transcript $2
+queue_get_session_name() {
+  local name="$1"
+  [[ -n "${name}" ]] || name="$(queue_get_job_name "$3")"
+  [[ -n "${name}" ]] || name="$(queue_get_transcript_title "$2")"
+  if [[ -n "${name}" ]]; then queue_get_shown_name "${name}"; fi
+}
+
+# a job dir inherited by another session's process names that job's session, not this one
+queue_get_job_name() {
+  local state="${CLAUDE_JOB_DIR:-}/state.json"
+  [[ "${CLAUDE_JOB_DIR:-}" == /* && -f "${state}" ]] || return 0
+  jq -r --arg id "$1" 'select(.sessionId == $id or .resumeSessionId == $id) | .name | strings' "${state}" 2>/dev/null || return 0
+}
+
+# title records only → the transcript's conversation text is never parsed
+queue_get_transcript_title() {
+  local transcript="${1:-}"
+  [[ "${transcript}" == /* && -f "${transcript}" ]] || return 0
+  { grep -F -e '"custom-title"' -e '"ai-title"' -- "${transcript}" 2>/dev/null || true; } \
+    | jq -Rrn '[inputs | fromjson? | objects] | (map(select(.type == "custom-title") | .customTitle | strings) | last)
+      // (map(select(.type == "ai-title") | .aiTitle | strings) | last) // empty' 2>/dev/null || return 0
+}
+
 # The register step: the token copy, then the register POST → the answered-waiting count on stdout.
 # All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
-# $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks)
+# $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks) ·
+# $5 an explicit session name and $6 a transcript path (queue_get_session_name sources)
 queue_register_session() {
-  local hint="${1:-}" max_time="${2:-}" cwd session_id pid socket body reply count
+  local hint="${1:-}" max_time="${2:-}" cwd session_id pid socket name body reply count
   session_id="$(queue_get_session_id "${4:-}")"
   pid="$(queue_get_pid)"
   [[ -n "${session_id}" && -n "${pid}" ]] || return 1
@@ -117,10 +165,12 @@ queue_register_session() {
   queue_put_messaging_auth "${session_id}" || true
   socket="$(queue_get_socket_path)"
   cwd="$(queue_get_cwd "${3:-}")"
+  name="$(queue_get_session_name "${5:-}" "${6:-}" "${session_id}")" || name=""
   body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg cwd "${cwd}" \
     --arg configDir "${CLAUDE_CONFIG_DIR:-}" --arg socketPath "${socket}" --arg permissionHint "${hint}" \
-    --arg launchHint "${ATRIUM_QUEUE_ACCEPT_WRAPPER:+accept_wrapper}" \
-    '{$sessionId, $pid, $cwd, $configDir, $socketPath, $permissionHint, $launchHint} | with_entries(select(.value != ""))')" || return 1
+    --arg launchHint "${ATRIUM_QUEUE_ACCEPT_WRAPPER:+accept_wrapper}" --arg name "${name}" \
+    '{$sessionId, $pid, $cwd, $configDir, $socketPath, $permissionHint, $launchHint, $name}
+      | with_entries(select(.value != ""))')" || return 1
   reply="$(queue_post /api/queue/sessions/register "${body}" "${max_time}")" || return 1
   count="$(jq -r '.answeredWaiting // 0' <<<"${reply}" 2>/dev/null)" || return 1
   [[ "${count}" =~ ^[0-9]+$ ]] || return 1

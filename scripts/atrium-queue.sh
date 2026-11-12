@@ -90,8 +90,9 @@ Usage — run by this absolute path, no interpreter or env prefix in front, so t
   ${cli} pending                  claim this session's answered items; prints each one's fetch and ack steps
   ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer only when it prints "first"
   ${cli} withdraw <item-id>       withdraw an item not in delivery
-  ${cli} register                 register this session (a resumed session runs it after its ack steps);
-                                  run it from the session's start directory: the monitor resumes from it
+  ${cli} register [--name <name>] register this session (a resumed session runs it after its ack steps);
+                                  run it from the session's start directory: the monitor resumes from it;
+                                  --name labels this session on the Queue page (kept until a new name)
   ${cli} help
 Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
@@ -251,12 +252,17 @@ print_claims() {
 }
 
 register_session() {
-  local count cli pid
+  local name="" count cli pid
+  if (($# > 0)); then
+    [[ "$1" == --name && $# -eq 2 ]] || fail_usage "register takes no argument but --name <name>"
+    name="$(queue_get_shown_name "$2")"
+    [[ -n "${name}" ]] || fail 64 "--name must hold a visible character"
+  fi
   require_session_id >/dev/null
   pid="$(queue_get_pid)"
   [[ -n "${pid}" ]] || fail 64 "CLAUDE_PID is unset or not a pid — run this inside a Claude Code session"
   # shellcheck disable=SC2310  # a failed register → the named exit below
-  count="$(queue_register_session "" "${CLI_MAX_TIME_S}")" \
+  count="$(queue_register_session "" "${CLI_MAX_TIME_S}" "" "" "${name}")" \
     || fail 1 "register failed (monitor down, slow or refusing)"
   printf 'registered this session with the Atrium queue\n'
   if ((count > 0)); then

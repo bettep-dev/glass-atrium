@@ -22,7 +22,7 @@ DECISION='{"title":"Pick the retention window","body":"Backups now take 40 GB a 
 setup() {
   # the ambient session's own CLAUDE_* values must never reach the CLI under test
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
-    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT
+    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
@@ -279,6 +279,43 @@ run_cli() {
     ls -la "${GA_ROOT}/data/queue/tokens"
     return 1
   }
+}
+
+@test "register --name sends the name with control characters as spaces, cut to the monitor's name limit" {
+  start_stub
+  set_reply 200 '{"answeredWaiting":0}'
+  local limit wide i sent
+  # the monitor's own limit, in UTF-16 units → a drift between the two layers fails here
+  limit="$(sed -n 's/^const SESSION_NAME_MAX = \([0-9][0-9]*\);$/\1/p' "${GA}/monitor/src/server/queue/schemas.ts")"
+  [[ "${limit}" =~ ^[0-9]+$ ]] || {
+    echo "no SESSION_NAME_MAX in schemas.ts"
+    return 1
+  }
+  wide="$(printf "%$((limit - 1))s" '' | tr ' ' 'x')"
+  local -a names=("nightly backup" $'queue\tsessions\x1b[0m' "  ${wide}yz" "${wide}😀")
+  local -a expected=("nightly backup" "queue sessions [0m" "${wide}y" "${wide}")
+  for ((i = 0; i < ${#names[@]}; i++)); do
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    run_cli register --name "${names[i]}"
+    sent="$(request_body /api/queue/sessions/register | jq -r '.name')"
+    [[ "${status}" -eq 0 && "${sent}" == "${expected[i]}" ]] || {
+      echo "row ${i}: status=${status} sent=[${sent}] ${stderr}"
+      return 1
+    }
+  done
+}
+
+@test "register refuses a blank or missing --name, or an unknown argument, with exit 64 and no request" {
+  start_stub
+  local i
+  local -a rows=("--name|   " $'--name|\xe3\x80\x80' "--name|" "--nickname|backup")
+  for ((i = 0; i < ${#rows[@]}; i++)); do
+    if [[ -n "${rows[i]#*|}" ]]; then run_cli register "${rows[i]%%|*}" "${rows[i]#*|}"; else run_cli register "${rows[i]%%|*}"; fi
+    [[ "${status}" -eq 64 && ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+      echo "row ${rows[i]}: status=${status} ${stderr}"
+      return 1
+    }
+  done
 }
 
 @test "register names the waiting count and the absolute pending command when answers wait" {

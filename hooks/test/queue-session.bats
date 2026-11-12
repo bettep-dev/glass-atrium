@@ -18,7 +18,7 @@ SOCKET_AUTH="tok-81f3c2e9d0b7a6f5"
 setup() {
   # the ambient session's own CLAUDE_* values must never reach a hook under test
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
-    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT
+    CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_QUEUE_ACCEPT_WRAPPER ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
@@ -182,6 +182,47 @@ run_deregister() {
     run_register "{\"hook_event_name\":\"SessionStart\",\"permission_mode\":\"${mode}\"}"
     [[ "$(request_body /api/queue/sessions/register | jq -r '.permissionHint')" == "${expected}" ]] || {
       echo "row ${row%%|*}"
+      return 1
+    }
+  done
+}
+
+@test "register sends the session's job name, else its last transcript title, and no name when no source holds one" {
+  start_stub
+  local foreign="0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d" job_dir="${BATS_TEST_TMPDIR}/job"
+  local transcript="${BATS_TEST_TMPDIR}/transcript.jsonl" row expected sent
+  local ai_title="{\"type\":\"ai-title\",\"aiTitle\":\"Fix the flaky sweep test\",\"sessionId\":\"${SESSION_ID}\"}"
+  local chatter="{\"type\":\"user\",\"message\":{\"content\":\"name it \\\"custom-title\\\"\"}}"
+  for row in "no-source|" "job-resumed-as-this-session|nightly-backup" "job-of-another-session|" \
+    "renamed-transcript|queue sessions" "ai-titled-transcript|Fix the flaky sweep test" \
+    "job-and-transcript|nightly-backup" "blank-title|"; do
+    expected="${row#*|}"
+    unset CLAUDE_JOB_DIR
+    mkdir -p "${job_dir}"
+    : >"${transcript}"
+    case "${row%%|*}" in
+      job-resumed-as-this-session | job-and-transcript)
+        export CLAUDE_JOB_DIR="${job_dir}"
+        printf '{"sessionId":"%s","resumeSessionId":"%s","name":"nightly-backup","nameSource":"user"}\n' "${foreign}" "${SESSION_ID}" >"${job_dir}/state.json"
+        ;;
+      job-of-another-session)
+        export CLAUDE_JOB_DIR="${job_dir}"
+        printf '{"sessionId":"%s","name":"someone-else","nameSource":"user"}\n' "${foreign}" >"${job_dir}/state.json"
+        ;;
+    esac
+    case "${row%%|*}" in
+      renamed-transcript | job-and-transcript)
+        printf '%s\n' "${ai_title}" "${chatter}" "{\"type\":\"custom-title\",\"customTitle\":\"queue work\",\"sessionId\":\"${SESSION_ID}\"}" \
+          "{\"type\":\"custom-title\",\"customTitle\":\"queue sessions\",\"sessionId\":\"${SESSION_ID}\"}" >"${transcript}"
+        ;;
+      ai-titled-transcript) printf '%s\n' "${chatter}" "${ai_title}" >"${transcript}" ;;
+      blank-title) printf '{"type":"custom-title","customTitle":"   ","sessionId":"%s"}\n' "${SESSION_ID}" >"${transcript}" ;;
+    esac
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    run_register "{\"hook_event_name\":\"SessionStart\",\"source\":\"resume\",\"transcript_path\":\"${transcript}\"}"
+    sent="$(request_body /api/queue/sessions/register | jq -r 'if has("name") then .name else "" end')"
+    [[ "${status}" -eq 0 && "${sent}" == "${expected}" ]] || {
+      echo "row ${row%%|*}: status=${status} sent=[${sent}] $(cat "${BATS_TEST_TMPDIR}/requests.log")"
       return 1
     }
   done
