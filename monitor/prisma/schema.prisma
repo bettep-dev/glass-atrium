@@ -1380,7 +1380,7 @@ enum QueueCanaryResult {
 /// One row per Claude session that registered with the queue (SessionStart hook / queue CLI).
 /// CHECKs (migration raw SQL only):
 ///   - config_dir present ⇔ config_dir_set · config_dir, cwd, worktree_root absolute
-///   - socket_path = /tmp or /private/tmp cc-socks/<pid>.sock → the sender never connects outside it
+///   - socket_path, when present = /tmp or /private/tmp cc-socks/<pid>.sock → confines legacy history values
 ///   - exit_reason present ⇔ state = exited · pid > 0 · profile_label, process_start_time non-empty
 ///   - name, when present: non-blank, no control character
 /// No relation from items is cascaded → an exited row that still owns items is never pruned.
@@ -1402,8 +1402,8 @@ model QueueSession {
   pid                      Int
   // Raw `ps -o lstart=` under TZ=UTC, server-read → compared as a string, never parsed
   processStartTime         String                  @map("process_start_time") @db.VarChar(64)
-  // NULL = socket channel off
-  socketPath               String?                 @map("socket_path")
+  // Retired column, kept for history rows → no channel reads it; register clears it to NULL
+  socketPath              String?                 @map("socket_path")
   permissionHint           QueuePermissionHint?    @map("permission_hint")
   launchHint               QueueLaunchHint?        @map("launch_hint")
   state                    QueueSessionState
