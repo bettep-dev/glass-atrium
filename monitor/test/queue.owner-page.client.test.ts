@@ -1043,7 +1043,7 @@ describe("the page re-reads itself", () => {
   for (const row of limits) test(`read size: ${row.name}`, () => assert.equal(call("getListLimitQ", row.loaded), row.expected));
 
   const merge = (prevItems: unknown[] | null, answerItems: unknown[], nextCursor: number | null = null, prevCursor: number | null = null) =>
-    call<{ data: { items: Array<{ id: number; status: string }>; nextCursor: number | null }; arrived: Array<{ id: number }> }>(
+    call<{ data: { items: Array<{ id: number; status: string }>; nextCursor: number | null }; arrived: Array<{ id: number }>; turned: Array<{ id: number }> }>(
       "getMergedDataQ", prevItems === null ? null : { items: prevItems, nextCursor: prevCursor }, { items: answerItems, nextCursor });
 
   test("a known row takes the read's state, a gone row leaves, and a new decision or report arrives", () => {
@@ -1115,6 +1115,46 @@ describe("the page re-reads itself", () => {
     { name: "several arrivals are counted", arrived: [buildItem({ id: 1 }), buildItem({ id: 2 }), buildItem({ id: 3 })], expected: "3 new items" },
   ];
   for (const row of notes) test(`arrival note: ${row.name}`, () => assert.equal(call("getArrivalNoteQ", row.arrived), row.expected));
+
+  // a turn to Not received is said once, on the read that sees it; a turn to Received and a copy first seen already failed are silent
+  test("a read reports the copies whose receipt turned to Not received since the last read", () => {
+    const order = (id: number, status: string, canResend = false) => buildItem({ id, kind: "message", status, canResend });
+    const { turned } = merge(
+      [order(1, "answered"), order(2, "delivering"), order(3, "unacked", true), order(4, "answered")],
+      [order(1, "unacked", true), order(2, "delivered"), order(3, "unacked", true), order(4, "expired"), order(5, "expired")],
+    );
+    assert.deepEqual(turned.map((item) => item.id), [1, 4]);
+  });
+
+  const turns = [
+    { name: "one recipient names its session", turned: [buildItem({ id: 1, kind: "message", status: "unacked", session: buildSession({ name: "yoaida" }) })], expected: "⚠ yoaida has not received an order" },
+    {
+      name: "recipients in several sessions are named together",
+      turned: [
+        buildItem({ id: 1, kind: "message", status: "unacked", session: buildSession({ name: "yoaida" }) }),
+        buildItem({ id: 2, kind: "message", status: "expired", session: buildSession({ id: "0d3e7a51-2c4f-4b8e-9f61-7a2b5c8d1e30", name: "gersona" }) }),
+      ],
+      expected: "⚠ yoaida and gersona have not received an order",
+    },
+    { name: "an answer to a decision is named an answer", turned: [buildItem({ id: 1, status: "unacked", session: buildSession({ name: "yoaida" }) })], expected: "⚠ yoaida has not received an answer" },
+  ];
+  for (const row of turns) test(`Not received note: ${row.name}`, () => assert.equal(call("getNotReceivedNoteQ", row.turned), row.expected));
+
+  const footRows = [
+    { name: "a line naming an order carries Show, which opens the order view at that order", status: { text: "⚠ yoaida has not received an order", orderId: 7 }, opened: [7] },
+    { name: "a plain line carries no Show", status: "Marked as read", opened: [] },
+  ];
+  for (const row of footRows) {
+    test(`list status line: ${row.name}`, () => {
+      const opened: number[] = [];
+      const queue = { ...withList(buildQueue(), [buildItem()]), status: row.status, openOrderRow: (target: { id: number }) => opened.push(target.id) };
+      const tree = render("ListFootQ", { queue });
+      const [line] = findNodes(tree, (node) => node.props?.role === "status");
+      assert.equal(collectText(line as RenderedNode), typeof row.status === "string" ? row.status : row.status.text);
+      for (const button of buttonLabelled(tree, "Show")) (button.props.onClick as () => void)();
+      assert.deepEqual(opened, row.opened);
+    });
+  }
 
   test("a read asked for while one is in flight joins it; a fresh one runs after it", async () => {
     const flight = { current: null as Promise<unknown> | null };

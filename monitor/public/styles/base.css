@@ -819,8 +819,16 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-list > .card-foot {
 	justify-content: space-between;
 }
-.queue-status {
+/* the status line's text ellipsizes; its quiet Show stays beside it */
+.queue-status-line {
 	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: var(--gap-control);
+}
+.queue-status {
+	flex: 0 1 auto;
 	min-width: 0;
 	white-space: nowrap;
 	overflow: hidden;

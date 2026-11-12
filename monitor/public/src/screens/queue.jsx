@@ -541,19 +541,32 @@ function usePageTickQ({ setList, readList, readResumes, sessions, orders, setSta
 	useEffectQ(() => { setArrival([]); }, [orders.isOpen]);
 	const tick = useCallbackQ(async () => {
 		const [read] = await Promise.all([readList({ isMarked: true }), sessions.read(), onReadQueueCount?.(), orders.isOpen && orders.reread()]);
-		if (read.arrived.length > 0) {
-			setStatus(getArrivalNoteQ(read.arrived));
-			setArrival(read.arrived);
-		}
+		if (read.arrived.length > 0) setArrival(read.arrived);
+		setReadStatusQ(read, setStatus);
 		return read.isGood;
 	}, [readList, sessions.read, onReadQueueCount, orders.isOpen, orders.reread, setStatus]);
 	useAutoReadQ(tick);
+	// ponytail: a turn first seen by an owner act's read is not said (its row still shows it) → the act's own line keeps the status line
 	const refresh = useCallbackQ(() => {
 		setList((prev) => ({ ...prev, newIds: [] }));
 		readResumes();
-		return Promise.all([readList({ isMarked: false }), sessions.read(), onReadQueueCount?.(), orders.isOpen && orders.reread()]);
-	}, [setList, readList, readResumes, sessions.read, onReadQueueCount, orders.isOpen, orders.reread]);
+		const list = readList({ isMarked: false }).then((read) => setReadStatusQ(read, setStatus));
+		return Promise.all([list, sessions.read(), onReadQueueCount?.(), orders.isOpen && orders.reread()]);
+	}, [setList, readList, readResumes, sessions.read, onReadQueueCount, orders.isOpen, orders.reread, setStatus]);
 	return { refresh, arrival };
+}
+
+// a turn to Not received outranks an arrival: it asks for an act, and an arrival keeps its New mark on its row
+function setReadStatusQ(read, setStatus) {
+	if (read.turned.length > 0) setStatus({ text: getNotReceivedNoteQ(read.turned), orderId: read.turned[0].id });
+	else if (read.arrived.length > 0) setStatus(getArrivalNoteQ(read.arrived));
+}
+
+// `⚠ yoaida has not received an order` · several sessions named together
+function getNotReceivedNoteQ(turned) {
+	const names = [...new Set(turned.map((item) => getSessionNameQ(item.session)))];
+	const what = getKindWordQ(turned[0]) === "Answer" ? "an answer" : "an order";
+	return `${window.UI.TONE_GLYPH.warn} ${getNameListQ(names)} ${names.length === 1 ? "has" : "have"} not received ${what}`;
 }
 
 /**
@@ -951,22 +964,22 @@ function useFilterQ() {
  * A failure with rows loaded keeps them and their read time; with none loaded it is the list's error state.
  * @param getList - the list now; absent → nothing loaded
  * @param isMarked - an arrival takes the New mark (every read but Refresh)
- * @returns `{ isGood, arrived }` — `arrived` the items this read marked New, in server order
+ * @returns `{ isGood, arrived, turned }` — `arrived` the items this read marked New, in server order; `turned` as getMergedDataQ
  */
 async function getListQ({ setList, getList = () => EMPTY_LIST_Q, isMarked = false }) {
 	if (getList().data === null) setList((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/items?limit=${getListLimitQ(getList().data?.items.length ?? 0)}`);
 	const prev = getList();
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
-		const { data, arrived } = getMergedDataQ(prev.data, answer.data);
+		const { data, arrived, turned } = getMergedDataQ(prev.data, answer.data);
 		const marked = isMarked ? arrived : [];
 		const kept = (prev.newIds ?? []).filter((id) => data.items.some((item) => item.id === id));
 		setList({ status: "ready", data, error: null, readAt: new Date().toISOString(), newIds: [...kept, ...marked.map((item) => item.id)] });
-		return { isGood: true, arrived: marked };
+		return { isGood: true, arrived: marked, turned };
 	}
 	const error = getReadFailureQ(answer);
 	setList(prev.data === null ? { ...prev, status: "error", error } : { ...prev, status: "ready", error });
-	return { isGood: false, arrived: [] };
+	return { isGood: false, arrived: [], turned: [] };
 }
 
 // every loaded row, so a list extended by Show more is not cut back, up to the read's cap
@@ -977,16 +990,18 @@ function getListLimitQ(loaded) {
 /**
  * The read merged by item id: a known row takes the read's state, a row the read no longer has leaves, a new one stands at its server position.
  * Rows loaded past the read's last position (beyond its cap) stay with their cursor until a read reaches them.
- * @returns `{ data, arrived }` — `arrived` the new open decisions and reports; the page's first read has none
+ * @returns `{ data, arrived, turned }` — `arrived` the new open decisions and reports, `turned` the known copies whose receipt
+ * turned to Not received (spec §4.4); the page's first read has neither
  */
 function getMergedDataQ(prev, answer) {
-	if (prev === null) return { data: answer, arrived: [] };
-	const known = new Set(prev.items.map((item) => item.id));
+	if (prev === null) return { data: answer, arrived: [], turned: [] };
+	const receipts = new Map(prev.items.map((item) => [item.id, getReceiptQ(item)]));
 	const read = new Set(answer.items.map((item) => item.id));
 	const beyond = answer.nextCursor === null ? [] : prev.items.filter((item) => !read.has(item.id) && item.queuePosition > answer.nextCursor);
-	const arrived = answer.items.filter((item) => !known.has(item.id) && item.status === "open" && (item.kind === "decision" || item.kind === "report"));
+	const arrived = answer.items.filter((item) => !receipts.has(item.id) && item.status === "open" && (item.kind === "decision" || item.kind === "report"));
+	const turned = answer.items.filter((item) => receipts.has(item.id) && receipts.get(item.id) !== "notReceived" && getReceiptQ(item) === "notReceived");
 	const nextCursor = beyond.length > 0 ? prev.nextCursor : answer.nextCursor;
-	return { data: { ...answer, items: [...answer.items, ...beyond], nextCursor }, arrived };
+	return { data: { ...answer, items: [...answer.items, ...beyond], nextCursor }, arrived, turned };
 }
 
 // Show more → the next page after the cursor joins the loaded list; a refused read → the page failure card with Retry
@@ -1286,11 +1301,16 @@ function getKindWordQ(item) {
 	return "Order";
 }
 
+// the status line: the last act's result or a read's note · a line naming an order carries a quiet Show that opens the order view at it
 function ListFootQ({ queue }) {
 	const data = queue.list.data;
+	const { text, orderId = null } = typeof queue.status === "string" ? { text: queue.status } : queue.status;
 	return (
 		<>
-			<span role="status" className="queue-status">{queue.status}</span>
+			<span className="queue-status-line">
+				<span role="status" className="queue-status">{text}</span>
+				{orderId !== null && <button type="button" className="btn ghost sm" onClick={() => queue.openOrderRow({ id: orderId })}>Show</button>}
+			</span>
 			{data && data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
 		</>
 	);
