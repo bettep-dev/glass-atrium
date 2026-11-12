@@ -310,6 +310,34 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .pill--count {
 	font-variant-numeric: tabular-nums;
 }
+/* the filled family (§7.3) — a shell a person reads at a glance; one weight for every fill, text always ink or the solid's surface */
+.pill--solid,
+.pill--tag,
+.pill--warn {
+	font-weight: 600;
+}
+/* waits for the owner — the system's strongest pair, so the desk keeps one hue */
+.pill--solid {
+	background: rgb(var(--ink));
+	color: rgb(var(--surface));
+}
+.pill--tag {
+	background: var(--tint-fill);
+	color: rgb(var(--ink));
+}
+/* the amber tint alone is 1.43:1 → the ⚠ and the word carry the state, both in ink (--warn on its own tint is 2.87 in light) */
+.pill--warn {
+	background: var(--tint-warn);
+	color: rgb(var(--ink));
+}
+/* count shape — a round chip, never narrower than its height */
+.pill--num {
+	min-width: 20px;
+	padding: 0 var(--space-1_5);
+	border-radius: 999px;
+	justify-content: center;
+	font-variant-numeric: tabular-nums;
+}
 /* height-match variant — model-config 메타/상태 배지를 같은 행 폼컨트롤(<select> · $ 입력, 둘 다 .field) 과 동일 HEIGHT 로 세로 정렬.
    canonical FORM(너비/폰트/radius) 유지 · HEIGHT 만 --ctl-h 로 .field 와 lockstep — min-height 가 base 24px 를 지배.
    box-sizing 은 base .pill 의 border-box 상속. */

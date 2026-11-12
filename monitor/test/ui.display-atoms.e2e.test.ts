@@ -39,6 +39,14 @@ const badges = renderToStaticMarkup(h("div", null,
   h(UI.Badge, { role: "count" }, "1,284"),
   h("button", { type: "button", className: "btn", id: "control" }, "Save"),
 ));
+// the three fills in their word and count shapes; 128 is a count past the 99 cap
+const fills = renderToStaticMarkup(h("div", null,
+  h(UI.Badge, { fill: "solid" }, "New"),
+  h(UI.Badge, { fill: "tag" }, "Decision"),
+  h(UI.Badge, { fill: "warn" }, "Not received"),
+  h(UI.Badge, { fill: "solid", role: "count" }, 7),
+  h(UI.Badge, { fill: "tag", role: "count" }, 128),
+));
 const fact = renderToStaticMarkup(h(UI.DetailField, { label: "File path", value: "hooks/track-outcome-with-a-very-long-name-that-has-to-wrap.sh", mono: true }));
 const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", { id }, h(UI.PageHeader, {
   title,
@@ -55,7 +63,7 @@ const empties = renderToStaticMarkup(h("div", null,
 ));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -227,6 +235,49 @@ describe("a badge", () => {
     const face = await page.$eval(".pill--count", (el) => ({ family: getComputedStyle(el).fontFamily, numeric: getComputedStyle(el).fontVariantNumeric }));
     assert.ok(!/mono/i.test(face.family), face.family);
     assert.equal(face.numeric, "tabular-nums");
+  });
+});
+
+describe("a filled badge", () => {
+  const readFills = () => page.$$eval("#fills .pill", (els) => els.map((el) => {
+    const style = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return { text: el.textContent ?? "", height: box.height, width: box.width, size: style.fontSize, weight: style.fontWeight, border: style.borderTopWidth,
+      radius: style.borderTopLeftRadius, background: style.backgroundColor, color: style.color, numeric: style.fontVariantNumeric, padding: style.paddingInlineStart };
+  }));
+
+  test("every fill, word or count, is a 20px chip in 13/600 with no edge", async () => {
+    const looks = await readFills();
+    assert.equal(looks.length, 5);
+    for (const look of looks) assert.deepEqual([look.height, look.size, look.weight, look.border], [20, "13px", "600", "0px"], look.text);
+  });
+
+  test("solid is an ink shell with surface text; tag and warn are tinted shells with ink text", async () => {
+    const [solid, tag, warn] = await readFills();
+    const inverse = await page.$eval("#ink-on-surface", (el) => ({ background: getComputedStyle(el).backgroundColor, color: getComputedStyle(el).color }));
+    const tints = await page.$eval("#tints", (el) => ({ fill: getComputedStyle(el).backgroundColor, warn: getComputedStyle(el).color }));
+    const ink = await page.$eval("#sunken", (el) => getComputedStyle(el).color);
+    assert.deepEqual([solid.background, solid.color], [inverse.background, inverse.color]);
+    assert.deepEqual([tag.background, tag.color], [tints.fill, ink]);
+    assert.deepEqual([warn.background, warn.color], [tints.warn, ink]);
+  });
+
+  test("the amber badge leads with the warn glyph, in the badge's own ink", async () => {
+    const lead = await page.$eval("#fills .pill--warn", (el) => {
+      const glyph = el.firstElementChild as HTMLElement;
+      return { text: el.textContent, glyphColor: getComputedStyle(glyph).color, isHidden: glyph.getAttribute("aria-hidden"), color: getComputedStyle(el).color };
+    });
+    assert.equal(lead.text, "⚠ Not received");
+    assert.deepEqual([lead.glyphColor, lead.isHidden], [lead.color, "true"]);
+  });
+
+  test("a count is a round chip at least 20 wide on 6px insets, tabular digits, capped at 99+", async () => {
+    const [, , , small, large] = await readFills();
+    for (const look of [small, large]) {
+      assert.deepEqual([look.radius, look.padding, look.numeric], ["999px", "6px", "tabular-nums"], look.text);
+      assert.ok(look.width >= 20, `${look.text} is ${look.width}px wide`);
+    }
+    assert.deepEqual([small.text, large.text], ["7", "99+"]);
   });
 });
 

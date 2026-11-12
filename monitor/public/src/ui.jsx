@@ -89,7 +89,10 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
 //   · label text stays --dim (AA-safe: light warn/ok/info tones on --sunken read 3.15–3.45:1, sub-AA at --fs-meta) — a glyph=false status keeps a neutral label too.
 //   · metadata/count stay neutral even when given a tone (color ≠ metadata/count).
 // Variants: absent=true → .pill--absent (dashed/faint) · interactive=true → <button> + .pill--interactive (WCAG 2.2 §2.5.8 target)
-function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
+// fill (DESIGN.md §7.3): quiet = the neutral shell above · solid = waits for the owner · tag = a fact worth a glance · warn = did not arrive.
+//   A filled shell carries ink (or surface on solid) text, never a tone label; warn leads with ⚠ in that ink. A filled count takes the round count shape.
+function Badge({ children, role='metadata', tone='neutral', fill='quiet', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
+  if (fill !== 'quiet') return <FilledBadge role={role} fill={fill} title={title} className={className}>{children}</FilledBadge>;
   const isStatus = role === 'status';
   const hasTone = isStatus && tone !== 'neutral';
   const toneTextClass = hasTone ? `text-${tone}` : '';   // tone → 내부 심볼/텍스트 color (shell 아님)
@@ -106,6 +109,20 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
   return interactive
     ? <button type="button" className={cls} onClick={onClick} {...a11y}>{content}</button>
     : <span className={cls} {...a11y}>{content}</span>;
+}
+
+const BADGE_COUNT_CAP = 99;
+
+function FilledBadge({ children, role, fill, title, className }) {
+  const isCount = role === 'count';
+  const cls = ['pill', `pill--${fill}`, isCount ? 'pill--num' : '', className].filter(Boolean).join(' ');
+  const lead = fill === 'warn' ? <span aria-hidden="true">{`${TONE_GLYPH.warn} `}</span> : null;
+  return <span className={cls} title={title}>{lead}{isCount ? getBadgeCount(children) : children}</span>;
+}
+
+/** A count badge's text: a whole number above the cap reads `99+`; any other content passes through. */
+function getBadgeCount(value) {
+  return Number.isInteger(value) && value > BADGE_COUNT_CAP ? `${BADGE_COUNT_CAP}+` : value;
 }
 
 // 기존 Pill 호출부 호환 — Badge styling layer 로 routing (두 번째 status idiom 방지).
@@ -2964,7 +2981,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
+  Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
