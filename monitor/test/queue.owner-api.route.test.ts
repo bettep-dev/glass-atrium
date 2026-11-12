@@ -397,7 +397,6 @@ describe("list and item detail", () => {
       configDir: `/Users/owner/${profileLabel}`,
       state: "live",
       isWaiting: false,
-      launchHint: "accept_wrapper",
       permissionHint: null,
       marker: null,
     });

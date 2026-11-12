@@ -62,7 +62,6 @@ function buildSession(overrides: Record<string, unknown> = {}) {
     cwdTail: "git/glass-atrium",
     configDir: null,
     state: "exited",
-    launchHint: null,
     isWaiting: false,
     permissionHint: "default",
     marker: null,

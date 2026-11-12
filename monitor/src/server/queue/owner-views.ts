@@ -51,7 +51,6 @@ export interface OwnerSessionView {
   state: string;
   /** A wait poll arrived within the freshness window (delivery.ts → WAIT_FRESH_MS). */
   isWaiting: boolean;
-  launchHint: string | null;
   permissionHint: string | null;
   /** Session marker: an automatic resume spawned and not yet registered; `bgId` from that spawn's resume rows. */
   marker: { setAt: string; bgId: string | null } | null;
@@ -264,7 +263,6 @@ function toSessionView(session: QueueSession, lastResumeBgId: string | null): Ow
     configDir: session.isConfigDirSet ? session.configDir : null,
     state: session.state,
     isWaiting: isSessionWaiting(session.sessionId),
-    launchHint: session.launchHint,
     permissionHint: session.permissionHint,
     marker: markedAt === null ? null : { setAt: markedAt.toISOString(), bgId: lastResumeBgId },
   };

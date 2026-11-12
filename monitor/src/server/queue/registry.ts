@@ -115,9 +115,6 @@ function getDeregisterPid(body: DeregisterBody): number | null {
 }
 
 async function getSessionFactsOrThrow(body: RegisterBody, homeDir: string): Promise<SessionFacts> {
-  if (body.socketPath !== undefined && !isConfinedSocketPath(body.socketPath, body.pid)) {
-    throw new QueueRequestError(400, "invalid_socket_path", "socket path must be cc-socks/<registered pid>.sock under /tmp");
-  }
   const cwd = await getExistingDirectoryOrThrow(body.cwd, "cwd");
   const [worktreeRoot, configDir, processStartTime] = await Promise.all([
     findWorktreeRoot(cwd),
@@ -126,10 +123,6 @@ async function getSessionFactsOrThrow(body: RegisterBody, homeDir: string): Prom
   ]);
   if (processStartTime === null) throw new QueueRequestError(400, "invalid_pid", "pid names no running process");
   return { cwd, worktreeRoot, configDir, processStartTime };
-}
-
-function isConfinedSocketPath(socketPath: string, pid: number): boolean {
-  return CONFINED_SOCKET_PATH.exec(socketPath)?.[1] === String(pid);
 }
 
 async function getConfigDirOrThrow(configDir: string, homeDir: string): Promise<string> {
@@ -197,9 +190,7 @@ async function putLiveSession(tx: Prisma.TransactionClient, body: RegisterBody, 
     worktreeRoot: facts.worktreeRoot,
     pid: body.pid,
     processStartTime: facts.processStartTime,
-    socketPath: body.socketPath ?? null,
     permissionHint: body.permissionHint === undefined ? null : PERMISSION_HINT_COLUMN[body.permissionHint],
-    launchHint: body.launchHint ?? null,
     state: "live" as const,
     exitReason: null,
     lastSeenAt: new Date(),

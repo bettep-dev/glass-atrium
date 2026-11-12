@@ -37,9 +37,7 @@ export const registerBodySchema = z.strictObject({
   pid,
   cwd: absolutePath,
   configDir: absolutePath.optional(),
-  socketPath: absolutePath.optional(),
   permissionHint: z.enum(PERMISSION_HINTS).optional(),
-  launchHint: z.enum(["accept_wrapper"]).optional(),
   name: sessionName.optional(),
   derivedName: sessionName.optional(),
 });
