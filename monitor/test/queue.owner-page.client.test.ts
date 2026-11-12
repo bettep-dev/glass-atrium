@@ -1483,8 +1483,59 @@ describe("the Orders mode", () => {
     const resends = buttonLabelled(tree, "Resend");
     assert.equal(resends.length, 1);
     (resends[0]?.props.onClick as () => void)();
-    assert.deepEqual(resent, [92]);
+    assert.deepEqual(getPlain(resent), [[92]]);
   });
+
+  const lines = (count: number) => Array.from({ length: count }, (_, index) => `step ${index + 1}`).join("\n");
+  const clamps = [
+    { name: "12 lines show in full with no disclosure", body: lines(12), isClamped: false, more: [] },
+    { name: "31 lines clamp at 12 under Show all 31 lines", body: lines(31), isClamped: true, more: ["Show all 31 lines"] },
+  ];
+  for (const row of clamps) {
+    test(`an order's bubble: ${row.name}`, () => {
+      const tree = render("OrderEntryQ", { entry: call<unknown[]>("getThreadEntriesQ", [copy({ id: 90, sendId: "s2", body: row.body })])[0], onResend: () => undefined });
+      const [bubble] = findNodes(tree, (node) => String(node.props?.className ?? "").split(" ").includes("queue-bubble"));
+      assert.equal(String(bubble?.props.className).split(" ").includes("is-clamped"), row.isClamped);
+      assert.deepEqual(findNodes(tree, (node) => node.type === "summary").map((node) => collectText(node).trim()), row.more);
+    });
+  }
+
+  const fan = (receipts: string[]) => receipts.map((receipt, index) => copy({
+    id: 90 + index, sendId: "s7", session: named(`session-${index}`, randomUUID()),
+    ...({ received: { status: "delivered", deliveredAt: "2026-11-12T12:28:00.000Z" }, notYet: {}, notReceived: { status: "unacked", canResend: true } } as Record<string, object>)[receipt],
+  }));
+  test("five recipients or more fold into one roll-up line; a recipient that did not receive it stays listed under it", () => {
+    const entry = call<unknown[]>("getThreadEntriesQ", fan(["received", "received", "received", "received", "received", "notYet", "notReceived"]))[0];
+    const tree = render("OrderEntryQ", { entry, onResend: () => undefined });
+    const [rollUp] = findNodes(tree, (node) => node.type === "summary");
+    assert.ok(collectText(rollUp as RenderedNode).includes("7 sessions · 5 received · 1 not yet"), collectText(rollUp as RenderedNode));
+    assert.ok(collectText(rollUp as RenderedNode).includes("1 not received"), collectText(rollUp as RenderedNode));
+    const [details] = findNodes(tree, (node) => node.type === "details");
+    const outside = findNodes(tree, (node) => node.props?.className === "queue-recipient").filter((node) => !findNodes(details as RenderedNode, (inner) => inner === node).length);
+    assert.deepEqual(outside.map((node) => collectText(node).split("Not")[0]?.trim()), ["session-6"]);
+    assert.equal(findNodes(details as RenderedNode, (node) => node.props?.className === "queue-recipient").length, 6, "the not received one is listed once, outside");
+  });
+
+  test("four recipients keep a row each and no roll-up line", () => {
+    const tree = render("OrderEntryQ", { entry: call<unknown[]>("getThreadEntriesQ", fan(["received", "notYet", "notYet", "notReceived"]))[0], onResend: () => undefined });
+    assert.equal(findNodes(tree, (node) => node.type === "details").length, 0);
+    assert.equal(findNodes(tree, (node) => node.props?.className === "queue-recipient").length, 4);
+  });
+
+  const resendAlls = [
+    { name: "two that can be resent → Resend to 2, sent to those two only", receipts: ["received", "notReceived", "notYet", "notReceived"], label: ["Resend to 2"], ids: [91, 93] },
+    { name: "one that can be resent → its own Resend only", receipts: ["received", "notReceived"], label: [], ids: [] },
+  ];
+  for (const row of resendAlls) {
+    test(`resending several recipients: ${row.name}`, () => {
+      const resent: unknown[] = [];
+      const tree = render("OrderEntryQ", { entry: call<unknown[]>("getThreadEntriesQ", fan(row.receipts))[0], onResend: (ids: unknown) => resent.push(getPlain(ids)) });
+      const all = findNodes(tree, (node) => node.type === "button" && /^Resend to /.test(collectText(node).trim()));
+      assert.deepEqual(all.map((node) => collectText(node).trim()), row.label);
+      if (all[0]) (all[0].props.onClick as () => void)();
+      assert.deepEqual(resent, all[0] ? [row.ids] : []);
+    });
+  }
 
   // days are KST days: 15:30Z is already the next day in Seoul
   test("the thread's day labels group orders by KST day: Today, Yesterday, else the date", () => {

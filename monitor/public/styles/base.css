@@ -709,6 +709,14 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-radius: var(--radius-card);
 	color: rgb(var(--ink));
 }
+/* --queue-clamp-lines comes from the page (ORDERS_Q.CLAMP_LINES) → one owner of the count */
+.queue-bubble.is-clamped > .prose-text {
+	max-height: calc(var(--queue-clamp-lines) * 1lh);
+	overflow: hidden;
+}
+.queue-roll-up {
+	text-align: end;
+}
 .queue-recipients {
 	display: flex;
 	flex-direction: column;

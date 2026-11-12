@@ -64,7 +64,7 @@ const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null });
 // the history read's page and the pane bodies whose scroll the Orders mode keeps (a hidden box does not keep its own)
-const ORDERS_Q = { PAGE: 30, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
+const ORDERS_Q = { PAGE: 30, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
 const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null });
 // the sheet holds no item and the owner has not handled everything
 const EMPTY_HOLD_Q = Object.freeze({ item: null, isHandled: false });
@@ -560,8 +560,15 @@ function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) 
 	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
 	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
 	const send = useCallbackQ((body, names) => sendMessageQ({ body, names, setComposer, setStatus, onSent }), [setStatus, onSent]);
-	const resend = useCallbackQ(async (id) => { if (await sendAction(id, "resend")) read(); }, [sendAction, read]);
+	const resend = useCallbackQ((ids) => putResendsQ(ids, sendAction, read), [sendAction, read]);
 	return { isOpen, open, close, thread, read, showEarlier, composer, setText, putError, send, resend };
+}
+
+// one after another → one busy state and one refusal line at a time; the thread re-reads once
+async function putResendsQ(ids, sendAction, read) {
+	let isAnyTaken = false;
+	for (const id of ids) isAnyTaken = (await sendAction(id, "resend")) || isAnyTaken;
+	if (isAnyTaken) read();
 }
 
 // entering → the caret in the box · leaving → both scrolls set again, focus back to the opener, else the selected row
@@ -1623,7 +1630,7 @@ function getDayLabelQ(day, now) {
 
 /** One order: the time line (`Re:` + the report's title for a reply), the bubble, a row per recipient with its receipt. */
 function OrderEntryQ({ entry, onResend }) {
-	const { ProseText, formatKstTime } = window.UI;
+	const { formatKstTime } = window.UI;
 	const { item, copies } = entry;
 	return (
 		<article className="queue-order">
@@ -1631,12 +1638,58 @@ function OrderEntryQ({ entry, onResend }) {
 				{item.kind === "report" && <span className="queue-order-re">{`Re: ${item.title}`}</span>}
 				<time dateTime={item.answeredAt}>{formatKstTime(item.answeredAt)}</time>
 			</p>
-			<div className="queue-bubble"><ProseText text={getOrderTextQ(item)} isCompact /></div>
-			<ul className="queue-recipients" aria-label="Recipients">
-				{copies.map((copy) => <RecipientRowQ key={copy.id} copy={copy} onResend={onResend} />)}
-			</ul>
+			<OrderBubbleQ text={getOrderTextQ(item)} />
+			<RecipientsQ copies={copies} onResend={onResend} />
 		</article>
 	);
+}
+
+// more than 12 written lines → clamped under `Show all N lines`; a long line that only wraps is not counted
+function OrderBubbleQ({ text }) {
+	const { ProseText, DisclosureChevron } = window.UI;
+	const [isFull, setFull] = useStateQ(false);
+	const count = text.split("\n").length;
+	const isLong = count > ORDERS_Q.CLAMP_LINES;
+	return (
+		<>
+			<div className={`queue-bubble${isLong && !isFull ? " is-clamped" : ""}`} style={{ "--queue-clamp-lines": ORDERS_Q.CLAMP_LINES }}><ProseText text={text} isCompact /></div>
+			{isLong && (
+				<details className="queue-order-more" onToggle={(event) => setFull(event.currentTarget.open)}>
+					<summary className="group disclosure fs-meta"><DisclosureChevron /><span>{`Show all ${count} lines`}</span></summary>
+				</details>
+			)}
+		</>
+	);
+}
+
+/** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received stay listed under it. */
+function RecipientsQ({ copies, onResend }) {
+	const { DisclosureChevron } = window.UI;
+	const resendable = copies.filter((copy) => copy.canResend).map((copy) => copy.id);
+	const isRolledUp = copies.length >= ORDERS_Q.ROLL_UP_FROM;
+	const isOutside = (copy) => !isRolledUp || getReceiptQ(copy) === "notReceived";
+	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} onResend={onResend} />)}</ul>;
+	return (
+		<>
+			{isRolledUp && (
+				<details className="queue-roll-up">
+					<summary className="group disclosure fs-meta"><DisclosureChevron /><RowFactsQ facts={getRollUpFactsQ(copies)} /></summary>
+					{list(copies.filter((copy) => !isOutside(copy)))}
+				</details>
+			)}
+			{copies.some(isOutside) && list(copies.filter(isOutside))}
+			{resendable.length >= 2 && <button type="button" className="btn ghost sm" onClick={() => onResend(resendable)}>{`Resend to ${resendable.length}`}</button>}
+		</>
+	);
+}
+
+// `7 sessions · 5 received · 1 not yet` + the amber `1 not received`; a zero count is left out
+function getRollUpFactsQ(copies) {
+	const receipts = copies.map(getReceiptQ);
+	const counted = (receipt) => receipts.filter((one) => one === receipt).length;
+	const parts = [`${copies.length} sessions`, `${counted("received")} received`, `${counted("notYet")} not yet`].filter((part, index) => index === 0 || !part.startsWith("0 "));
+	const failed = counted("notReceived");
+	return [{ text: parts.join(" · ") }, ...(failed > 0 ? [{ text: `${failed} not received`, badge: "warn" }] : [])];
 }
 
 // an order on a report's sheet is the report's answer text; a standalone order is the message's body
@@ -1653,7 +1706,7 @@ function RecipientRowQ({ copy, onResend }) {
 		<li className="queue-recipient">
 			<span className="queue-recipient-name"><ItemSessionNameQ session={copy.session} /></span>
 			<RowFactsQ facts={[getReceiptFactQ(receipt), ...time]} />
-			{copy.canResend && <button type="button" className="btn ghost sm" onClick={() => onResend(copy.id)}>Resend</button>}
+			{copy.canResend && <button type="button" className="btn ghost sm" onClick={() => onResend([copy.id])}>Resend</button>}
 		</li>
 	);
 }
