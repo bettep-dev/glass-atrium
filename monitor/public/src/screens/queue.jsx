@@ -76,6 +76,8 @@ const KEYS_Q = { STORE: "queue.keys" };
 const DESK_LETTERS_Q = { j: "next", k: "prev", r: "field", e: "read", l: "later", n: "new", o: "order" };
 const DESK_KEY_LIST_Q = [
 	{ keys: "J / K", does: "Next / previous row; the sheet follows" },
+	{ keys: "↓ / ↑", does: "Next / previous row, in the list" },
+	{ keys: "Home / End", does: "First / last row, in the list" },
 	{ keys: "Enter", does: "From a row into the sheet; on an order, into the thread" },
 	{ keys: "Esc", does: "From the sheet back to the row; closes Orders" },
 	{ keys: "1 – 9", does: "Pick the option at that position" },
@@ -138,13 +140,14 @@ function getQueueTitle(countState, appTitle) {
 	return Number.isInteger(awaiting) && awaiting > 0 ? `(${awaiting}) ${title}` : title;
 }
 
-// count slot alone: never read → null · failed or numberless read → "?"
+// count slot alone: never read, or nothing awaiting and nothing deviating → null · failed or numberless read → "?"
 function getCountBadgeQ(countState) {
 	if (countState?.status !== "ready" && countState?.status !== "error") return null;
 	const { awaiting, deviations } = countState.data ?? {};
 	if (countState.status === "error" || !Number.isInteger(awaiting) || !Number.isInteger(deviations)) {
 		return { badge: "?", title: "Queue count unavailable", description: "queue count unavailable" };
 	}
+	if (awaiting === 0 && deviations === 0) return null;
 	const parts = [`${awaiting} awaiting you`, deviations > 0 && `${deviations} ${deviations === 1 ? "deviation" : "deviations"}`];
 	const title = parts.filter(Boolean).join(", ");
 	const glyph = deviations > 0 ? window.UI.TONE_GLYPH.warn : undefined;
@@ -910,7 +913,8 @@ async function sendMessageQ({ body, names, shots = [], setComposer, setStatus, o
 	const answer = await sendOwnerRequestQ("/messages/send", getImageBodyQ(body, ids));
 	if (answer.status >= 200 && answer.status < 300) {
 		setComposer(() => EMPTY_COMPOSER_Q);
-		setStatus(getOrderSentStatusQ(names));
+		setStatus({ text: getOrderSentStatusQ(names), orderId: answer.data?.items?.[0]?.id ?? null });
+		window.document?.getElementById(ORDERS_Q.BOX_ID)?.focus();
 		onSent();
 		return true;
 	}
@@ -1224,7 +1228,7 @@ function getActionErrorQ(answer) {
 // the server's worded cause → one refusal sentence · none → null (the caller words it)
 function getRefusalReasonQ(answer) {
 	const reason = answer.data?.reason;
-	return typeof reason === "string" && reason !== "" ? `Refused: ${reason}.` : null;
+	return typeof reason === "string" && reason !== "" ? `Refused: ${reason.replace(/\.+$/, "")}.` : null;
 }
 
 function QueueFailureQ({ failure, onRetry }) {
@@ -1239,7 +1243,7 @@ function QueueListQ({ queue }) {
 	const visible = getVisibleItemsQ(items, queue.filter);
 	const offView = useOffViewNewQ(queue.list.newIds, queue.orders.isOpen);
 	return (
-		<Card className="queue-pane queue-list" title={getScopeTitleQ(items, queue.filter)} sub={`${visible.filter((item) => item.status === "open").length} waiting`}
+		<Card className="queue-pane queue-list" title={getScopeTitleQ(items, queue.filter)} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts"
 			bar={isListBarShownQ(items, queue.filter) ? <QueueFilterBarQ items={items} filter={queue.filter} onFilter={queue.setFilter} /> : null}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
@@ -1297,7 +1301,6 @@ function putNewRowInViewQ(id) {
 
 /** The key list behind the list head's ⓘ (spec §11) and the switch that turns the single keys off (WCAG 2.1.4). */
 function DeskKeysQ({ keys }) {
-	const { DetailField } = window.UI;
 	return (
 		<div className="flex flex-col gap-2">
 			<label className="inline-flex items-center gap-2 font-medium">
@@ -1305,7 +1308,7 @@ function DeskKeysQ({ keys }) {
 				Single-key shortcuts
 			</label>
 			<p className="fs-meta text-dim">Letters and digits act while the focus is on the desk and not in a text field. Enter, Esc and Cmd / Ctrl + Enter work either way.</p>
-			<div>{DESK_KEY_LIST_Q.map((row) => <DetailField key={row.keys} label={row.keys} value={row.does} />)}</div>
+			<dl className="queue-keys">{DESK_KEY_LIST_Q.map((row) => <React.Fragment key={row.keys}><dt>{row.keys}</dt><dd>{row.does}</dd></React.Fragment>)}</dl>
 		</div>
 	);
 }
@@ -1324,7 +1327,7 @@ function isListBarShownQ(items, filter) {
 function ListBodyQ({ queue, items, visible }) {
 	const { EmptyState, LoadingPlaceholder } = window.UI;
 	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={queue.reload} />;
-	if (queue.list.data === null) return <LoadingPlaceholder label="Loading the queue…" />;
+	if (queue.list.data === null) return <div className="queue-loading"><LoadingPlaceholder label="the queue" /></div>;
 	if (items.length === 0) return <EmptyState message="Nothing is waiting for you" hint="Sessions post reports and decisions here. The page checks every 15 seconds." />;
 	if (visible.length === 0) return <EmptyState kind="no-results" message="No items match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />;
 	return <QueueListboxQ queue={queue} items={items} />;
@@ -1391,7 +1394,10 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder }) 
 					{isNew && view.isNameShown && " "}
 					{view.isNameShown && <RowWhoQ row={row} />}
 				</span>
-				<span className="queue-row-facts"><RowFactsQ facts={facts} /></span>
+				<span className="queue-row-facts">
+					{view.isNameShown && facts.length > 0 && <span aria-hidden="true" className="queue-row-sep">·</span>}
+					<RowFactsQ facts={facts} />
+				</span>
 				<span className="queue-row-age" title={formatKstDateTime(item.askedAt)}>{formatRelativeTime(item.askedAt)}</span>
 			</span>
 			<Icon name="chevR" size={16} className="queue-row-chevron" />
@@ -1428,6 +1434,7 @@ function RowFactsQ({ facts }) {
 			<span key={fact.text}>
 				{index > 0 && !facts[index - 1].badge && " · "}
 				{fact.mark && <span aria-hidden="true" className={`text-${fact.mark}`}>{`${TONE_GLYPH[fact.mark]} `}</span>}
+				{fact.dot && <span aria-hidden="true" className={`text-${fact.dot}`}>{"● "}</span>}
 				{fact.text}
 			</span>
 		)))}</>;
@@ -1454,13 +1461,13 @@ function getDeliveryFactsQ(item, copies) {
 	return [{ text: route }, ...getReceiptFactsQ(copies)];
 }
 
-// one copy → its word · several → `2 of 3 received` (all waiting → Not yet), any not received → its own warning after the count
+// one copy → only a Not received shows · several → `2 of 3 received` (all waiting → the word Not yet), any not received → its own warning after the count
 function getReceiptFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
-	if (receipts.length === 1) return [getReceiptFactQ(receipts[0])];
+	if (receipts.length === 1) return receipts[0] === "notReceived" ? [getReceiptFactQ(receipts[0])] : [];
 	const received = receipts.filter((receipt) => receipt === "received").length;
 	const failed = receipts.filter((receipt) => receipt === "notReceived").length;
-	const count = received === 0 && failed === 0 ? getReceiptFactQ("notYet") : { text: `${received} of ${receipts.length} received` };
+	const count = { text: received === 0 && failed === 0 ? RECEIPT_Q.notYet : `${received} of ${receipts.length} received` };
 	return [count, ...(failed > 0 ? [{ text: `${failed} not received`, badge: "warn" }] : [])];
 }
 
@@ -1541,7 +1548,18 @@ function QueueSheetQ({ queue }) {
 	const state = sheet.kind === "handled"
 		? { message: "All handled", hint: getOnTheWayLineQ(queue.groups) }
 		: { message: "Nothing selected", hint: "Pick a row, or give an order." };
-	return <Card className="queue-sheet is-collapsed">{queue.list.data !== null && <EmptyState {...state} />}</Card>;
+	if (sheet.kind === "handled") return <Card className="queue-sheet is-collapsed">{queue.list.data !== null && <EmptyState {...state} />}</Card>;
+	return (
+		<Card className="queue-sheet is-collapsed">
+			{queue.list.data !== null && (
+				<p className="queue-sheet-empty">
+					<span className="font-semibold text-ink">{state.message}</span>
+					<span className="text-dim">{state.hint}</span>
+					<button type="button" className="btn" onClick={queue.orders.open}>New order</button>
+				</p>
+			)}
+		</Card>
+	);
 }
 
 // the In delivery rows → `2 answers and orders are still on their way.`; none → no line
@@ -1583,19 +1601,26 @@ function LetterheadQ({ item }) {
 }
 
 function LetterheadFactsQ({ item }) {
-	const facts = getRowFactsQ({ item, copies: [item] }, false);
+	const facts = item.status === "open" ? getRowFactsQ({ item, copies: [item] }, false) : [getReceiptFactQ(getReceiptQ(item))];
 	return facts.length > 0 ? <RowFactsQ facts={facts} /> : null;
 }
 
 function LetterheadTimeQ({ item }) {
 	const isAnswered = item.status !== "open" && item.answeredAt;
 	const verb = isAnswered ? "Answered" : "Posted";
-	const time = window.UI.formatKstDateTime(isAnswered ? item.answeredAt : item.askedAt);
+	const time = getDatedTimeQ(isAnswered ? item.answeredAt : item.askedAt);
+	const record = isAnswered ? getAnswerLineQ(item) : null;
 	return (
-		<span className="fs-meta text-faint tabular-nums" title={`${verb} ${time}`}>
+		<span className="fs-meta text-faint tabular-nums" title={record && !record.isOutside ? record.text : `${verb} ${time}`}>
 			<span className="sr-only">{`${verb} `}</span>{time}
 		</span>
 	);
+}
+
+// spec §4.3 → `2026-11-12 21:20 KST`
+function getDatedTimeQ(iso) {
+	const { formatKstDate, formatKstTime } = window.UI;
+	return `${formatKstDate(iso)} ${formatKstTime(iso)} KST`;
 }
 
 function SheetBodyQ({ item, draft, onDraft, cliPath }) {
@@ -1687,7 +1712,7 @@ function OriginalQuestionQ({ item }) {
 	const options = item.options ?? [];
 	return (
 		<details className="queue-kind">
-			<summary className="queue-fold">{`Show the question and its ${options.length} ${options.length === 1 ? "option" : "options"}`}</summary>
+			<summary className="group disclosure queue-fold"><window.UI.DisclosureChevron /><span>{`Show the question and its ${options.length} ${options.length === 1 ? "option" : "options"}`}</span></summary>
 			<ProseText text={item.body} linkedDocIds={item.linkedDocIds} />
 			<ul className="prose-text">{options.map((option) => <li key={option.code}>{`${option.code} · ${option.label}`}</li>)}</ul>
 		</details>
@@ -1705,6 +1730,7 @@ function CardStateQ({ item, cliPath }) {
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
 			<PullLineQ item={item} cliPath={cliPath} />
+			{notes.length === 0 && <NotReceivedLineQ item={item} cliPath={cliPath} />}
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
 		</Stack>
 	);
@@ -1719,9 +1745,22 @@ function PullLineQ({ item, cliPath }) {
 	return <p className="fs-meta text-dim">Run in that session: <MachineString>{`${getShellWordQ(cliPath)} pending`}</MachineString></p>;
 }
 
+// the ack window differs by route (pull or resume) and stays the server's → the line names no minutes
+function NotReceivedLineQ({ item, cliPath }) {
+	const { MachineString } = window.UI;
+	if (item.status === "open" || getReceiptQ(item) !== "notReceived") return null;
+	const name = getSessionNameQ(item.session);
+	return (
+		<p className="fs-meta text-dim">
+			{`${name} did not acknowledge it.`}
+			{cliPath && <>{` If ${name} is alive, run in that session: `}<MachineString>{`${getShellWordQ(cliPath)} pending`}</MachineString></>}
+		</p>
+	);
+}
+
 /** Answer record line `{ text, isOutside }`; an item with no answer → null. */
 function getAnswerLineQ(item) {
-	const time = item.answeredAt ? window.UI.formatKstDateTime(item.answeredAt) : null;
+	const time = item.answeredAt ? getDatedTimeQ(item.answeredAt) : null;
 	if (item.isAnsweredOutside) return { text: [OUTSIDE_ANSWER_LABEL_Q, time].filter(Boolean).join(" · "), isOutside: true };
 	const record = item.answerRecord;
 	if (!record) return null;
@@ -1731,8 +1770,7 @@ function getAnswerLineQ(item) {
 
 function AnswerLineQ({ item }) {
 	const line = getAnswerLineQ(item);
-	if (line === null) return null;
-	if (!line.isOutside) return <p className="fs-meta text-dim">{line.text}</p>;
+	if (line === null || !line.isOutside) return null;
 	return <ToneLineQ tone="warn">{line.text}</ToneLineQ>;
 }
 
@@ -1975,7 +2013,7 @@ function SessionsRegionQ({ queue }) {
 		<Card className="queue-pane queue-sessions" title="Sessions" sub={`${rows.length - endedCount} live · ${endedCount} ended`}
 			right={<button type="button" className="btn" onClick={queue.orders.open}>New order</button>}
 			foot={<RailFootQ queue={queue} />} isFlush>
-			{view === "loading" && <LoadingPlaceholder label="Loading sessions" />}
+			{view === "loading" && <div className="queue-loading"><LoadingPlaceholder label="sessions" /></div>}
 			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={sessions.region.error} isBusy={sessions.region.busy} onRetry={sessions.read} />}
 			{view === "ready" && <SessionsBodyQ queue={queue} rows={rows} />}
 		</Card>
@@ -2012,9 +2050,9 @@ function AllSessionsBandQ({ rows, sessions, view, notReceived, onScope }) {
 	const waiting = rows.reduce((sum, row) => sum + row.count.awaiting, 0);
 	const isCurrent = view.scope === "";
 	const box = <CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Order to all live sessions" />;
-	const face = <>All sessions<Badge role="count" fill="tag">{waiting}</Badge></>;
-	const warn = notReceived > 0 && <Badge fill="warn">{`${notReceived} not received`}</Badge>;
-	if (view.isOrders) return <label className="queue-band queue-rail-band is-pick">{face}{warn}<span className="queue-rail-box">{box}</span></label>;
+	const face = <>All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}</>;
+	const warn = notReceived > 0 && <Badge fill="warn" title={`${notReceived} not received`}>{notReceived}<span className="sr-only">{" not received"}</span></Badge>;
+	if (view.isOrders) return <label className="queue-band queue-rail-band is-pick">{face}{warn}<span className="queue-rail-box"><span className="inline-target">{box}</span></span></label>;
 	return (
 		<div className="queue-band queue-rail-band">
 			<button type="button" className="queue-rail-scope" aria-current={isCurrent ? "true" : undefined} onClick={onScope}>
@@ -2082,7 +2120,7 @@ function SessionRailRowQ({ row, view, sessions, onScope }) {
 		return (
 			<Row className="queue-rail-row is-pick" data-session={row.id} title={where}>
 				<span className="queue-rail-main"><RailRowFaceQ row={row} view={view} isCurrent={false} where={where} /></span>
-				{box && <span className="queue-rail-box">{box}</span>}
+				{box && <span className="queue-rail-box"><span className="inline-target">{box}</span></span>}
 			</Row>
 		);
 	}
@@ -2134,7 +2172,7 @@ function getSessionLineQ(row, notReceived) {
 	const age = { text: formatRelativeTime(row.lastActivityAt) };
 	if (notReceived > 0) return [{ text: `${notReceived} not received`, badge: "warn" }];
 	if (row.state === "stale") return [{ text: "Not reachable", badge: "warn" }, age];
-	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live, mark: "ok" }, row.count.inDelivery > 0 ? { text: `${row.count.inDelivery} in delivery` } : age];
+	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live, dot: "ok" }, row.count.inDelivery > 0 ? { text: `${row.count.inDelivery} in delivery` } : age];
 	if (row.markerSetAt) return [{ text: "Resume not yet registered" }];
 	return [{ text: getSessionStateLabelQ(row), badge: "tag" }, age];
 }
@@ -2146,7 +2184,7 @@ function CheckboxBoxQ({ isChecked, isMixed = false, onChange, ariaLabel }) {
 	return (
 		<span className="relative inline-flex items-center justify-center">
 			<input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} onChange={onChange} aria-label={ariaLabel} />
-			{isChecked && <Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
+			{(isChecked || isMixed) && <Icon name={isChecked ? "check" : "minus"} size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
 		</span>
 	);
 }
@@ -2162,15 +2200,10 @@ function OrdersViewQ({ queue }) {
 		orders.close();
 		queue.selectRow(arrival[0].id);
 	};
-	const close = (
-		<>
-			<OrdersArrivalQ arrived={arrival} onShow={onShow} />
-			<button type="button" className="btn ghost" title="Esc" onClick={orders.close}><span aria-hidden="true">{"✕ "}</span>Close</button>
-		</>
-	);
+	const close = <button type="button" className="btn ghost" title="Esc" onClick={orders.close}><span aria-hidden="true">{"✕ "}</span>Close</button>;
 	return (
 		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
-			<Card className="queue-orders-card" title="Orders" right={close} bar={<ToBarQ rows={rows} selectedIds={sessions.selectedIds} onClear={sessions.clear} />}
+			<Card className="queue-orders-card" title="Orders" sub={<OrdersArrivalQ arrived={arrival} onShow={onShow} />} right={close} bar={<ToBarQ rows={rows} selectedIds={sessions.selectedIds} onClear={sessions.clear} />}
 				foot={<OrderComposerQ queue={queue} targets={getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds)} isOver={zone.isOver} />} isFlush>
 				<ThreadQ orders={orders} names={rows.filter((row) => sessions.selectedIds.includes(row.id)).map((row) => row.name)} />
 			</Card>
@@ -2184,9 +2217,11 @@ function OrdersArrivalQ({ arrived, onShow }) {
 	const [first] = arrived;
 	const text = arrived.length === 1 ? `${getKindWordQ(first)} from ${getSessionNameQ(first.session)}` : `${arrived.length} items`;
 	return (
-		<span role="status" className="fs-meta">
+		<span role="status" className="queue-arrival">
 			{first && <Badge fill="solid">New</Badge>}
-			{first && ` ${text} · `}
+			{first && " "}
+			{first && <span>{text}</span>}
+			{first && " "}
 			{first && <button type="button" className="btn ghost sm" onClick={onShow}>Show</button>}
 		</span>
 	);
@@ -2213,7 +2248,7 @@ function ToBarQ({ rows, selectedIds, onClear }) {
 
 /** The owner's orders oldest first under day labels, `Show earlier` at the top; it opens at its end (useThreadScrollQ). */
 function ThreadQ({ orders, names }) {
-	const { EmptyState, LoadingPlaceholder } = window.UI;
+	const { LoadingPlaceholder } = window.UI;
 	const { thread } = orders;
 	const [viewer, setViewer] = useStateQ(null);
 	const entries = getThreadEntriesQ(thread.items);
@@ -2223,8 +2258,8 @@ function ThreadQ({ orders, names }) {
 		<div ref={scroll.ref} onScroll={scroll.onScroll} role="log" aria-label={names.length > 0 ? `Orders to ${getNameListQ(names)}` : "All orders"} tabIndex={0} className="queue-thread">
 			{thread.nextCursor !== null && <button type="button" className="btn ghost sm queue-earlier" disabled={thread.status === "loading"} onClick={orders.showEarlier}>Show earlier</button>}
 			{thread.status === "error" && <QueueFailureQ failure={thread.error} onRetry={orders.read} />}
-			{thread.status === "loading" && entries.length === 0 && <LoadingPlaceholder label="Loading orders…" />}
-			{thread.status === "ready" && entries.length === 0 && <EmptyState message="No orders yet" hint="An order you send shows here, with whether each session received it." />}
+			{thread.status === "loading" && entries.length === 0 && <div className="queue-loading"><LoadingPlaceholder label="orders" /></div>}
+			{thread.status === "ready" && entries.length === 0 && <ThreadEmptyQ names={names} />}
 			{getDayGroupsQ(entries).map((group) => (
 				<div key={group.day} className="queue-day-group">
 					<p className="queue-day">{group.label}</p>
@@ -2234,6 +2269,13 @@ function ThreadQ({ orders, names }) {
 			{viewer && <ImageViewerQ images={viewer.images} index={viewer.index} onStep={(index) => setViewer((prev) => ({ ...prev, index }))} onClose={() => setViewer(null)} />}
 		</div>
 	);
+}
+
+// spec §10 → Order view, no entry in scope
+function ThreadEmptyQ({ names }) {
+	const { EmptyState } = window.UI;
+	if (names.length === 0) return <EmptyState message="No orders yet" hint="Tick sessions in the rail and write the first one below." />;
+	return <EmptyState message={`No orders to ${getNameListQ(names)} yet`} hint="Write the first one below." />;
 }
 
 // opens at its end · stays there as orders are added only if it was there · an earlier page keeps the entries on screen where they are
@@ -2349,7 +2391,10 @@ function getImageUrlQ(id) {
 	return `${OWNER_API_Q}/images/${id}`;
 }
 
-/** One order's images, one at a time, fitted to the window; Left / Right step, Esc or Close closes and focus goes back to the thumbnail (DetailSurface). */
+/**
+ * One order's images, one at a time, fitted to the window on the page ground; one foot bar: name · size · place, previous / next, Close.
+ * Left / Right step, Esc or Close closes and focus goes back to the thumbnail (DetailSurface).
+ */
 function ImageViewerQ({ images, index, onStep, onClose }) {
 	const { DetailSurface } = window.UI;
 	const image = images[index];
@@ -2364,12 +2409,24 @@ function ImageViewerQ({ images, index, onStep, onClose }) {
 		return () => document.removeEventListener("keydown", onKey);
 	}, [index, images.length, onStep]);
 	return (
-		<DetailSurface open variant="fullscreen" title={image.name} onClose={onClose} panelClassName="queue-viewer" footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
+		<DetailSurface open bare variant="fullscreen" title={image.name} onClose={onClose} panelClassName="queue-viewer" bodyClassName="queue-viewer-body">
 			<figure className="queue-viewer-figure">
 				<img src={getImageUrlQ(image.id)} alt={image.name} width={image.width} height={image.height} />
-				<figcaption className="fs-meta text-dim">{`${image.name} · ${getSizeTextQ(image.bytes)} · ${index + 1} of ${images.length}`}</figcaption>
 			</figure>
+			<ViewerBarQ image={image} index={index} count={images.length} onStep={onStep} onClose={onClose} />
 		</DetailSurface>
+	);
+}
+
+function ViewerBarQ({ image, index, count, onStep, onClose }) {
+	const { Icon } = window.UI;
+	return (
+		<div className="queue-viewer-bar">
+			<span className="queue-viewer-name">{`${image.name} · ${getSizeTextQ(image.bytes)} · ${index + 1} of ${count}`}</span>
+			<button type="button" className="btn ghost sm icon" aria-label="Previous image" disabled={index === 0} onClick={() => onStep(index - 1)}><Icon name="chevron-left" size={16} /></button>
+			<button type="button" className="btn ghost sm icon" aria-label="Next image" disabled={index === count - 1} onClick={() => onStep(index + 1)}><Icon name="chevron-right" size={16} /></button>
+			<button type="button" className="btn ghost sm" onClick={onClose}>✕ Close</button>
+		</div>
 	);
 }
 
@@ -2423,7 +2480,7 @@ function RecipientRowQ({ copy, onResend }) {
 		<li className="queue-recipient">
 			<span className="queue-recipient-name"><ItemSessionNameQ session={copy.session} /></span>
 			<RowFactsQ facts={[getReceiptFactQ(receipt), ...time]} />
-			{copy.canResend && <button type="button" className="btn ghost sm" onClick={() => onResend([copy.id])}>Resend</button>}
+			{copy.canResend && <button type="button" className="btn sm" onClick={() => onResend([copy.id])}>Resend</button>}
 		</li>
 	);
 }
@@ -2658,9 +2715,12 @@ function getImageBodyQ(body, ids) {
 	return ids.length > 0 ? { ...body, attachmentIds: ids } : body;
 }
 
+// stored images only: a failed or running upload is not on the order yet
 function getImageCountLineQ(shots) {
-	const bytes = shots.reduce((sum, shot) => sum + shot.bytes, 0);
-	return `${shots.length} ${shots.length === 1 ? "image" : "images"} · ${getSizeTextQ(bytes)}`;
+	const stored = shots.filter((shot) => shot.status === "stored");
+	if (stored.length === 0) return "";
+	const bytes = stored.reduce((sum, shot) => sum + shot.bytes, 0);
+	return `${stored.length} ${stored.length === 1 ? "image" : "images"} · ${getSizeTextQ(bytes)}`;
 }
 
 function getSizeTextQ(bytes) {

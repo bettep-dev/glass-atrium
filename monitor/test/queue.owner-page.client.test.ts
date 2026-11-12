@@ -149,7 +149,7 @@ describe("queue nav slot", () => {
   const rows = [
     { name: "a count never read gives no slot, so no zero that was not loaded", countState: { status: "loading" }, expected: undefined },
     { name: "an unread count shows a question mark rather than a blank badge", countState: { status: "error" }, expected: ["?"] },
-    { name: "zero awaiting still shows the numeral", countState: ready(0, 0), expected: ["0"] },
+    { name: "nothing awaiting and nothing deviating gives no slot", countState: ready(0, 0), expected: undefined },
     { name: "a count with deviations shows the awaiting numeral alone", countState: ready(2, 1), expected: ["2"] },
     { name: "a count answer without numbers reads as unread", countState: { status: "ready", data: { rows: [] } }, expected: ["?"] },
   ];
@@ -308,7 +308,7 @@ describe("sheet state lines", () => {
 
   const ANSWERED_AT = "2026-11-12T04:05:17.482Z";
   const answered = (overrides: Record<string, unknown>) => buildItem({ status: "delivered", answeredAt: ANSWERED_AT, isAnsweredOutside: false, ...overrides });
-  // the line names when, by which route and on which request signal; only an unrecorded answer is flagged
+  // the record names when, by which route and on which request signal, in the letterhead time's title; only an unrecorded answer is a visible, flagged line
   const answerRows = [
     { name: "an answer on fetch metadata", item: answered({ answerRecord: { route: "answer", signal: "fetch_metadata" } }), words: ["Answered", "same-origin request"], isFlagged: false },
     { name: "a reply on the Origin header alone", item: answered({ kind: "report", answerRecord: { route: "reply", signal: "origin" } }), words: ["Replied", "Origin header"], isFlagged: false },
@@ -319,9 +319,10 @@ describe("sheet state lines", () => {
   for (const row of answerRows) {
     test(`answer record line: ${row.name}`, () => {
       const tree = render("CardStateQ", { item: row.item });
-      const text = collectText(tree);
+      const [time] = findNodes(render("LetterheadTimeQ", { item: row.item }), (node) => typeof node.props?.title === "string");
+      const text = row.isFlagged ? collectText(tree) : String(time?.props.title);
       for (const word of row.words) assert.ok(text.includes(word), text);
-      assert.ok(text.includes((realUi.formatKstDateTime as (iso: string) => string)(ANSWERED_AT)), text);
+      assert.ok(text.includes("2026-11-12 13:05 KST"), text);
       assert.equal(findNodes(tree, (node) => /\btext-warn\b/.test(String(node.props?.className ?? ""))).length, row.isFlagged ? 1 : 0, text);
     });
   }
@@ -1206,8 +1207,8 @@ describe("the page re-reads itself", () => {
   });
 
   const arrivalRows = [
-    { name: "one arrival in the Orders head names its kind and session", arrived: [buildItem({ session: buildSession({ name: "yoaida" }) })], text: "New Decision from yoaida · Show" },
-    { name: "several arrivals in the Orders head are counted", arrived: [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report" })], text: "New 2 items · Show" },
+    { name: "one arrival in the Orders head names its kind and session", arrived: [buildItem({ session: buildSession({ name: "yoaida" }) })], text: "New Decision from yoaida Show" },
+    { name: "several arrivals in the Orders head are counted", arrived: [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report" })], text: "New 2 items Show" },
     { name: "no arrival leaves the Orders head's status line empty", arrived: [], text: "" },
   ];
   for (const row of arrivalRows) {
@@ -1475,8 +1476,8 @@ describe("sessions rail rows", () => {
   const lines = [
     { name: "something not received leads", row: { state: "live", count: { awaiting: 0, inDelivery: 2 } }, notReceived: 1, first: { text: "1 not received", badge: "warn" } },
     { name: "an unreachable session says so", row: { state: "stale" }, notReceived: 0, first: { text: "Not reachable", badge: "warn" } },
-    { name: "a live session with orders on the way counts them", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, first: { text: "Live", mark: "ok" }, second: "1 in delivery" },
-    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, first: { text: "Live", mark: "ok" } },
+    { name: "a live session with orders on the way counts them", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, first: { text: "Live", dot: "ok" }, second: "1 in delivery" },
+    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, first: { text: "Live", dot: "ok" } },
     { name: "an automatic resume not yet registered says so", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, notReceived: 0, first: { text: "Resume not yet registered" } },
     { name: "an ended session wears its exit word", row: { state: "exited", exitReason: "dead" }, notReceived: 0, first: { text: "Ended · process gone", badge: "tag" } },
   ];
@@ -1673,16 +1674,16 @@ describe("an order send's answer", () => {
       },
     })) as ScreenModule;
     let composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null };
-    const statuses: string[] = [];
+    const statuses: unknown[] = [];
     const counts = { sent: 0 };
     const isDone = await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
       body: { sessionIds: [SESSION_ID, ENDED_ID], text: "rebase on main" },
       names: ["gersona", "yoaida"],
       setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); },
-      setStatus: (next: string) => statuses.push(next),
+      setStatus: (next: unknown) => statuses.push(next),
       onSent: () => { counts.sent += 1; },
     });
-    return { isDone, posts: getPlain(posts), composer: getPlain(composer), statuses, sent: counts.sent };
+    return { isDone, posts: getPlain(posts), composer: getPlain(composer), statuses: getPlain(statuses), sent: counts.sent };
   };
 
   // spec §9.3 → After sending: the ticks stay, so the next line goes to the same sessions; the list's status line names them
@@ -1691,7 +1692,7 @@ describe("an order send's answer", () => {
     assert.deepEqual(result.posts, [{ url: "/api/queue/owner/messages/send", body: { sessionIds: [SESSION_ID, ENDED_ID], text: "rebase on main" } }]);
     assert.equal(result.isDone, true);
     assert.deepEqual(result.composer, { text: "", isBusy: false, error: null });
-    assert.deepEqual(result.statuses, ["✓ Order sent to gersona and yoaida"]);
+    assert.deepEqual(result.statuses, [{ text: "✓ Order sent to gersona and yoaida", orderId: 81 }]);
     assert.equal(result.sent, 1);
   });
 
@@ -2105,11 +2106,11 @@ describe("desk keys", () => {
 
   test("the list head's ⓘ is named for the keys and lists every desk letter", () => {
     const { card, info } = renderKeyList(true);
-    const listed = findNodes(info, (node) => node.props?.atom === "DetailField").map((node) => String(node.props.label));
+    const listed = findNodes(info, (node) => node.type === "dt").map((node) => collectText(node).trim());
     const letters = Object.keys(getPlain(vm.runInContext("DESK_LETTERS_Q", screen as unknown as vm.Context) as Record<string, string>));
     assert.equal(card?.props.infoLabel, "Keyboard shortcuts");
     for (const letter of letters) assert.ok(listed.some((label) => label.split(/[ /]+/).includes(letter.toUpperCase())), `key ${letter.toUpperCase()} is listed`);
-    for (const chord of ["Enter", "Esc", "1 – 9", "Cmd / Ctrl + Enter"]) assert.ok(listed.includes(chord), `${chord} is listed`);
+    for (const chord of ["Enter", "Esc", "1 – 9", "Cmd / Ctrl + Enter", "↓ / ↑", "Home / End"]) assert.ok(listed.includes(chord), `${chord} is listed`);
   });
 
   const states = [
@@ -2399,4 +2400,147 @@ describe("images in an order's bubble", () => {
     { name: "another key does not step", index: 1, key: "ArrowDown", next: null },
   ];
   for (const row of steps) test(`viewer keys: ${row.name}`, () => assert.equal(call("getSteppedIndexQ", row.index, 3, row.key), row.next));
+});
+
+// the review of the built page against mockup v5 and spec 44063 (§4.2, §4.3, §7, §9.1–§9.4, §10)
+describe("marks and counts on the desk", () => {
+  test("the master box in its mixed state draws a dash, and a ticked box a check", () => {
+    const iconsOf = (props: Record<string, unknown>) => findNodes(render("CheckboxBoxQ", { onChange: () => undefined, ariaLabel: "Order to all live sessions", ...props }), (node) => node.props?.atom === "Icon").map((node) => node.props.name);
+    assert.deepEqual([iconsOf({ isChecked: false, isMixed: true }), iconsOf({ isChecked: true }), iconsOf({ isChecked: false })], [["minus"], ["check"], []]);
+  });
+
+  test("a live session's line 2 leads with the ok-toned dot, never the received check", () => {
+    const text = collectText(render("RowFactsQ", { facts: call("getSessionLineQ", buildSessionRow({ state: "live" }), 0) })).replace(/\s+/g, " ").trim();
+    assert.ok(text.startsWith("● Live") && !text.includes("✓"), text);
+  });
+
+  test("the All sessions band shows no count at zero and folds a failed receipt into the compact warning", () => {
+    const bandOf = (notReceived: number, awaiting: number) => render("AllSessionsBandQ", {
+      rows: [buildSessionRow({ count: { awaiting, inDelivery: 0 } })], sessions: { selectedIds: [], setSelectedIds: () => undefined },
+      view: { scope: "", isOrders: false }, notReceived, onScope: () => undefined,
+    });
+    const badges = (tree: RenderedNode) => findNodes(tree, (node) => node.props?.atom === "Badge").map((node) => ({ text: collectText(node).replace(/\s+/g, " ").trim(), title: node.props.title }));
+    assert.deepEqual(badges(bandOf(0, 0)), []);
+    const [warn] = findNodes(bandOf(1, 3), (node) => node.props?.atom === "Badge" && node.props.fill === "warn");
+    const spoken = findNodes(warn as RenderedNode, (node) => node.props?.className === "sr-only").map((node) => collectText(node).trim());
+    assert.deepEqual([badges(bandOf(1, 3)), spoken], [[{ text: "3", title: undefined }, { text: "1 not received", title: "1 not received" }], ["not received"]]);
+  });
+
+  test("the nav item carries no badge while nothing waits and nothing deviates", () => {
+    const ready = (awaiting: number, deviations: number) => ({ status: "ready", data: { awaiting, deviations } });
+    assert.deepEqual([call("getQueueNavBadge", ready(0, 0)), Object.keys(call("getQueueNavBadge", ready(0, 1)))], [{}, ["queue"]]);
+  });
+});
+
+describe("In delivery rows", () => {
+  const answered = (status: string, overrides: Record<string, unknown> = {}) => buildItem({ status, answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", ...overrides });
+  const rows = [
+    { name: "a copy not yet received shows the route word alone", item: answered("answered"), facts: [{ text: "Answer R1" }] },
+    { name: "a copy not received adds the amber badge", item: answered("unacked", { canResend: true }), facts: [{ text: "Answer R1" }, { text: "Not received", badge: "warn" }] },
+  ];
+  for (const row of rows) test(row.name, () => assert.deepEqual(call("getRowFactsQ", { item: row.item, copies: [row.item] }, false), row.facts));
+
+  test("an order to several sessions all still waiting says Not yet as a word, not a pill", () => {
+    const copies = ["answered", "delivering"].map((status, index) => buildItem({ id: 90 + index, kind: "message", status, sendId: "send-1", answeredAt: "2026-11-12T12:26:40.118Z" }));
+    assert.deepEqual(call("getRowFactsQ", { item: copies[0], copies }, false), [{ text: "Order" }, { text: "Not yet" }]);
+  });
+
+  test("a row's meta line puts ` · ` between the session name and its facts", () => {
+    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
+    const [meta] = findNodes(tree, (node) => node.props?.className === "queue-row-meta");
+    assert.match(collectText(meta as RenderedNode), /gersona · 2 options/);
+  });
+});
+
+describe("the sheet's letterhead and record", () => {
+  const item = buildItem({ status: "unacked", canResend: true, answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", answerRecord: { route: "answer", signal: "fetch_metadata" }, session: buildSession({ name: "aidl", state: "live" }) });
+
+  test("an answered decision's letterhead holds the receipt badge alone after the name", () => {
+    const facts = findNodes(render("LetterheadFactsQ", { item }), (node) => node.props?.atom === "Badge").map((node) => collectText(node));
+    assert.deepEqual([facts, collectText(render("LetterheadFactsQ", { item })).includes("Answer R1")], [["Not received"], false]);
+  });
+
+  test("the letterhead time reads the spec's dated form and its title carries the answer record", () => {
+    const tree = render("LetterheadTimeQ", { item });
+    const [time] = findNodes(tree, (node) => typeof node.props?.title === "string");
+    assert.equal(time?.props.title, "Answered 2026-11-12 21:26 KST through the monitor (same-origin request)");
+    assert.ok(collectText(tree).endsWith("2026-11-12 21:26 KST"), collectText(tree));
+  });
+
+  test("the record is no visible line, and a not received answer says why and what to run", () => {
+    const text = collectText(render("CardStateQ", { item, cliPath: CLI_PATH }));
+    assert.ok(!text.includes("same-origin") && text.includes("aidl did not acknowledge it") && text.includes(`${CLI_PATH} pending`), text);
+  });
+
+  test("the folded question opens on the system chevron", () => {
+    const [summary] = findNodes(render("OriginalQuestionQ", { item }), (node) => node.type === "summary");
+    assert.ok(findNodes(summary as RenderedNode, (node) => node.props?.atom === "DisclosureChevron").length === 1);
+  });
+});
+
+describe("loading and empty states", () => {
+  test("each loading body names its source once and the list head counts nothing before the first read", () => {
+    const { queue } = buildQueue();
+    const loading = { ...withList(queue, []), list: { status: "loading", data: null, error: null, readAt: null, newIds: [] } };
+    const [placeholder] = findNodes(render("ListBodyQ", { queue: loading, items: [], visible: [] }), (node) => node.props?.atom === "LoadingPlaceholder");
+    const [card] = findNodes(render("QueueListQ", { queue: loading }), (node) => node.props?.atom === "Card");
+    assert.deepEqual([placeholder?.props.label, card?.props.sub ?? null], ["the queue", null]);
+  });
+
+  test("the empty sheet is one line with the secondary New order", () => {
+    const { queue } = buildQueue();
+    const opened: unknown[] = [];
+    const tree = render("QueueSheetQ", { queue: { ...withList(queue, []), sheet: { kind: "empty", id: null }, orders: { ...(queue as { orders: object }).orders, open: () => opened.push(true) } } });
+    const text = collectText(tree);
+    for (const button of buttonLabelled(tree, "New order")) (button.props.onClick as () => void)();
+    assert.deepEqual([text.includes("Nothing selected"), text.includes("Pick a row, or give an order."), opened.length], [true, true, 1]);
+  });
+
+  test("an empty thread names the ticked sessions and asks for the first order", () => {
+    const tree = render("ThreadEmptyQ", { names: ["aidl"] });
+    const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
+    assert.deepEqual({ message: empty?.props.message, hint: empty?.props.hint }, { message: "No orders to aidl yet", hint: "Write the first one below." });
+  });
+
+  test("a refusal reason that ends its own sentence gets no second period", () => {
+    assert.equal(call("getRefusalReasonQ", { status: 409, data: { reason: "aidl ended, send again." } }), "Refused: aidl ended, send again.");
+  });
+});
+
+describe("the Orders mode after a send", () => {
+  test("a taken send's status line carries the quiet Show to its order, and the box takes the focus back", async () => {
+    const focused: string[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub(), document: { getElementById: (id: string) => ({ focus: () => focused.push(id) }) } },
+      fetch: async () => ({ status: 201, json: async () => ({ sendId: "send-7", items: [{ id: 77, sessionId: SESSION_ID }] }) }),
+    })) as ScreenModule;
+    const statuses: unknown[] = [];
+    await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({ body: { sessionIds: [SESSION_ID], text: "go" }, names: ["yoaida"], setComposer: () => undefined, setStatus: (next: unknown) => statuses.push(next), onSent: () => undefined });
+    assert.deepEqual([getPlain(statuses), focused], [[{ text: "✓ Order sent to yoaida", orderId: 77 }], ["queue-order-text"]]);
+  });
+
+  test("the arrival sits in the head's sub slot with no separator left hanging", () => {
+    const text = collectText(render("OrdersArrivalQ", { arrived: [buildItem({ kind: "report", session: buildSession({ name: "yoaida" }) })], onShow: () => undefined }));
+    assert.equal(text.replace(/\s+/g, " ").trim(), "New Report from yoaida Show");
+  });
+
+  test("a recipient's Resend is an edged small button", () => {
+    const tree = render("RecipientRowQ", { copy: buildItem({ kind: "message", status: "unacked", canResend: true }), onResend: () => undefined });
+    assert.deepEqual(buttonLabelled(tree, "Resend").map((node) => node.props.className), ["btn sm"]);
+  });
+
+  test("the thumbnails' count leaves out an image that failed to upload", () => {
+    const shots = [{ status: "stored", bytes: 2048 }, { status: "failed", bytes: 139 * 1024 }];
+    assert.deepEqual([call("getImageCountLineQ", shots), call("getImageCountLineQ", [shots[1]])], ["1 image · 2 KB", ""]);
+  });
+
+  test("the viewer is one picture over one foot bar: name · size · place, previous / next and Close", () => {
+    const steps: unknown[] = [];
+    const images = IMAGE_ID.map((id, index) => ({ id, name: `shot-${index + 1}.png`, bytes: 1024 * 1024, width: 800, height: 600 }));
+    const tree = render("ImageViewerQ", { images, index: 1, onStep: (next: unknown) => steps.push(next), onClose: () => undefined });
+    const [surface] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
+    for (const label of ["Previous image", "Next image"]) for (const button of findNodes(tree, (node) => node.props?.["aria-label"] === label)) (button.props.onClick as () => void)();
+    assert.deepEqual([surface?.props.bare, surface?.props.footer ?? null, steps, buttonLabelled(tree, "✕ Close").length, collectText(tree).split("shot-2.png").length - 1], [true, null, [0, 2], 1, 1]);
+  });
 });

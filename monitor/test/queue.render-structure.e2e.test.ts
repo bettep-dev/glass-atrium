@@ -434,7 +434,7 @@ async function tickSessions(page: Page, names: string[]): Promise<void> {
 }
 
 async function openOrders(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "New order", exact: true }).click();
+  await page.locator(".queue-sessions").getByRole("button", { name: "New order", exact: true }).click();
   await page.locator(`#${ORDER_BOX_ID}`).waitFor();
 }
 
@@ -773,7 +773,7 @@ describe("queue page on the mockup fixtures", () => {
       return body.scrollTop;
     }));
     const railRows = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-rail-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
-    await page.getByRole("button", { name: "New order", exact: true }).click();
+    await page.locator(".queue-sessions").getByRole("button", { name: "New order", exact: true }).click();
     await page.locator(".queue-order").first().waitFor();
     const mode = await page.evaluate(() => {
       const card = (document.querySelector(".queue-orders-card") as HTMLElement).getBoundingClientRect();
@@ -821,7 +821,7 @@ describe("queue page on the mockup fixtures", () => {
   test("an order's images are 96 squares in its bubble, an added one is a 56 thumbnail in a 104 box, and the viewer fits one in the window and steps", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    await page.getByRole("button", { name: "New order", exact: true }).click();
+    await page.locator(".queue-sessions").getByRole("button", { name: "New order", exact: true }).click();
     await page.locator(".queue-bubble-image img").first().waitFor();
     await page.waitForFunction(() => [...document.querySelectorAll(".queue-bubble-image img")].every((img) => (img as HTMLImageElement).complete));
     const bubble = await page.evaluate(() => [...document.querySelectorAll(".queue-bubble-image")].map((button) => {
@@ -842,7 +842,7 @@ describe("queue page on the mockup fixtures", () => {
       return img.top >= 0 && img.left >= 0 && img.bottom <= window.innerHeight && img.right <= window.innerWidth;
     });
     await page.keyboard.press("ArrowRight");
-    const stepped = await page.locator(".queue-viewer figcaption").textContent();
+    const stepped = await page.locator(".queue-viewer-name").textContent();
     await page.keyboard.press("Escape");
     const after = await page.evaluate(() => ({ isViewerOpen: document.querySelector(".queue-viewer") !== null, isModeOpen: document.querySelector(".queue-orders") !== null, focus: document.activeElement?.getAttribute("aria-label") }));
     await page.close();

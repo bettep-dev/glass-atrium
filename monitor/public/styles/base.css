@@ -488,8 +488,18 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	justify-content: space-between;
 }
 .queue-rail-band {
-	flex-wrap: wrap;
 	padding-inline-end: var(--space-4);
+}
+/* the head's sub shows whole or not at all: one 20 line, a sub that does not fit wraps below it and is clipped */
+.queue-sessions > .card-head > .card-head-text {
+	flex-wrap: wrap;
+	max-height: var(--lh-row);
+	overflow: hidden;
+	line-height: var(--lh-row);
+}
+.queue-sessions > .card-head > .card-head-text > .card-sub {
+	flex: 0 0 auto;
+	contain: none;
 }
 .queue-rail-scope {
 	display: inline-flex;
@@ -609,6 +619,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-orders-card > .card-head {
 	min-height: 48px;
 }
+.queue-arrival {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+.queue-loading > [role="status"] {
+	justify-content: flex-start;
+	padding: var(--space-4) var(--card-pad);
+}
 .queue-orders-card > .card-bar {
 	border-top: 1px solid rgb(var(--line));
 	border-bottom: 1px solid rgb(var(--line));
@@ -663,6 +682,9 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .queue-thread > :first-child {
 	margin-top: auto;
+}
+.queue-day-group:not(.queue-day-group ~ .queue-day-group) > .queue-day {
+	border-top-color: transparent;
 }
 .queue-earlier {
 	align-self: center;
@@ -766,22 +788,51 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-size: var(--fs-meta);
 	color: rgb(var(--dim));
 }
-/* the image viewer: one picture at its natural size, fitted to the window; no zoom, no download */
-.queue-viewer-figure {
+/* the image viewer: one picture at its natural size, fitted to the window on the page ground over one foot bar; no zoom, no download */
+.detail-fullscreen .queue-viewer {
+	max-width: none;
+	background: rgb(var(--surface));
+}
+.queue-viewer-body {
 	display: flex;
 	flex-direction: column;
+	min-height: 0;
+}
+.queue-viewer-figure {
+	flex: 1 1 auto;
+	display: flex;
 	align-items: center;
-	gap: var(--space-2);
+	justify-content: center;
 	margin: 0;
 	min-height: 0;
+	padding: var(--space-6);
 }
 .queue-viewer-figure > img {
 	display: block;
 	max-width: 100%;
-	max-height: calc(100vh - 12rem);
+	max-height: 100%;
 	width: auto;
 	height: auto;
 	object-fit: contain;
+}
+.queue-viewer-bar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: 48px;
+	padding: 0 var(--space-6);
+	border-top: 1px solid rgb(var(--line));
+	background: rgb(var(--elev));
+}
+.queue-viewer-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
 }
 .queue-roll-up {
 	text-align: end;
@@ -870,6 +921,19 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-order:focus-visible {
 	outline-offset: calc(-1 * var(--focus-ring-offset));
 }
+/* an entry takes focus only from the page (an order opened from its row) → the ring shows on every such focus, a mouse open included */
+.queue-order:focus {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: calc(-1 * var(--focus-ring-offset));
+}
+.queue-row-title,
+.queue-sheet-title,
+.queue-option-head,
+.queue-option-sides,
+.queue-compose-text {
+	word-break: keep-all;
+	overflow-wrap: anywhere;
+}
 .queue-row-title {
 	grid-column: 1;
 	display: -webkit-box;
@@ -911,6 +975,9 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	white-space: nowrap;
 	overflow: hidden;
 }
+.queue-row-sep {
+	color: rgb(var(--dim));
+}
 .queue-row-age {
 	margin-inline-start: auto;
 	color: rgb(var(--faint));
@@ -949,6 +1016,9 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	.queue-row-who:empty {
 		display: block;
 	}
+	.queue-row-sep {
+		display: none;
+	}
 	.queue-row-age {
 		text-align: end;
 	}
@@ -963,6 +1033,38 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .queue-sheet.is-collapsed {
 	align-self: start;
+}
+.queue-sheet.is-collapsed:has(.queue-sheet-empty) > .card-body {
+	padding: var(--space-2) var(--card-pad);
+}
+.queue-sheet-empty {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-1) var(--space-2);
+	min-height: var(--ctl-min-h);
+	font-size: var(--fs-meta);
+}
+/* the key list: the meanings in one column directly after the keys */
+.queue-keys {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: var(--space-1) var(--space-4);
+	margin: 0;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.queue-keys > dt {
+	font-weight: 600;
+	color: rgb(var(--ink));
+	white-space: nowrap;
+}
+.queue-keys > dd {
+	margin: 0;
+	color: rgb(var(--dim));
+}
+.queue-sheet-empty > .btn {
+	margin-inline-start: auto;
 }
 .queue-sheet .card-title {
 	font-size: var(--fs-control);
@@ -1117,7 +1219,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);
-	min-height: var(--lh-row);
+	min-height: var(--ctl-min-h);
 	margin-top: var(--space-2);
 	font-size: var(--fs-meta);
 	line-height: var(--lh-row);
@@ -1126,6 +1228,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-note-text {
 	flex: 1 1 auto;
 	min-width: 0;
+}
+.queue-note > .btn {
+	flex: none;
+	white-space: nowrap;
 }
 /* a box that takes images (§9.8): Add images on its last line at its end, 4 from the edge; the text keeps that 40 free */
 .queue-compose-box.has-images {
@@ -1149,7 +1255,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	--queue-thumb: 56px;
 	display: flex;
 	flex-wrap: wrap;
-	align-items: flex-end;
+	align-items: center;
 	gap: var(--space-2);
 	padding: var(--space-2) var(--space-2) 0;
 }
@@ -1183,8 +1289,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 /* a 24 target holding the 20 square, at the thumbnail's top end corner; always shown, never on hover only */
 .queue-thumb-remove {
 	position: absolute;
-	top: calc(-1 * var(--space-1) / 2);
-	inset-inline-end: calc(-1 * var(--space-1) / 2);
+	top: calc(-1 * var(--space-2));
+	inset-inline-end: calc(-1 * var(--space-2));
 	display: flex;
 	align-items: center;
 	justify-content: center;
