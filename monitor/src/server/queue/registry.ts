@@ -199,7 +199,9 @@ async function putLiveSession(tx: Prisma.TransactionClient, body: RegisterBody, 
     lastSeenAt: new Date(),
     resumeAwaitingRegisterAt: null,
   };
-  await tx.queueSession.upsert({ where: { sessionId: body.sessionId }, create: { sessionId: body.sessionId, ...row }, update: row });
+  // a nameless re-register (hook, resume payload) keeps the name the session gave earlier
+  const update = body.name === undefined ? row : { ...row, name: body.name };
+  await tx.queueSession.upsert({ where: { sessionId: body.sessionId }, create: { sessionId: body.sessionId, name: body.name ?? null, ...row }, update });
 }
 
 // Re-checked under the lock: the pre-lock read may be stale

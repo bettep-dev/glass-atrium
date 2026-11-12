@@ -161,6 +161,9 @@ describe("register", () => {
       { name: "config dir outside $HOME/.claude*", extra: { configDir: path.join(dir.home, "elsewhere") }, error: "invalid_config_dir" },
       { name: "socket path naming another pid", extra: { socketPath: `/tmp/cc-socks/${process.pid + 1}.sock` }, error: "invalid_socket_path" },
       { name: "pid of no running process", extra: { pid: 2_147_483_646 }, error: "invalid_pid" },
+      { name: "name past 100 characters", extra: { name: "n".repeat(101) }, error: "invalid_input" },
+      { name: "blank name", extra: { name: "   " }, error: "invalid_input" },
+      { name: "name carrying a line break", extra: { name: "queue sessions\nsecond line" }, error: "invalid_input" },
     ];
     for (const row of rows) {
       const sessionId = trackSessionId();
@@ -246,6 +249,20 @@ describe("register", () => {
       const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
       assert.equal(stored.profileLabel, row.label, row.name);
       assert.equal(stored.isConfigDirSet, row.isSet, row.name);
+    }
+  });
+
+  test("stores the name a session registers with, and a later register without one keeps it", async () => {
+    const sessionId = trackSessionId();
+    const steps = [
+      { name: "first register names the session", extra: { name: "queue-sessions M2" }, stored: "queue-sessions M2" },
+      { name: "a nameless re-register keeps the stored name", extra: {}, stored: "queue-sessions M2" },
+      { name: "a register with a new name replaces it", extra: { name: "queue-sessions M3" }, stored: "queue-sessions M3" },
+    ];
+    for (const step of steps) {
+      const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId, step.extra));
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.deepEqual([response.statusCode, stored.name], [200, step.stored], step.name);
     }
   });
 
@@ -364,6 +381,7 @@ describe("post and get by id", () => {
       { name: "unknown linked doc id", body: decision(sessionId, { linkedDocIds: [9_007_199_254_740_000] }), error: "unknown_linked_doc" },
       { name: "unknown key", body: decision(sessionId, { status: "answered" }), error: "invalid_input" },
       { name: "blank title", body: decision(sessionId, { title: "   " }), error: "invalid_input" },
+      { name: "message kind, which only the owner send creates", body: { ...(decision(sessionId) as Record<string, unknown>), kind: "message", options: undefined, recommendedCode: undefined }, error: "invalid_input" },
     ];
     for (const row of rows) {
       const response = await send("POST", "/api/queue/items", row.body);
@@ -457,6 +475,25 @@ describe("withdraw", () => {
       const response = await send("POST", `/api/queue/items/${itemId}/withdraw`, { sessionId });
       assert.equal(response.statusCode, row.code, row.status);
       assert.equal(await getStatus(itemId), row.after, row.status);
+    }
+  });
+
+  test("refuses an owner message in every withdrawable state and leaves it in place", async () => {
+    const sessionId = await seedSession();
+    for (const status of ["answered", "unacked", "held", "expired", "resume_pending"] as const) {
+      const itemId = await seedItem(sessionId, {
+        kind: "message",
+        title: "Rebase onto main",
+        body: "Rebase onto main before the review.",
+        isFreeTextAllowed: false,
+        status,
+        answeredAt: new Date(),
+        answerRoute: "message",
+        answerSignal: "fetch_metadata",
+      });
+      const response = await send("POST", `/api/queue/items/${itemId}/withdraw`, { sessionId });
+      assert.deepEqual([response.statusCode, response.json().error], [409, "not_withdrawable"], status);
+      assert.equal(await getStatus(itemId), status, status);
     }
   });
 });

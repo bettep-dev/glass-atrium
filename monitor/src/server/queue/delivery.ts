@@ -1,9 +1,9 @@
-// Session-side delivery transitions: pull claim (`pending`), ack (first valid ack wins), withdraw.
+// Session-side delivery transitions: pull claim (`pending`), ack (first valid ack wins), withdraw (never an owner message).
 // Each transaction locks the caller's registry row before touching item rows (registry.ts lock order).
 
 import { randomUUID } from "node:crypto";
 
-import type { Prisma, QueueItemStatus } from "../../generated/prisma/client.js";
+import type { Prisma, QueueItemKind, QueueItemStatus } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { QueueRequestError } from "./errors.js";
 import { lockSession } from "./registry.js";
@@ -72,7 +72,8 @@ export async function ackItem(itemId: number, sessionId: string, msgId: string):
 export async function withdrawItem(itemId: number, sessionId: string): Promise<void> {
   await getPrisma().$transaction(async (tx) => {
     await lockOwnSession(tx, sessionId);
-    const status = await assertOwnItem(tx, itemId, sessionId);
+    const { status, kind } = await assertOwnItem(tx, itemId, sessionId);
+    if (kind === "message") throw new QueueRequestError(409, "not_withdrawable", "an owner message cannot be withdrawn by its session");
     const moved = await tx.queueItem.updateMany({
       where: { id: BigInt(itemId), status: { in: WITHDRAWABLE } },
       data: { status: "withdrawn" },
@@ -98,8 +99,12 @@ async function lockOwnSession(tx: Prisma.TransactionClient, sessionId: string): 
   }
 }
 
-async function assertOwnItem(tx: Prisma.TransactionClient, itemId: number, sessionId: string): Promise<QueueItemStatus> {
-  const item = await tx.queueItem.findFirst({ where: { id: BigInt(itemId), sessionId }, select: { status: true } });
+async function assertOwnItem(
+  tx: Prisma.TransactionClient,
+  itemId: number,
+  sessionId: string,
+): Promise<{ status: QueueItemStatus; kind: QueueItemKind }> {
+  const item = await tx.queueItem.findFirst({ where: { id: BigInt(itemId), sessionId }, select: { status: true, kind: true } });
   if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found for this session");
-  return item.status;
+  return item;
 }

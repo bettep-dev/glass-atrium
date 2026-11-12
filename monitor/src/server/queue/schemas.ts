@@ -9,6 +9,8 @@ const MAX_LINKED_DOCS = 20;
 const OPTION_TEXT = { label: 200, pros: 800, cons: 800 } as const;
 
 const MAX_TEXT = 20_000;
+// queue_sessions.name VARCHAR(100) + queue_sessions_name_check; Zod counts UTF-16 units ≥ Postgres code points → never past the column
+const SESSION_NAME_MAX = 100;
 const MAX_LIST_LIMIT = 200;
 const RECENT_RESUME_LIMIT = { DEFAULT: 10, MAX: 50 } as const;
 
@@ -21,6 +23,7 @@ const absolutePath = z
   .max(MAX_PATH_LENGTH)
   .refine((value) => value.startsWith("/") && !value.includes("\0"), "must be an absolute path");
 const requiredText = (max: number) => z.string().max(max).refine((value) => value.trim() !== "", "must not be blank");
+const sessionName = requiredText(SESSION_NAME_MAX).refine((value) => !/\p{Cc}/u.test(value), "must be one line with no control character");
 
 export const PERMISSION_HINTS = ["default", "acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"] as const;
 
@@ -32,6 +35,7 @@ export const registerBodySchema = z.strictObject({
   socketPath: absolutePath.optional(),
   permissionHint: z.enum(PERMISSION_HINTS).optional(),
   launchHint: z.enum(["accept_wrapper"]).optional(),
+  name: sessionName.optional(),
 });
 
 export const deregisterBodySchema = z.strictObject({
