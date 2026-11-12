@@ -16,6 +16,7 @@ import { buildHostAllowlistHook } from "../queue/request-gate.js";
 import {
   ackBodySchema,
   deregisterBodySchema,
+  pendingBodySchema,
   postItemBodySchema,
   registerBodySchema,
   sessionBodySchema,
@@ -104,9 +105,9 @@ function registerDeliveryRoutes(app: FastifyInstance): void {
   app.post("/api/queue/pending", POST_ROUTE_OPTIONS, async (request, reply) =>
     handleParsed(request, reply, {
       route: "/api/queue/pending",
-      schema: sessionBodySchema,
+      schema: pendingBodySchema,
       input: request.body,
-      work: async (body) => ({ items: await claimPendingItems(body.sessionId) }),
+      work: async (body) => ({ items: await claimPendingItems(body.sessionId, body.pid === undefined ? undefined : { pid: body.pid }) }),
     }),
   );
   app.post<{ Params: IdParams }>("/api/queue/items/:id/ack", POST_ROUTE_OPTIONS, async (request, reply) =>

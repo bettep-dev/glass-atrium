@@ -52,6 +52,11 @@ export const deregisterBodySchema = z.strictObject({
 
 export const sessionBodySchema = z.strictObject({ sessionId });
 
+// A wait poll (the CLI's `wait`) carries its owning Claude pid; a plain pull carries neither
+export const pendingBodySchema = z
+  .strictObject({ sessionId, wait: z.literal(true).optional(), pid: pid.optional() })
+  .refine((body) => (body.wait === undefined) === (body.pid === undefined), "wait and pid come together");
+
 export const ackBodySchema = z.strictObject({ sessionId, msgId: z.uuid() });
 
 const optionSchema = z.strictObject({

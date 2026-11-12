@@ -1,10 +1,10 @@
 // Owner session list and owner message send. A message is one `message` item per target, inserted already answered,
-// so the existing delivery (socket frame, pull, ack, deadline, Resend, automatic resume) carries it unchanged.
+// so the existing delivery (pull or wait claim, ack, deadline, Resend, automatic resume) carries it unchanged.
 
 import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import type { PageOriginSignal } from "../request-guards.js";
-import { ACKABLE } from "./delivery.js";
+import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { SESSION_ID_PREFIX_LENGTH, getCwdBasename, getCwdTail } from "./owner-views.js";
 import { lockSessions } from "./registry.js";
@@ -23,6 +23,8 @@ export interface OwnerSessionRow {
   cwdTail: string;
   state: string;
   exitReason: string | null;
+  /** A wait poll arrived within the freshness window (delivery.ts → WAIT_FRESH_MS). */
+  isWaiting: boolean;
   /** Newest of the last register / probe and the last item asked. */
   lastActivityAt: string;
   /** awaiting = open items; inDelivery = answered items not yet acked */
@@ -117,6 +119,7 @@ function toSessionRow(row: SessionListRow): OwnerSessionRow {
     cwdTail: getCwdTail(row.cwd),
     state: row.state,
     exitReason: row.exitReason,
+    isWaiting: isSessionWaiting(row.id),
     lastActivityAt: row.lastActivityAt.toISOString(),
     count: { awaiting: row.awaiting, inDelivery: row.inDelivery },
     markerSetAt: row.markerSetAt?.toISOString() ?? null,

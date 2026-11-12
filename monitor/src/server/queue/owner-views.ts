@@ -12,19 +12,19 @@ import {
   type QueueSession,
 } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
-import { ACKABLE } from "./delivery.js";
-import { isSocketDeliveryOn } from "./drift-guard.js";
+import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { buildResumeInFlightSql } from "./resume-claim.js";
 import type { OwnerListQuery, RecentResumesQuery } from "./schemas.js";
 
 const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
-const DEVIATION_STATUSES = new Set<QueueItemStatus>(["unacked", "held", "expired", "resume_pending"]);
+/** The item states the count route and the item views flag as deviations. */
+export const DEVIATION_STATUSES = ["unacked", "held", "expired", "resume_pending"] as const satisfies readonly QueueItemStatus[];
 // Every state an answer leads to; open, seen and withdrawn carry no answer → never "answered outside"
 const ANSWERED_STATUSES = new Set<QueueItemStatus>([...ACKABLE, "delivered"]);
 export const SESSION_ID_PREFIX_LENGTH = 8;
 
-export type Deviation = "unacked" | "held" | "expired" | "resume_pending" | "session_not_reachable" | "delivery_off";
+export type Deviation = (typeof DEVIATION_STATUSES)[number];
 
 /** A marked row occupying the waiting session's worktree, named on its shared-worktree card. */
 export interface MarkedOccupant {
@@ -49,6 +49,8 @@ export interface OwnerSessionView {
   /** Present only when CLAUDE_CONFIG_DIR was recorded as set → the marker card's command carries it. */
   configDir: string | null;
   state: string;
+  /** A wait poll arrived within the freshness window (delivery.ts → WAIT_FRESH_MS). */
+  isWaiting: boolean;
   launchHint: string | null;
   permissionHint: string | null;
   /** Session marker: an automatic resume spawned and not yet registered; `bgId` from that spawn's resume rows. */
@@ -133,8 +135,7 @@ export function canResend(facts: ResendFacts): boolean {
   return facts.status === "resume_pending" && facts.resumeAttempts.includes(facts.nextAttempt);
 }
 
-/** The page; `isSocketDeliveryOn` false → the degraded banner (live sessions answered by pull). */
-export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: OwnerItemView[]; nextCursor: number | null; isSocketDeliveryOn: boolean }> {
+export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: OwnerItemView[]; nextCursor: number | null }> {
   const rows = await getPrisma().queueItem.findMany({
     where: {
       status: { notIn: TERMINAL },
@@ -149,7 +150,7 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
   const page = rows.slice(0, query.limit);
   const items = await buildViews(page);
   const last = page[page.length - 1];
-  return { items, nextCursor: rows.length > query.limit && last !== undefined ? Number(last.queuePosition) : null, isSocketDeliveryOn: isSocketDeliveryOn() };
+  return { items, nextCursor: rows.length > query.limit && last !== undefined ? Number(last.queuePosition) : null };
 }
 
 /**
@@ -239,7 +240,7 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     ...getAnswerRecordView(item),
     session: toSessionView(item.session, factsById.get(item.sessionId)?.lastResumeBgId ?? null),
     resumes,
-    deviation: getDeviation(item.status, item.session),
+    deviation: getDeviation(item.status),
     skipReason: item.status === "resume_pending" ? getSkipReason(item, factsById) : null,
     canResend: canResend({ status: item.status, nextAttempt: item.nextAttempt, isSessionMarked, resumeAttempts: resumes.map((resume) => resume.attempt) }),
   };
@@ -262,6 +263,7 @@ function toSessionView(session: QueueSession, lastResumeBgId: string | null): Ow
     cwdTail: getCwdTail(session.cwd),
     configDir: session.isConfigDirSet ? session.configDir : null,
     state: session.state,
+    isWaiting: isSessionWaiting(session.sessionId),
     launchHint: session.launchHint,
     permissionHint: session.permissionHint,
     marker: markedAt === null ? null : { setAt: markedAt.toISOString(), bgId: lastResumeBgId },
@@ -278,13 +280,8 @@ function toResumeRecord(delivery: QueueDelivery): ResumeRecord {
   };
 }
 
-// Same classes the count route counts: stale + socket path on → not reachable; live or stale with the socket path off
-// (no socket, or delivery degraded by the drift guard) → delivery off
-function getDeviation(status: QueueItemStatus, session: QueueSession): Deviation | null {
-  if (DEVIATION_STATUSES.has(status)) return status as Deviation; // the set holds exactly the status-named Deviation members
-  if (status !== "answered" || (session.state !== "live" && session.state !== "stale")) return null;
-  if (session.socketPath === null || !isSocketDeliveryOn()) return "delivery_off";
-  return session.state === "stale" ? "session_not_reachable" : null;
+function getDeviation(status: QueueItemStatus): Deviation | null {
+  return DEVIATION_STATUSES.find((deviation) => deviation === status) ?? null;
 }
 
 function getSkipReason(item: ItemWithRelations, factsById: Map<string, SessionFacts>): SkipReason | null {

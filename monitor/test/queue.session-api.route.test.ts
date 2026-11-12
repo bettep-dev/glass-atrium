@@ -7,9 +7,10 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import "dotenv/config";
 
@@ -17,7 +18,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { setSocketDeliveryOn } from "../src/server/queue/drift-guard.js";
+import { WAIT_FRESH_MS, isSessionWaiting } from "../src/server/queue/delivery.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
@@ -26,6 +27,7 @@ const PORT = 16145;
 const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
 const HOST = `127.0.0.1:${PORT}`;
 const ACK_DEADLINE_MS = 120_000;
+const QUEUE_CLI_SOURCE = fileURLToPath(new URL("../../scripts/atrium-queue.sh", import.meta.url));
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-api-"));
 const dir = { home: path.join(fixtureRoot, "home") };
@@ -421,6 +423,69 @@ describe("pending (pull claim)", () => {
     assert.deepEqual([await getStatus(open), await getStatus(foreign)], ["open", "answered"]);
     assert.deepEqual(deliveries.map((row) => [row.itemId, row.route, row.attempt]).sort(), [[answered[0], "pull", 2], [answered[1], "pull", 1]].sort());
   });
+
+  const notLiveRows = [
+    { name: "row ended by its own process", seed: { state: "exited" as const, exitReason: "ended" as const }, pidOffset: 0 },
+    { name: "row replaced after a clear", seed: { state: "exited" as const, exitReason: "replaced" as const }, pidOffset: 0 },
+    { name: "live row of another process", seed: {}, pidOffset: 1 },
+  ];
+  for (const row of notLiveRows) {
+    test(`a wait pull from a process the row is not live for is refused and claims nothing: ${row.name}`, async () => {
+      const pid = 700_000 + Math.floor(Math.random() * 100_000);
+      const sessionId = await seedSession({ ...row.seed, pid });
+      const itemId = await seedItem(sessionId, { status: "answered" });
+
+      const response = await send("POST", "/api/queue/pending", { sessionId, pid: pid + row.pidOffset, wait: true });
+
+      assert.deepEqual([response.statusCode, response.json().error], [409, "session_not_live"], row.name);
+      assert.equal(await getStatus(itemId), "answered", row.name);
+      assert.equal(await getPrisma().queueDelivery.count({ where: { itemId } }), 0, row.name);
+      assert.equal(isSessionWaiting(sessionId), false, row.name);
+    });
+  }
+
+  test("a wait pull from the row's own live process claims like a plain pull", async () => {
+    const pid = 700_000 + Math.floor(Math.random() * 100_000);
+    const sessionId = await seedSession({ pid });
+    const itemId = await seedItem(sessionId, { status: "answered" });
+
+    const response = await send("POST", "/api/queue/pending", { sessionId, pid, wait: true });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().items.map((claim: { id: { item: number } }) => claim.id.item), [Number(itemId)]);
+    assert.equal(await getStatus(itemId), "delivering");
+  });
+
+  test("rejects a wait flag with no pid and a pid with no wait flag", async () => {
+    const sessionId = await seedSession();
+    for (const body of [{ sessionId, wait: true }, { sessionId, pid: 4242 }]) {
+      const response = await send("POST", "/api/queue/pending", body);
+      assert.equal(response.statusCode, 400, JSON.stringify(body));
+    }
+  });
+});
+
+describe("waiting fact", () => {
+  test("a wait pull makes its session waiting until the freshness window passes; a plain pull never does", async () => {
+    const pid = 700_000 + Math.floor(Math.random() * 100_000);
+    const waiting = await seedSession({ pid });
+    const plain = await seedSession();
+
+    await send("POST", "/api/queue/pending", { sessionId: waiting, pid, wait: true });
+    await send("POST", "/api/queue/pending", { sessionId: plain });
+    const now = Date.now();
+
+    assert.deepEqual(
+      [isSessionWaiting(waiting, new Date(now)), isSessionWaiting(waiting, new Date(now + WAIT_FRESH_MS + 1_000)), isSessionWaiting(plain, new Date(now))],
+      [true, false, false],
+    );
+  });
+
+  test("the freshness window is two of the queue CLI's wait poll intervals", () => {
+    const pollSeconds = Number(/^readonly WAIT_POLL_S=(\d+)$/m.exec(readFileSync(QUEUE_CLI_SOURCE, "utf8"))?.[1]);
+
+    assert.equal(WAIT_FRESH_MS, 2 * pollSeconds * 1_000);
+  });
 });
 
 describe("ack", () => {
@@ -503,40 +568,23 @@ describe("withdraw", () => {
 });
 
 describe("count", () => {
-  test("counts open items as awaiting and every deviation, delivery off and not reachable included", async () => {
+  test("counts open items as awaiting and only the unacked, held, expired and resume-pending items as deviations", async () => {
     const readCount = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> =>
       (await send("GET", "/api/queue/count")).json();
-    const readCountWith = async (isOn: boolean): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
-      setSocketDeliveryOn(isOn);
-      return readCount();
-    };
-    const measureSeedDelta = async (): Promise<{ awaiting: number; deviations: number; degradedDeviations: number; oldestAgeSeconds: number | null }> => {
-      const baseline = await readCountWith(true);
-      const degradedBaseline = await readCountWith(false);
+    const measureSeedDelta = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
+      const baseline = await readCount();
       const live = await seedSession();
-      const deliveryOff = await seedSession({ socketPath: null });
-      const notReachable = await seedSession({ state: "stale" });
+      const noSocket = await seedSession({ socketPath: null });
+      const stale = await seedSession({ state: "stale" });
       await seedItem(live, { status: "open", askedAt: new Date(Date.now() - 3_600_000) });
-      await seedItem(live, { status: "answered" });
       for (const status of ["unacked", "held", "expired", "resume_pending"] as const) await seedItem(live, { status });
-      await seedItem(deliveryOff, { status: "answered" });
-      await seedItem(notReachable, { status: "answered" });
-      const counted = await readCountWith(true);
-      const degraded = await readCountWith(false);
-      return {
-        awaiting: counted.awaiting - baseline.awaiting,
-        deviations: counted.deviations - baseline.deviations,
-        degradedDeviations: degraded.deviations - degradedBaseline.deviations,
-        oldestAgeSeconds: counted.oldestAgeSeconds,
-      };
+      for (const sessionId of [live, noSocket, stale]) await seedItem(sessionId, { status: "answered" });
+      const counted = await readCount();
+      return { awaiting: counted.awaiting - baseline.awaiting, deviations: counted.deviations - baseline.deviations, oldestAgeSeconds: counted.oldestAgeSeconds };
     };
     // the count is database-wide → measured while no other suite holds queue items
-    const delta = await withQueueRowsExclusive(measureSeedDelta).finally(() => setSocketDeliveryOn(false));
-    assert.deepEqual(
-      { awaiting: delta.awaiting, deviations: delta.deviations, degradedDeviations: delta.degradedDeviations },
-      { awaiting: 1, deviations: 6, degradedDeviations: 7 },
-      "degraded: the live row's answered item counts as delivery off too",
-    );
+    const delta = await withQueueRowsExclusive(measureSeedDelta);
+    assert.deepEqual({ awaiting: delta.awaiting, deviations: delta.deviations }, { awaiting: 1, deviations: 4 }, "an answered item waits for its session's pull, never a deviation");
     assert.ok((delta.oldestAgeSeconds ?? 0) >= 3600, `oldest age ${delta.oldestAgeSeconds}`);
   });
 });

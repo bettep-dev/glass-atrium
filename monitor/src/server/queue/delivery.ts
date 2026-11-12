@@ -1,4 +1,5 @@
-// Session-side delivery transitions: pull claim (`pending`), ack (first valid ack wins), withdraw (never an owner message).
+// Session-side delivery transitions: pull claim (`pending` and the CLI's `wait` polls), ack (first valid ack wins),
+// withdraw (never an owner message), and the in-memory waiting fact a wait poll refreshes.
 // Each transaction locks the caller's registry row before touching item rows (registry.ts lock order).
 
 import { randomUUID } from "node:crypto";
@@ -6,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma, QueueItemKind, QueueItemStatus } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { QueueRequestError } from "./errors.js";
-import { lockSession } from "./registry.js";
+import { type LockedSession, lockSession } from "./registry.js";
 
 const PULL = {
   // The session fetches then acks right after a pull → a missed window means the process died mid-turn
@@ -14,6 +15,8 @@ const PULL = {
   // Bounded claim per call; the CLI pulls again while items remain
   BATCH_LIMIT: 20,
 } as const;
+// Two of the queue CLI's wait poll intervals (scripts/atrium-queue.sh → WAIT_POLL_S); a test binds the two
+export const WAIT_FRESH_MS = 10_000;
 
 /** An answer or message in flight: answered and not yet acked (the owner session list counts these too). */
 export const ACKABLE: QueueItemStatus[] = ["answered", "delivering", "unacked", "held", "expired", "resume_pending"];
@@ -27,10 +30,22 @@ export interface PullClaim {
 
 export type AckResult = "first" | "already_handled";
 
-/** Claims the caller's own answered items (route pull), one Delivery row per claimed item. */
-export async function claimPendingItems(sessionId: string): Promise<PullClaim[]> {
-  return getPrisma().$transaction(async (tx) => {
-    await lockOwnSession(tx, sessionId);
+/** A wait poll names the Claude process it waits for → its claim needs the row live for that process. */
+export interface WaitPoll {
+  pid: number;
+}
+
+// session id → last accepted wait poll; in memory only → a running wait repopulates it within one poll after a restart
+const lastWaitPollAt = new Map<string, number>();
+
+/**
+ * Claims the caller's own answered items (route pull), one Delivery row per claimed item.
+ * @param wait - present for a wait poll: refused with 409 unless the row is live for its pid; accepted → the session is waiting
+ */
+export async function claimPendingItems(sessionId: string, wait?: WaitPoll): Promise<PullClaim[]> {
+  const claims = await getPrisma().$transaction(async (tx) => {
+    const session = await lockOwnSession(tx, sessionId);
+    if (wait !== undefined) assertLiveFor(session, wait.pid);
     const answered = await tx.queueItem.findMany({
       where: { sessionId, status: "answered" },
       orderBy: { queuePosition: "asc" },
@@ -44,6 +59,14 @@ export async function claimPendingItems(sessionId: string): Promise<PullClaim[]>
     }
     return claims;
   });
+  if (wait !== undefined) putWaitPoll(sessionId, Date.now());
+  return claims;
+}
+
+/** True while the session's last accepted wait poll is younger than WAIT_FRESH_MS. */
+export function isSessionWaiting(sessionId: string, now: Date = new Date()): boolean {
+  const polledAt = lastWaitPollAt.get(sessionId);
+  return polledAt !== undefined && now.getTime() - polledAt < WAIT_FRESH_MS;
 }
 
 /**
@@ -83,6 +106,12 @@ export async function withdrawItem(itemId: number, sessionId: string): Promise<v
   });
 }
 
+// Lapsed entries dropped on each write → the map holds only sessions polled within the window
+function putWaitPoll(sessionId: string, nowMs: number): void {
+  for (const [id, polledAt] of lastWaitPollAt) if (nowMs - polledAt >= WAIT_FRESH_MS) lastWaitPollAt.delete(id);
+  lastWaitPollAt.set(sessionId, nowMs);
+}
+
 async function claimOne(tx: Prisma.TransactionClient, itemId: bigint, attempt: number): Promise<PullClaim | null> {
   const moved = await tx.queueItem.updateMany({ where: { id: itemId, status: "answered" }, data: { status: "delivering" } });
   if (moved.count !== 1) return null;
@@ -94,9 +123,16 @@ async function claimOne(tx: Prisma.TransactionClient, itemId: bigint, attempt: n
   return { id: { item: Number(itemId), msg: msgId } };
 }
 
-async function lockOwnSession(tx: Prisma.TransactionClient, sessionId: string): Promise<void> {
-  if ((await lockSession(tx, sessionId)) === null) {
-    throw new QueueRequestError(404, "unknown_session", "session not registered");
+async function lockOwnSession(tx: Prisma.TransactionClient, sessionId: string): Promise<LockedSession> {
+  const session = await lockSession(tx, sessionId);
+  if (session === null) throw new QueueRequestError(404, "unknown_session", "session not registered");
+  return session;
+}
+
+// An ended, replaced or re-registered row → this wait's conversation no longer owns the session's answers
+function assertLiveFor(session: LockedSession, pid: number): void {
+  if (session.state !== "live" || session.pid !== pid) {
+    throw new QueueRequestError(409, "session_not_live", "the session is not live for this process — stop waiting");
   }
 }
 

@@ -1,9 +1,9 @@
 // Queue items, session side: post, get by id (owning session only), and the count-only badge numbers.
 
-import type { Prisma, QueueItem } from "../../generated/prisma/client.js";
+import { Prisma, type QueueItem } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
-import { isSocketDeliveryOn } from "./drift-guard.js";
 import { QueueRequestError } from "./errors.js";
+import { DEVIATION_STATUSES } from "./owner-views.js";
 import { lockSession } from "./registry.js";
 import type { PostItemBody } from "./schemas.js";
 
@@ -52,24 +52,15 @@ export async function getItemOrThrow(id: number, sessionId: string): Promise<Que
   return toItemView(item);
 }
 
-/**
- * Deviations: unacked · held · expired · resume-pending, plus answered items derived from their session row:
- * stale → "session not reachable" or "delivery off"; live with the socket path off (no socket, or delivery degraded)
- * → "delivery off — session alive".
- */
+/** An answered item waits for its session's pull → never a deviation. */
 export async function getCount(): Promise<QueueCount> {
-  const isDeliveryOn = isSocketDeliveryOn();
   const [row] = await getPrisma().$queryRaw<Array<{ awaiting: bigint; deviations: bigint; oldest_age_seconds: number | null }>>`
     SELECT
-      count(*) FILTER (WHERE i."status" = 'open') AS "awaiting",
-      count(*) FILTER (
-        WHERE i."status" IN ('unacked', 'held', 'expired', 'resume_pending')
-           OR (i."status" = 'answered' AND (s."state" = 'stale' OR (s."state" = 'live' AND (s."socket_path" IS NULL OR NOT ${isDeliveryOn}))))
-      ) AS "deviations",
-      floor(extract(epoch FROM now() - min(i."asked_at") FILTER (WHERE i."status" = 'open')))::int AS "oldest_age_seconds"
-    FROM "monitor"."queue_items" i
-    JOIN "monitor"."queue_sessions" s ON s."session_id" = i."session_id"
-    WHERE i."status" NOT IN ('delivered', 'seen', 'withdrawn')`;
+      count(*) FILTER (WHERE "status" = 'open') AS "awaiting",
+      count(*) FILTER (WHERE "status"::text IN (${Prisma.join(DEVIATION_STATUSES)})) AS "deviations",
+      floor(extract(epoch FROM now() - min("asked_at") FILTER (WHERE "status" = 'open')))::int AS "oldest_age_seconds"
+    FROM "monitor"."queue_items"
+    WHERE "status" NOT IN ('delivered', 'seen', 'withdrawn')`;
   return { awaiting: Number(row?.awaiting ?? 0), deviations: Number(row?.deviations ?? 0), oldestAgeSeconds: row?.oldest_age_seconds ?? null };
 }
 
