@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 
 import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import { QueueRequestError } from "../queue/errors.js";
+import { IMAGE_BYTES_MAX, UPLOAD_CONTENT_TYPES, createImage, getImageFileOrThrow } from "../queue/images.js";
 import { putAnswer, putLater, putReply, putResend, putSeen } from "../queue/owner-items.js";
 import { getOwnerItemOrThrow, getOwnerItems, getOwnerOrders, getRecentResumes } from "../queue/owner-views.js";
 import { createMessages, getOwnerSessions } from "../queue/owner-sessions.js";
@@ -12,6 +13,8 @@ import { type PageOriginCarrier, buildPageOriginHook, getPageOrigins } from "../
 import {
   answerBodySchema,
   emptyBodySchema,
+  imageParamsSchema,
+  imageUploadQuerySchema,
   messageBodySchema,
   ownerListQuerySchema,
   ownerOrdersQuerySchema,
@@ -25,6 +28,14 @@ import { type IdParams, handleItemRequest, handleParsed } from "./queue-request.
 
 /** Answer, reply or message text 20000 chars at up to 4 UTF-8 bytes each, plus 20 session ids and JSON framing. */
 const OWNER_ROUTE_OPTIONS = { bodyLimit: 96 * 1024 } as const;
+const UPLOAD_ROUTE_OPTIONS = { bodyLimit: IMAGE_BYTES_MAX } as const;
+// An image is shown by the page's <img> only: never sniffed into a document, never run, never embedded by another site
+const IMAGE_SERVE_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "cross-origin-resource-policy": "same-origin",
+  "content-security-policy": "default-src 'none'; sandbox",
+  "cache-control": "private, max-age=31536000, immutable",
+} as const;
 
 type ItemTransition = (id: number) => Promise<void>;
 
@@ -35,6 +46,8 @@ export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRout
   registerOrderHistoryRoute(app);
   registerAnswerRoutes(app);
   registerSessionRoutes(app);
+  await app.register(imageUploadPlugin, options);
+  registerImageServeRoute(app, options.imageDir);
   registerTransitionRoute(app, "later", putLater);
   registerTransitionRoute(app, "seen", putSeen);
   registerTransitionRoute(app, "resend", putResend);
@@ -121,6 +134,41 @@ function registerSessionRoutes(app: FastifyInstance): void {
         (request as FastifyRequest & AuditChangeCarrier).auditChange = { itemIds: created.items.map((item) => item.id) };
         reply.code(201);
         return created;
+      },
+    }),
+  );
+}
+
+/**
+ * Upload: one image as the raw body. Its own encapsulated plugin → the image parsers reach this route alone, and no
+ * CORS-simple type (text/plain, form, multipart) is ever parsed; the parent's page-origin hook still runs first.
+ */
+async function imageUploadPlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
+  app.addContentTypeParser(UPLOAD_CONTENT_TYPES, { parseAs: "buffer" }, (_request, body, done) => done(null, body));
+  app.post("/api/queue/owner/images", UPLOAD_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/owner/images",
+      schema: imageUploadQuerySchema,
+      input: request.query,
+      work: async (query) => {
+        const created = await createImage(options.imageDir, Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0), query.name);
+        reply.code(201);
+        return created;
+      },
+    }),
+  );
+}
+
+function registerImageServeRoute(app: FastifyInstance, imageDir: string): void {
+  app.get("/api/queue/owner/images/:id", async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/owner/images/:id",
+      schema: imageParamsSchema,
+      input: request.params,
+      work: async (params) => {
+        const file = await getImageFileOrThrow(imageDir, params.id);
+        reply.headers({ ...IMAGE_SERVE_HEADERS, "content-type": file.mime, "content-disposition": `inline; filename="${file.fileName}"` });
+        return file.bytes;
       },
     }),
   );

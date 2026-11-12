@@ -6,11 +6,12 @@
 import { readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import type { Prisma, QueueItemStatus, QueueSessionState } from "../../generated/prisma/client.js";
+import type { Prisma, QueueImageType, QueueItemStatus, QueueSessionState } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { errnoCode } from "../errno.js";
 import { logger } from "../logger.js";
 import { buildResumePayload } from "./envelope.js";
+import { deleteImageFile, getImagePath, getStoredImageId, getUnusedCutoff } from "./images.js";
 import { lockSession } from "./registry.js";
 import { type ResumeClaim, claimResume, findClaimableSessionIds, getRereadOutcome, putSpawnAborted, putSpawnFailed, putWorktreeRoots } from "./resume-claim.js";
 import { type ResumeDeps, SESSION_ID_SHAPE, startResumeSpawn } from "./resume-spawn.js";
@@ -27,6 +28,8 @@ export interface SweepDeps {
   cliPath: string;
   /** Socket-era messaging token copies, drained every pass. */
   tokenDir: string;
+  /** Owner image folder; an upload no send claimed within the window is deleted from it. */
+  imageDir: string;
   /** Limits the pass to these sessions (isolation on a shared test database); absent → every session. */
   scope?: { sessionIds: string[] };
   /** Absent → no automatic resume (no `claude` found at start). */
@@ -61,6 +64,22 @@ export async function deleteTokenFiles(deps: SweepDeps): Promise<void> {
   if (strayCount > 0) logger.warn({ tokenDir: deps.tokenDir, strayCount }, "queue token dir holds non-session entries — left in place");
   const scoped = names.filter((name) => SESSION_ID_SHAPE.test(name) && (deps.scope?.sessionIds.includes(name) ?? true));
   await Promise.all(scoped.map((name) => deleteFile(path.join(deps.tokenDir, name))));
+}
+
+/**
+ * Deletes each upload no send or reply claimed within the window, row first, then its file.
+ * Only rows whose files sit in `imageDir` → a test's folder never reaches another suite's rows on a shared database.
+ */
+export async function deleteUnusedImages(deps: SweepDeps): Promise<void> {
+  const ids = (await getDirectoryNames(deps.imageDir)).flatMap((name) => getStoredImageId(name) ?? []);
+  if (ids.length === 0) return;
+  // ponytail: a file whose row insert failed and whose unlink also failed stays; add an mtime-aged orphan pass if one ever shows
+  const deleted = await getPrisma().$queryRaw<Array<{ id: string; type: QueueImageType }>>`
+    DELETE FROM "monitor"."queue_images"
+    WHERE "id" = ANY(${ids}::uuid[]) AND "used_at" IS NULL AND "created_at" <= ${getUnusedCutoff(deps.now())}
+    RETURNING "id"::text AS "id", "type"`;
+  await Promise.all(deleted.map((row) => deleteImageFile(getImagePath(deps.imageDir, row.id, row.type))));
+  if (deleted.length > 0) logger.info({ count: deleted.length }, "queue unused images deleted");
 }
 
 function getScopeWhere(deps: SweepDeps): { sessionId?: { in: string[] } } {

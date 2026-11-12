@@ -6,9 +6,10 @@ import path from "node:path";
 
 import { logger } from "../logger.js";
 import { getQueueCliPath } from "./envelope.js";
+import { getQueueImageDir } from "./images.js";
 import { getProcessStartTime } from "./process-start-time.js";
 import { deleteLeftoverCaptureDirs, findClaudePath, spawnClaudeLauncher } from "./resume-spawn.js";
-import { type SweepDeps, deleteTokenFiles, runSweepPass } from "./sweep.js";
+import { type SweepDeps, deleteTokenFiles, deleteUnusedImages, runSweepPass } from "./sweep.js";
 
 const SWEEP_INTERVAL_MS = 30_000;
 
@@ -19,7 +20,7 @@ export interface QueueScheduler {
 
 /**
  * Production deps under `${GA_ROOT:-$HOME/.glass-atrium}`: token files in data/queue/tokens, resume captures in
- * data/queue/resume-capture, the CLI in scripts/. No `claude` on PATH → automatic resume off (fail closed).
+ * data/queue/resume-capture, owner images in data/queue/images, the CLI in scripts/. No `claude` on PATH → automatic resume off (fail closed).
  */
 export function getSweepDeps(gaRoot: string = process.env.GA_ROOT || path.join(os.homedir(), ".glass-atrium")): SweepDeps {
   const claudePath = findClaudePath();
@@ -29,6 +30,7 @@ export function getSweepDeps(gaRoot: string = process.env.GA_ROOT || path.join(o
     now: () => new Date(),
     cliPath: getQueueCliPath(gaRoot),
     tokenDir: path.join(gaRoot, "data", "queue", "tokens"),
+    imageDir: getQueueImageDir(gaRoot),
     ...(claudePath === null ? {} : { resume: { launcher: spawnClaudeLauncher, claudePath, captureDir: path.join(gaRoot, "data", "queue", "resume-capture") } }),
   };
 }
@@ -70,6 +72,7 @@ async function runScheduledPass(deps: SweepDeps, isStart: boolean): Promise<void
     if (isStart && deps.resume !== undefined) await deleteLeftoverCaptureDirs(deps.resume.captureDir);
     await runSweepPass(deps);
     await deleteTokenFiles(deps);
+    await deleteUnusedImages(deps);
   } catch (error) {
     logger.error({ err: error }, "queue sweep pass failed — the next interval retries");
   }

@@ -10,6 +10,7 @@ import type { FastifyInstance } from "fastify";
 import { getMonitorPort } from "../monitor-port.js";
 import { ackItem, claimPendingItems, withdrawItem } from "../queue/delivery.js";
 import { getQueueCliPath } from "../queue/envelope.js";
+import { getQueueImageDir } from "../queue/images.js";
 import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook } from "../queue/request-gate.js";
@@ -34,6 +35,8 @@ export interface QueueRouteOptions {
   homeDir: string;
   /** Installed queue CLI → the owner page's pull command names the real path on a non-default install. */
   cliPath: string;
+  /** Owner image folder: uploads land here, the serve route and the session-side read name files in it. */
+  imageDir: string;
 }
 
 /** Defaults resolved at registration time (never import time) → a GA_ROOT set after import still wins. */
@@ -43,6 +46,7 @@ export function resolveQueueRouteOptions(): QueueRouteOptions {
     port: getMonitorPort(),
     homeDir: os.homedir(),
     cliPath: getQueueCliPath(gaRoot),
+    imageDir: getQueueImageDir(gaRoot),
   };
 }
 
@@ -56,7 +60,7 @@ async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Pr
     handleQueueRequest(request, reply, { route: "/api/queue/count", work: () => getCount() }),
   );
   registerSessionRoutes(app, options.homeDir);
-  registerItemRoutes(app);
+  registerItemRoutes(app, options.imageDir);
   registerDeliveryRoutes(app);
   registerWithdrawRoute(app);
   await app.register(ownerRoutesPlugin, options);
@@ -81,7 +85,7 @@ function registerSessionRoutes(app: FastifyInstance, homeDir: string): void {
   );
 }
 
-function registerItemRoutes(app: FastifyInstance): void {
+function registerItemRoutes(app: FastifyInstance, imageDir: string): void {
   app.post("/api/queue/items", POST_ROUTE_OPTIONS, async (request, reply) =>
     handleParsed(request, reply, {
       route: "/api/queue/items",
@@ -96,7 +100,7 @@ function registerItemRoutes(app: FastifyInstance): void {
       route: "/api/queue/items/:id",
       schema: sessionBodySchema,
       input: request.query,
-      work: (id, query) => getItemOrThrow(id, query.sessionId),
+      work: (id, query) => getItemOrThrow(id, query.sessionId, imageDir),
     }),
   );
 }

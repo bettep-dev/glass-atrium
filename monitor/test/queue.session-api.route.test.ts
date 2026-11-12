@@ -55,7 +55,7 @@ after(async () => {
 async function buildApp(): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
   instance.get("/api/root-probe", async () => ({ ok: true }));
-  await registerQueueRoutes(instance, { port: PORT, homeDir: dir.home, cliPath: CLI_PATH });
+  await registerQueueRoutes(instance, { port: PORT, homeDir: dir.home, cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images") });
   await instance.ready();
   return instance;
 }

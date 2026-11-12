@@ -37,7 +37,7 @@ const CAPTURE_TIME_BOUND_MS = 30_000;
 const fixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "queue-resume-")));
 // Under /tmp itself → registers as /tmp/… and stores /private/tmp/… on macOS
 const tmpRoot = mkdtempSync("/tmp/queue-resume-");
-const dir = { home: path.join(fixtureRoot, "home"), tokens: path.join(fixtureRoot, "tokens"), plain: path.join(fixtureRoot, "plain") };
+const dir = { home: path.join(fixtureRoot, "home"), tokens: path.join(fixtureRoot, "tokens"), plain: path.join(fixtureRoot, "plain"), images: path.join(fixtureRoot, "images") };
 const trackedSessionIds: string[] = [];
 const children: ChildProcess[] = [];
 
@@ -124,6 +124,7 @@ function buildHarness(sessionIds: string[], fake: FakeLauncher = buildFakeLaunch
     now: () => new Date(clock.ms),
     cliPath: CLI_PATH,
     tokenDir: dir.tokens,
+    imageDir: dir.images,
     scope: { sessionIds },
     resume: { launcher: fake.launcher, claudePath: CLAUDE_PATH, captureDir, signal: abort.signal, onCapture: (capture) => captures.push(capture), ...resumeOverrides },
   };
@@ -251,7 +252,7 @@ describe("automatic resume of an exited session", () => {
 
   test("an owner message to an exited session is resumed exactly once, under the message header", async () => {
     const sessionId = await seedSession({ cwd: newFixtureDir("message") });
-    const { items: [message] } = await createMessages({ sessionIds: [sessionId], text: "Rebase onto main before the review." }, "fetch_metadata");
+    const { items: [message] } = await createMessages({ sessionIds: [sessionId], text: "Rebase onto main before the review.", attachmentIds: [] }, "fetch_metadata");
     assert.ok(message !== undefined);
     const harness = buildHarness([sessionId]);
 

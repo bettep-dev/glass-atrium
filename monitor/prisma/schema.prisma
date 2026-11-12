@@ -1462,6 +1462,7 @@ model QueueItem {
 
   session    QueueSession    @relation(fields: [sessionId], references: [sessionId], onDelete: Restrict, onUpdate: Restrict)
   deliveries QueueDelivery[]
+  images     QueueItemImage[]
 
   // FK index; leading session_id + status → a session's items in one state (withdraw, resume claim)
   @@index([sessionId, status], map: "queue_items_session_status_idx")
@@ -1478,6 +1479,52 @@ model QueueItem {
 ///   - CHECKs: attempt ≥ 1 · abort_reason present ⇔ result = aborted, on resume rows only
 ///     · bg_id on resume rows only, letters, digits and hyphens, leading letter or digit → never read as a CLI option
 ///     · ack_deadline_at > sent_at
+// Image content type, read from the file's first bytes at upload (queue/images.ts); the declared type is never stored
+enum QueueImageType {
+  png
+  jpeg
+  webp
+  gif
+
+  @@schema("monitor")
+}
+
+// One owner upload; its file is `<id>.<extension>` in the queue image folder. used_at NULL → no send claimed it yet
+model QueueImage {
+  id        String         @id @db.Uuid
+  // The owner's file name, a label only — never part of a path
+  name      String
+  type      QueueImageType
+  bytes     Int
+  width     Int
+  height    Int
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  // Set once by the send or reply that links the image → a second send cannot take it, the clean-up skips it
+  usedAt    DateTime?      @map("used_at") @db.Timestamptz(6)
+
+  items QueueItemImage[]
+
+  @@map("queue_images")
+  @@schema("monitor")
+}
+
+// Ordered images of one item; every copy of one send links the same images
+model QueueItemImage {
+  itemId   BigInt @map("item_id")
+  position Int
+  imageId  String @map("image_id") @db.Uuid
+
+  // the link dies with its item; a linked image is never deleted (Restrict)
+  item  QueueItem  @relation(fields: [itemId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  image QueueImage @relation(fields: [imageId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([itemId, position], map: "queue_item_images_pkey")
+  // FK index
+  @@index([imageId], map: "queue_item_images_image_id_idx")
+  @@map("queue_item_images")
+  @@schema("monitor")
+}
+
 model QueueDelivery {
   id            BigInt                    @id @default(autoincrement())
   // Frame identity, ties an ack to its frame — not the dedupe key (item id is)

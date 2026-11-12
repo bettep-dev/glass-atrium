@@ -14,6 +14,7 @@ import {
 import { getPrisma } from "../db.js";
 import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
+import { ITEM_IMAGES_ARGS, type ImageView, getImageViews } from "./images.js";
 import { buildResumeInFlightSql } from "./resume-claim.js";
 import type { OwnerListQuery, OwnerOrdersQuery, RecentResumesQuery } from "./schemas.js";
 
@@ -102,6 +103,8 @@ export interface OwnerItemView {
   deliveredAt: string | null;
   /** Shared by every copy of one owner send; null → not a send, or a message sent before send ids existed. */
   sendId: string | null;
+  /** The owner's images on this order or report reply, in the order sent. */
+  attachments: ImageView[];
   /** null → never answered, or answered with no record */
   answerRecord: AnswerRecord | null;
   /** Answered, yet no record → written outside the monitor (straight into the database). */
@@ -122,7 +125,7 @@ export interface ResendFacts {
   resumeAttempts: number[];
 }
 
-type ItemWithRelations = QueueItem & { session: QueueSession; deliveries: QueueDelivery[] };
+type ItemWithRelations = Prisma.QueueItemGetPayload<{ include: typeof ITEM_RELATIONS }>;
 
 /** One copy of a paged order; `cursor` names its order and is the next page's `before` when it ends a page. */
 interface OrderCopyRow {
@@ -241,6 +244,7 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
 const ITEM_RELATIONS = {
   session: true,
   deliveries: { where: { route: "resume" }, orderBy: { id: "desc" } },
+  images: ITEM_IMAGES_ARGS,
 } as const satisfies Prisma.QueueItemInclude;
 
 async function buildViews(items: ItemWithRelations[]): Promise<OwnerItemView[]> {
@@ -295,6 +299,7 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     answeredAt: item.answeredAt?.toISOString() ?? null,
     deliveredAt: item.deliveredAt?.toISOString() ?? null,
     sendId: item.sendId,
+    attachments: getImageViews(item.images),
     ...getAnswerRecordView(item),
     session: toSessionView(item.session, factsById.get(item.sessionId)?.lastResumeBgId ?? null),
     resumes,

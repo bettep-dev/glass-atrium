@@ -46,7 +46,7 @@ after(async () => {
 
 async function buildApp(): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
-  await registerQueueRoutes(instance, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: CLI_PATH });
+  await registerQueueRoutes(instance, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images") });
   await instance.ready();
   return instance;
 }
@@ -512,11 +512,13 @@ describe("list and item detail", () => {
     assert.equal((await send("GET", "/api/queue/owner/items?limit=1")).json().cliPath, CLI_PATH);
   });
 
-  test("the CLI path follows GA_ROOT, so a non-default install shows its own path", () => {
+  test("the CLI path and the image folder follow GA_ROOT, so a non-default install uses its own", () => {
     const saved = process.env.GA_ROOT;
     process.env.GA_ROOT = "/Volumes/tools/atrium";
     try {
-      assert.equal(resolveQueueRouteOptions().cliPath, "/Volumes/tools/atrium/scripts/atrium-queue.sh");
+      const options = resolveQueueRouteOptions();
+      assert.equal(options.cliPath, "/Volumes/tools/atrium/scripts/atrium-queue.sh");
+      assert.equal(options.imageDir, "/Volumes/tools/atrium/data/queue/images");
     } finally {
       if (saved === undefined) delete process.env.GA_ROOT;
       else process.env.GA_ROOT = saved;

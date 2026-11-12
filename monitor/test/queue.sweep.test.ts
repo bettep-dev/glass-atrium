@@ -1,5 +1,5 @@
 // Owner queue sweep: no socket delivery, the stale / exited rule, overdue and exited-row item moves,
-// the token directory drain and the `claude` child env allowlist.
+// the token directory drain, the unused image clean-up and the `claude` child env allowlist.
 // Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/queue.sweep.test.ts
 // Every sweep pass is scoped to this file's session ids → rows other test files seed are never probed or moved.
 
@@ -16,11 +16,12 @@ import "dotenv/config";
 import type { QueueDelivery, QueueDeliveryRoute, QueueItemStatus, QueueSessionState } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { buildClaudeChildEnv } from "../src/server/queue/child-env.js";
+import { UNUSED_IMAGE_TTL_MS, createImage } from "../src/server/queue/images.js";
 import { getProcessStartTime } from "../src/server/queue/process-start-time.js";
 import { createMessages } from "../src/server/queue/owner-sessions.js";
 import { registerSession } from "../src/server/queue/registry.js";
 import { startQueueScheduler } from "../src/server/queue/scheduler.js";
-import { type SweepDeps, deleteTokenFiles, runSweepPass } from "../src/server/queue/sweep.js";
+import { type SweepDeps, deleteTokenFiles, deleteUnusedImages, runSweepPass } from "../src/server/queue/sweep.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
@@ -29,7 +30,7 @@ const MINUTE_MS = 60_000;
 const OLD_START_TIME = "Mon Jan  1 00:00:00 2026";
 
 const fixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "queue-sweep-")));
-const dir = { tokens: path.join(fixtureRoot, "tokens"), home: path.join(fixtureRoot, "home"), cwd: path.join(fixtureRoot, "cwd") };
+const dir = { tokens: path.join(fixtureRoot, "tokens"), home: path.join(fixtureRoot, "home"), cwd: path.join(fixtureRoot, "cwd"), images: path.join(fixtureRoot, "images") };
 const trackedSessionIds: string[] = [];
 const children: ChildProcess[] = [];
 let livePid: { pid: number; startTime: string };
@@ -78,6 +79,7 @@ function buildDeps(sessionIds: string[], overrides: Partial<SweepDeps> = {}): Sw
     now: () => new Date(),
     cliPath: CLI_PATH,
     tokenDir: dir.tokens,
+    imageDir: dir.images,
     scope: { sessionIds },
     ...overrides,
   };
@@ -152,7 +154,7 @@ describe("no socket delivery", () => {
   test("an answered item and an owner message on a live row with a socket path stay answered for the session's pull, with no Delivery row", async () => {
     const sessionId = await seedSession({ socketPath: `/private/tmp/cc-socks/${livePid.pid}.sock` });
     const itemId = await seedItem(sessionId, "answered");
-    const { items: [message] } = await createMessages({ sessionIds: [sessionId], text: "Rebase onto main before the review." }, "origin");
+    const { items: [message] } = await createMessages({ sessionIds: [sessionId], text: "Rebase onto main before the review.", attachmentIds: [] }, "origin");
     assert.ok(message !== undefined);
 
     await runSweepPass(buildDeps([sessionId]));
@@ -281,6 +283,36 @@ describe("token directory drain", () => {
     await deleteTokenFiles(buildDeps([liveId, exitedId, files.unknownOld, files.unknownFresh], { tokenDir }));
 
     assert.deepEqual(readdirSync(tokenDir), [files.notUuid]);
+  });
+});
+
+describe("unused image clean-up", () => {
+  // a real 3 × 2 PNG
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGP4z8AAQQxwFgBB0gX7h/C5SAAAAABJRU5ErkJggg==", "base64");
+
+  test("an upload no send claimed within the window is deleted with its file; a fresh, a claimed or another folder's upload stays", async (t) => {
+    const imageDir = path.join(fixtureRoot, "clean-images");
+    const otherDir = path.join(fixtureRoot, "other-images");
+    const now = new Date();
+    const pastWindow = new Date(now.getTime() - UNUSED_IMAGE_TTL_MS - MINUTE_MS);
+    const images = {
+      unusedOld: await createImage(imageDir, png, "old.png"),
+      unusedFresh: await createImage(imageDir, png, "fresh.png"),
+      usedOld: await createImage(imageDir, png, "used.png"),
+      otherFolderOld: await createImage(otherDir, png, "elsewhere.png"),
+    };
+    const ids = Object.values(images).map((image) => image.id);
+    t.after(() => getPrisma().queueImage.deleteMany({ where: { id: { in: ids } } }));
+    await getPrisma().queueImage.updateMany({ where: { id: { in: [images.unusedOld.id, images.otherFolderOld.id] } }, data: { createdAt: pastWindow } });
+    await getPrisma().queueImage.update({ where: { id: images.usedOld.id }, data: { createdAt: pastWindow, usedAt: pastWindow } });
+    writeFileSync(path.join(imageDir, "notes.txt"), "kept");
+
+    await deleteUnusedImages(buildDeps([], { imageDir, now: () => now }));
+
+    const kept = await getPrisma().queueImage.findMany({ where: { id: { in: ids } }, select: { id: true } });
+    assert.deepEqual(new Set(kept.map((row) => row.id)), new Set([images.unusedFresh.id, images.usedOld.id, images.otherFolderOld.id]));
+    assert.deepEqual(readdirSync(imageDir).sort(), [`${images.unusedFresh.id}.png`, `${images.usedOld.id}.png`, "notes.txt"].sort());
+    assert.deepEqual(readdirSync(otherDir), [`${images.otherFolderOld.id}.png`]);
   });
 });
 

@@ -5,6 +5,7 @@ import type { Prisma, QueueItem, QueueItemStatus } from "../../generated/prisma/
 import { getPrisma } from "../db.js";
 import type { PageOriginSignal } from "../request-guards.js";
 import { QueueRequestError } from "./errors.js";
+import { putItemImages } from "./images.js";
 import { canResend } from "./owner-views.js";
 import { lockSession } from "./registry.js";
 import type { AnswerBody, ReplyBody } from "./schemas.js";
@@ -33,7 +34,11 @@ export async function putAnswer(id: number, body: AnswerBody, signal: PageOrigin
 export async function putReply(id: number, body: ReplyBody, signal: PageOriginSignal): Promise<void> {
   const item = await getOpenItemOrThrow(id, "report");
   if (!item.isFreeTextAllowed) throw new QueueRequestError(400, "free_text_not_allowed", "this report takes no reply");
-  await putOpenTransition(id, { status: "answered", answerText: body.text, answeredAt: new Date(), answerRoute: "reply", answerSignal: signal });
+  // one transaction → a reply that loses the open race claims no image
+  await getPrisma().$transaction(async (tx) => {
+    await putOpenTransition(id, { status: "answered", answerText: body.text, answeredAt: new Date(), answerRoute: "reply", answerSignal: signal }, tx);
+    await putItemImages(tx, [BigInt(id)], body.attachmentIds);
+  });
 }
 
 export async function putSeen(id: number): Promise<void> {
@@ -101,8 +106,12 @@ async function getOpenItemOrThrow(id: number, kind: QueueItem["kind"]): Promise<
   return item;
 }
 
-async function putOpenTransition(id: number, data: Prisma.QueueItemUpdateManyMutationInput): Promise<void> {
-  const moved = await getPrisma().queueItem.updateMany({ where: { id: BigInt(id), status: "open" }, data });
+async function putOpenTransition(
+  id: number,
+  data: Prisma.QueueItemUpdateManyMutationInput,
+  client: Prisma.TransactionClient = getPrisma(),
+): Promise<void> {
+  const moved = await client.queueItem.updateMany({ where: { id: BigInt(id), status: "open" }, data });
   if (moved.count === 0) await throwNotOpen(id);
 }
 

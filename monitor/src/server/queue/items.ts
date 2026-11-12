@@ -3,6 +3,7 @@
 import { Prisma, type QueueItem } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { QueueRequestError } from "./errors.js";
+import { ITEM_IMAGES_ARGS, type SessionImageView, getSessionImageViews } from "./images.js";
 import { DEVIATION_STATUSES } from "./owner-views.js";
 import { lockSession } from "./registry.js";
 import type { PostItemBody } from "./schemas.js";
@@ -25,6 +26,8 @@ export interface QueueItemView {
   askedAt: string;
   answeredAt: string | null;
   deliveredAt: string | null;
+  /** The owner's images on this order or reply, each a local file the session reads. */
+  attachments: SessionImageView[];
 }
 
 /** Badge numbers only: awaiting-owner items, deviations, and the oldest awaiting item's age. */
@@ -45,11 +48,11 @@ export async function createItem(body: PostItemBody): Promise<{ id: number }> {
   });
 }
 
-export async function getItemOrThrow(id: number, sessionId: string): Promise<QueueItemView> {
-  const item = await getPrisma().queueItem.findFirst({ where: { id: BigInt(id), sessionId } });
+export async function getItemOrThrow(id: number, sessionId: string, imageDir: string): Promise<QueueItemView> {
+  const item = await getPrisma().queueItem.findFirst({ where: { id: BigInt(id), sessionId }, include: { images: ITEM_IMAGES_ARGS } });
   // another session's item answers the same as a missing one → no existence leak
   if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found for this session");
-  return toItemView(item);
+  return { ...toItemView(item), attachments: getSessionImageViews(imageDir, item.images) };
 }
 
 /** An answered item waits for its session's pull → never a deviation. */
@@ -84,7 +87,7 @@ function buildItemRow(body: PostItemBody): Prisma.QueueItemUncheckedCreateInput 
   return { ...shared, options: body.options, recommendedCode: body.recommendedCode, isApprovalClass: body.isApprovalClass };
 }
 
-function toItemView(item: QueueItem): QueueItemView {
+function toItemView(item: QueueItem): Omit<QueueItemView, "attachments"> {
   return {
     id: Number(item.id),
     kind: item.kind,

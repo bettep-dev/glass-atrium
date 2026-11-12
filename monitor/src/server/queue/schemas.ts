@@ -15,6 +15,9 @@ export const ITEM_TITLE_MAX = 200;
 const SESSION_NAME_MAX = 100;
 const MAX_LIST_LIMIT = 200;
 const MAX_MESSAGE_TARGETS = 20;
+const MAX_ATTACHMENTS = 8;
+// the owner's file name, kept as a label only (queue_images.name TEXT → this cap is the only one)
+const IMAGE_NAME_MAX = 255;
 const RECENT_RESUME_LIMIT = { DEFAULT: 10, MAX: 50 } as const;
 const ORDER_PAGE_LIMIT = { DEFAULT: 30, MAX: 100 } as const;
 /** Rows the owner session list returns at most → also the most sessions the history read takes, as the rail ticks only listed rows. */
@@ -31,7 +34,11 @@ const absolutePath = z
   .max(MAX_PATH_LENGTH)
   .refine((value) => value.startsWith("/") && !value.includes("\0"), "must be an absolute path");
 const requiredText = (max: number) => z.string().max(max).refine((value) => value.trim() !== "", "must not be blank");
-const sessionName = requiredText(SESSION_NAME_MAX).refine((value) => !/\p{Cc}/u.test(value), "must be one line with no control character");
+const oneLineText = (max: number) => requiredText(max).refine((value) => !/\p{Cc}/u.test(value), "must be one line with no control character");
+const sessionName = oneLineText(SESSION_NAME_MAX);
+// Postgres uuid ignores letter case → compare lower-cased
+const uniqueIds = (ids: string[]) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length;
+const attachmentIds = z.array(z.uuid()).max(MAX_ATTACHMENTS).refine(uniqueIds, "image ids must be unique").default([]);
 
 export const PERMISSION_HINTS = ["default", "acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"] as const;
 
@@ -106,7 +113,7 @@ export const answerBodySchema = z
   .strictObject({ code: optionCode.optional(), text: requiredText(MAX_TEXT).optional() })
   .refine((body) => body.code !== undefined || body.text !== undefined, "an option code or free text is required");
 
-export const replyBodySchema = z.strictObject({ text: requiredText(MAX_TEXT) });
+export const replyBodySchema = z.strictObject({ text: requiredText(MAX_TEXT), attachmentIds });
 
 // Query strings arrive as text → numbers coerced, then bounded
 export const ownerListQuerySchema = z.strictObject({
@@ -123,10 +130,14 @@ export const messageBodySchema = z.strictObject({
     .array(sessionId)
     .min(1)
     .max(MAX_MESSAGE_TARGETS)
-    // Postgres uuid ignores letter case → compare lower-cased
-    .refine((ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length, "session ids must be unique"),
+    .refine(uniqueIds, "session ids must be unique"),
   text: requiredText(MAX_TEXT),
+  attachmentIds,
 });
+
+export const imageUploadQuerySchema = z.strictObject({ name: oneLineText(IMAGE_NAME_MAX) });
+
+export const imageParamsSchema = z.strictObject({ id: z.uuid() });
 
 // "<answered-at epoch µs>:<first copy id>" from the previous page → 18 digits each stay inside int8
 const orderCursor = z

@@ -8,6 +8,7 @@ import { getPrisma } from "../db.js";
 import type { PageOriginSignal } from "../request-guards.js";
 import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
+import { putItemImages } from "./images.js";
 import { SESSION_ID_PREFIX_LENGTH, type SessionName, getCwdTail, getSessionName } from "./owner-views.js";
 import { lockSessions } from "./registry.js";
 import { ITEM_TITLE_MAX, type MessageBody, type OwnerSessionsQuery, SESSION_LIST_LIMIT } from "./schemas.js";
@@ -77,8 +78,9 @@ export async function getOwnerSessions(query: OwnerSessionsQuery): Promise<{ ses
 
 /**
  * All or nothing: locks every target's registry row (ascending id, before any item row), then inserts one
- * answered message per target, stamped with the send route, the page-origin signal and one send id shared by every copy.
- * @throws QueueRequestError 404 when an id names no session · 409 when a target was replaced
+ * answered message per target, stamped with the send route, the page-origin signal and one send id shared by every copy;
+ * every copy links the same images.
+ * @throws QueueRequestError 404 when an id names no session · 409 when a target was replaced or an image cannot be taken
  */
 export async function createMessages(body: MessageBody, signal: PageOriginSignal): Promise<{ sendId: string; items: CreatedMessage[] }> {
   const title = getMessageTitle(body.text);
@@ -103,6 +105,7 @@ export async function createMessages(body: MessageBody, signal: PageOriginSignal
       })),
       select: { id: true, sessionId: true },
     });
+    await putItemImages(tx, created.map((item) => item.id), body.attachmentIds);
     return { sendId, items: created.map((item) => ({ id: Number(item.id), sessionId: item.sessionId })) };
   });
 }
