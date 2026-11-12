@@ -616,6 +616,7 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 |---|---|
 | a background job session has run its `register --name` | start `wait`, and keep one running while the session works |
 | a session posted a decision, or a report with `isFreeTextAllowed: true` | start `wait` |
+| the task cannot continue without the answer a running `wait` will claim | end the turn and let the wait wake the session |
 | the monitor resumed this session | run `register` after its ack steps, whatever each ack replied, then start `wait` |
 | an `[ATRIUM-QUEUE]` context line says answers or messages wait | run `pending`: it claims them and prints each one's `get` and `ack` commands |
 | `get` exits 3 — the item belongs to another session | stop and take no action on it |
