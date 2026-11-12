@@ -258,14 +258,23 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The section is the only rule text telling a session when to use the queue; `scoped/orchestrator-core.md` → `## Where the rest lives` carries its trigger line and no rule.
   - That line stays one line: the core is printed whole at SessionStart, inside `hooks/inject-session-context.sh` → `CONTEXT_CAP_UNITS`.
   - The posting table is single-sited in the section: the trigger line names when to read it, never who posts what.
-- The section restates no command list, item JSON or exit-code list: their home is `scripts/atrium-queue.sh` → `print_usage`.
+  - The trigger line names no wait: a session reaches the wait rows through a trigger it already has — background job, posting, or the resume prompt's own wait step.
+- The section restates no command list or item JSON: their home is `scripts/atrium-queue.sh` → `print_usage`.
+  - Its `wait` exit rows are the one exit-code list it carries: a mirror of `print_usage` → `On a wait's exit`, canonical there, so both stay.
+  - The wait's bound is named, never quoted: its values live in `scripts/atrium-queue.sh` → `WAIT_MINUTES_DEFAULT` · `WAIT_MINUTES_MAX`.
+  - The section's `"Again once"` bullet reads `once` as one restart, then stop: `print_usage` states no second failure.
+- `### Envelopes and authority` is a split point holding `### Answers and messages` under the 3 KB H3 cap: cite `## Owner Queue`, never the split.
 - The posting table defines a background job session by how it started, never by `CLAUDE_JOB_DIR`.
   - Why: a process started inside a job inherits that variable (`scripts/lib/queue-session.sh` → `queue_get_job_name`).
 - Texts that tell the session the same thing; a change to one lands in each of the others:
   - the fetch → ack → act order and the `first` rule: `monitor/src/server/queue/envelope.ts` → `buildEnvelope` · `scripts/atrium-queue.sh` → `print_claims`;
+  - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound`;
+  - the two refusals behind `wait` exit 2: `monitor/src/server/queue/delivery.ts` → `lockOwnSession` (`unknown_session`) · `assertLiveFor` (`session_not_live`);
   - the never-an-approval sentence with its action list: `envelope.ts` → `RESUME_PREAMBLE` · `scripts/atrium-queue.sh` → `get_item`, its provenance line;
-  - the register-after-ack step: `envelope.ts` → `buildResumePayload`;
+  - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
   - the `[ATRIUM-QUEUE]` literal: `hooks/queue-session-register.sh`, and the core's trigger line.
 - What the section's honest-backing lines rest on:
+  - the waiting mark: `monitor/src/server/queue/delivery.ts` → `isSessionWaiting` · `monitor/public/src/screens/queue.jsx` → `SessionStateQ` · `PullLineQ`;
+  - envelopes in a resume prompt only: `monitor/src/server/queue/sweep.ts`, the one caller of `buildResumePayload`;
   - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
   - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`.
