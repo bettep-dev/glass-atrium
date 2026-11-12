@@ -10,9 +10,7 @@ import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { SESSION_ID_PREFIX_LENGTH, type SessionName, getCwdTail, getSessionName } from "./owner-views.js";
 import { lockSessions } from "./registry.js";
-import { ITEM_TITLE_MAX, type MessageBody, type OwnerSessionsQuery } from "./schemas.js";
-
-const LIST_LIMIT = 200;
+import { ITEM_TITLE_MAX, type MessageBody, type OwnerSessionsQuery, SESSION_LIST_LIMIT } from "./schemas.js";
 
 export interface OwnerSessionRow extends SessionName {
   id: string;
@@ -73,8 +71,8 @@ export async function getOwnerSessions(query: OwnerSessionsQuery): Promise<{ ses
     GROUP BY s."session_id"
     HAVING s."state" IN ('live', 'stale') OR count(i."id") > 0
     ORDER BY (s."state" = 'live') DESC, "lastActivityAt" DESC, s."session_id"
-    LIMIT ${LIST_LIMIT + 1}`;
-  return { sessions: rows.slice(0, LIST_LIMIT).map(toSessionRow), hasMore: rows.length > LIST_LIMIT };
+    LIMIT ${SESSION_LIST_LIMIT + 1}`;
+  return { sessions: rows.slice(0, SESSION_LIST_LIMIT).map(toSessionRow), hasMore: rows.length > SESSION_LIST_LIMIT };
 }
 
 /**

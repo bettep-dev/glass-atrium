@@ -15,7 +15,7 @@ import { getPrisma } from "../db.js";
 import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { buildResumeInFlightSql } from "./resume-claim.js";
-import type { OwnerListQuery, RecentResumesQuery } from "./schemas.js";
+import type { OwnerListQuery, OwnerOrdersQuery, RecentResumesQuery } from "./schemas.js";
 
 const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
 /** The item states the count route and the item views flag as deviations. */
@@ -124,6 +124,12 @@ export interface ResendFacts {
 
 type ItemWithRelations = QueueItem & { session: QueueSession; deliveries: QueueDelivery[] };
 
+/** One copy of a paged order; `cursor` names its order and is the next page's `before` when it ends a page. */
+interface OrderCopyRow {
+  id: bigint;
+  cursor: string;
+}
+
 interface SessionFacts {
   sessionId: string;
   worktreeRoot: string | null;
@@ -161,6 +167,22 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
 }
 
 /**
+ * The owner's orders — message items and reports carrying an owner reply — in every status, newest first, paged by order:
+ * every copy of a paged order is on that page, the copies to sessions the filter leaves out included.
+ * Items come order by order, the copies of one order in id order.
+ */
+export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<{ items: OwnerItemView[]; nextCursor: string | null }> {
+  const rows = await getOrderCopyRows(query);
+  const cursors = [...new Set(rows.map((row) => row.cursor))];
+  const paged = new Set(cursors.slice(0, query.limit));
+  const pageRows = rows.filter((row) => paged.has(row.cursor));
+  const found = await getPrisma().queueItem.findMany({ where: { id: { in: pageRows.map((row) => row.id) } }, include: ITEM_RELATIONS });
+  const itemById = new Map(found.map((item) => [item.id, item]));
+  const items = await buildViews(pageRows.flatMap((row) => itemById.get(row.id) ?? []));
+  return { items, nextCursor: cursors.length > query.limit ? (cursors[query.limit - 1] ?? null) : null };
+}
+
+/**
  * Newest resume Delivery rows across every item, terminal ones included → a resume stays visible after its item is delivered.
  * Id order = claim order: a resume row's sent time is set by the claim that inserts it.
  */
@@ -186,6 +208,34 @@ export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {
   const [view] = await buildViews([item]);
   if (view === undefined) throw new Error(`item ${id} view not built`);
   return view;
+}
+
+/**
+ * Copies of the page's orders plus one order past it, newest order first.
+ * Fold key: the send id, else equal answered_at and body (a message sent before send ids: one transaction stamped both),
+ * else the replied report itself. Order time = its newest copy's answered_at; ties broken by its lowest copy id.
+ */
+async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]> {
+  const sessionFilter = query.sessionIds === undefined ? Prisma.sql`TRUE` : Prisma.sql`bool_or(c."session_id" = ANY(${query.sessionIds}::uuid[]))`;
+  const cursorFilter =
+    query.before === undefined ? Prisma.sql`TRUE` : Prisma.sql`(o."at", o."first_id") < (${query.before.at}::bigint, ${query.before.id}::bigint)`;
+  return getPrisma().$queryRaw<OrderCopyRow[]>`
+    WITH copies AS (
+      SELECT i."id", i."session_id", t."at",
+        COALESCE(i."send_id"::text, CASE WHEN i."kind" = 'message' THEN concat('m:', t."at", ':', md5(i."body")) ELSE concat('i:', i."id") END) AS "order_key"
+      FROM "monitor"."queue_items" i
+      CROSS JOIN LATERAL (SELECT (extract(epoch FROM i."answered_at") * 1000000)::bigint AS "at") t
+      WHERE i."answered_at" IS NOT NULL AND (i."kind" = 'message' OR (i."kind" = 'report' AND i."answer_text" IS NOT NULL))
+    ),
+    orders AS (
+      SELECT c."order_key", max(c."at") AS "at", min(c."id") AS "first_id" FROM copies c GROUP BY c."order_key" HAVING ${sessionFilter}
+    ),
+    page AS (
+      SELECT o.* FROM orders o WHERE ${cursorFilter} ORDER BY o."at" DESC, o."first_id" DESC LIMIT ${query.limit + 1}
+    )
+    SELECT c."id", concat(p."at", ':', p."first_id") AS "cursor"
+    FROM page p JOIN copies c ON c."order_key" = p."order_key"
+    ORDER BY p."at" DESC, p."first_id" DESC, c."id"`;
 }
 
 const ITEM_RELATIONS = {

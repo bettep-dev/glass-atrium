@@ -728,3 +728,97 @@ describe("owner message send", () => {
     assert.equal((await getItemRow(BigInt(item.id))).status, "delivered");
   });
 });
+
+describe("order history", () => {
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+  const getOrders = (query: string) => send("GET", `/api/queue/owner/orders?${query}`, undefined, { headers: {} });
+
+  function seedMessage(sessionId: string, answeredAt: Date, overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Promise<bigint> {
+    return seedItem(sessionId, {
+      kind: "message",
+      title: "Rebase onto main.",
+      body: "Rebase onto main.",
+      isFreeTextAllowed: false,
+      status: "delivered",
+      answeredAt,
+      answerRoute: "message",
+      answerSignal: "fetch_metadata",
+      ...overrides,
+    });
+  }
+
+  function seedReply(sessionId: string, answeredAt: Date, status: Prisma.QueueItemUncheckedCreateInput["status"]): Promise<bigint> {
+    return seedItem(sessionId, { status, answerText: "Ship it after the rebase.", answeredAt, answerRoute: "reply", answerSignal: "fetch_metadata" });
+  }
+
+  test("lists the owner's orders and replied reports in every status, newest first, and nothing else", async () => {
+    const [mine, other] = [await seedSession(), await seedSession()];
+    const ids = {
+      deliveredMessage: await seedMessage(mine, minutesAgo(50), { sendId: randomUUID() }),
+      withdrawnReply: await seedReply(mine, minutesAgo(40), "withdrawn"),
+      unackedMessage: await seedMessage(mine, minutesAgo(30), { status: "unacked", sendId: randomUUID() }),
+      deliveredReply: await seedReply(mine, minutesAgo(20), "delivered"),
+    };
+    await seedItem(mine, { status: "open" });
+    await seedItem(mine, { status: "seen" });
+    await seedDecision(mine, { status: "delivered", answerCode: "R1", answeredAt: minutesAgo(10), answerRoute: "answer", answerSignal: "fetch_metadata" });
+    await seedMessage(other, minutesAgo(5), { sendId: randomUUID() });
+
+    const response = await getOrders(`sessionIds=${mine}`);
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(
+      response.json().items.map((item: { id: number }) => item.id),
+      [ids.deliveredReply, ids.unackedMessage, ids.withdrawnReply, ids.deliveredMessage].map(Number),
+    );
+    assert.equal(response.json().items[0].session.id, mine, "in the owner item view");
+  });
+
+  test("an order to several sessions comes whole, every recipient included, when one recipient is asked for", async () => {
+    const targets = [await seedSession(), await seedSession(), await seedSession()];
+    const sent = (await send("POST", "/api/queue/owner/messages/send", { sessionIds: targets, text: "Rebase onto main." })).json();
+
+    const listed = (await getOrders(`sessionIds=${targets[1]}`)).json().items as Array<{ sendId: string; session: { id: string } }>;
+
+    assert.deepEqual(listed.map((item) => item.sendId), [sent.sendId, sent.sendId, sent.sendId]);
+    assert.deepEqual(listed.map((item) => item.session.id).sort(), [...targets].sort());
+  });
+
+  test("paging by cursor returns every order once, newest first, with all its copies on one page", async () => {
+    const [left, right] = [await seedSession(), await seedSession()];
+    const orders: bigint[][] = [];
+    for (const [index, minutes] of [60, 50, 40, 30, 20].entries()) {
+      const answeredAt = minutesAgo(minutes);
+      // the second order predates send ids → its copies fold by their equal time and text
+      const fields = index === 1 ? { body: "Run the bats suite again." } : { sendId: randomUUID() };
+      orders.unshift([await seedMessage(left, answeredAt, fields), await seedMessage(right, answeredAt, fields)]);
+    }
+    orders.splice(2, 0, [await seedReply(left, minutesAgo(35), "answered")]);
+
+    const pages: number[][] = [];
+    let query = `sessionIds=${left},${right}&limit=2`;
+    for (let round = 0; round < 10; round += 1) {
+      const page = (await getOrders(query)).json() as { items: Array<{ id: number }>; nextCursor: string | null };
+      pages.push(page.items.map((item) => item.id));
+      if (page.nextCursor === null) break;
+      query = `sessionIds=${left},${right}&limit=2&before=${encodeURIComponent(page.nextCursor)}`;
+    }
+
+    const expected = orders.map((copies) => copies.map(Number));
+    assert.deepEqual(pages, [[...expected[0]!, ...expected[1]!], [...expected[2]!, ...expected[3]!], [...expected[4]!, ...expected[5]!]]);
+  });
+
+  test("refuses a malformed session list, limit or cursor", async () => {
+    const rows = [
+      { name: "a session id that is no uuid", query: "sessionIds=not-a-uuid" },
+      { name: "an empty session id in the list", query: `sessionIds=${randomUUID()},` },
+      { name: "a limit past the page cap", query: "limit=101" },
+      { name: "a cursor of another shape", query: "before=12" },
+      { name: "an unknown key", query: "status=delivered" },
+    ];
+    for (const row of rows) {
+      const response = await getOrders(row.query);
+      assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"], row.name);
+    }
+  });
+});

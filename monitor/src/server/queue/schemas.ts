@@ -16,6 +16,9 @@ const SESSION_NAME_MAX = 100;
 const MAX_LIST_LIMIT = 200;
 const MAX_MESSAGE_TARGETS = 20;
 const RECENT_RESUME_LIMIT = { DEFAULT: 10, MAX: 50 } as const;
+const ORDER_PAGE_LIMIT = { DEFAULT: 30, MAX: 100 } as const;
+/** Rows the owner session list returns at most → also the most sessions the history read takes, as the rail ticks only listed rows. */
+export const SESSION_LIST_LIMIT = 200;
 
 const sessionId = z.uuid();
 // profile_label VARCHAR(64)
@@ -125,6 +128,25 @@ export const messageBodySchema = z.strictObject({
   text: requiredText(MAX_TEXT),
 });
 
+// "<answered-at epoch µs>:<first copy id>" from the previous page → 18 digits each stay inside int8
+const orderCursor = z
+  .string()
+  .regex(/^\d{1,18}:\d{1,18}$/, "must be a cursor the history read returned")
+  .transform((value) => {
+    const [at = "", id = ""] = value.split(":");
+    return { at: BigInt(at), id: BigInt(id) };
+  });
+
+export const ownerOrdersQuerySchema = z.strictObject({
+  sessionIds: z
+    .string()
+    .transform((value) => value.split(","))
+    .pipe(z.array(sessionId).min(1).max(SESSION_LIST_LIMIT))
+    .optional(),
+  before: orderCursor.optional(),
+  limit: z.coerce.number().int().min(1).max(ORDER_PAGE_LIMIT.MAX).default(ORDER_PAGE_LIMIT.DEFAULT),
+});
+
 export const recentResumesQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(RECENT_RESUME_LIMIT.MAX).default(RECENT_RESUME_LIMIT.DEFAULT),
 });
@@ -136,6 +158,7 @@ export type AckBody = z.infer<typeof ackBodySchema>;
 export type AnswerBody = z.infer<typeof answerBodySchema>;
 export type ReplyBody = z.infer<typeof replyBodySchema>;
 export type OwnerListQuery = z.infer<typeof ownerListQuerySchema>;
+export type OwnerOrdersQuery = z.infer<typeof ownerOrdersQuerySchema>;
 export type RecentResumesQuery = z.infer<typeof recentResumesQuerySchema>;
 export type OwnerSessionsQuery = z.infer<typeof ownerSessionsQuerySchema>;
 export type MessageBody = z.infer<typeof messageBodySchema>;

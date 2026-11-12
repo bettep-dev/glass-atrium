@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import { QueueRequestError } from "../queue/errors.js";
 import { putAnswer, putLater, putReply, putResend, putSeen } from "../queue/owner-items.js";
-import { getOwnerItemOrThrow, getOwnerItems, getRecentResumes } from "../queue/owner-views.js";
+import { getOwnerItemOrThrow, getOwnerItems, getOwnerOrders, getRecentResumes } from "../queue/owner-views.js";
 import { createMessages, getOwnerSessions } from "../queue/owner-sessions.js";
 import { type PageOriginCarrier, buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
 import {
@@ -14,6 +14,7 @@ import {
   emptyBodySchema,
   messageBodySchema,
   ownerListQuerySchema,
+  ownerOrdersQuerySchema,
   ownerSessionsQuerySchema,
   recentResumesQuerySchema,
   replyBodySchema,
@@ -31,6 +32,7 @@ export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRout
   app.addHook("onRequest", buildPageOriginHook(getPageOrigins(options.port)));
   registerReadRoutes(app, options.cliPath);
   registerRecentResumesRoute(app);
+  registerOrderHistoryRoute(app);
   registerAnswerRoutes(app);
   registerSessionRoutes(app);
   registerTransitionRoute(app, "later", putLater);
@@ -65,6 +67,18 @@ function registerRecentResumesRoute(app: FastifyInstance): void {
       schema: recentResumesQuerySchema,
       input: request.query,
       work: (query) => getRecentResumes(query),
+    }),
+  );
+}
+
+// every status, unlike the owner list → an order stays readable after its session receives it
+function registerOrderHistoryRoute(app: FastifyInstance): void {
+  app.get("/api/queue/owner/orders", async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/owner/orders",
+      schema: ownerOrdersQuerySchema,
+      input: request.query,
+      work: (query) => getOwnerOrders(query),
     }),
   );
 }
