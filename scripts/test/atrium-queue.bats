@@ -670,6 +670,27 @@ SHIM
   }
 }
 
+@test "a wait that finds its lock name empty keeps polling and puts its own record back" {
+  start_stub
+  start_owner
+  use_fast_wait 6
+  set_reply 200 '{"items":[]}'
+  local lock="${GA_ROOT}/data/queue/waits/${SESSION_ID}"
+  start_waiter
+  await_requests 1
+  if ga_guard_path "${lock}"; then rm -f -- "${lock:?}"; fi
+  await_requests 3
+  kill -0 "${WAITER_PID}" 2>/dev/null && [[ "$(readlink "${lock}")" == "${WAITER_PID}|"* ]] || {
+    echo "alive=$(kill -0 "${WAITER_PID}" 2>/dev/null && echo yes) lock=$(readlink "${lock}") $(cat "${BATS_TEST_TMPDIR}/waiter.err")"
+    return 1
+  }
+  await_exit "${WAITER_PID}"
+  [[ "${AWAITED_STATUS}" == 4 ]] || {
+    echo "status=${AWAITED_STATUS} $(cat "${BATS_TEST_TMPDIR}/waiter.err")"
+    return 1
+  }
+}
+
 @test "a wait ended by a signal exits 143 and the next wait of the session starts" {
   start_stub
   start_owner
