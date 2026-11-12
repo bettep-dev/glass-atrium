@@ -81,6 +81,8 @@
 
   /* minimum hit height for every interactive atom */
   --ctl-min-h: 32px;
+  /* the 40 tier — a pane's composer box and its buttons only; every other control stays 32 */
+  --ctl-h-lg: 40px;
   /* control line box — what is left of the 32px control after its 6px padding-block and 1px borders,
      so every bordered control (.btn, .field) lands on exactly --ctl-min-h; a borderless .seg button rises to it by min-height */
   --lh-ctl: calc(var(--ctl-min-h) - 2 * var(--space-1_5) - 2px);
@@ -123,6 +125,10 @@
   --surface-overlay:  var(--overlay-surface);
   /* resting edge of a toggle with a filled selected state and of the field family — ≥3:1 on surface/elev/sunken/elev-2 (WCAG 1.4.11), one step under the --faint hover edge */
   --control-edge:     var(--pip-empty);
+  /* the three tints — an existing colour at a fixed alpha, text on them always ink (one definition per scope, so a nested dark scope re-tints) */
+  --tint-select: rgb(var(--ink) / 0.08);  /* here, or mine: a selected or scoped row, a picked option, a ticked rail row */
+  --tint-fill:   rgb(var(--ink) / 0.10);  /* a filled shell: the tag badge, the owner's order bubble */
+  --tint-warn:   rgb(var(--warn) / 0.16); /* did not arrive or cannot be reached — the amber badge, always with ⚠ and a word */
 }
 [data-theme="dark"] {
   --surface:  12  10   9;

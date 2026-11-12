@@ -3,13 +3,13 @@
 // Dark: body/primary text on --surface ≥ 4.5. Both themes: --crit carries words (form errors, destructive
 // labels) → ≥ 4.5 on every opaque surface; every tone is at least a glyph → ≥ 3.0 there.
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
+import { compositeOver, contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TOKENS_CSS = resolve(__dirname, "../public/styles/tokens.css");
@@ -150,5 +150,51 @@ test("every tone reads as a glyph on every opaque surface at 3:1, in both themes
         assert.ok(ratio >= UI_GLYPH, `${theme} ${tone} on ${surface} = ${ratio.toFixed(2)}:1 < ${UI_GLYPH}:1`);
       }
     }
+  }
+});
+
+// `--tint-*: rgb(var(--base) / alpha)` in the alias rule → the base token at that alpha, read from each theme's own triplet
+function getTintColour(block: string, name: string): Rgba {
+  const rule = css.match(/:root,\s*\[data-theme\]\s*\{([^}]*)\}/)?.[1] ?? "";
+  const m = rule.match(new RegExp(`${name}\\s*:\\s*rgb\\(var\\((--[\\w-]+)\\)\\s*/\\s*([\\d.]+)\\)`));
+  assert.ok(m, `the alias rule must declare ${name} as rgb(var(--token) / alpha)`);
+  return { ...parseTriplet(block, m[1]), a: Number(m[2]) };
+}
+
+// a ground stack, bottom first: one opaque token, then the tints laid over it → the colour a person sees there
+function getGroundColour(block: string, stack: readonly string[]): Rgba {
+  const [base, ...tints] = stack;
+  return tints.reduce((ground, tint) => compositeOver(getTintColour(block, tint), ground), parseTriplet(block, base));
+}
+
+const ON_SELECTED_ROW = ["--elev", "--tint-select"] as const;
+// the desk's pairs: text and glyphs on the three tints and the solid badge, the tinted shells on every ground they stand on
+const DESK_PAIRS = [
+  { name: "ink and dim text on a selected row", fgs: ["--ink", "--dim"], grounds: [ON_SELECTED_ROW], floor: AA_NORMAL },
+  { name: "the checkbox edge, the ok glyph and the focus ring on a selected row", fgs: ["--faint", "--ok", "--focus-ring"], grounds: [ON_SELECTED_ROW], floor: UI_GLYPH },
+  { name: "the focus ring on the card, the sunken fill and the page", fgs: ["--focus-ring"], grounds: [["--elev"], ["--sunken"], ["--surface"]], floor: UI_GLYPH },
+  { name: "solid badge text and primary button text: surface on ink", fgs: ["--surface"], grounds: [["--ink"]], floor: AA_NORMAL },
+  { name: "the solid badge shell on the card, a selected row and the nav ground", fgs: ["--ink"], grounds: [["--elev"], ON_SELECTED_ROW, ["--surface"]], floor: UI_GLYPH },
+  { name: "tag badge and order bubble text: ink on the tag fill over every ground it stands on", fgs: ["--ink"],
+    grounds: [["--elev", "--tint-fill"], ["--sunken", "--tint-fill"], [...ON_SELECTED_ROW, "--tint-fill"], ["--surface", "--tint-fill"]], floor: AA_NORMAL },
+  { name: "a failed image's file name in a bubble: dim on the tag fill", fgs: ["--dim"], grounds: [["--elev", "--tint-fill"]], floor: AA_NORMAL },
+  { name: "amber badge text and glyph: ink on the warn tint over every ground it stands on", fgs: ["--ink"],
+    grounds: [["--elev", "--tint-warn"], ["--sunken", "--tint-warn"], [...ON_SELECTED_ROW, "--tint-warn"]], floor: AA_NORMAL },
+  { name: "a checked radio or checkbox on the card, the sunken fill and a band", fgs: ["--selected-fill"], grounds: [["--elev"], ["--sunken"], ["--surface"]], floor: UI_GLYPH },
+  { name: "the checkbox mark on its checked fill", fgs: ["--selected-ink"], grounds: [["--selected-fill"]], floor: UI_GLYPH },
+] as const;
+
+describe("the desk's tints and badge fills clear their floors, in both themes", () => {
+  for (const pair of DESK_PAIRS) {
+    test(pair.name, () => {
+      for (const [theme, block] of THEMES) {
+        for (const fg of pair.fgs) {
+          for (const ground of pair.grounds) {
+            const ratio = contrastRatio(parseTriplet(block, fg), getGroundColour(block, ground));
+            assert.ok(ratio >= pair.floor, `${theme} ${fg} on ${ground.join(" + ")} = ${ratio.toFixed(2)}:1 < ${pair.floor}:1`);
+          }
+        }
+      }
+    });
   }
 });
