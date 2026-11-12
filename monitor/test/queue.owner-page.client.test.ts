@@ -480,8 +480,8 @@ describe("recent automatic resumes", () => {
 
   const views = [
     { name: "a failed read shows the shared region failure with Retry", region: { status: "error", data: null, error: "HTTP 503 database_unavailable", busy: false }, atom: "RegionUnavailable", isShown: true },
-    { name: "an empty record shows nothing", region: READY_RESUMES, atom: "Card", isShown: false },
-    { name: "a first read in flight shows nothing", region: { status: "loading", data: null, error: null, busy: true }, atom: "Card", isShown: false },
+    { name: "an empty record shows nothing", region: READY_RESUMES, atom: "DetailSurface", isShown: false },
+    { name: "a first read in flight shows nothing", region: { status: "loading", data: null, error: null, busy: true }, atom: "DetailSurface", isShown: false },
   ];
   for (const view of views) {
     test(view.name, () => {
@@ -664,11 +664,7 @@ describe("the queue page spaces on role keys only", () => {
     { name: "a sheet with a refusal", node: () => renderSheet({ item: data.items[0], queue: buildQueue({ busy: { id: null, error: { id: 1, message: "Refused: x." } } }).queue }) },
     {
       name: "the sessions region with a ticked row, the composer and a refusal",
-      node: () =>
-        render("SessionsRegionQ", {
-          sessions: buildSessions({ selectedIds: [SESSION_ID], isEndedShown: true, composer: { text: "rebase on main", isBusy: false, error: "Refused: x.", sentCount: null } }),
-          onSent: () => undefined,
-        }),
+      node: () => renderRail({ selectedIds: [SESSION_ID], isEndedShown: true, composer: { text: "rebase on main", isBusy: false, error: "Refused: x.", sentCount: null } }).tree,
     },
   ];
   for (const row of states) {
@@ -741,30 +737,24 @@ describe("queue filter bar", () => {
     return { bar, triggers, picks };
   };
 
+  // the rail is the Session filter → the bar holds the Account axis alone (spec §9.1 → Scope)
   const rows = [
-    { name: "at defaults each trigger reads All and the reset stays hidden", filter: { profile: "", session: "" }, account: "All", session: "All", isApplied: false },
-    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal", session: "" }, account: "personal", session: "All", isApplied: true },
-    {
-      name: "a chosen session names its worktree tail and id prefix",
-      filter: { profile: "", session: SESSION_ID },
-      account: "All",
-      session: "git/glass-atrium · 6f1c2a9e",
-      isApplied: true,
-    },
+    { name: "at defaults the Account trigger reads All and the reset stays hidden", filter: { profile: "", session: "" }, account: "All", isApplied: false },
+    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal", session: "" }, account: "personal", isApplied: true },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const { bar, triggers } = renderBar(row.filter);
+      assert.deepEqual(Object.keys(triggers), ["Account"]);
       assert.equal(triggers.Account?.value, row.account);
-      assert.equal(triggers.Session?.value, row.session);
       assert.equal(bar?.props.isApplied, row.isApplied);
     });
   }
 
-  test("Reset filters returns both axes to All", () => {
+  test("Reset filters returns the account to All and keeps the rail's scope", () => {
     const { bar, picks } = renderBar({ profile: "personal", session: SESSION_ID });
     (bar?.props.onReset as () => void)();
-    assert.deepEqual(getPlain(picks), [{ profile: "", session: "" }]);
+    assert.deepEqual(getPlain(picks), [{ profile: "", session: SESSION_ID }]);
   });
 
   test("a chosen value no loaded item carries stays an option, so its trigger still names it", () => {
@@ -1131,52 +1121,69 @@ function buildSessions(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// the table's rows as the shipped Table renders them: its body callback, called with a wide view
-function renderSessionRows(rows: unknown[], onToggle: (id: string) => void = () => undefined): RenderedNode {
-  const [table] = findNodes(render("SessionsTableQ", { rows, selectedIds: [], onToggle }), (node) => node.props.atom === "Table");
-  const [body] = table?.props.bodies as Array<{ rows: (view: unknown) => unknown[] }>;
-  const view = { isStacked: false, columnCount: 8 };
-  return renderScreen(screen.React.createElement("tbody", null, ...(body?.rows(view) ?? []))) as RenderedNode;
+// a Card atom's slots ride its props → rendered beside its body, so one tree holds the whole card
+function renderCard(name: string, props: unknown): RenderedNode {
+  const tree = render(name, props);
+  const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
+  const slots = ["title", "sub", "right", "bar", "foot"].map((key) => renderScreen(card?.props[key])).filter((node): node is RenderedNode => node !== null && typeof node !== "string");
+  return { type: "Fragment", props: {}, children: [tree, ...slots] } as RenderedNode;
 }
 
-describe("sessions region rows", () => {
-  const rowText = (row: unknown) => collectText(renderSessionRows([row]));
+// the rail as the desk renders it: the page's scope, ticks and list
+function renderRail(sessions: Record<string, unknown> = {}, filter = { profile: "", session: "" }, items: unknown[] = []) {
+  const filters: unknown[] = [];
+  const { queue } = buildQueue({ sessions: buildSessions(sessions) });
+  const tree = renderCard("SessionsRegionQ", { queue: { ...withList(queue, items), filter, setFilter: (next: unknown) => filters.push(next) } });
+  return { tree, filters: () => getPlain(filters) };
+}
 
+const railRowOf = (tree: RenderedNode, id: string) => findNodes(tree, (node) => node.props?.["data-session"] === id)[0] as RenderedNode;
+
+describe("sessions rail rows", () => {
   test("a row shows the registered name, and a nameless row shows its start-directory name marked as such", () => {
-    const named = rowText(buildSessionRow());
-    const nameless = rowText(buildSessionRow({ name: "glass-atrium", isNameRegistered: false }));
+    const { tree } = renderRail({ isEndedShown: true });
+    const named = collectText(railRowOf(tree, SESSION_ID));
+    const nameless = collectText(railRowOf(tree, ENDED_ID));
     assert.ok(named.includes("nightly-docs-sweep") && !named.includes("start directory"), named);
-    assert.ok(nameless.includes("glass-atrium") && nameless.includes("start directory"), nameless);
+    assert.ok(nameless.includes("atrium-hooks") && nameless.includes("start directory"), nameless);
   });
 
-  const states = [
-    { name: "a live session", row: { state: "live" }, label: "Live" },
-    { name: "a session that ended", row: { state: "exited", exitReason: "ended" }, label: "Ended" },
-    { name: "a session whose process is gone", row: { state: "exited", exitReason: "dead" }, label: "Ended · process gone" },
-    { name: "a session another took over", row: { state: "exited", exitReason: "replaced" }, label: "Replaced" },
+  test("two shown rows sharing a name show their id prefixes, and a unique name shows none", () => {
+    const rows = [buildSessionRow(), buildSessionRow({ id: ENDED_ID, sessionIdPrefix: "4c0e19aa" }), buildSessionRow({ id: REPLACED_ID, name: "gersona" })];
+    const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
+    const prefixes = (id: string) => findNodes(railRowOf(tree, id), (node) => node.props?.atom === "MachineString").length;
+    assert.deepEqual([prefixes(SESSION_ID), prefixes(ENDED_ID), prefixes(REPLACED_ID)], [1, 1, 0]);
+  });
+
+  // line 2: the first matching condition (spec §9.1 → Line 2)
+  const lines = [
+    { name: "something not received leads", row: { state: "live", count: { awaiting: 0, inDelivery: 2 } }, notReceived: 1, first: { text: "1 not received", badge: "warn" } },
+    { name: "an unreachable session says so", row: { state: "stale" }, notReceived: 0, first: { text: "Not reachable", badge: "warn" } },
+    { name: "a live session with orders on the way counts them", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, first: { text: "Live", mark: "ok" }, second: "1 in delivery" },
+    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, first: { text: "Live", mark: "ok" } },
+    { name: "an automatic resume not yet registered says so", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, notReceived: 0, first: { text: "Resume not yet registered" } },
+    { name: "an ended session wears its exit word", row: { state: "exited", exitReason: "dead" }, notReceived: 0, first: { text: "Ended · process gone", badge: "tag" } },
   ];
-  for (const row of states) test(`state label: ${row.name}`, () => assert.equal(call("getSessionStateLabelQ", buildSessionRow(row.row)), row.label));
+  for (const row of lines) {
+    test(`line 2: ${row.name}`, () => {
+      const facts = call<Array<{ text: string }>>("getSessionLineQ", buildSessionRow(row.row), row.notReceived);
+      assert.deepEqual(facts[0], row.first);
+      if (row.second) assert.equal(facts[1]?.text, row.second);
+    });
+  }
 
-  test("the State cell says a session is waiting for its answers only while its wait polls", () => {
-    const stateCell = (isWaiting: boolean) => {
-      const [cell] = findNodes(renderSessionRows([buildSessionRow({ isWaiting })]), (node) => node.props?.label === "State");
-      return collectText(cell as RenderedNode);
-    };
-    assert.match(stateCell(true), /^Live.*waiting for answers/);
-    assert.doesNotMatch(stateCell(false), /waiting/);
-  });
-
-  test("a replaced row's checkbox is disabled and every other row's is not", () => {
-    const tree = renderSessionRows(SESSION_ROWS);
-    const boxes = findNodes(tree, (node) => node.type === "input" && node.props.type === "checkbox");
-    assert.deepEqual(boxes.map((box) => box.props.disabled === true), [false, false, true]);
+  test("a row that takes no message has no checkbox, and every other row's box is named for the order", () => {
+    const { tree } = renderRail({ isEndedShown: true });
+    const boxOf = (id: string) => findNodes(railRowOf(tree, id), (node) => node.type === "input" && node.props.type === "checkbox")[0];
+    assert.equal(boxOf(SESSION_ID)?.props["aria-label"], "Order to nightly-docs-sweep");
+    assert.equal(boxOf(REPLACED_ID), undefined);
   });
 
   test("ticking a row calls the toggle with that row's id", () => {
     const toggled: unknown[] = [];
-    const tree = renderSessionRows(SESSION_ROWS, (id) => toggled.push(id));
-    const [, endedBox] = findNodes(tree, (node) => node.type === "input" && node.props.type === "checkbox");
-    (endedBox?.props.onChange as () => void)();
+    const { tree } = renderRail({ isEndedShown: true, toggle: (id: string) => toggled.push(id) });
+    const [box] = findNodes(railRowOf(tree, ENDED_ID), (node) => node.type === "input" && node.props.type === "checkbox");
+    (box?.props.onChange as () => void)();
     assert.deepEqual(toggled, [ENDED_ID]);
   });
 
@@ -1185,11 +1192,81 @@ describe("sessions region rows", () => {
     assert.deepEqual(call("putToggledIdQ", [SESSION_ID, ENDED_ID], SESSION_ID), [ENDED_ID]);
   });
 
-  test("ended rows stay hidden until Show ended is on", () => {
+  test("ended rows stay folded until the Ended band is open", () => {
     const ids = (isEndedShown: boolean) => call<Array<{ id: string }>>("getShownSessionsQ", SESSION_ROWS, isEndedShown).map((row) => row.id);
     assert.deepEqual(ids(false), [SESSION_ID]);
     assert.deepEqual(ids(true), [SESSION_ID, ENDED_ID, REPLACED_ID]);
   });
+
+  test("the waiting count is the row's one solid badge, and a session with nothing waiting shows none", () => {
+    const rows = [buildSessionRow({ count: { awaiting: 5, inDelivery: 0 } }), buildSessionRow({ id: ENDED_ID, name: "gersona", count: { awaiting: 0, inDelivery: 0 } })];
+    const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
+    const solid = (id: string) => findNodes(railRowOf(tree, id), (node) => node.props?.atom === "Badge" && node.props.fill === "solid").map((node) => collectText(node));
+    assert.deepEqual([solid(SESSION_ID), solid(ENDED_ID)], [["5"], []]);
+  });
+});
+
+describe("the rail as the session scope", () => {
+  test("pressing a row scopes the list to that session and keeps the account", () => {
+    const { tree, filters } = renderRail({}, { profile: "work-dev", session: "" });
+    const [button] = findNodes(railRowOf(tree, SESSION_ID), (node) => node.type === "button");
+    (button?.props.onClick as () => void)();
+    assert.deepEqual(filters(), [{ profile: "work-dev", session: SESSION_ID }]);
+  });
+
+  test("the scoped row and only it is current, and All sessions is current with no scope", () => {
+    const current = (session: string) => findNodes(renderRail({}, { profile: "", session }).tree, (node) => node.props?.["aria-current"] === "true").map((node) => collectText(node));
+    assert.ok(current(SESSION_ID).length === 1 && current(SESSION_ID)[0]?.includes("nightly-docs-sweep"), String(current(SESSION_ID)));
+    assert.ok(current("").length === 1 && current("")[0]?.includes("All sessions"), String(current("")));
+  });
+
+  test("All sessions clears the scope", () => {
+    const { tree, filters } = renderRail({}, { profile: "", session: SESSION_ID });
+    const [band] = findNodes(tree, (node) => node.type === "button" && collectText(node).includes("All sessions"));
+    (band?.props.onClick as () => void)();
+    assert.deepEqual(filters(), [{ profile: "", session: "" }]);
+  });
+
+  // master box: every live session that takes a message; an ended one is ticked on its own row
+  const masters = [
+    { name: "none ticked ticks every live session", ids: [], next: [SESSION_ID], state: "none" },
+    { name: "an ended tick alone stays and the live ones join it", ids: [ENDED_ID], next: [ENDED_ID, SESSION_ID], state: "none" },
+    { name: "every live session ticked unticks them and keeps the ended tick", ids: [ENDED_ID, SESSION_ID], next: [ENDED_ID], state: "all" },
+  ];
+  for (const row of masters) {
+    test(`the master box: ${row.name}`, () => {
+      assert.equal(call("getMasterTickQ", row.ids, SESSION_ROWS), row.state);
+      assert.deepEqual(call("putMasterTickQ", row.ids, SESSION_ROWS), row.next);
+    });
+  }
+
+  test("the master box shows the mixed state while only some live sessions are ticked", () => {
+    const rows = [buildSessionRow(), buildSessionRow({ id: ENDED_ID, state: "live" })];
+    assert.equal(call("getMasterTickQ", [SESSION_ID], rows), "some");
+  });
+
+  test("the session ticks round-trip through the hash", async () => {
+    const location = { hash: "#queue?to=a1,b2&item=7" };
+    const module = (await loadScreenModule(QUEUE_SRC, { URLSearchParams, window: { UI: uiStub(), location, history: { replaceState: (_s: unknown, _t: string, url: string) => { location.hash = url; } } } })) as ScreenModule;
+    assert.deepEqual(getPlain((module.getTicksFromHashQ as () => unknown)()), ["a1", "b2"]);
+    (module.setHashStateQ as (patch: unknown) => void)({ to: "" });
+    assert.deepEqual(getPlain((module.getTicksFromHashQ as () => unknown)()), []);
+  });
+});
+
+describe("the rail foot", () => {
+  const resumes = (results: string[]) => ({ status: "ready", busy: false, error: null, data: results.map((result, index) => ({ item: { id: index + 1, title: "Rebase" }, session: { profileLabel: "work-dev", cwdTail: "wt/a" }, attempt: 1, sentAt: "2026-11-12T12:20:11.204Z", result, abortReason: null, bgId: null })) });
+  const footButton = (region: unknown) => {
+    const { queue } = buildQueue({ resumes: region });
+    const tree = renderCard("SessionsRegionQ", { queue: { ...withList(queue, []), filter: { profile: "", session: "" }, setFilter: () => undefined } });
+    return findNodes(tree, (node) => node.type === "button" && collectText(node).includes("Automatic resumes")).map((node) => collectText(node));
+  };
+  const rows = [
+    { name: "two resumes open from one quiet button with their count", region: resumes(["sent", "acked"]), expected: ["Automatic resumes 2"] },
+    { name: "a failed resume puts the warning glyph before the label", region: resumes(["failed"]), expected: ["⚠ Automatic resumes 1"] },
+    { name: "no resume renders no button", region: resumes([]), expected: [] },
+  ];
+  for (const row of rows) test(row.name, () => assert.deepEqual(footButton(row.region), row.expected));
 });
 
 describe("message composer", () => {
@@ -1318,12 +1395,12 @@ describe("sessions region", () => {
   const views = [
     { name: "a failed read shows the shared region failure with Retry", region: { status: "error", data: null, error: "HTTP 503 database_unavailable", busy: false }, atom: "RegionUnavailable" },
     { name: "no session at all shows the empty state", region: { status: "ready", data: { sessions: [], hasMore: false }, error: null, busy: false }, atom: "EmptyState" },
-    { name: "a loaded list shows the table", region: buildSessions().region, atom: "Table" },
+    { name: "a loaded list shows the session rows", region: buildSessions().region, atom: "row" },
   ];
   for (const view of views) {
     test(view.name, () => {
-      const tree = render("SessionsRegionQ", { sessions: buildSessions({ region: view.region }), onSent: () => undefined });
-      assert.equal(findNodes(tree, (node) => node.props?.atom === view.atom).length, 1);
+      const { tree } = renderRail({ region: view.region });
+      assert.equal(findNodes(tree, (node) => node.props?.atom === view.atom || (view.atom === "row" && node.props?.["data-session"] === SESSION_ID)).length, 1);
     });
   }
 
@@ -1333,21 +1410,21 @@ describe("sessions region", () => {
   ];
   for (const row of composerRows) {
     test(row.name, () => {
-      const tree = render("SessionsRegionQ", { sessions: buildSessions({ selectedIds: row.selectedIds }), onSent: () => undefined });
+      const { tree } = renderRail({ selectedIds: row.selectedIds });
       assert.equal(findNodes(tree, (node) => node.type === "MessageComposerQ").length, row.fields);
     });
   }
 
   test("a taken send says how many sessions it went to once the composer is gone", () => {
-    const tree = render("SessionsRegionQ", { sessions: buildSessions({ composer: { text: "", isBusy: false, error: null, sentCount: 2 } }), onSent: () => undefined });
+    const { tree } = renderRail({ composer: { text: "", isBusy: false, error: null, sentCount: 2 } });
     const [notice] = findNodes(tree, (node) => node.props?.role === "status");
     assert.match(collectText(notice as RenderedNode), /Sent to 2 sessions/);
   });
 
-  test("the desk reads Sessions, then the list, then the sheet, with the recent resumes in the Sessions column", () => {
+  test("the desk reads Sessions, then the list, then the sheet, and the recent resumes open from the Sessions foot", () => {
     const tree = render("QueueDeskQ", { queue: withList(buildQueue().queue, [buildItem({ id: 1 })]) });
     const order = findNodes(tree, (node) => ["SessionsRegionQ", "RecentResumesQ", "QueueListQ", "QueueSheetQ"].includes(node.type)).map((node) => node.type);
-    assert.deepEqual(order, ["SessionsRegionQ", "RecentResumesQ", "QueueListQ", "QueueSheetQ"]);
+    assert.deepEqual(order, ["SessionsRegionQ", "QueueListQ", "QueueSheetQ"]);
   });
 });
 

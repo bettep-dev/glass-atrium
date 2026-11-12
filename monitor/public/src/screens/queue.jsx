@@ -66,16 +66,6 @@ const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null, s
 const EMPTY_HOLD_Q = Object.freeze({ item: null, isHandled: false });
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
-const SESSION_COLUMNS_Q = [
-	{ key: "select", label: <span className="sr-only">Selected</span> },
-	{ key: "session", label: "Session" },
-	{ key: "account", label: "Account" },
-	{ key: "directory", label: "Start directory" },
-	{ key: "state", label: "State" },
-	{ key: "activity", label: "Last activity" },
-	{ key: "awaiting", label: "Awaiting you", isNumeric: true },
-	{ key: "delivery", label: "In delivery", isNumeric: true },
-];
 
 const COMPOSER_ERROR_Q = {
 	noAnswer: "Pick an option or write an answer, then send.",
@@ -341,10 +331,7 @@ function ScreenQueue({ onRetryHarness }) {
 function QueueDeskQ({ queue }) {
 	return (
 		<div className="queue-desk">
-			<div className="queue-rail">
-				<SessionsRegionQ sessions={queue.sessions} onSent={queue.reload} />
-				<RecentResumesQ region={queue.resumes} onRetry={queue.readResumes} />
-			</div>
+			<SessionsRegionQ queue={queue} />
 			<QueueListQ queue={queue} />
 			<QueueSheetQ queue={queue} />
 		</div>
@@ -423,7 +410,8 @@ function useSheetQ(groups) {
 /** Session list region, the ticked rows, Show ended and the message composer; the list follows the Account filter. */
 function useSessionsStateQ(profile) {
 	const [region, setRegion] = useStateQ(window.UI.INITIAL_REGION_STATE);
-	const [selectedIds, setSelectedIds] = useStateQ([]);
+	const [selectedIds, setSelectedIds] = useStateQ(getTicksFromHashQ);
+	useEffectQ(() => { setHashStateQ({ to: selectedIds.join(",") }); }, [selectedIds]);
 	const [isEndedShown, setEndedShown] = useStateQ(false);
 	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
 	const read = useCallbackQ(() => getSessionsQ({ profile, setRegion, setSelectedIds }), [profile]);
@@ -434,7 +422,12 @@ function useSessionsStateQ(profile) {
 	const clear = useCallbackQ(() => setSelectedIds([]), []);
 	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
 	const send = useCallbackQ((body, onSent) => sendMessageQ({ body, setComposer, setSelectedIds, onSent }), []);
-	return { region, read, selectedIds, toggle, clear, isEndedShown, setEndedShown, composer, setText, send };
+	return { region, read, selectedIds, setSelectedIds, toggle, clear, isEndedShown, setEndedShown, composer, setText, send };
+}
+
+// #queue?to=<ids> → the recipients survive a reload; a read then drops the ones no longer taking a message (getKeptSelectionQ)
+function getTicksFromHashQ() {
+	return getHashStateQ().to.split(",").filter(Boolean);
 }
 
 // a read drops the ticks on rows it no longer lists or that turned unselectable
@@ -662,10 +655,9 @@ function getScopeTitleQ(items, filter) {
 	return session ? getSessionNameQ(session) : filter.session.slice(0, SESSION_PREFIX_LENGTH_Q);
 }
 
-// ponytail: the Session trigger stays in the bar until the rail becomes the session filter (spec §9.1, unit D)
+// the rail is the Session filter → the bar holds the Account axis, shown while it tells items apart
 function isListBarShownQ(items, filter) {
-	const count = (key) => new Set(items.map((item) => item.session[key])).size;
-	return isFilterAppliedQ(filter) || count("profileLabel") > 1 || count("id") > 1;
+	return Boolean(filter.profile) || new Set(items.map((item) => item.session.profileLabel)).size > 1;
 }
 
 function ListBodyQ({ queue, items, visible }) {
@@ -849,9 +841,8 @@ function QueueFilterBarQ({ items, filter, onFilter }) {
 	const { FilterBar } = window.UI;
 	const options = getFilterOptionsQ(items, filter);
 	return (
-		<FilterBar label="Queue filters" isApplied={isFilterAppliedQ(filter)} onReset={() => onFilter(DEFAULT_FILTER_Q)}>
+		<FilterBar label="Queue filters" isApplied={Boolean(filter.profile)} onReset={() => onFilter({ ...filter, profile: "" })}>
 			<FilterAxisTriggerQ axis="Account" options={options.profile} value={filter.profile} onPick={(profile) => onFilter({ ...filter, profile })} />
-			<FilterAxisTriggerQ axis="Session" options={options.session} value={filter.session} onPick={(session) => onFilter({ ...filter, session })} />
 		</FilterBar>
 	);
 }
@@ -1212,109 +1203,175 @@ function ResumeLineQ({ resume, profileLabel }) {
 	return <span>{`Automatic resume ${formatKstDateTime(resume.sentAt)}${account} · attempt ${resume.attempt} · ${getResumeResultLabelQ(resume)}`}</span>;
 }
 
-/** Sessions the owner can message: a checkbox table, Show ended, and the composer once a shown row is ticked. */
-function SessionsRegionQ({ sessions, onSent }) {
+/**
+ * The Sessions rail (spec §9.1): the All sessions band, the live and unreachable rows, the Ended band and its rows when open.
+ * A row button scopes the list (the Session filter); its box ticks a recipient. Foot: the recent automatic resumes.
+ */
+function SessionsRegionQ({ queue }) {
 	const { Card, RegionUnavailable, LoadingPlaceholder, getRegionView } = window.UI;
-	const { region } = sessions;
-	const view = getRegionView(region);
-	const rows = view === "ready" ? region.data.sessions : [];
+	const { sessions } = queue;
+	const view = getRegionView(sessions.region);
+	const rows = view === "ready" ? sessions.region.data.sessions : [];
+	const endedCount = rows.filter((row) => row.state === "exited").length;
 	return (
-		<Card title="Sessions" right={<EndedToggleQ sessions={sessions} rows={rows} />}>
+		<Card className="queue-pane queue-sessions" title="Sessions" sub={`${rows.length - endedCount} live · ${endedCount} ended`}
+			right={<button type="button" className="btn" onClick={() => queue.openOrders?.()}>New order</button>}
+			foot={<RailFootQ queue={queue} />} isFlush>
 			{view === "loading" && <LoadingPlaceholder label="Loading sessions" />}
-			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={region.error} isBusy={region.busy} onRetry={sessions.read} />}
-			{view === "ready" && <SessionsBodyQ sessions={sessions} rows={rows} onSent={onSent} />}
+			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={sessions.region.error} isBusy={sessions.region.busy} onRetry={sessions.read} />}
+			{view === "ready" && <SessionsBodyQ queue={queue} rows={rows} />}
 		</Card>
 	);
 }
 
-function EndedToggleQ({ sessions, rows }) {
-	const endedCount = rows.filter((row) => row.state === "exited").length;
-	return (
-		<CheckboxQ isChecked={sessions.isEndedShown} onChange={() => sessions.setEndedShown(!sessions.isEndedShown)}>
-			<span className="fs-meta">{`Show ended (${endedCount})`}</span>
-		</CheckboxQ>
-	);
-}
-
-function SessionsBodyQ({ sessions, rows, onSent }) {
-	const { Stack, EmptyState } = window.UI;
+function SessionsBodyQ({ queue, rows }) {
+	const { EmptyState } = window.UI;
+	const { sessions } = queue;
+	const live = rows.filter((row) => row.state !== "exited");
+	const ended = rows.filter((row) => row.state === "exited");
 	const shown = getShownSessionsQ(rows, sessions.isEndedShown);
 	const targets = getSendTargetsQ(shown, sessions.selectedIds);
-	const hiddenCount = rows.length - shown.length;
+	const view = { collidingNames: getCollidingNamesQ(shown), notReceived: getNotReceivedBySessionQ(queue.list.data?.items ?? []), scope: queue.filter.session };
+	const scope = (session) => queue.setFilter({ ...queue.filter, session });
 	return (
-		<Stack gap="stack">
-			{shown.length === 0
-				? <EmptyState message="No connected sessions" hint={hiddenCount > 0 ? `${hiddenCount} ended: Show ended lists them.` : "A session appears here once it registers or posts to the queue."} />
-				: <SessionsTableQ rows={shown} selectedIds={sessions.selectedIds} onToggle={sessions.toggle} />}
-			{sessions.region.data.hasMore && <p className="fs-meta text-dim">{`Showing the ${rows.length} most recently active sessions.`}</p>}
+		<>
+			<AllSessionsBandQ rows={rows} sessions={sessions} isCurrent={!view.scope} notReceived={[...view.notReceived.values()].reduce((sum, count) => sum + count, 0)} onScope={() => scope("")} />
+			{live.length === 0 && <EmptyState message="No connected sessions" hint="A session appears here once it registers or posts to the queue." />}
+			{live.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} onScope={scope} />)}
+			{ended.length > 0 && <EndedBandQ count={ended.length} isOpen={sessions.isEndedShown} onToggle={() => sessions.setEndedShown(!sessions.isEndedShown)} />}
+			{sessions.isEndedShown && ended.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} onScope={scope} />)}
+			{/* ponytail: the composer sits under the rail until the Orders mode holds it (spec §9.2, this stream's next unit) */}
 			{targets.ids.length > 0 && (
 				<MessageComposerQ targets={targets} composer={sessions.composer} onText={sessions.setText}
-					onSend={(body) => sessions.send(body, onSent)} onClear={sessions.clear} />
+					onSend={(body) => sessions.send(body, queue.reload)} onClear={sessions.clear} />
 			)}
 			{sessions.composer.sentCount !== null && <SentNoticeQ count={sessions.composer.sentCount} />}
-		</Stack>
+		</>
 	);
 }
 
-function SessionsTableQ({ rows, selectedIds, onToggle }) {
-	const { Table } = window.UI;
-	const getRows = (view) => rows.map((row) => <SessionRowQ key={row.id} row={row} view={view} isChecked={selectedIds.includes(row.id)} onToggle={onToggle} />);
+// the head of the roster: All sessions clears the scope, the master box ticks every live session that takes a message
+function AllSessionsBandQ({ rows, sessions, isCurrent, notReceived, onScope }) {
+	const { Badge, Icon } = window.UI;
+	const master = getMasterTickQ(sessions.selectedIds, rows);
+	const waiting = rows.reduce((sum, row) => sum + row.count.awaiting, 0);
 	return (
-		<Table caption="Sessions connected to the queue or that posted to it. Tick the sessions to write one message to."
-			columns={SESSION_COLUMNS_Q} stackBelowPx={SESSIONS_Q.STACK_BELOW_PX} bodies={[{ key: "sessions", rows: getRows }]} />
+		<div className="queue-band queue-rail-band">
+			<button type="button" className="queue-rail-scope" aria-current={isCurrent ? "true" : undefined} onClick={onScope}>
+				All sessions
+				<Badge role="count" fill="tag">{waiting}</Badge>
+				{isCurrent && <Icon name="chevR" size={16} className="queue-rail-chevron" />}
+			</button>
+			{notReceived > 0 && <Badge fill="warn">{`${notReceived} not received`}</Badge>}
+			<span className="queue-rail-box">
+				<CheckboxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Order to all live sessions" />
+			</span>
+		</div>
 	);
 }
 
-function SessionRowQ({ row, view, isChecked, onToggle }) {
-	const { TableRow, TableCell, formatRelativeTime } = window.UI;
+function EndedBandQ({ count, isOpen, onToggle }) {
+	const { Badge, DisclosureButton } = window.UI;
 	return (
-		<TableRow view={view}>
-			<TableCell view={view} textRole="label"><SessionCheckboxQ row={row} isChecked={isChecked} onToggle={onToggle} /></TableCell>
-			<TableCell view={view} kind="row-header"><SessionNameQ row={row} /></TableCell>
-			<TableCell view={view} textRole="meta" label="Account">{row.profileLabel}</TableCell>
-			<TableCell view={view} textRole="meta" label="Start directory" title={row.cwd}>{row.cwdTail}</TableCell>
-			<TableCell view={view} textRole="meta" label="State"><SessionStateQ row={row} /></TableCell>
-			<TableCell view={view} textRole="meta" label="Last activity">{formatRelativeTime(row.lastActivityAt)}</TableCell>
-			<TableCell view={view} textRole="meta" label="Awaiting you" isNumeric>{row.count.awaiting}</TableCell>
-			<TableCell view={view} textRole="meta" label="In delivery" isNumeric>{row.count.inDelivery}</TableCell>
-		</TableRow>
+		<div className="queue-band queue-rail-band">
+			<DisclosureButton isOpen={isOpen} onToggle={onToggle} label={<>Ended <Badge role="count" fill="tag">{count}</Badge></>} />
+		</div>
 	);
 }
 
-// a replaced row stays listed with a disabled box → its accessible name says why it takes no message
-function SessionCheckboxQ({ row, isChecked, onToggle }) {
-	const label = row.isSelectable ? `Select ${row.name}` : `${row.name}: ${getSessionStateLabelQ(row)}, takes no message`;
-	return <CheckboxQ isChecked={isChecked} isDisabled={!row.isSelectable} onChange={() => onToggle(row.id)} ariaLabel={label} />;
+/** Live sessions that take a message `"all"` ticked, `"some"`, or `"none"` (none live counts as none). */
+function getMasterTickQ(ids, rows) {
+	const live = getLiveTargetIdsQ(rows);
+	const ticked = live.filter((id) => ids.includes(id)).length;
+	if (ticked === 0) return "none";
+	return ticked === live.length ? "all" : "some";
 }
 
-// no registered name → the server's start-directory name, marked so it never reads as one the session chose
-function SessionNameQ({ row }) {
+// every live session ticked → untick them; else tick them all · an ended tick is the row's own and stays
+function putMasterTickQ(ids, rows) {
+	const live = getLiveTargetIdsQ(rows);
+	if (getMasterTickQ(ids, rows) === "all") return ids.filter((id) => !live.includes(id));
+	return [...ids, ...live.filter((id) => !ids.includes(id))];
+}
+
+function getLiveTargetIdsQ(rows) {
+	return rows.filter((row) => row.state !== "exited" && row.isSelectable).map((row) => row.id);
+}
+
+function getCollidingNamesQ(rows) {
+	const seen = new Map();
+	for (const row of rows) seen.set(row.name, (seen.get(row.name) ?? 0) + 1);
+	return new Set([...seen].filter(([, count]) => count > 1).map(([name]) => name));
+}
+
+// recipients that did not get what was sent, per session: the copies in the list the queue recorded as not received
+function getNotReceivedBySessionQ(items) {
+	const counts = new Map();
+	for (const item of items) {
+		if (item.status !== "open" && getReceiptQ(item) === "notReceived") counts.set(item.session.id, (counts.get(item.session.id) ?? 0) + 1);
+	}
+	return counts;
+}
+
+/** One session: the row button (name, waiting count, line 2) scopes the list; the box at its end ticks it as a recipient. */
+function SessionRailRowQ({ row, view, sessions, onScope }) {
+	const { Badge, Icon } = window.UI;
+	const isCurrent = view.scope === row.id;
+	const where = [row.profileLabel, row.cwd, row.id].filter(Boolean).join(" · ");
+	return (
+		<div className="queue-rail-row" data-session={row.id}>
+			<button type="button" className="queue-rail-main" title={where} aria-current={isCurrent ? "true" : undefined} onClick={() => onScope(row.id)}>
+				<span className="queue-rail-name">
+					<SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} />
+					{isCurrent && <Icon name="chevR" size={16} className="queue-rail-chevron" />}
+				</span>
+				{row.count.awaiting > 0 && <span className="queue-rail-count"><Badge role="count" fill="solid">{row.count.awaiting}</Badge><span className="sr-only">{" waiting"}</span></span>}
+				<span className="queue-rail-line"><RowFactsQ facts={getSessionLineQ(row, view.notReceived.get(row.id) ?? 0)} /></span>
+				<span className="sr-only">{`, ${where}`}</span>
+			</button>
+			{row.isSelectable && (
+				<span className="queue-rail-box">
+					<CheckboxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Order to ${row.name}`} />
+				</span>
+			)}
+		</div>
+	);
+}
+
+// no registered name → the server's start-directory name, marked so it never reads as one the session chose; the id only to tell two names apart
+function SessionNameQ({ row, isIdShown }) {
 	const { MachineString } = window.UI;
 	return (
-		<>
-			<span className="block">{row.name}{!row.isNameRegistered && <span className="fs-meta text-dim">{" · start directory"}</span>}</span>
-			<MachineString className="fs-meta">{row.sessionIdPrefix}</MachineString>
-		</>
+		<span className="queue-rail-name-text">
+			{row.name}
+			{!row.isNameRegistered && <span className="font-normal text-dim">{" · start directory"}</span>}
+			{isIdShown && <span className="font-normal text-dim">{" · "}<MachineString>{row.sessionIdPrefix}</MachineString></span>}
+		</span>
 	);
 }
 
-function SessionStateQ({ row }) {
-	return (
-		<>
-			{getSessionStateLabelQ(row)}
-			{row.isWaiting && <span className="block fs-meta text-dim">waiting for answers</span>}
-			{row.markerSetAt && <span className="block fs-meta text-dim">automatic resume not yet registered</span>}
-		</>
-	);
+/**
+ * Line 2 of a rail row, the first matching condition (spec §9.1): not received · not reachable · live with orders on the way ·
+ * live · a resume not yet registered · ended. Facts in the row-facts shape.
+ */
+function getSessionLineQ(row, notReceived) {
+	const { formatRelativeTime } = window.UI;
+	const age = { text: formatRelativeTime(row.lastActivityAt) };
+	if (notReceived > 0) return [{ text: `${notReceived} not received`, badge: "warn" }];
+	if (row.state === "stale") return [{ text: "Not reachable", badge: "warn" }, age];
+	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live, mark: "ok" }, row.count.inDelivery > 0 ? { text: `${row.count.inDelivery} in delivery` } : age];
+	if (row.markerSetAt) return [{ text: "Resume not yet registered" }];
+	return [{ text: getSessionStateLabelQ(row), badge: "tag" }, age];
 }
 
-// base.css → .ctl-checkbox visual: the mark drawn over the 16 box, the label the 24 hit area
-function CheckboxQ({ isChecked, isDisabled = false, onChange, ariaLabel, children }) {
+// base.css → .ctl-checkbox visual: the mark drawn over the 16 box, the label the 24 hit area; mixed → the DOM's indeterminate state
+function CheckboxQ({ isChecked, isMixed = false, isDisabled = false, onChange, ariaLabel, children }) {
 	const { Icon } = window.UI;
+	const setMixed = (input) => { if (input) input.indeterminate = isMixed; };
 	return (
 		<label className="inline-target gap-label-inline">
 			<span className="relative inline-flex items-center justify-center">
-				<input type="checkbox" className="ctl-checkbox" checked={isChecked} disabled={isDisabled} onChange={onChange} aria-label={ariaLabel} />
+				<input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} disabled={isDisabled} onChange={onChange} aria-label={ariaLabel} />
 				{isChecked && <Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
 			</span>
 			{children}
@@ -1357,17 +1414,35 @@ function SentNoticeQ({ count }) {
 	);
 }
 
-/** Page-level record: recent automatic resumes newest first → quota spent without a click stays visible. */
-function RecentResumesQ({ region, onRetry }) {
-	const { Card, RegionUnavailable, getRegionView } = window.UI;
-	const view = getRegionView(region);
-	if (view === "loading" || (view === "ready" && region.data.length === 0)) return null;
+function RailFootQ({ queue }) {
+	const { sessions } = queue;
+	const hasMore = sessions.region.data?.hasMore === true;
 	return (
-		<Card title="Recent automatic resumes">
-			{view === "error"
-				? <RegionUnavailable source="recent automatic resumes" error={region.error} isBusy={region.busy} onRetry={onRetry} />
-				: <RecentResumeListQ resumes={region.data} />}
-		</Card>
+		<>
+			<RecentResumesQ region={queue.resumes} onRetry={queue.readResumes} />
+			{hasMore && <span className="fs-meta text-dim">{`Showing the ${sessions.region.data.sessions.length} most recent`}</span>}
+		</>
+	);
+}
+
+/** Recent automatic resumes newest first, in a drawer from the rail foot → quota spent without a click stays one press away. */
+function RecentResumesQ({ region, onRetry }) {
+	const { RegionUnavailable, DetailSurface, TONE_GLYPH, getRegionView } = window.UI;
+	const [isOpen, setOpen] = useStateQ(false);
+	const view = getRegionView(region);
+	if (view === "error") return <RegionUnavailable source="recent automatic resumes" error={region.error} isBusy={region.busy} onRetry={onRetry} />;
+	if (view === "loading" || region.data.length === 0) return null;
+	const hasFailed = region.data.some((resume) => RESUME_RESULT_LABEL_Q[resume.result] === "failed");
+	return (
+		<>
+			<button type="button" className="btn ghost sm" onClick={() => setOpen(true)}>
+				{hasFailed && <span className="text-warn">{TONE_GLYPH.warn}</span>}
+				{`Automatic resumes ${region.data.length}`}
+			</button>
+			<DetailSurface open={isOpen} onClose={() => setOpen(false)} title="Recent automatic resumes">
+				<RecentResumeListQ resumes={region.data} />
+			</DetailSurface>
+		</>
 	);
 }
 

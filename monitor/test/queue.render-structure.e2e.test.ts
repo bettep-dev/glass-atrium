@@ -62,9 +62,9 @@ const QUEUE_STATES: QueueState[] = [
   {
     nn: "04", name: "rail-ticked",
     setUp: async (page) => {
-      await page.getByLabel("Select gersona").check();
-      await page.getByLabel("Select yoaida").check();
-      await page.getByLabel("Select yoaida").scrollIntoViewIfNeeded();
+      await page.getByLabel("Order to gersona").check();
+      await page.getByLabel("Order to yoaida").check();
+      await page.getByLabel("Order to yoaida").scrollIntoViewIfNeeded();
     },
   },
   { nn: "09", name: "not-received", getFixture: getNotReceivedFixture, setUp: (page) => selectRow(page, 210) },
@@ -209,7 +209,7 @@ async function getDeskFacts(page: Page): Promise<DeskFacts> {
     const scrollers = [document.scrollingElement, document.querySelector("main")].filter((node): node is Element => node !== null);
     return {
       isScrolled: scrollers.some((node) => node.scrollHeight > node.clientHeight),
-      rail: width(".queue-rail"), list: width(".queue-list"), sheet: width(".queue-sheet"),
+      rail: width(".queue-sessions"), list: width(".queue-list"), sheet: width(".queue-sheet"),
     };
   });
 }
