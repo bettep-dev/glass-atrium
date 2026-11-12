@@ -72,9 +72,11 @@ test("every screen's page h1 is its nav label", async () => {
 });
 
 // Documents wraps each slot's atom in a screen-local component (its stamp waits for a first read);
-// clauded-docs.screen-render pins that the wrappers render FreshnessStamp and RefreshButton
+// clauded-docs.screen-render pins that the wrappers render FreshnessStamp and RefreshButton.
+// Queue re-reads itself, so its slot states its cadence or its last good read (queue.owner-page pins the text)
 const SLOT_ATOMS: Record<string, { freshness: string; refresh: string }> = {
   "clauded-docs": { freshness: "DocHeaderFreshnessCD", refresh: "DocHeaderRefreshCD" },
+  queue: { freshness: "QueueFreshnessQ", refresh: "RefreshButton" },
 };
 
 test("every screen passes its stamp and Refresh through the named slots, never a free right cluster", async () => {
