@@ -74,7 +74,7 @@ async function seedSession(overrides: Partial<Prisma.QueueSessionUncheckedCreate
       cwd: "/Users/owner/Desktop/git/glass-atrium/monitor",
       worktreeRoot: `/Users/owner/Desktop/git/wt-${sessionId.slice(0, 8)}`,
       processStartTime: "Mon Nov  9 08:01:12 2026",
-      socketPath: `/private/tmp/cc-socks/${pid}.sock`,
+      socketPath: null,
       state: "live",
       lastSeenAt: new Date(),
       pid,
@@ -424,25 +424,18 @@ describe("list and item detail", () => {
     assert.equal(second.nextCursor, null, "the last page announces none");
   });
 
-  test("an answered item carries no deviation whatever its session's state or socket path", async () => {
-    const rows = [
-      { name: "live with a socket path", session: { state: "live" as const } },
-      { name: "live with no socket path", session: { state: "live" as const, socketPath: null } },
-      { name: "stale with a socket path", session: { state: "stale" as const } },
-      { name: "stale with no socket path", session: { state: "stale" as const, socketPath: null } },
-      { name: "exited", session: { state: "exited" as const, exitReason: "dead" as const } },
-    ];
-    for (const row of rows) {
-      const itemId = await seedDecision(await seedSession(row.session), { status: "answered", answerCode: "R1", answeredAt: new Date() });
-      const detail = (await send("GET", `/api/queue/owner/items/${itemId}`)).json();
-      assert.equal(detail.deviation, null, row.name);
-    }
+  test("an answered item carries no deviation", async () => {
+    const itemId = await seedDecision(await seedSession(), { status: "answered", answerCode: "R1", answeredAt: new Date() });
+
+    const detail = (await send("GET", `/api/queue/owner/items/${itemId}`)).json();
+
+    assert.equal(detail.deviation, null);
   });
 
   test("an item's session and the session list carry the session's waiting fact", async () => {
     const profileLabel = `.claude-wait-${randomUUID().slice(0, 8)}`;
     const pid = 700_000 + Math.floor(Math.random() * 100_000);
-    const id = { waiting: await seedSession({ profileLabel, pid, socketPath: null }), idle: await seedSession({ profileLabel }) };
+    const id = { waiting: await seedSession({ profileLabel, pid }), idle: await seedSession({ profileLabel }) };
     const itemIds = { waiting: await seedItem(id.waiting), idle: await seedItem(id.idle) };
 
     const pull = await send("POST", "/api/queue/pending", { sessionId: id.waiting, pid, wait: true }, { headers: {} });

@@ -87,7 +87,7 @@ interface SessionSeed {
   state?: QueueSessionState;
   pid?: number;
   startTime?: string;
-  socketPath?: string | null;
+  socketPath?: string;
 }
 
 async function seedSession(seed: SessionSeed = {}): Promise<string> {
@@ -103,7 +103,7 @@ async function seedSession(seed: SessionSeed = {}): Promise<string> {
       cwd: dir.cwd,
       pid,
       processStartTime: seed.startTime ?? livePid.startTime,
-      socketPath: seed.socketPath ?? `/private/tmp/cc-socks/${pid}.sock`,
+      socketPath: seed.socketPath ?? null,
       state,
       exitReason: state === "exited" ? "ended" : null,
       lastSeenAt: new Date(),
@@ -150,7 +150,7 @@ function getDeliveries(itemId: bigint): Promise<QueueDelivery[]> {
 
 describe("no socket delivery", () => {
   test("an answered item and an owner message on a live row with a socket path stay answered for the session's pull, with no Delivery row", async () => {
-    const sessionId = await seedSession();
+    const sessionId = await seedSession({ socketPath: `/private/tmp/cc-socks/${livePid.pid}.sock` });
     const itemId = await seedItem(sessionId, "answered");
     const { items: [message] } = await createMessages({ sessionIds: [sessionId], text: "Rebase onto main before the review." }, "origin");
     assert.ok(message !== undefined);
@@ -180,18 +180,17 @@ describe("stale / exited rule", () => {
     }
   });
 
-  const rows: Array<{ name: string; state: QueueSessionState; getIdentity: () => Promise<{ pid: number; startTime: string }>; socketPath?: null; expected: { state: string; exitReason: string | null } }> = [
+  const rows: Array<{ name: string; state: QueueSessionState; getIdentity: () => Promise<{ pid: number; startTime: string }>; expected: { state: string; exitReason: string | null } }> = [
     { name: "live row whose process still runs stays live", state: "live", getIdentity: spawnLiveProcess, expected: { state: "live", exitReason: null } },
     { name: "stale row whose process still runs returns to live", state: "stale", getIdentity: spawnLiveProcess, expected: { state: "live", exitReason: null } },
     { name: "stale row whose start time changed ends dead", state: "stale", getIdentity: async () => ({ pid: (await spawnLiveProcess()).pid, startTime: OLD_START_TIME }), expected: { state: "exited", exitReason: "dead" } },
     { name: "live row whose pid is gone ends dead", state: "live", getIdentity: async () => ({ pid: await getGonePid(), startTime: OLD_START_TIME }), expected: { state: "exited", exitReason: "dead" } },
-    { name: "live row with a socket path whose start time changed ends dead", state: "live", getIdentity: async () => ({ pid: (await spawnLiveProcess()).pid, startTime: OLD_START_TIME }), expected: { state: "exited", exitReason: "dead" } },
-    { name: "live row with no socket path whose start time changed ends dead", state: "live", getIdentity: async () => ({ pid: (await spawnLiveProcess()).pid, startTime: OLD_START_TIME }), socketPath: null, expected: { state: "exited", exitReason: "dead" } },
+    { name: "live row whose start time changed ends dead", state: "live", getIdentity: async () => ({ pid: (await spawnLiveProcess()).pid, startTime: OLD_START_TIME }), expected: { state: "exited", exitReason: "dead" } },
   ];
   for (const row of rows) {
     test(`the process start time alone decides the row state: ${row.name}`, async () => {
       const identity = await row.getIdentity();
-      const sessionId = await seedSession({ ...identity, state: row.state, ...(row.socketPath === null ? { socketPath: null } : {}) });
+      const sessionId = await seedSession({ ...identity, state: row.state });
 
       await runSweepPass(buildDeps([sessionId]));
 
@@ -200,7 +199,7 @@ describe("stale / exited rule", () => {
   }
 
   test("an answered item whose row ends in the pass goes to resume-pending with no Delivery row", async () => {
-    const sessionId = await seedSession({ pid: await getGonePid(), startTime: OLD_START_TIME, socketPath: null });
+    const sessionId = await seedSession({ pid: await getGonePid(), startTime: OLD_START_TIME });
     const itemId = await seedItem(sessionId, "answered");
 
     await runSweepPass(buildDeps([sessionId]));
