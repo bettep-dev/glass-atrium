@@ -1,4 +1,4 @@
-// Queue screen — the owner's decision and report queue behind the passphrase login: cards in queue order,
+// Queue screen — the owner's decision and report queue: cards in queue order,
 // answer / reply / Seen / Later / Resend, deviation and automatic-resume state per card.
 // Every server field renders as React text, never as HTML.
 const {
@@ -46,34 +46,21 @@ const SKIP_TEXT_Q = {
 	resume_used: "automatic resume used — Resend to try again",
 	shared_worktree: "another session is live or resuming in this worktree: this one resumes automatically once that one has ended",
 };
-// outage words come from the shared copy owner (ui.jsx → getErrorCopy) → one outage reads one way across card, region, sign-in and actions
+// outage words come from the shared copy owner (ui.jsx → getErrorCopy) → one outage reads one way across card, region and actions
 const OUTAGE_KINDS_Q = new Set(["network", "database", "server"]);
-// sign-in and sign-out answers the shared copy has no words for: no Details beside them → the next step is spelled out
-const SIGN_IN_COPY_Q = {
-	not_provisioned: "The queue is not set up. Run the queue setup script once in a terminal, then reload this page.",
-	refused: "The monitor refused the request. Reload the page, then try again.",
-	signOutRefused: "The monitor refused the sign-out. Reload the page, then try again.",
-};
 
 const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
 const WRAPPER_RISK_NOTE_Q =
 	"Started through the accept wrapper: on macOS the socket token is optional, so any same-uid process can drive this bypass session with no prompt.";
 
 /**
- * Queue nav slot: awaiting count, a deviation glyph when any deviation is open, a lock while signed out.
+ * Queue nav slot: awaiting count plus a deviation glyph when any deviation is open.
  * Never read → no key (no zero that was not loaded) · read failed → "?" so the badge never goes blank.
  * @param countState - shell store of /api/queue/count
- * @param auth - owner auth: 'unknown' | 'in' | 'out' | 'not_provisioned'
  */
-function getQueueNavBadge(countState, auth) {
+function getQueueNavBadge(countState) {
 	const count = getCountBadgeQ(countState);
-	if (count === null) return {};
-	const lock = { badge: "", icon: "lock", source: "auth", title: "Signed out of the queue", description: "signed out" };
-	return { queue: { badges: isSignedOutQ(auth) ? [count, lock] : [count] } };
-}
-
-function isSignedOutQ(auth) {
-	return auth === "out" || auth === "not_provisioned";
+	return count === null ? {} : { queue: { badges: [count] } };
 }
 
 // count slot alone: never read → null · failed or numberless read → "?"
@@ -87,20 +74,6 @@ function getCountBadgeQ(countState) {
 	const title = parts.filter(Boolean).join(", ");
 	const glyph = deviations > 0 ? window.UI.TONE_GLYPH.warn : undefined;
 	return { badge: String(awaiting), badgeTone: "warn", glyph, source: "queue", title, description: title };
-}
-
-/**
- * Owner answer → auth state; any other answer leaves it unchanged (null).
- * 503 is also a database outage (`database_unavailable`) → only the body's code means not provisioned.
- */
-function getAuthFromAnswerQ({ status, data }) {
-	if (status === 401) return "out";
-	if (isNotProvisionedQ({ status, data })) return "not_provisioned";
-	return status >= 200 && status < 300 ? "in" : null;
-}
-
-function isNotProvisionedQ({ status, data }) {
-	return status === 503 && data?.error === "not_provisioned";
 }
 
 /**
@@ -251,9 +224,9 @@ function getVisibleItemsQ(items, filter) {
 	);
 }
 
-function ScreenQueue({ onQueueAuth, onRetryHarness }) {
+function ScreenQueue({ onRetryHarness }) {
 	const { TypeScaleStyle } = window.UI;
-	const queue = useQueueStateQ({ onQueueAuth, onRetryHarness });
+	const queue = useQueueStateQ({ onRetryHarness });
 	return (
 		<div className="flex flex-col gap-section">
 			<TypeScaleStyle />
@@ -273,78 +246,54 @@ function QueueHeaderQ({ queue }) {
 			title="Queue"
 			freshness={<FreshnessStamp at={list.readAt} regions={regions} />}
 			refresh={<RefreshButton onRefresh={queue.reload} isBusy={getRegionSummary(regions).isBusy} hasRead={list.readAt !== null} label="Refresh queue" />}
-			actions={queue.auth === "in" ? <SignOutQ onSignOut={queue.signOut} /> : null}
 		/>
 	);
 }
 
-// a refused sign-out stays signed in → the reason shows beside the button, never silently
-function SignOutQ({ onSignOut }) {
-	const [state, setState] = useStateQ({ isBusy: false, error: null });
-	const onClick = async () => {
-		setState({ isBusy: true, error: null });
-		setState({ isBusy: false, error: await onSignOut() });
-	};
-	return (
-		<>
-			{state.error && <span className="fs-meta text-crit" role="alert">{state.error}</span>}
-			<button type="button" className="btn ghost sm" disabled={state.isBusy} onClick={onClick}>Sign out</button>
-		</>
-	);
-}
-
-// list read as a region summary input + the resume region; signed out → the sign-in form replaces both, so its refused resume read is no failure
-function getShownRegionsQ({ auth, list, resumes }) {
-	const listRegion = { busy: list.status === "loading", error: list.status === "error" ? list.error : null };
-	return isSignedOutQ(auth) ? [listRegion] : [listRegion, resumes];
+// list read as a region summary input + the resume region
+function getShownRegionsQ({ list, resumes }) {
+	return [{ busy: list.status === "loading", error: list.status === "error" ? list.error : null }, resumes];
 }
 
 function QueueBodyQ({ queue }) {
 	const { LoadingPlaceholder } = window.UI;
-	if (isSignedOutQ(queue.auth)) {
-		return <LoginFormQ auth={queue.auth} onLogin={queue.login} />;
-	}
 	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={queue.reload} />;
 	if (queue.list.data === null) return <LoadingPlaceholder label="Loading the queue" />;
 	return <QueueListQ queue={queue} />;
 }
 
-/** Page state: auth, the loaded list, per-card drafts kept across a re-login, and the owner actions. */
-function useQueueStateQ({ onQueueAuth, onRetryHarness }) {
-	const [auth, putAuth] = useAuthQ(onQueueAuth);
+/** Page state: the loaded list, per-card drafts kept across re-reads, and the owner actions. */
+function useQueueStateQ({ onRetryHarness }) {
 	const [list, setList] = useStateQ({ status: "loading", data: null, error: null, readAt: null });
-	const [resumes, readResumes] = useRecentResumesQ(putAuth);
+	const [resumes, readResumes] = useRecentResumesQ();
 	const [drafts, setDrafts] = useStateQ({});
 	const [filter, setFilter] = useFilterQ();
 	const [focus, setFocus] = useStateQ(null);
 	const reload = useCallbackQ(() => {
-		getListQ({ setList, putAuth });
+		getListQ({ setList });
 		readResumes();
-	}, [putAuth, readResumes]);
-	const loadMore = useCallbackQ(() => getMoreQ({ list, setList, putAuth }), [list, putAuth]);
+	}, [readResumes]);
+	const loadMore = useCallbackQ(() => getMoreQ({ list, setList }), [list]);
 	useEffectQ(() => { reload(); }, [reload]);
 	useFocusCardQ(focus);
-	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, putAuth, reload, onRetryHarness });
+	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, reload, onRetryHarness });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
-	const login = useCallbackQ((passphrase) => putSessionQ({ passphrase, putAuth, reload }), [putAuth, reload]);
-	const signOut = useCallbackQ(() => deleteSessionQ(putAuth), [putAuth]);
-	return { auth, list, resumes, readResumes, drafts, setDraft, filter, setFilter, reload, loadMore, login, signOut, ...actions };
+	return { list, resumes, readResumes, drafts, setDraft, filter, setFilter, reload, loadMore, ...actions };
 }
 
 // page-level resume record in its own region → a failed read leaves the list in place
-function useRecentResumesQ(putAuth) {
+function useRecentResumesQ() {
 	const [resumes, setResumes] = useStateQ(window.UI.INITIAL_REGION_STATE);
-	const readResumes = useCallbackQ(() => getResumesQ({ setResumes, putAuth }), [putAuth]);
+	const readResumes = useCallbackQ(() => getResumesQ({ setResumes }), []);
 	return [resumes, readResumes];
 }
 
 // newest resume Delivery rows from the server, terminal items included → a delivered item's resume stays listed
-async function getResumesQ({ setResumes, putAuth }) {
+async function getResumesQ({ setResumes }) {
 	const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
 	const request = {};
 	setResumes((state) => putRegionRequest(state, "resumes", request));
 	const answer = await sendOwnerRequestQ("/resumes");
-	putAuth(answer);
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.resumes)) {
 		return setResumes((state) => putRegionData(state, request, answer.data.resumes));
 	}
@@ -357,67 +306,26 @@ function useFilterQ() {
 	return [filter, setFilter];
 }
 
-// login → the held drafts stay in page state, so the owner sends the interrupted action again
-async function putSessionQ({ passphrase, putAuth, reload }) {
-	const error = await putLoginQ(passphrase);
-	if (error === null) {
-		putAuth({ status: 200, data: null });
-		reload();
-	}
-	return error;
-}
-
-/**
- * Sign out → the server drops the session and clears the cookie; a session already gone reads signed out too.
- * @returns null once signed out, else the message shown beside Sign out
- */
-async function deleteSessionQ(putAuth) {
-	const answer = await sendOwnerRequestQ("/logout", {});
-	if (answer.status >= 200 && answer.status < 300) {
-		putAuth({ status: 401, data: null });
-		return null;
-	}
-	putAuth(answer);
-	if (answer.status === 401 || isNotProvisionedQ(answer)) return null;
-	return getOutageStepQ(answer) ?? SIGN_IN_COPY_Q.signOutRefused;
-}
-
-// auth state + the setter every owner answer feeds; the shell hears each change for its lock badge
-function useAuthQ(onQueueAuth) {
-	const [auth, setAuth] = useStateQ("unknown");
-	const putAuth = useCallbackQ((answer) => {
-		const next = getAuthFromAnswerQ(answer);
-		if (next === null) return;
-		setAuth(next);
-		onQueueAuth?.(next);
-	}, [onQueueAuth]);
-	return [auth, putAuth];
-}
-
-async function getListQ({ setList, putAuth }) {
+async function getListQ({ setList }) {
 	setList((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_Q.LIMIT}`);
-	putAuth(answer);
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
 		return setList({ status: "ready", data: answer.data, error: null, readAt: new Date().toISOString() });
 	}
-	if (answer.status === 401 || isNotProvisionedQ(answer)) return setList((prev) => ({ ...prev, status: "ready" }));
 	setList((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
 }
 
 // Show more → the next page after the cursor joins the loaded list; a refused read → the page failure card with Retry
 // ponytail: a reload (Refresh, or after an answer) reads the first page again → Show more again past 100 items; upgrade = server-side filters
-async function getMoreQ({ list, setList, putAuth }) {
+async function getMoreQ({ list, setList }) {
 	const cursor = list.data?.nextCursor;
 	if (cursor === null || cursor === undefined) return;
 	setList((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_Q.LIMIT}&after=${cursor}`);
-	putAuth(answer);
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
 		const append = (prev) => ({ ...prev.data, items: [...prev.data.items, ...answer.data.items], nextCursor: answer.data.nextCursor });
 		return setList((prev) => ({ status: "ready", data: append(prev), error: null, readAt: new Date().toISOString() }));
 	}
-	if (answer.status === 401 || isNotProvisionedQ(answer)) return setList((prev) => ({ ...prev, status: "ready" }));
 	setList((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
 }
 
@@ -429,8 +337,8 @@ function useFocusCardQ(focus) {
 	}, [focus]);
 }
 
-function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, putAuth, reload, onRetryHarness }) {
-	const { busy, send } = useSendQ({ setDrafts, putAuth, reload, onRetryHarness });
+function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, reload, onRetryHarness }) {
+	const { busy, send } = useSendQ({ setDrafts, reload, onRetryHarness });
 	// next card from the filtered list → the focus never lands on a card the filter hides
 	const items = getVisibleItemsQ(list.data?.items ?? [], filter);
 	const later = useCallbackQ((id) => {
@@ -444,25 +352,24 @@ function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, putAuth,
 	return { busy, send, later, answerItem };
 }
 
-function useSendQ({ setDrafts, putAuth, reload, onRetryHarness }) {
+function useSendQ({ setDrafts, reload, onRetryHarness }) {
 	const [busy, setBusy] = useStateQ({ id: null, error: null });
 	const send = useCallbackQ(
-		(id, action, body) => sendActionQ({ id, action, body, setBusy, setDrafts, putAuth, reload, onRetryHarness }),
-		[putAuth, setDrafts, reload, onRetryHarness],
+		(id, action, body) => sendActionQ({ id, action, body, setBusy, setDrafts, reload, onRetryHarness }),
+		[setDrafts, reload, onRetryHarness],
 	);
 	return { busy, send };
 }
 
 /**
- * One owner action: a 401 keeps the card draft for the re-login, any other refusal shows on the card.
+ * One owner action: a refusal shows on the card and keeps its draft.
  * @returns true once the server took the action
  */
-async function sendActionQ({ id, action, body, setBusy, setDrafts, putAuth, reload, onRetryHarness }) {
+async function sendActionQ({ id, action, body, setBusy, setDrafts, reload, onRetryHarness }) {
 	setBusy({ id, error: null });
 	const answer = await sendOwnerRequestQ(`/items/${id}/${action}`, body ?? {});
-	putAuth(answer);
 	const isDone = answer.status >= 200 && answer.status < 300;
-	setBusy({ id: null, error: isDone || answer.status === 401 ? null : { id, message: getActionErrorQ(answer) } });
+	setBusy({ id: null, error: isDone ? null : { id, message: getActionErrorQ(answer) } });
 	if (!isDone) return false;
 	setDrafts((prev) => ({ ...prev, [id]: undefined }));
 	reload();
@@ -482,61 +389,6 @@ function getActionErrorQ(answer) {
 function QueueFailureQ({ failure, onRetry }) {
 	const { AlertCard, RetryButton } = window.UI;
 	return <AlertCard tone="crit" title={failure.sentence} body={failure.next} details={failure.detail} actions={<RetryButton onRetry={onRetry} />} />;
-}
-
-function LoginFormQ({ auth, onLogin }) {
-	const { Card } = window.UI;
-	if (auth === "not_provisioned") {
-		return (
-			<Card title="Queue not set up">
-				<p className="fs-body">No owner passphrase is set. Run the queue setup script once in a terminal, then reload this page.</p>
-			</Card>
-		);
-	}
-	return <PassphraseFormQ onLogin={onLogin} />;
-}
-
-// passphrase field state; the value is cleared once the login succeeds
-function usePassphraseSubmitQ(onLogin) {
-	const [passphrase, setPassphrase] = useStateQ("");
-	const [state, setState] = useStateQ({ isBusy: false, error: null });
-	const onSubmit = async (event) => {
-		event.preventDefault();
-		setState({ isBusy: true, error: null });
-		const error = await onLogin(passphrase);
-		setState({ isBusy: false, error });
-		if (error === null) setPassphrase("");
-	};
-	return { passphrase, setPassphrase, state, onSubmit };
-}
-
-function PassphraseFormQ({ onLogin }) {
-	const { Card, Stack } = window.UI;
-	const { passphrase, setPassphrase, state, onSubmit } = usePassphraseSubmitQ(onLogin);
-	return (
-		<Card title="Sign in to the queue">
-			<form onSubmit={onSubmit}>
-				<Stack gap="stack">
-					<label htmlFor="queue-passphrase" className="field-label">Passphrase</label>
-					<input id="queue-passphrase" type="password" autoComplete="current-password" className={`field${state.error ? " is-error" : ""}`}
-						value={passphrase} onChange={(event) => setPassphrase(event.target.value)} aria-invalid={state.error ? "true" : undefined}
-						aria-describedby={state.error ? "queue-passphrase-error" : undefined} />
-					{state.error && <div id="queue-passphrase-error" className="fs-meta text-crit" role="alert"><span aria-hidden="true">✕ </span>{state.error}</div>}
-					<button type="submit" className="btn primary self-start" disabled={state.isBusy || passphrase === ""}>Sign in</button>
-				</Stack>
-			</form>
-		</Card>
-	);
-}
-
-/** Login → null on success, else the message the form shows. */
-async function putLoginQ(passphrase) {
-	const answer = await sendOwnerRequestQ("/login", { passphrase });
-	if (answer.status >= 200 && answer.status < 300) return null;
-	if (answer.status === 401) return "Wrong passphrase.";
-	if (answer.status === 429) return `Too many attempts. Try again in ${answer.data?.retryAfterSeconds ?? "a few"} seconds.`;
-	if (isNotProvisionedQ(answer)) return SIGN_IN_COPY_Q.not_provisioned;
-	return getOutageStepQ(answer) ?? SIGN_IN_COPY_Q.refused;
 }
 
 function QueueListQ({ queue }) {
@@ -801,5 +653,5 @@ function RecentResumeListQ({ resumes }) {
 }
 
 window.ScreenQueue = ScreenQueue;
-// shell reads: the nav slot and the auth mapping its mount probe shares with this page
-window.QueueNav = { getQueueNavBadge, getAuthFromAnswerQ };
+// shell reads the nav slot
+window.QueueNav = { getQueueNavBadge };

@@ -42,10 +42,8 @@ const MAIN_CONTENT_ID = "main-content";
 const META_TEXT_STYLE = { fontSize: "var(--fs-meta)" };
 // circuit-breaker source for the Agents nav numeral — same cheap one-row read as the Dashboard's
 const AGENT_SUMMARY_URL = "/api/agents/summary?days=7&order=runs&limit=1";
-// queue nav numeral — count-only route, no owner auth
+// queue nav numeral — count-only route
 const QUEUE_COUNT_URL = "/api/queue/count";
-// one sign-in check at shell mount → the lock badge knows the state before the Queue screen opens; the check never renews the session
-const QUEUE_AUTH_PROBE_URL = "/api/queue/owner/session";
 
 // last page input → a route move rings only when a key caused it; a URL-bar or history move sends the page no input
 let lastInputKind = null;
@@ -139,7 +137,6 @@ function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 									>
 										{/* neutral shell + numeral, tone on the glyph only · description = what AT hears instead of the bare numeral */}
 										{b.glyph && <span aria-hidden="true" className={`text-${b.badgeTone}`}>{`${b.glyph} `}</span>}
-										{b.icon && <Icon name={b.icon} size={12} />}
 										<span aria-hidden={b.description ? "true" : undefined}>{b.badge}</span>
 										{b.description && <span className="sr-only">{`, ${b.description}`}</span>}
 									</span>
@@ -268,7 +265,6 @@ function App() {
 	const [hookFailState, setHookFailState] = useS(HARNESS_STORE_INITIAL);
 	const [agentsState, setAgentsState] = useS(HARNESS_STORE_INITIAL);
 	const [queueCountState, setQueueCountState] = useS(HARNESS_STORE_INITIAL);
-	const queueAuth = useQueueAuth();
 
 	// density 는 attribute 만 노출, CSS 매핑은 차후
 	useE(() => {
@@ -386,11 +382,11 @@ function App() {
 				Skip to content
 			</a>
 			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState}
-				queueBadges={window.QueueNav?.getQueueNavBadge(queueCountState, queueAuth.state) ?? {}} />
+				queueBadges={window.QueueNav?.getQueueNavBadge(queueCountState) ?? {}} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onQueueAuth={queueAuth.setState} />
+						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}
@@ -399,24 +395,6 @@ function App() {
 			<TweaksUI tweaks={tweaks} setTweak={setTweak} />
 		</div>
 	);
-}
-
-/**
- * Owner sign-in state for the queue lock badge: one probe at mount, then every Queue screen answer.
- * 'unknown' until the probe answers → no lock shown for a state not yet read.
- */
-function useQueueAuth() {
-	const [state, setState] = useS("unknown");
-	useE(() => {
-		let isMounted = true;
-		fetch(QUEUE_AUTH_PROBE_URL, { headers: { Accept: "application/json" } })
-			.then(async (response) => ({ status: response.status, data: await response.json().catch(() => null) }))
-			.then((answer) => isMounted && setState((prev) => (prev === "unknown" ? window.QueueNav?.getAuthFromAnswerQ(answer) ?? prev : prev)))
-			// no answer → the state stays unknown, so no lock is claimed for a sign-in state never read
-			.catch(() => undefined);
-		return () => { isMounted = false; };
-	}, []);
-	return { state, setState };
 }
 
 /**

@@ -103,7 +103,6 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
   return {
     calls,
     queue: {
-      auth: "in",
       busy: { id: null, error: null },
       resumes: READY_RESUMES,
       readResumes: record("readResumes"),
@@ -122,41 +121,26 @@ const buttonLabelled = (tree: RenderedNode, label: string) => findNodes(tree, (n
 describe("queue nav slot", () => {
   const ready = (awaiting: number, deviations: number) => ({ status: "ready", data: { awaiting, deviations, oldestAgeSeconds: 120 } });
   const rows = [
-    { name: "a count never read gives no slot, so no zero that was not loaded", countState: { status: "loading" }, auth: "in", expected: undefined },
-    { name: "an unread count shows a question mark rather than a blank badge", countState: { status: "error" }, auth: "in", expected: ["?"] },
-    { name: "an unread count keeps the lock for a signed-out owner", countState: { status: "error" }, auth: "out", expected: ["?", "lock"] },
-    { name: "zero awaiting still shows the numeral", countState: ready(0, 0), auth: "in", expected: ["0"] },
-    { name: "a signed-out owner sees the same count plus a lock badge", countState: ready(3, 0), auth: "out", expected: ["3", "lock"] },
-    { name: "an unprovisioned passphrase also shows the lock", countState: ready(2, 1), auth: "not_provisioned", expected: ["2", "lock"] },
-    { name: "an unknown sign-in state claims no lock", countState: ready(2, 0), auth: "unknown", expected: ["2"] },
-    { name: "a count answer without numbers reads as unread", countState: { status: "ready", data: { rows: [] } }, auth: "in", expected: ["?"] },
+    { name: "a count never read gives no slot, so no zero that was not loaded", countState: { status: "loading" }, expected: undefined },
+    { name: "an unread count shows a question mark rather than a blank badge", countState: { status: "error" }, expected: ["?"] },
+    { name: "zero awaiting still shows the numeral", countState: ready(0, 0), expected: ["0"] },
+    { name: "a count with deviations shows the awaiting numeral alone", countState: ready(2, 1), expected: ["2"] },
+    { name: "a count answer without numbers reads as unread", countState: { status: "ready", data: { rows: [] } }, expected: ["?"] },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const slot = call<{ queue?: { badges: Array<{ badge: string; icon?: string }> } }>("getQueueNavBadge", row.countState, row.auth);
+      const slot = call<{ queue?: { badges: Array<{ badge: string; icon?: string }> } }>("getQueueNavBadge", row.countState);
       assert.deepEqual(slot.queue?.badges.map((badge) => badge.icon ?? badge.badge), row.expected);
     });
   }
 
   test("the deviation glyph rides the count only while a deviation is open", () => {
     const glyphOf = (deviations: number) =>
-      call<{ queue: { badges: Array<{ glyph?: string; description: string }> } }>("getQueueNavBadge", ready(4, deviations), "in").queue.badges[0];
+      call<{ queue: { badges: Array<{ glyph?: string; description: string }> } }>("getQueueNavBadge", ready(4, deviations)).queue.badges[0];
     assert.equal(glyphOf(0)?.glyph, undefined);
     assert.equal(glyphOf(2)?.glyph, (realUi.TONE_GLYPH as Record<string, string>).warn);
     assert.equal(glyphOf(2)?.description, "4 awaiting you, 2 deviations");
   });
-});
-
-describe("owner auth from an owner answer", () => {
-  const rows = [
-    { name: "401 signs the owner out", status: 401, data: { error: "unauthorized" }, expected: "out" },
-    { name: "a 503 naming not_provisioned means the passphrase is not set", status: 503, data: { error: "not_provisioned" }, expected: "not_provisioned" },
-    { name: "a 503 database outage leaves the sign-in state unchanged", status: 503, data: { error: "database_unavailable" }, expected: null },
-    { name: "a 503 with no body leaves the sign-in state unchanged", status: 503, data: null, expected: null },
-    { name: "a 2xx answer means signed in", status: 200, data: { ok: true }, expected: "in" },
-    { name: "a conflict leaves the state unchanged", status: 409, data: { error: "conflict" }, expected: null },
-  ];
-  for (const row of rows) test(row.name, () => assert.equal(call("getAuthFromAnswerQ", { status: row.status, data: row.data }), row.expected));
 });
 
 describe("Later", () => {
@@ -207,26 +191,17 @@ test("after Send the focus skips a card the active filter hides", async () => {
     setList: () => undefined,
     setDrafts: () => undefined,
     setFocus: (next: unknown) => focus.push(next),
-    putAuth: () => undefined,
     reload: () => undefined,
   });
   await actions.answerItem(1, { code: "R1" });
   assert.deepEqual(getPlain(focus), [{ id: 3 }]);
 });
 
-describe("signed out", () => {
-  test("a 401 shows the passphrase form in place of the list", () => {
-    const tree = render("QueueBodyQ", { queue: { ...buildQueue().queue, auth: "out", list: { status: "ready", data: null } } });
-    assert.equal(findNodes(tree, (node) => node.type === "PassphraseFormQ").length, 1);
-    assert.equal(findNodes(tree, (node) => node.type === "QueueListQ").length, 0);
-  });
-
-  test("card input held in page state reappears on the card after the sign-in", () => {
-    const { queue } = buildQueue({ drafts: { 41: { text: "keep the shadow DB" } } });
-    const tree = render("QueueCardQ", { item: buildItem(), queue });
-    const [field] = findNodes(tree, (node) => node.type === "textarea");
-    assert.equal(field?.props.value, "keep the shadow DB");
-  });
+test("card input held in page state reappears on the card after a re-render", () => {
+  const { queue } = buildQueue({ drafts: { 41: { text: "keep the shadow DB" } } });
+  const tree = render("QueueCardQ", { item: buildItem(), queue });
+  const [field] = findNodes(tree, (node) => node.type === "textarea");
+  assert.equal(field?.props.value, "keep the shadow DB");
 });
 
 describe("card state lines", () => {
@@ -435,7 +410,7 @@ describe("recent automatic resumes", () => {
     })) as ScreenModule;
     let region: unknown = realUi.INITIAL_REGION_STATE;
     const setResumes = (next: (prev: unknown) => unknown) => { region = next(region); };
-    await (module.getResumesQ as (deps: unknown) => Promise<void>)({ setResumes, putAuth: () => undefined });
+    await (module.getResumesQ as (deps: unknown) => Promise<void>)({ setResumes });
     assert.deepEqual(urls, ["/api/queue/owner/resumes"]);
     assert.deepEqual((getPlain(region) as { data: Array<{ item: { id: number } }> }).data.map((resume) => resume.item.id), [9]);
   });
@@ -473,7 +448,6 @@ describe("an owner action's answer", () => {
     })) as ScreenModule;
     let drafts: Record<string, unknown> = { ...draft };
     let busy: unknown = null;
-    const auth: unknown[] = [];
     const counts = { reload: 0 };
     const isDone = await (module.sendActionQ as (deps: unknown) => Promise<boolean>)({
       id: 41,
@@ -481,10 +455,9 @@ describe("an owner action's answer", () => {
       body: { code: "R2", text: "keep the shadow DB" },
       setBusy: (next: unknown) => { busy = next; },
       setDrafts: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { drafts = next(drafts); },
-      putAuth: (answer: { status: number }) => auth.push(answer.status),
       reload: () => { counts.reload += 1; },
     });
-    return { isDone, drafts: getPlain(drafts), busy: getPlain(busy), auth, posts: getPlain(posts), reloads: counts.reload };
+    return { isDone, drafts: getPlain(drafts), busy: getPlain(busy), posts: getPlain(posts), reloads: counts.reload };
   };
 
   test("a taken answer posts the card's body, clears its draft and re-reads the list", async () => {
@@ -496,7 +469,12 @@ describe("an owner action's answer", () => {
   });
 
   const refusals = [
-    { name: "a 401 keeps the draft for the re-login, signs the owner out and shows no card error", status: 401, body: { error: "unauthorized" }, error: null },
+    {
+      name: "a page-origin refusal keeps the draft and shows on the card",
+      status: 403,
+      body: { error: "forbidden" },
+      error: { id: 41, message: "The monitor refused this action. Refresh and try again." },
+    },
     {
       name: "a refusal keeps the draft and shows the reason on the card",
       status: 400,
@@ -509,67 +487,8 @@ describe("an owner action's answer", () => {
       const result = await run(row.status, row.body);
       assert.equal(result.isDone, false);
       assert.deepEqual(result.drafts, draft);
-      assert.deepEqual(result.auth, [row.status]);
       assert.deepEqual(result.busy, { id: null, error: row.error });
       assert.equal(result.reloads, 0);
-    });
-  }
-});
-
-describe("sign out", () => {
-  const run = async (status: number, body: unknown) => {
-    const posts: Array<{ url: string; body: unknown }> = [];
-    const module = (await loadScreenModule(QUEUE_SRC, {
-      window: { UI: uiStub() },
-      fetch: async (url: string, init: { body: string }) => {
-        posts.push({ url, body: JSON.parse(init.body) });
-        return { status, json: async () => body };
-      },
-    })) as ScreenModule;
-    const auth: number[] = [];
-    const error = await (module.deleteSessionQ as (putAuth: unknown) => Promise<string | null>)((answer: { status: number }) => auth.push(answer.status));
-    return { error, auth, posts: getPlain(posts) };
-  };
-
-  const rows = [
-    { name: "an ended session signs the owner out", status: 200, body: { ok: true }, auth: [401], error: null },
-    { name: "a session already gone also reads signed out", status: 401, body: { error: "unauthorized" }, auth: [401], error: null },
-    { name: "a database outage keeps the owner signed in and names the outage", status: 503, body: { error: "database_unavailable" }, auth: [503], error: "outage" },
-    { name: "a refusal keeps the owner signed in and says so", status: 403, body: { error: "forbidden" }, auth: [403], error: "The monitor refused the sign-out. Reload the page, then try again." },
-  ];
-  for (const row of rows) {
-    test(row.name, async () => {
-      const result = await run(row.status, row.body);
-      assert.deepEqual(result.posts, [{ url: "/api/queue/owner/logout", body: {} }]);
-      assert.deepEqual(result.auth, row.auth);
-      if (row.error === "outage") assert.equal(result.error, call("getOutageStepQ", { status: row.status, data: row.body }));
-      else assert.equal(result.error, row.error);
-    });
-  }
-
-  const headerActions = (auth: string, signOut: () => unknown = () => null) => {
-    const [header] = findNodes(render("QueueHeaderQ", { queue: { auth, reload: () => undefined, signOut, list: { status: "ready", data: null, readAt: null }, resumes: READY_RESUMES } }), (node) => node.props?.atom === "PageHeader");
-    const actions = header?.props.actions;
-    return actions ? (renderScreen(actions) as RenderedNode) : null;
-  };
-
-  test("a signed-in header offers Sign out, and its click ends the session", async () => {
-    let calls = 0;
-    const tree = headerActions("in", () => { calls += 1; return Promise.resolve(null); });
-    const [button] = tree ? buttonLabelled(tree, "Sign out") : [];
-    await (button?.props.onClick as () => Promise<void>)();
-    assert.equal(calls, 1);
-  });
-
-  const signedOutRows = [
-    { name: "signed out", auth: "out" },
-    { name: "not provisioned", auth: "not_provisioned" },
-    { name: "not yet read", auth: "unknown" },
-  ];
-  for (const row of signedOutRows) {
-    test(`no Sign out while ${row.name}`, () => {
-      const tree = headerActions(row.auth);
-      assert.equal(tree === null ? 0 : buttonLabelled(tree, "Sign out").length, 0);
     });
   }
 });
@@ -629,8 +548,6 @@ describe("the queue page spaces on role keys only", () => {
   const states = [
     { name: "a loaded list with cards, the banner and Show more", node: () => render("QueueListQ", { queue: { ...buildQueue().queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } }) },
     { name: "a card with a refusal", node: () => render("QueueCardQ", { item: data.items[0], queue: buildQueue({ busy: { id: null, error: { id: 1, message: "Refused: x." } } }).queue }) },
-    { name: "the sign-in form", node: () => render("PassphraseFormQ", { onLogin: async () => null }) },
-    { name: "the setup card", node: () => render("LoginFormQ", { auth: "not_provisioned", onLogin: async () => null }) },
   ];
   for (const row of states) {
     test(row.name, () => {
@@ -752,7 +669,7 @@ describe("Show more", () => {
     const setList = (next: unknown) => {
       list = typeof next === "function" ? (next as (prev: unknown) => Record<string, unknown>)(list) : (next as Record<string, unknown>);
     };
-    await (module.getMoreQ as (deps: unknown) => Promise<void>)({ list, setList, putAuth: () => undefined });
+    await (module.getMoreQ as (deps: unknown) => Promise<void>)({ list, setList });
     const data = getPlain(list.data) as { items: Array<{ id: number }>; nextCursor: number | null };
     assert.match(urls[0] ?? "", /[?&]after=12(&|$)/);
     assert.deepEqual(data.items.map((item) => item.id), [1, 2, 3]);
@@ -770,7 +687,7 @@ describe("list read", () => {
     const setList = (next: unknown) => {
       list = typeof next === "function" ? (next as (prev: unknown) => Record<string, unknown>)(list) : (next as Record<string, unknown>);
     };
-    await (module.getListQ as (deps: unknown) => Promise<void>)({ setList, putAuth: () => undefined });
+    await (module.getListQ as (deps: unknown) => Promise<void>)({ setList });
     return list;
   };
 
@@ -784,10 +701,11 @@ describe("list read", () => {
     assert.equal(list.data, null);
   });
 
+  // no sign-in state to hand a refusal to → every refused read is a failure with Retry
   const refusals = [
     { name: "a 503 database outage is a read failure with Retry", status: 503, body: { error: "database_unavailable" }, expected: "error" },
-    { name: "a 503 naming not_provisioned hands the page to the setup card", status: 503, body: { error: "not_provisioned" }, expected: "ready" },
-    { name: "a 401 hands the page to the sign-in form", status: 401, body: { error: "unauthorized" }, expected: "ready" },
+    { name: "a 503 with any other code is a read failure with Retry", status: 503, body: { error: "not_provisioned" }, expected: "error" },
+    { name: "a 401 is a read failure with Retry", status: 401, body: { error: "unauthorized" }, expected: "error" },
   ];
   for (const row of refusals) test(row.name, async () => assert.equal((await read(row.status, row.body)).status, row.expected));
 });
@@ -816,7 +734,7 @@ describe("one outage reads one way across the page", () => {
     const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: realUi }, fetch: fetchFor(answer) })) as ScreenModule;
     let region = realUi.INITIAL_REGION_STATE as { error: unknown };
     const setResumes = (next: (prev: unknown) => typeof region) => { region = next(region); };
-    await (module.getResumesQ as (deps: unknown) => Promise<void>)({ setResumes, putAuth: () => undefined });
+    await (module.getResumesQ as (deps: unknown) => Promise<void>)({ setResumes });
     const element = realUiReact.createElement(realUi.RegionUnavailable, { source: "recent automatic resumes", error: region.error });
     return collectText(renderScreen(element) as RenderedNode);
   };
@@ -832,22 +750,19 @@ describe("one outage reads one way across the page", () => {
   }
 
   for (const row of outages) {
-    test(`a sign-in and an owner action on the same outage give the card's next step: ${row.name}`, async () => {
+    test(`an owner action on the same outage gives the card's next step: ${row.name}`, () => {
       const { failure } = getCard(row.answer);
-      const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() }, fetch: fetchFor(row.answer) })) as ScreenModule;
-      assert.equal(await (module.putLoginQ as (passphrase: string) => Promise<string | null>)("owner passphrase"), failure.next);
       assert.equal(call("getActionErrorQ", row.answer), failure.next);
     });
   }
 
-  // sign-in and action lines carry no Details → an unanswered request in any browser wording reads as the server not answering
-  test("a sign-in and an owner action on an unanswered request in unrecognised browser wording name the server, never Details", async () => {
+  // action lines carry no Details → an unanswered request in any browser wording reads as the server not answering
+  test("an owner action on an unanswered request in unrecognised browser wording names the server, never Details", () => {
     const answer = { status: 0, data: null, error: new TypeError("The network connection was lost.") };
     const { next } = getCard(outages[0].answer).failure;
-    const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() }, fetch: fetchFor(answer) })) as ScreenModule;
-    const lines = [await (module.putLoginQ as (passphrase: string) => Promise<string | null>)("owner passphrase"), call<string>("getActionErrorQ", answer)];
-    assert.deepEqual(lines, [next, next]);
-    assert.doesNotMatch(lines.join(" "), /Details/);
+    const line = call<string>("getActionErrorQ", answer);
+    assert.equal(line, next);
+    assert.doesNotMatch(line, /Details/);
   });
 
   test("a database outage names the database on the card and in the region", async () => {
@@ -856,20 +771,6 @@ describe("one outage reads one way across the page", () => {
     assert.match(await getRegionText(answer), /database/);
   });
 
-  const signIns = [
-    {
-      name: "a sign-in on a queue with no passphrase names the setup script",
-      answer: { status: 503, data: { error: "not_provisioned" } },
-      expected: "The queue is not set up. Run the queue setup script once in a terminal, then reload this page.",
-    },
-    { name: "a refused sign-in asks for a reload", answer: { status: 415, data: null }, expected: "The monitor refused the request. Reload the page, then try again." },
-  ];
-  for (const row of signIns) {
-    test(row.name, async () => {
-      const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() }, fetch: fetchFor(row.answer) })) as ScreenModule;
-      assert.equal(await (module.putLoginQ as (passphrase: string) => Promise<string | null>)("owner passphrase"), row.expected);
-    });
-  }
 });
 
 describe("page header freshness", () => {
@@ -877,7 +778,7 @@ describe("page header freshness", () => {
   const list = (overrides: Record<string, unknown> = {}) => ({ status: "ready", data: { items: [] }, error: null, readAt: readAt(), ...overrides });
   const resumes = (overrides: Record<string, unknown> = {}) => ({ ...READY_RESUMES, ...overrides });
   const getHeader = (queue: Record<string, unknown>) => {
-    const [header] = findNodes(render("QueueHeaderQ", { queue: { auth: "in", reload: () => undefined, ...queue } }), (node) => node.props?.atom === "PageHeader");
+    const [header] = findNodes(render("QueueHeaderQ", { queue: { reload: () => undefined, ...queue } }), (node) => node.props?.atom === "PageHeader");
     const freshness = header?.props.freshness as { props: Record<string, unknown> };
     const refresh = header?.props.refresh as { props: Record<string, unknown> };
     const stamp = collectText(renderScreen(realUiReact.createElement(realUi.FreshnessStamp, freshness.props)) as RenderedNode);
@@ -889,7 +790,6 @@ describe("page header freshness", () => {
     { name: "a failed list read beside a good resume read reads Partial", queue: { list: list({ status: "error", error: { detail: "HTTP 500" } }), resumes: resumes() }, stamp: /Partial/, isBusy: false },
     { name: "a resume read in flight keeps Refresh busy", queue: { list: list(), resumes: resumes({ busy: true }) }, stamp: /^$/, isBusy: true },
     { name: "both reads landed shows no stamp", queue: { list: list(), resumes: resumes() }, stamp: /^$/, isBusy: false },
-    { name: "signed out, the refused resume read is not a failure", queue: { auth: "out", list: list(), resumes: resumes({ data: null, status: "error", error: "HTTP 401 unauthorized" }) }, stamp: /^$/, isBusy: false },
   ];
   for (const row of rows) {
     test(row.name, () => {

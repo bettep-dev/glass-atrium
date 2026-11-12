@@ -265,6 +265,21 @@ test("the shell mounts at once, without waiting for the health read", async () =
   assert.equal(mounted.length, 1, "one root render while /api/health is still pending");
 });
 
+// the queue has no sign-in → the shell reads only the count route, never an owner route
+test("the shell reads no owner queue route on mount", async () => {
+  const urls: string[] = [];
+  const { render } = await mountShell({
+    fetch: (url) => {
+      urls.push(url);
+      return new Promise(() => undefined);
+    },
+  });
+  render();
+
+  assert.ok(urls.includes("/api/queue/count"), urls.join(", "));
+  assert.deepEqual(urls.filter((url) => url.startsWith("/api/queue/owner")), []);
+});
+
 test("a timezone arriving on the health read re-keys the page, so every time string re-renders in it", async () => {
   const health = { ok: true, json: async () => ({ timezone: "America/New_York" }) };
   const { render } = await mountShell({
