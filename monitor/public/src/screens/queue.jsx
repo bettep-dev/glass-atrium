@@ -585,11 +585,21 @@ function QueueCardQ({ item, queue, cliPath }) {
 						: <ReportBodyQ item={item} draft={draft} onDraft={(patch) => queue.setDraft(item.id, patch)} />}
 					<CardStateQ item={item} cliPath={cliPath} />
 					<CardActionsQ item={item} draft={draft} queue={queue} isBusy={isBusy} />
-					{error && <div className="fs-meta text-crit" role="alert"><span aria-hidden="true">✕ </span>{error}</div>}
+					{error && <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ>}
 					{item.resumes.length > 0 && <ResumeRecordListQ resumes={item.resumes} profileLabel={item.session.profileLabel} />}
 				</Stack>
 			</Card>
 		</section>
+	);
+}
+
+// one-line note led by its tone glyph → the tone survives without colour; an error line is toned whole
+function ToneLineQ({ tone, role, isTextToned = false, children }) {
+	return (
+		<p className={isTextToned ? `fs-meta text-${tone}` : "fs-meta"} role={role}>
+			<span aria-hidden="true" className={`text-${tone}`}>{`${window.UI.TONE_GLYPH[tone]} `}</span>
+			{children}
+		</p>
 	);
 }
 
@@ -676,12 +686,7 @@ function CardStateQ({ item, cliPath }) {
 	return (
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
-			{item.deviation && (
-				<p className="fs-meta">
-					<span aria-hidden="true" className="text-warn">{`${window.UI.TONE_GLYPH.warn} `}</span>
-					{DEVIATION_LABEL_Q[item.deviation] ?? item.deviation}
-				</p>
-			)}
+			{item.deviation && <ToneLineQ tone="warn">{DEVIATION_LABEL_Q[item.deviation] ?? item.deviation}</ToneLineQ>}
 			{PULL_DEVIATIONS_Q.has(item.deviation) && cliPath && (
 				<p className="fs-meta text-dim">Run in that session: <MachineString>{`${getShellWordQ(cliPath)} pending`}</MachineString></p>
 			)}
@@ -705,12 +710,7 @@ function AnswerLineQ({ item }) {
 	const line = getAnswerLineQ(item);
 	if (line === null) return null;
 	if (!line.isOutside) return <p className="fs-meta text-dim">{line.text}</p>;
-	return (
-		<p className="fs-meta">
-			<span aria-hidden="true" className="text-warn">{`${window.UI.TONE_GLYPH.warn} `}</span>
-			{line.text}
-		</p>
-	);
+	return <ToneLineQ tone="warn">{line.text}</ToneLineQ>;
 }
 
 function getNoteKeyQ(parts) {
@@ -870,7 +870,7 @@ function SessionStateQ({ row }) {
 	);
 }
 
-// the one checkbox visual (base.css → .ctl-checkbox): the mark drawn over the 16 box, the label the 24 hit area
+// base.css → .ctl-checkbox visual: the mark drawn over the 16 box, the label the 24 hit area
 function CheckboxQ({ isChecked, isDisabled = false, onChange, ariaLabel, children }) {
 	const { Icon } = window.UI;
 	return (
@@ -896,17 +896,16 @@ function MessageComposerQ({ targets, composer, onText, onSend, onClear }) {
 				<button type="button" className="btn primary" disabled={composer.isBusy || body === null} onClick={() => onSend(body)}>{getSendLabelQ(targets)}</button>
 				<button type="button" className="btn ghost" disabled={composer.isBusy} onClick={onClear}>Clear selection</button>
 			</Cluster>
-			{composer.error && <div className="fs-meta text-crit" role="alert"><span aria-hidden="true">✕ </span>{composer.error}</div>}
+			{composer.error && <ToneLineQ tone="crit" role="alert" isTextToned>{composer.error}</ToneLineQ>}
 		</Stack>
 	);
 }
 
 function SentNoticeQ({ count }) {
 	return (
-		<p className="fs-meta" role="status">
-			<span aria-hidden="true" className="text-ok">{`${window.UI.TONE_GLYPH.ok} `}</span>
+		<ToneLineQ tone="ok" role="status">
 			{`Sent to ${count} ${count === 1 ? "session" : "sessions"}: each message is a card in the queue, with its delivery state.`}
-		</p>
+		</ToneLineQ>
 	);
 }
 

@@ -618,6 +618,32 @@ describe("action refusal copy", () => {
   for (const row of rows) test(row.name, () => assert.equal(call("getActionErrorQ", row.answer), row.expected));
 });
 
+describe("refusal lines", () => {
+  const message = "Refused: the item changed state. Refresh to see where it is now.";
+  const rows = [
+    { name: "a refused card action", node: () => render("QueueCardQ", { item: buildItem({ id: 1 }), queue: buildQueue({ busy: { id: null, error: { id: 1, message } } }).queue }) },
+    {
+      name: "a refused send",
+      node: () =>
+        render("MessageComposerQ", {
+          targets: { ids: [SESSION_ID], endedCount: 0 },
+          composer: { text: "rebase on main", isBusy: false, error: message, sentCount: null },
+          onText: () => undefined,
+          onSend: () => undefined,
+          onClear: () => undefined,
+        }),
+    },
+  ];
+  for (const row of rows) {
+    test(`${row.name} is an alert led by the crit glyph, toned whole`, () => {
+      const alerts = findNodes(row.node(), (node) => node.props?.role === "alert" && /\btext-crit\b/.test(String(node.props?.className ?? "")));
+      assert.equal(alerts.length, 1, row.name);
+      const text = collectText(alerts[0] as RenderedNode);
+      assert.deepEqual([text.startsWith((realUi.TONE_GLYPH as Record<string, string>).crit), text.endsWith(message)], [true, true], text);
+    });
+  }
+});
+
 describe("queue filter bar", () => {
   const items = [
     buildItem({ id: 1, session: buildSession({ profileLabel: "work-dev" }) }),
