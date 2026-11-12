@@ -66,6 +66,8 @@ const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor hol
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null, sentCount: null });
+// the sheet holds no item and the owner has not handled everything
+const EMPTY_HOLD_Q = Object.freeze({ item: null, isHandled: false });
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
 const SESSION_COLUMNS_Q = [
@@ -305,6 +307,22 @@ function getSelectedIdQ(groups, hashItemId) {
 	return (named ?? rows[0])?.id ?? null;
 }
 
+/**
+ * What the sheet shows, `{ kind, id, item? }`: `item` the selected row's · `left` the open item it held, which the read no longer has open ·
+ * `handled` once the owner's acts left nothing open · `none` with no row. No item in the hash → the held item stays selected.
+ */
+function getSheetStateQ(groups, hashItemId, hold) {
+	if (hold.isHandled) return { kind: "handled", id: null };
+	const held = hold.item;
+	const named = hashItemId || (held === null ? "" : String(held.id));
+	const rows = groups.flatMap((group) => group.rows);
+	if (held !== null && named === String(held.id) && !rows.some((row) => row.id === held.id && row.item.status === "open")) {
+		return { kind: "left", id: held.id, item: held };
+	}
+	const id = getSelectedIdQ(groups, named);
+	return id === null ? { kind: "none", id: null } : { kind: "item", id, item: rows.find((row) => row.id === id).item };
+}
+
 function getVisibleItemsQ(items, filter) {
 	return items.filter(
 		(item) => (!filter.profile || item.session.profileLabel === filter.profile) && (!filter.session || item.session.id === filter.session),
@@ -364,14 +382,8 @@ function useQueueStateQ({ onRetryHarness }) {
 	const [filter, setFilter] = useFilterQ();
 	const [focus, setFocus] = useStateQ(null);
 	const [status, setStatus] = useStateQ("");
-	const [hashItemId, setHashItemId] = useStateQ(() => getHashStateQ().item);
 	const groups = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter));
-	const selectedId = getSelectedIdQ(groups, hashItemId);
-	const selectItem = useCallbackQ((id) => {
-		const value = id === null ? "" : String(id);
-		setHashItemId(value);
-		setHashStateQ({ item: value });
-	}, []);
+	const { sheet, selectItem } = useSheetQ(groups);
 	const sessions = useSessionsStateQ(filter.profile);
 	// sessions.read changes with the Account filter → a filter change re-reads the page
 	const reload = useCallbackQ(() => {
@@ -387,8 +399,29 @@ function useQueueStateQ({ onRetryHarness }) {
 	const selectRow = useCallbackQ((id) => { selectItem(id); setFocus({ id }); }, [selectItem]);
 	return {
 		list, resumes, readResumes, sessions, drafts, setDraft, filter, setFilter, reload, loadMore,
-		groups, selectedId, selectRow, status, ...actions,
+		groups, sheet, selectedId: sheet.id, selectRow, status, ...actions,
 	};
+}
+
+/**
+ * The sheet's selection and the open item it holds while that item is on it.
+ * selectItem(null) → all handled; any other selection → the owner moved on, so the held item goes.
+ */
+function useSheetQ(groups) {
+	const [hashItemId, setHashItemId] = useStateQ(() => getHashStateQ().item);
+	const [hold, setHold] = useStateQ(EMPTY_HOLD_Q);
+	const sheet = getSheetStateQ(groups, hashItemId, hold);
+	const shown = sheet.kind === "item" && sheet.item.status === "open" ? sheet.item : null;
+	useEffectQ(() => {
+		if (shown !== null) setHold((prev) => (prev.item === shown ? prev : { item: shown, isHandled: false }));
+	}, [shown]);
+	const selectItem = useCallbackQ((id) => {
+		const value = id === null ? "" : String(id);
+		setHashItemId(value);
+		setHashStateQ({ item: value });
+		setHold({ item: null, isHandled: id === null });
+	}, []);
+	return { sheet, selectItem };
 }
 
 /** Session list region, the ticked rows, Show ended and the message composer; the list follows the Account filter. */
@@ -546,7 +579,8 @@ function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatu
 		const nextId = getNextAwaitingIdQ(items, id);
 		if (!(await send(id, action, body))) return;
 		setStatus(getActionStatusQ(items.find((item) => item.id === id), action));
-		if (nextId === null) return;
+		// a later item is still open → it stays on the sheet; any other act with nothing open left → all handled
+		if (nextId === null) return action === "later" ? undefined : selectItem(null);
 		selectItem(nextId);
 		setFocus({ id: nextId });
 	}, [send, items, setFocus, setStatus, selectItem]);
@@ -647,10 +681,11 @@ function ListBodyQ({ queue, items, visible }) {
 	return <QueueListboxQ queue={queue} items={items} />;
 }
 
-// one tab stop: the selected row holds tabindex 0; Up / Down / Home / End move and select
+// one tab stop: the selected row holds tabindex 0, else the first row; Up / Down / Home / End move and select
 function QueueListboxQ({ queue, items }) {
 	const rows = queue.groups.flatMap((group) => group.rows);
-	const view = { isNameShown: !queue.filter.session, isAccountShown: new Set(items.map((item) => item.session.profileLabel)).size > 1 };
+	const tabStopId = rows.some((row) => row.id === queue.selectedId) ? queue.selectedId : rows[0]?.id;
+	const view = { isNameShown: !queue.filter.session, isAccountShown: new Set(items.map((item) => item.session.profileLabel)).size > 1, tabStopId };
 	const onKeyDown = (event) => {
 		const nextId = getKeyedRowIdQ(rows, queue.selectedId, event.key);
 		if (nextId === null) return;
@@ -693,7 +728,7 @@ function QueueRowQ({ row, isSelected, view, onSelect }) {
 	const { item } = row;
 	const facts = getRowFactsQ(row, view.isAccountShown);
 	return (
-		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={isSelected ? 0 : -1}
+		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={row.id === view.tabStopId ? 0 : -1}
 			aria-label={getRowLabelQ(row, facts, view.isNameShown)} className="queue-row" onClick={() => onSelect(row.id)}>
 			<span className="queue-row-title" title={item.title}>{item.title}</span>
 			<span className="queue-row-meta">
@@ -803,30 +838,38 @@ function FilterAxisTriggerQ({ axis, options, value, onPick }) {
 	return <window.UI.FilterTrigger axis={axis} value={label} options={options} chosenKeys={[value]} onPick={onPick} />;
 }
 
-/** The reading pane: the selected row as a one-page report; nothing selected → one collapsed line at the top of its column. */
+/** The reading pane: the selected item as a one-page report, or the item that just left the queue; else one collapsed line at the top of its column. */
 function QueueSheetQ({ queue }) {
 	const { Card, EmptyState } = window.UI;
-	const row = queue.groups.flatMap((group) => group.rows).find((candidate) => candidate.id === queue.selectedId);
-	if (row) return <ItemSheetQ key={row.id} item={row.item} queue={queue} cliPath={queue.list.data?.cliPath} />;
-	return (
-		<Card className="queue-sheet is-collapsed">
-			{queue.list.data !== null && <EmptyState message="Nothing selected" hint="Pick a row, or give an order." />}
-		</Card>
-	);
+	const { sheet } = queue;
+	if (sheet.kind === "item" || sheet.kind === "left") {
+		return <ItemSheetQ key={sheet.id} item={sheet.item} queue={queue} cliPath={queue.list.data?.cliPath} hasLeft={sheet.kind === "left"} />;
+	}
+	const state = sheet.kind === "handled"
+		? { message: "All handled", hint: getOnTheWayLineQ(queue.groups) }
+		: { message: "Nothing selected", hint: "Pick a row, or give an order." };
+	return <Card className="queue-sheet is-collapsed">{queue.list.data !== null && <EmptyState {...state} />}</Card>;
+}
+
+// the In delivery rows → `2 answers and orders are still on their way.`; none → no line
+function getOnTheWayLineQ(groups) {
+	const count = groups.find((group) => group.key === LIST_GROUPS_Q.inDelivery.key)?.rows.length ?? 0;
+	if (count === 0) return undefined;
+	return count === 1 ? "1 answer or order is still on its way." : `${count} answers and orders are still on their way.`;
 }
 
 /**
  * One item on the sheet: letterhead (kind, session, time), body (title, text, kind block, state lines), foot (the composer).
  * @param cliPath - the installed queue CLI the server resolved (GA_ROOT-aware)
  */
-function ItemSheetQ({ item, queue, cliPath }) {
+function ItemSheetQ({ item, queue, cliPath, hasLeft = false }) {
 	const { Card } = window.UI;
 	const draft = queue.drafts[item.id] ?? {};
 	const isBusy = queue.busy.id === item.id;
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
 	return (
 		<Card className="queue-pane queue-sheet" title={<LetterheadQ item={item} />} sub={<LetterheadFactsQ item={item} />} right={<LetterheadTimeQ item={item} />}
-			foot={<SheetFootQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />}>
+			foot={hasLeft ? <LeftQueueLineQ /> : <SheetFootQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />}>
 			<SheetBodyQ item={item} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} />
 		</Card>
 	);
@@ -1008,6 +1051,11 @@ function getNoteKeyQ(parts) {
 function NotePartsQ({ parts }) {
 	const { MachineString } = window.UI;
 	return <>{parts.map((part, index) => (typeof part === "string" ? part : <MachineString key={index}>{part.machine}</MachineString>))}</>;
+}
+
+// answered elsewhere, withdrawn or received while on the sheet → it stays until the owner moves on, with nothing left to send
+function LeftQueueLineQ() {
+	return <div className="queue-composer"><ToneLineQ tone="info">This item left the queue.</ToneLineQ></div>;
 }
 
 /** The sheet's foot: the composer in its decision or report use; an item already answered or sent → its buttons alone. */

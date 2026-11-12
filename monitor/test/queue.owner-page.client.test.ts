@@ -126,8 +126,10 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
 // the queue with a loaded list, its bands and the first row selected, as useQueueStateQ hands it to the desk
 function withList(queue: Record<string, unknown>, items: unknown[], nextCursor: number | null = null) {
   const groups = call<Array<{ rows: Array<{ id: number }> }>>("getGroupsQ", items);
-  return { ...queue, list: { status: "ready", data: { items, nextCursor } }, filter: { profile: "", session: "" }, setFilter: () => undefined, groups, selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
+  return { ...queue, list: { status: "ready", data: { items, nextCursor } }, filter: { profile: "", session: "" }, setFilter: () => undefined, groups, sheet: getSheet(groups, ""), selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
 }
+
+const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }>("getSheetStateQ", groups, hashId, { item: null, isHandled: false });
 
 // the Card atom's head and foot ride its props → rendered beside its body, so one tree holds the whole sheet
 function renderSheet(props: unknown): RenderedNode {
@@ -487,7 +489,7 @@ describe("screen", () => {
     assert.deepEqual(findNodes(list, (node) => node.props?.role === "option").map((node) => node.props.id), ["queue-row-1", "queue-row-2"]);
     assert.deepEqual(findNodes(list, (node) => node.props?.className === "queue-band").map((node) => collectText(node)), ["Decisions 1", "Reports 1"]);
     assert.equal(findNodes(list, (node) => node.props?.atom === "AlertCard").length, 0);
-    const sheet = render("QueueSheetQ", { queue: { ...queue, selectedId: 2 } });
+    const sheet = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "2") } });
     const [link] = findNodes(sheet, (node) => node.type === "a" && node.props.className === "prose-link");
     assert.equal(link?.props.href, "#clauded-docs?doc=43944");
   });
@@ -819,6 +821,84 @@ describe("selection", () => {
   ];
   for (const row of rows) test(row.name, () => assert.equal(call("getSelectedIdQ", groups, row.hashId), row.expected));
   test("an empty list selects nothing", () => assert.equal(call("getSelectedIdQ", [], ""), null));
+});
+
+describe("what the sheet shows", () => {
+  const held = buildItem({ id: 3 });
+  const arrived = buildItem({ id: 2 });
+  const answered = buildItem({ id: 3, status: "answered", answeredAt: "2026-11-12T12:20:00.000Z" });
+  const rows = [
+    { name: "an open item on the sheet that the read no longer holds stays on it as left the queue", items: [arrived], hashId: "3", expected: { kind: "left", id: 3 } },
+    { name: "a default-selected item that is answered elsewhere stays on the sheet as left the queue", items: [arrived, answered], hashId: "", expected: { kind: "left", id: 3 } },
+    { name: "a held item still open keeps the sheet when a new row arrives before it", items: [arrived, held], hashId: "", expected: { kind: "item", id: 3 } },
+    { name: "a row the owner selected replaces the held item", items: [arrived], hashId: "2", expected: { kind: "item", id: 2 } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, { item: held, isHandled: false });
+      assert.deepEqual({ kind: sheet.kind, id: sheet.id }, row.expected);
+    });
+  }
+
+  test("the owner's last open item handled leaves the sheet all handled", () => {
+    const sheet = call<{ kind: string; id: number | null }>("getSheetStateQ", call("getGroupsQ", [answered]), "", { item: null, isHandled: true });
+    assert.deepEqual({ kind: sheet.kind, id: sheet.id }, { kind: "handled", id: null });
+  });
+
+  test("an item that left the queue keeps its sheet, its foot one line and no composer", () => {
+    const { queue } = buildQueue();
+    const tree = render("QueueSheetQ", { queue: { ...withList(queue, [arrived]), sheet: { kind: "left", id: 3, item: held } } });
+    const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
+    const foot = renderScreen(card?.props.foot) as RenderedNode;
+    assert.equal(collectText(renderScreen(card?.props.title) as RenderedNode).includes("Decision"), true, "the held item's letterhead");
+    assert.equal(collectText(foot).replace(/\s+/g, " ").trim(), "ℹ This item left the queue.");
+    assert.equal(findNodes(foot, (node) => node.type === "button" || node.type === "textarea").length, 0);
+  });
+
+  const handledRows = [
+    { name: "all handled counts what is still on its way", items: [answered, buildItem({ id: 9, kind: "message", status: "answered", sendId: "s-9" })], hint: "2 answers and orders are still on their way." },
+    { name: "all handled says one thing on its way in the singular", items: [answered], hint: "1 answer or order is still on its way." },
+    { name: "all handled with nothing on its way carries no count line", items: [], hint: undefined },
+  ];
+  test("with no row on the sheet, the first row holds the list's one tab stop", () => {
+    const queue = withList(buildQueue().queue, [answered, buildItem({ id: 9, kind: "message", status: "answered", sendId: "s-9" })]);
+    const list = render("QueueListQ", { queue: { ...queue, sheet: { kind: "handled", id: null }, selectedId: null } });
+    assert.deepEqual(findNodes(list, (node) => node.props?.role === "option").map((node) => node.props.tabIndex), [0, -1]);
+  });
+
+  for (const row of handledRows) {
+    test(row.name, () => {
+      const queue = withList(buildQueue().queue, row.items);
+      const tree = render("QueueSheetQ", { queue: { ...queue, sheet: { kind: "handled", id: null } } });
+      const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
+      assert.deepEqual({ message: empty?.props.message, hint: empty?.props.hint }, { message: "All handled", hint: row.hint });
+    });
+  }
+});
+
+describe("after the owner acts on the last open item", () => {
+  const act = async (action: "answerItem" | "later") => {
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      fetch: async () => ({ status: 200, json: async () => ({ ok: true }) }),
+    })) as ScreenModule;
+    const selected: unknown[] = [];
+    const actions = (module.useQueueActionsQ as (deps: unknown) => Record<string, (id: number, body?: unknown) => Promise<void>>)({
+      list: { status: "ready", data: { items: [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" })], nextCursor: null } },
+      filter: { profile: "", session: "" },
+      setList: () => undefined,
+      setDrafts: () => undefined,
+      setFocus: () => undefined,
+      setStatus: () => undefined,
+      selectItem: (id: unknown) => selected.push(id),
+      reload: () => undefined,
+    });
+    await actions[action]!(1, { code: "R1" });
+    return selected;
+  };
+
+  test("an answer selects nothing, so the sheet says all handled", async () => assert.deepEqual(await act("answerItem"), [null]));
+  test("a later keeps the item selected, since it is still open", async () => assert.deepEqual(await act("later"), []));
 });
 
 describe("Show more", () => {
