@@ -6,18 +6,15 @@ import { getPrisma } from "../db.js";
 import type { PageOriginSignal } from "../request-guards.js";
 import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
-import { SESSION_ID_PREFIX_LENGTH, getCwdBasename, getCwdTail } from "./owner-views.js";
+import { SESSION_ID_PREFIX_LENGTH, type SessionName, getCwdTail, getSessionName } from "./owner-views.js";
 import { lockSessions } from "./registry.js";
 import { ITEM_TITLE_MAX, type MessageBody, type OwnerSessionsQuery } from "./schemas.js";
 
 const LIST_LIMIT = 200;
 
-export interface OwnerSessionRow {
+export interface OwnerSessionRow extends SessionName {
   id: string;
   sessionIdPrefix: string;
-  /** Registered name, else the start directory's basename. */
-  name: string;
-  isNameRegistered: boolean;
   profileLabel: string;
   cwd: string;
   cwdTail: string;
@@ -112,8 +109,7 @@ function toSessionRow(row: SessionListRow): OwnerSessionRow {
   return {
     id: row.id,
     sessionIdPrefix: row.id.slice(0, SESSION_ID_PREFIX_LENGTH),
-    name: row.name ?? getCwdBasename(row.cwd),
-    isNameRegistered: row.name !== null,
+    ...getSessionName(row),
     profileLabel: row.profileLabel,
     cwd: row.cwd,
     cwdTail: getCwdTail(row.cwd),

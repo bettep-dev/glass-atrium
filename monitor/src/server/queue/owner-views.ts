@@ -41,7 +41,13 @@ export type SkipReason =
   | { kind: "shared_worktree"; markedOccupants: MarkedOccupant[]; hasUnmarkedOccupant: boolean }
   | { kind: "in_flight" };
 
-export interface OwnerSessionView {
+/** One naming rule for every owner surface: the registered name, else the start directory's basename. */
+export interface SessionName {
+  name: string;
+  isNameRegistered: boolean;
+}
+
+export interface OwnerSessionView extends SessionName {
   id: string;
   profileLabel: string;
   cwd: string;
@@ -257,6 +263,7 @@ function toSessionView(session: QueueSession, lastResumeBgId: string | null): Ow
   const markedAt = session.resumeAwaitingRegisterAt;
   return {
     id: session.sessionId,
+    ...getSessionName(session),
     profileLabel: session.profileLabel,
     cwd: session.cwd,
     cwdTail: getCwdTail(session.cwd),
@@ -313,12 +320,16 @@ function toMarkedOccupant(facts: SessionFacts): MarkedOccupant {
   return { profileLabel: facts.profileLabel, cwdTail: getCwdTail(facts.cwd), sessionIdPrefix: facts.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH) };
 }
 
+export function getSessionName(session: { name: string | null; cwd: string }): SessionName {
+  return { name: session.name ?? getCwdBasename(session.cwd), isNameRegistered: session.name !== null };
+}
+
 export function getCwdTail(cwd: string): string {
   return getCwdSegments(cwd).slice(-2).join("/");
 }
 
 // cwd is an absolute realpath (queue_sessions_cwd_check) → "/" alone has no segment, shown as itself
-export function getCwdBasename(cwd: string): string {
+function getCwdBasename(cwd: string): string {
   return getCwdSegments(cwd).at(-1) ?? cwd;
 }
 
