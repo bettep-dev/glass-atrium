@@ -12,6 +12,7 @@ import {
   type QueueSession,
 } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import { ACKABLE } from "./delivery.js";
 import { isSocketDeliveryOn } from "./drift-guard.js";
 import { QueueRequestError } from "./errors.js";
 import { buildResumeInFlightSql } from "./resume-claim.js";
@@ -20,7 +21,7 @@ import type { OwnerListQuery, RecentResumesQuery } from "./schemas.js";
 const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
 const DEVIATION_STATUSES = new Set<QueueItemStatus>(["unacked", "held", "expired", "resume_pending"]);
 // Every state an answer leads to; open, seen and withdrawn carry no answer → never "answered outside"
-const ANSWERED_STATUSES = new Set<QueueItemStatus>(["answered", "delivering", "unacked", "held", "expired", "resume_pending", "delivered"]);
+const ANSWERED_STATUSES = new Set<QueueItemStatus>([...ACKABLE, "delivered"]);
 export const SESSION_ID_PREFIX_LENGTH = 8;
 
 export type Deviation = "unacked" | "held" | "expired" | "resume_pending" | "session_not_reachable" | "delivery_off";

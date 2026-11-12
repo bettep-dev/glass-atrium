@@ -15,7 +15,8 @@ const PULL = {
   BATCH_LIMIT: 20,
 } as const;
 
-const ACKABLE: QueueItemStatus[] = ["answered", "delivering", "unacked", "held", "expired", "resume_pending"];
+/** An answer or message in flight: answered and not yet acked (the owner session list counts these too). */
+export const ACKABLE: QueueItemStatus[] = ["answered", "delivering", "unacked", "held", "expired", "resume_pending"];
 // Every non-terminal state except delivering → the session retries once it has acked or the item moved on
 const WITHDRAWABLE: QueueItemStatus[] = ["open", "answered", "unacked", "held", "expired", "resume_pending"];
 

@@ -4,6 +4,7 @@
 import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import type { PageOriginSignal } from "../request-guards.js";
+import { ACKABLE } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { SESSION_ID_PREFIX_LENGTH, getCwdTail } from "./owner-views.js";
 import { lockSessions } from "./registry.js";
@@ -66,7 +67,7 @@ export async function getOwnerSessions(query: OwnerSessionsQuery): Promise<{ ses
       s."resume_awaiting_register_at" AS "markerSetAt",
       GREATEST(s."last_seen_at", max(i."asked_at")) AS "lastActivityAt",
       count(i."id") FILTER (WHERE i."status" = 'open')::int AS "awaiting",
-      count(i."id") FILTER (WHERE i."status" IN ('answered', 'delivering', 'unacked', 'held', 'expired', 'resume_pending'))::int AS "inDelivery"
+      count(i."id") FILTER (WHERE i."status"::text IN (${Prisma.join(ACKABLE)}))::int AS "inDelivery"
     FROM "monitor"."queue_sessions" s
     LEFT JOIN "monitor"."queue_items" i ON i."session_id" = s."session_id"
     WHERE ${profileFilter}
