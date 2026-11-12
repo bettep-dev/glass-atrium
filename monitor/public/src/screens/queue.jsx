@@ -10,7 +10,12 @@ const {
 } = React;
 
 const OWNER_API_Q = "/api/queue/owner";
-const LIST_Q = { LIMIT: 100, SOURCE: "the queue" };
+// MAX = the items read's own cap (schemas.ts → MAX_LIST_LIMIT)
+const LIST_Q = { LIMIT: 100, MAX: 200, SOURCE: "the queue" };
+const EMPTY_LIST_Q = Object.freeze({ status: "loading", data: null, error: null, readAt: null, newIds: [] });
+// the page's own re-read (spec §4.4): 15 s after the last read settles, 60 s once three in a row have failed
+const POLL_Q = { MS: 15_000, SLOW_MS: 60_000, SLOW_AFTER: 3 };
+const QUEUE_TITLE_Q = "Queue";
 const SESSION_PREFIX_LENGTH_Q = 8;
 const ROW_ID_PREFIX_Q = "queue-row-";
 const ORDER_ID_PREFIX_Q = "queue-order-";
@@ -65,7 +70,8 @@ const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null });
 // the history read's page and the pane bodies whose scroll the Orders mode keeps (a hidden box does not keep its own)
-const ORDERS_Q = { PAGE: 30, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
+// MAX = the history read's own cap (schemas.ts → ORDER_PAGE_LIMIT)
+const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
 const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null });
 // the sheet holds no item and the owner has not handled everything
 const EMPTY_HOLD_Q = Object.freeze({ item: null, isHandled: false });
@@ -102,6 +108,17 @@ let shotSeqQ = 0;
 function getQueueNavBadge(countState) {
 	const count = getCountBadgeQ(countState);
 	return count === null ? {} : { queue: { badges: [count] } };
+}
+
+/**
+ * The document title while the Queue page is open → a background tab shows what waits.
+ * Nothing awaiting, or a count not read → no count.
+ * @param appTitle - the monitor's own title, which the page's name leads
+ */
+function getQueueTitle(countState, appTitle) {
+	const awaiting = countState?.status === "ready" ? countState.data?.awaiting : null;
+	const title = `${QUEUE_TITLE_Q} · ${appTitle}`;
+	return Number.isInteger(awaiting) && awaiting > 0 ? `(${awaiting}) ${title}` : title;
 }
 
 // count slot alone: never read → null · failed or numberless read → "?"
@@ -336,9 +353,12 @@ function getVisibleItemsQ(items, filter) {
 	);
 }
 
-function ScreenQueue({ onRetryHarness }) {
+/**
+ * @param onReadQueueCount - the shell's count read (app.jsx) → the nav badge follows the page's own tick
+ */
+function ScreenQueue({ onRetryHarness, onReadQueueCount }) {
 	const { TypeScaleStyle } = window.UI;
-	const queue = useQueueStateQ({ onRetryHarness });
+	const queue = useQueueStateQ({ onRetryHarness, onReadQueueCount });
 	return (
 		<div className="queue-screen">
 			<TypeScaleStyle />
@@ -377,17 +397,29 @@ function isOrdersCloseKeyQ(event, isOpen) {
 	return isOpen && event.key === "Escape" && !event.defaultPrevented && !event.target?.closest?.('[role="dialog"]');
 }
 
-// stamp and Refresh read one region summary → a failed resume re-read beside a good list read shows Partial, never Fresh
+// Refresh is busy while any region reads; a failed resume or session read shows in its own region, not here
 function QueueHeaderQ({ queue }) {
-	const { PageHeader, FreshnessStamp, RefreshButton, getRegionSummary } = window.UI;
+	const { PageHeader, RefreshButton, getRegionSummary } = window.UI;
 	const regions = getShownRegionsQ(queue);
 	const { list } = queue;
 	return (
 		<PageHeader
-			title="Queue"
-			freshness={<FreshnessStamp at={list.readAt} regions={regions} />}
-			refresh={<RefreshButton onRefresh={queue.reload} isBusy={getRegionSummary(regions).isBusy} hasRead={list.readAt !== null} label="Refresh queue" />}
+			title={QUEUE_TITLE_Q}
+			freshness={<QueueFreshnessQ list={list} />}
+			refresh={<RefreshButton onRefresh={queue.refresh} isBusy={getRegionSummary(regions).isBusy} hasRead={list.readAt !== null} label="Refresh queue" />}
 		/>
+	);
+}
+
+// the page's own cadence · a failed read with rows on screen → since when they stand (spec §4.4); nothing loaded → the list card says it
+function QueueFreshnessQ({ list }) {
+	const { TONE_GLYPH, formatKstTime } = window.UI;
+	if (list.data === null || list.error === null) return <span className="fs-meta text-dim">{`Checks every ${POLL_Q.MS / 1000}s`}</span>;
+	return (
+		<span className="fs-meta">
+			<span aria-hidden="true" className="text-warn">{`${TONE_GLYPH.warn} `}</span>
+			{`Not updated · last read ${formatKstTime(list.readAt)}`}
+		</span>
 	);
 }
 
@@ -397,8 +429,8 @@ function getShownRegionsQ({ list, resumes, sessions }) {
 }
 
 /** Page state: the loaded list, its bands and selection, per-item drafts kept across re-reads, and the owner actions. */
-function useQueueStateQ({ onRetryHarness }) {
-	const [list, setList] = useStateQ({ status: "loading", data: null, error: null, readAt: null });
+function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
+	const [list, setList] = useStateQ(EMPTY_LIST_Q);
 	const [resumes, readResumes] = useRecentResumesQ();
 	const [drafts, setDrafts] = useStateQ({});
 	const [filter, setFilter] = useFilterQ();
@@ -407,26 +439,139 @@ function useQueueStateQ({ onRetryHarness }) {
 	const groups = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter));
 	const { sheet, selectItem } = useSheetQ(groups);
 	const sessions = useSessionsStateQ(filter.profile);
-	// sessions.read changes with the Account filter → a filter change re-reads the page
+	const readList = useListReadQ(list, setList);
+	// sessions.read changes with the Account filter → a filter change re-reads the page; an owner act's read runs after any read in flight
 	const reload = useCallbackQ(() => {
-		getListQ({ setList });
+		readList({ isMarked: true, isFresh: true });
 		readResumes();
 		sessions.read();
-	}, [readResumes, sessions.read]);
+		onReadQueueCount?.();
+	}, [readList, readResumes, sessions.read, onReadQueueCount]);
 	const loadMore = useCallbackQ(() => getMoreQ({ list, setList }), [list]);
 	useEffectQ(() => { reload(); }, [reload]);
 	useFocusRowQ(focus);
 	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatus, selectItem, reload, onRetryHarness });
 	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, selectedId: sheet.id, sendAction: actions.send, setStatus, reload });
+	const ticks = usePageTickQ({ setList, readList, readResumes, sessions, orders, setStatus, onReadQueueCount });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const setImages = useCallbackQ((id, update) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], images: update(prev[id]?.images ?? []) } })), []);
-	const selectRow = useCallbackQ((id) => { selectItem(id); setFocus({ id }); }, [selectItem]);
+	// selecting a row is the owner seeing it → its New mark goes
+	const selectRow = useCallbackQ((id) => {
+		selectItem(id);
+		setFocus({ id });
+		setList((prev) => ({ ...prev, newIds: prev.newIds.filter((other) => other !== id) }));
+	}, [selectItem]);
 	const openOrderRow = useOrderRowQ({ list, selectItem, sessions, orders });
 	const openReplyOrder = useReplyOrderQ({ sessions, orders });
 	return {
 		list, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, loadMore,
-		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, openReplyOrder, status, ...actions,
+		groups, sheet, selectedId: sheet.id, selectRow, openOrderRow, openReplyOrder, status, ...actions, ...ticks,
 	};
+}
+
+// one list read at a time (getJoinedReadQ), merged into the list as it stands when the answer lands
+function useListReadQ(list, setList) {
+	const latestList = useRefQ(list);
+	latestList.current = list;
+	const flight = useRefQ(null);
+	return useCallbackQ(({ isMarked, isFresh = false }) => {
+		const start = () => getListQ({ setList, getList: () => latestList.current, isMarked });
+		return getJoinedReadQ(flight, start, isFresh);
+	}, [setList]);
+}
+
+/**
+ * The page's own tick (spec §4.4): the items, the sessions, the nav count and, with the Orders mode open, its thread.
+ * An arrival is said on the list's status line and, while the mode hides the list, in the order view's head.
+ * Refresh clears every New mark and joins the read in flight.
+ */
+function usePageTickQ({ setList, readList, readResumes, sessions, orders, setStatus, onReadQueueCount }) {
+	const [arrival, setArrival] = useStateQ([]);
+	useEffectQ(() => { setArrival([]); }, [orders.isOpen]);
+	const tick = useCallbackQ(async () => {
+		const [read] = await Promise.all([readList({ isMarked: true }), sessions.read(), onReadQueueCount?.(), orders.isOpen && orders.reread()]);
+		if (read.arrived.length > 0) {
+			setStatus(getArrivalNoteQ(read.arrived));
+			setArrival(read.arrived);
+		}
+		return read.isGood;
+	}, [readList, sessions.read, onReadQueueCount, orders.isOpen, orders.reread, setStatus]);
+	useAutoReadQ(tick);
+	const refresh = useCallbackQ(() => {
+		setList((prev) => ({ ...prev, newIds: [] }));
+		readResumes();
+		return Promise.all([readList({ isMarked: false }), sessions.read(), onReadQueueCount?.(), orders.isOpen && orders.reread()]);
+	}, [setList, readList, readResumes, sessions.read, onReadQueueCount, orders.isOpen, orders.reread]);
+	return { refresh, arrival };
+}
+
+/**
+ * Re-runs `tick` on the page's cadence while the page is mounted; a hidden tab keeps its timer at the browser's own throttle,
+ * and a tab shown again ticks at once when its last read is older than the step.
+ * @param tick - resolves true when the list read landed
+ */
+function useAutoReadQ(tick) {
+	const latestTick = useRefQ(tick);
+	latestTick.current = tick;
+	useEffectQ(() => {
+		const clock = createReadClockQ(() => latestTick.current());
+		const onShow = () => { if (document.visibilityState === "visible") clock.runIfStale(); };
+		document.addEventListener("visibilitychange", onShow);
+		return () => {
+			clock.stop();
+			document.removeEventListener("visibilitychange", onShow);
+		};
+	}, []);
+}
+
+// a timer chain → each tick schedules the next once it settles, and never two run at once
+function createReadClockQ(tick) {
+	const clock = { timer: null, settledAt: Date.now(), fails: 0, isBusy: false, isLive: true };
+	const run = async () => {
+		if (clock.isBusy) return;
+		clearTimeout(clock.timer);
+		clock.isBusy = true;
+		const isGood = await tick();
+		Object.assign(clock, { isBusy: false, settledAt: Date.now(), fails: isGood ? 0 : clock.fails + 1 });
+		if (clock.isLive) clock.timer = setTimeout(run, getPollDelayQ(clock.fails));
+	};
+	clock.timer = setTimeout(run, POLL_Q.MS);
+	return {
+		runIfStale: () => { if (isReadStaleQ(clock.settledAt, Date.now())) run(); },
+		stop: () => {
+			clock.isLive = false;
+			clearTimeout(clock.timer);
+		},
+	};
+}
+
+function getPollDelayQ(fails) {
+	return fails >= POLL_Q.SLOW_AFTER ? POLL_Q.SLOW_MS : POLL_Q.MS;
+}
+
+function isReadStaleQ(settledAt, now) {
+	return now - settledAt > POLL_Q.MS;
+}
+
+/**
+ * One read in flight: a read asked for meanwhile joins it; a fresh one — after an owner act the read in flight may predate — runs after it.
+ * @param flight - ref holding the read in flight, null when none
+ */
+function getJoinedReadQ(flight, start, isFresh = false) {
+	if (flight.current !== null && !isFresh) return flight.current;
+	const read = (flight.current ?? Promise.resolve()).then(() => start());
+	flight.current = read;
+	read.finally(() => {
+		if (flight.current === read) flight.current = null;
+	});
+	return read;
+}
+
+// one arrival by kind, session and title · several by count
+function getArrivalNoteQ(arrived) {
+	if (arrived.length !== 1) return `${arrived.length} new items`;
+	const [item] = arrived;
+	return `New ${item.kind} from ${getSessionNameQ(item.session)}: ${item.title}`;
 }
 
 // an order's row → the row selected for the return, its recipients ticked, the mode open at its entry
@@ -600,14 +745,14 @@ function useOrdersQ({ selectedIds, selectedId, sendAction, setStatus, reload }) 
 	const { isOpen, open, openAt, aim, close } = useOrdersOpenQ(selectedId);
 	const replyLink = useReplyLinkQ(isOpen);
 	const [composer, setComposer] = useStateQ(EMPTY_COMPOSER_Q);
-	const { thread, read, showEarlier } = useThreadQ(isOpen, selectedIds);
+	const { thread, read, showEarlier, reread } = useThreadQ(isOpen, selectedIds);
 	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
 	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
 	const setImages = useCallbackQ((update) => setComposer((prev) => ({ ...prev, images: update(prev.images ?? []) })), []);
 	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
 	const send = useCallbackQ((body, names, shots) => sendMessageQ({ body, names, shots, setComposer, setStatus, onSent }), [setStatus, onSent]);
 	const resend = useCallbackQ((ids) => putResendsQ(ids, sendAction, read), [sendAction, read]);
-	return { isOpen, open, openAt, aim, close, thread, read, showEarlier, composer, setText, putError, setImages, send, resend, ...replyLink };
+	return { isOpen, open, openAt, aim, close, thread, read, reread, showEarlier, composer, setText, putError, setImages, send, resend, ...replyLink };
 }
 
 // `openAt(id)` aims the thread at the order holding that copy (useThreadAimQ); the aim goes with the mode
@@ -670,35 +815,46 @@ function setPaneScrollsQ(root, scrolls) {
 }
 
 // first page on opening and on every tick change; a read for ticks since changed is dropped
-// ponytail: a re-read (a send, a resend, a tick) reads the first page again → loaded earlier pages go; upgrade = the 15 s re-read of loaded entries (P4)
+// ponytail: a send, a resend or a tick change reads the first page again → loaded earlier pages go; the page's tick (reread) keeps them
 function useThreadQ(isOpen, selectedIds) {
 	const [thread, setThread] = useStateQ(EMPTY_THREAD_Q);
 	const key = selectedIds.join(",");
 	const latest = useRefQ(key);
 	latest.current = key;
+	const latestThread = useRefQ(thread);
+	latestThread.current = thread;
 	const ids = key ? key.split(",") : [];
 	const isCurrent = () => latest.current === key;
 	const read = useCallbackQ(() => getThreadQ({ ids, before: null, setThread, isCurrent }), [key]);
 	useEffectQ(() => { if (isOpen) read(); }, [isOpen, read]);
 	const showEarlier = useCallbackQ(() => getThreadQ({ ids, before: thread.nextCursor, setThread, isCurrent }), [key, thread.nextCursor]);
-	return { thread, read, showEarlier };
+	const reread = useCallbackQ(() => getThreadQ({ ids, before: null, setThread, isCurrent, limit: getThreadLimitQ(latestThread.current.items), isQuiet: true }), [key]);
+	return { thread, read, showEarlier, reread };
 }
 
-/** One page of the history read: a first page replaces the thread, an earlier one joins it with a copy on both kept once. */
-async function getThreadQ({ ids, before, setThread, isCurrent = () => true }) {
-	setThread((prev) => ({ ...prev, status: "loading" }));
-	const answer = await sendOwnerRequestQ(`/orders?${getOrdersQueryQ(ids, before)}`);
+/**
+ * One page of the history read: a first page replaces the thread, an earlier one joins it with a copy on both kept once.
+ * @param isQuiet - the page's own re-read: no loading state, and a failure keeps the thread as it stands
+ */
+async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limit = ORDERS_Q.PAGE, isQuiet = false }) {
+	if (!isQuiet) setThread((prev) => ({ ...prev, status: "loading" }));
+	const answer = await sendOwnerRequestQ(`/orders?${getOrdersQueryQ(ids, before, limit)}`);
 	if (!isCurrent()) return;
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
 		const { items, nextCursor } = answer.data;
 		return setThread((prev) => ({ status: "ready", items: before === null ? items : putEarlierPageQ(prev.items, items), nextCursor: nextCursor ?? null, error: null }));
 	}
-	setThread((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
+	if (!isQuiet) setThread((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
+}
+
+// every loaded order, so a thread extended by Show earlier is not cut back, up to the read's cap
+function getThreadLimitQ(items) {
+	return Math.min(Math.max(ORDERS_Q.PAGE, getFoldedRowsQ(items).length), ORDERS_Q.MAX);
 }
 
 // no tick → the orders to every session
-function getOrdersQueryQ(ids, before) {
-	const query = new URLSearchParams({ limit: String(ORDERS_Q.PAGE) });
+function getOrdersQueryQ(ids, before, limit = ORDERS_Q.PAGE) {
+	const query = new URLSearchParams({ limit: String(limit) });
 	if (ids.length > 0) query.set("sessionIds", ids.join(","));
 	if (before) query.set("before", before);
 	return query.toString();
@@ -739,17 +895,51 @@ function useFilterQ() {
 	return [filter, setFilter];
 }
 
-async function getListQ({ setList }) {
-	setList((prev) => ({ ...prev, status: "loading" }));
-	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_Q.LIMIT}`);
+/**
+ * One read of the list, merged by item id into the list as it stands when the answer lands (getMergedDataQ).
+ * A failure with rows loaded keeps them and their read time; with none loaded it is the list's error state.
+ * @param getList - the list now; absent → nothing loaded
+ * @param isMarked - an arrival takes the New mark (every read but Refresh)
+ * @returns `{ isGood, arrived }` — `arrived` the items this read marked New, in server order
+ */
+async function getListQ({ setList, getList = () => EMPTY_LIST_Q, isMarked = false }) {
+	if (getList().data === null) setList((prev) => ({ ...prev, status: "loading" }));
+	const answer = await sendOwnerRequestQ(`/items?limit=${getListLimitQ(getList().data?.items.length ?? 0)}`);
+	const prev = getList();
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
-		return setList({ status: "ready", data: answer.data, error: null, readAt: new Date().toISOString() });
+		const { data, arrived } = getMergedDataQ(prev.data, answer.data);
+		const marked = isMarked ? arrived : [];
+		const kept = (prev.newIds ?? []).filter((id) => data.items.some((item) => item.id === id));
+		setList({ status: "ready", data, error: null, readAt: new Date().toISOString(), newIds: [...kept, ...marked.map((item) => item.id)] });
+		return { isGood: true, arrived: marked };
 	}
-	setList((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
+	const error = getReadFailureQ(answer);
+	setList(prev.data === null ? { ...prev, status: "error", error } : { ...prev, status: "ready", error });
+	return { isGood: false, arrived: [] };
+}
+
+// every loaded row, so a list extended by Show more is not cut back, up to the read's cap
+function getListLimitQ(loaded) {
+	return Math.min(Math.max(LIST_Q.LIMIT, loaded), LIST_Q.MAX);
+}
+
+/**
+ * The read merged by item id: a known row takes the read's state, a row the read no longer has leaves, a new one stands at its server position.
+ * Rows loaded past the read's last position (beyond its cap) stay with their cursor until a read reaches them.
+ * @returns `{ data, arrived }` — `arrived` the new open decisions and reports; the page's first read has none
+ */
+function getMergedDataQ(prev, answer) {
+	if (prev === null) return { data: answer, arrived: [] };
+	const known = new Set(prev.items.map((item) => item.id));
+	const read = new Set(answer.items.map((item) => item.id));
+	const beyond = answer.nextCursor === null ? [] : prev.items.filter((item) => !read.has(item.id) && item.queuePosition > answer.nextCursor);
+	const arrived = answer.items.filter((item) => !known.has(item.id) && item.status === "open" && (item.kind === "decision" || item.kind === "report"));
+	const nextCursor = beyond.length > 0 ? prev.nextCursor : answer.nextCursor;
+	return { data: { ...answer, items: [...answer.items, ...beyond], nextCursor }, arrived };
 }
 
 // Show more → the next page after the cursor joins the loaded list; a refused read → the page failure card with Retry
-// ponytail: a reload (Refresh, or after an answer) reads the first page again → Show more again past 100 items; upgrade = server-side filters
+// ponytail: a re-read covers the loaded rows up to the read's cap (getListLimitQ), rows past it keep their last state until reached; upgrade = server-side filters
 async function getMoreQ({ list, setList }) {
 	const cursor = list.data?.nextCursor;
 	if (cursor === null || cursor === undefined) return;
@@ -757,7 +947,7 @@ async function getMoreQ({ list, setList }) {
 	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_Q.LIMIT}&after=${cursor}`);
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
 		const append = (prev) => ({ ...prev.data, items: [...prev.data.items, ...answer.data.items], nextCursor: answer.data.nextCursor });
-		return setList((prev) => ({ status: "ready", data: append(prev), error: null, readAt: new Date().toISOString() }));
+		return setList((prev) => ({ ...prev, status: "ready", data: append(prev), error: null, readAt: new Date().toISOString() }));
 	}
 	setList((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
 }
@@ -919,22 +1109,30 @@ function QueueGroupQ({ group, queue, view }) {
 				{group.label}
 				<Badge role="count" fill="tag" title={hasMore ? `${count} loaded, more not loaded yet` : undefined}>{hasMore ? `${count}+` : count}</Badge>
 			</div>
-			{group.rows.map((row) => <QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} />)}
+			{group.rows.map((row) => (
+				<QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} isNew={queue.list.newIds.includes(row.id)} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} />
+			))}
 		</div>
 	);
 }
 
 // an order's row opens the Orders mode at it (spec §9.2); every other row opens on the sheet
-function QueueRowQ({ row, isSelected, view, onSelect, onOrder }) {
-	const { Icon, formatRelativeTime, formatKstDateTime } = window.UI;
+// an arrival not yet selected leads its meta line and its name with New (spec §4.4)
+function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder }) {
+	const { Icon, Badge, formatRelativeTime, formatKstDateTime } = window.UI;
 	const { item } = row;
 	const facts = getRowFactsQ(row, view.isAccountShown);
 	return (
 		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={row.id === view.tabStopId ? 0 : -1}
-			aria-label={getRowLabelQ(row, facts, view.isNameShown)} className="queue-row" onClick={() => (getKindWordQ(item) === "Order" ? onOrder(row) : onSelect(row.id))}>
+			aria-label={`${isNew ? "New, " : ""}${getRowLabelQ(row, facts, view.isNameShown)}`} className="queue-row"
+			onClick={() => (getKindWordQ(item) === "Order" ? onOrder(row) : onSelect(row.id))}>
 			<span className="queue-row-title" title={item.title}>{item.title}</span>
 			<span className="queue-row-meta">
-				<span className="queue-row-who">{view.isNameShown && <RowWhoQ row={row} />}</span>
+				<span className="queue-row-who">
+					{isNew && <Badge fill="solid">New</Badge>}
+					{isNew && view.isNameShown && " "}
+					{view.isNameShown && <RowWhoQ row={row} />}
+				</span>
 				<span className="queue-row-facts"><RowFactsQ facts={facts} /></span>
 				<span className="queue-row-age" title={formatKstDateTime(item.askedAt)}>{formatRelativeTime(item.askedAt)}</span>
 			</span>
@@ -1690,11 +1888,20 @@ function CheckboxBoxQ({ isChecked, isMixed = false, onChange, ariaLabel }) {
 /** The order view (spec §9.2): head Orders + Close, the To bar, the thread of the owner's orders, the composer in its order use. */
 function OrdersViewQ({ queue }) {
 	const { Card } = window.UI;
-	const { orders, sessions } = queue;
+	const { orders, sessions, arrival = [] } = queue;
 	const rows = sessions.region.data?.sessions ?? [];
 	// a file dropped anywhere on the card joins the order box
 	const zone = useDropZoneQ((files) => getTrayQ({ fieldId: ORDERS_Q.BOX_ID, box: getOrderBoxQ(queue) }).onFiles(files, false));
-	const close = <button type="button" className="btn ghost" title="Esc" onClick={orders.close}><span aria-hidden="true">{"✕ "}</span>Close</button>;
+	const onShow = () => {
+		orders.close();
+		queue.selectRow(arrival[0].id);
+	};
+	const close = (
+		<>
+			<OrdersArrivalQ arrived={arrival} onShow={onShow} />
+			<button type="button" className="btn ghost" title="Esc" onClick={orders.close}><span aria-hidden="true">{"✕ "}</span>Close</button>
+		</>
+	);
 	return (
 		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
 			<Card className="queue-orders-card" title="Orders" right={close} bar={<ToBarQ rows={rows} selectedIds={sessions.selectedIds} onClear={sessions.clear} />}
@@ -1702,6 +1909,20 @@ function OrdersViewQ({ queue }) {
 				<ThreadQ orders={orders} names={rows.filter((row) => sessions.selectedIds.includes(row.id)).map((row) => row.name)} />
 			</Card>
 		</section>
+	);
+}
+
+// an arrival while the mode hides the list (spec §4.4) → said in the head; Show closes the mode on the first arrived row
+function OrdersArrivalQ({ arrived, onShow }) {
+	const { Badge } = window.UI;
+	const [first] = arrived;
+	const text = arrived.length === 1 ? `${getKindWordQ(first)} from ${getSessionNameQ(first.session)}` : `${arrived.length} items`;
+	return (
+		<span role="status" className="fs-meta">
+			{first && <Badge fill="solid">New</Badge>}
+			{first && ` ${text} · `}
+			{first && <button type="button" className="btn ghost sm" onClick={onShow}>Show</button>}
+		</span>
 	);
 }
 
@@ -2284,4 +2505,4 @@ function RecentResumeListQ({ resumes }) {
 
 window.ScreenQueue = ScreenQueue;
 // shell reads the nav slot
-window.QueueNav = { getQueueNavBadge };
+window.QueueNav = { getQueueNavBadge, getQueueTitle };

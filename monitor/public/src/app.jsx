@@ -44,6 +44,8 @@ const META_TEXT_STYLE = { fontSize: "var(--fs-meta)" };
 const AGENT_SUMMARY_URL = "/api/agents/summary?days=7&order=runs&limit=1";
 // queue nav numeral — count-only route
 const QUEUE_COUNT_URL = "/api/queue/count";
+// index.html's own <title>, restored when a screen that names itself in the title is left
+const APP_TITLE = "Atrium Monitor";
 
 // last page input → a route move rings only when a key caused it; a URL-bar or history move sends the page no input
 let lastInputKind = null;
@@ -335,6 +337,18 @@ function App() {
 		};
 	}, [pollHarness]);
 
+	// the Queue page's own tick reads the count too → its nav badge follows the page's 15 s read, not the 60 s poll
+	const readQueueCount = useC(
+		() => Promise.allSettled([fetchJson(QUEUE_COUNT_URL)]).then(([queueCountRead]) => {
+			if (isHarnessMountedRef.current) setQueueCountState((prev) => toStoreState(queueCountRead, prev));
+		}),
+		[],
+	);
+	// a background Queue tab shows what waits in its title (screens/queue.jsx → getQueueTitle)
+	useE(() => {
+		document.title = active === "queue" && window.QueueNav ? window.QueueNav.getQueueTitle(queueCountState, APP_TITLE) : APP_TITLE;
+	}, [active, queueCountState]);
+
 	// shared Refresh/Retry → the shell's coalesced harness read (ui.jsx → getHarnessRead)
 	useE(() => {
 		window.UI.setShellBridge({ readHarness: pollHarness });
@@ -392,7 +406,7 @@ function App() {
 			<div className="flex-1 min-w-0 flex flex-col">
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} />
+						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}

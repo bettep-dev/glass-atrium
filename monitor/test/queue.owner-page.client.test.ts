@@ -129,7 +129,7 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
 // the queue with a loaded list, its bands and the first row selected, as useQueueStateQ hands it to the desk
 function withList(queue: Record<string, unknown>, items: unknown[], nextCursor: number | null = null) {
   const groups = call<Array<{ rows: Array<{ id: number }> }>>("getGroupsQ", items);
-  return { ...queue, list: { status: "ready", data: { items, nextCursor } }, filter: { profile: "", session: "" }, setFilter: () => undefined, groups, sheet: getSheet(groups, ""), selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
+  return { ...queue, list: { status: "ready", data: { items, nextCursor }, newIds: [] }, filter: { profile: "", session: "" }, setFilter: () => undefined, groups, sheet: getSheet(groups, ""), selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
 }
 
 const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }>("getSheetStateQ", groups, hashId, { item: null, isHandled: false });
@@ -167,6 +167,17 @@ describe("queue nav slot", () => {
     assert.equal(glyphOf(2)?.glyph, (realUi.TONE_GLYPH as Record<string, string>).warn);
     assert.equal(glyphOf(2)?.description, "4 awaiting you, 2 deviations");
   });
+
+  // a background tab shows what waits; a count of nothing, or one not read, adds nothing to the title
+  const titleRows = [
+    { name: "items awaiting lead the title with their count", countState: ready(7, 0), expected: "(7) Queue · Atrium Monitor" },
+    { name: "nothing awaiting leaves the count out", countState: ready(0, 0), expected: "Queue · Atrium Monitor" },
+    { name: "a count not read yet leaves the count out", countState: { status: "loading" }, expected: "Queue · Atrium Monitor" },
+    { name: "a failed count read leaves the count out", countState: { status: "error", data: { awaiting: 3, deviations: 0 } }, expected: "Queue · Atrium Monitor" },
+  ];
+  for (const row of titleRows) {
+    test(`document title: ${row.name}`, () => assert.equal(call("getQueueTitle", row.countState, "Atrium Monitor"), row.expected));
+  }
 });
 
 describe("Later", () => {
@@ -1008,6 +1019,160 @@ describe("list read", () => {
   for (const row of refusals) test(row.name, async () => assert.equal((await read(row.status, row.body)).status, row.expected));
 });
 
+describe("the page re-reads itself", () => {
+  const cadence = [
+    { name: "a good read keeps the 15 s step", fails: 0, expected: 15_000 },
+    { name: "two failed reads in a row keep the 15 s step", fails: 2, expected: 15_000 },
+    { name: "three failed reads in a row slow it to 60 s", fails: 3, expected: 60_000 },
+    { name: "more failed reads stay at 60 s", fails: 7, expected: 60_000 },
+  ];
+  for (const row of cadence) test(`cadence: ${row.name}`, () => assert.equal(call("getPollDelayQ", row.fails), row.expected));
+
+  const stale = [
+    { name: "a tab shown again reads at once when its last read is older than 15 s", age: 15_001, expected: true },
+    { name: "a tab shown again within 15 s of its last read waits for its timer", age: 14_999, expected: false },
+  ];
+  for (const row of stale) test(row.name, () => assert.equal(call("isReadStaleQ", 1_000_000, 1_000_000 + row.age), row.expected));
+
+  // the server takes up to 200 per read → a list extended by Show more is read whole up to that cap
+  const limits = [
+    { name: "a first page reads the page size", loaded: 0, expected: 100 },
+    { name: "a list extended by Show more reads every loaded row", loaded: 150, expected: 150 },
+    { name: "a list past the server's cap reads the cap", loaded: 350, expected: 200 },
+  ];
+  for (const row of limits) test(`read size: ${row.name}`, () => assert.equal(call("getListLimitQ", row.loaded), row.expected));
+
+  const merge = (prevItems: unknown[] | null, answerItems: unknown[], nextCursor: number | null = null, prevCursor: number | null = null) =>
+    call<{ data: { items: Array<{ id: number; status: string }>; nextCursor: number | null }; arrived: Array<{ id: number }> }>(
+      "getMergedDataQ", prevItems === null ? null : { items: prevItems, nextCursor: prevCursor }, { items: answerItems, nextCursor });
+
+  test("a known row takes the read's state, a gone row leaves, and a new decision or report arrives", () => {
+    const { data, arrived } = merge(
+      [buildItem({ id: 1 }), buildItem({ id: 2 })],
+      [buildItem({ id: 1, status: "answered" }), buildItem({ id: 3, kind: "report" }), buildItem({ id: 4 })],
+    );
+    assert.deepEqual(data.items.map((item) => [item.id, item.status]), [[1, "answered"], [3, "open"], [4, "open"]]);
+    assert.deepEqual(arrived.map((item) => item.id), [3, 4]);
+  });
+
+  test("the owner's own new order and the first read of the page are no arrivals", () => {
+    assert.deepEqual(merge([buildItem({ id: 1 })], [buildItem({ id: 1 }), buildItem({ id: 5, kind: "message", status: "answered" })]).arrived, []);
+    assert.deepEqual(merge(null, [buildItem({ id: 1 })]).arrived, []);
+  });
+
+  test("rows loaded past the read's last position stay, with their cursor, until a read reaches them", () => {
+    const loaded = [buildItem({ id: 1, queuePosition: 1 }), buildItem({ id: 2, queuePosition: 2 }), buildItem({ id: 9, queuePosition: 9 })];
+    const { data } = merge(loaded, [buildItem({ id: 1, queuePosition: 1 }), buildItem({ id: 3, queuePosition: 3 })], 3, 9);
+    assert.deepEqual(data.items.map((item) => item.id), [1, 3, 9]);
+    assert.equal(data.nextCursor, 9);
+  });
+
+  const readOnce = async (list: Record<string, unknown>, status: number, body: unknown, isMarked = true) => {
+    const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() }, fetch: async () => ({ status, json: async () => body }) })) as ScreenModule;
+    let current = list;
+    const setList = (next: unknown) => {
+      current = typeof next === "function" ? (next as (prev: unknown) => Record<string, unknown>)(current) : (next as Record<string, unknown>);
+    };
+    const result = await (module.getListQ as (deps: unknown) => Promise<{ isGood: boolean; arrived: Array<{ id: number }> }>)({ setList, getList: () => current, isMarked });
+    return { list: getPlain(current) as Record<string, unknown> & { data: { items: Array<{ id: number }> } | null; newIds: number[] }, result: getPlain(result) };
+  };
+  const loadedList = (overrides: Record<string, unknown> = {}) =>
+    ({ status: "ready", data: { items: [buildItem({ id: 1 })], nextCursor: null }, error: null, readAt: "2026-11-13T03:10:00.000Z", newIds: [], ...overrides });
+
+  test("a failed read with rows loaded keeps every row and its last read time, and says the read failed", async () => {
+    const { list, result } = await readOnce(loadedList(), 503, { error: "database_unavailable" });
+    assert.deepEqual(list.data?.items.map((item) => item.id), [1]);
+    assert.equal(list.status, "ready");
+    assert.equal(list.readAt, "2026-11-13T03:10:00.000Z");
+    assert.notEqual(list.error, null);
+    assert.equal(result.isGood, false);
+  });
+
+  test("a good read after a failed one clears the failure", async () => {
+    const { list, result } = await readOnce(loadedList({ error: { sentence: "x" } }), 200, { items: [buildItem({ id: 1 })], nextCursor: null });
+    assert.equal(list.error, null);
+    assert.equal(result.isGood, true);
+  });
+
+  test("an arrival is marked New and reported; an unmarked read reports none and marks none", async () => {
+    const answer = { items: [buildItem({ id: 1 }), buildItem({ id: 6 })], nextCursor: null };
+    const marked = await readOnce(loadedList({ newIds: [1] }), 200, answer);
+    assert.deepEqual(marked.list.newIds, [1, 6]);
+    assert.deepEqual(marked.result.arrived.map((item) => item.id), [6]);
+    const unmarked = await readOnce(loadedList(), 200, answer, false);
+    assert.deepEqual(unmarked.list.newIds, []);
+    assert.deepEqual(unmarked.result.arrived, []);
+  });
+
+  test("a New mark goes with its row when a read no longer has it", async () => {
+    const { list } = await readOnce(loadedList({ newIds: [1] }), 200, { items: [buildItem({ id: 2 })], nextCursor: null }, false);
+    assert.deepEqual(list.newIds, []);
+  });
+
+  const notes = [
+    { name: "one arrival names its kind, its session and its title", arrived: [buildItem({ session: buildSession({ name: "yoaida" }) })], expected: "New decision from yoaida: Pick the migration order" },
+    { name: "a report names itself a report", arrived: [buildItem({ kind: "report", title: "Nightly sweep done", session: buildSession({ name: "yoaida" }) })], expected: "New report from yoaida: Nightly sweep done" },
+    { name: "several arrivals are counted", arrived: [buildItem({ id: 1 }), buildItem({ id: 2 }), buildItem({ id: 3 })], expected: "3 new items" },
+  ];
+  for (const row of notes) test(`arrival note: ${row.name}`, () => assert.equal(call("getArrivalNoteQ", row.arrived), row.expected));
+
+  test("a read asked for while one is in flight joins it; a fresh one runs after it", async () => {
+    const flight = { current: null as Promise<unknown> | null };
+    const started: string[] = [];
+    const start = (label: string) => () => { started.push(label); return Promise.resolve(label); };
+    const join = screen.getJoinedReadQ as (flight: unknown, start: () => Promise<unknown>, isFresh?: boolean) => Promise<unknown>;
+    const first = join(flight, start("tick"));
+    const joined = join(flight, start("refresh"));
+    const fresh = join(flight, start("action"), true);
+    assert.deepEqual(await Promise.all([first, joined, fresh]), ["tick", "tick", "action"]);
+    assert.deepEqual(started, ["tick", "action"]);
+    assert.equal(flight.current, null);
+  });
+
+  test("each tick schedules the next once it settles: three failures in a row slow the chain, a good read restores the step", async () => {
+    const delays: number[] = [];
+    let due: (() => Promise<void>) | null = null;
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      setTimeout: (run: () => Promise<void>, ms: number) => { delays.push(ms); due = run; return delays.length; },
+      clearTimeout: () => undefined,
+    })) as ScreenModule;
+    const answers = [false, false, false, true];
+    (module.createReadClockQ as (tick: () => Promise<boolean | undefined>) => unknown)(async () => answers.shift());
+    for (let index = 0; index < 4; index += 1) await (due as unknown as () => Promise<void>)();
+    assert.deepEqual(delays, [15_000, 15_000, 15_000, 60_000, 15_000]);
+  });
+
+  const arrivalRows = [
+    { name: "one arrival in the Orders head names its kind and session", arrived: [buildItem({ session: buildSession({ name: "yoaida" }) })], text: "New Decision from yoaida · Show" },
+    { name: "several arrivals in the Orders head are counted", arrived: [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report" })], text: "New 2 items · Show" },
+    { name: "no arrival leaves the Orders head's status line empty", arrived: [], text: "" },
+  ];
+  for (const row of arrivalRows) {
+    test(row.name, () => {
+      const shown: unknown[] = [];
+      const tree = render("OrdersArrivalQ", { arrived: row.arrived, onShow: () => shown.push(true) });
+      const [line] = findNodes(tree, (node) => node.props?.role === "status");
+      assert.equal(collectText(line as RenderedNode).replace(/\s+/g, " ").trim(), row.text);
+      for (const button of buttonLabelled(tree, "Show")) (button.props.onClick as () => void)();
+      assert.equal(shown.length, row.arrived.length > 0 ? 1 : 0);
+    });
+  }
+
+  test("an arrived row carries the solid New badge at the start of its meta line, and its name leads with New", () => {
+    const row = call<{ id: number }>("getSingleRowQ", buildItem());
+    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+    const rowOf = (isNew: boolean) => {
+      const [option] = findNodes(render("QueueRowQ", { row, isSelected: false, isNew, view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
+      return { label: String(option?.props["aria-label"]), badges: findNodes(option as RenderedNode, (node) => node.props?.atom === "Badge" && node.props.fill === "solid").map((node) => collectText(node)) };
+    };
+    assert.deepEqual(rowOf(true).badges, ["New"]);
+    assert.match(rowOf(true).label, /^New, Decision from /);
+    assert.deepEqual(rowOf(false).badges, []);
+    assert.doesNotMatch(rowOf(false).label, /^New/);
+  });
+});
+
 describe("one outage reads one way across the page", () => {
   const outages = [
     { name: "no answer at all", answer: { status: 0, data: null, error: new TypeError("Failed to fetch") } },
@@ -1079,15 +1244,16 @@ describe("page header freshness", () => {
     const [header] = findNodes(render("QueueHeaderQ", { queue: { reload: () => undefined, sessions: buildSessions(), ...queue } }), (node) => node.props?.atom === "PageHeader");
     const freshness = header?.props.freshness as { props: Record<string, unknown> };
     const refresh = header?.props.refresh as { props: Record<string, unknown> };
-    const stamp = collectText(renderScreen(realUiReact.createElement(realUi.FreshnessStamp, freshness.props)) as RenderedNode);
+    const stamp = collectText(renderScreen(freshness) as RenderedNode).replace(/\s+/g, " ");
     return { stamp, isBusy: refresh.props.isBusy };
   };
 
+  // the freshness slot holds the page's own cadence; only a failed list read with rows on screen replaces it
   const rows = [
-    { name: "a failed resume re-read after a good read reads Partial", queue: { list: list(), resumes: resumes({ data: [], error: "HTTP 503 database_unavailable" }) }, stamp: /Partial/, isBusy: false },
-    { name: "a failed list read beside a good resume read reads Partial", queue: { list: list({ status: "error", error: { detail: "HTTP 500" } }), resumes: resumes() }, stamp: /Partial/, isBusy: false },
-    { name: "a resume read in flight keeps Refresh busy", queue: { list: list(), resumes: resumes({ busy: true }) }, stamp: /^$/, isBusy: true },
-    { name: "both reads landed shows no stamp", queue: { list: list(), resumes: resumes() }, stamp: /^$/, isBusy: false },
+    { name: "a failed resume re-read leaves the header on the page's cadence", queue: { list: list(), resumes: resumes({ data: [], error: "HTTP 503 database_unavailable" }) }, stamp: /^Checks every 15s$/, isBusy: false },
+    { name: "a failed list read with rows loaded says the page is not updated and when it last read", queue: { list: list({ data: { items: [] }, readAt: "2026-11-13T12:29:00.000Z", error: { detail: "HTTP 500" } }), resumes: resumes() }, stamp: /^⚠ Not updated · last read 21:29$/, isBusy: false },
+    { name: "a resume read in flight keeps Refresh busy", queue: { list: list(), resumes: resumes({ busy: true }) }, stamp: /^Checks every 15s$/, isBusy: true },
+    { name: "both reads landed shows the page's cadence", queue: { list: list(), resumes: resumes() }, stamp: /^Checks every 15s$/, isBusy: false },
   ];
   for (const row of rows) {
     test(row.name, () => {
