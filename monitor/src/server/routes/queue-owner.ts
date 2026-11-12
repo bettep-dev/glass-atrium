@@ -8,7 +8,7 @@ import { QueueRequestError } from "../queue/errors.js";
 import { putAnswer, putLater, putReply, putResend, putSeen } from "../queue/owner-items.js";
 import { getOwnerItemOrThrow, getOwnerItems, getRecentResumes } from "../queue/owner-views.js";
 import { createMessages, getOwnerSessions } from "../queue/owner-sessions.js";
-import { buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
+import { type PageOriginCarrier, buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
 import {
   answerBodySchema,
   emptyBodySchema,
@@ -18,7 +18,7 @@ import {
   recentResumesQuerySchema,
   replyBodySchema,
 } from "../queue/schemas.js";
-import { type PageOriginSignal, getPageOriginSignal } from "../request-guards.js";
+import type { PageOriginSignal } from "../request-guards.js";
 import type { QueueRouteOptions } from "./queue.js";
 import { type IdParams, handleItemRequest, handleParsed } from "./queue-request.js";
 
@@ -28,12 +28,11 @@ const OWNER_ROUTE_OPTIONS = { bodyLimit: 96 * 1024 } as const;
 type ItemTransition = (id: number) => Promise<void>;
 
 export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
-  const pageOrigins = getPageOrigins(options.port);
-  app.addHook("onRequest", buildPageOriginHook(pageOrigins));
+  app.addHook("onRequest", buildPageOriginHook(getPageOrigins(options.port)));
   registerReadRoutes(app, options.cliPath);
   registerRecentResumesRoute(app);
-  registerAnswerRoutes(app, pageOrigins);
-  registerSessionRoutes(app, pageOrigins);
+  registerAnswerRoutes(app);
+  registerSessionRoutes(app);
   registerTransitionRoute(app, "later", putLater);
   registerTransitionRoute(app, "seen", putSeen);
   registerTransitionRoute(app, "resend", putResend);
@@ -70,13 +69,13 @@ function registerRecentResumesRoute(app: FastifyInstance): void {
   );
 }
 
-function registerAnswerRoutes(app: FastifyInstance, pageOrigins: ReadonlySet<string>): void {
+function registerAnswerRoutes(app: FastifyInstance): void {
   app.post<{ Params: IdParams }>("/api/queue/owner/items/:id/answer", OWNER_ROUTE_OPTIONS, async (request, reply) =>
     handleItemRequest(request, reply, {
       route: "/api/queue/owner/items/:id/answer",
       schema: answerBodySchema,
       input: request.body,
-      work: (id, body) => putAnswer(id, body, getPageOriginSignalOrThrow(request, pageOrigins)).then(() => ({ ok: true })),
+      work: (id, body) => putAnswer(id, body, getPageOriginSignalOrThrow(request)).then(() => ({ ok: true })),
     }),
   );
   app.post<{ Params: IdParams }>("/api/queue/owner/items/:id/reply", OWNER_ROUTE_OPTIONS, async (request, reply) =>
@@ -84,12 +83,12 @@ function registerAnswerRoutes(app: FastifyInstance, pageOrigins: ReadonlySet<str
       route: "/api/queue/owner/items/:id/reply",
       schema: replyBodySchema,
       input: request.body,
-      work: (id, body) => putReply(id, body, getPageOriginSignalOrThrow(request, pageOrigins)).then(() => ({ ok: true })),
+      work: (id, body) => putReply(id, body, getPageOriginSignalOrThrow(request)).then(() => ({ ok: true })),
     }),
   );
 }
 
-function registerSessionRoutes(app: FastifyInstance, pageOrigins: ReadonlySet<string>): void {
+function registerSessionRoutes(app: FastifyInstance): void {
   app.get("/api/queue/owner/sessions", async (request, reply) =>
     handleParsed(request, reply, {
       route: "/api/queue/owner/sessions",
@@ -104,7 +103,7 @@ function registerSessionRoutes(app: FastifyInstance, pageOrigins: ReadonlySet<st
       schema: messageBodySchema,
       input: request.body,
       work: async (body) => {
-        const created = await createMessages(body, getPageOriginSignalOrThrow(request, pageOrigins));
+        const created = await createMessages(body, getPageOriginSignalOrThrow(request));
         (request as FastifyRequest & AuditChangeCarrier).auditChange = { itemIds: created.items.map((item) => item.id) };
         reply.code(201);
         return created;
@@ -125,9 +124,9 @@ function registerTransitionRoute(app: FastifyInstance, action: "later" | "seen" 
   );
 }
 
-// The page-origin hook already refused a request with no signal → null here is a wiring fault, still refused, never stamped
-function getPageOriginSignalOrThrow(request: FastifyRequest, pageOrigins: ReadonlySet<string>): PageOriginSignal {
-  const signal = getPageOriginSignal(request.headers, pageOrigins);
-  if (signal === null) throw new QueueRequestError(403, "not_page_origin", "the request is not from the monitor page");
+// The page-origin hook stamps every mutation it admits → no stamp is a wiring fault, still refused, never recorded
+function getPageOriginSignalOrThrow(request: FastifyRequest): PageOriginSignal {
+  const signal = (request as FastifyRequest & PageOriginCarrier).pageOriginSignal;
+  if (signal === undefined) throw new QueueRequestError(403, "not_page_origin", "the request is not from the monitor page");
   return signal;
 }
