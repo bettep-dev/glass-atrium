@@ -2915,12 +2915,12 @@ update_wire_hooks_post_apply() {
 #     loaded — a lazy import, or a launchd KeepAlive restart, fails until the recovery line
 #     has run; headless never kickstarts after a failure and CLI never restarts.
 update_install_monitor_deps() {
-  local paths monitor_dir needs_install=0
+  local paths monitor_dir should_install=0
   paths=$'\n'"${_update_apply_paths}"$'\n'
   monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
   # first arm wins → an install always regenerates; a schema/config change alone only regenerates
   case "${paths}" in
-    *$'\n'monitor/package-lock.json$'\n'* | *$'\n'monitor/package.json$'\n'*) needs_install=1 ;;
+    *$'\n'monitor/package-lock.json$'\n'* | *$'\n'monitor/package.json$'\n'*) should_install=1 ;;
     *$'\n'monitor/prisma/schema.prisma$'\n'* | *$'\n'monitor/prisma.config.ts$'\n'*) ;;
     *) return 0 ;;
   esac
@@ -2928,7 +2928,7 @@ update_install_monitor_deps() {
     update_log "deps: monitor dir absent (${monitor_dir}) — skipping the dependency step"
     return 0
   fi
-  if [[ "${needs_install}" -eq 1 ]]; then
+  if [[ "${should_install}" -eq 1 ]]; then
     update_monitor_npm_ci "${monitor_dir}"
   fi
   update_monitor_prisma_generate "${monitor_dir}"
