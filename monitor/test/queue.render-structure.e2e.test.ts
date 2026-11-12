@@ -8,6 +8,7 @@
 
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -19,9 +20,10 @@ import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
 import type { OwnerItemView } from "../src/server/queue/owner-views.js";
-import { ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
+import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
-  FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW, FIXTURE_SESSION_IDS, getArrivalFixture, getNotReceivedFixture, getRestFixture, type QueueFixture,
+  buildSentCopies, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW, FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture,
+  getEmptyFixture, getNotReceivedFixture, getOneReceivedFixture, getRestFixture, getUnreachableFixture, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,42 +40,215 @@ const VIEWPORTS = [
 type Viewport = (typeof VIEWPORTS)[number];
 
 /**
- * One named page state: `nn` and `name` follow the mockup's capture names (`<width>x<height>-<nn>-<name>.png`).
- * `setUp` drives the page as it is built today → each page stream rewrites the steps its change moves.
+ * One named page state: `nn` and `name` follow the mockup's capture names (`<width>x<height>-<nn>-<name>.png`, spec §18.4).
+ * `setUp` drives the page to the state and waits on what the state shows → a step the page no longer takes fails the capture.
+ * @property isClockDriven - the page's timers run on the test's clock, for the 15 s re-read
+ * @property isFirstLoad - captured before the first item read answers, without the setUp
  */
 interface QueueState {
   nn: string;
   name: string;
   getFixture?: () => QueueFixture;
-  setUp?: (page: Page) => Promise<void>;
+  setUp?: (page: Page, harness: Harness) => Promise<void>;
+  isClockDriven?: boolean;
+  isFirstLoad?: boolean;
 }
 
-const QUEUE_STATES: QueueState[] = [
+const NOTE_TEXT = "R2로 가되, 비교 평가 결과는 다음 보고에 붙여 주세요.";
+const REPLY_TEXT = "README 안내까지 끝나면 PR 병합 단계로 넘어가 주세요.";
+const ORDER_TO = ["gersona", "yoaida"];
+
+const DESK_STATES: QueueState[] = [
   { nn: "01", name: "rest" },
-  {
-    nn: "02", name: "decision-picked",
-    setUp: async (page) => {
-      await page.locator("#queue-row-103").click();
-      await page.locator("#queue-option-103-R2").check();
-      await page.locator("#queue-text-103").fill("R2로 가되, 비교 평가 결과는 다음 보고에 붙여 주세요.");
-    },
-  },
+  { nn: "02", name: "decision-picked", setUp: (page) => pickWithNote(page) },
   { nn: "03", name: "report", setUp: (page) => selectRow(page, 101) },
   {
     nn: "04", name: "rail-ticked",
     setUp: async (page) => {
-      await page.getByLabel("Order to gersona").check();
-      await page.getByLabel("Order to yoaida").check();
+      await tickSessions(page, ORDER_TO);
       await page.getByLabel("Order to yoaida").scrollIntoViewIfNeeded();
     },
   },
-  { nn: "09", name: "not-received", getFixture: getNotReceivedFixture, setUp: (page) => selectRow(page, 210) },
+  { nn: "11a", name: "restore-before", setUp: (page) => scrollDesk(page) },
+  {
+    nn: "11b", name: "restore-after",
+    setUp: async (page) => {
+      await scrollDesk(page);
+      await openOrders(page);
+      await page.getByRole("button", { name: "Close" }).click();
+      await page.locator(".queue-sheet").waitFor();
+    },
+  },
+  { nn: "17", name: "in-delivery-row", setUp: (page) => selectRow(page, 109) },
   { nn: "18", name: "answered-not-yet", setUp: (page) => selectRow(page, 108) },
+  { nn: "18b", name: "answered-not-received", getFixture: getAnswerNotReceivedFixture, setUp: (page) => selectRow(page, 108) },
+  {
+    nn: "19", name: "scope-and-tick",
+    setUp: async (page) => {
+      await page.locator(`[data-session="${FIXTURE_SESSION_IDS.gersona}"] .queue-rail-main`).click();
+      await tickSessions(page, ["yoaida"]);
+    },
+  },
+  { nn: "20", name: "arrival-on-desk", isClockDriven: true, setUp: (page, harness) => arriveItem(page, harness) },
+  { nn: "21b", name: "empty-queue", getFixture: getEmptyFixture },
+  { nn: "24", name: "first-load", isFirstLoad: true },
+  { nn: "26", name: "not-reachable", getFixture: getUnreachableFixture },
 ];
+
+const ORDER_STATES: QueueState[] = [
+  { nn: "05", name: "new-order-mode", setUp: (page) => openOrdersTo(page, ORDER_TO) },
+  { nn: "06", name: "order-with-images", setUp: (page) => typeOrderWithImages(page) },
+  { nn: "07", name: "just-sent", setUp: (page) => sendOrderWithImages(page) },
+  { nn: "08", name: "one-received", getFixture: getOneReceivedFixture, setUp: (page) => openOrdersTo(page, ORDER_TO) },
+  { nn: "09", name: "not-received", getFixture: getNotReceivedFixture, setUp: (page) => selectRow(page, 210) },
+  {
+    nn: "09b", name: "after-resend", getFixture: getNotReceivedFixture,
+    setUp: async (page) => {
+      await selectRow(page, 210);
+      await page.locator(".queue-orders").getByRole("button", { name: "Resend" }).first().click();
+      await page.locator(".queue-orders").getByText("Not received").waitFor({ state: "detached" });
+    },
+  },
+  {
+    nn: "10", name: "arrival-in-mode", isClockDriven: true,
+    setUp: async (page, harness) => {
+      await openOrdersTo(page, ORDER_TO);
+      await arriveItem(page, harness);
+    },
+  },
+  { nn: "12", name: "reply-from-report", setUp: (page) => orderFromReport(page) },
+  {
+    nn: "12b", name: "second-tick",
+    setUp: async (page) => {
+      await orderFromReport(page);
+      await tickSessions(page, ["gersona"]);
+    },
+  },
+  {
+    nn: "13", name: "image-viewer",
+    setUp: async (page) => {
+      await openOrdersTo(page, ["atrium"]);
+      await page.locator(".queue-bubble-image").nth(1).click();
+      await page.locator(".queue-viewer img").waitFor();
+    },
+  },
+  { nn: "14a", name: "refused-count", setUp: (page) => addOrderFiles(page, Array.from({ length: 9 }, (_, index) => getImageFile(index))) },
+  { nn: "14b", name: "refused-type", setUp: (page) => addOrderFiles(page, [{ name: "plan.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\n") }]) },
+  { nn: "14c", name: "refused-size", setUp: (page) => addOrderFiles(page, [{ ...getImageFile(0), name: "large.png", buffer: Buffer.concat([getImageFile(0).buffer, Buffer.alloc(11 * 1024 * 1024)]) }]) },
+  {
+    nn: "14d", name: "upload-failed",
+    setUp: async (page, harness) => {
+      harness.refusals.set("upload", { status: 500, body: { error: "server" } });
+      await addOrderFiles(page, [getImageFile(0)]);
+      await page.locator(".queue-thumb-failed").first().waitFor();
+    },
+  },
+  { nn: "14e", name: "file-hanging", setUp: (page) => hangFileOverComposer(page) },
+  { nn: "15", name: "report-order-image", setUp: (page) => typeReportOrder(page) },
+  {
+    nn: "15b", name: "report-order-sent",
+    setUp: async (page) => {
+      await typeReportOrder(page);
+      await page.locator(".queue-sheet").getByRole("button", { name: "Send order" }).click();
+      await page.locator(".queue-status", { hasText: "Order sent to yoaida" }).waitFor();
+    },
+  },
+  { nn: "16", name: "atrium-ticked", setUp: (page) => openOrdersTo(page, ["atrium"]) },
+  {
+    nn: "16b", name: "send-no-tick",
+    setUp: async (page) => {
+      await openOrders(page);
+      await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
+      await page.locator(".queue-orders").getByRole("button", { name: "Send order" }).click();
+      await page.locator(".queue-orders").getByText("Tick at least one session").waitFor();
+    },
+  },
+  { nn: "21c", name: "empty-thread", getFixture: getEmptyFixture, setUp: (page) => openOrdersTo(page, ["aidl"]) },
+];
+
+const REFUSAL_STATES: QueueState[] = [
+  {
+    nn: "22", name: "send-answer-empty",
+    setUp: async (page) => {
+      await selectRow(page, 103);
+      await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
+    },
+  },
+  {
+    nn: "22b", name: "refused-409",
+    setUp: async (page, harness) => {
+      harness.refusals.set("action", { status: 409, body: { error: "conflict" } });
+      await selectRow(page, 103);
+      await page.locator("#queue-option-103-R2").check();
+      await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
+      await page.locator(".queue-sheet").getByText("Refused: the item changed state").waitFor();
+    },
+  },
+  {
+    nn: "22d", name: "order-refused",
+    setUp: async (page, harness) => {
+      harness.refusals.set("send", { status: 400, body: { error: "invalid_body", reason: "One of the sessions has ended. Untick it and send again." } });
+      await typeOrderWithImages(page);
+      await page.locator(".queue-orders").getByRole("button", { name: /^Send to 2 sessions/ }).click();
+      await page.locator(".queue-orders").getByText("One of the sessions has ended").waitFor();
+    },
+  },
+];
+
+const LOOK_STATES: QueueState[] = [
+  { nn: "23", name: "light-01", setUp: (page) => setLightTheme(page) },
+  {
+    nn: "23", name: "light-05",
+    setUp: async (page) => {
+      await openOrdersTo(page, ORDER_TO);
+      await setLightTheme(page);
+    },
+  },
+  {
+    nn: "23", name: "light-07",
+    setUp: async (page) => {
+      await sendOrderWithImages(page);
+      await setLightTheme(page);
+    },
+  },
+  {
+    nn: "25b", name: "focus-row",
+    setUp: async (page) => {
+      await page.locator(".queue-row").first().click();
+      await page.keyboard.press("j");
+    },
+  },
+  {
+    nn: "25c", name: "focus-option",
+    setUp: async (page) => {
+      await page.locator(".queue-row").first().click();
+      await page.keyboard.press("Enter");
+    },
+  },
+  {
+    nn: "25e", name: "focus-close",
+    setUp: async (page) => {
+      await openOrdersTo(page, ORDER_TO);
+      // a key press, not a programmatic focus → the browser draws the keyboard ring on Close
+      await page.getByRole("button", { name: "Clear" }).focus();
+      await page.keyboard.press("Shift+Tab");
+    },
+  },
+  { nn: "25f", name: "key-list", setUp: (page) => page.getByRole("button", { name: /Keyboard shortcuts/ }).click() },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
 const MARKUP_BODY = "- 본문 <img data-markup-probe src=\"/markup-probe.png\" onerror=\"window.__markupRan = true\">";
+
+/** A write route a state makes refuse: its status and the server's refusal body. */
+interface Refusal {
+  status: number;
+  body: { error: string; reason?: string };
+}
+type WriteRoute = "send" | "action" | "upload";
 
 interface Harness {
   app: FastifyInstance;
@@ -82,11 +257,18 @@ interface Harness {
   fixture: QueueFixture;
   /** Queue reads no fixture route answered, as "METHOD /path". */
   missedReads: string[];
+  /** Write routes answering a refusal instead of taking the write; cleared before each state. */
+  refusals: Map<WriteRoute, Refusal>;
+  /** Set → the item list read waits on it, so the page's first-load placeholders hold. */
+  heldRead: Promise<void> | null;
+  uploads: number;
 }
 
 async function openHarness(): Promise<Harness> {
   const app = Fastify({ logger: false });
-  const harness: Harness = { app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [] };
+  const harness: Harness = {
+    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, uploads: 0,
+  };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
   app.all("/api/*", async (request, reply) => {
@@ -104,11 +286,12 @@ async function closeHarness(harness: Harness | undefined): Promise<void> {
   await harness?.app?.close();
 }
 
-// the owner reads, the count and the image serve route, each answering in the server's response shape
+// the owner reads, the count and the image routes, each answering in the server's response shape
 function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
-  app.get<{ Querystring: { after?: string } }>("/api/queue/owner/items", async (request) => ({
-    items: request.query.after === undefined ? harness.fixture.items : [], nextCursor: null, cliPath: FIXTURE_CLI_PATH,
-  }));
+  app.get<{ Querystring: { after?: string } }>("/api/queue/owner/items", async (request) => {
+    await harness.heldRead;
+    return { items: request.query.after === undefined ? harness.fixture.items : [], nextCursor: null, cliPath: FIXTURE_CLI_PATH };
+  });
   app.get<{ Params: { id: string } }>("/api/queue/owner/items/:id", async (request, reply) => {
     const item = harness.fixture.items.find((candidate) => String(candidate.id) === request.params.id);
     return item ?? reply.code(404).send({ error: "unknown_item" });
@@ -121,17 +304,53 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     if (image === undefined) return reply.code(404).send({ error: "unknown_image" });
     return reply.headers({ "content-type": image.mime, "x-content-type-options": "nosniff" }).send(image.bytes);
   });
-  // an upload is stored as the first fixture image under the owner's label → its thumbnail loads from the serve route above
+  // an upload is stored as the next fixture image under the owner's label → its thumbnail loads from the serve route above
   app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
   app.post<{ Querystring: { name: string } }>("/api/queue/owner/images", async (request, reply) => {
-    const [first] = FIXTURE_IMAGES.values();
-    return reply.code(201).send({ ...first?.view, name: request.query.name, bytes: (request.body as Buffer).length });
+    const refusal = harness.refusals.get("upload");
+    if (refusal !== undefined) return reply.code(refusal.status).send(refusal.body);
+    const image = [...FIXTURE_IMAGES.values()][harness.uploads++ % FIXTURE_IMAGES.size];
+    return reply.code(201).send({ ...image?.view, name: request.query.name, bytes: (request.body as Buffer).length });
   });
+  registerWriteRoutes(app, harness);
   app.get("/api/queue/count", async () => ({
     awaiting: harness.fixture.items.filter((item) => item.status === "open").length,
     deviations: harness.fixture.items.filter((item) => item.deviation !== null).length,
     oldestAgeSeconds: null,
   }));
+}
+
+/**
+ * The owner's writes on the fixture: a send adds one copy per recipient, awaiting receipt, to the list and the history read;
+ * an answer or reply leaves the item answered, a read (`seen`) drops it, a resend clears the not-received state in the list and the thread. A set refusal answers instead.
+ */
+function registerWriteRoutes(app: FastifyInstance, harness: Harness): void {
+  app.post("/api/queue/owner/messages/send", async (request, reply) => {
+    const refusal = harness.refusals.get("send");
+    if (refusal !== undefined) return reply.code(refusal.status).send(refusal.body);
+    const { sessionIds, text, attachmentIds = [] } = messageBodySchema.parse(request.body);
+    const images = attachmentIds.flatMap((id) => FIXTURE_IMAGES.get(id)?.view ?? []);
+    const firstId = Math.max(...harness.fixture.items.map((item) => item.id), ...harness.fixture.orders.map((item) => item.id)) + 1;
+    const copies = buildSentCopies(firstId, { sendId: randomUUID(), sessionIds, text, images });
+    harness.fixture = { ...harness.fixture, items: [...harness.fixture.items, ...copies], orders: [...harness.fixture.orders, ...copies] };
+    return reply.code(201).send({ items: copies });
+  });
+  app.post<{ Params: { id: string; action: string } }>("/api/queue/owner/items/:id/:action", async (request, reply) => {
+    const refusal = harness.refusals.get("action");
+    if (refusal !== undefined) return reply.code(refusal.status).send(refusal.body);
+    const id = Number(request.params.id);
+    const act = (item: OwnerItemView) => (item.id === id ? getActedItem(item, request.params.action) : [item]);
+    const orders = request.params.action === "resend" ? harness.fixture.orders.flatMap(act) : harness.fixture.orders;
+    harness.fixture = { ...harness.fixture, items: harness.fixture.items.flatMap(act), orders };
+    return reply.send({ ok: true });
+  });
+}
+
+function getActedItem(item: OwnerItemView, action: string): OwnerItemView[] {
+  if (action === "seen") return [];
+  if (action === "resend") return [{ ...item, status: "answered", deviation: null, canResend: false }];
+  if (action === "answer" || action === "reply") return [{ ...item, status: "answered", answeredAt: new Date(FIXTURE_NOW).toISOString() }];
+  return [item];
 }
 
 /** `id` = its lowest copy id → the cursor's tie-break, as on the server. */
@@ -195,6 +414,112 @@ function selectRow(page: Page, id: number): Promise<void> {
   return page.locator(`#queue-row-${id}`).click();
 }
 
+const ORDER_BOX_ID = "queue-order-text";
+
+async function pickWithNote(page: Page): Promise<void> {
+  await selectRow(page, 103);
+  await page.locator("#queue-option-103-R2").check();
+  await page.locator("#queue-text-103").fill(NOTE_TEXT);
+}
+
+async function scrollDesk(page: Page): Promise<void> {
+  await pickWithNote(page);
+  await page.evaluate(() => {
+    for (const [selector, top] of [[".queue-list > .card-body", 60], [".queue-sheet > .card-body", 160]] as const) (document.querySelector(selector) as HTMLElement).scrollTop = top;
+  });
+}
+
+async function tickSessions(page: Page, names: string[]): Promise<void> {
+  for (const name of names) await page.getByLabel(`Order to ${name}`).check();
+}
+
+async function openOrders(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "New order", exact: true }).click();
+  await page.locator(`#${ORDER_BOX_ID}`).waitFor();
+}
+
+async function openOrdersTo(page: Page, names: string[]): Promise<void> {
+  await tickSessions(page, names);
+  await openOrders(page);
+  await page.locator(".queue-thread").waitFor();
+  await waitForImages(page);
+}
+
+// a capture taken before the bubbles' images decode shows empty squares
+async function waitForImages(page: Page): Promise<void> {
+  await page.waitForFunction(() => [...document.querySelectorAll("img")].every((img) => img.complete));
+}
+
+function getImageFile(index: number): { name: string; mimeType: string; buffer: Buffer } {
+  const image = [...FIXTURE_IMAGES.values()][index % FIXTURE_IMAGES.size]!;
+  return { name: `queue-0${(index % FIXTURE_IMAGES.size) + 1}.${image.view.type}`, mimeType: image.mime, buffer: image.bytes };
+}
+
+async function setFiles(page: Page, fieldId: string, files: Array<{ name: string; mimeType: string; buffer: Buffer }>): Promise<void> {
+  await page.locator(`#${fieldId}-files`).setInputFiles(files);
+}
+
+async function addOrderFiles(page: Page, files: Array<{ name: string; mimeType: string; buffer: Buffer }>): Promise<void> {
+  await openOrdersTo(page, ["gersona"]);
+  await setFiles(page, ORDER_BOX_ID, files);
+}
+
+async function typeOrderWithImages(page: Page): Promise<void> {
+  await openOrdersTo(page, ORDER_TO);
+  await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
+  await setFiles(page, ORDER_BOX_ID, [0, 1, 2].map(getImageFile));
+  await page.locator(".queue-thumb:not(.is-busy) img").nth(2).waitFor();
+  await waitForImages(page);
+}
+
+async function sendOrderWithImages(page: Page): Promise<void> {
+  await typeOrderWithImages(page);
+  await page.locator(".queue-orders").getByRole("button", { name: /^Send to 2 sessions/ }).click();
+  await page.locator(".queue-order", { hasText: FIXTURE_ORDER_TEXT }).waitFor();
+  await waitForImages(page);
+}
+
+// the 15 s re-read finds a report yoaida posted since the first read
+async function arriveItem(page: Page, harness: Harness): Promise<void> {
+  harness.fixture = getArrivalFixture();
+  await page.clock.fastForward(15_000);
+  await page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS });
+}
+
+// `O` on the atrium report carries its draft into the mode under a `Re:` line
+async function orderFromReport(page: Page): Promise<void> {
+  await selectRow(page, 102);
+  await page.locator("#queue-reply-102").fill(REPLY_TEXT);
+  await selectRow(page, 102);
+  await page.keyboard.press("o");
+  await page.locator(`#${ORDER_BOX_ID}`).waitFor();
+  await waitForImages(page);
+}
+
+async function typeReportOrder(page: Page): Promise<void> {
+  await selectRow(page, 101);
+  await page.locator("#queue-reply-101").fill(REPLY_TEXT);
+  await setFiles(page, "queue-reply-101", [getImageFile(0)]);
+  await page.locator(".queue-sheet .queue-thumb:not(.is-busy) img").waitFor();
+  await waitForImages(page);
+}
+
+// a file dragged over the order box, not yet dropped → the box's drop state
+async function hangFileOverComposer(page: Page): Promise<void> {
+  await openOrdersTo(page, ["gersona"]);
+  const transfer = await page.evaluateHandle(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(["png"], "queue-01.png", { type: "image/png" }));
+    return data;
+  });
+  await page.dispatchEvent(`#${ORDER_BOX_ID}`, "dragover", { dataTransfer: transfer });
+  await page.locator(".queue-compose-box.is-drop").waitFor();
+}
+
+async function setLightTheme(page: Page): Promise<void> {
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+}
+
 /** Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268, the two gaps 16 each. */
 const DESK_WIDTHS = [
   { viewport: { width: 1280, height: 800 }, rail: 208, list: 320, sheet: 452 },
@@ -250,20 +575,50 @@ async function getSheetFacts(page: Page): Promise<SheetFacts> {
   });
 }
 
-/** Every state at every desktop width, each on a fresh page, as `<dir>/<width>x<height>-<nn>-<name>.png`. */
-async function captureQueueStates(harness: Harness, dir: string): Promise<void> {
+/**
+ * Every state at every desktop width, each on a fresh page, as `<dir>/<width>x<height>-<nn>-<name>.png`.
+ * @returns one line per capture whose setUp failed, so one broken state does not hide the others
+ */
+async function captureQueueStates(harness: Harness, dir: string): Promise<string[]> {
+  const failures: string[] = [];
   for (const viewport of VIEWPORTS) {
-    for (const state of QUEUE_STATES) await captureQueueState(harness, dir, viewport, state);
+    for (const state of QUEUE_STATES) {
+      await captureQueueState(harness, dir, viewport, state).catch((error: unknown) => {
+        failures.push(`${getShotName(viewport, state)}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+      });
+    }
   }
+  return failures;
 }
 
 async function captureQueueState(harness: Harness, dir: string, viewport: Viewport, state: QueueState): Promise<void> {
   harness.fixture = state.getFixture?.() ?? getRestFixture();
-  const page = await openQueuePage(harness, viewport, getRestReadyText());
+  harness.refusals.clear();
+  if (state.isFirstLoad === true) return captureFirstLoad(harness, dir, viewport, state);
+  const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture), state.isClockDriven);
   try {
-    await state.setUp?.(page);
+    await state.setUp?.(page, harness);
+    // an entry transition still running → a half-faded surface; disabled → each capture shows the state's end frame
+    await page.screenshot({ path: join(dir, getShotName(viewport, state)), animations: "disabled" });
+  } finally {
+    await page.close();
+  }
+}
+
+// the item read held open → the page's placeholders, captured once the screen has drawn them
+async function captureFirstLoad(harness: Harness, dir: string, viewport: Viewport, state: QueueState): Promise<void> {
+  let release = () => {};
+  harness.heldRead = new Promise((resolve) => { release = resolve; });
+  const page = await harness.browser.newPage({ viewport });
+  try {
+    await page.clock.setFixedTime(FIXTURE_NOW);
+    await page.goto(`${harness.url}/#queue`, { waitUntil: "load" });
+    await page.locator(".queue-screen").waitFor({ timeout: READY_TIMEOUT_MS });
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.screenshot({ path: join(dir, getShotName(viewport, state)) });
   } finally {
+    release();
+    harness.heldRead = null;
     await page.close();
   }
 }
@@ -286,8 +641,9 @@ async function getPngSize(file: string): Promise<{ width: number; height: number
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
-function getRestReadyText(): string {
-  return getRestFixture().items[0]!.title;
+// the first item's title, or the empty list's line → the list read has answered
+function getRestReadyText(fixture = getRestFixture()): string {
+  return fixture.items[0]?.title ?? "Nothing is waiting for you";
 }
 
 describe("queue page on the mockup fixtures", () => {
@@ -504,8 +860,9 @@ describe("queue page on the mockup fixtures", () => {
     const dir = await getShotsDir();
     t.diagnostic(`captures: ${dir}`);
 
-    await captureQueueStates(harness, dir);
+    const failures = await captureQueueStates(harness, dir);
 
+    assert.deepEqual(failures, []);
     for (const viewport of VIEWPORTS) {
       for (const state of QUEUE_STATES) {
         const name = getShotName(viewport, state);

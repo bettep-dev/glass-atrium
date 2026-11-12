@@ -286,4 +286,49 @@ export function getArrivalFixture(): QueueFixture {
   return { ...rest, items: [...rest.items, report], sessions };
 }
 
+/** The order the owner types in states 06–08, to `gersona` and `yoaida` (mockup v5 §18.3). */
+export const FIXTURE_ORDER_TEXT = "오늘 결정한 내용은 내일 오전 보고에 한 줄씩 정리해 주세요.";
+
+/** The rest state plus that order sent with the three images, `gersona` having received it and `yoaida` not yet. */
+export function getOneReceivedFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const sent = buildOrderCopies(220, {
+    sendId: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b06", minutesAgo: 1, text: FIXTURE_ORDER_TEXT, images: IMAGES.map((image) => image.view),
+    to: [["gersona", { deliveredAt: getAt(0) }], ["yoaida", { status: "answered", deliveredAt: null }]],
+  });
+  return { ...rest, items: [...rest.items, sent[1]!], orders: [...rest.orders, ...sent] };
+}
+
+/** The rest state with the aidl answer gone unacknowledged: `Not received` on the sheet with `Resend answer`. */
+export function getAnswerNotReceivedFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const unacked = { ...ANSWERED_DECISION, status: "unacked" as const, deviation: "unacked" as const, canResend: true };
+  return { ...rest, items: rest.items.map((item) => (item.id === ANSWERED_DECISION.id ? unacked : item)) };
+}
+
+/** No item left and no order sent: the empty queue and the empty thread. */
+export function getEmptyFixture(): QueueFixture {
+  const rest = getRestFixture();
+  return { ...rest, items: [], orders: [], sessions: rest.sessions.map((row) => ({ ...row, count: { awaiting: 0, inDelivery: 0 } })) };
+}
+
+/** The rest state with `atrium` no longer answering: its rail row `Not reachable`. */
+export function getUnreachableFixture(): QueueFixture {
+  const rest = getRestFixture();
+  return { ...rest, sessions: rest.sessions.map((row) => (row.id === SESSION_IDS.atrium ? { ...row, state: "stale" as const, lastActivityAt: getAt(14) } : row)) };
+}
+
+/**
+ * The copies one taken send writes, as the send route stores them: one per recipient, awaiting receipt.
+ * @param firstId - the first copy's item id; the rest follow it
+ */
+export function buildSentCopies(firstId: number, send: { sendId: string; sessionIds: string[]; text: string; images: ImageView[] }): OwnerItemView[] {
+  const keys = Object.keys(SESSION_IDS) as SessionKey[];
+  const to = send.sessionIds.flatMap((id): Array<[SessionKey, Partial<OwnerItemView>]> => {
+    const key = keys.find((candidate) => SESSION_IDS[candidate] === id);
+    return key === undefined ? [] : [[key, { status: "answered", deliveredAt: null }]];
+  });
+  return buildOrderCopies(firstId, { sendId: send.sendId, minutesAgo: 0, text: send.text, to, images: send.images });
+}
+
 export const FIXTURE_SESSION_IDS = SESSION_IDS;
