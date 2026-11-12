@@ -8,7 +8,6 @@ import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, fstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { type Server, type Socket, createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -41,9 +40,6 @@ const tmpRoot = mkdtempSync("/tmp/queue-resume-");
 const dir = { home: path.join(fixtureRoot, "home"), tokens: path.join(fixtureRoot, "tokens"), plain: path.join(fixtureRoot, "plain") };
 const trackedSessionIds: string[] = [];
 const children: ChildProcess[] = [];
-const servers: Server[] = [];
-const socketMap = new Map<string, string>();
-const received = new Map<string, string[]>();
 
 before(async () => {
   await lockQueueRows();
@@ -52,7 +48,6 @@ before(async () => {
 
 after(async () => {
   for (const child of children) child.kill("SIGKILL");
-  await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
   const prisma = getPrisma();
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
@@ -70,24 +65,6 @@ async function spawnLiveProcess(): Promise<{ pid: number; startTime: string }> {
   const startTime = await getProcessStartTime(child.pid);
   if (startTime === null) throw new Error(`start time unreadable for pid ${child.pid}`);
   return { pid: child.pid, startTime };
-}
-
-function confinedSocketPath(pid: number): string {
-  return `/private/tmp/cc-socks/${pid}.sock`;
-}
-
-async function serveSocket(confinedPath: string): Promise<void> {
-  const fixturePath = path.join(fixtureRoot, `s${socketMap.size}.sock`);
-  const lines: string[] = [];
-  received.set(confinedPath, lines);
-  const server = createServer((socket: Socket) => {
-    let buffer = "";
-    socket.on("data", (chunk) => (buffer += chunk.toString("utf8")));
-    socket.on("end", () => lines.push(...buffer.split("\n").filter((line) => line !== "")));
-  });
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(fixturePath, resolve));
-  socketMap.set(confinedPath, fixturePath);
 }
 
 /** A directory holding a `.git` entry: a directory for a main checkout, a file for a linked worktree. */
@@ -143,9 +120,7 @@ function buildHarness(sessionIds: string[], fake: FakeLauncher = buildFakeLaunch
   const captureDir = path.join(newFixtureDir("capture"), "resume-capture");
   const abort = new AbortController();
   const deps: SweepDeps = {
-    connector: (socketPath) => createConnection({ path: socketMap.get(socketPath) ?? path.join(fixtureRoot, "missing.sock") }),
     readStartTime: getProcessStartTime,
-    isSocketDeliveryOn: () => true,
     now: () => new Date(clock.ms),
     cliPath: CLI_PATH,
     tokenDir: dir.tokens,
@@ -421,7 +396,7 @@ describe("automatic resume of an exited session", () => {
     assert.equal(harness.fake.calls.length, 1);
   });
 
-  test("an approval-class item is never resumed, carries the terminal reason, and goes out over the socket once its row registers live", async () => {
+  test("an approval-class item is never resumed, carries the terminal reason, and waits answered for the session's pull once its row registers live", async () => {
     const identity = await spawnLiveProcess();
     const cwd = newFixtureDir("approval");
     const sessionId = await seedSession({ cwd, identity });
@@ -430,14 +405,13 @@ describe("automatic resume of an exited session", () => {
 
     await runPasses(harness, 3);
     const skip = await getSkipReason(itemId);
-    await serveSocket(confinedSocketPath(identity.pid));
-    await registerSession({ sessionId, pid: identity.pid, cwd, socketPath: confinedSocketPath(identity.pid) }, dir.home);
+    await registerSession({ sessionId, pid: identity.pid, cwd }, dir.home);
     await runPasses(harness, 1);
 
     assert.equal(harness.fake.calls.length, 0);
     assert.deepEqual(skip, { kind: "approval" });
-    assert.equal(await getStatus(itemId), "delivering");
-    assert.equal((await getPrisma().queueDelivery.findFirstOrThrow({ where: { itemId } })).route, "socket");
+    assert.equal(await getStatus(itemId), "answered");
+    assert.equal(await getPrisma().queueDelivery.count({ where: { itemId } }), 0);
   });
 });
 
@@ -455,22 +429,20 @@ describe("pre-spawn re-read", () => {
     assert.ok(claim === null || (await getRereadOutcome(claim)) === "session_returned");
   });
 
-  test("a register committing after the claim stops the spawn, aborts its row as session returned, and the item goes back out over the socket", async () => {
+  test("a register committing after the claim stops the spawn, aborts its row as session returned, and the item waits answered for the session's pull", async () => {
     const identity = await spawnLiveProcess();
     const cwd = newFixtureDir("returned");
     const sessionId = await seedSession({ cwd, identity });
     const itemId = await seedItem(sessionId, "resume_pending");
-    await serveSocket(confinedSocketPath(identity.pid));
-    const register = () => registerSession({ sessionId, pid: identity.pid, cwd, socketPath: confinedSocketPath(identity.pid) }, dir.home).then(() => undefined);
+    const register = () => registerSession({ sessionId, pid: identity.pid, cwd }, dir.home).then(() => undefined);
     const harness = buildHarness([sessionId], undefined, { hooks: { beforeReread: register } });
 
     await runPasses(harness, 1);
 
     const routes = (await getPrisma().queueDelivery.findMany({ where: { itemId }, orderBy: { id: "asc" } })).map((row) => [row.route, row.result, row.abortReason]);
     assert.equal(harness.fake.calls.length, 0);
-    // only an answered item is socket-claimed → the abort returned it to answered
-    assert.deepEqual(routes, [["resume", "aborted", "session_returned"], ["socket", "sent", null]]);
-    assert.equal(await getStatus(itemId), "delivering");
+    assert.deepEqual(routes, [["resume", "aborted", "session_returned"]]);
+    assert.equal(await getStatus(itemId), "answered");
   });
 
   test("a session registering in the worktree after the claim stops the spawn, aborts the row as shared worktree and leaves the attempt used", async () => {
@@ -671,16 +643,16 @@ describe("session marker", () => {
     assert.deepEqual(await getSkipReason(secondItemId), { kind: "marker" });
   });
 
-  test("a register after the ack clears the marker and the second item goes over the socket", async () => {
+  test("a register after the ack clears the marker and the second item waits answered for the session's pull", async () => {
     const { sessionId, secondItemId, harness, identity } = await seedAckedResume();
-    await serveSocket(confinedSocketPath(identity.pid));
 
-    await registerSession({ sessionId, pid: identity.pid, cwd: (await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } })).cwd, socketPath: confinedSocketPath(identity.pid) }, dir.home);
+    await registerSession({ sessionId, pid: identity.pid, cwd: (await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } })).cwd }, dir.home);
     await runPasses(harness, 1);
 
     assert.equal(await isMarked(sessionId), false);
     assert.equal(harness.fake.calls.length, 1);
-    assert.equal((await getPrisma().queueDelivery.findFirstOrThrow({ where: { itemId: secondItemId } })).route, "socket");
+    assert.equal(await getStatus(secondItemId), "answered");
+    assert.equal(await getPrisma().queueDelivery.count({ where: { itemId: secondItemId } }), 0);
   });
 
   test("a deregister carrying another pid clears the marker and the next sweep resumes the second item once", async () => {
@@ -728,7 +700,7 @@ describe("session marker", () => {
 });
 
 describe("resume payload and argv", () => {
-  test("the payload carries every envelope, the not-user-approval clause and the register-after-ack instruction with the CLI literal", () => {
+  test("the payload carries every envelope, the not-user-approval clause and the register-then-wait instruction with the CLI literal", () => {
     const items = [
       { id: 41, kind: "decision" as const, msgId: randomUUID() },
       { id: 42, kind: "report" as const, msgId: randomUUID() },
@@ -741,6 +713,7 @@ describe("resume payload and argv", () => {
     assert.match(payload, /no permission or consent for any high-impact action/i);
     assert.ok(payload.includes(`${CLI_PATH} register`), "register-after-ack names the CLI literal");
     assert.ok(payload.indexOf(`${CLI_PATH} register`) > payload.lastIndexOf(" ack "), "the register step comes after the ack steps");
+    assert.ok(payload.indexOf(`${CLI_PATH} wait`) > payload.indexOf(`${CLI_PATH} register`), "the wait step comes after the register step");
   });
 
   test("an owner message goes out under its own header and subject, and the preamble names messages beside answers", () => {
