@@ -1,6 +1,6 @@
 // Owner queue session-side API (/api/queue/*): request gate, register/deregister, post/get, pull, ack, withdraw, count.
 // Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/queue.session-api.route.test.ts
-// Secrets and home are mktemp fixtures passed as plugin options → the live ~/.glass-atrium/secrets is never read.
+// Home is a mktemp fixture passed as a plugin option → no live config dir is read.
 // Every session id a test creates is tracked and its rows are deleted in after().
 
 import test, { after, before, describe } from "node:test";
@@ -24,22 +24,19 @@ import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/qu
 
 const PORT = 16145;
 const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
-const QUEUE_KEY = "test-queue-key-0123456789abcdef";
 const HOST = `127.0.0.1:${PORT}`;
 const ACK_DEADLINE_MS = 120_000;
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-api-"));
-const dir = { secrets: path.join(fixtureRoot, "secrets"), home: path.join(fixtureRoot, "home") };
+const dir = { home: path.join(fixtureRoot, "home") };
 const trackedSessionIds: string[] = [];
 let app: FastifyInstance;
 
 before(async () => {
   await lockQueueRows();
-  mkdirSync(dir.secrets, { mode: 0o700 });
-  writeFileSync(path.join(dir.secrets, "queue-key"), `${QUEUE_KEY}\n`, { mode: 0o600 });
   mkdirSync(path.join(dir.home, ".claude-work"), { recursive: true });
   mkdirSync(path.join(dir.home, "elsewhere"), { recursive: true });
-  app = await buildApp(dir.secrets);
+  app = await buildApp();
 });
 
 after(async () => {
@@ -53,25 +50,17 @@ after(async () => {
   deleteDirectory(fixtureRoot);
 });
 
-async function buildApp(secrets: string): Promise<FastifyInstance> {
+async function buildApp(): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
   instance.get("/api/root-probe", async () => ({ ok: true }));
-  await registerQueueRoutes(instance, { secretsDir: secrets, port: PORT, homeDir: dir.home, cliPath: CLI_PATH });
+  await registerQueueRoutes(instance, { port: PORT, homeDir: dir.home, cliPath: CLI_PATH });
   await instance.ready();
   return instance;
 }
 
-interface SendOptions {
-  host?: string;
-  key?: string | null;
-  target?: FastifyInstance;
-}
-
-function send(method: "GET" | "POST", url: string, body?: object, options: SendOptions = {}): Promise<LightMyRequestResponse> {
-  const headers: Record<string, string> = { host: options.host ?? HOST };
-  const key = options.key === undefined ? QUEUE_KEY : options.key;
-  if (key !== null) headers["x-atrium-queue-key"] = key;
-  return (options.target ?? app).inject({ method, url, headers, ...(body === undefined ? {} : { payload: body }) });
+function send(method: "GET" | "POST", url: string, body?: object, options: { host?: string } = {}): Promise<LightMyRequestResponse> {
+  const headers = { host: options.host ?? HOST };
+  return app.inject({ method, url, headers, ...(body === undefined ? {} : { payload: body }) });
 }
 
 function trackSessionId(): string {
@@ -133,46 +122,31 @@ function registerBody(sessionId: string, extra: object = {}): object {
 }
 
 describe("queue request gate", () => {
-  test("Host allowlist runs first, then the queue key", async () => {
+  test("the Host allowlist is the only gate a session route has: no key header, no secrets directory", async () => {
     const rows = [
-      { name: "rebinding host", host: `evil.example:${PORT}`, key: QUEUE_KEY, status: 403 },
-      { name: "rebinding host with no key is refused by the Host check", host: `evil.example:${PORT}`, key: null, status: 403 },
-      { name: "allowlisted name on another port", host: "127.0.0.1:1", key: QUEUE_KEY, status: 403 },
-      { name: "no key", host: HOST, key: null, status: 401 },
-      { name: "wrong key", host: `localhost:${PORT}`, key: "not-the-key", status: 401 },
-      { name: "right key over [::1] reaches the handler", host: `[::1]:${PORT}`, key: QUEUE_KEY, status: 404 },
+      { name: "rebinding host", host: `evil.example:${PORT}`, status: 403 },
+      { name: "allowlisted name on another port", host: "127.0.0.1:1", status: 403 },
+      { name: "127.0.0.1 with no key header reaches the handler", host: HOST, status: 404 },
+      { name: "localhost with no key header reaches the handler", host: `localhost:${PORT}`, status: 404 },
+      { name: "[::1] with no key header reaches the handler", host: `[::1]:${PORT}`, status: 404 },
     ];
     for (const row of rows) {
-      const response = await send("POST", "/api/queue/pending", { sessionId: randomUUID() }, { host: row.host, key: row.key });
+      const response = await send("POST", "/api/queue/pending", { sessionId: randomUUID() }, { host: row.host });
       assert.equal(response.statusCode, row.status, row.name);
     }
   });
 
   test("a root route outside the queue plugin sees no queue hook", async () => {
-    const response = await send("GET", "/api/root-probe", undefined, { host: `evil.example:${PORT}`, key: null });
+    const response = await send("GET", "/api/root-probe", undefined, { host: `evil.example:${PORT}` });
     assert.equal(response.statusCode, 200);
   });
 
-  test("the count route needs no queue key but still refuses a rebinding host", async () => {
-    const refused = await send("GET", "/api/queue/count", undefined, { host: `evil.example:${PORT}`, key: null });
-    const counted = await send("GET", "/api/queue/count", undefined, { key: null });
+  test("the count route refuses a rebinding host", async () => {
+    const refused = await send("GET", "/api/queue/count", undefined, { host: `evil.example:${PORT}` });
+    const counted = await send("GET", "/api/queue/count");
     assert.equal(refused.statusCode, 403);
     assert.equal(counted.statusCode, 200);
     assert.deepEqual(Object.keys(counted.json()).sort(), ["awaiting", "deviations", "oldestAgeSeconds"]);
-  });
-
-  test("a key file written after a not-provisioned answer is picked up with no restart", async () => {
-    const lateSecrets = makeFixtureDir("late-secrets");
-    const lateApp = await buildApp(lateSecrets);
-    try {
-      const before = await send("POST", "/api/queue/pending", { sessionId: randomUUID() }, { target: lateApp });
-      writeFileSync(path.join(lateSecrets, "queue-key"), QUEUE_KEY, { mode: 0o600 });
-      const afterWrite = await send("POST", "/api/queue/pending", { sessionId: randomUUID() }, { target: lateApp });
-      assert.equal(before.statusCode, 503);
-      assert.equal(afterWrite.statusCode, 404);
-    } finally {
-      await lateApp.close();
-    }
   });
 });
 
@@ -490,7 +464,7 @@ describe("withdraw", () => {
 describe("count", () => {
   test("counts open items as awaiting and every deviation, delivery off and not reachable included", async () => {
     const readCount = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> =>
-      (await send("GET", "/api/queue/count", undefined, { key: null })).json();
+      (await send("GET", "/api/queue/count")).json();
     const readCountWith = async (isOn: boolean): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
       setSocketDeliveryOn(isOn);
       return readCount();

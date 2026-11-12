@@ -1,11 +1,10 @@
-// Owner queue API (/api/queue/owner/*): owner-session auth, list and item detail, answer, later, seen, reply, resend.
+// Owner queue API (/api/queue/owner/*): page-origin leg, list and item detail, answer, later, seen, reply, resend.
 // Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/queue.owner-api.route.test.ts
-// Secrets are mktemp fixtures passed as plugin options → the live ~/.glass-atrium/secrets is never read.
 
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID, scryptSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -16,7 +15,6 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { setSocketDeliveryOn } from "../src/server/queue/drift-guard.js";
-import { registerRoutes } from "../src/server/routes/index.js";
 import { registerQueueRoutes, resolveQueueRouteOptions } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
@@ -24,24 +22,16 @@ import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 const PORT = 16145;
 const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
 const HOST = `127.0.0.1:${PORT}`;
-const PASSPHRASE = "owner passphrase for tests";
-const QUEUE_KEY = "test-queue-key-0123456789abcdef";
-const COOKIE_NAME = "atrium_queue_owner";
+const SAME_ORIGIN = { "sec-fetch-site": "same-origin" } as const;
 const ACK_DEADLINE_MS = 120_000;
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-owner-api-"));
-const dir = { secrets: path.join(fixtureRoot, "secrets"), home: path.join(fixtureRoot, "home") };
 const trackedSessionIds: string[] = [];
 let app: FastifyInstance;
-let ownerCookie: string;
 
 before(async () => {
   await lockQueueRows();
-  mkdirSync(dir.secrets, { mode: 0o700 });
-  mkdirSync(dir.home);
-  writeSecrets(dir.secrets);
-  app = await buildApp(dir.secrets);
-  ownerCookie = await loginOrThrow(app);
+  app = await buildApp();
 });
 
 after(async () => {
@@ -55,41 +45,22 @@ after(async () => {
   deleteDirectory(fixtureRoot);
 });
 
-function writeSecrets(secretsDir: string): void {
-  const salt = randomBytes(16);
-  const hash = scryptSync(PASSPHRASE, salt, 32, { N: 16_384, r: 8, p: 1 });
-  const record = { algorithm: "scrypt", N: 16_384, r: 8, p: 1, keyLength: 32, salt: salt.toString("base64"), hash: hash.toString("base64") };
-  writeFileSync(path.join(secretsDir, "owner-passphrase.json"), JSON.stringify(record), { mode: 0o600 });
-  writeFileSync(path.join(secretsDir, "queue-key"), `${QUEUE_KEY}\n`, { mode: 0o600 });
-}
-
-async function buildApp(secretsDir: string): Promise<FastifyInstance> {
+async function buildApp(): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
-  instance.get("/api/root-probe", async (request) => ({ hasCookies: "cookies" in request }));
-  await registerQueueRoutes(instance, { secretsDir, port: PORT, homeDir: dir.home, cliPath: CLI_PATH });
+  await registerQueueRoutes(instance, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: CLI_PATH });
   await instance.ready();
   return instance;
 }
 
 interface SendOptions {
   host?: string;
-  cookie?: string | null;
+  /** Replaces the default same-origin fetch metadata; `{}` sends neither page-origin header. */
   headers?: Record<string, string>;
-  target?: FastifyInstance;
 }
 
 function send(method: "GET" | "POST", url: string, body?: object, options: SendOptions = {}): Promise<LightMyRequestResponse> {
-  const headers: Record<string, string> = { host: options.host ?? HOST, ...options.headers };
-  const cookie = options.cookie === undefined ? ownerCookie : options.cookie;
-  if (cookie !== null) headers.cookie = `${COOKIE_NAME}=${cookie}`;
-  return (options.target ?? app).inject({ method, url, headers, ...(body === undefined ? {} : { payload: body }) });
-}
-
-async function loginOrThrow(target: FastifyInstance): Promise<string> {
-  const response = await send("POST", "/api/queue/owner/login", { passphrase: PASSPHRASE }, { target, cookie: null });
-  const cookie = response.cookies.find((entry) => entry.name === COOKIE_NAME);
-  if (response.statusCode !== 200 || cookie === undefined) throw new Error(`login failed: ${response.statusCode} ${response.body}`);
-  return cookie.value;
+  const headers = { host: options.host ?? HOST, ...(options.headers ?? SAME_ORIGIN) };
+  return app.inject({ method, url, headers, ...(body === undefined ? {} : { payload: body }) });
 }
 
 async function seedSession(overrides: Partial<Prisma.QueueSessionUncheckedCreateInput> = {}): Promise<string> {
@@ -147,133 +118,75 @@ async function countDeliveries(itemId: bigint): Promise<number> {
   return getPrisma().queueDelivery.count({ where: { itemId } });
 }
 
-describe("owner auth", () => {
-  test("owner routes accept only a live owner session cookie", async () => {
-    const noHeaders: Record<string, string> = {};
-    const rows = [
-      { name: "no cookie", cookie: null, headers: noHeaders, status: 401 },
-      { name: "unknown session id", cookie: randomBytes(32).toString("base64url"), headers: noHeaders, status: 401 },
-      { name: "the queue key instead of a cookie", cookie: null, headers: { "x-atrium-queue-key": QUEUE_KEY }, status: 401 },
-      { name: "rebinding Host with a valid cookie", cookie: undefined, headers: noHeaders, host: `evil.example:${PORT}`, status: 403 },
-      { name: "valid owner session", cookie: undefined, headers: noHeaders, status: 200 },
+describe("page origin", () => {
+  test("an owner mutation is accepted only from the monitor's own page", async () => {
+    const sessionId = await seedSession();
+    const rows: Array<{ name: string; headers: Record<string, string>; status: number }> = [
+      { name: "fetch metadata same-origin", headers: { "sec-fetch-site": "same-origin" }, status: 200 },
+      { name: "Origin only, 127.0.0.1 at the monitor port", headers: { origin: `http://127.0.0.1:${PORT}` }, status: 200 },
+      { name: "Origin only, localhost at the monitor port", headers: { origin: `http://localhost:${PORT}` }, status: 200 },
+      { name: "Origin only, [::1] at the monitor port", headers: { origin: `http://[::1]:${PORT}` }, status: 200 },
+      { name: "neither header", headers: {}, status: 403 },
+      { name: "fetch metadata cross-site", headers: { "sec-fetch-site": "cross-site" }, status: 403 },
+      { name: "fetch metadata same-site", headers: { "sec-fetch-site": "same-site" }, status: 403 },
+      { name: "fetch metadata none (address bar)", headers: { "sec-fetch-site": "none" }, status: 403 },
+      { name: "a foreign Origin", headers: { origin: "https://evil.example" }, status: 403 },
+      { name: "a loopback Origin on another port", headers: { origin: `http://127.0.0.1:${PORT + 1}` }, status: 403 },
+      { name: "a loopback Origin over https", headers: { origin: `https://127.0.0.1:${PORT}` }, status: 403 },
+      { name: "the opaque Origin null", headers: { origin: "null" }, status: 403 },
     ];
     for (const row of rows) {
-      const response = await send("GET", "/api/queue/owner/items", undefined, { cookie: row.cookie, headers: row.headers, host: row.host });
+      const itemId = await seedDecision(sessionId);
+      const response = await send("POST", `/api/queue/owner/items/${itemId}/answer`, { code: "R1" }, { headers: row.headers });
       assert.equal(response.statusCode, row.status, `${row.name}: ${response.body}`);
+      assert.equal((await getItemRow(itemId)).status, row.status === 200 ? "answered" : "open", row.name);
     }
   });
 
-  test("a wrong passphrase is refused with no cookie", async () => {
-    const target = await buildApp(dir.secrets);
-    try {
-      const response = await send("POST", "/api/queue/owner/login", { passphrase: "not the passphrase" }, { target, cookie: null });
-      assert.equal(response.statusCode, 401, response.body);
-      assert.equal(response.cookies.length, 0);
-    } finally {
-      await target.close();
-    }
-  });
-
-  test("a second failed login right after the free failures is throttled without checking the passphrase", async () => {
-    const target = await buildApp(dir.secrets);
-    try {
-      const statuses: number[] = [];
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const response = await send("POST", "/api/queue/owner/login", { passphrase: "wrong" }, { target, cookie: null });
-        statuses.push(response.statusCode);
-      }
-      assert.deepEqual(statuses, [401, 401, 401, 401, 429]);
-      const right = await send("POST", "/api/queue/owner/login", { passphrase: PASSPHRASE }, { target, cookie: null });
-      assert.equal(right.statusCode, 429, "the right passphrase also waits while throttled");
-      assert.ok(Number(right.headers["retry-after"]) >= 1, "Retry-After names the wait");
-    } finally {
-      await target.close();
-    }
-  });
-
-  test("the owner cookie is httpOnly, SameSite=Strict, host-only, scoped to the queue API, 7 days, never Secure", async () => {
-    const response = await send("POST", "/api/queue/owner/login", { passphrase: PASSPHRASE }, { cookie: null });
-    const header = String(response.headers["set-cookie"]);
-    const attributes = header.split(";").map((part) => part.trim().toLowerCase());
-    assert.ok(attributes.includes("httponly"), header);
-    assert.ok(attributes.includes("samesite=strict"), header);
-    assert.ok(attributes.includes("path=/api/queue"), header);
-    assert.ok(attributes.includes("max-age=604800"), header);
-    assert.ok(!attributes.some((part) => part.startsWith("domain=")), `host-only: ${header}`);
-    assert.ok(!attributes.includes("secure"), header);
-  });
-
-  test("owner activity renews the cookie", async () => {
-    const response = await send("GET", "/api/queue/owner/items");
-    const renewed = response.cookies.find((entry) => entry.name === COOKIE_NAME);
-    assert.equal(renewed?.value, ownerCookie);
-    assert.equal(renewed?.maxAge, 604_800);
-  });
-
-  test("the session check answers the sign-in state and never renews the cookie", async () => {
-    const ended = await loginOrThrow(app);
-    await send("POST", "/api/queue/owner/logout", undefined, { cookie: ended });
+  test("every owner mutation route refuses a request with neither page-origin header", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
     const rows = [
-      { name: "live session", cookie: undefined, status: 200 },
-      { name: "no cookie", cookie: null, status: 401 },
-      { name: "unknown session id", cookie: randomBytes(32).toString("base64url"), status: 401 },
-      { name: "signed-out session", cookie: ended, status: 401 },
+      { action: "answer", itemId: await seedDecision(sessionId), body: { code: "R1" } },
+      { action: "reply", itemId: await seedItem(sessionId), body: { text: "merge it" } },
+      { action: "seen", itemId: await seedItem(sessionId), body: undefined },
+      { action: "later", itemId: await seedItem(sessionId), body: undefined },
+      { action: "resend", itemId: await seedDecision(sessionId, { status: "unacked", answerCode: "R1", answeredAt: new Date() }), body: undefined },
     ];
     for (const row of rows) {
-      const response = await send("GET", "/api/queue/owner/session", undefined, { cookie: row.cookie });
-      assert.equal(response.statusCode, row.status, `${row.name}: ${response.body}`);
-      assert.equal(response.cookies.length, 0, `${row.name}: no Set-Cookie`);
+      const before = await getItemRow(row.itemId);
+      const response = await send("POST", `/api/queue/owner/items/${row.itemId}/${row.action}`, row.body, { headers: {} });
+      assert.equal(response.statusCode, 403, `${row.action}: ${response.body}`);
+      const item = await getItemRow(row.itemId);
+      assert.deepEqual([item.status, item.queuePosition, item.nextAttempt], [before.status, before.queuePosition, before.nextAttempt], row.action);
     }
   });
 
-  test("logout ends the owner session", async () => {
-    const cookie = await loginOrThrow(app);
-    const out = await send("POST", "/api/queue/owner/logout", undefined, { cookie });
-    assert.equal(out.statusCode, 200, out.body);
-    const after = await send("GET", "/api/queue/owner/items", undefined, { cookie });
-    assert.equal(after.statusCode, 401);
+  test("owner reads need no sign-in and no page-origin header", async () => {
+    assert.equal((await send("GET", "/api/queue/owner/items?limit=1", undefined, { headers: {} })).statusCode, 200);
   });
 
-  test("a root route outside the queue gets no cookie parsing", async () => {
-    const response = await send("GET", "/api/root-probe", undefined, { cookie: ownerCookie });
-    assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { hasCookies: false });
-  });
-});
-
-describe("provisioning", () => {
-  test("missing secrets answer not provisioned, and files written afterwards work on the next request with no restart", async () => {
-    const secretsDir = path.join(fixtureRoot, `late-${randomUUID().slice(0, 8)}`);
-    mkdirSync(secretsDir, { mode: 0o700 });
-    const target = await buildApp(secretsDir);
-    try {
-      const login = await send("POST", "/api/queue/owner/login", { passphrase: PASSPHRASE }, { target, cookie: null });
-      assert.equal(login.statusCode, 503, login.body);
-      assert.equal(login.json().error, "not_provisioned");
-      const list = await send("GET", "/api/queue/owner/items", undefined, { target, cookie: null });
-      assert.equal(list.statusCode, 503, list.body);
-      writeSecrets(secretsDir);
-      const cookie = await loginOrThrow(target);
-      const listed = await send("GET", "/api/queue/owner/items", undefined, { target, cookie });
-      assert.equal(listed.statusCode, 200, listed.body);
-    } finally {
-      await target.close();
+  test("a foreign Host is refused on owner and session routes even with same-origin fetch metadata", async () => {
+    const itemId = await seedDecision(await seedSession());
+    const rows = [
+      { name: "owner mutation", method: "POST" as const, url: `/api/queue/owner/items/${itemId}/answer`, body: { code: "R1" } },
+      { name: "owner read", method: "GET" as const, url: "/api/queue/owner/items", body: undefined },
+      { name: "session route", method: "POST" as const, url: "/api/queue/pending", body: { sessionId: randomUUID() } },
+    ];
+    for (const row of rows) {
+      const response = await send(row.method, row.url, row.body, { host: `evil.example:${PORT}` });
+      assert.equal(response.statusCode, 403, `${row.name}: ${response.body}`);
     }
+    assert.equal((await getItemRow(itemId)).status, "open");
   });
 
-  test("registerRoutes on a bare instance reads no secret file: an unreadable secrets layout surfaces only on the first request", async () => {
-    const secretsDir = path.join(fixtureRoot, `unreadable-${randomUUID().slice(0, 8)}`);
-    mkdirSync(path.join(secretsDir, "owner-passphrase.json"), { recursive: true });
-    mkdirSync(path.join(secretsDir, "queue-key"), { recursive: true });
-    const target = Fastify({ logger: false });
-    try {
-      await registerRoutes(target, { secretsDir });
-      await target.ready();
-      const login = await send("POST", "/api/queue/owner/login", { passphrase: PASSPHRASE }, { target, cookie: null });
-      assert.equal(login.statusCode, 500, login.body);
-      assert.equal(login.json().error, "queue_environment_failure");
-    } finally {
-      await target.close();
+  test("the sign-in routes no longer exist", async () => {
+    const rows = [
+      { method: "POST" as const, url: "/api/queue/owner/login", body: { passphrase: "owner passphrase" } },
+      { method: "POST" as const, url: "/api/queue/owner/logout", body: {} },
+      { method: "GET" as const, url: "/api/queue/owner/session", body: undefined },
+    ];
+    for (const row of rows) {
+      assert.equal((await send(row.method, row.url, row.body)).statusCode, 404, row.url);
     }
   });
 });
@@ -590,8 +503,7 @@ describe("recent automatic resumes", () => {
     assert.equal(items.some((resume) => resume.item.id === Number(itemId)), false);
   });
 
-  test("the record needs an owner session and a bounded limit", async () => {
-    assert.equal((await send("GET", "/api/queue/owner/resumes", undefined, { cookie: null })).statusCode, 401);
+  test("the record takes a bounded limit", async () => {
     assert.equal((await send("GET", "/api/queue/owner/resumes?limit=51")).statusCode, 400);
   });
 });

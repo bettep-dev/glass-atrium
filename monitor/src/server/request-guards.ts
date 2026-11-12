@@ -96,6 +96,29 @@ export function isAllowedRequest(method: string, headers: IncomingHttpHeaders): 
   return isLoopbackOrigin(origin);
 }
 
+/** Which page-origin signal admitted an owner mutation; the answer record stores it. */
+export type PageOriginSignal = "fetch_metadata" | "origin";
+
+/**
+ * Stricter variant of the gate for owner mutations: the request must come from the monitor's own page.
+ * Sec-Fetch-Site decides when present (same-origin only); otherwise the Origin must be one of `allowedOrigins`.
+ * Neither header → null, so curl, hooks and a session's own scripts are refused.
+ * @param allowedOrigins - serialized origins (`http://127.0.0.1:<port>`) the monitor page is served from
+ * @returns the signal that admitted the request, or null when it is not from the monitor page
+ */
+export function getPageOriginSignal(headers: IncomingHttpHeaders, allowedOrigins: ReadonlySet<string>): PageOriginSignal | null {
+  const site = getHeader(headers, "sec-fetch-site");
+  if (site !== undefined) {
+    return site.trim().toLowerCase() === "same-origin" ? "fetch_metadata" : null;
+  }
+  const origin = getHeader(headers, "origin");
+  if (origin === undefined) {
+    return null;
+  }
+  const parsed = getSerializedOrigin(origin);
+  return parsed !== null && allowedOrigins.has(parsed) ? "origin" : null;
+}
+
 /** A duplicated header arrives as an array — the first value decides, so a second copy cannot slip the check. */
 function getHeader(headers: IncomingHttpHeaders, name: string): string | undefined {
   const value = headers[name];
@@ -112,5 +135,14 @@ function isLoopbackOrigin(origin: string): boolean {
     return isLoopbackHost(new URL(origin).hostname);
   } catch {
     return false;
+  }
+}
+
+/** `new URL().origin` normalizes case and default ports; `null` and malformed values → null, never a throw. */
+function getSerializedOrigin(origin: string): string | null {
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return null;
   }
 }

@@ -2,8 +2,6 @@
 
 import { z } from "zod";
 
-import { PASSPHRASE } from "./passphrase.js";
-
 const MAX_PID = 2_147_483_647;
 const MAX_PATH_LENGTH = 4096;
 const MAX_LINKED_DOCS = 20;
@@ -85,8 +83,6 @@ const decisionSchema = z
   });
 
 export const postItemBodySchema = z.discriminatedUnion("kind", [reportSchema, decisionSchema]);
-
-export const loginBodySchema = z.strictObject({ passphrase: z.string().min(1).max(PASSPHRASE.MAX_LENGTH) });
 
 export const emptyBodySchema = z.strictObject({});
 

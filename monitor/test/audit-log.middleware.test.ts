@@ -3,10 +3,7 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID, scryptSync } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import "dotenv/config";
 
@@ -22,7 +19,6 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { buildApp } from "../src/server/app.js";
 import { ROUTE_RESOURCE, registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { registerRoutes } from "../src/server/routes/index.js";
-import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
 // Unique marker isolates this suite's rows in payload for scrub + assertion.
@@ -405,12 +401,6 @@ test("coverage-drift guard: ROUTE_RESOURCE is a superset of all registered mutat
 // Production assembly: the root audit hook, added after registerRoutes, still reaches the queue's
 // encapsulated owner routes, and one owner answer writes exactly one row (no source-order pin).
 test("assembly: one owner answer through the production buildApp writes exactly one audit row", async () => {
-  const passphrase = "audit assembly passphrase";
-  const secretsDir = mkdtempSync(path.join(tmpdir(), "audit-assembly-"));
-  const salt = randomBytes(16);
-  const hash = scryptSync(passphrase, salt, 32, { N: 16_384, r: 8, p: 1 });
-  const record = { algorithm: "scrypt", N: 16_384, r: 8, p: 1, keyLength: 32, salt: salt.toString("base64"), hash: hash.toString("base64") };
-  writeFileSync(path.join(secretsDir, "owner-passphrase.json"), JSON.stringify(record), { mode: 0o600 });
   const prisma = getPrisma();
   const sessionId = randomUUID();
   await prisma.queueSession.create({
@@ -439,16 +429,13 @@ test("assembly: one owner answer through the production buildApp writes exactly 
       recommendedCode: "R1",
     },
   });
-  const assembly = await buildApp({ secretsDir });
+  const assembly = await buildApp();
   const host = "127.0.0.1:16145";
   try {
-    const login = await assembly.inject({ method: "POST", url: "/api/queue/owner/login", headers: { host }, payload: { passphrase } });
-    const cookie = login.cookies.find((entry) => entry.name === "atrium_queue_owner");
-    assert.ok(cookie !== undefined, `login failed: ${login.statusCode} ${login.body}`);
     const answer = await assembly.inject({
       method: "POST",
       url: `/api/queue/owner/items/${item.id}/answer`,
-      headers: { host, cookie: `atrium_queue_owner=${cookie.value}` },
+      headers: { host, "sec-fetch-site": "same-origin" },
       payload: { code: "R2" },
     });
     assert.strictEqual(answer.statusCode, 200, answer.body);
@@ -458,11 +445,10 @@ test("assembly: one owner answer through the production buildApp writes exactly 
     assert.strictEqual(await countAuditRows("queue-item.answer", Number(item.id)), 1);
   } finally {
     await assembly.close();
-    deleteDirectory(secretsDir);
     await prisma.$executeRaw`
       DELETE FROM monitor.audit_log
       WHERE actor = 'monitor-web'
-        AND ((target_table = 'queue-item' AND target_id = ${item.id}) OR (target_table = 'queue-owner' AND target_id IS NULL))
+        AND target_table = 'queue-item' AND target_id = ${item.id}
         AND event_ts >= NOW() - INTERVAL '10 minutes'
     `;
     await prisma.queueItem.delete({ where: { id: item.id } });

@@ -20,10 +20,7 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { randomBytes, randomInt, scryptSync } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { randomInt } from "node:crypto";
 
 import "dotenv/config";
 
@@ -32,7 +29,6 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { buildApp } from "../src/server/app.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { BODY_LIMIT_BYTES, registerRequestGuards } from "../src/server/request-guards.js";
-import { deleteDirectory } from "./lib/remove-dir.js";
 
 
 const EVIL_ORIGIN = "https://evil.example";
@@ -197,7 +193,6 @@ test("bodyLimit: JSON body over the stated limit → 413", async () => {
 const ASSEMBLY_ITEM_ID = Number.MAX_SAFE_INTEGER - randomInt(1_000_000_000);
 const ASSEMBLY = {
   HOST: "127.0.0.1:16145",
-  PASSPHRASE: "csrf-gate assembly passphrase",
   ANSWER_URL: `/api/queue/owner/items/${ASSEMBLY_ITEM_ID}/answer`,
   AUDITED_ANSWERS: 2,
 } as const;
@@ -208,35 +203,21 @@ before(async () => {
   auditBaselineId = row?.maxId ?? 0n;
 });
 
-async function withOwnerAssembly(run: (assembly: FastifyInstance, cookie: string) => Promise<void>): Promise<void> {
-  const secretsDir = mkdtempSync(path.join(tmpdir(), "csrf-assembly-"));
-  const salt = randomBytes(16);
-  const hash = scryptSync(ASSEMBLY.PASSPHRASE, salt, 32, { N: 16_384, r: 8, p: 1 });
-  const record = { algorithm: "scrypt", N: 16_384, r: 8, p: 1, keyLength: 32, salt: salt.toString("base64"), hash: hash.toString("base64") };
-  writeFileSync(path.join(secretsDir, "owner-passphrase.json"), JSON.stringify(record), { mode: 0o600 });
-  const assembly = await buildApp({ secretsDir });
+async function withOwnerAssembly(run: (assembly: FastifyInstance) => Promise<void>): Promise<void> {
+  const assembly = await buildApp();
   try {
-    const login = await assembly.inject({
-      method: "POST",
-      url: "/api/queue/owner/login",
-      headers: { host: ASSEMBLY.HOST },
-      payload: { passphrase: ASSEMBLY.PASSPHRASE },
-    });
-    const cookie = login.cookies.find((entry) => entry.name === "atrium_queue_owner");
-    assert.ok(cookie !== undefined, `owner login through the assembly failed: ${login.statusCode} ${login.body}`);
-    await run(assembly, `atrium_queue_owner=${cookie.value}`);
+    await run(assembly);
   } finally {
     await assembly.close();
-    deleteDirectory(secretsDir);
   }
 }
 
-test("assembly: text/plain with a body to a queue owner route, with a valid owner session → 415", async () => {
-  await withOwnerAssembly(async (assembly, cookie) => {
+test("assembly: text/plain with a body to a queue owner route, from the monitor page → 415", async () => {
+  await withOwnerAssembly(async (assembly) => {
     const res = await assembly.inject({
       method: "POST",
       url: ASSEMBLY.ANSWER_URL,
-      headers: { host: ASSEMBLY.HOST, cookie, "content-type": "text/plain" },
+      headers: { host: ASSEMBLY.HOST, "sec-fetch-site": "same-origin", "content-type": "text/plain" },
       payload: '{"code":"R1"}',
     });
     assert.strictEqual(res.statusCode, 415, res.body);
@@ -244,25 +225,24 @@ test("assembly: text/plain with a body to a queue owner route, with a valid owne
 });
 
 test("assembly: a cross-site mutation to a queue owner route is refused with 403 before its handler", async () => {
-  await withOwnerAssembly(async (assembly, cookie) => {
+  await withOwnerAssembly(async (assembly) => {
     const res = await assembly.inject({
       method: "POST",
       url: ASSEMBLY.ANSWER_URL,
-      headers: { host: ASSEMBLY.HOST, cookie, "content-type": "application/json", "sec-fetch-site": "cross-site", origin: EVIL_ORIGIN },
+      headers: { host: ASSEMBLY.HOST, "content-type": "application/json", "sec-fetch-site": "cross-site", origin: EVIL_ORIGIN },
       payload: { code: "R1" },
     });
     assert.strictEqual(res.statusCode, 403, res.body);
   });
 });
 
-// Login rows carry no field naming their writer → bounded to rows written since this file began (no test counts them)
 after(async () => {
   try {
     await waitForAnswerAuditRows();
     await getPrisma().$executeRaw`
       DELETE FROM monitor.audit_log
       WHERE actor = 'monitor-web' AND id > ${auditBaselineId}
-        AND ((target_table = 'queue-item' AND target_id = ${ASSEMBLY_ITEM_ID}) OR action_kind = 'queue-owner.login')
+        AND target_table = 'queue-item' AND target_id = ${ASSEMBLY_ITEM_ID}
     `;
   } finally {
     await disconnectPrisma();

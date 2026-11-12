@@ -17,15 +17,10 @@ import { registerImprovementRoutes } from "./improvement.js";
 import { registerWikiRoutes } from "./wiki.js";
 // model-config: "Models & limits" settings screen — per-domain model assignment + USD limits.
 import { registerModelConfigRoutes } from "./model-config.js";
-// queue: owner report/decision queue — encapsulated plugin (its Host + key hooks stay inside /api/queue/*).
+// queue: owner report/decision queue — encapsulated plugin (its Host and page-origin hooks stay inside /api/queue/*).
 import { registerQueueRoutes, resolveQueueRouteOptions } from "./queue.js";
 
-export interface RegisterRoutesOptions {
-  /** Queue secrets directory; absent → `${GA_ROOT:-$HOME/.glass-atrium}/secrets`, resolved here at registration. */
-  secretsDir?: string;
-}
-
-export async function registerRoutes(app: FastifyInstance, options: RegisterRoutesOptions = {}): Promise<void> {
+export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await registerHealthRoute(app);
   await registerDashboardRoutes(app);
   await registerHealthDetailRoutes(app);
@@ -38,5 +33,5 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
   await registerImprovementRoutes(app);
   await registerWikiRoutes(app);
   await registerModelConfigRoutes(app);
-  await registerQueueRoutes(app, resolveQueueRouteOptions(options.secretsDir));
+  await registerQueueRoutes(app, resolveQueueRouteOptions());
 }

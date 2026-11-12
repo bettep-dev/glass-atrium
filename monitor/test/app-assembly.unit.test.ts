@@ -4,12 +4,7 @@
 
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
 import { disconnectPrisma } from "../src/server/db.js";
-import { deleteDirectory } from "./lib/remove-dir.js";
 
 const LISTENING_RESOURCES = new Set(["TCPServerWrap", "PipeServerWrap"]);
 
@@ -26,9 +21,8 @@ test("importing the assembly and building an app binds no port, starts no timer 
     throw new Error("process.exit called by the assembly");
   });
   const before = { servers: countResources(LISTENING_RESOURCES), timers: countResources(new Set(["Timeout"])) };
-  const secretsDir = mkdtempSync(path.join(tmpdir(), "app-assembly-"));
   const { buildApp } = await import("../src/server/app.js");
-  const app = await buildApp({ secretsDir });
+  const app = await buildApp();
   try {
     await app.ready();
     assert.deepEqual(exitCalls, []);
@@ -37,14 +31,12 @@ test("importing the assembly and building an app binds no port, starts no timer 
     assert.equal(countResources(new Set(["Timeout"])), before.timers, "no timer started");
   } finally {
     await app.close();
-    deleteDirectory(secretsDir);
   }
 });
 
 test("the shell and its assets are served with framing denied, so no other page can frame the owner actions", async () => {
-  const secretsDir = mkdtempSync(path.join(tmpdir(), "app-assembly-"));
   const { buildApp } = await import("../src/server/app.js");
-  const app = await buildApp({ secretsDir });
+  const app = await buildApp();
   try {
     for (const url of ["/", "/index.html", "/styles/base.css"]) {
       const response = await app.inject({ method: "GET", url, headers: { host: "127.0.0.1:16145" } });
@@ -54,6 +46,5 @@ test("the shell and its assets are served with framing denied, so no other page 
     }
   } finally {
     await app.close();
-    deleteDirectory(secretsDir);
   }
 });

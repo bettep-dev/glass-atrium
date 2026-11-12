@@ -35,9 +35,7 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/agents/:name", "agents"],
   // Self-update control plane — applies a release to the live install (irreversible, host-wide).
   ["/api/dashboard/update", "self-update"],
-  // Owner queue: login/logout and every owner decision on an item; the body (passphrase, answer text) is never recorded.
-  ["/api/queue/owner/login", "queue-owner"],
-  ["/api/queue/owner/logout", "queue-owner"],
+  // Owner queue: every owner decision on an item; the body (answer text) is never recorded.
   ["/api/queue/owner/items/:id/answer", "queue-item"],
   ["/api/queue/owner/items/:id/later", "queue-item"],
   ["/api/queue/owner/items/:id/seen", "queue-item"],

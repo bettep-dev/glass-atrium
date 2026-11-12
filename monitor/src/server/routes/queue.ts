@@ -1,6 +1,6 @@
 // Owner queue API — the monitor's first encapsulated plugin (deliberately NOT fastify-plugin wrapped):
-// its Host allowlist, queue-key, cookie and owner-session hooks reach only /api/queue/* routes, never a root route.
-// Two credentials, no overlap: session routes take the queue key, owner routes (queue-owner.ts) the owner cookie.
+// its Host allowlist reaches only /api/queue/* routes, never a root route. No credential: a session route acts only on
+// the session id it names; owner mutations (queue-owner.ts) additionally need the monitor page's own origin.
 
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +12,7 @@ import { ackItem, claimPendingItems, withdrawItem } from "../queue/delivery.js";
 import { getQueueCliPath } from "../queue/envelope.js";
 import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
-import { buildHostAllowlistHook, buildQueueKeyHook } from "../queue/request-gate.js";
+import { buildHostAllowlistHook } from "../queue/request-gate.js";
 import {
   ackBodySchema,
   deregisterBodySchema,
@@ -27,9 +27,7 @@ import { type IdParams, handleItemRequest, handleParsed, handleQueueRequest } fr
 const POST_ROUTE_OPTIONS = { bodyLimit: 192 * 1024 } as const;
 
 export interface QueueRouteOptions {
-  /** Directory holding the 0600 `queue-key` and `owner-passphrase.json` files; read lazily, never at registration. */
-  secretsDir: string;
-  /** Port the Host allowlist pins (`127.0.0.1:<port>` · `localhost:<port>` · `[::1]:<port>`). */
+  /** Port the Host allowlist and the page-origin leg pin (`127.0.0.1:<port>` · `localhost:<port>` · `[::1]:<port>`). */
   port: number;
   /** Home whose `.claude` / `.claude-<name>` directories are the only accepted config dirs. */
   homeDir: string;
@@ -37,11 +35,10 @@ export interface QueueRouteOptions {
   cliPath: string;
 }
 
-/** Defaults resolved at registration time (never import time) so a caller-supplied secrets dir always wins. */
-export function resolveQueueRouteOptions(secretsDir?: string): QueueRouteOptions {
+/** Defaults resolved at registration time (never import time) → a GA_ROOT set after import still wins. */
+export function resolveQueueRouteOptions(): QueueRouteOptions {
   const gaRoot = process.env.GA_ROOT || path.join(os.homedir(), ".glass-atrium");
   return {
-    secretsDir: secretsDir ?? path.join(gaRoot, "secrets"),
     port: getMonitorPort(),
     homeDir: os.homedir(),
     cliPath: getQueueCliPath(gaRoot),
@@ -57,16 +54,11 @@ async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Pr
   app.get("/api/queue/count", async (request, reply) =>
     handleQueueRequest(request, reply, { route: "/api/queue/count", work: () => getCount() }),
   );
-  await app.register(sessionRoutesPlugin, options);
-  await app.register(ownerRoutesPlugin, options);
-}
-
-async function sessionRoutesPlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
-  app.addHook("onRequest", buildQueueKeyHook(options.secretsDir));
   registerSessionRoutes(app, options.homeDir);
   registerItemRoutes(app);
   registerDeliveryRoutes(app);
   registerWithdrawRoute(app);
+  await app.register(ownerRoutesPlugin, options);
 }
 
 function registerSessionRoutes(app: FastifyInstance, homeDir: string): void {

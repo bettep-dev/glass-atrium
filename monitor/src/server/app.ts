@@ -8,7 +8,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 
 import { logger } from "./logger.js";
-import { type RegisterRoutesOptions, registerRoutes } from "./routes/index.js";
+import { registerRoutes } from "./routes/index.js";
 import { registerBrowserShutdownHook } from "./clauded-docs/browser-pool.js";
 import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { registerRequestGuards } from "./request-guards.js";
@@ -16,12 +16,10 @@ import { registerRequestGuards } from "./request-guards.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
 
-// a meta CSP cannot carry frame-ancestors, and SameSite=Strict ignores the port → a neighbour 127.0.0.1 page could frame the owner actions with the cookie attached
+// a meta CSP cannot carry frame-ancestors → a framed Queue page would send same-origin owner actions a neighbour page could click into
 const STATIC_FRAME_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } as const;
 
-export type AppOptions = RegisterRoutesOptions;
-
-export async function buildApp(options: AppOptions = {}): Promise<FastifyInstance> {
+export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ loggerInstance: logger, disableRequestLogging: false });
 
   // Before every route → the queue plugin copies the parsers the guards leave (text/plain removed) at its load
@@ -36,7 +34,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     },
   });
 
-  await registerRoutes(app, options);
+  await registerRoutes(app);
 
   // audit-trail hook — mutating write 를 monitor.audit_log 에 fire-and-forget 기록(mutation 미차단)
   registerAuditLogHook(app);
