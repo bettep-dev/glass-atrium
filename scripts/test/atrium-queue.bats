@@ -10,6 +10,8 @@
 bats_require_minimum_version 1.5.0
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${GA}/scripts/lib/path-guard.sh"
 CLI="${GA}/scripts/atrium-queue.sh"
 REGISTER_HOOK="${GA}/hooks/queue-session-register.sh"
 SESSION_ID="3f1c2b9a-7d4e-4f5a-9b6c-0e1d2c3b4a59"
@@ -280,8 +282,9 @@ run_cli() {
 @test "pending names answers or messages and never prints item text" {
   start_stub
   local row
+  local nth_reply="${BATS_TEST_TMPDIR}/reply.1"
   for row in one-claim no-claim; do
-    rm -f "${BATS_TEST_TMPDIR}/reply.1"
+    if ga_guard_path "${nth_reply}"; then rm -f -- "${nth_reply:?}"; fi
     : >"${BATS_TEST_TMPDIR}/requests.log"
     stop_stub
     if [[ "${row}" == one-claim ]]; then
