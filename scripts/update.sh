@@ -307,7 +307,7 @@ _update_staging=""
 _update_snapshot=""
 # 1 once the monitor dependency step has rewritten node_modules or the generated client
 # this run → a later failure's recovery must rebuild before any restart.
-_update_deps_ran=0
+_update_has_refreshed_deps=0
 
 # P3 headless / web-triggered orchestration run state (see the file header). Mode
 # flag + DB update_job tracking state + the resolved running-script dir (for the
@@ -2940,7 +2940,7 @@ update_monitor_npm_ci() {
   local monitor_dir="$1" npm rc=0
   npm="${ATRIUM_UPDATE_NPM:-npm}"
   update_log "deps: installing monitor dependencies — npm ci from the npm registry (${monitor_dir})"
-  _update_deps_ran=1
+  _update_has_refreshed_deps=1
   update_ticker_start
   (cd -- "${monitor_dir}" && "${npm}" ci --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=1 </dev/null) || rc=$?
   update_ticker_stop
@@ -2964,7 +2964,7 @@ update_monitor_prisma_generate() {
     update_die_monitor_deps "prisma generate" 127 "prisma CLI missing or not executable (${prisma_bin})" "${monitor_dir}"
   fi
   update_log "deps: regenerating the Prisma client (${monitor_dir})"
-  _update_deps_ran=1
+  _update_has_refreshed_deps=1
   (cd -- "${monitor_dir}" && "${prisma_bin}" generate </dev/null) || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
     update_die_monitor_deps "prisma generate" "${rc}" "monitor/.env missing or DATABASE_URL / SHADOW_DATABASE_URL unset (prisma.config.ts reads both), or the schema is invalid — see the prisma output above" "${monitor_dir}"
@@ -2982,9 +2982,9 @@ update_die_monitor_deps() {
 
 # Recovery suffix for a failure after the dependency step rewrote node_modules this run: the
 # old dist/server may not load against them. Empty when the step did not run.
-update_rebuild_note() {
-  [[ "${_update_deps_ran}" -eq 1 ]] || return 0
-  printf '%s\n' "; monitor dependencies were reinstalled this run, so run 'npm run build' in ${1} before restarting the monitor"
+update_get_rebuild_note() {
+  [[ "${_update_has_refreshed_deps}" -eq 1 ]] || return 0
+  printf '%s\n' "; the monitor dependencies or Prisma client were refreshed this run, so run 'npm run build' in ${1} before restarting the monitor"
 }
 
 # ---------------------------------------------------------------------------
@@ -3076,7 +3076,7 @@ update_migrate_deploy_post_apply() {
   # node_modules IS present (or a binary was named outright) and the CLI still is not
   # there — that is a broken install rather than an uninstalled one, so it loud-fails.
   if [[ ! -x "${prisma_bin}" ]]; then
-    update_die_code 15 "prisma CLI missing or not executable (${prisma_bin}) — update files APPLIED but PENDING migrations were NOT applied; reinstall the monitor dependencies (npm ci in ${monitor_dir}), then run '${root}/glass-atrium db-setup'$(update_rebuild_note "${monitor_dir}")"
+    update_die_code 15 "prisma CLI missing or not executable (${prisma_bin}) — update files APPLIED but PENDING migrations were NOT applied; reinstall the monitor dependencies (npm ci in ${monitor_dir}), then run '${root}/glass-atrium db-setup'$(update_get_rebuild_note "${monitor_dir}")"
   fi
 
   update_log "migrate: applying pending Prisma migrations (${monitor_dir})"
@@ -3084,7 +3084,7 @@ update_migrate_deploy_post_apply() {
   update_heartbeat
   (cd -- "${monitor_dir}" && "${prisma_bin}" migrate deploy) || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
-    update_die_code 15 "prisma migrate deploy failed (rc=${rc}) — update files APPLIED but the database schema was NOT migrated (database unreachable, or a migration errored — see the prisma output above); the monitor was NOT restarted. Recover with '${root}/glass-atrium db-setup', then '${root}/glass-atrium doctor'$(update_rebuild_note "${monitor_dir}")"
+    update_die_code 15 "prisma migrate deploy failed (rc=${rc}) — update files APPLIED but the database schema was NOT migrated (database unreachable, or a migration errored — see the prisma output above); the monitor was NOT restarted. Recover with '${root}/glass-atrium db-setup', then '${root}/glass-atrium doctor'$(update_get_rebuild_note "${monitor_dir}")"
   fi
   update_log "migrate: pending Prisma migrations applied"
   update_run_unadjudicated_backfill "${root}"
