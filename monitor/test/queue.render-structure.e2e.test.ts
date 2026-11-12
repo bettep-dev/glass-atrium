@@ -121,6 +121,12 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     if (image === undefined) return reply.code(404).send({ error: "unknown_image" });
     return reply.headers({ "content-type": image.mime, "x-content-type-options": "nosniff" }).send(image.bytes);
   });
+  // an upload is stored as the first fixture image under the owner's label → its thumbnail loads from the serve route above
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
+  app.post<{ Querystring: { name: string } }>("/api/queue/owner/images", async (request, reply) => {
+    const [first] = FIXTURE_IMAGES.values();
+    return reply.code(201).send({ ...first?.view, name: request.query.name, bytes: (request.body as Buffer).length });
+  });
   app.get("/api/queue/count", async () => ({
     awaiting: harness.fixture.items.filter((item) => item.status === "open").length,
     deviations: harness.fixture.items.filter((item) => item.deviation !== null).length,
@@ -392,6 +398,44 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(railRows, [68]);
     assert.deepEqual({ isAwayShown: mode.isAwayShown, column: mode.column, insets: mode.insets }, { isAwayShown: false, column: 720, insets: [mode.pad, mode.pad] });
     assert.deepEqual(restored, stored);
+  });
+
+  test("an order's images are 96 squares in its bubble, an added one is a 56 thumbnail in a 104 box, and the viewer fits one in the window and steps", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await page.getByRole("button", { name: "New order", exact: true }).click();
+    await page.locator(".queue-bubble-image img").first().waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll(".queue-bubble-image img")].every((img) => (img as HTMLImageElement).complete));
+    const bubble = await page.evaluate(() => [...document.querySelectorAll(".queue-bubble-image")].map((button) => {
+      const box = button.getBoundingClientRect();
+      return [Math.round(box.width), Math.round(box.height), ((button.querySelector("img") as HTMLImageElement).naturalWidth > 0)];
+    }));
+    await page.locator("#queue-order-text-files").setInputFiles({ name: "shot-1.png", mimeType: "image/png", buffer: [...FIXTURE_IMAGES.values()][0]?.bytes ?? Buffer.alloc(0) });
+    await page.locator(".queue-thumb:not(.is-busy) img").waitFor();
+    const composer = await page.evaluate(() => ({
+      thumb: [".queue-thumb"].map((selector) => { const box = (document.querySelector(selector) as HTMLElement).getBoundingClientRect(); return [Math.round(box.width), Math.round(box.height)]; })[0],
+      box: Math.round((document.querySelector(".queue-orders .queue-compose-box") as HTMLElement).getBoundingClientRect().height),
+      count: document.querySelector(".queue-thumbs-count")?.textContent,
+    }));
+    await page.locator(".queue-bubble-image").first().click();
+    await page.locator(".queue-viewer img").waitFor();
+    const fit = await page.evaluate(() => {
+      const img = (document.querySelector(".queue-viewer img") as HTMLElement).getBoundingClientRect();
+      return img.top >= 0 && img.left >= 0 && img.bottom <= window.innerHeight && img.right <= window.innerWidth;
+    });
+    await page.keyboard.press("ArrowRight");
+    const stepped = await page.locator(".queue-viewer figcaption").textContent();
+    await page.keyboard.press("Escape");
+    const after = await page.evaluate(() => ({ isViewerOpen: document.querySelector(".queue-viewer") !== null, isModeOpen: document.querySelector(".queue-orders") !== null, focus: document.activeElement?.getAttribute("aria-label") }));
+    await page.close();
+
+    assert.ok(bubble.length > 0 && bubble.every(([width, height, isLoaded]) => width === 96 && height === 96 && isLoaded), JSON.stringify(bubble));
+    assert.deepEqual({ thumb: composer.thumb, box: composer.box }, { thumb: [56, 56], box: 104 });
+    assert.match(composer.count ?? "", /^1 image · \d+ KB$/);
+    assert.equal(fit, true);
+    assert.match(stepped ?? "", / · 2 of \d+$/);
+    assert.deepEqual({ isViewerOpen: after.isViewerOpen, isModeOpen: after.isModeOpen }, { isViewerOpen: false, isModeOpen: true });
+    assert.match(after.focus ?? "", /^Open image 1 of \d+: /);
   });
 
   test("each named state is captured at every desktop width as a viewport-sized PNG named for the mockup", async (t) => {
