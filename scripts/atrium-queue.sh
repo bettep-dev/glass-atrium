@@ -333,9 +333,11 @@ get_start_time() {
 
 # The lock is a symlink whose target is the holder record "waiter pid|its start|owner pid|its start". Every lock
 # change but a holder's own create-if-absent runs under the waits mutex; a takeover renames a pre-built record onto the
-# name in one step → the name is never empty mid-takeover, and only a holder ever removes its own record.
+# name in one step → the name is never empty mid-takeover, and only a holder ever removes its own record. A failed
+# rename removes the private "<session>.take" name before it exits; a crash between building it and renaming it leaves
+# it behind, unread, until the next takeover's ln -f replaces it.
 take_wait_lock() {
-  local state
+  local state take="${WAIT_LOCK}.take"
   mkdir -p -- "${WAIT_LOCK%/*}" || fail 1 "cannot create the wait lock directory ${WAIT_LOCK%/*}"
   # shellcheck disable=SC2310  # a mutex held past its bound → the named exit
   take_waits_mutex || fail 1 "could not take this session's wait lock — the waits mutex stayed held"
@@ -345,8 +347,11 @@ take_wait_lock() {
       mine) break ;;
       live) fail 5 "another wait already runs for this session — nothing to do" ;;
       stale)
-        ln -sfn -- "${WAIT_RECORD}" "${WAIT_LOCK}.take" || fail 1 "cannot build the replacement wait lock record"
-        mv -f -- "${WAIT_LOCK}.take" "${WAIT_LOCK}" || fail 1 "cannot replace the stale wait lock ${WAIT_LOCK}"
+        ln -sfn -- "${WAIT_RECORD}" "${take}" || fail 1 "cannot build the replacement wait lock record"
+        if ! mv -f -- "${take}" "${WAIT_LOCK}"; then
+          if ga_guard_path "${take}"; then rm -f -- "${take:?}"; fi
+          fail 1 "cannot replace the stale wait lock ${WAIT_LOCK}"
+        fi
         ;;
       *) ln -sn -- "${WAIT_RECORD}" "${WAIT_LOCK}" 2>/dev/null || continue ;;
     esac

@@ -92,9 +92,8 @@ await_file_or_exit() {
   done
 }
 
-# mv and ln shims → the real tool runs first; then a process exporting QUEUE_TEST_PAUSE=<tool> pauses once, at its
-# first call whose source operand is the lock, until the stub logs QUEUE_TEST_PAUSE_POLLS more requests (at most 5 s);
-# a process exporting QUEUE_TEST_TRACE logs each call naming the lock and the lock name's target, or ABSENT, after it
+# mv and ln shims → the real tool runs first; then a process exporting QUEUE_TEST_TRACE logs each call naming the lock
+# and the lock name's target, or ABSENT, after it
 install_lock_step_shims() {
   local tool lock="$1" t="${BATS_TEST_TMPDIR}"
   for tool in mv ln; do
@@ -102,22 +101,54 @@ install_lock_step_shims() {
 #!/usr/bin/env bash
 "$(command -v "${tool}")" "\$@"
 status=\$?
-if [[ "\${QUEUE_TEST_PAUSE:-}" == ${tool} && "\$1" == -- && "\$2" == "${lock}" && ! -e "${t}/in-gap" ]]; then
-  : >"${t}/in-gap"
-  base=\$(wc -l <"${t}/requests.log")
-  tries=0
-  while ((\$(wc -l <"${t}/requests.log") < base + \${QUEUE_TEST_PAUSE_POLLS:-2} && tries < 100)); do
-    sleep 0.05
-    tries=\$((tries + 1))
-  done
-fi
 if [[ -n "\${QUEUE_TEST_TRACE:-}" && "\$*" == *"${lock}"* ]]; then
-  printf '%s %s → %s\n' ${tool} "\$*" "\$("$(command -v readlink)" "${lock}" || echo ABSENT)" >>"${t}/trace.log"
+  printf '%s %s → %s\n' ${tool} "\$*" "\$("$(PATH="${PATH#"${t}/bin:"}" command -v readlink)" "${lock}" || echo ABSENT)" >>"${t}/trace.log"
 fi
 exit "\${status}"
 SHIM
     chmod 755 "${t}/bin/${tool}"
   done
+}
+
+# readlink shim → a process exporting QUEUE_TEST_GATE_READ=<glob> holds once, at its first read under the waits mutex
+# (fd 9 open) whose target matches the glob: it writes its own pid to in-gap, then holds until gate-open exists (at
+# most 5 s, inside the CLI's 10 s mutex bound)
+install_read_gate_shim() {
+  local t="${BATS_TEST_TMPDIR}"
+  cat >"${t}/bin/readlink" <<SHIM
+#!/usr/bin/env bash
+held="\$("$(PATH="${PATH#"${t}/bin:"}" command -v readlink)" "\$@")" || exit
+if [[ -n "\${QUEUE_TEST_GATE_READ:-}" && "\${held}" == \${QUEUE_TEST_GATE_READ} && ! -e "${t}/in-gap" ]] \\
+  && { : >&9; } 2>/dev/null; then
+  printf '%s\n' "\$\$" >"${t}/in-gap.part"
+  /bin/mv -f -- "${t}/in-gap.part" "${t}/in-gap"
+  tries=0
+  while [[ ! -e "${t}/gate-open" ]] && ((tries < 100)); do
+    sleep 0.05
+    tries=\$((tries + 1))
+  done
+fi
+printf '%s\n' "\${held}"
+SHIM
+  chmod 755 "${t}/bin/readlink"
+}
+
+# KILLs pid $1 and each ancestor up to and including pid $2 → a crash of a whole wait, children and all; refuses a
+# chain that never reaches $2
+kill_chain_up_to() {
+  local pid="$1" chain=""
+  while [[ "${pid}" =~ ^[0-9]+$ ]] && ((pid > 1)); do
+    chain="${chain} ${pid}"
+    if [[ "${pid}" == "$2" ]]; then
+      # shellcheck disable=SC2086  # the chain is a space-separated pid list, split on purpose
+      kill -KILL ${chain}
+      return 0
+    fi
+    pid="$(ps -o ppid= -p "${pid}")"
+    pid="${pid//[[:space:]]/}"
+  done
+  echo "pid $1 is no descendant of $2"
+  return 1
 }
 
 # the start time the CLI records for pid $1
@@ -561,39 +592,66 @@ SHIM
   set_reply 200 '{"items":[]}'
   local t="${BATS_TEST_TMPDIR}" lock="${GA_ROOT}/data/queue/waits/${SESSION_ID}"
   install_lock_step_shims "${lock}"
-  local row old_pid new_pid leftover
-  # each row → what happens while the displaced wait releases (its lock-moving step paused until two newcomer polls)
+  install_read_gate_shim
+  local row old_owner new_owner old_pid new_pid third_pid old_status leftover
+  # each row → what happens while the displaced wait releases; a gap row holds that release inside drop_wait_lock,
+  # under the waits mutex, at its read of the newcomer's record, and starts a third wait of the newcomer's Claude
+  # process there
   for row in release-completes third-wait-in-gap releaser-killed-in-gap; do
     stop_waiters
-    for leftover in "${t}/in-gap" "${t}/trace.log" "${lock}"; do
+    for leftover in "${t}/in-gap" "${t}/gate-open" "${t}/trace.log" "${lock}"; do
       if ga_guard_path "${leftover}"; then rm -f -- "${leftover:?}"; fi
     done
     start_owner
+    old_owner="${OWNER_PID}"
+    start_owner
+    new_owner="${OWNER_PID}"
+    export CLAUDE_PID="${old_owner}"
     use_fast_wait 30
-    export QUEUE_TEST_PAUSE=mv
+    if [[ "${row}" != release-completes ]]; then export QUEUE_TEST_GATE_READ="*|${new_owner}|*"; fi
     start_waiter old
-    unset QUEUE_TEST_PAUSE
+    unset QUEUE_TEST_GATE_READ
     old_pid="${WAITER_PID}"
     await_requests "$(($(wc -l <"${t}/requests.log") + 1))"
-    start_owner
+    export CLAUDE_PID="${new_owner}"
     use_fast_wait 6
     export QUEUE_TEST_TRACE=1
     start_waiter new
     unset QUEUE_TEST_TRACE
     new_pid="${WAITER_PID}"
-    await_file_or_exit "${t}/in-gap" "${old_pid}"
-    case "${row}" in
-      third-wait-in-gap)
-        use_fast_wait 2
-        run_cli wait
-        [[ "${status}" -eq 5 && "${stderr}" == *"already runs"* ]] || {
-          echo "row ${row}: third wait status=${status} ${stderr}"
-          return 1
-        }
-        ;;
-      releaser-killed-in-gap) kill -KILL "${old_pid}" 2>/dev/null || true ;;
-    esac
+    old_status=5
+    if [[ "${row}" != release-completes ]]; then
+      await_file_or_exit "${t}/in-gap" "${old_pid}"
+      [[ -s "${t}/in-gap" ]] && kill -0 "${old_pid}" 2>/dev/null || {
+        echo "row ${row}: the displaced wait never held inside its release ($(cat "${t}/waiter.old.err"))"
+        return 1
+      }
+      use_fast_wait 2
+      start_waiter third
+      third_pid="${WAITER_PID}"
+      # the third wait reaches the waits mutex and waits there on the held release
+      sleep 1
+      kill -0 "${third_pid}" 2>/dev/null || {
+        echo "row ${row}: the third wait ended before the release did: $(cat "${t}/waiter.third.err")"
+        return 1
+      }
+      if [[ "${row}" == releaser-killed-in-gap ]]; then
+        kill_chain_up_to "$(cat "${t}/in-gap")" "${old_pid}"
+        old_status=137
+      else
+        : >"${t}/gate-open"
+      fi
+      await_exit "${third_pid}"
+      [[ "${AWAITED_STATUS}" == 5 && "$(cat "${t}/waiter.third.err")" == *"already runs"* ]] || {
+        echo "row ${row}: third wait status=${AWAITED_STATUS} $(cat "${t}/waiter.third.err")"
+        return 1
+      }
+    fi
     await_exit "${old_pid}"
+    [[ "${AWAITED_STATUS}" == "${old_status}" ]] || {
+      echo "row ${row}: displaced wait status=${AWAITED_STATUS} $(cat "${t}/waiter.old.err")"
+      return 1
+    }
     kill -0 "${new_pid}" 2>/dev/null && [[ "$(readlink "${lock}")" == "${new_pid}|"* ]] || {
       echo "row ${row}: newcomer alive=$(kill -0 "${new_pid}" 2>/dev/null && echo yes) lock=$(readlink "${lock}")"
       cat "${t}/waiter.new.err"
@@ -604,8 +662,9 @@ SHIM
       echo "row ${row}: newcomer status=${AWAITED_STATUS} $(cat "${t}/waiter.new.err")"
       return 1
     }
-    [[ -z "$(find "${lock%/*}" -name '*.drop.*')" ]] || {
-      echo "row ${row}: private names left: $(ls "${lock%/*}")"
+    # the newcomer's own release empties the waits dir: no lock name and no private name is left
+    [[ -z "$(ls -A "${lock%/*}")" ]] || {
+      echo "row ${row}: names left in the waits dir: $(ls -A "${lock%/*}")"
       return 1
     }
     ! grep -q 'ABSENT' "${t}/trace.log" || {
@@ -628,29 +687,22 @@ SHIM
   stale="${dead_pid}|Thu Nov 12 21:30:07 2026|${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")"
   mkdir -p "${lock%/*}"
   ln -sn -- "${stale}" "${lock}"
-  install_lock_step_shims "${lock}"
-  # readlink shim: the first wait's read of the dead record holds until the second wait has polled (at most 3 s)
-  cat >"${t}/bin/readlink" <<SHIM
-#!/usr/bin/env bash
-held="\$("$(command -v readlink)" "\$@")" || exit
-if [[ -n "\${QUEUE_TEST_HOLD_READ:-}" && "\${held}" == '${stale}' && ! -e "${t}/read-held" ]]; then
-  : >"${t}/read-held"
-  tries=0
-  while [[ ! -s "${t}/requests.log" ]] && ((tries < 60)); do
-    sleep 0.05
-    tries=\$((tries + 1))
-  done
-fi
-printf '%s\n' "\${held}"
-SHIM
-  chmod 755 "${t}/bin/readlink"
-  export QUEUE_TEST_HOLD_READ=1 QUEUE_TEST_PAUSE=mv QUEUE_TEST_PAUSE_POLLS=1
+  install_read_gate_shim
+  # the first wait holds at its read of the dead record inside take_wait_lock, under the waits mutex, until gate-open;
+  # the second wait starts meanwhile and reaches the mutex while the first still holds it
+  export QUEUE_TEST_GATE_READ="${stale}"
   start_waiter first
-  unset QUEUE_TEST_HOLD_READ QUEUE_TEST_PAUSE QUEUE_TEST_PAUSE_POLLS
+  unset QUEUE_TEST_GATE_READ
   local first_pid="${WAITER_PID}" second_pid ended="" survivor tries=0
-  await_file_or_exit "${t}/read-held" "${first_pid}"
+  await_file_or_exit "${t}/in-gap" "${first_pid}"
+  [[ -s "${t}/in-gap" ]] || {
+    echo "the first wait never held at its read of the dead record: $(cat "${t}/waiter.first.err")"
+    return 1
+  }
   start_waiter second
   second_pid="${WAITER_PID}"
+  sleep 0.5
+  : >"${t}/gate-open"
   while [[ -z "${ended}" ]] && ((tries < 200)); do
     kill -0 "${first_pid}" 2>/dev/null || ended=first
     kill -0 "${second_pid}" 2>/dev/null || ended=second
@@ -666,6 +718,36 @@ SHIM
   }
   kill -0 "${survivor}" 2>/dev/null && [[ "$(readlink "${lock}")" == "${survivor}|"* ]] || {
     echo "survivor ${survivor} alive=$(kill -0 "${survivor}" 2>/dev/null && echo yes) lock=$(readlink "${lock}")"
+    return 1
+  }
+}
+
+@test "a wait whose takeover rename fails exits 1 and leaves no private name in the waits dir" {
+  start_stub
+  set_reply 200 '{"items":[]}'
+  start_owner
+  use_fast_wait 2
+  local t="${BATS_TEST_TMPDIR}" lock="${GA_ROOT}/data/queue/waits/${SESSION_ID}" dead_pid stale
+  true &
+  dead_pid=$!
+  wait "${dead_pid}"
+  stale="${dead_pid}|Thu Nov 12 21:30:07 2026|${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")"
+  mkdir -p "${lock%/*}"
+  ln -sn -- "${stale}" "${lock}"
+  # mv shim: the rename of the built record onto the lock name fails
+  cat >"${t}/bin/mv" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == *"${lock}.take"* ]]; then exit 1; fi
+exec "$(command -v mv)" "\$@"
+SHIM
+  chmod 755 "${t}/bin/mv"
+  run_cli wait
+  [[ "${status}" -eq 1 && "${stderr}" == *"cannot replace the stale wait lock"* ]] || {
+    echo "status=${status} ${stderr}"
+    return 1
+  }
+  [[ "$(ls -A "${lock%/*}")" == "${SESSION_ID}" && "$(readlink "${lock}")" == "${stale}" ]] || {
+    echo "waits dir: $(ls -A "${lock%/*}") lock=$(readlink "${lock}")"
     return 1
   }
 }
