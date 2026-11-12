@@ -879,6 +879,65 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	overflow-wrap: anywhere;
 }
 
+/* body text (ProseText) — agent-written plain text on the prose line; sets its own line height → its element never takes .fs-body,
+   whose 1.45 in TypeScaleStyle's later <style> would win at the same specificity */
+.prose-text {
+	max-width: var(--measure-prose);
+	font-size: var(--fs-body);
+	font-weight: 400;
+	line-height: 24px;
+	color: rgb(var(--ink));
+	word-break: keep-all; /* Korean breaks at spaces, never inside a word */
+	overflow-wrap: anywhere;
+}
+.prose-text--compact {
+	font-size: var(--fs-control);
+	line-height: 22px;
+}
+.prose-text > * + * {
+	margin-top: var(--space-3);
+}
+/* the preflight strips list markers → restored here */
+.prose-text ul {
+	list-style: disc;
+	padding-inline-start: var(--space-4);
+}
+.prose-text ol {
+	list-style: decimal;
+	padding-inline-start: var(--space-4);
+}
+.prose-text li + li,
+.prose-text li > ul,
+.prose-text li > ol {
+	margin-top: var(--space-1);
+}
+.prose-text li::marker {
+	color: rgb(var(--faint));
+}
+.prose-text strong {
+	font-weight: 600;
+}
+.prose-text .machine {
+	font-size: var(--fs-meta);
+}
+.prose-pre {
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-size: var(--fs-meta);
+	line-height: 1.5;
+	white-space: pre-wrap;
+}
+
+/* inline document link — no arrow, so an underline at rest is its non-colour cue (WCAG 1.4.1); .link underlines only on hover */
+a.prose-link {
+	color: rgb(var(--ink));
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+}
+a.prose-link:hover {
+	text-decoration-thickness: 2px;
+}
+
 /* drawer fact — one label · value row (spec §6): label 13/500 dim left, value 15 ink right, 32 row; long value wraps, never scrolls */
 .detail-fact {
 	display: flex;

@@ -94,6 +94,8 @@
   --row-h-compact: 32px;
   /* one line box per row for 13–15px text — .tbl derives its cell block padding from it and the 40 row */
   --lh-row: 20px;
+  /* reading measure — a ch length resolves against the text that uses it: 66ch of 15px on the sheet, of 14px in a compact bubble */
+  --measure-prose: 66ch;
 
   /* one filled selected state — pressed toggles, active segments, checked items */
   --selected-fill:  28  25  23;

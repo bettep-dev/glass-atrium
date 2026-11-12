@@ -198,6 +198,7 @@
 | 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
 | 기타 | `Icon` · `ChipGroup` (filter chips retiring, §12.3) · `DetailField` | `.seg` |
 | control row · inline target | — (class only) | `.control-row` · `.inline-target` (§7.15 · §7.16) |
+| 본문 텍스트 | `ProseText` · parser `getProseBlocks` | `.prose-text` · `.prose-text--compact` · `.prose-pre` · `a.prose-link` (§7.13) |
 
 - **Taxonomy** (§12.3): every interactive or informational thing takes one row's look there. The atoms it names that `ui.jsx` lacks — `Segmented`, `Tab`, filter trigger, bar search, `Select`, quiet button, `Link`, `Stack`, `Cluster`, the machine-string atom — join this table in the change that ships each.
 
@@ -650,6 +651,13 @@
 - **`.page-verdict`** (`PageVerdict`, retiring — §12.7): glyph 가 tone, 단어 · 문장은 ink.
 - **`.section-label`** (`SectionLabel`): `--fs-meta` 600 sentence case `--dim`, 실제 h2/h3.
 - **`.skip-link`**: 첫 Tab stop, focus 시 화면 안으로.
+- **`.prose-text`** (`ProseText`): agent-written plain text (queue items and orders) — never the document viewer's markdown pipeline.
+  - 15 / 400 / ink on a 24 line; `.prose-text--compact` 14 / 22 (order bubble) · `max-width: var(--measure-prose)` (66ch of its own size) · `word-break: keep-all` + `overflow-wrap: anywhere`.
+  - Sets its own line height → its element never takes `.fs-body` (`TypeScaleStyle`'s later 1.45 wins at the same specificity).
+  - Blocks `--space-3` apart · lists disc / decimal (the author's number kept), faint markers, indent `--space-4`, items `--space-1` apart, one nested level · `# ` lines → one 600 paragraph, never a larger size.
+  - Code span → `MachineString` 13 · fenced block `.prose-pre` mono 13 / 1.5, pre-wrap, no fill or border · `**text**` 600 · addresses, tables, quotes and tags stay literal text.
+  - React elements only, never HTML; the one generated href is `#clauded-docs?doc=` + an integer.
+  - Document link (`a.prose-link`, §12.3 Inline link): a declared id (`linkedDocIds`) not touching a digit or Latin letter, or `clauded-docs/<id>` · `clauded-docs?doc=<id>`; a keyword + number (`monitor 16145`, `문서 120건`) stays text. `getProseBlocks` returns the declared ids it linked.
 
 ### 7.14 System map — R2 two-column layout (`architecture.jsx`)
 
@@ -957,6 +965,7 @@
 | Button — secondary | any other in-page action outside a bar (Show all) | elev fill + 1px `--control-edge`, h32, radius 6, 14/500 — fill + border is an open decision |
 | Button — quiet | an action inside a bar or header line (Refresh, Previous/Next, Reset filters) | no edge or fill at rest, dim text + icon, sunken fill on hover |
 | Link | navigation to another page or document ("Task results →") | ink text, trailing →, underline on hover, no box, inline height |
+| Inline link | a document reference inside body text (`ProseText`, §7.13) | `a.prose-link`: ink text, always underlined (1 px, offset 0.2em; 2 px on hover), no arrow — the underline is its non-colour cue |
 | Search (bar) | free-text filter in a filter bar or card head | sunken fill + leading search icon, no border, h32, radius 6; focus ring on focus |
 | Filter trigger | one filter axis on a bar (Show, Audience, Agent, Result, Sort) | quiet: axis label 14/500 dim + value ink + chevron, no colon; sunken fill on hover and while open; option list = menu with ✓ on the chosen value(s) |
 | Segmented control | a page-wide window (range 7d/30d/90d) — not a list filter | sunken track, no outer edge, h32, items 14/500 dim; selected = raised thumb + 1px `--control-edge` + ink text |
