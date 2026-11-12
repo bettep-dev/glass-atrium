@@ -11,6 +11,7 @@ import "dotenv/config";
 
 import { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { registerBodySchema } from "../src/server/queue/schemas.js";
 
 /** Thrown last inside a case's transaction → the transaction rolls back and nothing persists. */
 class Rollback extends Error {}
@@ -356,7 +357,37 @@ describe("monitor.queue_sessions name", () => {
       );
     });
   }
+
+  // one limit in two layers → same unit (code points) and same character class (\p{Cc}) on both sides
+  test("the register schema and the name column accept the same names", async () => {
+    const astral = "\u{1F600}";
+    const candidates = [astral.repeat(100), astral.repeat(101), "n".repeat(99) + astral, "n".repeat(100) + astral];
+    for (const code of [...range(0x01, 0xff), ...range(0x2000, 0x206f), 0xfeff, 0xfff9, 0xfffa, 0xfffb, 0xe0001]) {
+      candidates.push(`a${String.fromCodePoint(code)}b`);
+    }
+    const disagreements: string[] = [];
+    for (const name of candidates) {
+      const isSchemaAccepted = registerBodySchema.safeParse({ sessionId: randomUUID(), pid: 1, cwd: "/tmp", name }).success;
+      if (isSchemaAccepted !== (await isNameStored(name))) disagreements.push(JSON.stringify(name.length > 8 ? `${[...name].length} cp` : name));
+    }
+    assert.deepEqual(disagreements, []);
+  });
 });
+
+function range(first: number, last: number): number[] {
+  return Array.from({ length: last - first + 1 }, (_, offset) => first + offset);
+}
+
+async function isNameStored(name: string): Promise<boolean> {
+  try {
+    await runRolledBack((tx) => tx.queueSession.create({ data: { ...buildSession(41016), name } }));
+  } catch (error) {
+    if (error instanceof Rollback) return true;
+    if (/queue_sessions_name_check|value too long|too long for the column/.test(String(error))) return false;
+    throw error;
+  }
+  throw new Error("rolled-back create returned without the rollback signal");
+}
 
 describe("monitor.queue_* length and shape limits", () => {
   const rejectedRows: readonly {

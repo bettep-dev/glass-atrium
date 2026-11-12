@@ -21,19 +21,15 @@ readonly QUEUE_PID_SHAPE='^[1-9][0-9]{0,9}$'
 readonly QUEUE_MESSAGING_AUTH_SHAPE='^[!-~]+$'
 readonly QUEUE_MESSAGING_AUTH_MAX=512
 readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions dontAsk plan '
-# in UTF-16 units, as the monitor's register schema counts a session name
+# in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
 # space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
 QUEUE_NAME_JQ="$(
   cat <<'JQ'
-def units: if . >= 65536 then 2 else 1 end;
 def space: "[\\s\\p{Zs}\\x{FEFF}\\x{2028}\\x{2029}]";
 $name | explode | map(if . < 32 or (. >= 127 and . < 160) then 32 else . end) | implode
 | sub("^\(space)+"; "")
-| reduce explode[] as $code ({units: 0, codes: [], full: false};
-    if .full or .units + ($code | units) > $max then .full = true
-    else .units += ($code | units) | .codes += [$code] end)
-| .codes | implode | sub("\(space)+$"; "")
+| explode | .[:$max] | implode | sub("\(space)+$"; "")
 | select(test("[^" + (space | .[1:-1]) + "]"))
 JQ
 )"

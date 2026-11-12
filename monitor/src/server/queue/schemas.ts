@@ -9,7 +9,7 @@ const MAX_LINKED_DOCS = 20;
 const OPTION_TEXT = { label: 200, pros: 800, cons: 800 } as const;
 
 const MAX_TEXT = 20_000;
-// queue_sessions.name VARCHAR(100) + queue_sessions_name_check; Zod counts UTF-16 units ≥ Postgres code points → never past the column
+// code points, as Zod's max and the VARCHAR(100) column both count → queue.schema.test.ts binds this schema to the column
 const SESSION_NAME_MAX = 100;
 const MAX_LIST_LIMIT = 200;
 const MAX_MESSAGE_TARGETS = 20;

@@ -332,15 +332,15 @@ run_cli() {
   start_stub
   set_reply 200 '{"answeredWaiting":0}'
   local limit wide i sent
-  # the monitor's own limit, in UTF-16 units → a drift between the two layers fails here
+  # the monitor's own limit, in code points as its schema and column count → a drift in number or unit fails here
   limit="$(sed -n 's/^const SESSION_NAME_MAX = \([0-9][0-9]*\);$/\1/p' "${GA}/monitor/src/server/queue/schemas.ts")"
   [[ "${limit}" =~ ^[0-9]+$ ]] || {
     echo "no SESSION_NAME_MAX in schemas.ts"
     return 1
   }
   wide="$(printf "%$((limit - 1))s" '' | tr ' ' 'x')"
-  local -a names=("nightly backup" $'queue\tsessions\x1b[0m' "  ${wide}yz" "${wide}😀")
-  local -a expected=("nightly backup" "queue sessions [0m" "${wide}y" "${wide}")
+  local -a names=("nightly backup" $'queue\tsessions\x1b[0m' "  ${wide}yz" "${wide}😀" "${wide}y😀")
+  local -a expected=("nightly backup" "queue sessions [0m" "${wide}y" "${wide}😀" "${wide}y")
   for ((i = 0; i < ${#names[@]}; i++)); do
     : >"${BATS_TEST_TMPDIR}/requests.log"
     run_cli register --name "${names[i]}"
