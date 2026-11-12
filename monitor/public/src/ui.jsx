@@ -1558,6 +1558,248 @@ function MachineString({ className = '', children }) {
 }
 
 /**
+ * Agent-written plain text → paragraphs, lists, code, bold and document links, built as React elements — never set as HTML.
+ * Unlike the document viewer's markdown pipeline: no headings, tables, images or author links, so queue text stays text.
+ * @param linkedDocIds - the item's declared document ids; a digit run equal to one becomes a link
+ * @param isCompact - the 14 / 22 form inside an order bubble
+ */
+function ProseText({ text, linkedDocIds = [], isCompact = false, className = '' }) {
+  const { blocks } = getProseBlocks(text, linkedDocIds);
+  const classes = `prose-text${isCompact ? ' prose-text--compact' : ''} ${className}`.trim();
+  return <div className={classes}>{blocks.map((block, index) => <ProseBlock key={index} block={block} />)}</div>;
+}
+
+function ProseBlock({ block }) {
+  if (block.kind === 'code') return <pre className="prose-pre">{block.text}</pre>;
+  if (block.kind === 'heading') return <p><strong>{block.inlines.map(renderProseInline)}</strong></p>;
+  if (block.kind === 'list') return <ProseList list={block} />;
+  return <p>{renderProseLines(block.lines)}</p>;
+}
+
+function ProseList({ list }) {
+  const items = list.items.map((item, index) => <li key={index} value={list.isOrdered ? item.value : undefined}>
+    {renderProseLines(item.lines)}
+    {item.lists.map((child, childIndex) => <ProseList key={childIndex} list={child} />)}
+  </li>);
+  return list.isOrdered ? <ol>{items}</ol> : <ul>{items}</ul>;
+}
+
+function renderProseLines(lines) {
+  return lines.map((inlines, index) => <React.Fragment key={index}>
+    {index > 0 && <br />}{inlines.map(renderProseInline)}
+  </React.Fragment>);
+}
+
+function renderProseInline(node, index) {
+  if (typeof node === 'string') return node;
+  if (node.kind === 'code') return <MachineString key={index}>{node.text}</MachineString>;
+  if (node.kind === 'link') return <a key={index} className="prose-link" href={`${PROSE_DOC_ROUTE}${node.id}`}>{node.text}</a>;
+  return <strong key={index}>{node.children.map(renderProseInline)}</strong>;
+}
+
+// every pattern is line-anchored with no nested quantifier; inline scans only move forward → linear in the text
+const PROSE_BULLET = /^( *)[-*•] (.*)$/;
+const PROSE_NUMBER = /^( *)(\d{1,9})[.)] (.*)$/;
+const PROSE_HEADING = /^#{1,6} (.*)$/;
+const PROSE_FENCE = '```';
+const PROSE_NEST_INDENT = 2;
+const PROSE_STAR = Object.freeze({ kind: 'star' });
+const PROSE_DOC_ROUTE = '#clauded-docs?doc=';
+const PROSE_DOC_PATH = 'clauded-docs';
+const PROSE_DOC_FORMS = Object.freeze(['/', '?doc=']);
+const PROSE_DOC_DIGITS_MAX = 9;
+
+/**
+ * Body-text parser: text → blocks, plus the declared ids the text itself turned into links.
+ * @param linkedDocIds - declared ids; only these link as a bare digit run, and only these are returned
+ * @returns `linkedIds` — the declared ids linked in either form, in `linkedDocIds` order → the caller lists the rest separately
+ */
+function getProseBlocks(text, linkedDocIds = []) {
+  const state = { blocks: [], open: null, item: null, declared: new Set(linkedDocIds.map(String)), linked: new Set() };
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+  for (let index = 0; index < lines.length; index += 1) index = putProseLine(state, lines, index);
+  return { blocks: state.blocks, linkedIds: linkedDocIds.filter((id) => state.linked.has(String(id))) };
+}
+
+// returns the index of the last line consumed
+function putProseLine(state, lines, index) {
+  const line = lines[index];
+  if (line.trimStart().startsWith(PROSE_FENCE)) return putProseFence(state, lines, index);
+  if (line.trim() === '') {
+    state.open = null;
+    return index;
+  }
+  const heading = PROSE_HEADING.exec(line);
+  const item = heading ? null : getProseItem(line);
+  if (heading) putProseBlock(state, { kind: 'heading', inlines: getProseInlines(heading[1], state) }, false);
+  else if (item) putProseItem(state, item);
+  else putProseText(state, line);
+  return index;
+}
+
+// a fence with no closing line runs to the end of the text; the opening line's info string is dropped
+function putProseFence(state, lines, index) {
+  let close = index + 1;
+  while (close < lines.length && !lines[close].trimStart().startsWith(PROSE_FENCE)) close += 1;
+  putProseBlock(state, { kind: 'code', text: lines.slice(index + 1, close).join('\n') }, false);
+  return Math.min(close, lines.length - 1);
+}
+
+function putProseBlock(state, block, isOpen) {
+  state.blocks.push(block);
+  state.open = isOpen ? block : null;
+  state.item = null;
+  return block;
+}
+
+function getProseItem(line) {
+  const bullet = PROSE_BULLET.exec(line);
+  if (bullet) return { isOrdered: false, indent: bullet[1].length, value: null, text: bullet[2] };
+  const number = PROSE_NUMBER.exec(line);
+  if (number) return { isOrdered: true, indent: number[1].length, value: Number.parseInt(number[2], 10), text: number[3] };
+  return null;
+}
+
+// indented under an open list → one nested level under its last top item; any deeper indent renders at that level too
+function putProseItem(state, item) {
+  const entry = { value: item.value, lines: [getProseInlines(item.text, state)], lists: [] };
+  const list = state.open?.kind === 'list' ? state.open : null;
+  if (list && item.indent >= PROSE_NEST_INDENT) {
+    getProseChildList(list.items.at(-1).lists, item.isOrdered).items.push(entry);
+  } else {
+    const target = list?.isOrdered === item.isOrdered ? list : putProseBlock(state, { kind: 'list', isOrdered: item.isOrdered, items: [] }, true);
+    target.items.push(entry);
+  }
+  state.item = entry;
+}
+
+function getProseChildList(lists, isOrdered) {
+  const last = lists.at(-1);
+  if (last?.isOrdered === isOrdered) return last;
+  const list = { kind: 'list', isOrdered, items: [] };
+  lists.push(list);
+  return list;
+}
+
+// an indented line after an item continues it; any other line joins the open paragraph or starts one
+function putProseText(state, line) {
+  if (state.open?.kind === 'list' && line.startsWith(' '.repeat(PROSE_NEST_INDENT))) {
+    state.item.lines.push(getProseInlines(line.trimStart(), state));
+    return;
+  }
+  const paragraph = state.open?.kind === 'paragraph' ? state.open : putProseBlock(state, { kind: 'paragraph', lines: [] }, true);
+  paragraph.lines.push(getProseInlines(line, state));
+}
+
+// code spans first (opaque), then `**` pairs over the rest, then document links inside text — an unpaired marker stays literal
+function getProseInlines(line, state) {
+  const tokens = getProseSpans(line).flatMap(getProseStarTokens);
+  let starsLeft = tokens.filter((token) => token === PROSE_STAR).length;
+  const nodes = [];
+  let strong = null;
+  for (const token of tokens) {
+    if (token !== PROSE_STAR) {
+      putProseToken(strong ? strong.children : nodes, token, state);
+      continue;
+    }
+    starsLeft -= 1;
+    if (strong) {
+      nodes.push(strong.children.length ? strong : '****');
+      strong = null;
+    } else if (starsLeft > 0) strong = { kind: 'strong', children: [] };
+    else nodes.push('**');
+  }
+  return nodes;
+}
+
+// text strings and `{ kind: 'code' }` spans; an empty or unclosed backtick pair stays literal
+function getProseSpans(line) {
+  const spans = [];
+  let start = 0;
+  let open = line.indexOf('`');
+  while (open !== -1) {
+    const close = line.indexOf('`', open + 1);
+    if (close === -1) break;
+    if (close > open + 1) {
+      spans.push(line.slice(start, open), { kind: 'code', text: line.slice(open + 1, close) });
+      start = close + 1;
+    }
+    open = line.indexOf('`', close + 1);
+  }
+  spans.push(line.slice(start));
+  return spans.filter((span) => span !== '');
+}
+
+function getProseStarTokens(span) {
+  if (typeof span !== 'string') return [span];
+  return span.split('**').flatMap((piece, index) => (index === 0 ? [piece] : [PROSE_STAR, piece])).filter((token) => token !== '');
+}
+
+function putProseToken(nodes, token, state) {
+  if (typeof token !== 'string') nodes.push(token);
+  else putProseLinks(nodes, token, state);
+}
+
+function putProseLinks(nodes, text, state) {
+  let literalStart = 0;
+  let index = 0;
+  while (index < text.length) {
+    const ref = getProseRef(text, index, state);
+    if (!ref) {
+      index += 1;
+      continue;
+    }
+    if (ref.isLink) {
+      if (ref.start > literalStart) nodes.push(text.slice(literalStart, ref.start));
+      nodes.push(getProseLink(text.slice(ref.start, ref.end), state));
+      literalStart = ref.end;
+    }
+    index = ref.end;
+  }
+  if (text.length > literalStart) nodes.push(text.slice(literalStart));
+}
+
+// the one generated href value: a digit run re-serialized as an integer
+function getProseLink(digits, state) {
+  const id = String(Number.parseInt(digits, 10));
+  state.linked.add(id);
+  return { kind: 'link', text: digits, id };
+}
+
+// a whole digit run is consumed at once, linked or not → no position is scanned twice
+function getProseRef(text, index, state) {
+  if (text.startsWith(PROSE_DOC_PATH, index)) return getProseAddressRef(text, index);
+  if (!isProseDigit(text[index])) return null;
+  const end = getProseDigitEnd(text, index);
+  const isLink = state.declared.has(text.slice(index, end)) && !isProseLatin(text[index - 1]) && !isProseLatin(text[end]);
+  return { start: index, end, isLink };
+}
+
+function getProseAddressRef(text, index) {
+  if (isProseLatin(text[index - 1])) return null;
+  const formStart = index + PROSE_DOC_PATH.length;
+  const form = PROSE_DOC_FORMS.find((candidate) => text.startsWith(candidate, formStart));
+  if (!form) return null;
+  const start = formStart + form.length;
+  const end = getProseDigitEnd(text, start);
+  return end > start && end - start <= PROSE_DOC_DIGITS_MAX ? { start, end, isLink: true } : null;
+}
+
+function getProseDigitEnd(text, index) {
+  let end = index;
+  while (isProseDigit(text[end])) end += 1;
+  return end;
+}
+
+function isProseDigit(char) {
+  return char !== undefined && char >= '0' && char <= '9';
+}
+
+function isProseLatin(char) {
+  return char !== undefined && /[A-Za-z]/.test(char);
+}
+
+/**
  * Pagination bar: the row range left, Previous · current page · Next right; nothing renders for an empty result.
  * An end step stays focusable (aria-disabled + click guard) → pressing Next onto the last page never drops focus to the body.
  * @param page - 0-based page index; caller clamps its own held page to `ceil(total / pageSize) - 1` when total shrinks → the rows it slices match the range shown
@@ -2726,7 +2968,7 @@ window.UI = {
   SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
-  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, Pagination,
+  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
   getDisplayName, hasFieldValue, DetailField,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
