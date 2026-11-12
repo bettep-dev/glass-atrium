@@ -164,6 +164,7 @@ describe("register", () => {
       { name: "name past 100 characters", extra: { name: "n".repeat(101) }, error: "invalid_input" },
       { name: "blank name", extra: { name: "   " }, error: "invalid_input" },
       { name: "name carrying a line break", extra: { name: "queue sessions\nsecond line" }, error: "invalid_input" },
+      { name: "derived name carrying a line break", extra: { derivedName: "queue sessions\nsecond line" }, error: "invalid_input" },
     ];
     for (const row of rows) {
       const sessionId = trackSessionId();
@@ -252,12 +253,15 @@ describe("register", () => {
     }
   });
 
-  test("stores the name a session registers with, and a later register without one keeps it", async () => {
+  test("a derived name labels a session until it registers an explicit name, which only another explicit name replaces", async () => {
     const sessionId = trackSessionId();
     const steps = [
-      { name: "first register names the session", extra: { name: "queue-sessions M2" }, stored: "queue-sessions M2" },
+      { name: "a derived name labels an unnamed session", extra: { derivedName: "Fix the flaky sweep test" }, stored: "Fix the flaky sweep test" },
+      { name: "a later derived name replaces a derived one", extra: { derivedName: "queue sessions" }, stored: "queue sessions" },
+      { name: "an explicit name replaces a derived one", extra: { name: "queue-sessions M2" }, stored: "queue-sessions M2" },
+      { name: "a derived name never replaces an explicit one", extra: { derivedName: "nightly-backup" }, stored: "queue-sessions M2" },
       { name: "a nameless re-register keeps the stored name", extra: {}, stored: "queue-sessions M2" },
-      { name: "a register with a new name replaces it", extra: { name: "queue-sessions M3" }, stored: "queue-sessions M3" },
+      { name: "a new explicit name replaces the old one", extra: { name: "queue-sessions M3" }, stored: "queue-sessions M3" },
     ];
     for (const step of steps) {
       const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId, step.extra));

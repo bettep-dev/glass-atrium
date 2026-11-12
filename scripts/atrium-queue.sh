@@ -93,7 +93,7 @@ Usage — run by this absolute path, no interpreter or env prefix in front, so t
   ${cli} withdraw <item-id>       withdraw an item this session posted, not in delivery (never an owner message)
   ${cli} register [--name <name>] register this session (a resumed session runs it after its ack steps);
                                   run it from the session's start directory: the monitor resumes from it;
-                                  --name labels this session on the Queue page (kept until a new name)
+                                  --name labels this session on the Queue page (only a later --name replaces it)
   ${cli} help
 Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.

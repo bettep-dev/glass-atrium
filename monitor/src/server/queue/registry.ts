@@ -205,9 +205,20 @@ async function putLiveSession(tx: Prisma.TransactionClient, body: RegisterBody, 
     lastSeenAt: new Date(),
     resumeAwaitingRegisterAt: null,
   };
-  // a nameless re-register (hook, resume payload) keeps the name the session gave earlier
-  const update = body.name === undefined ? row : { ...row, name: body.name };
-  await tx.queueSession.upsert({ where: { sessionId: body.sessionId }, create: { sessionId: body.sessionId, name: body.name ?? null, ...row }, update });
+  const nameUpdate = await getNameUpdate(tx, body);
+  await tx.queueSession.upsert({ where: { sessionId: body.sessionId }, create: { sessionId: body.sessionId, ...row, ...nameUpdate }, update: { ...row, ...nameUpdate } });
+}
+
+/**
+ * Name precedence, read under the registry row lock: an explicit name (`register --name`) always wins and is flagged;
+ * a derived name (job state, transcript title — re-sent at every SessionStart) replaces only a derived or absent one;
+ * neither → the stored name stays.
+ */
+async function getNameUpdate(tx: Prisma.TransactionClient, body: RegisterBody): Promise<{ name?: string; isNameExplicit?: boolean }> {
+  if (body.name !== undefined) return { name: body.name, isNameExplicit: true };
+  if (body.derivedName === undefined) return {};
+  const stored = await tx.queueSession.findUnique({ where: { sessionId: body.sessionId }, select: { isNameExplicit: true } });
+  return stored?.isNameExplicit === true ? {} : { name: body.derivedName, isNameExplicit: false };
 }
 
 // Re-checked under the lock: the pre-lock read may be stale

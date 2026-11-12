@@ -37,6 +37,7 @@ export const registerBodySchema = z.strictObject({
   permissionHint: z.enum(PERMISSION_HINTS).optional(),
   launchHint: z.enum(["accept_wrapper"]).optional(),
   name: sessionName.optional(),
+  derivedName: sessionName.optional(),
 });
 
 export const deregisterBodySchema = z.strictObject({

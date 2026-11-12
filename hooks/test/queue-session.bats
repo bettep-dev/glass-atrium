@@ -187,7 +187,7 @@ run_deregister() {
   done
 }
 
-@test "register sends the session's job name, else its last transcript title, and no name when no source holds one" {
+@test "register sends the session's job name, else its last transcript title, as a derived name, and none when no source holds one" {
   start_stub
   local foreign="0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d" job_dir="${BATS_TEST_TMPDIR}/job"
   local transcript="${BATS_TEST_TMPDIR}/transcript.jsonl" row expected sent
@@ -220,7 +220,8 @@ run_deregister() {
     esac
     : >"${BATS_TEST_TMPDIR}/requests.log"
     run_register "{\"hook_event_name\":\"SessionStart\",\"source\":\"resume\",\"transcript_path\":\"${transcript}\"}"
-    sent="$(request_body /api/queue/sessions/register | jq -r 'if has("name") then .name else "" end')"
+    # derivedName, never name: only an explicit `register --name` may replace an explicit name
+    sent="$(request_body /api/queue/sessions/register | jq -r 'if has("name") then "explicit:" + .name else .derivedName // "" end')"
     [[ "${status}" -eq 0 && "${sent}" == "${expected}" ]] || {
       echo "row ${row%%|*}: status=${status} sent=[${sent}] $(cat "${BATS_TEST_TMPDIR}/requests.log")"
       return 1

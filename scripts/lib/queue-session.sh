@@ -123,12 +123,12 @@ queue_get_shown_name() {
   jq -rn --arg name "$1" --argjson max "${QUEUE_NAME_MAX}" "${QUEUE_NAME_JQ}"
 }
 
-# This session's name → stdout, shown form; nothing when no source holds one. Sources in order: $1 an explicit name ·
-# the background job's state when it names session $3 · the last custom title, else the last AI title, in transcript $2
-queue_get_session_name() {
-  local name="$1"
-  [[ -n "${name}" ]] || name="$(queue_get_job_name "$3")"
-  [[ -n "${name}" ]] || name="$(queue_get_transcript_title "$2")"
+# This session's derived name → stdout, shown form; nothing when no source holds one. Sources in order:
+# the background job's state when it names session $2 · the last custom title, else the last AI title, in transcript $1
+queue_get_derived_name() {
+  local name
+  name="$(queue_get_job_name "$2")"
+  [[ -n "${name}" ]] || name="$(queue_get_transcript_title "$1")"
   if [[ -n "${name}" ]]; then queue_get_shown_name "${name}"; fi
 }
 
@@ -151,9 +151,10 @@ queue_get_transcript_title() {
 # The register step: the token copy, then the register POST → the answered-waiting count on stdout.
 # All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
 # $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks) ·
-# $5 an explicit session name and $6 a transcript path (queue_get_session_name sources)
+# $5 an explicit session name, sent as name · else $6 a transcript path → queue_get_derived_name, sent as derivedName
+# (the monitor lets only an explicit name replace an explicit one)
 queue_register_session() {
-  local hint="${1:-}" max_time="${2:-}" cwd session_id pid socket name body reply count
+  local hint="${1:-}" max_time="${2:-}" cwd session_id pid socket name="" derived_name="" body reply count
   session_id="$(queue_get_session_id "${4:-}")"
   pid="$(queue_get_pid)"
   [[ -n "${session_id}" && -n "${pid}" ]] || return 1
@@ -161,11 +162,16 @@ queue_register_session() {
   queue_put_messaging_auth "${session_id}" || true
   socket="$(queue_get_socket_path)"
   cwd="$(queue_get_cwd "${3:-}")"
-  name="$(queue_get_session_name "${5:-}" "${6:-}" "${session_id}")" || name=""
+  if [[ -n "${5:-}" ]]; then
+    name="$(queue_get_shown_name "$5")" || name=""
+  else
+    derived_name="$(queue_get_derived_name "${6:-}" "${session_id}")" || derived_name=""
+  fi
   body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg cwd "${cwd}" \
     --arg configDir "${CLAUDE_CONFIG_DIR:-}" --arg socketPath "${socket}" --arg permissionHint "${hint}" \
     --arg launchHint "${ATRIUM_QUEUE_ACCEPT_WRAPPER:+accept_wrapper}" --arg name "${name}" \
-    '{$sessionId, $pid, $cwd, $configDir, $socketPath, $permissionHint, $launchHint, $name}
+    --arg derivedName "${derived_name}" \
+    '{$sessionId, $pid, $cwd, $configDir, $socketPath, $permissionHint, $launchHint, $name, $derivedName}
       | with_entries(select(.value != ""))')" || return 1
   reply="$(queue_post /api/queue/sessions/register "${body}" "${max_time}")" || return 1
   count="$(jq -r '.answeredWaiting // 0' <<<"${reply}" 2>/dev/null)" || return 1

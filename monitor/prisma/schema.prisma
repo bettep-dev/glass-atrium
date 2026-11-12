@@ -1389,6 +1389,8 @@ model QueueSession {
   sessionId                String                  @id @map("session_id") @db.Uuid
   // Optional label the session registers with; NULL → the owner list shows the start-directory name
   name                     String?                 @db.VarChar(100)
+  // true → the name came from `register --name` → a derived name (job state, transcript title) never replaces it
+  isNameExplicit           Boolean                 @default(false) @map("is_name_explicit")
   isConfigDirSet           Boolean                 @map("config_dir_set")
   configDir                String?                 @map("config_dir")
   // Config dir basename or "default", server-derived — no email (no PII)
