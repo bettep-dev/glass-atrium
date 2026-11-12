@@ -271,13 +271,15 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound`;
   - the two refusals behind `wait` exit 2: `monitor/src/server/queue/delivery.ts` → `lockOwnSession` (`unknown_session`) · `assertLiveFor` (`session_not_live`);
   - the never-an-approval sentence with its action list: `envelope.ts` → `RESUME_PREAMBLE` · `scripts/atrium-queue.sh` → `get_item`, its provenance line;
+  - the attached-image line and its read-before-acting step: `scripts/atrium-queue.sh` → `print_images` · the section's `get` image bullet;
   - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
   - the `[ATRIUM-QUEUE]` literal: `hooks/queue-session-register.sh`, and the core's trigger line.
 - What the section's honest-backing lines rest on:
   - the waiting mark: `monitor/src/server/queue/delivery.ts` → `isSessionWaiting` · `monitor/public/src/screens/queue.jsx` → `SessionStateQ` · `PullLineQ`;
   - envelopes in a resume prompt only: `monitor/src/server/queue/sweep.ts`, the one caller of `buildResumePayload`;
   - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
-  - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`.
+  - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`;
+  - the image paths: `monitor/src/server/queue/images.ts` → `getSessionImageViews` gives each one; `scripts/atrium-queue.sh` → `print_images` prints only a server-made name inside the image folder.
 
 ### `### Answers and messages`
 
