@@ -478,6 +478,30 @@ run_cli() {
   done
 }
 
+@test "a wait that ends as another wait takes its lock over leaves the newcomer's lock in place" {
+  start_stub
+  start_owner
+  use_fast_wait 20
+  set_reply 200 "{\"items\":[{\"id\":{\"item\":17,\"msg\":\"${MSG_ID}\"}}]}"
+  local lock="${GA_ROOT}/data/queue/waits/${SESSION_ID}" newcomer="31337|Thu Nov 12 21:30:07 2026|5151|Thu Nov 12 21:29:58 2026"
+  # readlink shim: after the claiming poll, the first read of a wait-lock path → a newcomer replaces the lock
+  cat >"${BATS_TEST_TMPDIR}/bin/readlink" <<SHIM
+#!/usr/bin/env bash
+held="\$("$(command -v readlink)" "\$@")" || exit
+if [[ -s "${BATS_TEST_TMPDIR}/requests.log" && "\$1" == "${lock%/*}/"* && ! -e "${BATS_TEST_TMPDIR}/taken" ]]; then
+  : >"${BATS_TEST_TMPDIR}/taken"
+  ln -sfn -- '${newcomer}' "${lock}"
+fi
+printf '%s\n' "\${held}"
+SHIM
+  chmod 755 "${BATS_TEST_TMPDIR}/bin/readlink"
+  run_cli wait
+  [[ "${status}" -eq 0 && -e "${BATS_TEST_TMPDIR}/taken" && "$(readlink "${lock}")" == "${newcomer}" ]] || {
+    echo "status=${status} taken=$([[ -e "${BATS_TEST_TMPDIR}/taken" ]] && echo yes) lock=$(readlink "${lock}") ${stderr}"
+    return 1
+  }
+}
+
 @test "a wait ends silently once its owning Claude process is gone" {
   start_stub
   start_owner

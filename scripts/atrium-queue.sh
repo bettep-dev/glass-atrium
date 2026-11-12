@@ -28,6 +28,8 @@ readonly PULL_ROUNDS_MAX=10
 readonly WAIT_POLL_S=5
 readonly WAIT_BACKOFF_MAX_S=60
 readonly WAIT_MINUTES_DEFAULT=60
+# a 73-minute background command observed surviving; longer bounds rest on a probe still running
+# → only an explicit --max-minutes reaches that unproven range
 readonly WAIT_MINUTES_MAX=240
 readonly WAIT_MINUTES_SHAPE='^[1-9][0-9]{0,2}$'
 readonly ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
@@ -351,12 +353,17 @@ is_wait_live() {
   [[ "${started}" == "${waiter_start}" ]]
 }
 
-# <record> → removes the lock only while it still holds that record
+# <record> → removes the lock only while it holds that record; rename to a private name first → no takeover lands
+# between the read and the remove; another record goes back under the lock name unless a newcomer already took it
 drop_wait_lock() {
-  local held
-  held="$(readlink "${WAIT_LOCK}" 2>/dev/null)" || return 0
-  [[ "${held}" == "$1" ]] || return 0
-  if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
+  local held private="${WAIT_LOCK}.drop.$$"
+  mv -- "${WAIT_LOCK}" "${private}" 2>/dev/null || return 0
+  held="$(readlink "${private}")" || {
+    mv -n -- "${private}" "${WAIT_LOCK}" || true
+    return 0
+  }
+  if [[ "${held}" != "$1" ]]; then ln -sn -- "${held}" "${WAIT_LOCK}" 2>/dev/null || true; fi
+  if ga_guard_path "${private}"; then rm -f -- "${private:?}"; fi
 }
 
 # <body> <bound s> <owner pid> <owner start> → never returns; failures back off up to WAIT_BACKOFF_MAX_S
