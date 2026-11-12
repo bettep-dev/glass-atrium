@@ -96,18 +96,21 @@ print_usage() {
   cli="$(queue_get_cli_path)"
   cat <<USAGE
 Usage — run by this absolute path, no interpreter or env prefix in front, so the allow rule matches:
-  ${cli} report <item.json|->     post a report; prints the new item id
-  ${cli} decision <item.json|->   post a decision; prints the new item id
+  ${cli} report <item.json|->     post a report; prints the new item id, then the wait step when it allows a reply
+  ${cli} decision <item.json|->   post a decision; prints the new item id, then the wait step
   ${cli} get <item-id>            fetch one of this session's items, answer included; an owner message
                                   comes after one provenance line
-  ${cli} pending                  claim this session's owner answers and messages; prints each one's fetch and ack steps
+  ${cli} pending                  claim this session's owner answers and messages; prints each one's fetch and ack steps,
+                                  then the wait step
   ${cli} wait [--max-minutes N]   run as a background command: blocks until a poll claims this session's answers or
                                   messages, then prints the same steps; bound ${WAIT_MINUTES_DEFAULT} minutes by default, at most ${WAIT_MINUTES_MAX}
   ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer or message only when it prints "first"
   ${cli} withdraw <item-id>       withdraw an item this session posted, not in delivery (never an owner message)
   ${cli} register [--name <name>] register this session (a resumed session runs it after its ack steps);
                                   run it from the session's start directory: the monitor resumes from it;
-                                  --name labels this session on the Queue page (only a later --name replaces it)
+                                  --name labels this session on the Queue page (only a later --name replaces it);
+                                  prints the wait step last
+The wait step: start a background wait, or that one of this session already runs.
   ${cli} help
 Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
@@ -174,7 +177,7 @@ describe_error() {
 }
 
 post_item() {
-  local kind="$1" source="${2:-}" session_id raw body reply id
+  local kind="$1" source="${2:-}" session_id raw body reply id allows_reply
   [[ -n "${source}" && $# -eq 2 ]] || fail_usage "${kind} takes one item file, or - for stdin"
   session_id="$(require_session_id)"
   raw="$(read_item "${source}")"
@@ -182,7 +185,32 @@ post_item() {
   reply="$(call_monitor POST /api/queue/items "${body}")"
   id="$(jq -r '.id' <<<"${reply}" 2>/dev/null)" || id=""
   [[ "${id}" =~ ${ITEM_ID_SHAPE} ]] || fail 1 "the monitor's reply named no item id"
+  # callers read the id from this first line → its form stays fixed
   printf 'posted %s item %s\n' "${kind}" "${id}"
+  allows_reply="$(jq -r '.isFreeTextAllowed' <<<"${raw}")"
+  if [[ "${kind}" == decision || "${allows_reply}" == true ]]; then print_wait_step "${session_id}"; fi
+}
+
+# <session id> → one line naming this session's next queue step: start a background wait, or none while a wait of this
+# session runs. The monitor pushes nothing into a session → an owner answer or message arrives only through its wait.
+print_wait_step() {
+  local owner_pid owner_start cli state=none WAIT_LOCK WAIT_RECORD
+  owner_pid="$(queue_get_pid)"
+  if [[ -n "${owner_pid}" ]]; then
+    owner_start="$(get_start_time "${owner_pid}")"
+    WAIT_LOCK="$(queue_get_root)/data/queue/waits/$1"
+    # an empty waiter part never reads as mine → live only for a running wait of this Claude process
+    WAIT_RECORD="||${owner_pid}|${owner_start}"
+    state="$(get_wait_lock_state)"
+  fi
+  if [[ "${state}" == live ]]; then
+    printf 'next: a wait of this session already runs — owner answers and messages reach this session through it;'
+    printf ' start no other wait\n'
+    return 0
+  fi
+  cli="$(queue_get_cli_path)"
+  printf 'next: start the wait as a background command: %s wait — owner answers and messages reach this session' "${cli}"
+  printf ' only through it\n'
 }
 
 read_item() {
@@ -267,6 +295,7 @@ pull_pending() {
     total=$((total + $(wc -l <<<"${claims}")))
   done
   if ((total == 0)); then printf 'no owner answer or message waits for this session\n'; fi
+  print_wait_step "${session_id}"
 }
 
 # <pending reply body> → one "<item id>\t<msg id>" line per claim; non-zero when malformed
@@ -466,13 +495,13 @@ end_wait_at_bound() {
 }
 
 register_session() {
-  local name="" count cli pid
+  local name="" count cli pid session_id
   if (($# > 0)); then
     [[ "$1" == --name && $# -eq 2 ]] || fail_usage "register takes no argument but --name <name>"
     name="$(queue_get_shown_name "$2")"
     [[ -n "${name}" ]] || fail 64 "--name must hold a visible character"
   fi
-  require_session_id >/dev/null
+  session_id="$(require_session_id)"
   pid="$(queue_get_pid)"
   [[ -n "${pid}" ]] || fail 64 "CLAUDE_PID is unset or not a pid — run this inside a Claude Code session"
   # shellcheck disable=SC2310  # a failed register → the named exit below
@@ -483,6 +512,7 @@ register_session() {
     cli="$(queue_get_cli_path)"
     printf '%s owner queue answer(s) or message(s) wait for this session — fetch them with: %s pending\n' "${count}" "${cli}"
   fi
+  print_wait_step "${session_id}"
 }
 
 main "$@"

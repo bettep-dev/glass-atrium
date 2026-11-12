@@ -895,6 +895,87 @@ SHIM
   }
 }
 
+# the one line the CLI prints to start this session's wait, and the one it prints while a wait of this session runs
+start_wait_line() {
+  printf 'next: start the wait as a background command: %s/scripts/atrium-queue.sh wait — owner answers and messages reach this session only through it\n' "${GA_ROOT}"
+}
+WAIT_RUNS_LINE="next: a wait of this session already runs — owner answers and messages reach this session through it; start no other wait"
+
+@test "a decision or a report allowing a reply prints the start-wait line after the id line; a no-reply report only the id" {
+  start_stub
+  set_reply 201 '{"id":17}'
+  local row kind item expected start_line
+  start_line="$(start_wait_line)"
+  local no_reply_report="${REPORT/\"isFreeTextAllowed\":true/\"isFreeTextAllowed\":false}"
+  for row in "decision|${DECISION}|2" "report|${REPORT}|2" "report|${no_reply_report}|1"; do
+    IFS='|' read -r kind item expected <<<"${row}"
+    run_cli "${kind}" - <<<"${item}"
+    [[ "${status}" -eq 0 && "${lines[0]}" == "posted ${kind} item 17" && "${#lines[@]}" -eq "${expected}" ]] || {
+      echo "row ${kind}/${expected}: status=${status} ${output}${stderr}"
+      return 1
+    }
+    if ((expected == 2)); then
+      [[ "${lines[1]}" == "${start_line}" ]] || {
+        echo "row ${kind}: second line [${lines[1]}]"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "pending and register end with the start-wait line when no wait of this session runs" {
+  start_stub
+  start_owner
+  local row start_line nth_reply="${BATS_TEST_TMPDIR}/reply.1"
+  start_line="$(start_wait_line)"
+  # a dead waiter's record of this Claude process, and a live waiter's record of another one → neither is this wait
+  mkdir -p "${GA_ROOT}/data/queue/waits"
+  ln -sn -- "99999999|Thu Nov 12 21:30:07 2026|${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")" \
+    "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
+  for row in pending-claim pending-none register; do
+    if ga_guard_path "${nth_reply}"; then rm -f -- "${nth_reply:?}"; fi
+    if [[ "${row}" == pending-claim ]]; then
+      set_nth_reply 1 200 "{\"items\":[{\"id\":{\"item\":17,\"msg\":\"${MSG_ID}\"}}]}"
+    fi
+    set_reply 200 '{"items":[],"answeredWaiting":0}'
+    stop_stub
+    start_stub
+    run_cli "${row%%-*}"
+    [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == "${start_line}" && "${output}" != *"already runs"* ]] || {
+      echo "row ${row}: status=${status} ${output}${stderr}"
+      return 1
+    }
+  done
+  ln -sfn -- "$$|$(get_recorded_start "$$")|1|$(get_recorded_start 1)" "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
+  run_cli register
+  [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == "${start_line}" ]] || {
+    echo "another Claude process's wait: status=${status} ${output}${stderr}"
+    return 1
+  }
+}
+
+@test "while a wait of this session runs, a post, pending and register say so instead of starting another" {
+  start_stub
+  start_owner
+  use_fast_wait 30
+  # one reply every route reads → the running wait keeps claiming nothing
+  set_reply 200 '{"id":17,"items":[],"answeredWaiting":0}'
+  start_waiter
+  await_requests 1
+  local row
+  for row in decision pending register; do
+    if [[ "${row}" == decision ]]; then run_cli decision - <<<"${DECISION}"; else run_cli "${row}"; fi
+    [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == "${WAIT_RUNS_LINE}" && "${output}" != *"start the wait"* ]] || {
+      echo "row ${row}: status=${status} ${output}${stderr}"
+      return 1
+    }
+  done
+  kill -0 "${WAITER_PID}" || {
+    echo "the running wait ended: $(cat "${BATS_TEST_TMPDIR}/waiter.err")"
+    return 1
+  }
+}
+
 @test "requests carry no queue key header and the messaging token never reaches curl's argv" {
   start_stub
   set_reply 200 '{"answeredWaiting":0}'
