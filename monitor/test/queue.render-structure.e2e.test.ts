@@ -190,8 +190,10 @@ function selectRow(page: Page, id: number): Promise<void> {
 const DESK_WIDTHS = [
   { viewport: { width: 1280, height: 800 }, rail: 208, list: 320, sheet: 452 },
   { viewport: VIEWPORTS[0], rail: 232, list: 360, sheet: 548 },
+  { viewport: { width: 1568, height: 759 }, rail: 232, list: 383, sheet: 653 },
   { viewport: VIEWPORTS[1], rail: 248, list: 527, sheet: 653 },
   { viewport: VIEWPORTS[2], rail: 248, list: 719, sheet: 653 },
+  { viewport: { width: 2560, height: 1440 }, rail: 280, list: 1327, sheet: 653 },
 ] as const;
 
 interface DeskFacts {
@@ -346,6 +348,15 @@ describe("queue page on the mockup fixtures", () => {
     const facts = await getSheetFacts(page);
     await page.close();
     assert.deepEqual(facts, { text: ["15px", "24px", "true"], title: ["20px", "28px"], rowHeights: [68, 88], bands: ["32 true"], isFootInView: true });
+  });
+
+  test("list rows take their one-line form, 44 high, once the list is 880 wide", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, { width: 2560, height: 1440 }, getRestReadyText());
+    const rowHeights = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
+    await page.close();
+
+    assert.deepEqual(rowHeights, [44]);
   });
 
   test("each named state is captured at every desktop width as a viewport-sized PNG named for the mockup", async (t) => {
