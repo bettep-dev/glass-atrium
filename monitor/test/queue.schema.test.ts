@@ -258,7 +258,7 @@ describe("monitor.queue_items answer record", () => {
   const rows: readonly { name: string; route: string | null; signal: string | null; isAccepted: boolean; error?: RegExp }[] = [
     { name: "accepts the answer route with fetch metadata", route: "answer", signal: "fetch_metadata", isAccepted: true },
     { name: "accepts the reply route with an Origin-only signal", route: "reply", signal: "origin", isAccepted: true },
-    { name: "accepts the message route with fetch metadata", route: "message", signal: "fetch_metadata", isAccepted: true },
+    { name: "rejects the message route on a decision", route: "message", signal: "fetch_metadata", isAccepted: false, error: /queue_items_message_check/ },
     { name: "accepts a backfilled row from before the record", route: "answer", signal: "before_record", isAccepted: true },
     { name: "accepts an unstamped answer, which the page lists as outside", route: null, signal: null, isAccepted: true },
     { name: "rejects a route with no signal", route: "answer", signal: null, isAccepted: false, error: /queue_items_answer_record_check/ },
@@ -279,6 +279,81 @@ describe("monitor.queue_items answer record", () => {
       });
       if (row.isAccepted) await assert.rejects(work, Rollback);
       else await assert.rejects(work, row.error ?? /./);
+    });
+  }
+});
+
+describe("monitor.queue_items message kind", () => {
+  // Raw SQL → the new enum value and the message CHECK reach Postgres, not the typed client's own checks.
+  const rows: readonly { name: string; change: Prisma.Sql | null; error?: RegExp }[] = [
+    { name: "accepts a plain message answered through the send route", change: null },
+    {
+      name: "rejects a message carrying options",
+      change: Prisma.sql`"options" = ${JSON.stringify(buildOptions(2))}::jsonb, "recommended_code" = 'R1'`,
+      error: /queue_items_decision_options_check/,
+    },
+    { name: "rejects a message carrying an answer code", change: Prisma.sql`"answer_code" = 'R1'`, error: /queue_items_answer_code_check/ },
+    { name: "rejects a message carrying answer text", change: Prisma.sql`"answer_text" = 'done'`, error: /queue_items_message_check/ },
+    { name: "rejects a message in the approval class", change: Prisma.sql`"approval_class" = true`, error: /queue_items_message_check/ },
+    {
+      name: "rejects a message with no answer record",
+      change: Prisma.sql`"answer_route" = NULL, "answer_signal" = NULL`,
+      error: /queue_items_message_check/,
+    },
+    { name: "rejects a message stamped with the answer route", change: Prisma.sql`"answer_route" = 'answer'`, error: /queue_items_message_check/ },
+    { name: "rejects a message that is open to the owner", change: Prisma.sql`"status" = 'open'`, error: /queue_items_message_check/ },
+    { name: "rejects a message marked seen", change: Prisma.sql`"status" = 'seen'`, error: /queue_items_message_check/ },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41013), select: { sessionId: true } });
+        const [message] = await tx.$queryRaw<Array<{ id: bigint }>>`
+          INSERT INTO "monitor"."queue_items"
+            ("kind", "session_id", "title", "body", "free_text_allowed", "status", "answered_at", "answer_route", "answer_signal")
+          VALUES ('message', ${sessionId}::uuid, 'Rebase onto main before the review', ${"Rebase onto main before the review\nthen rerun the suite"},
+                  false, 'answered', ${SENT_AT}, 'message', 'fetch_metadata')
+          RETURNING "id"`;
+        assert.ok(message !== undefined, "insert returned no row");
+        if (row.change !== null) await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change} WHERE "id" = ${message.id}`;
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+});
+
+describe("monitor.queue_sessions name", () => {
+  const acceptedNames: readonly { name: string; value: string | undefined }[] = [
+    { name: "accepts a session registered without a name", value: undefined },
+    { name: "accepts a session name at the 100-character cap", value: "n".repeat(100) },
+  ];
+
+  for (const row of acceptedNames) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack(async (tx) => {
+          const session = await tx.queueSession.create({ data: { ...buildSession(41014), name: row.value }, select: { name: true } });
+          assert.equal(session.name, row.value ?? null);
+        }),
+        Rollback,
+      );
+    });
+  }
+
+  const rejectedNames: readonly { name: string; value: string; error: RegExp }[] = [
+    { name: "rejects a session name past 100 characters", value: "n".repeat(101), error: /value too long|too long for the column/ },
+    { name: "rejects a blank session name", value: "   ", error: /queue_sessions_name_check/ },
+    { name: "rejects a session name carrying a line break", value: "queue sessions\nsecond line", error: /queue_sessions_name_check/ },
+  ];
+
+  for (const row of rejectedNames) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack((tx) => tx.queueSession.create({ data: { ...buildSession(41015), name: row.value } })),
+        row.error,
+      );
     });
   }
 });

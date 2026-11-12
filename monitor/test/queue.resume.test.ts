@@ -727,6 +727,17 @@ describe("resume payload and argv", () => {
     assert.ok(payload.indexOf(`${CLI_PATH} register`) > payload.lastIndexOf(" ack "), "the register step comes after the ack steps");
   });
 
+  test("an owner message goes out under its own header and subject, and the preamble names messages beside answers", () => {
+    const message = { id: 43, kind: "message" as const, msgId: randomUUID() };
+
+    const payload = buildResumePayload([message], CLI_PATH);
+
+    assert.ok(payload.includes(`[ATRIUM-MESSAGE v1] item ${message.id} · msg ${message.msgId}`), "message header with ids");
+    assert.match(payload, /the owner sent you a message/i);
+    assert.match(payload, /queue answers or messages/i);
+    assert.ok(payload.includes(`${CLI_PATH} ack ${message.id} ${message.msgId}`), "same fetch → ack steps as an answer");
+  });
+
   const badIds = ["--all", "-h", "not-a-uuid", `${randomUUID()} --bg`];
   test("a non-UUID session id is rejected before any argv is built", () => {
     for (const badId of badIds) assert.throws(() => buildResumeArgs(badId, "payload"), /session id/, badId);

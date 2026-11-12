@@ -1295,6 +1295,8 @@ enum QueueLaunchHint {
 enum QueueItemKind {
   report
   decision
+  // Owner → session; inserted answered by the owner send route only (CHECK queue_items_message_check)
+  message
 
   @@schema("monitor")
 }
@@ -1380,10 +1382,13 @@ enum QueueCanaryResult {
 ///   - config_dir present ⇔ config_dir_set · config_dir, cwd, worktree_root absolute
 ///   - socket_path = /tmp or /private/tmp cc-socks/<pid>.sock → the sender never connects outside it
 ///   - exit_reason present ⇔ state = exited · pid > 0 · profile_label, process_start_time non-empty
+///   - name, when present: non-blank, no control character
 /// No relation from items is cascaded → an exited row that still owns items is never pruned.
 model QueueSession {
   // UUID-only → never readable as a `--resume` option
   sessionId                String                  @id @map("session_id") @db.Uuid
+  // Optional label the session registers with; NULL → the owner list shows the start-directory name
+  name                     String?                 @db.VarChar(100)
   isConfigDirSet           Boolean                 @map("config_dir_set")
   configDir                String?                 @map("config_dir")
   // Config dir basename or "default", server-derived — no email (no PII)
@@ -1413,12 +1418,13 @@ model QueueSession {
   @@schema("monitor")
 }
 
-/// One report or decision a session put in front of the owner.
+/// One report or decision a session put in front of the owner, or one message the owner sent to a session.
 /// CHECKs (migration raw SQL only):
 ///   - title non-blank · body 1..20000 chars · answer_text ≤ 20000 chars · linked_doc_ids ≤ 20 entries
 ///   - decision ⇔ options (2..9-entry JSON array) + recommended_code naming one entry's code; report ⇒ neither
 ///   - options serialized text ≤ 20000 chars → the route's per-field caps for 9 entries must fit under it
 ///   - answer_code only on a decision, naming one entry's code · next_attempt ≥ 1 · defer_count ≥ 0
+///   - message ⇔ answer_route message; a message carries no answer text, no approval class, never open or seen
 /// Per-entry option shape and unique codes → the post route's Zod schema (a CHECK cannot iterate the array).
 model QueueItem {
   id                BigInt          @id @default(autoincrement())
