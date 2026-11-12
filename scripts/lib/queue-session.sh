@@ -151,7 +151,8 @@ queue_get_transcript_title() {
 # The register step: the token copy, then the register POST → the answered-waiting count on stdout.
 # All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
 # $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks) ·
-# $5 an explicit session name, sent as name · else $6 a transcript path → queue_get_derived_name, sent as derivedName
+# $5 an explicit session name, already in shown form (queue_get_shown_name), sent as name ·
+# else $6 a transcript path → queue_get_derived_name, sent as derivedName
 # (the monitor lets only an explicit name replace an explicit one)
 queue_register_session() {
   local hint="${1:-}" max_time="${2:-}" cwd session_id pid socket name="" derived_name="" body reply count
@@ -163,7 +164,7 @@ queue_register_session() {
   socket="$(queue_get_socket_path)"
   cwd="$(queue_get_cwd "${3:-}")"
   if [[ -n "${5:-}" ]]; then
-    name="$(queue_get_shown_name "$5")" || name=""
+    name="$5"
   else
     derived_name="$(queue_get_derived_name "${6:-}" "${session_id}")" || derived_name=""
   fi
