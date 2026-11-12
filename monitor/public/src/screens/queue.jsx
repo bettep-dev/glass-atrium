@@ -1,5 +1,5 @@
-// Queue screen — decision, report and sent-message cards in queue order (answer / reply / Seen / Later / Resend,
-// deviation and automatic-resume state per card), the recent resumes, and the Sessions region whose composer sends one message to the ticked sessions.
+// Queue screen — the desk: the Sessions pane, the list of decisions, reports and items in delivery under their bands,
+// and the sheet showing the selected item as a one-page report with its composer (answer / order / Mark as read / later / Resend).
 // Every server field renders as React text, never as HTML.
 const {
 	useState: useStateQ,
@@ -11,11 +11,18 @@ const {
 const OWNER_API_Q = "/api/queue/owner";
 const LIST_Q = { LIMIT: 100, SOURCE: "the queue" };
 const SESSION_PREFIX_LENGTH_Q = 8;
-const CARD_ID_PREFIX_Q = "queue-item-";
+const ROW_ID_PREFIX_Q = "queue-row-";
 // characters a POSIX shell never treats as syntax in an unquoted word
 const SHELL_SAFE_Q = /^[A-Za-z0-9_@%+=:,./-]+$/;
 const FILTER_AXES_Q = ["profile", "session"];
 const DEFAULT_FILTER_Q = Object.freeze({ profile: "", session: "" });
+// every key the page keeps in its hash → one writer merges them all
+const HASH_KEYS_Q = ["session", "profile", "item", "to", "view"];
+const LIST_GROUPS_Q = {
+	decisions: { key: "decisions", label: "Decisions" },
+	reports: { key: "reports", label: "Reports" },
+	inDelivery: { key: "inDelivery", label: "In delivery" },
+};
 
 const DEVIATION_LABEL_Q = {
 	unacked: "Unacked",
@@ -72,7 +79,11 @@ const SESSION_COLUMNS_Q = [
 	{ key: "delivery", label: "In delivery", isNumeric: true },
 ];
 
-const APPROVAL_NOTE_Q = "Approval: the terminal confirmation is still needed after you answer here.";
+const COMPOSER_ERROR_Q = {
+	noAnswer: "Pick an option or write an answer, then send.",
+	noOrder: "Write the order, then send.",
+	unsentOrder: "Unsent order in the field. Send it, or clear it first.",
+};
 
 /**
  * Queue nav slot: awaiting count plus a deviation glyph when any deviation is open.
@@ -222,21 +233,76 @@ function isFilterAppliedQ(filter) {
 
 // #queue?profile=…&session=… → the filter survives a reload; an absent query → defaults
 function getFilterFromHashQ() {
-	const hash = window.location.hash.slice(1);
-	const queryIndex = hash.indexOf("?");
-	if (queryIndex < 0) return DEFAULT_FILTER_Q;
-	const params = new URLSearchParams(hash.slice(queryIndex + 1));
-	return Object.fromEntries(FILTER_AXES_Q.map((axis) => [axis, params.get(axis) ?? DEFAULT_FILTER_Q[axis]]));
+	const state = getHashStateQ();
+	return Object.fromEntries(FILTER_AXES_Q.map((axis) => [axis, state[axis]]));
 }
 
-// replaceState → a filter change adds no history entry; defaults leave a bare #queue
 function setFilterHashQ(filter) {
-	const hash = window.location.hash.slice(1);
-	const queryIndex = hash.indexOf("?");
-	const screenId = queryIndex < 0 ? hash : hash.slice(0, queryIndex);
-	const search = new URLSearchParams(FILTER_AXES_Q.filter((axis) => filter[axis]).map((axis) => [axis, filter[axis]])).toString();
+	setHashStateQ(Object.fromEntries(FILTER_AXES_Q.map((axis) => [axis, filter[axis]])));
+}
+
+/** Every page key of the hash query, "" when absent. */
+function getHashStateQ() {
+	const { query } = getHashPartsQ();
+	return Object.fromEntries(HASH_KEYS_Q.map((key) => [key, query.get(key) ?? ""]));
+}
+
+/**
+ * The one hash writer: the patch merges over the keys already there → a write of one key never erases another.
+ * replaceState → no history entry; an emptied key leaves the hash; no key left → a bare #queue.
+ */
+function setHashStateQ(patch) {
+	const { screenId } = getHashPartsQ();
+	const state = { ...getHashStateQ(), ...patch };
+	const search = new URLSearchParams(HASH_KEYS_Q.filter((key) => state[key]).map((key) => [key, state[key]])).toString();
 	const next = `#${search ? `${screenId}?${search}` : screenId}`;
 	if (window.location.hash !== next) window.history.replaceState(null, "", next);
+}
+
+function getHashPartsQ() {
+	const hash = window.location.hash.slice(1);
+	const queryIndex = hash.indexOf("?");
+	if (queryIndex < 0) return { screenId: hash, query: new URLSearchParams() };
+	return { screenId: hash.slice(0, queryIndex), query: new URLSearchParams(hash.slice(queryIndex + 1)) };
+}
+
+/**
+ * The list's bands in their fixed order — open decisions, open reports, everything else — each in server order; an empty band is left out.
+ * A row is `{ id, item, copies }`: the copies of one owner send fold into one row under the lowest id (send id, else equal time and text).
+ */
+function getGroupsQ(items) {
+	const isOpen = (kind) => (item) => item.kind === kind && item.status === "open";
+	const rest = items.filter((item) => item.status !== "open" || (item.kind !== "decision" && item.kind !== "report"));
+	const groups = [
+		{ ...LIST_GROUPS_Q.decisions, rows: items.filter(isOpen("decision")).map(getSingleRowQ) },
+		{ ...LIST_GROUPS_Q.reports, rows: items.filter(isOpen("report")).map(getSingleRowQ) },
+		{ ...LIST_GROUPS_Q.inDelivery, rows: getFoldedRowsQ(rest) },
+	];
+	return groups.filter((group) => group.rows.length > 0);
+}
+
+function getSingleRowQ(item) {
+	return { id: item.id, item, copies: [item] };
+}
+
+// first copy's position keeps the row in server order
+function getFoldedRowsQ(items) {
+	const byKey = new Map();
+	for (const item of items) {
+		const key = item.kind === "message" ? `send:${item.sendId ?? `${item.answeredAt}|${item.body}`}` : `item:${item.id}`;
+		byKey.set(key, [...(byKey.get(key) ?? []), item]);
+	}
+	return [...byKey.values()].map((copies) => {
+		const sorted = [...copies].sort((left, right) => left.id - right.id);
+		return { id: sorted[0].id, item: sorted[0], copies: sorted };
+	});
+}
+
+/** The row the sheet shows: the one holding the hash's item (a folded copy included), else the first row of the first band; none → null. */
+function getSelectedIdQ(groups, hashItemId) {
+	const rows = groups.flatMap((group) => group.rows);
+	const named = rows.find((row) => row.copies.some((copy) => String(copy.id) === hashItemId));
+	return (named ?? rows[0])?.id ?? null;
 }
 
 function getVisibleItemsQ(items, filter) {
@@ -249,10 +315,24 @@ function ScreenQueue({ onRetryHarness }) {
 	const { TypeScaleStyle } = window.UI;
 	const queue = useQueueStateQ({ onRetryHarness });
 	return (
-		<div className="flex flex-col gap-section">
+		<div className="queue-screen">
 			<TypeScaleStyle />
 			<QueueHeaderQ queue={queue} />
-			<QueueBodyQ queue={queue} />
+			<QueueDeskQ queue={queue} />
+		</div>
+	);
+}
+
+// DOM order Sessions → list → sheet; the panes are fixed-role columns that never stack
+function QueueDeskQ({ queue }) {
+	return (
+		<div className="queue-desk">
+			<div className="queue-rail">
+				<SessionsRegionQ sessions={queue.sessions} onSent={queue.reload} />
+				<RecentResumesQ region={queue.resumes} onRetry={queue.readResumes} />
+			</div>
+			<QueueListQ queue={queue} />
+			<QueueSheetQ queue={queue} />
 		</div>
 	);
 }
@@ -276,20 +356,22 @@ function getShownRegionsQ({ list, resumes, sessions }) {
 	return [{ busy: list.status === "loading", error: list.status === "error" ? list.error : null }, resumes, sessions.region];
 }
 
-function QueueBodyQ({ queue }) {
-	const { LoadingPlaceholder } = window.UI;
-	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={queue.reload} />;
-	if (queue.list.data === null) return <LoadingPlaceholder label="Loading the queue" />;
-	return <QueueListQ queue={queue} />;
-}
-
-/** Page state: the loaded list, per-card drafts kept across re-reads, and the owner actions. */
+/** Page state: the loaded list, its bands and selection, per-item drafts kept across re-reads, and the owner actions. */
 function useQueueStateQ({ onRetryHarness }) {
 	const [list, setList] = useStateQ({ status: "loading", data: null, error: null, readAt: null });
 	const [resumes, readResumes] = useRecentResumesQ();
 	const [drafts, setDrafts] = useStateQ({});
 	const [filter, setFilter] = useFilterQ();
 	const [focus, setFocus] = useStateQ(null);
+	const [status, setStatus] = useStateQ("");
+	const [hashItemId, setHashItemId] = useStateQ(() => getHashStateQ().item);
+	const groups = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter));
+	const selectedId = getSelectedIdQ(groups, hashItemId);
+	const selectItem = useCallbackQ((id) => {
+		const value = id === null ? "" : String(id);
+		setHashItemId(value);
+		setHashStateQ({ item: value });
+	}, []);
 	const sessions = useSessionsStateQ(filter.profile);
 	// sessions.read changes with the Account filter → a filter change re-reads the page
 	const reload = useCallbackQ(() => {
@@ -299,10 +381,14 @@ function useQueueStateQ({ onRetryHarness }) {
 	}, [readResumes, sessions.read]);
 	const loadMore = useCallbackQ(() => getMoreQ({ list, setList }), [list]);
 	useEffectQ(() => { reload(); }, [reload]);
-	useFocusCardQ(focus);
-	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, reload, onRetryHarness });
+	useFocusRowQ(focus);
+	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatus, selectItem, reload, onRetryHarness });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
-	return { list, resumes, readResumes, sessions, drafts, setDraft, filter, setFilter, reload, loadMore, ...actions };
+	const selectRow = useCallbackQ((id) => { selectItem(id); setFocus({ id }); }, [selectItem]);
+	return {
+		list, resumes, readResumes, sessions, drafts, setDraft, filter, setFilter, reload, loadMore,
+		groups, selectedId, selectRow, status, ...actions,
+	};
 }
 
 /** Session list region, the ticked rows, Show ended and the message composer; the list follows the Account filter. */
@@ -443,27 +529,43 @@ async function getMoreQ({ list, setList }) {
 	setList((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
 }
 
-// focus request `{ id }` → a fresh object per request, so asking for the same card again still moves the focus
-function useFocusCardQ(focus) {
+// focus request `{ id }` → a fresh object per request, so asking for the same row again still moves the focus
+function useFocusRowQ(focus) {
 	useEffectQ(() => {
 		if (focus === null) return;
-		document.getElementById(`${CARD_ID_PREFIX_Q}${focus.id}`)?.focus();
+		document.getElementById(`${ROW_ID_PREFIX_Q}${focus.id}`)?.focus();
 	}, [focus]);
 }
 
-function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, reload, onRetryHarness }) {
+/** Owner acts on the sheet: a taken act selects the next open item in list order, focuses its row and says what happened on the list's status line. */
+function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatus, selectItem, reload, onRetryHarness }) {
 	const { busy, send } = useSendQ({ setDrafts, reload, onRetryHarness });
-	// next card from the filtered list → the focus never lands on a card the filter hides
+	// next item from the filtered list → the focus never lands on a row the filter hides
 	const items = getVisibleItemsQ(list.data?.items ?? [], filter);
+	const settle = useCallbackQ(async (id, action, body) => {
+		const nextId = getNextAwaitingIdQ(items, id);
+		if (!(await send(id, action, body))) return;
+		setStatus(getActionStatusQ(items.find((item) => item.id === id), action));
+		if (nextId === null) return;
+		selectItem(nextId);
+		setFocus({ id: nextId });
+	}, [send, items, setFocus, setStatus, selectItem]);
 	const later = useCallbackQ((id) => {
 		setList((prev) => (prev.data ? { ...prev, data: { ...prev.data, items: putLaterQ(prev.data.items, id) } } : prev));
-		return send(id, "later");
-	}, [send, setList]);
-	const answerItem = useCallbackQ(async (id, body) => {
-		const nextId = getNextAwaitingIdQ(items, id);
-		if ((await send(id, "answer", body)) && nextId !== null) setFocus({ id: nextId });
-	}, [send, items, setFocus]);
-	return { busy, send, later, answerItem };
+		return settle(id, "later");
+	}, [settle, setList]);
+	const answerItem = useCallbackQ((id, body) => settle(id, "answer", body), [settle]);
+	return { busy, send, settle, later, answerItem };
+}
+
+// the list's status line after a taken act; an unknown item (gone from the list) → the act alone
+function getActionStatusQ(item, action) {
+	const name = item ? getSessionNameQ(item.session) : "the session";
+	if (action === "seen") return "Marked as read";
+	if (action === "reply") return `${window.UI.TONE_GLYPH.ok} Order sent to ${name}`;
+	if (action === "answer") return `${window.UI.TONE_GLYPH.ok} Answer sent to ${name}`;
+	if (action === "later") return `Moved to the end of ${item?.kind === "report" ? "Reports" : "Decisions"}`;
+	return "";
 }
 
 function useSendQ({ setDrafts, reload, onRetryHarness }) {
@@ -510,33 +612,178 @@ function QueueFailureQ({ failure, onRetry }) {
 	return <AlertCard tone="crit" title={failure.sentence} body={failure.next} details={failure.detail} actions={<RetryButton onRetry={onRetry} />} />;
 }
 
+/** The list card: head = the scope and its open count, bar = the filters while they tell items apart, body = the bands, foot = the status line and Show more. */
 function QueueListQ({ queue }) {
-	const { EmptyState } = window.UI;
-	const data = queue.list.data;
-	const visible = getVisibleItemsQ(data.items, queue.filter);
+	const { Card } = window.UI;
+	const items = queue.list.data?.items ?? [];
+	const visible = getVisibleItemsQ(items, queue.filter);
 	return (
-		<div className="flex flex-col gap-section">
-			<QueueFilterBarQ items={data.items} filter={queue.filter} onFilter={queue.setFilter} />
-			{data.items.length === 0 && <EmptyState message="Nothing waiting for you" hint="Sessions post decisions and reports here; the nav badge counts them." />}
-			{data.items.length > 0 && visible.length === 0 && (
-				<EmptyState kind="no-results" message="No records match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />
-			)}
-			{visible.map((item) => <QueueCardQ key={item.id} item={item} queue={queue} cliPath={data.cliPath} />)}
-			{data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
-			<SessionsRegionQ sessions={queue.sessions} onSent={queue.reload} />
-			<RecentResumesQ region={queue.resumes} onRetry={queue.readResumes} />
+		<Card className="queue-pane queue-list" title={getScopeTitleQ(items, queue.filter)} sub={`${visible.filter((item) => item.status === "open").length} waiting`}
+			bar={isListBarShownQ(items, queue.filter) ? <QueueFilterBarQ items={items} filter={queue.filter} onFilter={queue.setFilter} /> : null}
+			foot={<ListFootQ queue={queue} />} isFlush>
+			<ListBodyQ queue={queue} items={items} visible={visible} />
+		</Card>
+	);
+}
+
+function getScopeTitleQ(items, filter) {
+	if (!filter.session) return "All sessions";
+	const session = items.find((item) => item.session.id === filter.session)?.session;
+	return session ? getSessionNameQ(session) : filter.session.slice(0, SESSION_PREFIX_LENGTH_Q);
+}
+
+// ponytail: the Session trigger stays in the bar until the rail becomes the session filter (spec §9.1, unit D)
+function isListBarShownQ(items, filter) {
+	const count = (key) => new Set(items.map((item) => item.session[key])).size;
+	return isFilterAppliedQ(filter) || count("profileLabel") > 1 || count("id") > 1;
+}
+
+function ListBodyQ({ queue, items, visible }) {
+	const { EmptyState, LoadingPlaceholder } = window.UI;
+	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={queue.reload} />;
+	if (queue.list.data === null) return <LoadingPlaceholder label="Loading the queue…" />;
+	if (items.length === 0) return <EmptyState message="Nothing is waiting for you" hint="Sessions post reports and decisions here. The page checks every 15 seconds." />;
+	if (visible.length === 0) return <EmptyState kind="no-results" message="No items match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />;
+	return <QueueListboxQ queue={queue} items={items} />;
+}
+
+// one tab stop: the selected row holds tabindex 0; Up / Down / Home / End move and select
+function QueueListboxQ({ queue, items }) {
+	const rows = queue.groups.flatMap((group) => group.rows);
+	const view = { isNameShown: !queue.filter.session, isAccountShown: new Set(items.map((item) => item.session.profileLabel)).size > 1 };
+	const onKeyDown = (event) => {
+		const nextId = getKeyedRowIdQ(rows, queue.selectedId, event.key);
+		if (nextId === null) return;
+		event.preventDefault();
+		queue.selectRow(nextId);
+	};
+	return (
+		<div role="listbox" aria-label="Queue items" className="queue-listbox" onKeyDown={onKeyDown}>
+			{queue.groups.map((group) => <QueueGroupQ key={group.key} group={group} queue={queue} view={view} />)}
 		</div>
 	);
 }
 
-function ShowMoreQ({ count, isBusy, onMore }) {
-	const { Cluster } = window.UI;
+/** The row a list key moves to: Up / Down step (held at the ends), Home / End jump; any other key → null. */
+function getKeyedRowIdQ(rows, selectedId, key) {
+	const index = rows.findIndex((row) => row.id === selectedId);
+	const target = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: rows.length - 1 }[key];
+	if (target === undefined || rows.length === 0) return null;
+	return rows[Math.min(Math.max(target, 0), rows.length - 1)].id;
+}
+
+function QueueGroupQ({ group, queue, view }) {
+	const { Badge } = window.UI;
+	const bandId = `queue-band-${group.key}`;
+	const hasMore = queue.list.data.nextCursor !== null;
+	const count = group.rows.length;
 	return (
-		<Cluster gap="control">
-			<span className="fs-meta text-dim">{`Showing the first ${count} items in queue order.`}</span>
-			<button type="button" className="btn ghost sm" disabled={isBusy} onClick={onMore}>Show more</button>
-		</Cluster>
+		<div role="group" aria-labelledby={bandId}>
+			<div id={bandId} className="queue-band">
+				{group.label}
+				<Badge role="count" fill="tag" title={hasMore ? `${count} loaded, more not loaded yet` : undefined}>{hasMore ? `${count}+` : count}</Badge>
+			</div>
+			{group.rows.map((row) => <QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} view={view} onSelect={queue.selectRow} />)}
+		</div>
 	);
+}
+
+function QueueRowQ({ row, isSelected, view, onSelect }) {
+	const { Icon, formatRelativeTime, formatKstDateTime } = window.UI;
+	const { item } = row;
+	const facts = getRowFactsQ(row, view.isAccountShown);
+	return (
+		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={isSelected ? 0 : -1}
+			aria-label={getRowLabelQ(row, facts, view.isNameShown)} className="queue-row" onClick={() => onSelect(row.id)}>
+			<span className="queue-row-title" title={item.title}>{item.title}</span>
+			<span className="queue-row-meta">
+				<span className="queue-row-who">{view.isNameShown && <RowWhoQ row={row} />}</span>
+				<span className="queue-row-facts"><RowFactsQ facts={facts} /></span>
+				<span className="queue-row-age" title={formatKstDateTime(item.askedAt)}>{formatRelativeTime(item.askedAt)}</span>
+			</span>
+			<Icon name="chevR" size={16} className="queue-row-chevron" />
+		</div>
+	);
+}
+
+function RowWhoQ({ row }) {
+	if (row.copies.length > 1) return `${row.copies.length} sessions`;
+	return <ItemSessionNameQ session={row.item.session} />;
+}
+
+// no registered name → the start-directory name, marked so it never reads as one the session chose
+function ItemSessionNameQ({ session }) {
+	return (
+		<>
+			{getSessionNameQ(session)}
+			{session.isNameRegistered === false && <span className="font-normal text-dim">{" start directory"}</span>}
+		</>
+	);
+}
+
+// the item view's session name; an item from before the name existed → its start directory
+function getSessionNameQ(session) {
+	return session.name ?? session.cwdTail;
+}
+
+function RowFactsQ({ facts }) {
+	const { Badge } = window.UI;
+	return facts.map((fact, index) => (fact.badge
+		? <Badge key={fact.text} fill={fact.badge}>{fact.text}</Badge>
+		: <span key={fact.text}>{index > 0 && !facts[index - 1].badge ? ` · ${fact.text}` : fact.text}</span>));
+}
+
+/**
+ * What sets a row apart beside its band: a decision's option count and approval tag, an In delivery row's route word and receipt count.
+ * @returns `{ text, badge? }` per fact — `badge` names the Badge fill
+ */
+function getRowFactsQ(row, isAccountShown) {
+	const { item, copies } = row;
+	const account = isAccountShown ? [{ text: item.session.profileLabel }] : [];
+	if (item.status === "open" && item.kind === "decision") {
+		const count = (item.options ?? []).length;
+		return [...account, { text: `${count} ${count === 1 ? "option" : "options"}` }, ...(item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [])];
+	}
+	if (item.status === "open" && item.kind === "report") return account;
+	return [...account, ...getDeliveryFactsQ(item, copies)];
+}
+
+// ponytail: the deviation word stands for the receipt until the three receipt words land (spec §9.4, unit D)
+function getDeliveryFactsQ(item, copies) {
+	const images = item.attachments?.length ?? 0;
+	const route = item.kind === "decision" ? ["Answer", item.answer?.code].filter(Boolean).join(" ") : `Order${images > 0 ? ` · ${images} ${images === 1 ? "image" : "images"}` : ""}`;
+	const received = copies.length > 1 ? [{ text: `${copies.filter((copy) => copy.deliveredAt !== null).length} of ${copies.length} received` }] : [];
+	const deviations = copies.filter((copy) => copy.deviation);
+	const warn = deviations.length > 0 ? [{ text: DEVIATION_LABEL_Q[deviations[0].deviation] ?? deviations[0].deviation, badge: "warn" }] : [];
+	return [{ text: route }, ...received, ...warn];
+}
+
+// kind + session + title + facts + age → `Decision from gersona: <title>, 3 options, posted 9m ago`
+function getRowLabelQ(row, facts, isNameShown) {
+	const { item } = row;
+	const from = isNameShown ? ` from ${row.copies.length > 1 ? `${row.copies.length} sessions` : getSessionNameQ(item.session)}` : "";
+	const parts = [`${getKindWordQ(item)}${from}: ${item.title}`, ...facts.map((fact) => fact.text), `posted ${window.UI.formatRelativeTime(item.askedAt)}`];
+	return parts.join(", ");
+}
+
+function getKindWordQ(item) {
+	if (item.kind === "decision") return item.status === "open" ? "Decision" : "Answer";
+	if (item.kind === "report" && item.status === "open") return "Report";
+	return "Order";
+}
+
+function ListFootQ({ queue }) {
+	const data = queue.list.data;
+	return (
+		<>
+			<span role="status" className="queue-status">{queue.status}</span>
+			{data && data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
+		</>
+	);
+}
+
+function ShowMoreQ({ count, isBusy, onMore }) {
+	return <button type="button" className="btn ghost sm" disabled={isBusy} title={`${count} items loaded`} onClick={onMore}>Show more</button>;
 }
 
 function QueueFilterBarQ({ items, filter, onFilter }) {
@@ -556,108 +803,158 @@ function FilterAxisTriggerQ({ axis, options, value, onPick }) {
 	return <window.UI.FilterTrigger axis={axis} value={label} options={options} chosenKeys={[value]} onPick={onPick} />;
 }
 
-function QueueCardQ({ item, queue, cliPath }) {
-	const { Card, Stack } = window.UI;
-	const isBusy = queue.busy.id === item.id;
-	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
-	const draft = queue.drafts[item.id] ?? {};
+/** The reading pane: the selected row as a one-page report; nothing selected → one collapsed line at the top of its column. */
+function QueueSheetQ({ queue }) {
+	const { Card, EmptyState } = window.UI;
+	const row = queue.groups.flatMap((group) => group.rows).find((candidate) => candidate.id === queue.selectedId);
+	if (row) return <ItemSheetQ key={row.id} item={row.item} queue={queue} cliPath={queue.list.data?.cliPath} />;
 	return (
-		<section id={`${CARD_ID_PREFIX_Q}${item.id}`} tabIndex={-1} aria-label={item.title}>
-			<Card title={item.title} sub={<CardMetaQ item={item} />}>
-				<Stack gap="stack">
-					{item.kind === "decision"
-						? <DecisionBodyQ item={item} draft={draft} onDraft={(patch) => queue.setDraft(item.id, patch)} />
-						: <ReportBodyQ item={item} draft={draft} onDraft={(patch) => queue.setDraft(item.id, patch)} />}
-					<CardStateQ item={item} cliPath={cliPath} />
-					<CardActionsQ item={item} draft={draft} queue={queue} isBusy={isBusy} />
-					{error && <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ>}
-					{item.resumes.length > 0 && <ResumeRecordListQ resumes={item.resumes} profileLabel={item.session.profileLabel} />}
-				</Stack>
-			</Card>
-		</section>
+		<Card className="queue-sheet is-collapsed">
+			{queue.list.data !== null && <EmptyState message="Nothing selected" hint="Pick a row, or give an order." />}
+		</Card>
 	);
 }
 
-// one-line note led by its tone glyph → the tone survives without colour; an error line is toned whole
-function ToneLineQ({ tone, role, isTextToned = false, children }) {
+/**
+ * One item on the sheet: letterhead (kind, session, time), body (title, text, kind block, state lines), foot (the composer).
+ * @param cliPath - the installed queue CLI the server resolved (GA_ROOT-aware)
+ */
+function ItemSheetQ({ item, queue, cliPath }) {
+	const { Card } = window.UI;
+	const draft = queue.drafts[item.id] ?? {};
+	const isBusy = queue.busy.id === item.id;
+	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
 	return (
-		<p className={isTextToned ? `fs-meta text-${tone}` : "fs-meta"} role={role}>
-			<span aria-hidden="true" className={`text-${tone}`}>{`${window.UI.TONE_GLYPH[tone]} `}</span>
-			{children}
+		<Card className="queue-pane queue-sheet" title={<LetterheadQ item={item} />} sub={<LetterheadFactsQ item={item} />} right={<LetterheadTimeQ item={item} />}
+			foot={<SheetFootQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />}>
+			<SheetBodyQ item={item} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} />
+		</Card>
+	);
+}
+
+// the card's h2: read as `Decision from gersona`; the session's account, directory and id ride its title
+function LetterheadQ({ item }) {
+	const { Badge } = window.UI;
+	const { session } = item;
+	const where = [session.profileLabel, session.cwd, session.id].filter(Boolean).join(" · ");
+	return (
+		<span className="queue-letter">
+			<Badge fill="tag">{getKindWordQ(item)}</Badge>
+			<span className="sr-only">{" from "}</span>
+			<span title={where}><ItemSessionNameQ session={session} /></span>
+		</span>
+	);
+}
+
+function LetterheadFactsQ({ item }) {
+	const facts = getRowFactsQ({ item, copies: [item] }, false);
+	return facts.length > 0 ? <RowFactsQ facts={facts} /> : null;
+}
+
+function LetterheadTimeQ({ item }) {
+	const isAnswered = item.status !== "open" && item.answeredAt;
+	const verb = isAnswered ? "Answered" : "Posted";
+	const time = window.UI.formatKstDateTime(isAnswered ? item.answeredAt : item.askedAt);
+	return (
+		<span className="fs-meta text-faint tabular-nums" title={`${verb} ${time}`}>
+			<span className="sr-only">{`${verb} `}</span>{time}
+		</span>
+	);
+}
+
+function SheetBodyQ({ item, draft, onDraft, cliPath }) {
+	const isAnsweredDecision = item.kind === "decision" && item.status !== "open";
+	return (
+		<div className="queue-sheet-body">
+			<h3 className="queue-sheet-title">{item.title}</h3>
+			{isAnsweredDecision ? <YourAnswerQ item={item} /> : <ItemTextQ item={item} />}
+			{item.kind === "decision" && item.status === "open" && <OptionsQ item={item} draft={draft} onDraft={onDraft} />}
+			<CardStateQ item={item} cliPath={cliPath} />
+			{isAnsweredDecision && <OriginalQuestionQ item={item} />}
+			{item.resumes.length > 0 && <ResumeRecordListQ resumes={item.resumes} profileLabel={item.session.profileLabel} />}
+		</div>
+	);
+}
+
+function ItemTextQ({ item }) {
+	const { ProseText } = window.UI;
+	return (
+		<>
+			<ProseText text={item.body} linkedDocIds={item.linkedDocIds} />
+			<DocumentsLineQ item={item} />
+		</>
+	);
+}
+
+// declared documents the text did not turn into a link; none → no line
+function DocumentsLineQ({ item }) {
+	const { linkedIds } = window.UI.getProseBlocks(item.body, item.linkedDocIds);
+	const rest = item.linkedDocIds.filter((id) => !linkedIds.includes(id));
+	if (rest.length === 0) return null;
+	return (
+		<p className="prose-text">
+			{"Documents: "}
+			{rest.map((id, index) => <React.Fragment key={id}>{index > 0 && ", "}<a className="prose-link" href={`#clauded-docs?doc=${id}`}>{id}</a></React.Fragment>)}
 		</p>
 	);
 }
 
-function CardMetaQ({ item }) {
-	const { formatRelativeTime } = window.UI;
-	const { session } = item;
-	const verb = item.kind === "message" ? "sent" : "asked";
-	return <span>{`${session.profileLabel} · ${session.cwdTail} · ${verb} ${formatRelativeTime(item.askedAt)}`}</span>;
-}
-
-function DecisionBodyQ({ item, draft, onDraft }) {
-	const { Stack } = window.UI;
-	const isOpen = item.status === "open";
+// no option preselected → the recommended answer is never one press away
+function OptionsQ({ item, draft, onDraft }) {
 	return (
-		<Stack gap="stack">
-			<p className="fs-body whitespace-pre-wrap">{item.body}</p>
-			{item.isApprovalClass && <p className="fs-meta text-dim">{APPROVAL_NOTE_Q}</p>}
-			<fieldset disabled={!isOpen}>
-				<legend className="sr-only">Options</legend>
-				<Stack gap="list">
-					{(item.options ?? []).map((option) => (
-						<DecisionOptionQ key={option.code} itemId={item.id} option={option} isRecommended={option.code === item.recommendedCode}
-							isChecked={(draft.code ?? item.answer.code) === option.code} onPick={() => onDraft({ code: option.code })} />
-					))}
-				</Stack>
-			</fieldset>
-			{item.isFreeTextAllowed && isOpen && (
-				<DraftFieldQ id={`queue-text-${item.id}`} label="Your answer (optional)" value={draft.text ?? ""} onChange={(text) => onDraft({ text })} />
-			)}
-		</Stack>
+		<fieldset className="queue-options queue-kind">
+			<legend>Options</legend>
+			{(item.options ?? []).map((option) => (
+				<OptionRowQ key={option.code} itemId={item.id} option={option} isRecommended={option.code === item.recommendedCode}
+					isChecked={draft.code === option.code} onPick={() => onDraft({ code: option.code })} />
+			))}
+		</fieldset>
 	);
 }
 
-function DecisionOptionQ({ itemId, option, isRecommended, isChecked, onPick }) {
-	const { Cluster } = window.UI;
-	const id = `queue-option-${itemId}-${option.code}`;
+function OptionRowQ({ itemId, option, isRecommended, isChecked, onPick }) {
+	const { Badge } = window.UI;
 	return (
-		<Cluster gap="control" className="flex-nowrap items-baseline">
-			<input id={id} type="radio" name={`queue-options-${itemId}`} checked={isChecked} onChange={onPick} />
-			<label htmlFor={id} className="fs-body">
-				<span className="font-semibold">{`${option.code} · ${option.label}`}</span>
-				{isRecommended && <span className="fs-meta text-dim">{" · recommended"}</span>}
-				{option.pros && <span className="block fs-meta text-dim">{`Pros: ${option.pros}`}</span>}
-				{option.cons && <span className="block fs-meta text-dim">{`Cons: ${option.cons}`}</span>}
-			</label>
-		</Cluster>
+		<label className="queue-option">
+			<input id={`queue-option-${itemId}-${option.code}`} type="radio" className="ctl-radio" name={`queue-options-${itemId}`} checked={isChecked} onChange={onPick} />
+			<span className="min-w-0">
+				<span className="queue-option-head">
+					<span><span className="text-dim">{option.code}</span>{` ${option.label}`}</span>
+					{isRecommended && <Badge fill="tag">Recommended</Badge>}
+				</span>
+				{(option.pros || option.cons) && (
+					<span className="queue-option-sides">
+						{option.pros && <><span className="queue-label">Pros</span><span>{option.pros}</span></>}
+						{option.cons && <><span className="queue-label">Cons</span><span>{option.cons}</span></>}
+					</span>
+				)}
+			</span>
+		</label>
 	);
 }
 
-function ReportBodyQ({ item, draft, onDraft }) {
-	const { Stack, Link } = window.UI;
+function YourAnswerQ({ item }) {
+	const { ProseText } = window.UI;
+	const option = (item.options ?? []).find((candidate) => candidate.code === item.answer?.code);
 	return (
-		<Stack gap="stack">
-			<p className="fs-body whitespace-pre-wrap">{item.body}</p>
-			{item.linkedDocIds.length > 0 && (
-				<ul className="fs-body">
-					{item.linkedDocIds.map((docId) => <li key={docId}><Link href={`#clauded-docs?doc=${docId}`}>{`Document ${docId} →`}</Link></li>)}
-				</ul>
-			)}
-			{item.isFreeTextAllowed && item.status === "open" && (
-				<DraftFieldQ id={`queue-reply-${item.id}`} label="Reply (optional)" value={draft.text ?? ""} onChange={(text) => onDraft({ text })} />
-			)}
-		</Stack>
+		<div>
+			<p className="queue-label">Your answer</p>
+			{option && <p className="queue-answer">{`${option.code} · ${option.label}`}</p>}
+			{item.answer?.text && <ProseText text={item.answer.text} />}
+		</div>
 	);
 }
 
-function DraftFieldQ({ id, label, value, onChange }) {
-	const { Stack } = window.UI;
+// the decision as it was asked, as text and not as controls
+function OriginalQuestionQ({ item }) {
+	const { ProseText } = window.UI;
+	const options = item.options ?? [];
 	return (
-		<Stack gap="label">
-			<label htmlFor={id} className="field-label">{label}</label>
-			<textarea id={id} rows={3} className="field" value={value} onChange={(event) => onChange(event.target.value)} />
-		</Stack>
+		<details className="queue-kind">
+			<summary className="queue-fold">{`Show the question and its ${options.length} ${options.length === 1 ? "option" : "options"}`}</summary>
+			<ProseText text={item.body} linkedDocIds={item.linkedDocIds} />
+			<ul className="prose-text">{options.map((option) => <li key={option.code}>{`${option.code} · ${option.label}`}</li>)}</ul>
+		</details>
 	);
 }
 
@@ -713,25 +1010,113 @@ function NotePartsQ({ parts }) {
 	return <>{parts.map((part, index) => (typeof part === "string" ? part : <MachineString key={index}>{part.machine}</MachineString>))}</>;
 }
 
-function CardActionsQ({ item, draft, queue, isBusy }) {
-	const { Cluster } = window.UI;
-	const isOpen = item.status === "open";
+/** The sheet's foot: the composer in its decision or report use; an item already answered or sent → its buttons alone. */
+function SheetFootQ({ item, draft, queue, isBusy, error }) {
+	if (item.status === "open" && item.kind === "decision") return <DecisionComposerQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
+	if (item.status === "open" && item.kind === "report") return <ReportComposerQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
+	const label = item.kind === "decision" ? "Resend answer" : "Resend";
+	const buttons = item.canResend ? [{ label, onPress: () => queue.send(item.id, "resend") }] : [];
+	return <ComposerQ buttons={buttons} isBusy={isBusy} note={error ? <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ> : null} />;
+}
+
+function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
+	const name = getSessionNameQ(item.session);
+	const firstCode = (item.options ?? [])[0]?.code;
+	const onSend = () => {
+		const body = getAnswerBodyQ(draft);
+		if (body === null) return putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noAnswer, firstCode ? `queue-option-${item.id}-${firstCode}` : `queue-text-${item.id}`);
+		return queue.answerItem(item.id, body);
+	};
+	const resend = item.canResend ? [{ label: "Resend", onPress: () => queue.send(item.id, "resend") }] : [];
+	const rest = `${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to ${name}.`;
 	return (
-		<Cluster gap="control">
-			{isOpen && item.kind === "decision" && <SendButtonQ item={item} draft={draft} queue={queue} isBusy={isBusy} />}
-			{isOpen && item.kind === "report" && <ReportButtonsQ item={item} draft={draft} queue={queue} isBusy={isBusy} />}
-			{isOpen && <button type="button" className="btn" disabled={isBusy} onClick={() => queue.later(item.id)}>Later</button>}
-			{item.canResend && <button type="button" className="btn" disabled={isBusy} onClick={() => queue.send(item.id, "resend")}>Resend</button>}
-		</Cluster>
+		<ComposerQ field={item.isFreeTextAllowed ? { id: `queue-text-${item.id}`, label: "Your own answer or a note (optional)" } : null}
+			text={draft.text ?? ""} onText={(text) => queue.setDraft(item.id, { text, error: null })} isBusy={isBusy}
+			buttons={[...resend, { label: "Send answer", isInk: true, onPress: onSend }]}
+			note={<ComposerNoteQ error={error ?? draft.error} info={item.isApprovalClass ? `Approval: after you answer here, confirm once more in ${name}'s terminal.` : null} rest={rest} />}
+			later={{ label: "Answer later", onPress: () => queue.later(item.id) }} />
 	);
 }
 
-function SendButtonQ({ item, draft, queue, isBusy }) {
-	const body = getAnswerBodyQ(draft);
+// Mark as read carries the ink while the box is empty, Send order once it holds text; order, labels and widths never change
+function ReportComposerQ({ item, draft, queue, isBusy, error }) {
+	const name = getSessionNameQ(item.session);
+	const fieldId = `queue-reply-${item.id}`;
+	const text = draft.text ?? "";
+	const hasText = text.trim() !== "";
+	const markRead = () => (hasText ? putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.unsentOrder, fieldId) : queue.settle(item.id, "seen"));
+	const sendOrder = () => (hasText ? queue.settle(item.id, "reply", { text }) : putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noOrder, fieldId));
+	const order = item.isFreeTextAllowed ? [{ label: "Send order", isInk: hasText, onPress: sendOrder }] : [];
+	const rest = hasText ? `Send order delivers this to ${name} and closes the report.` : `Mark as read closes this report. ${name} hears nothing.`;
 	return (
-		<button type="button" className="btn primary" disabled={isBusy || body === null} onClick={() => queue.answerItem(item.id, body)}>
-			Send
-		</button>
+		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: `Order to ${name} (optional)` } : null}
+			text={text} onText={(next) => queue.setDraft(item.id, { text: next, error: null })} isBusy={isBusy}
+			buttons={[{ label: "Mark as read", isInk: !hasText, onPress: markRead }, ...order]}
+			note={<ComposerNoteQ error={error ?? draft.error} rest={rest} />}
+			later={{ label: "Read later", onPress: () => queue.later(item.id) }} />
+	);
+}
+
+// a press with something missing → the note slot says what and focus goes to the first missing control
+function putInvalidQ(queue, id, message, targetId) {
+	queue.setDraft(id, { error: message });
+	window.document?.getElementById(targetId)?.focus();
+}
+
+/**
+ * One composer for every field the owner writes in: label, the box and its buttons on one row, the reserved note line.
+ * Buttons are always enabled; while sending they read `Sending…` and carry aria-disabled. Cmd / Ctrl + Enter presses the ink button.
+ * @param field - `{ id, label }` of the box; null → buttons alone
+ * @param buttons - `{ label, isInk, onPress }` in order, the ink one last
+ * @param later - the quiet button at the end of the note line
+ */
+function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later }) {
+	const ink = buttons.find((button) => button.isInk);
+	const onKeyDown = (event) => {
+		if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || !ink || isBusy) return;
+		event.preventDefault();
+		ink.onPress();
+	};
+	return (
+		<div className="queue-composer">
+			{field && <label htmlFor={field.id} className="field-label">{field.label}</label>}
+			<div className="queue-compose-row">
+				{field && (
+					<div className="queue-compose-box">
+						<textarea id={field.id} rows={1} className="queue-compose-text" value={text} onChange={(event) => onText(event.target.value)} onKeyDown={onKeyDown} />
+					</div>
+				)}
+				<div className="queue-compose-buttons">
+					{buttons.map((button) => (
+						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} aria-disabled={isBusy || undefined}
+							aria-busy={(isBusy && button.isInk) || undefined} onClick={isBusy ? undefined : button.onPress}>
+							{isBusy && button.isInk ? "Sending…" : button.label}
+						</button>
+					))}
+				</div>
+			</div>
+			<div className="queue-note">
+				<div className="queue-note-text">{note}</div>
+				{later && <button type="button" className="btn ghost sm" disabled={isBusy} onClick={later.onPress}>{later.label}</button>}
+			</div>
+		</div>
+	);
+}
+
+// one line: a refusal or a missing control (crit alert), else the approval reminder (info), else the line at rest
+function ComposerNoteQ({ error, info = null, rest }) {
+	if (error) return <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ>;
+	if (info) return <ToneLineQ tone="info">{info}</ToneLineQ>;
+	return <p className="fs-meta">{rest}</p>;
+}
+
+// one-line note led by its tone glyph → the tone survives without colour; an error line is toned whole
+function ToneLineQ({ tone, role, isTextToned = false, children }) {
+	return (
+		<p className={isTextToned ? `fs-meta text-${tone}` : "fs-meta"} role={role}>
+			<span aria-hidden="true" className={`text-${tone}`}>{`${window.UI.TONE_GLYPH[tone]} `}</span>
+			{children}
+		</p>
 	);
 }
 
@@ -740,16 +1125,6 @@ function getAnswerBodyQ(draft) {
 	const text = draft.text?.trim() ? draft.text : undefined;
 	if (draft.code === undefined && text === undefined) return null;
 	return { ...(draft.code === undefined ? {} : { code: draft.code }), ...(text === undefined ? {} : { text }) };
-}
-
-function ReportButtonsQ({ item, draft, queue, isBusy }) {
-	const hasReply = Boolean(draft.text?.trim());
-	return (
-		<>
-			<button type="button" className="btn primary" disabled={isBusy} onClick={() => queue.send(item.id, "seen")}>Seen</button>
-			{hasReply && <button type="button" className="btn" disabled={isBusy} onClick={() => queue.send(item.id, "reply", { text: draft.text })}>Send reply</button>}
-		</>
-	);
 }
 
 function ResumeRecordListQ({ resumes, profileLabel }) {
@@ -889,6 +1264,16 @@ function MessageComposerQ({ targets, composer, onText, onSend, onClear }) {
 				<button type="button" className="btn ghost" disabled={composer.isBusy} onClick={onClear}>Clear selection</button>
 			</Cluster>
 			{composer.error && <ToneLineQ tone="crit" role="alert" isTextToned>{composer.error}</ToneLineQ>}
+		</Stack>
+	);
+}
+
+function DraftFieldQ({ id, label, value, onChange }) {
+	const { Stack } = window.UI;
+	return (
+		<Stack gap="label">
+			<label htmlFor={id} className="field-label">{label}</label>
+			<textarea id={id} rows={3} className="field" value={value} onChange={(event) => onChange(event.target.value)} />
 		</Stack>
 	);
 }

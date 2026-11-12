@@ -638,6 +638,8 @@
 | drawer 전면 시트 | ≤ 640px |
 
 - 한 view 에서 radius family 를 섞지 않는다 — 역할로만 스케일.
+- **Queue desk** (`.queue-screen` · `.queue-desk` · `.queue-pane`): viewport 높이를 채우는 3열 grid — rail(단계별 고정 폭) · list(나머지, 최소 320 / 1440부터 360) · sheet(`--measure-prose` + 32 gutter 둘, 최대 653). 페이지는 스크롤하지 않고 각 pane 의 `.card-body` 만 스크롤. 1280 미만은 가로 스크롤(`min-width: 1012px`), 쌓이는 레이아웃 없음. `SplitRow` 가 아닌 이유: 비율 2종 + 1280 미만 stack.
+  - `.queue-row`(68 / 88, 880px 이상 list 에서는 container query 로 한 줄 44) · `.queue-sheet`(`--card-pad` → `--space-8`) · `.queue-option` · `.queue-composer` — 화면 전용 class 는 `base.css` 에만(§12.1 lint).
 
 ### 7.12 Disclosure · Popover
 

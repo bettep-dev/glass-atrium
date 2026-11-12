@@ -114,11 +114,27 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       later: record("later"),
       send: record("send"),
       answerItem: record("answerItem"),
+      settle: record("settle"),
+      selectRow: record("selectRow"),
       sessions: buildSessions(),
       reload: record("reload"),
       ...overrides,
     },
   };
+}
+
+// the queue with a loaded list, its bands and the first row selected, as useQueueStateQ hands it to the desk
+function withList(queue: Record<string, unknown>, items: unknown[], nextCursor: number | null = null) {
+  const groups = call<Array<{ rows: Array<{ id: number }> }>>("getGroupsQ", items);
+  return { ...queue, list: { status: "ready", data: { items, nextCursor } }, filter: { profile: "", session: "" }, setFilter: () => undefined, groups, selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
+}
+
+// the Card atom's head and foot ride its props → rendered beside its body, so one tree holds the whole sheet
+function renderSheet(props: unknown): RenderedNode {
+  const tree = render("ItemSheetQ", props);
+  const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
+  const slots = ["title", "sub", "right", "foot"].map((key) => renderScreen(card?.props[key])).filter((node): node is RenderedNode => node !== null && typeof node !== "string");
+  return { type: "Fragment", props: {}, children: [tree, ...slots] } as RenderedNode;
 }
 
 const buttonLabelled = (tree: RenderedNode, label: string) => findNodes(tree, (node) => node.type === "button" && collectText(node).trim() === label);
@@ -157,14 +173,14 @@ describe("Later", () => {
   });
 
   const kinds = [
-    { name: "a decision card offers Later", kind: "decision" },
-    { name: "a report card offers Later", kind: "report" },
+    { name: "a decision's sheet offers Answer later", kind: "decision", label: "Answer later" },
+    { name: "a report's sheet offers Read later", kind: "report", label: "Read later" },
   ];
   for (const row of kinds) {
     test(row.name, () => {
       const { calls, queue } = buildQueue();
-      const tree = render("QueueCardQ", { item: buildItem({ id: 9, kind: row.kind }), queue });
-      const [later] = buttonLabelled(tree, "Later");
+      const tree = renderSheet({ item: buildItem({ id: 9, kind: row.kind }), queue });
+      const [later] = buttonLabelled(tree, row.label);
       assert.ok(later, "Later button rendered");
       (later.props.onClick as () => void)();
       assert.deepEqual(getPlain(calls), [["later", 9]]);
@@ -196,15 +212,17 @@ test("after Send the focus skips a card the active filter hides", async () => {
     setList: () => undefined,
     setDrafts: () => undefined,
     setFocus: (next: unknown) => focus.push(next),
+    setStatus: () => undefined,
+    selectItem: () => undefined,
     reload: () => undefined,
   });
   await actions.answerItem(1, { code: "R1" });
   assert.deepEqual(getPlain(focus), [{ id: 3 }]);
 });
 
-test("card input held in page state reappears on the card after a re-render", () => {
+test("a draft held in page state reappears when its item is selected again", () => {
   const { queue } = buildQueue({ drafts: { 41: { text: "keep the shadow DB" } } });
-  const tree = render("QueueCardQ", { item: buildItem(), queue });
+  const tree = renderSheet({ item: buildItem(), queue });
   const [field] = findNodes(tree, (node) => node.type === "textarea");
   assert.equal(field?.props.value, "keep the shadow DB");
 });
@@ -263,10 +281,10 @@ describe("card state lines", () => {
     assert.doesNotMatch(text, /Answered|Replied|Sent as/);
   });
 
-  test("an approval-class decision says the terminal confirmation is still needed", () => {
-    const text = (item: unknown) => collectText(render("DecisionBodyQ", { item, draft: {}, onDraft: () => undefined }));
-    assert.match(text(buildItem({ isApprovalClass: true })), /terminal confirmation is still needed/);
-    assert.doesNotMatch(text(buildItem()), /terminal confirmation/);
+  test("an approval-class decision's note slot says to confirm once more in the session's terminal", () => {
+    const text = (item: unknown) => collectText(render("SheetFootQ", { item, draft: {}, queue: buildQueue().queue, isBusy: false, error: null }));
+    assert.match(text(buildItem({ isApprovalClass: true })), /Approval: after you answer here, confirm once more in git\/glass-atrium's terminal\./);
+    assert.doesNotMatch(text(buildItem()), /confirm once more/);
   });
 });
 
@@ -369,17 +387,17 @@ describe("card precedence notes", () => {
 
   test("a marked session with a used attempt shows the marker reason and no Resend", () => {
     const item = pending({ kind: "marker" }, { session: markedSession("bg-7f3a"), canResend: false, resumes: [{ attempt: 1, sentAt: "2026-11-10T06:20:11.204Z", result: "sent", abortReason: null, bgId: "bg-7f3a" }] });
-    const tree = render("QueueCardQ", { item, queue: buildQueue().queue });
+    const tree = renderSheet({ item, queue: buildQueue().queue });
     assert.match(collectText(tree), /claude logs bg-7f3a/);
-    assert.equal(buttonLabelled(tree, "Resend").length, 0);
+    assert.equal(buttonLabelled(tree, "Resend answer").length, 0);
   });
 
-  test("a used attempt in a shared worktree shows the used state with Resend", () => {
+  test("a used attempt in a shared worktree shows the used state with Resend answer", () => {
     const item = pending({ kind: "resume_used" }, { canResend: true });
     const { calls, queue } = buildQueue();
-    const tree = render("QueueCardQ", { item, queue });
+    const tree = renderSheet({ item, queue });
     assert.match(collectText(tree), /automatic resume used — Resend to try again/);
-    const [resend] = buttonLabelled(tree, "Resend");
+    const [resend] = buttonLabelled(tree, "Resend answer");
     (resend?.props.onClick as () => void)();
     assert.deepEqual(getPlain(calls), [["send", 41, "resend"]]);
   });
@@ -396,7 +414,7 @@ describe("automatic resume record", () => {
 
   test("each card resume shows its time, account and result", () => {
     const resume = { attempt: 2, sentAt: "2026-11-10T06:20:11.204Z", result: "aborted", abortReason: "session_returned", bgId: null };
-    const text = collectText(render("QueueCardQ", { item: buildItem({ status: "resume_pending", resumes: [resume] }), queue: buildQueue().queue }));
+    const text = collectText(renderSheet({ item: buildItem({ status: "resume_pending", resumes: [resume] }), queue: buildQueue().queue }));
     const line = text.split("Automatic resume ")[1] ?? "";
     assert.ok(line.startsWith((realUi.formatKstDateTime as (iso: string) => string)(resume.sentAt)), line);
     assert.match(line, /work-dev · attempt 2 · not spawned: session came back/);
@@ -462,13 +480,15 @@ describe("screen", () => {
   });
 
   // the list carries no delivery flag → a page alert here would read as a delivery outage that does not exist
-  test("a loaded list renders one card per item and no page alert", () => {
-    const { queue } = buildQueue();
-    const data = { items: [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report", linkedDocIds: [43944] })], nextCursor: null };
-    const tree = render("QueueListQ", { queue: { ...queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } });
-    assert.equal(findNodes(tree, (node) => node.type === "QueueCardQ").length, 2);
-    assert.equal(findNodes(tree, (node) => node.props?.atom === "AlertCard").length, 0);
-    const [link] = findNodes(tree, (node) => node.props.atom === "Link");
+  test("a loaded list renders one list card with one row per item under bands, and the selected item on the sheet", () => {
+    const items = [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report", linkedDocIds: [43944] })];
+    const queue = withList(buildQueue().queue, items);
+    const list = render("QueueListQ", { queue });
+    assert.deepEqual(findNodes(list, (node) => node.props?.role === "option").map((node) => node.props.id), ["queue-row-1", "queue-row-2"]);
+    assert.deepEqual(findNodes(list, (node) => node.props?.className === "queue-band").map((node) => collectText(node)), ["Decisions 1", "Reports 1"]);
+    assert.equal(findNodes(list, (node) => node.props?.atom === "AlertCard").length, 0);
+    const sheet = render("QueueSheetQ", { queue: { ...queue, selectedId: 2 } });
+    const [link] = findNodes(sheet, (node) => node.type === "a" && node.props.className === "prose-link");
     assert.equal(link?.props.href, "#clauded-docs?doc=43944");
   });
 });
@@ -531,42 +551,57 @@ describe("an owner action's answer", () => {
   }
 });
 
-describe("card buttons", () => {
+describe("sheet composer buttons", () => {
+  const foot = (item: unknown, draft: unknown) => {
+    const { calls, queue } = buildQueue();
+    return { calls, tree: render("SheetFootQ", { item, draft, queue, isBusy: false, error: null }) };
+  };
+  const press = (tree: RenderedNode, label: string) => {
+    const [button] = buttonLabelled(tree, label);
+    assert.ok(button, `${label} rendered`);
+    assert.equal(button.props.disabled, undefined, `${label} is always enabled`);
+    (button.props.onClick as () => void)();
+  };
+
   const sendRows = [
-    { name: "no option and no text leaves Send disabled", draft: {}, body: null },
-    { name: "whitespace-only text leaves Send disabled", draft: { text: "   " }, body: null },
-    { name: "a picked option alone sends its code", draft: { code: "R1" }, body: { code: "R1" } },
-    { name: "text alone sends the text", draft: { text: "hold until Friday" }, body: { text: "hold until Friday" } },
-    { name: "an option and text send both", draft: { code: "R2", text: "after the deploy" }, body: { code: "R2", text: "after the deploy" } },
+    { name: "no option and no text writes the note-slot line", draft: {}, calls: [["setDraft", 41, { error: "Pick an option or write an answer, then send." }]] },
+    { name: "whitespace-only text writes the note-slot line", draft: { text: "   " }, calls: [["setDraft", 41, { error: "Pick an option or write an answer, then send." }]] },
+    { name: "a picked option alone sends its code", draft: { code: "R1" }, calls: [["answerItem", 41, { code: "R1" }]] },
+    { name: "text alone sends the text", draft: { text: "hold until Friday" }, calls: [["answerItem", 41, { text: "hold until Friday" }]] },
+    { name: "an option and text send both", draft: { code: "R2", text: "after the deploy" }, calls: [["answerItem", 41, { code: "R2", text: "after the deploy" }]] },
   ];
   for (const row of sendRows) {
-    test(row.name, () => {
-      const { calls, queue } = buildQueue();
-      const [send] = buttonLabelled(render("CardActionsQ", { item: buildItem(), draft: row.draft, queue, isBusy: false }), "Send");
-      assert.equal(send?.props.disabled, row.body === null);
-      if (row.body !== null) (send?.props.onClick as () => void)();
-      assert.deepEqual(getPlain(calls), row.body === null ? [] : [["answerItem", 41, row.body]]);
+    test(`Send answer: ${row.name}`, () => {
+      const { calls, tree } = foot(buildItem(), row.draft);
+      press(tree, "Send answer");
+      assert.deepEqual(getPlain(calls), row.calls);
     });
   }
 
-  test("Seen on a report sends the seen action", () => {
-    const { calls, queue } = buildQueue();
-    const [seen] = buttonLabelled(render("CardActionsQ", { item: buildItem({ kind: "report" }), draft: {}, queue, isBusy: false }), "Seen");
-    (seen?.props.onClick as () => void)();
-    assert.deepEqual(getPlain(calls), [["send", 41, "seen"]]);
-  });
-
-  const replyRows = [
-    { name: "a typed reply offers Send reply with the typed text", draft: { text: "thanks, merged" }, calls: [["send", 41, "reply", { text: "thanks, merged" }]] },
-    { name: "a blank reply offers no Send reply", draft: { text: "  " }, calls: null },
+  const reportRows = [
+    { name: "Mark as read on an empty box sends the seen action", draft: {}, label: "Mark as read", calls: [["settle", 41, "seen"]] },
+    { name: "Mark as read with text in the box says the order is unsent", draft: { text: "thanks" }, label: "Mark as read", calls: [["setDraft", 41, { error: "Unsent order in the field. Send it, or clear it first." }]] },
+    { name: "Send order sends the reply action with the typed text", draft: { text: "thanks, merged" }, label: "Send order", calls: [["settle", 41, "reply", { text: "thanks, merged" }]] },
+    { name: "Send order on a blank box asks for the order", draft: { text: "  " }, label: "Send order", calls: [["setDraft", 41, { error: "Write the order, then send." }]] },
   ];
-  for (const row of replyRows) {
+  for (const row of reportRows) {
     test(row.name, () => {
-      const { calls, queue } = buildQueue();
-      const [reply] = buttonLabelled(render("CardActionsQ", { item: buildItem({ kind: "report" }), draft: row.draft, queue, isBusy: false }), "Send reply");
-      assert.equal(reply === undefined, row.calls === null);
-      (reply?.props.onClick as (() => void) | undefined)?.();
-      assert.deepEqual(getPlain(calls), row.calls ?? []);
+      const { calls, tree } = foot(buildItem({ kind: "report" }), row.draft);
+      press(tree, row.label);
+      assert.deepEqual(getPlain(calls), row.calls);
+    });
+  }
+
+  // which button carries the ink follows the box; order and labels never change
+  const inkRows = [
+    { name: "an empty box", draft: {}, ink: "Mark as read" },
+    { name: "a box with text", draft: { text: "rebase" }, ink: "Send order" },
+  ];
+  for (const row of inkRows) {
+    test(`the report's ink button with ${row.name} is ${row.ink}, the order staying Mark as read then Send order`, () => {
+      const buttons = findNodes(foot(buildItem({ kind: "report" }), row.draft).tree, (node) => node.type === "button" && /\bbtn lg\b/.test(String(node.props.className)));
+      assert.deepEqual(buttons.map((node) => collectText(node)), ["Mark as read", "Send order"]);
+      assert.deepEqual(buttons.filter((node) => /\bprimary\b/.test(String(node.props.className))).map((node) => collectText(node)), [row.ink]);
     });
   }
 });
@@ -589,8 +624,8 @@ describe("the queue page spaces on role keys only", () => {
     nextCursor: 9,
   };
   const states = [
-    { name: "a loaded list with cards, the pull command, a deviation and Show more", node: () => render("QueueListQ", { queue: { ...buildQueue().queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } }) },
-    { name: "a card with a refusal", node: () => render("QueueCardQ", { item: data.items[0], queue: buildQueue({ busy: { id: null, error: { id: 1, message: "Refused: x." } } }).queue }) },
+    { name: "a loaded list with its bands, a deviation and Show more", node: () => render("QueueListQ", { queue: withList(buildQueue().queue, data.items, data.nextCursor) }) },
+    { name: "a sheet with a refusal", node: () => renderSheet({ item: data.items[0], queue: buildQueue({ busy: { id: null, error: { id: 1, message: "Refused: x." } } }).queue }) },
     {
       name: "the sessions region with a ticked row, the composer and a refusal",
       node: () =>
@@ -610,12 +645,12 @@ describe("the queue page spaces on role keys only", () => {
 
 describe("report reply", () => {
   const rows = [
-    { name: "a report that takes a reply shows the reply field", isFreeTextAllowed: true, fields: 1 },
-    { name: "a report that takes no reply shows no reply field", isFreeTextAllowed: false, fields: 0 },
+    { name: "a report that takes an order shows the order field in the sheet's foot", isFreeTextAllowed: true, fields: 1 },
+    { name: "a report that takes no order shows no order field", isFreeTextAllowed: false, fields: 0 },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const tree = render("ReportBodyQ", { item: buildItem({ kind: "report", isFreeTextAllowed: row.isFreeTextAllowed }), draft: {}, onDraft: () => undefined });
+      const tree = render("SheetFootQ", { item: buildItem({ kind: "report", isFreeTextAllowed: row.isFreeTextAllowed }), draft: {}, queue: buildQueue().queue, isBusy: false, error: null });
       assert.equal(findNodes(tree, (node) => node.type === "textarea").length, row.fields);
     });
   }
@@ -634,7 +669,7 @@ describe("action refusal copy", () => {
 describe("refusal lines", () => {
   const message = "Refused: the item changed state. Refresh to see where it is now.";
   const rows = [
-    { name: "a refused card action", node: () => render("QueueCardQ", { item: buildItem({ id: 1 }), queue: buildQueue({ busy: { id: null, error: { id: 1, message } } }).queue }) },
+    { name: "a refused sheet action", node: () => renderSheet({ item: buildItem({ id: 1 }), queue: buildQueue({ busy: { id: null, error: { id: 1, message } } }).queue }) },
     {
       name: "a refused send",
       node: () =>
@@ -725,6 +760,65 @@ describe("filter state in the hash", () => {
       assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), row.filter);
     });
   }
+
+  // one hash writer merges every key → a filter write never erases the selected item or the mode (spec §4.3 → Selection)
+  const mergeRows = [
+    { name: "a filter write keeps the selected item and the mode", start: "#queue?item=41&view=orders&to=a,b", patch: { profile: "work-dev", session: "" }, expected: { session: "", profile: "work-dev", item: "41", to: "a,b", view: "orders" } },
+    { name: "an item write keeps the filter", start: "#queue?profile=personal&session=s1", patch: { item: "7" }, expected: { session: "s1", profile: "personal", item: "7", to: "", view: "" } },
+    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { session: "", profile: "personal", item: "", to: "", view: "" } },
+  ];
+  for (const row of mergeRows) {
+    test(row.name, async () => {
+      const { module, location } = await load(row.start);
+      (module.setHashStateQ as (patch: unknown) => void)(row.patch);
+      assert.ok(location.hash.startsWith("#queue"), location.hash);
+      assert.deepEqual(getPlain((module.getHashStateQ as () => unknown)()), row.expected);
+    });
+  }
+});
+
+describe("list groups", () => {
+  const gersona = buildSession({ id: "a1", name: "gersona" });
+  const yoaida = buildSession({ id: "b2", name: "yoaida" });
+  const order = (id: number, session: unknown, sendId: string | null, answeredAt = "2026-11-12T12:20:00.000Z") =>
+    buildItem({ id, kind: "message", status: "delivered", body: "rebase", answeredAt, sendId, session });
+  const getShape = (items: unknown[]) =>
+    call<Array<{ key: string; label: string; rows: Array<{ id: number; copies: Array<{ id: number }> }> }>>("getGroupsQ", items)
+      .map((group) => ({ key: group.key, rows: group.rows.map((row) => [row.id, row.copies.map((copy) => copy.id)]) }));
+
+  test("open decisions, then open reports, then everything else, each in server order, and an empty group is left out", () => {
+    const items = [
+      buildItem({ id: 1, kind: "report" }),
+      buildItem({ id: 2, status: "answered" }),
+      buildItem({ id: 3 }),
+      buildItem({ id: 4, kind: "report", status: "answered" }),
+      buildItem({ id: 5 }),
+    ];
+    assert.deepEqual(getShape(items), [
+      { key: "decisions", rows: [[3, [3]], [5, [5]]] },
+      { key: "reports", rows: [[1, [1]]] },
+      { key: "inDelivery", rows: [[2, [2]], [4, [4]]] },
+    ]);
+    assert.deepEqual(getShape([buildItem({ id: 9, kind: "report" })]).map((group) => group.key), ["reports"]);
+  });
+
+  const foldRows = [
+    { name: "the copies of one send fold into one row under its lowest id", items: [order(12, yoaida, "s-1"), order(11, gersona, "s-1"), order(13, gersona, "s-2")], expected: [[11, [11, 12]], [13, [13]]] },
+    { name: "copies with no send id fold by equal time and text", items: [order(21, gersona, null), order(22, yoaida, null), order(23, yoaida, null, "2026-11-12T12:21:00.000Z")], expected: [[21, [21, 22]], [23, [23]]] },
+  ];
+  for (const row of foldRows) test(row.name, () => assert.deepEqual(getShape(row.items)[0]?.rows, row.expected));
+});
+
+describe("selection", () => {
+  const groups = call("getGroupsQ", [buildItem({ id: 5, kind: "report" }), buildItem({ id: 3 }), buildItem({ id: 8, kind: "message", status: "delivered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" })]);
+  const rows = [
+    { name: "a loaded item named in the hash is selected", hashId: "5", expected: 5 },
+    { name: "a copy named in the hash selects its folded row", hashId: "8", expected: 7 },
+    { name: "an item the list does not hold falls back to the first row of the first group", hashId: "99", expected: 3 },
+    { name: "no item in the hash selects the first row of the first group", hashId: "", expected: 3 },
+  ];
+  for (const row of rows) test(row.name, () => assert.equal(call("getSelectedIdQ", groups, row.hashId), row.expected));
+  test("an empty list selects nothing", () => assert.equal(call("getSelectedIdQ", [], ""), null));
 });
 
 describe("Show more", () => {
@@ -1136,17 +1230,17 @@ describe("sessions region", () => {
     assert.match(collectText(notice as RenderedNode), /Sent to 2 sessions/);
   });
 
-  test("the region sits after the item cards and before the recent resumes", () => {
-    const { queue } = buildQueue();
-    const data = { items: [buildItem({ id: 1 })], nextCursor: null };
-    const tree = render("QueueListQ", { queue: { ...queue, list: { status: "ready", data }, filter: { profile: "", session: "" }, setFilter: () => undefined } });
-    const order = findNodes(tree, (node) => ["QueueCardQ", "SessionsRegionQ", "RecentResumesQ"].includes(node.type)).map((node) => node.type);
-    assert.deepEqual(order, ["QueueCardQ", "SessionsRegionQ", "RecentResumesQ"]);
+  test("the desk reads Sessions, then the list, then the sheet, with the recent resumes in the Sessions column", () => {
+    const tree = render("QueueDeskQ", { queue: withList(buildQueue().queue, [buildItem({ id: 1 })]) });
+    const order = findNodes(tree, (node) => ["SessionsRegionQ", "RecentResumesQ", "QueueListQ", "QueueSheetQ"].includes(node.type)).map((node) => node.type);
+    assert.deepEqual(order, ["SessionsRegionQ", "RecentResumesQ", "QueueListQ", "QueueSheetQ"]);
   });
 });
 
-test("a message card says when it was sent, not asked", () => {
-  const text = collectText(render("CardMetaQ", { item: buildItem({ kind: "message" }) }));
-  assert.match(text, /· sent /);
-  assert.doesNotMatch(text, /asked/);
+test("a row's age carries no verb", () => {
+  const rows = call<Array<{ rows: unknown[] }>>("getGroupsQ", [buildItem({ id: 1 }), buildItem({ id: 2, kind: "message", status: "delivered", sendId: "s" })]).flatMap((group) => group.rows);
+  for (const row of rows) {
+    const text = collectText(render("QueueRowQ", { row, isSelected: false, view: { isNameShown: true, isAccountShown: false }, onSelect: () => undefined }));
+    assert.doesNotMatch(text, /\b(asked|sent)\b/, text);
+  }
 });

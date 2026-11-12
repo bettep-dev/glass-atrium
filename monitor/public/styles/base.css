@@ -448,6 +448,346 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	outline: none;
 }
 
+/* the Queue desk (§7.11) — the screen fills the viewport under main's padding and never scrolls; each pane scrolls its own body.
+   Three columns at every width: the rail fixed per step, the sheet one page (the measure + its two 32 gutters) giving way before the list
+   goes under its minimum, the list the rest. The 66ch resolves on the desk's 15px text, the sheet text's own size */
+.queue-screen {
+	display: flex;
+	flex-direction: column;
+	height: calc(100dvh - 2 * var(--gap-page));
+	min-height: 608px;
+}
+.queue-desk {
+	--queue-rail-w: 208px;
+	--queue-list-min: 320px;
+	--queue-sheet-max: calc(var(--measure-prose) + 2 * var(--space-8));
+	flex: 1 1 auto;
+	min-height: 560px;
+	min-width: 1012px;
+	display: grid;
+	grid-template-columns: var(--queue-rail-w) minmax(var(--queue-list-min), 1fr) min(var(--queue-sheet-max), calc(100% - var(--queue-rail-w) - var(--queue-list-min) - 2 * var(--gap-section)));
+	grid-template-rows: minmax(0, 1fr);
+	gap: var(--gap-section);
+	font-size: var(--fs-body);
+}
+@media (min-width: 1440px) {
+	.queue-desk { --queue-rail-w: 232px; --queue-list-min: 360px; }
+}
+@media (min-width: 1728px) {
+	.queue-desk { --queue-rail-w: 248px; }
+}
+@media (min-width: 2240px) {
+	.queue-desk { --queue-rail-w: 264px; }
+}
+@media (min-width: 2560px) {
+	.queue-desk { --queue-rail-w: 280px; }
+}
+.queue-rail {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-section);
+	min-width: 0;
+	min-height: 0;
+}
+.queue-rail > .card {
+	flex: none;
+	max-height: 40%;
+}
+.queue-rail > .queue-pane {
+	flex: 1 1 auto;
+	max-height: none;
+}
+/* a pane: head, bar and foot fixed, the body the only scroller on its axis */
+.queue-pane > .card-body,
+.queue-rail > .card > .card-body {
+	max-height: none;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+.queue-list {
+	container-type: inline-size;
+}
+.queue-list > .card-body {
+	overflow-anchor: auto;
+}
+.queue-list > .card-foot {
+	justify-content: space-between;
+}
+.queue-status {
+	flex: 1 1 auto;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.queue-listbox .queue-band {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+/* a row: title 14/600 (two lines at most) over its meta line; 68 with a one-line title, 88 with two */
+.queue-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 16px;
+	column-gap: var(--space-2);
+	row-gap: var(--space-1);
+	align-items: center;
+	padding: var(--space-3) var(--card-pad);
+	cursor: pointer;
+}
+/* the hairline is drawn inside the row → a row stays 68 or 88 */
+.queue-row + .queue-row {
+	box-shadow: inset 0 1px 0 rgb(var(--line));
+}
+.queue-row:hover {
+	background: rgb(var(--sunken));
+}
+.queue-row[aria-selected="true"] {
+	background: var(--tint-select);
+}
+.queue-row:focus-visible {
+	outline-offset: calc(-1 * var(--focus-ring-offset));
+}
+.queue-row-title {
+	grid-column: 1;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	overflow: hidden;
+	font-size: var(--fs-control);
+	font-weight: 600;
+	line-height: var(--lh-row);
+	color: rgb(var(--ink));
+}
+.queue-row-meta {
+	grid-column: 1;
+	display: flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-width: 0;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.queue-row-who {
+	flex: 0 1 auto;
+	min-width: 0;
+	font-weight: 600;
+	color: rgb(var(--ink));
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.queue-row-who:empty {
+	display: none;
+}
+.queue-row-facts {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-width: 0;
+	color: rgb(var(--dim));
+	white-space: nowrap;
+	overflow: hidden;
+}
+.queue-row-age {
+	margin-inline-start: auto;
+	color: rgb(var(--faint));
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+/* faint on the select tint is a thin pass → the selected row's age takes dim */
+.queue-row[aria-selected="true"] .queue-row-age {
+	color: rgb(var(--dim));
+}
+.queue-row-chevron {
+	grid-column: 2;
+	grid-row: 1 / span 2;
+	color: transparent;
+}
+.queue-row:hover .queue-row-chevron {
+	color: rgb(var(--faint));
+}
+.queue-row[aria-selected="true"] .queue-row-chevron {
+	color: rgb(var(--ink));
+}
+/* the one-line form on a list 880 wide: the meta line's parts become columns, 44 high, no column header */
+@container (min-width: 880px) {
+	.queue-row {
+		grid-template-columns: minmax(0, 1fr) 160px 220px 88px 16px;
+		column-gap: var(--space-4);
+	}
+	.queue-row-title {
+		display: block;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+	.queue-row-meta {
+		display: contents;
+	}
+	.queue-row-who:empty {
+		display: block;
+	}
+	.queue-row-age {
+		text-align: end;
+	}
+	.queue-row-chevron {
+		grid-column: 5;
+		grid-row: 1;
+	}
+}
+/* the sheet: one page wide, one column on a 32 inline column shared by its head, body and foot */
+.queue-sheet {
+	--card-pad: var(--space-8);
+}
+.queue-sheet.is-collapsed {
+	align-self: start;
+}
+.queue-sheet .card-title {
+	font-size: var(--fs-control);
+}
+.queue-letter {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+.queue-sheet > .card-body {
+	padding: var(--space-6) var(--space-8) var(--space-8);
+}
+.queue-sheet-body > * + * {
+	margin-top: var(--space-3);
+}
+.queue-sheet-body > .queue-kind {
+	margin-top: var(--space-6);
+}
+.queue-sheet-title {
+	max-width: var(--measure-prose);
+	font-size: var(--fs-stat);
+	font-weight: 600;
+	line-height: calc(var(--fs-stat) + var(--space-2));
+	color: rgb(var(--ink));
+}
+/* 13/600/dim = a label for what follows, on the whole desk */
+.queue-label,
+.queue-options > legend {
+	padding: 0;
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+.queue-answer {
+	font-size: var(--fs-body);
+	font-weight: 600;
+	line-height: 24px;
+}
+.queue-fold {
+	cursor: pointer;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+.queue-options {
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+.queue-options > legend {
+	margin-bottom: var(--space-2);
+}
+/* an option row bleeds to the card's edges as a list row does; the radio and text stay on the sheet's column */
+.queue-option {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr);
+	column-gap: var(--space-3);
+	min-height: 48px;
+	margin-inline: calc(-1 * var(--card-pad));
+	padding: var(--space-3) var(--card-pad);
+	cursor: pointer;
+}
+.queue-option + .queue-option {
+	border-top: 1px solid rgb(var(--line));
+}
+.queue-option:hover {
+	background: rgb(var(--sunken));
+}
+.queue-option:has(:checked) {
+	background: var(--tint-select);
+}
+.queue-option:has(:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: calc(-1 * var(--focus-ring-offset));
+}
+.queue-option > .ctl-radio {
+	margin-top: calc((var(--lh-ctl-lg) - 16px) / 2);
+}
+.queue-option > .ctl-radio:focus-visible {
+	outline: none;
+}
+.queue-option-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--gap-control);
+	font-size: var(--fs-body);
+	font-weight: 600;
+	line-height: var(--lh-ctl-lg);
+	color: rgb(var(--ink));
+}
+.queue-option-sides {
+	display: grid;
+	grid-template-columns: 44px minmax(0, 1fr);
+	row-gap: var(--gap-stack);
+	margin-top: var(--space-1);
+	font-size: var(--fs-control);
+	line-height: var(--lh-row);
+}
+/* the composer: one pattern on every pane's foot — label, the box with its buttons, one reserved note line */
+.queue-sheet > .card-foot {
+	display: block;
+	min-height: 0;
+	padding: 0;
+	border-top: 0;
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+}
+.queue-composer {
+	padding: var(--space-4) var(--card-pad);
+	border-top: 1px solid rgb(var(--line));
+}
+.queue-composer > .field-label {
+	display: block;
+	margin-bottom: var(--gap-label);
+}
+.queue-compose-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--gap-control);
+}
+.queue-compose-row > .queue-compose-box {
+	flex: 1 1 220px;
+}
+.queue-compose-buttons {
+	flex: none;
+	display: flex;
+	gap: var(--gap-control);
+	margin-inline-start: auto;
+}
+.queue-note {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: var(--lh-row);
+	margin-top: var(--space-2);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+.queue-note-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
    발산하던 idiom(드로어 hairline · DetailMetric ring 타일 · i-card-shadow)을 단일 수렴점으로.
    ring 은 box-shadow 로 표현(box model 무영향) — .card 와 달리 1px line 만, 그림자 없음(z-depth 하위). */

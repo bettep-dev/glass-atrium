@@ -53,11 +53,12 @@ const QUEUE_STATES: QueueState[] = [
   {
     nn: "02", name: "decision-picked",
     setUp: async (page) => {
+      await page.locator("#queue-row-103").click();
       await page.locator("#queue-option-103-R2").check();
       await page.locator("#queue-text-103").fill("R2로 가되, 비교 평가 결과는 다음 보고에 붙여 주세요.");
     },
   },
-  { nn: "03", name: "report", setUp: (page) => scrollToCard(page, 101) },
+  { nn: "03", name: "report", setUp: (page) => selectRow(page, 101) },
   {
     nn: "04", name: "rail-ticked",
     setUp: async (page) => {
@@ -66,8 +67,8 @@ const QUEUE_STATES: QueueState[] = [
       await page.getByLabel("Select yoaida").scrollIntoViewIfNeeded();
     },
   },
-  { nn: "09", name: "not-received", getFixture: getNotReceivedFixture, setUp: (page) => scrollToCard(page, 210) },
-  { nn: "18", name: "answered-not-yet", setUp: (page) => scrollToCard(page, 108) },
+  { nn: "09", name: "not-received", getFixture: getNotReceivedFixture, setUp: (page) => selectRow(page, 210) },
+  { nn: "18", name: "answered-not-yet", setUp: (page) => selectRow(page, 108) },
 ];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
@@ -170,8 +171,10 @@ function isOrderBefore(order: { at: bigint; id: bigint }, bound: { at: bigint; i
 }
 
 /** A fresh page on the pinned clock, opened on #queue once the fixture's text and the web fonts are in. */
-async function openQueuePage(harness: Harness, viewport: Viewport, readyText: string): Promise<Page> {
+async function openQueuePage(harness: Harness, viewport: { width: number; height: number }, readyText: string): Promise<Page> {
   const page = await harness.browser.newPage({ viewport });
+  // tsx keeps function names through an injected __name helper → the evaluated fact readers need it on the page
+  await page.addInitScript("globalThis.__name = (fn) => fn");
   await page.clock.setFixedTime(FIXTURE_NOW);
   await page.goto(`${harness.url}/#queue`, { waitUntil: "load" });
   await page.getByText(readyText).first().waitFor({ timeout: READY_TIMEOUT_MS });
@@ -179,8 +182,61 @@ async function openQueuePage(harness: Harness, viewport: Viewport, readyText: st
   return page;
 }
 
-function scrollToCard(page: Page, id: number): Promise<void> {
-  return page.locator(`#queue-item-${id}`).scrollIntoViewIfNeeded();
+function selectRow(page: Page, id: number): Promise<void> {
+  return page.locator(`#queue-row-${id}`).click();
+}
+
+/** Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268, the two gaps 16 each. */
+const DESK_WIDTHS = [
+  { viewport: { width: 1280, height: 800 }, rail: 208, list: 320, sheet: 452 },
+  { viewport: VIEWPORTS[0], rail: 232, list: 360, sheet: 548 },
+  { viewport: VIEWPORTS[1], rail: 248, list: 527, sheet: 653 },
+  { viewport: VIEWPORTS[2], rail: 248, list: 719, sheet: 653 },
+] as const;
+
+interface DeskFacts {
+  isScrolled: boolean;
+  rail: number;
+  list: number;
+  sheet: number;
+}
+
+async function getDeskFacts(page: Page): Promise<DeskFacts> {
+  return page.evaluate(() => {
+    const width = (selector: string) => Math.round(document.querySelector(selector)?.getBoundingClientRect().width ?? -1);
+    const scrollers = [document.scrollingElement, document.querySelector("main")].filter((node): node is Element => node !== null);
+    return {
+      isScrolled: scrollers.some((node) => node.scrollHeight > node.clientHeight),
+      rail: width(".queue-rail"), list: width(".queue-list"), sheet: width(".queue-sheet"),
+    };
+  });
+}
+
+interface SheetFacts {
+  text: string[];
+  title: string[];
+  rowHeights: number[];
+  bands: string[];
+  isFootInView: boolean;
+}
+
+// painted type, row and band facts of spec §14.4, read on the report sheet
+async function getSheetFacts(page: Page): Promise<SheetFacts> {
+  return page.evaluate(() => {
+    const style = (selector: string) => getComputedStyle(document.querySelector(selector) as Element);
+    const text = document.querySelector(".queue-sheet .prose-text") as HTMLElement;
+    const probe = document.body.appendChild(Object.assign(document.createElement("div"), { style: "background: rgb(var(--surface))" }));
+    const ground = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    const foot = document.querySelector(".queue-sheet > .card-foot")?.getBoundingClientRect();
+    return {
+      text: [style(".queue-sheet .prose-text").fontSize, style(".queue-sheet .prose-text").lineHeight, String(text.getBoundingClientRect().width <= 590)],
+      title: [style(".queue-sheet-title").fontSize, style(".queue-sheet-title").lineHeight],
+      rowHeights: [...new Set([...document.querySelectorAll(".queue-row")].map((row) => Math.round(row.getBoundingClientRect().height)))].sort(),
+      bands: [...new Set([...document.querySelectorAll(".queue-band")].map((band) => `${Math.round(band.getBoundingClientRect().height)} ${getComputedStyle(band).backgroundColor === ground}`))],
+      isFootInView: foot !== undefined && foot.bottom <= window.innerHeight && foot.height > 0,
+    };
+  });
 }
 
 /** Every state at every desktop width, each on a fresh page, as `<dir>/<width>x<height>-<nn>-<name>.png`. */
@@ -268,6 +324,28 @@ describe("queue page on the mockup fixtures", () => {
     const pages = [...getSendIds(all.json()), ...getSendIds(rest.json())];
     assert.equal(new Set(pages).size, pages.length, "no order on two pages");
     assert.equal(pages.length, new Set(getRestFixture().orders.map((order) => order.sendId)).size, "every order on some page");
+  });
+
+  test("the desk fills the window with no page scroll, its rail, list and sheet sized per width step", async () => {
+    harness.fixture = getRestFixture();
+    for (const row of DESK_WIDTHS) {
+      const page = await openQueuePage(harness, row.viewport, getRestReadyText());
+      const facts = await getDeskFacts(page);
+      await page.close();
+      // 66ch is measured on the loaded font, the spec's widths are its arithmetic → within one pixel
+      const near = (actual: number, expected: number) => (Math.abs(actual - expected) <= 1 ? expected : actual);
+      const shown = { ...facts, rail: near(facts.rail, row.rail), list: near(facts.list, row.list), sheet: near(facts.sheet, row.sheet) };
+      assert.deepEqual(shown, { isScrolled: false, rail: row.rail, list: row.list, sheet: row.sheet }, `${row.viewport.width}x${row.viewport.height}`);
+    }
+  });
+
+  test("the sheet's text is 15/24 within 66ch, its title 20/28, rows 68 or 88, bands 32 on the page ground, and its foot in view", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await selectRow(page, 101);
+    const facts = await getSheetFacts(page);
+    await page.close();
+    assert.deepEqual(facts, { text: ["15px", "24px", "true"], title: ["20px", "28px"], rowHeights: [68, 88], bands: ["32 true"], isFootInView: true });
   });
 
   test("each named state is captured at every desktop width as a viewport-sized PNG named for the mockup", async (t) => {
