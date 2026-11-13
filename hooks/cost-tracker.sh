@@ -193,7 +193,7 @@ def calc_cost(it, ot, cr, cc, model_key):
     silent family pricing is forbidden.
     Zero-cost allowlist — "<synthetic>" and empty/None are legitimate zero-cost
     events, NOT pricing failures, so they MUST stay out of the stderr advisory
-    + DATA-183 hook-failure channel (loud-fail pollution): "<synthetic>" is the
+    + DATA-183 signal (loud-fail pollution): "<synthetic>" is the
     harness marker on self-synthesized assistant notices (all-zero usage in the
     transcript), empty/None means a no-LLM turn or usage-less subagent file.
     They return a clean $0 without walking the resolution chain (whose remote
@@ -556,9 +556,10 @@ if [[ "${PARSER_STATUS}" -ne 0 ]]; then
   PARSED="{\"date\":\"${DATE}\",\"time\":\"${TIME}\",\"session_id\":\"${SESSION_ID}\",\"kind\":\"turn\",\"dedup_key\":\"parser_crash:${SESSION_ID}@${DATE}T${TIME}\",\"parse_error\":true,\"raw_input\":\"parser_crash:exit=${PARSER_STATUS}\"}"
 fi
 
-# Unknown-model advisory → persisted hook-failure path. stderr alone is
-# session-local; emit_error + a best-effort core.hook_failures row surface a new
-# model id on the monitor the same day. Distinct ids joined with "," and
+# Unknown-model advisory → the relayed stderr line + the structured DATA-183
+# signal only. No core.hook_failures row: a pricing gap is no failed write, and
+# each core.cost_events row already stores the model it priced, so unpriced ids
+# are derivable from there. Distinct ids joined with "," and
 # allowlist-sanitized before interpolation into the literal JSON below. grep
 # no-match exits 1 under pipefail → "|| true" keeps the no-unknowns path alive.
 UNKNOWN_MODELS=""
@@ -572,31 +573,6 @@ if [[ -n "${UNKNOWN_MODELS}" ]]; then
     "cost-tracker model id absent from pricing SoT — priced via a non-sot resolution (see resolution= label in stderr)" \
     "Add the model to the models map in pricing.json (hooks/pricing.json), then bump last_verified" \
     "{\"date\":\"${DATE}\",\"session_id\":\"${SESSION_ID}\",\"models\":\"${UNKNOWN_MODELS}\"}"
-  # core.hook_failures is written via hardcoded SQL only (it is deliberately
-  # absent from _pg_dual_write.py's dynamic-target allowlist). Best-effort:
-  # any DB problem is swallowed — the advisory must never block the hook.
-  # shellcheck disable=SC2016
-  UNKNOWN_MODELS="${UNKNOWN_MODELS}" python3 -c '
-import os, sys
-try:
-    import psycopg
-except ImportError:
-    sys.exit(0)
-models = os.environ.get("UNKNOWN_MODELS", "")[:114]
-try:
-    with psycopg.connect("dbname=glass_atrium", connect_timeout=1) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO core.hook_failures "
-                "(failure_ts, hook_name, target_table, error_kind, payload_ref, retry_attempted) "
-                "VALUES (now(), %s, %s, %s, %s, %s)",
-                ("cost-tracker", "core.cost_events", "unknown",
-                 "unknown_model:" + models, False),
-            )
-        conn.commit()
-except Exception:
-    pass
-' || true
 fi
 
 # PG core.cost_events is the single sink; emit_error calls are observability
