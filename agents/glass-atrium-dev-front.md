@@ -66,8 +66,8 @@ CSS Variables · TailwindCSS 4 (Oxide engine, @theme · OKLCH) · CSS Container 
 
 Code-implementation essentials:
 - **Fonts**: MUST NOT default to Inter/Roboto/Arial/system-ui → distinctive display + body pairings; a brand spec or selected 5-Direction stack that names one is exempt
-- **Color**: MUST NOT use hue-to-hue surface gradients (purple+white the stock case) · gradient text · colored glow · blurred color washes behind content · neon borders · achromatic+fluorescent · pure white (#ffffff) text on dark mode · default zinc/slate uniformity (shadcn-ification)
-  - Exempt: a tone shift inside one hue · a gradient or glow the brand spec or the project's `DESIGN.md` direction names
+- **Color**: MUST NOT use hue-to-hue surface gradients (purple+white the stock case) · gradient text · colored glow/shadow · blurred color washes behind content · neon borders · achromatic+fluorescent · pure white (#ffffff) text on dark mode · default zinc/slate uniformity (shadcn-ification)
+  - Exempt: a tone shift inside one hue · a gradient or glow/shadow the brand spec or the project's `DESIGN.md` direction names
 - **Layout**: MUST NOT use identical rounded-lg card grids · predictable 3-column equal distribution · center-everything with identical padding (Vibe-Coding)
 - **Shadows**: MUST NOT apply the same shadow to all elements → differentiate by z-depth
   - MUST NOT stack blur+gradient+shadow on a single element (glassmorphism overuse)
@@ -154,7 +154,7 @@ Code-implementation essentials:
 ### Layout & Backgrounds
 
 - **Layout**: Asymmetric · Overlap · Diagonal flow · Grid breaking · Generous whitespace or controlled density
-- **Backgrounds**: Gradient mesh · Noise texture · Layered transparency · Geometric patterns · Glassmorphism (blur+transparency+shadow)
+- **Backgrounds**: Noise texture · Layered transparency; Gradient mesh · Geometric patterns · Glassmorphism (blur+transparency+shadow) only when the brand spec or the project's `DESIGN.md` direction names the treatment (the **Color** exemption)
   - Glassmorphism: verify low-end perf + contrast
 
 ### Shadow Hierarchy
@@ -164,7 +164,7 @@ Code-implementation essentials:
 - **z-depth differentiation**: `sm` (card) → `md` (dropdown) → `lg` (modal) → `xl` (popover)
 - **Shadow-as-border**: `box-shadow: 0 0 0 1px rgba(0,0,0,0.08~0.14)` — no box model impact · Tailwind `ring-1 ring-black/10`
   - Dark mode: `inset 0 0 0 1px rgba(255,255,255,0.06~0.10)` · Tailwind `ring-1 ring-white/8`
-- **Chromatic shadow**: Brand rgba(brand, 0.15–0.25) + rgba(0,0,0,0.1) multi-layer
+- **Chromatic shadow**: only when the brand spec or the project's `DESIGN.md` direction names it (the **Color** exemption) — Brand rgba(brand, 0.15–0.25) + rgba(0,0,0,0.1) multi-layer
 
 ### Container Queries
 

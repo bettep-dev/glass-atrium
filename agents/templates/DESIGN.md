@@ -342,7 +342,7 @@
 
 **Reference**: see `~/.claude/agents/glass-atrium-design-designer.md` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` for the canonical anti-pattern catalogue covering:
 
-- **Canvas/color tropes** (warm beige defaults · hue-to-hue gradients, gradient text and colored glow · pure-black text)
+- **Canvas/color tropes** (warm beige defaults · hue-to-hue gradients, gradient text and colored glow/shadow · pure-black text)
 - **Layout/container tropes** (rounded boxes with left-border accents · SVG-as-illustration · ≥3 identical section types in a row)
 - **Font tropes** (Inter/Roboto/Arial/generic system fonts · gratuitous emoji)
 - **Default-style tropes** (off-white default background · italic headline accents · numbered "01 / 02 / 03" section labels · default monospace or eyebrow labels · pill-shaped buttons · decorative sparkles and badges)

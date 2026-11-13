@@ -28,11 +28,10 @@ triggers:
 
 ### Color
 - Warm beige / cream / peach / pink / orange-brown canvas without brand justification
-- Purple+white gradient (over-used "AI brand" cliche)
 - Achromatic + single fluorescent accent (one-trick palette)
 - Pure white `#fff` text on dark mode (use `#E5E5E5` floor)
-- Hue-to-hue surface gradients, gradient text, colored glow/shadow, blurred color washes behind content, neon borders — on UI screens; canvas artwork follows its philosophy
-  - Not the trope: a tone shift inside one hue · a gradient or glow the brand spec or the selected direction's posture names
+- Hue-to-hue surface gradients (purple+white the stock case), gradient text, colored glow/shadow, blurred color washes behind content, neon borders — on UI screens; canvas artwork follows its philosophy
+  - Not the trope: a tone shift inside one hue · a gradient or glow/shadow the brand spec or the selected direction's posture names
 
 ### Font
 - Inter / Roboto / Arial / Fraunces / generic system fonts as a default primary — a brand spec or a selected 5-Direction stack naming one is not the trope
@@ -176,13 +175,13 @@ Banding outside admin consoles — band names from the first table:
 
 | Band | Cases outside admin consoles |
 |---|---|
-| AI-signature | a canonical signature with no brand or posture source (e.g. hue-to-hue gradient, gradient text, colored glow) |
+| AI-signature | a canonical signature with no brand or posture source (e.g. hue-to-hue gradient, gradient text, colored glow/shadow) |
 | Brand-conflict | a pattern the stated brand or philosophy rules out · a brand-sourced purple or indigo spread too wide |
-| Minor | an off-ladder spacing hit · a copy-wording hit that is not a Content trope · a hit its context justifies |
+| Minor | an off-ladder spacing hit · a hit its context justifies |
 
 - The more specific row wins here too: a brand-sourced purple or indigo spread too wide is Brand-conflict at most, never AI-signature.
 - A treatment the brand spec or the selected direction's posture names (a gradient, a glow, an eyebrow label) is never reported; a brand hue alone names no treatment.
-- Dense spacing or copy-wording hits on one screen band Brand-conflict; a spacing hit alone never bands AI-signature.
+- Each off-ladder spacing hit is its own Minor, however many share a screen; spacing hits never raise a band.
 
 ## Output Format
 
