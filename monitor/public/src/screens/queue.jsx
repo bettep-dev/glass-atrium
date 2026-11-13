@@ -170,6 +170,10 @@ async function sendOwnerRequestQ(path, body) {
 	}
 }
 
+function isOkAnswerQ(answer) {
+	return answer.status >= 200 && answer.status < 300;
+}
+
 /** Failed list read → the shared failure copy `{ sentence, next, detail, kind }`, classified from the same detail the resume region stores. */
 function getReadFailureQ(answer) {
 	return window.UI.getErrorCopy(getAnswerDetailQ(answer), LIST_Q.SOURCE);
@@ -270,10 +274,6 @@ function getFilterOptionsQ(items, filter = DEFAULT_FILTER_Q) {
 		profile: [{ key: "", label: "All" }, ...profiles.map((label) => ({ key: label, label }))],
 		session: [{ key: "", label: "All" }, ...[...sessions].map(([key, label]) => ({ key, label }))],
 	};
-}
-
-function isFilterAppliedQ(filter) {
-	return FILTER_AXES_Q.some((axis) => filter[axis] !== DEFAULT_FILTER_Q[axis]);
 }
 
 // #queue?profile=…&session=… → the filter survives a reload; an absent query → defaults
@@ -687,7 +687,7 @@ function setReadStatusQ(read, setStatus) {
 
 // `⚠ yoaida has not received an order` · several sessions named together
 function getNotReceivedNoteQ(turned) {
-	const names = [...new Set(turned.map((item) => getSessionNameQ(item.session)))];
+	const names = [...new Set(turned.map((item) => item.session.name))];
 	const what = getKindWordQ(turned[0]) === "Answer" ? "an answer" : "an order";
 	return `${window.UI.TONE_GLYPH.warn} ${getNameListQ(names)} ${names.length === 1 ? "has" : "have"} not received ${what}`;
 }
@@ -758,7 +758,7 @@ function getJoinedReadQ(flight, start, isFresh = false) {
 function getArrivalNoteQ(arrived) {
 	if (arrived.length !== 1) return `${arrived.length} new items`;
 	const [item] = arrived;
-	return `New ${item.kind} from ${getSessionNameQ(item.session)}: ${item.title}`;
+	return `New ${item.kind} from ${item.session.name}: ${item.title}`;
 }
 
 // an order's row → the row selected for the return, its recipients ticked, the mode open at its entry
@@ -834,7 +834,7 @@ async function getSessionsQ({ profile, setRegion, setSelectedIds }) {
 	setRegion((state) => putRegionRequest(state, profile, request));
 	const query = profile ? `?${new URLSearchParams({ profile })}` : "";
 	const answer = await sendOwnerRequestQ(`/sessions${query}`);
-	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.sessions)) {
+	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.sessions)) {
 		setSelectedIds((ids) => getKeptSelectionQ(ids, answer.data.sessions));
 		return setRegion((state) => putRegionData(state, request, answer.data));
 	}
@@ -910,7 +910,7 @@ async function sendMessageQ({ body, names, shots = [], setComposer, setStatus, o
 		return false;
 	}
 	const answer = await sendOwnerRequestQ("/messages/send", getImageBodyQ(body, ids));
-	if (answer.status >= 200 && answer.status < 300) {
+	if (isOkAnswerQ(answer)) {
 		setComposer(() => EMPTY_COMPOSER_Q);
 		setStatus({ text: getOrderSentStatusQ(names), orderId: answer.data?.items?.[0]?.id ?? null });
 		window.document?.getElementById(ORDERS_Q.BOX_ID)?.focus();
@@ -1035,7 +1035,7 @@ async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limi
 	if (!isQuiet) setThread((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/orders?${getOrdersQueryQ(ids, before, limit)}`);
 	if (!isCurrent()) return;
-	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
+	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.items)) {
 		return setThread((prev) => ({ status: "ready", ...getReadThreadQ(prev, answer.data, before, isQuiet), error: null }));
 	}
 	if (!isQuiet) setThread((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
@@ -1091,7 +1091,7 @@ async function getResumesQ({ setResumes }) {
 	const request = {};
 	setResumes((state) => putRegionRequest(state, "resumes", request));
 	const answer = await sendOwnerRequestQ("/resumes");
-	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.resumes)) {
+	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.resumes)) {
 		return setResumes((state) => putRegionData(state, request, answer.data.resumes));
 	}
 	setResumes((state) => putRegionFailure(state, request, answer.status === 0 ? answer.error : new Error(getAnswerDetailQ(answer))));
@@ -1114,7 +1114,7 @@ async function getListQ({ setList, getList = () => EMPTY_LIST_Q, isMarked = fals
 	if (getList().data === null) setList((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/items?limit=${getListLimitQ(getList().data?.items.length ?? 0)}`);
 	const prev = getList();
-	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
+	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.items)) {
 		const { data, arrived, turned } = getMergedDataQ(prev.data, answer.data);
 		const marked = isMarked ? arrived : [];
 		const kept = (prev.newIds ?? []).filter((id) => data.items.some((item) => item.id === id));
@@ -1155,7 +1155,7 @@ async function getMoreQ({ list, setList }) {
 	if (cursor === null || cursor === undefined) return;
 	setList((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/items?limit=${LIST_Q.LIMIT}&after=${cursor}`);
-	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
+	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.items)) {
 		const append = (prev) => ({ ...prev.data, items: [...prev.data.items, ...answer.data.items], nextCursor: answer.data.nextCursor });
 		return setList((prev) => ({ ...prev, status: "ready", data: append(prev), error: null, readAt: new Date().toISOString() }));
 	}
@@ -1196,7 +1196,7 @@ function useQueueActionsQ({ list, filter, setList, setDrafts, setFocus, setStatu
 
 // the list's status line after a taken act; an unknown item (gone from the list) → the act alone · a reply's order is the report itself → its id backs Show
 function getActionStatusQ(item, action) {
-	const name = item ? getSessionNameQ(item.session) : "the session";
+	const name = item ? item.session.name : "the session";
 	if (action === "seen") return "Marked as read";
 	if (action === "reply") return { text: `${window.UI.TONE_GLYPH.ok} Order sent to ${name}`, orderId: item?.id ?? null };
 	if (action === "answer") return `${window.UI.TONE_GLYPH.ok} Answer sent to ${name}`;
@@ -1220,7 +1220,7 @@ function useSendQ({ setDrafts, reload, onRetryHarness }) {
 async function sendActionQ({ id, action, body, setBusy, setDrafts, reload, onRetryHarness }) {
 	setBusy({ id, error: null });
 	const answer = await sendOwnerRequestQ(`/items/${id}/${action}`, body ?? {});
-	const isDone = answer.status >= 200 && answer.status < 300;
+	const isDone = isOkAnswerQ(answer);
 	setBusy({ id: null, error: isDone ? null : { id, message: getActionErrorQ(answer) } });
 	if (!isDone) return false;
 	setDrafts((prev) => ({ ...prev, [id]: undefined }));
@@ -1328,7 +1328,7 @@ function DeskKeysQ({ keys }) {
 function getScopeTitleQ(items, filter) {
 	if (!filter.session) return "All sessions";
 	const session = items.find((item) => item.session.id === filter.session)?.session;
-	return session ? getSessionNameQ(session) : filter.session.slice(0, SESSION_PREFIX_LENGTH_Q);
+	return session ? session.name : filter.session.slice(0, SESSION_PREFIX_LENGTH_Q);
 }
 
 // the rail is the Session filter → the bar holds the Account axis, shown while it tells items apart
@@ -1426,15 +1426,10 @@ function RowWhoQ({ row }) {
 function ItemSessionNameQ({ session }) {
 	return (
 		<>
-			{getSessionNameQ(session)}
+			{session.name}
 			{session.isNameRegistered === false && <span className="font-normal text-dim">{" start directory"}</span>}
 		</>
 	);
-}
-
-// the item view's session name; an item from before the name existed → its start directory
-function getSessionNameQ(session) {
-	return session.name ?? session.cwdTail;
 }
 
 // a settled receipt is a mark and a word, no shell (spec §9.4) → the mark rides the text, hidden from screen readers
@@ -1501,7 +1496,7 @@ function getReceiptQ(item) {
 // kind + session + title + facts + age → `Decision from gersona: <title>, 3 options, posted 9m ago`
 function getRowLabelQ(row, facts, isNameShown) {
 	const { item } = row;
-	const from = isNameShown ? ` from ${row.copies.length > 1 ? `${row.copies.length} sessions` : getSessionNameQ(item.session)}` : "";
+	const from = isNameShown ? ` from ${row.copies.length > 1 ? `${row.copies.length} sessions` : item.session.name}` : "";
 	const parts = [`${getKindWordQ(item)}${from}: ${item.title}`, ...facts.map((fact) => fact.text), `posted ${window.UI.formatRelativeTime(item.askedAt)}`];
 	return parts.join(", ");
 }
@@ -1761,7 +1756,7 @@ function PullLineQ({ item, cliPath }) {
 function NotReceivedLineQ({ item, cliPath }) {
 	const { MachineString } = window.UI;
 	if (item.status === "open" || getReceiptQ(item) !== "notReceived") return null;
-	const name = getSessionNameQ(item.session);
+	const name = item.session.name;
 	return (
 		<p className="fs-meta text-dim">
 			{`${name} did not acknowledge it.`}
@@ -1810,7 +1805,7 @@ function SheetFootQ({ item, draft, queue, isBusy, error }) {
 }
 
 function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
-	const name = getSessionNameQ(item.session);
+	const name = item.session.name;
 	const firstCode = (item.options ?? [])[0]?.code;
 	const onSend = () => {
 		const body = getAnswerBodyQ(draft);
@@ -1830,26 +1825,36 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 
 // Mark as read carries the ink while the box is empty, Send order once it holds text or an image; order, labels and widths never change
 function ReportComposerQ({ item, draft, queue, isBusy, error }) {
-	const name = getSessionNameQ(item.session);
+	const name = item.session.name;
 	const fieldId = `queue-reply-${item.id}`;
-	const text = draft.text ?? "";
-	const hasText = text.trim() !== "";
-	const box = { shots: draft.images ?? [], setShots: (update) => queue.setImages(item.id, update), putError: (next) => queue.setDraft(item.id, { error: next }) };
+	const box = getDraftBoxQ(queue, item.id, draft);
+	const hasText = box.text.trim() !== "";
 	const hasContent = hasText || box.shots.length > 0;
-	const zone = useDropZoneQ((files) => getTrayQ({ fieldId, box }).onFiles(files, false));
-	const tray = getTrayQ({ fieldId, box, isOver: zone.isOver });
-	const sendReply = (ids) => queue.settle(item.id, "reply", getImageBodyQ({ text }, ids));
+	const { zone, tray } = useTrayZoneQ(fieldId, box);
 	const markRead = () => (hasContent ? putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.unsentOrder, fieldId) : queue.settle(item.id, "seen"));
-	const sendOrder = () => (hasText ? sendWithImagesQ(box.shots, sendReply, (isWaiting) => queue.setDraft(item.id, { isWaiting })) : putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noOrder, fieldId));
+	const sendOrder = () => (hasText ? sendReplyQ(queue, item.id, box) : putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noOrder, fieldId));
 	const order = item.isFreeTextAllowed ? [{ label: "Send order", isInk: hasContent, onPress: sendOrder }] : [];
 	const rest = hasContent ? `Send order delivers this to ${name} and closes the report.` : `Mark as read closes this report. ${name} hears nothing.`;
 	return (
 		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: `Order to ${name} (optional)` } : null} tray={item.isFreeTextAllowed ? tray : null} zone={zone.handlers}
-			text={text} onText={(next) => queue.setDraft(item.id, { text: next, error: null })} isBusy={isBusy || Boolean(draft.isWaiting)}
+			text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
 			buttons={[{ label: "Mark as read", isInk: !hasContent, keyName: "e", onPress: markRead }, ...order]}
 			note={<ComposerNoteQ error={error ?? draft.error} tray={tray} fieldId={fieldId} rest={rest} />}
 			later={{ label: "Read later", keyName: "l", onPress: () => queue.later(item.id) }} />
 	);
+}
+
+/** A report's draft as a composer box `{ text, setText, shots, setShots, putError }`, every change written back to the draft. */
+function getDraftBoxQ(queue, id, draft) {
+	return {
+		text: draft.text ?? "", setText: (text) => queue.setDraft(id, { text, error: null }),
+		shots: draft.images ?? [], setShots: (update) => queue.setImages(id, update), putError: (error) => queue.setDraft(id, { error }),
+	};
+}
+
+// the report's reply with the box's text and images; an upload still running → the draft waits (Sending…)
+function sendReplyQ(queue, id, box) {
+	return sendWithImagesQ(box.shots, (ids) => queue.settle(id, "reply", getImageBodyQ({ text: box.text }, ids)), (isWaiting) => queue.setDraft(id, { isWaiting }));
 }
 
 // a press with something missing → the note slot says what and focus goes to the first missing control
@@ -2147,7 +2152,6 @@ function SessionRailRowQ({ row, view, sessions, onScope }) {
 	);
 }
 
-// name, waiting count and line 2 of a rail row
 function RailRowFaceQ({ row, view, isCurrent, where }) {
 	const { Badge, Icon } = window.UI;
 	return (
@@ -2206,8 +2210,9 @@ function OrdersViewQ({ queue }) {
 	const { Card } = window.UI;
 	const { orders, sessions, arrival = [] } = queue;
 	const rows = sessions.region.data?.sessions ?? [];
+	const box = getOrderBoxQ(queue);
 	// a file dropped anywhere on the card joins the order box
-	const zone = useDropZoneQ((files) => getTrayQ({ fieldId: ORDERS_Q.BOX_ID, box: getOrderBoxQ(queue) }).onFiles(files, false));
+	const { zone, tray } = useTrayZoneQ(ORDERS_Q.BOX_ID, box);
 	const onShow = () => {
 		orders.close();
 		queue.selectRow(arrival[0].id);
@@ -2216,7 +2221,7 @@ function OrdersViewQ({ queue }) {
 	return (
 		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
 			<Card className="queue-orders-card" title="Orders" sub={<OrdersArrivalQ arrived={arrival} onShow={onShow} />} right={close} bar={<ToBarQ rows={rows} selectedIds={sessions.selectedIds} onClear={sessions.clear} />}
-				foot={<OrderComposerQ queue={queue} targets={getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds)} isOver={zone.isOver} />} isFlush>
+				foot={<OrderComposerQ queue={queue} targets={getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds)} box={box} tray={tray} />} isFlush>
 				<ThreadQ orders={orders} names={rows.filter((row) => sessions.selectedIds.includes(row.id)).map((row) => row.name)} />
 			</Card>
 		</section>
@@ -2227,7 +2232,7 @@ function OrdersViewQ({ queue }) {
 function OrdersArrivalQ({ arrived, onShow }) {
 	const { Badge } = window.UI;
 	const [first] = arrived;
-	const text = arrived.length === 1 ? `${getKindWordQ(first)} from ${getSessionNameQ(first.session)}` : `${arrived.length} items`;
+	const text = arrived.length === 1 ? `${getKindWordQ(first)} from ${first.session.name}` : `${arrived.length} items`;
 	return (
 		<span role="status" className="queue-arrival">
 			{first && <Badge fill="solid">New</Badge>}
@@ -2328,7 +2333,6 @@ function getAimedEntryIdQ(entries, copyId) {
 	return entries.find((entry) => entry.copies.some((copy) => copy.id === copyId))?.id ?? null;
 }
 
-// consecutive entries of one KST day under one label
 function getDayGroupsQ(entries, now = new Date()) {
 	const groups = [];
 	for (const entry of entries) {
@@ -2442,7 +2446,6 @@ function ViewerBarQ({ image, index, count, onStep, onClose }) {
 	);
 }
 
-// one step within the order's images; an end or another key → null
 function getSteppedIndexQ(index, count, key) {
 	const next = key === "ArrowRight" ? index + 1 : key === "ArrowLeft" ? index - 1 : index;
 	return next === index || next < 0 || next >= count ? null : next;
@@ -2498,10 +2501,8 @@ function RecipientRowQ({ copy, onResend }) {
 }
 
 // the composer in its order use: the send carries the ink once the box holds text; a press with something missing says what and moves focus
-function OrderComposerQ({ queue, targets, isOver = false }) {
+function OrderComposerQ({ queue, targets, box, tray }) {
 	const { orders } = queue;
-	const box = getOrderBoxQ(queue);
-	const tray = getTrayQ({ fieldId: ORDERS_Q.BOX_ID, box, isOver });
 	const isLinked = isReplyLinkedQ(orders.reply, targets.ids);
 	const onSend = () => {
 		const invalid = getOrderInvalidQ(targets, box.text);
@@ -2510,7 +2511,6 @@ function OrderComposerQ({ queue, targets, isOver = false }) {
 		const selector = invalid.focus === "box" ? `#${ORDERS_Q.BOX_ID}` : ".queue-sessions .ctl-checkbox";
 		window.document?.querySelector(selector)?.focus();
 	};
-	// the text and images move from the report's draft to the order box
 	const onDrop = () => {
 		orders.setText(box.text);
 		orders.setImages(() => box.shots);
@@ -2540,11 +2540,7 @@ function getOrderBoxQ(queue) {
 	const { id } = reply.item;
 	const draft = drafts[id] ?? {};
 	const refusal = busy.error?.id === id ? busy.error.message : null;
-	return {
-		text: draft.text ?? "", setText: (text) => queue.setDraft(id, { text, error: null }),
-		isBusy: busy.id === id || composer.isBusy || Boolean(draft.isWaiting), error: refusal ?? draft.error ?? composer.error,
-		shots: draft.images ?? [], setShots: (update) => queue.setImages(id, update), putError: (error) => queue.setDraft(id, { error }),
-	};
+	return { ...getDraftBoxQ(queue, id, draft), isBusy: busy.id === id || composer.isBusy || Boolean(draft.isWaiting), error: refusal ?? draft.error ?? composer.error };
 }
 
 function getReplyNoteQ(reply, isLinked, targets) {
@@ -2556,9 +2552,7 @@ function getReplyNoteQ(reply, isLinked, targets) {
 // the report's own Send order: it closes and leaves the queue, the next open item selected (settle) → the link goes, the thread re-reads
 async function sendReplyOrderQ(queue, box) {
 	const { orders } = queue;
-	const { id } = orders.reply.item;
-	const send = (ids) => queue.settle(id, "reply", getImageBodyQ({ text: box.text }, ids));
-	if (!(await sendWithImagesQ(box.shots, send, (isWaiting) => queue.setDraft(id, { isWaiting })))) return;
+	if (!(await sendReplyQ(queue, orders.reply.item.id, box))) return;
 	orders.linkReply(null);
 	orders.read();
 }
@@ -2694,7 +2688,7 @@ function getUploadNameQ(name) {
 
 function getUploadResultQ(answer) {
 	const id = answer.data?.id;
-	if (answer.status >= 200 && answer.status < 300 && typeof id === "string") return { status: "stored", id, src: getImageUrlQ(id), cause: null };
+	if (isOkAnswerQ(answer) && typeof id === "string") return { status: "stored", id, src: getImageUrlQ(id), cause: null };
 	return { status: "failed", cause: getUploadCauseQ(answer) };
 }
 
@@ -2747,6 +2741,12 @@ function getImageNoteQ(shots, isOver) {
 	const uploading = shots.filter((shot) => shot.status === "uploading").length;
 	if (uploading > 0) return { tone: "info", text: `Uploading ${uploading} ${uploading === 1 ? "image" : "images"}…`, retryKey: null };
 	return null;
+}
+
+// a composer's image tray and the drop zone feeding it: a file dropped on the zone joins the tray's box
+function useTrayZoneQ(fieldId, box) {
+	const zone = useDropZoneQ((files) => getTrayQ({ fieldId, box }).onFiles(files, false));
+	return { zone, tray: getTrayQ({ fieldId, box, isOver: zone.isOver }) };
 }
 
 // a file over the zone → the box shows the drop state; leaving it for a child of the zone is no leave

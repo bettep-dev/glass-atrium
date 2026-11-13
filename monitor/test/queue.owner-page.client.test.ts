@@ -59,6 +59,8 @@ const READY_RESUMES = { status: "ready", data: [], error: null, busy: false };
 function buildSession(overrides: Record<string, unknown> = {}) {
   return {
     id: SESSION_ID,
+    name: "glass-atrium",
+    isNameRegistered: true,
     profileLabel: "work-dev",
     cwd: "/Users/owner/Desktop/git/glass-atrium",
     cwdTail: "git/glass-atrium",
@@ -334,7 +336,7 @@ describe("sheet state lines", () => {
 
   test("an approval-class decision's note slot says to confirm once more in the session's terminal", () => {
     const text = (item: unknown) => collectText(render("SheetFootQ", { item, draft: {}, queue: buildQueue().queue, isBusy: false, error: null }));
-    assert.match(text(buildItem({ isApprovalClass: true })), /Approval: after you answer here, confirm once more in git\/glass-atrium's terminal\./);
+    assert.match(text(buildItem({ isApprovalClass: true })), /Approval: after you answer here, confirm once more in glass-atrium's terminal\./);
     assert.doesNotMatch(text(buildItem()), /confirm once more/);
   });
 });
@@ -1619,7 +1621,9 @@ describe("order composer", () => {
   const replyComposer = (reply: unknown, ids: string[]) => {
     const { queue, calls } = buildQueue({ drafts: { 61: { text: "ship it" } }, orders: buildOrders({ reply, composer: { text: "typed order", isBusy: false, error: null }, send: (...args: unknown[]) => calls.push(["orderSend", ...args]), dropReply: () => calls.push(["dropReply"]) }) });
     const targets = { ids, names: ids.map((id) => (id === SESSION_ID ? "atrium" : "yoaida")), endedCount: 0 };
-    return { tree: render("OrderComposerQ", { queue: withList(queue, []), targets }), calls };
+    const listed = withList(queue, []);
+    const box = call("getOrderBoxQ", listed);
+    return { tree: render("OrderComposerQ", { queue: listed, targets, box, tray: call("getTrayQ", { fieldId: "queue-order-text", box }) }), calls };
   };
   const replies = [
     { name: "the report's session alone → the Re: line, the report's draft and its own Send order", reply: { item: REPORT, isDropped: false }, ids: [SESSION_ID], line: true, text: "ship it", note: "Sends this to atrium and closes the report.", sent: ["settle", 61, "reply", { text: "ship it" }] },
