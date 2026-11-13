@@ -20,9 +20,9 @@ Applies to heroes and marketing sections.
 
 | Trope | Decide instead | Passes when |
 |---|---|---|
-| A pill badge above the headline announcing a release or feature | none; real news becomes one quiet text link | the news is supplied by the user and dated |
+| A launch or feature announcement in a rounded chip over the headline | drop it; a genuine announcement gets one plain inline link | the news is supplied by the user and dated |
 | A headline that would fit any product | what this product does and for whom, in its own nouns | with another product's name swapped in, the line no longer fits |
-| Three or more actions, or chips and avatar stacks under the buttons | one primary action and at most one secondary | every further action sits in navigation or a later section |
+| A row of three or more buttons, or tags and face stacks crowding the call to action | one main call to action, plus at most one lower-weight alternative | every further action sits in navigation or a later section |
 | Feature cards of an emoji, a bold title and a vague line | fewer features, each with concrete copy | each line says what the feature does; the emoji follows **Font tropes** |
 
 ## Hero composition and visual
@@ -31,17 +31,17 @@ Extends the SoT entries **Vibe-Coding layout** and **AI-generated 3D floating me
 
 | Trope | Decide instead | Passes when |
 |---|---|---|
-| Headline, text, buttons and picture stacked and centered by default | the composition follows the hero visual and the selected posture | centered only for a short hero with no visual |
-| Blobs, orbs, grids or glowing lines behind the hero | a plain ground, or the one hero visual | nothing behind the text is decoration alone |
-| Glossy 3D shapes, liquid chrome or a nebula as the hero visual | the product itself, or one concrete metaphor for what it does | one sentence states what the visual shows about this product |
-| Robots, glowing brains, circuit lines or holograms standing for AI | what the product's AI produces, or no image | the output shown is one the user supplied |
+| Every hero element in one centered column, chosen without a reason | a composition derived from the hero visual's shape and the selected posture | one sentence ties the chosen alignment to the visual's shape and the posture; a centered column and a split both pass on a stated reason, neither by default |
+| Decorative shapes or luminous lines filling the space behind the hero copy | an empty ground, or the single hero visual doing the work | nothing behind the text is decoration alone |
+| A shiny rendered abstraction (3D shapes, metallic liquid, a space backdrop) standing in as the hero visual | a view of the actual product, or a single specific image of the job it does | one sentence states what the visual shows about this product |
+| Stock machine-intelligence imagery — androids, lit-up brains, circuit traces, holograms | an example of the AI feature's output, or no image | the output shown is one the user supplied |
 
 ## Brand mark
 
 | Trope | Decide instead | Passes when |
 |---|---|---|
-| A gradient tile with a sparkle, or a gradient wordmark | the product name as text plus a flat mark | it reads in one solid color |
-| A glossy orb, gradient ball or glowing dot as the mark | a flat glyph in one solid color, or the wordmark alone | it stays legible at favicon size (**Scale minimums**) |
+| A sparkle on a color-blended square, or lettering filled with a gradient | the name set in type, beside a simple single-color symbol | it reads in one solid color |
+| A shiny sphere, color-blended ball or luminous dot as the symbol | a single-color glyph, or the name in type with no symbol | it stays legible at favicon size (**Scale minimums**) |
 
 - An existing brand mark is not redrawn unasked: whether it counts as brand evidence, and how a matching trope is reported → `## Pre-Execution Verification` → **Visual Vocabulary Match**.
 
