@@ -29,7 +29,7 @@ triggers:
 - **Hierarchy**: On first 1-second glance, what does the eye land on? Is that the intended primary action? Are secondary / tertiary tiers visually distinguishable?
 - **Execution**: Are spacing values round multiples of a base unit (e.g., 4 / 8px)? Are color contrasts measured or guessed? Is motion timing easing-curved or default-linear?
 - **Specificity**: Pick any 3 visible strings — are they real project values or placeholder / lorem-ipsum / round-number stat-slop?
-  - A deliverable carrying a headline or hero (product UI, landing, brand): with another product's name swapped in, do the headline, the primary visual and one signature detail still fit?
+  - A deliverable carrying a headline or hero (product UI, landing, brand): with the name of a product from an unrelated category swapped in, do the headline, the primary visual and one signature detail still fit?
     - Any that still fits is Specificity evidence against the axis's project-specific bar; the palette is not a test object.
 - **Restraint**: Count attention-seeking gestures (gradient, glow, large animation, oversize hero element). >1 = overdesign — which is the signature, which gets removed?
   - Does the kept flourish sit on a content moment the product supplies, or on chrome? Default and exemptions: `agents/glass-atrium-design-designer.md` → **Scarcity as rationale**.
