@@ -91,12 +91,12 @@ Run each pattern with the Grep tool (ripgrep syntax — a bare `|` is alternatio
 
 ~~~text
 Color         (case-insensitive)  (beige|cream|peach|#fff[^a-f0-9])
-Flat surface  (case-insensitive)  gradient|background-clip:\s*text|bg-clip-text|box-shadow:[^;]*0 0 \d+px    read: a tone shift inside one hue passes
-Font          (case-insensitive)  Inter|Roboto|Arial|Fraunces
+Flat surface  (case-insensitive)  gradient|background-clip:\s*text|bg-clip-text|box-shadow:\s*([^;]*,\s*)?(inset\s+)?0\s+0\s+[1-9]\d*(\.\d+)?px    read: a tone shift inside one hue passes
+Font                              \b(Inter|Roboto|Arial|Fraunces)\b
 Layout        (case-insensitive)  rounded-lg|grid-cols-3|text-center            (+ visual scan)
 Effects       (case-insensitive)  backdrop-blur|backdrop-filter|drop-shadow
 Emoji                             [\x{1F300}-\x{1FAFF}]                         glob: also *.md
-Label         (case-insensitive)  uppercase                                     read: paired with tracking- or letter-spacing as the default label treatment
+Label                             uppercase                                     read: paired with tracking- or letter-spacing as the default label treatment
 Decoration                        Sparkles|\x{2728}|>\s*(PRO|New|Beta)\s*<      read: a sparkle marking AI-generated content and a badge carrying a real state pass
 Spacing                           \b((m|p)[trblxyse]?|gap(-[xy])?|space-[xy])-\[\d+(\.\d+)?(px|rem)\]    read: a value on the project's ladder or a documented optical adjustment passes
 ~~~
@@ -136,7 +136,7 @@ Small type             text-xs                                                  
 Motion                 animate-(fade|slide|bounce)|@keyframes|transition:\s*all|transition-all
 Pulse                  animate-pulse                                             read: outside a loading skeleton
 Precision              toFixed\([3-9]\)|\d+\.\d{3,}%
-Flat surface           linear-gradient|bg-gradient-to|background-clip:\s*text|bg-clip-text|backdrop-(filter|blur)|box-shadow:[^;]*0 0 \d+px
+Flat surface           linear-gradient|bg-gradient-to|background-clip:\s*text|bg-clip-text|backdrop-(filter|blur)|box-shadow:\s*([^;]*,\s*)?(inset\s+)?0\s+0\s+[1-9]\d*(\.\d+)?px
 Type                   \b(Inter|Roboto|Arial)\b|italic|uppercase                 read: uppercase paired with tracking-
 Icons                  Sparkles|[\x{1F300}-\x{1FAFF}]                            read: also an icon wrapped in rounded-full + a background
 ~~~
