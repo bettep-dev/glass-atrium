@@ -48,7 +48,7 @@ main() {
   # shellcheck disable=SC2310  # not due and a failed check both end the turn normally
   is_nudge_due "${stamp}" "${pid}" "${items%%$'\n'*}" || exit 0
   # shellcheck disable=SC2310  # an unusable monitor reply already printed its warning
-  item="$(find_wait_resolved_item "${session_id}" "${items}")" || exit 0
+  item="$(get_wait_resolved_item "${session_id}" "${items}")" || exit 0
   [[ -n "${item}" ]] || exit 0
   # the stamp lands before the continuation → no write failure can turn into a repeated one
   if ! (printf '%s %s\n' "${pid}" "${items%%$'\n'*}" >"${stamp}") 2>/dev/null; then
@@ -84,7 +84,7 @@ is_nudge_due() {
 
 # <session id> <item ids, newest first> → the first of at most CHECK_MAX_ITEMS a running wait would carry, nothing when
 # none; drops the marks of items the monitor reports terminal or unknown; non-zero on a monitor reply it cannot read
-find_wait_resolved_item() {
+get_wait_resolved_item() {
   local id status checked=0
   for id in $2; do
     ((checked++ < CHECK_MAX_ITEMS)) || break
