@@ -574,6 +574,7 @@ assert_silent_turn_end() {
   assert_verdict_ask "first fire" "ends without a queue verdict line" || return 1
   local row name tokens
   for row in 'same turn, its continuation ran a tool|start:t-1 tool result text feedback tool result text|silent' \
+    'same turn, compacted after the ask|start:t-1 tool result text feedback compact:c-1 tool result text|silent' \
     'next tool-using turn|start:t-1 tool result text start:t-2 tool result text|ask' \
     'same next turn again|start:t-1 tool result text start:t-2 tool result text|silent'; do
     IFS='|' read -r name tokens expect <<<"${row}"

@@ -5,7 +5,8 @@
 
 # <path> <token>... → writes <path>, one entry per token, oldest first: start:<uuid> and notify:<uuid> open a turn (a
 # prompt, a task notification) · tool · result · text · bigtext (about 2 KB) · feedback (the isMeta Stop hook feedback
-# entry); non-zero on an unknown token
+# entry) · compact:<uuid> (a compaction summary, carrying the turn position of the turn start it follows) ·
+# nullmessage and stringmessage (an assistant entry whose message is no object); non-zero on an unknown token
 write_turn_transcript() {
   local path="$1" token big
   shift
@@ -28,6 +29,11 @@ write_turn_transcript() {
         message: {role: "assistant", content: [{type: "text", text: $text}]}}' ;;
       feedback) jq -cn '{type: "user", uuid: "f-1", isMeta: true,
         message: {role: "user", content: "Stop hook feedback:\nQueue verdict (harness)"}}' ;;
+      compact:*) jq -cn --arg uuid "${token#compact:}" '{type: "user", uuid: $uuid, isCompactSummary: true,
+        turnPosition: {promptIndex: 0, turnIndex: 1},
+        message: {role: "user", content: "Summary of the earlier conversation"}}' ;;
+      nullmessage) jq -cn '{type: "assistant", uuid: "a-4", message: null, error: "tool_use"}' ;;
+      stringmessage) jq -cn '{type: "assistant", uuid: "a-5", message: "tool_use"}' ;;
       *) return 1 ;;
     esac >>"${path}"
   done

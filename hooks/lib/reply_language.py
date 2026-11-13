@@ -22,7 +22,8 @@ DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 MARKER = SimpleNamespace(
     HUMAN=b'"kind":"human"',
     # a turn's start entry, whatever its origin, carries a turnPosition object; tool results, assistant and Stop
-    # feedback entries carry none (shared-hook-capability-contract.md → Stop row)
+    # feedback entries carry none (shared-hook-capability-contract.md → Stop row); a compaction summary carries the
+    # position of the turn start it follows
     TURN=b'"turnPosition":{',
     TOOL_USE=b'"tool_use"',
 )
@@ -76,16 +77,27 @@ def find_newest_human_prose(path, window, cap):
 
 
 def find_current_turn(path, window, cap):
-    """Status `none` with truncated=true means the cap was reached before the turn's start entry."""
+    """Status `none` with truncated=true means the cap was reached before the turn's start entry.
+
+    A compaction summary is passed over, so tool calls before a mid-turn compaction stay the turn's and the turn keeps
+    one id; a transcript that opens on summaries, its turn start left in an earlier file, starts at the oldest."""
+    oldest_summary = None
+
     def visit(line, result):
+        nonlocal oldest_summary
         if MARKER.TOOL_USE in line and _has_tool_use(_get_json_object(line)):
             result["tools"] = True
-        turn = _get_turn_start_id(line) if MARKER.TURN in line else None
+        entry = _get_json_object(line) if MARKER.TURN in line else {}
+        turn = _get_turn_position_id(entry)
+        if turn and entry.get("isCompactSummary") is True:
+            oldest_summary, turn = turn, None
         if turn:
             result.update(status="found", turn=turn)
         return bool(turn)
 
     result = _scan_backward(path, window, cap, {"status": "none", "turn": None, "tools": False}, visit)
+    if result["status"] == "none" and oldest_summary and not result["truncated"]:
+        result.update(status="found", turn=oldest_summary)
     if result["status"] == "none":
         result["tools"] = False
     return result
@@ -108,14 +120,19 @@ def _scan_backward(path, window, cap, result, visit):
 
 
 def _has_tool_use(entry):
-    content = entry.get("message", {}).get("content") if entry.get("type") == "assistant" else None
+    content = _get_message_content(entry) if entry.get("type") == "assistant" else None
     return isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_use" for b in content)
 
 
-def _get_turn_start_id(line):
-    entry = _get_json_object(line)
+def _get_turn_position_id(entry):
     uuid = entry.get("uuid")
     return uuid if isinstance(entry.get("turnPosition"), dict) and isinstance(uuid, str) and uuid else None
+
+
+def _get_message_content(entry):
+    """None when the entry's message is no object."""
+    message = entry.get("message")
+    return message.get("content") if isinstance(message, dict) else None
 
 
 def _get_lines_backward(fh, size, window, cap, scan):
@@ -152,7 +169,7 @@ def _get_text_prose(text, entry_kind):
 def _get_human_text(entry):
     """Human prose sits on user entries and, for prompts queued mid-turn, on the attachment."""
     if entry.get("type") == "user" and _get_origin_kind(entry) == "human":
-        return _get_text_content(entry.get("message", {}).get("content")), "user"
+        return _get_text_content(_get_message_content(entry)), "user"
     attachment = entry.get("attachment")
     if (
         entry.get("type") == "attachment"
