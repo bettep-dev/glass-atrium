@@ -90,7 +90,7 @@ Run each pattern with the Grep tool (ripgrep syntax — a bare `|` is alternatio
 
 ~~~text
 Color         (case-insensitive)  (beige|cream|peach|#fff[^a-f0-9])
-Flat surface  (case-insensitive)  gradient|background-clip:\s*text|bg-clip-text|box-shadow:\s*([^;]*,\s*)?(inset\s+)?0\s+0\s+[1-9]\d*(\.\d+)?px    read: a tone shift inside one hue passes
+Flat surface  (case-insensitive)  gradient|background-clip:\s*text|bg-clip-text|box-shadow:\s*([^;]*,\s*)?(inset\s+)?0(px)?\s+0(px)?\s+([1-9]\d*(\.\d+)?|0?\.\d*[1-9]\d*)(px|r?em)|shadow-\[([^\]]*,)?(inset_)?0(px)?_0(px)?_([1-9]\d*(\.\d+)?|0?\.\d*[1-9]\d*)(px|r?em)|\bshadow-(red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d    read: a tone shift inside one hue passes
 Font                              \b(Inter|Roboto|Arial|Fraunces)\b
 Layout        (case-insensitive)  rounded-lg|grid-cols-3|text-center            (+ visual scan)
 Effects       (case-insensitive)  backdrop-blur|backdrop-filter|drop-shadow

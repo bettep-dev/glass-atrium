@@ -72,6 +72,37 @@ assert_rows() {
     "a glow in a later shadow layer is flagged|Flat surface|match|box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 0 12px #a855f7;"
 }
 
+@test "the Flat surface line keeps flagging gradients and clipped gradient text" {
+  assert_rows \
+    "a CSS gradient fill is flagged|Flat surface|match|background: linear-gradient(90deg, #7c3aed, #ec4899);" \
+    "a Tailwind gradient utility is flagged|Flat surface|match|<div class=\"bg-gradient-to-r from-violet-500 to-pink-500\">" \
+    "CSS gradient text is flagged|Flat surface|match|-webkit-background-clip: text;" \
+    "Tailwind gradient text is flagged|Flat surface|match|<h1 class=\"bg-clip-text text-transparent\">"
+}
+
+@test "the Flat surface line flags rem, em and px-offset CSS glows and passes a neutral elevation" {
+  assert_rows \
+    "a rem-blur zero-offset shadow is a glow|Flat surface|match|box-shadow: 0 0 1.5rem #a855f7;" \
+    "an em-blur zero-offset shadow is a glow|Flat surface|match|box-shadow: 0 0 .75em rgba(34, 211, 238, 0.5);" \
+    "px-unit zero offsets are a glow|Flat surface|match|box-shadow: 0px 0px 20px #a855f7;" \
+    "a rem-blur elevation shadow is no glow|Flat surface|none|box-shadow: 0 4px 1rem rgba(0, 0, 0, 0.08);" \
+    "a px-offset spread ring is no glow|Flat surface|none|box-shadow: 0px 0px 0px 1px var(--border);"
+}
+
+@test "the Flat surface line flags utility-class glows and passes neutral elevation utilities" {
+  assert_rows \
+    "an arbitrary zero-offset px shadow is a glow|Flat surface|match|<div class=\"shadow-[0_0_20px_rgba(168,85,247,0.5)]\">" \
+    "an arbitrary zero-offset rem shadow is a glow|Flat surface|match|<div class=\"shadow-[0_0_1.5rem_#a855f7]\">" \
+    "a glow in a later arbitrary layer is flagged|Flat surface|match|<div class=\"shadow-[0_1px_2px_#0000001a,0_0_12px_#a855f7]\">" \
+    "a hue-tinted shadow utility is a glow|Flat surface|match|<button class=\"shadow-lg shadow-purple-500/50\">" \
+    "a variant-prefixed tinted shadow is a glow|Flat surface|match|<a class=\"hover:shadow-cyan-400\">" \
+    "a neutral card elevation is no glow|Flat surface|none|<div class=\"rounded-xl border bg-white shadow-md\">" \
+    "a black-tinted elevation is no glow|Flat surface|none|<div class=\"shadow-lg shadow-black/5\">" \
+    "a gray-tinted elevation is no glow|Flat surface|none|<div class=\"shadow-sm shadow-slate-900/10\">" \
+    "an arbitrary offset elevation is no glow|Flat surface|none|<div class=\"shadow-[0_1px_3px_rgba(0,0,0,0.1)]\">" \
+    "an arbitrary spread ring is no glow|Flat surface|none|<div class=\"shadow-[0_0_0_1px_#e5e7eb]\">"
+}
+
 @test "the Label line flags the uppercase class and value, never a toUpperCase call" {
   assert_rows \
     "a toUpperCase call is no label treatment|Label|none|const code = id.toUpperCase();" \
