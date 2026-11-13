@@ -17,6 +17,8 @@ CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
 OUTPUT_KEYS='["bytes_read","entry","prose","reason","status","truncated"]'
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/turn-transcript.bash
+source "${BATS_TEST_DIRNAME}/lib/turn-transcript.bash"
 
 setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -61,35 +63,6 @@ write_human_transcript() {
   for text in "$@"; do
     jq -cn --arg text "${text}" \
       '{type: "user", origin: {kind: "human"}, message: {role: "user", content: $text}}' >>"${path}"
-  done
-}
-
-# Writes one transcript entry per token, oldest first: start:<uuid> and notify:<uuid> open a turn (a prompt, a task
-# notification) · tool · result · text · bigtext (about 2 KB) · feedback (the isMeta Stop hook feedback entry)
-write_turn_transcript() {
-  local path="$1" token big
-  shift
-  printf -v big '%2000s' ''
-  : >"${path}"
-  for token in "$@"; do
-    case "${token}" in
-      start:*) jq -cn --arg uuid "${token#start:}" '{type: "user", uuid: $uuid, promptId: "p-1", turnOrigin: "sdk",
-        turnPosition: {promptIndex: 0, turnIndex: 1}, message: {role: "user", content: "Run the release build"}}' ;;
-      notify:*) jq -cn --arg uuid "${token#notify:}" '{type: "user", uuid: $uuid, promptId: "p-1",
-        origin: {kind: "task-notification"}, turnPosition: {promptIndex: 0, turnIndex: 2},
-        message: {role: "user", content: "<task-notification>build finished</task-notification>"}}' ;;
-      tool) jq -cn '{type: "assistant", uuid: "a-1", turnPosition: null, message: {role: "assistant",
-        content: [{type: "tool_use", id: "toolu_1", name: "Bash", input: {command: "make release"}}]}}' ;;
-      result) jq -cn '{type: "user", uuid: "r-1", message: {role: "user",
-        content: [{type: "tool_result", tool_use_id: "toolu_1", content: "build ok"}]}}' ;;
-      text) jq -cn '{type: "assistant", uuid: "a-2", message: {role: "assistant",
-        content: [{type: "text", text: "The build passed."}]}}' ;;
-      bigtext) jq -cn --arg text "${big// /x}" '{type: "assistant", uuid: "a-3",
-        message: {role: "assistant", content: [{type: "text", text: $text}]}}' ;;
-      feedback) jq -cn '{type: "user", uuid: "f-1", isMeta: true,
-        message: {role: "user", content: "Stop hook feedback:\nQueue verdict (harness)"}}' ;;
-      *) return 1 ;;
-    esac >>"${path}"
   done
 }
 

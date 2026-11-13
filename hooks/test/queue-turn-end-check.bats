@@ -19,6 +19,8 @@ ITEM_TITLE="Merge the release branch tonight?"
 KEPT_STATUSES="delivering held unacked expired resume_pending"
 # shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
 source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
+# shellcheck source-path=SCRIPTDIR source=lib/turn-transcript.bash
+source "${BATS_TEST_DIRNAME}/lib/turn-transcript.bash"
 
 setup() {
   # the ambient session's own CLAUDE_* values must never reach the hook under test
@@ -31,7 +33,7 @@ setup() {
   : >"${BATS_TEST_TMPDIR}/requests.log"
   set_reply 200 "$(item_reply open)"
   TRANSCRIPT="${BATS_TEST_TMPDIR}/transcript.jsonl"
-  write_turn_transcript start:t-1 text
+  write_turn_transcript "${TRANSCRIPT}" start:t-1 text
 }
 
 teardown() {
@@ -112,30 +114,6 @@ stop_payload() {
       stop_hook_active: false}'
 }
 
-# Writes TRANSCRIPT, one entry per token, oldest first: start:<uuid> and notify:<uuid> open a turn (a prompt, a task
-# notification) · tool · result · text · feedback (the isMeta Stop hook feedback entry)
-write_turn_transcript() {
-  local token
-  : >"${TRANSCRIPT}"
-  for token in "$@"; do
-    case "${token}" in
-      start:*) jq -cn --arg uuid "${token#start:}" '{type: "user", uuid: $uuid, promptId: "p-1", turnOrigin: "sdk",
-        turnPosition: {promptIndex: 0, turnIndex: 1}, message: {role: "user", content: "Run the release build"}}' ;;
-      notify:*) jq -cn --arg uuid "${token#notify:}" '{type: "user", uuid: $uuid, promptId: "p-1",
-        origin: {kind: "task-notification"}, turnPosition: {promptIndex: 0, turnIndex: 2},
-        message: {role: "user", content: "<task-notification>build finished</task-notification>"}}' ;;
-      tool) jq -cn '{type: "assistant", uuid: "a-1", turnPosition: null, message: {role: "assistant",
-        content: [{type: "tool_use", id: "toolu_1", name: "Bash", input: {command: "make release"}}]}}' ;;
-      result) jq -cn '{type: "user", uuid: "r-1", message: {role: "user",
-        content: [{type: "tool_result", tool_use_id: "toolu_1", content: "build ok"}]}}' ;;
-      text) jq -cn '{type: "assistant", uuid: "a-2", message: {role: "assistant",
-        content: [{type: "text", text: "The build passed."}]}}' ;;
-      feedback) jq -cn '{type: "user", uuid: "f-1", isMeta: true,
-        message: {role: "user", content: "Stop hook feedback:\nQueue verdict (harness)"}}' ;;
-    esac >>"${TRANSCRIPT}"
-  done
-}
-
 run_hook() {
   local payload="${1:-}"
   [[ -n "${payload}" ]] || payload="$(stop_payload)"
@@ -165,33 +143,40 @@ hold_wait_lock() {
     "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
 }
 
-# the continuation the hook returns: a block decision whose reason names the absolute wait command
-assert_continuation() {
-  local reason
-  reason="$(jq -r 'select(.decision == "block") | .reason' <<<"${output}" 2>/dev/null)" || reason=""
-  [[ "${status}" -eq 0 && "${reason}" == *"[ATRIUM-QUEUE]"*" ${GA_ROOT}/scripts/atrium-queue.sh wait"* ]] || {
-    echo "$1: status=${status} stdout=${output} stderr=${stderr}"
-    return 1
-  }
+# the reason of the block decision in the hook's stdout; non-zero when that stdout is not JSON
+get_block_reason() {
+  jq -r 'select(.decision == "block") | .reason' <<<"${output}" 2>/dev/null
+}
+
+# <row name> → the hook's stdout carries neither the item's title nor its body
+assert_no_item_text() {
   [[ "${output}" != *"${ITEM_TITLE}"* && "${output}" != *"Owner context body"* ]] || {
     echo "$1: item text reached the session: ${output}"
     return 1
   }
 }
 
+# the continuation the hook returns: a block decision whose reason names the absolute wait command
+assert_continuation() {
+  local reason
+  reason="$(get_block_reason)" || reason=""
+  [[ "${status}" -eq 0 && "${reason}" == *"[ATRIUM-QUEUE]"*" ${GA_ROOT}/scripts/atrium-queue.sh wait"* ]] || {
+    echo "$1: status=${status} stdout=${output} stderr=${stderr}"
+    return 1
+  }
+  assert_no_item_text "$1"
+}
+
 # <row name> <text the reason carries> → one verdict ask, teaching the line forms, with no item text
 assert_verdict_ask() {
   local reason
-  reason="$(jq -r 'select(.decision == "block") | .reason' <<<"${output}" 2>/dev/null)" || reason=""
+  reason="$(get_block_reason)" || reason=""
   [[ "${status}" -eq 0 && "${output}" != *$'\n'* && "${reason}" == *"$2"* &&
     "${reason}" == *'`[QUEUE-VERDICT] nothing to post`'* ]] || {
     echo "$1: status=${status} stdout=${output} stderr=${stderr}"
     return 1
   }
-  [[ "${output}" != *"${ITEM_TITLE}"* && "${output}" != *"Owner context body"* ]] || {
-    echo "$1: item text reached the session: ${output}"
-    return 1
-  }
+  assert_no_item_text "$1"
 }
 
 assert_silent_turn_end() {
@@ -257,7 +242,7 @@ assert_silent_turn_end() {
     new_root
     mark_items 41
     export CLAUDE_PID="$$"
-    if [[ "${row}" != "running wait" ]]; then write_turn_transcript start:t-1 tool result text; fi
+    if [[ "${row}" != "running wait" ]]; then write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text; fi
     payload="$(stop_payload)"
     case "${row}" in
       "running wait") hold_wait_lock live ;;
@@ -515,7 +500,7 @@ assert_silent_turn_end() {
     IFS='|' read -r name message reply fetched expect <<<"${row}"
     printf -v message '%b' "${message}"
     new_root
-    write_turn_transcript start:t-1 tool result text
+    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
     set_reply "${reply}" "$(item_reply open)"
     : >"${BATS_TEST_TMPDIR}/requests.log"
     run_hook "$(stop_payload "${message}")"
@@ -536,7 +521,7 @@ assert_silent_turn_end() {
   start_stub
   set_nth_reply 1 200 "$(item_reply open)"
   set_nth_reply 2 404 '{"error":"unknown_item"}'
-  write_turn_transcript start:t-1 tool result text
+  write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
   run_hook "$(stop_payload '[QUEUE-VERDICT] posted #41 #77')"
   assert_verdict_ask "one foreign id" "#77 is not an item of this session" || return 1
   [[ "$(jq -r '.reason' <<<"${output}")" != *"#41"* ]] || {
@@ -553,7 +538,7 @@ assert_silent_turn_end() {
     IFS='|' read -r name tokens <<<"${row}"
     IFS=' ' read -r -a tokens <<<"${tokens}"
     new_root
-    write_turn_transcript "${tokens[@]}"
+    write_turn_transcript "${TRANSCRIPT}" "${tokens[@]}"
     run_hook
     assert_silent_turn_end "row ${name}" || return 1
   done
@@ -565,7 +550,7 @@ assert_silent_turn_end() {
   for row in 'headless -p run|sdk-cli' 'no entrypoint|-'; do
     IFS='|' read -r name entrypoint <<<"${row}"
     new_root
-    write_turn_transcript start:t-1 tool result text
+    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
     unset CLAUDE_CODE_ENTRYPOINT
     if [[ "${entrypoint}" != - ]]; then export CLAUDE_CODE_ENTRYPOINT="${entrypoint}"; fi
     run_hook
@@ -576,7 +561,7 @@ assert_silent_turn_end() {
 @test "a missing verdict and an awaiting item with no wait end the turn in one block carrying both lines" {
   start_stub
   mark_items 41
-  write_turn_transcript start:t-1 tool result text
+  write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
   run_hook
   assert_continuation "both due" || return 1
   assert_verdict_ask "both due" "ends without a queue verdict line"
@@ -584,7 +569,7 @@ assert_silent_turn_end() {
 
 @test "a turn is asked for its verdict once: a later fire of the same turn is silent and the next tool-using turn is asked again" {
   start_stub
-  write_turn_transcript start:t-1 tool result text
+  write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
   run_hook
   assert_verdict_ask "first fire" "ends without a queue verdict line" || return 1
   local row name tokens
@@ -593,7 +578,7 @@ assert_silent_turn_end() {
     'same next turn again|start:t-1 tool result text start:t-2 tool result text|silent'; do
     IFS='|' read -r name tokens expect <<<"${row}"
     IFS=' ' read -r -a tokens <<<"${tokens}"
-    write_turn_transcript "${tokens[@]}"
+    write_turn_transcript "${TRANSCRIPT}" "${tokens[@]}"
     run_hook
     if [[ "${expect}" == silent ]]; then
       assert_silent_turn_end "row ${name}" || return 1
@@ -610,12 +595,12 @@ assert_silent_turn_end() {
     new_root
     mark_items 41
     start_stub
-    write_turn_transcript start:t-1 tool result text
+    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
     payload="$(stop_payload)"
     case "${row}" in
       "unreadable transcript") TRANSCRIPT="${BATS_TEST_TMPDIR}/no-such.jsonl" && payload="$(stop_payload)" ;;
       "no transcript path") payload="$(jq -c 'del(.transcript_path)' <<<"${payload}")" ;;
-      "no turn start") write_turn_transcript tool result text ;;
+      "no turn start") write_turn_transcript "${TRANSCRIPT}" tool result text ;;
       "no final message") payload="$(jq -c 'del(.last_assistant_message)' <<<"${payload}")" ;;
       "monitor down") payload="$(stop_payload '[QUEUE-VERDICT] posted #41')" && export ATRIUM_MONITOR_PORT=1 ;;
     esac
@@ -640,7 +625,7 @@ assert_silent_turn_end() {
   start_stub
   while IFS= read -r form; do
     new_root
-    write_turn_transcript start:t-1 tool result text
+    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
     run_hook "$(stop_payload "${form//<item-id>/41}")"
     assert_silent_turn_end "form ${form}" || return 1
   done <<<"${forms}"
