@@ -191,11 +191,13 @@ queue_create_listed_awaiting_items() {
 }
 
 # The deregister step: pid, else the socket path (the monitor reads the pid from its name), else the id alone.
-# The session's awaiting set goes once the monitor holds the deregister, and only with a pid: the register that writes
-# the marks back at a resume needs one, so a host without it keeps its set (the stale-set prune drops it later).
+# The session's awaiting set goes only when the reply says this deregister ended the session, and only with a pid:
+# - another process still running the same session id → its marks stay, else its turn-end check finds none
+# - the register that writes the marks back at a resume needs a pid → a host without one keeps its set
+# - an older monitor's reply says nothing → kept; the stale-set prune drops a kept set later
 # $1: session id from a hook payload (optional; queue_get_session_id fallback)
 queue_deregister_session() {
-  local session_id pid socket body token_file
+  local session_id pid socket body token_file reply is_ended
   session_id="$(queue_get_session_id "${1:-}")"
   [[ -n "${session_id}" ]] || return 1
   pid="$(queue_get_pid)"
@@ -206,8 +208,11 @@ queue_deregister_session() {
   # retired messaging token → also deleted here, not only by the monitor sweep, so a down monitor leaves none behind
   token_file="$(queue_get_token_dir)/${session_id}"
   if ga_guard_path "${token_file}"; then rm -f -- "${token_file:?}"; fi
-  queue_post /api/queue/sessions/deregister "${body}" >/dev/null || return 1
-  if [[ -n "${pid}" ]]; then queue_delete_awaiting_set "${session_id}"; fi
+  reply="$(queue_post /api/queue/sessions/deregister "${body}")" || return 1
+  if [[ -n "${pid}" ]]; then
+    is_ended="$(jq -r '.isEnded == true' <<<"${reply}" 2>/dev/null)" || is_ended=false
+    if [[ "${is_ended}" == true ]]; then queue_delete_awaiting_set "${session_id}"; fi
+  fi
 }
 
 # <session id> → the path of its wait lock

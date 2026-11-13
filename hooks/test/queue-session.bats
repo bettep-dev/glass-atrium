@@ -353,10 +353,11 @@ run_deregister() {
   done
 }
 
-@test "deregister removes this session's awaiting set only once the monitor holds it and the env holds a pid" {
+@test "deregister removes this session's awaiting set only once the monitor says the session ended and the env holds a pid" {
   local other="0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d" row name expected actual
   local dir="${GA_ROOT}/data/queue/awaiting"
-  for row in "monitor answers, pid set|removed" "no pid in the session env|kept" "monitor down|kept" \
+  for row in "monitor says it ended, pid set|removed" "monitor says another process still runs it|kept" \
+    "older monitor reply without the fact|kept" "no pid in the session env|kept" "monitor down|kept" \
     "monitor refusing|kept"; do
     IFS='|' read -r name expected <<<"${row}"
     stop_stub
@@ -365,8 +366,10 @@ run_deregister() {
     : >"${dir}/${SESSION_ID}/41"
     : >"${dir}/${other}/7"
     case "${name}" in
-      "monitor answers"*) set_reply 200 '{"ok":true}' && start_stub ;;
-      "no pid"*) unset CLAUDE_PID && set_reply 200 '{"ok":true}' && start_stub ;;
+      "monitor says it ended"*) set_reply 200 '{"ok":true,"isEnded":true}' && start_stub ;;
+      "monitor says another"*) set_reply 200 '{"ok":true,"isEnded":false}' && start_stub ;;
+      "older monitor"*) set_reply 200 '{"ok":true}' && start_stub ;;
+      "no pid"*) unset CLAUDE_PID && set_reply 200 '{"ok":true,"isEnded":true}' && start_stub ;;
       "monitor down") export ATRIUM_MONITOR_PORT=1 ;;
       "monitor refusing") set_reply 403 '{"error":"forbidden_host"}' && start_stub ;;
     esac
