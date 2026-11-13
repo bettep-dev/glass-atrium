@@ -96,10 +96,16 @@ const DESK_STATES: QueueState[] = [
 ];
 
 const ORDER_STATES: QueueState[] = [
-  { nn: "05", name: "new-order-mode", setUp: (page) => openOrdersTo(page, ORDER_TO) },
+  {
+    nn: "05", name: "two-composers",
+    setUp: async (page) => {
+      await tickOrdersTo(page, ORDER_TO);
+      await selectRow(page, 103);
+    },
+  },
   { nn: "06", name: "order-with-images", setUp: (page) => typeOrderWithImages(page) },
   { nn: "07", name: "just-sent", setUp: (page) => sendOrderWithImages(page) },
-  { nn: "08", name: "one-received", getFixture: getOneReceivedFixture, setUp: (page) => openOrdersTo(page, ORDER_TO) },
+  { nn: "08", name: "one-received", getFixture: getOneReceivedFixture, setUp: (page) => tickOrdersTo(page, ORDER_TO) },
   { nn: "09", name: "not-received", getFixture: getNotReceivedFixture, setUp: (page) => selectRow(page, 210) },
   {
     nn: "09b", name: "after-resend", getFixture: getNotReceivedFixture,
@@ -110,24 +116,24 @@ const ORDER_STATES: QueueState[] = [
     },
   },
   {
-    nn: "10", name: "arrival-in-mode", isClockDriven: true,
+    nn: "10", name: "arrival-on-sheet", isClockDriven: true,
     setUp: async (page, harness) => {
-      await openOrdersTo(page, ORDER_TO);
+      await selectRow(page, 101);
       await arriveItem(page, harness);
     },
   },
-  { nn: "12", name: "reply-from-report", setUp: (page) => orderFromReport(page) },
   {
-    nn: "12b", name: "second-tick",
+    nn: "12", name: "recipients-changed",
     setUp: async (page) => {
-      await orderFromReport(page);
-      await tickSessions(page, ["gersona"]);
+      await tickOrdersTo(page, ["gersona"]);
+      await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
+      await tickSessions(page, ["yoaida"]);
     },
   },
   {
     nn: "13", name: "image-viewer",
     setUp: async (page) => {
-      await openOrdersTo(page, ["atrium"]);
+      await tickOrdersTo(page, ["atrium"]);
       await page.locator(".queue-bubble-image").nth(1).click();
       await page.locator(".queue-viewer img").waitFor();
     },
@@ -154,17 +160,16 @@ const ORDER_STATES: QueueState[] = [
       await page.locator('[role="status"]', { hasText: "Order sent to yoaida" }).first().waitFor({ state: "attached" });
     },
   },
-  { nn: "16", name: "atrium-ticked", setUp: (page) => openOrdersTo(page, ["atrium"]) },
+  { nn: "16", name: "atrium-ticked", setUp: (page) => tickOrdersTo(page, ["atrium"]) },
   {
     nn: "16b", name: "send-no-tick",
     setUp: async (page) => {
-      await openOrders(page);
       await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
       await page.locator(".queue-orders").getByRole("button", { name: "Send order" }).click();
       await page.locator(".queue-orders").getByText("Tick at least one session").waitFor();
     },
   },
-  { nn: "21c", name: "empty-thread", getFixture: getEmptyFixture, setUp: (page) => openOrdersTo(page, ["aidl"]) },
+  { nn: "21c", name: "empty-thread", getFixture: getEmptyFixture, setUp: (page) => tickOrdersTo(page, ["aidl"]) },
 ];
 
 const REFUSAL_STATES: QueueState[] = [
@@ -201,7 +206,7 @@ const LOOK_STATES: QueueState[] = [
   {
     nn: "23", name: "light-05",
     setUp: async (page) => {
-      await openOrdersTo(page, ORDER_TO);
+      await tickOrdersTo(page, ORDER_TO);
       await setLightTheme(page);
     },
   },
@@ -224,15 +229,6 @@ const LOOK_STATES: QueueState[] = [
     setUp: async (page) => {
       await page.locator(".queue-row").first().click();
       await page.keyboard.press("Enter");
-    },
-  },
-  {
-    nn: "25e", name: "focus-close",
-    setUp: async (page) => {
-      await openOrdersTo(page, ORDER_TO);
-      // a key press, not a programmatic focus → the browser draws the keyboard ring on Close
-      await page.getByRole("button", { name: "Clear" }).focus();
-      await page.keyboard.press("Shift+Tab");
     },
   },
   { nn: "25f", name: "key-list", setUp: (page) => page.getByRole("button", { name: /Keyboard shortcuts/ }).click() },
@@ -433,14 +429,9 @@ async function tickSessions(page: Page, names: string[]): Promise<void> {
   for (const name of names) await page.getByLabel(`Order to ${name}`).check();
 }
 
-async function openOrders(page: Page): Promise<void> {
-  await page.locator(".queue-sessions").getByRole("button", { name: "New order", exact: true }).click();
-  await page.locator(`#${ORDER_BOX_ID}`).waitFor();
-}
-
-async function openOrdersTo(page: Page, names: string[]): Promise<void> {
+// Orders is on screen at rest → ticking is all it takes to address it and scope its thread
+async function tickOrdersTo(page: Page, names: string[]): Promise<void> {
   await tickSessions(page, names);
-  await openOrders(page);
   await page.locator(".queue-thread").waitFor();
   await waitForImages(page);
 }
@@ -460,12 +451,12 @@ async function setFiles(page: Page, fieldId: string, files: Array<{ name: string
 }
 
 async function addOrderFiles(page: Page, files: Array<{ name: string; mimeType: string; buffer: Buffer }>): Promise<void> {
-  await openOrdersTo(page, ["gersona"]);
+  await tickOrdersTo(page, ["gersona"]);
   await setFiles(page, ORDER_BOX_ID, files);
 }
 
 async function typeOrderWithImages(page: Page): Promise<void> {
-  await openOrdersTo(page, ORDER_TO);
+  await tickOrdersTo(page, ORDER_TO);
   await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
   await setFiles(page, ORDER_BOX_ID, [0, 1, 2].map(getImageFile));
   await page.locator(".queue-thumb:not(.is-busy) img").nth(2).waitFor();
@@ -486,16 +477,6 @@ async function arriveItem(page: Page, harness: Harness): Promise<void> {
   await page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS });
 }
 
-// `O` on the atrium report carries its draft into the mode under a `Re:` line
-async function orderFromReport(page: Page): Promise<void> {
-  await selectRow(page, 102);
-  await page.locator("#queue-reply-102").fill(REPLY_TEXT);
-  await page.locator(".queue-sheet > .card-body").focus();
-  await page.keyboard.press("o");
-  await page.locator(`#${ORDER_BOX_ID}`).waitFor();
-  await waitForImages(page);
-}
-
 async function typeReportOrder(page: Page): Promise<void> {
   await selectRow(page, 101);
   await page.locator("#queue-reply-101").fill(REPLY_TEXT);
@@ -506,7 +487,7 @@ async function typeReportOrder(page: Page): Promise<void> {
 
 // a file dragged over the order box, not yet dropped → the box's drop state
 async function hangFileOverComposer(page: Page): Promise<void> {
-  await openOrdersTo(page, ["gersona"]);
+  await tickOrdersTo(page, ["gersona"]);
   const transfer = await page.evaluateHandle(() => {
     const data = new DataTransfer();
     data.items.add(new File(["png"], "queue-01.png", { type: "image/png" }));
@@ -520,14 +501,14 @@ async function setLightTheme(page: Page): Promise<void> {
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
 }
 
-/** Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268; the rail per step, one gap of 16, the middle pane the rest (Orders still a mode). */
+/** Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268; the rail and Orders per step, two gaps of 16, the middle pane the rest. */
 const DESK_WIDTHS = [
-  { viewport: { width: 1280, height: 800 }, rail: 208, middle: 788 },
-  { viewport: VIEWPORTS[0], rail: 232, middle: 924 },
-  { viewport: { width: 1568, height: 759 }, rail: 232, middle: 1052 },
-  { viewport: VIEWPORTS[1], rail: 248, middle: 1196 },
-  { viewport: VIEWPORTS[2], rail: 248, middle: 1388 },
-  { viewport: { width: 2560, height: 1440 }, rail: 280, middle: 1996 },
+  { viewport: { width: 1280, height: 800 }, rail: 208, middle: 452, orders: 320 },
+  { viewport: VIEWPORTS[0], rail: 232, middle: 564, orders: 344 },
+  { viewport: { width: 1568, height: 759 }, rail: 232, middle: 692, orders: 344 },
+  { viewport: VIEWPORTS[1], rail: 248, middle: 820, orders: 360 },
+  { viewport: VIEWPORTS[2], rail: 248, middle: 1012, orders: 360 },
+  { viewport: { width: 2560, height: 1440 }, rail: 280, middle: 1588, orders: 392 },
 ] as const;
 
 interface DeskFacts {
@@ -535,6 +516,7 @@ interface DeskFacts {
   rail: number[] | null;
   list: number[] | null;
   sheet: number[] | null;
+  orders: number[] | null;
 }
 
 // each pane's painted box as [x, width]; a pane not rendered → null
@@ -547,7 +529,7 @@ async function getDeskFacts(page: Page): Promise<DeskFacts> {
       return [Math.round(rect.left), Math.round(rect.width)];
     };
     const scrollers = [document.scrollingElement, document.querySelector("main")].filter((node): node is Element => node !== null);
-    return { isScrolled: scrollers.some((node) => node.scrollHeight > node.clientHeight), rail: box(".queue-sessions"), list: box(".queue-list"), sheet: box(".queue-sheet") };
+    return { isScrolled: scrollers.some((node) => node.scrollHeight > node.clientHeight), rail: box(".queue-sessions"), list: box(".queue-list"), sheet: box(".queue-sheet"), orders: box(".queue-orders") };
   });
 }
 
@@ -634,9 +616,8 @@ async function openEdgePage(harness: Harness, viewport: { width: number; height:
   return openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
 }
 
-// the Orders mode with no tick → every order in the thread, its images decoded
-async function openAllOrders(page: Page): Promise<void> {
-  await openOrders(page);
+// no tick → every order in the thread, its images decoded
+async function waitForAllOrders(page: Page): Promise<void> {
   await page.locator(".queue-order").first().waitFor();
   await waitForImages(page);
 }
@@ -760,7 +741,7 @@ describe("queue page on the mockup fixtures", () => {
     assert.equal(pages.length, new Set(getRestFixture().orders.map((order) => order.sendId)).size, "every order on some page");
   });
 
-  test("the desk fills the window with no page scroll, the rail and the middle pane sized per width step, and an opened row's sheet takes the list's box", async () => {
+  test("the desk fills the window with no page scroll, the rail, the middle pane and Orders sized per width step, and an opened row's sheet takes the list's box", async () => {
     harness.fixture = getRestFixture();
     for (const row of DESK_WIDTHS) {
       const page = await openQueuePage(harness, row.viewport, getRestReadyText());
@@ -769,15 +750,14 @@ describe("queue page on the mockup fixtures", () => {
       const opened = await getDeskFacts(page);
       await page.close();
       const size = `${row.viewport.width}x${row.viewport.height}`;
-      assert.deepEqual([rest.isScrolled, rest.rail?.[1], rest.list?.[1], rest.sheet], [false, row.rail, row.middle, null], `${size} at rest`);
-      assert.deepEqual(opened, { isScrolled: false, rail: rest.rail, list: null, sheet: rest.list }, `${size} with a row opened`);
+      assert.deepEqual([rest.isScrolled, rest.rail?.[1], rest.list?.[1], rest.sheet, rest.orders?.[1]], [false, row.rail, row.middle, null, row.orders], `${size} at rest`);
+      assert.deepEqual(opened, { isScrolled: false, rail: rest.rail, list: null, sheet: rest.list, orders: rest.orders }, `${size} with a row opened`);
     }
   });
 
   test("the sheet's text is 15/24 within 66ch, its title 20/28, rows 68 or 88, bands 32 on the page ground, and its foot in view", async () => {
     harness.fixture = getRestFixture();
-    // 1280: the list under the 880 one-line width while Orders is still a mode (the two-column desk)
-    const page = await openQueuePage(harness, DESK_WIDTHS[0].viewport, getRestReadyText());
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const list = await getListFacts(page);
     await selectRow(page, 101);
     const sheet = await getSheetFacts(page);
@@ -862,7 +842,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §11: the desk's keys on the real page, and the inset ring on the rows the cards clip
-  test("J / K move the focus on the list, Enter opens the sheet, J steps it, a digit picks, Esc returns to the row, N opens Orders and Esc gives the focus back", async () => {
+  test("J / K move the focus on the list, Enter opens the sheet, J steps it, a digit picks, Esc returns to the row, N puts the caret in Orders and Esc gives the focus back to the middle pane", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const active = () => page.evaluate(() => {
@@ -900,49 +880,39 @@ describe("queue page on the mockup fixtures", () => {
     assert.equal(rail.offset, "-2px", "a rail row's ring is inset");
     assert.equal(box.id, "queue-order-text", "N puts the caret in the order box");
     assert.equal(entry.offset, "-2px", "a thread entry's ring is inset");
-    assert.deepEqual([returned.cls, returned.offset], [rail.cls, "-2px"], "Esc closes Orders and gives the focus back to the rail row that opened it");
+    assert.deepEqual([returned.id, returned.offset], [rowIds[1], "-2px"], "Esc in Orders gives the focus back to the middle pane: the list's current row");
   });
 
-  test("rail rows are 68; the Orders mode hides the middle pane, keeps one 720 column, and gives the open sheet's scroll position back on Close", async () => {
+  test("rail rows are 68; Orders is rendered at rest beside the list on its card's 16 column, and an opened row hides the list alone", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    await selectRow(page, 103);
-    const stored = await page.evaluate(() => {
-      const body = document.querySelector(".queue-sheet > .card-body") as HTMLElement;
-      body.scrollTop = 40;
-      return body.scrollTop;
-    });
-    const railRows = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-rail-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
-    await page.locator(".queue-sessions").getByRole("button", { name: "New order", exact: true }).click();
     await page.locator(".queue-order").first().waitFor();
-    const mode = await page.evaluate(() => {
-      const card = (document.querySelector(".queue-orders-card") as HTMLElement).getBoundingClientRect();
-      const inset = (selector: string, side: "left" | "right") => {
-        const box = (document.querySelector(selector) as HTMLElement).getBoundingClientRect();
-        return Math.round(side === "left" ? box.left - card.left : card.right - box.right);
-      };
+    const shown = () => page.evaluate(() => [".queue-list", ".queue-sheet", ".queue-orders"].map((selector) => (document.querySelector(selector)?.getClientRects().length ?? 0) > 0));
+    const rest = await shown();
+    const facts = await page.evaluate(() => {
+      // the inset from the card's inner edge, inside its 1 px border
+      const element = document.querySelector(".queue-orders-card") as HTMLElement;
+      const card = element.getBoundingClientRect();
+      const edge = element.clientLeft;
       const orders = [...document.querySelectorAll(".queue-order")];
       return {
-        isAwayShown: [".queue-list", ".queue-sheet"].some((selector) => (document.querySelector(selector) as HTMLElement).getClientRects().length > 0),
-        column: Math.round(card.width - 2 * inset(".queue-orders-card > .card-head h2, .queue-orders-card > .card-head .card-title", "left")),
-        insets: [inset(".queue-orders-card > .card-head .btn", "right"), Math.round(card.right - (orders[orders.length - 1] as HTMLElement).getBoundingClientRect().right)],
-        pad: Math.round((card.width - 720) / 2),
+        railRows: [...new Set([...document.querySelectorAll(".queue-rail-row")].map((row) => Math.round(row.getBoundingClientRect().height)))],
+        insets: [Math.round((document.querySelector(".queue-orders-card > .card-head .card-title") as HTMLElement).getBoundingClientRect().left - card.left - edge), Math.round(card.right - edge - (orders[orders.length - 1] as HTMLElement).getBoundingClientRect().right)],
       };
     });
-    await page.getByRole("button", { name: "Close" }).click();
-    const restored = await page.evaluate(() => (document.querySelector(".queue-sheet > .card-body") as HTMLElement).scrollTop);
+    await selectRow(page, 103);
+    const opened = await shown();
     await page.close();
 
-    assert.deepEqual(railRows, [68]);
-    assert.deepEqual({ isAwayShown: mode.isAwayShown, column: mode.column, insets: mode.insets }, { isAwayShown: false, column: 720, insets: [mode.pad, mode.pad] });
-    assert.equal(restored, stored);
+    assert.deepEqual(facts, { railRows: [68], insets: [16, 16] });
+    assert.deepEqual({ rest, opened }, { rest: [true, false, true], opened: [false, true, true] });
   });
 
-  // spec §10: the thread's empty state is text on the order view's 720 column, never indented off it
-  test("the empty thread's line starts on the order view's column, where the Orders title starts", async () => {
+  // spec §10: the thread's empty state is text on the Orders column, never indented off it
+  test("the empty thread's line starts on the Orders column, where the Orders title starts", async () => {
     harness.fixture = getEmptyFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(getEmptyFixture()));
-    await openOrdersTo(page, ["aidl"]);
+    await tickOrdersTo(page, ["aidl"]);
     await page.getByText("No orders to aidl yet").waitFor();
     const lefts = await page.evaluate(() => [".queue-orders-card > .card-head .card-title", ".queue-thread > .placeholder > div"]
       .map((selector) => Math.round((document.querySelector(selector) as HTMLElement).getBoundingClientRect().left)));
@@ -976,7 +946,6 @@ describe("queue page on the mockup fixtures", () => {
   test("an order's images are 96 squares in its bubble, an added one is a 56 thumbnail in a 104 box, and the viewer spans the window, fits one in it and steps", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    await page.locator(".queue-sessions").getByRole("button", { name: "New order", exact: true }).click();
     await page.locator(".queue-bubble-image img").first().waitFor();
     await page.waitForFunction(() => [...document.querySelectorAll(".queue-bubble-image img")].every((img) => (img as HTMLImageElement).complete));
     const bubble = await page.evaluate(() => [...document.querySelectorAll(".queue-bubble-image")].map((button) => {
@@ -1017,20 +986,19 @@ describe("queue page on the mockup fixtures", () => {
     assert.match(after.focus ?? "", /^Open image 1 of \d+: /);
   });
 
-  // todo → a known page defect: runs and reports, never fails the suite until the page meets the spec
-  test("every pane head is 48 high, on the desk and in the Orders mode, at every desk width", { todo: "the Sessions pane head is 69 high at every desk width, on the desk and in the Orders mode (spec §3.1: 48)" }, async () => {
+  test("every pane head is 48 high, in both middle-pane states, at every desk width", async () => {
     harness.fixture = getRestFixture();
     const heads = [];
     for (const { viewport } of DESK_WIDTHS) {
       const page = await openQueuePage(harness, viewport, getRestReadyText());
-      const desk = await getHeadHeights(page, [".queue-sessions", ".queue-list", ".queue-sheet"]);
-      await openOrders(page);
-      const orders = await getHeadHeights(page, [".queue-sessions", ".queue-orders-card"]);
+      const list = await getHeadHeights(page, [".queue-sessions", ".queue-list", ".queue-orders-card"]);
+      await selectRow(page, 101);
+      const sheet = await getHeadHeights(page, [".queue-sessions", ".queue-sheet", ".queue-orders-card"]);
       await page.close();
-      heads.push({ width: viewport.width, desk, orders });
+      heads.push({ width: viewport.width, list, sheet });
     }
 
-    assert.deepEqual(heads, heads.map(({ width }) => ({ width, desk: [48, 48, 48], orders: [48, 48] })));
+    assert.deepEqual(heads, heads.map(({ width }) => ({ width, list: [48, 48, 48], sheet: [48, 48, 48] })));
   });
 
   test("a badge is 20 high in every fill", async () => {
@@ -1060,22 +1028,23 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(ends, ends.map((row) => ({ ...row, queue: row.docs })));
   });
 
-  test("the report's composer and the order view's share a 40 box, 40 buttons and one computed type", async () => {
+  test("the report's composer and the Orders composer, on one screen, share a 40 box, 40 buttons and one computed type, the Orders button under its box", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await selectRow(page, 101);
     const report = await getComposerFacts(page, ".queue-sheet");
-    await openOrders(page);
     const order = await getComposerFacts(page, ".queue-orders");
+    const isUnder = await page.evaluate(() => (document.querySelector(".queue-orders .queue-compose-buttons .btn") as HTMLElement).getBoundingClientRect().top >= (document.querySelector(".queue-orders .queue-compose-box") as HTMLElement).getBoundingClientRect().bottom);
     await page.close();
 
     assert.deepEqual({ box: report.box, buttons: report.buttons }, { box: 40, buttons: [40] }, "the report's composer");
-    assert.deepEqual(order, report, "the order view's composer against the report's");
+    assert.deepEqual(order, report, "the Orders composer against the report's");
+    assert.equal(isUnder, true, "the Orders button falls under its box");
   });
 
   test("the thread opens at its end, and its composer stays in view at every scroll position of the thread", async () => {
     const page = await openEdgePage(harness, { width: 1568, height: 759 });
-    await openAllOrders(page);
+    await waitForAllOrders(page);
     const facts = await page.evaluate(() => {
       const log = document.querySelector(".queue-thread") as HTMLElement;
       const composer = document.querySelector(".queue-orders .queue-composer") as HTMLElement;
@@ -1096,7 +1065,7 @@ describe("queue page on the mockup fixtures", () => {
   test("an order bubble is no wider than 85% of the thread's column and no wider than 66ch of its own text", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    await openAllOrders(page);
+    await waitForAllOrders(page);
     const bubbles = await page.evaluate(() => {
       const log = document.querySelector(".queue-thread") as HTMLElement;
       const pad = getComputedStyle(log);
@@ -1236,7 +1205,7 @@ describe("queue page on the mockup fixtures", () => {
 
     test("the thread holds order entries only, and an order to three sessions shows each recipient's one receipt and no other text", async () => {
       const page = await openEdgePage(harness);
-      await openAllOrders(page);
+      await waitForAllOrders(page);
       const shown = await page.evaluate(() => {
         const isOrdersOnly = [...document.querySelectorAll(".queue-day-group > *")].every((entry) => entry.matches(".queue-day, article.queue-order"));
         const entry = [...document.querySelectorAll("article.queue-order")].find((order) => order.querySelectorAll(".queue-recipient").length === 3);
@@ -1265,7 +1234,7 @@ describe("queue page on the mockup fixtures", () => {
     test("an order with eight images reads Order · 8 images on its row and shows eight 96 squares in its bubble, each named n of 8", async () => {
       const page = await openEdgePage(harness);
       const row = await page.evaluate((id) => document.querySelector(`#queue-row-${id} .queue-row-facts`)?.textContent ?? "", EDGE_IDS.eightImages);
-      await openAllOrders(page);
+      await waitForAllOrders(page);
       const images = await page.evaluate(() => {
         const entry = [...document.querySelectorAll("article.queue-order")].find((order) => order.querySelectorAll(".queue-bubble-image").length > 3);
         return [...(entry?.querySelectorAll(".queue-bubble-image") ?? [])].map((button) => {

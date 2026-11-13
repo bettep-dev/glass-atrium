@@ -453,31 +453,33 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	height: calc(100dvh - 2 * var(--gap-page));
 	min-height: 608px;
 }
+/* three fixed-role columns at every width (spec §3.2): the rail and Orders step with the viewport, the middle pane takes the rest */
 .queue-desk {
 	--queue-rail-w: 208px;
+	--queue-orders-w: 320px;
 	flex: 1 1 auto;
 	min-height: 560px;
 	min-width: 1012px;
 	display: grid;
-	grid-template-columns: var(--queue-rail-w) minmax(0, 1fr);
+	grid-template-columns: var(--queue-rail-w) minmax(0, 1fr) var(--queue-orders-w);
 	grid-template-rows: minmax(0, 1fr);
 	gap: var(--gap-section);
 	font-size: var(--fs-body);
 }
 @media (min-width: 1440px) {
-	.queue-desk { --queue-rail-w: 232px; }
+	.queue-desk { --queue-rail-w: 232px; --queue-orders-w: 344px; }
 }
 @media (min-width: 1728px) {
-	.queue-desk { --queue-rail-w: 248px; }
+	.queue-desk { --queue-rail-w: 248px; --queue-orders-w: 360px; }
 }
 @media (min-width: 2240px) {
-	.queue-desk { --queue-rail-w: 264px; }
+	.queue-desk { --queue-rail-w: 264px; --queue-orders-w: 376px; }
 }
 @media (min-width: 2560px) {
-	.queue-desk { --queue-rail-w: 280px; }
+	.queue-desk { --queue-rail-w: 280px; --queue-orders-w: 392px; }
 }
 /* the Sessions rail (spec §9.1): the All sessions band, a row per session (name 14/600, the solid waiting count, line 2 13/dim),
-   the box column at the row's end under the head's New order. A row is 68 — the list row's own geometry */
+   the box column at the row's end. A row is 68 — the list row's own geometry */
 .queue-sessions > .card-foot {
 	justify-content: space-between;
 }
@@ -580,13 +582,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: none;
 	color: rgb(var(--ink));
 }
-/* the Orders mode (spec §9.2): the list and the sheet put away — hidden, still mounted — and their room given to the order view */
-.queue-away {
-	display: contents;
-}
-.queue-away[hidden] {
-	display: none;
-}
 /* the list stays mounted under a sheet (spec §3.3): hidden, its rows and state kept */
 .queue-list-slot {
 	display: contents;
@@ -594,18 +589,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-list-slot[hidden] {
 	display: none;
 }
-.queue-desk.is-orders {
-	grid-template-columns: var(--queue-rail-w) minmax(0, 1fr);
-}
-/* in the mode a rail row is one target, the box's label; a ticked row carries the select tint beside its checked box */
-.queue-rail-row.is-pick,
-.queue-rail-band.is-pick {
-	cursor: pointer;
-}
-.queue-desk.is-orders .queue-rail-row:has(.ctl-checkbox:checked) {
-	background: var(--tint-select);
-}
-/* the order view: one 720 column in the middle of the card for head, To bar, thread and composer; the hairlines still run edge to edge */
+/* Orders (spec §9.2): its own column on the card's 16 inline column; the thread is the body's one scroller */
 .queue-orders {
 	display: flex;
 	flex-direction: column;
@@ -613,23 +597,17 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-height: 0;
 }
 .queue-orders-card {
-	--queue-thread-w: 720px;
-	--card-pad: max(var(--space-6), calc((100% - var(--queue-thread-w)) / 2));
 	flex: 1 1 auto;
 }
-.queue-arrival {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--space-2);
+.queue-orders-scope {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 .queue-loading > [role="status"] {
 	justify-content: flex-start;
 	padding: var(--space-4) var(--card-pad);
-}
-.queue-orders-card > .card-bar {
-	border-top: 1px solid rgb(var(--line));
-	border-bottom: 1px solid rgb(var(--line));
-	padding-block: 0;
 }
 .queue-orders-card > .card-body {
 	display: flex;
@@ -638,34 +616,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-height: 0;
 	max-height: none;
 	overflow: hidden;
-}
-.queue-to {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-1) var(--space-2);
-	min-height: var(--card-head-h);
-}
-.queue-to-label {
-	font-size: var(--fs-meta);
-	font-weight: 600;
-	color: rgb(var(--dim));
-}
-.queue-to-name {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--space-1);
-	font-size: var(--fs-control);
-	font-weight: 600;
-	color: rgb(var(--ink));
-}
-.queue-to-clear {
-	margin-inline-start: auto;
-}
-/* zero ticks: Clear is gone from the tab order and the accessibility tree, its slot kept */
-.queue-to-clear[hidden] {
-	display: inline-flex;
-	visibility: hidden;
 }
 /* the thread: the body's one scroller, oldest at the top, the newest directly above the composer */
 .queue-thread {
@@ -1209,22 +1159,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	display: block;
 	margin-bottom: var(--gap-label);
 }
-/* the order's label line with its Re: link → one line: label · the report's title (ellipsis) · the ✕ */
-.queue-compose-label {
-	display: flex;
-	align-items: center;
-	gap: var(--space-1_5);
-	min-width: 0;
-	margin-bottom: var(--gap-label);
-}
-.queue-compose-re {
-	min-width: 0;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	font-size: var(--fs-meta);
-	font-weight: 400;
-	color: rgb(var(--dim));
+/* the Orders label line: the receiving sessions are names → ink 600 inside the dim label (spec §9.2) */
+.queue-order-to {
+	font-weight: 600;
+	color: rgb(var(--ink));
 }
 .queue-compose-row {
 	display: flex;
