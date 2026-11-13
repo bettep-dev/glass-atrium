@@ -27,8 +27,9 @@ readonly NUDGE_NO_PID_KEY=no-pid
 readonly VERDICT_KEYWORD='[QUEUE-VERDICT]'
 # shellcheck disable=SC2016  # the backticks are the reason's literal markdown
 readonly VERDICT_FORMS='`[QUEUE-VERDICT] posted #<item-id>` (every item the turn posted, on the one line) or `[QUEUE-VERDICT] nothing to post`'
-readonly VERDICT_ASK_STEPS="Judge the turn against the must-not-miss kinds, post what is owed, then end the message with one \
-last line: ${VERDICT_FORMS}. A decision posted now needs"
+# %s → the queue CLI path
+readonly VERDICT_ASK_TEMPLATE="Judge the turn against the must-not-miss kinds, post what is owed, then end the message with \
+one last line: ${VERDICT_FORMS}. A decision posted now needs \`%s wait\` started as a background command."
 readonly WAIT_REASON_LEAD="[ATRIUM-QUEUE] harness: an item of this session awaits the owner and no wait runs — start it \
 now as a background command:"
 
@@ -133,15 +134,13 @@ set_tool_turn() {
 # <session id> <last line> → verdict_reason: empty for an accepted verdict, else the ask naming the forms and, for ids
 # the monitor does not know for this session, those ids alone
 set_verdict_problem() {
-  local lead="" ids=() id
+  local lead cli steps ids=()
+  [[ "$2" != "${VERDICT_KEYWORD} nothing to post" ]] || return 0
   if [[ "$2" == "${VERDICT_KEYWORD} posted "* ]]; then
     IFS=' ' read -r -a ids <<<"${2#"${VERDICT_KEYWORD} posted "}" || true
   fi
-  [[ "$2" != "${VERDICT_KEYWORD} nothing to post" ]] || return 0
-  for id in "${ids[@]+"${ids[@]}"}"; do
-    [[ "${id}" == "#"* && "${id#\#}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || ids=()
-  done
-  if ((${#ids[@]} > 0)); then
+  # shellcheck disable=SC2310  # a pure test, so the errexit suspension changes nothing
+  if ((${#ids[@]} > 0)) && is_item_id_list "${ids[@]}"; then
     set_foreign_ids "$1" "${ids[@]}"
     [[ -n "${foreign_ids}" ]] || return 0
     lead="${foreign_ids} is not an item of this session: post it from this session or correct the verdict line"
@@ -150,8 +149,18 @@ set_verdict_problem() {
   else
     lead="this turn called a tool, and its final message ends without a queue verdict line"
   fi
-  verdict_reason="Queue verdict (harness): ${lead}. ${VERDICT_ASK_STEPS} \`$(queue_get_cli_path) wait\` started as"
-  verdict_reason+=" a background command."
+  cli="$(queue_get_cli_path)"
+  # shellcheck disable=SC2059  # the format is this file's own constant; the CLI path goes in as an argument
+  printf -v steps "${VERDICT_ASK_TEMPLATE}" "${cli}"
+  verdict_reason="Queue verdict (harness): ${lead}. ${steps}"
+}
+
+# <word>... → 0 when every word is #<item id>
+is_item_id_list() {
+  local id
+  for id in "$@"; do
+    [[ "${id}" == "#"* && "${id#\#}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 1
+  done
 }
 
 # <session id> <#id>... → foreign_ids: "#N #M" for each id the monitor does not know for this session; a failed fetch
@@ -160,13 +169,8 @@ set_foreign_ids() {
   local session_id="$1" id status
   shift
   for id in "$@"; do
-    if ((SECONDS >= check_deadline)); then
-      warn "the ${CHECK_BUDGET_S} s check budget ran out before item ${id#\#}"
-      is_check_spent=true
-      return 0
-    fi
-    # shellcheck disable=SC2310  # an unusable reply already printed its warning
-    if ! status="$(get_item_status "${session_id}" "${id#\#}")"; then
+    # shellcheck disable=SC2310  # a spent budget or an unusable reply already printed its warning
+    if ! status="$(get_budgeted_item_status "${session_id}" "${id#\#}")"; then
       is_check_spent=true
       return 0
     fi
@@ -218,12 +222,8 @@ is_nudge_due() {
 get_wait_resolved_item() {
   local id status
   for id in $2; do
-    if ((SECONDS >= check_deadline)); then
-      warn "the ${CHECK_BUDGET_S} s check budget ran out before item ${id}"
-      return 1
-    fi
-    # shellcheck disable=SC2310  # an unusable reply already printed its warning
-    status="$(get_item_status "$1" "${id}")" || return 1
+    # shellcheck disable=SC2310  # a spent budget or an unusable reply already printed its warning
+    status="$(get_budgeted_item_status "$1" "${id}")" || return 1
     if [[ "${QUEUE_WAIT_RESOLVED_STATUSES}" == *" ${status} "* ]]; then
       printf '%s\n' "${id}"
       return 0
@@ -233,6 +233,15 @@ get_wait_resolved_item() {
       queue_delete_awaiting_item "$1" "${id}" || true
     fi
   done
+}
+
+# <session id> <item id> → get_item_status while CHECK_BUDGET_S lasts; non-zero, after one warning, once it has run out
+get_budgeted_item_status() {
+  if ((SECONDS >= check_deadline)); then
+    warn "the ${CHECK_BUDGET_S} s check budget ran out before item $2"
+    return 1
+  fi
+  get_item_status "$1" "$2"
 }
 
 # <session id> <item id> → its status, "gone" when the monitor knows no such item of this session; non-zero, after the
