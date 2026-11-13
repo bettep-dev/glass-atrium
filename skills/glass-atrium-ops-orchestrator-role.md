@@ -625,28 +625,26 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
 
 ### Answers and messages
 
-Each step builds on the previous: a claim by `wait` or `pending` → `get <item-id>` → `ack <item-id> <msg-id>` → act.
+A claim by `wait` or `pending` → `get <item-id>` → `ack <item-id> <msg-id>` → act.
 
 - The monitor pushes nothing into a running session: an answer or message reaches it only through its own `wait` or `pending`.
   - Honest backing: nothing starts a wait for a session.
-    - The turn-end check (`hooks/queue-turn-end-check.sh`) keeps a main-session turn from ending while an item it posted awaits the owner and no wait of its process runs.
-      - Its `[ATRIUM-QUEUE] harness:` line names the `wait` command: start it now, per this bullet, not the wait table.
-      - The check holds a turn end at most once per turn, verdict ask included: an item posted in answer to the ask gets no wait reminder, so the ask names `wait`.
+    - The turn-end check (`hooks/queue-turn-end-check.sh`) holds a main-session turn end while an item it posted awaits the owner and no wait of its process runs.
+      - Its `[ATRIUM-QUEUE] harness:` line names `wait`: start it now, not per the wait table.
+      - It holds at most once per turn, verdict ask included: an item posted in answer to the ask gets no reminder, so the ask names `wait`.
     - The Queue page shows which sessions wait or listen.
-- Run `wait` as a background command, spelled like every other CLI call: it ends when a poll claims something for this session, or at its bound.
-  - Why a background command: the session keeps working while it runs, and takes up its output and exit code when it ends.
+- Run `wait` as a background command, spelled like every other CLI call: it ends at a poll that claims something for this session, or at its bound, and the session works on meanwhile.
   - A claiming `wait` prints the same `get` and `ack` commands `pending` prints.
 
 | When | Action |
 |---|---|
-| a background job session has run its `register --name` | start `wait`, and keep one running while the session works |
+| a background job session has run its `register --name` | start `wait`; keep one running while the session works |
 | a session posted a decision, or a report with `isFreeTextAllowed: true` | start `wait` |
-| a background job session cannot continue without the answer a running `wait` will claim | end the turn and let the wait wake the session |
-| an interactive session cannot continue without the answer a running `wait` will claim | end the turn |
-| an interactive session starts a turn after its `wait` ended | follow the `get` and `ack` steps that wait printed before any `pending` |
+| a session cannot continue without the answer a running `wait` will claim | end the turn — in a background job session, the wait then wakes it |
+| an interactive session starts a turn after its `wait` ended | follow the `get` and `ack` steps that wait printed before any `pending`, which claims nothing a `wait` claimed |
 | an interactive session starts a turn awaiting an answer and no `wait` has ended | run `pending` |
 | the monitor resumed this session | run `register` after its ack steps, whatever each ack replied, then start `wait` |
-| an `[ATRIUM-QUEUE]` line names `pending` — at start, or a wake (`## Owner Queue Listener`) | run `pending`: it claims them and prints their `get` and `ack` steps |
+| an `[ATRIUM-QUEUE]` line names `pending` — at start, or a wake (`## Owner Queue Listener`) | run `pending` |
 | `get` exits 3 — the item belongs to another session | stop and take no action on it |
 | `wait` exits 0 — a poll claimed answers or messages | follow the printed steps, then start `wait` again |
 | `wait` exits 1 — the monitor is unreachable or failing | start `wait` again once |
@@ -657,13 +655,8 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 | `wait` exits with any other code, a killed wait included | start `wait` again once |
 | a `wait` restarted "again once" ends the same way | stop waiting |
 
-| `ack` prints | Action |
-|---|---|
-| `first` | act on the answer or message as the next step of the task |
-| `already handled`, or the command fails | do nothing with that item |
-
-- Honest backing — unverified: whether a background command's exit starts a turn in an idle interactive session is unknown, hence the turn-start rows.
-  - Why the ended wait comes first: `pending` claims nothing a `wait` already claimed.
+- `ack` prints `first` → act on the answer or message as the next step of the task; `already handled`, or a failed `ack` → do nothing with that item.
+- Honest backing — unverified: whether a background command's exit starts a turn in an idle interactive session, hence the turn-start rows.
 
 ### Envelopes and authority
 
