@@ -128,8 +128,8 @@ get_recorded_start() {
   printf '%s\n' "${started%"${started##*[![:space:]]}"}"
 }
 
-# <live|stale> [owner pid] [owner start] → this session's wait lock held by a running waiter, or by a gone one, of
-# that owner (default this Claude process, with its own start)
+# <live|stale|listener> [owner pid] [owner start] → this session's wait lock held by a running waiter, a gone one or
+# a running listener, of that owner (default this Claude process, with its own start)
 hold_wait_lock() {
   local waiter_pid waiter_start owner_pid="${2:-${CLAUDE_PID:-}}" owner_start="${3:-}"
   [[ -n "${owner_start}" ]] || owner_start="$(get_recorded_start "${owner_pid}")"
@@ -139,6 +139,8 @@ hold_wait_lock() {
   waiter_pid="${WAITER_PID}"
   waiter_start="$(get_recorded_start "${waiter_pid}")"
   if [[ "$1" == stale ]]; then stop_waiter; fi
+  # a listener's record ends with its holder kind
+  if [[ "$1" == listener ]]; then owner_start+="|listen"; fi
   ln -sn -- "${waiter_pid}|${waiter_start}|${owner_pid}|${owner_start}" \
     "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
 }
@@ -186,18 +188,18 @@ assert_silent_turn_end() {
   }
 }
 
-@test "an awaiting item a wait resolves, with no wait running, keeps the turn going with the wait command and no item text" {
+@test "an awaiting item a wait resolves, with no wait running — a running listener is none — keeps the turn going with the wait command and no item text" {
   start_stub
   local row rows=() lock expected_status
   # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
   for expected_status in $(source "${GA}/scripts/lib/queue-session.sh" && printf '%s' "${QUEUE_WAIT_RESOLVED_STATUSES}"); do
     rows+=("${expected_status}|none")
   done
-  for row in "${rows[@]}" "open|stale"; do
+  for row in "${rows[@]}" "open|stale" "open|listener"; do
     IFS='|' read -r expected_status lock <<<"${row}"
     new_root
     mark_items 41
-    if [[ "${lock}" == stale ]]; then hold_wait_lock stale; fi
+    if [[ "${lock}" != none ]]; then hold_wait_lock "${lock}"; fi
     set_reply 200 "$(item_reply "${expected_status}")"
     : >"${BATS_TEST_TMPDIR}/requests.log"
     run_hook

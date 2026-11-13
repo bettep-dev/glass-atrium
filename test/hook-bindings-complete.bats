@@ -78,6 +78,24 @@ array_rows() {
   }
 }
 
+@test "the queue listener is bound asyncRewake on SessionStart and Stop, with a timeout its own lifetime ends inside" {
+  local rows lifetime poll_s max_s event options bad=""
+  rows="$(drive_engine get_expected_binding_option_rows)"
+  # the CLI's own constants: the host SIGTERMs the hook at the timeout, so the last poll must end before it
+  lifetime="$(sed -n 's/^readonly LISTEN_LIFETIME_S=\([0-9]*\)$/\1/p' "${GA}/scripts/atrium-queue.sh")"
+  poll_s="$(sed -n 's/^readonly WAIT_POLL_S=\([0-9]*\)$/\1/p' "${GA}/scripts/atrium-queue.sh")"
+  max_s="$(sed -n 's/^readonly CLI_MAX_TIME_S=\([0-9]*\)$/\1/p' "${GA}/scripts/atrium-queue.sh")"
+  for event in SessionStart Stop; do
+    options="$(awk -F '\t' -v e="${event}" '$1 == e && $2 == "queue-listener.sh" { print $3 }' <<<"${rows}")"
+    jq -e --argjson floor "$((lifetime + poll_s + max_s))" '.asyncRewake == true and .timeout > $floor' \
+      <<<"${options}" >/dev/null 2>&1 || bad="${bad} ${event}:${options:-unbound}"
+  done
+  [[ -n "${lifetime}" && -z "${bad}" ]] || {
+    echo "lifetime=${lifetime} listener binding options:${bad}"
+    return 1
+  }
+}
+
 # Run one engine function inside the initialized engine; stdout = its output.
 drive_engine() {
   env GA_TARGET_HOME="${BATS_TEST_TMPDIR}" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" bash -c '

@@ -29,6 +29,8 @@ readonly QUEUE_TERMINAL_STATUSES=' delivered seen withdrawn '
 # the states a running wait carries forward: open (no answer yet) and answered (claimed by the wait)
 # shellcheck disable=SC2034  # read by the sourcing turn-end hook
 readonly QUEUE_WAIT_RESOLVED_STATUSES=' open answered '
+# the holder kind a listener's lock record ends with ("…|owner start|listen"); a session-run wait's record has none
+readonly QUEUE_LISTENER_KIND=listen
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
 # space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
@@ -223,7 +225,7 @@ queue_get_wait_lock_path() {
 }
 
 # <session id> → this Claude process's view of the session's wait lock: none · live (a running wait of this process) ·
-# stale. Without CLAUDE_PID the owner is the one the lock records → live while that owner and its waiter both still
+# listener (a running listener of this process — no wait) · stale. Without CLAUDE_PID the owner is the one the lock records → live while that owner and its waiter both still
 # run with their recorded starts; a wait of another process under the same session id then counts as running too.
 queue_get_wait_state() {
   local lock owner_pid owner=""
@@ -242,28 +244,32 @@ queue_get_start_time() {
 }
 
 # <lock path> <owner "pid|its start"> [this wait's own record] → none · mine (holds that record) · live (another
-# running wait of that owner) · stale (its waiter is gone, or it names another owner); the one reader of the lock name
+# running wait of that owner) · listener (a running listener of that owner) · stale (its waiter is gone, or it names
+# another owner); the one reader of the lock name
 # - an empty owner → the owner the record names, live while it still runs with its recorded start
 queue_get_wait_lock_state() {
   local held
   held="$(readlink "$1" 2>/dev/null)" || held=""
-  # shellcheck disable=SC2310  # liveness is the last branch
+  # shellcheck disable=SC2310  # a liveness test in a condition, never an errexit
   if [[ -z "${held}" ]]; then
     printf 'none\n'
   elif [[ "${held}" == "${3:-}" ]]; then
     printf 'mine\n'
-  elif queue_is_wait_live "${held}" "$2"; then
-    printf 'live\n'
-  else
+  elif ! queue_is_wait_live "${held}" "$2"; then
     printf 'stale\n'
+  elif [[ "${held}" == *"|${QUEUE_LISTENER_KIND}" ]]; then
+    printf 'listener\n'
+  else
+    printf 'live\n'
   fi
 }
 
 # <held record> <owner "pid|its start", or empty for its own> → 0 while its waiter still runs and it names that owner;
-# the one splitter of the record
+# the one splitter of the record, whose optional fifth field is the holder kind
 queue_is_wait_live() {
-  local waiter_pid waiter_start owner expected="$2" started
-  IFS='|' read -r waiter_pid waiter_start owner <<<"$1"
+  local waiter_pid waiter_start owner_pid owner_start owner expected="$2" started
+  IFS='|' read -r waiter_pid waiter_start owner_pid owner_start _ <<<"$1"
+  owner="${owner_pid}|${owner_start}"
   if [[ -z "${expected}" ]]; then
     [[ "${owner%%|*}" =~ ${QUEUE_PID_SHAPE} ]] || return 1
     expected="${owner%%|*}|$(queue_get_start_time "${owner%%|*}")"

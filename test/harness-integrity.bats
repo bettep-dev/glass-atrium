@@ -204,17 +204,27 @@ run_file_drift() {
   done
 }
 
-# settings.json with the given (event, basename, matcher) Atrium bindings plus one foreign user hook.
+# settings.json with the given (event, basename, matcher) Atrium bindings, each carrying the options the engine
+# declares for it as wire_hooks writes them, plus one foreign user hook.
 write_settings() {
   local -a args=()
-  local row
+  local row options
   for row in "$@"; do args+=("${row}"); done
+  options="$(get_expected_option_rows | jq -R 'split("\t") | {key: (.[0] + "\t" + .[1]), value: (.[2] | fromjson)}' \
+    | jq -s 'from_entries')"
   printf '%s\n' "${args[@]}" | jq -R --arg dir "${FAKE_HOME}/.glass-atrium/hooks/" 'split("\t")' \
-    | jq -s --arg dir "${FAKE_HOME}/.glass-atrium/hooks/" '
+    | jq -s --arg dir "${FAKE_HOME}/.glass-atrium/hooks/" --argjson options "${options}" '
       reduce .[] as $b ({hooks: {}};
-        .hooks[$b[0]] += [{matcher: ($b[2] // ""), hooks: [{type: "command", command: ($dir + $b[1])}]}])
+        .hooks[$b[0]] += [{matcher: ($b[2] // ""),
+          hooks: [{type: "command", command: ($dir + $b[1])} + ($options[$b[0] + "\t" + $b[1]] // {})]}])
       | .hooks.PreToolUse += [{matcher: "Bash", hooks: [{type: "command", command: "/usr/local/bin/my-hook.sh"}]}]' \
       >"${FAKE_HOME}/.claude/settings.json"
+}
+
+# Every declared binding-options row, read from the engine itself.
+get_expected_option_rows() {
+  env GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" GA_DATA_ROOT="${SANDBOX}/data" bash -c 'source "$1/lib/ga-env.sh"
+    ga_init_env "$2"; source "$1/lib/ga-config-hooks.sh"; get_expected_binding_option_rows' _ "${GA}" "${ROOT}"
 }
 
 # Every expected binding, read from the engine itself.

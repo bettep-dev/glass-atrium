@@ -92,6 +92,7 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-session-context.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-security-warnings-state.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-session-spawns.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-listener.sh", "asyncRewake": true, "timeout": 1200 } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-session-register.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-compliance-matrix.sh" } ] }
     ],
@@ -102,6 +103,7 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-preedit-facts.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/cost-tracker.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-typecheck.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-listener.sh", "asyncRewake": true, "timeout": 1200 } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-turn-end-check.sh" } ] }
     ],
     "SubagentStart": [

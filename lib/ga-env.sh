@@ -250,12 +250,14 @@ ga_init_env() {
     "SessionStart	inject-session-context.sh	"
     "SessionStart	prune-security-warnings-state.sh	"
     "SessionStart	prune-session-spawns.sh	"
+    "SessionStart	queue-listener.sh	"
     "SessionStart	queue-session-register.sh	"
     "SessionStart	validate-compliance-matrix.sh	"
     "UserPromptSubmit	inject-reply-language.sh	"
     "Stop	advisory-preedit-facts.sh	"
     "Stop	cost-tracker.sh	"
     "Stop	post-edit-typecheck.sh	"
+    "Stop	queue-listener.sh	"
     "Stop	queue-turn-end-check.sh	"
     "SubagentStart	agent-tracker.sh	"
     "SubagentStart	inject-scope-rules.sh	"
@@ -286,7 +288,12 @@ ga_init_env() {
   # take the options as the matcher. Managed keys = the keys a row declares (asyncRewake, timeout —
   # test/hook-bindings-complete.bats holds the allowlist); every other command key stays the user's own.
   # Read through get_expected_binding_option_rows (lib/ga-config-hooks.sh), never directly.
-  EXPECTED_HOOK_BINDING_OPTIONS=()
+  # queue-listener.sh: the host SIGTERMs an asyncRewake hook at its timeout → 1200 s, the longest measured to let a
+  # wake land, outlasts the listener's own lifetime (scripts/atrium-queue.sh → LISTEN_LIFETIME_S)
+  EXPECTED_HOOK_BINDING_OPTIONS=(
+    "SessionStart	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":1200}"
+    "Stop	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":1200}"
+  )
   readonly EXPECTED_HOOK_BINDING_OPTIONS
 
   # prune named exit codes (loud-fail, distinct from die's generic 1): 2 = no

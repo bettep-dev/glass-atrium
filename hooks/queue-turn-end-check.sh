@@ -187,6 +187,7 @@ set_wait_reason() {
   nudge_key="$(queue_get_pid)"
   nudge_key="${nudge_key:-${NUDGE_NO_PID_KEY}}"
   wait_state="$(queue_get_wait_state "$1")"
+  # a running listener (queue-listener.sh) is no wait: it only announces, and the nudged wait takes its lock over
   [[ "${wait_state}" != live ]] || return 0
   stamp="$(queue_get_awaiting_dir "$1")/.nudged"
   newest="${items%%$'\n'*}"
