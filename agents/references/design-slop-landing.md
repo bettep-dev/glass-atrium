@@ -21,9 +21,9 @@ Applies to heroes and marketing sections.
 | Trope | Decide instead | Passes when |
 |---|---|---|
 | A launch or feature announcement in a rounded chip over the headline | drop it; a genuine announcement gets one plain inline link | the news is supplied by the user and dated |
-| A headline that would fit any product | what this product does and for whom, in its own nouns | with another product's name swapped in, the line no longer fits |
-| A row of three or more buttons, or tags and face stacks crowding the call to action | one main call to action, plus at most one lower-weight alternative | every further action sits in navigation or a later section |
-| Feature cards of an emoji, a bold title and a vague line | fewer features, each with concrete copy | each line says what the feature does; the emoji follows **Font tropes** |
+| Headline copy interchangeable with a competitor's | name the job this product performs, and the user it serves, in the product's own vocabulary | putting a competitor's name into the line makes it false |
+| A cluster of buttons, tags or avatar stacks competing with the call to action | a single primary call to action, with one quieter secondary option at most | other actions live in navigation or further down the page |
+| A feature grid where each card pairs an emoji icon and a bold heading with filler copy | a shorter feature list whose text names concrete capabilities | every card states the capability it describes; any emoji is judged under **Font tropes** |
 
 ## Hero composition and visual
 
