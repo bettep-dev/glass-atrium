@@ -904,7 +904,7 @@ SHIM
   set_reply 200 '{"answeredWaiting":0}'
   local limit wide i sent
   # the monitor's own limit, in code points as its schema and column count → a drift in number or unit fails here
-  limit="$(sed -n 's/^const SESSION_NAME_MAX = \([0-9][0-9]*\);$/\1/p' "${GA}/monitor/src/server/queue/schemas.ts")"
+  limit="$(sed -n 's/^export const SESSION_NAME_MAX = \([0-9][0-9]*\);$/\1/p' "${GA}/monitor/src/server/queue/schemas.ts")"
   [[ "${limit}" =~ ^[0-9]+$ ]] || {
     echo "no SESSION_NAME_MAX in schemas.ts"
     return 1
