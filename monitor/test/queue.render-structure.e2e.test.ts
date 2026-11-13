@@ -1930,6 +1930,41 @@ describe("queue page on the mockup fixtures", () => {
       assert.match(row, /Order · 8 images/);
       assert.deepEqual(images, Array.from({ length: 8 }, (_, index) => `96x96 Open image ${index + 1} of 8: queue-edge-0${index + 1}.webp`));
     });
+
+    // the 220 facts column cannot hold `2 of 3 received` and its `⚠ 1 not received` → the dim text yields, never the warning
+    test("a one-line row keeps every badge of its facts whole, and the last fact text yields first to the column, ending in an ellipsis", async () => {
+      const page = await openEdgePage(harness, VIEWPORTS[2]);
+      const rows = await page.evaluate(() => [...document.querySelectorAll(".queue-row-facts")].map((facts) => {
+        const box = facts.getBoundingClientRect();
+        const badges = [...facts.querySelectorAll(".pill")].map((badge) => ({
+          text: badge.textContent,
+          isWhole: badge.getBoundingClientRect().right <= box.right + 0.5 && badge.scrollWidth <= badge.clientWidth,
+        }));
+        // a fact's laid-out text against the nearest box that clips it, whichever span holds the fact
+        const texts = [...facts.querySelectorAll("span")].filter((span) => span.textContent && !span.closest(".pill, .queue-row-sep, [aria-hidden]") && ![...span.children].some((child) => !child.matches("[aria-hidden]")));
+        const getClip = (span: Element) => {
+          for (let node: Element | null = span; node && node !== facts.parentElement; node = node.parentElement) if (getComputedStyle(node).overflowX === "hidden") return node;
+          return facts;
+        };
+        const getExtent = (span: Element) => {
+          const range = document.createRange();
+          range.selectNodeContents(span);
+          return range.getBoundingClientRect();
+        };
+        const cut = texts.filter((span) => getExtent(span).right > getClip(span).getBoundingClientRect().right + 0.5);
+        const last = texts.at(-1);
+        const isEarlyCut = last !== undefined && getClip(last).getBoundingClientRect().right > getExtent(last).left + 0.5 && cut.some((span) => span !== last);
+        return { text: facts.textContent, badges, isEarlyCut, cutWithoutEllipsis: cut.filter((span) => getComputedStyle(getClip(span)).textOverflow !== "ellipsis").length };
+      }));
+      const height = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
+      await page.close();
+
+      assert.deepEqual(height, [44], "the list is in its one-line form");
+      assert.ok(rows.some((row) => row.badges.some((badge) => badge.text?.includes("not received")) && /received/.test(row.text?.replace(/⚠.*$/, "") ?? "")), "a row carries a count and its warning");
+      assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => !badge.isWhole).map((badge) => `${row.text}: ${badge.text}`)), [], "every badge whole");
+      assert.deepEqual(rows.filter((row) => row.cutWithoutEllipsis > 0).map((row) => row.text), [], "a cut fact text ends in an ellipsis");
+      assert.deepEqual(rows.filter((row) => row.isEarlyCut).map((row) => row.text), [], "an earlier fact text is cut only once the last one has yielded all its room");
+    });
   });
 
   test("each named state is captured at every size §18.4 marks for it as a viewport-sized PNG named for the mockup", async (t) => {

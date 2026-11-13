@@ -1438,7 +1438,7 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, on
 				</span>
 				<span className="queue-row-facts">
 					{view.isNameShown && facts.length > 0 && <span aria-hidden="true" className="queue-row-sep">·</span>}
-					<RowFactsQ facts={facts} />
+					<RowFactsLineQ facts={facts} />
 				</span>
 				<span className="queue-row-age" title={formatKstDateTime(item.askedAt)}>{formatRelativeTime(item.askedAt)}</span>
 			</span>
@@ -1458,6 +1458,17 @@ function ItemSessionNameQ({ session }) {
 		<>
 			{session.name}
 			{session.isNameRegistered === false && <span className="font-normal text-dim">{" start directory"}</span>}
+		</>
+	);
+}
+
+// a row's text facts run as one span, its badges trailing → a narrow column cuts the run from its end, the badges stay whole
+function RowFactsLineQ({ facts }) {
+	const texts = facts.filter((fact) => !fact.badge);
+	return (
+		<>
+			{texts.length > 0 && <span className="queue-row-facts-text"><RowFactsQ facts={texts} /></span>}
+			<RowFactsQ facts={facts.filter((fact) => fact.badge)} />
 		</>
 	);
 }

@@ -945,6 +945,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	white-space: nowrap;
 	overflow: hidden;
 }
+/* facts wider than their room → the dim text yields with an ellipsis, a badge stays whole (spec §9.4) */
+.queue-row-facts-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.queue-row-facts > .pill {
+	flex: none;
+}
 .queue-row-sep {
 	color: rgb(var(--dim));
 }
