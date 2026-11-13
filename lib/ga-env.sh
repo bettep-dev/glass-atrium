@@ -256,6 +256,7 @@ ga_init_env() {
     "Stop	advisory-preedit-facts.sh	"
     "Stop	cost-tracker.sh	"
     "Stop	post-edit-typecheck.sh	"
+    "Stop	queue-turn-end-check.sh	"
     "SubagentStart	agent-tracker.sh	"
     "SubagentStart	inject-scope-rules.sh	"
     "SubagentStart	inject-scope-part-01.sh	"

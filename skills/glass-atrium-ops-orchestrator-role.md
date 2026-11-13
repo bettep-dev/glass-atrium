@@ -607,7 +607,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
 Each step builds on the previous: a claim by `wait` or `pending` → `get <item-id>` → `ack <item-id> <msg-id>` → act.
 
 - The monitor pushes nothing into a running session: an answer or message reaches one only through that session's own `wait` or `pending`.
-  - Honest backing — honor-system: nothing starts a wait for a session; the Queue page shows which sessions wait.
+  - Honest backing: nothing starts a wait for a session; the turn-end check (`hooks/queue-turn-end-check.sh`) keeps a main-session turn from ending once while an item it posted awaits the owner and no wait of its process runs — its `[ATRIUM-QUEUE] harness:` line means start `wait` now as a background command; the Queue page shows which sessions wait.
 - Run `wait` as a background command, spelled like every other CLI call: it ends when a poll claims something for this session, or at its bound.
   - Why a background command: the session keeps working while the wait runs, and takes up its output and exit code when it ends.
   - A claiming `wait` prints the same `get` and `ack` commands `pending` prints.

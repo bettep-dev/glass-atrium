@@ -14,7 +14,7 @@ What each Claude Code lifecycle event can observe, what it can mutate, and which
 |-------|------------------------|-----------------|---------------|-------|
 | PreToolUse | `tool_input` only (via `updatedInput`) | `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `tool_name`, `tool_input`, `agent_id` | channel a for every block here (measured) · stdout `hookSpecificOutput.permissionDecision`, not `decision` (docs-only) | Cannot read the agent's prose/reasoning. Agent calls: `PreToolUse(Agent) measured record`. |
 | PostToolUse | none — observe-only (no `updatedOutput`) | `tool_name`, `tool_response`/output, `tool_input` | channel a, or channel b (stdout `{"decision":"block"}` only) | May only block, or advise via stderr, after the tool ran. |
-| `Stop` / `SubagentStop` | none — observe-only | terminal turn / subagent transcript metadata | none (advisory lifecycle; `exit 2` does not rewind a finished turn) | Post-completion accounting only (`cost-tracker.sh`, `track-outcome.sh`). |
+| `Stop` / `SubagentStop` | none — observe-only | stdin payload (docs-only): the common fields plus `stop_hook_active`, `last_assistant_message`, `background_tasks`, `session_crons`; `SubagentStop` adds `agent_id`, `agent_type`, `agent_transcript_path` | docs-only, unmeasured on the live CLI: channel b at `exit 0`, or `exit 2` + stderr, keeps Claude from stopping and continues the turn with the reason as its input — a continuation, never a rewind | `Stop` fires for the main agent only, never on a user interrupt (an API error fires `StopFailure`). `queue-turn-end-check.sh` is the one blocking `Stop` hook: it reads `stop_hook_active` and its own stamp, because the host's eight-continuation cap resets on every tool call. `cost-tracker.sh`, `advisory-preedit-facts.sh`, `post-edit-typecheck.sh` and `track-outcome.sh` only account or advise, and a continued turn runs them again. Source: `https://code.claude.com/docs/en/hooks` → `### Stop`, `### Stop input`, `### Stop decision control`. |
 | `SessionStart` | injects turn-0 context via stdout (additive, never a mutation) | stdin payload (measured 2.1.319: `cwd`, `hook_event_name`, `session_id`, `source`, `transcript_path`, plus `model` on interactive and `--bg` starts; no `permission_mode`): `queue-session-register.sh` reads `cwd` and `session_id` for the register and `permission_mode` as a display hint only, should a version send it; the other hooks drain it unused · session env `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID` (measured: the session's own process), `CLAUDE_CODE_MESSAGING_SOCKET` (measured: set), `CLAUDE_CONFIG_DIR` | none — an `exit 2` here is an audit signal that rewinds nothing | `inject-session-context.sh` injects; `validate-compliance-matrix.sh` exits 2 on a confirmed matrix or roster mismatch; `queue-session-register.sh` registers the session with the owner queue and adds one count-only pointer line, fail-open, always `exit 0` |
 | `SessionEnd` | none — observe-only | stdin payload (measured 2.1.319: `cwd`, `hook_event_name`, `prompt_id`, `reason`, `session_id`, `transcript_path`): `queue-session-deregister.sh` reads `session_id` · session env `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID` (measured: set, the ending session's own process), `CLAUDE_CODE_MESSAGING_SOCKET` and the messaging token (measured: both unset) | none (docs-only: the session is already ending) | `queue-session-deregister.sh` deregisters the session and removes its token file, fail-open, always `exit 0`. Fires on `-p` exit and `claude stop` (`reason` `other`) and on interactive `/exit` (`reason` `prompt_input_exit`) (measured 2.1.319); other exits (Ctrl-D, a closed terminal, a kill) are unprobed, and a missed run is covered by the monitor's dead-session rule |
 | `SubagentStart` | injects child context via stdout `hookSpecificOutput.additionalContext` (additive) | `agent_type`, `agent_id` | none (cannot block a spawn — context-injection only) | `inject-scope-rules.sh` delivers the marker blocks to its rostered children; fail-open, always `exit 0`. |
@@ -37,13 +37,14 @@ What a PreToolUse hook receives on an `Agent` tool call. Agent calls only: no ot
 
 ## Block Channels (Two Non-Interchangeable Mechanisms)
 
-- Every block this section names pairs its channel with `exit 2`; a stdout decision at `exit 0` is documented, unused by these hooks, and unmeasured.
+- Every block this section names pairs its channel with `exit 2`, except the `Stop` use of channel b at `exit 0`, which is documented and unmeasured.
 - **Non-substitutability**: never swap one channel for the other without re-verifying the registering event's contract.
   - Why: each block shows the model one reason text, and the event plus the JSON content decide which surface supplies it (**What the model sees at `exit 2`**, below).
 - **Channel a — stderr `emit_error` JSON + `exit 2`**: the hook writes a structured JSON error to stderr (`hook-utils.sh` → `hook_emit_error`), then exits 2.
   - Used by `validate-secret-scan.sh`, `block-dangerous-commands.sh`, `enforce-commit-guard.sh`, `enforce-delegation.sh`, `validate-pre-write-raw.sh`, `lint-workflow-template-literal.sh` (plain-text reason), and the no-progress brake of `advisory-subagent-budget.sh` (`NOPROGRESS-001`).
   - A plain-text stderr reason + `exit 2` with silent stdout is the same channel.
-- **Channel b — stdout `{"decision":"block"}` + exit**: the hook prints a JSON object carrying `"decision":"block"` to stdout, then exits, on PostToolUse — no registered hook uses it.
+- **Channel b — stdout `{"decision":"block"}` + exit**: the hook prints a JSON object carrying `"decision":"block"` to stdout, then exits — no registered PostToolUse hook uses it.
+  - On `Stop` the object at `exit 0` keeps Claude from stopping, and its required `reason` tells Claude why it should continue (docs-only: `https://code.claude.com/docs/en/hooks` → `### Stop decision control`); `queue-turn-end-check.sh` uses it.
 - **`"advisory"` is not a channel-b form**: the PostToolUse decision schema rejects it (`"Hook JSON output validation failed"`), so a non-blocking advisory emits a stderr `emit_error` + `exit 0` instead — `validate-output.sh`'s LLM07 path is the worked case.
 - **Discriminator is the stdout `"decision"` JSON, never the exit code**: channel-a hooks carry no stdout `decision` at all, while a channel-b block emits a stdout decision and `exit 2` together.
 - **What the model sees at `exit 2`**: on PreToolUse and PostToolUse, stdout JSON at `exit 2` is parsed, not ignored; which text reaches the model differs per event, per the table below.
@@ -80,11 +81,12 @@ Worked cases, keyed by disposition:
   - `advisory-subagent-budget.sh` is a noop for its tool-use nudges only; its no-progress brake is listed under **exception**.
   - Also noop: the `enforce-verification-gate.sh` and `enforce-workflow-verify-stage.sh` warnings.
   - Also noop: a `track-outcome.sh` parse advisory that only warns and records the block unchanged.
-- **reask**: `robustAgent`'s retry-once-on-null re-spawn in schema-mode workflows · the Failure Recovery Loop retry at the delegation layer.
+- **reask**: `robustAgent`'s retry-once-on-null re-spawn in schema-mode workflows · the Failure Recovery Loop retry at the delegation layer · `queue-turn-end-check.sh`'s one `Stop` continuation naming the queue wait command.
 
 ### Picking a disposition
 
-- **Disposition is event-capability-bound**: an event with no block channel (`Stop`/`SubagentStop`/`SessionStart`/`SessionEnd`/`SubagentStart`) can only `filter`, `fix`, `noop`, or `reask` (via a later spawn) — never `exception`.
+- **Disposition is event-capability-bound**: an event with no block channel (`SessionStart`/`SessionEnd`/`SubagentStart`) can only `filter`, `fix`, `noop`, or `reask` (via a later spawn) — never `exception`.
+  - A `Stop`/`SubagentStop` block continues the turn that just finished, so it is a `reask` of the same model, never an `exception`: nothing it blocks is undone.
   - A SessionStart audit `exit 2` stops nothing, so it is not an `exception`.
   - Naming a disposition grants no capability the registering event lacks.
 
@@ -103,7 +105,8 @@ Worked cases, keyed by disposition:
 - **Mutation discipline**: design no hook that rewrites model-visible data other than PreToolUse `tool_input` — a `PostToolUse` hook cannot rewrite tool output.
 - **Channel discipline**: pick channel a or channel b per the registering event's contract, and document which in the hook header.
   - Never swap them unverified: `## Block Channels` → **Non-substitutability**.
-- **Fail-open default**: a lifecycle hook that cannot block (`SessionStart`, `SessionEnd`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure.
+- **Fail-open default**: a lifecycle hook (`SessionStart`, `SessionEnd`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure.
+  - A `Stop` hook blocks only on a condition it decided, never on an error it hit, and checks `stop_hook_active` so it blocks at most once per turn end.
   - Exception: `~/.glass-atrium/autoagent/` pipeline hooks follow the loud-fail principle (`rules/glass-atrium/shared-self-improve-hygiene.md` → `## Precondition Loud-Fail Principle`).
 - **No secret/PII in hook output**: hook stdout/stderr is session-visible — never echo `.env` contents, tokens, or PII.
 
