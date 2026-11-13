@@ -19,6 +19,8 @@ const CONFINED_SOCKET_PATH = /^(?:\/private)?\/tmp\/cc-socks\/([1-9][0-9]{0,9})\
 export const AWAITING_IDS_LIMIT = 200;
 // Defined here, not in the owner views → registry stays below delivery/owner-views, no import cycle
 export const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
+/** An item awaits its session's answer: a decision, or an item allowing a free-text reply; atrium-queue.bats binds the CLI's post-time marks to it */
+export const AWAITING_WHERE = { OR: [{ kind: "decision" }, { isFreeTextAllowed: true }] } satisfies Prisma.QueueItemWhereInput;
 
 const PERMISSION_HINT_COLUMN: Record<(typeof PERMISSION_HINTS)[number], QueuePermissionHint> = {
   default: "default",
@@ -240,10 +242,9 @@ async function markReplaced(tx: Prisma.TransactionClient, sessionIds: string[], 
   });
 }
 
-// Same rule the CLI marks by at post time: a decision, or an item allowing a free-text reply
 async function findAwaitingItemIds(tx: Prisma.TransactionClient, sessionId: string): Promise<number[]> {
   const rows = await tx.queueItem.findMany({
-    where: { sessionId, status: { notIn: TERMINAL }, OR: [{ kind: "decision" }, { isFreeTextAllowed: true }] },
+    where: { sessionId, status: { notIn: TERMINAL }, ...AWAITING_WHERE },
     orderBy: { id: "desc" },
     take: AWAITING_IDS_LIMIT,
     select: { id: true },

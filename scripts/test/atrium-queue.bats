@@ -984,21 +984,35 @@ mark_awaiting() {
   bash -c 'source "$1/scripts/lib/queue-session.sh" && queue_create_awaiting_item "$2" "$3"' _ "${GA}" "${2:-${SESSION_ID}}" "$1"
 }
 
-@test "a decision or a report allowing a reply leaves its item awaiting, newest first; a no-reply report leaves none" {
+@test "a post leaves its item awaiting exactly when the monitor's register rule lists it, newest first" {
+  local rule
+  # the monitor's rule as JSON: [{ kind: "decision" }, ...] → [{"kind":"decision"}, ...]
+  rule="$(sed -n 's/^export const AWAITING_WHERE = { OR: \(\[.*\]\) } satisfies .*;$/\1/p' \
+    "${GA}/monitor/src/server/queue/registry.ts" | sed -E 's/([A-Za-z]+):/"\1":/g')"
+  jq -e 'type == "array" and length > 0' <<<"${rule}" >/dev/null || {
+    echo "no AWAITING_WHERE in registry.ts: [${rule}]"
+    return 1
+  }
   start_stub
-  local row kind id item
-  local no_reply_report="${REPORT/\"isFreeTextAllowed\":true/\"isFreeTextAllowed\":false}"
-  for row in "decision|9|${DECISION}" "report|17|${REPORT}" "report|18|${no_reply_report}"; do
-    IFS='|' read -r kind id item <<<"${row}"
+  local row kind id flag item expected=""
+  for row in "decision|9|false" "decision|10|true" "report|17|true" "report|18|false"; do
+    IFS='|' read -r kind id flag <<<"${row}"
+    if [[ "${kind}" == decision ]]; then item="${DECISION}"; else item="${REPORT}"; fi
+    item="$(jq -c --argjson flag "${flag}" '.isFreeTextAllowed = $flag' <<<"${item}")"
     set_reply 201 "{\"id\":${id}}"
     run_cli "${kind}" - <<<"${item}"
     [[ "${status}" -eq 0 ]] || {
-      echo "row ${kind}/${id}: status=${status} ${output}${stderr}"
+      echo "row ${kind}/${flag}: status=${status} ${output}${stderr}"
       return 1
     }
+    if jq -e --argjson rule "${rule}" --arg kind "${kind}" --argjson flag "${flag}" \
+      '{kind: $kind, isFreeTextAllowed: $flag} as $item | any($rule[]; to_entries | all(.value == $item[.key]))' \
+      <<<'null' >/dev/null; then
+      expected="${id}${expected:+$'\n'}${expected}"
+    fi
   done
-  [[ "$(awaiting_items)" == $'17\n9' ]] || {
-    echo "awaiting: [$(awaiting_items)]"
+  [[ "$(awaiting_items)" == "${expected}" ]] || {
+    echo "awaiting: [$(awaiting_items)] · monitor rule ${rule} lists: [${expected}]"
     return 1
   }
 }
