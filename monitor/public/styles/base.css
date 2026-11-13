@@ -783,7 +783,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--dim));
 }
 /* the image viewer: one picture at its natural size, fitted to the window on the page ground over one foot bar; no zoom, no download */
-.detail-fullscreen .queue-viewer {
+/* `.detail-panel` in the selector → outranks `.detail-fullscreen .detail-panel { max-width: 980px }`, which comes later on the same element */
+.detail-fullscreen .detail-panel.queue-viewer {
 	max-width: none;
 	background: rgb(var(--surface));
 }

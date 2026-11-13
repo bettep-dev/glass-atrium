@@ -831,7 +831,7 @@ describe("queue page on the mockup fixtures", () => {
     }
   });
 
-  test("an order's images are 96 squares in its bubble, an added one is a 56 thumbnail in a 104 box, and the viewer fits one in the window and steps", async () => {
+  test("an order's images are 96 squares in its bubble, an added one is a 56 thumbnail in a 104 box, and the viewer spans the window, fits one in it and steps", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await page.locator(".queue-sessions").getByRole("button", { name: "New order", exact: true }).click();
@@ -851,8 +851,13 @@ describe("queue page on the mockup fixtures", () => {
     await page.locator(".queue-bubble-image").first().click();
     await page.locator(".queue-viewer img").waitFor();
     const fit = await page.evaluate(() => {
+      const panel = (document.querySelector(".queue-viewer") as HTMLElement).getBoundingClientRect();
       const img = (document.querySelector(".queue-viewer img") as HTMLElement).getBoundingClientRect();
-      return img.top >= 0 && img.left >= 0 && img.bottom <= window.innerHeight && img.right <= window.innerWidth;
+      return {
+        panel: [Math.round(panel.left), Math.round(panel.width)],
+        window: [0, window.innerWidth],
+        isImageInside: img.top >= 0 && img.left >= 0 && img.bottom <= window.innerHeight && img.right <= window.innerWidth,
+      };
     });
     await page.keyboard.press("ArrowRight");
     const stepped = await page.locator(".queue-viewer-name").textContent();
@@ -863,7 +868,8 @@ describe("queue page on the mockup fixtures", () => {
     assert.ok(bubble.length > 0 && bubble.every(([width, height, isLoaded]) => width === 96 && height === 96 && isLoaded), JSON.stringify(bubble));
     assert.deepEqual({ thumb: composer.thumb, box: composer.box }, { thumb: [56, 56], box: 104 });
     assert.match(composer.count ?? "", /^1 image · \d+ KB$/);
-    assert.equal(fit, true);
+    assert.deepEqual(fit.panel, fit.window, "the viewer panel spans the window width");
+    assert.equal(fit.isImageInside, true);
     assert.match(stepped ?? "", / · 2 of \d+$/);
     assert.deepEqual({ isViewerOpen: after.isViewerOpen, isModeOpen: after.isModeOpen }, { isViewerOpen: false, isModeOpen: true });
     assert.match(after.focus ?? "", /^Open image 1 of \d+: /);
