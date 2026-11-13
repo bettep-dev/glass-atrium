@@ -266,7 +266,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The section's `"again once"` restart row reads `once` as one restart, then stop: `print_usage` states no second failure.
 - `### Envelopes and authority` is a split point holding `### Answers and messages` under the 3 KB H3 cap: cite `## Owner Queue`, never the split.
 - `## Owner Queue Listener` is a split point holding `## Owner Queue` under the 8 KB H2 cap; the action on a wake stays single-sited in the wait table's `[ATRIUM-QUEUE]` row.
-  - The core's trigger line names `## Owner Queue` alone: a session reaches the split through the pointer in `### Answers and messages`.
+  - The core's trigger line names `## Owner Queue` alone: a session reaches the split through the pointer on the wait table's `[ATRIUM-QUEUE]` row, where a woken session looks.
   - The section names the listener's lifetime, never quotes it: its value lives in `scripts/atrium-queue.sh` → `LISTEN_LIFETIME_S`.
   - The section's `twice` mirrors `scripts/atrium-queue.sh` → `LISTEN_ANNOUNCE_MAX`, canonical there: change the two together.
 - The posting table defines a background job session by how it started, never by `CLAUDE_JOB_DIR`.
@@ -285,7 +285,6 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the `[QUEUE-VERDICT]` literal: the section's verdict bullet, and the core's trigger line.
 - What the section's honest-backing lines rest on:
   - the waiting mark: `monitor/src/server/queue/delivery.ts` → `isSessionWaiting`, refreshed by `claimPendingItems` on a wait poll and by `getPendingCount` on a listener's count read · `monitor/public/src/screens/queue.jsx` → `SessionStateQ` · `PullLineQ`;
-  - the check beside a listener: `hooks/queue-turn-end-check.sh` → `set_wait_reason`, which stays silent only on the lock state `live`;
   - envelopes in a resume prompt only: `monitor/src/server/queue/sweep.ts`, the one caller of `buildResumePayload`;
   - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
   - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`;
@@ -298,11 +297,12 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - What the section's lines rest on:
   - where a listener starts: `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS` (its `SessionStart` and `Stop` rows) · `EXPECTED_HOOK_BINDING_OPTIONS` (`asyncRewake` and the binding timeout, which outlasts the listener's lifetime);
     - the updater writes both into a profile's settings; a session reads its hook config once, at its start;
-  - the run condition: `hooks/queue-listener.sh` → `is_listenable_session` · `main` (its `agent_id` filter);
+  - the run condition: the posting-table qualifier above, which cites it · `hooks/queue-listener.sh` → `main` (its `agent_id` filter);
   - the count read that claims nothing: `scripts/atrium-queue.sh` → `set_listen_count` · `monitor/src/server/queue/delivery.ts` → `getPendingCount`;
   - the wake line: `scripts/atrium-queue.sh` → `print_wake`;
   - the takeover in both directions: `scripts/atrium-queue.sh` → `take_wait_lock` · `check_wait_owner` · `scripts/lib/queue-session.sh` → `queue_get_wait_lock_state` (its `listener` state);
-  - the announce cap and what leaves it unreset: `scripts/atrium-queue.sh` → `announce_if_due` · `get_announce_count`; the record goes only with its awaiting set: `scripts/lib/queue-session.sh` → `queue_delete_awaiting_set` · `queue_delete_stale_awaiting`;
+  - the announce cap and its restart: `scripts/atrium-queue.sh` → `announce_if_due` · `get_announce_count` · `drop_announce_record`, called on a claim by `pull_pending` · `poll_wait` and on a count read back at zero by `run_listen_loop`; the record also goes with its awaiting set: `scripts/lib/queue-session.sh` → `queue_delete_awaiting_set` · `queue_delete_stale_awaiting`;
+  - the check beside a listener (`a listener is no wait`): `hooks/queue-turn-end-check.sh` → `set_wait_reason`, which stays silent only on the lock state `live`;
   - the ends without a wake: `scripts/atrium-queue.sh` → `run_listen_loop` · `end_run` · `stop_listening`;
   - the wrapper, the folded wake and the unmeasured host behaviour: `scoped/shared-hook-capability-contract.md` → "`asyncRewake` command hooks — measured record";
   - `stop_hook_active` on a wake-started turn's `Stop`: no reading in that file's `Stop` row; `hooks/queue-turn-end-check.sh` → `main` exits on it.
