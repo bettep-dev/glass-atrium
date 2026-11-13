@@ -113,6 +113,8 @@ const DESK_STATES: QueueState[] = [
   { nn: "27a", name: "stress-desk", getFixture: getEdgeFixture, setUp: (page) => waitForAllOrders(page) },
   { nn: "27b", name: "stress-long-title", getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.longTitle) },
   { nn: "27c", name: "stress-nine-options", getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.nineOptions) },
+  { nn: "27d", name: "stress-seven-sessions", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "7 sessions · 5 received · 1 not yet") },
+  { nn: "27e", name: "stress-long-order", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "Show all 31 lines") },
   { nn: "28a", name: "wide-list", viewports: [WIDE_WINDOW] },
   { nn: "28b", name: "wide-report", viewports: [WIDE_WINDOW], setUp: (page) => selectRow(page, 101) },
 ];
@@ -238,6 +240,7 @@ const LOOK_STATES: QueueState[] = [
     nn: "23", name: "light-05",
     setUp: async (page) => {
       await tickOrdersTo(page, ORDER_TO);
+      await selectRow(page, 103);
       await setLightTheme(page);
     },
   },
@@ -267,8 +270,9 @@ const LOOK_STATES: QueueState[] = [
   {
     nn: "25b", name: "focus-row",
     setUp: async (page) => {
-      await page.locator(".queue-row").first().click();
+      await focusByKeyboard(page, page.locator(".queue-row").first());
       await page.keyboard.press("j");
+      await page.locator(".queue-row:focus-visible").waitFor();
     },
   },
   {
@@ -289,28 +293,11 @@ const NEXT_ITEM = ".queue-sheet-head [aria-label='Next item']";
 const BUTTON_STATES: CloseUpState[] = [
   { nn: "29", name: "buttons-rest-head", closeUp: SHEET_HEAD, setUp: (page) => selectRow(page, 103) },
   { nn: "29", name: "buttons-rest-foot", closeUp: SHEET_FOOT, setUp: (page) => selectRow(page, 103) },
-  {
-    nn: "29", name: "buttons-hover", closeUp: SHEET_HEAD,
-    setUp: async (page) => {
-      await selectRow(page, 103);
-      await page.locator(NEXT_ITEM).hover();
-    },
-  },
-  {
-    nn: "29", name: "buttons-held", closeUp: SHEET_HEAD,
-    setUp: async (page) => {
-      await selectRow(page, 103);
-      await page.locator(NEXT_ITEM).hover();
-      await page.mouse.down();
-    },
-  },
-  {
-    nn: "29", name: "buttons-focus", closeUp: SHEET_HEAD,
-    setUp: async (page) => {
-      await selectRow(page, 103);
-      await page.locator(NEXT_ITEM).focus();
-    },
-  },
+  ...[
+    { rank: "quiet", closeUp: SHEET_HEAD, target: NEXT_ITEM },
+    { rank: "secondary", closeUp: SHEET_HEAD, target: ".queue-sheet-head [aria-label='Back to the list']" },
+    { rank: "primary", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.primary` },
+  ].flatMap(getRankCloseUps),
   {
     nn: "29", name: "buttons-rest-head-light", closeUp: SHEET_HEAD,
     setUp: async (page) => {
@@ -326,6 +313,25 @@ const BUTTON_STATES: CloseUpState[] = [
     },
   },
 ];
+
+// spec §18.4 29: one rank's button hovered, held and focused (by keyboard → its ring paints) on the open decision 103
+function getRankCloseUps({ rank, closeUp, target }: { rank: string; closeUp: string; target: string }): CloseUpState[] {
+  const steps: Array<[string, (page: Page) => Promise<void>]> = [
+    ["hover", (page) => page.locator(target).hover()],
+    ["held", async (page) => {
+      await page.locator(target).hover();
+      await page.mouse.down();
+    }],
+    ["focus", (page) => focusByKeyboard(page, page.locator(target))],
+  ];
+  return steps.map(([look, act]) => ({
+    nn: "29", name: `buttons-${look}-${rank}`, closeUp,
+    setUp: async (page) => {
+      await selectRow(page, 103);
+      await act(page);
+    },
+  }));
+}
 
 // spec §18.4 29's other close-ups, each in both themes
 const PARTS: CloseUpState[] = [
@@ -379,6 +385,8 @@ interface Harness {
   refusals: Map<WriteRoute, Refusal>;
   /** Set → the item list read waits on it, so the page's first-load placeholders hold. */
   heldRead: Promise<void> | null;
+  /** Set → the session and order reads wait on it too, so the desk's first load holds all three placeholders. */
+  heldDesk: Promise<void> | null;
   /** True → the item list read answers the server's outage, so the page's check fails. */
   isListDown: boolean;
   /** Set → the first page of the item list offers this cursor, so the list foot shows Show more. */
@@ -389,7 +397,7 @@ interface Harness {
 async function openHarness(): Promise<Harness> {
   const app = Fastify({ logger: false });
   const harness: Harness = {
-    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, isListDown: false, moreCursor: null, uploads: 0,
+    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, isListDown: false, moreCursor: null, uploads: 0,
   };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
@@ -420,9 +428,15 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     const item = harness.fixture.items.find((candidate) => String(candidate.id) === request.params.id);
     return item ?? reply.code(404).send({ error: "unknown_item" });
   });
-  app.get("/api/queue/owner/sessions", async () => ({ sessions: harness.fixture.sessions, hasMore: false }));
+  app.get("/api/queue/owner/sessions", async () => {
+    await harness.heldDesk;
+    return { sessions: harness.fixture.sessions, hasMore: false };
+  });
   app.get("/api/queue/owner/resumes", async () => ({ resumes: harness.fixture.resumes }));
-  app.get("/api/queue/owner/orders", async (request) => getOrderPage(harness.fixture.orders, ownerOrdersQuerySchema.parse(request.query)));
+  app.get("/api/queue/owner/orders", async (request) => {
+    await harness.heldDesk;
+    return getOrderPage(harness.fixture.orders, ownerOrdersQuerySchema.parse(request.query));
+  });
   app.get<{ Params: { id: string } }>("/api/queue/owner/images/:id", async (request, reply) => {
     const image = FIXTURE_IMAGES.get(request.params.id) ?? EDGE_FIXTURE_IMAGES.get(request.params.id);
     if (image === undefined) return reply.code(404).send({ error: "unknown_image" });
@@ -798,6 +812,13 @@ async function openEdgePage(harness: Harness, viewport: { width: number; height:
 }
 
 // no tick → every order in the thread, its images decoded
+// an entry of the thread brought into view by a text it shows
+async function showThreadText(page: Page, text: string): Promise<void> {
+  const shown = page.locator(".queue-thread").getByText(text);
+  await shown.waitFor();
+  await shown.scrollIntoViewIfNeeded();
+}
+
 async function waitForAllOrders(page: Page): Promise<void> {
   await page.locator(".queue-order").first().waitFor();
   await waitForImages(page);
@@ -848,20 +869,24 @@ async function captureCloseUp(harness: Harness, dir: string, state: CloseUpState
   }
 }
 
-// the item read held open → the page's placeholders, captured once the screen has drawn them
+// the item, session and order reads held open → the three cards' placeholders (spec §10, desk first load), captured once drawn
 async function captureFirstLoad(harness: Harness, dir: string, viewport: Viewport, state: QueueState): Promise<void> {
   let release = () => {};
-  harness.heldRead = new Promise((resolve) => { release = resolve; });
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  harness.heldRead = held;
+  harness.heldDesk = held;
   const page = await harness.browser.newPage({ viewport });
   try {
     await page.clock.setFixedTime(FIXTURE_NOW);
     await page.goto(`${harness.url}/#queue`, { waitUntil: "load" });
     await page.locator(".queue-screen").waitFor({ timeout: READY_TIMEOUT_MS });
+    for (const text of ["Loading sessions…", "Loading the queue…", "Loading orders…"]) await page.getByText(text).waitFor({ timeout: READY_TIMEOUT_MS });
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.screenshot({ path: join(dir, getShotName(viewport, state)) });
   } finally {
     release();
     harness.heldRead = null;
+    harness.heldDesk = null;
     await page.close();
   }
 }
