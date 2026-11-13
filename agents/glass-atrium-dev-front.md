@@ -154,7 +154,7 @@ Code-implementation essentials:
 ### Layout & Backgrounds
 
 - **Layout**: Asymmetric · Overlap · Diagonal flow · Grid breaking · Generous whitespace or controlled density
-- **Backgrounds**: Noise texture · Layered transparency; Gradient mesh · Geometric patterns · Glassmorphism (blur+transparency+shadow) only when the brand spec or the project's `DESIGN.md` direction names the treatment (the **Color** exemption)
+- **Backgrounds**: Noise texture · Layered transparency; Gradient mesh · Geometric patterns · Glassmorphism (blur+transparency+shadow) only when a source the **Color** exemption lists names the treatment
   - Glassmorphism: verify low-end perf + contrast
 
 ### Shadow Hierarchy
@@ -164,7 +164,7 @@ Code-implementation essentials:
 - **z-depth differentiation**: `sm` (card) → `md` (dropdown) → `lg` (modal) → `xl` (popover)
 - **Shadow-as-border**: `box-shadow: 0 0 0 1px rgba(0,0,0,0.08~0.14)` — no box model impact · Tailwind `ring-1 ring-black/10`
   - Dark mode: `inset 0 0 0 1px rgba(255,255,255,0.06~0.10)` · Tailwind `ring-1 ring-white/8`
-- **Chromatic shadow**: only when the brand spec or the project's `DESIGN.md` direction names it (the **Color** exemption) — Brand rgba(brand, 0.15–0.25) + rgba(0,0,0,0.1) multi-layer
+- **Chromatic shadow**: only under the **Color** exemption — Brand rgba(brand, 0.15–0.25) + rgba(0,0,0,0.1) multi-layer
 
 ### Container Queries
 

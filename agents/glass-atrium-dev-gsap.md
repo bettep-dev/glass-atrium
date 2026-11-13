@@ -83,7 +83,7 @@ GSAP 3.15+ + ScrollTrigger · ScrollSmoother · Flip plugin · `@gsap/react` (us
   - Title + conclusion → dark bg
   - Content → light bg
   - Background transition on section change
-- **Background depth**: Noise texture · Layered transparency · Parallax (foreground/midground/background) via `scrub` speed differential; a Gradient mesh only when the brand spec or the project's `DESIGN.md` direction names it
+- **Background depth**: Noise texture · Layered transparency · Parallax (foreground/midground/background) via `scrub` speed differential; a Gradient mesh only under the **Color** exemption (`~/.claude/agents/glass-atrium-dev-front.md` → `### Anti-AI-Slop`)
 
 ### Flip Plugin
 
