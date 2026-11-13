@@ -8,7 +8,7 @@ triggers:
   - anti-slop scan
 ---
 
-<!-- Pattern categories adapt nexu-io/open-design `apps/daemon/src/prompts/official-system.ts` (Apache 2.0) entries plus community patterns. -->
+<!-- Pattern categories adapt nexu-io/open-design `apps/daemon/src/prompts/official-system.ts` (Apache 2.0) entries plus community patterns. The gradient/glow, eyebrow-label, sparkle/badge and off-ladder-spacing rows and detector lines, and the audit-driven-fix rule, adapt ideas from "unslop" by Damir Sokolovsky (@heydamir) — https://github.com/heydamir/unslop · https://heydamir.design/unslop — CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); reworded and restructured. -->
 
 # Anti-Slop
 
@@ -31,7 +31,8 @@ triggers:
 - Purple+white gradient (over-used "AI brand" cliche)
 - Achromatic + single fluorescent accent (one-trick palette)
 - Pure white `#fff` text on dark mode (use `#E5E5E5` floor)
-- Aggressive gradient backgrounds
+- Hue-to-hue surface gradients, gradient text, colored glow/shadow, blurred color washes behind content, neon borders — on UI screens; canvas artwork follows its philosophy
+  - Not the trope: a tone shift inside one hue · a gradient or glow the brand spec or the selected direction's posture names
 
 ### Font
 - Inter / Roboto / Arial / Fraunces / generic system fonts as a default primary — a brand spec or a selected 5-Direction stack naming one is not the trope
@@ -43,6 +44,7 @@ triggers:
 - Rounded box with left-border accent (cliche callout card) — the same stripe on a selected table row too
 - Vibe-Coding pattern: centered everything + excessive whitespace + identical padding
 - 3+ consecutive sections of same type (card / list / chart)
+- Off-ladder spacing values
 
 ### Content
 - Stat-slop: invented metrics ("99% faster" / "10,000+ users") without source
@@ -64,8 +66,9 @@ triggers:
 - Off-white page background chosen as a default — a background taken from the brand palette or the selected direction's `--bg` is not the trope
 - Italic accent words inside headlines
 - Numbered "01 / 02 / 03" section labels
-- Monospace labels as the default label treatment — a selected direction whose posture names mono (editorial-monocle metadata, tech-utility code/IDs) is not the trope
+- Monospace or letter-spaced uppercase (eyebrow) labels as the default label treatment — a selected direction whose posture names the treatment (editorial-monocle metadata and kicker, tech-utility code/IDs) is not the trope
 - Pill-shaped buttons — status pills and full-pill avatars/tags are not buttons; admin-console status pills also stay out of table cells
+- A decorative sparkle icon, and `PRO` / `New` / `Beta` badges used as decoration — a sparkle marking AI-generated content and a badge carrying a real state are not the trope
 
 ### Admin-console (data screens)
 
@@ -79,19 +82,23 @@ Mirror of the SoT's `#### Admin-console tropes (data screens)` — scope, except
 - Layout and navigation: big-number KPI card row + big chart · record detail or edit in a modal · intro sentence restating the title · an icon on every menu item and tab · everything centered
 - Dialogs, toasts and copy: toasts for everything or long · generic error copy · `OK / Submit / Yes` buttons · leftover dev or filler copy · marketing voice and round numbers
 - Type and density: type shrunk for density
-- Motion and data visualization: entrance motion on everything · `transition: all` · reduced motion ignored · a chart where one number would do · decorative sparkline · false precision
+- Motion and data visualization: entrance motion on everything · `transition: all` · reduced motion ignored · a chart where one number would do · decorative sparkline · false precision · rainbow or all-accent chart series
 - Color, type and decoration: gradients, glow, glass, blur · one accent everywhere · permanent dark + neon · default fonts, italic accents, eyebrow labels · emoji, sparkles, boxed icons · blinking badges and dots · happy path only
 
 ## Detection Guidance
 
-Run each pattern with the Grep tool (ripgrep syntax — a bare `|` is alternation; case-insensitive where marked), then read every hit in context before banding it.
+Run each pattern with the Grep tool (ripgrep syntax — a bare `|` is alternation; case-insensitive where marked) on every screen type, with glob `*.{css,scss,html,tsx,jsx,vue}`, then read every hit in context before banding it.
 
 ~~~text
-Color    (case-insensitive)  (beige|cream|peach|#fff[^a-f0-9]|gradient)   glob: *.{css,html}
-Font     (case-insensitive)  Inter|Roboto|Arial|Fraunces                   glob: *.{css,html}
-Layout   (case-insensitive)  rounded-lg|grid-cols-3|text-center            glob: *.html   (+ visual scan)
-Effects  (case-insensitive)  backdrop-blur|backdrop-filter|drop-shadow     glob: *.css
-Emoji                        [\x{1F300}-\x{1FAFF}]                         glob: *.{md,html}
+Color         (case-insensitive)  (beige|cream|peach|#fff[^a-f0-9])
+Flat surface  (case-insensitive)  gradient|background-clip:\s*text|bg-clip-text|box-shadow:[^;]*0 0 \d+px    read: a tone shift inside one hue passes
+Font          (case-insensitive)  Inter|Roboto|Arial|Fraunces
+Layout        (case-insensitive)  rounded-lg|grid-cols-3|text-center            (+ visual scan)
+Effects       (case-insensitive)  backdrop-blur|backdrop-filter|drop-shadow
+Emoji                             [\x{1F300}-\x{1FAFF}]                         glob: also *.md
+Label         (case-insensitive)  uppercase                                     read: paired with tracking- or letter-spacing as the default label treatment
+Decoration                        Sparkles|\x{2728}|>\s*(PRO|New|Beta)\s*<      read: a sparkle marking AI-generated content and a badge carrying a real state pass
+Spacing                           \b((m|p)[trblxyse]?|gap(-[xy])?|space-[xy])-\[\d+(\.\d+)?(px|rem)\]    read: a value on the project's ladder or a documented optical adjustment passes
 ~~~
 
 - Content: read the body — flag round-number metrics without citation and lorem-ipsum markers.
@@ -165,6 +172,18 @@ Admin-console banding — band names from the table above, cases from the SoT bu
 - The more specific row wins: a brand-sourced purple or indigo spread too wide is Brand-conflict, not Minor.
 - A Not-signals case is never reported; a Limit line is a source caveat and moves no band.
 
+Banding outside admin consoles — band names from the first table:
+
+| Band | Cases outside admin consoles |
+|---|---|
+| AI-signature | a canonical signature with no brand or posture source (e.g. hue-to-hue gradient, gradient text, colored glow) |
+| Brand-conflict | a pattern the stated brand or philosophy rules out · a brand-sourced purple or indigo spread too wide |
+| Minor | an off-ladder spacing hit · a copy-wording hit that is not a Content trope · a hit its context justifies |
+
+- The more specific row wins here too: a brand-sourced purple or indigo spread too wide is Brand-conflict at most, never AI-signature.
+- A treatment the brand spec or the selected direction's posture names (a gradient, a glow, an eyebrow label) is never reported; a brand hue alone names no treatment.
+- Dense spacing or copy-wording hits on one screen band Brand-conflict; a spacing hit alone never bands AI-signature.
+
 ## Output Format
 
 Return inline in the response, in this shape:
@@ -184,9 +203,15 @@ Return inline in the response, in this shape:
 
 - Hint stays at policy / defense-layer (e.g., "Replace generic font with brand-system primary"). No code, no specific API names, no concrete hex values.
 - Never redefine or add a pattern here: surface a newly observed one as `[NEW PATTERN candidate]` for glass-atrium-design-designer review.
+- **Audit-driven fixes** — a fix made because of this audit; a redesign the user asks for is outside this rule:
+  - A PASS artifact is not restyled.
+  - An ITERATE fix changes the banded hits only: features, content, section order and every palette, type or layout choice no hit names stay.
+  - A removed decoration is not replaced by another.
+  - A structure hit (e.g. Vibe-Coding layout) licenses changing that structure only.
 
 ## Cross-References
 
 - `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — pattern SoT; additions land there
+- `~/.claude/agents/references/design-slop-landing.md` — SoT extension for landing pages, heroes, marketing sections and brand marks; Read it before auditing one. Its rows are read checks: no pattern line above reaches them
 - `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — complementary visual rubric for HTML primary
 - `glass-atrium-design-contrast-check` — mechanical WCAG verification (paired use)
