@@ -27,10 +27,10 @@ lib="${self%/*}/../scripts/lib/queue-session.sh"
 source "${lib}" 2>/dev/null || exit 0
 
 main() {
-  local payload="" fields is_subagent is_continued payload_session session_id items pid wait_state item stamp
-  if [[ ! -t 0 ]]; then payload="$(head -c 65536 2>/dev/null)" || payload=""; fi
+  local fields="" is_subagent is_continued payload_session session_id items pid wait_state item stamp
+  # the whole payload, uncapped → a long last_assistant_message never cuts the JSON short
   # shellcheck disable=SC2310  # no fields → the malformed-payload branch below
-  fields="$(get_payload_fields "${payload}")" || fields=""
+  if [[ ! -t 0 ]]; then fields="$(get_payload_fields)" || fields=""; fi
   if [[ -z "${fields}" ]]; then
     warn "the Stop payload is not a JSON object"
     exit 0
@@ -58,12 +58,12 @@ main() {
   print_continuation
 }
 
-# <payload> → "<has agent_id>␟<stop_hook_active>␟<session_id>"; nothing for anything but a JSON object
+# stdin payload → "<has agent_id>␟<stop_hook_active>␟<session_id>"; nothing for anything but a JSON object
 get_payload_fields() {
   jq -r 'if type == "object" then
       [(has("agent_id") | tostring), (.stop_hook_active == true | tostring), (.session_id | strings // "")]
       | join("\u001f")
-    else empty end' <<<"$1" 2>/dev/null
+    else empty end' 2>/dev/null
 }
 
 warn() {

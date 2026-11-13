@@ -165,6 +165,22 @@ assert_silent_turn_end() {
   done
 }
 
+@test "a Stop payload whose final message runs past 64 KiB is read whole and still keeps the turn going" {
+  start_stub
+  mark_items 41
+  local message payload
+  # about 25k Korean characters → 75 KB of UTF-8 in last_assistant_message alone
+  message="$(printf '%25000s' '' | sed 's/ /결/g')"
+  payload="$(jq -nc --arg id "${SESSION_ID}" --arg message "${message}" '{hook_event_name: "Stop",
+    last_assistant_message: $message, background_tasks: [], session_id: $id, stop_hook_active: false}')"
+  ((${#payload} > 25000)) || {
+    echo "payload is only ${#payload} characters"
+    return 1
+  }
+  run_hook "${payload}"
+  assert_continuation "75 KB payload"
+}
+
 @test "with no awaiting mark the turn ends silently and the monitor is never asked" {
   start_stub
   run_hook
