@@ -225,8 +225,9 @@ queue_get_wait_lock_path() {
 }
 
 # <session id> → this Claude process's view of the session's wait lock: none · live (a running wait of this process) ·
-# listener (a running listener of this process — no wait) · stale. Without CLAUDE_PID the owner is the one the lock records → live while that owner and its waiter both still
-# run with their recorded starts; a wait of another process under the same session id then counts as running too.
+# listener (a running listener of this process — no wait) · stale. Without CLAUDE_PID the owner is the one the lock
+# records → live while that owner and its waiter both still run with their recorded starts; a wait of another process
+# under the same session id then counts as running too.
 queue_get_wait_state() {
   local lock owner_pid owner=""
   lock="$(queue_get_wait_lock_path "$1")"

@@ -199,6 +199,16 @@ expected_wake() {
   }
 }
 
+@test "a zero poll seam falls back to the default poll interval, as the wait's does, instead of polling back to back" {
+  start_stub
+  export ATRIUM_QUEUE_WAIT_POLL_S=0 ATRIUM_QUEUE_LISTEN_LIFETIME_S=2
+  run_hook
+  [[ "${status}" -eq 0 && -z "${stderr}" && "$(request_count)" -eq 1 ]] || {
+    echo "status=${status} err=${stderr} requests=$(request_count)"
+    return 1
+  }
+}
+
 @test "a TERM ends the listener and its child at once with exit 0, no wake and its lock released" {
   start_stub
   export ATRIUM_QUEUE_WAIT_POLL_S=60

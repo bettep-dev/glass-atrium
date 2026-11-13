@@ -37,6 +37,9 @@ readonly WAIT_MINUTES_MAX=240
 readonly WAIT_MINUTES_SHAPE='^[1-9][0-9]{0,2}$'
 # 50 ms apart → a wait gives up on the waits mutex after 10 s
 readonly WAIT_MUTEX_TRIES=200
+# test seam shapes (get_seam_s): a whole positive number of seconds, or one that may be 0
+readonly SEAM_POSITIVE_SHAPE='^[1-9][0-9]*$'
+readonly SEAM_WHOLE_SHAPE='^[0-9]+$'
 # ponytail: inside the longest measured asyncRewake lifetime (666 s, binding timeout 1200 in lib/ga-env.sh) → raise both
 # together once a longer one is measured
 readonly LISTEN_LIFETIME_S=600
@@ -438,11 +441,7 @@ get_wait_bound_s() {
     fi
     minutes="$2"
   fi
-  if [[ "${ATRIUM_QUEUE_WAIT_BOUND_S:-}" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s\n' "${ATRIUM_QUEUE_WAIT_BOUND_S}"
-  else
-    printf '%s\n' "$((minutes * 60))"
-  fi
+  get_seam_s "${ATRIUM_QUEUE_WAIT_BOUND_S:-}" "$((minutes * 60))" "${SEAM_POSITIVE_SHAPE}"
 }
 
 # The lock is a symlink whose target is the holder record "waiter pid|its start|owner pid|its start", plus "|listen" for
@@ -505,10 +504,11 @@ drop_waits_mutex() {
   exec 9>&-
 }
 
-# <body> <bound s> <owner pid> <owner start> → never returns; failures back off up to WAIT_BACKOFF_MAX_S
+# <body> <bound s> <owner pid> <owner start> → never returns; failures back off up to WAIT_BACKOFF_MAX_S;
+# ATRIUM_QUEUE_WAIT_POLL_S, a test seam, overrides the poll
 run_wait_loop() {
-  local body="$1" deadline=$((SECONDS + $2)) poll_s="${WAIT_POLL_S}" delay outcome
-  if [[ "${ATRIUM_QUEUE_WAIT_POLL_S:-}" =~ ^[1-9][0-9]*$ ]]; then poll_s="${ATRIUM_QUEUE_WAIT_POLL_S}"; fi
+  local body="$1" deadline=$((SECONDS + $2)) poll_s delay outcome
+  poll_s="$(get_seam_s "${ATRIUM_QUEUE_WAIT_POLL_S:-}" "${WAIT_POLL_S}" "${SEAM_POSITIVE_SHAPE}")"
   delay="${poll_s}"
   while true; do
     check_wait_owner "$3" "$4"
@@ -564,7 +564,7 @@ end_wait_at_bound() {
 listen_for_answers() {
   local session_id body
   is_listening=true
-  trap 'if ((BASH_SUBSHELL > 0)); then exit 1; fi; exit 0' ERR
+  trap 'end_run 1' ERR
   (($# == 0)) || fail 64 "listen takes no argument"
   session_id="$(require_session_id)"
   set_wait_holder "${session_id}" "${QUEUE_LISTENER_KIND}"
@@ -580,9 +580,9 @@ listen_for_answers() {
 # ATRIUM_QUEUE_LISTEN_LIFETIME_S and ATRIUM_QUEUE_LISTEN_GRACE_S, test seams, override the three
 run_listen_loop() {
   local started="${SECONDS}" poll_s lifetime_s grace_s
-  poll_s="$(get_seam_s "${ATRIUM_QUEUE_WAIT_POLL_S:-}" "${WAIT_POLL_S}")"
-  lifetime_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_LIFETIME_S:-}" "${LISTEN_LIFETIME_S}")"
-  grace_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_GRACE_S:-}" "${LISTEN_REFUSAL_GRACE_S}")"
+  poll_s="$(get_seam_s "${ATRIUM_QUEUE_WAIT_POLL_S:-}" "${WAIT_POLL_S}" "${SEAM_POSITIVE_SHAPE}")"
+  lifetime_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_LIFETIME_S:-}" "${LISTEN_LIFETIME_S}" "${SEAM_POSITIVE_SHAPE}")"
+  grace_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_GRACE_S:-}" "${LISTEN_REFUSAL_GRACE_S}" "${SEAM_WHOLE_SHAPE}")"
   while ((SECONDS - started < lifetime_s)); do
     check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
     set_listen_count "$2" "$((SECONDS - started < grace_s))"
@@ -591,9 +591,9 @@ run_listen_loop() {
   done
 }
 
-# <value> <default> → the value when a whole number, else the default
+# <value> <default> <shape> → the value when it matches the shape, else the default
 get_seam_s() {
-  if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi
+  if [[ "$1" =~ $3 ]]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi
 }
 
 # <command…> → runs it as this shell's waited child, its stdout into LISTEN_OUT → a signal ends it with the listener
