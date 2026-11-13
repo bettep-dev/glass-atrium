@@ -25,8 +25,7 @@ lib="${self%/*}/../scripts/lib/queue-session.sh"
 source "${lib}" 2>/dev/null || exit 0
 
 main() {
-  local fields="" is_subagent is_continued payload_session session_id items pid wait_state item stamp
-  # the whole payload, uncapped → a long last_assistant_message never cuts the JSON short
+  local fields="" is_subagent is_continued payload_session session_id items newest pid wait_state item stamp
   # shellcheck disable=SC2310  # no fields → the malformed-payload branch below
   if [[ ! -t 0 ]]; then fields="$(get_payload_fields)" || fields=""; fi
   if [[ -z "${fields}" ]]; then
@@ -43,13 +42,14 @@ main() {
   wait_state="$(queue_get_wait_state "${session_id}")"
   [[ "${wait_state}" != live ]] || exit 0
   stamp="$(queue_get_awaiting_dir "${session_id}")/.nudged"
+  newest="${items%%$'\n'*}"
   # shellcheck disable=SC2310  # not due and a failed check both end the turn normally
-  is_nudge_due "${stamp}" "${pid}" "${items%%$'\n'*}" || exit 0
+  is_nudge_due "${stamp}" "${pid}" "${newest}" || exit 0
   # shellcheck disable=SC2310  # an unusable monitor reply already printed its warning
   item="$(get_wait_resolved_item "${session_id}" "${items}")" || exit 0
   [[ -n "${item}" ]] || exit 0
   # the stamp lands before the continuation → no write failure can turn into a repeated one
-  if ! (printf '%s %s\n' "${pid}" "${items%%$'\n'*}" >"${stamp}") 2>/dev/null; then
+  if ! (printf '%s %s\n' "${pid}" "${newest}" >"${stamp}") 2>/dev/null; then
     warn "no nudge stamp could be written at ${stamp}"
     exit 0
   fi
