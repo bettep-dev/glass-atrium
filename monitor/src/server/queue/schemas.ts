@@ -12,7 +12,7 @@ const MAX_TEXT = 20_000;
 // queue_items.title VARCHAR(200) → Postgres counts code points
 export const ITEM_TITLE_MAX = 200;
 // code points, as Zod's max and the VARCHAR(100) column both count → queue.schema.test.ts binds this schema to the column
-const SESSION_NAME_MAX = 100;
+export const SESSION_NAME_MAX = 100;
 const MAX_LIST_LIMIT = 200;
 const MAX_MESSAGE_TARGETS = 20;
 const MAX_ATTACHMENTS = 8;

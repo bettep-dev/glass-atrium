@@ -8,7 +8,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getImageFacts } from "../../src/server/queue/image-format.js";
-import { ITEM_TITLE_MAX } from "../../src/server/queue/schemas.js";
+import { ITEM_TITLE_MAX, SESSION_NAME_MAX } from "../../src/server/queue/schemas.js";
 import type { ImageView } from "../../src/server/queue/images.js";
 import type { OwnerItemView, OwnerSessionView, RecentResume } from "../../src/server/queue/owner-views.js";
 import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
@@ -343,6 +343,7 @@ export const EDGE_SESSION_IDS = {
 
 /** The longest name a session can register (`schemas.ts` → SESSION_NAME_MAX). */
 export const EDGE_LONG_SESSION_NAME = "nightly-dependency-audit-and-release-notes-for-the-public-monitor-installer-and-its-update-script-ci";
+if (EDGE_LONG_SESSION_NAME.length !== SESSION_NAME_MAX) throw new Error(`the long-name fixture is ${EDGE_LONG_SESSION_NAME.length} characters, not ${SESSION_NAME_MAX}`);
 
 /** The longest title an item can carry (`schemas.ts` → ITEM_TITLE_MAX). */
 export const EDGE_LONG_TITLE = "[정리 작업] 세 저장소의 끝난 작업 폴더 정리, 의존성 감사, 릴리스 노트 초안, 설치 스크립트 점검을 한 번에 진행한 결과 — 웹·관리 화면·API 모두 테스트 통과, dev DB 반영과 병합은 승인 대기, 디스크 여유 22GB 확보, 남은 일은 브라우저 확인과 README 안내 이동, 그리고 다음 배포 전 업데이터 점검과 모니터 화면 나머지 정리입니다";
