@@ -40,7 +40,8 @@ readonly WAIT_MUTEX_TRIES=200
 # ponytail: inside the longest measured asyncRewake lifetime (666 s, binding timeout 1200 in lib/ga-env.sh) → raise both
 # together once a longer one is measured
 readonly LISTEN_LIFETIME_S=600
-# the same answer count to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn
+# the same answer count to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
+# a claim or a count read back at 0 starts the bound over (drop_announce_record)
 readonly LISTEN_ANNOUNCE_MAX=2
 # a session's register runs beside the listener at its start → a refusal this early may be the register not yet landed
 readonly LISTEN_REFUSAL_GRACE_S=30
@@ -376,6 +377,7 @@ pull_pending() {
     claims="$(get_claims "${reply}")" || fail 1 "the monitor's pending reply is malformed"
     [[ -n "${claims}" ]] || break
     print_claims "${claims}"
+    drop_announce_record "${session_id}"
     total=$((total + $(wc -l <<<"${claims}")))
   done
   if ((total == 0)); then printf 'no owner answer or message waits for this session\n'; fi
@@ -548,6 +550,7 @@ poll_wait() {
   claims="$(get_claims "${body}")" || fail 1 "the monitor's pending reply is malformed"
   [[ -n "${claims}" ]] || return 3
   print_claims "${claims}"
+  drop_announce_record "${CLAUDE_CODE_SESSION_ID:-}"
 }
 
 end_wait_at_bound() {
@@ -583,7 +586,7 @@ run_listen_loop() {
   while ((SECONDS - started < lifetime_s)); do
     check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
     set_listen_count "$2" "$((SECONDS - started < grace_s))"
-    if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}"; fi
+    if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}"; else drop_announce_record "$1"; fi
     run_child sleep "${poll_s}"
   done
 }
@@ -663,6 +666,15 @@ get_announce_count() {
   fi
 }
 
+# <session id> → its announce record gone: the answered set changed, so the next arrival is announced anew
+drop_announce_record() {
+  local dir record
+  # shellcheck disable=SC2310  # no UUID → no record to drop
+  dir="$(queue_get_awaiting_dir "$1")" || return 0
+  record="${dir}/.announced"
+  if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
+}
+
 # subshell write → no interrupt from an un-waited child reaches it; the exit comes from the caller's code path
 print_wake() {
   local cli
@@ -678,7 +690,7 @@ stop_listening() {
     kill "${listen_child}" 2>/dev/null || true
   fi
   drop_wait_lock
-  if [[ -n "${LISTEN_OUT}" ]] && ga_guard_path "${LISTEN_OUT}"; then rm -f -- "${LISTEN_OUT:?}"; fi
+  if ga_guard_path "${LISTEN_OUT}"; then rm -f -- "${LISTEN_OUT:?}"; fi
 }
 
 register_session() {

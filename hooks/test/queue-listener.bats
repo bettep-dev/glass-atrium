@@ -2,8 +2,9 @@
 # shellcheck disable=SC2030,SC2031,SC2154,SC2312  # a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison
 # The owner queue's listener (SessionStart and Stop hook, bound asyncRewake) against a stand-in monitor: it runs only
 # in an interactive main session, announces this session's answered items by count without claiming them, wakes the
-# session with one fixed line (exit 2) at most twice per set of answers per Claude process, yields to a newer listener
-# and to a session-run wait, and ends quietly — never with a wake — on a signal, its lifetime or a monitor failure.
+# session with one fixed line (exit 2) at most twice per answer count per Claude process until a claim or a zero count
+# starts that bound over, yields to a newer listener and to a session-run wait, and ends quietly — never with a wake —
+# on a signal, its lifetime or a monitor failure.
 #
 # Run via: bats hooks/test/queue-listener.bats
 # Requires: bats, bash 3.2+, jq, curl, python3, perl
@@ -282,6 +283,40 @@ expected_wake() {
       echo "row ${row}: status=${status} err=${stderr}"
       return 1
     }
+  done
+}
+
+@test "a claim or a count read back at zero restarts the bound, so each new lone answer wakes the session again" {
+  start_stub
+  export ATRIUM_QUEUE_LISTEN_LIFETIME_S=2
+  local row round wake
+  for row in claim read-zero; do
+    for round in 1 2 3; do
+      set_reply 200 '{"answeredWaiting":1,"items":[]}'
+      for wake in first re-announce; do
+        run_hook
+        [[ "${status}" -eq 2 && "${stderr}" == "$(expected_wake 1)" ]] || {
+          echo "row ${row} round ${round} ${wake}: status=${status} err=${stderr}"
+          return 1
+        }
+      done
+      if [[ "${row}" == claim ]]; then
+        set_nth_reply "$(($(request_count) + 1))" 200 \
+          '{"items":[{"id":{"item":"4107","msg":"5b0e7c2d-9a41-4c3e-8f6d-2e7a1b9c0d34"}}]}'
+        CLAUDE_CODE_SESSION_ID="${SESSION_ID}" run "${CLI}" pending
+        [[ "${status}" -eq 0 && "${output}" == *"item 4107"* ]] || {
+          echo "row ${row} round ${round} claim: status=${status} out=${output}"
+          return 1
+        }
+      else
+        set_reply 200 '{"answeredWaiting":0,"items":[]}'
+        run_hook
+        [[ "${status}" -eq 0 && -z "${stderr}" ]] || {
+          echo "row ${row} round ${round} read-zero: status=${status} err=${stderr}"
+          return 1
+        }
+      fi
+    done
   done
 }
 
