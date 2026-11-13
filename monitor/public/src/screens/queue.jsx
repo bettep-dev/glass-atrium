@@ -117,7 +117,6 @@ const IMAGES_Q = {
 const PNG_SIGNATURE_Q = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 // shot key → its upload's promise, so a send waits for the uploads still running
 const UPLOADS_Q = new Map();
-let shotSeqQ = 0;
 
 /**
  * Queue nav slot: awaiting count plus a deviation glyph when any deviation is open.
@@ -2632,9 +2631,9 @@ function getPastedNameQ(shots, index, type) {
 }
 
 // uploading → the picture from the browser's own memory until the server holds it
+// random key → a draft restored after a reload keeps its keys, so a counter that restarts would hand one out again
 function getShotQ(candidate, name) {
-	shotSeqQ += 1;
-	return { key: `shot-${shotSeqQ}`, name, bytes: candidate.bytes, status: "uploading", src: URL.createObjectURL(candidate.file), file: candidate.file, id: null, cause: null };
+	return { key: `shot-${crypto.randomUUID()}`, name, bytes: candidate.bytes, status: "uploading", src: URL.createObjectURL(candidate.file), file: candidate.file, id: null, cause: null };
 }
 
 function putUploadQ(shot, setShots) {

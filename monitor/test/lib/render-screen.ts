@@ -177,6 +177,7 @@ export async function loadScreenModule(
   const context: Record<string, unknown> = {
     React: createReactStub(),
     console,
+    crypto: globalThis.crypto,
     fetch: async () => {
       throw new Error("fetch is not available in the render harness");
     },

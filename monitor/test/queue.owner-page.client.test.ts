@@ -2289,6 +2289,23 @@ describe("images in a composer", () => {
     assert.deepEqual(result.errors, [null]);
   });
 
+  // spec §4.5: a reload loses no draft → an image added after one never takes a restored image's key
+  test("an image added after a reload stays apart from the restored ones: both thumbnails and both ids are kept", async () => {
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      URL: { createObjectURL: () => "blob:queue/1", revokeObjectURL: () => undefined },
+      fetch: async () => ({ status: 201, json: async () => ({ id: IMAGE_ID[1], name: "after reload.png", type: "png", bytes: 76, width: 3, height: 2 }) }),
+    })) as ScreenModule;
+    let shots: Array<Record<string, unknown>> = [shot(0, { key: "shot-1" })];
+    await (module.putFilesQ as (deps: unknown) => Promise<void>)({
+      files: [new File([SAMPLE_IMAGE.png], "after reload.png", { type: "image/png" })], shots, putError: () => undefined,
+      setShots: (next: (prev: unknown[]) => Array<Record<string, unknown>>) => { shots = next(shots); },
+    });
+    const ids = await (module.getStoredIdsQ as (shots: unknown[]) => Promise<string[] | null>)(shots);
+    assert.equal(new Set(shots.map((one) => one.key)).size, 2, JSON.stringify(getPlain(shots)));
+    assert.deepEqual([getPlain(shots).map((one) => [one.name, one.id]), getPlain(ids)], [[["shot-1.png", IMAGE_ID[0]], ["after reload.png", IMAGE_ID[1]]], [IMAGE_ID[0], IMAGE_ID[1]]]);
+  });
+
   test("a refused upload keeps the thumbnail as failed with the server's cause", async () => {
     const result = await upload(415, { error: "unsupported_image", reason: "only PNG, JPEG, WebP or GIF images are taken" });
     assert.deepEqual(result.shots.map(({ status, cause }) => ({ status, cause })), [{ status: "failed", cause: "only PNG, JPEG, WebP or GIF images are taken" }]);
