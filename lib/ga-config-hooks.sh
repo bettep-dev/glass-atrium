@@ -309,18 +309,24 @@ get_binding_options() {
   printf '{}\n'
 }
 
+# jq defs the binding-option drift reader and its repairer share → both pick the same Atrium commands of $base, the
+# tilde-normalised command path under either Atrium hooks dir; the caller binds $home, $d1, $d2 and $base
+# shellcheck disable=SC2016  # a jq program, not a shell expansion
+GA_BINDING_OPTION_JQ_DEFS='
+  def is_target:
+    (if startswith("~/") then $home + .[1:] else . end)
+    | (. == ($d1 + $base)) or (. == ($d2 + $base));
+  def is_target_command: type == "object" and (.command | type) == "string" and (.command | is_target);'
+
 # Declared option keys ($4) that differ on the Atrium commands of ($2 event, $3 basename) in settings file $1:
 # one `matcher<US>key<US>live-JSON` line each (live `null` = absent). An undeclared key is never read. Read-only.
 get_binding_option_drift() {
   jq -r --arg ev "$2" --arg base "$3" --argjson o "$4" --arg home "${HOME}" \
-    --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
-    def is_target:
-      (if startswith("~/") then $home + .[1:] else . end)
-      | (. == ($d1 + $base)) or (. == ($d2 + $base));
+    --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" "${GA_BINDING_OPTION_JQ_DEFS}"'
     (.hooks[$ev] // []) | select(type == "array") | .[] | select(type == "object")
     | ((.matcher // "") | tostring) as $m
     | (.hooks // []) | select(type == "array") | .[]
-    | select(type == "object" and (.command | type) == "string" and (.command | is_target))
+    | select(is_target_command)
     | . as $cmd
     | $o | to_entries[]
     | select($cmd[.key] != .value)
@@ -478,11 +484,7 @@ reconcile_hook_binding_options() {
 put_binding_options() {
   RENDER_TMP="${SETTINGS_JSON}.ga-options.$$"
   jq --arg ev "$1" --arg base "$2" --argjson o "$3" --arg home "${HOME}" \
-    --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
-    def is_target:
-      (if startswith("~/") then $home + .[1:] else . end)
-      | (. == ($d1 + $base)) or (. == ($d2 + $base));
-    def is_target_command: type == "object" and (.command | type) == "string" and (.command | is_target);
+    --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" "${GA_BINDING_OPTION_JQ_DEFS}"'
     if (.hooks[$ev] | type) == "array" then
       .hooks[$ev] |= map(
         if type == "object" and (.hooks | type) == "array"
