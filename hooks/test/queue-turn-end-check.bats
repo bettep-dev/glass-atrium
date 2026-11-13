@@ -283,6 +283,29 @@ assert_silent_turn_end() {
   done
 }
 
+@test "a nudge stamp that cannot be written ends the turn with one stderr line and no continuation" {
+  start_stub
+  mark_items 41
+  # a directory in the stamp's place → the write fails as on a read-only data root
+  mkdir -p "${AWAITING}/.nudged"
+  run_hook
+  [[ "${status}" -eq 0 && -z "${output}" && "${stderr}" == "queue-turn-end-check: no nudge stamp"* &&
+    "${stderr}" != *$'\n'* ]] || {
+    echo "status=${status} stdout=${output} stderr=${stderr}"
+    return 1
+  }
+}
+
+@test "the hook reached through a hook-farm symlink still loads its library and keeps the turn going" {
+  start_stub
+  mark_items 41
+  mkdir -p "${BATS_TEST_TMPDIR}/farm"
+  ln -s "${HOOK}" "${BATS_TEST_TMPDIR}/farm/queue-turn-end-check.sh"
+  HOOK="${BATS_TEST_TMPDIR}/farm/queue-turn-end-check.sh"
+  run_hook
+  assert_continuation "through the farm symlink"
+}
+
 @test "a down, slow, refusing or garbled monitor and a malformed payload end the turn with one stderr line" {
   local row started elapsed payload
   for row in down slow refusing garbled payload; do
