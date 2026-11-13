@@ -1043,7 +1043,7 @@ describe("the page re-reads itself", () => {
     { name: "a list extended by Show more reads every loaded row", loaded: 150, expected: 150 },
     { name: "a list past the server's cap reads the cap", loaded: 350, expected: 200 },
   ];
-  for (const row of limits) test(`read size: ${row.name}`, () => assert.equal(call("getListLimitQ", row.loaded), row.expected));
+  for (const row of limits) test(`read size: ${row.name}`, () => assert.equal(call("getReadLimitQ", row.loaded, ...vm.runInContext("[LIST_Q.LIMIT, LIST_Q.MAX]", screen)), row.expected));
 
   const merge = (prevItems: unknown[] | null, answerItems: unknown[], nextCursor: number | null = null, prevCursor: number | null = null) =>
     call<{ data: { items: Array<{ id: number; status: string }>; nextCursor: number | null }; arrived: Array<{ id: number }>; turned: Array<{ id: number }> }>(

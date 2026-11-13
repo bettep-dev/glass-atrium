@@ -34,6 +34,14 @@ const LIST_GROUPS_Q = {
 // one vocabulary on every surface (spec §9.4): whether a recipient has the order, never why it waits
 const RECEIPT_Q = { received: "Received", notYet: "Not yet", notReceived: "Not received" };
 
+function getNotReceivedFactQ(count) {
+	return { text: `${count} not received`, badge: "warn" };
+}
+
+function getReceiptCountQ(receipts, receipt) {
+	return receipts.filter((one) => one === receipt).length;
+}
+
 const RESUME_RESULT_LABEL_Q = {
 	sent: "spawned",
 	acked: "spawned · acknowledged",
@@ -1023,7 +1031,7 @@ function useThreadQ(isOpen, selectedIds) {
 	const read = useCallbackQ(() => getThreadQ({ ids, before: null, setThread, isCurrent }), [key]);
 	useEffectQ(() => { if (isOpen) read(); }, [isOpen, read]);
 	const showEarlier = useCallbackQ(() => getThreadQ({ ids, before: thread.nextCursor, setThread, isCurrent }), [key, thread.nextCursor]);
-	const reread = useCallbackQ(() => getThreadQ({ ids, before: null, setThread, isCurrent, limit: getThreadLimitQ(latestThread.current.items), isQuiet: true }), [key]);
+	const reread = useCallbackQ(() => getThreadQ({ ids, before: null, setThread, isCurrent, limit: getReadLimitQ(getFoldedRowsQ(latestThread.current.items).length, ORDERS_Q.PAGE, ORDERS_Q.MAX), isQuiet: true }), [key]);
 	return { thread, read, showEarlier, reread };
 }
 
@@ -1044,20 +1052,23 @@ async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limi
 // an earlier page joins the thread, the page's own re-read merges into it, any other first page replaces it
 function getReadThreadQ(prev, page, before, isQuiet) {
 	if (before !== null) return { items: putEarlierPageQ(prev.items, page.items), nextCursor: page.nextCursor ?? null };
-	if (isQuiet) return getRereadThreadQ(prev, page);
+	if (isQuiet) return getKeptBeyondQ(prev, page, () => true);
 	return { items: page.items, nextCursor: page.nextCursor ?? null };
 }
 
-// spec §4.4: orders the re-read covers take its state; loaded orders an arrival pushed past its end stay, with the loaded cursor
-function getRereadThreadQ(prev, page) {
-	const read = new Set(page.items.map((item) => item.id));
-	const beyond = prev.items.filter((item) => !read.has(item.id));
-	return { items: [...page.items, ...beyond], nextCursor: beyond.length > 0 ? prev.nextCursor : page.nextCursor ?? null };
+/**
+ * A re-read merged into what is loaded (spec §4.4): rows the read covers take its state; loaded rows past its end stay, and while any stay the loaded cursor stays.
+ * @param isPast - a loaded row the read did not return lies past its end
+ */
+function getKeptBeyondQ(prev, read, isPast) {
+	const ids = new Set(read.items.map((item) => item.id));
+	const beyond = prev.items.filter((item) => !ids.has(item.id) && isPast(item));
+	return { items: [...read.items, ...beyond], nextCursor: beyond.length > 0 ? prev.nextCursor : read.nextCursor ?? null };
 }
 
-// every loaded order, so a thread extended by Show earlier is not cut back, up to the read's cap
-function getThreadLimitQ(items) {
-	return Math.min(Math.max(ORDERS_Q.PAGE, getFoldedRowsQ(items).length), ORDERS_Q.MAX);
+// every loaded row, so a list or thread extended by Show more / Show earlier is not cut back, up to the read's cap
+function getReadLimitQ(loaded, page, max) {
+	return Math.min(Math.max(page, loaded), max);
 }
 
 // no tick → the orders to every session
@@ -1112,7 +1123,7 @@ function useFilterQ() {
  */
 async function getListQ({ setList, getList = () => EMPTY_LIST_Q, isMarked = false }) {
 	if (getList().data === null) setList((prev) => ({ ...prev, status: "loading" }));
-	const answer = await sendOwnerRequestQ(`/items?limit=${getListLimitQ(getList().data?.items.length ?? 0)}`);
+	const answer = await sendOwnerRequestQ(`/items?limit=${getReadLimitQ(getList().data?.items.length ?? 0, LIST_Q.LIMIT, LIST_Q.MAX)}`);
 	const prev = getList();
 	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.items)) {
 		const { data, arrived, turned } = getMergedDataQ(prev.data, answer.data);
@@ -1126,11 +1137,6 @@ async function getListQ({ setList, getList = () => EMPTY_LIST_Q, isMarked = fals
 	return { isGood: false, arrived: [], turned: [] };
 }
 
-// every loaded row, so a list extended by Show more is not cut back, up to the read's cap
-function getListLimitQ(loaded) {
-	return Math.min(Math.max(LIST_Q.LIMIT, loaded), LIST_Q.MAX);
-}
-
 /**
  * The read merged by item id: a known row takes the read's state, a row the read no longer has leaves, a new one stands at its server position.
  * Rows loaded past the read's last position (beyond its cap) stay with their cursor until a read reaches them.
@@ -1140,16 +1146,14 @@ function getListLimitQ(loaded) {
 function getMergedDataQ(prev, answer) {
 	if (prev === null) return { data: answer, arrived: [], turned: [] };
 	const receipts = new Map(prev.items.map((item) => [item.id, getReceiptQ(item)]));
-	const read = new Set(answer.items.map((item) => item.id));
-	const beyond = answer.nextCursor === null ? [] : prev.items.filter((item) => !read.has(item.id) && item.queuePosition > answer.nextCursor);
 	const arrived = answer.items.filter((item) => !receipts.has(item.id) && item.status === "open" && (item.kind === "decision" || item.kind === "report"));
 	const turned = answer.items.filter((item) => receipts.has(item.id) && receipts.get(item.id) !== "notReceived" && getReceiptQ(item) === "notReceived");
-	const nextCursor = beyond.length > 0 ? prev.nextCursor : answer.nextCursor;
-	return { data: { ...answer, items: [...answer.items, ...beyond], nextCursor }, arrived, turned };
+	const isPast = (item) => answer.nextCursor !== null && item.queuePosition > answer.nextCursor;
+	return { data: { ...answer, ...getKeptBeyondQ(prev, answer, isPast) }, arrived, turned };
 }
 
 // Show more → the next page after the cursor joins the loaded list; a refused read → the page failure card with Retry
-// ponytail: a re-read covers the loaded rows up to the read's cap (getListLimitQ), rows past it keep their last state until reached; upgrade = server-side filters
+// ponytail: a re-read covers the loaded rows up to the read's cap (getReadLimitQ), rows past it keep their last state until reached; upgrade = server-side filters
 async function getMoreQ({ list, setList }) {
 	const cursor = list.data?.nextCursor;
 	if (cursor === null || cursor === undefined) return;
@@ -1472,10 +1476,10 @@ function getDeliveryFactsQ(item, copies) {
 function getReceiptFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
 	if (receipts.length === 1) return receipts[0] === "notReceived" ? [getReceiptFactQ(receipts[0])] : [];
-	const received = receipts.filter((receipt) => receipt === "received").length;
-	const failed = receipts.filter((receipt) => receipt === "notReceived").length;
+	const received = getReceiptCountQ(receipts, "received");
+	const failed = getReceiptCountQ(receipts, "notReceived");
 	const count = { text: received === 0 && failed === 0 ? RECEIPT_Q.notYet : `${received} of ${receipts.length} received` };
-	return [count, ...(failed > 0 ? [{ text: `${failed} not received`, badge: "warn" }] : [])];
+	return [count, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
 }
 
 function getReceiptFactQ(receipt) {
@@ -2068,7 +2072,7 @@ function AllSessionsBandQ({ rows, sessions, view, notReceived, onScope }) {
 	const isCurrent = view.scope === "";
 	const box = <CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Order to all live sessions" />;
 	const face = <>All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}</>;
-	const warn = notReceived > 0 && <Badge fill="warn" title={`${notReceived} not received`}>{notReceived}<span className="sr-only">{" not received"}</span></Badge>;
+	const warn = notReceived > 0 && <Badge fill="warn" title={getNotReceivedFactQ(notReceived).text}>{notReceived}<span className="sr-only">{" not received"}</span></Badge>;
 	if (view.isOrders) return <label className="queue-band queue-rail-band is-pick">{face}{warn}<span className="queue-rail-box"><span className="inline-target">{box}</span></span></label>;
 	return (
 		<div className="queue-band queue-rail-band">
@@ -2186,7 +2190,7 @@ function SessionNameQ({ row, isIdShown }) {
 function getSessionLineQ(row, notReceived) {
 	const { formatRelativeTime } = window.UI;
 	const age = { text: formatRelativeTime(row.lastActivityAt) };
-	if (notReceived > 0) return [{ text: `${notReceived} not received`, badge: "warn" }];
+	if (notReceived > 0) return [getNotReceivedFactQ(notReceived)];
 	if (row.state === "stale") return [{ text: "Not reachable", badge: "warn" }, age];
 	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live, dot: "ok" }, row.count.inDelivery > 0 ? { text: `${row.count.inDelivery} in delivery` } : age];
 	if (row.markerSetAt) return [{ text: "Resume not yet registered" }];
@@ -2475,10 +2479,10 @@ function RecipientsQ({ copies, onResend }) {
 // `7 sessions · 5 received · 1 not yet` + the amber `1 not received`; a zero count is left out
 function getRollUpFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
-	const counted = (receipt) => receipts.filter((one) => one === receipt).length;
+	const counted = (receipt) => getReceiptCountQ(receipts, receipt);
 	const parts = [`${copies.length} sessions`, `${counted("received")} received`, `${counted("notYet")} not yet`].filter((part, index) => index === 0 || !part.startsWith("0 "));
 	const failed = counted("notReceived");
-	return [{ text: parts.join(" · ") }, ...(failed > 0 ? [{ text: `${failed} not received`, badge: "warn" }] : [])];
+	return [{ text: parts.join(" · ") }, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
 }
 
 // an order on a report's sheet is the report's answer text; a standalone order is the message's body
