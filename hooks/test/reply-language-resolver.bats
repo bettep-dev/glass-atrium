@@ -1,9 +1,13 @@
 #!/usr/bin/env bats
-# reply-language-resolver.bats — hooks/lib/reply_language.py, the newest-human-message finder.
+# reply-language-resolver.bats — hooks/lib/reply_language.py, the newest-human-message finder and its `turn`
+# subcommand, the current-turn reader.
 # Contracts protected:
 # - only origin kind `human` is the user's message
 # - an entry whitespace-empty after wrapper, paste and code removal is passed over
 # - the transcript read stays bounded
+# - `turn`: the current turn starts at the newest entry with a turn position, whatever its origin, and owns only the
+#   tool calls after it; no turn start within the cap is no turn
+# - an unknown subcommand exits non-zero
 
 # shellcheck disable=SC2154  # BATS_TEST_DIRNAME is set by bats before the file loads
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
