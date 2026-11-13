@@ -64,6 +64,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -74,9 +75,12 @@ from pathlib import Path
 from unittest import mock
 
 _HOOKS_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _HOOKS_ROOT.parent
 _SOT_PATH = _HOOKS_ROOT / "pricing.json"
 _LIB_DIR = _HOOKS_ROOT / "lib"
 _BACKFILL = _HOOKS_ROOT / "backfill-cost-events.py"
+_PARITY_PATH = _HOOKS_ROOT / "test" / "fixtures" / "model-id-pricing-parity.json"
+_PARITY = json.loads(_PARITY_PATH.read_text(encoding="utf-8"))
 
 # Same sys.path seam the consumers use (PRICING_LIB_DIR / Path(__file__)/lib).
 if str(_LIB_DIR) not in sys.path:
@@ -118,6 +122,8 @@ _FABLE_5_2_RATE = {"input": 8.0, "output": 40.0, "cache_read": 0.2, "cache_creat
 _WINDOW_STANDARD = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75}
 _WINDOW_INTRO = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
 _HAIKU_RATE = {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_creation": 1.25}
+# 5.5 is vendor-quoted at its ≤100,000-token prompt tier.
+_HAIKU_5_5_RATE = {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_creation": 0.125}
 
 # The two committed remote_sources urls, in declared order (own-repo #1 is
 # the PREDICTED post-merge raw address — 404s by design until pushed).
@@ -482,38 +488,12 @@ class SotValidationTest(_LoaderCase):
 
 
 class NormalizeModelKeyTest(unittest.TestCase):
-    """Suffix-stripping normalizer (single source now — no mirror to lockstep)."""
+    """Suffix-stripping normalizer — the rows are the parity table the monitor's SQL copy also reads."""
 
-    def test_strips_1m_bracket_suffix(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-opus-4-8[1m]"), "claude-opus-4-8"
-        )
-
-    def test_strips_dated_suffix(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-haiku-4-5-20251001"),
-            "claude-haiku-4-5",
-        )
-
-    def test_strips_bracket_then_date(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-haiku-4-5-20251001[1m]"),
-            "claude-haiku-4-5",
-        )
-
-    def test_plain_key_unchanged(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-opus-4-8"), "claude-opus-4-8"
-        )
-
-    def test_non_8_digit_numeric_suffix_unchanged(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-x-1234567"), "claude-x-1234567"
-        )
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-x-123456789"),
-            "claude-x-123456789",
-        )
+    def test_each_parity_row_normalizes_to_its_key(self):
+        for row in _PARITY["normalized_keys"]:
+            with self.subTest(row["name"]):
+                self.assertEqual(pricing_loader.normalize_model_key(row["raw"]), row["key"])
 
     def test_falsy_passthrough(self):
         self.assertEqual(pricing_loader.normalize_model_key(""), "")
@@ -582,6 +562,17 @@ class RateForSotTest(_LoaderCase):
             pricing_loader.is_known("claude-fable-5-1", sot_path=str(_SOT_PATH))
         )
 
+    def test_haiku_5_5_resolves_from_its_own_sot_row_with_remote_disabled(self):
+        # No own row + no overlay → family-latest haiku-4-5 rate, so resolution=sot proves the own row.
+        with mock.patch.dict(os.environ, {"PRICING_REMOTE_DISABLE": "1"}):
+            record = self._rate_for("claude-haiku-5-5")
+        self.assertEqual(record["resolution"], "sot")
+        self.assertEqual(record["matched_model"], "claude-haiku-5-5")
+        self.assertEqual(record["rate"], _HAIKU_5_5_RATE)
+        self.assertTrue(
+            pricing_loader.is_known("claude-haiku-5-5", sot_path=str(_SOT_PATH))
+        )
+
     def test_minor_versioned_id_resolves_from_its_own_sot_row(self):
         # A missing own row resolves each id to its family-latest row and leaves it unknown → out of the model-config roster.
         rows = [
@@ -618,6 +609,66 @@ class RateForSotTest(_LoaderCase):
             self.assertTrue(pricing_loader.is_known(key, sot_path=str(_SOT_PATH)), key)
         for key in ("claude-foobar-9-9", "", None):
             self.assertFalse(pricing_loader.is_known(key, sot_path=str(_SOT_PATH)), key)
+
+
+def _read_repo_text(rel_path):
+    return (_REPO_ROOT / rel_path).read_text(encoding="utf-8")
+
+
+def _find_agent_model_pins():
+    """Frontmatter `model:` values across agents/*.md — none ship today, a future pin is caught."""
+    ids = set()
+    for body in sorted((_REPO_ROOT / "agents").glob("*.md")):
+        head = re.match(r"---\n(.*?)\n---", body.read_text(encoding="utf-8"), re.S)
+        if head:
+            ids.update(re.findall(r"^model:\s*[\"']?([^\"'\s]+)", head.group(1), re.M))
+    return ids - {"inherit"}
+
+
+def _find_worker_default_pins():
+    text = _read_repo_text("scripts/lib/atrium-config.sh")
+    body = text.split("atrium_resolve_worker_model() {", 1)[1].split("\n}", 1)[0]
+    return set(re.findall(r'local model="([^"]+)"', body))
+
+
+def _find_retired_worker_replacement_pins():
+    text = _read_repo_text("monitor/src/server/model-config-consts.ts")
+    return set(re.findall(r'RETIRED_WORKER_MODEL_REPLACEMENT = "([^"]+)"', text))
+
+
+def _find_model_config_catalog_pins():
+    # Quoted keys only: the unquoted `inherit` key follows the session model, never a priced id.
+    text = _read_repo_text("monitor/public/src/screens/model-config.jsx")
+    block = text.split("const MODEL_CAP_MC = {", 1)[1].split("\n};", 1)[0]
+    return set(re.findall(r'^\s*"([^"]+)":', block, re.M)) - {"inherit"}
+
+
+class PinnedModelIdPricingTest(unittest.TestCase):
+    """Recurrence check, shipped-tree leg: every model id the tree pins runs and
+    is costed by the hook, so each needs its own pricing.json row — a missing
+    row prices it at a family or fallback guess and raises the advisory. Ids an
+    install picks up from outside the tree are the updater's check
+    (scripts/check-pricing-roster.sh)."""
+
+    # (source, extractor, may the source pin nothing)
+    SOURCES = (
+        ("agents/*.md frontmatter", _find_agent_model_pins, True),
+        ("atrium-config.sh worker default", _find_worker_default_pins, False),
+        ("RETIRED_WORKER_MODEL_REPLACEMENT", _find_retired_worker_replacement_pins, False),
+        ("model-config.jsx MODEL_CAP_MC", _find_model_config_catalog_pins, False),
+    )
+
+    def test_every_pinned_model_id_has_its_own_pricing_row(self):
+        for source, extract, may_be_empty in self.SOURCES:
+            ids = extract()
+            with self.subTest(source=source):
+                # An extractor that finds nothing has lost its anchor, not proven coverage.
+                self.assertTrue(may_be_empty or ids, f"{source}: no model id found")
+                unpriced = sorted(
+                    i for i in ids
+                    if not pricing_loader.is_known(i, sot_path=str(_SOT_PATH))
+                )
+                self.assertEqual(unpriced, [], f"{source}: no hooks/pricing.json row")
 
 
 class TierBoundaryTest(_LoaderCase):
@@ -1635,7 +1686,7 @@ class BackfillCalcCostTest(_LoaderCase):
             "rate_for",
             side_effect=AssertionError("resolution chain walked on a zero-cost row"),
         ), redirect_stderr(err):
-            for model in (None, "", "<synthetic>"):
+            for model in _PARITY["zero_cost_ids"]:
                 self.assertEqual(backfill.calc_cost(1000, 500, 0, 0, model), 0.0)
         self.assertEqual(err.getvalue(), "")
 

@@ -1,0 +1,16 @@
+{
+  "_comment": "One table for the model-id facts each pricing copy derives on its own: hooks/cost-tracker.sh calc_cost, hooks/backfill-cost-events.py calc_cost, scripts/check-pricing-roster.sh find_unpriced_ids and monitor health-detail.ts findUnpricedModelRows. Each copy's suite reads this file, so a copy changed alone fails its suite, and a row changed here fails every copy that disagrees. zero_cost_ids: priced at $0 without a rate lookup, so never reported as lacking a row. rate_lookup_ids: near misses that still need a row. normalized_keys: hooks/lib/pricing_loader.py normalize_model_key.",
+  "zero_cost_ids": [null, "", "<synthetic>"],
+  "rate_lookup_ids": ["synthetic", "<Synthetic>"],
+  "normalized_keys": [
+    { "name": "a plain id is its own key", "raw": "claude-opus-4-8", "key": "claude-opus-4-8" },
+    { "name": "a context variant is cut at its bracket", "raw": "claude-opus-4-8[1m]", "key": "claude-opus-4-8" },
+    { "name": "a snapshot date suffix is dropped", "raw": "claude-haiku-4-5-20251001", "key": "claude-haiku-4-5" },
+    { "name": "the bracket is cut before the date is dropped", "raw": "claude-haiku-4-5-20251001[1m]", "key": "claude-haiku-4-5" },
+    { "name": "a seven-digit numeric suffix is kept", "raw": "claude-x-1234567", "key": "claude-x-1234567" },
+    { "name": "a nine-digit numeric suffix is kept", "raw": "claude-x-123456789", "key": "claude-x-123456789" },
+    { "name": "a date inside the id is kept", "raw": "claude-x-20251001-beta", "key": "claude-x-20251001-beta" },
+    { "name": "an id the bracket cut empties keeps its raw form", "raw": "[1m]", "key": "[1m]" },
+    { "name": "an id the date drop empties keeps its raw form", "raw": "-20251001", "key": "-20251001" }
+  ]
+}

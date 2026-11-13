@@ -2041,7 +2041,7 @@ read_calls() {
 }
 
 @test "an exit-9 recovery names the dependency install exactly when the monitor's node_modules are absent" {
-  local row label state want_install modules="${INSTALL}/monitor/node_modules"
+  local row label state want_install client_dir modules="${INSTALL}/monitor/node_modules"
   local -a rows=(
     "dependencies never installed|absent|1"
     "dependencies installed|present|0"
@@ -2050,7 +2050,8 @@ read_calls() {
     IFS='|' read -r label state want_install <<<"${row}"
     if ga_guard_path "${modules}"; then rm -rf -- "${modules:?}"; fi
     if [[ "${state}" == present ]]; then
-      mkdir -p "${modules}/.bin" "${INSTALL}/monitor/src/generated/prisma"
+      client_dir="$(get_schema_client_dir "${INSTALL}/monitor")"
+      mkdir -p "${modules}/.bin" "${client_dir}"
       printf '#!/bin/sh\n' | tee "${modules}/.bin/tsc" >"${modules}/.bin/prisma"
       chmod +x "${modules}/.bin/tsc" "${modules}/.bin/prisma"
     fi
@@ -2092,10 +2093,20 @@ read_calls() {
   done
 }
 
+# Generated-client dir under $1 (a monitor dir), from the release schema's generator `output`
+# → a heal row seeded here fails when update_get_monitor_heal checks another path.
+get_schema_client_dir() {
+  local output
+  output="$(sed -n 's/^[[:space:]]*output[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "${GA}/monitor/prisma/schema.prisma")"
+  [[ -n "${output}" ]] || { echo "no generator output in ${GA}/monitor/prisma/schema.prisma" >&2; return 1; }
+  printf '%s\n' "$1/prisma/${output}"
+}
+
 # Seed the install's monitor for one self-heal row: each of tsc / prisma / client is
 # present|absent, and the fixture monitor/.env exists (empty) unless $4 is absent.
 seed_monitor_heal_state() {
-  local monitor="${INSTALL}/monitor" entry bin
+  local monitor="${INSTALL}/monitor" entry bin client_dir
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
   if ga_guard_path "${monitor}"; then rm -rf -- "${monitor:?}"; fi
   mkdir -p "${monitor}/node_modules/.bin" "${monitor}/prisma/migrations/20260101000000_probe"
@@ -2105,7 +2116,10 @@ seed_monitor_heal_state() {
     printf '#!/bin/sh\n' >"${bin}"
     chmod +x "${bin}"
   done
-  [[ "$3" == absent ]] || mkdir -p "${monitor}/src/generated/prisma"
+  if [[ "$3" != absent ]]; then
+    client_dir="$(get_schema_client_dir "${monitor}")"
+    mkdir -p "${client_dir}"
+  fi
   [[ "${4:-present}" == absent ]] || : >"${monitor}/.env"
 }
 
@@ -3647,4 +3661,115 @@ write_escaping_files_manifest() {
   [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
   grep -q "fr=aborted (exit=17)" "${WORK}/psql.log" || { cat "${WORK}/psql.log"; return 1; }
   [ ! -e "${WORK}/nest/escaped.sh" ] || return 1
+}
+
+# Apply of a changed scripts/tool.sh beside a shipped hooks/pricing.json, with the
+# pricing-roster checker stubbed: it logs its argument to check.log in ${GATE_DIR} (set to ${WORK} when unset), prints
+# $CHECK_OUT and exits $CHECK_RC. psql is the mock, so the DB-enabled arm is reachable
+# without a database. PRICING_SHIPPED=0 leaves pricing.json out of the release.
+run_pricing_gate_apply() {
+  GATE_DIR="${GATE_DIR:-${WORK}}"
+  write_mock_psql "${WORK}/psql"
+  cat >"${WORK}/check-stub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >>"${CHECK_LOG}"
+[[ -n "${CHECK_OUT}" ]] && printf '%s\n' "${CHECK_OUT}"
+exit "${CHECK_RC}"
+STUB
+  chmod +x "${WORK}/check-stub"
+  local rels=("scripts/tool.sh")
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  if [[ "${PRICING_SHIPPED:-1}" -eq 1 ]]; then
+    seed_file "${INSTALL}" "hooks/pricing.json" '{"models":{}}'
+    seed_file "${NEWSRC}" "hooks/pricing.json" '{"models":{}}'
+    rels+=("hooks/pricing.json")
+  fi
+  write_manifest "${GATE_DIR}/manifest.json" "${rels[@]}"
+  [[ -z "${PRICING_TAMPER:-}" ]] || printf 'tampered' >"${NEWSRC}/hooks/pricing.json"
+  run --separate-stderr env -u GA_SKIP_DB_SETUP -u ATRIUM_UPDATE_DB -u ATRIUM_UPDATE_ALLOW_UNPRICED \
+    GA_SKIP_DB_SETUP="${SKIP_DB:-}" \
+    ATRIUM_UPDATE_ALLOW_UNPRICED="${ALLOW_UNPRICED:-}" \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${GATE_DIR}/manifest.json" \
+    ATRIUM_UPDATE_PSQL="${WORK}/psql" \
+    ATRIUM_UPDATE_PRICING_CHECK="${WORK}/check-stub" \
+    CHECK_LOG="${GATE_DIR}/check.log" CHECK_RC="${CHECK_RC:-0}" CHECK_OUT="${CHECK_OUT:-}" \
+    bash "${SKILL}"
+}
+
+@test "the pricing-roster gate refuses an apply only on a verdict of unpriced ids, before any file is swapped" {
+  # name | checker rc | override | db opt-out | shipped | tampered | want status | applied | checked | stderr needle
+  local rows=(
+    "every id priced|0|||1||0|1|1|"
+    "unpriced ids refuse with the named code|3|||1||19|0|1|claude-new-9-9"
+    "the override applies past unpriced ids|3|1||1||0|1|1|ATRIUM_UPDATE_ALLOW_UNPRICED"
+    "a database without a verdict warns and applies|4|||1||0|1|1|no verdict"
+    "a check that cannot run warns and applies|127|||1||0|1|1|no verdict"
+    "the DB opt-out skips the check|3||1|1||0|1|0|database opt-out"
+    "a release without pricing.json skips the check|3|||0||0|1|0|ships no hooks/pricing.json"
+    "a release pricing.json off its manifest hash is refused|0|||1|1|1|0|0|hash"
+  )
+  local row name want_status want_applied want_checked needle applied checked i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name CHECK_RC ALLOW_UNPRICED SKIP_DB PRICING_SHIPPED PRICING_TAMPER \
+      want_status want_applied want_checked needle <<<"${row}"
+    [[ -n "${PRICING_SHIPPED}" ]] || PRICING_SHIPPED=1
+    CHECK_OUT=$'claude-new-9-9\nclaude-other-9-9'
+    i=$((i + 1))
+    GATE_DIR="${WORK}/gate-row-${i}"
+    INSTALL="${GATE_DIR}/install" NEWSRC="${GATE_DIR}/newsrc" STATE="${GATE_DIR}/state"
+    mkdir -p -- "${INSTALL}" "${NEWSRC}" "${STATE}"
+    run_pricing_gate_apply
+    [[ "${status}" -eq "${want_status}" ]] || {
+      echo "${name}: status ${status}"
+      echo "${stderr}"
+      return 1
+    }
+    applied=0
+    [[ "$(cat "${INSTALL}/scripts/tool.sh")" != "new content" ]] || applied=1
+    [[ "${applied}" -eq "${want_applied}" ]] || {
+      echo "${name}: applied=${applied}"
+      echo "${stderr}"
+      return 1
+    }
+    checked=0
+    [[ ! -s "${GATE_DIR}/check.log" ]] || checked=1
+    [[ "${checked}" -eq "${want_checked}" ]] || {
+      echo "${name}: checked=${checked}"
+      echo "${stderr}"
+      return 1
+    }
+    [[ -z "${needle}" || "${stderr}" == *"${needle}"* ]] || {
+      echo "${name}: stderr lacks ${needle}"
+      echo "${stderr}"
+      return 1
+    }
+  done
+}
+
+@test "the pricing-roster gate checks the release's own pricing.json and records each unpriced verdict durably" {
+  CHECK_RC=3 CHECK_OUT=$'claude-new-9-9\nclaude-other-9-9'
+  run_pricing_gate_apply
+  [[ "${status}" -eq 19 ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  [[ "$(cat "${GATE_DIR}/check.log")" == */new/hooks/pricing.json ]] || {
+    cat "${GATE_DIR}/check.log"
+    return 1
+  }
+  local ledger
+  ledger="$(find "${WORK}" -name pricing-roster.log -print)"
+  [[ -n "${ledger}" ]] || {
+    echo "no pricing-roster.log under ${WORK}"
+    return 1
+  }
+  grep -q 'refused.*claude-new-9-9 claude-other-9-9' "${ledger}" || {
+    cat "${ledger}"
+    return 1
+  }
 }
