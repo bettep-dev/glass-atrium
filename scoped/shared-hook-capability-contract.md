@@ -35,6 +35,40 @@ What a PreToolUse hook receives on an `Agent` tool call. Agent calls only: no ot
 - **Workflow `agent()` spawns do not reach PreToolUse(Agent)**: the Workflow spawn left no record, so no PreToolUse(Agent) hook sees a Workflow spawn.
 - **Re-probe**: after a CLI upgrade, re-capture the Agent `tool_input` and envelope keys before a hook relies on any one of them.
 
+### `asyncRewake` command hooks — measured record
+
+What a command hook bound with `asyncRewake: true` does, per session kind. Unbound by any live hook today.
+
+- **Provenance**: isolated probe on CLI 2.1.322, 2026-11-13, model haiku.
+  - The stand-in hook was a stub that slept and exited with a planned code; no queue call was made.
+  - Settings: `--setting-sources project` + `--settings` holding only the stub bindings, `claudeMdExcludes` for every CLAUDE.md and rules file, `--strict-mcp-config` with an empty config. No user or project hook of the machine ran.
+  - Session kinds: `-p` (`CLAUDE_CODE_ENTRYPOINT` `sdk-cli`) and an interactive pty in a private tmux server (`cli`, `--permission-mode default`).
+  - Workspace trust came from a parent directory the profile already trusted. No trust entry was written: the set of trusted paths was the same before and after.
+- **Session kind decides async**: interactive → the hook runs in the background and the session takes input meanwhile.
+  - `-p` → the same binding runs synchronously, as a plain hook (static read: async rewake is skipped in non-interactive mode).
+    - `SessionStart` holds the start for the hook's full run.
+    - `UserPromptSubmit` `exit 2` blocks the prompt.
+    - `Stop` `exit 2` continues the turn.
+    - `Stop` at `exit 0` after a 25 s sleep still holds the `-p` exit for those 25 s.
+  - So a `-p` process waits out every such hook, and a long-lived one holds a headless worker for its whole lifetime.
+- **Events accepting it** (P1): `SessionStart` and `Stop`, both measured interactive, and the binding validates and runs on `UserPromptSubmit` (`-p` only). No event restriction appears in the rewake handler (static read).
+- **`exit 2` wakes an idle interactive session** (P2): measured on `SessionStart` with no prompt ever typed, and on `Stop` after a finished turn.
+  - The wake starts a new turn that carries `<task-notification><summary>Stop hook feedback</summary>…` plus a system reminder `Stop hook blocking error from command "<event>": <stderr>`, so stderr reaches the model.
+  - A draft typed into the input box stays unsent.
+  - `--bg` sessions: unmeasured. A `--bg` start enters the owner's real job list, so it is not isolatable.
+- **Timeout** (P3): at the binding `timeout` the host sends the hook SIGTERM, measured at 20 s: no wake, no orphan, and the session stays idle.
+  - Longest honoured, within the 666 s bound tested: a `timeout` of 1200 let a `SessionStart` hook run 666 s, past the 600 s command default, and its `exit 2` then woke a session idle for 11 minutes. A 60-minute lifetime: unmeasured.
+  - A hook that ignores SIGTERM, or a child outside the hook's process group: unmeasured.
+- **Wake during a busy turn** (P4): no interruption, and nothing lost.
+  - On a turn making tool calls, the wake is folded into that same turn as a `queued_command` attachment between tool calls. The turn ran on to its own end, and the model did not act on the folded text.
+  - On a turn with no tool call, the wake waits for the turn to end, then starts its own turn.
+- **Environment** (P5): `CLAUDE_PID` is set and equals the nearest `claude` ancestor. `CLAUDE_CODE_SESSION_ID` equals the payload `session_id`. `CLAUDE_CODE_ENTRYPOINT` is `cli` interactive and `sdk-cli` under `-p`. The hook's parent is the session process.
+  - At `/exit` and at a SIGTERM to the session process, the running async hook receives SIGTERM and exits; no orphan is left.
+- **Background-job idle supervision** (P6): unmeasured. It needs a `--bg` session left about an hour, in the owner's real job list.
+- **Overlapping `Stop` instances** (P7): a `Stop` that fires while the previous turn's async `Stop` hook still runs starts a second instance. The first is not cancelled and runs to its own end.
+- **Background command exit** (interactive): a `run_in_background` Bash command finishing in an idle interactive session starts a turn on its own.
+- **Re-probe**: after a CLI upgrade, re-run the probe before a hook relies on any line above.
+
 ## Block Channels (Two Non-Interchangeable Mechanisms)
 
 - Every block this section names pairs its channel with `exit 2`, except the `Stop` use of channel b at `exit 0` (measured on `-p`, CLI 2.1.322; the `Stop` row above).
