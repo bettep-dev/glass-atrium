@@ -19,6 +19,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { WAIT_FRESH_MS, isSessionWaiting } from "../src/server/queue/delivery.js";
+import { AWAITING_IDS_LIMIT } from "../src/server/queue/registry.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
@@ -97,6 +98,34 @@ async function seedItem(sessionId: string, overrides: Partial<Prisma.QueueItemUn
     data: { kind: "report", sessionId, title: "Build finished", body: "All 12 suites green.", isFreeTextAllowed: true, ...overrides },
   });
   return item.id;
+}
+
+function decisionItem(overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Partial<Prisma.QueueItemUncheckedCreateInput> {
+  return {
+    kind: "decision",
+    title: "Pick the cache backend",
+    body: "Two options fit the measured load.",
+    options: [
+      { code: "R1", label: "Postgres table", pros: "no new service", cons: "slower reads" },
+      { code: "R2", label: "Redis", pros: "fast", cons: "one more daemon" },
+    ],
+    recommendedCode: "R1",
+    isFreeTextAllowed: false,
+    ...overrides,
+  };
+}
+
+function ownerMessageItem(): Partial<Prisma.QueueItemUncheckedCreateInput> {
+  return {
+    kind: "message",
+    title: "Rebase onto main",
+    body: "Rebase onto main before the review.",
+    isFreeTextAllowed: false,
+    status: "answered",
+    answeredAt: new Date(),
+    answerRoute: "message",
+    answerSignal: "fetch_metadata",
+  };
 }
 
 async function seedDelivery(itemId: bigint, attempt = 1): Promise<string> {
@@ -292,9 +321,41 @@ describe("register", () => {
     const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
     const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { answeredWaiting: 2 });
+    assert.equal(response.json().answeredWaiting, 2);
     assert.deepEqual([stored.state, stored.exitReason, stored.resumeAwaitingRegisterAt], ["live", null, null]);
     assert.equal(await getStatus(resumePending), "answered");
+  });
+
+  test("lists this session's non-terminal items that expect an answer, newest first, and no other session's", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    const otherSessionId = await seedSession();
+    const id = {
+      openDecision: await seedItem(sessionId, decisionItem({ status: "open" })),
+      answeredFreeTextReport: await seedItem(sessionId, { status: "answered" }),
+      reportTakingNoReply: await seedItem(sessionId, { isFreeTextAllowed: false, status: "open" }),
+      deliveredDecision: await seedItem(sessionId, decisionItem({ status: "delivered" })),
+      ownerMessage: await seedItem(sessionId, ownerMessageItem()),
+      otherSessionDecision: await seedItem(otherSessionId, decisionItem({ status: "open" })),
+    };
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().awaitingItemIds, [Number(id.answeredFreeTextReport), Number(id.openDecision)]);
+  });
+
+  test("the awaiting list is an added key: a session with none gets an empty list beside the answered count", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    await seedItem(sessionId, { isFreeTextAllowed: false, status: "open" });
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    assert.deepEqual([response.statusCode, response.json()], [200, { answeredWaiting: 0, awaitingItemIds: [] }]);
+  });
+
+  test("the awaiting list stops at its limit and keeps the newest ids", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    const report = { kind: "report" as const, sessionId, title: "Nightly sweep", body: "One mismatch needs a reply.", isFreeTextAllowed: true };
+    await getPrisma().queueItem.createMany({ data: Array.from({ length: AWAITING_IDS_LIMIT + 1 }, () => report) });
+    const newest = await getPrisma().queueItem.findMany({ where: { sessionId }, orderBy: { id: "desc" }, take: AWAITING_IDS_LIMIT, select: { id: true } });
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    assert.deepEqual(response.json().awaitingItemIds, newest.map((row) => Number(row.id)));
   });
 
   test("a row still holding a retired socket path of its old process registers live from a new process and drops the path", async () => {

@@ -15,10 +15,10 @@ import { getPrisma } from "../db.js";
 import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type ImageView, getImageViews } from "./images.js";
+import { TERMINAL } from "./registry.js";
 import { buildResumeInFlightSql } from "./resume-claim.js";
 import type { OwnerListQuery, OwnerOrdersQuery, RecentResumesQuery } from "./schemas.js";
 
-const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
 /** The item states the count route and the item views flag as deviations. */
 export const DEVIATION_STATUSES = ["unacked", "held", "expired", "resume_pending"] as const satisfies readonly QueueItemStatus[];
 // Every state an answer leads to; open, seen and withdrawn carry no answer → never "answered outside"

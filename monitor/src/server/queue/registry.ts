@@ -4,7 +4,7 @@
 import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-import type { Prisma, QueuePermissionHint } from "../../generated/prisma/client.js";
+import type { Prisma, QueueItemStatus, QueuePermissionHint } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { errnoCode } from "../errno.js";
 import { QueueEnvironmentError, QueueRequestError } from "./errors.js";
@@ -15,6 +15,10 @@ const DEFAULT_PROFILE_LABEL = "default";
 // $HOME/.claude or $HOME/.claude-<name>; the label column is varchar(64)
 const CONFIG_DIR_NAME = /^\.claude(-[A-Za-z0-9._-]{1,56})?$/;
 const CONFINED_SOCKET_PATH = /^(?:\/private)?\/tmp\/cc-socks\/([1-9][0-9]{0,9})\.sock$/;
+/** Awaiting ids a register reply carries at most (newest kept). */
+export const AWAITING_IDS_LIMIT = 200;
+// Defined here, not in the owner views → registry stays below delivery/owner-views, no import cycle
+export const TERMINAL: QueueItemStatus[] = ["delivered", "seen", "withdrawn"];
 
 const PERMISSION_HINT_COLUMN: Record<(typeof PERMISSION_HINTS)[number], QueuePermissionHint> = {
   default: "default",
@@ -63,12 +67,18 @@ export async function findWorktreeRoot(cwd: string): Promise<string | null> {
   }
 }
 
+export interface RegisterResult {
+  /** answered items now waiting for this session (the SessionStart pointer line) */
+  answeredWaiting: number;
+  /** this session's non-terminal items that expect an owner answer, newest first → the lib re-derives its awaiting marks */
+  awaitingItemIds: number[];
+}
+
 /**
  * Registers a session live: marks a same-process row under another id replaced, clears the session marker
  * and returns the session's resume-pending items to answered.
- * @returns the count of answered items now waiting for this session (the SessionStart pointer line)
  */
-export async function registerSession(body: RegisterBody, homeDir: string): Promise<{ answeredWaiting: number }> {
+export async function registerSession(body: RegisterBody, homeDir: string): Promise<RegisterResult> {
   const facts = await getSessionFactsOrThrow(body, homeDir);
   const identity: ProcessIdentity = { pid: body.pid, startTime: facts.processStartTime };
   return getPrisma().$transaction(async (tx) => {
@@ -77,7 +87,8 @@ export async function registerSession(body: RegisterBody, homeDir: string): Prom
     await putLiveSession(tx, body, facts);
     await markReplaced(tx, replacedIds, identity);
     await tx.queueItem.updateMany({ where: { sessionId: body.sessionId, status: "resume_pending" }, data: { status: "answered" } });
-    return { answeredWaiting: await tx.queueItem.count({ where: { sessionId: body.sessionId, status: "answered" } }) };
+    const answeredWaiting = await tx.queueItem.count({ where: { sessionId: body.sessionId, status: "answered" } });
+    return { answeredWaiting, awaitingItemIds: await findAwaitingItemIds(tx, body.sessionId) };
   });
 }
 
@@ -221,4 +232,15 @@ async function markReplaced(tx: Prisma.TransactionClient, sessionIds: string[], 
     where: { sessionId: { in: sessionIds }, pid: identity.pid, processStartTime: identity.startTime, state: { not: "exited" } },
     data: { state: "exited", exitReason: "replaced" },
   });
+}
+
+// Same rule the CLI marks by at post time: a decision, or an item allowing a free-text reply
+async function findAwaitingItemIds(tx: Prisma.TransactionClient, sessionId: string): Promise<number[]> {
+  const rows = await tx.queueItem.findMany({
+    where: { sessionId, status: { notIn: TERMINAL }, OR: [{ kind: "decision" }, { isFreeTextAllowed: true }] },
+    orderBy: { id: "desc" },
+    take: AWAITING_IDS_LIMIT,
+    select: { id: true },
+  });
+  return rows.map((row) => Number(row.id));
 }
