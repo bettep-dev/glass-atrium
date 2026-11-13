@@ -226,26 +226,11 @@ queue_get_wait_lock_path() {
 # stale. Without CLAUDE_PID the owner is the one the lock records → live while that owner and its waiter both still
 # run with their recorded starts; a wait of another process under the same session id then counts as running too.
 queue_get_wait_state() {
-  local owner_pid owner_start lock
+  local lock owner_pid owner=""
   lock="$(queue_get_wait_lock_path "$1")"
   owner_pid="$(queue_get_pid)"
-  [[ -n "${owner_pid}" ]] || owner_pid="$(queue_get_lock_owner_pid "${lock}")"
-  if [[ -n "${owner_pid}" ]]; then
-    owner_start="$(queue_get_start_time "${owner_pid}")"
-    queue_get_wait_lock_state "${lock}" "${owner_pid}|${owner_start}"
-  elif [[ -L "${lock}" ]]; then
-    printf 'stale\n'
-  else
-    printf 'none\n'
-  fi
-}
-
-# <lock path> → the owner pid its record names ("waiter pid|its start|owner pid|its start"); nothing when none
-queue_get_lock_owner_pid() {
-  local held owner_pid
-  held="$(readlink "$1" 2>/dev/null)" || return 0
-  IFS='|' read -r _ _ owner_pid _ <<<"${held}"
-  if [[ "${owner_pid}" =~ ${QUEUE_PID_SHAPE} ]]; then printf '%s\n' "${owner_pid}"; fi
+  if [[ -n "${owner_pid}" ]]; then owner="${owner_pid}|$(queue_get_start_time "${owner_pid}")"; fi
+  queue_get_wait_lock_state "${lock}" "${owner}"
 }
 
 # <pid> → its process start time, the recycled-pid guard; nothing when the pid is gone
@@ -258,6 +243,7 @@ queue_get_start_time() {
 
 # <lock path> <owner "pid|its start"> [this wait's own record] → none · mine (holds that record) · live (another
 # running wait of that owner) · stale (its waiter is gone, or it names another owner); the one reader of the lock name
+# - an empty owner → the owner the record names, live while it still runs with its recorded start
 queue_get_wait_lock_state() {
   local held
   held="$(readlink "$1" 2>/dev/null)" || held=""
@@ -273,11 +259,16 @@ queue_get_wait_lock_state() {
   fi
 }
 
-# <held record> <owner "pid|its start"> → 0 while its waiter still runs and it names that owner
+# <held record> <owner "pid|its start", or empty for its own> → 0 while its waiter still runs and it names that owner;
+# the one splitter of the record
 queue_is_wait_live() {
-  local waiter_pid waiter_start owner started
+  local waiter_pid waiter_start owner expected="$2" started
   IFS='|' read -r waiter_pid waiter_start owner <<<"$1"
-  [[ "${owner}" == "$2" && "${waiter_pid}" =~ ${QUEUE_PID_SHAPE} && -n "${waiter_start}" ]] || return 1
+  if [[ -z "${expected}" ]]; then
+    [[ "${owner%%|*}" =~ ${QUEUE_PID_SHAPE} ]] || return 1
+    expected="${owner%%|*}|$(queue_get_start_time "${owner%%|*}")"
+  fi
+  [[ "${owner}" == "${expected}" && "${waiter_pid}" =~ ${QUEUE_PID_SHAPE} && -n "${waiter_start}" ]] || return 1
   started="$(queue_get_start_time "${waiter_pid}")"
   [[ "${started}" == "${waiter_start}" ]]
 }
