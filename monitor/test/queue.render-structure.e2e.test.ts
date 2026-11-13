@@ -38,17 +38,27 @@ const VIEWPORTS = [
   { width: 1728, height: 1117 },
   { width: 1920, height: 1080 },
 ] as const;
-type Viewport = (typeof VIEWPORTS)[number];
+interface Viewport {
+  width: number;
+  height: number;
+}
+
+// §18.4's sizes beyond the desktop widths: the owner's window, the minimum and the wide display
+const OWNER_WINDOW: Viewport = { width: 1568, height: 759 };
+const MIN_WINDOW: Viewport = { width: 1280, height: 800 };
+const WIDE_WINDOW: Viewport = { width: 2560, height: 1440 };
 
 /**
  * One named page state: `nn` and `name` follow the mockup's capture names (`<width>x<height>-<nn>-<name>.png`, spec §18.4).
  * `setUp` drives the page to the state and waits on what the state shows → a step the page no longer takes fails the capture.
+ * @property viewports - the sizes §18.4 marks for the state; unset → the desktop widths
  * @property isClockDriven - the page's timers run on the test's clock, for the 15 s re-read
  * @property isFirstLoad - captured before the first item read answers, without the setUp
  */
 interface QueueState {
   nn: string;
   name: string;
+  viewports?: readonly Viewport[];
   getFixture?: () => QueueFixture;
   setUp?: (page: Page, harness: Harness) => Promise<void>;
   isClockDriven?: boolean;
@@ -65,9 +75,9 @@ const REPLY_TEXT = "README 안내까지 끝나면 PR 병합 단계로 넘어가 
 const ORDER_TO = ["gersona", "yoaida"];
 
 const DESK_STATES: QueueState[] = [
-  { nn: "01", name: "rest" },
+  { nn: "01", name: "rest", viewports: [...VIEWPORTS, OWNER_WINDOW, MIN_WINDOW] },
   { nn: "02", name: "decision-picked", setUp: (page) => pickWithNote(page) },
-  { nn: "03", name: "report", setUp: (page) => selectRow(page, 101) },
+  { nn: "03", name: "report", viewports: [...VIEWPORTS, OWNER_WINDOW], setUp: (page) => selectRow(page, 101) },
   {
     nn: "04", name: "rail-ticked",
     setUp: async (page) => {
@@ -99,18 +109,24 @@ const DESK_STATES: QueueState[] = [
   { nn: "21b", name: "empty-queue", getFixture: getEmptyFixture },
   { nn: "24", name: "first-load", isFirstLoad: true },
   { nn: "26", name: "not-reachable", getFixture: getUnreachableFixture },
+  // the edge fixture holds §14.4's stress content: the 200-character title, nine options, the long session name, 99+, eight images
+  { nn: "27a", name: "stress-desk", getFixture: getEdgeFixture, setUp: (page) => waitForAllOrders(page) },
+  { nn: "27b", name: "stress-long-title", getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.longTitle) },
+  { nn: "27c", name: "stress-nine-options", getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.nineOptions) },
+  { nn: "28a", name: "wide-list", viewports: [WIDE_WINDOW] },
+  { nn: "28b", name: "wide-report", viewports: [WIDE_WINDOW], setUp: (page) => selectRow(page, 101) },
 ];
 
 const ORDER_STATES: QueueState[] = [
   {
-    nn: "05", name: "two-composers",
+    nn: "05", name: "two-composers", viewports: [...VIEWPORTS, OWNER_WINDOW, MIN_WINDOW],
     setUp: async (page) => {
       await tickOrdersTo(page, ORDER_TO);
       await selectRow(page, 103);
     },
   },
   { nn: "06", name: "order-with-images", setUp: (page) => typeOrderWithImages(page) },
-  { nn: "07", name: "just-sent", setUp: (page) => sendOrderWithImages(page) },
+  { nn: "07", name: "just-sent", viewports: [...VIEWPORTS, OWNER_WINDOW], setUp: (page) => sendOrderWithImages(page) },
   { nn: "08", name: "one-received", getFixture: getOneReceivedFixture, setUp: (page) => tickOrdersTo(page, ORDER_TO) },
   { nn: "09", name: "not-received", getFixture: getNotReceivedFixture, setUp: (page) => selectRow(page, 210) },
   {
@@ -232,6 +248,22 @@ const LOOK_STATES: QueueState[] = [
       await setLightTheme(page);
     },
   },
+  { nn: "25a", name: "focus-master-box", setUp: (page) => focusByKeyboard(page, page.getByLabel("Select all live sessions")) },
+  { nn: "25g", name: "focus-rail-box", setUp: (page) => focusByKeyboard(page, page.getByLabel("Select gersona")) },
+  {
+    nn: "25h", name: "focus-back",
+    setUp: async (page) => {
+      await selectRow(page, 103);
+      await focusByKeyboard(page, page.getByRole("button", { name: "Back to the list" }));
+    },
+  },
+  {
+    nn: "25i", name: "focus-thumb-remove",
+    setUp: async (page) => {
+      await typeOrderWithImages(page);
+      await focusByKeyboard(page, page.locator(".queue-orders .queue-thumb-remove").first());
+    },
+  },
   {
     nn: "25b", name: "focus-row",
     setUp: async (page) => {
@@ -294,6 +326,34 @@ const BUTTON_STATES: CloseUpState[] = [
     },
   },
 ];
+
+// spec §18.4 29's other close-ups, each in both themes
+const PARTS: CloseUpState[] = [
+  { nn: "29", name: "rail-ticked", closeUp: ".queue-sessions", setUp: (page) => tickSessions(page, ["gersona"]) },
+  { nn: "29", name: "list-band-rows", closeUp: ".queue-list > .card-body" },
+  { nn: "29", name: "sheet-report", closeUp: ".queue-sheet", setUp: (page) => selectRow(page, 101) },
+  { nn: "29", name: "option-recommended", closeUp: ".queue-sheet .queue-option:has-text('Recommended')", setUp: (page) => selectRow(page, 103) },
+  { nn: "29", name: "composer-sheet", closeUp: ".queue-sheet .queue-composer", setUp: (page) => selectRow(page, 101) },
+  { nn: "29", name: "composer-orders", closeUp: ".queue-orders .queue-composer", setUp: (page) => selectRow(page, 101) },
+  { nn: "29", name: "order-images", closeUp: "article.queue-order:has(.queue-bubble-image)", setUp: (page) => waitForAllOrders(page) },
+  {
+    nn: "29", name: "order-three-receipts", closeUp: "article.queue-order:has(.queue-recipient ~ .queue-recipient ~ .queue-recipient)", getFixture: getEdgeFixture,
+    setUp: (page) => waitForAllOrders(page),
+  },
+];
+
+const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...PARTS.flatMap((state) => [state, getLightCloseUp(state)])];
+
+function getLightCloseUp(state: CloseUpState): CloseUpState {
+  return {
+    ...state,
+    name: `${state.name}-light`,
+    setUp: async (page, harness) => {
+      await state.setUp?.(page, harness);
+      await setLightTheme(page);
+    },
+  };
+}
 
 const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES];
 
@@ -569,6 +629,12 @@ async function setLightTheme(page: Page): Promise<void> {
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
 }
 
+// a key press first → the browser treats the focus as keyboard focus and paints its ring
+async function focusByKeyboard(page: Page, target: Locator): Promise<void> {
+  await page.keyboard.press("Tab");
+  await target.focus();
+}
+
 /** Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268; the rail and Orders per step, two gaps of 16, the middle pane the rest. */
 const DESK_WIDTHS = [
   { viewport: { width: 1280, height: 800 }, rail: 208, middle: 452, orders: 320 },
@@ -737,13 +803,13 @@ async function waitForAllOrders(page: Page): Promise<void> {
 }
 
 /**
- * Every state at every desktop width, each on a fresh page, as `<dir>/<width>x<height>-<nn>-<name>.png`.
+ * Every state at each of its sizes, each on a fresh page, as `<dir>/<width>x<height>-<nn>-<name>.png`.
  * @returns one line per capture whose setUp failed, so one broken state does not hide the others
  */
 async function captureQueueStates(harness: Harness, dir: string): Promise<string[]> {
   const failures: string[] = [];
-  for (const viewport of VIEWPORTS) {
-    for (const state of QUEUE_STATES) {
+  for (const state of QUEUE_STATES) {
+    for (const viewport of getStateViewports(state)) {
       await captureQueueState(harness, dir, viewport, state).catch((error: unknown) => {
         failures.push(`${getShotName(viewport, state)}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
       });
@@ -769,11 +835,11 @@ async function captureQueueState(harness: Harness, dir: string, viewport: Viewpo
 
 /** @returns the element's box in CSS pixels, read in the frame the close-up shows */
 async function captureCloseUp(harness: Harness, dir: string, state: CloseUpState): Promise<{ width: number; height: number }> {
-  harness.fixture = getRestFixture();
+  harness.fixture = state.getFixture?.() ?? getRestFixture();
   const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture), false, 2);
   try {
     await state.setUp?.(page, harness);
-    const element = page.locator(state.closeUp);
+    const element = page.locator(state.closeUp).first();
     await element.screenshot({ path: join(dir, getShotName(VIEWPORTS[0], state)), animations: "disabled" });
     return await element.evaluate((node) => ({ width: Math.round(node.getBoundingClientRect().width), height: Math.round(node.getBoundingClientRect().height) }));
   } finally {
@@ -797,6 +863,10 @@ async function captureFirstLoad(harness: Harness, dir: string, viewport: Viewpor
     harness.heldRead = null;
     await page.close();
   }
+}
+
+function getStateViewports(state: QueueState): readonly Viewport[] {
+  return state.viewports ?? VIEWPORTS;
 }
 
 function getShotName(viewport: Viewport, state: QueueState): string {
@@ -1667,26 +1737,26 @@ describe("queue page on the mockup fixtures", () => {
     });
   });
 
-  test("each named state is captured at every desktop width as a viewport-sized PNG named for the mockup", async (t) => {
+  test("each named state is captured at every size §18.4 marks for it as a viewport-sized PNG named for the mockup", async (t) => {
     const dir = await getShotsDir();
     t.diagnostic(`captures: ${dir}`);
 
     const failures = await captureQueueStates(harness, dir);
 
     assert.deepEqual(failures, []);
-    for (const viewport of VIEWPORTS) {
-      for (const state of QUEUE_STATES) {
+    for (const state of QUEUE_STATES) {
+      for (const viewport of getStateViewports(state)) {
         const name = getShotName(viewport, state);
         assert.deepEqual(await getPngSize(join(dir, name)), { width: viewport.width, height: viewport.height }, name);
       }
     }
   });
 
-  test("each button close-up is captured at device scale 2: its PNG is twice its element's box", async (t) => {
+  test("each close-up is captured at device scale 2: its PNG is twice its element's box", async (t) => {
     const dir = await getShotsDir();
     t.diagnostic(`close-ups: ${dir}`);
     const shots = [];
-    for (const state of BUTTON_STATES) {
+    for (const state of CLOSE_UP_STATES) {
       const box = await captureCloseUp(harness, dir, state);
       const name = getShotName(VIEWPORTS[0], state);
       shots.push({ name, png: await getPngSize(join(dir, name)), twice: { width: box.width * 2, height: box.height * 2 } });
