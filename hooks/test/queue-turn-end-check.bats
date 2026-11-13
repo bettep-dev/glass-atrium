@@ -395,6 +395,19 @@ assert_silent_turn_end() {
   }
 }
 
+@test "a verdict stamp that cannot be written ends the turn with one stderr line and no verdict ask" {
+  start_stub
+  write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
+  # a directory in the stamp's place → the write fails as on a read-only data root
+  mkdir -p "${AWAITING}/.verdict-asked"
+  run_hook
+  [[ "${status}" -eq 0 && -z "${output}" && "${stderr}" == "queue-turn-end-check: no verdict stamp"* &&
+    "${stderr}" != *$'\n'* ]] || {
+    echo "status=${status} stdout=${output} stderr=${stderr}"
+    return 1
+  }
+}
+
 @test "the hook reached through a hook-farm symlink still loads its library and keeps the turn going" {
   start_stub
   mark_items 41
