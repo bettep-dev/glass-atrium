@@ -1,9 +1,15 @@
 #!/usr/bin/env bats
-# reply-language-resolver.bats — hooks/lib/reply_language.py, the newest-human-message finder.
+# reply-language-resolver.bats — hooks/lib/reply_language.py, the newest-human-message finder and its `turn`
+# subcommand, the current-turn reader.
 # Contracts protected:
 # - only origin kind `human` is the user's message
 # - an entry whitespace-empty after wrapper, paste and code removal is passed over
 # - the transcript read stays bounded
+# - `turn`: the current turn starts at the newest entry with a turn position, whatever its origin, and owns only the
+#   tool calls after it; a compaction summary is passed over unless the transcript opens on it; no turn start within
+#   the cap is no turn
+# - an entry whose message is no object is passed over
+# - an unknown subcommand exits non-zero
 
 # shellcheck disable=SC2154  # BATS_TEST_DIRNAME is set by bats before the file loads
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
@@ -13,6 +19,8 @@ CORPUS="${BATS_TEST_DIRNAME}/corpus/reply-language"
 OUTPUT_KEYS='["bytes_read","entry","prose","reason","status","truncated"]'
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/turn-transcript.bash
+source "${BATS_TEST_DIRNAME}/lib/turn-transcript.bash"
 
 setup() {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
@@ -91,7 +99,11 @@ assert_rows() {
 }
 
 @test "only origin-kind human entries are the user's message, whatever machine entries follow them" {
+  write_human_transcript "${RL_TMP}/message-no-object.jsonl" 'Now apply the review comments please'
+  jq -cn '{type: "user", origin: {kind: "human"}, message: null},
+    {type: "user", origin: {kind: "human"}, message: "Run it again"}' >>"${RL_TMP}/message-no-object.jsonl"
   assert_rows \
+    'message-no-object|found|user|Now apply the review comments please' \
     'newest-human-korean|found|user|좋아, 이제 리뷰 반영해줘' \
     'newest-human-english|found|user|Now apply the review comments please' \
     'queued-human|found|queued_command|중간에 하나 더: 로그도 같이 확인해줘' \
@@ -170,7 +182,53 @@ assert_rows() {
   }
 }
 
-@test "any subcommand but transcript exits non-zero so a caller falls silent" {
+@test "the current turn starts at the newest entry with a turn position, whatever its origin, and owns only the tool calls after it, a compaction summary passed over" {
+  local row name tokens want got
+  # Row shape: name|tokens|status|turn|tools; an empty turn prints as null
+  for row in \
+    'tool turn and its continuation|start:t-1 tool result text feedback tool result|found|t-1|true' \
+    'tool-free turn|start:t-1 text|found|t-1|false' \
+    'notification turn after a tool turn|start:t-1 tool result text notify:n-1 text|found|n-1|false' \
+    'tool call in a notification turn|start:t-1 text notify:n-1 tool result text|found|n-1|true' \
+    'tool call before a mid-turn compaction|start:t-1 tool result compact:c-1 text|found|t-1|true' \
+    'tool call after a mid-turn compaction|start:t-1 text compact:c-1 tool result text|found|t-1|true' \
+    'tool-free turn compacted mid-turn|start:t-1 text compact:c-1 text|found|t-1|false' \
+    'transcript opening on a compaction|compact:c-1 tool result text|found|c-1|true' \
+    'second compaction in a transcript opening on one|compact:c-1 text compact:c-2 tool result|found|c-1|true' \
+    'assistant messages that are no object|start:t-1 nullmessage stringmessage text|found|t-1|false' \
+    'no turn start|tool result text|none|null|false'; do
+    IFS='|' read -r name tokens want <<<"${row}"
+    IFS=' ' read -r -a tokens <<<"${tokens}"
+    write_turn_transcript "${RL_TMP}/turn.jsonl" "${tokens[@]}"
+    run python3 "${LIB}" turn "${RL_TMP}/turn.jsonl"
+    got="$(jq -r '(keys - ["bytes_read","reason","status","tools","truncated","turn"]) as $extra
+      | if $extra != [] then "extra keys: \($extra)" else [.status, .turn, .tools] | map(tostring) | join("|") end' \
+      <<<"${output}" 2>/dev/null)" || got="unparsed: ${output}"
+    [[ "${status}" -eq 0 && "${got}" == "${want}" ]] || {
+      echo "${name}: exit ${status}, got ${got}"
+      return 1
+    }
+  done
+}
+
+@test "a turn start past the read cap or an unreadable transcript is reported as no turn" {
+  write_turn_transcript "${RL_TMP}/long.jsonl" start:t-1 tool result bigtext bigtext bigtext bigtext
+  write_turn_transcript "${RL_TMP}/compacted.jsonl" start:t-1 tool result bigtext bigtext bigtext bigtext compact:c-1 text
+  local row name path want got
+  for row in "past the cap|${RL_TMP}/long.jsonl|none|true|null" \
+    "past the cap behind a compaction|${RL_TMP}/compacted.jsonl|none|true|null" \
+    "unreadable|${RL_TMP}/no-such.jsonl|none|false|unreadable"; do
+    IFS='|' read -r name path want <<<"${row}"
+    run env REPLY_LANG_WINDOW_BYTES=1024 REPLY_LANG_MAX_BYTES=4096 python3 "${LIB}" turn "${path}"
+    got="$(jq -r '[.status, .truncated, .reason] | map(tostring) | join("|")' <<<"${output}" 2>/dev/null)" || got=""
+    [[ "${status}" -eq 0 && "${got}" == "${want}" ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "an unknown subcommand exits non-zero so a caller falls silent" {
   local name
   for name in bogus text reply; do
     run python3 "${LIB}" "${name}"

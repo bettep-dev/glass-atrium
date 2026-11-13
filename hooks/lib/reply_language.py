@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""reply_language.py — the user's newest own message in a transcript, found by record structure alone.
+"""reply_language.py — bounded backward transcript reads, by record structure alone.
 
-Shared by the reply-language hooks, which quote its start so the model judges the reply language; nothing
-here reads or names a language. Only origin kind `human` is the user's message, and an entry left
-whitespace-empty once wrappers, pastes and code are removed has no prose of its own. Contract: `--help`.
+`transcript`: the user's newest own message, for the reply-language hooks, which quote its start so the model
+judges the reply language; nothing here reads or names a language. Only origin kind `human` is the user's
+message, and an entry left whitespace-empty once wrappers, pastes and code are removed has no prose of its own.
+`turn`: the current turn's start entry and whether the turn called a tool, for the queue turn-end check.
+Contract: `--help`.
 """
 
 import argparse
@@ -11,11 +13,20 @@ import json
 import os
 import re
 import sys
+from types import SimpleNamespace
 
 # Backward read, window doubled per pass up to the cap — human entry lags ~2.3 MB, transcripts reach ~145 MB
 DEFAULT_WINDOW_BYTES = 256 * 1024
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
-HUMAN_MARKER = b'"kind":"human"'
+# Byte needles that admit a line to the JSON parse
+MARKER = SimpleNamespace(
+    HUMAN=b'"kind":"human"',
+    # a turn's start entry, whatever its origin, carries a turnPosition object; tool results, assistant and Stop
+    # feedback entries carry none (shared-hook-capability-contract.md → Stop row); a compaction summary carries the
+    # position of the turn start it follows
+    TURN=b'"turnPosition":{',
+    TOOL_USE=b'"tool_use"',
+)
 # Bounds the output only; the hook cleans and caps the quote the model sees.
 PROSE_EXCERPT_CHARS = 500
 
@@ -32,7 +43,8 @@ def main(argv=None):
     args = _build_parser().parse_args(argv)
     window = _get_env_bytes("REPLY_LANG_WINDOW_BYTES", DEFAULT_WINDOW_BYTES)
     cap = _get_env_bytes("REPLY_LANG_MAX_BYTES", DEFAULT_MAX_BYTES)
-    json.dump(find_newest_human_prose(args.path, window, cap), sys.stdout)
+    find = find_current_turn if args.command == "turn" else find_newest_human_prose
+    json.dump(find(args.path, window, cap), sys.stdout)
     sys.stdout.write("\n")
     return 0
 
@@ -40,32 +52,87 @@ def main(argv=None):
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog="reply_language.py",
-        description="Print one JSON object: status (found|none), entry (user|queued_command), prose, "
-        "bytes_read and truncated, plus reason=unreadable when the transcript cannot be opened.",
+        description="Print one JSON object: status (found|none), bytes_read and truncated, plus "
+        "reason=unreadable when the transcript cannot be opened; transcript adds entry (user|queued_command) and "
+        "prose, turn adds turn (the turn-start entry's uuid) and tools (the turn called a tool).",
     )
     commands = parser.add_subparsers(dest="command")
     commands.required = True
     transcript = commands.add_parser("transcript", help="the newest human message with prose of its own")
     transcript.add_argument("path")
+    turn = commands.add_parser("turn", help="the current turn's start entry and whether it called a tool")
+    turn.add_argument("path")
     return parser
 
 
 def find_newest_human_prose(path, window, cap):
     """Status `none` with truncated=true means the cap was reached before any human prose."""
-    result = {"status": "none", "entry": None, "prose": None}
+    def visit(line, result):
+        found = _get_line_prose(line)
+        if found:
+            result.update(found)
+        return bool(found)
+
+    return _scan_backward(path, window, cap, {"status": "none", "entry": None, "prose": None}, visit)
+
+
+def find_current_turn(path, window, cap):
+    """Status `none` with truncated=true means the cap was reached before the turn's start entry.
+
+    A compaction summary is passed over, so tool calls before a mid-turn compaction stay the turn's and the turn keeps
+    one id; a transcript that opens on summaries, its turn start left in an earlier file, starts at the oldest."""
+    oldest_summary = None
+
+    def visit(line, result):
+        nonlocal oldest_summary
+        if MARKER.TOOL_USE in line and _has_tool_use(_get_json_object(line)):
+            result["tools"] = True
+        entry = _get_json_object(line) if MARKER.TURN in line else {}
+        turn = _get_turn_position_id(entry)
+        if turn and entry.get("isCompactSummary") is True:
+            oldest_summary, turn = turn, None
+        if turn:
+            result.update(status="found", turn=turn)
+        return bool(turn)
+
+    result = _scan_backward(path, window, cap, {"status": "none", "turn": None, "tools": False}, visit)
+    if result["status"] == "none" and oldest_summary and not result["truncated"]:
+        result.update(status="found", turn=oldest_summary)
+    if result["status"] == "none":
+        result["tools"] = False
+    return result
+
+
+def _scan_backward(path, window, cap, result, visit):
+    """Lines newest first → `visit(line, result)` until true; adds bytes_read + truncated, reason=unreadable on an
+    unreadable transcript."""
     scan = {"bytes_read": 0, "truncated": False}
     try:
         with open(path, "rb") as fh:
             size = fh.seek(0, os.SEEK_END)
             for line in _get_lines_backward(fh, size, window, cap, scan):
-                found = _get_line_prose(line)
-                if found:
-                    result = found
+                if visit(line, result):
                     break
     except OSError:
         result["reason"] = "unreadable"
     result.update(scan)
     return result
+
+
+def _has_tool_use(entry):
+    content = _get_message_content(entry) if entry.get("type") == "assistant" else None
+    return isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_use" for b in content)
+
+
+def _get_turn_position_id(entry):
+    uuid = entry.get("uuid")
+    return uuid if isinstance(entry.get("turnPosition"), dict) and isinstance(uuid, str) and uuid else None
+
+
+def _get_message_content(entry):
+    """None when the entry's message is no object."""
+    message = entry.get("message")
+    return message.get("content") if isinstance(message, dict) else None
 
 
 def _get_lines_backward(fh, size, window, cap, scan):
@@ -86,7 +153,7 @@ def _get_lines_backward(fh, size, window, cap, scan):
 
 
 def _get_line_prose(line):
-    if HUMAN_MARKER not in line:
+    if MARKER.HUMAN not in line:
         return None
     text, entry_kind = _get_human_text(_get_json_object(line))
     return _get_text_prose(text, entry_kind)
@@ -102,7 +169,7 @@ def _get_text_prose(text, entry_kind):
 def _get_human_text(entry):
     """Human prose sits on user entries and, for prompts queued mid-turn, on the attachment."""
     if entry.get("type") == "user" and _get_origin_kind(entry) == "human":
-        return _get_text_content(entry.get("message", {}).get("content")), "user"
+        return _get_text_content(_get_message_content(entry)), "user"
     attachment = entry.get("attachment")
     if (
         entry.get("type") == "attachment"

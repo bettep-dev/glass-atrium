@@ -44,7 +44,6 @@ Starting map (names drop `glass-atrium-`):
 | Wiki operations | wiki-curator |
 
 - Pick by `domains`/description fit, cited in the rationale; never by keyword or alias.
-- Routing safety, the < 0.7 halt and the single-agent skip: `scope-orchestrator.md` → `## LLM-led Routing`.
 - Route a compound request by fit: one agent takes only the parts it fits and its context can carry.
 - Independent, non-overlapping sub-tasks fan out in parallel by default, under `#### Automatic Parallelization`.
 - Team schema: `agents` (≥ 1) · `reason` (sub-task + fit) · `order` (phase 1-6 or `parallel`).
@@ -108,7 +107,7 @@ Role-file heading → when:
 - `### Failure Recovery Loop` — `fail`/`blocked`; a defect traced to an earlier fix, any result
 - `## Document-Driven Workflow` — plan to deploy
 - `## Harness Path Protection`, `### Progress-file exclusion` — harness paths
-- `## Owner Queue` — background job · posting to owner · `[ATRIUM-QUEUE]`
+- `## Owner Queue` — must-not-miss items go to the owner queue · each tool-using turn ends with a `[QUEUE-VERDICT]` line · background job · `[ATRIUM-QUEUE]`
 
 The skill:
 

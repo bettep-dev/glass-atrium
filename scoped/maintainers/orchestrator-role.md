@@ -255,9 +255,10 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `## Owner Queue`
 
-- The section is the only rule text telling a session when to use the queue; `scoped/orchestrator-core.md` → `## Where the rest lives` carries its trigger line and no rule.
+- The section is the only rule text telling a session what to post and when to use the queue; `scoped/orchestrator-core.md` → `## Where the rest lives` carries its trigger line.
   - That line stays one line: the core is printed whole at SessionStart, inside `hooks/inject-session-context.sh` → `CONTEXT_CAP_UNITS`.
-  - The posting table is single-sited in the section: the trigger line names when to read it, never who posts what.
+  - The trigger line states the must-not-miss obligation and the `[QUEUE-VERDICT]` keyword, and nothing more of the rule.
+    - Single-sited in the section: the posting table, the must-not-miss kinds list and the verdict line's forms.
   - The trigger line names no wait: a session reaches the wait rows through a trigger it already has — background job, posting, or the resume prompt's own wait step.
 - The section restates no command list or item JSON: their home is `scripts/atrium-queue.sh` → `print_usage`.
   - Its `wait` exit rows are the one exit-code list it carries: a mirror of `print_usage` → `On a wait's exit`, canonical there, so both stay.
@@ -270,16 +271,19 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the fetch → ack → act order and the `first` rule: `monitor/src/server/queue/envelope.ts` → `buildEnvelope` · `scripts/atrium-queue.sh` → `print_claims`;
   - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound`;
   - the two refusals behind `wait` exit 2: `monitor/src/server/queue/delivery.ts` → `lockOwnSession` (`unknown_session`) · `assertLiveFor` (`session_not_live`);
-  - the never-an-approval sentence with its action list: `envelope.ts` → `RESUME_PREAMBLE` · `scripts/atrium-queue.sh` → `get_item`, its provenance line;
+  - the never-an-approval sentence with its action list: `envelope.ts` → `RESUME_PREAMBLE` · `scripts/atrium-queue.sh` → `get_item`, its provenance line · the section's approval-kind bullet, in short form;
   - the attached-image line and its read-before-acting step: `scripts/atrium-queue.sh` → `print_images` · the section's `get` image bullet;
   - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
-  - the `[ATRIUM-QUEUE]` literal: `hooks/queue-session-register.sh`, and the core's trigger line.
+  - the `[ATRIUM-QUEUE]` literal: `hooks/queue-session-register.sh`, and the core's trigger line;
+  - the `[QUEUE-VERDICT]` literal: the section's verdict bullet, and the core's trigger line.
 - What the section's honest-backing lines rest on:
   - the waiting mark: `monitor/src/server/queue/delivery.ts` → `isSessionWaiting` · `monitor/public/src/screens/queue.jsx` → `SessionStateQ` · `PullLineQ`;
   - envelopes in a resume prompt only: `monitor/src/server/queue/sweep.ts`, the one caller of `buildResumePayload`;
   - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
   - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`;
   - the image paths: `monitor/src/server/queue/images.ts` → `getSessionImageViews` gives each one; `scripts/atrium-queue.sh` → `print_images` prints only a server-made name inside the image folder.
+  - the verdict check, its once-per-turn stamp and its id cross-check: `hooks/queue-turn-end-check.sh` → `set_verdict_reason` · `set_foreign_ids`; the turn boundary and the tool-call test: `hooks/lib/reply_language.py` → `find_current_turn`.
+  - the headless `claude -p` exclusion: `hooks/lib/session-entrypoint.sh` → `is_owner_facing_session`, called by `hooks/queue-turn-end-check.sh` → `main`; the at-most-once-per-turn hold: that hook's `main`, which exits on `stop_hook_active`.
 
 ### `### Answers and messages`
 
