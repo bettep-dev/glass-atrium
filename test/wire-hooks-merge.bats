@@ -322,3 +322,91 @@ JSON
     [[ "${output}" == *"ok   : hook bound — PreToolUse -> advisory-spawn-budget.sh"* ]] &&
     [[ "${output}" == *"ok   : hook bound — PostToolUse -> validate-tool-response.sh"* ]]
 }
+
+# Drive the REAL wire_hooks with the binding-options table replaced by $1 (rows, one per line):
+# the shipped table may hold no row, so the reader is the seam, never a fake hook.
+run_wire_with_options() {
+  run env GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${TARGET}/data" bash -c '
+    set -Eeuo pipefail
+    # shellcheck source=/dev/null
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    option_rows="$2"
+    get_expected_binding_option_rows() { printf "%s\n" "${option_rows}"; }
+    wire_hooks
+  ' _ "${GA}" "$1"
+}
+
+readonly STOP_OPTIONS_ROW=$'Stop\tcost-tracker.sh\t{"asyncRewake":true,"timeout":1200}'
+
+# the command object(s) bound for one basename under one event, compact JSON, one per line.
+command_objects() {
+  jq -c --arg ev "$1" --arg b "$2" '
+    (.hooks[$ev] // [])[] | .hooks[]? | select(.command | endswith("/" + $b))' "${SETTINGS}"
+}
+
+@test "declared binding options land on that binding's command only; an option-less binding stays type + command" {
+  run_wire_with_options "${STOP_OPTIONS_ROW}"
+
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "$(command_objects Stop cost-tracker.sh)" == "{\"type\":\"command\",\"command\":\"${HOME}/.glass-atrium/hooks/cost-tracker.sh\",\"asyncRewake\":true,\"timeout\":1200}" ]] || {
+    echo "options row: $(command_objects Stop cost-tracker.sh)"
+    return 1
+  }
+  [[ "$(command_objects Stop advisory-preedit-facts.sh)" == "{\"type\":\"command\",\"command\":\"${HOME}/.glass-atrium/hooks/advisory-preedit-facts.sh\"}" ]] || {
+    echo "plain row: $(command_objects Stop advisory-preedit-facts.sh)"
+    return 1
+  }
+}
+
+@test "an already-wired binding whose declared options drifted is repaired, and every key the user owns survives" {
+  run_wire_with_options ""
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  jq '(.hooks.Stop[].hooks[] | select(.command | endswith("/cost-tracker.sh"))) += {timeout: 30, statusMessage: "mine"}
+    | (.hooks.Stop[].hooks[] | select(.command | endswith("/advisory-preedit-facts.sh"))) += {timeout: 45}' \
+    "${SETTINGS}" >"${SETTINGS}.next" || return 1
+  mv -f "${SETTINGS}.next" "${SETTINGS}"
+
+  run_wire_with_options "${STOP_OPTIONS_ROW}"
+
+  [[ "${status}" -eq 0 && "${output}" == *"repaired binding options: Stop -> cost-tracker.sh"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "$(command_objects Stop cost-tracker.sh | jq -c '{asyncRewake, timeout, statusMessage}')" == '{"asyncRewake":true,"timeout":1200,"statusMessage":"mine"}' ]] || {
+    echo "repaired row: $(command_objects Stop cost-tracker.sh)"
+    return 1
+  }
+  [[ "$(command_objects Stop advisory-preedit-facts.sh | jq -c '.timeout')" == "45" ]] || {
+    echo "user-owned timeout: $(command_objects Stop advisory-preedit-facts.sh)"
+    return 1
+  }
+}
+
+@test "a re-wire whose declared options are already in place writes nothing" {
+  run_wire_with_options "${STOP_OPTIONS_ROW}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  local before backups_before
+  before="$(cat "${SETTINGS}")"
+  backups_before="$(find "${TARGET}" -name 'settings.json.ga-*backup*' | wc -l)"
+
+  run_wire_with_options "${STOP_OPTIONS_ROW}"
+
+  [[ "${status}" -eq 0 && "$(cat "${SETTINGS}")" == "${before}" ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "$(find "${TARGET}" -name 'settings.json.ga-*backup*' | wc -l)" -eq "${backups_before}" ]] || {
+    echo "a no-op re-wire took a backup: ${output}"
+    return 1
+  }
+}

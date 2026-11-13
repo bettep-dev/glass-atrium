@@ -267,6 +267,40 @@ get_expected_bindings() {
   }
 }
 
+# Run one detector with the binding-options table replaced by $1 (rows, one per line).
+run_detector_with_options() {
+  local rows="$1"
+  shift
+  run --separate-stderr env GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${STATE}" \
+    GA_TARGET_HOME="${FAKE_HOME}/.claude" GA_MANIFEST="${ROOT}/manifest.json" \
+    bash -c 'set -Eeuo pipefail; source "$1/lib/ga-core.sh"; ga_init_env "$2"
+      option_rows="$3"
+      get_expected_binding_option_rows() { printf "%s\n" "${option_rows}"; }
+      shift 3; "$@"' _ "${GA}" "${ROOT}" "${rows}" "$@"
+}
+
+@test "a declared binding option the live command lacks reads as drift, and an undeclared user key never does" {
+  local -a expected=()
+  local line settings="${FAKE_HOME}/.claude/settings.json"
+  while IFS= read -r line; do expected+=("${line}"); done < <(get_expected_bindings)
+  write_settings "${expected[@]}"
+  jq '(.hooks.Stop[].hooks[] | select(.command | endswith("/cost-tracker.sh"))) += {timeout: 1200}
+    | (.hooks.Stop[].hooks[] | select(.command | endswith("/advisory-preedit-facts.sh"))) += {timeout: 5}' \
+    "${settings}" >"${settings}.next" || return 1
+  mv -f "${settings}.next" "${settings}"
+
+  run_detector_with_options $'Stop\tcost-tracker.sh\t{"asyncRewake":true,"timeout":1200}' get_hook_binding_drift all
+
+  [[ "${stderr}" == *"binding options: Stop cost-tracker.sh"*"asyncRewake"* ]] || {
+    echo "options row: ${stderr}"
+    return 1
+  }
+  [[ "${output}" == "1" && "${stderr}" != *"advisory-preedit-facts.sh"* ]] || {
+    echo "count '${output}': ${stderr}"
+    return 1
+  }
+}
+
 @test "the integrity run records a verdict the session-start line reads" {
   local -a expected=()
   local line

@@ -288,6 +288,46 @@ get_live_hook_bindings() {
   ' -- "${SETTINGS_JSON}" 2>/dev/null | sort -u || printf ''
 }
 
+# EXPECTED_HOOK_BINDING_OPTIONS rows, one per line; nothing for an empty table (bash 3.2 nounset-safe expansion).
+get_expected_binding_option_rows() {
+  local row
+  for row in ${EXPECTED_HOOK_BINDING_OPTIONS[@]+"${EXPECTED_HOOK_BINDING_OPTIONS[@]}"}; do
+    printf '%s\n' "${row}"
+  done
+}
+
+# Declared options JSON object for ($1 event, $2 basename); `{}` when no row declares any.
+get_binding_options() {
+  local rows event hook options
+  rows="$(get_expected_binding_option_rows)"
+  while IFS=$'\t' read -r event hook options; do
+    if [[ "${event}" == "$1" && "${hook}" == "$2" ]]; then
+      printf '%s\n' "${options}"
+      return 0
+    fi
+  done <<<"${rows}"
+  printf '{}\n'
+}
+
+# Declared option keys ($4) that differ on the Atrium commands of ($2 event, $3 basename) in settings file $1:
+# one `matcher<US>key<US>live-JSON` line each (live `null` = absent). An undeclared key is never read. Read-only.
+get_binding_option_drift() {
+  jq -r --arg ev "$2" --arg base "$3" --argjson o "$4" --arg home "${HOME}" \
+    --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
+    def is_target:
+      (if startswith("~/") then $home + .[1:] else . end)
+      | (. == ($d1 + $base)) or (. == ($d2 + $base));
+    (.hooks[$ev] // []) | select(type == "array") | .[] | select(type == "object")
+    | ((.matcher // "") | tostring) as $m
+    | (.hooks // []) | select(type == "array") | .[]
+    | select(type == "object" and (.command | type) == "string" and (.command | is_target))
+    | . as $cmd
+    | $o | to_entries[]
+    | select($cmd[.key] != .value)
+    | [ $m, .key, ($cmd[.key] | tojson) ] | join("\u001f")
+  ' -- "$1"
+}
+
 # wire reconcile primitive: DROP a stale-matcher binding left behind by a matcher change.
 # WHY: the wire loop is ADD-ONLY — is_hook_bound is (event, matcher, basename)-scoped, so when a hook's EXPECTED_HOOK_BINDINGS matcher CHANGES (validate-pre-write-raw.sh Write -> Write|Edit) the new row is ADDED while the OLD-matcher row survives → the hook DOUBLE-FIRES on every matching tool call. This pass removes every Atrium binding whose (event, basename) IS expected but whose matcher is NOT.
 # NARROW predicate (deliberate): an (event, basename) pair with NO expected row at all is a RETIRED or hand-wired hook and is LEFT ALONE — that surface belongs to retire_hook_binding, and unwire_hooks documents that surplus Atrium bindings legitimately exist. A sibling row whose matcher IS expected survives untouched (validate-secret-scan.sh legitimately holds TWO matcher rows under PreToolUse).
@@ -401,8 +441,66 @@ reconcile_stale_hook_matchers() {
   log "reconcile_stale_hook_matchers: ${removed} stale hook command(s) dropped (backup: ${backup:-none — no mutation})"
 }
 
+# wire reconcile primitive: REPAIR declared binding options (EXPECTED_HOOK_BINDING_OPTIONS) that drifted on an
+# already-wired command. WHY: the add loop skips a bound basename, so an install wired before its row declared an
+# option — or a hand edit that dropped one — would keep the old command object; an asyncRewake binding that lost
+# the key runs synchronously and holds the session for the hook's lifetime.
+# Only the keys a row declares are compared and set; every other command, group and settings key is the user's
+# own and flows through. Lazily backed up, a no-op run writes nothing. Count → GA_REWIRE_REPAIRED (the
+# reconcile_stale_hook_matchers caller-transfer reason).
+reconcile_hook_binding_options() {
+  GA_REWIRE_REPAIRED=0
+  [[ -f "${SETTINGS_JSON}" ]] || return 0
+  local rows event hook options drift key keys backup="" repaired=0
+  rows="$(get_expected_binding_option_rows)"
+  while IFS=$'\t' read -r event hook options; do
+    [[ -n "${event}" ]] || continue
+    drift="$(get_binding_option_drift "${SETTINGS_JSON}" "${event}" "${hook}" "${options}")"
+    [[ -n "${drift}" ]] || continue
+    if [[ -z "${backup}" ]]; then
+      backup="${SETTINGS_JSON}.ga-options-backup.$(date +%Y%m%d-%H%M%S)"
+      cp -p -- "${SETTINGS_JSON}" "${backup}"
+      log "reconcile_hook_binding_options: backed up settings.json -> ${backup}"
+    fi
+    put_binding_options "${event}" "${hook}" "${options}" "${backup}"
+    keys=""
+    while IFS=$'\x1f' read -r _ key _; do
+      repaired=$((repaired + 1))
+      [[ ",${keys}," == *",${key},"* ]] || keys+="${keys:+,}${key}"
+    done <<<"${drift}"
+    log "  repaired binding options: ${event} -> ${hook} (${keys})"
+  done <<<"${rows}"
+  GA_REWIRE_REPAIRED="${repaired}"
+}
+
+# Merge the declared options ($3) into every Atrium command of ($1 event, $2 basename) in SETTINGS_JSON; $4 = the
+# backup named on failure. Atomic (temp + jq-revalidate + mv, RENDER_TMP trap-swept), injection-safe (--arg).
+put_binding_options() {
+  RENDER_TMP="${SETTINGS_JSON}.ga-options.$$"
+  jq --arg ev "$1" --arg base "$2" --argjson o "$3" --arg home "${HOME}" \
+    --arg d1 "${HOME}/.claude/hooks/" --arg d2 "${HOME}/.glass-atrium/hooks/" '
+    def is_target:
+      (if startswith("~/") then $home + .[1:] else . end)
+      | (. == ($d1 + $base)) or (. == ($d2 + $base));
+    def is_target_command: type == "object" and (.command | type) == "string" and (.command | is_target);
+    if (.hooks[$ev] | type) == "array" then
+      .hooks[$ev] |= map(
+        if type == "object" and (.hooks | type) == "array"
+        then .hooks |= map(if is_target_command then . + $o else . end)
+        else . end)
+    else . end
+  ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
+  if ! jq -e . -- "${RENDER_TMP}" >/dev/null 2>&1; then
+    delete_temp_file "${RENDER_TMP}"
+    RENDER_TMP=""
+    die "put_binding_options: merge produced invalid JSON for $1 -> $2 — backup: $4"
+  fi
+  mv -f -- "${RENDER_TMP}" "${SETTINGS_JSON}"
+  RENDER_TMP=""
+}
+
 # Restart notice + pending marker for a run that CHANGED the hook bindings ($1 added, $2 removed,
-# $3 retired). Claude Code snapshots settings.json bindings at SESSION START, so every change here
+# $3 retired, $4 option keys repaired). Claude Code snapshots settings.json bindings at SESSION START, so every change here
 # is inert in the sessions already running — a fact nothing in the tree stated before, which left
 # the mutation half-applied until the user happened to restart for unrelated reasons.
 # CONDITION is the SUM, never `added` alone: a matcher change wires nothing new (added=0) yet drops
@@ -411,10 +509,10 @@ reconcile_stale_hook_matchers() {
 # written unconditionally would stop meaning anything.
 # The marker is what doctor reads; the log line alone scrolls away with the installer output.
 note_hook_rewire() {
-  local added="${1:-0}" removed="${2:-0}" retired="${3:-0}"
-  local changed=$((added + removed + retired))
+  local added="${1:-0}" removed="${2:-0}" retired="${3:-0}" repaired="${4:-0}"
+  local changed=$((added + removed + retired + repaired))
   [[ "${changed}" -gt 0 ]] || return 0
-  log "  RESTART REQUIRED: ${changed} hook binding change(s) (added ${added}, dropped ${removed}, retired ${retired}) — Claude Code snapshots hook bindings at SESSION START, so they are INERT in every already-running session. Start a NEW session to activate them."
+  log "  RESTART REQUIRED: ${changed} hook binding change(s) (added ${added}, dropped ${removed}, retired ${retired}, options repaired ${repaired}) — Claude Code snapshots hook bindings at SESSION START, so they are INERT in every already-running session. Start a NEW session to activate them."
   local marker_dir="${GA_DATA_ROOT}/data"
   # TEST-HARNESS SANDBOX GUARD — a bats suite drives the REAL wire path against a sandboxed
   # GA_TARGET_HOME while inheriting the operator's $HOME, so GA_DATA_ROOT falls back to the LIVE
@@ -430,7 +528,7 @@ note_hook_rewire() {
   mkdir -p -- "${marker_dir}"
   local now
   now="$(date +%s)"
-  printf 'epoch=%s\nadded=%s removed=%s retired=%s\n' "${now}" "${added}" "${removed}" "${retired}" >"${marker}"
+  printf 'epoch=%s\nadded=%s removed=%s retired=%s repaired=%s\n' "${now}" "${added}" "${removed}" "${retired}" "${repaired}" >"${marker}"
   log "  rewire marker written: ${marker} (doctor reports it until the notice window expires)"
 }
 
@@ -475,7 +573,7 @@ wire_hooks() {
   # back up ONCE before the FIRST mutation — timestamped, user-recoverable; taken lazily (only when a binding is about to be written) so a fully-wired re-run stays a true no-op (zero writes), not an accumulating backup.
   local backup=""
 
-  local binding event hook matcher cmd added=0 already=0
+  local binding event hook matcher cmd options added=0 already=0
   for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
     IFS=$'\t' read -r event hook matcher <<<"${binding}"
     # command template → in-place ~/.glass-atrium/hooks consumer (the ~/.claude/hooks farm is dropped; hooks fire from the install root).
@@ -490,19 +588,20 @@ wire_hooks() {
       continue
     fi
 
-    # build the new hook-group object: a matcher key when non-empty, omitted for unmatched events (SessionStart/Stop). --arg everywhere → no command/matcher value interpolated into the jq program (injection-safe). RENDER_TMP-tracked so an INT/TERM during the jq>tmp is trap-swept (F-7).
+    # build the new hook-group object: a matcher key when non-empty, omitted for unmatched events (SessionStart/Stop); the command carries its declared options in the same transform, so a binding is never written without them. --arg everywhere → no command/matcher value interpolated into the jq program (injection-safe). RENDER_TMP-tracked so an INT/TERM during the jq>tmp is trap-swept (F-7).
+    options="$(get_binding_options "${event}" "${hook}")"
     RENDER_TMP="${SETTINGS_JSON}.ga-wire.$$"
     if [[ -n "${matcher}" ]]; then
-      jq --arg ev "${event}" --arg m "${matcher}" --arg c "${cmd}" '
+      jq --arg ev "${event}" --arg m "${matcher}" --arg c "${cmd}" --argjson o "${options}" '
         .hooks //= {}
         | .hooks[$ev] //= []
-        | .hooks[$ev] += [ { "matcher": $m, "hooks": [ { "type": "command", "command": $c } ] } ]
+        | .hooks[$ev] += [ { "matcher": $m, "hooks": [ ({ "type": "command", "command": $c } + $o) ] } ]
       ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
     else
-      jq --arg ev "${event}" --arg c "${cmd}" '
+      jq --arg ev "${event}" --arg c "${cmd}" --argjson o "${options}" '
         .hooks //= {}
         | .hooks[$ev] //= []
-        | .hooks[$ev] += [ { "hooks": [ { "type": "command", "command": $c } ] } ]
+        | .hooks[$ev] += [ { "hooks": [ ({ "type": "command", "command": $c } + $o) ] } ]
       ' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
     fi
 
@@ -528,9 +627,11 @@ wire_hooks() {
 
   # RECONCILE stale matchers AFTER the add loop: the correct binding is already in place, so the hook is never momentarily unbound while the old-matcher row is dropped.
   reconcile_stale_hook_matchers
+  # the add loop skips a bound basename, so options declared after its first wire land only here.
+  reconcile_hook_binding_options
 
   log "wire_hooks: ${added} binding(s) added, ${already} already wired (backup: ${backup:-none — no mutation})"
-  note_hook_rewire "${added}" "${GA_REWIRE_REMOVED:-0}" 0
+  note_hook_rewire "${added}" "${GA_REWIRE_REMOVED:-0}" 0 "${GA_REWIRE_REPAIRED:-0}"
 }
 
 # settings.json un-wire (remove ALL Atrium hook bindings).

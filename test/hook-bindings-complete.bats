@@ -58,3 +58,33 @@ array_rows() {
     return 1
   fi
 }
+
+@test "every binding-options row is a JSON object of managed keys for an expected (event, hook) pair" {
+  local rows expected event hook options bad=""
+  rows="$(drive_engine get_expected_binding_option_rows)" || {
+    echo "the options reader did not run: ${rows}"
+    return 1
+  }
+  expected="$(drive_engine _get_expected_binding_keys)"
+  while IFS=$'\t' read -r event hook options; do
+    [[ -n "${event}" ]] || continue
+    jq -e 'type == "object" and length > 0 and ((keys - ["asyncRewake", "timeout"]) | length) == 0' \
+      <<<"${options}" >/dev/null 2>&1 || bad="${bad} ${event}/${hook}:unmanaged-or-not-an-object"
+    [[ $'\n'"${expected}" == *$'\n'"${event}"$'\x1f'"${hook}"$'\x1f'* ]] || bad="${bad} ${event}/${hook}:no-binding-row"
+  done <<<"${rows}"
+  [[ -z "${bad}" ]] || {
+    echo "invalid binding-options row(s):${bad}"
+    return 1
+  }
+}
+
+# Run one engine function inside the initialized engine; stdout = its output.
+drive_engine() {
+  env GA_TARGET_HOME="${BATS_TEST_TMPDIR}" GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data" bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    shift
+    "$@"
+  ' _ "${GA}" "$@" 2>&1
+}

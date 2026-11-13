@@ -2598,7 +2598,8 @@ get_manifest_anchor_drift() {
   printf '1\n'
 }
 
-# Atrium hook bindings in SETTINGS_JSON vs EXPECTED_HOOK_BINDINGS. altered = an expected hook bound
+# Atrium hook bindings in SETTINGS_JSON vs EXPECTED_HOOK_BINDINGS + EXPECTED_HOOK_BINDING_OPTIONS. options = a
+# declared option key whose live value differs (both modes: run_doctor §6 never reads options). altered = an expected hook bound
 # under a matcher the table does not list for it; surplus = an Atrium hook the table does not bind
 # under that event; missing = an expected binding absent (mode `all` only — run_doctor §6 counts
 # those itself). Foreign user hooks are never read (get_live_hook_bindings). Profile branches reach
@@ -2620,6 +2621,8 @@ get_hook_binding_drift() {
   live="$(get_live_hook_bindings)"
   # shellcheck disable=SC2311
   count="$(_get_extra_binding_count "${expected}" "${live}")"
+  # shellcheck disable=SC2311
+  count=$((count + $(_get_binding_option_drift_count)))
   if [[ "${mode}" == "all" ]]; then
     # shellcheck disable=SC2311
     count=$((count + $(_get_missing_binding_count "${expected}" "${live}")))
@@ -2651,6 +2654,27 @@ _get_extra_binding_count() {
     fi
     count=$((count + 1))
   done <<<"$2"
+  printf '%d\n' "${count}"
+}
+
+# Declared option keys (EXPECTED_HOOK_BINDING_OPTIONS) whose live value differs on an Atrium command; a key no row
+# declares is the user's own and never read. Logs each; stdout = the count.
+_get_binding_option_drift_count() {
+  local rows event hook options drift matcher key live declared effect count=0
+  rows="$(get_expected_binding_option_rows)"
+  while IFS=$'\t' read -r event hook options; do
+    [[ -n "${event}" ]] || continue
+    drift="$(get_binding_option_drift "${SETTINGS_JSON}" "${event}" "${hook}" "${options}")"
+    while IFS=$'\x1f' read -r matcher key live; do
+      [[ -n "${key}" ]] || continue
+      declared="$(jq -c --arg k "${key}" '.[$k]' <<<"${options}")"
+      effect=""
+      [[ "${key}" != "asyncRewake" ]] || effect=" — without it the hook runs synchronously and holds the session for its lifetime"
+      # shellcheck disable=SC2016  # the quotes are literal text in the log line
+      log "  warn : binding DRIFT — binding options: ${event} ${hook}${matcher:+ (matcher '${matcher}')} has ${key}=${live}, declared ${declared}${effect}"
+      count=$((count + 1))
+    done <<<"${drift}"
+  done <<<"${rows}"
   printf '%d\n' "${count}"
 }
 
