@@ -485,20 +485,8 @@ function renderToText(node: unknown): string {
 // 렌더된 트리의 모든 요소 부분트리 글 — 함수 컴포넌트는 불러서 그 결과까지 폄.
 // 포함 여부만 보는 단언은 matcher 를 한 목록에, 명령을 다른 목록에 평평히 늘어놓은 렌더러도
 // 통과함(둘 다 어딘가에는 있음). '어느 자리 안에서' 를 재려면 자리마다의 글이 필요함.
-function collectSubtreeTexts(node: unknown, out: string[] = []): string[] {
-  if (node === null || node === undefined || typeof node === "boolean") return out;
-  if (typeof node === "string" || typeof node === "number") return out;
-  if (Array.isArray(node)) {
-    for (const child of node) collectSubtreeTexts(child, out);
-    return out;
-  }
-
-  const el = node as { type?: unknown; props?: { children?: unknown }; children?: unknown };
-  if (typeof el.type === "function")
-    return collectSubtreeTexts((el.type as (props: unknown) => unknown)(el.props), out);
-
-  out.push(renderToText(el));
-  return collectSubtreeTexts(el.children ?? null, out);
+function collectSubtreeTexts(node: unknown): string[] {
+  return findElements(node, () => true).map((el) => renderToText(el));
 }
 
 // 렌더러에 먹일 훅 구성 — matcher 둘 · 훅 둘. 폴드 케이스와 같은 모양을 쓰되 값은 따로 둠:

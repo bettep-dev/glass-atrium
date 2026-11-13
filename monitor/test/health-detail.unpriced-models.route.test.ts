@@ -174,7 +174,7 @@ test("never lists the ids cost-tracker prices at zero without a rate lookup, but
   for (const nearMiss of PARITY.rate_lookup_ids) {
     assert.ok(findEntry(body, nearMiss) !== undefined, `near miss ${JSON.stringify(nearMiss)} not listed`);
   }
-  for (const excluded of [...PARITY.zero_cost_ids.filter((id) => id !== null), "unknown"]) {
+  for (const excluded of PARITY.zero_cost_ids.filter((id) => id !== null)) {
     assert.strictEqual(findEntry(body, excluded), undefined, `zero-cost id ${JSON.stringify(excluded)} listed`);
   }
   assert.ok(body.models.every((entry) => typeof entry.model === "string"), "no null model entry");

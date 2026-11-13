@@ -202,7 +202,7 @@ const MAP_PAYLOAD_DAEMON = "autoagent";
 // 설계도/live/큐 fetch 는 이 틱을 타지 않음: 준정적 데이터를 60s 마다 다시 끌 이유가 없음.
 const HEALTH_POLL_MS = 60_000;
 
-// 맵의 health fetch 표 — health.jsx:42-47 의 다섯 URL + 가격 권고 하나.
+// 맵의 health fetch 표 — health.jsx:42-47 의 URL 집합 + 가격 권고.
 // 함수로 둠: 페이로드 URL 이 선택 데몬을 달고 나가야 하고(T9c 드릴다운),
 // 목록이 코드 안에 흩어지면 흡수 완결성을 셀 자리가 없어짐.
 // 데몬 이름은 응답에서 온 값이라 인코딩해 실음 — 이름 안의 `&`/공백이 그냥 붙으면 질의가
@@ -220,9 +220,8 @@ function getMapHealthEndpoints(payloadDaemon) {
 	];
 }
 
-// 표에서 페이로드 URL 이 앉은 자리 — 여섯 중 드릴다운 데몬을 따라 움직이는 유일한 항목이고,
-// 두 요청 무리(폴링 다섯 = 머리글 판정 넷 + 가격 권고 하나 · 드릴다운 하나)를 가르는 기준임. 목록은 언제나 위 표에서
-// 파생시킴: URL 을 effect 안에 다시 적으면 흡수 표(T7)와 갈라져 한쪽만 고쳐지는 자리가 생김.
+// 표에서 페이로드 URL 이 앉은 자리 — 드릴다운 데몬을 따라 움직이는 유일한 항목, 폴링 무리와 드릴다운을 가르는 기준.
+// 두 무리의 목록은 언제나 위 표에서 파생 — URL 을 effect 안에 다시 적으면 흡수 표(T7)와 갈라짐.
 const MAP_PAYLOAD_URL_INDEX = 3;
 
 // 행 확장 본문 — 부품 명부의 kind 중 펼칠 내용이 있는 것만 등록함. 없는 kind(pg · browser)는
@@ -419,10 +418,9 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick]);
 
-	// 폴링 health 응답 5종 — 머리글 판정 넷 + 머리글 판정이 아닌 가격 권고 하나, 병렬 발화. 수동 Refresh(refreshTick)와 60s 폴링(healthTick)
-	// 에서만 다시 나감. 드릴다운(payloadDaemon)은 일부러 deps 에 없음: 행 하나를 펼쳤다고 이 다섯이
-	// 다시 나가면 왕복 동안 표의 PG·브라우저 판정이 빈 칸으로 떨어져 방금 읽은 실패를 조작자가
-	// 다시 못 봄. 세터 순서는 아래 URL 순서와 짝임.
+	// 폴링 health 무리 — getMapHealthEndpoints 에서 드릴다운 자리를 뺀 나머지, 병렬 발화 · refreshTick·healthTick 에서만 다시 나감.
+	// payloadDaemon 은 일부러 deps 에 없음 — 행을 펼쳐 이 무리가 다시 나가면 왕복 동안 PG·브라우저 판정이 빈 칸으로 떨어짐.
+	// 세터 순서 = 아래 URL 순서.
 	useEffectAR(() => {
 		const ctrl = new AbortController();
 		healthAbortRef.current?.abort();
@@ -435,8 +433,7 @@ function ScreenArchitecture(
 			setHookFailState,
 			setUnpricedModelState,
 		];
-		// 표에서 페이로드 자리만 덜어냄. 데몬 이름을 싣는 URL 은 방금 덜어낸 그 하나뿐이라
-		// 어느 이름으로 표를 세우든 남는 다섯은 같음 — 그래서 payloadDaemon 이 여기 필요 없음.
+		// 데몬 이름을 싣는 URL 은 덜어낸 페이로드 자리뿐 → 남는 목록은 이름과 무관, payloadDaemon 불요.
 		const urls = getMapHealthEndpoints(MAP_PAYLOAD_DAEMON).filter(
 			(_url, index) => index !== MAP_PAYLOAD_URL_INDEX,
 		);
@@ -457,8 +454,8 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick, healthTick]);
 
-	// 드릴다운 응답 1종 — 위 다섯과 달리 선택 데몬을 따라 다시 나감 (T9c). 자기 요청만 중단함:
-	// 폴링 다섯과 abort 컨트롤러를 함께 쓰면 행을 펼칠 때 그쪽 왕복까지 끊겨 같은 공백이 생김.
+	// 드릴다운 요청 — 폴링 무리와 달리 선택 데몬을 따라 다시 나감 (T9c).
+	// 자기 요청만 중단 — 폴링 무리와 abort 컨트롤러를 공유하면 행을 펼칠 때 그쪽 왕복까지 끊김.
 	useEffectAR(() => {
 		const ctrl = new AbortController();
 		payloadAbortRef.current?.abort();

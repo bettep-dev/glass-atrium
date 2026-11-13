@@ -71,13 +71,12 @@ const ALLOWED_PAYLOAD_DAEMONS: ReadonlySet<string> = new Set([
 ]);
 const DEFAULT_PAYLOAD_LIMIT = 10;
 const MAX_PAYLOAD_LIMIT = 30;
-// hook-failures: dual bound — days (time window) allowlist + limit (row count) integer clamp.
+// hook-failures + unpriced-models: dual bound — days (time window) allowlist + limit (row count) integer clamp.
+// one set for both → the panel reads the failure log and the pricing advisory over one window.
 const ALLOWED_HOOK_FAILURE_DAYS: ReadonlySet<number> = new Set([7, 14, 30, 90]);
 const DEFAULT_HOOK_FAILURE_DAYS = 30;
 const DEFAULT_HOOK_FAILURE_LIMIT = 50;
 const MAX_HOOK_FAILURE_LIMIT = 200;
-// unpriced-models: same dual bound as hook-failures — the panel reads both over one window.
-const DEFAULT_UNPRICED_MODEL_LIMIT = 50;
 // document-integrity: `limit` is the newest-N row bound and is the DEFAULT — a full-corpus
 // sweep re-reads and re-hashes every stored body on every call (no memo), so it stays
 // reachable but opt-in via `limit=all` rather than being what omitting the param buys.
@@ -770,7 +769,7 @@ async function handleUnpricedModels(
   if (days === null) {
     return reply.code(400).send(invalidParam("days"));
   }
-  const limit = parseLimitParam(request.query.limit, DEFAULT_UNPRICED_MODEL_LIMIT, MAX_HOOK_FAILURE_LIMIT);
+  const limit = parseLimitParam(request.query.limit, DEFAULT_HOOK_FAILURE_LIMIT, MAX_HOOK_FAILURE_LIMIT);
   if (limit === null) {
     return reply.code(400).send(invalidParam("limit"));
   }
