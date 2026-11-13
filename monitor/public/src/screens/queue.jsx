@@ -1,6 +1,7 @@
 // Queue screen — the desk: the Sessions pane, the list of decisions, reports and items in delivery under their bands,
 // and the sheet showing the selected item as a one-page report with its composer (answer / order / Mark as read / later / Resend).
 // Every server field renders as React text, never as HTML.
+// "spec §N" in this file = the Queue desk design spec, clauded-docs 44063 (Atrium Monitor documents, outside the repo).
 const {
 	useState: useStateQ,
 	useEffect: useEffectQ,
@@ -513,9 +514,15 @@ const DESK_KEY_ACTS_Q = {
 	field: ({ root }) => root?.querySelector(".queue-sheet .queue-compose-text")?.focus(),
 	read: ({ root }) => root?.querySelector('.queue-sheet [data-key="e"]')?.click(),
 	later: ({ root }) => root?.querySelector('.queue-sheet [data-key="l"]')?.click(),
-	send: ({ target }) => target?.closest?.(".queue-sheet, .queue-orders")?.querySelector(".queue-composer .btn.primary")?.click(),
+	send: putSendKeyQ,
 	order: putOrderKeyQ,
 };
+
+// Cmd / Ctrl + Enter: in Orders its send button, inked or not, so a send with something missing says what as a press does · on the sheet its ink button
+function putSendKeyQ({ target }) {
+	const selector = target?.closest?.(".queue-orders") ? '.queue-composer [data-key="send"]' : ".queue-composer .btn.primary";
+	target?.closest?.(".queue-sheet, .queue-orders")?.querySelector(selector)?.click();
+}
 
 // on a sheet → the neighbouring item's sheet; on the list → the focus to the row beside the focused one, opening nothing (spec §11)
 function putSteppedRowQ({ queue, target, root }, key) {
@@ -1946,15 +1953,17 @@ function putInvalidQ(queue, id, message, targetId) {
  * One composer for every field the owner writes in: label, the box and its buttons on one row, the reserved note line.
  * Buttons are always enabled; while sending they read `Sending…` and carry aria-disabled. Cmd / Ctrl + Enter presses the ink button.
  * @param field - `{ id, label }` of the box; null → buttons alone
- * @param buttons - `{ label, isInk, keyName, onPress }` in order, the ink one last; `keyName` = the desk letter that presses it (getDeskKeyQ)
+ * @param buttons - `{ label, isInk, keyName, onPress }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter
  * @param later - the quiet button at the end of the note line, `{ label, keyName, onPress }`
  */
 function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null }) {
 	const ink = buttons.find((button) => button.isInk);
+	// the send key presses the button keyed `send` where there is one, else the ink one
+	const keyed = buttons.find((button) => button.keyName === "send") ?? ink;
 	const onKeyDown = (event) => {
-		if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || !ink || isBusy) return;
+		if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || !keyed || isBusy) return;
 		event.preventDefault();
-		ink.onPress();
+		keyed.onPress();
 	};
 	return (
 		<div className="queue-composer" {...(tray ? zone : null)}>
@@ -2560,7 +2569,7 @@ function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }
 	return (
 		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: <OrderLabelQ rows={rows.filter((row) => targets.ids.includes(row.id))} /> }} tray={tray}
 			text={box.text} onText={onText} isBusy={box.isBusy}
-			buttons={[{ label: getSendLabelQ(targets), isInk: box.text.trim() !== "" && targets.ids.length > 0, onPress: onSend }]}
+			buttons={[{ label: getSendLabelQ(targets), isInk: box.text.trim() !== "" && targets.ids.length > 0, keyName: "send", onPress: onSend }]}
 			note={<ComposerNoteQ error={box.error} info={changed} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets, isReady ? rows : null)} />} />
 	);
 }

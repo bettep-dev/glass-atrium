@@ -1,5 +1,6 @@
 // Queue owner page: the nav slot, card precedence text, resume records and the card controls, read from the shipped
 // queue.jsx through test/lib/render-screen.ts.
+// "spec §N" in this file = the Queue desk design spec, clauded-docs 44063 (Atrium Monitor documents, outside the repo).
 //
 // Runner: npx tsx --test test/queue.owner-page.client.test.ts
 
@@ -2232,6 +2233,69 @@ describe("desk keys", () => {
   test("Cmd+Enter presses the primary button of the pane holding the focus", () => {
     keyRoot.elements = { ".queue-composer .btn.primary": keyElement("Send answer") };
     assert.deepEqual(press("send", 3, { target: sheet }).acts, ["click Send answer"]);
+  });
+
+  // spec §9.2 → Foot, §11: in Orders the send key answers as a press of the send button does, inked or not
+  // → the rendered order composer, a key on its box bubbling to the desk as the page wires it
+  const ordersKeyDesk = async (targets: { ids: string[]; names: string[]; endedCount: number }) => {
+    const focused: string[] = [];
+    const sent: unknown[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub(), document: { querySelector: (selector: string) => ({ focus: () => focused.push(selector) }), getElementById: (id: string) => ({ focus: () => focused.push(`#${id}`) }) } },
+    })) as ScreenModule;
+    const composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null };
+    const orders = buildOrders({ composer, putError: (error: unknown) => { composer.error = error; }, send: (body: unknown) => sent.push(getPlain(body)) });
+    const queue = withList(buildQueue({ orders }).queue, []);
+    const draw = () => {
+      const box = (module.getOrderBoxQ as (q: unknown) => unknown)(queue);
+      const tray = (module.getTrayQ as (o: unknown) => unknown)({ fieldId: "queue-order-text", box });
+      return renderScreen((module.React as typeof screen.React).createElement(module.OrderComposerQ as Component, { queue, targets, box, tray })) as RenderedNode;
+    };
+    const tree = draw();
+    // the pane's querySelector, read off the rendered composer by the selector's last part (classes and one attribute)
+    const pane = {
+      querySelector: (selector: string) => {
+        const last = selector.trim().split(/\s+/).pop() ?? "";
+        const attr = /\[([\w-]+)="([^"]*)"\]/.exec(last);
+        const classes = last.replace(/\[.*\]/, "").split(".").filter(Boolean);
+        const [node] = findNodes(tree, (one) => {
+          const names = String(one.props?.className ?? "").split(/\s+/);
+          return (classes.length > 0 || attr !== null) && classes.every((name) => names.includes(name)) && (!attr || one.props?.[attr[1]] === attr[2]);
+        });
+        return node ? { click: () => (node.props.onClick as (() => void) | undefined)?.(), focus: () => focused.push(selector) } : null;
+      },
+    };
+    const inOrders = (tag: string) => ({ tagName: tag, type: "", isContentEditable: false, closest: (selector: string) => (selector.split(",").some((part) => part.trim() === ".queue-orders") ? pane : null) });
+    // the key on `target`: the box's own handler first when the focus is in it, then the desk's unless the box took it
+    const pressSend = (target: ReturnType<typeof inOrders>) => {
+      const event = { key: "Enter", metaKey: true, ctrlKey: false, altKey: false, defaultPrevented: false, target, preventDefault() { this.defaultPrevented = true; } };
+      if (target.tagName === "TEXTAREA") {
+        const [field] = findNodes(tree, (one) => one.type === "textarea");
+        (field?.props.onKeyDown as (e: unknown) => void)(event);
+      }
+      const action = (module.getDeskKeyQ as (e: unknown, o: unknown) => { name: string } | null)(event, { isKeysOn: true });
+      if (action) (module.putDeskKeyQ as (a: unknown, c: unknown) => void)(action, { queue, target, root: pane });
+    };
+    return { focused, sent, composer, draw, pressSend, inOrders };
+  };
+
+  const untickedSends = [
+    { name: "in the Orders box", tag: "TEXTAREA" },
+    { name: "elsewhere in Orders", tag: "DIV" },
+  ];
+  for (const row of untickedSends) {
+    test(`Cmd+Enter ${row.name} with nothing ticked sends nothing, says the tick is missing and focuses the rail, as the button does`, async () => {
+      const desk = await ordersKeyDesk({ ids: [], names: [], endedCount: 0 });
+      desk.pressSend(desk.inOrders(row.tag));
+      assert.deepEqual([desk.sent, desk.composer.error, desk.focused], [[], "Tick at least one session in the rail.", [".queue-sessions .ctl-checkbox"]]);
+      assert.equal(collectText(desk.draw()).includes("Tick at least one session in the rail."), true);
+    });
+  }
+
+  test("Cmd+Enter in the Orders box with a session ticked sends the order once", async () => {
+    const desk = await ordersKeyDesk({ ids: [SESSION_ID], names: ["atrium"], endedCount: 0 });
+    desk.pressSend(desk.inOrders("TEXTAREA"));
+    assert.deepEqual([desk.sent, desk.composer.error], [[{ sessionIds: [SESSION_ID], text: "rebase on main" }], null]);
   });
 
   const named = [
