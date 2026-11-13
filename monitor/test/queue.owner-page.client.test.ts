@@ -137,7 +137,7 @@ function withList(queue: Record<string, unknown>, items: unknown[], nextCursor: 
   return { ...queue, list: { status: "ready", data: { items, nextCursor }, newIds: [] }, filter: { profile: "" }, setFilter: () => undefined, groups, sheet: getSheet(groups, ""), selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
 }
 
-const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }>("getSheetStateQ", groups, hashId, { item: null, isHandled: false });
+const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }>("getSheetStateQ", groups, hashId, null);
 
 // the sheet is its own card markup → one tree holds its head, body and foot
 const renderSheet = (props: unknown): RenderedNode => render("ItemSheetQ", props);
@@ -224,8 +224,7 @@ test("after Send the next open item the active filter shows takes the sheet, in 
   const items = [buildItem({ id: 1 }), buildItem({ id: 4, kind: "report" }), buildItem({ id: 2, session: personal }), buildItem({ id: 3 })];
   const opened: unknown[] = [];
   const actions = (module.useQueueActionsQ as (deps: unknown) => { answerItem: (id: number, body: unknown) => Promise<void> })({
-    list: { status: "ready", data: { items, nextCursor: null } },
-    filter: { profile: "work-dev", session: "" },
+    groups: call("getGroupsQ", call("getVisibleItemsQ", items, { profile: "work-dev" })),
     setList: () => undefined,
     setDrafts: () => undefined,
     setStatus: () => undefined,
@@ -1002,8 +1001,7 @@ describe("after the owner acts on the last open item", () => {
     })) as ScreenModule;
     const selected: unknown[] = [];
     const actions = (module.useQueueActionsQ as (deps: unknown) => Record<string, (id: number, body?: unknown) => Promise<void>>)({
-      list: { status: "ready", data: { items: [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" })], nextCursor: null } },
-      filter: { profile: "", session: "" },
+      groups: call("getGroupsQ", [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" })]),
       setList: () => undefined,
       setDrafts: () => undefined,
       setStatus: () => undefined,
@@ -1455,7 +1453,7 @@ describe("page header freshness", () => {
     });
   }
 
-  // spec §3.1: the page checks by itself every 15 s and after each owner act → a manual read has nothing to add
+  // spec §3.1: the page checks by itself on its own cadence (POLL_Q) and after each owner act → a manual read has nothing to add
   test("the header holds the status line and no Refresh, a read in flight included", () => {
     const { header } = getHeader({ list: list({ status: "loading" }), resumes: resumes({ busy: true }) });
     assert.deepEqual([header?.props.freshness === undefined, header?.props.refresh, header?.props.actions, header?.props.primary], [false, undefined, undefined, undefined]);
@@ -1541,11 +1539,9 @@ function renderCard(name: string, props: unknown): RenderedNode {
 }
 
 // the rail as the desk renders it: the page's scope, ticks and list
-function renderRail(sessions: Record<string, unknown> = {}, filter = { profile: "", session: "" }, items: unknown[] = []) {
-  const filters: unknown[] = [];
+function renderRail(sessions: Record<string, unknown> = {}) {
   const { queue } = buildQueue({ sessions: buildSessions(sessions) });
-  const tree = renderCard("SessionsRegionQ", { queue: { ...withList(queue, items), filter, setFilter: (next: unknown) => filters.push(next) } });
-  return { tree, filters: () => getPlain(filters) };
+  return { tree: renderCard("SessionsRegionQ", { queue: withList(queue, []) }) };
 }
 
 const railRowOf = (tree: RenderedNode, id: string) => findNodes(tree, (node) => node.props?.["data-session"] === id)[0] as RenderedNode;
@@ -1715,7 +1711,7 @@ describe("the ticks as the one selection", () => {
 describe("the rail head", () => {
   const headSub = (region: unknown) => {
     const { queue } = buildQueue({ sessions: buildSessions({ region }) });
-    const tree = render("SessionsRegionQ", { queue: { ...withList(queue, []), filter: { profile: "", session: "" }, setFilter: () => undefined } });
+    const tree = render("SessionsRegionQ", { queue: withList(queue, []) });
     return findNodes(tree, (node) => node.props?.atom === "Card")[0]?.props.sub;
   };
   const live = SESSION_ROWS.filter((row) => row.state !== "exited").length;
@@ -1731,7 +1727,7 @@ describe("the rail foot", () => {
   const resumes = (results: string[]) => ({ status: "ready", busy: false, error: null, data: results.map((result, index) => ({ item: { id: index + 1, title: "Rebase" }, session: { profileLabel: "work-dev", cwdTail: "wt/a" }, attempt: 1, sentAt: "2026-11-12T12:20:11.204Z", result, abortReason: null, bgId: null })) });
   const footButton = (region: unknown) => {
     const { queue } = buildQueue({ resumes: region });
-    const tree = renderCard("SessionsRegionQ", { queue: { ...withList(queue, []), filter: { profile: "", session: "" }, setFilter: () => undefined } });
+    const tree = renderCard("SessionsRegionQ", { queue: withList(queue, []) });
     return findNodes(tree, (node) => node.type === "button" && collectText(node).includes("Automatic resumes")).map((node) => collectText(node));
   };
   const rows = [

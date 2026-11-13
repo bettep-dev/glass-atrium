@@ -101,9 +101,10 @@ const DESK_KEY_LIST_Q = [
 	{ keys: "O", does: "Tick the item's session, then the Orders box" },
 	{ keys: "Cmd / Ctrl + Enter", does: "Send from the pane in focus" },
 ];
-// the history read's page and the list body whose scroll the sheet keeps (a hidden box does not keep its own)
 // PAGE, MAX = schemas.ts → ORDER_PAGE_LIMIT DEFAULT, MAX · a page test fails when the two part
-const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", LIST_BODY: ".queue-list > .card-body" };
+const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text" };
+// the middle pane's parts: the list body whose scroll the sheet keeps (a hidden box does not keep its own), the sheet body, the list's tab stop
+const PANE_Q = { LIST_BODY: ".queue-list > .card-body", SHEET_BODY: ".queue-sheet > .card-body", TAB_STOP: '.queue-listbox [tabindex="0"]' };
 const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null });
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
@@ -356,7 +357,16 @@ function getSelectedIdQ(groups, hashItemId) {
 
 // every row but an order's opens on a sheet (spec §4.2) → the rows stepping and the position count
 function getSheetRowsQ(groups) {
-	return groups.flatMap((group) => group.rows).filter((row) => getKindWordQ(row.item) !== "Order");
+	return getRowsQ(groups).filter((row) => getKindWordQ(row.item) !== "Order");
+}
+
+// the bands' rows in list order
+function getRowsQ(groups) {
+	return groups.flatMap((group) => group.rows);
+}
+
+function getRowQ(groups, id) {
+	return getRowsQ(groups).find((row) => row.id === id);
 }
 
 /**
@@ -367,13 +377,12 @@ function getSheetRowsQ(groups) {
  */
 function getSheetStateQ(groups, hashItemId, held, ids = []) {
 	if (!hashItemId) return { kind: "none", id: null };
-	const rows = groups.flatMap((group) => group.rows);
 	if (held?.session && ids.length > 0 && !ids.includes(held.session.id)) return { kind: "none", id: null };
-	if (held !== null && hashItemId === String(held.id) && !rows.some((row) => row.id === held.id && row.item.status === "open")) {
+	if (held !== null && hashItemId === String(held.id) && getRowQ(groups, held.id)?.item.status !== "open") {
 		return { kind: "left", id: held.id, item: held };
 	}
 	const id = getSelectedIdQ(groups, hashItemId);
-	return id === null ? { kind: "none", id: null } : { kind: "item", id, item: rows.find((row) => row.id === id).item };
+	return id === null ? { kind: "none", id: null } : { kind: "item", id, item: getRowQ(groups, id).item };
 }
 
 /**
@@ -450,7 +459,7 @@ function getDeskKeyQ(event, { isKeysOn }) {
  */
 function MiddlePaneQ({ queue }) {
 	const isSheetOpen = queue.sheet.kind !== "none";
-	const { text } = typeof queue.status === "string" ? { text: queue.status } : queue.status;
+	const { text } = getStatusLineQ(queue.status);
 	return (
 		<>
 			<div className="queue-list-slot" hidden={isSheetOpen || undefined}>
@@ -514,7 +523,7 @@ function putSteppedRowQ({ queue, target, root }, key) {
 		const id = key === "ArrowDown" ? queue.steps.nextId : queue.steps.prevId;
 		return void (id !== null && queue.selectRow(id));
 	}
-	const id = getKeyedRowIdQ(queue.groups.flatMap((group) => group.rows), getRowIdQ(target), key);
+	const id = getKeyedRowIdQ(getRowsQ(queue.groups), getRowIdQ(target), key);
 	if (id !== null) root?.getElementById(`${ROW_ID_PREFIX_Q}${id}`)?.focus();
 }
 
@@ -526,8 +535,7 @@ function getRowIdQ(target) {
 
 // Enter on a row: its sheet in the list's place · an order's row → its entry in Orders, the list staying
 function putSheetEntryQ({ queue, target }) {
-	const id = getRowIdQ(target);
-	const row = queue.groups.flatMap((group) => group.rows).find((one) => one.id === id);
+	const row = getRowQ(queue.groups, getRowIdQ(target));
 	if (!row) return;
 	if (getKindWordQ(row.item) === "Order") return queue.openOrderRow(row);
 	queue.selectRow(row.id);
@@ -546,8 +554,7 @@ function getSheetOpenItemQ(sheet) {
 // a rail row's own session, else the focused list row's, else the open item's → added to the ticks there are, then the caret in the Orders box (spec §9.2)
 function putOrderKeyQ({ queue, target }) {
 	const railId = target?.closest?.("[data-session]")?.getAttribute("data-session");
-	const rowId = getRowIdQ(target);
-	const row = rowId === null ? null : queue.groups.flatMap((group) => group.rows).find((one) => one.id === rowId);
+	const row = getRowQ(queue.groups, getRowIdQ(target));
 	const item = row?.item ?? (queue.sheet.kind === "item" ? queue.sheet.item : null);
 	const id = railId || item?.session.id;
 	const isTakingOrders = (queue.sessions.region.data?.sessions ?? []).some((row) => row.id === id && row.isSelectable);
@@ -555,13 +562,16 @@ function putOrderKeyQ({ queue, target }) {
 	queue.orders.focus();
 }
 
-// the open sheet's body, else the list's current row, else its tab stop
 function putLeftOrdersQ({ queue, root }) {
-	const body = queue.sheet.kind !== "none" ? root?.querySelector(".queue-sheet > .card-body") : null;
-	(body ?? root?.getElementById(`${ROW_ID_PREFIX_Q}${queue.selectedId}`) ?? root?.querySelector('.queue-listbox [tabindex="0"]'))?.focus();
+	getPaneFocusQ(root, queue.selectedId)?.focus();
 }
 
-// one status line and no button: the page checks every 15 s and after each owner act (spec §3.1) · a failed resume or session read shows in its own region
+// the open sheet's body (mounted only while a sheet is open), else the list's current row, else its tab stop
+function getPaneFocusQ(root, currentId) {
+	return root?.querySelector(PANE_Q.SHEET_BODY) ?? root?.getElementById(`${ROW_ID_PREFIX_Q}${currentId}`) ?? root?.querySelector(PANE_Q.TAB_STOP);
+}
+
+// one status line and no button: the page checks on its own cadence (POLL_Q) and after each owner act (spec §3.1) · a failed resume or session read shows in its own region
 function QueueHeaderQ({ queue }) {
 	const { PageHeader } = window.UI;
 	return <PageHeader title={QUEUE_TITLE_Q} freshness={<QueueFreshnessQ list={queue.list} failedChecks={queue.failedChecks} />} />;
@@ -605,18 +615,18 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	}, [readList, readResumes, sessions.read, onReadQueueCount]);
 	const loadMore = useCallbackQ(() => getMoreQ({ list, setList }), [list]);
 	useEffectQ(() => { reload(); }, [reload]);
-	const actions = useQueueActionsQ({ list, filter, ids: sessions.selectedIds, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness });
+	const actions = useQueueActionsQ({ groups, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness });
 	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, sendAction: actions.send, setStatus, reload });
 	const ticks = usePageTickQ({ readList, readResumes, sessions, orders, setStatus, onReadQueueCount });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const setImages = useCallbackQ((id, update) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], images: update(prev[id]?.images ?? []) } })), []);
 	// opening a row or focusing it is the owner seeing it → its New mark goes (spec §4.4)
-	const seeRow = useCallbackQ((id) => setList((prev) => (prev.newIds.includes(id) ? { ...prev, newIds: prev.newIds.filter((other) => other !== id) } : prev)), []);
-	const selectRow = useCallbackQ((id) => { openItem(id); seeRow(id); }, [openItem, seeRow]);
+	const setSeen = useCallbackQ((id) => setList((prev) => (prev.newIds.includes(id) ? { ...prev, newIds: prev.newIds.filter((other) => other !== id) } : prev)), []);
+	const selectRow = useCallbackQ((id) => { openItem(id); setSeen(id); }, [openItem, setSeen]);
 	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders });
 	return {
 		list, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, loadMore, groups, sheet, steps,
-		selectedId: currentId, selectRow, seeRow, back: closeSheet, openOrderRow, status, keys, ...actions, ...ticks,
+		selectedId: currentId, selectRow, setSeen, back: closeSheet, openOrderRow, status, keys, ...actions, ...ticks,
 	};
 }
 
@@ -864,14 +874,14 @@ function useSheetMovesQ(currentId) {
 	const listTop = useRefQ(0);
 	useLayoutEffectQ(() => {
 		if (move === null) return;
-		if (move.to === "sheet") return void document.querySelector(".queue-sheet > .card-body")?.focus();
-		const body = document.querySelector(ORDERS_Q.LIST_BODY);
+		if (move.to === "sheet") return void document.querySelector(PANE_Q.SHEET_BODY)?.focus();
+		const body = document.querySelector(PANE_Q.LIST_BODY);
 		if (body) body.scrollTop = listTop.current;
-		if (move.to === "list") (document.getElementById(`${ROW_ID_PREFIX_Q}${currentId}`) ?? document.querySelector('.queue-listbox [tabindex="0"]'))?.focus({ preventScroll: true });
+		if (move.to === "list") getPaneFocusQ(document, currentId)?.focus({ preventScroll: true });
 	}, [move]);
 	return useCallbackQ((to) => {
 		// the list's own box keeps no scroll while hidden in every browser → read while it is still on screen
-		if (to === "sheet" && document.querySelector(".queue-sheet") === null) listTop.current = document.querySelector(ORDERS_Q.LIST_BODY)?.scrollTop ?? 0;
+		if (to === "sheet" && document.querySelector(".queue-sheet") === null) listTop.current = document.querySelector(PANE_Q.LIST_BODY)?.scrollTop ?? 0;
 		setMoveState({ to });
 	}, []);
 }
@@ -1194,11 +1204,13 @@ async function getMoreQ({ list, setList }) {
 	setList((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
 }
 
-/** Owner acts on the sheet: a taken act opens the next open item in list order on the sheet and says what happened on the list's status line. */
-function useQueueActionsQ({ list, filter, ids, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness }) {
+/**
+ * Owner acts on the sheet: a taken act opens the next open item in list order on the sheet and says what happened on the list's status line.
+ * @param groups - the list's bands as shown → the next sheet is never a row the filter or the ticks hide
+ */
+function useQueueActionsQ({ groups, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness }) {
 	const { busy, send } = useSendQ({ setDrafts, reload, onRetryHarness });
-	// the list as it stands, band by band → the next sheet is never a row the filter or the ticks hide
-	const items = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter, ids)).flatMap((group) => group.rows.map((row) => row.item));
+	const items = getRowsQ(groups).map((row) => row.item);
 	const settle = useCallbackQ(async (id, action, body) => {
 		const nextId = getNextAwaitingIdQ(items, id);
 		if (!(await send(id, action, body))) return false;
@@ -1294,7 +1306,7 @@ function QueueListQ({ queue }) {
 function useOffViewNewQ(newIds, isHidden) {
 	const [offView, setOffView] = useStateQ(null);
 	useEffectQ(() => {
-		const body = document.querySelector(ORDERS_Q.LIST_BODY);
+		const body = document.querySelector(PANE_Q.LIST_BODY);
 		if (!body || isHidden || newIds.length === 0) return void setOffView(null);
 		const measure = () => {
 			const next = getOffViewQ(body.getBoundingClientRect(), getRowBoxesQ(newIds));
@@ -1363,7 +1375,7 @@ function ListBodyQ({ queue, items, visible }) {
 	const { EmptyState, LoadingPlaceholder } = window.UI;
 	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={queue.reload} />;
 	if (queue.list.data === null) return <div className="queue-loading"><LoadingPlaceholder label="the queue" /></div>;
-	if (items.length === 0) return <EmptyState message="Nothing is waiting for you" hint="Sessions post reports and decisions here. The page checks every 15 seconds." />;
+	if (items.length === 0) return <EmptyState message="Nothing is waiting for you" hint={`Sessions post reports and decisions here. The page checks every ${POLL_Q.MS / 1000} seconds.`} />;
 	if (visible.length > 0) return <QueueListboxQ queue={queue} items={items} />;
 	if (queue.filter.profile) return <EmptyState kind="no-results" message="No items match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />;
 	return <EmptyState message={getTickedEmptyQ(queue.sessions)} action={<button type="button" className="btn ghost sm" onClick={queue.sessions.clear}>Show all sessions</button>} />;
@@ -1377,7 +1389,7 @@ function getTickedEmptyQ({ region, selectedIds }) {
 
 // one tab stop: the current row holds tabindex 0, else the first row; Up / Down / Home / End move the focus and open nothing (spec §11)
 function QueueListboxQ({ queue, items }) {
-	const rows = queue.groups.flatMap((group) => group.rows);
+	const rows = getRowsQ(queue.groups);
 	const tabStopId = rows.some((row) => row.id === queue.selectedId) ? queue.selectedId : rows[0]?.id;
 	const view = { isNameShown: queue.sessions.selectedIds.length !== 1, isAccountShown: new Set(items.map((item) => item.session.profileLabel)).size > 1, tabStopId };
 	const onKeyDown = (event) => {
@@ -1413,7 +1425,7 @@ function QueueGroupQ({ group, queue, view }) {
 				<Badge role="count" fill="tag" title={hasMore ? `${count} loaded, more not loaded yet` : undefined}>{hasMore ? `${count}+` : count}</Badge>
 			</div>
 			{group.rows.map((row) => (
-				<QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} isNew={queue.list.newIds.includes(row.id)} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} onSeen={queue.seeRow} />
+				<QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} isNew={queue.list.newIds.includes(row.id)} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} onSeen={queue.setSeen} />
 			))}
 		</div>
 	);
@@ -1552,7 +1564,7 @@ function getKindWordQ(item) {
 // the off-view note follows the scroll, so it stays out of the live region: only reads and acts are announced
 function ListFootQ({ queue, offView = null, onShowNew }) {
 	const data = queue.list.data;
-	const { text, orderId = null } = typeof queue.status === "string" ? { text: queue.status } : queue.status;
+	const { text, orderId = null } = getStatusLineQ(queue.status);
 	return (
 		<>
 			<span className="queue-status-line">
@@ -1564,6 +1576,11 @@ function ListFootQ({ queue, offView = null, onShowNew }) {
 			{data && data.nextCursor !== null && <ShowMoreQ count={data.items.length} isBusy={queue.list.status === "loading"} onMore={queue.loadMore} />}
 		</>
 	);
+}
+
+// the page's status as `{ text, orderId? }`: a plain line is a string, a line backing Show names its order (getActionStatusQ)
+function getStatusLineQ(status) {
+	return typeof status === "string" ? { text: status } : status;
 }
 
 function ShowMoreQ({ count, isBusy, onMore }) {

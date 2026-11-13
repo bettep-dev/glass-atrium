@@ -322,14 +322,18 @@ export function getEmptyFixture(): QueueFixture {
 
 /** The rest state with `atrium` no longer answering: its rail row `Not reachable`. */
 export function getUnreachableFixture(): QueueFixture {
-  const rest = getRestFixture();
-  return { ...rest, sessions: rest.sessions.map((row) => (row.id === SESSION_IDS.atrium ? { ...row, state: "stale" as const, lastActivityAt: getAt(14) } : row)) };
+  return getPatchedRestFixture(SESSION_IDS.atrium, { state: "stale", lastActivityAt: getAt(14) });
 }
 
 /** The rest state after `yoaida` was replaced: its row listed, no longer taking a message (a tick on it is dropped). */
 export function getStoppedFixture(): QueueFixture {
+  return getPatchedRestFixture(SESSION_IDS.yoaida, { state: "exited", exitReason: "replaced", isSelectable: false });
+}
+
+// the rest state with one session row patched by id
+function getPatchedRestFixture(id: string, patch: Partial<QueueFixture["sessions"][number]>): QueueFixture {
   const rest = getRestFixture();
-  return { ...rest, sessions: rest.sessions.map((row) => (row.id === SESSION_IDS.yoaida ? { ...row, state: "exited" as const, exitReason: "replaced", isSelectable: false } : row)) };
+  return { ...rest, sessions: rest.sessions.map((row) => (row.id === id ? { ...row, ...patch } : row)) };
 }
 
 /**
