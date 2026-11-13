@@ -1539,7 +1539,7 @@
     "monitor/public/src/data/health-model.js": "9c3d39acd520e9e8fb7aceffba7a2dcb700539c60430b8cb587aca1a18238813",
     "monitor/public/src/data/pricing.js": "e988ea9859abfbd6b6ec5e475c6d0c6f833653666f1888ea7485dacf9bdff8ab",
     "monitor/public/src/screens/agents.jsx": "c20c1513486cb2acbfcac2d886fc4aeeafa4987149ff80b26011129e38c5d817",
-    "monitor/public/src/screens/architecture.jsx": "5ea6fd4c9d244b1b7b1d65a348c208b275d5ffac90cc13ede4ce6af61baa75f7",
+    "monitor/public/src/screens/architecture.jsx": "1a38b02cb6bac38eb90656c6421677e171b24629a36534d0ef23c1bf9c35f4e4",
     "monitor/public/src/screens/clauded-docs.jsx": "f3a0219d288b0d500a465c7f4b988bc7963a6efe21ba3d3a47c14c12013ba6da",
     "monitor/public/src/screens/cost.jsx": "76d65d5c0be5b1c2d38067d1c9b007b3aee9c3222edf49471ed290e8bd560ca0",
     "monitor/public/src/screens/dashboard.jsx": "89d6f32580c2c1bba83a36088c3e4d676528e72950a535ee18a05d5e16c67115",
