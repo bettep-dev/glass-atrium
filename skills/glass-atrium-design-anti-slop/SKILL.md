@@ -107,6 +107,7 @@ Spacing                           \b((m|p)[trblxyse]?|gap(-[xy])?|space-[xy])-\[
 
 - Run these only on admin-console screens (`### Admin-console (data screens)`), with glob `*.{css,scss,html,tsx,jsx,vue}`.
 - A hit is a likelihood, never proof: the read note after a pattern names the context that makes it a signal.
+- A hit a `## Detection Guidance` line already matched counts once.
 
 ~~~text
 Stripe                 border-left:\s*[2-6]px|box-shadow:\s*inset\s+\d+px\s+0\s+0|border-l-[2-8]
@@ -135,7 +136,6 @@ Small type             text-xs                                                  
 Motion                 animate-(fade|slide|bounce)|@keyframes|transition:\s*all|transition-all
 Pulse                  animate-pulse                                             read: outside a loading skeleton
 Precision              toFixed\([3-9]\)|\d+\.\d{3,}%
-Flat surface           linear-gradient|bg-gradient-to|background-clip:\s*text|bg-clip-text|backdrop-(filter|blur)|box-shadow:\s*([^;]*,\s*)?(inset\s+)?0\s+0\s+[1-9]\d*(\.\d+)?px
 Type                   \b(Inter|Roboto|Arial)\b|italic|uppercase                 read: uppercase paired with tracking-
 Icons                  Sparkles|[\x{1F300}-\x{1FAFF}]                            read: also an icon wrapped in rounded-full + a background
 ~~~

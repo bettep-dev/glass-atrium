@@ -18,10 +18,9 @@ setup() {
 import re
 import sys
 
-skill, block, name, sample = sys.argv[1:5]
-heading = "## Detection Guidance" if block == "general" else "### Admin-console signals"
+skill, name, sample = sys.argv[1:4]
 with open(skill, encoding="utf-8") as handle:
-    section = handle.read().split(heading, 1)[1]
+    section = handle.read().split("## Detection Guidance", 1)[1]
 fence = section.split("~~~text\n", 1)[1].split("~~~", 1)[0]
 marker = "(case-insensitive)"
 for line in fence.splitlines():
@@ -40,10 +39,10 @@ PY
 }
 
 assert_rows() {
-  local row name block line expected sample
+  local row name line expected sample
   for row in "$@"; do
-    IFS='|' read -r name block line expected sample <<<"${row}"
-    run python3 -I -c "${PY_SRC}" "${SKILL}" "${block}" "${line}" "${sample}"
+    IFS='|' read -r name line expected sample <<<"${row}"
+    run python3 -I -c "${PY_SRC}" "${SKILL}" "${line}" "${sample}"
     [[ "${status}" -eq 0 ]] || {
       echo "${name}: ${output}"
       return 1
@@ -57,27 +56,25 @@ assert_rows() {
 
 @test "the Font line flags a font name only as a whole, case-exact word" {
   assert_rows \
-    "a pointer cursor value is no font name|general|Font|none|cursor: pointer;" \
-    "an ariaLabel prop is no font name|general|Font|none|<button ariaLabel=\"Close\">" \
-    "an interval timer is no font name|general|Font|none|const interval = setInterval(tick, 1000);" \
-    "a default Inter stack is flagged|general|Font|match|font-family: Inter, sans-serif;" \
-    "a Fraunces display face is flagged|general|Font|match|font-family: \"Fraunces\", serif;"
+    "a pointer cursor value is no font name|Font|none|cursor: pointer;" \
+    "an ariaLabel prop is no font name|Font|none|<button ariaLabel=\"Close\">" \
+    "an interval timer is no font name|Font|none|const interval = setInterval(tick, 1000);" \
+    "a default Inter stack is flagged|Font|match|font-family: Inter, sans-serif;" \
+    "a Fraunces display face is flagged|Font|match|font-family: \"Fraunces\", serif;"
 }
 
-@test "the Flat surface lines flag a blurred zero-offset shadow and pass zero-blur spread rings" {
+@test "the Flat surface line flags a blurred zero-offset shadow and passes zero-blur spread rings" {
   assert_rows \
-    "a hairline spread ring is no glow|general|Flat surface|none|box-shadow: 0 0 0 1px var(--border);" \
-    "an inset spread ring is no glow|general|Flat surface|none|box-shadow: inset 0 0 0 3px var(--accent);" \
-    "a two-layer focus ring is no glow|general|Flat surface|none|box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus);" \
-    "a blurred zero-offset shadow is a glow|general|Flat surface|match|box-shadow: 0 0 24px rgba(124, 58, 237, 0.6);" \
-    "a glow in a later shadow layer is flagged|general|Flat surface|match|box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 0 12px #a855f7;" \
-    "an admin hairline spread ring is no glow|admin|Flat surface|none|box-shadow: 0 0 0 1px var(--border);" \
-    "an admin blurred zero-offset shadow is a glow|admin|Flat surface|match|box-shadow: 0 0 16px var(--accent);"
+    "a hairline spread ring is no glow|Flat surface|none|box-shadow: 0 0 0 1px var(--border);" \
+    "an inset spread ring is no glow|Flat surface|none|box-shadow: inset 0 0 0 3px var(--accent);" \
+    "a two-layer focus ring is no glow|Flat surface|none|box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus);" \
+    "a blurred zero-offset shadow is a glow|Flat surface|match|box-shadow: 0 0 24px rgba(124, 58, 237, 0.6);" \
+    "a glow in a later shadow layer is flagged|Flat surface|match|box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), 0 0 12px #a855f7;"
 }
 
 @test "the Label line flags the uppercase class and value, never a toUpperCase call" {
   assert_rows \
-    "a toUpperCase call is no label treatment|general|Label|none|const code = id.toUpperCase();" \
-    "the Tailwind uppercase class is flagged|general|Label|match|<span class=\"uppercase tracking-widest\">" \
-    "a CSS uppercase transform is flagged|general|Label|match|text-transform: uppercase;"
+    "a toUpperCase call is no label treatment|Label|none|const code = id.toUpperCase();" \
+    "the Tailwind uppercase class is flagged|Label|match|<span class=\"uppercase tracking-widest\">" \
+    "a CSS uppercase transform is flagged|Label|match|text-transform: uppercase;"
 }
