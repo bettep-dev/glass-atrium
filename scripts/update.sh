@@ -130,7 +130,10 @@
 # right after the fetch, before the roster gate and any staging, nothing applied ·
 # 18 monitor dependency step failed — `npm ci` or `prisma generate` (files APPLIED,
 # migrations NOT applied, monitor NOT rebuilt or restarted — run `glass-atrium
-# db-setup`, then `npm run build` in the monitor, then restart it).
+# db-setup`, then `npm run build` in the monitor, then restart it) · 19 the release's
+# hooks/pricing.json has no row for a model id this install ran in the last 30 days or holds
+# in its model config (update_check_pricing_roster) — caught after verify, before the swap,
+# nothing applied; ATRIUM_UPDATE_ALLOW_UNPRICED=1 applies past it with a WARN.
 # The record subcommand also exits 16, writing nothing, for a pending request, an
 # invalid or non-merge-claimed name, an absent body, or a body without EDITABLE
 # regions; the reset restore exits 10 (the restore code) on any missing, refused or
@@ -176,6 +179,7 @@
 # ATRIUM_UPDATE_MONITOR_PLIST · ATRIUM_UPDATE_ONESHOT_PLIST ·
 # ATRIUM_UPDATE_RENDER_LAUNCHD · ATRIUM_UPDATE_RENDER_MONITOR_ENV ·
 # ATRIUM_UPDATE_CLAUDE_BIN · ATRIUM_UPDATE_PRISMA (the monitor's prisma CLI) ·
+# ATRIUM_UPDATE_PRICING_CHECK (scripts/check-pricing-roster.sh beside the running updater) ·
 # AUTOAGENT_BACKUP_DIR (agents-bak base). GA_SKIP_DB_SETUP (the shared install /
 # doctor DB opt-out) additionally skips the post-apply migrate step.
 
@@ -4232,6 +4236,64 @@ path-pattern refusal holds a changed row back for manual review.
 USAGE
 }
 
+# Pricing-roster gate, after verify and before the swap: a release whose hooks/pricing.json has no
+# row for a model id this install ran would have the cost hook price that id at a guessed rate.
+# Reads the release-tree copy, hash-checked here: staging holds only changed paths, and the
+# installed copy can carry rows the loader's self-refresh added that the release lacks.
+# Only a verdict of unpriced ids refuses; no verdict (database unavailable, a loader that rejects
+# a newer schema, a missing checker) warns and applies, so the gate never blocks on itself.
+# $1 = extracted release dir · $2 = release manifest · $3 = install root.
+update_check_pricing_roster() {
+  local pricing="$1/hooks/pricing.json" manifest="$2" root="$3" checker unpriced rc=0
+  # shellcheck disable=SC2310  # predicate in a condition by design — it logs its own skip
+  update_is_verified_release_pricing "${pricing}" "${manifest}" || return 0
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]] || ! update_db_enabled; then
+    update_log "WARN: pricing-roster check skipped — database opt-out (GA_SKIP_DB_SETUP, ATRIUM_UPDATE_DB=off or no psql); the release's pricing.json is unchecked against the model ids this install ran"
+    return 0
+  fi
+  checker="${ATRIUM_UPDATE_PRICING_CHECK:-${_update_script_dir}/check-pricing-roster.sh}"
+  unpriced="$("${checker}" "${pricing}")" || rc=$? # GA-ABSORB[handled@update_check_pricing_roster]: rc selects refuse or warn below
+  case "${rc}" in
+    0) update_log "pricing-roster check: every model id this install ran has a pricing row" ;;
+    3) update_refuse_unpriced_models "${root}" "$(printf '%s' "${unpriced}" | tr '\n' ' ')" ;;
+    *) update_log "WARN: pricing-roster check gave no verdict (rc=${rc}: database unavailable or the check could not run) — applying unchecked" ;;
+  esac
+}
+
+# rc 0 when the release ships hooks/pricing.json at its manifest hash. A release without the file
+# skips the gate (rc 1, logged); a copy off its hash is a corrupt download and ends the run.
+update_is_verified_release_pricing() {
+  local pricing="$1" manifest="$2" want got
+  want="$(spine_get_manifest_hash "${manifest}" "hooks/pricing.json")"
+  if [[ -z "${want}" || ! -f "${pricing}" ]]; then
+    update_log "WARN: the release ships no hooks/pricing.json — pricing-roster check skipped"
+    return 1
+  fi
+  got="$(spine_sha256_of "${pricing}")" || update_die "could not hash the release's hooks/pricing.json"
+  [[ "${got}" == "${want}" ]] \
+    || update_die "per-file hash verification failed for hooks/pricing.json (want=${want} got=${got}) — corrupt download, refusing to apply"
+}
+
+# Record the unpriced verdict in the run ledger (Precondition Loud-Fail's third leg), then refuse
+# with exit 19 unless ATRIUM_UPDATE_ALLOW_UNPRICED applies past it. $1 = install root · $2 = ids.
+update_refuse_unpriced_models() {
+  local root="$1" ids="${2% }" outcome=refused dest
+  [[ -z "${ATRIUM_UPDATE_ALLOW_UNPRICED:-}" ]] || outcome=allowed-by-override
+  dest="$(update_declines_dir "${root}")"
+  if mkdir -p -- "${dest}" \
+    && printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${outcome}" "${ids}" >>"${dest}/pricing-roster.log"; then
+    update_log "  pricing-roster verdict recorded → ${dest}/pricing-roster.log"
+  else
+    update_log "WARN: could not persist the pricing-roster verdict (${dest}) — it is stderr-only"
+  fi
+  if [[ "${outcome}" != refused ]]; then
+    update_log "WARN: ATRIUM_UPDATE_ALLOW_UNPRICED set — applying a release whose hooks/pricing.json has no row for: ${ids}"
+    return 0
+  fi
+  update_job_fail "pricing-roster: no pricing row for ${ids} (exit=19)"
+  update_die_code 19 "the release's hooks/pricing.json has no row for model id(s) this install ran: ${ids} — the cost hook would price them at a guessed rate; update once a release adds the rows, or apply anyway with ATRIUM_UPDATE_ALLOW_UNPRICED=1"
+}
+
 # The committing callback for the non-agent sync: snapshot+swap the staged change
 # set via the spine. Globals carry the paths, so the callback takes no arguments.
 #
@@ -4749,6 +4811,10 @@ update_run() {
   update_heartbeat
   spine_stage_and_verify "${new_dir}" "${manifest}" "${staging}" <"${apply_paths}" \
     || update_die "per-file hash verification failed — corrupt download, refusing to apply"
+
+  # Step 4.5 — pricing-roster gate: exit 19 before the swap on a model id this install ran that
+  # the release's pricing.json cannot price.
+  update_check_pricing_roster "${new_dir}" "${manifest}" "${root}"
 
   # Step 5 — deterministic snapshot+swap of every staged change.
   _update_apply_paths="$(cat "${apply_paths}")"
