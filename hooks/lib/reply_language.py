@@ -62,41 +62,44 @@ def _build_parser():
 
 def find_newest_human_prose(path, window, cap):
     """Status `none` with truncated=true means the cap was reached before any human prose."""
-    result = {"status": "none", "entry": None, "prose": None}
-    scan = {"bytes_read": 0, "truncated": False}
-    try:
-        with open(path, "rb") as fh:
-            size = fh.seek(0, os.SEEK_END)
-            for line in _get_lines_backward(fh, size, window, cap, scan):
-                found = _get_line_prose(line)
-                if found:
-                    result = found
-                    break
-    except OSError:
-        result["reason"] = "unreadable"
-    result.update(scan)
-    return result
+    def visit(line, result):
+        found = _get_line_prose(line)
+        if found:
+            result.update(found)
+        return bool(found)
+
+    return _scan_backward(path, window, cap, {"status": "none", "entry": None, "prose": None}, visit)
 
 
 def find_current_turn(path, window, cap):
     """Status `none` with truncated=true means the cap was reached before the turn's start entry."""
-    result = {"status": "none", "turn": None, "tools": False}
+    def visit(line, result):
+        if TOOL_USE_MARKER in line and _has_tool_use(_get_json_object(line)):
+            result["tools"] = True
+        turn = _get_turn_start_id(line) if TURN_MARKER in line else None
+        if turn:
+            result.update(status="found", turn=turn)
+        return bool(turn)
+
+    result = _scan_backward(path, window, cap, {"status": "none", "turn": None, "tools": False}, visit)
+    if result["status"] == "none":
+        result["tools"] = False
+    return result
+
+
+def _scan_backward(path, window, cap, result, visit):
+    """Lines newest first → `visit(line, result)` until true; adds bytes_read + truncated, reason=unreadable on an
+    unreadable transcript."""
     scan = {"bytes_read": 0, "truncated": False}
     try:
         with open(path, "rb") as fh:
             size = fh.seek(0, os.SEEK_END)
             for line in _get_lines_backward(fh, size, window, cap, scan):
-                if TOOL_USE_MARKER in line and _has_tool_use(_get_json_object(line)):
-                    result["tools"] = True
-                turn = _get_turn_start_id(line) if TURN_MARKER in line else None
-                if turn:
-                    result.update(status="found", turn=turn)
+                if visit(line, result):
                     break
     except OSError:
         result["reason"] = "unreadable"
     result.update(scan)
-    if result["status"] == "none":
-        result["tools"] = False
     return result
 
 
