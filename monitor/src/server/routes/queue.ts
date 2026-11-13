@@ -8,7 +8,7 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 
 import { getMonitorPort } from "../monitor-port.js";
-import { ackItem, claimPendingItems, withdrawItem } from "../queue/delivery.js";
+import { ackItem, claimPendingItems, getPendingCount, withdrawItem } from "../queue/delivery.js";
 import { getQueueCliPath } from "../queue/envelope.js";
 import { getQueueImageDir } from "../queue/images.js";
 import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
@@ -18,6 +18,7 @@ import {
   ackBodySchema,
   deregisterBodySchema,
   pendingBodySchema,
+  pendingCountBodySchema,
   postItemBodySchema,
   registerBodySchema,
   sessionBodySchema,
@@ -62,6 +63,7 @@ async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Pr
   registerSessionRoutes(app, options.homeDir);
   registerItemRoutes(app, options.imageDir);
   registerDeliveryRoutes(app);
+  registerPendingCountRoute(app);
   registerWithdrawRoute(app);
   await app.register(ownerRoutesPlugin, options);
 }
@@ -120,6 +122,17 @@ function registerDeliveryRoutes(app: FastifyInstance): void {
       schema: ackBodySchema,
       input: request.body,
       work: async (id, body) => ({ result: await ackItem(id, body.sessionId, body.msgId) }),
+    }),
+  );
+}
+
+function registerPendingCountRoute(app: FastifyInstance): void {
+  app.post("/api/queue/pending/count", POST_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/pending/count",
+      schema: pendingCountBodySchema,
+      input: request.body,
+      work: async (body) => ({ answeredWaiting: await getPendingCount(body.sessionId, { pid: body.pid }) }),
     }),
   );
 }

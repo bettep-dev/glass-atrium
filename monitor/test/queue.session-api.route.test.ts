@@ -486,6 +486,12 @@ describe("post and get by id", () => {
   });
 });
 
+const notLiveRows = [
+  { name: "row ended by its own process", seed: { state: "exited" as const, exitReason: "ended" as const }, pidOffset: 0 },
+  { name: "row replaced after a clear", seed: { state: "exited" as const, exitReason: "replaced" as const }, pidOffset: 0 },
+  { name: "live row of another process", seed: {}, pidOffset: 1 },
+];
+
 describe("pending (pull claim)", () => {
   test("claims only the caller's answered items and inserts one pull delivery each", async () => {
     const caller = await seedSession();
@@ -504,11 +510,6 @@ describe("pending (pull claim)", () => {
     assert.deepEqual(deliveries.map((row) => [row.itemId, row.route, row.attempt]).sort(), [[answered[0], "pull", 2], [answered[1], "pull", 1]].sort());
   });
 
-  const notLiveRows = [
-    { name: "row ended by its own process", seed: { state: "exited" as const, exitReason: "ended" as const }, pidOffset: 0 },
-    { name: "row replaced after a clear", seed: { state: "exited" as const, exitReason: "replaced" as const }, pidOffset: 0 },
-    { name: "live row of another process", seed: {}, pidOffset: 1 },
-  ];
   for (const row of notLiveRows) {
     test(`a wait pull from a process the row is not live for is refused and claims nothing: ${row.name}`, async () => {
       const pid = 700_000 + Math.floor(Math.random() * 100_000);
@@ -545,7 +546,73 @@ describe("pending (pull claim)", () => {
   });
 });
 
+describe("pending count (listener read)", () => {
+  test("counts only the caller's unclaimed answers and owner messages, claims nothing, and returns the count alone", async () => {
+    const pid = 700_000 + Math.floor(Math.random() * 100_000);
+    const caller = await seedSession({ pid });
+    const other = await seedSession();
+    const items = [
+      await seedItem(caller, { status: "answered" }),
+      await seedItem(caller, ownerMessageItem()),
+      await seedItem(caller),
+      await seedItem(caller, { status: "delivering" }),
+      await seedItem(other, { status: "answered" }),
+    ];
+    const statusesBefore = await Promise.all(items.map(getStatus));
+
+    const response = await send("POST", "/api/queue/pending/count", { sessionId: caller, pid });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { answeredWaiting: 2 });
+    assert.deepEqual(await Promise.all(items.map(getStatus)), statusesBefore);
+    assert.equal(await getPrisma().queueDelivery.count({ where: { itemId: { in: items } } }), 0);
+  });
+
+  test("an unknown session is refused as the other session routes refuse it", async () => {
+    const sessionId = trackSessionId();
+
+    const response = await send("POST", "/api/queue/pending/count", { sessionId, pid: 4242 });
+
+    assert.deepEqual([response.statusCode, response.json().error], [404, "unknown_session"]);
+    assert.equal(isSessionWaiting(sessionId), false);
+  });
+
+  for (const row of notLiveRows) {
+    test(`a count read from a process the row is not live for is refused and marks no waiting: ${row.name}`, async () => {
+      const pid = 700_000 + Math.floor(Math.random() * 100_000);
+      const sessionId = await seedSession({ ...row.seed, pid });
+      await seedItem(sessionId, { status: "answered" });
+
+      const response = await send("POST", "/api/queue/pending/count", { sessionId, pid: pid + row.pidOffset });
+
+      assert.deepEqual([response.statusCode, response.json().error], [409, "session_not_live"], row.name);
+      assert.equal(isSessionWaiting(sessionId), false, row.name);
+    });
+  }
+
+  test("rejects a count read that names no pid", async () => {
+    const sessionId = await seedSession();
+
+    const response = await send("POST", "/api/queue/pending/count", { sessionId });
+
+    assert.equal(response.statusCode, 400, response.body);
+  });
+});
+
 describe("waiting fact", () => {
+  test("a count read makes its session waiting until the freshness window passes", async () => {
+    const pid = 700_000 + Math.floor(Math.random() * 100_000);
+    const sessionId = await seedSession({ pid });
+
+    await send("POST", "/api/queue/pending/count", { sessionId, pid });
+    const now = Date.now();
+
+    assert.deepEqual(
+      [isSessionWaiting(sessionId, new Date(now)), isSessionWaiting(sessionId, new Date(now + WAIT_FRESH_MS + 1_000))],
+      [true, false],
+    );
+  });
+
   test("a wait pull makes its session waiting until the freshness window passes; a plain pull never does", async () => {
     const pid = 700_000 + Math.floor(Math.random() * 100_000);
     const waiting = await seedSession({ pid });

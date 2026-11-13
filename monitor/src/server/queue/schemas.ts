@@ -65,6 +65,9 @@ export const pendingBodySchema = z
   .strictObject({ sessionId, wait: z.literal(true).optional(), pid: pid.optional() })
   .refine((body) => (body.wait === undefined) === (body.pid === undefined), "wait and pid come together");
 
+// The listener's count read always names its Claude pid → every accepted read is a live poll
+export const pendingCountBodySchema = z.strictObject({ sessionId, pid });
+
 export const ackBodySchema = z.strictObject({ sessionId, msgId: z.uuid() });
 
 const optionSchema = z.strictObject({

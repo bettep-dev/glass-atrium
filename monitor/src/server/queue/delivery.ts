@@ -1,5 +1,5 @@
 // Session-side delivery transitions: pull claim (`pending` and the CLI's `wait` polls), ack (first valid ack wins),
-// withdraw (never an owner message), and the in-memory waiting fact a wait poll refreshes.
+// withdraw (never an owner message), the listener's non-claiming count read, and the in-memory waiting fact both polls refresh.
 // Each transaction locks the caller's registry row before touching item rows (registry.ts lock order).
 
 import { randomUUID } from "node:crypto";
@@ -61,6 +61,19 @@ export async function claimPendingItems(sessionId: string, wait?: WaitPoll): Pro
   });
   if (wait !== undefined) putWaitPoll(sessionId, Date.now());
   return claims;
+}
+
+/**
+ * Counts the caller's own answered items (answers and owner messages) without claiming any — the harness listener's poll.
+ * Refused with 409 unless the row is live for the poll's pid; accepted → the session is waiting, as after a wait poll.
+ */
+export async function getPendingCount(sessionId: string, poll: WaitPoll): Promise<number> {
+  const count = await getPrisma().$transaction(async (tx) => {
+    assertLiveFor(await lockOwnSession(tx, sessionId), poll.pid);
+    return tx.queueItem.count({ where: { sessionId, status: "answered" } });
+  });
+  putWaitPoll(sessionId, Date.now());
+  return count;
 }
 
 /** True while the session's last accepted wait poll is younger than WAIT_FRESH_MS. */
