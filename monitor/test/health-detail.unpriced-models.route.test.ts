@@ -6,6 +6,7 @@
 import test, { after, before, describe, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -21,6 +22,17 @@ import type {
   HealthUnpricedModelsResponse,
   UnpricedModelEntry,
 } from "../src/server/types/health-detail.js";
+
+// The model-id facts every pricing copy derives on its own (skip list, loader fold) — the same
+// table the hook, loader and roster-check suites read.
+interface PricingParityTable {
+  zero_cost_ids: Array<string | null>;
+  rate_lookup_ids: string[];
+  normalized_keys: Array<{ name: string; raw: string; key: string }>;
+}
+const PARITY = JSON.parse(
+  readFileSync(new URL("../../hooks/test/fixtures/model-id-pricing-parity.json", import.meta.url), "utf8"),
+) as PricingParityTable;
 
 const DAY_MS = 86_400_000;
 const RUN = randomUUID().slice(0, 8);
@@ -135,20 +147,34 @@ test("folds model ids the way the pricing loader does before matching the roster
   );
 });
 
-test("never lists the ids cost-tracker prices at zero without a rate lookup", async (t) => {
-  const marker = `claude-s4marker-${RUN}`;
+describe("folds each parity-table id to the pricing loader's key", () => {
+  for (const row of PARITY.normalized_keys) {
+    test(row.name, async (t) => {
+      await insertRows(t, [{ model: row.raw, seenAt: secondsAgo(60) }]);
+
+      const body = await getUnpriced("?limit=200");
+
+      assert.ok(findEntry(body, row.key) !== undefined, `${row.raw} not listed as ${row.key}`);
+      if (row.raw !== row.key) {
+        assert.strictEqual(findEntry(body, row.raw), undefined, `${row.raw} listed unfolded`);
+      }
+    });
+  }
+});
+
+test("never lists the ids cost-tracker prices at zero without a rate lookup, but lists their near misses", async (t) => {
   const now = secondsAgo(60);
   await insertRows(t, [
-    { model: null, seenAt: now },
-    { model: "", seenAt: now },
-    { model: "<synthetic>", seenAt: now },
-    { model: marker, seenAt: now },
+    ...PARITY.zero_cost_ids.map((model) => ({ model, seenAt: now })),
+    ...PARITY.rate_lookup_ids.map((model) => ({ model, seenAt: now })),
   ]);
 
-  const body = await getUnpriced();
+  const body = await getUnpriced("?limit=200");
 
-  assert.ok(findEntry(body, marker) !== undefined, "the fixture's own unpriced id is listed");
-  for (const excluded of ["", "<synthetic>", "unknown"]) {
+  for (const nearMiss of PARITY.rate_lookup_ids) {
+    assert.ok(findEntry(body, nearMiss) !== undefined, `near miss ${JSON.stringify(nearMiss)} not listed`);
+  }
+  for (const excluded of [...PARITY.zero_cost_ids.filter((id) => id !== null), "unknown"]) {
     assert.strictEqual(findEntry(body, excluded), undefined, `zero-cost id ${JSON.stringify(excluded)} listed`);
   }
   assert.ok(body.models.every((entry) => typeof entry.model === "string"), "no null model entry");

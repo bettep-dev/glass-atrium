@@ -810,6 +810,7 @@ function buildUnpricedModelsResponse(
  * Model normalization = hooks/lib/pricing_loader.py → normalize_model_key (bracket variant cut, then a
  * trailing -YYYYMMDD; an empty result keeps the raw id). NULL / '' / '<synthetic>' are excluded:
  * cost-tracker.sh → calc_cost prices them at $0 before any rate lookup, so they never lack a row.
+ * Both facts are pinned to their other copies by hooks/test/fixtures/model-id-pricing-parity.json.
  */
 async function findUnpricedModelRows(
   days: number,

@@ -9,6 +9,7 @@
 # monitor.model_config values under the model.* keys. Skipped ids — never priced by the cost hook:
 #   NULL, empty and '<synthetic>' (hooks/cost-tracker.sh → calc_cost returns $0 before resolving a rate)
 #   a config value of 'inherit' or '' (the agent follows the session model)
+# The zero-cost skips are pinned to calc_cost by hooks/test/fixtures/model-id-pricing-parity.json.
 # Membership is the loader's own (hooks/lib/pricing_loader.py → is_known), so dated and [1m]
 # variants resolve to their base row.
 #

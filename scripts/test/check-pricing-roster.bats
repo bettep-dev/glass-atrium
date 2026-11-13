@@ -39,13 +39,11 @@ seed_rows() {
   done
 }
 
-@test "the verdict lists exactly the ids the pricing file cannot price, after normalization and the zero-cost skips" {
+@test "the verdict lists exactly the ids the pricing file cannot price, after normalization and the config-value skips" {
   local rows=(
     "priced cost id|cost	claude-opus-4-8|0|"
     "dated snapshot of a priced id|cost	claude-haiku-4-5-20251001|0|"
     "context-variant of a priced id|cost	claude-fable-5[1m]|0|"
-    "NULL cost model (rendered empty)|cost	|0|"
-    "harness synthetic marker|cost	<synthetic>|0|"
     "config value inherit|config	inherit|0|"
     "config value unset|config	|0|"
     "unpriced cost id|cost	claude-foobar-9-9|3|claude-foobar-9-9"
@@ -68,6 +66,40 @@ seed_rows() {
       return 1
     }
   done
+}
+
+# Prints one parity-table id per line from the given list key — a null as the empty string the
+# roster query's coalesce renders it as.
+parity_ids() {
+  python3 -I -c 'import json, sys
+for model in json.load(open(sys.argv[1]))[sys.argv[2]]:
+    print(model or "")' "${BATS_TEST_DIRNAME}/../../hooks/test/fixtures/model-id-pricing-parity.json" "${1}"
+}
+
+@test "an id cost-tracker prices at zero is skipped, while a near miss of one still needs a row" {
+  local zero_ids lookup_ids model
+  zero_ids="$(parity_ids zero_cost_ids)"
+  lookup_ids="$(parity_ids rate_lookup_ids)"
+  while IFS= read -r model; do
+    : >"${STUB_ROWS}"
+    seed_rows "cost	${model}"
+    run "${SCRIPT}" "${PRICING}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "zero-cost id '${model}': status ${status}"
+      echo "${output}"
+      return 1
+    }
+  done <<<"${zero_ids}"
+  while IFS= read -r model; do
+    : >"${STUB_ROWS}"
+    seed_rows "cost	${model}"
+    run "${SCRIPT}" "${PRICING}"
+    [[ "${status}" -eq 3 && "${output}" == *"${model}"* ]] || {
+      echo "rate-lookup id '${model}': status ${status}"
+      echo "${output}"
+      return 1
+    }
+  done <<<"${lookup_ids}"
 }
 
 @test "several unpriced ids are each listed once on stdout, sorted, while priced ids are not" {

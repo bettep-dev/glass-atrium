@@ -79,6 +79,8 @@ _REPO_ROOT = _HOOKS_ROOT.parent
 _SOT_PATH = _HOOKS_ROOT / "pricing.json"
 _LIB_DIR = _HOOKS_ROOT / "lib"
 _BACKFILL = _HOOKS_ROOT / "backfill-cost-events.py"
+_PARITY_PATH = _HOOKS_ROOT / "test" / "fixtures" / "model-id-pricing-parity.json"
+_PARITY = json.loads(_PARITY_PATH.read_text(encoding="utf-8"))
 
 # Same sys.path seam the consumers use (PRICING_LIB_DIR / Path(__file__)/lib).
 if str(_LIB_DIR) not in sys.path:
@@ -486,38 +488,12 @@ class SotValidationTest(_LoaderCase):
 
 
 class NormalizeModelKeyTest(unittest.TestCase):
-    """Suffix-stripping normalizer (single source now — no mirror to lockstep)."""
+    """Suffix-stripping normalizer — the rows are the parity table the monitor's SQL copy also reads."""
 
-    def test_strips_1m_bracket_suffix(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-opus-4-8[1m]"), "claude-opus-4-8"
-        )
-
-    def test_strips_dated_suffix(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-haiku-4-5-20251001"),
-            "claude-haiku-4-5",
-        )
-
-    def test_strips_bracket_then_date(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-haiku-4-5-20251001[1m]"),
-            "claude-haiku-4-5",
-        )
-
-    def test_plain_key_unchanged(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-opus-4-8"), "claude-opus-4-8"
-        )
-
-    def test_non_8_digit_numeric_suffix_unchanged(self):
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-x-1234567"), "claude-x-1234567"
-        )
-        self.assertEqual(
-            pricing_loader.normalize_model_key("claude-x-123456789"),
-            "claude-x-123456789",
-        )
+    def test_each_parity_row_normalizes_to_its_key(self):
+        for row in _PARITY["normalized_keys"]:
+            with self.subTest(row["name"]):
+                self.assertEqual(pricing_loader.normalize_model_key(row["raw"]), row["key"])
 
     def test_falsy_passthrough(self):
         self.assertEqual(pricing_loader.normalize_model_key(""), "")
@@ -1710,7 +1686,7 @@ class BackfillCalcCostTest(_LoaderCase):
             "rate_for",
             side_effect=AssertionError("resolution chain walked on a zero-cost row"),
         ), redirect_stderr(err):
-            for model in (None, "", "<synthetic>"):
+            for model in _PARITY["zero_cost_ids"]:
                 self.assertEqual(backfill.calc_cost(1000, 500, 0, 0, model), 0.0)
         self.assertEqual(err.getvalue(), "")
 

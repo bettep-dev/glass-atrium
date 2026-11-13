@@ -16,10 +16,11 @@
 #   6. dated id (claude-haiku-4-5-20251001) → haiku rate 0.0035 via
 #      normalize_model_key (sot resolution, no advisory)
 #   7. fable-5 → first-class SoT row at 10/50 rates (0.035), no advisory
-#   8. '<synthetic>' (harness marker) → zero-cost allowlist: no advisory,
-#      no DATA-183, clean $0 row still recorded
-#   9. missing model field → zero-cost allowlist: no advisory, no DATA-183,
-#      clean $0 row (the resolution chain is never walked)
+#   8. each zero-cost id of the parity table (fixtures/model-id-pricing-parity.json:
+#      missing model field, '', '<synthetic>')
+#      → no advisory, no DATA-183, clean $0 row despite billable usage
+#   9. each near miss of a zero-cost id → walks the resolution chain:
+#      fallback price + model=unknown:<id> advisory
 #  10. synthetic sonnet-5 launch window (fixture tier) — COST_TRACKER_TODAY 2026-08-31 →
 #      intro 0.007, 2026-09-01 → standard 0.0105 (tier-by-date in the loader)
 #  11. family-matched NEW id (claude-opus-4-9) → older-family rate 0.0175 +
@@ -370,52 +371,57 @@ _run_hook_eph() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# Case 8: harness-synthetic model is allowlisted (no advisory, no DATA-183)
-
-@test "harness-synthetic model emits no unknown advisory and no DATA-183, records \$0 row" {
-  local tx stderr_file
-  tx="${TEST_TMP}/synthetic.jsonl"
-  stderr_file="${TEST_TMP}/err8.txt"
-  # Real harness-synthetic records carry all-zero usage → faithful 0/0 tokens.
-  _make_transcript "<synthetic>" "${tx}" 0 0
-  _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"
-  [[ "${status}" -eq 0 ]]
-  local err
-  err="$(cat "${stderr_file}")"
-  [[ ! "${err}" =~ "model=unknown" ]]
-  [[ ! "${err}" =~ "DATA-183" ]]
-  # The row itself is still recorded (clean $0, not a parse error).
-  _run_parser "${tx}" "${FRESH_TODAY}"
-  [[ "${status}" -eq 0 ]]
-  # Trailing comma pins the full value — bare '0.0' would prefix-match 0.0525.
-  [[ "${output}" == *'"cost_usd": 0.0,'* ]]
-  [[ "${output}" == *'"model": "<synthetic>"'* ]]
-  [[ "${output}" == *'"parse_error": false'* ]]
+# Prints `<null|str><US><model><US><stored model as JSON>` per id under the given parity-table key (the
+# row stores an empty id as null); the unit separator keeps an empty id a field of its own on read-back.
+_parity_rows() {
+  python3 -I -c 'import json, sys
+for model in json.load(open(sys.argv[1]))[sys.argv[2]]:
+    print("null" if model is None else "str", model or "", json.dumps(model or None), sep="\x1f")' \
+    "${BATS_TEST_DIRNAME}/fixtures/model-id-pricing-parity.json" "${1}"
 }
 
-# Case 9: empty model (field absent) is allowlisted (no advisory, no DATA-183)
+# Case 8: every zero-cost parity id is allowlisted (no advisory, no DATA-183, $0 row)
 
-@test "missing model field emits no unknown advisory and no DATA-183, records \$0 row" {
-  local tx stderr_file
-  tx="${TEST_TMP}/no-model.jsonl"
-  stderr_file="${TEST_TMP}/err9.txt"
-  _make_transcript_no_model "${tx}"
-  _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"
-  [[ "${status}" -eq 0 ]]
-  local err
-  err="$(cat "${stderr_file}")"
-  [[ ! "${err}" =~ "model=unknown" ]]
-  [[ ! "${err}" =~ "DATA-183" ]]
-  # Zero-cost allowlist: a model-less usage row is a legitimate $0 event —
-  # the resolution chain is never walked (no fallback pricing, no advisory).
-  # Verified against core.cost_events: every empty-model row carries 0 tokens,
-  # so the clean $0 is value-identical to the former fallback-rate-times-zero.
-  _run_parser "${tx}" "${FRESH_TODAY}"
-  [[ "${status}" -eq 0 ]]
-  # Trailing comma pins the full value (bare '0.0' could prefix-match floats).
-  [[ "${output}" == *'"cost_usd": 0.0,'* ]]
-  [[ "${output}" == *'"model": null'* ]]
-  [[ "${output}" == *'"parse_error": false'* ]]
+@test "an id the parity table prices at zero emits no unknown advisory and no DATA-183, records a \$0 row" {
+  local rows kind model model_json tx stderr_file err
+  rows="$(_parity_rows zero_cost_ids)"
+  while IFS=$'\x1f' read -r kind model model_json; do
+    tx="${TEST_TMP}/zero-${kind}-${#model}.jsonl"
+    stderr_file="${tx}.err"
+    # Billable usage, so only the allowlist (never 0 tokens) can make the row $0.
+    if [[ "${kind}" == "null" ]]; then _make_transcript_no_model "${tx}"; else _make_transcript "${model}" "${tx}"; fi
+    _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"
+    err="$(cat "${stderr_file}")"
+    [[ "${status}" -eq 0 && "${err}" != *"model=unknown"* && "${err}" != *"DATA-183"* ]] || {
+      echo "zero-cost ${kind} '${model}': status ${status}: ${err}"
+      return 1
+    }
+    _run_parser "${tx}" "${FRESH_TODAY}"
+    # Trailing comma pins the full value — bare '0.0' would prefix-match 0.0525.
+    [[ "${status}" -eq 0 && "${output}" == *'"cost_usd": 0.0,'* && "${output}" == *'"parse_error": false'* &&
+      "${output}" == *"\"model\": ${model_json}"* ]] || {
+      echo "zero-cost ${kind} '${model}': ${output}"
+      return 1
+    }
+  done <<<"${rows}"
+}
+
+# Case 9: a near miss of a zero-cost id walks the resolution chain (advisory + fallback price)
+
+@test "a near miss of a zero-cost id is priced by the fallback with an unknown advisory" {
+  local rows kind model model_json tx stderr_file err
+  rows="$(_parity_rows rate_lookup_ids)"
+  while IFS=$'\x1f' read -r kind model model_json; do
+    tx="${TEST_TMP}/near-${#model}-${RANDOM}.jsonl"
+    stderr_file="${tx}.err"
+    _make_transcript "${model}" "${tx}"
+    _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"
+    err="$(cat "${stderr_file}")"
+    [[ "${status}" -eq 0 && "${err}" == *"model=unknown:${model} "* ]] || {
+      echo "near miss ${kind} '${model}': status ${status}: ${err}"
+      return 1
+    }
+  done <<<"${rows}"
 }
 
 # Case 10: synthetic sonnet-5 launch window (fixture tier, intro rate through 2026-08-31)
