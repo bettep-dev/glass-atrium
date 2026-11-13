@@ -202,7 +202,7 @@ const MAP_PAYLOAD_DAEMON = "autoagent";
 // 설계도/live/큐 fetch 는 이 틱을 타지 않음: 준정적 데이터를 60s 마다 다시 끌 이유가 없음.
 const HEALTH_POLL_MS = 60_000;
 
-// 맵의 health fetch 표 — health.jsx:42-47 의 URL 집합 + 가격 권고.
+// The map's health fetch table: the five health endpoints the map absorbed plus the pricing advisory; this function owns the set.
 // 함수로 둠: 페이로드 URL 이 선택 데몬을 달고 나가야 하고(T9c 드릴다운),
 // 목록이 코드 안에 흩어지면 흡수 완결성을 셀 자리가 없어짐.
 // 데몬 이름은 응답에서 온 값이라 인코딩해 실음 — 이름 안의 `&`/공백이 그냥 붙으면 질의가
