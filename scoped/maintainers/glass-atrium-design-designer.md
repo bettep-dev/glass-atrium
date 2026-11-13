@@ -29,7 +29,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | `#### Admin-console tropes (data screens)` | **Admin-console tropes citers** |
 | `##### Owner-review signatures` | `## Pre-Emit 5-Axis Self-Critique` → **Admin-console recheck** |
 | `##### Tables and pagination` | `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line |
-| `##### Color, type and decoration` (replacement and the brand-purple exception) | body-internal: **Canvas/color tropes** → the `Not the trope` sub-bullet |
+| **Canvas/color tropes** → the `Replacement` sub-bullet (flat surfaces and the brand-purple exception) | body-internal: `##### Color, type and decoration` → its first row · anti-slop skill → `## Severity Bands` (both banding tables) |
 | **Canvas/color tropes** (the hue-to-hue gradient and gradient-text entry) | `scoped/scope-report.md` → `### Visual-Maximization Floor` → **SoT** |
 | **Placeholder First** · **Scale minimums** · **Visual Vocabulary Match** · the trope group leads | `agents/references/design-slop-landing.md` |
 | **Scarcity as rationale** (the product-UI default) | 5-axis-critique skill → **Restraint** prompt |
