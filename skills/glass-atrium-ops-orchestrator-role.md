@@ -630,7 +630,7 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 - The monitor pushes nothing into a running session: an answer or message reaches it only through its own `wait` or `pending`.
   - Honest backing: nothing starts a wait for a session; the turn-end check (`hooks/queue-turn-end-check.sh`) keeps a main-session turn from ending while an item it posted awaits the owner and no wait of its process runs — its `[ATRIUM-QUEUE] harness:` line means start `wait` now; the Queue page shows which sessions wait.
     - The check holds a turn end at most once per turn, verdict ask included: an item posted in answer to the ask gets no wait reminder, so the ask names `wait`.
-- Run `wait` as a background command: it ends when a poll claims something for this session, or at its bound.
+- Run `wait` as a background command, spelled like every other CLI call: it ends when a poll claims something for this session, or at its bound.
   - Why a background command: the session keeps working while it runs, and takes up its output and exit code when it ends.
   - A claiming `wait` prints the same `get` and `ack` commands `pending` prints.
 
@@ -640,11 +640,11 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 | a session posted a decision, or a report with `isFreeTextAllowed: true` | start `wait` |
 | a background job session cannot continue without the answer a running `wait` will claim | end the turn and let the wait wake the session |
 | an interactive session cannot continue without the answer a running `wait` will claim | end the turn |
-| an interactive session starts a turn after its `wait` ended | follow the steps that wait printed before any `pending` |
+| an interactive session starts a turn after its `wait` ended | follow the `get` and `ack` steps that wait printed before any `pending` |
 | an interactive session starts a turn awaiting an answer and no `wait` has ended | run `pending` |
 | the monitor resumed this session | run `register` after its ack steps, whatever each ack replied, then start `wait` |
-| an `[ATRIUM-QUEUE]` context line says answers or messages wait | run `pending` |
-| `get` exits 3 — the item belongs to another session | take no action on it |
+| an `[ATRIUM-QUEUE]` context line says answers or messages wait | run `pending`: it claims them and prints each one's `get` and `ack` commands |
+| `get` exits 3 — the item belongs to another session | stop and take no action on it |
 | `wait` exits 0 — a poll claimed answers or messages | follow the printed steps, then start `wait` again |
 | `wait` exits 1 — the monitor is unreachable or failing | start `wait` again once |
 | `wait` exits 2, its refusal naming `unknown_session` | run `register`, then start `wait` again |
