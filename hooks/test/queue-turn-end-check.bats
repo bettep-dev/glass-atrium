@@ -13,6 +13,10 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 HOOK="${GA}/hooks/queue-turn-end-check.sh"
 SESSION_ID="3f1c2b9a-7d4e-4f5a-9b6c-0e1d2c3b4a59"
 ITEM_TITLE="Merge the release branch tonight?"
+# the statuses a running wait carries forward, and those it cannot: the parity row ties both, with the monitor's
+# terminal set, to the QueueItemStatus enum
+RESOLVED_STATUSES="open answered"
+KEPT_STATUSES="delivering held unacked expired resume_pending"
 # shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
 source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
 
@@ -148,8 +152,9 @@ assert_silent_turn_end() {
 
 @test "an awaiting item a wait resolves, with no wait running, keeps the turn going with the wait command and no item text" {
   start_stub
-  local row lock expected_status
-  for row in "open|none" "answered|none" "open|stale"; do
+  local row rows=() lock expected_status
+  for expected_status in ${RESOLVED_STATUSES}; do rows+=("${expected_status}|none"); done
+  for row in "${rows[@]}" "open|stale"; do
     IFS='|' read -r expected_status lock <<<"${row}"
     new_root
     mark_items 41
@@ -219,9 +224,13 @@ assert_silent_turn_end() {
 
 @test "a terminal or unknown item drops its mark, an item a wait cannot resolve keeps it, and neither keeps the turn going" {
   start_stub
-  local row reply_status item_status kept
-  for row in "200|delivered|no" "200|seen|no" "200|withdrawn|no" "404||no" "200|delivering|yes" "200|held|yes" \
-    "200|unacked|yes" "200|expired|yes" "200|resume_pending|yes"; do
+  local row rows=("404||no") reply_status item_status kept
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
+  for item_status in $(source "${GA}/scripts/lib/queue-session.sh" && printf '%s' "${QUEUE_TERMINAL_STATUSES}"); do
+    rows+=("200|${item_status}|no")
+  done
+  for item_status in ${KEPT_STATUSES}; do rows+=("200|${item_status}|yes"); done
+  for row in "${rows[@]}"; do
     IFS='|' read -r reply_status item_status kept <<<"${row}"
     new_root
     mark_items 41
@@ -347,6 +356,24 @@ assert_silent_turn_end() {
     | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ')"
   [[ "${check_set}" == "${monitor_set}" ]] || {
     echo "check: ${check_set} · monitor: ${monitor_set}"
+    return 1
+  }
+}
+
+@test "every status the monitor's enum holds is one the check resolves by a wait, drops as terminal or keeps" {
+  local enum_set check_set
+  enum_set="$(sed -n '/^enum QueueItemStatus {$/,/^}$/p' "${GA}/monitor/prisma/schema.prisma" \
+    | sed -n 's/^  \([a-z_]*\)$/\1/p' | sort | tr '\n' ' ')"
+  [[ -n "${enum_set}" ]] || {
+    echo "no QueueItemStatus enum in schema.prisma"
+    return 1
+  }
+  # each list splits into one status per word
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh disable=SC2086
+  check_set="$(source "${GA}/scripts/lib/queue-session.sh" \
+    && printf '%s\n' ${RESOLVED_STATUSES} ${QUEUE_TERMINAL_STATUSES} ${KEPT_STATUSES} | sort | tr '\n' ' ')"
+  [[ "${check_set}" == "${enum_set}" ]] || {
+    echo "check: ${check_set} · enum: ${enum_set}"
     return 1
   }
 }
