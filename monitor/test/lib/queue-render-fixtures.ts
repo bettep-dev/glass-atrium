@@ -326,6 +326,12 @@ export function getUnreachableFixture(): QueueFixture {
   return { ...rest, sessions: rest.sessions.map((row) => (row.id === SESSION_IDS.atrium ? { ...row, state: "stale" as const, lastActivityAt: getAt(14) } : row)) };
 }
 
+/** The rest state after `yoaida` was replaced: its row listed, no longer taking a message (a tick on it is dropped). */
+export function getStoppedFixture(): QueueFixture {
+  const rest = getRestFixture();
+  return { ...rest, sessions: rest.sessions.map((row) => (row.id === SESSION_IDS.yoaida ? { ...row, state: "exited" as const, exitReason: "replaced", isSelectable: false } : row)) };
+}
+
 /**
  * The copies one taken send writes, as the send route stores them: one per recipient, awaiting receipt.
  * @param firstId - the first copy's item id; the rest follow it

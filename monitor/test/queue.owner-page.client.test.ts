@@ -134,7 +134,7 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
 // the queue with a loaded list, its bands and the first row selected, as useQueueStateQ hands it to the desk
 function withList(queue: Record<string, unknown>, items: unknown[], nextCursor: number | null = null) {
   const groups = call<Array<{ rows: Array<{ id: number }> }>>("getGroupsQ", items);
-  return { ...queue, list: { status: "ready", data: { items, nextCursor }, newIds: [] }, filter: { profile: "", session: "" }, setFilter: () => undefined, groups, sheet: getSheet(groups, ""), selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
+  return { ...queue, list: { status: "ready", data: { items, nextCursor }, newIds: [] }, filter: { profile: "" }, setFilter: () => undefined, groups, sheet: getSheet(groups, ""), selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
 }
 
 const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }>("getSheetStateQ", groups, hashId, { item: null, isHandled: false });
@@ -755,10 +755,10 @@ describe("queue filter bar", () => {
     return { bar, triggers, picks };
   };
 
-  // the rail is the Session filter → the bar holds the Account axis alone (spec §9.1 → Scope)
+  // the rail's ticks are the session scope → the bar holds the Account axis alone (spec §4.1 → Filters)
   const rows = [
-    { name: "at defaults the Account trigger reads All and the reset stays hidden", filter: { profile: "", session: "" }, account: "All", isApplied: false },
-    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal", session: "" }, account: "personal", isApplied: true },
+    { name: "at defaults the Account trigger reads All and the reset stays hidden", filter: { profile: "" }, account: "All", isApplied: false },
+    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal" }, account: "personal", isApplied: true },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -769,14 +769,14 @@ describe("queue filter bar", () => {
     });
   }
 
-  test("Reset filters returns the account to All and keeps the rail's scope", () => {
-    const { bar, picks } = renderBar({ profile: "personal", session: SESSION_ID });
+  test("Reset filters returns the account to All", () => {
+    const { bar, picks } = renderBar({ profile: "personal" });
     (bar?.props.onReset as () => void)();
-    assert.deepEqual(getPlain(picks), [{ profile: "", session: SESSION_ID }]);
+    assert.deepEqual(getPlain(picks), [{ profile: "" }]);
   });
 
   test("a chosen value no loaded item carries stays an option, so its trigger still names it", () => {
-    const { triggers } = renderBar({ profile: "archived", session: "" });
+    const { triggers } = renderBar({ profile: "archived" });
     assert.equal(triggers.Account?.value, "archived");
     assert.ok((triggers.Account?.options as Array<{ key: string }>).some((option) => option.key === "archived"));
   });
@@ -792,9 +792,8 @@ describe("filter state in the hash", () => {
     return { module, location };
   };
   const rows = [
-    { name: "both axes round-trip through the screen query", start: "#queue", filter: { profile: "work-dev", session: SESSION_ID } },
-    { name: "one axis round-trips and the other stays All", start: "#queue?profile=old", filter: { profile: "", session: SESSION_ID } },
-    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal", filter: { profile: "", session: "" } },
+    { name: "the account round-trips through the screen query", start: "#queue", filter: { profile: "work-dev" } },
+    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal", filter: { profile: "" } },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -807,9 +806,9 @@ describe("filter state in the hash", () => {
 
   // one hash writer merges every key → a filter write never erases the selected item or the ticks (spec §4.3 → Selection)
   const mergeRows = [
-    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev", session: "" }, expected: { session: "", profile: "work-dev", item: "41", to: "a,b" } },
-    { name: "an item write keeps the filter", start: "#queue?profile=personal&session=s1", patch: { item: "7" }, expected: { session: "s1", profile: "personal", item: "7", to: "" } },
-    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { session: "", profile: "personal", item: "", to: "" } },
+    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev" }, expected: { profile: "work-dev", item: "41", to: "a,b" } },
+    { name: "an item write keeps the filter and the ticks", start: "#queue?profile=personal&to=s1", patch: { item: "7" }, expected: { profile: "personal", item: "7", to: "s1" } },
+    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { profile: "personal", item: "", to: "" } },
   ];
   for (const row of mergeRows) {
     test(row.name, async () => {
@@ -820,12 +819,19 @@ describe("filter state in the hash", () => {
     });
   }
 
-  // Orders is always open (spec §9.2) → an old link's view= names no state, and the first write leaves it out
-  test("an old link's view= opens nothing and leaves the hash at the first write", async () => {
-    const { module, location } = await load("#queue?view=orders&item=41");
-    (module.setHashStateQ as (patch: unknown) => void)({ item: "" });
-    assert.equal(location.hash, "#queue");
-  });
+  // Orders is always open and the ticks are the one selection (spec §9.1, §9.2) → an old link's view= or session= names no state, and the first write leaves it out
+  const oldLinks = [
+    { name: "an old link's view= opens nothing and leaves the hash at the first write", start: "#queue?view=orders&item=41" },
+    { name: "an old link's session= scopes nothing and leaves the hash at the first write", start: "#queue?session=s1&item=41" },
+  ];
+  for (const row of oldLinks) {
+    test(row.name, async () => {
+      const { module, location } = await load(row.start);
+      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), { profile: "" });
+      (module.setHashStateQ as (patch: unknown) => void)({ item: "" });
+      assert.equal(location.hash, "#queue");
+    });
+  }
 });
 
 describe("list groups", () => {
@@ -922,10 +928,13 @@ describe("what the sheet shows", () => {
     { name: "a held item still open keeps the sheet when a new row arrives before it", items: [arrived, held], hashId: "3", expected: { kind: "item", id: 3 } },
     { name: "a row the owner opened replaces the held item", items: [arrived], hashId: "2", expected: { kind: "item", id: 2 } },
     { name: "nothing in the hash leaves the held item off the sheet", items: [arrived, held], hashId: "", expected: { kind: "none", id: null } },
+    // spec §4.3: the ticks change → the sheet gives way to the list once its item's session falls out of scope, never to the left-the-queue line
+    { name: "a held item whose session the ticks leave out gives way to the list", items: [arrived], hashId: "3", ids: ["b2"], expected: { kind: "none", id: null } },
+    { name: "a held item whose session stays ticked keeps the sheet", items: [arrived, held], hashId: "3", ids: [SESSION_ID], expected: { kind: "item", id: 3 } },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, held);
+      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, held, row.ids ?? []);
       assert.deepEqual({ kind: sheet.kind, id: sheet.id }, row.expected);
     });
   }
@@ -1513,11 +1522,27 @@ describe("sessions rail rows", () => {
     });
   }
 
-  test("a row that takes no message has no checkbox, and every other row's box is named for the order", () => {
+  test("a row that takes no message has no checkbox, and every other row's box is named Select and its session", () => {
     const { tree } = renderRail({ isEndedShown: true });
     const boxOf = (id: string) => findNodes(railRowOf(tree, id), (node) => node.type === "input" && node.props.type === "checkbox")[0];
-    assert.equal(boxOf(SESSION_ID)?.props["aria-label"], "Order to nightly-docs-sweep");
+    assert.equal(boxOf(SESSION_ID)?.props["aria-label"], "Select nightly-docs-sweep");
     assert.equal(boxOf(REPLACED_ID), undefined);
+  });
+
+  // spec §9.1: one control per row — the row is its checkbox's label, so a press anywhere on it ticks; a row that takes no message is no control
+  test("a row is its checkbox's label and holds no button, and a row that takes no message is no label", () => {
+    const { tree } = renderRail({ isEndedShown: true });
+    const controls = (id: string) => findNodes(railRowOf(tree, id), (node) => node.type === "button" || node.type === "input").map((node) => node.type);
+    assert.deepEqual([railRowOf(tree, SESSION_ID).type, controls(SESSION_ID)], ["label", ["input"]]);
+    assert.deepEqual([railRowOf(tree, REPLACED_ID).type, controls(REPLACED_ID)], ["div", []]);
+  });
+
+  test("every box of the rail shares one description of what a tick does", () => {
+    const { tree } = renderRail({ isEndedShown: true });
+    const described = findNodes(tree, (node) => node.type === "input" && node.props.type === "checkbox").map((node) => node.props["aria-describedby"]);
+    const [hint] = findNodes(tree, (node) => node.props?.id === described[0]);
+    assert.ok(described.length === 3 && described.every((id) => id === described[0]), String(described));
+    assert.equal(collectText(hint as RenderedNode), "Ticked sessions set whose reports and orders are shown and who receives the next order. With none ticked, every session is shown and no order can be sent.");
   });
 
   test("ticking a row calls the toggle with that row's id", () => {
@@ -1547,39 +1572,69 @@ describe("sessions rail rows", () => {
   });
 });
 
-describe("the rail as the session scope", () => {
-  test("pressing a row scopes the list to that session and keeps the account", () => {
-    const { tree, filters } = renderRail({}, { profile: "work-dev", session: "" });
-    const [button] = findNodes(railRowOf(tree, SESSION_ID), (node) => node.type === "button");
-    (button?.props.onClick as () => void)();
-    assert.deepEqual(filters(), [{ profile: "work-dev", session: SESSION_ID }]);
+describe("the ticks as the one selection", () => {
+  const gersona = buildSession({ id: "a1", name: "gersona" });
+  const yoaida = buildSession({ id: "b2", name: "yoaida" });
+  const atrium = buildSession({ id: "c3", name: "atrium" });
+  const items = [buildItem({ id: 1, session: gersona }), buildItem({ id: 2, session: yoaida }), buildItem({ id: 3, session: atrium })];
+  // spec §9.1: the ticked sessions are the list's scope; nothing ticked → every session's items
+  const scopes = [
+    { name: "nothing ticked shows every session's items", ids: [], expected: [1, 2, 3] },
+    { name: "two ticked show theirs and leave a third session's out", ids: ["a1", "b2"], expected: [1, 2] },
+  ];
+  for (const row of scopes) {
+    test(`the list's scope: ${row.name}`, () => {
+      assert.deepEqual(call<Array<{ id: number }>>("getVisibleItemsQ", items, { profile: "" }, row.ids).map((item) => item.id), row.expected);
+    });
+  }
+
+  const rails = [buildSessionRow({ id: "a1", name: "gersona" }), buildSessionRow({ id: "b2", name: "yoaida" })];
+  const titles = [
+    { name: "nothing ticked reads All sessions", ids: [], title: "All sessions" },
+    { name: "one tick names its session", ids: ["b2"], title: "yoaida" },
+    { name: "several ticks name them all in tick order", ids: ["b2", "a1"], title: "yoaida, gersona" },
+  ];
+  for (const row of titles) test(`the list's head: ${row.name}`, () => assert.equal(call("getScopeTitleQ", rails, row.ids), row.title));
+
+  test("no rail row and no band is aria-current, whatever is ticked", () => {
+    const { tree } = renderRail({ selectedIds: [SESSION_ID] });
+    assert.equal(findNodes(tree, (node) => node.props?.["aria-current"] !== undefined).length, 0);
   });
 
-  test("the scoped row and only it is current, and All sessions is current with no scope", () => {
-    const current = (session: string) => findNodes(renderRail({}, { profile: "", session }).tree, (node) => node.props?.["aria-current"] === "true").map((node) => collectText(node));
-    assert.ok(current(SESSION_ID).length === 1 && current(SESSION_ID)[0]?.includes("nightly-docs-sweep"), String(current(SESSION_ID)));
-    assert.ok(current("").length === 1 && current("")[0]?.includes("All sessions"), String(current("")));
-  });
-
-  test("All sessions clears the scope", () => {
-    const { tree, filters } = renderRail({}, { profile: "", session: SESSION_ID });
-    const [band] = findNodes(tree, (node) => node.type === "button" && collectText(node).includes("All sessions"));
-    (band?.props.onClick as () => void)();
-    assert.deepEqual(filters(), [{ profile: "", session: "" }]);
-  });
-
-  // master box: every live session that takes a message; an ended one is ticked on its own row
+  // master box (spec §9.1): nothing ticked → every live session that takes a message; anything ticked → every tick cleared, an ended one's too
+  const live = buildSessionRow({ id: "d4", name: "aidl" });
+  const masterRows = [...SESSION_ROWS, live];
   const masters = [
-    { name: "none ticked ticks every live session", ids: [], next: [SESSION_ID], state: "none" },
-    { name: "an ended tick alone stays and the live ones join it", ids: [ENDED_ID], next: [ENDED_ID, SESSION_ID], state: "none" },
-    { name: "every live session ticked unticks them and keeps the ended tick", ids: [ENDED_ID, SESSION_ID], next: [ENDED_ID], state: "all" },
+    { name: "none ticked ticks every live session", ids: [], next: [SESSION_ID, "d4"], state: "none" },
+    { name: "an ended tick alone clears", ids: [ENDED_ID], next: [], state: "some" },
+    { name: "some live ticked clears every tick", ids: [SESSION_ID, ENDED_ID], next: [], state: "some" },
+    { name: "every live session ticked clears them all", ids: [SESSION_ID, "d4"], next: [], state: "all" },
   ];
   for (const row of masters) {
     test(`the master box: ${row.name}`, () => {
-      assert.equal(call("getMasterTickQ", row.ids, SESSION_ROWS), row.state);
-      assert.deepEqual(call("putMasterTickQ", row.ids, SESSION_ROWS), row.next);
+      assert.equal(call("getMasterTickQ", row.ids, masterRows), row.state);
+      assert.deepEqual(call("putMasterTickQ", row.ids, masterRows), row.next);
     });
   }
+
+  test("the master box is named for every live session, and absent while no session takes a message", () => {
+    const masterOf = (rows: unknown[]) => findNodes(renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } }).tree, (node) => node.props?.["aria-label"] === "Select all live sessions").length;
+    assert.deepEqual([masterOf(SESSION_ROWS), masterOf([SESSION_ROWS[2]])], [1, 0]);
+  });
+
+  // spec §9.1 → In the address: a tick on a session that no longer takes a message is dropped and said in the status line
+  const dropped = [
+    { name: "one", ids: [SESSION_ID, REPLACED_ID], line: "⚠ nightly-docs-sweep no longer takes orders and was unticked." },
+    { name: "none", ids: [SESSION_ID], line: null },
+  ];
+  for (const row of dropped) test(`a dropped tick's status line: ${row.name}`, () => assert.equal(call("getDroppedNoteQ", row.ids, SESSION_ROWS), row.line));
+
+  // spec §9.2: the recipients changed under a draft → the note says so once
+  const changes = [
+    { name: "to two sessions", names: ["gersona", "yoaida"], note: "Recipients changed: now gersona and yoaida." },
+    { name: "to none", names: [], note: "No session ticked now: this order has no recipient." },
+  ];
+  for (const row of changes) test(`the recipients-changed note: ${row.name}`, () => assert.equal(call("getRecipientsNoteQ", row.names), row.note));
 
   test("the master box shows the mixed state while only some live sessions are ticked", () => {
     const rows = [buildSessionRow(), buildSessionRow({ id: ENDED_ID, state: "live" })];
@@ -1612,10 +1667,10 @@ describe("the rail foot", () => {
 
 describe("order composer", () => {
   const shown = SESSION_ROWS;
-  test("the targets are the ticked rows on show, never a hidden ended row or a replaced row", () => {
+  // one tick set → list scope, thread and recipients agree: a ticked ended row stays a recipient while its band is folded
+  test("the targets are every ticked row that takes a message, an ended one included, never a replaced row", () => {
     const ticked = [SESSION_ID, ENDED_ID, REPLACED_ID];
     assert.deepEqual(call("getSendTargetsQ", shown, ticked), { ids: [SESSION_ID, ENDED_ID], names: ["nightly-docs-sweep", "atrium-hooks"], endedCount: 1 });
-    assert.deepEqual(call("getSendTargetsQ", [shown[0]], ticked), { ids: [SESSION_ID], names: ["nightly-docs-sweep"], endedCount: 0 });
   });
 
   // spec §9.2 → Foot: the send button names who the order goes to
@@ -2174,7 +2229,7 @@ describe("desk keys", () => {
 });
 
 describe("sessions region", () => {
-  test("the list read follows the Account filter and drops ticks on rows no longer listed or selectable", async () => {
+  test("the list read follows the Account filter, drops ticks on rows no longer listed or selectable, and says the dropped one", async () => {
     const urls: string[] = [];
     const module = (await loadScreenModule(QUEUE_SRC, {
       URLSearchParams,
@@ -2186,14 +2241,18 @@ describe("sessions region", () => {
     })) as ScreenModule;
     let region: unknown = realUi.INITIAL_REGION_STATE;
     let selectedIds = ["9b2e7c41-0d3a-4c55-8e1f-2a6b9c4d7e10", SESSION_ID, REPLACED_ID];
+    const lines: string[] = [];
     await (module.getSessionsQ as (deps: unknown) => Promise<void>)({
       profile: "work dev",
       setRegion: (next: (prev: unknown) => unknown) => { region = next(region); },
+      getIds: () => selectedIds,
       setSelectedIds: (next: (prev: string[]) => string[]) => { selectedIds = next(selectedIds); },
+      onDropped: (line: string) => lines.push(line),
     });
     assert.deepEqual(urls, ["/api/queue/owner/sessions?profile=work+dev"]);
     assert.equal((getPlain(region) as { data: { sessions: unknown[] } }).data.sessions.length, 3);
     assert.deepEqual(getPlain(selectedIds), [SESSION_ID]);
+    assert.deepEqual(lines, ["⚠ nightly-docs-sweep no longer takes orders and was unticked."]);
   });
 
   const views = [
@@ -2454,7 +2513,7 @@ describe("images in an order's bubble", () => {
 // the review of the built page against mockup v5 and spec 44063 (§4.2, §4.3, §7, §9.1–§9.4, §10)
 describe("marks and counts on the desk", () => {
   test("the master box in its mixed state draws a dash, and a ticked box a check", () => {
-    const iconsOf = (props: Record<string, unknown>) => findNodes(render("CheckboxBoxQ", { onChange: () => undefined, ariaLabel: "Order to all live sessions", ...props }), (node) => node.props?.atom === "Icon").map((node) => node.props.name);
+    const iconsOf = (props: Record<string, unknown>) => findNodes(render("CheckboxBoxQ", { onChange: () => undefined, ariaLabel: "Select all live sessions", ...props }), (node) => node.props?.atom === "Icon").map((node) => node.props.name);
     assert.deepEqual([iconsOf({ isChecked: false, isMixed: true }), iconsOf({ isChecked: true }), iconsOf({ isChecked: false })], [["minus"], ["check"], []]);
   });
 

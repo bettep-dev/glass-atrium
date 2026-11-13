@@ -638,11 +638,11 @@
 | drawer 전면 시트 | ≤ 640px |
 
 - 한 view 에서 radius family 를 섞지 않는다 — 역할로만 스케일.
-- **Queue desk** (`.queue-screen` · `.queue-desk` · `.queue-pane`): viewport 높이를 채우는 3열 grid — rail(단계별 고정 폭) · list(나머지, 최소 320 / 1440부터 360) · sheet(`--measure-prose` + 32 gutter 둘, 최대 653). 페이지는 스크롤하지 않고 각 pane 의 `.card-body` 만 스크롤. 1280 미만은 가로 스크롤(`min-width: 1012px`), 쌓이는 레이아웃 없음. `SplitRow` 가 아닌 이유: 비율 2종 + 1280 미만 stack.
+- **Queue desk** (`.queue-screen` · `.queue-desk` · `.queue-pane`): viewport 높이를 채우는 3열 grid — rail(`--queue-rail-w`) · 가운데 pane(나머지: list, 또는 그 자리의 sheet — `--measure-prose` 한 열 + 32 이상 gutter 둘) · Orders(`--queue-orders-w`), 두 폭은 1440 · 1728 · 2240 · 2560 media query 단계. 페이지는 스크롤하지 않고 각 pane 의 `.card-body` 만 스크롤. 1280 미만은 가로 스크롤(`min-width: 1012px`), 쌓이는 레이아웃 없음. `SplitRow` 가 아닌 이유: 비율 2종 + 1280 미만 stack.
   - `.queue-row`(68 / 88, 880px 이상 list 에서는 container query 로 한 줄 44) · `.queue-sheet`(`--card-pad` → `--space-8`) · `.queue-option` · `.queue-composer` — 화면 전용 class 는 `base.css` 에만(§12.1 lint).
-  - `.queue-rail-row`(68: 이름 줄 20 + 상태 줄 20, count badge 는 flex 상자라 20 을 넘지 않음) — Orders mode 에서는 row 전체가 checkbox 의 `label`, 체크된 row 는 `--tint-select`.
-  - focus ring 은 card 가 clip 하는 행(`.queue-row` · `.queue-rail-main` · `.queue-rail-scope` · `.queue-order`)에서 inset(`outline-offset` = −`--focus-ring-offset`) — `.seg` 와 같은 이유.
-  - **Orders mode** (`.queue-desk.is-orders` · `.queue-orders-card`): list·sheet 는 `hidden`(마운트 유지), desk 는 rail · order view. card 의 `--card-pad` = `max(--space-6, (100% − --queue-thread-w 720) / 2)` → head·To bar·thread·composer 가 가운데 한 열(720). `.queue-order` 는 열 끝 정렬, 최대 `min(--measure-prose, 85%)`; `.queue-bubble` 은 `--tint-fill`, 12줄 초과는 `.is-clamped`(줄 수는 `ORDERS_Q.CLAMP_LINES` 가 `--queue-clamp-lines` 로 넘김); 수신자 5명 이상은 `.queue-roll-up` 한 줄; `.queue-compose-label` 은 `Order · Re: <report>` · ✕ 한 줄.
+  - `.queue-rail-row`(68: 이름 줄 20 + 상태 줄 20, count badge 는 flex 상자라 20 을 넘지 않음) — row 전체가 checkbox 의 `label`(button 없음), 체크된 row 는 `--tint-select`; `All sessions` band 는 master box 의 `label`.
+  - focus ring 은 card 가 clip 하는 행(`.queue-row` · `.queue-order`, 그리고 box 에 focus 가 있는 `.queue-rail-row`)에서 inset(`outline-offset` = −`--focus-ring-offset`) — `.seg` 와 같은 이유.
+  - **Orders** (`.queue-orders` · `.queue-orders-card`): 항상 열린 셋째 열, card 의 16 열. `.queue-order` 는 열 끝 정렬, 최대 `min(--measure-prose, 85%)`; `.queue-bubble` 은 `--tint-fill`, 12줄 초과는 `.is-clamped`(줄 수는 `ORDERS_Q.CLAMP_LINES` 가 `--queue-clamp-lines` 로 넘김); 수신자 5명 이상은 `.queue-roll-up` 한 줄; composer 의 label 줄은 받는 session 을 모두 이름으로(`.queue-order-to`).
   - **Images** (`.queue-compose-box.has-images` · `.queue-thumbs` · `.queue-bubble-images` · `.queue-viewer`): report·order composer 만 — box 끝 마지막 줄의 icon-only `Add images`(32, ghost, box 가장자리에서 `--space-1`), text 는 그 40 을 비움. box 안 text 위 thumbnail 56(`--radius-control`, 1px `--line`) + 24 target 안 20 `--elev` 제거 사각(`--radius-inline`, 항상 보임) + 마지막 뒤 13/dim 개수 줄; 업로드 중 0.5, 실패는 ✕ 칸. 파일이 위에 있으면 box 는 ink edge + `--tint-select`. bubble 안 text 아래 96 버튼(clamp 밖에 남음), 못 읽으면 ✕ + 파일 이름 칸. viewer 는 `DetailSurface` fullscreen 의 한 장(창에 맞춤, 확대·다운로드 없음). 한도 8장 · 10 MB 는 `IMAGES_Q`(서버 값과 테스트로 묶임).
 
 ### 7.12 Disclosure · Popover
@@ -1041,6 +1041,7 @@
 - **Fixtures**: test and screenshot data mix long names, empty values and 1,000+ numbers.
 - **Row actions**: visible on every row, two at most, the second an overflow menu (⋯); or the whole row is the click target with no action buttons.
 - **Master–detail desk**: a screen whose rows are pending owner actions (the Queue) opens the pressed row in the list's own pane, with a way back and previous / next; record detail elsewhere still opens in the drawer.
+- **One selection**: on such a desk one tick per row of its rail is the whole selection — the scope of the list, the filter of the side thread and the recipients of the next send; a row is its checkbox's label, and opening, stepping or going back changes no tick.
 - **Pagination** (O3): left column = the range line, sans tnum 13 dim; right column = Previous / Next quiet. Page numbers, where shown: current = sunken-fill square + ink label at 500; others dim at 400; no border on any.
 - **No horizontal scroll** in drawers or cards: width overflow is solved by stacking, not scrolling.
 - Stacked mode: when the measured width of the table's own wrapper falls under the table's threshold, rows become stacked two-line items (primary 15 ink + meta line 13 dim), not a scrolling grid.

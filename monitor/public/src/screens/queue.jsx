@@ -21,10 +21,10 @@ const ROW_ID_PREFIX_Q = "queue-row-";
 const ORDER_ID_PREFIX_Q = "queue-order-";
 // characters a POSIX shell never treats as syntax in an unquoted word
 const SHELL_SAFE_Q = /^[A-Za-z0-9_@%+=:,./-]+$/;
-const FILTER_AXES_Q = ["profile", "session"];
-const DEFAULT_FILTER_Q = Object.freeze({ profile: "", session: "" });
-// every key the page keeps in its hash → one writer merges them all
-const HASH_KEYS_Q = ["session", "profile", "item", "to"];
+const FILTER_AXES_Q = ["profile"];
+const DEFAULT_FILTER_Q = Object.freeze({ profile: "" });
+// every key the page keeps in its hash → one writer merges them all; an old link's session= or view= is left out at the first write
+const HASH_KEYS_Q = ["profile", "item", "to"];
 const LIST_GROUPS_Q = {
 	decisions: { key: "decisions", label: "Decisions" },
 	reports: { key: "reports", label: "Reports" },
@@ -76,6 +76,9 @@ const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor hol
 // targets per send: the send route refuses more (schemas.ts → messageBodySchema; the page test binds the two)
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
+// one description every box of the rail shares (spec §9.1 → What says so before the first press)
+const RAIL_HINT_ID_Q = "queue-rail-hint";
+const RAIL_HINT_Q = "Ticked sessions set whose reports and orders are shown and who receives the next order. With none ticked, every session is shown and no order can be sent.";
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null });
 // per tab: each item's draft by id, and the order view's draft under its own key
 const DRAFT_STORE_Q = { ITEMS: "queue.drafts", ORDER: "queue.orderDraft" };
@@ -269,21 +272,16 @@ function getCardNotesQ(item) {
 }
 
 /**
- * Account and session filter choices from the loaded items; "" = All.
+ * Account filter choices from the loaded items; "" = All.
  * A chosen value no loaded item carries (a hash link) stays an option → the trigger still names it.
  */
 function getFilterOptionsQ(items, filter = DEFAULT_FILTER_Q) {
 	const profiles = [...new Set(items.map((item) => item.session.profileLabel))].sort();
-	const sessions = new Map(items.map((item) => [item.session.id, `${item.session.cwdTail} · ${item.session.id.slice(0, SESSION_PREFIX_LENGTH_Q)}`]));
 	if (filter.profile && !profiles.includes(filter.profile)) profiles.unshift(filter.profile);
-	if (filter.session && !sessions.has(filter.session)) sessions.set(filter.session, filter.session.slice(0, SESSION_PREFIX_LENGTH_Q));
-	return {
-		profile: [{ key: "", label: "All" }, ...profiles.map((label) => ({ key: label, label }))],
-		session: [{ key: "", label: "All" }, ...[...sessions].map(([key, label]) => ({ key, label }))],
-	};
+	return { profile: [{ key: "", label: "All" }, ...profiles.map((label) => ({ key: label, label }))] };
 }
 
-// #queue?profile=…&session=… → the filter survives a reload; an absent query → defaults
+// #queue?profile=… → the filter survives a reload; an absent query → defaults
 function getFilterFromHashQ() {
 	const state = getHashStateQ();
 	return Object.fromEntries(FILTER_AXES_Q.map((axis) => [axis, state[axis]]));
@@ -362,12 +360,14 @@ function getSheetRowsQ(groups) {
 
 /**
  * What the middle pane shows, `{ kind, id, item? }`: `item` the opened row's sheet · `left` the opened open item the read no longer has open ·
- * `none` → the list (spec §4.3: nothing is opened for the owner).
+ * `none` → the list (spec §4.3: nothing is opened for the owner; a session ticked out of scope takes its item's sheet with it).
  * @param held - the open item last shown on the sheet, null when none
+ * @param ids - the ticks; none → every session in scope
  */
-function getSheetStateQ(groups, hashItemId, held) {
+function getSheetStateQ(groups, hashItemId, held, ids = []) {
 	if (!hashItemId) return { kind: "none", id: null };
 	const rows = groups.flatMap((group) => group.rows);
+	if (held?.session && ids.length > 0 && !ids.includes(held.session.id)) return { kind: "none", id: null };
 	if (held !== null && hashItemId === String(held.id) && !rows.some((row) => row.id === held.id && row.item.status === "open")) {
 		return { kind: "left", id: held.id, item: held };
 	}
@@ -388,10 +388,9 @@ function getStepsQ(groups, id, lastIndex) {
 	return { index, count: rows.length, prevId: prev?.id ?? null, nextId: next?.id ?? null };
 }
 
-function getVisibleItemsQ(items, filter) {
-	return items.filter(
-		(item) => (!filter.profile || item.session.profileLabel === filter.profile) && (!filter.session || item.session.id === filter.session),
-	);
+/** The list's scope: the Account filter and the ticks (spec §9.1); nothing ticked → every session's items. */
+function getVisibleItemsQ(items, filter, ids = []) {
+	return items.filter((item) => (!filter.profile || item.session.profileLabel === filter.profile) && (ids.length === 0 || ids.includes(item.session.id)));
 }
 
 /**
@@ -597,9 +596,9 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const [drafts, setDrafts] = useStoredStateQ(DRAFT_STORE_Q.ITEMS, {}, getKeptDraftsQ);
 	const [filter, setFilter] = useFilterQ();
 	const [status, setStatus] = useStateQ("");
-	const groups = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter));
-	const { sheet, steps, currentId, setCurrentId, openItem, closeSheet } = useSheetQ(groups);
-	const sessions = useSessionsStateQ(filter.profile);
+	const sessions = useSessionsStateQ(filter.profile, setStatus);
+	const groups = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter, sessions.selectedIds));
+	const { sheet, steps, currentId, setCurrentId, openItem, closeSheet } = useSheetQ(groups, sessions.selectedIds);
 	const keys = useKeysSwitchQ();
 	const readList = useListReadQ(list, setList);
 	// sessions.read changes with the Account filter → a filter change re-reads the page; an owner act's read runs after any read in flight
@@ -611,7 +610,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	}, [readList, readResumes, sessions.read, onReadQueueCount]);
 	const loadMore = useCallbackQ(() => getMoreQ({ list, setList }), [list]);
 	useEffectQ(() => { reload(); }, [reload]);
-	const actions = useQueueActionsQ({ list, filter, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness });
+	const actions = useQueueActionsQ({ list, filter, ids: sessions.selectedIds, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness });
 	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, sendAction: actions.send, setStatus, reload });
 	const ticks = usePageTickQ({ setList, readList, readResumes, sessions, orders, setStatus, onReadQueueCount });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
@@ -830,14 +829,17 @@ function getShowTicksQ(ids, items, copyId) {
 
 /**
  * The middle pane's state: the opened item (`item=` in the hash), the current row (the one last opened), the open item held while it is on the sheet.
- * openItem(id) → its sheet in the list's place · closeSheet() → the list again (spec §4.3).
+ * openItem(id) → its sheet in the list's place · closeSheet() → the list again (spec §4.3) · a tick change that leaves the item out → the list, the focus kept on the box.
  */
-function useSheetQ(groups) {
+function useSheetQ(groups, ids) {
 	const [openId, setOpenId] = useStateQ(() => getHashStateQ().item);
 	const [currentId, setCurrentId] = useStateQ(() => Number(getHashStateQ().item) || null);
 	const [held, setHeld] = useStateQ(null);
 	const lastIndex = useRefQ(-1);
-	const sheet = getSheetStateQ(groups, openId, held);
+	const lastKind = useRefQ("none");
+	const sheet = getSheetStateQ(groups, openId, held, ids);
+	const wasShown = lastKind.current !== "none";
+	lastKind.current = sheet.kind;
 	const steps = getStepsQ(groups, sheet.id, lastIndex.current);
 	if (steps.index >= 0) lastIndex.current = steps.index;
 	const shown = getSheetOpenItemQ(sheet);
@@ -846,13 +848,16 @@ function useSheetQ(groups) {
 	const putOpenId = useCallbackQ((value) => { setOpenId(value); setHashStateQ({ item: value }); setHeld(null); }, []);
 	const openItem = useCallbackQ((id) => { setMove("sheet"); putOpenId(String(id)); setCurrentId(id); }, [setMove, putOpenId]);
 	const closeSheet = useCallbackQ(() => { setMove("list"); putOpenId(""); }, [setMove, putOpenId]);
+	useLayoutEffectQ(() => {
+		if (wasShown && sheet.kind === "none" && openId !== "") { setMove("scroll"); putOpenId(""); }
+	}, [ids.join(",")]);
 	return { sheet, steps, currentId, setCurrentId, openItem, closeSheet };
 }
 
 /**
  * Focus and the list's scroll across the pane's two states (spec §3.3, §11): an opened sheet → its body ·
- * the list again → the scroll it had when the first sheet opened, the focus on the current row.
- * @returns setMove(to) — "sheet" or "list", called before the state change it follows
+ * the list again → the scroll it had when the first sheet opened, the focus on the current row (`scroll`: the focus stays where it is).
+ * @returns setMove(to) — "sheet", "list" or "scroll", called before the state change it follows
  */
 function useSheetMovesQ(currentId) {
 	const [move, setMoveState] = useStateQ(null);
@@ -862,7 +867,7 @@ function useSheetMovesQ(currentId) {
 		if (move.to === "sheet") return void document.querySelector(".queue-sheet > .card-body")?.focus();
 		const body = document.querySelector(ORDERS_Q.LIST_BODY);
 		if (body) body.scrollTop = listTop.current;
-		(document.getElementById(`${ROW_ID_PREFIX_Q}${currentId}`) ?? document.querySelector('.queue-listbox [tabindex="0"]'))?.focus({ preventScroll: true });
+		if (move.to === "list") (document.getElementById(`${ROW_ID_PREFIX_Q}${currentId}`) ?? document.querySelector('.queue-listbox [tabindex="0"]'))?.focus({ preventScroll: true });
 	}, [move]);
 	return useCallbackQ((to) => {
 		// the list's own box keeps no scroll while hidden in every browser → read while it is still on screen
@@ -871,13 +876,19 @@ function useSheetMovesQ(currentId) {
 	}, []);
 }
 
-/** Session list region, the ticked rows and Show ended; the list follows the Account filter. */
-function useSessionsStateQ(profile) {
+/**
+ * Session list region, the ticks and Show ended; the list follows the Account filter.
+ * The ticks are the one selection (spec §9.1): the list's scope, the thread's filter and the recipients.
+ * @param onDropped - the status line, told of a tick dropped because its session no longer takes orders
+ */
+function useSessionsStateQ(profile, onDropped) {
 	const [region, setRegion] = useStateQ(window.UI.INITIAL_REGION_STATE);
 	const [selectedIds, setSelectedIds] = useStateQ(getTicksFromHashQ);
+	const latestIds = useRefQ(selectedIds);
+	latestIds.current = selectedIds;
 	useEffectQ(() => { setHashStateQ({ to: selectedIds.join(",") }); }, [selectedIds]);
 	const [isEndedShown, setEndedShown] = useStateQ(false);
-	const read = useCallbackQ(() => getSessionsQ({ profile, setRegion, setSelectedIds }), [profile]);
+	const read = useCallbackQ(() => getSessionsQ({ profile, setRegion, getIds: () => latestIds.current, setSelectedIds, onDropped }), [profile, onDropped]);
 	const toggle = useCallbackQ((id) => setSelectedIds((ids) => putToggledIdQ(ids, id)), []);
 	const clear = useCallbackQ(() => setSelectedIds([]), []);
 	return { region, read, selectedIds, setSelectedIds, toggle, clear, isEndedShown, setEndedShown };
@@ -888,14 +899,16 @@ function getTicksFromHashQ() {
 	return getHashStateQ().to.split(",").filter(Boolean);
 }
 
-// a read drops the ticks on rows it no longer lists or that turned unselectable
-async function getSessionsQ({ profile, setRegion, setSelectedIds }) {
+// a read drops the ticks on rows it no longer lists or that turned unselectable; a listed one that stopped taking orders is said
+async function getSessionsQ({ profile, setRegion, getIds, setSelectedIds, onDropped }) {
 	const { putRegionRequest, putRegionData, putRegionFailure } = window.UI;
 	const request = {};
 	setRegion((state) => putRegionRequest(state, profile, request));
 	const query = profile ? `?${new URLSearchParams({ profile })}` : "";
 	const answer = await sendOwnerRequestQ(`/sessions${query}`);
 	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.sessions)) {
+		const dropped = getDroppedNoteQ(getIds(), answer.data.sessions);
+		if (dropped !== null) onDropped(dropped);
 		setSelectedIds((ids) => getKeptSelectionQ(ids, answer.data.sessions));
 		return setRegion((state) => putRegionData(state, request, answer.data));
 	}
@@ -907,6 +920,19 @@ function getKeptSelectionQ(ids, sessions) {
 	return ids.filter((id) => selectable.has(id));
 }
 
+// ticks on listed sessions that no longer take a message → `⚠ yoaida no longer takes orders and was unticked.`; none → null
+function getDroppedNoteQ(ids, sessions) {
+	const names = sessions.filter((row) => !row.isSelectable && ids.includes(row.id)).map((row) => row.name);
+	if (names.length === 0) return null;
+	const verb = names.length === 1 ? "no longer takes orders and was unticked" : "no longer take orders and were unticked";
+	return `${window.UI.TONE_GLYPH.warn} ${getNameListQ(names)} ${verb}.`;
+}
+
+// the note under a draft whose recipients changed (spec §9.2); the info glyph is the tone line's
+function getRecipientsNoteQ(names) {
+	return names.length === 0 ? "No session ticked now: this order has no recipient." : `Recipients changed: now ${getNameListQ(names)}.`;
+}
+
 function putToggledIdQ(ids, id) {
 	return ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id];
 }
@@ -915,10 +941,13 @@ function getShownSessionsQ(sessions, isEndedShown) {
 	return isEndedShown ? sessions : sessions.filter((row) => row.state !== "exited");
 }
 
-/** Send targets `{ ids, names, endedCount }`: ticked rows on show that take a message → a hidden ended row or a replaced row is never sent to. */
-function getSendTargetsQ(shownRows, selectedIds) {
-	const rows = shownRows.filter((row) => row.isSelectable && selectedIds.includes(row.id));
-	return { ids: rows.map((row) => row.id), names: rows.map((row) => row.name), endedCount: rows.filter((row) => row.state === "exited").length };
+/**
+ * Send targets `{ ids, names, endedCount }`: every ticked row that takes a message, a folded ended row included → the list's scope,
+ * the thread and the recipients read one tick set; a replaced row is never sent to.
+ */
+function getSendTargetsQ(rows, selectedIds) {
+	const targets = rows.filter((row) => row.isSelectable && selectedIds.includes(row.id));
+	return { ids: targets.map((row) => row.id), names: targets.map((row) => row.name), endedCount: targets.filter((row) => row.state === "exited").length };
 }
 
 // one target by name, several by count · an ended target is resumed to take the order → the label says how many before the owner sends
@@ -1164,10 +1193,10 @@ async function getMoreQ({ list, setList }) {
 }
 
 /** Owner acts on the sheet: a taken act opens the next open item in list order on the sheet and says what happened on the list's status line. */
-function useQueueActionsQ({ list, filter, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness }) {
+function useQueueActionsQ({ list, filter, ids, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness }) {
 	const { busy, send } = useSendQ({ setDrafts, reload, onRetryHarness });
-	// the list as it stands, band by band → the next sheet is never a row the filter hides
-	const items = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter)).flatMap((group) => group.rows.map((row) => row.item));
+	// the list as it stands, band by band → the next sheet is never a row the filter or the ticks hide
+	const items = getGroupsQ(getVisibleItemsQ(list.data?.items ?? [], filter, ids)).flatMap((group) => group.rows.map((row) => row.item));
 	const settle = useCallbackQ(async (id, action, body) => {
 		const nextId = getNextAwaitingIdQ(items, id);
 		if (!(await send(id, action, body))) return false;
@@ -1243,10 +1272,11 @@ function QueueFailureQ({ failure, onRetry }) {
 function QueueListQ({ queue }) {
 	const { Card } = window.UI;
 	const items = queue.list.data?.items ?? [];
-	const visible = getVisibleItemsQ(items, queue.filter);
+	const ids = queue.sessions.selectedIds;
+	const visible = getVisibleItemsQ(items, queue.filter, ids);
 	const offView = useOffViewNewQ(queue.list.newIds, queue.sheet.kind !== "none");
 	return (
-		<Card className="queue-pane queue-list" title={getScopeTitleQ(items, queue.filter)} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
+		<Card className="queue-pane queue-list" title={getScopeTitleQ(queue.sessions.region.data?.sessions ?? [], ids)} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts"
 			bar={isListBarShownQ(items, queue.filter) ? <QueueFilterBarQ items={items} filter={queue.filter} onFilter={queue.setFilter} /> : null}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
@@ -1316,13 +1346,13 @@ function DeskKeysQ({ keys }) {
 	);
 }
 
-function getScopeTitleQ(items, filter) {
-	if (!filter.session) return "All sessions";
-	const session = items.find((item) => item.session.id === filter.session)?.session;
-	return session ? session.name : filter.session.slice(0, SESSION_PREFIX_LENGTH_Q);
+// the scope the ticks set: All sessions with none, else every ticked name; a tick the rail has not listed yet → its id prefix
+function getScopeTitleQ(rows, ids) {
+	if (ids.length === 0) return "All sessions";
+	return ids.map((id) => rows.find((row) => row.id === id)?.name ?? id.slice(0, SESSION_PREFIX_LENGTH_Q)).join(", ");
 }
 
-// the rail is the Session filter → the bar holds the Account axis, shown while it tells items apart
+// the rail's ticks are the session scope → the bar holds the Account axis, shown while it tells items apart
 function isListBarShownQ(items, filter) {
 	return Boolean(filter.profile) || new Set(items.map((item) => item.session.profileLabel)).size > 1;
 }
@@ -1332,15 +1362,22 @@ function ListBodyQ({ queue, items, visible }) {
 	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={queue.reload} />;
 	if (queue.list.data === null) return <div className="queue-loading"><LoadingPlaceholder label="the queue" /></div>;
 	if (items.length === 0) return <EmptyState message="Nothing is waiting for you" hint="Sessions post reports and decisions here. The page checks every 15 seconds." />;
-	if (visible.length === 0) return <EmptyState kind="no-results" message="No items match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />;
-	return <QueueListboxQ queue={queue} items={items} />;
+	if (visible.length > 0) return <QueueListboxQ queue={queue} items={items} />;
+	if (queue.filter.profile) return <EmptyState kind="no-results" message="No items match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />;
+	return <EmptyState message={getTickedEmptyQ(queue.sessions)} action={<button type="button" className="btn ghost sm" onClick={queue.sessions.clear}>Show all sessions</button>} />;
+}
+
+// spec §10 → List, sessions ticked and nothing from them
+function getTickedEmptyQ({ region, selectedIds }) {
+	if (selectedIds.length > 1) return "Nothing from the ticked sessions in the queue.";
+	return `Nothing from ${getScopeTitleQ(region.data?.sessions ?? [], selectedIds)} in the queue.`;
 }
 
 // one tab stop: the current row holds tabindex 0, else the first row; Up / Down / Home / End move the focus and open nothing (spec §11)
 function QueueListboxQ({ queue, items }) {
 	const rows = queue.groups.flatMap((group) => group.rows);
 	const tabStopId = rows.some((row) => row.id === queue.selectedId) ? queue.selectedId : rows[0]?.id;
-	const view = { isNameShown: !queue.filter.session, isAccountShown: new Set(items.map((item) => item.session.profileLabel)).size > 1, tabStopId };
+	const view = { isNameShown: queue.sessions.selectedIds.length !== 1, isAccountShown: new Set(items.map((item) => item.session.profileLabel)).size > 1, tabStopId };
 	const onKeyDown = (event) => {
 		const nextId = getKeyedRowIdQ(rows, getRowIdQ(event.target), event.key);
 		if (nextId === null) return;
@@ -2045,37 +2082,37 @@ function SessionsBodyQ({ queue, rows }) {
 	const live = rows.filter((row) => row.state !== "exited");
 	const ended = rows.filter((row) => row.state === "exited");
 	const shown = getShownSessionsQ(rows, sessions.isEndedShown);
-	const view = { collidingNames: getCollidingNamesQ(shown), notReceived: getNotReceivedBySessionQ(queue.list.data?.items ?? []), scope: queue.filter.session };
-	const scope = (session) => queue.setFilter({ ...queue.filter, session });
+	const view = { collidingNames: getCollidingNamesQ(shown), notReceived: getNotReceivedBySessionQ(queue.list.data?.items ?? []) };
 	return (
 		<>
-			<AllSessionsBandQ rows={rows} sessions={sessions} view={view} notReceived={[...view.notReceived.values()].reduce((sum, count) => sum + count, 0)} onScope={() => scope("")} />
+			<p id={RAIL_HINT_ID_Q} hidden>{RAIL_HINT_Q}</p>
+			<AllSessionsBandQ rows={rows} sessions={sessions} notReceived={[...view.notReceived.values()].reduce((sum, count) => sum + count, 0)} />
 			{live.length === 0 && <EmptyState message="No connected sessions" hint="A session appears here once it registers or posts to the queue." />}
-			{live.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} onScope={scope} />)}
+			{live.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} />)}
 			{ended.length > 0 && <EndedBandQ count={ended.length} isOpen={sessions.isEndedShown} onToggle={() => sessions.setEndedShown(!sessions.isEndedShown)} />}
-			{sessions.isEndedShown && ended.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} onScope={scope} />)}
+			{sessions.isEndedShown && ended.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} />)}
 		</>
 	);
 }
 
-/** The head of the roster: All sessions clears the scope and the master box ticks every live session that takes a message. */
-function AllSessionsBandQ({ rows, sessions, view, notReceived, onScope }) {
-	const { Badge, Icon } = window.UI;
+/** The head of the roster, the whole band its master box's label (spec §9.1); no live session that takes a message → no box. */
+function AllSessionsBandQ({ rows, sessions, notReceived }) {
+	const { Badge } = window.UI;
 	const master = getMasterTickQ(sessions.selectedIds, rows);
 	const waiting = rows.reduce((sum, row) => sum + row.count.awaiting, 0);
-	const isCurrent = view.scope === "";
-	const box = <CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Order to all live sessions" />;
-	const face = <>All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}</>;
+	const isMasterShown = getLiveTargetIdsQ(rows).length > 0;
+	const Band = isMasterShown ? "label" : "div";
 	const warn = notReceived > 0 && <Badge fill="warn" title={getNotReceivedFactQ(notReceived).text}>{notReceived}<span className="sr-only">{" not received"}</span></Badge>;
 	return (
-		<div className="queue-band queue-rail-band">
-			<button type="button" className="queue-rail-scope" aria-current={isCurrent ? "true" : undefined} onClick={onScope}>
-				{face}
-				{isCurrent && <Icon name="chevR" size={16} className="queue-rail-chevron" />}
-			</button>
+		<Band className="queue-band queue-rail-band">
+			<span className="queue-rail-all">All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}</span>
 			{warn}
-			<span className="queue-rail-box"><label className="inline-target">{box}</label></span>
-		</div>
+			{isMasterShown && (
+				<span className="queue-rail-box">
+					<span className="inline-target"><CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Select all live sessions" describedBy={RAIL_HINT_ID_Q} /></span>
+				</span>
+			)}
+		</Band>
 	);
 }
 
@@ -2088,19 +2125,16 @@ function EndedBandQ({ count, isOpen, onToggle }) {
 	);
 }
 
-/** Live sessions that take a message `"all"` ticked, `"some"`, or `"none"` (none live counts as none). */
+/** The master box: `"none"` with nothing ticked, `"all"` with every live session that takes a message ticked, else `"some"`. */
 function getMasterTickQ(ids, rows) {
+	if (ids.length === 0) return "none";
 	const live = getLiveTargetIdsQ(rows);
-	const ticked = live.filter((id) => ids.includes(id)).length;
-	if (ticked === 0) return "none";
-	return ticked === live.length ? "all" : "some";
+	return live.length > 0 && live.every((id) => ids.includes(id)) ? "all" : "some";
 }
 
-// every live session ticked → untick them; else tick them all · an ended tick is the row's own and stays
+// nothing ticked → every live session that takes a message · anything ticked → none, an ended tick too: one press is back at the desk's rest
 function putMasterTickQ(ids, rows) {
-	const live = getLiveTargetIdsQ(rows);
-	if (getMasterTickQ(ids, rows) === "all") return ids.filter((id) => !live.includes(id));
-	return [...ids, ...live.filter((id) => !ids.includes(id))];
+	return ids.length === 0 ? getLiveTargetIdsQ(rows) : [];
 }
 
 function getLiveTargetIdsQ(rows) {
@@ -2122,28 +2156,28 @@ function getNotReceivedBySessionQ(items) {
 	return counts;
 }
 
-/** One session: the row button (name, waiting count, line 2) scopes the list and the box at its end ticks it as a recipient. */
-function SessionRailRowQ({ row, view, sessions, onScope }) {
+/** One session, one control (spec §9.1): the whole row is its box's label, so a press anywhere ticks it; a row that takes no message is no control. */
+function SessionRailRowQ({ row, view, sessions }) {
 	const where = [row.profileLabel, row.cwd, row.id].filter(Boolean).join(" · ");
-	const box = row.isSelectable && <CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Order to ${row.name}`} />;
-	const isCurrent = view.scope === row.id;
+	const Row = row.isSelectable ? "label" : "div";
 	return (
-		<div className="queue-rail-row" data-session={row.id}>
-			<button type="button" className="queue-rail-main" title={where} aria-current={isCurrent ? "true" : undefined} onClick={() => onScope(row.id)}>
-				<RailRowFaceQ row={row} view={view} isCurrent={isCurrent} where={where} />
-			</button>
-			{box && <span className="queue-rail-box"><label className="inline-target">{box}</label></span>}
-		</div>
+		<Row className="queue-rail-row" data-session={row.id} title={where}>
+			<RailRowFaceQ row={row} view={view} where={where} />
+			{row.isSelectable && (
+				<span className="queue-rail-box">
+					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={RAIL_HINT_ID_Q} /></span>
+				</span>
+			)}
+		</Row>
 	);
 }
 
-function RailRowFaceQ({ row, view, isCurrent, where }) {
-	const { Badge, Icon } = window.UI;
+function RailRowFaceQ({ row, view, where }) {
+	const { Badge } = window.UI;
 	return (
 		<>
 			<span className="queue-rail-name">
 				<SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} />
-				{isCurrent && <Icon name="chevR" size={16} className="queue-rail-chevron" />}
 			</span>
 			{row.count.awaiting > 0 && <span className="queue-rail-count"><Badge role="count" fill="solid">{row.count.awaiting}</Badge><span className="sr-only">{" waiting"}</span></span>}
 			<span className="queue-rail-line"><RowFactsQ facts={getSessionLineQ(row, view.notReceived.get(row.id) ?? 0)} /></span>
@@ -2179,12 +2213,12 @@ function getSessionLineQ(row, notReceived) {
 }
 
 // base.css → .ctl-checkbox visual: the mark drawn over the 16 box; the caller's label is the hit area; mixed → the DOM's indeterminate state
-function CheckboxBoxQ({ isChecked, isMixed = false, onChange, ariaLabel }) {
+function CheckboxBoxQ({ isChecked, isMixed = false, onChange, ariaLabel, describedBy }) {
 	const { Icon } = window.UI;
 	const setMixed = (input) => { if (input) input.indeterminate = isMixed; };
 	return (
 		<span className="relative inline-flex items-center justify-center">
-			<input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} onChange={onChange} aria-label={ariaLabel} />
+			<input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} onChange={onChange} aria-label={ariaLabel} aria-describedby={describedBy} />
 			{(isChecked || isMixed) && <Icon name={isChecked ? "check" : "minus"} size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
 		</span>
 	);
@@ -2198,13 +2232,13 @@ function OrdersViewQ({ queue }) {
 	const box = getOrderBoxQ(queue);
 	// a file dropped anywhere on the card joins the order box
 	const { zone, tray } = useTrayZoneQ(ORDERS_Q.BOX_ID, box);
-	const targets = getSendTargetsQ(getShownSessionsQ(rows, sessions.isEndedShown), sessions.selectedIds);
+	const targets = getSendTargetsQ(rows, sessions.selectedIds);
 	const names = rows.filter((row) => sessions.selectedIds.includes(row.id)).map((row) => row.name);
 	const scope = names.length > 0 ? `to ${names.join(", ")}` : "to every session";
 	return (
 		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
 			<Card className="queue-orders-card" title="Orders" sub={<span className="queue-orders-scope" title={scope}>{scope}</span>}
-				foot={<OrderComposerQ queue={queue} targets={targets} rows={rows} box={box} tray={tray} />} isFlush>
+				foot={<OrderComposerQ queue={queue} targets={targets} rows={rows} box={box} tray={tray} isReady={sessions.region.data !== null} />} isFlush>
 				<ThreadQ orders={orders} names={names} />
 			</Card>
 		</section>
@@ -2449,21 +2483,43 @@ function RecipientRowQ({ copy, onResend }) {
 }
 
 // the composer in its order use: the label line names every receiving session; the send carries the ink once the box holds text and a session is ticked
-function OrderComposerQ({ queue, targets, rows = [], box, tray }) {
+function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }) {
 	const { orders } = queue;
+	const [changed, setChanged] = useRecipientsNoteQ(targets, box, isReady);
+	const onText = (text) => { setChanged(null); box.setText(text); };
 	const onSend = () => {
 		const invalid = getOrderInvalidQ(targets, box.text);
-		if (invalid === null) return orders.send({ sessionIds: targets.ids, text: box.text }, targets.names, box.shots);
+		if (invalid === null) {
+			setChanged(null);
+			return orders.send({ sessionIds: targets.ids, text: box.text }, targets.names, box.shots);
+		}
 		orders.putError(invalid.message);
 		const selector = invalid.focus === "box" ? `#${ORDERS_Q.BOX_ID}` : ".queue-sessions .ctl-checkbox";
 		window.document?.querySelector(selector)?.focus();
 	};
 	return (
 		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: <OrderLabelQ rows={rows.filter((row) => targets.ids.includes(row.id))} /> }} tray={tray}
-			text={box.text} onText={box.setText} isBusy={box.isBusy}
+			text={box.text} onText={onText} isBusy={box.isBusy}
 			buttons={[{ label: getSendLabelQ(targets), isInk: box.text.trim() !== "" && targets.ids.length > 0, onPress: onSend }]}
-			note={<ComposerNoteQ error={box.error} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets)} />} />
+			note={<ComposerNoteQ error={box.error} info={changed} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets)} />} />
 	);
+}
+
+/**
+ * The once-said note under a draft whose recipients changed (spec §9.2); a change before the rail first loads is no change.
+ * @returns [note, setNote] — the note, null when none; cleared by the caller on a keystroke or a send
+ */
+function useRecipientsNoteQ(targets, box, isReady) {
+	const [note, setNote] = useStateQ(null);
+	const key = targets.ids.join(",");
+	const last = useRefQ(null);
+	const hasDraft = box.text.trim() !== "" || box.shots.length > 0;
+	useEffectQ(() => {
+		if (!isReady) return;
+		if (last.current !== null && last.current !== key && hasDraft) setNote(getRecipientsNoteQ(targets.names));
+		last.current = key;
+	}, [key, isReady]);
+	return [note, setNote];
 }
 
 // `New order to gersona, yoaida` — every name, an ended one tagged; none → said in dim (spec §9.2 → Label line)

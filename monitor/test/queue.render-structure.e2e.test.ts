@@ -24,7 +24,7 @@ import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNotReceivedFixture,
-  getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getUnreachableFixture, type QueueFixture,
+  getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -67,7 +67,7 @@ const DESK_STATES: QueueState[] = [
     nn: "04", name: "rail-ticked",
     setUp: async (page) => {
       await tickSessions(page, ORDER_TO);
-      await page.getByLabel("Order to yoaida").scrollIntoViewIfNeeded();
+      await page.getByLabel("Select yoaida").scrollIntoViewIfNeeded();
     },
   },
   { nn: "11a", name: "back-before", setUp: (page) => scrollList(page) },
@@ -82,11 +82,12 @@ const DESK_STATES: QueueState[] = [
   { nn: "17", name: "in-delivery-row", setUp: (page) => selectRow(page, 109) },
   { nn: "18", name: "answered-not-yet", setUp: (page) => selectRow(page, 108) },
   { nn: "18b", name: "answered-not-received", getFixture: getAnswerNotReceivedFixture, setUp: (page) => selectRow(page, 108) },
+  { nn: "19", name: "master-box", setUp: (page) => page.getByLabel("Select all live sessions").check() },
   {
-    nn: "19", name: "scope-and-tick",
+    nn: "19b", name: "master-box-cleared",
     setUp: async (page) => {
-      await page.locator(`[data-session="${FIXTURE_SESSION_IDS.gersona}"] .queue-rail-main`).click();
-      await tickSessions(page, ["yoaida"]);
+      await page.getByLabel("Select all live sessions").check();
+      await page.getByLabel("Select all live sessions").click();
     },
   },
   { nn: "20", name: "arrival-on-desk", isClockDriven: true, setUp: (page, harness) => arriveItem(page, harness) },
@@ -128,6 +129,7 @@ const ORDER_STATES: QueueState[] = [
       await tickOrdersTo(page, ["gersona"]);
       await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
       await tickSessions(page, ["yoaida"]);
+      await page.locator(".queue-orders").getByText("Recipients changed").waitFor();
     },
   },
   {
@@ -426,7 +428,7 @@ async function scrollList(page: Page): Promise<void> {
 }
 
 async function tickSessions(page: Page, names: string[]): Promise<void> {
-  for (const name of names) await page.getByLabel(`Order to ${name}`).check();
+  for (const name of names) await page.getByLabel(`Select ${name}`).check();
 }
 
 // Orders is on screen at rest → ticking is all it takes to address it and scope its thread
@@ -862,8 +864,11 @@ describe("queue page on the mockup fixtures", () => {
     const next = await page.evaluate(() => [window.location.hash, (document.activeElement as HTMLElement).className]);
     await page.keyboard.press("Escape");
     const back = await active();
-    await page.focus(".queue-rail-row .queue-rail-main");
-    const rail = await active();
+    await page.focus(".queue-rail-row .ctl-checkbox");
+    const rail = await page.evaluate(() => {
+      const row = (document.activeElement as HTMLElement).closest(".queue-rail-row") as HTMLElement;
+      return { offset: getComputedStyle(row).outlineOffset, style: getComputedStyle(row).outlineStyle };
+    });
     await page.keyboard.press("n");
     const box = await active();
     await page.focus(".queue-order");
@@ -877,7 +882,7 @@ describe("queue page on the mockup fixtures", () => {
     assert.equal(picked, 1, "2 picks the second option");
     assert.deepEqual(next, [`#queue?item=${rowIds[1]!.slice("queue-row-".length)}`, "card-body"], "J on the sheet opens the next item, the focus on its body");
     assert.deepEqual([back.id, back.offset], [rowIds[1], "-2px"], "Esc gives the focus back to the row just read, its ring inset");
-    assert.equal(rail.offset, "-2px", "a rail row's ring is inset");
+    assert.deepEqual([rail.style, rail.offset], ["solid", "-2px"], "a focused rail box rings its row, inset");
     assert.equal(box.id, "queue-order-text", "N puts the caret in the order box");
     assert.equal(entry.offset, "-2px", "a thread entry's ring is inset");
     assert.deepEqual([returned.id, returned.offset], [rowIds[1], "-2px"], "Esc in Orders gives the focus back to the middle pane: the list's current row");
@@ -906,6 +911,187 @@ describe("queue page on the mockup fixtures", () => {
 
     assert.deepEqual(facts, { railRows: [68], insets: [16, 16] });
     assert.deepEqual({ rest, opened }, { rest: [true, false, true], opened: [false, true, true] });
+  });
+
+  // spec §9.1: one control per row — the row is its box's label
+  test("a rail row holds one interactive element, its checkbox, and no button; a press on its name ticks it and a second unticks it", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const row = page.locator(`[data-session="${FIXTURE_SESSION_IDS.atrium}"]`);
+    const controls = await row.evaluate((element) => [...element.querySelectorAll("button, input, a, [tabindex]")].map((control) => `${control.tagName}:${control.getAttribute("type")}`));
+    await row.locator(".queue-rail-name").click();
+    const ticked = await page.getByLabel("Select atrium").isChecked();
+    await row.locator(".queue-rail-line").click();
+    const unticked = await page.getByLabel("Select atrium").isChecked();
+    await page.close();
+
+    assert.deepEqual({ controls, ticked, unticked }, { controls: ["INPUT:checkbox"], ticked: true, unticked: false });
+  });
+
+  // spec §4.3, §14.4: opening a report changes no tick → the composer's address holds across a press, a step, an order row and ← List
+  test("pressing a row, stepping, pressing an order row and ← List leave every rail box as it was, and the Orders label line and send button unchanged", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await tickSessions(page, ORDER_TO);
+    const read = () => page.evaluate(() => ({
+      boxes: [...document.querySelectorAll<HTMLInputElement>(".queue-sessions .ctl-checkbox")].map((box) => `${box.getAttribute("aria-label")}=${box.checked}`),
+      label: document.querySelector(".queue-orders .field-label")?.textContent,
+      send: [...document.querySelectorAll(".queue-orders .queue-compose-buttons .btn")].map((button) => button.textContent),
+    }));
+    const before = await read();
+    await selectRow(page, 103);
+    const opened = await read();
+    await page.keyboard.press("j");
+    const stepped = await read();
+    await page.getByRole("button", { name: "Back to the list" }).click();
+    const back = await read();
+    await selectRow(page, 109);
+    const order = await read();
+    await page.close();
+
+    assert.deepEqual(before.boxes.filter((box) => box.endsWith("=true")), ["Select gersona=true", "Select yoaida=true"]);
+    assert.equal(before.label, "New order to gersona, yoaida");
+    assert.deepEqual({ opened, stepped, back, order }, { opened: before, stepped: before, back: before, order: before });
+  });
+
+  // spec §9.1, §14.4 (the fixture: gersona and yoaida ticked while atrium has a report; an order to gersona and the unticked aidl)
+  test("with sessions ticked, the list holds their items alone, the thread their orders, the list head and the composer label name exactly them, and the hash holds them in to=", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await tickOrdersTo(page, ORDER_TO);
+    await page.locator(".queue-order", { hasText: "aidl" }).first().waitFor();
+    const shown = await page.evaluate(() => ({
+      rowIds: [...document.querySelectorAll(".queue-row")].map((row) => Number(row.id.slice("queue-row-".length))),
+      recipients: [...document.querySelectorAll(".queue-order")].map((entry) => [...entry.querySelectorAll(".queue-recipient-name")].map((name) => name.textContent)),
+      head: document.querySelector(".queue-list > .card-head .card-title")?.textContent,
+      label: document.querySelector(".queue-orders .field-label")?.textContent,
+      hash: window.location.hash,
+    }));
+    await page.close();
+
+    const sessionOf = (id: number) => harness.fixture.items.find((item) => item.id === id)?.session.name;
+    assert.ok(shown.rowIds.length > 0 && shown.rowIds.every((id) => ORDER_TO.includes(sessionOf(id) ?? "")), JSON.stringify(shown.rowIds.map(sessionOf)));
+    assert.ok(shown.recipients.every((names) => names.some((name) => ORDER_TO.includes(name ?? ""))), JSON.stringify(shown.recipients));
+    assert.ok(shown.recipients.some((names) => names.includes("gersona") && names.includes("aidl")), "an order to a ticked and an unticked session is one entry with both");
+    assert.deepEqual([shown.head, shown.label, shown.hash], ["gersona, yoaida", "New order to gersona, yoaida", `#queue?to=${FIXTURE_SESSION_IDS.gersona}%2C${FIXTURE_SESSION_IDS.yoaida}`]);
+  });
+
+  // spec §9.2: nothing ticked → everything shown, no one addressed: a send press makes no request
+  test("with nothing ticked the list and the thread hold every session's, and a send press makes no request, says what is missing and focuses the rail's first box", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await waitForAllOrders(page);
+    const posts: string[] = [];
+    page.on("request", (request) => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
+    await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
+    await page.locator(".queue-orders").getByRole("button", { name: "Send order" }).click();
+    await page.locator(".queue-orders").getByText("Tick at least one session in the rail.").waitFor();
+    const shown = await page.evaluate(() => ({
+      rows: document.querySelectorAll(".queue-row").length,
+      entries: document.querySelectorAll(".queue-order").length,
+      label: document.querySelector(".queue-orders .field-label")?.textContent,
+      alert: document.querySelector('.queue-orders [role="alert"]')?.textContent,
+      focus: (document.activeElement as HTMLElement).getAttribute("aria-label"),
+      first: document.querySelector(".queue-sessions .ctl-checkbox")?.getAttribute("aria-label"),
+    }));
+    await page.close();
+
+    assert.deepEqual(posts, []);
+    assert.deepEqual([shown.rows, shown.entries], [9, 4], "every item row (one per order) and every order");
+    assert.equal(shown.label, "New order · no session ticked");
+    assert.match(shown.alert ?? "", /Tick at least one session in the rail\./);
+    assert.equal(shown.focus, shown.first);
+  });
+
+  // spec §9.1 → All sessions: one press from any selection is back at rest; "order everyone" is a second, deliberate press
+  test("the master box ticks every live box from nothing ticked, and from one box ticked unticks them all", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const checked = () => page.evaluate(() => [...document.querySelectorAll<HTMLInputElement>(".queue-rail-row .ctl-checkbox")].filter((box) => box.checked).map((box) => box.getAttribute("aria-label")));
+    const master = page.getByLabel("Select all live sessions");
+    await master.click();
+    const all = { boxes: await checked(), send: await page.locator(".queue-orders .queue-compose-buttons .btn").textContent() };
+    await master.click();
+    const cleared = await checked();
+    await tickSessions(page, ["aidl"]);
+    await master.click();
+    const fromOne = await checked();
+    await page.close();
+
+    assert.deepEqual(all, { boxes: ["Select gersona", "Select atrium", "Select aidl", "Select yoaida"], send: "Send to 4 sessions" });
+    assert.deepEqual({ cleared, fromOne }, { cleared: [], fromOne: [] });
+  });
+
+  // spec §9.2: the draft is what the owner wrote, the ticks who gets it
+  test("an order typed with one image survives a tick, an untick of every box and a reload, and the tick's Recipients changed note is said once", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await tickSessions(page, ["gersona"]);
+    await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
+    await addOrderFiles(page, [getImageFile(0)]);
+    await waitForImages(page);
+    const draft = () => page.evaluate((id) => [(document.getElementById(id) as HTMLTextAreaElement).value, document.querySelectorAll(".queue-orders .queue-thumb").length], ORDER_BOX_ID);
+    const note = () => page.locator(".queue-orders .queue-note-text").textContent();
+    await tickSessions(page, ["yoaida"]);
+    // the note follows the tick's render → wait on it, and read what stands should it never come
+    const changed = await page.locator(".queue-orders .queue-note-text", { hasText: "Recipients changed" }).textContent({ timeout: 3_000 }).catch(() => note());
+    const ticked = { draft: await draft(), note: changed };
+    await page.locator(`#${ORDER_BOX_ID}`).press("End");
+    await page.locator(`#${ORDER_BOX_ID}`).pressSequentially(" ");
+    const typed = await note();
+    await page.getByLabel("Select all live sessions").click();
+    const untickedAll = { draft: await draft(), label: await page.locator(".queue-orders .field-label").textContent() };
+    await page.reload({ waitUntil: "load" });
+    await page.getByText(getRestReadyText()).first().waitFor({ timeout: READY_TIMEOUT_MS });
+    const reloaded = await draft();
+    await page.close();
+
+    assert.deepEqual(ticked, { draft: [FIXTURE_ORDER_TEXT, 1], note: "ℹ Recipients changed: now gersona and yoaida." });
+    assert.doesNotMatch(typed ?? "", /Recipients changed/);
+    assert.deepEqual(untickedAll, { draft: [`${FIXTURE_ORDER_TEXT} `, 1], label: "New order · no session ticked" });
+    assert.deepEqual(reloaded, [`${FIXTURE_ORDER_TEXT} `, 1]);
+  });
+
+  // spec §4.5 → Cmd / Ctrl + Enter sends from the pane the focus is in and from no other
+  test("with a decision open and an order typed, each pane holds one primary button, and Cmd+Enter posts only from the pane holding the focus", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const posts: string[] = [];
+    page.on("request", (request) => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
+    await tickSessions(page, ["gersona"]);
+    await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
+    await pickWithNote(page);
+    const primaries = await page.evaluate(() => [".queue-sheet", ".queue-orders"].map((pane) => document.querySelectorAll(`${pane} .btn.primary`).length));
+    await page.locator(`#${ORDER_BOX_ID}`).press("ControlOrMeta+Enter");
+    await page.getByText("Order sent to gersona").first().waitFor({ state: "attached" });
+    const fromOrders = [...posts];
+    await page.locator("#queue-text-103").press("ControlOrMeta+Enter");
+    await page.getByText("Answer sent to gersona").first().waitFor({ state: "attached" });
+    await page.close();
+
+    assert.deepEqual(primaries, [1, 1]);
+    assert.deepEqual(fromOrders, ["/api/queue/owner/messages/send"]);
+    assert.deepEqual(posts.slice(fromOrders.length), ["/api/queue/owner/items/103/answer"]);
+  });
+
+  // spec §9.1 → In the address, §10: a tick on a session that stops taking orders is dropped and said
+  test("a ticked session that stops taking orders is unticked on the page's next read, and the status line says so", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
+    try {
+      await tickSessions(page, ["yoaida"]);
+      harness.fixture = getStoppedFixture();
+      await page.clock.fastForward(16_000);
+      await page.getByText("yoaida no longer takes orders and was unticked.").waitFor({ state: "attached" });
+      const shown = await page.evaluate(() => ({
+        box: document.querySelector('[aria-label="Select yoaida"]') !== null,
+        label: document.querySelector(".queue-orders .field-label")?.textContent,
+        hash: window.location.hash,
+      }));
+      assert.deepEqual(shown, { box: false, label: "New order · no session ticked", hash: "#queue" });
+    } finally {
+      await page.close();
+    }
   });
 
   // spec §10: the thread's empty state is text on the Orders column, never indented off it
