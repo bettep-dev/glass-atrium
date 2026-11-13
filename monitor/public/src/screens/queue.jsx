@@ -89,7 +89,7 @@ const DESK_KEY_LIST_Q = [
 	{ keys: "Cmd / Ctrl + Enter", does: "Send from the pane in focus" },
 ];
 // the history read's page and the pane bodies whose scroll the Orders mode keeps (a hidden box does not keep its own)
-// MAX = the history read's own cap (schemas.ts → ORDER_PAGE_LIMIT)
+// PAGE, MAX = schemas.ts → ORDER_PAGE_LIMIT DEFAULT, MAX · a page test fails when the two part
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", PANE_BODIES: [".queue-list > .card-body", ".queue-sheet > .card-body"] };
 const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null });
 // the sheet holds no item and the owner has not handled everything

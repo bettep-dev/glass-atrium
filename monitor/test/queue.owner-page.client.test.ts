@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { imageUploadQuerySchema, messageBodySchema, replyBodySchema } from "../src/server/queue/schemas.js";
+import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, replyBodySchema } from "../src/server/queue/schemas.js";
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
@@ -1796,6 +1796,13 @@ describe("the Orders mode", () => {
     await (module.getThreadQ as (deps: unknown) => Promise<void>)({ ids: [SESSION_ID], before: null, setThread, isQuiet: true });
     const items = getPlain(thread.items) as Array<{ id: number; status: string }>;
     assert.deepEqual([items.map((item) => [item.id, item.status]), thread.nextCursor], [[[95, "answered"], [90, "answered"], [70, "delivered"], [40, "answered"]], "1762950364118000:40"]);
+  });
+
+  // a page cap past the server's → every re-read of a long thread is refused and the thread stops updating
+  test("the page's history sizes are the server's: its page is the default, and its cap passes where one more does not", () => {
+    const ORDERS = vm.runInContext("ORDERS_Q", screen) as { PAGE: number; MAX: number };
+    const limit = (value: number) => ownerOrdersQuerySchema.safeParse({ limit: String(value) }).success;
+    assert.deepEqual([ownerOrdersQuerySchema.parse({}).limit, limit(ORDERS.MAX), limit(ORDERS.MAX + 1)], [ORDERS.PAGE, true, false]);
   });
 
   test("no tick reads the orders to every session", async () => {
