@@ -102,18 +102,19 @@ get_wait_resolved_item() {
 # <session id> <item id> → its status, "gone" when the monitor knows no such item of this session; non-zero, after the
 # warning, on no reply or an unusable one
 get_item_status() {
-  local reply code status
+  local reply code body status
   # shellcheck disable=SC2310  # no reply → the warning below
   if ! reply="$(queue_send GET "/api/queue/items/$2?sessionId=$1" "" "${CHECK_FETCH_MAX_S}")"; then
     warn "the monitor gave no reply within ${CHECK_FETCH_MAX_S} s"
     return 1
   fi
-  code="${reply##*$'\n'}"
+  code="$(queue_get_reply_code "${reply}")"
   if [[ "${code}" == 404 ]]; then
     printf 'gone\n'
     return 0
   fi
-  status="$(jq -r '.status | strings' <<<"${reply%$'\n'*}" 2>/dev/null)" || status=""
+  body="$(queue_get_reply_body "${reply}")"
+  status="$(jq -r '.status | strings' <<<"${body}" 2>/dev/null)" || status=""
   if [[ "${code}" != 2?? || ! "${status}" =~ ^[a-z_]+$ ]]; then
     warn "the monitor's item reply was unusable (HTTP ${code})"
     return 1

@@ -151,23 +151,28 @@ require_item_id() {
 
 # <method> <route> [json body] → the 2xx reply body; a refusal exits 2, anything else exits 1.
 call_monitor() {
-  local route="$2" reply
+  local route="$2" reply code
   # shellcheck disable=SC2310  # no reply → the named exit below
   reply="$(queue_send "$1" "${route}" "${3:-}" "${CLI_MAX_TIME_S}")" \
     || fail 1 "no reply from the monitor on ${route} (down or slow)"
   # shellcheck disable=SC2310  # neither 2xx nor 4xx → the named exit below
-  check_reply_status "${route}" "${reply}" || fail 1 "monitor failed (${reply##*$'\n'}) on ${route}"
-  printf '%s\n' "${reply%$'\n'*}"
+  if ! check_reply_status "${route}" "${reply}"; then
+    code="$(queue_get_reply_code "${reply}")"
+    fail 1 "monitor failed (${code}) on ${route}"
+  fi
+  queue_get_reply_body "${reply}"
 }
 
 # <route> <queue_send reply> → 0 on a 2xx, 1 on any status but 2xx or 4xx; a 4xx refusal exits 2
 check_reply_status() {
-  local status="${2##*$'\n'}" reason
-  case "${status}" in
+  local code body reason
+  code="$(queue_get_reply_code "$2")"
+  case "${code}" in
     2??) ;;
     4??)
-      reason="$(describe_error "${2%$'\n'*}")"
-      fail 2 "refused (${status}) on $1: ${reason}"
+      body="$(queue_get_reply_body "$2")"
+      reason="$(describe_error "${body}")"
+      fail 2 "refused (${code}) on $1: ${reason}"
       ;;
     *) return 1 ;;
   esac
@@ -463,13 +468,14 @@ check_wait_owner() {
 
 # <body> → 0 claimed and printed · 1 no reply or a 5xx · 3 nothing claimed; a refusal exits 2
 poll_wait() {
-  local reply claims
+  local reply body claims
   # shellcheck disable=SC2310  # no reply → the backoff outcome
   reply="$(queue_send POST /api/queue/pending "$1" "${CLI_MAX_TIME_S}")" || return 1
   # shellcheck disable=SC2310  # a 5xx → the backoff outcome
   check_reply_status /api/queue/pending "${reply}" || return 1
+  body="$(queue_get_reply_body "${reply}")"
   # shellcheck disable=SC2310  # a malformed reply → the named exit
-  claims="$(get_claims "${reply%$'\n'*}")" || fail 1 "the monitor's pending reply is malformed"
+  claims="$(get_claims "${body}")" || fail 1 "the monitor's pending reply is malformed"
   [[ -n "${claims}" ]] || return 3
   print_claims "${claims}"
 }

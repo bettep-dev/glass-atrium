@@ -97,14 +97,24 @@ queue_send() {
   curl "${args[@]}" "http://127.0.0.1:${port}${route}" 2>/dev/null
 }
 
+# <queue_send reply> → its HTTP status
+queue_get_reply_code() {
+  printf '%s\n' "${1##*$'\n'}"
+}
+
+# <queue_send reply> → its body
+queue_get_reply_body() {
+  printf '%s\n' "${1%$'\n'*}"
+}
+
 # POST <route> <json body> [max seconds] → reply body on stdout; non-zero when unreachable, slow or refused.
 queue_post() {
-  local reply status
+  local reply code
   # shellcheck disable=SC2310  # no reply → this function's own failure, never an errexit
   reply="$(queue_send POST "$1" "$2" "${3:-}")" || return 1
-  status="${reply##*$'\n'}"
-  [[ "${status}" == 2?? ]] || return 1
-  printf '%s\n' "${reply%$'\n'*}"
+  code="$(queue_get_reply_code "${reply}")"
+  [[ "${code}" == 2?? ]] || return 1
+  queue_get_reply_body "${reply}"
 }
 
 # <text> → the name the monitor accepts: control characters as spaces, trimmed, cut to QUEUE_NAME_MAX; nothing when blank
