@@ -1711,6 +1711,22 @@ describe("the ticks as the one selection", () => {
   });
 });
 
+// a count the rail has not read is no claim → no `0 live · 0 ended` over its placeholder or its outage
+describe("the rail head", () => {
+  const headSub = (region: unknown) => {
+    const { queue } = buildQueue({ sessions: buildSessions({ region }) });
+    const tree = render("SessionsRegionQ", { queue: { ...withList(queue, []), filter: { profile: "", session: "" }, setFilter: () => undefined } });
+    return findNodes(tree, (node) => node.props?.atom === "Card")[0]?.props.sub;
+  };
+  const live = SESSION_ROWS.filter((row) => row.state !== "exited").length;
+  const rows = [
+    { name: "a first read in flight states no count", region: { status: "loading", data: null, error: null, busy: true }, expected: undefined },
+    { name: "a failed first read states no count", region: { status: "error", data: null, error: { message: "down" }, busy: false }, expected: undefined },
+    { name: "a read rail states its live and ended counts", region: { status: "ready", data: { sessions: SESSION_ROWS, hasMore: false }, error: null, busy: false }, expected: `${live} live · ${SESSION_ROWS.length - live} ended` },
+  ];
+  for (const row of rows) test(row.name, () => assert.equal(headSub(row.region), row.expected));
+});
+
 describe("the rail foot", () => {
   const resumes = (results: string[]) => ({ status: "ready", busy: false, error: null, data: results.map((result, index) => ({ item: { id: index + 1, title: "Rebase" }, session: { profileLabel: "work-dev", cwdTail: "wt/a" }, attempt: 1, sentAt: "2026-11-12T12:20:11.204Z", result, abortReason: null, bgId: null })) });
   const footButton = (region: unknown) => {

@@ -2077,8 +2077,10 @@ function SessionsRegionQ({ queue }) {
 	const view = getRegionView(sessions.region);
 	const rows = view === "ready" ? sessions.region.data.sessions : [];
 	const endedCount = rows.filter((row) => row.state === "exited").length;
+	// a rail not read yet states no count (as getOrderNoteQ with no rows)
+	const sub = view === "ready" ? `${rows.length - endedCount} live · ${endedCount} ended` : undefined;
 	return (
-		<Card className="queue-pane queue-sessions" title="Sessions" sub={`${rows.length - endedCount} live · ${endedCount} ended`}
+		<Card className="queue-pane queue-sessions" title="Sessions" sub={sub}
 			foot={<RailFootQ queue={queue} />} isFlush>
 			{view === "loading" && <div className="queue-loading"><LoadingPlaceholder label="sessions" /></div>}
 			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={sessions.region.error} isBusy={sessions.region.busy} onRetry={sessions.read} />}
