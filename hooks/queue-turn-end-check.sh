@@ -25,9 +25,6 @@ readonly NUDGE_NO_PID_KEY=no-pid
 # the verdict line's keyword and forms; the rule text that teaches them: glass-atrium-ops-orchestrator-role.md →
 # Queue verdict line (queue-turn-end-check.bats feeds each form it teaches through this check)
 readonly VERDICT_KEYWORD='[QUEUE-VERDICT]'
-# interactive and background job sessions report cli; a `claude -p` worker run (daemon, wiki) reports sdk-cli and is
-# never asked for a verdict — the same value inject-reply-language.sh → INTERACTIVE_ENTRYPOINT gates on
-readonly OWNER_FACING_ENTRYPOINT=cli
 # shellcheck disable=SC2016  # the backticks are the reason's literal markdown
 readonly VERDICT_FORMS='`[QUEUE-VERDICT] posted #<item-id>` (every item the turn posted, on the one line) or `[QUEUE-VERDICT] nothing to post`'
 readonly VERDICT_ASK_STEPS="Judge the turn against the must-not-miss kinds, post what is owed, then end the message with one \
@@ -43,6 +40,8 @@ lib="${self%/*}/../scripts/lib/queue-session.sh"
 [[ -f "${lib}" ]] || exit 0
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/queue-session.sh
 source "${lib}" 2>/dev/null || exit 0
+# shellcheck source=lib/session-entrypoint.sh
+source "${self%/*}/lib/session-entrypoint.sh" 2>/dev/null || exit 0
 readonly TURN_READER="${self%/*}/lib/reply_language.py"
 
 # set by the checks main runs, read by print_block
@@ -67,7 +66,9 @@ main() {
   session_id="$(queue_get_session_id "${payload_session}")"
   [[ -n "${session_id}" ]] || exit 0
   check_deadline=$((SECONDS + CHECK_BUDGET_S))
-  if [[ "${CLAUDE_CODE_ENTRYPOINT:-}" == "${OWNER_FACING_ENTRYPOINT}" ]]; then
+  # a `claude -p` run is never asked for a verdict
+  # shellcheck disable=SC2310  # a single [[ ]] test, so the errexit suspension changes nothing
+  if is_owner_facing_session; then
     set_verdict_reason "${session_id}" "${transcript}" "${has_message}" "${last_line}"
   fi
   if [[ "${is_check_spent}" == false ]]; then set_wait_reason "${session_id}"; fi

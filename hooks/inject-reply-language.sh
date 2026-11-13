@@ -14,8 +14,6 @@ readonly EXCERPT_CHARS=200
 readonly HEAD_CHARS=80
 # jq's global regex costs grow with the square of the string, so a pasted prompt is cleaned from this prefix.
 readonly HEAD_SCAN_CHARS=4096
-# `claude -p` runs (daemon cycles, wiki dedup) report sdk-cli even when a cli parent exported this.
-readonly INTERACTIVE_ENTRYPOINT="cli"
 # C0 and C1 controls become spaces; bidi and zero-width controls are dropped.
 readonly CLEAN_DEF='def clean: tostring | explode
   | map(select((. == 1564 or (. >= 8203 and . <= 8207) or (. >= 8234 and . <= 8238)
@@ -25,11 +23,14 @@ readonly CLEAN_DEF='def clean: tostring | explode
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly RESOLVER="${SCRIPT_DIR}/lib/reply_language.py"
+# shellcheck source=lib/session-entrypoint.sh
+source "${SCRIPT_DIR}/lib/session-entrypoint.sh"
 
 main() {
   local input fields event source transcript head
   input="$(cat)"
-  [[ "${CLAUDE_CODE_ENTRYPOINT:-}" == "${INTERACTIVE_ENTRYPOINT}" ]] || return 0
+  # shellcheck disable=SC2310  # a single [[ ]] test, so the errexit suspension changes nothing
+  is_owner_facing_session || return 0
   command -v jq >/dev/null 2>&1 || return 0
   # A cleaned prefix starts the cleaned whole, so the whole is cleaned only when the prefix falls short of the head.
   fields="$(jq -r --argjson head "${HEAD_CHARS}" --argjson scan "${HEAD_SCAN_CHARS}" "${CLEAN_DEF}"'
