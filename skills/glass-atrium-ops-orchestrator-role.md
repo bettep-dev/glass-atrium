@@ -612,7 +612,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
   - Honest backing: the turn-end check (`hooks/queue-turn-end-check.sh`) confirms only that the line is there and that each id is an item of this session.
     - A missing line, or an id that is not this session's item, keeps the turn from ending; whatever the check cannot decide ends the turn.
     - It never confirms the judgment: `nothing to post` on a turn that owed a post passes.
-    - It never checks a headless `claude -p` run.
+    - It never asks a headless `claude -p` run for the line.
     - How often it holds a turn end: `### Answers and messages` → the turn-end check's honest backing.
 - **No repeat in the reply**: the reply of a turn that posted carries only what the queue item does not hold, never the item's body or options.
   - The verdict line alone names the item: the reply repeats the item id nowhere else, and may be that line alone.
