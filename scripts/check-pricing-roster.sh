@@ -78,11 +78,11 @@ import sys
 sys.path.insert(0, sys.argv[2])
 import pricing_loader
 
-sot = sys.argv[1]
+sot, name = sys.argv[1], sys.argv[3]
 try:
     pricing_loader.load_pricing(sot)
 except pricing_loader.PricingSotError as exc:
-    sys.stderr.write("[check-pricing-roster.sh] pricing file rejected: %s\n" % exc)
+    sys.stderr.write("[%s] pricing file rejected: %s\n" % (name, exc))
     sys.exit(2)
 unpriced = set()
 for line in sys.stdin.read().splitlines():
@@ -97,13 +97,13 @@ for model in sorted(unpriced):
     print(model)
 if unpriced:
     sys.stderr.write(
-        "[check-pricing-roster.sh] %s has no row for %d model id(s) this install ran: %s\n"
-        % (sot, len(unpriced), ", ".join(sorted(unpriced)))
+        "[%s] %s has no row for %d model id(s) this install ran: %s\n"
+        % (name, sot, len(unpriced), ", ".join(sorted(unpriced)))
     )
     sys.exit(3)
 PY
   )"
-  PRICING_REMOTE_DISABLE=1 python3 -I -c "${py_src}" "${1}" "${PRICING_LIB_DIR:-${SELF_DIR}/../hooks/lib}"
+  PRICING_REMOTE_DISABLE=1 python3 -I -c "${py_src}" "${1}" "${PRICING_LIB_DIR:-${SELF_DIR}/../hooks/lib}" "${SCRIPT_NAME}"
 }
 
 main "$@"

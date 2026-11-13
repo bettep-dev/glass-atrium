@@ -409,10 +409,10 @@ for model in json.load(open(sys.argv[1]))[sys.argv[2]]:
 # Case 9: a near miss of a zero-cost id walks the resolution chain (advisory + fallback price)
 
 @test "a near miss of a zero-cost id is priced by the fallback with an unknown advisory" {
-  local rows kind model model_json tx stderr_file err
+  local rows kind model tx stderr_file err
   rows="$(_parity_rows rate_lookup_ids)"
-  while IFS=$'\x1f' read -r kind model model_json; do
-    tx="${TEST_TMP}/near-${#model}-${RANDOM}.jsonl"
+  while IFS=$'\x1f' read -r kind model _; do
+    tx="${TEST_TMP}/near-${kind}-${#model}.jsonl"
     stderr_file="${tx}.err"
     _make_transcript "${model}" "${tx}"
     _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"

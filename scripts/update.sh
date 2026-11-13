@@ -4277,7 +4277,7 @@ update_is_verified_release_pricing() {
 # Record the unpriced verdict in the run ledger (Precondition Loud-Fail's third leg), then refuse
 # with exit 19 unless ATRIUM_UPDATE_ALLOW_UNPRICED applies past it. $1 = install root · $2 = ids.
 update_refuse_unpriced_models() {
-  local root="$1" ids="${2% }" outcome=refused dest
+  local root="$1" ids="$2" outcome=refused dest
   [[ -z "${ATRIUM_UPDATE_ALLOW_UNPRICED:-}" ]] || outcome=allowed-by-override
   dest="$(update_declines_dir "${root}")"
   if mkdir -p -- "${dest}" \

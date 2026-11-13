@@ -3664,10 +3664,11 @@ write_escaping_files_manifest() {
 }
 
 # Apply of a changed scripts/tool.sh beside a shipped hooks/pricing.json, with the
-# pricing-roster checker stubbed: it logs its argument to check.log in ${GATE_DIR} (default ${WORK}), prints
+# pricing-roster checker stubbed: it logs its argument to check.log in ${GATE_DIR} (set to ${WORK} when unset), prints
 # $CHECK_OUT and exits $CHECK_RC. psql is the mock, so the DB-enabled arm is reachable
 # without a database. PRICING_SHIPPED=0 leaves pricing.json out of the release.
 run_pricing_gate_apply() {
+  GATE_DIR="${GATE_DIR:-${WORK}}"
   write_mock_psql "${WORK}/psql"
   cat >"${WORK}/check-stub" <<'STUB'
 #!/usr/bin/env bash
@@ -3684,7 +3685,7 @@ STUB
     seed_file "${NEWSRC}" "hooks/pricing.json" '{"models":{}}'
     rels+=("hooks/pricing.json")
   fi
-  write_manifest "${GATE_DIR:-${WORK}}/manifest.json" "${rels[@]}"
+  write_manifest "${GATE_DIR}/manifest.json" "${rels[@]}"
   [[ -z "${PRICING_TAMPER:-}" ]] || printf 'tampered' >"${NEWSRC}/hooks/pricing.json"
   run --separate-stderr env -u GA_SKIP_DB_SETUP -u ATRIUM_UPDATE_DB -u ATRIUM_UPDATE_ALLOW_UNPRICED \
     GA_SKIP_DB_SETUP="${SKIP_DB:-}" \
@@ -3693,10 +3694,10 @@ STUB
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
-    ATRIUM_UPDATE_SRC_MANIFEST="${GATE_DIR:-${WORK}}/manifest.json" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${GATE_DIR}/manifest.json" \
     ATRIUM_UPDATE_PSQL="${WORK}/psql" \
     ATRIUM_UPDATE_PRICING_CHECK="${WORK}/check-stub" \
-    CHECK_LOG="${GATE_DIR:-${WORK}}/check.log" CHECK_RC="${CHECK_RC:-0}" CHECK_OUT="${CHECK_OUT:-}" \
+    CHECK_LOG="${GATE_DIR}/check.log" CHECK_RC="${CHECK_RC:-0}" CHECK_OUT="${CHECK_OUT:-}" \
     bash "${SKILL}"
 }
 
@@ -3736,7 +3737,7 @@ STUB
       return 1
     }
     checked=0
-    [[ ! -s "${GATE_DIR:-${WORK}}/check.log" ]] || checked=1
+    [[ ! -s "${GATE_DIR}/check.log" ]] || checked=1
     [[ "${checked}" -eq "${want_checked}" ]] || {
       echo "${name}: checked=${checked}"
       echo "${stderr}"
@@ -3757,8 +3758,8 @@ STUB
     echo "${stderr}"
     return 1
   }
-  [[ "$(cat "${GATE_DIR:-${WORK}}/check.log")" == */new/hooks/pricing.json ]] || {
-    cat "${GATE_DIR:-${WORK}}/check.log"
+  [[ "$(cat "${GATE_DIR}/check.log")" == */new/hooks/pricing.json ]] || {
+    cat "${GATE_DIR}/check.log"
     return 1
   }
   local ledger

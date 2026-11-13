@@ -122,7 +122,7 @@ _FABLE_5_2_RATE = {"input": 8.0, "output": 40.0, "cache_read": 0.2, "cache_creat
 _WINDOW_STANDARD = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75}
 _WINDOW_INTRO = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
 _HAIKU_RATE = {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_creation": 1.25}
-# 5.5 is vendor-quoted at its ≤100,000-token prompt tier — 1/10 of the haiku-4-5 family row.
+# 5.5 is vendor-quoted at its ≤100,000-token prompt tier.
 _HAIKU_5_5_RATE = {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_creation": 0.125}
 
 # The two committed remote_sources urls, in declared order (own-repo #1 is
@@ -563,7 +563,7 @@ class RateForSotTest(_LoaderCase):
         )
 
     def test_haiku_5_5_resolves_from_its_own_sot_row_with_remote_disabled(self):
-        # No own row + no overlay → family-latest haiku-4-5, 10x this id's input rate.
+        # No own row + no overlay → family-latest haiku-4-5 rate, so resolution=sot proves the own row.
         with mock.patch.dict(os.environ, {"PRICING_REMOTE_DISABLE": "1"}):
             record = self._rate_for("claude-haiku-5-5")
         self.assertEqual(record["resolution"], "sot")
