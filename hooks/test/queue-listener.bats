@@ -190,7 +190,8 @@ expected_wake() {
 
 @test "with nothing answered the listener polls quietly and ends itself at its lifetime with exit 0, its lock released" {
   start_stub
-  export ATRIUM_QUEUE_LISTEN_LIFETIME_S=2
+  # the lifetime is read in whole seconds → 3 s fits two 1 s polls wherever in a second the run starts
+  export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
   run_hook
   [[ "${status}" -eq 0 && -z "${output}" && -z "${stderr}" && "$(request_count)" -ge 2 && -z "$(lock_record)" ]] || {
     echo "status=${status} out=${output} err=${stderr} requests=$(request_count) lock=$(lock_record)"
