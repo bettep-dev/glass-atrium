@@ -352,18 +352,16 @@ describe("the 40 tier: a composer box and its buttons share one height", () => {
     assert.deepEqual(text, ["14px", "22px", "8px", "12px", "0px"]);
   });
 
-  test("the composer box rests on the control edge, lifts to --faint on hover, and draws --crit while invalid", async () => {
+  test("the composer box rests on the control edge and lifts to --faint on hover", async () => {
     const edgeOf = () => readStyle("compose-box", "border-top-color");
     for (const theme of THEMES) {
-      const [rest, hover, invalid, tokens] = await withTheme(theme, async () => {
+      const [rest, hover, tokens] = await withTheme(theme, async () => {
         const resting = await edgeOf();
         await forcePseudo("compose-box", ["hover"]);
         const hovered = await edgeOf().finally(() => forcePseudo("compose-box", []));
-        await page.$eval(getAtomSelector("compose-box"), (el) => el.classList.add("is-invalid"));
-        const errored = await edgeOf().finally(() => page.$eval(getAtomSelector("compose-box"), (el) => el.classList.remove("is-invalid")));
-        return [resting, hovered, errored, await Promise.all(["control-edge", "faint", "crit"].map(readProbe))] as const;
+        return [resting, hovered, await Promise.all(["control-edge", "faint"].map(readProbe))] as const;
       });
-      assert.deepEqual([rest, hover, invalid], tokens, theme);
+      assert.deepEqual([rest, hover], tokens, theme);
     }
   });
 

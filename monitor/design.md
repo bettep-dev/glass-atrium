@@ -711,7 +711,7 @@
 | C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
 | C32 tab | 32 | 6 / 8 | 14 / 18 / 500 | label only; selected = ink + 2px ink underline, constant thickness |
 | C40 button · `.btn.lg` (a composer's buttons only) | 40 (`--ctl-h-lg`) | 8 / 16 | 14 / 22 (`--lh-ctl-lg`) / 500 | as C32 button |
-| C40 composer box · `.queue-compose-box` + `.queue-compose-text` | 40 at rest; the text grows to 8 lines (194), then scrolls | text 8 / 12 | 14 / 22 / 400 | the field family's 1px `--control-edge` on the box, the text borderless; hover `--faint`; focus = `--accent` edge + global outline on the box through `:has(:focus-visible)`; invalid (`.is-invalid`) = `--crit` edge |
+| C40 composer box · `.queue-compose-box` + `.queue-compose-text` | 40 at rest; the text grows to 8 lines (194), then scrolls | text 8 / 12 | 14 / 22 / 400 | the field family's 1px `--control-edge` on the box, the text borderless; hover `--faint`; focus = `--accent` edge + global outline on the box through `:has(:focus-visible)` |
 | C24 static pill · `.pill`, `--meta`, `--count` (never on a button) | 24 (`.pill--ctl-h` deprecated) | 0 / 8 | 13 / 1 / 500 | no border, fill only |
 | C24 inline target · `.inline-target` on links, ledger expanders, checkbox hit areas | min 24 (checkbox visual 16: `.ctl-checkbox` — `--elev` box, 1.5px `--faint` edge, `--radius-inline`; checked or mixed = `--selected-fill` with a `--selected-ink` `.ctl-checkbox-mark`; radio visual 16: `.ctl-radio` — the same box drawn round in rules of its own, checked = `--selected-fill` with an inset `--elev` ring drawing the dot) | 0 | inherits size and weight / `--lh-row` 20 | no border; global focus outline |
 

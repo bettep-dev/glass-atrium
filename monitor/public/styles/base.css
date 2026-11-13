@@ -424,9 +424,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
 	outline-offset: var(--focus-ring-offset);
 }
-.queue-compose-box.is-invalid {
-	border-color: rgb(var(--crit));
-}
 .queue-compose-text {
 	display: block;
 	width: 100%;
@@ -616,9 +613,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	--card-pad: max(var(--space-6), calc((100% - var(--queue-thread-w)) / 2));
 	flex: 1 1 auto;
 }
-.queue-orders-card > .card-head {
-	min-height: 48px;
-}
 .queue-arrival {
 	display: inline-flex;
 	align-items: center;
@@ -646,7 +640,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--space-1) var(--space-2);
-	min-height: 48px;
+	min-height: var(--card-head-h);
 }
 .queue-to-label {
 	font-size: var(--fs-meta);
@@ -763,10 +757,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-radius: var(--radius-control);
 	cursor: zoom-in;
 }
-.queue-bubble-image:focus-visible {
-	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
-	outline-offset: var(--focus-ring-offset);
-}
 .queue-bubble-image > img,
 .queue-bubble-broken {
 	display: block;
@@ -824,7 +814,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);
-	min-height: 48px;
+	min-height: var(--card-head-h);
 	padding: 0 var(--space-6);
 	border-top: 1px solid rgb(var(--line));
 	background: rgb(var(--elev));
