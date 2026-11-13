@@ -112,9 +112,11 @@ get_recorded_start() {
   printf '%s\n' "${started%"${started##*[![:space:]]}"}"
 }
 
-# <live|stale> → this session's wait lock held by a running waiter of this Claude process, or by a gone one
+# <live|stale> [owner pid] [owner start] → this session's wait lock held by a running waiter, or by a gone one, of
+# that owner (default this Claude process, with its own start)
 hold_wait_lock() {
-  local waiter_pid waiter_start
+  local waiter_pid waiter_start owner_pid="${2:-${CLAUDE_PID:-}}" owner_start="${3:-}"
+  [[ -n "${owner_start}" ]] || owner_start="$(get_recorded_start "${owner_pid}")"
   mkdir -p "${GA_ROOT}/data/queue/waits"
   sleep 30 &
   WAITER_PID=$!
@@ -124,7 +126,7 @@ hold_wait_lock() {
     kill "${WAITER_PID}" && wait "${WAITER_PID}" 2>/dev/null || true
     WAITER_PID=""
   fi
-  ln -sn -- "${waiter_pid}|${waiter_start}|${CLAUDE_PID}|$(get_recorded_start "${CLAUDE_PID}")" \
+  ln -sn -- "${waiter_pid}|${waiter_start}|${owner_pid}|${owner_start}" \
     "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
 }
 
@@ -198,10 +200,10 @@ assert_silent_turn_end() {
   }
 }
 
-@test "the turn ends silently with no monitor call for a running wait, a continued stop, a subagent, no pid or no session" {
+@test "the turn ends silently with no monitor call for a running wait, a continued stop, a subagent or no session" {
   start_stub
   local row name payload
-  for row in "running wait" "continued stop" "subagent" "no pid" "no session"; do
+  for row in "running wait" "continued stop" "subagent" "no session"; do
     new_root
     mark_items 41
     export CLAUDE_PID="$$"
@@ -210,7 +212,6 @@ assert_silent_turn_end() {
       "running wait") hold_wait_lock live ;;
       "continued stop") payload="$(jq -c '.stop_hook_active = true' <<<"${payload}")" ;;
       subagent) payload="$(jq -c '.agent_id = "a1b2c3" | .agent_type = "glass-atrium-dev-shell"' <<<"${payload}")" ;;
-      "no pid") unset CLAUDE_PID ;;
       "no session") payload="$(jq -c 'del(.session_id)' <<<"${payload}")" ;;
     esac
     : >"${BATS_TEST_TMPDIR}/requests.log"
@@ -221,6 +222,36 @@ assert_silent_turn_end() {
       echo "row ${name}: $(requested_paths)"
       return 1
     }
+  done
+}
+
+@test "with no pid in the hook env, a wait counts as running only while the lock's recorded waiter and owner both run" {
+  start_stub
+  local row dead_pid
+  # an exited process's pid → no process runs under it
+  dead_pid="$(bash -c 'printf "%s" "$$"')"
+  for row in "no lock|continue" "waiter gone|continue" "owner gone|continue" "owner pid recycled|continue" \
+    "waiter and owner run|silent"; do
+    new_root
+    mark_items 41
+    unset CLAUDE_PID
+    case "${row}" in
+      "waiter gone"*) hold_wait_lock stale "$$" ;;
+      "owner gone"*) hold_wait_lock live "${dead_pid}" "Thu Jan  1 00:00:00 1970" ;;
+      "owner pid recycled"*) hold_wait_lock live "$$" "Thu Jan  1 00:00:00 1970" ;;
+      "waiter and owner run"*) hold_wait_lock live "$$" ;;
+    esac
+    run_hook
+    if [[ "${row##*|}" == silent ]]; then
+      assert_silent_turn_end "row ${row}" || return 1
+    else
+      assert_continuation "row ${row}" || return 1
+    fi
+    if [[ -n "${WAITER_PID:-}" ]]; then
+      kill "${WAITER_PID}" 2>/dev/null || true
+      wait "${WAITER_PID}" 2>/dev/null || true
+    fi
+    WAITER_PID=""
   done
 }
 
@@ -302,11 +333,13 @@ assert_silent_turn_end() {
   assert_continuation "first turn end"
   local row
   for row in "same items, wait failed fast|silent" "a newer item posted|continue" "same items again|silent" \
-    "interval passed|continue" "another Claude process|continue"; do
+    "interval passed|continue" "another Claude process|continue" "no pid in the hook env|continue" \
+    "no pid, same items again|silent"; do
     case "${row}" in
       "a newer item posted"*) mark_items 42 ;;
       "interval passed"*) touch -t 200001010000 "${AWAITING}/.nudged" ;;
       "another Claude process"*) export CLAUDE_PID=1 ;;
+      "no pid in the hook env"*) unset CLAUDE_PID ;;
     esac
     run_hook
     if [[ "${row##*|}" == silent ]]; then
@@ -370,10 +403,10 @@ assert_silent_turn_end() {
 
 @test "the terminal statuses the check drops marks for are the monitor's own terminal set" {
   local monitor_set check_set
-  monitor_set="$(sed -n 's/^const TERMINAL: QueueItemStatus\[\] = \[\(.*\)\];$/\1/p' \
-    "${GA}/monitor/src/server/queue/owner-views.ts" | tr -d '" ' | tr ',' '\n' | sort | tr '\n' ' ')"
+  monitor_set="$(sed -n 's/^export const TERMINAL: QueueItemStatus\[\] = \[\(.*\)\];$/\1/p' \
+    "${GA}/monitor/src/server/queue/registry.ts" | tr -d '" ' | tr ',' '\n' | sort | tr '\n' ' ')"
   [[ -n "${monitor_set}" ]] || {
-    echo "no TERMINAL in owner-views.ts"
+    echo "no TERMINAL in registry.ts"
     return 1
   }
   # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh

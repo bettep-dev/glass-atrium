@@ -22,7 +22,8 @@ readonly QUEUE_ITEM_ID_SHAPE='^[1-9][0-9]{0,15}$'
 # another session's awaiting set untouched this long → that session is gone (a kill or a closed terminal skips SessionEnd)
 readonly QUEUE_AWAITING_TTL_DAYS=30
 readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions dontAsk plan '
-# the item states nothing moves on from; the set itself is the monitor's TERMINAL (queue-turn-end-check.bats compares the two)
+# the item states nothing moves on from; the set itself is the monitor's TERMINAL in registry.ts
+# (queue-turn-end-check.bats compares the two)
 # shellcheck disable=SC2034  # read by the sourcing turn-end hook
 readonly QUEUE_TERMINAL_STATUSES=' delivered seen withdrawn '
 # the states a running wait carries forward: open (no answer yet) and answered (claimed by the wait)
@@ -201,14 +202,29 @@ queue_get_wait_lock_path() {
 }
 
 # <session id> → this Claude process's view of the session's wait lock: none · live (a running wait of this process) ·
-# stale; nothing without CLAUDE_PID (a wait cannot start without it)
+# stale. Without CLAUDE_PID the owner is the one the lock records → live while that owner and its waiter both still
+# run with their recorded starts; a wait of another process under the same session id then counts as running too.
 queue_get_wait_state() {
-  local owner_pid owner lock
-  owner_pid="$(queue_get_pid)"
-  [[ -n "${owner_pid}" ]] || return 0
-  owner="${owner_pid}|$(queue_get_start_time "${owner_pid}")"
+  local owner_pid owner_start lock
   lock="$(queue_get_wait_lock_path "$1")"
-  queue_get_wait_lock_state "${lock}" "${owner}"
+  owner_pid="$(queue_get_pid)"
+  [[ -n "${owner_pid}" ]] || owner_pid="$(queue_get_lock_owner_pid "${lock}")"
+  if [[ -n "${owner_pid}" ]]; then
+    owner_start="$(queue_get_start_time "${owner_pid}")"
+    queue_get_wait_lock_state "${lock}" "${owner_pid}|${owner_start}"
+  elif [[ -L "${lock}" ]]; then
+    printf 'stale\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# <lock path> → the owner pid its record names ("waiter pid|its start|owner pid|its start"); nothing when none
+queue_get_lock_owner_pid() {
+  local held owner_pid
+  held="$(readlink "$1" 2>/dev/null)" || return 0
+  IFS='|' read -r _ _ owner_pid _ <<<"${held}"
+  if [[ "${owner_pid}" =~ ${QUEUE_PID_SHAPE} ]]; then printf '%s\n' "${owner_pid}"; fi
 }
 
 # <pid> → its process start time, the recycled-pid guard; nothing when the pid is gone

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # queue-turn-end-check.sh — Stop hook: while an item this session posted awaits the owner and no wait of this Claude
 # process runs, keeps the turn from ending once with one line naming the wait command — never the item's text.
-# Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (docs-only Stop channel,
+# With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_wait_state).
+# Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
 # shared-hook-capability-contract.md → Stop row). Fail-open: whatever it cannot decide ends the turn normally, exit 0;
 # a monitor or payload failure leaves one stderr line.
 
@@ -15,6 +16,8 @@ readonly CHECK_BUDGET_S=3
 readonly CHECK_FETCH_MAX_S=1
 # the same items to the same Claude process → named again only after this long, so a wait that fails fast starts no loop
 readonly NUDGE_INTERVAL_MIN=10
+# the nudge stamp's process key when the hook env holds no pid
+readonly NUDGE_NO_PID_KEY=no-pid
 
 self="${BASH_SOURCE[0]}"
 if [[ -L "${self}" ]]; then
@@ -26,7 +29,7 @@ lib="${self%/*}/../scripts/lib/queue-session.sh"
 source "${lib}" 2>/dev/null || exit 0
 
 main() {
-  local fields="" is_subagent is_continued payload_session session_id items newest pid wait_state item stamp
+  local fields="" is_subagent is_continued payload_session session_id items newest nudge_key wait_state item stamp
   # shellcheck disable=SC2310  # no fields → the malformed-payload branch below
   if [[ ! -t 0 ]]; then fields="$(get_payload_fields)" || fields=""; fi
   if [[ -z "${fields}" ]]; then
@@ -38,19 +41,20 @@ main() {
   session_id="$(queue_get_session_id "${payload_session}")"
   [[ -n "${session_id}" ]] || exit 0
   items="$(queue_get_awaiting_items "${session_id}")"
-  pid="$(queue_get_pid)"
-  [[ -n "${items}" && -n "${pid}" ]] || exit 0
+  [[ -n "${items}" ]] || exit 0
+  nudge_key="$(queue_get_pid)"
+  nudge_key="${nudge_key:-${NUDGE_NO_PID_KEY}}"
   wait_state="$(queue_get_wait_state "${session_id}")"
   [[ "${wait_state}" != live ]] || exit 0
   stamp="$(queue_get_awaiting_dir "${session_id}")/.nudged"
   newest="${items%%$'\n'*}"
   # shellcheck disable=SC2310  # not due and a failed check both end the turn normally
-  is_nudge_due "${stamp}" "${pid}" "${newest}" || exit 0
+  is_nudge_due "${stamp}" "${nudge_key}" "${newest}" || exit 0
   # shellcheck disable=SC2310  # an unusable monitor reply already printed its warning
   item="$(get_wait_resolved_item "${session_id}" "${items}")" || exit 0
   [[ -n "${item}" ]] || exit 0
   # the stamp lands before the continuation → no write failure can turn into a repeated one
-  if ! (printf '%s %s\n' "${pid}" "${newest}" >"${stamp}") 2>/dev/null; then
+  if ! (printf '%s %s\n' "${nudge_key}" "${newest}" >"${stamp}") 2>/dev/null; then
     warn "no nudge stamp could be written at ${stamp}"
     exit 0
   fi
@@ -69,12 +73,13 @@ warn() {
   (printf 'queue-turn-end-check: %s — the turn ends without the owner-queue check\n' "$1") >&2 || true
 }
 
-# <stamp> <pid> <newest item id> → 0 unless this Claude process was told about these items within NUDGE_INTERVAL_MIN
+# <stamp> <nudge key> <newest item id> → 0 unless this Claude process was told about these items within
+# NUDGE_INTERVAL_MIN
 is_nudge_due() {
-  local told_pid="" told_newest="" recent
+  local told_key="" told_newest="" recent
   [[ -f "$1" ]] || return 0
-  IFS=' ' read -r told_pid told_newest <"$1" || return 0
-  if [[ "${told_pid}" != "$2" || ! "${told_newest}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || (($3 > told_newest)); then
+  IFS=' ' read -r told_key told_newest <"$1" || return 0
+  if [[ "${told_key}" != "$2" || ! "${told_newest}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || (($3 > told_newest)); then
     return 0
   fi
   recent="$(find "$1" -mmin "-${NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
