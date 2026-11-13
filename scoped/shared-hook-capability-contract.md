@@ -81,7 +81,7 @@ Worked cases, keyed by disposition:
   - `advisory-subagent-budget.sh` is a noop for its tool-use nudges only; its no-progress brake is listed under **exception**.
   - Also noop: the `enforce-verification-gate.sh` and `enforce-workflow-verify-stage.sh` warnings.
   - Also noop: a `track-outcome.sh` parse advisory that only warns and records the block unchanged.
-- **reask**: `robustAgent`'s retry-once-on-null re-spawn in schema-mode workflows · the Failure Recovery Loop retry at the delegation layer · `queue-turn-end-check.sh`'s one `Stop` continuation naming the queue wait command.
+- **reask**: `robustAgent`'s retry-once-on-null re-spawn in schema-mode workflows · the Failure Recovery Loop retry at the delegation layer · `queue-turn-end-check.sh`'s one `Stop` continuation per turn end, naming the queue wait command, the missing queue verdict line, or both.
 
 ### Picking a disposition
 

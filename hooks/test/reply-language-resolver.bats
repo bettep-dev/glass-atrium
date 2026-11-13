@@ -60,6 +60,35 @@ write_human_transcript() {
   done
 }
 
+# Writes one transcript entry per token, oldest first: start:<uuid> and notify:<uuid> open a turn (a prompt, a task
+# notification) · tool · result · text · bigtext (about 2 KB) · feedback (the isMeta Stop hook feedback entry)
+write_turn_transcript() {
+  local path="$1" token big
+  shift
+  printf -v big '%2000s' ''
+  : >"${path}"
+  for token in "$@"; do
+    case "${token}" in
+      start:*) jq -cn --arg uuid "${token#start:}" '{type: "user", uuid: $uuid, promptId: "p-1", turnOrigin: "sdk",
+        turnPosition: {promptIndex: 0, turnIndex: 1}, message: {role: "user", content: "Run the release build"}}' ;;
+      notify:*) jq -cn --arg uuid "${token#notify:}" '{type: "user", uuid: $uuid, promptId: "p-1",
+        origin: {kind: "task-notification"}, turnPosition: {promptIndex: 0, turnIndex: 2},
+        message: {role: "user", content: "<task-notification>build finished</task-notification>"}}' ;;
+      tool) jq -cn '{type: "assistant", uuid: "a-1", turnPosition: null, message: {role: "assistant",
+        content: [{type: "tool_use", id: "toolu_1", name: "Bash", input: {command: "make release"}}]}}' ;;
+      result) jq -cn '{type: "user", uuid: "r-1", message: {role: "user",
+        content: [{type: "tool_result", tool_use_id: "toolu_1", content: "build ok"}]}}' ;;
+      text) jq -cn '{type: "assistant", uuid: "a-2", message: {role: "assistant",
+        content: [{type: "text", text: "The build passed."}]}}' ;;
+      bigtext) jq -cn --arg text "${big// /x}" '{type: "assistant", uuid: "a-3",
+        message: {role: "assistant", content: [{type: "text", text: $text}]}}' ;;
+      feedback) jq -cn '{type: "user", uuid: "f-1", isMeta: true,
+        message: {role: "user", content: "Stop hook feedback:\nQueue verdict (harness)"}}' ;;
+      *) return 1 ;;
+    esac >>"${path}"
+  done
+}
+
 # Prints "status|entry|prose" for the resolver JSON in ${output}, or the keys outside the contract.
 get_found() {
   jq -r --argjson contract "${OUTPUT_KEYS}" '
@@ -170,7 +199,45 @@ assert_rows() {
   }
 }
 
-@test "any subcommand but transcript exits non-zero so a caller falls silent" {
+@test "the current turn starts at the newest entry with a turn position, whatever its origin, and owns only the tool calls after it" {
+  local row name tokens want got
+  # Row shape: name|tokens|status|turn|tools; an empty turn prints as null
+  for row in \
+    'tool turn and its continuation|start:t-1 tool result text feedback tool result|found|t-1|true' \
+    'tool-free turn|start:t-1 text|found|t-1|false' \
+    'notification turn after a tool turn|start:t-1 tool result text notify:n-1 text|found|n-1|false' \
+    'tool call in a notification turn|start:t-1 text notify:n-1 tool result text|found|n-1|true' \
+    'no turn start|tool result text|none|null|false'; do
+    IFS='|' read -r name tokens want <<<"${row}"
+    IFS=' ' read -r -a tokens <<<"${tokens}"
+    write_turn_transcript "${RL_TMP}/turn.jsonl" "${tokens[@]}"
+    run python3 "${LIB}" turn "${RL_TMP}/turn.jsonl"
+    got="$(jq -r '(keys - ["bytes_read","reason","status","tools","truncated","turn"]) as $extra
+      | if $extra != [] then "extra keys: \($extra)" else [.status, .turn, .tools] | map(tostring) | join("|") end' \
+      <<<"${output}" 2>/dev/null)" || got="unparsed: ${output}"
+    [[ "${status}" -eq 0 && "${got}" == "${want}" ]] || {
+      echo "${name}: exit ${status}, got ${got}"
+      return 1
+    }
+  done
+}
+
+@test "a turn start past the read cap or an unreadable transcript is reported as no turn" {
+  write_turn_transcript "${RL_TMP}/long.jsonl" start:t-1 tool result bigtext bigtext bigtext bigtext
+  local row name path want got
+  for row in "past the cap|${RL_TMP}/long.jsonl|none|true|null" \
+    "unreadable|${RL_TMP}/no-such.jsonl|none|false|unreadable"; do
+    IFS='|' read -r name path want <<<"${row}"
+    run env REPLY_LANG_WINDOW_BYTES=1024 REPLY_LANG_MAX_BYTES=4096 python3 "${LIB}" turn "${path}"
+    got="$(jq -r '[.status, .truncated, .reason] | map(tostring) | join("|")' <<<"${output}" 2>/dev/null)" || got=""
+    [[ "${status}" -eq 0 && "${got}" == "${want}" ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "an unknown subcommand exits non-zero so a caller falls silent" {
   local name
   for name in bogus text reply; do
     run python3 "${LIB}" "${name}"

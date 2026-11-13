@@ -282,6 +282,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
   - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`;
   - the image paths: `monitor/src/server/queue/images.ts` → `getSessionImageViews` gives each one; `scripts/atrium-queue.sh` → `print_images` prints only a server-made name inside the image folder.
+  - the verdict check, its once-per-turn stamp and its id cross-check: `hooks/queue-turn-end-check.sh` → `set_verdict_reason` · `set_foreign_ids`; the turn boundary and the tool-call test: `hooks/lib/reply_language.py` → `find_current_turn`.
 
 ### `### Answers and messages`
 

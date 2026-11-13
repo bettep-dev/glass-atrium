@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""reply_language.py — the user's newest own message in a transcript, found by record structure alone.
+"""reply_language.py — bounded backward transcript reads, by record structure alone.
 
-Shared by the reply-language hooks, which quote its start so the model judges the reply language; nothing
-here reads or names a language. Only origin kind `human` is the user's message, and an entry left
-whitespace-empty once wrappers, pastes and code are removed has no prose of its own. Contract: `--help`.
+`transcript`: the user's newest own message, for the reply-language hooks, which quote its start so the model
+judges the reply language; nothing here reads or names a language. Only origin kind `human` is the user's
+message, and an entry left whitespace-empty once wrappers, pastes and code are removed has no prose of its own.
+`turn`: the current turn's start entry and whether the turn called a tool, for the queue turn-end check.
+Contract: `--help`.
 """
 
 import argparse
@@ -16,6 +18,10 @@ import sys
 DEFAULT_WINDOW_BYTES = 256 * 1024
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 HUMAN_MARKER = b'"kind":"human"'
+# a turn's start entry, whatever its origin, carries a turnPosition object; tool results, assistant and Stop
+# feedback entries carry none (shared-hook-capability-contract.md → Stop row)
+TURN_MARKER = b'"turnPosition":{'
+TOOL_USE_MARKER = b'"tool_use"'
 # Bounds the output only; the hook cleans and caps the quote the model sees.
 PROSE_EXCERPT_CHARS = 500
 
@@ -32,7 +38,8 @@ def main(argv=None):
     args = _build_parser().parse_args(argv)
     window = _get_env_bytes("REPLY_LANG_WINDOW_BYTES", DEFAULT_WINDOW_BYTES)
     cap = _get_env_bytes("REPLY_LANG_MAX_BYTES", DEFAULT_MAX_BYTES)
-    json.dump(find_newest_human_prose(args.path, window, cap), sys.stdout)
+    find = find_current_turn if args.command == "turn" else find_newest_human_prose
+    json.dump(find(args.path, window, cap), sys.stdout)
     sys.stdout.write("\n")
     return 0
 
@@ -40,13 +47,16 @@ def main(argv=None):
 def _build_parser():
     parser = argparse.ArgumentParser(
         prog="reply_language.py",
-        description="Print one JSON object: status (found|none), entry (user|queued_command), prose, "
-        "bytes_read and truncated, plus reason=unreadable when the transcript cannot be opened.",
+        description="Print one JSON object: status (found|none), bytes_read and truncated, plus "
+        "reason=unreadable when the transcript cannot be opened; transcript adds entry (user|queued_command) and "
+        "prose, turn adds turn (the turn-start entry's uuid) and tools (the turn called a tool).",
     )
     commands = parser.add_subparsers(dest="command")
     commands.required = True
     transcript = commands.add_parser("transcript", help="the newest human message with prose of its own")
     transcript.add_argument("path")
+    turn = commands.add_parser("turn", help="the current turn's start entry and whether it called a tool")
+    turn.add_argument("path")
     return parser
 
 
@@ -66,6 +76,39 @@ def find_newest_human_prose(path, window, cap):
         result["reason"] = "unreadable"
     result.update(scan)
     return result
+
+
+def find_current_turn(path, window, cap):
+    """Status `none` with truncated=true means the cap was reached before the turn's start entry."""
+    result = {"status": "none", "turn": None, "tools": False}
+    scan = {"bytes_read": 0, "truncated": False}
+    try:
+        with open(path, "rb") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            for line in _get_lines_backward(fh, size, window, cap, scan):
+                if TOOL_USE_MARKER in line and _has_tool_use(_get_json_object(line)):
+                    result["tools"] = True
+                turn = _get_turn_start_id(line) if TURN_MARKER in line else None
+                if turn:
+                    result.update(status="found", turn=turn)
+                    break
+    except OSError:
+        result["reason"] = "unreadable"
+    result.update(scan)
+    if result["status"] == "none":
+        result["tools"] = False
+    return result
+
+
+def _has_tool_use(entry):
+    content = entry.get("message", {}).get("content") if entry.get("type") == "assistant" else None
+    return isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_use" for b in content)
+
+
+def _get_turn_start_id(line):
+    entry = _get_json_object(line)
+    uuid = entry.get("uuid")
+    return uuid if isinstance(entry.get("turnPosition"), dict) and isinstance(uuid, str) and uuid else None
 
 
 def _get_lines_backward(fh, size, window, cap, scan):
