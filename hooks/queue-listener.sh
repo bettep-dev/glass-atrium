@@ -2,8 +2,9 @@
 # queue-listener.sh — SessionStart and Stop hook, bound asyncRewake: in an interactive main session it execs the queue
 # CLI's listen step, which polls this session's answered owner-queue count without claiming and wakes the idle session
 # with one count line naming the pending command (exit 2) — never an item's text.
-# Exits 0 at once for a subagent payload, a non-cli entrypoint (`claude -p` runs an asyncRewake hook synchronously and
-# would hold its run for the listener's lifetime), a background job, or a session whose kind it cannot decide.
+# Exits 0 at once for a subagent payload, a non-cli entrypoint or a print flag in its process's arguments (`claude -p`
+# runs an asyncRewake hook synchronously and would hold its run for the listener's lifetime), a background job, or a
+# session whose kind it cannot decide.
 # Disposition reask, as a wake into its own turn, never a block of the turn end that started it. Fail-open: exit 0.
 
 set -Eeuo pipefail
@@ -41,8 +42,8 @@ main() {
   exec "${cli}" listen </dev/null
 }
 
-# 0 for an interactive main session's process: cli entrypoint, no job dir, and a parent that is no background-job host
-# — a parent it cannot read counts as one (fails closed)
+# 0 for an interactive main session's process: cli entrypoint, no job dir, no print flag in its arguments, and a parent
+# that is no background-job host — arguments or a parent it cannot read fail closed
 is_listenable_session() {
   local pid parent_pid parent
   # shellcheck disable=SC2310  # a single [[ ]] test
