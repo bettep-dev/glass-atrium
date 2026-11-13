@@ -64,6 +64,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -74,6 +75,7 @@ from pathlib import Path
 from unittest import mock
 
 _HOOKS_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _HOOKS_ROOT.parent
 _SOT_PATH = _HOOKS_ROOT / "pricing.json"
 _LIB_DIR = _HOOKS_ROOT / "lib"
 _BACKFILL = _HOOKS_ROOT / "backfill-cost-events.py"
@@ -631,6 +633,66 @@ class RateForSotTest(_LoaderCase):
             self.assertTrue(pricing_loader.is_known(key, sot_path=str(_SOT_PATH)), key)
         for key in ("claude-foobar-9-9", "", None):
             self.assertFalse(pricing_loader.is_known(key, sot_path=str(_SOT_PATH)), key)
+
+
+def _read_repo_text(rel_path):
+    return (_REPO_ROOT / rel_path).read_text(encoding="utf-8")
+
+
+def _find_agent_model_pins():
+    """Frontmatter `model:` values across agents/*.md — none ship today, a future pin is caught."""
+    ids = set()
+    for body in sorted((_REPO_ROOT / "agents").glob("*.md")):
+        head = re.match(r"---\n(.*?)\n---", body.read_text(encoding="utf-8"), re.S)
+        if head:
+            ids.update(re.findall(r"^model:\s*[\"']?([^\"'\s]+)", head.group(1), re.M))
+    return ids - {"inherit"}
+
+
+def _find_worker_default_pins():
+    text = _read_repo_text("scripts/lib/atrium-config.sh")
+    body = text.split("atrium_resolve_worker_model() {", 1)[1].split("\n}", 1)[0]
+    return set(re.findall(r'local model="([^"]+)"', body))
+
+
+def _find_retired_worker_replacement_pins():
+    text = _read_repo_text("monitor/src/server/model-config-consts.ts")
+    return set(re.findall(r'RETIRED_WORKER_MODEL_REPLACEMENT = "([^"]+)"', text))
+
+
+def _find_model_config_catalog_pins():
+    # Quoted keys only: the unquoted `inherit` key follows the session model, never a priced id.
+    text = _read_repo_text("monitor/public/src/screens/model-config.jsx")
+    block = text.split("const MODEL_CAP_MC = {", 1)[1].split("\n};", 1)[0]
+    return set(re.findall(r'^\s*"([^"]+)":', block, re.M)) - {"inherit"}
+
+
+class PinnedModelIdPricingTest(unittest.TestCase):
+    """Recurrence check, shipped-tree leg: every model id the tree pins runs and
+    is costed by the hook, so each needs its own pricing.json row — a missing
+    row prices it at a family or fallback guess and raises the advisory. Ids an
+    install picks up from outside the tree are the updater's check
+    (scripts/check-pricing-roster.sh)."""
+
+    # (source, extractor, may the source pin nothing)
+    SOURCES = (
+        ("agents/*.md frontmatter", _find_agent_model_pins, True),
+        ("atrium-config.sh worker default", _find_worker_default_pins, False),
+        ("RETIRED_WORKER_MODEL_REPLACEMENT", _find_retired_worker_replacement_pins, False),
+        ("model-config.jsx MODEL_CAP_MC", _find_model_config_catalog_pins, False),
+    )
+
+    def test_every_pinned_model_id_has_its_own_pricing_row(self):
+        for source, extract, may_be_empty in self.SOURCES:
+            ids = extract()
+            with self.subTest(source=source):
+                # An extractor that finds nothing has lost its anchor, not proven coverage.
+                self.assertTrue(may_be_empty or ids, f"{source}: no model id found")
+                unpriced = sorted(
+                    i for i in ids
+                    if not pricing_loader.is_known(i, sot_path=str(_SOT_PATH))
+                )
+                self.assertEqual(unpriced, [], f"{source}: no hooks/pricing.json row")
 
 
 class TierBoundaryTest(_LoaderCase):
