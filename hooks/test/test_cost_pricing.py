@@ -118,6 +118,8 @@ _FABLE_5_2_RATE = {"input": 8.0, "output": 40.0, "cache_read": 0.2, "cache_creat
 _WINDOW_STANDARD = {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_creation": 3.75}
 _WINDOW_INTRO = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_creation": 2.5}
 _HAIKU_RATE = {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_creation": 1.25}
+# 5.5 is vendor-quoted at its ≤100,000-token prompt tier — 1/10 of the haiku-4-5 family row.
+_HAIKU_5_5_RATE = {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_creation": 0.125}
 
 # The two committed remote_sources urls, in declared order (own-repo #1 is
 # the PREDICTED post-merge raw address — 404s by design until pushed).
@@ -580,6 +582,17 @@ class RateForSotTest(_LoaderCase):
         self.assertNotEqual(record["rate"], _FABLE_RATE)
         self.assertTrue(
             pricing_loader.is_known("claude-fable-5-1", sot_path=str(_SOT_PATH))
+        )
+
+    def test_haiku_5_5_resolves_from_its_own_sot_row_with_remote_disabled(self):
+        # No own row + no overlay → family-latest haiku-4-5, 10x this id's input rate.
+        with mock.patch.dict(os.environ, {"PRICING_REMOTE_DISABLE": "1"}):
+            record = self._rate_for("claude-haiku-5-5")
+        self.assertEqual(record["resolution"], "sot")
+        self.assertEqual(record["matched_model"], "claude-haiku-5-5")
+        self.assertEqual(record["rate"], _HAIKU_5_5_RATE)
+        self.assertTrue(
+            pricing_loader.is_known("claude-haiku-5-5", sot_path=str(_SOT_PATH))
         )
 
     def test_minor_versioned_id_resolves_from_its_own_sot_row(self):
