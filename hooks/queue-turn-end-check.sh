@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # queue-turn-end-check.sh — Stop hook, at most one block per turn end, carrying either line or both, never an item's
-# text: (1) a main-session turn that called a tool and whose final message's last non-blank line is no
-# [QUEUE-VERDICT] form, or names an id that is not an item of this session, is asked for its verdict once per turn;
-# (2) while an item this session posted awaits the owner and no wait of this Claude process runs, the wait command.
+# text: (1) an interactive or background main-session turn that called a tool and whose final message's last
+# non-blank line is no [QUEUE-VERDICT] form, or names an id that is not an item of this session, is asked for its
+# verdict once per turn; (2) while an item this session posted awaits the owner and no wait of this Claude process
+# runs, the wait command.
 # The verdict check confirms only that a verdict is stated and its ids are this session's items, never the judgment.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_wait_state).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
@@ -24,6 +25,9 @@ readonly NUDGE_NO_PID_KEY=no-pid
 # the verdict line's keyword and forms; the rule text that teaches them: glass-atrium-ops-orchestrator-role.md →
 # Queue verdict line (queue-turn-end-check.bats feeds each form it teaches through this check)
 readonly VERDICT_KEYWORD='[QUEUE-VERDICT]'
+# interactive and background job sessions report cli; a `claude -p` worker run (daemon, wiki) reports sdk-cli and is
+# never asked for a verdict — the same value inject-reply-language.sh → INTERACTIVE_ENTRYPOINT gates on
+readonly OWNER_FACING_ENTRYPOINT=cli
 # shellcheck disable=SC2016  # the backticks are the reason's literal markdown
 readonly VERDICT_FORMS='`[QUEUE-VERDICT] posted #<item-id>` (every item the turn posted, on the one line) or `[QUEUE-VERDICT] nothing to post`'
 readonly VERDICT_ASK_STEPS="Judge the turn against the must-not-miss kinds, post what is owed, then end the message with one \
@@ -63,7 +67,9 @@ main() {
   session_id="$(queue_get_session_id "${payload_session}")"
   [[ -n "${session_id}" ]] || exit 0
   check_deadline=$((SECONDS + CHECK_BUDGET_S))
-  set_verdict_reason "${session_id}" "${transcript}" "${has_message}" "${last_line}"
+  if [[ "${CLAUDE_CODE_ENTRYPOINT:-}" == "${OWNER_FACING_ENTRYPOINT}" ]]; then
+    set_verdict_reason "${session_id}" "${transcript}" "${has_message}" "${last_line}"
+  fi
   if [[ "${is_check_spent}" == false ]]; then set_wait_reason "${session_id}"; fi
   [[ -n "${verdict_reason}${wait_reason}" ]] || exit 0
   print_block

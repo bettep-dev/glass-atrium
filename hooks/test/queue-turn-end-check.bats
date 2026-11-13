@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2016,SC2030,SC2031,SC2154,SC2249,SC2312  # backticked verdict forms are literal text; a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison; each case arm is a row
-# The owner queue's turn-end check (Stop hook) against a stand-in monitor: it keeps a turn from ending once,
-# naming the wait command, only while an item of this session awaits the owner and no wait of this Claude
-# process runs — never twice for the same items, never with item text, and never when it cannot decide.
+# The owner queue's turn-end check (Stop hook) against a stand-in monitor: it keeps a turn from ending at most once
+# per turn, asking an interactive or background session's tool-using turn for its [QUEUE-VERDICT] line, naming the
+# wait command while an item of this session awaits the owner and no wait of this Claude process runs, or both in
+# one block — never twice for the same items, never with item text, and never when it cannot decide.
 #
 # Run via: bats hooks/test/queue-turn-end-check.bats
 # Requires: bats, bash 3.2+, jq, curl, python3
@@ -25,6 +26,8 @@ setup() {
   new_root
   # a live pid → its start time exists, as the session's own Claude process has one
   export CLAUDE_PID="$$"
+  # an interactive or background session, the kinds the verdict check asks
+  export CLAUDE_CODE_ENTRYPOINT=cli
   : >"${BATS_TEST_TMPDIR}/requests.log"
   set_reply 200 "$(item_reply open)"
   TRANSCRIPT="${BATS_TEST_TMPDIR}/transcript.jsonl"
@@ -551,6 +554,20 @@ assert_silent_turn_end() {
     IFS=' ' read -r -a tokens <<<"${tokens}"
     new_root
     write_turn_transcript "${tokens[@]}"
+    run_hook
+    assert_silent_turn_end "row ${name}" || return 1
+  done
+}
+
+@test "a headless claude -p run or a host naming no entrypoint is never asked for a verdict, even on a tool-using turn" {
+  start_stub
+  local row name entrypoint
+  for row in 'headless -p run|sdk-cli' 'no entrypoint|-'; do
+    IFS='|' read -r name entrypoint <<<"${row}"
+    new_root
+    write_turn_transcript start:t-1 tool result text
+    unset CLAUDE_CODE_ENTRYPOINT
+    if [[ "${entrypoint}" != - ]]; then export CLAUDE_CODE_ENTRYPOINT="${entrypoint}"; fi
     run_hook
     assert_silent_turn_end "row ${name}" || return 1
   done
