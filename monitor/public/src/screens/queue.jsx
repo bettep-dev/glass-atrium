@@ -1028,18 +1028,31 @@ function useThreadQ(isOpen, selectedIds) {
 }
 
 /**
- * One page of the history read: a first page replaces the thread, an earlier one joins it with a copy on both kept once.
- * @param isQuiet - the page's own re-read: no loading state, and a failure keeps the thread as it stands
+ * One page of the history read (getReadThreadQ says how it joins the thread).
+ * @param isQuiet - the page's own re-read: no loading state, a failure keeps the thread as it stands, and no loaded order leaves
  */
 async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limit = ORDERS_Q.PAGE, isQuiet = false }) {
 	if (!isQuiet) setThread((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/orders?${getOrdersQueryQ(ids, before, limit)}`);
 	if (!isCurrent()) return;
 	if (answer.status >= 200 && answer.status < 300 && Array.isArray(answer.data?.items)) {
-		const { items, nextCursor } = answer.data;
-		return setThread((prev) => ({ status: "ready", items: before === null ? items : putEarlierPageQ(prev.items, items), nextCursor: nextCursor ?? null, error: null }));
+		return setThread((prev) => ({ status: "ready", ...getReadThreadQ(prev, answer.data, before, isQuiet), error: null }));
 	}
 	if (!isQuiet) setThread((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
+}
+
+// an earlier page joins the thread, the page's own re-read merges into it, any other first page replaces it
+function getReadThreadQ(prev, page, before, isQuiet) {
+	if (before !== null) return { items: putEarlierPageQ(prev.items, page.items), nextCursor: page.nextCursor ?? null };
+	if (isQuiet) return getRereadThreadQ(prev, page);
+	return { items: page.items, nextCursor: page.nextCursor ?? null };
+}
+
+// spec §4.4: orders the re-read covers take its state; loaded orders an arrival pushed past its end stay, with the loaded cursor
+function getRereadThreadQ(prev, page) {
+	const read = new Set(page.items.map((item) => item.id));
+	const beyond = prev.items.filter((item) => !read.has(item.id));
+	return { items: [...page.items, ...beyond], nextCursor: beyond.length > 0 ? prev.nextCursor : page.nextCursor ?? null };
 }
 
 // every loaded order, so a thread extended by Show earlier is not cut back, up to the read's cap

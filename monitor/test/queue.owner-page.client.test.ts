@@ -1787,6 +1787,17 @@ describe("the Orders mode", () => {
     assert.deepEqual(getPlain(thread.items).map((item) => item.id), [90, 70, 40], "a copy on both pages is kept once");
   });
 
+  // spec §4.4: an arrival never moves the thread → the page's own re-read keeps every loaded order, the oldest one at the top included
+  test("an arrival keeps every loaded order: the re-read updates the orders it covers and keeps the ones it pushed past its end", async () => {
+    const answer = { items: [copy({ id: 95, sendId: "s3" }), copy({ id: 90, sendId: "s2" }), copy({ id: 70, sendId: "s1", status: "delivered" })], nextCursor: "1762950364118000:70" };
+    const module = (await loadScreenModule(QUEUE_SRC, { URLSearchParams, window: { UI: uiStub() }, fetch: async () => ({ status: 200, json: async () => answer }) })) as ScreenModule;
+    let thread = { status: "ready", items: [copy({ id: 90, sendId: "s2" }), copy({ id: 70, sendId: "s1" }), copy({ id: 40, sendId: "s0" })], nextCursor: "1762950364118000:40", error: null };
+    const setThread = (next: (prev: typeof thread) => typeof thread) => { thread = next(thread); };
+    await (module.getThreadQ as (deps: unknown) => Promise<void>)({ ids: [SESSION_ID], before: null, setThread, isQuiet: true });
+    const items = getPlain(thread.items) as Array<{ id: number; status: string }>;
+    assert.deepEqual([items.map((item) => [item.id, item.status]), thread.nextCursor], [[[95, "answered"], [90, "answered"], [70, "delivered"], [40, "answered"]], "1762950364118000:40"]);
+  });
+
   test("no tick reads the orders to every session", async () => {
     const urls: string[] = [];
     const module = (await loadScreenModule(QUEUE_SRC, { URLSearchParams, window: { UI: uiStub() }, fetch: async (url: string) => { urls.push(url); return { status: 200, json: async () => ({ items: [], nextCursor: null }) }; } })) as ScreenModule;
