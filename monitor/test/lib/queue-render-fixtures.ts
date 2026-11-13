@@ -8,6 +8,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getImageFacts } from "../../src/server/queue/image-format.js";
+import { ITEM_TITLE_MAX } from "../../src/server/queue/schemas.js";
 import type { ImageView } from "../../src/server/queue/images.js";
 import type { OwnerItemView, OwnerSessionView, RecentResume } from "../../src/server/queue/owner-views.js";
 import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
@@ -332,3 +333,95 @@ export function buildSentCopies(firstId: number, send: { sendId: string; session
 }
 
 export const FIXTURE_SESSION_IDS = SESSION_IDS;
+
+// spec 44063 §14.4's edge cases, beside the rest state: the page's limits and the facts that only show next to a neighbour
+export const EDGE_SESSION_IDS = {
+  twin: "b7c6d5e4-0f1a-4b2c-8d3e-1a2b3c4d5e66",
+  longName: "c8d7e6f5-1a2b-4c3d-9e4f-2b3c4d5e6f77",
+  busy: "d9e8f7a6-2b3c-4d4e-8f5a-3c4d5e6f7a88",
+} as const;
+
+/** The longest name a session can register (`schemas.ts` → SESSION_NAME_MAX). */
+export const EDGE_LONG_SESSION_NAME = "nightly-dependency-audit-and-release-notes-for-the-public-monitor-installer-and-its-update-script-ci";
+
+/** The longest title an item can carry (`schemas.ts` → ITEM_TITLE_MAX). */
+export const EDGE_LONG_TITLE = "[정리 작업] 세 저장소의 끝난 작업 폴더 정리, 의존성 감사, 릴리스 노트 초안, 설치 스크립트 점검을 한 번에 진행한 결과 — 웹·관리 화면·API 모두 테스트 통과, dev DB 반영과 병합은 승인 대기, 디스크 여유 22GB 확보, 남은 일은 브라우저 확인과 README 안내 이동, 그리고 다음 배포 전 업데이터 점검과 모니터 화면 나머지 정리입니다";
+if (EDGE_LONG_TITLE.length !== ITEM_TITLE_MAX) throw new Error(`the long-title fixture is ${EDGE_LONG_TITLE.length} characters, not ${ITEM_TITLE_MAX}`);
+
+/** Item ids and send ids of the edge cases, for the tests that select them. */
+export const EDGE_IDS = {
+  nineOptions: 301, approval: 302, longTitle: 303, linkedReport: 304, declaredReport: 305, threeReceipts: 310, eightImages: 320,
+  threeReceiptsSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b10", eightImagesSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b11",
+} as const;
+
+// eight distinct ids over the three asset files → an order at the per-order image limit
+const EDGE_IMAGES: FixtureImage[] = Array.from({ length: 8 }, (_, index) => {
+  const image = IMAGES[index % IMAGES.length]!;
+  return { ...image, view: { ...image.view, id: `1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5${index}`, name: `queue-edge-0${index + 1}.${image.view.type}` } };
+});
+
+/** The edge orders' image bytes by id, beside FIXTURE_IMAGES for the harness's serve route. */
+export const EDGE_FIXTURE_IMAGES: ReadonlyMap<string, FixtureImage> = new Map(EDGE_IMAGES.map((image) => [image.view.id, image]));
+
+function buildEdgeSession(id: string, name: string, awaiting: number): { view: OwnerSessionView; row: OwnerSessionRow } {
+  const view: OwnerSessionView = { ...buildSessionView("atrium"), id, name };
+  const row: OwnerSessionRow = { ...buildSessionRow("atrium", { awaiting, inDelivery: 0 }, 12), id, sessionIdPrefix: id.slice(0, 8), name };
+  return { view, row };
+}
+
+const EDGE_SESSIONS = {
+  twin: buildEdgeSession(EDGE_SESSION_IDS.twin, "atrium", 1),
+  longName: buildEdgeSession(EDGE_SESSION_IDS.longName, EDGE_LONG_SESSION_NAME, 0),
+  busy: buildEdgeSession(EDGE_SESSION_IDS.busy, "batch", 128),
+};
+
+const NINE_OPTION_LABELS = ["지금 꼴 유지", "짧은 안내문", "단계별 설명", "모델별 평가 뒤 결정", "기획에 먼저 확인", "회원 설정으로", "화면별로 다르게", "다음 배포로 미룸", "검토에 올림"];
+
+const EDGE_ITEMS = [
+  buildItem(EDGE_IDS.nineOptions, "gersona", {
+    title: "[도움말 프롬프트] 답의 꼴을 아홉 안 가운데 하나로 정하기",
+    body: "- 기획 초안과 지금 백엔드 글이 다르고, 검토에서 아홉 가지 안이 나왔습니다.\n- 계획 문서: 모니터 44060",
+    linkedDocIds: [44060], recommendedCode: "R4",
+    options: NINE_OPTION_LABELS.map((label, index) => ({ code: `R${index + 1}`, label, pros: "지금 기능과 충돌이 없다", cons: "평가가 필요하다" })),
+  }),
+  buildItem(EDGE_IDS.approval, "aidl", {
+    title: "[배포] dev DB 반영(DB-3) 승인", isApprovalClass: true, recommendedCode: "R1",
+    body: "- DB 기반 테스트 두 묶음이 통과했습니다.\n- 반영 전 덤프를 보관합니다.",
+    options: [
+      { code: "R1", label: "지금 반영", pros: "다음 작업이 바로 이어진다", cons: "반영 중 dev DB 쓰기가 잠시 멈춘다" },
+      { code: "R2", label: "내일 오전 반영", pros: "작업 시간을 피한다", cons: "후속 작업이 하루 밀린다" },
+    ],
+  }),
+  buildItem(EDGE_IDS.longTitle, "yoaida", { kind: "report", title: EDGE_LONG_TITLE, body: "- 세 저장소 모두 테스트 통과\n- dev DB 반영과 병합은 승인 대기" }),
+  buildItem(EDGE_IDS.linkedReport, "atrium", {
+    kind: "report", title: "배포 #61 계획 검토 완료", linkedDocIds: [44061],
+    body: "- 계획 모니터 44061을 검토했고 필수 수정 2건을 반영했습니다.\n- 다음 단계: 구현 위임",
+  }),
+  buildItem(EDGE_IDS.declaredReport, "atrium", {
+    kind: "report", session: EDGE_SESSIONS.twin.view, title: "업데이터 점검 완료", linkedDocIds: [44071],
+    body: "- 업데이터의 의존성 단계가 빠진 도구를 다시 설치하는지 점검했습니다.\n- 남은 일 없음",
+  }),
+];
+
+// the delivered copy leaves the owner list (TERMINAL) and stays in the history read, as on the server
+const THREE_RECEIPT_ORDER = buildOrderCopies(EDGE_IDS.threeReceipts, {
+  sendId: EDGE_IDS.threeReceiptsSend, minutesAgo: 30, text: "오늘 바뀐 점을 보고 한 건으로 올려 주세요.",
+  to: [["gersona", { deliveredAt: getAt(28) }], ["aidl", { status: "answered", deliveredAt: null }], ["yoaida", { status: "unacked", deviation: "unacked", canResend: true }]],
+});
+
+const EIGHT_IMAGE_ORDER = buildOrderCopies(EDGE_IDS.eightImages, {
+  sendId: EDGE_IDS.eightImagesSend, minutesAgo: 20, text: "표시한 여덟 화면의 글자 크기를 한 단계씩 줄여 주세요.", images: EDGE_IMAGES.map((image) => image.view),
+  to: [["atrium", { status: "answered", deliveredAt: null }]],
+});
+
+/** The rest state plus every edge case of spec 44063 §14.4 the rest state leaves out, its new sessions at the rail's end. */
+export function getEdgeFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const listed = THREE_RECEIPT_ORDER.filter((copy) => copy.status !== "delivered");
+  return {
+    ...rest,
+    items: [...rest.items, ...EDGE_ITEMS, ...listed, ...EIGHT_IMAGE_ORDER],
+    sessions: [...rest.sessions, ...Object.values(EDGE_SESSIONS).map((session) => session.row)],
+    orders: [...rest.orders, ...THREE_RECEIPT_ORDER, ...EIGHT_IMAGE_ORDER],
+  };
+}

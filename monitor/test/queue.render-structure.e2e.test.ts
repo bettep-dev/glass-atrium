@@ -22,8 +22,9 @@ import { chromium } from "playwright";
 import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
-  buildSentCopies, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW, FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture,
-  getEmptyFixture, getNotReceivedFixture, getOneReceivedFixture, getRestFixture, getUnreachableFixture, type QueueFixture,
+  buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNotReceivedFixture,
+  getOneReceivedFixture, getRestFixture, getUnreachableFixture, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -300,7 +301,7 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
   app.get("/api/queue/owner/resumes", async () => ({ resumes: harness.fixture.resumes }));
   app.get("/api/queue/owner/orders", async (request) => getOrderPage(harness.fixture.orders, ownerOrdersQuerySchema.parse(request.query)));
   app.get<{ Params: { id: string } }>("/api/queue/owner/images/:id", async (request, reply) => {
-    const image = FIXTURE_IMAGES.get(request.params.id);
+    const image = FIXTURE_IMAGES.get(request.params.id) ?? EDGE_FIXTURE_IMAGES.get(request.params.id);
     if (image === undefined) return reply.code(404).send({ error: "unknown_image" });
     return reply.headers({ "content-type": image.mime, "x-content-type-options": "nosniff" }).send(image.bytes);
   });
@@ -573,6 +574,48 @@ async function getSheetFacts(page: Page): Promise<SheetFacts> {
       isFootInView: foot !== undefined && foot.bottom <= window.innerHeight && foot.height > 0,
     };
   });
+}
+
+function getHeadHeights(page: Page, cards: string[]): Promise<number[]> {
+  return page.evaluate((selectors) => selectors.map((selector) => Math.round(document.querySelector(`${selector} > .card-head`)?.getBoundingClientRect().height ?? -1)), cards);
+}
+
+// the right end of the header's control cluster, the header's last painted box
+function getHeadEnd(page: Page): Promise<number> {
+  return page.evaluate(() => Math.round(document.querySelector(".page-head-cluster")?.getBoundingClientRect().right ?? -1));
+}
+
+interface ComposerFacts {
+  box: number;
+  buttons: number[];
+  type: { text: string; button: string };
+}
+
+async function getComposerFacts(page: Page, root: string): Promise<ComposerFacts> {
+  return page.evaluate((scope) => {
+    const height = (element: Element) => Math.round(element.getBoundingClientRect().height);
+    const type = (selector: string) => {
+      const style = getComputedStyle(document.querySelector(`${scope} ${selector}`) as Element);
+      return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight].join(" / ");
+    };
+    return {
+      box: height(document.querySelector(`${scope} .queue-compose-box`) as Element),
+      buttons: [...new Set([...document.querySelectorAll(`${scope} .queue-compose-buttons .btn`)].map(height))],
+      type: { text: type(".queue-compose-text"), button: type(".queue-compose-buttons .btn") },
+    };
+  }, root);
+}
+
+async function openEdgePage(harness: Harness, viewport: { width: number; height: number } = VIEWPORTS[0]): Promise<Page> {
+  harness.fixture = getEdgeFixture();
+  return openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+}
+
+// the Orders mode with no tick → every order in the thread, its images decoded
+async function openAllOrders(page: Page): Promise<void> {
+  await openOrders(page);
+  await page.locator(".queue-order").first().waitFor();
+  await waitForImages(page);
 }
 
 /**
@@ -873,6 +916,269 @@ describe("queue page on the mockup fixtures", () => {
     assert.match(stepped ?? "", / · 2 of \d+$/);
     assert.deepEqual({ isViewerOpen: after.isViewerOpen, isModeOpen: after.isModeOpen }, { isViewerOpen: false, isModeOpen: true });
     assert.match(after.focus ?? "", /^Open image 1 of \d+: /);
+  });
+
+  // todo → a known page defect: runs and reports, never fails the suite until the page meets the spec
+  test("every pane head is 48 high, on the desk and in the Orders mode, at every desk width", { todo: "the Sessions pane head is 69 high at every desk width, on the desk and in the Orders mode (spec §3.1: 48)" }, async () => {
+    harness.fixture = getRestFixture();
+    const heads = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText());
+      const desk = await getHeadHeights(page, [".queue-sessions", ".queue-list", ".queue-sheet"]);
+      await openOrders(page);
+      const orders = await getHeadHeights(page, [".queue-sessions", ".queue-orders-card"]);
+      await page.close();
+      heads.push({ width: viewport.width, desk, orders });
+    }
+
+    assert.deepEqual(heads, heads.map(({ width }) => ({ width, desk: [48, 48, 48], orders: [48, 48] })));
+  });
+
+  test("a badge is 20 high in every fill", async () => {
+    harness.fixture = getNotReceivedFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    const fills = await page.evaluate(() => [...new Set([...document.querySelectorAll(".pill--solid, .pill--tag, .pill--warn")]
+      .filter((pill) => pill.getClientRects().length > 0)
+      .map((pill) => `${/pill--(solid|tag|warn)/.exec(pill.className)?.[1]} ${Math.round(pill.getBoundingClientRect().height)}`))].sort());
+    await page.close();
+
+    assert.deepEqual(fills, ["solid 20", "tag 20", "warn 20"]);
+  });
+
+  test("the page header ends at the same x as on the Documents page, at every desk width", async () => {
+    harness.fixture = getRestFixture();
+    const ends = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText());
+      const queue = await getHeadEnd(page);
+      await page.evaluate(() => { window.location.hash = "#clauded-docs"; });
+      await page.locator(".page-head-title", { hasText: "Documents" }).waitFor({ timeout: READY_TIMEOUT_MS });
+      const docs = await getHeadEnd(page);
+      await page.close();
+      ends.push({ width: viewport.width, queue, docs });
+    }
+
+    assert.deepEqual(ends, ends.map((row) => ({ ...row, queue: row.docs })));
+  });
+
+  test("the report's composer and the order view's share a 40 box, 40 buttons and one computed type", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await selectRow(page, 101);
+    const report = await getComposerFacts(page, ".queue-sheet");
+    await openOrders(page);
+    const order = await getComposerFacts(page, ".queue-orders");
+    await page.close();
+
+    assert.deepEqual({ box: report.box, buttons: report.buttons }, { box: 40, buttons: [40] }, "the report's composer");
+    assert.deepEqual(order, report, "the order view's composer against the report's");
+  });
+
+  test("the thread opens at its end, and its composer stays in view at every scroll position of the thread", async () => {
+    const page = await openEdgePage(harness, { width: 1568, height: 759 });
+    await openAllOrders(page);
+    const facts = await page.evaluate(() => {
+      const log = document.querySelector(".queue-thread") as HTMLElement;
+      const composer = document.querySelector(".queue-orders .queue-composer") as HTMLElement;
+      const end = log.scrollHeight - log.clientHeight;
+      const isAtEnd = end - log.scrollTop < 2;
+      const isComposerInView = [0, end / 2, end].map((top) => {
+        log.scrollTop = top;
+        const box = composer.getBoundingClientRect();
+        return box.top >= 0 && box.bottom <= window.innerHeight;
+      });
+      return { isOverflowing: end > 0, isAtEnd, isComposerInView };
+    });
+    await page.close();
+
+    assert.deepEqual(facts, { isOverflowing: true, isAtEnd: true, isComposerInView: [true, true, true] });
+  });
+
+  test("an order bubble is no wider than 85% of the thread's column and no wider than 66ch of its own text", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await openAllOrders(page);
+    const bubbles = await page.evaluate(() => {
+      const log = document.querySelector(".queue-thread") as HTMLElement;
+      const pad = getComputedStyle(log);
+      const column = log.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
+      return [...document.querySelectorAll(".queue-bubble")].map((bubble) => {
+        const text = bubble.querySelector(".prose-text") as HTMLElement;
+        const probe = text.appendChild(Object.assign(document.createElement("span"), { style: "display: block; width: 66ch" }));
+        const measure = probe.getBoundingClientRect().width;
+        probe.remove();
+        return { width: bubble.getBoundingClientRect().width, limit: Math.min(0.85 * column, measure) };
+      });
+    });
+    await page.close();
+
+    assert.ok(bubbles.length > 0 && bubbles.every(({ width, limit }) => width <= limit + 0.5), JSON.stringify(bubbles));
+  });
+
+  // spec 44063 §14.4's edge cases: what the page shows for each, beside the rest state
+  describe("on the edge-case fixtures", () => {
+    test("a 9-option decision lists its nine options in the author's order with none picked, and its row reads 9 options", async () => {
+      const page = await openEdgePage(harness);
+      await selectRow(page, EDGE_IDS.nineOptions);
+      const shown = await page.evaluate((id) => ({
+        codes: [...document.querySelectorAll(".queue-sheet .queue-option-head .text-dim")].map((code) => code.textContent),
+        picked: [...document.querySelectorAll<HTMLInputElement>(".queue-sheet .ctl-radio")].filter((radio) => radio.checked).length,
+        hasCount: document.querySelector(`#queue-row-${id} .queue-row-facts`)?.textContent?.includes("9 options") === true,
+      }), EDGE_IDS.nineOptions);
+      await page.close();
+
+      assert.deepEqual(shown, { codes: ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"], picked: 0, hasCount: true });
+    });
+
+    test("an approval-class decision carries the Approval tag on its row and its letterhead, and its note says to confirm in the terminal", async () => {
+      const page = await openEdgePage(harness);
+      await selectRow(page, EDGE_IDS.approval);
+      const shown = await page.evaluate((id) => ({
+        row: [...document.querySelectorAll(`#queue-row-${id} .queue-row-facts .pill--tag`)].map((badge) => badge.textContent),
+        letterhead: [...document.querySelectorAll(".queue-sheet > .card-head .pill--tag")].map((badge) => badge.textContent),
+        note: document.querySelector(".queue-sheet .queue-note-text")?.textContent ?? "",
+      }), EDGE_IDS.approval);
+      await page.close();
+
+      assert.deepEqual({ row: shown.row, letterhead: shown.letterhead }, { row: ["Approval"], letterhead: ["Decision", "Approval"] });
+      assert.match(shown.note, /Approval: after you answer here, confirm once more in aidl's terminal\./);
+    });
+
+    test("a 200-character title takes two lines on its 88 row with the whole title in its tooltip, and wraps in full at 20/28 on the sheet", async () => {
+      const page = await openEdgePage(harness);
+      await selectRow(page, EDGE_IDS.longTitle);
+      const shown = await page.evaluate((id) => {
+        const row = document.querySelector(`#queue-row-${id}`) as HTMLElement;
+        const title = document.querySelector(".queue-sheet-title") as HTMLElement;
+        const style = getComputedStyle(title);
+        return {
+          row: [Math.round(row.getBoundingClientRect().height), row.querySelector(".queue-row-title")?.getAttribute("title")],
+          sheet: [title.textContent, title.scrollHeight <= title.clientHeight, `${style.fontSize}/${style.lineHeight}`],
+        };
+      }, EDGE_IDS.longTitle);
+      await page.close();
+
+      assert.deepEqual(shown, { row: [88, EDGE_LONG_TITLE], sheet: [EDGE_LONG_TITLE, true, "20px/28px"] });
+    });
+
+    test("a report whose text names its linked document links the id in its text and adds no Documents line", async () => {
+      const page = await openEdgePage(harness);
+      await selectRow(page, EDGE_IDS.linkedReport);
+      const shown = await page.evaluate(() => ({
+        links: [...document.querySelectorAll(".queue-sheet-body .prose-link")].map((link) => `${link.textContent} ${link.getAttribute("href")}`),
+        hasDocumentsLine: document.querySelector(".queue-sheet-body")?.textContent?.includes("Documents:") === true,
+      }));
+      await page.close();
+
+      assert.deepEqual(shown, { links: ["44061 #clauded-docs?doc=44061"], hasDocumentsLine: false });
+    });
+
+    test("a declared document the text does not name gets a Documents line linking its id", async () => {
+      const page = await openEdgePage(harness);
+      await selectRow(page, EDGE_IDS.declaredReport);
+      const line = await page.evaluate(() => {
+        const block = [...document.querySelectorAll(".queue-sheet-body .prose-text")].find((text) => text.textContent?.startsWith("Documents:"));
+        return block === undefined ? null : [block.textContent, block.querySelector(".prose-link")?.getAttribute("href")];
+      });
+      await page.close();
+
+      assert.deepEqual(line, ["Documents: 44071", "#clauded-docs?doc=44071"]);
+    });
+
+    test("two sessions with one name each show their 8-character id on the rail, and a session with its own name shows none", async () => {
+      const page = await openEdgePage(harness);
+      const names = await page.evaluate(() => [...document.querySelectorAll(".queue-rail-name-text")].map((name) => name.textContent));
+      await page.close();
+
+      assert.deepEqual(
+        { atrium: names.filter((name) => name?.startsWith("atrium")), gersona: names.filter((name) => name?.startsWith("gersona")) },
+        { atrium: [`atrium · ${FIXTURE_SESSION_IDS.atrium.slice(0, 8)}`, `atrium · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`], gersona: ["gersona"] },
+      );
+    });
+
+    // todo → a known page defect: runs and reports, never fails the suite until the page meets the spec
+    test("an item from one of two sessions with one name shows that session's 8-character id after the name in its letterhead", { todo: "the letterhead shows the bare name `atrium`, no ` · b7c6d5e4` (spec §4.3)" }, async () => {
+      const page = await openEdgePage(harness);
+      await selectRow(page, EDGE_IDS.declaredReport);
+      const name = await page.evaluate(() => document.querySelector(".queue-letter [title]")?.textContent);
+      await page.close();
+
+      assert.equal(name, `atrium · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`);
+    });
+
+    test("a 100-character session name stays on one cut line, its rail row 68 high and inside the rail", async () => {
+      const page = await openEdgePage(harness);
+      const shown = await page.evaluate((id) => {
+        const row = document.querySelector(`.queue-rail-row[data-session="${id}"]`) as HTMLElement;
+        const name = row.querySelector(".queue-rail-name-text") as HTMLElement;
+        const rail = (document.querySelector(".queue-sessions") as HTMLElement).getBoundingClientRect();
+        return {
+          text: name.textContent,
+          height: Math.round(row.getBoundingClientRect().height),
+          isCut: getComputedStyle(name).textOverflow === "ellipsis" && name.scrollWidth > name.clientWidth,
+          isInsideRail: row.getBoundingClientRect().right <= rail.right,
+        };
+      }, EDGE_SESSION_IDS.longName);
+      await page.close();
+
+      assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 68, isCut: true, isInsideRail: true });
+    });
+
+    test("a session with 128 items waiting shows 99+ in its 20 high count badge", async () => {
+      const page = await openEdgePage(harness);
+      const badge = await page.evaluate((id) => {
+        const count = document.querySelector(`.queue-rail-row[data-session="${id}"] .queue-rail-count .pill`) as HTMLElement | null;
+        return count === null ? null : [count.textContent, Math.round(count.getBoundingClientRect().height)];
+      }, EDGE_SESSION_IDS.busy);
+      await page.close();
+
+      assert.deepEqual(badge, ["99+", 20]);
+    });
+
+    test("the thread holds order entries only, and an order to three sessions shows each recipient's one receipt and no other text", async () => {
+      const page = await openEdgePage(harness);
+      await openAllOrders(page);
+      const shown = await page.evaluate(() => {
+        const isOrdersOnly = [...document.querySelectorAll(".queue-day-group > *")].every((entry) => entry.matches(".queue-day, article.queue-order"));
+        const entry = [...document.querySelectorAll("article.queue-order")].find((order) => order.querySelectorAll(".queue-recipient").length === 3);
+        const recipients = [...(entry?.querySelectorAll(".queue-recipient") ?? [])].map((row) => {
+          const copy = row.cloneNode(true) as HTMLElement;
+          for (const button of copy.querySelectorAll("button")) button.remove();
+          const name = row.querySelector(".queue-recipient-name")?.textContent ?? "";
+          const receipts = copy.textContent?.match(/Received|Not yet|Not received/g) ?? [];
+          const residue = (copy.textContent ?? "").replace(name, "").replace(/Received|Not yet|Not received/, "").replace(/[✓⚠·\s]|\d\d:\d\d/g, "");
+          return { name, receipts, residue };
+        });
+        return { isOrdersOnly, recipients };
+      });
+      await page.close();
+
+      assert.deepEqual(shown, {
+        isOrdersOnly: true,
+        recipients: [
+          { name: "gersona", receipts: ["Received"], residue: "" },
+          { name: "aidl", receipts: ["Not yet"], residue: "" },
+          { name: "yoaida", receipts: ["Not received"], residue: "" },
+        ],
+      });
+    });
+
+    test("an order with eight images reads Order · 8 images on its row and shows eight 96 squares in its bubble, each named n of 8", async () => {
+      const page = await openEdgePage(harness);
+      const row = await page.evaluate((id) => document.querySelector(`#queue-row-${id} .queue-row-facts`)?.textContent ?? "", EDGE_IDS.eightImages);
+      await openAllOrders(page);
+      const images = await page.evaluate(() => {
+        const entry = [...document.querySelectorAll("article.queue-order")].find((order) => order.querySelectorAll(".queue-bubble-image").length > 3);
+        return [...(entry?.querySelectorAll(".queue-bubble-image") ?? [])].map((button) => {
+          const box = button.getBoundingClientRect();
+          return `${Math.round(box.width)}x${Math.round(box.height)} ${button.getAttribute("aria-label")}`;
+        });
+      });
+      await page.close();
+
+      assert.match(row, /Order · 8 images/);
+      assert.deepEqual(images, Array.from({ length: 8 }, (_, index) => `96x96 Open image ${index + 1} of 8: queue-edge-0${index + 1}.webp`));
+    });
   });
 
   test("each named state is captured at every desktop width as a viewport-sized PNG named for the mockup", async (t) => {
