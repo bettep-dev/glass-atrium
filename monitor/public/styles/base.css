@@ -685,9 +685,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-radius: var(--radius-card);
 	color: rgb(var(--ink));
 }
-/* --queue-clamp-lines comes from the page (ORDERS_Q.CLAMP_LINES) → one owner of the count */
+/* --queue-clamp-lines comes from the page (ORDERS_Q.CLAMP_LINES) → one owner of the count.
+   A line clamp, never a height in lines: the gaps between paragraphs and list items would cut the last line through */
 .queue-bubble.is-clamped > .prose-text {
-	max-height: calc(var(--queue-clamp-lines) * 1lh);
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: var(--queue-clamp-lines);
 	overflow: hidden;
 }
 /* an order's images inside its bubble, under its text (§9.8): 96 squares, wrapping */

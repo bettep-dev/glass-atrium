@@ -1830,6 +1830,28 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { title: EDGE_LONG_SESSION_NAME, isOneLine: true, isCut: true, areOthersWhole: true, isInsideThread: true });
     });
 
+    // spec §9.3 Bubble: a long order shows 12 whole lines under its clamp, block gaps between paragraphs and list items included
+    test("a 31-line order's clamped bubble shows 12 whole lines and no line cut through", async () => {
+      const page = await openEdgePage(harness);
+      await showThreadText(page, "Show all 31 lines");
+      const shown = await page.evaluate(() => {
+        const prose = document.querySelector(".queue-bubble.is-clamped > .prose-text") as HTMLElement;
+        const bottom = prose.getBoundingClientRect().bottom;
+        const walker = document.createTreeWalker(prose, NodeFilter.SHOW_TEXT);
+        const lines: DOMRect[] = [];
+        for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          lines.push(...[...range.getClientRects()].filter((rect) => rect.height > 0));
+        }
+        const tops = new Set(lines.filter((rect) => rect.bottom <= bottom + 0.5).map((rect) => Math.round(rect.top)));
+        return { shown: tops.size, isAnyCut: lines.some((rect) => rect.top < bottom - 0.5 && rect.bottom > bottom + 0.5) };
+      });
+      await page.close();
+
+      assert.deepEqual(shown, { shown: 12, isAnyCut: false });
+    });
+
     // spec §9.3 `Five recipients or more`: one roll-up line, the chevron right before its counts; the amber badge may take its own line
     for (const viewport of [VIEWPORTS[0], MIN_WINDOW]) {
       test(`at ${viewport.width} the roll-up's counts stay on one line with the chevron right before them`, async () => {
