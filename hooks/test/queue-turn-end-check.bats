@@ -250,24 +250,47 @@ assert_silent_turn_end() {
   done
 }
 
-@test "the check asks about at most three items, newest first, and stops at the first one a wait resolves" {
+@test "the check asks newest first, past any number of marks a wait cannot resolve, and stops at the first it resolves" {
   start_stub
   mark_items 7 12 31 44 58
   set_reply 200 "$(item_reply delivered)"
   run_hook
   assert_silent_turn_end "five terminal marks"
-  [[ "$(requested_paths | sed 's/?.*//' | tr '\n' ' ')" == "/api/queue/items/58 /api/queue/items/44 /api/queue/items/31 " ]] || {
+  [[ "$(requested_paths | sed 's/?.*//' | tr '\n' ' ')" == "/api/queue/items/58 /api/queue/items/44 /api/queue/items/31 /api/queue/items/12 /api/queue/items/7 " ]] || {
     requested_paths
     return 1
   }
   stop_stub
+  new_root
+  mark_items 7 12 31 44 58
   start_stub
   set_nth_reply 1 200 "$(item_reply held)"
-  set_nth_reply 2 200 "$(item_reply answered)"
+  set_nth_reply 2 200 "$(item_reply unacked)"
+  set_nth_reply 3 200 "$(item_reply expired)"
+  set_nth_reply 4 200 "$(item_reply open)"
   run_hook
-  assert_continuation "second item answered" || return 1
-  [[ "$(requested_paths | sed 's/?.*//' | tr '\n' ' ')" == "/api/queue/items/12 /api/queue/items/7 " ]] || {
+  assert_continuation "an open item behind three kept marks" || return 1
+  [[ "$(requested_paths | sed 's/?.*//' | tr '\n' ' ')" == "/api/queue/items/58 /api/queue/items/44 /api/queue/items/31 /api/queue/items/12 " ]] || {
     requested_paths
+    return 1
+  }
+}
+
+@test "a monitor slow on every item ends the turn within the check's time budget with one stderr line" {
+  local id started elapsed asked
+  for id in $(seq 101 120); do mark_items "${id}"; done
+  set_reply "200 0.5" "$(item_reply held)"
+  start_stub
+  started=${SECONDS}
+  run_hook
+  elapsed=$((SECONDS - started))
+  asked="$(requested_paths | wc -l | tr -d ' ')"
+  [[ "${status}" -eq 0 && -z "${output}" && "${stderr}" == queue-turn-end-check:* && "${stderr}" != *$'\n'* ]] || {
+    echo "status=${status} stdout=${output} stderr=${stderr}"
+    return 1
+  }
+  ((asked < 20 && elapsed <= 6)) || {
+    echo "asked ${asked} of 20 items in ${elapsed}s"
     return 1
   }
 }

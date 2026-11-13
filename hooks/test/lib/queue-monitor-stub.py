@@ -4,7 +4,7 @@ Binds 127.0.0.1 on an OS-chosen port, writes the port to argv[1], appends one JS
 request (method, path, headers, body) to argv[2], and answers with the status and body held in
 argv[3] (first line the status, the rest the body) → a test sets the reply per row.
 A file `<argv[3]>.<n>` answers the n-th request instead (1-based) → a test sets a reply sequence.
-A status line of `hang` holds the request open past every client timeout.
+A status line of `hang` holds the request open past every client timeout; `<status> <seconds>` answers after that delay.
 """
 
 import json
@@ -42,6 +42,9 @@ class Handler(BaseHTTPRequestHandler):
         if status == "hang":
             time.sleep(30)
             return
+        status, _, delay = status.partition(" ")
+        if delay:
+            time.sleep(float(delay))
         encoded = payload.encode("utf-8")
         self.send_response(int(status))
         self.send_header("content-type", "application/json")

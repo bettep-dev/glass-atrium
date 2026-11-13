@@ -10,7 +10,8 @@ IFS=$'\n\t'
 # inside a $( ) the trap fails the substitution, so its caller still sees the failure
 trap 'if ((BASH_SUBSHELL > 0)); then exit 1; fi; exit 0' ERR
 
-readonly CHECK_MAX_ITEMS=3
+# no new item fetch starts after this long → the pass stays bounded however many marks wait in a kept status
+readonly CHECK_BUDGET_S=3
 readonly CHECK_FETCH_MAX_S=1
 # the same items to the same Claude process → named again only after this long, so a wait that fails fast starts no loop
 readonly NUDGE_INTERVAL_MIN=10
@@ -80,12 +81,16 @@ is_nudge_due() {
   [[ -z "${recent}" ]]
 }
 
-# <session id> <item ids, newest first> → the first of at most CHECK_MAX_ITEMS a running wait would carry, nothing when
-# none; drops the marks of items the monitor reports terminal or unknown; non-zero on a monitor reply it cannot read
+# <session id> <item ids, newest first> → the first a running wait would carry, nothing when none; drops the marks of
+# items the monitor reports terminal or unknown; non-zero on a monitor reply it cannot read or when CHECK_BUDGET_S runs
+# out with marks left unasked
 get_wait_resolved_item() {
-  local id status checked=0
+  local id status deadline=$((SECONDS + CHECK_BUDGET_S))
   for id in $2; do
-    ((checked++ < CHECK_MAX_ITEMS)) || break
+    if ((SECONDS >= deadline)); then
+      warn "the ${CHECK_BUDGET_S} s check budget ran out before item ${id}"
+      return 1
+    fi
     # shellcheck disable=SC2310  # an unusable reply already printed its warning
     status="$(get_item_status "$1" "${id}")" || return 1
     if [[ "${QUEUE_WAIT_RESOLVED_STATUSES}" == *" ${status} "* ]]; then
