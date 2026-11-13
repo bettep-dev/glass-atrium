@@ -17,6 +17,8 @@ CLI="${GA}/scripts/atrium-queue.sh"
 SESSION_ID="3f1c2b9a-7d4e-4f5a-9b6c-0e1d2c3b4a59"
 # shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
 source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
+# shellcheck source-path=SCRIPTDIR source=lib/queue-monitor-stub.bash
+source "${BATS_TEST_DIRNAME}/lib/queue-monitor-stub.bash"
 
 setup() {
   # the ambient session's own CLAUDE_* values must never reach the hook under test
@@ -36,53 +38,7 @@ teardown() {
     kill "${pid}" 2>/dev/null || true
     wait "${pid}" 2>/dev/null || true
   done
-  if [[ -n "${STUB_PID:-}" ]]; then
-    kill "${STUB_PID}" 2>/dev/null || true
-    wait "${STUB_PID}" 2>/dev/null || true
-  fi
-}
-
-# a live stand-in for the session's own Claude process
-start_owner() {
-  sleep 300 >/dev/null 2>&1 3>&- &
-  OWNER_PIDS="${OWNER_PIDS:-} $!"
-  export CLAUDE_PID=$!
-}
-
-set_reply() {
-  printf '%s\n%s' "$1" "$2" >"${BATS_TEST_TMPDIR}/reply"
-}
-
-# <n> <status> <body> → the stub's reply to its n-th request
-set_nth_reply() {
-  printf '%s\n%s' "$2" "$3" >"${BATS_TEST_TMPDIR}/reply.$1"
-}
-
-start_stub() {
-  local port_file="${BATS_TEST_TMPDIR}/port" tries=0
-  : >"${BATS_TEST_TMPDIR}/requests.log"
-  python3 -I "${GA}/hooks/test/lib/queue-monitor-stub.py" "${port_file}" \
-    "${BATS_TEST_TMPDIR}/requests.log" "${BATS_TEST_TMPDIR}/reply" >/dev/null 2>&1 3>&- &
-  STUB_PID=$!
-  while [[ ! -s "${port_file}" ]] && ((tries < 100)); do
-    sleep 0.05
-    tries=$((tries + 1))
-  done
-  ATRIUM_MONITOR_PORT="$(cat "${port_file}")"
-  export ATRIUM_MONITOR_PORT
-}
-
-request_count() {
-  wc -l <"${BATS_TEST_TMPDIR}/requests.log" | tr -d ' '
-}
-
-# blocks until the stub has logged $1 requests (at most 10 s)
-await_requests() {
-  local tries=0
-  while (($(request_count) < $1)) && ((tries < 200)); do
-    sleep 0.05
-    tries=$((tries + 1))
-  done
+  stop_stub
 }
 
 # [payload extra JSON] → a SessionStart payload of this session
@@ -105,19 +61,6 @@ start_hook() {
   BG_PIDS="${BG_PIDS:-} ${BG_PID}"
 }
 
-# the exit status of background process $1 once it ends (at most 10 s) → AWAITED_STATUS, else "running"
-await_exit() {
-  local tries=0
-  while kill -0 "$1" 2>/dev/null && ((tries < 200)); do
-    sleep 0.05
-    tries=$((tries + 1))
-  done
-  AWAITED_STATUS=running
-  if kill -0 "$1" 2>/dev/null; then return 0; fi
-  AWAITED_STATUS=0
-  wait "$1" || AWAITED_STATUS=$?
-}
-
 lock_record() {
   readlink "${GA_ROOT}/data/queue/waits/${SESSION_ID}" 2>/dev/null || true
 }
@@ -129,15 +72,12 @@ expected_wake() {
 
 @test "the listener exits at once with no monitor call for a subagent, a non-cli or unnamed entrypoint, a background job, a print-mode process or an undecidable session" {
   start_stub
-  local bg_parent_file="${BATS_TEST_TMPDIR}/bg-child" row tries=0
+  local bg_parent_file="${BATS_TEST_TMPDIR}/bg-child" row
   # a session process whose parent is a background-job pty host, as `claude --bg` runs one
   bash -c 'sleep 300 & printf "%s\n" "$!" >"$2"; wait' listener-test --bg-pty-host "${bg_parent_file}" \
     >/dev/null 2>&1 3>&- &
   BG_PIDS="${BG_PIDS:-} $!"
-  while [[ ! -s "${bg_parent_file}" ]] && ((tries < 100)); do
-    sleep 0.05
-    tries=$((tries + 1))
-  done
+  poll_until 100 test -s "${bg_parent_file}"
   BG_PIDS="${BG_PIDS} $(cat "${bg_parent_file}")"
   # a headless run whose entrypoint reads cli, as a `claude -p` child of an interactive session inherits it
   bash -c 'exec -a "claude --model haiku -p" sleep 300' >/dev/null 2>&1 3>&- &
@@ -214,12 +154,9 @@ expected_wake() {
   export ATRIUM_QUEUE_WAIT_POLL_S=60
   start_hook listener
   await_requests 1
-  local child tries=0
-  while [[ -z "${child:-}" ]] && ((tries < 100)); do
-    child="$(pgrep -P "${BG_PID}" sleep || true)"
-    sleep 0.05
-    tries=$((tries + 1))
-  done
+  local child
+  poll_until 100 pgrep -P "${BG_PID}" sleep
+  child="$(pgrep -P "${BG_PID}" sleep || true)"
   [[ -n "${child}" ]] || {
     echo "no sleep child under the listener"
     return 1
