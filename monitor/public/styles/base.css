@@ -1258,7 +1258,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	inset-inline-end: var(--space-1);
 	inset-block-end: var(--space-1);
 }
-.queue-compose-add:active {
+/* .btn.ghost in the selector → outranks the system's .btn.ghost:hover, which still matches under a held pointer */
+.queue-screen .btn.ghost.queue-compose-add:active {
 	background: var(--tint-select);
 }
 /* a file hanging over the composer (or the order card) → ink edge + the selection tint */

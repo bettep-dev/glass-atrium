@@ -1570,22 +1570,36 @@ describe("queue page on the mockup fixtures", () => {
     });
   }
 
-  // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest or hovered
-  test("Add images draws no edge of its own inside the order box, at rest or under the pointer", async () => {
+  // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest, hovered or held;
+  // held under the pointer it takes the selection tint, never the ghost's hover fill
+  test("Add images draws no edge of its own inside the order box, at rest or under the pointer, and takes the selection tint while held", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const add = page.locator(".queue-orders .queue-compose-add");
-    const getEdge = () => add.evaluate((element) => {
+    // the button's colour transition settled first → the look the state ends on, never a mid-fade blend
+    const getLook = () => add.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
       const style = getComputedStyle(element);
       const alpha = style.borderTopColor.startsWith("rgba") ? Number(style.borderTopColor.split(",").at(-1)?.replace(")", "")) : 1;
-      return parseFloat(style.borderTopWidth) === 0 || alpha === 0;
+      const tint = document.createElement("div");
+      tint.style.background = "var(--tint-select)";
+      element.parentElement?.append(tint);
+      const isTinted = style.backgroundColor === getComputedStyle(tint).backgroundColor;
+      tint.remove();
+      return { isEdgeless: parseFloat(style.borderTopWidth) === 0 || alpha === 0, isTinted };
     });
-    const rest = await getEdge();
+    const rest = await getLook();
     await add.hover();
-    const hovered = await getEdge();
+    const hovered = await getLook();
+    await page.mouse.down();
+    const held = await getLook();
     await page.close();
 
-    assert.deepEqual({ rest, hovered }, { rest: true, hovered: true });
+    assert.deepEqual({ rest, hovered, held }, {
+      rest: { isEdgeless: true, isTinted: false },
+      hovered: { isEdgeless: true, isTinted: false },
+      held: { isEdgeless: true, isTinted: true },
+    });
   });
 
   // spec §9.2: a focused entry's ring stands clear of its time line and its Resend, and the thread's column does not clip it
