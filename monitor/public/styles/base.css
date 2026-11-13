@@ -860,15 +860,16 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-row[aria-selected="true"] {
 	background: var(--tint-select);
 }
-/* rows the card clips (list rows, rail rows and their band, thread entries) → the ring drawn inside them (spec §11) */
-.queue-row:focus-visible,
-.queue-order:focus-visible {
+/* rows the card clips (list rows, rail rows and their band) → the ring drawn inside them (spec §11) */
+.queue-row:focus-visible {
 	outline-offset: calc(-1 * var(--focus-ring-offset));
 }
-/* an entry takes focus only from the page (an order opened from its row) → the ring shows on every such focus, a mouse open included */
+/* an entry takes focus only from the page (an order opened from its row) → the ring shows on every such focus, a mouse open included;
+   drawn outside the entry, in the thread's padding and gap → clear of the time line and of Resend's own edge */
 .queue-order:focus {
 	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
-	outline-offset: calc(-1 * var(--focus-ring-offset));
+	outline-offset: var(--space-1_5);
+	border-radius: var(--radius-card);
 }
 .queue-row-title,
 .queue-sheet-title,
@@ -1168,6 +1169,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-compose-row > .queue-compose-box {
 	flex: 1 1 220px;
 }
+/* Orders: the button under the box at every width (spec §4.5) → a short label never stands beside it and the shape holds on a tick */
+.queue-orders .queue-compose-row > .queue-compose-box {
+	flex-basis: 100%;
+}
 .queue-compose-buttons {
 	flex: none;
 	display: flex;
@@ -1195,10 +1200,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 /* §12.5 — on the Queue screen every button carries a 1px edge at rest; three ranks, six states, colours only (no size, no shadow).
    The edge walks control edge → faint → ink as the pointer commits; the primary's fill walks ink → dim → faint.
    The drawer's own close button (.detail-head) stays the system's. */
-.queue-screen .btn.ghost:not(.detail-head .btn) {
+.queue-screen .btn.ghost:not(.detail-head .btn, .queue-compose-add) {
 	border-color: rgb(var(--control-edge));
 }
-.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn):hover {
+.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .queue-compose-add):hover {
 	border-color: rgb(var(--faint));
 }
 .queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):hover {
@@ -1206,7 +1211,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-color: rgb(var(--dim));
 }
 /* :is(.btn, .btn.ghost) → outranks the quiet hover edge while held */
-.queue-screen :is(.btn, .btn.ghost):not(.primary, [aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn):active {
+.queue-screen :is(.btn, .btn.ghost):not(.primary, [aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .queue-compose-add):active {
 	background: rgb(var(--sunken));
 	border-color: rgb(var(--ink));
 	color: rgb(var(--ink));
@@ -1247,10 +1252,14 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-compose-box.has-images > .queue-compose-text {
 	padding-inline-end: calc(var(--ctl-min-h) + 2 * var(--space-1));
 }
+/* a glyph inside the one bordered field → no edge of its own (spec §12.5): the ghost's hover fill, the selection tint while held */
 .queue-compose-add {
 	position: absolute;
 	inset-inline-end: var(--space-1);
 	inset-block-end: var(--space-1);
+}
+.queue-compose-add:active {
+	background: var(--tint-select);
 }
 /* a file hanging over the composer (or the order card) → ink edge + the selection tint */
 .queue-compose-box.is-drop {
@@ -1330,11 +1339,20 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	line-height: var(--lh-row);
 	color: rgb(var(--dim));
 }
+/* the note takes the wrap; Try again keeps its label on one line */
 .queue-note-failure {
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);
 	min-width: 0;
+}
+.queue-note-failure > :first-child {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.queue-note-failure > .btn {
+	flex: none;
+	white-space: nowrap;
 }
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────

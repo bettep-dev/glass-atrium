@@ -2302,6 +2302,16 @@ function useThreadScrollQ(entries) {
 		else if (firstId !== prev.firstId) log.scrollTop += log.scrollHeight - prev.height;
 		last.current = { firstId, height: log.scrollHeight, isAtEnd: prev.isAtEnd };
 	}, [signature]);
+	// a composer growing under a draft shrinks the thread → one at its end stays there (spec §12.2: the last bubble and what stands under it)
+	useEffectQ(() => {
+		const log = ref.current;
+		if (!log || typeof ResizeObserver === "undefined") return undefined;
+		const observer = new ResizeObserver(() => {
+			if (last.current.isAtEnd) log.scrollTop = log.scrollHeight;
+		});
+		observer.observe(log);
+		return () => observer.disconnect();
+	}, []);
 	const onScroll = () => {
 		const log = ref.current;
 		last.current.isAtEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 2;

@@ -762,8 +762,9 @@ function getButtonFacts(): ButtonFacts {
     if (element.classList.contains("primary")) return "primary";
     return element.classList.contains("ghost") ? "quiet" : "secondary";
   };
+  // Add images is a glyph inside the bordered box, ranked by its own §12.5 row (no edge) → its own test, never a quiet button here
   const buttons = [...document.querySelectorAll(".queue-screen .btn")]
-    .filter((element) => element.getClientRects().length > 0 && !element.closest(".detail-head"))
+    .filter((element) => element.getClientRects().length > 0 && !element.closest(".detail-head") && !element.matches(".queue-compose-add"))
     .map((element) => {
       const style = getComputedStyle(element);
       return {
@@ -1069,7 +1070,6 @@ describe("queue page on the mockup fixtures", () => {
     await page.keyboard.press("n");
     const box = await active();
     await page.focus(".queue-order");
-    const entry = await active();
     await page.keyboard.press("Escape");
     const returned = await active();
     await page.close();
@@ -1081,7 +1081,6 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual([back.id, back.offset], [rowIds[1], "-2px"], "Esc gives the focus back to the row just read, its ring inset");
     assert.deepEqual([rail.style, rail.offset], ["solid", "-2px"], "a focused rail box rings its row, inset");
     assert.equal(box.id, "queue-order-text", "N puts the caret in the order box");
-    assert.equal(entry.offset, "-2px", "a thread entry's ring is inset");
     assert.deepEqual([returned.id, returned.offset], [rowIds[1], "-2px"], "Esc in Orders gives the focus back to the middle pane: the list's current row");
   });
 
@@ -1528,6 +1527,96 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual({ box: report.box, buttons: report.buttons }, { box: 40, buttons: [40] }, "the report's composer");
     assert.deepEqual(order, report, "the Orders composer against the report's");
     assert.equal(isUnder, true, "the Orders button falls under its box");
+  });
+
+  // spec §4.5 → under the box "always so in the Orders pane": the short rest label must not stand beside the box on a wide window
+  for (const viewport of [VIEWPORTS[0], { width: 2240, height: 1260 }, WIDE_WINDOW]) {
+    test(`the Orders send button stands under its box with nothing ticked at ${viewport.width}`, async () => {
+      harness.fixture = getRestFixture();
+      const page = await openQueuePage(harness, viewport, getRestReadyText());
+      const facts = await page.evaluate(() => {
+        const button = document.querySelector(".queue-orders .queue-compose-buttons .btn") as HTMLElement;
+        const box = document.querySelector(".queue-orders .queue-compose-box") as HTMLElement;
+        return { label: button.textContent, isUnder: button.getBoundingClientRect().top >= box.getBoundingClientRect().bottom };
+      });
+      await page.close();
+
+      assert.deepEqual(facts, { label: "Send order", isUnder: true });
+    });
+  }
+
+  // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest or hovered
+  test("Add images draws no edge of its own inside the order box, at rest or under the pointer", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const add = page.locator(".queue-orders .queue-compose-add");
+    const getEdge = () => add.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const alpha = style.borderTopColor.startsWith("rgba") ? Number(style.borderTopColor.split(",").at(-1)?.replace(")", "")) : 1;
+      return parseFloat(style.borderTopWidth) === 0 || alpha === 0;
+    });
+    const rest = await getEdge();
+    await add.hover();
+    const hovered = await getEdge();
+    await page.close();
+
+    assert.deepEqual({ rest, hovered }, { rest: true, hovered: true });
+  });
+
+  // spec §9.2: a focused entry's ring stands clear of its time line and its Resend, and the thread's column does not clip it
+  test("a focused thread entry's ring stands outside the entry, inside the thread", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await waitForAllOrders(page);
+    const facts = await page.evaluate(() => {
+      const entry = document.querySelector(".queue-order") as HTMLElement;
+      entry.focus();
+      const style = getComputedStyle(entry);
+      const outset = parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth);
+      const ring = entry.getBoundingClientRect();
+      const log = (entry.closest(".queue-thread") as HTMLElement).getBoundingClientRect();
+      return { isClear: parseFloat(style.outlineOffset) > 0, isInside: ring.left - outset >= log.left && ring.right + outset <= log.right };
+    });
+    await page.close();
+
+    assert.deepEqual(facts, { isClear: true, isInside: true });
+  });
+
+  // spec §12.2: the thread's last bubble and what stands under it stay in view while the composer grows under a draft
+  test("a thread at its end stays at its end when a longer draft grows the composer", async () => {
+    const page = await openEdgePage(harness, { width: 1568, height: 759 });
+    await waitForAllOrders(page);
+    await page.locator(`#${ORDER_BOX_ID}`).fill("first line of the order\nsecond line\nthird line\nfourth line");
+    const facts = await page.evaluate(() => new Promise<{ isShrunk: boolean; isAtEnd: boolean }>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const log = document.querySelector(".queue-thread") as HTMLElement;
+        const composer = document.querySelector(".queue-orders .queue-composer") as HTMLElement;
+        resolve({ isShrunk: composer.getBoundingClientRect().height > 174, isAtEnd: log.scrollHeight - log.scrollTop - log.clientHeight < 2 });
+      }));
+    }));
+    await page.close();
+
+    assert.deepEqual(facts, { isShrunk: true, isAtEnd: true });
+  });
+
+  // spec §9.8 → Upload failed: the note takes the wrap; the quiet Try again keeps its label on one line
+  test("a failed upload's Try again keeps its label on one line beside a wrapping note", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    harness.refusals.set("upload", { status: 500, body: { error: "server" } });
+    try {
+      await addOrderFiles(page, [{ ...getImageFile(0), name: "a-screenshot-named-long-enough-to-wrap-the-note.png" }]);
+      await page.locator(".queue-thumb-failed").first().waitFor();
+      const lines = await page.locator(`#${ORDER_BOX_ID}-retry`).evaluate((button) => {
+        const range = document.createRange();
+        range.selectNodeContents(button);
+        return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+      });
+      assert.equal(lines, 1);
+    } finally {
+      harness.refusals.clear();
+      await page.close();
+    }
   });
 
   test("the thread opens at its end, and its composer stays in view at every scroll position of the thread", async () => {
