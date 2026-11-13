@@ -168,7 +168,6 @@ Admin-console banding — band names from the table above, cases from the SoT bu
 | Brand-conflict | a rule the project design system already set is broken (e.g. filled fields mixed into an outlined-field form) · a brand-sourced purple or indigo spread too wide |
 | Minor | a case an Exception line names · the secondary button carrying fill + border (an open decision) · a hit its context justifies |
 
-- The more specific row wins: a brand-sourced purple or indigo spread too wide is Brand-conflict, not Minor.
 - A Not-signals case is never reported; a Limit line is a source caveat and moves no band.
 
 Banding outside admin consoles — band names from the first table:
@@ -179,7 +178,7 @@ Banding outside admin consoles — band names from the first table:
 | Brand-conflict | a pattern the stated brand or philosophy rules out · a brand-sourced purple or indigo spread too wide |
 | Minor | an off-ladder spacing hit · a hit its context justifies |
 
-- The more specific row wins here too: a brand-sourced purple or indigo spread too wide is Brand-conflict at most, never AI-signature.
+- In both tables the more specific row wins: a brand-sourced purple or indigo spread too wide is Brand-conflict, never Minor or AI-signature.
 - A treatment the brand spec or the selected direction's posture names (a gradient, a glow, an eyebrow label) is never reported; a brand hue alone names no treatment.
 - Each off-ladder spacing hit is its own Minor, however many share a screen; spacing hits never raise a band.
 
