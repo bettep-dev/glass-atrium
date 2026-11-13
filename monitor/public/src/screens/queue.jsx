@@ -726,9 +726,14 @@ function createReadClockQ(tick) {
 		if (clock.isBusy) return;
 		clearTimeout(clock.timer);
 		clock.isBusy = true;
-		const isGood = await tick();
-		Object.assign(clock, { isBusy: false, settledAt: Date.now(), fails: isGood ? 0 : clock.fails + 1 });
-		if (clock.isLive) clock.timer = setTimeout(run, getPollDelayQ(clock.fails));
+		let isGood = false;
+		// a throw → a failed read for the backoff, the chain kept; the error still reaches the browser as an unhandled rejection
+		try {
+			isGood = await tick();
+		} finally {
+			Object.assign(clock, { isBusy: false, settledAt: Date.now(), fails: isGood ? 0 : clock.fails + 1 });
+			if (clock.isLive) clock.timer = setTimeout(run, getPollDelayQ(clock.fails));
+		}
 	};
 	clock.timer = setTimeout(run, POLL_Q.MS);
 	return {

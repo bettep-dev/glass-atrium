@@ -1208,6 +1208,27 @@ describe("the page re-reads itself", () => {
     assert.deepEqual(delays, [15_000, 15_000, 15_000, 60_000, 15_000]);
   });
 
+  test("a tick that throws counts as a failed read and still schedules the next one, which runs", async () => {
+    const delays: number[] = [];
+    let due: (() => Promise<void>) | null = null;
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub() },
+      setTimeout: (run: () => Promise<void>, ms: number) => { delays.push(ms); due = run; return delays.length; },
+      clearTimeout: () => undefined,
+    })) as ScreenModule;
+    const ticks: string[] = [];
+    const answers: Array<() => boolean> = [
+      () => { ticks.push("throws"); throw new Error("read failed"); },
+      () => { ticks.push("throws"); throw new Error("read failed"); },
+      () => { ticks.push("throws"); throw new Error("read failed"); },
+      () => { ticks.push("lands"); return true; },
+    ];
+    (module.createReadClockQ as (tick: () => Promise<boolean | undefined>) => unknown)(async () => (answers.shift() as () => boolean)());
+    for (let index = 0; index < 4; index += 1) await (due as unknown as () => Promise<void>)().catch(() => undefined);
+    assert.deepEqual(ticks, ["throws", "throws", "throws", "lands"]);
+    assert.deepEqual(delays, [15_000, 15_000, 15_000, 60_000, 15_000]);
+  });
+
   const arrivalRows = [
     { name: "one arrival in the Orders head names its kind and session", arrived: [buildItem({ session: buildSession({ name: "yoaida" }) })], text: "New Decision from yoaida Show" },
     { name: "several arrivals in the Orders head are counted", arrived: [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report" })], text: "New 2 items Show" },
