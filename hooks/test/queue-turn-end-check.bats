@@ -31,10 +31,16 @@ setup() {
 
 teardown() {
   stop_stub
+  stop_waiter
+}
+
+# ends the fake waiter hold_wait_lock started, if any
+stop_waiter() {
   if [[ -n "${WAITER_PID:-}" ]]; then
     kill "${WAITER_PID}" 2>/dev/null || true
     wait "${WAITER_PID}" 2>/dev/null || true
   fi
+  WAITER_PID=""
 }
 
 # a fresh queue data root → no row inherits another row's marks, stamp or lock
@@ -122,10 +128,7 @@ hold_wait_lock() {
   WAITER_PID=$!
   waiter_pid="${WAITER_PID}"
   waiter_start="$(get_recorded_start "${waiter_pid}")"
-  if [[ "$1" == stale ]]; then
-    kill "${WAITER_PID}" && wait "${WAITER_PID}" 2>/dev/null || true
-    WAITER_PID=""
-  fi
+  if [[ "$1" == stale ]]; then stop_waiter; fi
   ln -sn -- "${waiter_pid}|${waiter_start}|${owner_pid}|${owner_start}" \
     "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
 }
@@ -247,11 +250,7 @@ assert_silent_turn_end() {
     else
       assert_continuation "row ${row}" || return 1
     fi
-    if [[ -n "${WAITER_PID:-}" ]]; then
-      kill "${WAITER_PID}" 2>/dev/null || true
-      wait "${WAITER_PID}" 2>/dev/null || true
-    fi
-    WAITER_PID=""
+    stop_waiter
   done
 }
 
