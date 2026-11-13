@@ -585,6 +585,194 @@ test("T11 a response that has not arrived folds to null, never to an empty confi
   );
 });
 
+// --- the hook failure log and the pricing advisory beside it ----------------
+
+interface RenderedElement {
+  type?: unknown;
+  props: Record<string, unknown> & { children?: unknown };
+  children?: unknown;
+}
+
+// every element the renderer produced that matches — function components are called and walked through
+function findElements(
+  node: unknown,
+  isMatch: (el: RenderedElement) => boolean,
+  out: RenderedElement[] = [],
+): RenderedElement[] {
+  if (node === null || node === undefined || typeof node !== "object") return out;
+  if (Array.isArray(node)) {
+    for (const child of node) findElements(child, isMatch, out);
+    return out;
+  }
+  const el = node as RenderedElement;
+  if (typeof el.type === "function")
+    return findElements((el.type as (props: unknown) => unknown)(el.props), isMatch, out);
+  if (isMatch(el)) out.push(el);
+  return findElements(el.children ?? null, isMatch, out);
+}
+
+const hasAttr = (name: string) => (el: RenderedElement) => el.props?.[name] !== undefined;
+
+const READY_HOOK_CHAIN: FetchState = { status: "ready", error: null, data: { events: [], source_path: "/fixture/settings.json" } };
+
+function getHookFailure(id: number, payloadRef: string | null, errorKind = "connection_refused") {
+  return {
+    id,
+    failure_ts: `2026-11-13T0${id}:00:00.000Z`,
+    hook_name: "cost-tracker",
+    target_table: "core.cost_events",
+    error_kind: errorKind,
+    payload_ref: payloadRef,
+    retry_attempted: false,
+  };
+}
+
+function renderHookDetail(hookFailData: unknown, unpricedModelState?: FetchState): unknown {
+  return rowDetails.hook(null, {
+    hookState: READY_HOOK_CHAIN,
+    hookFailState: { status: "ready", error: null, data: hookFailData },
+    unpricedModelState: unpricedModelState ?? { status: "loading", error: null, data: null },
+  } as unknown as MapHealthStates);
+}
+
+test("each failure row names the reason its own failure recorded, as escaped text", () => {
+  const hostile = "<img src=x onerror=alert(1)>";
+  const failures = [
+    getHookFailure(1, "session:3f2a"),
+    getHookFailure(2, "unknown_model:claude-haiku-5-5", "unknown"),
+    getHookFailure(3, hostile),
+  ];
+  const rendered = renderHookDetail({
+    days: 30,
+    failures: [...failures, getHookFailure(4, null)],
+    error_kind_breakdown: [],
+    last_failure_ts: failures[0].failure_ts,
+  });
+
+  const rows = findElements(rendered, hasAttr("data-hook-fail-row"));
+  assert.strictEqual(rows.length, failures.length + 1, "one row per failure");
+  const rowTexts = rows.map((el) => renderToText(el));
+  failures.forEach((failure, i) => {
+    const reason = failure.payload_ref as string;
+    assert.ok(rowTexts[i].includes(reason), `row ${i} must name its reason ${reason}, but it read: ${rowTexts[i]}`);
+    for (const other of failures.filter((f) => f !== failure))
+      assert.ok(!rowTexts[i].includes(other.payload_ref as string), `row ${i} names another failure's reason: ${rowTexts[i]}`);
+  });
+  // an absent payload_ref draws no reason cell — never an empty or invented reason
+  assert.deepStrictEqual(
+    rows.map((row) => findElements(row, hasAttr("data-hook-fail-reason")).length),
+    [1, 1, 1, 0],
+  );
+  // a recorded reason is server text — it must reach the screen as a text child, never through a raw-HTML prop
+  assert.deepStrictEqual(findElements(rendered, hasAttr("dangerouslySetInnerHTML")).length, 0);
+});
+
+// heading total = the uncapped breakdown sum; the capped list length only names what is shown
+const HEADING_ROWS = [
+  {
+    name: "a capped list states the window total and how many it shows",
+    listed: 2,
+    breakdown: [
+      { error_kind: "unknown", hook_name: "cost-tracker", target_table: "core.cost_events", count: 48 },
+      { error_kind: "timeout", hook_name: "track-outcome", target_table: "core.outcomes", count: 2 },
+    ],
+    expected: { total: "50 failures", showing: "showing newest 2" },
+  },
+  {
+    name: "an uncapped list states the total and makes no showing claim",
+    listed: 2,
+    breakdown: [{ error_kind: "timeout", hook_name: "cost-tracker", target_table: "core.cost_events", count: 2 }],
+    expected: { total: "2 failures", showing: null },
+  },
+  {
+    name: "a response without a breakdown falls back to the list it carries",
+    listed: 1,
+    breakdown: undefined,
+    expected: { total: "1 failure", showing: null },
+  },
+] as const;
+
+describe("the failure heading counts the whole window, not the capped list", () => {
+  for (const row of HEADING_ROWS) {
+    test(row.name, () => {
+      const failures = Array.from({ length: row.listed }, (_, i) => getHookFailure(i + 1, `session:${i}`));
+      const rendered = renderHookDetail({ days: 30, failures, error_kind_breakdown: row.breakdown, last_failure_ts: failures[0].failure_ts });
+      const heads = findElements(rendered, hasAttr("data-hook-fail-total"));
+      assert.strictEqual(heads.length, 1, "exactly one heading count");
+      const text = renderToText(heads[0]).replace(/\s+/g, " ");
+      assert.ok(text.includes(`${row.expected.total} in the last`), `heading must read ${row.expected.total}, but it read: ${text}`);
+      const fullText = renderToText(rendered).replace(/\s+/g, " ");
+      if (row.expected.showing === null) assert.ok(!fullText.includes("showing newest"), `no cap claim expected: ${fullText}`);
+      else assert.ok(fullText.includes(row.expected.showing), `cap note ${row.expected.showing} missing: ${fullText}`);
+    });
+  }
+});
+
+const UNPRICED_READY = (models: unknown[], extra: Record<string, unknown> = {}): FetchState => ({
+  status: "ready",
+  error: null,
+  data: { days: 30, limit: 50, roster_available: true, models, model_count: models.length, timezone: "UTC", ...extra },
+});
+
+const ADVISORY_ROWS = [
+  {
+    name: "models with no pricing row are each named with their event count",
+    state: UNPRICED_READY([
+      { model: "claude-haiku-5-5", event_count: 116, last_seen_at: "2026-11-13T07:00:00.000Z" },
+      { model: "claude-fable-5-3", event_count: 1, last_seen_at: "2026-11-12T07:00:00.000Z" },
+    ]),
+    includes: ["claude-haiku-5-5", "116", "claude-fable-5-3"],
+  },
+  {
+    name: "an unreadable pricing table is reported as such and lists no model",
+    state: UNPRICED_READY([], { roster_available: false }),
+    includes: ["pricing table"],
+  },
+  {
+    name: "a window where every model has a row says so",
+    state: UNPRICED_READY([]),
+    includes: ["has a pricing row"],
+  },
+  {
+    name: "a failed read names the failure",
+    state: { status: "error", error: "HTTP 503", data: null },
+    includes: ["Couldn't read the pricing advisory", "HTTP 503"],
+  },
+] as const;
+
+describe("the pricing advisory stands on its own line and never counts as a failure", () => {
+  const breakdown = [{ error_kind: "timeout", hook_name: "cost-tracker", target_table: "core.cost_events", count: 3 }];
+  const failures = [getHookFailure(1, "session:a")];
+
+  for (const row of ADVISORY_ROWS) {
+    test(row.name, () => {
+      const rendered = renderHookDetail({ days: 30, failures, error_kind_breakdown: breakdown, last_failure_ts: null }, row.state);
+      const lines = findElements(rendered, hasAttr("data-pricing-advisory"));
+      assert.strictEqual(lines.length, 1, "the advisory is one line of its own");
+      const text = renderToText(lines[0]);
+      for (const fragment of row.includes) assert.ok(text.includes(fragment), `advisory must include ${fragment}, but it read: ${text}`);
+
+      // outside the failure log: not inside any failure row, and the heading total is the breakdown's alone
+      for (const failRow of findElements(rendered, hasAttr("data-hook-fail-row")))
+        assert.strictEqual(findElements(failRow, hasAttr("data-pricing-advisory")).length, 0);
+      const head = renderToText(findElements(rendered, hasAttr("data-hook-fail-total"))[0]).replace(/\s+/g, " ");
+      assert.ok(head.includes("3 failures"), `the advisory must not move the failure total: ${head}`);
+      // never the failure tone
+      const tones = findElements(lines[0], (el) => el.props?.status !== undefined).map((dot) => dot.props.status);
+      assert.ok(!tones.includes("crit"), `the advisory must never carry the failure tone: ${tones.join(",")}`);
+    });
+  }
+});
+
+test("the advisory endpoint is on the polled health table, outside the daemon drill-down", () => {
+  const urls = arch.getMapHealthEndpoints("wiki");
+  const advisory = urls.filter((u) => u.startsWith("/api/health/unpriced-models"));
+  assert.strictEqual(advisory.length, 1, `the map must request the advisory once per poll, but the table read: ${urls.join(", ")}`);
+  assert.ok(!advisory[0].includes("wiki"), "the advisory must not follow the drill-down daemon");
+  assert.strictEqual(new URL(advisory[0], "http://monitor.invalid").searchParams.get("days"), "30",
+    "the advisory must read the same 30-day window as the failure log beside it");
+});
+
 // T8 의 DOM-id 절은 그 id 와 함께 사라졌음 — 패널에는 접을 것이 없어 aria-controls 로 영역을
 // 가리킬 일이 없고, 상세는 제 부품 항목 '안에' 서므로 자리로 이미 결정됨. 그 포함 관계는
 // merged-surface e2e 의 AC-T8 상세 절이 잼(영역이 제 부품 안에 있고 제 데몬을 이름으로 실음).
