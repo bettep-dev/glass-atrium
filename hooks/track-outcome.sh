@@ -2026,8 +2026,8 @@ fi
 # disables the whole pipeline.
 #
 # Cost: the bounded transcript tail read (T9_TAIL_WINDOW_BYTES, 64 KiB default) now runs on every
-# recorded stop rather than only in the no-emit window. SubagentStop has no block channel, so this is
-# latency only — never a behavioral risk.
+# recorded stop rather than only in the no-emit window. This hook never takes SubagentStop's block
+# channel — it exits 0 on every path — so this is latency only, never a behavioral risk.
 T9_CORRECTION_DETECTION="${T9_CORRECTION_DETECTION:-true}"
 # Always-run verdict: 1 = matched, 0 = evaluated with no match, EMPTY = no verdict (flag off,
 # transcript absent/unreadable, or the scan skipped before the regex ran). Empty is NOT a negative
