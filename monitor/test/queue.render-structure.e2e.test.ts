@@ -1808,6 +1808,51 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 68, isCut: true, isInsideRail: true });
     });
 
+    // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it
+    test("a 100-character session name stays on one cut line in its thread recipient row, its full name in the title, its receipt and Resend whole", async () => {
+      const page = await openEdgePage(harness);
+      await showThreadText(page, "7 sessions · 5 received · 1 not yet");
+      const shown = await page.evaluate((longName) => {
+        const name = [...document.querySelectorAll(".queue-recipient-name")].find((node) => node.textContent === longName) as HTMLElement;
+        const row = name.closest(".queue-recipient") as HTMLElement;
+        const thread = (row.closest(".queue-thread") as HTMLElement).getBoundingClientRect();
+        const others = [...row.children].filter((child) => child !== name) as HTMLElement[];
+        return {
+          title: name.getAttribute("title"),
+          isOneLine: name.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(name).lineHeight),
+          isCut: getComputedStyle(name).textOverflow === "ellipsis" && name.scrollWidth > name.clientWidth,
+          areOthersWhole: others.length === 2 && others.every((child) => child.scrollWidth <= child.clientWidth && child.getClientRects().length === 1 && child.getBoundingClientRect().height < 40),
+          isInsideThread: row.getBoundingClientRect().left >= thread.left && row.getBoundingClientRect().right <= thread.right,
+        };
+      }, EDGE_LONG_SESSION_NAME);
+      await page.close();
+
+      assert.deepEqual(shown, { title: EDGE_LONG_SESSION_NAME, isOneLine: true, isCut: true, areOthersWhole: true, isInsideThread: true });
+    });
+
+    // spec §9.3 `Five recipients or more`: one roll-up line, the chevron right before its counts; the amber badge may take its own line
+    for (const viewport of [VIEWPORTS[0], MIN_WINDOW]) {
+      test(`at ${viewport.width} the roll-up's counts stay on one line with the chevron right before them`, async () => {
+        const page = await openEdgePage(harness, viewport);
+        await showThreadText(page, "7 sessions · 5 received · 1 not yet");
+        const shown = await page.evaluate(() => {
+          const summary = document.querySelector(".queue-roll-up > summary") as HTMLElement;
+          const chevron = summary.querySelector(".disclosure-chevron") as Element;
+          const counts = [...summary.querySelectorAll("span")].find((span) => span.textContent === "7 sessions · 5 received · 1 not yet") as HTMLElement;
+          const gap = parseFloat(getComputedStyle(summary).columnGap) || 0;
+          const chevronBox = chevron.getBoundingClientRect();
+          const countsBox = counts.getBoundingClientRect();
+          return {
+            isOneLine: counts.getClientRects().length === 1 && countsBox.height < 2 * parseFloat(getComputedStyle(counts).lineHeight),
+            isChevronBeside: countsBox.left - chevronBox.right <= gap + 1 && chevronBox.top < countsBox.bottom && chevronBox.bottom > countsBox.top,
+          };
+        });
+        await page.close();
+
+        assert.deepEqual(shown, { isOneLine: true, isChevronBeside: true });
+      });
+    }
+
     test("a session with 128 items waiting shows 99+ in its 20 high count badge", async () => {
       const page = await openEdgePage(harness);
       const badge = await page.evaluate((id) => {

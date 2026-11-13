@@ -2465,11 +2465,12 @@ function RecipientsQ({ copies, busy, onResend }) {
 	const isRolledUp = copies.length >= ORDERS_Q.ROLL_UP_FROM;
 	const isOutside = (copy) => !isRolledUp || getReceiptQ(copy) === "notReceived";
 	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} busy={busy} onResend={onResend} />)}</ul>;
+	const [counts, ...badges] = getRollUpFactsQ(copies);
 	return (
 		<>
 			{isRolledUp && (
 				<details className="queue-roll-up">
-					<summary className="group disclosure fs-meta"><DisclosureChevron /><RowFactsQ facts={getRollUpFactsQ(copies)} /></summary>
+					<summary className="group disclosure fs-meta"><span className="queue-roll-up-counts"><DisclosureChevron /><span>{counts.text}</span></span><RowFactsQ facts={badges} /></summary>
 					{list(copies.filter((copy) => !isOutside(copy)))}
 				</details>
 			)}
@@ -2502,7 +2503,7 @@ function RecipientRowQ({ copy, busy, onResend }) {
 	return (
 		<>
 			<li className="queue-recipient">
-				<span className="queue-recipient-name"><ItemSessionNameQ session={copy.session} /></span>
+				<span className="queue-recipient-name" title={copy.session.name}><ItemSessionNameQ session={copy.session} /></span>
 				<RowFactsQ facts={[getReceiptFactQ(receipt), ...time]} />
 				{copy.canResend && <BusyButtonQ className="btn sm" label="Resend" busyLabel="Resending…" isBusy={busy?.id === copy.id} onPress={() => onResend([copy.id])} />}
 			</li>

@@ -783,21 +783,43 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-roll-up {
 	text-align: end;
 }
+/* the counts and their chevron one unbroken unit; the amber badge takes its own line when both do not fit */
+.queue-roll-up > summary {
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	row-gap: var(--gap-stack);
+}
+.queue-roll-up-counts {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	white-space: nowrap;
+}
 .queue-recipients {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
 	gap: var(--gap-stack);
+	max-width: 100%;
 }
 .queue-recipient {
 	display: flex;
 	align-items: center;
 	gap: var(--space-1_5);
+	max-width: 100%;
 	min-height: 24px;
 	font-size: var(--fs-meta);
 	color: rgb(var(--dim));
 }
+/* the name yields → one cut line, the full name in its title (as on the rail); the receipt and Resend keep their width */
+.queue-recipient > :not(.queue-recipient-name) {
+	flex: none;
+}
 .queue-recipient-name {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 	font-weight: 600;
 	color: rgb(var(--ink));
 }
