@@ -21,6 +21,9 @@ readonly QUEUE_ITEM_ID_SHAPE='^[1-9][0-9]{0,15}$'
 # another session's awaiting set untouched this long → that session is gone (a kill or a closed terminal skips SessionEnd)
 readonly QUEUE_AWAITING_TTL_DAYS=30
 readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions dontAsk plan '
+# the item states nothing moves on from; the set itself is the monitor's TERMINAL (queue-turn-end-check.bats compares the two)
+# shellcheck disable=SC2034  # read by the sourcing turn-end hook
+readonly QUEUE_TERMINAL_STATUSES=' delivered seen withdrawn '
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
 # space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
