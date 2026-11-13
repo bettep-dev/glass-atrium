@@ -918,8 +918,8 @@ describe("selection", () => {
   for (const row of stepRows) test(`stepping: ${row.name}`, () => assert.deepEqual(call("getStepsQ", call("getGroupsQ", stepItems), row.id, row.lastIndex), row.expected));
 
   const presses = [
-    { name: "an order to a session opens the Orders mode at it", item: { kind: "message", status: "answered", sendId: "s" }, opens: 1 },
-    { name: "an order written on a report opens the Orders mode at it", item: { kind: "report", status: "answered", answer: { code: null, text: "ship it" } }, opens: 1 },
+    { name: "an order to a session shows its entry in Orders", item: { kind: "message", status: "answered", sendId: "s" }, opens: 1 },
+    { name: "an order written on a report shows its entry in Orders", item: { kind: "report", status: "answered", answer: { code: null, text: "ship it" } }, opens: 1 },
     { name: "an answered decision opens on the sheet", item: { status: "answered", answer: { code: "R1", text: null } }, opens: 0 },
     { name: "an open decision opens on the sheet", item: {}, opens: 0 },
   ];
@@ -1220,7 +1220,7 @@ describe("the page re-reads itself", () => {
     { name: "a New row under the visible part is one new below", rows: [rowAt(7, 820)], expected: { count: 1, direction: "below", id: 7 } },
     { name: "New rows over the visible part are counted, and Show goes to the nearest", rows: [rowAt(3, -200), rowAt(4, 112)], expected: { count: 2, direction: "above", id: 4 } },
     { name: "New rows on both sides name the side below, nearest first", rows: [rowAt(3, 40), rowAt(9, 1200), rowAt(8, 900)], expected: { count: 2, direction: "below", id: 8 } },
-    { name: "a list put away by the Orders mode has no visible part to leave", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: null },
+    { name: "a list put away by an open sheet has no visible part to leave", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: null },
   ];
   for (const row of offViews) test(`off-view note: ${row.name}`, () => assert.deepEqual(call("getOffViewQ", row.body ?? listBody, row.rows), row.expected));
 
@@ -1767,12 +1767,15 @@ describe("order composer", () => {
     assert.deepEqual(getPlain(calls.filter((one) => ["settle", "orderSend"].includes(String(one[0])))).map((one) => (one as unknown[]).slice(0, 2)), [["orderSend", { sessionIds: [SESSION_ID], text: "typed order" }]]);
   });
 
+  // spec §10 → Rail "no session takes a message": the note says so, not "tick one"; before the rail loads nothing is known
   const notes = [
-    { name: "none ticked", count: 0, note: "Tick a session in the rail to address this order." },
-    { name: "one ticked", count: 1, note: "Goes to s0." },
-    { name: "several ticked", count: 2, note: "Each ticked session gets its own copy." },
+    { name: "none ticked", count: 0, rows: [buildSessionRow()], note: "Tick a session in the rail to address this order." },
+    { name: "none ticked before the rail loads", count: 0, rows: null, note: "Tick a session in the rail to address this order." },
+    { name: "no session takes a message", count: 0, rows: [buildSessionRow({ isSelectable: false }), buildSessionRow({ id: REPLACED_ID, state: "exited", exitReason: "replaced", isSelectable: false })], note: "No session can take an order right now." },
+    { name: "one ticked", count: 1, rows: [buildSessionRow()], note: "Goes to s0." },
+    { name: "several ticked", count: 2, rows: [buildSessionRow()], note: "Each ticked session gets its own copy." },
   ];
-  for (const row of notes) test(`the note at rest: ${row.name}`, () => assert.equal(call("getOrderNoteQ", targetsOf(row.count)), row.note));
+  for (const row of notes) test(`the note at rest: ${row.name}`, () => assert.equal(call("getOrderNoteQ", targetsOf(row.count), row.rows), row.note));
 
   test("the page's per-send target cap is the send route's: the cap passes and one more is refused", () => {
     const text = "rebase on main";
@@ -2241,6 +2244,7 @@ describe("desk keys", () => {
     { name: "O on a decision adds its session to the ticks, then the caret to Orders", selected: 3, target: desk, ticked: [OTHER_TICK_ID], expected: [OTHER_TICK_ID, SESSION_ID] },
     { name: "O on an open report adds its session, with no Re: line", selected: 5, target: desk, ticked: [OTHER_TICK_ID], expected: [OTHER_TICK_ID, SESSION_ID] },
     { name: "O on a rail row adds that row's session", selected: 3, target: buildKeyTarget({ session: ENDED_ID }), ticked: [], expected: [ENDED_ID] },
+    { name: "O on a focused list row adds that row's session", selected: 0, target: rowTarget(5), ticked: [OTHER_TICK_ID], expected: [OTHER_TICK_ID, SESSION_ID] },
     { name: "O on a session already ticked keeps the ticks as they are", selected: 3, target: desk, ticked: [SESSION_ID], expected: [SESSION_ID] },
     { name: "O on a session that takes no message ticks nothing", selected: 3, target: buildKeyTarget({ session: REPLACED_ID }), ticked: [], expected: [] },
   ];

@@ -77,8 +77,10 @@ const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor hol
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
 // one description every box of the rail shares (spec §9.1 → What says so before the first press)
-const RAIL_HINT_ID_Q = "queue-rail-hint";
-const RAIL_HINT_Q = "Ticked sessions set whose reports and orders are shown and who receives the next order. With none ticked, every session is shown and no order can be sent.";
+const RAIL_HINT_Q = {
+	ID: "queue-rail-hint",
+	TEXT: "Ticked sessions set whose reports and orders are shown and who receives the next order. With none ticked, every session is shown and no order can be sent.",
+};
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null });
 // per tab: each item's draft by id, and the order view's draft under its own key
 const DRAFT_STORE_Q = { ITEMS: "queue.drafts", ORDER: "queue.orderDraft" };
@@ -103,7 +105,6 @@ const DESK_KEY_LIST_Q = [
 // PAGE, MAX = schemas.ts → ORDER_PAGE_LIMIT DEFAULT, MAX · a page test fails when the two part
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text", LIST_BODY: ".queue-list > .card-body" };
 const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null });
-// the sheet holds no item and the owner has not handled everything
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
 
@@ -542,10 +543,12 @@ function getSheetOpenItemQ(sheet) {
 	return sheet.kind === "item" && sheet.item.status === "open" ? sheet.item : null;
 }
 
-// a rail row's own session, else the open item's → added to the ticks there are, then the caret in the Orders box (spec §9.2)
+// a rail row's own session, else the focused list row's, else the open item's → added to the ticks there are, then the caret in the Orders box (spec §9.2)
 function putOrderKeyQ({ queue, target }) {
 	const railId = target?.closest?.("[data-session]")?.getAttribute("data-session");
-	const item = queue.sheet.kind === "item" ? queue.sheet.item : null;
+	const rowId = getRowIdQ(target);
+	const row = rowId === null ? null : queue.groups.flatMap((group) => group.rows).find((one) => one.id === rowId);
+	const item = row?.item ?? (queue.sheet.kind === "item" ? queue.sheet.item : null);
 	const id = railId || item?.session.id;
 	const isTakingOrders = (queue.sessions.region.data?.sessions ?? []).some((row) => row.id === id && row.isSelectable);
 	if (isTakingOrders) queue.sessions.setSelectedIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
@@ -963,9 +966,11 @@ function getOrderInvalidQ(targets, text) {
 	return null;
 }
 
-function getOrderNoteQ({ ids, names }) {
-	if (ids.length === 0) return "Tick a session in the rail to address this order.";
-	return ids.length === 1 ? `Goes to ${names[0]}.` : "Each ticked session gets its own copy.";
+/** The composer's note at rest · `rows` null → the rail not read yet, so no claim that nobody takes an order (spec §10). */
+function getOrderNoteQ({ ids, names }, rows = null) {
+	if (ids.length === 1) return `Goes to ${names[0]}.`;
+	if (ids.length > 1) return "Each ticked session gets its own copy.";
+	return rows?.some((row) => row.isSelectable) === false ? "No session can take an order right now." : "Tick a session in the rail to address this order.";
 }
 
 function getOrderSentStatusQ(names) {
@@ -1311,7 +1316,7 @@ function getRowBoxesQ(ids) {
 
 /**
  * A row cut by an edge still shows; only one wholly past an edge is off view. Both sides → the side below, where arrivals land.
- * @param view - the list body's box; zero high while the Orders mode puts the list away
+ * @param view - the list body's box; zero high while an open sheet puts the list away
  * @returns `{ count, direction, id }` — `id` the off-view New row nearest the visible part · null when none
  */
 function getOffViewQ(view, rows) {
@@ -1414,7 +1419,7 @@ function QueueGroupQ({ group, queue, view }) {
 	);
 }
 
-// an order's row opens the Orders mode at it (spec §9.2); every other row opens on the sheet
+// an order's row shows its entry in Orders, the list staying (spec §9.2); every other row opens its sheet in the list's place
 // an arrival not yet opened or focused leads its meta line and its name with New (spec §4.4)
 function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, onSeen }) {
 	const { Icon, Badge, formatRelativeTime, formatKstDateTime } = window.UI;
@@ -2091,7 +2096,7 @@ function SessionsBodyQ({ queue, rows }) {
 	const view = { collidingNames: getCollidingNamesQ(shown), notReceived: getNotReceivedBySessionQ(queue.list.data?.items ?? []) };
 	return (
 		<>
-			<p id={RAIL_HINT_ID_Q} hidden>{RAIL_HINT_Q}</p>
+			<p id={RAIL_HINT_Q.ID} hidden>{RAIL_HINT_Q.TEXT}</p>
 			<AllSessionsBandQ rows={rows} sessions={sessions} notReceived={[...view.notReceived.values()].reduce((sum, count) => sum + count, 0)} />
 			{live.length === 0 && <EmptyState message="No connected sessions" hint="A session appears here once it registers or posts to the queue." />}
 			{live.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} />)}
@@ -2115,7 +2120,7 @@ function AllSessionsBandQ({ rows, sessions, notReceived }) {
 			{warn}
 			{isMasterShown && (
 				<span className="queue-rail-box">
-					<span className="inline-target"><CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Select all live sessions" describedBy={RAIL_HINT_ID_Q} /></span>
+					<span className="inline-target"><CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Select all live sessions" describedBy={RAIL_HINT_Q.ID} /></span>
 				</span>
 			)}
 		</Band>
@@ -2171,7 +2176,7 @@ function SessionRailRowQ({ row, view, sessions }) {
 			<RailRowFaceQ row={row} view={view} where={where} />
 			{row.isSelectable && (
 				<span className="queue-rail-box">
-					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={RAIL_HINT_ID_Q} /></span>
+					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={RAIL_HINT_Q.ID} /></span>
 				</span>
 			)}
 		</Row>
@@ -2515,7 +2520,7 @@ function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }
 		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: <OrderLabelQ rows={rows.filter((row) => targets.ids.includes(row.id))} /> }} tray={tray}
 			text={box.text} onText={onText} isBusy={box.isBusy}
 			buttons={[{ label: getSendLabelQ(targets), isInk: box.text.trim() !== "" && targets.ids.length > 0, onPress: onSend }]}
-			note={<ComposerNoteQ error={box.error} info={changed} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets)} />} />
+			note={<ComposerNoteQ error={box.error} info={changed} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets, isReady ? rows : null)} />} />
 	);
 }
 
