@@ -73,10 +73,10 @@ test("every screen's page h1 is its nav label", async () => {
 
 // Documents wraps each slot's atom in a screen-local component (its stamp waits for a first read);
 // clauded-docs.screen-render pins that the wrappers render FreshnessStamp and RefreshButton.
-// Queue re-reads itself, so its slot states its cadence or its last good read (queue.owner-page pins the text)
-const SLOT_ATOMS: Record<string, { freshness: string; refresh: string }> = {
+// Queue re-reads itself on its 15 s tick → no Refresh; its slot states its cadence or its failed checks (queue.owner-page pins the text)
+const SLOT_ATOMS: Record<string, { freshness: string; refresh: string | null }> = {
   "clauded-docs": { freshness: "DocHeaderFreshnessCD", refresh: "DocHeaderRefreshCD" },
-  queue: { freshness: "QueueFreshnessQ", refresh: "RefreshButton" },
+  queue: { freshness: "QueueFreshnessQ", refresh: null },
 };
 
 test("every screen passes its stamp and Refresh through the named slots, never a free right cluster", async () => {
@@ -86,7 +86,7 @@ test("every screen passes its stamp and Refresh through the named slots, never a
     const header = await getScreenHeader(id);
     const atoms = SLOT_ATOMS[id] ?? { freshness: "FreshnessStamp", refresh: "RefreshButton" };
     assert.equal(header.right, undefined, `${id} header carries no free right cluster`);
-    assert.deepEqual(getElementNames(header.refresh), [atoms.refresh], `${id} Refresh rides the refresh slot`);
+    assert.deepEqual(getElementNames(header.refresh), atoms.refresh ? [atoms.refresh] : [], `${id} Refresh rides the refresh slot, or the screen has none`);
     assert.ok(getElementNames(header.freshness).includes(atoms.freshness), `${id} stamp rides the freshness slot`);
   }
 });

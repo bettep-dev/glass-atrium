@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser, Page } from "playwright";
+import type { Browser, Locator, Page } from "playwright";
 import { chromium } from "playwright";
 
 import type { OwnerItemView } from "../src/server/queue/owner-views.js";
@@ -53,6 +53,11 @@ interface QueueState {
   setUp?: (page: Page, harness: Harness) => Promise<void>;
   isClockDriven?: boolean;
   isFirstLoad?: boolean;
+}
+
+/** A close-up (spec §18.4 29): the element `closeUp` at device scale 2, after `setUp`. */
+interface CloseUpState extends QueueState {
+  closeUp: string;
 }
 
 const NOTE_TEXT = "R2로 가되, 비교 평가 결과는 다음 보고에 붙여 주세요.";
@@ -193,6 +198,14 @@ const REFUSAL_STATES: QueueState[] = [
     },
   },
   {
+    nn: "22c", name: "check-failed", isClockDriven: true,
+    setUp: async (page, harness) => {
+      harness.isListDown = true;
+      await page.clock.fastForward(15_000);
+      await page.locator(".page-head [role=status]", { hasText: "Not updated" }).waitFor();
+    },
+  },
+  {
     nn: "22d", name: "order-refused",
     setUp: async (page, harness) => {
       harness.refusals.set("send", { status: 400, body: { error: "invalid_body", reason: "One of the sessions has ended. Untick it and send again." } });
@@ -233,7 +246,53 @@ const LOOK_STATES: QueueState[] = [
       await page.keyboard.press("Enter");
     },
   },
+  { nn: "25d", name: "focus-quiet", setUp: (page) => page.getByRole("button", { name: /^Automatic resumes/ }).focus() },
   { nn: "25f", name: "key-list", setUp: (page) => page.getByRole("button", { name: /Keyboard shortcuts/ }).click() },
+];
+
+// spec §12.5 close-ups: on an open decision the head holds ← List (secondary), Previous (disabled) and Next (quiet); the foot the primary
+const SHEET_HEAD = ".queue-sheet-head";
+const SHEET_FOOT = ".queue-sheet .card-foot";
+const NEXT_ITEM = ".queue-sheet-head [aria-label='Next item']";
+const BUTTON_STATES: CloseUpState[] = [
+  { nn: "29", name: "buttons-rest-head", closeUp: SHEET_HEAD, setUp: (page) => selectRow(page, 103) },
+  { nn: "29", name: "buttons-rest-foot", closeUp: SHEET_FOOT, setUp: (page) => selectRow(page, 103) },
+  {
+    nn: "29", name: "buttons-hover", closeUp: SHEET_HEAD,
+    setUp: async (page) => {
+      await selectRow(page, 103);
+      await page.locator(NEXT_ITEM).hover();
+    },
+  },
+  {
+    nn: "29", name: "buttons-held", closeUp: SHEET_HEAD,
+    setUp: async (page) => {
+      await selectRow(page, 103);
+      await page.locator(NEXT_ITEM).hover();
+      await page.mouse.down();
+    },
+  },
+  {
+    nn: "29", name: "buttons-focus", closeUp: SHEET_HEAD,
+    setUp: async (page) => {
+      await selectRow(page, 103);
+      await page.locator(NEXT_ITEM).focus();
+    },
+  },
+  {
+    nn: "29", name: "buttons-rest-head-light", closeUp: SHEET_HEAD,
+    setUp: async (page) => {
+      await selectRow(page, 103);
+      await setLightTheme(page);
+    },
+  },
+  {
+    nn: "29", name: "buttons-rest-foot-light", closeUp: SHEET_FOOT,
+    setUp: async (page) => {
+      await selectRow(page, 103);
+      await setLightTheme(page);
+    },
+  },
 ];
 
 const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES];
@@ -260,13 +319,17 @@ interface Harness {
   refusals: Map<WriteRoute, Refusal>;
   /** Set → the item list read waits on it, so the page's first-load placeholders hold. */
   heldRead: Promise<void> | null;
+  /** True → the item list read answers the server's outage, so the page's check fails. */
+  isListDown: boolean;
+  /** Set → the first page of the item list offers this cursor, so the list foot shows Show more. */
+  moreCursor: string | null;
   uploads: number;
 }
 
 async function openHarness(): Promise<Harness> {
   const app = Fastify({ logger: false });
   const harness: Harness = {
-    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, uploads: 0,
+    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, isListDown: false, moreCursor: null, uploads: 0,
   };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
@@ -287,9 +350,11 @@ async function closeHarness(harness: Harness | undefined): Promise<void> {
 
 // the owner reads, the count and the image routes, each answering in the server's response shape
 function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
-  app.get<{ Querystring: { after?: string } }>("/api/queue/owner/items", async (request) => {
+  app.get<{ Querystring: { after?: string } }>("/api/queue/owner/items", async (request, reply) => {
     await harness.heldRead;
-    return { items: request.query.after === undefined ? harness.fixture.items : [], nextCursor: null, cliPath: FIXTURE_CLI_PATH };
+    if (harness.isListDown) return reply.code(503).send({ error: "database_unavailable" });
+    const isFirstPage = request.query.after === undefined;
+    return { items: isFirstPage ? harness.fixture.items : [], nextCursor: isFirstPage ? harness.moreCursor : null, cliPath: FIXTURE_CLI_PATH };
   });
   app.get<{ Params: { id: string } }>("/api/queue/owner/items/:id", async (request, reply) => {
     const item = harness.fixture.items.find((candidate) => String(candidate.id) === request.params.id);
@@ -397,9 +462,10 @@ function isOrderBefore(order: { at: bigint; id: bigint }, bound: { at: bigint; i
 /**
  * A fresh page on the pinned clock, opened on #queue once the fixture's text and the web fonts are in.
  * @param isClockDriven - the page's timers run on the test's clock (`page.clock.fastForward`), time still flowing from the pinned start
+ * @param scale - the device scale factor, 2 for a close-up
  */
-async function openQueuePage(harness: Harness, viewport: { width: number; height: number }, readyText: string, isClockDriven = false): Promise<Page> {
-  const page = await harness.browser.newPage({ viewport });
+async function openQueuePage(harness: Harness, viewport: { width: number; height: number }, readyText: string, isClockDriven = false, scale = 1): Promise<Page> {
+  const page = await harness.browser.newPage({ viewport, deviceScaleFactor: scale });
   // tsx keeps function names through an injected __name helper → the evaluated fact readers need it on the page
   await page.addInitScript("globalThis.__name = (fn) => fn");
   await (isClockDriven ? page.clock.install({ time: FIXTURE_NOW }) : page.clock.setFixedTime(FIXTURE_NOW));
@@ -613,6 +679,52 @@ async function getComposerFacts(page: Page, root: string): Promise<ComposerFacts
   }, root);
 }
 
+type ButtonRank = "primary" | "secondary" | "quiet" | "disabled";
+interface ButtonLook { edgeWidth: string; edge: string; label: string; opacity: string }
+interface ButtonFacts {
+  tokens: Record<"controlEdge" | "ink" | "dim" | "faint" | "line" | "sunken", string>;
+  buttons: Array<{ name: string; rank: ButtonRank; look: ButtonLook }>;
+}
+
+// every painted button of the Queue screen but a drawer's own close, with its rank read from its class and state
+function getButtonFacts(): ButtonFacts {
+  const root = getComputedStyle(document.documentElement);
+  const token = (name: string) => `rgb(${root.getPropertyValue(name).trim().split(/\s+/).join(", ")})`;
+  const tokens = { controlEdge: token("--control-edge"), ink: token("--ink"), dim: token("--dim"), faint: token("--faint"), line: token("--line"), sunken: token("--sunken") };
+  const getRank = (element: Element): ButtonRank => {
+    if ((element as HTMLButtonElement).disabled || (element.getAttribute("aria-disabled") === "true" && element.getAttribute("aria-busy") !== "true")) return "disabled";
+    if (element.classList.contains("primary")) return "primary";
+    return element.classList.contains("ghost") ? "quiet" : "secondary";
+  };
+  const buttons = [...document.querySelectorAll(".queue-screen .btn")]
+    .filter((element) => element.getClientRects().length > 0 && !element.closest(".detail-head"))
+    .map((element) => {
+      const style = getComputedStyle(element);
+      return {
+        name: (element.getAttribute("aria-label") ?? element.textContent ?? "").trim(),
+        rank: getRank(element),
+        look: { edgeWidth: style.borderTopWidth, edge: style.borderTopColor, label: style.color, opacity: style.opacity },
+      };
+    });
+  return { tokens, buttons };
+}
+
+// the 0.12 s colour transition settles first → the state's own colours, never a mid-step
+async function getSettledLook(button: Locator): Promise<{ fill: string; edge: string; label: string }> {
+  return button.evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    const style = getComputedStyle(element);
+    return { fill: style.backgroundColor, edge: style.borderTopColor, label: style.color };
+  });
+}
+
+// spec §12.5 rest looks: the edge by rank, a quiet label dim, a disabled one on the line edge with a faint label at full strength
+function getRankLook(tokens: ButtonFacts["tokens"], button: ButtonFacts["buttons"][number]): ButtonLook {
+  const edge = { primary: tokens.ink, secondary: tokens.controlEdge, quiet: tokens.controlEdge, disabled: tokens.line }[button.rank];
+  const label = { quiet: tokens.dim, disabled: tokens.faint }[button.rank as "quiet" | "disabled"] ?? button.look.label;
+  return { edgeWidth: "1px", edge, label, opacity: "1" };
+}
+
 async function openEdgePage(harness: Harness, viewport: { width: number; height: number } = VIEWPORTS[0]): Promise<Page> {
   harness.fixture = getEdgeFixture();
   return openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
@@ -649,6 +761,21 @@ async function captureQueueState(harness: Harness, dir: string, viewport: Viewpo
     await state.setUp?.(page, harness);
     // an entry transition still running → a half-faded surface; disabled → each capture shows the state's end frame
     await page.screenshot({ path: join(dir, getShotName(viewport, state)), animations: "disabled" });
+  } finally {
+    harness.isListDown = false;
+    await page.close();
+  }
+}
+
+/** @returns the element's box in CSS pixels, read in the frame the close-up shows */
+async function captureCloseUp(harness: Harness, dir: string, state: CloseUpState): Promise<{ width: number; height: number }> {
+  harness.fixture = getRestFixture();
+  const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture), false, 2);
+  try {
+    await state.setUp?.(page, harness);
+    const element = page.locator(state.closeUp);
+    await element.screenshot({ path: join(dir, getShotName(VIEWPORTS[0], state)), animations: "disabled" });
+    return await element.evaluate((node) => ({ width: Math.round(node.getBoundingClientRect().width), height: Math.round(node.getBoundingClientRect().height) }));
   } finally {
     await page.close();
   }
@@ -1214,6 +1341,111 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(ends, ends.map((row) => ({ ...row, queue: row.docs })));
   });
 
+  test("every button of the open decision's desk has a 1 px edge at rest in its rank's colour, a quiet label is dim, and a disabled one keeps a faint label at full strength on the line edge", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await selectRow(page, 103);
+    const facts = await page.evaluate(getButtonFacts);
+    await page.close();
+
+    const looks = facts.buttons.map((button) => ({ name: button.name, look: button.look }));
+    const expected = facts.buttons.map((button) => ({ name: button.name, look: getRankLook(facts.tokens, button) }));
+    assert.deepEqual(looks, expected);
+    assert.deepEqual([...new Set(facts.buttons.map((button) => button.rank))].sort(), ["disabled", "primary", "quiet", "secondary"], "the open sheet shows every rank");
+  });
+
+  test("a quiet button hovered takes the sunken fill and an ink label, and held down an ink edge", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const button = page.getByRole("button", { name: "Keyboard shortcuts" });
+    const read = () => getSettledLook(button);
+    const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+    await button.hover();
+    const hovered = await read();
+    await page.mouse.down();
+    const held = await read();
+    await page.mouse.up();
+    await page.keyboard.press("Escape");
+    await page.close();
+
+    assert.deepEqual([hovered.fill, hovered.label, held.edge], [tokens.sunken, tokens.ink, tokens.ink]);
+  });
+
+  test("a quiet button in progress keeps its rest look under the pointer: no fill, the control edge and a dim label", async () => {
+    harness.fixture = getRestFixture();
+    harness.moreCursor = "next-page";
+    let release = () => {};
+    try {
+      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+      const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+      harness.heldRead = new Promise((resolve) => { release = resolve; });
+      await page.getByRole("button", { name: "Show more" }).click();
+      const look = await getSettledLook(page.getByRole("button", { name: "Loading…" }));
+      release();
+      await page.close();
+
+      assert.deepEqual(look, { fill: "rgba(0, 0, 0, 0)", edge: tokens.controlEdge, label: tokens.dim });
+    } finally {
+      release();
+      harness.heldRead = null;
+      harness.moreCursor = null;
+    }
+  });
+
+  test("a button reached by keyboard wears the focus ring outside its rest edge", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const button = page.getByRole("button", { name: "Keyboard shortcuts" });
+    await button.focus();
+    const focused = await button.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { isVisible: element.matches(":focus-visible"), outline: `${style.outlineColor} ${style.outlineStyle} ${style.outlineWidth}`, offset: style.outlineOffset };
+    });
+    const look = await getSettledLook(button);
+    const ringToken = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--focus-ring").trim().split(/\s+/).join(", "));
+    const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+    await page.close();
+
+    assert.deepEqual({ ...focused, edge: look.edge }, { isVisible: true, outline: `rgb(${ringToken}) solid 2px`, offset: "2px", edge: tokens.controlEdge });
+  });
+
+  test("the page header holds no button and one status line, Checks every 15s, and no Queue button is named New order, Clear or Refresh", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const head = await page.evaluate(() => ({
+      line: [...document.querySelectorAll(".page-head [role=status]")].map((node) => node.textContent?.trim()),
+      headButtons: document.querySelectorAll(".page-head button").length,
+      named: [...document.querySelectorAll(".queue-screen button")].map((node) => (node.getAttribute("aria-label") ?? node.textContent ?? "").trim())
+        .filter((name) => /^(New order|Clear|Refresh)/.test(name)),
+    }));
+    await page.close();
+
+    assert.deepEqual(head, { line: ["Checks every 15s"], headButtons: 0, named: [] });
+  });
+
+  test("a failed check over loaded rows turns the header line to Not updated with the next check's interval, and the first good check restores it", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
+    const line = page.locator(".page-head [role=status]");
+    try {
+      const loaded = await page.locator(".queue-row").count();
+      harness.isListDown = true;
+      await page.clock.fastForward(15_000);
+      await line.filter({ hasText: "Not updated" }).waitFor({ timeout: READY_TIMEOUT_MS });
+      const failed = (await line.textContent())?.trim();
+      const kept = await page.locator(".queue-row").count();
+      harness.isListDown = false;
+      await page.clock.fastForward(15_000);
+      await line.filter({ hasText: /^Checks every 15s$/ }).waitFor({ timeout: READY_TIMEOUT_MS });
+
+      assert.match(failed ?? "", /^⚠ Not updated · last read \d{2}:\d{2} · trying again every 15s$/);
+      assert.deepEqual([kept, loaded > 0], [loaded, true], "the loaded rows stay on screen");
+    } finally {
+      harness.isListDown = false;
+      await page.close();
+    }
+  });
+
   test("the report's composer and the Orders composer, on one screen, share a 40 box, 40 buttons and one computed type, the Orders button under its box", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
@@ -1448,5 +1680,18 @@ describe("queue page on the mockup fixtures", () => {
         assert.deepEqual(await getPngSize(join(dir, name)), { width: viewport.width, height: viewport.height }, name);
       }
     }
+  });
+
+  test("each button close-up is captured at device scale 2: its PNG is twice its element's box", async (t) => {
+    const dir = await getShotsDir();
+    t.diagnostic(`close-ups: ${dir}`);
+    const shots = [];
+    for (const state of BUTTON_STATES) {
+      const box = await captureCloseUp(harness, dir, state);
+      const name = getShotName(VIEWPORTS[0], state);
+      shots.push({ name, png: await getPngSize(join(dir, name)), twice: { width: box.width * 2, height: box.height * 2 } });
+    }
+
+    assert.deepEqual(shots.map((shot) => ({ name: shot.name, png: shot.png })), shots.map((shot) => ({ name: shot.name, png: shot.twice })));
   });
 });

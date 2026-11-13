@@ -487,7 +487,7 @@ describe("recent automatic resumes", () => {
 
   test("the record lists the server's resume rows in its order, each with account, worktree and item title", () => {
     const resumes = [row(9, "Pick the lock order", 2, "acked"), row(4, "Pick the index", 1, "sent")];
-    const text = collectText(render("RecentResumesQ", { region: { ...READY_RESUMES, data: resumes }, onRetry: () => undefined }));
+    const text = collectText(render("RecentResumesQ", { region: { ...READY_RESUMES, data: resumes }, onRead: () => undefined }));
     const lines = text.split("Automatic resume ").slice(1);
     assert.equal(lines.length, 2, text);
     assert.match(lines[0] ?? "", /\.claude-work · atrium\/hooks · attempt 2 · spawned · acknowledged\s+— Pick the lock order/);
@@ -501,10 +501,33 @@ describe("recent automatic resumes", () => {
   ];
   for (const view of views) {
     test(view.name, () => {
-      const tree = render("RecentResumesQ", { region: view.region, onRetry: () => undefined });
+      const tree = render("RecentResumesQ", { region: view.region, onRead: () => undefined });
       assert.equal(findNodes(tree, (node) => node.props?.atom === view.atom).length > 0, view.isShown);
     });
   }
+
+  test("opening the drawer re-reads the record", () => {
+    let reads = 0;
+    const tree = render("RecentResumesQ", { region: { ...READY_RESUMES, data: [row(9, "Pick the lock order", 1, "acked")] }, onRead: () => { reads += 1; } });
+    const [button] = buttonLabelled(tree, "Automatic resumes 1");
+    (button?.props.onClick as () => void)();
+    assert.equal(reads, 1);
+  });
+
+  // spec §4.4: the foot button's count and ⚠ follow the page's own tick, as the list does
+  test("the page's tick reads the resume record beside the list, the sessions, the count and the thread", async () => {
+    const reads: string[] = [];
+    const read = (name: string, answer: unknown = undefined) => async () => { reads.push(name); return answer; };
+    const isGood = await (screen.getPageReadQ as (deps: unknown) => Promise<boolean>)({
+      readList: read("list", { isGood: true, arrived: [], turned: [] }),
+      readResumes: read("resumes"),
+      sessions: { read: read("sessions") },
+      orders: { reread: read("thread") },
+      onReadQueueCount: read("count"),
+      setStatus: () => undefined,
+    });
+    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "list", "resumes", "sessions", "thread"]]);
+  });
 
   test("the record is read from the resume route, whatever the owner list holds", async () => {
     const urls: string[] = [];
@@ -592,7 +615,7 @@ describe("an owner action's answer", () => {
       name: "a page-origin refusal keeps the draft and shows on the card",
       status: 403,
       body: { error: "forbidden" },
-      error: { id: 41, message: "The monitor refused this action. Refresh and try again." },
+      error: { id: 41, message: "The monitor refused this action. Try again." },
     },
     {
       name: "a refusal keeps the draft and shows the reason on the card",
@@ -601,13 +624,14 @@ describe("an owner action's answer", () => {
       error: { id: 41, message: "Refused: the code is not one of this item's options." },
     },
   ];
+  // spec §4.4: a refused act is followed by a read at once, so the refusal line is true when it is read
   for (const row of refusals) {
-    test(row.name, async () => {
+    test(`${row.name}, and re-reads the page at once`, async () => {
       const result = await run(row.status, row.body);
       assert.equal(result.isDone, false);
       assert.deepEqual(result.drafts, draft);
       assert.deepEqual(result.busy, { id: null, error: row.error });
-      assert.equal(result.reloads, 0);
+      assert.equal(result.reloads, 1);
     });
   }
 });
@@ -716,15 +740,22 @@ describe("report reply", () => {
 describe("action refusal copy", () => {
   const rows = [
     { name: "the server's worded reason is shown", answer: { status: 400, data: { error: "free_text_not_allowed", reason: "this report takes no reply" } }, expected: "Refused: this report takes no reply." },
-    { name: "a refusal with no reason shows fixed copy", answer: { status: 400, data: { error: "invalid_input", issues: [] } }, expected: "The monitor refused this action. Refresh and try again." },
-    { name: "a refusal with no body shows fixed copy", answer: { status: 400, data: null }, expected: "The monitor refused this action. Refresh and try again." },
-    { name: "a state change names the refresh", answer: { status: 409, data: { error: "conflict", reason: "item is answered" } }, expected: "Refused: the item changed state. Refresh to see where it is now." },
+    { name: "a refusal with no reason shows fixed copy", answer: { status: 400, data: { error: "invalid_input", issues: [] } }, expected: "The monitor refused this action. Try again." },
+    { name: "a refusal with no body shows fixed copy", answer: { status: 400, data: null }, expected: "The monitor refused this action. Try again." },
+    { name: "a state change says the list shows where the item is now", answer: { status: 409, data: { error: "conflict", reason: "item is answered" } }, expected: "Refused: the item changed state. The list shows where it is now." },
   ];
-  for (const row of rows) test(row.name, () => assert.equal(call("getActionErrorQ", row.answer), row.expected));
+  // spec §10: the page has no Refresh, so no refusal line names one
+  for (const row of rows) {
+    test(row.name, () => {
+      const line = call<string>("getActionErrorQ", row.answer);
+      assert.equal(line, row.expected);
+      assert.doesNotMatch(line, /refresh/i);
+    });
+  }
 });
 
 describe("refusal lines", () => {
-  const message = "Refused: the item changed state. Refresh to see where it is now.";
+  const message = "Refused: the item changed state. The list shows where it is now.";
   const rows = [
     { name: "a refused sheet action", node: () => renderSheet({ item: buildItem({ id: 1 }), queue: buildQueue({ busy: { id: null, error: { id: 1, message } } }).queue }) },
     {
@@ -994,6 +1025,20 @@ describe("Show more", () => {
     assert.equal(button?.props.className, "btn ghost sm");
   });
 
+  // spec §12.5 in progress: the rest look, the -ing label, focus kept (no disabled), and a press reads nothing more
+  const loads = [
+    { name: "Show more", render: "ShowMoreQ", props: (onPress: () => void) => ({ count: 100, isBusy: true, onMore: onPress }) },
+    { name: "Show earlier", render: "ShowEarlierQ", props: (onPress: () => void) => ({ isBusy: true, onShow: onPress }) },
+  ];
+  for (const row of loads) {
+    test(`${row.name} in progress reads Loading…, stays focusable and starts no second read`, () => {
+      let presses = 0;
+      const [button] = buttonLabelled(render(row.render, row.props(() => { presses += 1; })), "Loading…");
+      (button?.props.onClick as (() => void) | undefined)?.();
+      assert.deepEqual([button?.props["aria-busy"], button?.props.disabled, presses], [true, undefined, 0]);
+    });
+  }
+
   test("the next page after the cursor joins the loaded list in queue order", async () => {
     const urls: string[] = [];
     const module = (await loadScreenModule(QUEUE_SRC, {
@@ -1096,13 +1141,13 @@ describe("the page re-reads itself", () => {
     assert.equal(data.nextCursor, 9);
   });
 
-  const readOnce = async (list: Record<string, unknown>, status: number, body: unknown, isMarked = true) => {
+  const readOnce = async (list: Record<string, unknown>, status: number, body: unknown) => {
     const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() }, fetch: async () => ({ status, json: async () => body }) })) as ScreenModule;
     let current = list;
     const setList = (next: unknown) => {
       current = typeof next === "function" ? (next as (prev: unknown) => Record<string, unknown>)(current) : (next as Record<string, unknown>);
     };
-    const result = await (module.getListQ as (deps: unknown) => Promise<{ isGood: boolean; arrived: Array<{ id: number }> }>)({ setList, getList: () => current, isMarked });
+    const result = await (module.getListQ as (deps: unknown) => Promise<{ isGood: boolean; arrived: Array<{ id: number }> }>)({ setList, getList: () => current });
     return { list: getPlain(current) as Record<string, unknown> & { data: { items: Array<{ id: number }> } | null; newIds: number[] }, result: getPlain(result) };
   };
   const loadedList = (overrides: Record<string, unknown> = {}) =>
@@ -1123,19 +1168,16 @@ describe("the page re-reads itself", () => {
     assert.equal(result.isGood, true);
   });
 
-  test("an arrival is marked New and reported; an unmarked read reports none and marks none", async () => {
+  test("an arrival is marked New and reported", async () => {
     const answer = { items: [buildItem({ id: 1 }), buildItem({ id: 6 })], nextCursor: null };
     const marked = await readOnce(loadedList({ newIds: [1] }), 200, answer);
     assert.deepEqual(marked.list.newIds, [1, 6]);
     assert.deepEqual(marked.result.arrived.map((item) => item.id), [6]);
-    const unmarked = await readOnce(loadedList(), 200, answer, false);
-    assert.deepEqual(unmarked.list.newIds, []);
-    assert.deepEqual(unmarked.result.arrived, []);
   });
 
   test("a New mark goes with its row when a read no longer has it", async () => {
-    const { list } = await readOnce(loadedList({ newIds: [1] }), 200, { items: [buildItem({ id: 2 })], nextCursor: null }, false);
-    assert.deepEqual(list.newIds, []);
+    const { list } = await readOnce(loadedList({ newIds: [1] }), 200, { items: [buildItem({ id: 2 })], nextCursor: null });
+    assert.deepEqual(list.newIds, [2]);
   });
 
   const notes = [
@@ -1212,11 +1254,11 @@ describe("the page re-reads itself", () => {
     const started: string[] = [];
     const start = (label: string) => () => { started.push(label); return Promise.resolve(label); };
     const join = screen.getJoinedReadQ as (flight: unknown, start: () => Promise<unknown>, isFresh?: boolean) => Promise<unknown>;
-    const first = join(flight, start("tick"));
-    const joined = join(flight, start("refresh"));
-    const fresh = join(flight, start("action"), true);
-    assert.deepEqual(await Promise.all([first, joined, fresh]), ["tick", "tick", "action"]);
-    assert.deepEqual(started, ["tick", "action"]);
+    const first = join(flight, start("action"), true);
+    const joined = join(flight, start("tick"));
+    const fresh = join(flight, start("next action"), true);
+    assert.deepEqual(await Promise.all([first, joined, fresh]), ["action", "action", "next action"]);
+    assert.deepEqual(started, ["action", "next action"]);
     assert.equal(flight.current, null);
   });
 
@@ -1229,9 +1271,11 @@ describe("the page re-reads itself", () => {
       clearTimeout: () => undefined,
     })) as ScreenModule;
     const answers = [false, false, false, true];
-    (module.createReadClockQ as (tick: () => Promise<boolean | undefined>) => unknown)(async () => answers.shift());
+    const settled: number[] = [];
+    (module.createReadClockQ as (tick: () => Promise<boolean | undefined>, onSettle: (fails: number) => void) => unknown)(async () => answers.shift(), (fails) => settled.push(fails));
     for (let index = 0; index < 4; index += 1) await (due as unknown as () => Promise<void>)();
     assert.deepEqual(delays, [15_000, 15_000, 15_000, 60_000, 15_000]);
+    assert.deepEqual(settled, [1, 2, 3, 0], "the failures in a row the header line words its interval from");
   });
 
   test("a tick that throws counts as a failed read and still schedules the next one, which runs", async () => {
@@ -1392,23 +1436,40 @@ describe("page header freshness", () => {
   const getHeader = (queue: Record<string, unknown>) => {
     const [header] = findNodes(render("QueueHeaderQ", { queue: { reload: () => undefined, sessions: buildSessions(), ...queue } }), (node) => node.props?.atom === "PageHeader");
     const freshness = header?.props.freshness as { props: Record<string, unknown> };
-    const refresh = header?.props.refresh as { props: Record<string, unknown> };
-    const stamp = collectText(renderScreen(freshness) as RenderedNode).replace(/\s+/g, " ");
-    return { stamp, isBusy: refresh.props.isBusy };
+    const line = renderScreen(freshness) as RenderedNode;
+    const stamp = collectText(line).replace(/\s+/g, " ");
+    const regions = findNodes(line, (node) => node.props?.role === "status");
+    return { stamp, header, regions: regions.map((node) => [collectText(node).replace(/\s+/g, " "), node.props.title]) };
   };
 
   // the freshness slot holds the page's own cadence; only a failed list read with rows on screen replaces it
   const rows = [
-    { name: "a failed resume re-read leaves the header on the page's cadence", queue: { list: list(), resumes: resumes({ data: [], error: "HTTP 503 database_unavailable" }) }, stamp: /^Checks every 15s$/, isBusy: false },
-    { name: "a failed list read with rows loaded says the page is not updated and when it last read", queue: { list: list({ data: { items: [] }, readAt: "2026-11-13T12:29:00.000Z", error: { detail: "HTTP 500" } }), resumes: resumes() }, stamp: /^⚠ Not updated · last read 21:29$/, isBusy: false },
-    { name: "a resume read in flight keeps Refresh busy", queue: { list: list(), resumes: resumes({ busy: true }) }, stamp: /^Checks every 15s$/, isBusy: true },
-    { name: "both reads landed shows the page's cadence", queue: { list: list(), resumes: resumes() }, stamp: /^Checks every 15s$/, isBusy: false },
+    { name: "a failed resume re-read leaves the header on the page's cadence", queue: { list: list(), resumes: resumes({ data: [], error: "HTTP 503 database_unavailable" }) }, stamp: /^Checks every 15s$/ },
+    { name: "a failed list read with rows loaded says the page is not updated, when it last read and when it tries again", queue: { list: list({ data: { items: [] }, readAt: "2026-11-13T12:29:00.000Z", error: { detail: "HTTP 500" } }), resumes: resumes(), failedChecks: 1 }, stamp: /^⚠ Not updated · last read 21:29 · trying again every 15s$/ },
+    { name: "three failed checks in a row say the slower step", queue: { list: list({ data: { items: [] }, readAt: "2026-11-13T12:29:00.000Z", error: { detail: "HTTP 500" } }), resumes: resumes(), failedChecks: 3 }, stamp: /^⚠ Not updated · last read 21:29 · trying again every 60s$/ },
+    { name: "both reads landed shows the page's cadence", queue: { list: list(), resumes: resumes() }, stamp: /^Checks every 15s$/ },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const { stamp, isBusy } = getHeader(row.queue);
-      assert.match(stamp.trim(), row.stamp);
-      assert.equal(isBusy, row.isBusy);
+      assert.match(getHeader(row.queue).stamp.trim(), row.stamp);
+    });
+  }
+
+  // spec §3.1: the page checks by itself every 15 s and after each owner act → a manual read has nothing to add
+  test("the header holds the status line and no Refresh, a read in flight included", () => {
+    const { header } = getHeader({ list: list({ status: "loading" }), resumes: resumes({ busy: true }) });
+    assert.deepEqual([header?.props.freshness === undefined, header?.props.refresh, header?.props.actions, header?.props.primary], [false, undefined, undefined, undefined]);
+  });
+
+  // spec §3.1: one status region in both forms, so a turn to failed and back is said once; its title carries the last read
+  const lines = [
+    { name: "the cadence line", list: list({ readAt: "2026-11-13T12:30:15.000Z" }) },
+    { name: "the failed-check line", list: list({ readAt: "2026-11-13T12:30:15.000Z", error: { detail: "HTTP 500" } }) },
+  ];
+  for (const row of lines) {
+    test(`${row.name} is a status region whose title names the last read`, () => {
+      const { stamp, regions } = getHeader({ list: row.list, resumes: resumes(), failedChecks: 1 });
+      assert.deepEqual(regions, [[stamp, `Last read ${(realUi.formatKstFull as (iso: string) => string)("2026-11-13T12:30:15.000Z")}`]]);
     });
   }
 });
@@ -1747,15 +1808,16 @@ describe("an order send's answer", () => {
     })) as ScreenModule;
     let composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null };
     const statuses: unknown[] = [];
-    const counts = { sent: 0 };
+    const counts = { sent: 0, refused: 0 };
     const isDone = await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
       body: { sessionIds: [SESSION_ID, ENDED_ID], text: "rebase on main" },
       names: ["gersona", "yoaida"],
       setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); },
       setStatus: (next: unknown) => statuses.push(next),
       onSent: () => { counts.sent += 1; },
+      onRefused: () => { counts.refused += 1; },
     });
-    return { isDone, posts: getPlain(posts), composer: getPlain(composer), statuses: getPlain(statuses), sent: counts.sent };
+    return { isDone, posts: getPlain(posts), composer: getPlain(composer), statuses: getPlain(statuses), sent: counts.sent, refused: counts.refused };
   };
 
   // spec §9.3 → After sending: the ticks stay, so the next line goes to the same sessions; the list's status line names them
@@ -1765,20 +1827,21 @@ describe("an order send's answer", () => {
     assert.equal(result.isDone, true);
     assert.deepEqual(result.composer, { text: "", isBusy: false, error: null });
     assert.deepEqual(result.statuses, [{ text: "✓ Order sent to gersona and yoaida", orderId: 81 }]);
-    assert.equal(result.sent, 1);
+    assert.deepEqual([result.sent, result.refused], [1, 0]);
   });
 
   const refusals = [
     { name: "a replaced target names the server's reason", status: 409, answer: { error: "session_replaced", reason: "a replaced session takes no message" }, error: "Refused: a replaced session takes no message." },
     { name: "an unknown target names the server's reason", status: 404, answer: { error: "unknown_session", reason: "every target must be a registered session" }, error: "Refused: every target must be a registered session." },
-    { name: "a refusal with no reason shows fixed copy", status: 403, answer: { error: "forbidden" }, error: "The monitor refused this order. Refresh the session list and try again." },
+    { name: "a refusal with no reason shows fixed copy", status: 403, answer: { error: "forbidden" }, error: "The monitor refused this order. Try again." },
   ];
+  // spec §4.4: a refused send is followed by a read at once
   for (const row of refusals) {
-    test(`a refused send keeps the text: ${row.name}`, async () => {
+    test(`a refused send keeps the text and re-reads the page: ${row.name}`, async () => {
       const result = await run(row.status, row.answer);
       assert.equal(result.isDone, false);
       assert.deepEqual(result.composer, { text: "rebase on main", isBusy: false, error: row.error });
-      assert.deepEqual([result.statuses, result.sent], [[], 0]);
+      assert.deepEqual([result.statuses, result.sent, result.refused], [[], 0, 1]);
     });
   }
 
@@ -1907,6 +1970,39 @@ describe("Orders", () => {
     (resends[0]?.props.onClick as () => void)();
     assert.deepEqual(getPlain(resent), [[92]]);
   });
+
+  // the page's one action state (queue.busy) names the copy a resend is for → only that recipient's row shows it
+  const resendStates = [
+    {
+      name: "in flight → the pressed recipient's Resend and Resend to 2 read Resending… and take no press; the other row's stays",
+      busy: { id: 92, error: null },
+      rows: [["queue-recipient", [["Resend", false, true]], ""], ["queue-recipient", [["Resending…", true, false]], ""]],
+      all: [["Resending…", true, false]],
+    },
+    {
+      name: "refused → the reason under that recipient only, every Resend back at rest",
+      busy: { id: null, error: { id: 92, message: "Refused: atrium ended." } },
+      rows: [["queue-recipient", [["Resend", false, true]], ""], ["queue-recipient", [["Resend", false, true]], ""], ["queue-recipient-refusal", [], "✕ Refused: atrium ended."]],
+      all: [["Resend to 2", false, true]],
+    },
+  ];
+  for (const row of resendStates) {
+    test(`a recipient's resend: ${row.name}`, () => {
+      const thread = { status: "ready", nextCursor: null, error: null, items: [
+        copy({ id: 91, sendId: "s3", status: "unacked", canResend: true, session: named("yoaida", OTHER_ID) }),
+        copy({ id: 92, sendId: "s3", status: "unacked", canResend: true, session: named("atrium", ENDED_ID) }),
+      ] };
+      const { queue } = buildQueue({ busy: row.busy, orders: buildOrders({ thread }) });
+      const tree = renderCard("OrdersViewQ", { queue: withList(queue, []) });
+      const looks = (node: RenderedNode) => findNodes(node, (inner) => inner.type === "button").map((button) => [collectText(button).trim(), button.props["aria-busy"] === true, typeof button.props.onClick === "function"]);
+      const [list] = findNodes(tree, (node) => node.props?.className === "queue-recipients");
+      const items = findNodes(list as RenderedNode, (node) => node.type === "li").map((item) => [item.props.className, looks(item), findNodes(item, (inner) => inner.type === "p" && inner.props.role === "alert").map((line) => collectText(line).replace(/\s+/g, " ").trim()).join("")]);
+      assert.deepEqual(items, row.rows);
+      const inList = new Set(findNodes(list as RenderedNode, (node) => node.type === "button"));
+      const all = findNodes(tree, (node) => node.type === "button" && !inList.has(node) && /^Resend/.test(collectText(node).trim()));
+      assert.deepEqual(all.flatMap(looks), row.all);
+    });
+  }
 
   const lines = (count: number) => Array.from({ length: count }, (_, index) => `step ${index + 1}`).join("\n");
   const clamps = [

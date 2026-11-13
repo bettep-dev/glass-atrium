@@ -558,35 +558,27 @@ function putLeftOrdersQ({ queue, root }) {
 	(body ?? root?.getElementById(`${ROW_ID_PREFIX_Q}${queue.selectedId}`) ?? root?.querySelector('.queue-listbox [tabindex="0"]'))?.focus();
 }
 
-// Refresh is busy while any region reads; a failed resume or session read shows in its own region, not here
+// one status line and no button: the page checks every 15 s and after each owner act (spec §3.1) · a failed resume or session read shows in its own region
 function QueueHeaderQ({ queue }) {
-	const { PageHeader, RefreshButton, getRegionSummary } = window.UI;
-	const regions = getShownRegionsQ(queue);
-	const { list } = queue;
-	return (
-		<PageHeader
-			title={QUEUE_TITLE_Q}
-			freshness={<QueueFreshnessQ list={list} />}
-			refresh={<RefreshButton onRefresh={queue.refresh} isBusy={getRegionSummary(regions).isBusy} hasRead={list.readAt !== null} label="Refresh queue" />}
-		/>
-	);
+	const { PageHeader } = window.UI;
+	return <PageHeader title={QUEUE_TITLE_Q} freshness={<QueueFreshnessQ list={queue.list} failedChecks={queue.failedChecks} />} />;
 }
 
-// the page's own cadence · a failed read with rows on screen → since when they stand (spec §4.4); nothing loaded → the list card says it
-function QueueFreshnessQ({ list }) {
-	const { TONE_GLYPH, formatKstTime } = window.UI;
-	if (list.data === null || list.error === null) return <span className="fs-meta text-dim">{`Checks every ${POLL_Q.MS / 1000}s`}</span>;
+/**
+ * The page's own cadence · a failed read with rows on screen → since when they stand and when the next check runs (spec §4.4);
+ * nothing loaded → the list card says it. One status region in both forms, so each turn is said once.
+ * @param failedChecks - the page's checks failed in a row → the interval the line names
+ */
+function QueueFreshnessQ({ list, failedChecks = 0 }) {
+	const { TONE_GLYPH, formatKstTime, formatKstFull } = window.UI;
+	const title = list.readAt ? `Last read ${formatKstFull(list.readAt)}` : undefined;
+	if (list.data === null || list.error === null) return <span className="fs-meta text-dim" role="status" title={title}>{`Checks every ${POLL_Q.MS / 1000}s`}</span>;
 	return (
-		<span className="fs-meta">
+		<span className="fs-meta" role="status" title={title}>
 			<span aria-hidden="true" className="text-warn">{`${TONE_GLYPH.warn} `}</span>
-			{`Not updated · last read ${formatKstTime(list.readAt)}`}
+			{`Not updated · last read ${formatKstTime(list.readAt)} · trying again every ${getPollDelayQ(failedChecks) / 1000}s`}
 		</span>
 	);
-}
-
-// list read as a region summary input + the resume and session regions
-function getShownRegionsQ({ list, resumes, sessions }) {
-	return [{ busy: list.status === "loading", error: list.status === "error" ? list.error : null }, resumes, sessions.region];
 }
 
 /** Page state: the loaded list, its bands and selection, per-item drafts kept across re-reads, and the owner actions. */
@@ -603,7 +595,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const readList = useListReadQ(list, setList);
 	// sessions.read changes with the Account filter → a filter change re-reads the page; an owner act's read runs after any read in flight
 	const reload = useCallbackQ(() => {
-		readList({ isMarked: true, isFresh: true });
+		readList({ isFresh: true });
 		readResumes();
 		sessions.read();
 		onReadQueueCount?.();
@@ -612,7 +604,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	useEffectQ(() => { reload(); }, [reload]);
 	const actions = useQueueActionsQ({ list, filter, ids: sessions.selectedIds, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness });
 	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, sendAction: actions.send, setStatus, reload });
-	const ticks = usePageTickQ({ setList, readList, readResumes, sessions, orders, setStatus, onReadQueueCount });
+	const ticks = usePageTickQ({ readList, readResumes, sessions, orders, setStatus, onReadQueueCount });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const setImages = useCallbackQ((id, update) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], images: update(prev[id]?.images ?? []) } })), []);
 	// opening a row or focusing it is the owner seeing it → its New mark goes (spec §4.4)
@@ -691,31 +683,32 @@ function useListReadQ(list, setList) {
 	const latestList = useRefQ(list);
 	latestList.current = list;
 	const flight = useRefQ(null);
-	return useCallbackQ(({ isMarked, isFresh = false }) => {
-		const start = () => getListQ({ setList, getList: () => latestList.current, isMarked });
+	return useCallbackQ(({ isFresh = false } = {}) => {
+		const start = () => getListQ({ setList, getList: () => latestList.current });
 		return getJoinedReadQ(flight, start, isFresh);
 	}, [setList]);
 }
 
+/** The page's own tick (getPageReadQ) on its cadence, and the checks failed in a row the header line words its interval from. */
+function usePageTickQ({ readList, readResumes, sessions, orders, setStatus, onReadQueueCount }) {
+	const [failedChecks, setFailedChecks] = useStateQ(0);
+	const tick = useCallbackQ(
+		() => getPageReadQ({ readList, readResumes, sessions, orders, setStatus, onReadQueueCount }),
+		[readList, readResumes, sessions, orders, setStatus, onReadQueueCount],
+	);
+	useAutoReadQ(tick, setFailedChecks);
+	return { failedChecks };
+}
+
 /**
- * The page's own tick (spec §4.4): the items, the sessions, the nav count and the thread, which is always on screen.
- * An arrival is said on the list's status line. Refresh clears every New mark and joins the read in flight.
+ * One tick (spec §4.4): the items, the sessions, the nav count, the thread (always on screen) and the resume record, whose foot
+ * count has no other read to keep it current. An arrival is said on the list's status line.
+ * @returns true when the list read landed
  */
-function usePageTickQ({ setList, readList, readResumes, sessions, orders, setStatus, onReadQueueCount }) {
-	const tick = useCallbackQ(async () => {
-		const [read] = await Promise.all([readList({ isMarked: true }), sessions.read(), onReadQueueCount?.(), orders.reread()]);
-		setReadStatusQ(read, setStatus);
-		return read.isGood;
-	}, [readList, sessions.read, onReadQueueCount, orders.reread, setStatus]);
-	useAutoReadQ(tick);
-	// ponytail: a turn first seen by an owner act's read is not said (its row still shows it) → the act's own line keeps the status line
-	const refresh = useCallbackQ(() => {
-		setList((prev) => ({ ...prev, newIds: [] }));
-		readResumes();
-		const list = readList({ isMarked: false }).then((read) => setReadStatusQ(read, setStatus));
-		return Promise.all([list, sessions.read(), onReadQueueCount?.(), orders.reread()]);
-	}, [setList, readList, readResumes, sessions.read, onReadQueueCount, orders.reread, setStatus]);
-	return { refresh };
+async function getPageReadQ({ readList, readResumes, sessions, orders, setStatus, onReadQueueCount }) {
+	const [read] = await Promise.all([readList(), sessions.read(), onReadQueueCount?.(), orders.reread(), readResumes()]);
+	setReadStatusQ(read, setStatus);
+	return read.isGood;
 }
 
 // a turn to Not received outranks an arrival: it asks for an act, and an arrival keeps its New mark on its row
@@ -736,11 +729,11 @@ function getNotReceivedNoteQ(turned) {
  * and a tab shown again ticks at once when its last read is older than the step.
  * @param tick - resolves true when the list read landed
  */
-function useAutoReadQ(tick) {
+function useAutoReadQ(tick, onSettle) {
 	const latestTick = useRefQ(tick);
 	latestTick.current = tick;
 	useEffectQ(() => {
-		const clock = createReadClockQ(() => latestTick.current());
+		const clock = createReadClockQ(() => latestTick.current(), onSettle);
 		const onShow = () => { if (document.visibilityState === "visible") clock.runIfStale(); };
 		document.addEventListener("visibilitychange", onShow);
 		return () => {
@@ -750,8 +743,11 @@ function useAutoReadQ(tick) {
 	}, []);
 }
 
-// a timer chain → each tick schedules the next once it settles, and never two run at once
-function createReadClockQ(tick) {
+/**
+ * A timer chain → each tick schedules the next once it settles, and never two run at once.
+ * @param onSettle - told the failures in a row after each tick
+ */
+function createReadClockQ(tick, onSettle) {
 	const clock = { timer: null, settledAt: Date.now(), fails: 0, isBusy: false, isLive: true };
 	const run = async () => {
 		if (clock.isBusy) return;
@@ -763,6 +759,7 @@ function createReadClockQ(tick) {
 			isGood = await tick();
 		} finally {
 			Object.assign(clock, { isBusy: false, settledAt: Date.now(), fails: isGood ? 0 : clock.fails + 1 });
+			onSettle?.(clock.fails);
 			if (clock.isLive) clock.timer = setTimeout(run, getPollDelayQ(clock.fails));
 		}
 	};
@@ -990,9 +987,10 @@ function getSessionStateLabelQ(row) {
  * a refusal keeps the text and shows in the note slot.
  * @param names - the targets' names, for the list's status line
  * @param onSent - re-reads the list and the thread, so the new order shows
+ * @param onRefused - re-reads the page, so the refusal line meets the state it names (spec §4.4)
  * @returns true once the server took the send
  */
-async function sendMessageQ({ body, names, shots = [], setComposer, setStatus, onSent }) {
+async function sendMessageQ({ body, names, shots = [], setComposer, setStatus, onSent, onRefused }) {
 	setComposer((prev) => ({ ...prev, isBusy: true, error: null }));
 	const ids = await getStoredIdsQ(shots);
 	if (ids === null) {
@@ -1008,11 +1006,12 @@ async function sendMessageQ({ body, names, shots = [], setComposer, setStatus, o
 		return true;
 	}
 	setComposer((prev) => ({ ...prev, isBusy: false, error: getSendErrorQ(answer) }));
+	onRefused?.();
 	return false;
 }
 
 function getSendErrorQ(answer) {
-	return getOutageStepQ(answer) ?? getRefusalReasonQ(answer) ?? "The monitor refused this order. Refresh the session list and try again.";
+	return getOutageStepQ(answer) ?? getRefusalReasonQ(answer) ?? "The monitor refused this order. Try again.";
 }
 
 /**
@@ -1027,7 +1026,7 @@ function useOrdersQ({ selectedIds, sendAction, setStatus, reload }) {
 	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
 	const setImages = useCallbackQ((update) => setComposer((prev) => ({ ...prev, images: update(prev.images ?? []) })), []);
 	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
-	const send = useCallbackQ((body, names, shots) => sendMessageQ({ body, names, shots, setComposer, setStatus, onSent }), [setStatus, onSent]);
+	const send = useCallbackQ((body, names, shots) => sendMessageQ({ body, names, shots, setComposer, setStatus, onSent, onRefused: reload }), [setStatus, onSent, reload]);
 	const resend = useCallbackQ((ids) => putResendsQ(ids, sendAction, read), [sendAction, read]);
 	const focus = useCallbackQ(() => document.getElementById(ORDERS_Q.BOX_ID)?.focus(), []);
 	// a fresh object per press → the same order shown twice is aimed at twice
@@ -1144,19 +1143,17 @@ function useFilterQ() {
  * One read of the list, merged by item id into the list as it stands when the answer lands (getMergedDataQ).
  * A failure with rows loaded keeps them and their read time; with none loaded it is the list's error state.
  * @param getList - the list now; absent → nothing loaded
- * @param isMarked - an arrival takes the New mark (every read but Refresh)
  * @returns `{ isGood, arrived, turned }` — `arrived` the items this read marked New, in server order; `turned` as getMergedDataQ
  */
-async function getListQ({ setList, getList = () => EMPTY_LIST_Q, isMarked = false }) {
+async function getListQ({ setList, getList = () => EMPTY_LIST_Q }) {
 	if (getList().data === null) setList((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/items?limit=${getReadLimitQ(getList().data?.items.length ?? 0, LIST_Q.LIMIT, LIST_Q.MAX)}`);
 	const prev = getList();
 	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.items)) {
 		const { data, arrived, turned } = getMergedDataQ(prev.data, answer.data);
-		const marked = isMarked ? arrived : [];
 		const kept = (prev.newIds ?? []).filter((id) => data.items.some((item) => item.id === id));
-		setList({ status: "ready", data, error: null, readAt: new Date().toISOString(), newIds: [...kept, ...marked.map((item) => item.id)] });
-		return { isGood: true, arrived: marked, turned };
+		setList({ status: "ready", data, error: null, readAt: new Date().toISOString(), newIds: [...kept, ...arrived.map((item) => item.id)] });
+		return { isGood: true, arrived, turned };
 	}
 	const error = getReadFailureQ(answer);
 	setList(prev.data === null ? { ...prev, status: "error", error } : { ...prev, status: "ready", error });
@@ -1234,7 +1231,7 @@ function useSendQ({ setDrafts, reload, onRetryHarness }) {
 }
 
 /**
- * One owner action: a refusal shows on the card and keeps its draft.
+ * One owner action: a refusal shows on the card and keeps its draft. Taken or refused, the page re-reads at once (spec §4.4).
  * @returns true once the server took the action
  */
 async function sendActionQ({ id, action, body, setBusy, setDrafts, reload, onRetryHarness }) {
@@ -1242,9 +1239,9 @@ async function sendActionQ({ id, action, body, setBusy, setDrafts, reload, onRet
 	const answer = await sendOwnerRequestQ(`/items/${id}/${action}`, body ?? {});
 	const isDone = isOkAnswerQ(answer);
 	setBusy({ id: null, error: isDone ? null : { id, message: getActionErrorQ(answer) } });
+	reload();
 	if (!isDone) return false;
 	setDrafts((prev) => ({ ...prev, [id]: undefined }));
-	reload();
 	onRetryHarness?.();
 	return true;
 }
@@ -1253,8 +1250,8 @@ async function sendActionQ({ id, action, body, setBusy, setDrafts, reload, onRet
 function getActionErrorQ(answer) {
 	const outage = getOutageStepQ(answer);
 	if (outage !== null) return outage;
-	if (answer.status === 409) return "Refused: the item changed state. Refresh to see where it is now.";
-	return getRefusalReasonQ(answer) ?? "The monitor refused this action. Refresh and try again.";
+	if (answer.status === 409) return "Refused: the item changed state. The list shows where it is now.";
+	return getRefusalReasonQ(answer) ?? "The monitor refused this action. Try again.";
 }
 
 // the server's worded cause → one refusal sentence · none → null (the caller words it)
@@ -1554,7 +1551,16 @@ function ListFootQ({ queue, offView = null, onShowNew }) {
 }
 
 function ShowMoreQ({ count, isBusy, onMore }) {
-	return <button type="button" className="btn ghost sm" disabled={isBusy} title={`${count} items loaded`} onClick={onMore}>Show more</button>;
+	return <BusyButtonQ className="btn ghost sm" label="Show more" busyLabel="Loading…" title={`${count} items loaded`} isBusy={isBusy} onPress={onMore} />;
+}
+
+// in progress → focusable, its rank's rest look and the -ing label; a press does nothing until it settles (spec §12.5)
+function BusyButtonQ({ className, label, busyLabel, title, isBusy, onPress }) {
+	return (
+		<button type="button" className={className} aria-disabled={isBusy || undefined} aria-busy={isBusy || undefined} title={title} onClick={isBusy ? undefined : onPress}>
+			{isBusy ? busyLabel : label}
+		</button>
+	);
 }
 
 function QueueFilterBarQ({ items, filter, onFilter }) {
@@ -2239,14 +2245,14 @@ function OrdersViewQ({ queue }) {
 		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
 			<Card className="queue-orders-card" title="Orders" sub={<span className="queue-orders-scope" title={scope}>{scope}</span>}
 				foot={<OrderComposerQ queue={queue} targets={targets} rows={rows} box={box} tray={tray} isReady={sessions.region.data !== null} />} isFlush>
-				<ThreadQ orders={orders} names={names} />
+				<ThreadQ orders={orders} names={names} busy={queue.busy} />
 			</Card>
 		</section>
 	);
 }
 
 /** The owner's orders oldest first under day labels, `Show earlier` at the top; it opens at its end (useThreadScrollQ). */
-function ThreadQ({ orders, names }) {
+function ThreadQ({ orders, names, busy }) {
 	const { LoadingPlaceholder } = window.UI;
 	const { thread } = orders;
 	const [viewer, setViewer] = useStateQ(null);
@@ -2255,14 +2261,14 @@ function ThreadQ({ orders, names }) {
 	useThreadAimQ(entries, orders.aim, orders.clearAim);
 	return (
 		<div ref={scroll.ref} onScroll={scroll.onScroll} role="log" aria-label={names.length > 0 ? `Orders to ${getNameListQ(names)}` : "All orders"} tabIndex={0} className="queue-thread">
-			{thread.nextCursor !== null && <button type="button" className="btn ghost sm queue-earlier" disabled={thread.status === "loading"} onClick={orders.showEarlier}>Show earlier</button>}
+			{thread.nextCursor !== null && <ShowEarlierQ isBusy={thread.status === "loading"} onShow={orders.showEarlier} />}
 			{thread.status === "error" && <QueueFailureQ failure={thread.error} onRetry={orders.read} />}
 			{thread.status === "loading" && entries.length === 0 && <div className="queue-loading"><LoadingPlaceholder label="orders" /></div>}
 			{thread.status === "ready" && entries.length === 0 && <ThreadEmptyQ names={names} />}
 			{getDayGroupsQ(entries).map((group) => (
 				<div key={group.day} className="queue-day-group">
 					<p className="queue-day">{group.label}</p>
-					{group.entries.map((entry) => <OrderEntryQ key={entry.id} entry={entry} onResend={orders.resend} onOpenImage={(images, index) => setViewer({ images, index })} />)}
+					{group.entries.map((entry) => <OrderEntryQ key={entry.id} entry={entry} busy={busy} onResend={orders.resend} onOpenImage={(images, index) => setViewer({ images, index })} />)}
 				</div>
 			))}
 			{viewer && <ImageViewerQ images={viewer.images} index={viewer.index} onStep={(index) => setViewer((prev) => ({ ...prev, index }))} onClose={() => setViewer(null)} />}
@@ -2333,7 +2339,7 @@ function getDayLabelQ(day, now) {
 }
 
 /** One order: the time line (`Re:` + the report's title for a reply), the bubble, a row per recipient with its receipt. */
-function OrderEntryQ({ entry, onResend, onOpenImage }) {
+function OrderEntryQ({ entry, busy, onResend, onOpenImage }) {
 	const { formatKstTime } = window.UI;
 	const { item, copies } = entry;
 	return (
@@ -2343,7 +2349,7 @@ function OrderEntryQ({ entry, onResend, onOpenImage }) {
 				<time dateTime={item.answeredAt}>{formatKstTime(item.answeredAt)}</time>
 			</p>
 			<OrderBubbleQ text={getOrderTextQ(item)} images={item.attachments ?? []} onOpenImage={onOpenImage} />
-			<RecipientsQ copies={copies} onResend={onResend} />
+			<RecipientsQ copies={copies} busy={busy} onResend={onResend} />
 		</article>
 	);
 }
@@ -2416,6 +2422,10 @@ function ImageViewerQ({ images, index, onStep, onClose }) {
 	);
 }
 
+function ShowEarlierQ({ isBusy, onShow }) {
+	return <BusyButtonQ className="btn ghost sm queue-earlier" label="Show earlier" busyLabel="Loading…" isBusy={isBusy} onPress={onShow} />;
+}
+
 function ViewerBarQ({ image, index, count, onStep, onClose }) {
 	const { Icon } = window.UI;
 	return (
@@ -2423,7 +2433,7 @@ function ViewerBarQ({ image, index, count, onStep, onClose }) {
 			<span className="queue-viewer-name">{`${image.name} · ${getSizeTextQ(image.bytes)} · ${index + 1} of ${count}`}</span>
 			<button type="button" className="btn ghost sm icon" aria-label="Previous image" disabled={index === 0} onClick={() => onStep(index - 1)}><Icon name="chevron-left" size={16} /></button>
 			<button type="button" className="btn ghost sm icon" aria-label="Next image" disabled={index === count - 1} onClick={() => onStep(index + 1)}><Icon name="chevron-right" size={16} /></button>
-			<button type="button" className="btn ghost sm" onClick={onClose}>✕ Close</button>
+			<button type="button" className="btn sm" onClick={onClose}>✕ Close</button>
 		</div>
 	);
 }
@@ -2434,12 +2444,12 @@ function getSteppedIndexQ(index, count, key) {
 }
 
 /** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received stay listed under it. */
-function RecipientsQ({ copies, onResend }) {
+function RecipientsQ({ copies, busy, onResend }) {
 	const { DisclosureChevron } = window.UI;
 	const resendable = copies.filter((copy) => copy.canResend).map((copy) => copy.id);
 	const isRolledUp = copies.length >= ORDERS_Q.ROLL_UP_FROM;
 	const isOutside = (copy) => !isRolledUp || getReceiptQ(copy) === "notReceived";
-	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} onResend={onResend} />)}</ul>;
+	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} busy={busy} onResend={onResend} />)}</ul>;
 	return (
 		<>
 			{isRolledUp && (
@@ -2449,7 +2459,7 @@ function RecipientsQ({ copies, onResend }) {
 				</details>
 			)}
 			{copies.some(isOutside) && list(copies.filter(isOutside))}
-			{resendable.length >= 2 && <button type="button" className="btn ghost sm" onClick={() => onResend(resendable)}>{`Resend to ${resendable.length}`}</button>}
+			{resendable.length >= 2 && <BusyButtonQ className="btn ghost sm" label={`Resend to ${resendable.length}`} busyLabel="Resending…" isBusy={resendable.includes(busy?.id)} onPress={() => onResend(resendable)} />}
 		</>
 	);
 }
@@ -2468,17 +2478,21 @@ function getOrderTextQ(item) {
 	return item.kind === "report" ? (item.answer?.text ?? "") : item.body;
 }
 
-// the session name and its receipt, and nothing else; Resend only where the queue names it (canResend)
-function RecipientRowQ({ copy, onResend }) {
+// the session name and its receipt, and nothing else; Resend only where the queue names it (canResend); a refused resend says why under the row
+function RecipientRowQ({ copy, busy, onResend }) {
 	const { formatKstTime } = window.UI;
 	const receipt = getReceiptQ(copy);
 	const time = receipt === "received" && copy.deliveredAt ? [{ text: formatKstTime(copy.deliveredAt) }] : [];
+	const refusal = busy?.error?.id === copy.id ? busy.error.message : null;
 	return (
-		<li className="queue-recipient">
-			<span className="queue-recipient-name"><ItemSessionNameQ session={copy.session} /></span>
-			<RowFactsQ facts={[getReceiptFactQ(receipt), ...time]} />
-			{copy.canResend && <button type="button" className="btn sm" onClick={() => onResend([copy.id])}>Resend</button>}
-		</li>
+		<>
+			<li className="queue-recipient">
+				<span className="queue-recipient-name"><ItemSessionNameQ session={copy.session} /></span>
+				<RowFactsQ facts={[getReceiptFactQ(receipt), ...time]} />
+				{copy.canResend && <BusyButtonQ className="btn sm" label="Resend" busyLabel="Resending…" isBusy={busy?.id === copy.id} onPress={() => onResend([copy.id])} />}
+			</li>
+			{refusal && <li className="queue-recipient-refusal"><ToneLineQ tone="crit" role="alert" isTextToned>{refusal}</ToneLineQ></li>}
+		</>
 	);
 }
 
@@ -2774,23 +2788,26 @@ function RailFootQ({ queue }) {
 	const hasMore = sessions.region.data?.hasMore === true;
 	return (
 		<>
-			<RecentResumesQ region={queue.resumes} onRetry={queue.readResumes} />
+			<RecentResumesQ region={queue.resumes} onRead={queue.readResumes} />
 			{hasMore && <span className="fs-meta text-dim">{`Showing the ${sessions.region.data.sessions.length} most recent`}</span>}
 		</>
 	);
 }
 
-/** Recent automatic resumes newest first, in a drawer from the rail foot → quota spent without a click stays one press away. */
-function RecentResumesQ({ region, onRetry }) {
+/**
+ * Recent automatic resumes newest first, in a drawer from the rail foot → quota spent without a click stays one press away.
+ * @param onRead - reads the record again: Retry, and each opening of the drawer (spec §4.4)
+ */
+function RecentResumesQ({ region, onRead }) {
 	const { RegionUnavailable, DetailSurface, TONE_GLYPH, getRegionView } = window.UI;
 	const [isOpen, setOpen] = useStateQ(false);
 	const view = getRegionView(region);
-	if (view === "error") return <RegionUnavailable source="recent automatic resumes" error={region.error} isBusy={region.busy} onRetry={onRetry} />;
+	if (view === "error") return <RegionUnavailable source="recent automatic resumes" error={region.error} isBusy={region.busy} onRetry={onRead} />;
 	if (view === "loading" || region.data.length === 0) return null;
 	const hasFailed = region.data.some((resume) => RESUME_RESULT_LABEL_Q[resume.result] === "failed");
 	return (
 		<>
-			<button type="button" className="btn ghost sm" onClick={() => setOpen(true)}>
+			<button type="button" className="btn ghost sm" onClick={() => { setOpen(true); onRead(); }}>
 				{hasFailed && <span className="text-warn">{TONE_GLYPH.warn}</span>}
 				{`Automatic resumes ${region.data.length}`}
 			</button>

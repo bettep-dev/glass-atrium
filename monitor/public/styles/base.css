@@ -1192,6 +1192,54 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: none;
 	white-space: nowrap;
 }
+/* §12.5 — on the Queue screen every button carries a 1px edge at rest; three ranks, six states, colours only (no size, no shadow).
+   The edge walks control edge → faint → ink as the pointer commits; the primary's fill walks ink → dim → faint.
+   The drawer's own close button (.detail-head) stays the system's. */
+.queue-screen .btn.ghost:not(.detail-head .btn) {
+	border-color: rgb(var(--control-edge));
+}
+.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn):hover {
+	border-color: rgb(var(--faint));
+}
+.queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):hover {
+	background: rgb(var(--dim));
+	border-color: rgb(var(--dim));
+}
+/* :is(.btn, .btn.ghost) → outranks the quiet hover edge while held */
+.queue-screen :is(.btn, .btn.ghost):not(.primary, [aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn):active {
+	background: rgb(var(--sunken));
+	border-color: rgb(var(--ink));
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):active {
+	background: rgb(var(--faint));
+	border-color: rgb(var(--faint));
+	color: rgb(var(--surface));
+}
+/* in progress → its rank's rest look under the pointer */
+.queue-screen .btn[aria-busy="true"]:hover {
+	background: rgb(var(--elev));
+	border-color: rgb(var(--control-edge));
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.ghost[aria-busy="true"]:hover {
+	background: transparent;
+	color: rgb(var(--dim));
+}
+.queue-screen .btn.primary[aria-busy="true"]:hover {
+	background: rgb(var(--ink));
+	border-color: rgb(var(--ink));
+	color: rgb(var(--surface));
+}
+/* disabled → the press sign (the control edge) goes; the label stays readable at full strength (half strength is 2.34:1 light) */
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn),
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn):is(:hover, :active) {
+	opacity: 1;
+	background: transparent;
+	border-color: rgb(var(--line));
+	color: rgb(var(--faint));
+	cursor: not-allowed;
+}
 /* a box that takes images (§9.8): Add images on its last line at its end, 4 from the edge; the text keeps that 40 free */
 .queue-compose-box.has-images {
 	position: relative;
