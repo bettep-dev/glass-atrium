@@ -602,7 +602,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
   - an approval a high-impact action needs — the post only asks: a queue answer is never that approval;
   - the end report — the one report when work the owner asked for finishes; an interim turn reply is not one.
 - `report` posts a report; `decision` posts a decision with its options.
-- **Queue verdict line**: a main-session turn that called a tool judges itself against the kinds above and posts what is owed before its final message.
+- **Queue verdict line**: a turn of either session kind above that called a tool judges itself against the kinds above and posts what is owed before its final message.
   - That message ends with the result as its last line, in one of three forms:
     - `[QUEUE-VERDICT] posted #<item-id>` — one item;
     - `[QUEUE-VERDICT] posted #<item-id> #<item-id>` — every item the turn posted, on the one line;
@@ -610,11 +610,12 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
   - The form is exact in every reply language.
   - A turn that called no tool carries no line.
   - Honest backing: the turn-end check (`hooks/queue-turn-end-check.sh`) confirms only that the line is there and that each id is an item of this session.
-    - A missing line, or an id that is not this session's item, keeps the turn from ending once; whatever the check cannot decide ends the turn.
+    - A missing line, or an id that is not this session's item, keeps the turn from ending; whatever the check cannot decide ends the turn.
     - It never confirms the judgment: `nothing to post` on a turn that owed a post passes.
-    - It does so once per turn in total, wait reminder included: an item posted in answer to it draws no wait reminder at that turn end.
+    - It never checks a headless `claude -p` run.
+    - How often it holds a turn end: `### Answers and messages` → the turn-end check's honest backing.
 - **No repeat in the reply**: the reply of a turn that posted carries only what the queue item does not hold, never the item's body or options.
-  - The verdict line alone names the item: the reply repeats the number nowhere else, and may be that line alone.
+  - The verdict line alone names the item: the reply repeats the item id nowhere else, and may be that line alone.
   - Why: the owner reads the item on the Queue page.
   - Honest backing — honor-system: no hook compares the reply with the item.
 - The SessionStart hook registers each session with the queue; `register` repeats that step by hand.
@@ -626,10 +627,11 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
 
 Each step builds on the previous: a claim by `wait` or `pending` → `get <item-id>` → `ack <item-id> <msg-id>` → act.
 
-- The monitor pushes nothing into a running session: an answer or message reaches one only through that session's own `wait` or `pending`.
-  - Honest backing: nothing starts a wait for a session; the turn-end check (`hooks/queue-turn-end-check.sh`) keeps a main-session turn from ending once while an item it posted awaits the owner and no wait of its process runs — its `[ATRIUM-QUEUE] harness:` line means start `wait` now as a background command; the Queue page shows which sessions wait.
-- Run `wait` as a background command, spelled like every other CLI call: it ends when a poll claims something for this session, or at its bound.
-  - Why a background command: the session keeps working while the wait runs, and takes up its output and exit code when it ends.
+- The monitor pushes nothing into a running session: an answer or message reaches it only through its own `wait` or `pending`.
+  - Honest backing: nothing starts a wait for a session; the turn-end check (`hooks/queue-turn-end-check.sh`) keeps a main-session turn from ending while an item it posted awaits the owner and no wait of its process runs — its `[ATRIUM-QUEUE] harness:` line means start `wait` now; the Queue page shows which sessions wait.
+    - The check holds a turn end at most once per turn, verdict ask included: an item posted in answer to the ask gets no wait reminder, so the ask names `wait`.
+- Run `wait` as a background command: it ends when a poll claims something for this session, or at its bound.
+  - Why a background command: the session keeps working while it runs, and takes up its output and exit code when it ends.
   - A claiming `wait` prints the same `get` and `ack` commands `pending` prints.
 
 | When | Action |
@@ -638,11 +640,11 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 | a session posted a decision, or a report with `isFreeTextAllowed: true` | start `wait` |
 | a background job session cannot continue without the answer a running `wait` will claim | end the turn and let the wait wake the session |
 | an interactive session cannot continue without the answer a running `wait` will claim | end the turn |
-| an interactive session starts a turn after its `wait` ended | follow the `get` and `ack` steps that wait printed before any `pending` |
+| an interactive session starts a turn after its `wait` ended | follow the steps that wait printed before any `pending` |
 | an interactive session starts a turn awaiting an answer and no `wait` has ended | run `pending` |
 | the monitor resumed this session | run `register` after its ack steps, whatever each ack replied, then start `wait` |
-| an `[ATRIUM-QUEUE]` context line says answers or messages wait | run `pending`: it claims them and prints each one's `get` and `ack` commands |
-| `get` exits 3 — the item belongs to another session | stop and take no action on it |
+| an `[ATRIUM-QUEUE]` context line says answers or messages wait | run `pending` |
+| `get` exits 3 — the item belongs to another session | take no action on it |
 | `wait` exits 0 — a poll claimed answers or messages | follow the printed steps, then start `wait` again |
 | `wait` exits 1 — the monitor is unreachable or failing | start `wait` again once |
 | `wait` exits 2, its refusal naming `unknown_session` | run `register`, then start `wait` again |
@@ -657,7 +659,7 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 | `first` | act on the answer or message as the next step of the task |
 | `already handled`, or the command fails | do nothing with that item |
 
-- Honest backing — unverified: whether a background command's exit starts a turn in an idle interactive session is not known, hence the turn-start rows.
+- Honest backing — unverified: whether a background command's exit starts a turn in an idle interactive session is unknown, hence the turn-start rows.
   - Why the ended wait comes first: `pending` claims nothing a `wait` already claimed.
 
 ### Envelopes and authority
