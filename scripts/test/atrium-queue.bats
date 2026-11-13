@@ -923,6 +923,86 @@ WAIT_RUNS_LINE="next: a wait of this session already runs — owner answers and 
   done
 }
 
+# session $1's (default this one) awaiting items through the lib reader the turn-end check reads
+awaiting_items() {
+  bash -c 'source "$1/scripts/lib/queue-session.sh" && queue_get_awaiting_items "$2"' _ "${GA}" "${1:-${SESSION_ID}}"
+}
+
+# marks item $1 awaiting for session $2 (default this one) through the lib writer a post uses
+mark_awaiting() {
+  bash -c 'source "$1/scripts/lib/queue-session.sh" && queue_create_awaiting_item "$2" "$3"' _ "${GA}" "${2:-${SESSION_ID}}" "$1"
+}
+
+@test "a decision or a report allowing a reply leaves its item awaiting, newest first; a no-reply report leaves none" {
+  start_stub
+  local row kind id item
+  local no_reply_report="${REPORT/\"isFreeTextAllowed\":true/\"isFreeTextAllowed\":false}"
+  for row in "decision|9|${DECISION}" "report|17|${REPORT}" "report|18|${no_reply_report}"; do
+    IFS='|' read -r kind id item <<<"${row}"
+    set_reply 201 "{\"id\":${id}}"
+    run_cli "${kind}" - <<<"${item}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "row ${kind}/${id}: status=${status} ${output}${stderr}"
+      return 1
+    }
+  done
+  [[ "$(awaiting_items)" == $'17\n9' ]] || {
+    echo "awaiting: [$(awaiting_items)]"
+    return 1
+  }
+}
+
+@test "a post whose awaiting mark cannot be written still exits 0 with the id line first and warns on stderr" {
+  start_stub
+  set_reply 201 '{"id":17}'
+  mkdir -p "${GA_ROOT}/data/queue"
+  : >"${GA_ROOT}/data/queue/awaiting"
+  run_cli decision - <<<"${DECISION}"
+  [[ "${status}" -eq 0 && "${lines[0]}" == "posted decision item 17" && "${stderr}" == *"item 17"*"awaiting mark"* ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+}
+
+@test "ack on first or already handled and an accepted withdraw end the item's awaiting; a refused one keeps it" {
+  start_stub
+  local row name cmd reply_status reply expected
+  for row in "ack-first|ack|200|{\"result\":\"first\"}|9" \
+    "ack-already-handled|ack|200|{\"result\":\"already_handled\"}|9" \
+    "ack-refused|ack|404|{\"error\":\"unknown_msg_id\",\"reason\":\"msg id belongs to no delivery of this item\"}|17 9" \
+    "withdraw-accepted|withdraw|200|{}|9" \
+    "withdraw-refused|withdraw|409|{\"error\":\"not_withdrawable\",\"reason\":\"item in state delivering cannot be withdrawn\"}|17 9"; do
+    IFS='|' read -r name cmd reply_status reply expected <<<"${row}"
+    mark_awaiting 17
+    mark_awaiting 9
+    set_reply "${reply_status}" "${reply}"
+    if [[ "${cmd}" == ack ]]; then run_cli ack 17 "${MSG_ID}"; else run_cli withdraw 17; fi
+    [[ "$(awaiting_items | tr '\n' ' ')" == "${expected} " ]] || {
+      echo "row ${name}: status=${status} awaiting [$(awaiting_items)] ${output}${stderr}"
+      return 1
+    }
+  done
+}
+
+@test "a post drops other sessions' awaiting sets untouched for over 30 days and keeps fresher ones and its own" {
+  start_stub
+  set_reply 201 '{"id":17}'
+  local awaiting="${GA_ROOT}/data/queue/awaiting" fresh_session="5d6e7f80-1a2b-4c3d-8e4f-5a6b7c8d9e0f"
+  mark_awaiting 5
+  mark_awaiting 3 "${FOREIGN_SESSION_ID}"
+  mark_awaiting 4 "${fresh_session}"
+  # shellcheck disable=SC2016  # a perl program, not a shell expansion
+  perl -e 'my $t = time - 40 * 86400; utime $t, $t, @ARGV or exit 1' "${awaiting}/${SESSION_ID}/5" \
+    "${awaiting}/${SESSION_ID}" "${awaiting}/${FOREIGN_SESSION_ID}/3" "${awaiting}/${FOREIGN_SESSION_ID}"
+  run_cli decision - <<<"${DECISION}"
+  [[ "${status}" -eq 0 && ! -e "${awaiting}/${FOREIGN_SESSION_ID}" && "$(awaiting_items "${fresh_session}")" == 4 \
+    && "$(awaiting_items)" == $'17\n5' ]] || {
+    echo "status=${status} ${stderr}"
+    ls -laR "${awaiting}"
+    return 1
+  }
+}
+
 @test "pending and register end with the start-wait line when no wait of this session runs" {
   start_stub
   start_owner

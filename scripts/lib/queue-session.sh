@@ -17,6 +17,9 @@ readonly QUEUE_CONNECT_TIMEOUT_S=1
 readonly QUEUE_MAX_TIME_S=2
 readonly QUEUE_UUID_SHAPE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 readonly QUEUE_PID_SHAPE='^[1-9][0-9]{0,9}$'
+readonly QUEUE_ITEM_ID_SHAPE='^[1-9][0-9]{0,15}$'
+# another session's awaiting set untouched this long → that session is gone (a kill or a closed terminal skips SessionEnd)
+readonly QUEUE_AWAITING_TTL_DAYS=30
 readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions dontAsk plan '
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
@@ -171,4 +174,102 @@ queue_deregister_session() {
   token_file="$(queue_get_token_dir)/${session_id}"
   if ga_guard_path "${token_file}"; then rm -f -- "${token_file:?}"; fi
   queue_post /api/queue/sessions/deregister "${body}" >/dev/null
+}
+
+# <session id> → this Claude process's view of the session's wait lock: none · live (a running wait of this process) ·
+# stale; nothing without CLAUDE_PID (a wait cannot start without it)
+queue_get_wait_state() {
+  local owner_pid WAIT_LOCK WAIT_RECORD
+  owner_pid="$(queue_get_pid)"
+  [[ -n "${owner_pid}" ]] || return 0
+  WAIT_LOCK="$(queue_get_root)/data/queue/waits/$1"
+  # an empty waiter part never reads as mine → live only for a running wait of this Claude process
+  WAIT_RECORD="||${owner_pid}|$(get_start_time "${owner_pid}")"
+  get_wait_lock_state
+}
+
+# <pid> → its process start time, the recycled-pid guard; nothing when the pid is gone
+get_start_time() {
+  local started
+  started="$(LC_ALL=C ps -p "$1" -o lstart= 2>/dev/null)" || return 0
+  started="${started#"${started%%[![:space:]]*}"}"
+  printf '%s\n' "${started%"${started##*[![:space:]]}"}"
+}
+
+# → mine · none · live (another running wait of this Claude process) · stale (its waiter is gone, or it names another
+# Claude process); the one reader of the lock name. Reads the caller's WAIT_LOCK (lock path) and WAIT_RECORD (its own
+# "waiter pid|its start|owner pid|its start" record).
+get_wait_lock_state() {
+  local held
+  held="$(readlink "${WAIT_LOCK}" 2>/dev/null)" || held=""
+  # shellcheck disable=SC2310  # liveness is the last branch
+  if [[ "${held}" == "${WAIT_RECORD}" ]]; then
+    printf 'mine\n'
+  elif [[ -z "${held}" ]]; then
+    printf 'none\n'
+  elif is_wait_live "${held}"; then
+    printf 'live\n'
+  else
+    printf 'stale\n'
+  fi
+}
+
+# <held record> → 0 while its waiter still runs and its owner is this wait's own Claude process
+is_wait_live() {
+  local waiter_pid waiter_start owner started
+  IFS='|' read -r waiter_pid waiter_start owner <<<"$1"
+  [[ "${owner}" == "${WAIT_RECORD#*|*|}" && "${waiter_pid}" =~ ${QUEUE_PID_SHAPE} && -n "${waiter_start}" ]] || return 1
+  started="$(get_start_time "${waiter_pid}")"
+  [[ "${started}" == "${waiter_start}" ]]
+}
+
+# Awaiting marks: one empty file per item a session posted that expects an owner answer, named by the item id → the
+# turn-end check lists them before any monitor call. SessionEnd keeps them: a resumed session keeps its id.
+
+# <session id> → its awaiting set's directory; non-zero for anything but a UUID
+queue_get_awaiting_dir() {
+  local root
+  [[ "$1" =~ ${QUEUE_UUID_SHAPE} ]] || return 1
+  root="$(queue_get_root)"
+  printf '%s/data/queue/awaiting/%s\n' "${root}" "$1"
+}
+
+# <session id> <item id> → marks the posted item awaiting
+queue_create_awaiting_item() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  [[ "$2" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 1
+  { mkdir -p -- "${dir}" && : >"${dir}/$2"; } 2>/dev/null
+}
+
+# <session id> <item id> → the item awaits no longer (acked or withdrawn)
+queue_delete_awaiting_item() {
+  local dir marker
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  [[ "$2" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 1
+  marker="${dir}/$2"
+  if ga_guard_path "${marker}"; then rm -f -- "${marker:?}"; fi
+}
+
+# <session id> → its awaiting item ids, newest (highest) first; nothing when none
+queue_get_awaiting_items() {
+  local dir marker ids=""
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  for marker in "${dir}"/*; do
+    if [[ -f "${marker}" && "${marker##*/}" =~ ${QUEUE_ITEM_ID_SHAPE} ]]; then ids+="${marker##*/}"$'\n'; fi
+  done
+  if [[ -n "${ids}" ]]; then sort -rn <<<"${ids%$'\n'}"; fi
+}
+
+# Drops every awaiting set untouched for QUEUE_AWAITING_TTL_DAYS; run right after a create, so the caller's own set is
+# fresh and never among them.
+# ponytail: a live session whose newest mark is older than the TTL loses its set → raise the TTL if owners answer later
+queue_delete_stale_awaiting() {
+  local root sets set
+  root="$(queue_get_root)/data/queue/awaiting"
+  sets="$(find "${root}" -mindepth 1 -maxdepth 1 -type d -mtime "+${QUEUE_AWAITING_TTL_DAYS}" 2>/dev/null)" || return 1
+  [[ -n "${sets}" ]] || return 0
+  while IFS= read -r set; do
+    if ga_guard_path "${set}"; then rm -rf -- "${set:?}"; fi
+  done <<<"${sets}"
 }
