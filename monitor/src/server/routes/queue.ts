@@ -80,7 +80,7 @@ function registerSessionRoutes(app: FastifyInstance, homeDir: string): void {
       route: "/api/queue/sessions/deregister",
       schema: deregisterBodySchema,
       input: request.body,
-      work: (body) => deregisterSession(body).then(() => ({ ok: true })),
+      work: (body) => deregisterSession(body).then((result) => ({ ok: true, ...result })),
     }),
   );
 }

@@ -368,14 +368,14 @@ describe("register", () => {
 });
 
 describe("deregister", () => {
-  test("on a marked row only another process's pid clears the marker", async () => {
+  test("on a marked row only another process's pid clears the marker, and only the stored process or no pid ends the session", async () => {
     const storedPid = 812_345;
     const rows = [
-      { name: "another pid", extra: { pid: storedPid + 1 }, isCleared: true },
-      { name: "the stored pid", extra: { pid: storedPid }, isCleared: false },
-      { name: "no pid", extra: {}, isCleared: false },
-      { name: "socket path naming another pid", extra: { socketPath: `/tmp/cc-socks/${storedPid + 1}.sock` }, isCleared: true },
-      { name: "socket path naming the stored pid", extra: { socketPath: `/private/tmp/cc-socks/${storedPid}.sock` }, isCleared: false },
+      { name: "another pid", extra: { pid: storedPid + 1 }, isCleared: true, isEnded: false },
+      { name: "the stored pid", extra: { pid: storedPid }, isCleared: false, isEnded: true },
+      { name: "no pid", extra: {}, isCleared: false, isEnded: true },
+      { name: "socket path naming another pid", extra: { socketPath: `/tmp/cc-socks/${storedPid + 1}.sock` }, isCleared: true, isEnded: false },
+      { name: "socket path naming the stored pid", extra: { socketPath: `/private/tmp/cc-socks/${storedPid}.sock` }, isCleared: false, isEnded: true },
     ];
     for (const row of rows) {
       const sessionId = await seedSession({ pid: storedPid, state: "exited", exitReason: "dead", resumeAwaitingRegisterAt: new Date() });
@@ -383,14 +383,24 @@ describe("deregister", () => {
       const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
       assert.equal(response.statusCode, 200, row.name);
       assert.equal(stored.resumeAwaitingRegisterAt === null, row.isCleared, row.name);
+      assert.deepEqual(response.json(), { ok: true, isEnded: row.isEnded }, row.name);
     }
   });
 
-  test("ends a live row whose own process deregisters", async () => {
+  test("ends a live row whose own process deregisters and says so", async () => {
     const sessionId = await seedSession({ pid: 823_456 });
-    await send("POST", "/api/queue/sessions/deregister", { sessionId, pid: 823_456 });
+    const response = await send("POST", "/api/queue/sessions/deregister", { sessionId, pid: 823_456 });
     const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
     assert.deepEqual([stored.state, stored.exitReason], ["exited", "ended"]);
+    assert.deepEqual(response.json(), { ok: true, isEnded: true });
+  });
+
+  test("keeps a live row live when another process under the same session id deregisters, and says it did not end", async () => {
+    const sessionId = await seedSession({ pid: 834_567 });
+    const response = await send("POST", "/api/queue/sessions/deregister", { sessionId, pid: 834_568 });
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.equal(stored.state, "live");
+    assert.deepEqual(response.json(), { ok: true, isEnded: false });
   });
 
   test("refuses an unknown session and an unconfined socket path", async () => {

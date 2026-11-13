@@ -92,17 +92,24 @@ export async function registerSession(body: RegisterBody, homeDir: string): Prom
   });
 }
 
+export interface DeregisterResult {
+  /** false when another process's pid only cleared the marker → the session stays live, so the lib keeps its awaiting marks */
+  isEnded: boolean;
+}
+
 /**
  * Deregisters a session (SessionEnd). Only a pid other than the stored one clears the session marker:
  * under the marker the row still stores the old, dead process's pid.
  */
-export async function deregisterSession(body: DeregisterBody): Promise<void> {
+export async function deregisterSession(body: DeregisterBody): Promise<DeregisterResult> {
   const callerPid = getDeregisterPid(body);
-  await getPrisma().$transaction(async (tx) => {
+  return getPrisma().$transaction(async (tx) => {
     const session = await lockSession(tx, body.sessionId);
     if (session === null) throw new QueueRequestError(404, "unknown_session", "session not registered");
-    const data = buildDeregisterUpdate(session, callerPid);
+    const isOtherProcess = callerPid !== null && callerPid !== session.pid;
+    const data = buildDeregisterUpdate(session, isOtherProcess);
     if (Object.keys(data).length > 0) await tx.queueSession.update({ where: { sessionId: body.sessionId }, data });
+    return { isEnded: !isOtherProcess };
   });
 }
 
@@ -110,8 +117,7 @@ export async function deregisterSession(body: DeregisterBody): Promise<void> {
  * - another process's pid → marker cleared; on a live or stale row the state stays (that process's end proves nothing here)
  * - stored pid or no pid → a live or stale row ends; an exited row keeps its reason
  */
-function buildDeregisterUpdate(session: LockedSession, callerPid: number | null): Prisma.QueueSessionUpdateInput {
-  const isOtherProcess = callerPid !== null && callerPid !== session.pid;
+function buildDeregisterUpdate(session: LockedSession, isOtherProcess: boolean): Prisma.QueueSessionUpdateInput {
   if (isOtherProcess) return { resumeAwaitingRegisterAt: null };
   if (session.state === "exited") return {};
   return { state: "exited", exitReason: "ended" };

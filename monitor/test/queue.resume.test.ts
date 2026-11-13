@@ -669,7 +669,7 @@ describe("session marker", () => {
   test("a deregister carrying the stored pid between the claim commit and the spawn leaves the marker set, and a second item is not resumed", async () => {
     const sessionId = await seedSession({ cwd: newFixtureDir("stale-end"), identity: { pid: 999_997, startTime: "Mon Jan  1 00:00:00 2026" } });
     await seedItem(sessionId, "resume_pending");
-    const harness = buildHarness([sessionId], undefined, { hooks: { beforeReread: () => deregisterSession({ sessionId, pid: 999_997 }) } });
+    const harness = buildHarness([sessionId], undefined, { hooks: { beforeReread: async () => { await deregisterSession({ sessionId, pid: 999_997 }); } } });
     await runPasses(harness, 1);
     const secondItemId = await seedItem(sessionId, "resume_pending");
 
