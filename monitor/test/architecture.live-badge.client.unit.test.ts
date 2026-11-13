@@ -78,7 +78,7 @@ interface HealthModelGlobal {
 }
 
 interface ArchHelpers {
-  // 맵이 흡수한 health 엔드포인트 표(ADR-B1 R2) — health.jsx:42-47 의 5종.
+  // 맵의 health fetch 표 — 집합의 주인은 architecture.jsx 의 getMapHealthEndpoints.
   getMapHealthEndpoints: (payloadDaemon: string) => string[];
   // T11: hook-chain 응답을 이벤트 → matcher → 훅 줄로 접는 순수 fold.
   getHookChainRows: (state: FetchState | null | undefined) => HookChainRow[] | null;
