@@ -73,7 +73,8 @@ Produce brand-consistent visual design deliverables in three stages: visual phil
   - Why: borrowed direction is what the **Specificity** axis and the AI Slop Tropes catch.
 - **Fallback inference oracle**: when no token or rule covers a decision, resolve it from the project DESIGN.md's Visual Theme & Atmosphere / philosophy, never from a generic default.
 - **Scarcity as rationale**: ration every strong signal — accent hue, heavy weight, motion flourish, oversized type; a second strong signal needs the same justification as an extra accent color.
-  - Product UI default: the kept flourish sits on a content moment the product supplies, not on chrome, unless the selected direction is `brutalist-experimental`, whose posture puts the strong signal in structure (full-strength borders, asymmetric columns); a CTA's functional accent (`### Color, state and hierarchy`) is not that flourish.
+  - Product UI default: the kept flourish sits on a content moment the product supplies, not on chrome, unless the selected direction is `brutalist-experimental`, whose posture puts the strong signal in structure (full-strength borders, asymmetric columns).
+    - A CTA's functional accent (`### Color, state and hierarchy`) is not that flourish.
 - **Section minimalism**: the standard-minimum sections, named as `agents/templates/DESIGN.md` heads them (Visual Theme & Atmosphere, Color, Typography, Components, Anti-Patterns), are required; open per-system categories (motion, audio, interaction patterns) only when the system needs them.
   - DESIGN.md consumers preserve unrecognized sections rather than dropping them.
 

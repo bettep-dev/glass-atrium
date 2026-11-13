@@ -31,10 +31,12 @@ Extends the SoT entries **Vibe-Coding layout** and **AI-generated 3D floating me
 
 | Trope | Decide instead | Passes when |
 |---|---|---|
-| Every hero element in one centered column, chosen without a reason | a composition derived from the hero visual's shape and the selected posture | one sentence ties the chosen alignment to the visual's shape and the posture; a centered column and a split both pass on a stated reason, neither by default |
+| Every hero element in one centered column, chosen without a reason | a composition derived from the hero visual's shape and the selected posture | one sentence ties the chosen alignment to the visual's shape and the posture |
 | Decorative shapes or luminous lines filling the space behind the hero copy | an empty ground, or the single hero visual doing the work | nothing behind the text is decoration alone |
 | A shiny rendered abstraction (3D shapes, metallic liquid, a space backdrop) standing in as the hero visual | a view of the actual product, or a single specific image of the job it does | one sentence states what the visual shows about this product |
 | Stock machine-intelligence imagery — androids, lit-up brains, circuit traces, holograms | an example of the AI feature's output, or no image | the output shown is one the user supplied |
+
+- Centered-column row: a centered column and a split both pass on a stated reason; neither passes by default.
 
 ## Brand mark
 

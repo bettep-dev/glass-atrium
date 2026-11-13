@@ -107,7 +107,7 @@ Spacing                           \b((m|p)[trblxyse]?|gap(-[xy])?|space-[xy])-\[
 
 - Run these only on admin-console screens (`### Admin-console (data screens)`), with glob `*.{css,scss,html,tsx,jsx,vue}`.
 - A hit is a likelihood, never proof: the read note after a pattern names the context that makes it a signal.
-- A hit a `## Detection Guidance` line already matched counts once.
+- A hit already matched by a line of the every-screen block — the pattern block directly under `## Detection Guidance` — counts once.
 
 ~~~text
 Stripe                 border-left:\s*[2-6]px|box-shadow:\s*inset\s+\d+px\s+0\s+0|border-l-[2-8]
@@ -210,6 +210,13 @@ Return inline in the response, in this shape:
 ## Cross-References
 
 - `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` — pattern SoT; additions land there
-- `~/.claude/agents/references/design-slop-landing.md` — SoT extension for landing pages, heroes, marketing sections and brand marks; Read it before auditing one. Its rows are read checks: no pattern line above reaches them
+- `~/.claude/agents/references/design-slop-landing.md` — SoT extension for landing pages, heroes, marketing sections and brand marks; Read it before auditing one
+  - No pattern line is written for its rows, and every row's `Passes when` test is a read
+  - `## Detection Guidance` lines written for SoT tropes still reach the rows below where the trope sits in markup or CSS — a hit is a signal to read; an image asset draws none:
+    - Brand mark: both rows — Flat surface (gradient fill, gradient lettering, glow) · the sparkle row — also Decoration
+    - Hero: the centered-column row — Layout (`text-center`) · the decoration-behind-copy row — Flat surface (gradient, glow)
+    - Copy and actions: the emoji feature-grid row — Emoji · Layout (`grid-cols-3`)
+    - Copy and actions: the announcement-chip row — Decoration, only when an element in the chip reads exactly `PRO` / `New` / `Beta`
+  - Only a read catches: the generic-headline row · the competing-actions row · a rendered abstraction or stock machine-intelligence image as the hero visual
 - `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — complementary visual rubric for HTML primary
 - `glass-atrium-design-contrast-check` — mechanical WCAG verification (paired use)
