@@ -23,7 +23,7 @@ Applies to heroes and marketing sections.
 | A launch or feature announcement in a rounded chip over the headline | drop it; a genuine announcement gets one plain inline link | the news is supplied by the user and dated |
 | Headline copy that holds equally for a product from an unrelated category | name the job this product performs, and the user it serves, in the product's own vocabulary | the line is false when read as describing a product from an unrelated category |
 | A cluster of buttons, tags or avatar stacks competing with the call to action | a single primary call to action, with one quieter secondary option at most | other actions live in navigation or further down the page |
-| A feature grid where each card pairs an emoji icon and a bold heading with filler copy | a shorter feature list whose text names concrete capabilities | every card states the capability it describes; any emoji is judged under **Font tropes** |
+| A feature grid where each card pairs an emoji icon and a bold heading with filler copy | a shorter feature list whose text names concrete capabilities | every card states the capability it describes |
 
 ## Hero composition and visual
 
