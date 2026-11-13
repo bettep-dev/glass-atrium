@@ -2041,7 +2041,7 @@ read_calls() {
 }
 
 @test "an exit-9 recovery names the dependency install exactly when the monitor's node_modules are absent" {
-  local row label state want_install modules="${INSTALL}/monitor/node_modules"
+  local row label state want_install client_dir modules="${INSTALL}/monitor/node_modules"
   local -a rows=(
     "dependencies never installed|absent|1"
     "dependencies installed|present|0"
@@ -2050,7 +2050,8 @@ read_calls() {
     IFS='|' read -r label state want_install <<<"${row}"
     if ga_guard_path "${modules}"; then rm -rf -- "${modules:?}"; fi
     if [[ "${state}" == present ]]; then
-      mkdir -p "${modules}/.bin" "${INSTALL}/monitor/src/generated/prisma"
+      client_dir="$(get_schema_client_dir "${INSTALL}/monitor")"
+      mkdir -p "${modules}/.bin" "${client_dir}"
       printf '#!/bin/sh\n' | tee "${modules}/.bin/tsc" >"${modules}/.bin/prisma"
       chmod +x "${modules}/.bin/tsc" "${modules}/.bin/prisma"
     fi
@@ -2092,10 +2093,20 @@ read_calls() {
   done
 }
 
+# Generated-client dir under $1 (a monitor dir), from the release schema's generator `output`
+# → a heal row seeded here fails when update_get_monitor_heal checks another path.
+get_schema_client_dir() {
+  local output
+  output="$(sed -n 's/^[[:space:]]*output[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "${GA}/monitor/prisma/schema.prisma")"
+  [[ -n "${output}" ]] || { echo "no generator output in ${GA}/monitor/prisma/schema.prisma" >&2; return 1; }
+  printf '%s\n' "$1/prisma/${output}"
+}
+
 # Seed the install's monitor for one self-heal row: each of tsc / prisma / client is
 # present|absent, and the fixture monitor/.env exists (empty) unless $4 is absent.
 seed_monitor_heal_state() {
-  local monitor="${INSTALL}/monitor" entry bin
+  local monitor="${INSTALL}/monitor" entry bin client_dir
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
   if ga_guard_path "${monitor}"; then rm -rf -- "${monitor:?}"; fi
   mkdir -p "${monitor}/node_modules/.bin" "${monitor}/prisma/migrations/20260101000000_probe"
@@ -2105,7 +2116,10 @@ seed_monitor_heal_state() {
     printf '#!/bin/sh\n' >"${bin}"
     chmod +x "${bin}"
   done
-  [[ "$3" == absent ]] || mkdir -p "${monitor}/src/generated/prisma"
+  if [[ "$3" != absent ]]; then
+    client_dir="$(get_schema_client_dir "${monitor}")"
+    mkdir -p "${client_dir}"
+  fi
   [[ "${4:-present}" == absent ]] || : >"${monitor}/.env"
 }
 
