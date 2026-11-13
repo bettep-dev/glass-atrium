@@ -13,15 +13,19 @@ import json
 import os
 import re
 import sys
+from types import SimpleNamespace
 
 # Backward read, window doubled per pass up to the cap — human entry lags ~2.3 MB, transcripts reach ~145 MB
 DEFAULT_WINDOW_BYTES = 256 * 1024
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
-HUMAN_MARKER = b'"kind":"human"'
-# a turn's start entry, whatever its origin, carries a turnPosition object; tool results, assistant and Stop
-# feedback entries carry none (shared-hook-capability-contract.md → Stop row)
-TURN_MARKER = b'"turnPosition":{'
-TOOL_USE_MARKER = b'"tool_use"'
+# Byte needles that admit a line to the JSON parse
+MARKER = SimpleNamespace(
+    HUMAN=b'"kind":"human"',
+    # a turn's start entry, whatever its origin, carries a turnPosition object; tool results, assistant and Stop
+    # feedback entries carry none (shared-hook-capability-contract.md → Stop row)
+    TURN=b'"turnPosition":{',
+    TOOL_USE=b'"tool_use"',
+)
 # Bounds the output only; the hook cleans and caps the quote the model sees.
 PROSE_EXCERPT_CHARS = 500
 
@@ -74,9 +78,9 @@ def find_newest_human_prose(path, window, cap):
 def find_current_turn(path, window, cap):
     """Status `none` with truncated=true means the cap was reached before the turn's start entry."""
     def visit(line, result):
-        if TOOL_USE_MARKER in line and _has_tool_use(_get_json_object(line)):
+        if MARKER.TOOL_USE in line and _has_tool_use(_get_json_object(line)):
             result["tools"] = True
-        turn = _get_turn_start_id(line) if TURN_MARKER in line else None
+        turn = _get_turn_start_id(line) if MARKER.TURN in line else None
         if turn:
             result.update(status="found", turn=turn)
         return bool(turn)
@@ -132,7 +136,7 @@ def _get_lines_backward(fh, size, window, cap, scan):
 
 
 def _get_line_prose(line):
-    if HUMAN_MARKER not in line:
+    if MARKER.HUMAN not in line:
         return None
     text, entry_kind = _get_human_text(_get_json_object(line))
     return _get_text_prose(text, entry_kind)
