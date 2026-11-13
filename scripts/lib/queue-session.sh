@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# queue-session.sh — the owner queue's session-side wire steps, shared by the SessionStart / SessionEnd
-# hooks and the queue CLI so their register fields cannot drift. Sourced, not executable.
-# Never reads the messaging token; sends a pid, never a start time.
+# queue-session.sh — the owner queue's session side, shared by the SessionStart / SessionEnd / Stop hooks and the
+# queue CLI so each has one owner: the register and deregister steps, the monitor reply framing, the item status sets,
+# the awaiting marks and the wait-lock reader. Sourced, not executable; never reads the messaging token, and sends a
+# pid, never a start time.
 
 if [[ -n "${_QUEUE_SESSION_LOADED:-}" ]]; then
   return 0
@@ -182,50 +183,55 @@ queue_deregister_session() {
   queue_post /api/queue/sessions/deregister "${body}" >/dev/null
 }
 
+# <session id> → the path of its wait lock
+queue_get_wait_lock_path() {
+  local root
+  root="$(queue_get_root)"
+  printf '%s/data/queue/waits/%s\n' "${root}" "$1"
+}
+
 # <session id> → this Claude process's view of the session's wait lock: none · live (a running wait of this process) ·
 # stale; nothing without CLAUDE_PID (a wait cannot start without it)
 queue_get_wait_state() {
-  local owner_pid WAIT_LOCK WAIT_RECORD
+  local owner_pid owner lock
   owner_pid="$(queue_get_pid)"
   [[ -n "${owner_pid}" ]] || return 0
-  WAIT_LOCK="$(queue_get_root)/data/queue/waits/$1"
-  # an empty waiter part never reads as mine → live only for a running wait of this Claude process
-  WAIT_RECORD="||${owner_pid}|$(get_start_time "${owner_pid}")"
-  get_wait_lock_state
+  owner="${owner_pid}|$(queue_get_start_time "${owner_pid}")"
+  lock="$(queue_get_wait_lock_path "$1")"
+  queue_get_wait_lock_state "${lock}" "${owner}"
 }
 
 # <pid> → its process start time, the recycled-pid guard; nothing when the pid is gone
-get_start_time() {
+queue_get_start_time() {
   local started
   started="$(LC_ALL=C ps -p "$1" -o lstart= 2>/dev/null)" || return 0
   started="${started#"${started%%[![:space:]]*}"}"
   printf '%s\n' "${started%"${started##*[![:space:]]}"}"
 }
 
-# → mine · none · live (another running wait of this Claude process) · stale (its waiter is gone, or it names another
-# Claude process); the one reader of the lock name. Reads the caller's WAIT_LOCK (lock path) and WAIT_RECORD (its own
-# "waiter pid|its start|owner pid|its start" record).
-get_wait_lock_state() {
+# <lock path> <owner "pid|its start"> [this wait's own record] → none · mine (holds that record) · live (another
+# running wait of that owner) · stale (its waiter is gone, or it names another owner); the one reader of the lock name
+queue_get_wait_lock_state() {
   local held
-  held="$(readlink "${WAIT_LOCK}" 2>/dev/null)" || held=""
+  held="$(readlink "$1" 2>/dev/null)" || held=""
   # shellcheck disable=SC2310  # liveness is the last branch
-  if [[ "${held}" == "${WAIT_RECORD}" ]]; then
-    printf 'mine\n'
-  elif [[ -z "${held}" ]]; then
+  if [[ -z "${held}" ]]; then
     printf 'none\n'
-  elif is_wait_live "${held}"; then
+  elif [[ "${held}" == "${3:-}" ]]; then
+    printf 'mine\n'
+  elif queue_is_wait_live "${held}" "$2"; then
     printf 'live\n'
   else
     printf 'stale\n'
   fi
 }
 
-# <held record> → 0 while its waiter still runs and its owner is this wait's own Claude process
-is_wait_live() {
+# <held record> <owner "pid|its start"> → 0 while its waiter still runs and it names that owner
+queue_is_wait_live() {
   local waiter_pid waiter_start owner started
   IFS='|' read -r waiter_pid waiter_start owner <<<"$1"
-  [[ "${owner}" == "${WAIT_RECORD#*|*|}" && "${waiter_pid}" =~ ${QUEUE_PID_SHAPE} && -n "${waiter_start}" ]] || return 1
-  started="$(get_start_time "${waiter_pid}")"
+  [[ "${owner}" == "$2" && "${waiter_pid}" =~ ${QUEUE_PID_SHAPE} && -n "${waiter_start}" ]] || return 1
+  started="$(queue_get_start_time "${waiter_pid}")"
   [[ "${started}" == "${waiter_start}" ]]
 }
 

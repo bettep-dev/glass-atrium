@@ -342,10 +342,11 @@ wait_for_claims() {
   session_id="$(require_session_id)"
   owner_pid="$(queue_get_pid)"
   [[ -n "${owner_pid}" ]] || fail 64 "CLAUDE_PID is unset or not a pid — run this inside a Claude Code session"
-  owner_start="$(get_start_time "${owner_pid}")"
+  owner_start="$(queue_get_start_time "${owner_pid}")"
   [[ -n "${owner_start}" ]] || fail 64 "CLAUDE_PID ${owner_pid} names no running process"
-  WAIT_LOCK="$(queue_get_root)/data/queue/waits/${session_id}"
-  WAIT_RECORD="$$|$(get_start_time "$$")|${owner_pid}|${owner_start}"
+  WAIT_LOCK="$(queue_get_wait_lock_path "${session_id}")"
+  WAIT_OWNER="${owner_pid}|${owner_start}"
+  WAIT_RECORD="$$|$(queue_get_start_time "$$")|${WAIT_OWNER}"
   take_wait_lock
   trap drop_wait_lock EXIT
   trap 'exit 129' HUP
@@ -382,7 +383,7 @@ take_wait_lock() {
   # shellcheck disable=SC2310  # a mutex held past its bound → the named exit
   take_waits_mutex || fail 1 "could not take this session's wait lock — the waits mutex stayed held"
   for _ in 1 2 3; do
-    state="$(get_wait_lock_state)"
+    state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
     case "${state}" in
       mine) break ;;
       live) fail 5 "another wait already runs for this session — nothing to do" ;;
@@ -406,7 +407,7 @@ drop_wait_lock() {
   local state
   # shellcheck disable=SC2310  # no mutex → the lock stays, reclaimable once this wait is gone
   take_waits_mutex || return 0
-  state="$(get_wait_lock_state)"
+  state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   if [[ "${state}" == mine ]]; then
     if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
   fi
@@ -451,11 +452,11 @@ run_wait_loop() {
 # holds the lock; an empty lock name is no loss → this wait puts its record back
 check_wait_owner() {
   local started state
-  started="$(get_start_time "$1")"
+  started="$(queue_get_start_time "$1")"
   [[ "${started}" == "$2" ]] || exit 4
-  state="$(get_wait_lock_state)"
-  if [[ "${state}" == none ]]; then
-    ln -sn -- "${WAIT_RECORD}" "${WAIT_LOCK}" 2>/dev/null || state="$(get_wait_lock_state)"
+  state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
+  if [[ "${state}" == none ]] && ! ln -sn -- "${WAIT_RECORD}" "${WAIT_LOCK}" 2>/dev/null; then
+    state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   fi
   [[ "${state}" == mine || "${state}" == none ]] || fail 5 "another wait took over this session — this one ends"
 }
