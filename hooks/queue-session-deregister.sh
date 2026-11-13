@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # queue-session-deregister.sh — SessionEnd hook: deregisters this session from the Atrium owner queue
-# (pid, else the messaging socket path, else the id alone) and removes its messaging token file.
+# (pid, else the messaging socket path, else the id alone), removes its messaging token file and, once the monitor
+# holds the deregister, its awaiting marks (queue_deregister_session).
 # Disposition noop: fail-open, always exit 0 with nothing printed. No block channel.
 
 set -Eeuo pipefail

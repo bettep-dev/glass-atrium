@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# shellcheck disable=SC2154,SC2249,SC2312  # BATS_* and run results are set by bats; a masked status fails its comparison; each case arm is a row
+# shellcheck disable=SC2030,SC2031,SC2154,SC2249,SC2312  # a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison; each case arm is a row
 # The owner queue's session side: the SessionStart register hook and the SessionEnd deregister hook
 # against a stand-in monitor. Protects the wire fields (pid only, never a start time), the secrecy of
 # the messaging token, the pointer line, and the fail-open exit.
@@ -332,6 +332,53 @@ run_deregister() {
     ls -la "${dir}"
     return 1
   }
+}
+
+@test "register writes back an awaiting mark for each item id the reply lists, and none for a reply listing none" {
+  start_stub
+  local row name reply expected marks
+  for row in 'lists two|{"answeredWaiting":0,"awaitingItemIds":[57,41]}|57 41' \
+    'lists none|{"answeredWaiting":0,"awaitingItemIds":[]}|' \
+    'older monitor, no list|{"answeredWaiting":1}|' \
+    'entries that are no item id|{"answeredWaiting":0,"awaitingItemIds":[41,"../x",0,-3,1.5]}|41'; do
+    IFS='|' read -r name reply expected <<<"${row}"
+    export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root.${name// /-}"
+    set_reply 200 "${reply}"
+    run_register
+    marks="$(find "${GA_ROOT}/data/queue" -type f -exec basename {} \; 2>/dev/null | sort -rn | paste -sd ' ' -)"
+    [[ "${status}" -eq 0 && "${marks}" == "${expected}" ]] || {
+      echo "row ${name}: status=${status} marks=[${marks}] ${output}${stderr}"
+      return 1
+    }
+  done
+}
+
+@test "deregister removes this session's awaiting set only once the monitor holds it and the env holds a pid" {
+  local other="0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d" row name expected actual
+  local dir="${GA_ROOT}/data/queue/awaiting"
+  for row in "monitor answers, pid set|removed" "no pid in the session env|kept" "monitor down|kept" \
+    "monitor refusing|kept"; do
+    IFS='|' read -r name expected <<<"${row}"
+    stop_stub
+    export CLAUDE_PID=4242
+    mkdir -p "${dir}/${SESSION_ID}" "${dir}/${other}"
+    : >"${dir}/${SESSION_ID}/41"
+    : >"${dir}/${other}/7"
+    case "${name}" in
+      "monitor answers"*) set_reply 200 '{"ok":true}' && start_stub ;;
+      "no pid"*) unset CLAUDE_PID && set_reply 200 '{"ok":true}' && start_stub ;;
+      "monitor down") export ATRIUM_MONITOR_PORT=1 ;;
+      "monitor refusing") set_reply 403 '{"error":"forbidden_host"}' && start_stub ;;
+    esac
+    run_deregister
+    actual=kept
+    [[ -e "${dir}/${SESSION_ID}" ]] || actual=removed
+    [[ "${status}" -eq 0 && "${actual}" == "${expected}" && -f "${dir}/${other}/7" ]] || {
+      echo "row ${name}: status=${status} set ${actual}"
+      ls -laR "${dir}"
+      return 1
+    }
+  done
 }
 
 @test "the hooks reached through a hook-farm symlink still load their library and reach the monitor" {

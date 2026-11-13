@@ -148,7 +148,8 @@ queue_get_transcript_title() {
       // (map(select(.type == "ai-title") | .aiTitle | strings) | last) // empty' 2>/dev/null || return 0
 }
 
-# The register step: the register POST → the answered-waiting count on stdout.
+# The register step: the register POST → the answered-waiting count on stdout, after writing back an awaiting mark for
+# each item the reply lists (the marks a SessionEnd cleared → a resumed session gets them back).
 # All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
 # $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks) ·
 # $5 an explicit session name, already in shown form (queue_get_shown_name), sent as name ·
@@ -174,10 +175,24 @@ queue_register_session() {
   reply="$(queue_post /api/queue/sessions/register "${body}" "${max_time}")" || return 1
   count="$(jq -r '.answeredWaiting // 0' <<<"${reply}" 2>/dev/null)" || return 1
   [[ "${count}" =~ ^[0-9]+$ ]] || return 1
+  queue_create_listed_awaiting_items "${session_id}" "${reply}"
   printf '%s\n' "${count}"
 }
 
+# <session id> <register reply> → an awaiting mark per id in its awaitingItemIds; an older monitor's reply lists none.
+# A mark that cannot be written costs only a turn-end reminder → never the register's result.
+queue_create_listed_awaiting_items() {
+  local ids id
+  ids="$(jq -r '.awaitingItemIds // [] | .[] | numbers | tostring' <<<"$2" 2>/dev/null)" || return 0
+  while IFS= read -r id; do
+    # shellcheck disable=SC2310  # a failed mark → the next id, per the header
+    if [[ -n "${id}" ]]; then queue_create_awaiting_item "$1" "${id}" || continue; fi
+  done <<<"${ids}"
+}
+
 # The deregister step: pid, else the socket path (the monitor reads the pid from its name), else the id alone.
+# The session's awaiting set goes once the monitor holds the deregister, and only with a pid: the register that writes
+# the marks back at a resume needs one, so a host without it keeps its set (the stale-set prune drops it later).
 # $1: session id from a hook payload (optional; queue_get_session_id fallback)
 queue_deregister_session() {
   local session_id pid socket body token_file
@@ -191,7 +206,8 @@ queue_deregister_session() {
   # retired messaging token → also deleted here, not only by the monitor sweep, so a down monitor leaves none behind
   token_file="$(queue_get_token_dir)/${session_id}"
   if ga_guard_path "${token_file}"; then rm -f -- "${token_file:?}"; fi
-  queue_post /api/queue/sessions/deregister "${body}" >/dev/null
+  queue_post /api/queue/sessions/deregister "${body}" >/dev/null || return 1
+  if [[ -n "${pid}" ]]; then queue_delete_awaiting_set "${session_id}"; fi
 }
 
 # <session id> → the path of its wait lock
@@ -262,7 +278,8 @@ queue_is_wait_live() {
 }
 
 # Awaiting marks: one empty file per item a session posted that expects an owner answer, named by the item id → the
-# turn-end check lists them before any monitor call. SessionEnd keeps them: a resumed session keeps its id.
+# turn-end check lists them before any monitor call. SessionEnd clears them and the register writes them back
+# (queue_deregister_session, queue_register_session).
 
 # <session id> → its awaiting set's directory; non-zero for anything but a UUID
 queue_get_awaiting_dir() {
@@ -297,6 +314,13 @@ queue_get_awaiting_items() {
     if [[ -f "${marker}" && "${marker##*/}" =~ ${QUEUE_ITEM_ID_SHAPE} ]]; then ids+="${marker##*/}"$'\n'; fi
   done
   if [[ -n "${ids}" ]]; then sort -rn <<<"${ids%$'\n'}"; fi
+}
+
+# <session id> → its awaiting set removed
+queue_delete_awaiting_set() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  if ga_guard_path "${dir}"; then rm -rf -- "${dir:?}"; fi
 }
 
 # Drops every awaiting set untouched for QUEUE_AWAITING_TTL_DAYS; run right after a create, so the caller's own set is

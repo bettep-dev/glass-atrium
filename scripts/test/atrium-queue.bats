@@ -880,6 +880,25 @@ SHIM
   }
 }
 
+@test "the SessionStart hook and the CLI register both write back the awaiting marks the register reply lists" {
+  start_stub
+  set_reply 200 '{"answeredWaiting":0,"awaitingItemIds":[57,41]}'
+  local row marks
+  for row in hook cli; do
+    export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root.${row}"
+    if [[ "${row}" == hook ]]; then
+      run --separate-stderr "${REGISTER_HOOK}" <<<'{"hook_event_name":"SessionStart","source":"resume"}'
+    else
+      run_cli register
+    fi
+    marks="$(awaiting_items | paste -sd ' ' -)"
+    [[ "${status}" -eq 0 && "${marks}" == "57 41" ]] || {
+      echo "row ${row}: status=${status} marks=[${marks}] ${output}${stderr}"
+      return 1
+    }
+  done
+}
+
 @test "register --name sends the name with control characters as spaces, cut to the monitor's name limit" {
   start_stub
   set_reply 200 '{"answeredWaiting":0}'

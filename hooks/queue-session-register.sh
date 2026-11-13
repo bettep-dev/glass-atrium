@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # queue-session-register.sh — SessionStart hook (startup · resume · fork · clear): registers this session
-# with the Atrium owner queue and, when owner answers or messages wait for it, prints one context line naming
-# the count and the CLI pending command — never their text.
+# with the Atrium owner queue, writes back the awaiting marks the reply lists (queue_register_session) and, when owner
+# answers or messages wait for it, prints one context line naming the count and the CLI pending command — never their
+# text.
 # Disposition noop: fail-open, always exit 0 with nothing printed on any failure (monitor down, slow or
 # refusing). No block channel (SessionStart cannot block).
 
