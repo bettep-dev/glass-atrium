@@ -13,9 +13,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 HOOK="${GA}/hooks/queue-turn-end-check.sh"
 SESSION_ID="3f1c2b9a-7d4e-4f5a-9b6c-0e1d2c3b4a59"
 ITEM_TITLE="Merge the release branch tonight?"
-# the statuses a running wait carries forward, and those it cannot: the parity row ties both, with the monitor's
-# terminal set, to the QueueItemStatus enum
-RESOLVED_STATUSES="open answered"
+# the statuses a running wait cannot carry forward: the parity row ties them, with the check's own resolved and
+# terminal sets, to the QueueItemStatus enum
 KEPT_STATUSES="delivering held unacked expired resume_pending"
 # shellcheck source-path=SCRIPTDIR source=lib/forced-write.bash
 source "${BATS_TEST_DIRNAME}/lib/forced-write.bash"
@@ -153,7 +152,10 @@ assert_silent_turn_end() {
 @test "an awaiting item a wait resolves, with no wait running, keeps the turn going with the wait command and no item text" {
   start_stub
   local row rows=() lock expected_status
-  for expected_status in ${RESOLVED_STATUSES}; do rows+=("${expected_status}|none"); done
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
+  for expected_status in $(source "${GA}/scripts/lib/queue-session.sh" && printf '%s' "${QUEUE_WAIT_RESOLVED_STATUSES}"); do
+    rows+=("${expected_status}|none")
+  done
   for row in "${rows[@]}" "open|stale"; do
     IFS='|' read -r expected_status lock <<<"${row}"
     new_root
@@ -371,7 +373,7 @@ assert_silent_turn_end() {
   # each list splits into one status per word
   # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh disable=SC2086
   check_set="$(source "${GA}/scripts/lib/queue-session.sh" \
-    && printf '%s\n' ${RESOLVED_STATUSES} ${QUEUE_TERMINAL_STATUSES} ${KEPT_STATUSES} | sort | tr '\n' ' ')"
+    && printf '%s\n' ${QUEUE_WAIT_RESOLVED_STATUSES} ${QUEUE_TERMINAL_STATUSES} ${KEPT_STATUSES} | sort | tr '\n' ' ')"
   [[ "${check_set}" == "${enum_set}" ]] || {
     echo "check: ${check_set} · enum: ${enum_set}"
     return 1

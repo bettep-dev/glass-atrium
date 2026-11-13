@@ -14,8 +14,6 @@ readonly CHECK_MAX_ITEMS=3
 readonly CHECK_FETCH_MAX_S=1
 # the same items to the same Claude process → named again only after this long, so a wait that fails fast starts no loop
 readonly NUDGE_INTERVAL_MIN=10
-# the states a running wait carries forward: open (no answer yet) and answered (claimed by the wait)
-readonly WAIT_RESOLVED_STATUSES=' open answered '
 
 self="${BASH_SOURCE[0]}"
 if [[ -L "${self}" ]]; then
@@ -90,7 +88,7 @@ get_wait_resolved_item() {
     ((checked++ < CHECK_MAX_ITEMS)) || break
     # shellcheck disable=SC2310  # an unusable reply already printed its warning
     status="$(get_item_status "$1" "${id}")" || return 1
-    if [[ "${WAIT_RESOLVED_STATUSES}" == *" ${status} "* ]]; then
+    if [[ "${QUEUE_WAIT_RESOLVED_STATUSES}" == *" ${status} "* ]]; then
       printf '%s\n' "${id}"
       return 0
     fi

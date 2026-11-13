@@ -24,6 +24,9 @@ readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions don
 # the item states nothing moves on from; the set itself is the monitor's TERMINAL (queue-turn-end-check.bats compares the two)
 # shellcheck disable=SC2034  # read by the sourcing turn-end hook
 readonly QUEUE_TERMINAL_STATUSES=' delivered seen withdrawn '
+# the states a running wait carries forward: open (no answer yet) and answered (claimed by the wait)
+# shellcheck disable=SC2034  # read by the sourcing turn-end hook
+readonly QUEUE_WAIT_RESOLVED_STATUSES=' open answered '
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
 # space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
