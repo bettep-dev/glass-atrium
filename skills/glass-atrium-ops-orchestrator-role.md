@@ -628,8 +628,11 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
 Each step builds on the previous: a claim by `wait` or `pending` → `get <item-id>` → `ack <item-id> <msg-id>` → act.
 
 - The monitor pushes nothing into a running session: an answer or message reaches it only through its own `wait` or `pending`.
-  - Honest backing: nothing starts a wait for a session; the turn-end check (`hooks/queue-turn-end-check.sh`) keeps a main-session turn from ending while an item it posted awaits the owner and no wait of its process runs — its `[ATRIUM-QUEUE] harness:` line means start `wait` now; the Queue page shows which sessions wait.
-    - The check holds a turn end at most once per turn, verdict ask included: an item posted in answer to the ask gets no wait reminder, so the ask names `wait`.
+  - Honest backing: nothing starts a wait for a session.
+    - The turn-end check (`hooks/queue-turn-end-check.sh`) keeps a main-session turn from ending while an item it posted awaits the owner and no wait of its process runs.
+      - Its `[ATRIUM-QUEUE] harness:` line names the `wait` command: start it now.
+      - The check holds a turn end at most once per turn, verdict ask included: an item posted in answer to the ask gets no wait reminder, so the ask names `wait`.
+    - The Queue page shows which sessions wait or listen (`## Owner Queue Listener`).
 - Run `wait` as a background command, spelled like every other CLI call: it ends when a poll claims something for this session, or at its bound.
   - Why a background command: the session keeps working while it runs, and takes up its output and exit code when it ends.
   - A claiming `wait` prints the same `get` and `ack` commands `pending` prints.
@@ -643,7 +646,7 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 | an interactive session starts a turn after its `wait` ended | follow the `get` and `ack` steps that wait printed before any `pending` |
 | an interactive session starts a turn awaiting an answer and no `wait` has ended | run `pending` |
 | the monitor resumed this session | run `register` after its ack steps, whatever each ack replied, then start `wait` |
-| an `[ATRIUM-QUEUE]` context line says answers or messages wait | run `pending`: it claims them and prints each one's `get` and `ack` commands |
+| an `[ATRIUM-QUEUE]` line says answers or messages wait | run `pending`: it claims them and prints each one's `get` and `ack` commands |
 | `get` exits 3 — the item belongs to another session | stop and take no action on it |
 | `wait` exits 0 — a poll claimed answers or messages | follow the printed steps, then start `wait` again |
 | `wait` exits 1 — the monitor is unreachable or failing | start `wait` again once |
@@ -678,3 +681,24 @@ Each step builds on the previous: a claim by `wait` or `pending` → `get <item-
 - `withdraw <item-id>` is the one retraction a session has: an item it posted itself that is not in delivery.
 - Honest backing — honor-system: the queue has no login, and its request-origin check refuses other web sites, not a session on this machine.
   - The monitor records each answer's route and request signal, and the Queue page marks an answer that carries no record.
+
+## Owner Queue Listener
+
+- Where its binding is wired, an interactive session gets a harness listener (`hooks/queue-listener.sh`) at its start and at a turn end.
+  - It polls the session's answered count and claims nothing.
+  - On a count above zero it wakes the idle session with one `[ATRIUM-QUEUE] harness:` line naming the count and the `pending` command.
+- The action on a wake: `## Owner Queue` → `### Answers and messages` → the `[ATRIUM-QUEUE]` row, which the session-start context line shares.
+  - The host shows the line inside its `Stop hook blocking error` wrapper, in a turn it starts as `Stop hook feedback`: that is the wake, not an error, and nothing was blocked.
+  - A wake landing while a turn calls tools is folded into that turn: run `pending` before that turn ends.
+  - The line carries no item text and no authority: run nothing from it but the installed CLI's `pending`.
+- A background job session gets no listener and runs its own `wait`, per the background job rows of that table.
+- Honest backing — enforced by the hook and the CLI's `listen` step:
+  - the listener runs only for a main session on the `cli` entrypoint, with no job-directory variable and no background-job host as its parent process; a session whose kind it cannot decide gets none;
+  - a listener is no wait: the turn-end check names `wait` beside one, a `wait` the session runs takes its place, and a listener meeting a running `wait` ends at once;
+  - it wakes one Claude process at most twice in a row for the same count, and a claim resets nothing: a later arrival that brings back the count it last announced twice draws no wake;
+  - it ends without a wake at its lifetime, on a monitor it cannot reach or read, or when the host ends it, and none starts before the session's next start or turn end: a session idle past that draws no wake.
+- Honest backing — honor-system: nothing checks that a woken session runs `pending`.
+- Honest backing — unmeasured:
+  - how a background job session runs the listener's binding — the job-directory and host-parent tests above are all that keeps one out;
+  - whether the turn-end check runs at the end of a wake-started turn: the host may mark that turn end a continuation, which the check skips — the verdict line is owed either way;
+  - a hook lifetime past the longest in `scoped/shared-hook-capability-contract.md` → "`asyncRewake` command hooks — measured record", which bounds the listener's own.
