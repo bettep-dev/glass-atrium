@@ -1976,6 +1976,7 @@ run_cli_apply() {
   done
   write_manifest "${WORK}/manifest.json" "$@"
   run env -u GA_SKIP_DB_SETUP -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME \
+    GA_SKIP_DB_SETUP="${CLI_SKIP_DB_SETUP:-}" \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
@@ -2048,7 +2049,11 @@ read_calls() {
   for row in "${rows[@]}"; do
     IFS='|' read -r label state want_install <<<"${row}"
     if ga_guard_path "${modules}"; then rm -rf -- "${modules:?}"; fi
-    [[ "${state}" == absent ]] || mkdir -p "${modules}/.bin"
+    if [[ "${state}" == present ]]; then
+      mkdir -p "${modules}/.bin" "${INSTALL}/monitor/src/generated/prisma"
+      printf '#!/bin/sh\n' | tee "${modules}/.bin/tsc" >"${modules}/.bin/prisma"
+      chmod +x "${modules}/.bin/tsc" "${modules}/.bin/prisma"
+    fi
     NPM_RC_typecheck=1 run_cli_apply "monitor/src/server/app.ts"
     [[ "${status}" -eq 9 ]] || { echo "${label}: ${output}"; return 1; }
     if [[ "${want_install}" -eq 1 ]]; then
@@ -2084,6 +2089,60 @@ read_calls() {
     [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
     read_calls
     [[ "${CALLS}" == "${want}" ]] || { echo "${label}: got '${CALLS}'"; return 1; }
+  done
+}
+
+# Seed the install's monitor for one self-heal row: each of tsc / prisma / client is
+# present|absent, and the fixture monitor/.env exists (empty) unless $4 is absent.
+seed_monitor_heal_state() {
+  local monitor="${INSTALL}/monitor" entry bin
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${monitor}"; then rm -rf -- "${monitor:?}"; fi
+  mkdir -p "${monitor}/node_modules/.bin" "${monitor}/prisma/migrations/20260101000000_probe"
+  for entry in "tsc:$1" "prisma:$2"; do
+    [[ "${entry#*:}" == present ]] || continue
+    bin="${monitor}/node_modules/.bin/${entry%%:*}"
+    printf '#!/bin/sh\n' >"${bin}"
+    chmod +x "${bin}"
+  done
+  [[ "$3" == absent ]] || mkdir -p "${monitor}/src/generated/prisma"
+  [[ "${4:-present}" == absent ]] || : >"${monitor}/.env"
+}
+
+@test "an apply set with no trigger path heals missing monitor tooling with an install and a missing client with a generate" {
+  local row label tsc prisma client want
+  local -a rows=(
+    "tsc binary absent|absent|present|present|ci prisma generate prisma migrate deploy run typecheck run build "
+    "prisma binary absent|present|absent|present|ci prisma generate prisma migrate deploy run typecheck run build "
+    "generated client absent|present|present|absent|prisma generate prisma migrate deploy run typecheck run build "
+    "tooling and client present|present|present|present|prisma migrate deploy run typecheck run build "
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label tsc prisma client want <<<"${row}"
+    seed_monitor_heal_state "${tsc}" "${prisma}" "${client}"
+    : >"${WORK}/calls.log"
+    run_cli_apply "monitor/src/server/app.ts"
+    [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
+    read_calls
+    [[ "${CALLS}" == "${want}" ]] || { echo "${label}: got '${CALLS}'"; return 1; }
+  done
+}
+
+@test "the self-heal skips loudly, naming db-setup, under GA_SKIP_DB_SETUP or with no monitor/.env" {
+  local row label skip_db env_file want_text
+  local -a rows=(
+    "GA_SKIP_DB_SETUP set|1|present|GA_SKIP_DB_SETUP set"
+    "monitor/.env absent||absent|.env absent"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label skip_db env_file want_text <<<"${row}"
+    seed_monitor_heal_state absent absent absent "${env_file}"
+    : >"${WORK}/calls.log"
+    CLI_SKIP_DB_SETUP="${skip_db}" run_cli_apply "monitor/src/server/app.ts"
+    [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
+    read_calls
+    [[ "${CALLS}" != *"ci"* && "${CALLS}" != *"generate"* ]] || { echo "${label}: healed: ${CALLS}"; return 1; }
+    [[ "${output}" == *"self-heal SKIPPED"*"${want_text}"*"glass-atrium db-setup"* ]] || { echo "${label}: ${output}"; return 1; }
   done
 }
 
@@ -2604,9 +2663,11 @@ retired_live_map() {
 
 # Drive the updater through the source-tree seam with the sweep's own sandbox seams
 # pinned: the Trash sink and the facade home both inside the per-test dir, so no run
-# can reach ~/.Trash or the real ~/.claude.
+# can reach ~/.Trash or the real ~/.claude. GA_SKIP_DB_SETUP keeps a fixture monitor that
+# seeds a .env out of the dependency self-heal, so no sweep run reaches the npm registry.
 run_update_sweep() {
   run env \
+    GA_SKIP_DB_SETUP=1 \
     GA_ROOT="${INSTALL}" \
     GA_TARGET_HOME="${FARM}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \

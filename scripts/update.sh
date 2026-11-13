@@ -151,12 +151,15 @@
 # PENDING migrations between the apply and the monitor restart (named exit 15 on
 # failure, never a silent skip, never a rollback of the applied files). It no-ops —
 # loudly, naming the remedy — under GA_SKIP_DB_SETUP, with no migrations directory,
-# and on a monitor whose node_modules are still absent when it runs (recoverable:
-# db-setup's `npm ci` installs them, so it is no state worth failing an update over).
+# and on a monitor whose node_modules are still absent when it runs.
 # `glass-atrium doctor` §21 reports any migration left pending.
-# Before it, update_install_monitor_deps runs `npm ci` and/or `prisma generate` when
-# the apply set holds one of its trigger paths, so a node_modules still absent at
-# migrate means no install trigger shipped in this release.
+# Before it, update_install_monitor_deps runs `npm ci` and/or `prisma generate` on an
+# apply-set trigger path, and also heals what no apply set shows: `npm ci` when the
+# monitor's own tsc or prisma binary is absent, `prisma generate` when the generated
+# client is absent. So the node_modules-absent no-op is a defensive branch, normally
+# unreachable: the dependency step heals that state first, and offline it fails with
+# exit 18 naming the db-setup recovery. The heal alone skips loudly, naming db-setup,
+# under GA_SKIP_DB_SETUP or with no monitor/.env (generate cannot run there).
 #
 # core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
 # update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
@@ -2891,36 +2894,64 @@ update_wire_hooks_post_apply() {
   update_log "settings.json hook bindings reconciled to the applied release"
 }
 
-# Post-apply `npm ci` / `prisma generate` on the apply set alone: a release ships a new
-# package-lock or schema but never node_modules or the git-ignored generated client, and the
-# build's tsc fails on them yet still emits dist/server.
+# Post-apply `npm ci` / `prisma generate` on an apply-set trigger or a self-heal need
+# (update_get_monitor_heal): a release ships a new package-lock or schema but never node_modules
+# or the git-ignored generated client, and the build's tsc fails on them yet still emits dist/server.
 #   * Registry reach — the updater's only one: this `npm ci`, stdin closed, fetch-bounded,
 #     never `npx`; the bounds miss the postinstall (playwright install chromium).
-#   * Never-installed monitor (no node_modules) → installed here only by a package-lock or
-#     package.json trigger; otherwise a triggered generate and then migrate skip loudly, and the
-#     build exits 9 naming db-setup.
+#   * Never-installed monitor (no node_modules) → installed by the heal when monitor/.env exists;
+#     offline that is exit 18 naming db-setup, files applied.
 #   * prisma.config.ts reads DATABASE_URL + SHADOW_DATABASE_URL through env(), which throws when
-#     unset → generate needs monitor/.env, though no DB connection; GA_SKIP_DB_SETUP does not skip it.
+#     unset → generate needs monitor/.env, though no DB connection; GA_SKIP_DB_SETUP does not skip
+#     a triggered generate, only the heal.
 #   * `npm ci` deletes node_modules first → after a failure the running monitor survives only on
 #     modules already loaded; a lazy import or a KeepAlive restart fails until recovery.
 update_install_monitor_deps() {
-  local paths monitor_dir should_install=0
+  local paths monitor_dir need=''
   paths=$'\n'"${_update_apply_paths}"$'\n'
   monitor_dir="$(update_get_monitor_dir)"
   case "${paths}" in
-    *$'\n'monitor/package-lock.json$'\n'* | *$'\n'monitor/package.json$'\n'*) should_install=1 ;;
-    *$'\n'monitor/prisma/schema.prisma$'\n'* | *$'\n'monitor/prisma.config.ts$'\n'*) ;;
-    *) return 0 ;;
+    *$'\n'monitor/package-lock.json$'\n'* | *$'\n'monitor/package.json$'\n'*) need=install ;;
+    *$'\n'monitor/prisma/schema.prisma$'\n'* | *$'\n'monitor/prisma.config.ts$'\n'*) need=generate ;;
+    *) ;;
   esac
   if [[ ! -d "${monitor_dir}" ]]; then
-    update_log "deps: monitor dir absent (${monitor_dir}) — skipping the dependency step"
+    [[ -z "${need}" ]] || update_log "deps: monitor dir absent (${monitor_dir}) — skipping the dependency step"
+    return 0
+  fi
+  [[ "${need}" == install ]] || need="$(update_get_monitor_heal "${monitor_dir}" "${need}")"
+  if [[ -z "${need}" ]]; then
     return 0
   fi
   _update_has_refreshed_deps=1
-  if [[ "${should_install}" -eq 1 ]]; then
+  if [[ "${need}" == install ]]; then
     update_monitor_npm_ci "${monitor_dir}"
   fi
   update_monitor_prisma_generate "${monitor_dir}"
+}
+
+# Self-heal for state no apply set shows (uninstall removes node_modules; the client is
+# git-ignored): `install` when the monitor's own tsc or prisma binary is absent — the probe
+# run_bootstrap uses — else `generate` when the client dir (the schema's `output`) is absent,
+# else the trigger need $2. A heal skips loudly under GA_SKIP_DB_SETUP or with no
+# monitor/.env, where generate cannot succeed → db-setup is the recovery either way.
+update_get_monitor_heal() {
+  local monitor_dir="$1" heal='' reason=''
+  if [[ ! -x "${monitor_dir}/node_modules/.bin/tsc" || ! -x "${monitor_dir}/node_modules/.bin/prisma" ]]; then
+    heal=install
+  elif [[ ! -d "${monitor_dir}/src/generated/prisma" ]]; then
+    heal=generate
+  fi
+  if [[ -n "${heal}" && -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    reason='GA_SKIP_DB_SETUP set'
+  elif [[ -n "${heal}" && ! -e "${monitor_dir}/.env" ]]; then
+    reason="${monitor_dir}/.env absent, which prisma generate needs"
+  fi
+  if [[ -n "${reason}" ]]; then
+    update_log "deps: monitor self-heal SKIPPED (${reason}) — the monitor tooling or generated Prisma client is missing; run '$(update_ga_root)/glass-atrium db-setup', then 'npm run build' in ${monitor_dir}"
+    heal=''
+  fi
+  printf '%s\n' "${heal:-$2}"
 }
 
 # npm's default fetch timeout and retries allow minutes → offline fails in bounded time
@@ -3035,7 +3066,9 @@ update_get_rebuild_note() {
 #   * GA_SKIP_DB_SETUP — the same opt-out setup_database (lib/ga-db.sh) and doctor
 #     §21 honour, so a sandbox/CI run never touches machine-global PostgreSQL.
 #   * no prisma/migrations directory under the monitor root — nothing to apply.
-#   * no monitor node_modules at all — the dependencies were never installed here.
+#   * no monitor node_modules at all — the dependencies were never installed here. A
+#     defensive branch: update_install_monitor_deps heals this state before migrate, so it
+#     is reached only where that heal skipped (GA_SKIP_DB_SETUP, no monitor/.env).
 #     That is a DEGRADED but recoverable install, not a broken one: `npm ci` is this
 #     project's documented self-heal for it (lib/ga-core.sh and lib/ga-tui-run.sh both
 #     run it before the monitor build) and uninstall deliberately REMOVES node_modules
