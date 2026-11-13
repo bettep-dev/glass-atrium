@@ -1040,6 +1040,7 @@
 - **Cells**: a status column only where status varies; an empty cell reads `None` in faint ink, never blank.
 - **Fixtures**: test and screenshot data mix long names, empty values and 1,000+ numbers.
 - **Row actions**: visible on every row, two at most, the second an overflow menu (⋯); or the whole row is the click target with no action buttons.
+- **Master–detail desk**: a screen whose rows are pending owner actions (the Queue) opens the pressed row in the list's own pane, with a way back and previous / next; record detail elsewhere still opens in the drawer.
 - **Pagination** (O3): left column = the range line, sans tnum 13 dim; right column = Previous / Next quiet. Page numbers, where shown: current = sunken-fill square + ink label at 500; others dim at 400; no border on any.
 - **No horizontal scroll** in drawers or cards: width overflow is solved by stacking, not scrolling.
 - Stacked mode: when the measured width of the table's own wrapper falls under the table's threshold, rows become stacked two-line items (primary 15 ink + meta line 13 dim), not a scrolling grid.

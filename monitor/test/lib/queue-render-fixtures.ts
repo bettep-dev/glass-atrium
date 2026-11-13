@@ -287,6 +287,13 @@ export function getArrivalFixture(): QueueFixture {
   return { ...rest, items: [...rest.items, report], sessions };
 }
 
+/** Nothing open: the In delivery band alone, its first row an order, and an order between its two answered decisions → stepping passes over orders. */
+export function getOrderFirstFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const second = { ...ANSWERED_DECISION, id: 160, askedAt: getAt(18), title: "배포 전 업데이터 점검 순서" };
+  return { ...rest, items: [...IN_DELIVERY_ORDER, ANSWERED_DECISION, ...NOT_RECEIVED_ORDER, second], orders: [...rest.orders, ...NOT_RECEIVED_ORDER] };
+}
+
 /** The order the owner types in states 06–08, to `gersona` and `yoaida` (mockup v5 §18.3). */
 export const FIXTURE_ORDER_TEXT = "오늘 결정한 내용은 내일 오전 보고에 한 줄씩 정리해 주세요.";
 

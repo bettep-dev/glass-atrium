@@ -446,8 +446,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 
 /* the Queue desk (§7.11) — the screen fills the viewport under main's padding and never scrolls; each pane scrolls its own body.
-   Three columns at every width: the rail fixed per step, the sheet one page (the measure + its two 32 gutters) giving way before the list
-   goes under its minimum, the list the rest. The 66ch resolves on the desk's 15px text, the sheet text's own size */
+   The rail fixed per step, the middle pane the rest: the list, or the opened row's sheet in its place */
 .queue-screen {
 	display: flex;
 	flex-direction: column;
@@ -456,19 +455,17 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .queue-desk {
 	--queue-rail-w: 208px;
-	--queue-list-min: 320px;
-	--queue-sheet-max: calc(var(--measure-prose) + 2 * var(--space-8));
 	flex: 1 1 auto;
 	min-height: 560px;
 	min-width: 1012px;
 	display: grid;
-	grid-template-columns: var(--queue-rail-w) minmax(var(--queue-list-min), 1fr) min(var(--queue-sheet-max), calc(100% - var(--queue-rail-w) - var(--queue-list-min) - 2 * var(--gap-section)));
+	grid-template-columns: var(--queue-rail-w) minmax(0, 1fr);
 	grid-template-rows: minmax(0, 1fr);
 	gap: var(--gap-section);
 	font-size: var(--fs-body);
 }
 @media (min-width: 1440px) {
-	.queue-desk { --queue-rail-w: 232px; --queue-list-min: 360px; }
+	.queue-desk { --queue-rail-w: 232px; }
 }
 @media (min-width: 1728px) {
 	.queue-desk { --queue-rail-w: 248px; }
@@ -588,6 +585,13 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	display: contents;
 }
 .queue-away[hidden] {
+	display: none;
+}
+/* the list stays mounted under a sheet (spec §3.3): hidden, its rows and state kept */
+.queue-list-slot {
+	display: contents;
+}
+.queue-list-slot[hidden] {
 	display: none;
 }
 .queue-desk.is-orders {
@@ -1022,23 +1026,50 @@ details[open] > summary.disclosure > .disclosure-chevron {
 		grid-row: 1;
 	}
 }
-/* the sheet: one page wide, one column on a 32 inline column shared by its head, body and foot */
+/* the sheet: one page column — the 66ch measure centred in the pane, gutters of at least 32 — shared by its head, body and foot (spec §3.2).
+   Registered → the ch resolves here on the desk's 15px text, not on the 13/14px of the head and foot that read it; the % on each of them */
+@property --queue-page-pad {
+	syntax: "<length-percentage>";
+	inherits: true;
+	initial-value: 0px;
+}
 .queue-sheet {
-	--card-pad: var(--space-8);
+	--queue-page-pad: max(var(--space-8), calc((100% - var(--measure-prose)) / 2));
+	--card-pad: var(--queue-page-pad);
 }
-.queue-sheet.is-collapsed {
-	align-self: start;
+.queue-sheet-head {
+	flex-wrap: nowrap;
 }
-.queue-sheet.is-collapsed:has(.queue-sheet-empty) > .card-body {
-	padding: var(--space-2) var(--card-pad);
+.queue-sheet-head > .card-title,
+.queue-letter {
+	min-width: 0;
 }
-.queue-sheet-empty {
+.queue-letter-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.queue-steps {
+	flex: none;
 	display: flex;
-	flex-wrap: wrap;
 	align-items: center;
-	gap: var(--space-1) var(--space-2);
-	min-height: var(--ctl-min-h);
+	gap: var(--space-1);
+	margin-inline-start: auto;
+}
+.queue-steps > .tabular-nums {
+	margin-inline-end: var(--space-2);
+}
+/* the letterhead's second line: what the item holds at its start, when at its end */
+.queue-date-line {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	min-height: var(--lh-row);
 	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
 }
 /* the key list: the meanings in one column directly after the keys */
 .queue-keys {
@@ -1058,9 +1089,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	margin: 0;
 	color: rgb(var(--dim));
 }
-.queue-sheet-empty > .btn {
-	margin-inline-start: auto;
-}
 .queue-sheet .card-title {
 	font-size: var(--fs-control);
 }
@@ -1070,7 +1098,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	gap: var(--space-2);
 }
 .queue-sheet > .card-body {
-	padding: var(--space-6) var(--space-8) var(--space-8);
+	padding: var(--space-4) var(--card-pad) var(--space-8);
+}
+.queue-sheet-body > .queue-sheet-title {
+	margin-top: var(--space-2);
 }
 .queue-sheet-body > * + * {
 	margin-top: var(--space-3);

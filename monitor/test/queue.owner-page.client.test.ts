@@ -123,6 +123,9 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       sessions: buildSessions(),
       orders: { isOpen: false, open: record("openOrders") },
       reload: record("reload"),
+      back: record("back"),
+      list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [] },
+      steps: { index: 0, count: 1, prevId: null, nextId: null },
       ...overrides,
     },
   };
@@ -136,13 +139,9 @@ function withList(queue: Record<string, unknown>, items: unknown[], nextCursor: 
 
 const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }>("getSheetStateQ", groups, hashId, { item: null, isHandled: false });
 
-// the Card atom's head and foot ride its props → rendered beside its body, so one tree holds the whole sheet
-function renderSheet(props: unknown): RenderedNode {
-  const tree = render("ItemSheetQ", props);
-  const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
-  const slots = ["title", "sub", "right", "foot"].map((key) => renderScreen(card?.props[key])).filter((node): node is RenderedNode => node !== null && typeof node !== "string");
-  return { type: "Fragment", props: {}, children: [tree, ...slots] } as RenderedNode;
-}
+// the sheet is its own card markup → one tree holds its head, body and foot
+const renderSheet = (props: unknown): RenderedNode => render("ItemSheetQ", props);
+const byClass = (tree: RenderedNode, name: string) => findNodes(tree, (node) => String(node.props?.className ?? "").split(" ").includes(name));
 
 const buttonLabelled = (tree: RenderedNode, label: string) => findNodes(tree, (node) => node.type === "button" && collectText(node).trim() === label);
 
@@ -206,7 +205,7 @@ describe("Later", () => {
   }
 });
 
-describe("after Send the focus moves to the next awaiting row", () => {
+describe("after Send the next awaiting item is found in list order", () => {
   const items = [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" }), buildItem({ id: 3 }), buildItem({ id: 4 })];
   const rows = [
     { name: "skips a row no longer awaiting", id: 1, expected: 3 },
@@ -216,26 +215,26 @@ describe("after Send the focus moves to the next awaiting row", () => {
   for (const row of rows) test(row.name, () => assert.equal(call("getNextAwaitingIdQ", row.list ?? items, row.id), row.expected));
 });
 
-test("after Send the focus skips a row the active filter hides", async () => {
+test("after Send the next open item the active filter shows takes the sheet, in band order", async () => {
   const module = (await loadScreenModule(QUEUE_SRC, {
     window: { UI: uiStub() },
     fetch: async () => ({ status: 200, json: async () => ({ ok: true }) }),
   })) as ScreenModule;
   const personal = buildSession({ id: "9b2e7c41-0d3a-4c55-8e1f-2a6b9c4d7e10", profileLabel: "personal" });
-  const items = [buildItem({ id: 1 }), buildItem({ id: 2, session: personal }), buildItem({ id: 3 })];
-  const focus: unknown[] = [];
+  const items = [buildItem({ id: 1 }), buildItem({ id: 4, kind: "report" }), buildItem({ id: 2, session: personal }), buildItem({ id: 3 })];
+  const opened: unknown[] = [];
   const actions = (module.useQueueActionsQ as (deps: unknown) => { answerItem: (id: number, body: unknown) => Promise<void> })({
     list: { status: "ready", data: { items, nextCursor: null } },
     filter: { profile: "work-dev", session: "" },
     setList: () => undefined,
     setDrafts: () => undefined,
-    setFocus: (next: unknown) => focus.push(next),
     setStatus: () => undefined,
-    selectItem: () => undefined,
+    openItem: (id: unknown) => opened.push(["open", id]),
+    closeSheet: () => opened.push(["close"]),
     reload: () => undefined,
   });
   await actions.answerItem(1, { code: "R1" });
-  assert.deepEqual(getPlain(focus), [{ id: 3 }]);
+  assert.deepEqual(getPlain(opened), [["open", 3]]);
 });
 
 test("a draft held in page state reappears when its item is selected again", () => {
@@ -533,15 +532,24 @@ describe("screen", () => {
   });
 
   // the list carries no delivery flag → a page alert here would read as a delivery outage that does not exist
-  test("a loaded list renders one list card with one row per item under bands, and the selected item on the sheet", () => {
+  test("a loaded list renders the list alone at rest, one row per item under bands, and no sheet", () => {
     const items = [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report", linkedDocIds: [43944] })];
     const queue = withList(buildQueue().queue, items);
-    const list = render("QueueListQ", { queue });
-    assert.deepEqual(findNodes(list, (node) => node.props?.role === "option").map((node) => node.props.id), ["queue-row-1", "queue-row-2"]);
-    assert.deepEqual(findNodes(list, (node) => node.props?.className === "queue-band").map((node) => collectText(node)), ["Decisions 1", "Reports 1"]);
-    assert.equal(findNodes(list, (node) => node.props?.atom === "AlertCard").length, 0);
-    const sheet = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "2") } });
-    const [link] = findNodes(sheet, (node) => node.type === "a" && node.props.className === "prose-link");
+    const pane = render("MiddlePaneQ", { queue });
+    const [slot] = byClass(pane, "queue-list-slot");
+    assert.deepEqual(findNodes(pane, (node) => node.props?.role === "option").map((node) => node.props.id), ["queue-row-1", "queue-row-2"]);
+    assert.deepEqual(findNodes(pane, (node) => node.props?.className === "queue-band").map((node) => collectText(node)), ["Decisions 1", "Reports 1"]);
+    assert.equal(findNodes(pane, (node) => node.props?.atom === "AlertCard").length, 0);
+    assert.deepEqual([slot?.props.hidden, byClass(pane, "queue-sheet").length], [undefined, 0]);
+  });
+
+  test("an opened row puts the list away, still mounted, and its sheet takes the pane", () => {
+    const items = [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report", linkedDocIds: [43944] })];
+    const listed = withList(buildQueue().queue, items);
+    const pane = render("MiddlePaneQ", { queue: { ...listed, sheet: getSheet(listed.groups, "2"), selectedId: 2 } });
+    const [slot] = byClass(pane, "queue-list-slot");
+    const [link] = findNodes(pane, (node) => node.type === "a" && node.props.className === "prose-link");
+    assert.deepEqual([slot?.props.hidden, findNodes(slot as RenderedNode, (node) => node.props?.role === "option").length], [true, 2]);
     assert.equal(link?.props.href, "#clauded-docs?doc=43944");
   });
 });
@@ -848,13 +856,22 @@ describe("list groups", () => {
 describe("selection", () => {
   const groups = call("getGroupsQ", [buildItem({ id: 5, kind: "report" }), buildItem({ id: 3 }), buildItem({ id: 8, kind: "message", status: "delivered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" })]);
   const rows = [
-    { name: "a loaded item named in the hash is selected", hashId: "5", expected: 5 },
-    { name: "a copy named in the hash selects its folded row", hashId: "8", expected: 7 },
-    { name: "an item the list does not hold falls back to the first row of the first group", hashId: "99", expected: 3 },
-    { name: "no item in the hash selects the first row of the first group", hashId: "", expected: 3 },
+    { name: "a loaded item named in the hash opens on the sheet", hashId: "5", expected: 5 },
+    { name: "an order named in the hash opens nothing, since an order has no sheet", hashId: "8", expected: null },
+    { name: "an item the list does not hold opens nothing", hashId: "99", expected: null },
+    { name: "no item in the hash opens nothing, so the pane is the list", hashId: "", expected: null },
   ];
   for (const row of rows) test(row.name, () => assert.equal(call("getSelectedIdQ", groups, row.hashId), row.expected));
-  test("an empty list selects nothing", () => assert.equal(call("getSelectedIdQ", [], ""), null));
+
+  // the neighbours are the list's rows that open on a sheet, in list order; an order's row is stepped over
+  const stepItems = [buildItem({ id: 3 }), buildItem({ id: 5, kind: "report" }), buildItem({ id: 9, kind: "message", status: "answered", sendId: "s" }), buildItem({ id: 11, status: "answered", answer: { code: "R1", text: null } })];
+  const stepRows = [
+    { name: "the first sheet row has no previous", id: 3, lastIndex: -1, expected: { index: 0, count: 3, prevId: null, nextId: 5 } },
+    { name: "stepping passes over an order's row both ways", id: 5, lastIndex: -1, expected: { index: 1, count: 3, prevId: 3, nextId: 11 } },
+    { name: "the last sheet row has no next", id: 11, lastIndex: -1, expected: { index: 2, count: 3, prevId: 5, nextId: null } },
+    { name: "an item gone from the list steps to the rows that stood beside it", id: 4, lastIndex: 1, expected: { index: -1, count: 3, prevId: 3, nextId: 5 } },
+  ];
+  for (const row of stepRows) test(`stepping: ${row.name}`, () => assert.deepEqual(call("getStepsQ", call("getGroupsQ", stepItems), row.id, row.lastIndex), row.expected));
 
   const presses = [
     { name: "an order to a session opens the Orders mode at it", item: { kind: "message", status: "answered", sendId: "s" }, opens: 1 },
@@ -890,51 +907,40 @@ describe("what the sheet shows", () => {
   const answered = buildItem({ id: 3, status: "answered", answeredAt: "2026-11-12T12:20:00.000Z" });
   const rows = [
     { name: "an open item on the sheet that the read no longer holds stays on it as left the queue", items: [arrived], hashId: "3", expected: { kind: "left", id: 3 } },
-    { name: "a default-selected item that is answered elsewhere stays on the sheet as left the queue", items: [arrived, answered], hashId: "", expected: { kind: "left", id: 3 } },
-    { name: "a held item still open keeps the sheet when a new row arrives before it", items: [arrived, held], hashId: "", expected: { kind: "item", id: 3 } },
-    { name: "a row the owner selected replaces the held item", items: [arrived], hashId: "2", expected: { kind: "item", id: 2 } },
+    { name: "an opened item that is answered elsewhere stays on the sheet as left the queue", items: [arrived, answered], hashId: "3", expected: { kind: "left", id: 3 } },
+    { name: "a held item still open keeps the sheet when a new row arrives before it", items: [arrived, held], hashId: "3", expected: { kind: "item", id: 3 } },
+    { name: "a row the owner opened replaces the held item", items: [arrived], hashId: "2", expected: { kind: "item", id: 2 } },
+    { name: "nothing in the hash leaves the held item off the sheet", items: [arrived, held], hashId: "", expected: { kind: "none", id: null } },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, { item: held, isHandled: false });
+      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, held);
       assert.deepEqual({ kind: sheet.kind, id: sheet.id }, row.expected);
     });
   }
 
-  test("the owner's last open item handled leaves the sheet all handled", () => {
-    const sheet = call<{ kind: string; id: number | null }>("getSheetStateQ", call("getGroupsQ", [answered]), "", { item: null, isHandled: true });
-    assert.deepEqual({ kind: sheet.kind, id: sheet.id }, { kind: "handled", id: null });
-  });
-
   test("an item that left the queue keeps its sheet, its foot one line and no composer", () => {
     const { queue } = buildQueue();
     const tree = render("QueueSheetQ", { queue: { ...withList(queue, [arrived]), sheet: { kind: "left", id: 3, item: held } } });
-    const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
-    const foot = renderScreen(card?.props.foot) as RenderedNode;
-    assert.equal(collectText(renderScreen(card?.props.title) as RenderedNode).includes("Decision"), true, "the held item's letterhead");
+    const [foot] = byClass(tree, "card-foot");
+    const [head] = findNodes(tree, (node) => node.type === "h2");
+    assert.equal(collectText(head as RenderedNode).includes("Decision"), true, "the held item's letterhead");
     assert.equal(collectText(foot).replace(/\s+/g, " ").trim(), "ℹ This item left the queue.");
     assert.equal(findNodes(foot, (node) => node.type === "button" || node.type === "textarea").length, 0);
   });
 
-  const handledRows = [
-    { name: "all handled counts what is still on its way", items: [answered, buildItem({ id: 9, kind: "message", status: "answered", sendId: "s-9" })], hint: "2 answers and orders are still on their way." },
-    { name: "all handled says one thing on its way in the singular", items: [answered], hint: "1 answer or order is still on its way." },
-    { name: "all handled with nothing on its way carries no count line", items: [], hint: undefined },
-  ];
-  test("with no row on the sheet, the first row holds the list's one tab stop", () => {
+  test("with no row opened yet, the first row holds the list's one tab stop and no row is current", () => {
     const queue = withList(buildQueue().queue, [answered, buildItem({ id: 9, kind: "message", status: "answered", sendId: "s-9" })]);
-    const list = render("QueueListQ", { queue: { ...queue, sheet: { kind: "handled", id: null }, selectedId: null } });
-    assert.deepEqual(findNodes(list, (node) => node.props?.role === "option").map((node) => node.props.tabIndex), [0, -1]);
+    const list = render("QueueListQ", { queue: { ...queue, selectedId: null } });
+    const options = findNodes(list, (node) => node.props?.role === "option");
+    assert.deepEqual([options.map((node) => node.props.tabIndex), options.map((node) => node.props["aria-selected"])], [[0, -1], [false, false]]);
   });
 
-  for (const row of handledRows) {
-    test(row.name, () => {
-      const queue = withList(buildQueue().queue, row.items);
-      const tree = render("QueueSheetQ", { queue: { ...queue, sheet: { kind: "handled", id: null } } });
-      const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
-      assert.deepEqual({ message: empty?.props.message, hint: empty?.props.hint }, { message: "All handled", hint: row.hint });
-    });
-  }
+  test("with no item opened the sheet renders nothing", () => {
+    const queue = withList(buildQueue().queue, [answered]);
+    const tree = render("QueueSheetQ", { queue: { ...queue, sheet: { kind: "none", id: null } } });
+    assert.deepEqual([byClass(tree, "queue-sheet").length, findNodes(tree, (node) => node.type === "h2").length], [0, 0]);
+  });
 });
 
 describe("after the owner acts on the last open item", () => {
@@ -949,16 +955,16 @@ describe("after the owner acts on the last open item", () => {
       filter: { profile: "", session: "" },
       setList: () => undefined,
       setDrafts: () => undefined,
-      setFocus: () => undefined,
       setStatus: () => undefined,
-      selectItem: (id: unknown) => selected.push(id),
+      openItem: (id: unknown) => selected.push(id),
+      closeSheet: () => selected.push("list"),
       reload: () => undefined,
     });
     await actions[action]!(1, { code: "R1" });
     return selected;
   };
 
-  test("an answer selects nothing, so the sheet says all handled", async () => assert.deepEqual(await act("answerItem"), [null]));
+  test("an answer with nothing left open returns the list", async () => assert.deepEqual(await act("answerItem"), ["list"]));
   test("a later keeps the item selected, since it is still open", async () => assert.deepEqual(await act("later"), []));
 });
 
@@ -1769,23 +1775,33 @@ describe("the Orders mode", () => {
   const returns = [
     { name: "the opener still on the page takes the focus back", stored: { opener: { isConnected: true, name: "New order" }, openerSession: null }, expected: "New order" },
     { name: "a rail row the mode re-rendered takes it back through its session", stored: { opener: { isConnected: false }, openerSession: OTHER_ID }, expected: "rail main" },
-    { name: "an opener gone with no rail row → the selected row", stored: { opener: { isConnected: false }, openerSession: null }, expected: "row 41" },
+    { name: "an opener gone with no rail row → the current row", stored: { opener: { isConnected: false }, openerSession: null }, expected: "row 41" },
+    { name: "an opener gone with a sheet open → the sheet's body", stored: { opener: { isConnected: false }, openerSession: null }, isSheetOpen: true, expected: "sheet body" },
   ];
   for (const row of returns) {
     test(`leaving the mode: ${row.name}`, () => {
       const rail = { getAttribute: () => OTHER_ID, querySelector: (selector: string) => (selector === ".queue-rail-main" ? { name: "rail main" } : null) };
-      const root = { querySelectorAll: () => [{ getAttribute: () => SESSION_ID, querySelector: () => null }, rail], getElementById: (id: string) => (id === "queue-row-41" ? { name: "row 41" } : null) };
+      const sheetBody = (row as { isSheetOpen?: boolean }).isSheetOpen ? { name: "sheet body" } : null;
+      const root = {
+        querySelectorAll: () => [{ getAttribute: () => SESSION_ID, querySelector: () => null }, rail],
+        querySelector: (selector: string) => (selector === ".queue-sheet > .card-body" ? sheetBody : null),
+        getElementById: (id: string) => (id === "queue-row-41" ? { name: "row 41" } : null),
+      };
       assert.equal(call<{ name: string }>("getReturnFocusQ", row.stored, root, 41).name, row.expected);
     });
   }
 
-  test("the list's and the sheet's scroll positions stored on entering are set again on leaving", () => {
-    const bodies: Record<string, { scrollTop: number }> = { ".queue-list > .card-body": { scrollTop: 412 }, ".queue-sheet > .card-body": { scrollTop: 96 } };
+  // a list put away under a sheet reads 0 in some browsers → its scroll is the sheet's own store to give back, never this one's
+  test("the middle pane's scroll on screen stored on entering is set again on leaving, and a put-away list's is left alone", () => {
+    const bodies: Record<string, { scrollTop: number; getClientRects: () => unknown[] }> = {
+      ".queue-list > .card-body": { scrollTop: 412, getClientRects: () => [] },
+      ".queue-sheet > .card-body": { scrollTop: 96, getClientRects: () => [{}] },
+    };
     const root = { querySelector: (selector: string) => bodies[selector] ?? null };
     const stored = (screen.getPaneScrollsQ as (r: unknown) => unknown)(root);
-    for (const body of Object.values(bodies)) body.scrollTop = 0;
+    for (const body of Object.values(bodies)) body.scrollTop = 7;
     (screen.setPaneScrollsQ as (r: unknown, s: unknown) => void)(root, stored);
-    assert.deepEqual(Object.values(bodies).map((body) => body.scrollTop), [412, 96]);
+    assert.deepEqual(Object.values(bodies).map((body) => body.scrollTop), [7, 96]);
   });
 
   test("the history read asks for the ticked sessions' orders a page at a time, and Show earlier continues from the cursor", async () => {
@@ -2030,12 +2046,13 @@ describe("desk keys", () => {
   const decision = buildItem({ id: 3 });
   const report = buildItem({ id: 5, kind: "report", options: [] });
   const order = buildItem({ id: 9, kind: "message", status: "answered", sendId: "s", options: [], session: buildSession({ id: ENDED_ID }) });
-  // the desk with `selected` on the sheet; `calls` records every queue act a key makes
+  // the desk with `selected` on the sheet (0 → the list, nothing open); `calls` records every queue act a key makes
   const deskWith = (selected: number, sessions: Record<string, unknown> = {}) => {
     const built = buildQueue({ sessions: buildSessions(sessions), openOrderRow: (row: { id: number }) => built.calls.push(["openOrderRow", row.id]), openReplyOrder: (item: { id: number }) => built.calls.push(["openReplyOrder", item.id]) });
     const listed = withList(built.queue, [decision, report, order]);
     const groups = listed.groups as Array<{ rows: Array<{ id: number }> }>;
-    return { calls: built.calls, queue: { ...listed, sheet: getSheet(groups, String(selected)), selectedId: selected } };
+    const sheet = getSheet(groups, selected ? String(selected) : "");
+    return { calls: built.calls, queue: { ...listed, sheet, selectedId: selected || null, steps: call("getStepsQ", groups, sheet.id, -1) } };
   };
   const press = (name: string, selected: number, extra: Record<string, unknown> = {}) => {
     keyActs.length = 0;
@@ -2044,26 +2061,30 @@ describe("desk keys", () => {
     return { calls: getPlain(calls), acts: [...keyActs] };
   };
 
-  const steps = [
-    { name: "J on a decision selects the report after it", action: "next", selected: 3, expected: 5 },
-    { name: "K on the report selects the decision before it", action: "prev", selected: 5, expected: 3 },
-    { name: "J on the last row stays on it", action: "next", selected: 9, expected: 9 },
+  const sheetSteps = [
+    { name: "J on a decision's sheet opens the report after it", action: "next", selected: 3, expected: [["selectRow", 5]] },
+    { name: "K on the report's sheet opens the decision before it", action: "prev", selected: 5, expected: [["selectRow", 3]] },
+    { name: "J on the last sheet passes over the order's row and opens nothing", action: "next", selected: 5, expected: [] },
   ];
-  for (const row of steps) test(`a key's act: ${row.name}`, () => assert.deepEqual(press(row.action, row.selected).calls, [["selectRow", row.expected]]));
+  for (const row of sheetSteps) test(`a key's act: ${row.name}`, () => assert.deepEqual(press(row.action, row.selected).calls, row.expected));
 
-  test("Enter on a decision's row focuses its picked option, else its first", () => {
-    keyRoot.elements = { ".queue-sheet input[type=radio]": keyElement("first option") };
-    assert.deepEqual(press("enter", 3).acts, ["focus first option"]);
-    keyRoot.elements = { ".queue-sheet input[type=radio]:checked": keyElement("picked option"), ".queue-sheet input[type=radio]": keyElement("first option") };
-    assert.deepEqual(press("enter", 3).acts, ["focus picked option"]);
-  });
+  const rowTarget = (id: number) => ({ ...buildKeyTarget({ inside: ['[role="option"]'] }), closest: (selector: string) => (selector === '[role="option"]' ? { id: `queue-row-${id}` } : null) });
+  const listSteps = [
+    { name: "J on the list focuses the row after the focused one and opens nothing", action: "next", target: rowTarget(3), expected: "focus row 5" },
+    { name: "K on the list focuses the row before the focused one", action: "prev", target: rowTarget(9), expected: "focus row 5" },
+    { name: "J with no row focused focuses the first row", action: "next", target: undefined, expected: "focus row 3" },
+  ];
+  for (const row of listSteps) {
+    test(`a key's act: ${row.name}`, () => {
+      keyRoot.elements = { "#queue-row-3": keyElement("row 3"), "#queue-row-5": keyElement("row 5"), "#queue-row-9": keyElement("row 9") };
+      const pressed = press(row.action, 0, { target: row.target });
+      assert.deepEqual([pressed.acts, pressed.calls], [[row.expected], []]);
+    });
+  }
 
-  test("Enter on a report's row focuses the sheet's primary button", () => {
-    keyRoot.elements = { ".queue-sheet .queue-composer .btn.primary": keyElement("Mark as read") };
-    assert.deepEqual(press("enter", 5).acts, ["focus Mark as read"]);
-  });
+  test("Enter on a row opens its sheet", () => assert.deepEqual(press("enter", 0, { target: rowTarget(5) }).calls, [["selectRow", 5]]));
 
-  test("Enter on an order's row opens the Orders mode at its entry", () => assert.deepEqual(press("enter", 9).calls, [["openOrderRow", 9]]));
+  test("Enter on an order's row opens the Orders mode at its entry and no sheet", () => assert.deepEqual(press("enter", 0, { target: rowTarget(9) }).calls, [["openOrderRow", 9]]));
 
   const picks = [
     { name: "a digit on an open decision picks that option", selected: 3, index: 1, expected: [["setDraft", 3, { code: "R2", error: null }]] },
@@ -2088,10 +2109,7 @@ describe("desk keys", () => {
     assert.deepEqual(press("field", 5).acts, ["focus field"]);
   });
 
-  test("Esc from the sheet focuses the selected row", () => {
-    keyRoot.elements = { "#queue-row-5": keyElement("row 5") };
-    assert.deepEqual(press("back", 5).acts, ["focus row 5"]);
-  });
+  test("Esc from the sheet goes back to the list", () => assert.deepEqual(press("back", 5).calls, [["back"]]));
 
   test("Cmd+Enter presses the primary button of the pane holding the focus", () => {
     keyRoot.elements = { ".queue-composer .btn.primary": keyElement("Send answer") };
@@ -2516,17 +2534,58 @@ describe("In delivery rows", () => {
 describe("the sheet's letterhead and record", () => {
   const item = buildItem({ status: "unacked", canResend: true, answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", answerRecord: { route: "answer", signal: "fetch_metadata" }, session: buildSession({ name: "aidl", state: "live" }) });
 
-  test("an answered decision's letterhead holds the receipt badge alone after the name", () => {
+  test("an answered decision's date line holds the receipt badge alone", () => {
     const facts = findNodes(render("LetterheadFactsQ", { item }), (node) => node.props?.atom === "Badge").map((node) => collectText(node));
     assert.deepEqual([facts, collectText(render("LetterheadFactsQ", { item })).includes("Answer R1")], [["Not received"], false]);
   });
 
-  test("the letterhead time reads the spec's dated form and its title carries the answer record", () => {
+  test("the date line's time reads the spec's dated form and its title carries the answer record", () => {
     const tree = render("LetterheadTimeQ", { item });
     const [time] = findNodes(tree, (node) => typeof node.props?.title === "string");
     assert.equal(time?.props.title, "Answered 2026-11-12 21:26 KST through the monitor (same-origin request)");
     assert.ok(collectText(tree).endsWith("2026-11-12 21:26 KST"), collectText(tree));
   });
+
+  test("the sheet's date line comes first in its body: the facts, then the time", () => {
+    const tree = renderSheet({ item, queue: buildQueue().queue });
+    const [line] = byClass(tree, "queue-date-line");
+    const [body] = byClass(tree, "queue-sheet-body");
+    assert.deepEqual([body?.children[0] === line, collectText(line as RenderedNode).replace(/\s+/g, " ").trim()], [true, "Not received Answered 2026-11-12 21:26 KST"]);
+  });
+
+  test("the sheet's head holds the way back, the kind tag and name as its h2, the position and the stepping", () => {
+    const { calls, queue } = buildQueue({ steps: { index: 0, count: 8, prevId: null, nextId: 7 } });
+    const tree = renderSheet({ item: buildItem(), queue });
+    const [head] = byClass(tree, "card-head");
+    const buttons = findNodes(head as RenderedNode, (node) => node.type === "button");
+    for (const button of buttons) if (!button.props.disabled) (button.props.onClick as () => void)();
+    assert.deepEqual(buttons.map((button) => [button.props["aria-label"], button.props.title, Boolean(button.props.disabled)]), [["Back to the list", "Esc", false], ["Previous item", "K", true], ["Next item", "J", false]]);
+    assert.equal(collectText(findNodes(head as RenderedNode, (node) => node.type === "h2")[0] as RenderedNode).replace(/\s+/g, " ").trim(), "Decision from glass-atrium");
+    assert.ok(collectText(head as RenderedNode).includes("1 of 8"));
+    assert.deepEqual(getPlain(calls), [["back"], ["selectRow", 7]]);
+  });
+
+  test("rows that arrived while the sheet is open are counted on the way back", () => {
+    const { queue } = buildQueue({ list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [50, 51] } });
+    const [back] = findNodes(renderSheet({ item: buildItem(), queue }), (node) => node.type === "button" && node.props.title === "Esc");
+    assert.deepEqual([back?.props["aria-label"], findNodes(back as RenderedNode, (node) => node.props?.atom === "Badge").map((node) => collectText(node))], ["Back to the list, 2 new in the list", ["2"]]);
+  });
+
+  // the session's facts ride its name; the id or the account shows only while it tells two loaded sessions apart
+  const twin = buildSession({ id: "b7c6d5e4-0000-4000-8000-000000000001" });
+  const elsewhere = buildSession({ id: "c1d2e3f4-0000-4000-8000-000000000002", name: "aidl", profileLabel: ".claude-personal" });
+  const nameRows = [
+    { name: "a name no other loaded session carries stands alone", items: [buildItem()], expected: "glass-atrium" },
+    { name: "a name two loaded sessions share takes the 8-character id", items: [buildItem(), buildItem({ id: 42, session: twin })], expected: "glass-atrium · 6f1c2a9e" },
+    { name: "items from more than one account add the account", items: [buildItem(), buildItem({ id: 42, session: elsewhere })], expected: "glass-atrium · work-dev" },
+  ];
+  for (const row of nameRows) {
+    test(`the sheet's session name: ${row.name}`, () => {
+      const { queue } = buildQueue({ list: { status: "ready", data: { items: row.items, nextCursor: null }, newIds: [] } });
+      const [name] = byClass(renderSheet({ item: row.items[0], queue }), "queue-letter-name");
+      assert.equal(collectText(name as RenderedNode).replace(/\s+/g, " ").trim(), row.expected);
+    });
+  }
 
   test("the record is no visible line, and a not received answer says why and what to run", () => {
     const text = collectText(render("CardStateQ", { item, cliPath: CLI_PATH }));
@@ -2546,15 +2605,6 @@ describe("loading and empty states", () => {
     const [placeholder] = findNodes(render("ListBodyQ", { queue: loading, items: [], visible: [] }), (node) => node.props?.atom === "LoadingPlaceholder");
     const [card] = findNodes(render("QueueListQ", { queue: loading }), (node) => node.props?.atom === "Card");
     assert.deepEqual([placeholder?.props.label, card?.props.sub ?? null], ["the queue", null]);
-  });
-
-  test("the empty sheet is one line with the secondary New order", () => {
-    const { queue } = buildQueue();
-    const opened: unknown[] = [];
-    const tree = render("QueueSheetQ", { queue: { ...withList(queue, []), sheet: { kind: "empty", id: null }, orders: { ...(queue as { orders: object }).orders, open: () => opened.push(true) } } });
-    const text = collectText(tree);
-    for (const button of buttonLabelled(tree, "New order")) (button.props.onClick as () => void)();
-    assert.deepEqual([text.includes("Nothing selected"), text.includes("Pick a row, or give an order."), opened.length], [true, true, 1]);
   });
 
   test("an empty thread names the ticked sessions and asks for the first order", () => {
