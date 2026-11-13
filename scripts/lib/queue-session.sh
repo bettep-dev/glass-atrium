@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# queue-session.sh — the owner queue's session-side wire steps, shared by the SessionStart / SessionEnd
-# hooks and the queue CLI so their register fields cannot drift. Sourced, not executable.
-# Never reads the messaging token; sends a pid, never a start time.
+# queue-session.sh — the owner queue's session side, shared by the SessionStart / SessionEnd / Stop hooks and the
+# queue CLI so each has one owner: the register and deregister steps, the monitor reply framing, the item status sets,
+# the awaiting marks and the wait-lock reader. Sourced, not executable; never reads the messaging token, and sends a
+# pid, never a start time.
 
 if [[ -n "${_QUEUE_SESSION_LOADED:-}" ]]; then
   return 0
@@ -17,7 +18,16 @@ readonly QUEUE_CONNECT_TIMEOUT_S=1
 readonly QUEUE_MAX_TIME_S=2
 readonly QUEUE_UUID_SHAPE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 readonly QUEUE_PID_SHAPE='^[1-9][0-9]{0,9}$'
+readonly QUEUE_ITEM_ID_SHAPE='^[1-9][0-9]{0,15}$'
+# another session's awaiting set untouched this long → that session is gone (a kill or a closed terminal skips SessionEnd)
+readonly QUEUE_AWAITING_TTL_DAYS=30
 readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions dontAsk plan '
+# the item states nothing moves on from; the set itself is the monitor's TERMINAL (queue-turn-end-check.bats compares the two)
+# shellcheck disable=SC2034  # read by the sourcing turn-end hook
+readonly QUEUE_TERMINAL_STATUSES=' delivered seen withdrawn '
+# the states a running wait carries forward: open (no answer yet) and answered (claimed by the wait)
+# shellcheck disable=SC2034  # read by the sourcing turn-end hook
+readonly QUEUE_WAIT_RESOLVED_STATUSES=' open answered '
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
 # space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
@@ -87,14 +97,24 @@ queue_send() {
   curl "${args[@]}" "http://127.0.0.1:${port}${route}" 2>/dev/null
 }
 
+# <queue_send reply> → its HTTP status
+queue_get_reply_code() {
+  printf '%s\n' "${1##*$'\n'}"
+}
+
+# <queue_send reply> → its body
+queue_get_reply_body() {
+  printf '%s\n' "${1%$'\n'*}"
+}
+
 # POST <route> <json body> [max seconds] → reply body on stdout; non-zero when unreachable, slow or refused.
 queue_post() {
-  local reply status
+  local reply code
   # shellcheck disable=SC2310  # no reply → this function's own failure, never an errexit
   reply="$(queue_send POST "$1" "$2" "${3:-}")" || return 1
-  status="${reply##*$'\n'}"
-  [[ "${status}" == 2?? ]] || return 1
-  printf '%s\n' "${reply%$'\n'*}"
+  code="$(queue_get_reply_code "${reply}")"
+  [[ "${code}" == 2?? ]] || return 1
+  queue_get_reply_body "${reply}"
 }
 
 # <text> → the name the monitor accepts: control characters as spaces, trimmed, cut to QUEUE_NAME_MAX; nothing when blank
@@ -171,4 +191,107 @@ queue_deregister_session() {
   token_file="$(queue_get_token_dir)/${session_id}"
   if ga_guard_path "${token_file}"; then rm -f -- "${token_file:?}"; fi
   queue_post /api/queue/sessions/deregister "${body}" >/dev/null
+}
+
+# <session id> → the path of its wait lock
+queue_get_wait_lock_path() {
+  local root
+  root="$(queue_get_root)"
+  printf '%s/data/queue/waits/%s\n' "${root}" "$1"
+}
+
+# <session id> → this Claude process's view of the session's wait lock: none · live (a running wait of this process) ·
+# stale; nothing without CLAUDE_PID (a wait cannot start without it)
+queue_get_wait_state() {
+  local owner_pid owner lock
+  owner_pid="$(queue_get_pid)"
+  [[ -n "${owner_pid}" ]] || return 0
+  owner="${owner_pid}|$(queue_get_start_time "${owner_pid}")"
+  lock="$(queue_get_wait_lock_path "$1")"
+  queue_get_wait_lock_state "${lock}" "${owner}"
+}
+
+# <pid> → its process start time, the recycled-pid guard; nothing when the pid is gone
+queue_get_start_time() {
+  local started
+  started="$(LC_ALL=C ps -p "$1" -o lstart= 2>/dev/null)" || return 0
+  started="${started#"${started%%[![:space:]]*}"}"
+  printf '%s\n' "${started%"${started##*[![:space:]]}"}"
+}
+
+# <lock path> <owner "pid|its start"> [this wait's own record] → none · mine (holds that record) · live (another
+# running wait of that owner) · stale (its waiter is gone, or it names another owner); the one reader of the lock name
+queue_get_wait_lock_state() {
+  local held
+  held="$(readlink "$1" 2>/dev/null)" || held=""
+  # shellcheck disable=SC2310  # liveness is the last branch
+  if [[ -z "${held}" ]]; then
+    printf 'none\n'
+  elif [[ "${held}" == "${3:-}" ]]; then
+    printf 'mine\n'
+  elif queue_is_wait_live "${held}" "$2"; then
+    printf 'live\n'
+  else
+    printf 'stale\n'
+  fi
+}
+
+# <held record> <owner "pid|its start"> → 0 while its waiter still runs and it names that owner
+queue_is_wait_live() {
+  local waiter_pid waiter_start owner started
+  IFS='|' read -r waiter_pid waiter_start owner <<<"$1"
+  [[ "${owner}" == "$2" && "${waiter_pid}" =~ ${QUEUE_PID_SHAPE} && -n "${waiter_start}" ]] || return 1
+  started="$(queue_get_start_time "${waiter_pid}")"
+  [[ "${started}" == "${waiter_start}" ]]
+}
+
+# Awaiting marks: one empty file per item a session posted that expects an owner answer, named by the item id → the
+# turn-end check lists them before any monitor call. SessionEnd keeps them: a resumed session keeps its id.
+
+# <session id> → its awaiting set's directory; non-zero for anything but a UUID
+queue_get_awaiting_dir() {
+  local root
+  [[ "$1" =~ ${QUEUE_UUID_SHAPE} ]] || return 1
+  root="$(queue_get_root)"
+  printf '%s/data/queue/awaiting/%s\n' "${root}" "$1"
+}
+
+# <session id> <item id> → marks the posted item awaiting
+queue_create_awaiting_item() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  [[ "$2" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 1
+  { mkdir -p -- "${dir}" && : >"${dir}/$2"; } 2>/dev/null
+}
+
+# <session id> <item id> → the item awaits no longer (acked or withdrawn)
+queue_delete_awaiting_item() {
+  local dir marker
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  [[ "$2" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 1
+  marker="${dir}/$2"
+  if ga_guard_path "${marker}"; then rm -f -- "${marker:?}"; fi
+}
+
+# <session id> → its awaiting item ids, newest (highest) first; nothing when none
+queue_get_awaiting_items() {
+  local dir marker ids=""
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  for marker in "${dir}"/*; do
+    if [[ -f "${marker}" && "${marker##*/}" =~ ${QUEUE_ITEM_ID_SHAPE} ]]; then ids+="${marker##*/}"$'\n'; fi
+  done
+  if [[ -n "${ids}" ]]; then sort -rn <<<"${ids%$'\n'}"; fi
+}
+
+# Drops every awaiting set untouched for QUEUE_AWAITING_TTL_DAYS; run right after a create, so the caller's own set is
+# fresh and never among them.
+# ponytail: a live session whose newest mark is older than the TTL loses its set → raise the TTL if owners answer later
+queue_delete_stale_awaiting() {
+  local root sets set
+  root="$(queue_get_root)/data/queue/awaiting"
+  sets="$(find "${root}" -mindepth 1 -maxdepth 1 -type d -mtime "+${QUEUE_AWAITING_TTL_DAYS}" 2>/dev/null)" || return 1
+  [[ -n "${sets}" ]] || return 0
+  while IFS= read -r set; do
+    if ga_guard_path "${set}"; then rm -rf -- "${set:?}"; fi
+  done <<<"${sets}"
 }

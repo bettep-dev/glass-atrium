@@ -101,7 +101,8 @@ write_full_settings() {
     "Stop": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-preedit-facts.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/cost-tracker.sh" } ] },
-      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-typecheck.sh" } ] }
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-typecheck.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-turn-end-check.sh" } ] }
     ],
     "SubagentStart": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/agent-tracker.sh" } ] },

@@ -3,11 +3,11 @@
 #
 # Post-turn ADVISORY for the scope-dev.md "Pre-Edit Facts Disclosure" rule: surfaces files
 # Write/Edit-ed without a `Pre-Edit Facts:` declaration. WARN only, NEVER blocks. Facts come from the
-# transcript (Stop supplies only a transcript_path, not the inline last_assistant_message).
+# transcript: the edits are tool calls, which the payload's last_assistant_message text never carries.
 # Registered on Stop ONLY (matcher ""), firing alongside cost-tracker.sh. NOT on SubagentStop: the
 # parent transcript visible there predates the subagent's own edits, so it has nothing to advise on.
-# Advisory-only because Stop has NO block channel — a finished turn cannot be rewound
-# by exit 2 (scoped/shared-hook-capability-contract.md Per-Event table: observe-only), so ALWAYS exit 0.
+# Advisory-only by choice: a Stop block continues the turn rather than undoing its edits
+# (scoped/shared-hook-capability-contract.md → Stop row), so ALWAYS exit 0.
 #
 # The transcript is read as a BOUNDED tail (last ~1 MiB), never a full stream: the current turn's edits +
 # declarations always fall in that tail, so a long session no longer re-reads the whole file each turn-end.
@@ -15,7 +15,6 @@
 # Declaration format (scope-dev.md rule): a block headed `Pre-Edit Facts: <file_path>` then
 # `importers:` / `affected API:` / `data schemas:` / `user instruction:`. The advisory keys on the
 # <file_path> header PRESENCE per edited file, NOT fact quality/accuracy.
-# Per shared-hook-capability-contract.md the Stop lifecycle is advisory accounting only.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
