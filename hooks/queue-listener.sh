@@ -50,11 +50,29 @@ is_listenable_session() {
   [[ -z "${CLAUDE_JOB_DIR:-}" ]] || return 1
   pid="$(queue_get_pid)"
   [[ -n "${pid}" ]] || return 1
+  # shellcheck disable=SC2310  # a single ps read → non-zero fails closed
+  is_print_mode_process "${pid}" && return 1
   parent_pid="$(ps -o ppid= -p "${pid}" 2>/dev/null)" || return 1
   parent_pid="${parent_pid//[[:space:]]/}"
   [[ "${parent_pid}" =~ ${QUEUE_PID_SHAPE} ]] || return 1
   parent="$(ps -o command= -p "${parent_pid}" 2>/dev/null)" || return 1
   [[ -n "${parent}" && "${parent}" != *"${BG_PTY_HOST_FLAG}"* ]]
+}
+
+# <pid> → 0 when that process's argv carries a print flag, or when its argv cannot be read (fails closed); a second
+# headless signal beside the entrypoint, which a `claude -p` child of an interactive session inherits as `cli`
+is_print_mode_process() {
+  local command word words
+  command="$(ps -ww -o command= -p "$1" 2>/dev/null)" || return 0
+  [[ -n "${command}" ]] || return 0
+  IFS=' ' read -r -a words <<<"${command}"
+  for word in "${words[@]}"; do
+    case "${word}" in
+      -p | --print | --print=*) return 0 ;;
+      *) ;;
+    esac
+  done
+  return 1
 }
 
 main

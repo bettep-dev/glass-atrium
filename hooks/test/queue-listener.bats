@@ -127,7 +127,7 @@ expected_wake() {
     "${WAKE_LEAD}" "$1" "${GA_ROOT}/scripts/atrium-queue.sh"
 }
 
-@test "the listener exits at once with no monitor call for a subagent, a non-cli or unnamed entrypoint, a background job or an undecidable session" {
+@test "the listener exits at once with no monitor call for a subagent, a non-cli or unnamed entrypoint, a background job, a print-mode process or an undecidable session" {
   start_stub
   local bg_parent_file="${BATS_TEST_TMPDIR}/bg-child" row tries=0
   # a session process whose parent is a background-job pty host, as `claude --bg` runs one
@@ -139,7 +139,11 @@ expected_wake() {
     tries=$((tries + 1))
   done
   BG_PIDS="${BG_PIDS} $(cat "${bg_parent_file}")"
-  for row in subagent sdk-cli no-entrypoint job-dir bg-pty-host no-pid dead-pid; do
+  # a headless run whose entrypoint reads cli, as a `claude -p` child of an interactive session inherits it
+  bash -c 'exec -a "claude --model haiku -p" sleep 300' >/dev/null 2>&1 3>&- &
+  local print_pid=$!
+  BG_PIDS="${BG_PIDS} ${print_pid}"
+  for row in subagent sdk-cli no-entrypoint job-dir bg-pty-host print-flag no-pid dead-pid; do
     (
       payload="$(start_payload)"
       case "${row}" in
@@ -151,6 +155,7 @@ expected_wake() {
         no-entrypoint) unset CLAUDE_CODE_ENTRYPOINT ;;
         job-dir) export CLAUDE_JOB_DIR="${BATS_TEST_TMPDIR}/job" ;;
         bg-pty-host) CLAUDE_PID="$(cat "${bg_parent_file}")" && export CLAUDE_PID ;;
+        print-flag) export CLAUDE_PID="${print_pid}" ;;
         no-pid) unset CLAUDE_PID ;;
         dead-pid) export CLAUDE_PID=999999 ;;
         *) ;;
