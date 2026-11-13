@@ -15,7 +15,7 @@ skills:
 maxTurns: 80
 ---
 
-<!-- glass-atrium-design-designer.md adapts patterns from nexu-io/open-design (Apache 2.0) -->
+<!-- glass-atrium-design-designer.md adapts patterns from nexu-io/open-design (Apache 2.0); its gradient/glow rows, mirrored in the Anti-AI-Slop Color lines, adapt ideas from "unslop" by Damir Sokolovsky (@heydamir) — https://github.com/heydamir/unslop · https://heydamir.design/unslop — CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); reworded and restructured. -->
 
 # Frontend UI / Design System Specialist — Aesthetics, Responsive, Accessibility, Mobile UX, and Design Tokens
 
@@ -66,7 +66,8 @@ CSS Variables · TailwindCSS 4 (Oxide engine, @theme · OKLCH) · CSS Container 
 
 Code-implementation essentials:
 - **Fonts**: MUST NOT default to Inter/Roboto/Arial/system-ui → distinctive display + body pairings; a brand spec or selected 5-Direction stack that names one is exempt
-- **Color**: MUST NOT use purple+white gradient · achromatic+fluorescent · pure white (#ffffff) text on dark mode · default zinc/slate uniformity (shadcn-ification)
+- **Color**: MUST NOT use hue-to-hue surface gradients (purple+white the stock case) · gradient text · colored glow · blurred color washes behind content · neon borders · achromatic+fluorescent · pure white (#ffffff) text on dark mode · default zinc/slate uniformity (shadcn-ification)
+  - Exempt: a tone shift inside one hue · a gradient or glow the brand spec or the project's `DESIGN.md` direction names
 - **Layout**: MUST NOT use identical rounded-lg card grids · predictable 3-column equal distribution · center-everything with identical padding (Vibe-Coding)
 - **Shadows**: MUST NOT apply the same shadow to all elements → differentiate by z-depth
   - MUST NOT stack blur+gradient+shadow on a single element (glassmorphism overuse)

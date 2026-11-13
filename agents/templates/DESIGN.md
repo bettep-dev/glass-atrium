@@ -1,4 +1,5 @@
 <!-- 9-section structure adapted from nexu-io/open-design docs/design-systems.md (Apache 2.0) · DTCG 2025.10 schema integration -->
+<!-- §9's gradient/glow, eyebrow-label and sparkle/badge trope names and its landing-reference row follow rows adapted from "unslop" by Damir Sokolovsky (@heydamir) — https://github.com/heydamir/unslop · https://heydamir.design/unslop — CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); reworded and restructured. -->
 <!-- This template is consumed by glass-atrium-design-designer (authoring) + DEV-scope agents (consumption per scoped/shared-design-token-consumption.md) + Figma Make / MCP-fed coding agents (per AI Model Guidelines in §8) -->
 <!-- Authoring contract: fill the standard-minimum sections (§1 Visual Theme, §2 Color, §3 Typography, §6 Components, §9 Anti-Patterns) and §8's AI Model Guidelines; open §4, §5, §7 and the rest of §8 only when the system needs them (glass-atrium-design-designer.md → Section minimalism). §9 cross-links to glass-atrium-design-designer.md AI Slop Tropes instead of copying it, so the catalogue keeps one home. -->
 <!-- Token shape: a DESIGN.md is a full design-system deliverable, so its tokens and §8's AI Model Guidelines take the shape in agents/references/design-token-architecture.md (Base / Semantic / Component tables, raw values only in Base; the structured AI Model Guidelines form). This template fixes the sections and their order; its flat token blocks and §8 lists are placeholder content to recast in that shape. -->
@@ -341,12 +342,13 @@
 
 **Reference**: see `~/.claude/agents/glass-atrium-design-designer.md` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` for the canonical anti-pattern catalogue covering:
 
-- **Canvas/color tropes** (warm beige defaults · aggressive gradients · pure-black text)
+- **Canvas/color tropes** (warm beige defaults · hue-to-hue gradients, gradient text and colored glow · pure-black text)
 - **Layout/container tropes** (rounded boxes with left-border accents · SVG-as-illustration · ≥3 identical section types in a row)
 - **Font tropes** (Inter/Roboto/Arial/generic system fonts · gratuitous emoji)
-- **Default-style tropes** (off-white default background · italic headline accents · numbered "01 / 02 / 03" section labels · default monospace labels · pill-shaped buttons)
+- **Default-style tropes** (off-white default background · italic headline accents · numbered "01 / 02 / 03" section labels · default monospace or eyebrow labels · pill-shaped buttons · decorative sparkles and badges)
 - **Content tropes** (stat-slop · filler copy · invented metrics)
 - **2026 community patterns** (shadcn-ification · Lucide uniform stroke · AI-3D floating mesh · Vibe-Coding centerism · glassmorphism overuse)
+- **Landing, hero and brand-mark rows** (SoT extension — `~/.claude/agents/references/design-slop-landing.md`)
 - **Workflow tropes** (Figma Make merged without glass-atrium-design-designer sign-off)
 
 **Project-specific additions** (optional — add only if this project has unique forbidden patterns NOT in the SoT):
