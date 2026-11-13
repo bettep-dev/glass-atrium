@@ -179,6 +179,29 @@ export interface HealthHookFailuresResponse {
   timezone: "UTC";
 }
 
+// core.cost_events model ids with no pricing SoT row — a pricing advisory, not a hook failure.
+
+export interface UnpricedModelEntry {
+  // Loader-normalized id (bracket variant + -YYYYMMDD snapshot suffix stripped).
+  model: string;
+  // Turn + subagent rows inside the days window.
+  event_count: number;
+  // UTC ISO instant of the newest such row.
+  last_seen_at: string;
+}
+
+export interface HealthUnpricedModelsResponse {
+  days: number;
+  limit: number;
+  // false → pricing SoT unreadable: no roster to subtract, so `models` stays empty rather than listing every id.
+  roster_available: boolean;
+  // Newest event first, LIMIT-truncated.
+  models: UnpricedModelEntry[];
+  // Unpriced ids in the window, NOT LIMIT-truncated.
+  model_count: number;
+  timezone: "UTC";
+}
+
 export type HealthDetailErrorBody =
   | { error: "internal" }
   | { error: "database_unavailable" }

@@ -24,6 +24,7 @@ import {
   auditDocumentBodies,
   type DocumentBodyAuditResult,
 } from "../maintenance/document-body-integrity.js";
+import { loadKnownModelIds } from "../model-config-consts.js";
 import {
   nextOccurrenceUtc,
   DAEMON_CRON_SCHEDULE,
@@ -42,6 +43,7 @@ import type {
   HealthDetailErrorBody,
   HealthHookChainResponse,
   HealthHookFailuresResponse,
+  HealthUnpricedModelsResponse,
   HealthWikiReportsResponse,
   HookChainEvent,
   HookEntry,
@@ -49,6 +51,7 @@ import type {
   HookErrorKindValue,
   HookFailureEntry,
   HookMatcherGroup,
+  UnpricedModelEntry,
   WikiReport,
 } from "../types/health-detail.js";
 
@@ -73,6 +76,8 @@ const ALLOWED_HOOK_FAILURE_DAYS: ReadonlySet<number> = new Set([7, 14, 30, 90]);
 const DEFAULT_HOOK_FAILURE_DAYS = 30;
 const DEFAULT_HOOK_FAILURE_LIMIT = 50;
 const MAX_HOOK_FAILURE_LIMIT = 200;
+// unpriced-models: same dual bound as hook-failures — the panel reads both over one window.
+const DEFAULT_UNPRICED_MODEL_LIMIT = 50;
 // document-integrity: `limit` is the newest-N row bound and is the DEFAULT — a full-corpus
 // sweep re-reads and re-hashes every stored body on every call (no memo), so it stays
 // reachable but opt-in via `limit=all` rather than being what omitting the param buys.
@@ -147,6 +152,7 @@ export async function registerHealthDetailRoutes(app: FastifyInstance): Promise<
   // Read-only drilldowns into two orphan tables.
   app.get("/api/health/daemon-payload", handleDaemonPayload);
   app.get("/api/health/hook-failures", handleHookFailures);
+  app.get("/api/health/unpriced-models", handleUnpricedModels);
   app.get("/api/health/document-integrity", handleDocumentIntegrity);
   app.get("/api/health/architecture-budget", handleArchitectureBudget);
 }
@@ -740,6 +746,103 @@ function logDocumentIntegrity(
     return;
   }
   request.log.info(fields, "health query complete");
+}
+
+// 7. /api/health/unpriced-models
+
+interface UnpricedModelRow {
+  model: string;
+  event_count: bigint;
+  last_seen_at: Date;
+  model_count: bigint;
+}
+
+/**
+ * Model ids cost-tracker priced without a pricing SoT row, derived from the stored cost rows —
+ * the condition the hook's stderr advisory reports, which clears once the row is added.
+ */
+async function handleUnpricedModels(
+  request: FastifyRequest<{ Querystring: { days?: string; limit?: string } }>,
+  reply: FastifyReply,
+): Promise<HealthUnpricedModelsResponse | HealthDetailErrorBody> {
+  const start = Date.now();
+  const days = parseDaysParam(request.query.days, DEFAULT_HOOK_FAILURE_DAYS, ALLOWED_HOOK_FAILURE_DAYS);
+  if (days === null) {
+    return reply.code(400).send(invalidParam("days"));
+  }
+  const limit = parseLimitParam(request.query.limit, DEFAULT_UNPRICED_MODEL_LIMIT, MAX_HOOK_FAILURE_LIMIT);
+  if (limit === null) {
+    return reply.code(400).send(invalidParam("limit"));
+  }
+  // The loader rejects an empty `models` object, so an empty roster is always a failed read.
+  const roster = await loadKnownModelIds();
+  if (roster.size === 0) {
+    request.log.warn({ route: "/api/health/unpriced-models" }, "pricing SoT unreadable; unpriced-model list withheld");
+    return { days, limit, roster_available: false, models: [], model_count: 0, timezone: "UTC" };
+  }
+  try {
+    const response = buildUnpricedModelsResponse(days, limit, await findUnpricedModelRows(days, limit, [...roster]));
+    request.log.info(
+      { route: "/api/health/unpriced-models", days, limit, modelCount: response.model_count, durationMs: Date.now() - start },
+      "health query complete",
+    );
+    return response;
+  } catch (error) {
+    return failWithDb(request, reply, "/api/health/unpriced-models", error);
+  }
+}
+
+function buildUnpricedModelsResponse(
+  days: number,
+  limit: number,
+  rows: ReadonlyArray<UnpricedModelRow>,
+): HealthUnpricedModelsResponse {
+  const models: UnpricedModelEntry[] = rows.map((row) => ({
+    model: row.model,
+    event_count: bigintToNumber(row.event_count),
+    last_seen_at: row.last_seen_at.toISOString(),
+  }));
+  const modelCount = rows[0] === undefined ? 0 : bigintToNumber(rows[0].model_count);
+  return { days, limit, roster_available: true, models, model_count: modelCount, timezone: "UTC" };
+}
+
+/**
+ * Model normalization = hooks/lib/pricing_loader.py → normalize_model_key (bracket variant cut, then a
+ * trailing -YYYYMMDD; an empty result keeps the raw id). NULL / '' / '<synthetic>' are excluded:
+ * cost-tracker.sh → calc_cost prices them at $0 before any rate lookup, so they never lack a row.
+ */
+async function findUnpricedModelRows(
+  days: number,
+  limit: number,
+  roster: string[],
+): Promise<UnpricedModelRow[]> {
+  // Both validated before embedding (days=allowlist, limit=integer clamp).
+  const intervalLiteral = Prisma.raw(`INTERVAL '${days} days'`);
+  const limitLiteral = Prisma.raw(String(limit));
+  return getPrisma().$queryRaw<UnpricedModelRow[]>`
+    WITH normalized AS (
+      SELECT
+        COALESCE(NULLIF(regexp_replace(split_part(model, '[', 1), '-[0-9]{8}$', ''), ''), model) AS model,
+        event_date + event_time AS seen_wall_clock
+      FROM core.cost_events
+      -- event_date pre-filter keeps the date index usable; the wall-clock bound is the exact window.
+      WHERE event_date >= ((NOW() AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text) - ${intervalLiteral})::date
+        AND event_date + event_time >= (NOW() AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text) - ${intervalLiteral}
+        AND model IS NOT NULL
+        AND model NOT IN ('', '<synthetic>')
+    )
+    SELECT
+      model,
+      COUNT(*)::bigint AS event_count,
+      -- zone-less day-bucket wall-clock → timestamptz, else the driver reads it as UTC
+      (MAX(seen_wall_clock) AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text) AS last_seen_at,
+      COUNT(*) OVER ()::bigint AS model_count
+    FROM normalized
+    WHERE NOT (model = ANY(${roster}::text[]))
+    GROUP BY model
+    ORDER BY last_seen_at DESC, model ASC
+    LIMIT ${limitLiteral}
+  `;
 }
 
 // shared helpers (mirror dashboard.ts/autoagent.ts patterns)
