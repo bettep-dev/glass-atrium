@@ -2298,8 +2298,10 @@ describe("queue page on the mockup fixtures", () => {
         note: [...document.querySelectorAll(".queue-orders .card-foot p")].map((line) => line.textContent).find((text) => text?.includes("not listening")),
       }));
       await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
+      // armed before the click → a reply landing before the click resolves is still seen
+      const sent = page.waitForResponse((response) => response.url().endsWith("/api/queue/owner/messages/send"));
       await page.locator(".queue-orders").getByRole("button", { name: /^Send to nightly/ }).click();
-      await page.waitForResponse((response) => response.url().endsWith("/api/queue/owner/messages/send"));
+      await sent;
       await page.close();
 
       assert.deepEqual(shown, { tagged: [["nightly", "Not listening"]], note: "nightly is not listening: it gets this at its next turn end or restart." });
