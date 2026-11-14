@@ -32,14 +32,14 @@ const TASK_TYPE_COLUMNS = [
   { key: 'cleanup',   label: 'cleanup'   },
 ];
 
-// revision_count 분포 — server enum 순서 (stacked bar bottom→top).
-// a quantity, not a severity → one --data hue, an ordered alpha ramp tells the buckets apart (spec 44084 §7)
+// revision_count 분포 — server enum 순서 (stacked bar left→right).
+// a quantity, not a severity → solid --data segments split by --elev separators, counts in visible text (spec 44084 §7, §1 --data floor)
 const REVISION_BUCKETS = [
-  { key: '0',  label: '0',  alpha: 1 },
-  { key: '1',  label: '1',  alpha: 0.8 },
-  { key: '2',  label: '2',  alpha: 0.6 },
-  { key: '3',  label: '3',  alpha: 0.45 },
-  { key: '4+', label: '4+', alpha: 0.3 },
+  { key: '0',  label: '0'  },
+  { key: '1',  label: '1'  },
+  { key: '2',  label: '2'  },
+  { key: '3',  label: '3'  },
+  { key: '4+', label: '4+' },
 ];
 
 const MATRIX_AGENT_CAP = 25;
@@ -2874,41 +2874,41 @@ function QualityHealthTimelineTooltip({ active, payload }) {
   );
 }
 
-// revision_count 분포 inline mini-bar — 0/1/2/3/4+ 5색 stacked horizontal bar.
+// revision_count 분포 inline mini-bar — one --data hue; position + separators split the buckets, the line below names each count.
 function RevisionInlineMiniBar({ buckets, total }) {
   if (total === 0) {
     return <div className="fs-meta text-faint">no revision data</div>;
   }
+  const drawn = REVISION_BUCKETS.filter((b) => (buckets[`bucket_${b.key}`] || 0) > 0);
   return (
-    <div
-      className="flex h-1.5 rounded-full overflow-hidden bg-sunken"
-      role="img"
-      aria-label={`revision distribution — ${total} total · ${getRevisionMixText(buckets)}`}>
-      {REVISION_BUCKETS.map((b) => {
-        const count = buckets[`bucket_${b.key}`] || 0;
-        if (count === 0) return null;
-        const widthPct = (count / total) * 100;
-        return (
-          <div
-            key={b.key}
-            style={{
-              width: `${widthPct}%`,
-              background: `rgb(var(--data) / ${b.alpha})`,
-            }}
-            title={`revision=${b.label}: ${count} (${formatPctAg(widthPct)})`}
-          />
-        );
-      })}
+    <div className="space-y-label">
+      <div className="flex h-1.5 rounded-full overflow-hidden bg-sunken" aria-hidden="true">
+        {drawn.map((b, i) => {
+          const count = buckets[`bucket_${b.key}`];
+          const widthPct = (count / total) * 100;
+          return (
+            <div
+              key={b.key}
+              style={{
+                width: `${widthPct}%`,
+                background: 'rgb(var(--data))',
+                ...(i > 0 && { borderLeft: '1px solid rgb(var(--elev))' }),
+              }}
+              title={`revision=${b.label}: ${count} (${formatPctAg(widthPct)})`}
+            />
+          );
+        })}
+      </div>
+      <p className="fs-meta text-dim tnum">{getRevisionMixText(drawn, buckets)}</p>
     </div>
   );
 }
 
-// every drawn bucket in words → the mix reads without telling the alpha steps apart
-function getRevisionMixText(buckets) {
-  return REVISION_BUCKETS
-    .filter((b) => (buckets[`bucket_${b.key}`] || 0) > 0)
-    .map((b) => `${b.label} revision${b.label === '1' ? '' : 's'}: ${buckets[`bucket_${b.key}`]}`)
-    .join(', ');
+// every drawn bucket in words → the mix reads on screen and to a screen reader, never from the bar alone
+function getRevisionMixText(drawn, buckets) {
+  return drawn
+    .map((b) => `${b.label} revision${b.label === '1' ? '' : 's'} ${formatIntAg(buckets[`bucket_${b.key}`])}`)
+    .join(' · ');
 }
 
 // LifecycleStats (col-span-2) — orphan spawn gap + duration 분포 (/api/agents/lifecycle-stats).

@@ -2507,6 +2507,23 @@ describe("Agents values take the shared number, date and nothing forms", () => {
     assert.deepEqual(findAtoms(tree, "AbsentValue").map((n) => n.props.kind), ["not-loaded"]);
   });
 
+  test("the revision mix draws every bucket in the one data colour, split by separators, with each count in visible text", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+    const buckets = { bucket_0: 40, bucket_1: 5, bucket_2: 1, bucket_3: 0, "bucket_4+": 2 };
+    const tree = renderScreen(React.createElement(mod.RevisionInlineMiniBar as Component, { buckets, total: 48 }));
+    const segments = findNodes(tree, (n) => typeof (n.props.style as { width?: unknown } | undefined)?.width === "string");
+    const styles = segments.map((n) => n.props.style as { background: string; borderLeft?: string });
+
+    assert.equal(segments.length, 4, "one segment per bucket with runs");
+    assert.deepEqual([...new Set(styles.map((s) => s.background))], ["rgb(var(--data))"], "no alpha ramp below the --data floor");
+    assert.deepEqual(styles.map((s) => s.borderLeft ?? null), [null, ...Array(3).fill("1px solid rgb(var(--elev))")], "a separator before every later segment");
+    const visible = collectText(findNodes(tree, (n) => n.type === "p")[0] ?? null);
+    for (const [label, count] of [["0", 40], ["1", 5], ["2", 1], ["4+", 2]] as const) {
+      assert.match(visible, new RegExp(`(^|· )${label.replace("+", "\\+")} revisions? ${count}( ·|$)`), `${label} shows its count on screen`);
+    }
+  });
+
   test("a fractional budget crossing peak prints through formatPct in the drawer and on the P95 bar", async () => {
     const mod = await loadAgentsScreen(formOverrides());
     const getCrossing = mod.getCrossingMetricsAg as (s: unknown, m: unknown, id: string) => { count: unknown; peak: unknown };
@@ -2522,17 +2539,5 @@ describe("Agents values take the shared number, date and nothing forms", () => {
     const last = (mod.resolveLastBreakage as (p: unknown, m: unknown) => { text: string; title: string })({ agent: "a", lastFailureDate: "2026-11-13" }, null);
     assert.equal(last.text, "11-13");
     assert.match(last.title, /2026-11-13/, "the full date stays in the title");
-  });
-
-  test("the revision mix paints every segment in the data colour and names each bucket's count", async () => {
-    const mod = await loadAgentsScreen(formOverrides());
-    const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-    const buckets = { bucket_0: 12, bucket_1: 3, bucket_2: 0, bucket_3: 1, "bucket_4+": 2 };
-    const tree = renderScreen(React.createElement(mod.RevisionInlineMiniBar as Component, { buckets, total: 18 }));
-    const segments = findNodes(tree, (n) => typeof (n.props?.style as { background?: string } | undefined)?.background === "string");
-    assert.equal(segments.length, 4, "a zero bucket draws no segment");
-    for (const segment of segments) assert.match(String((segment.props.style as { background: string }).background), /var\(--data\)/);
-    const [img] = findNodes(tree, (n) => n.props?.role === "img");
-    assert.match(String(img.props["aria-label"]), /0 revisions: 12.*1 revision: 3.*3 revisions: 1.*4\+ revisions: 2/);
   });
 });
