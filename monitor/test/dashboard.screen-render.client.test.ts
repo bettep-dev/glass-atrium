@@ -823,3 +823,15 @@ test("a folded weekday keeps its ×2 token on one line in the fold sentence and 
   assert.equal(label && collectText(label), "Wed ×2", "the row label names the folded weekday");
   assert.match(classOf(label), /\bwhitespace-nowrap\b/, "the row label never wraps inside its track");
 });
+
+test("a zero spend day draws no bar, and every day's track stands on the baseline", () => {
+  const strip = (mod.buildSpendStrip as (points: unknown) => unknown)(
+    [["2026-11-10", 12.5], ["2026-11-11", 0], ["2026-11-12", 3.25]].map(([date, cost]) => ({ date, cost_usd: cost, session_count: 1 })),
+  );
+  const days = findNodes(render("SpendStrip", { strip }), (n) => n.type === "li");
+  const barsOf = (day: RenderedNode) => findNodes(day, (n) => /\bdash-strip-(?:bar|partial)\b/.test(classOf(n))).length;
+  assert.deepEqual(days.map(barsOf), [1, 0, 1], "only the zero day is bare");
+  for (const day of days) {
+    assert.equal(findNodes(day, (n) => n.props["data-chart-baseline"] === "").length, 1, "one baseline segment per day track");
+  }
+});

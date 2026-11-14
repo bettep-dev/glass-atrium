@@ -157,7 +157,11 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
-        .dash-strip-track { height: 4rem; }
+        .dash-strip-track { height: 4rem; position: relative; }
+        /* one 1px --line baseline across the strip → each day's segment reaches half the gap-1 column gap either side */
+        .dash-strip-base { position: absolute; bottom: 0; left: -0.125rem; right: -0.125rem; height: 1px; background: rgb(var(--line)); }
+        li:first-child > .dash-strip-track > .dash-strip-base { left: 0; }
+        li:last-child > .dash-strip-track > .dash-strip-base { right: 0; }
         .dash-strip-bar { background: currentColor; border-radius: 2px; }
         /* today is still accruing → an outlined bar, never a filled one that reads as a closed day */
         .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
@@ -482,8 +486,9 @@ function SpendStrip({ strip }) {
           <li key={bar.date} className="flex flex-col items-center gap-1 min-w-0">
             <span className="fs-meta tabular-nums whitespace-nowrap">{formatUsdCompact(bar.cost)}</span>
             <div className="dash-strip-track w-full flex items-end text-data" aria-hidden="true">
-              <div className={`w-full ${bar.isPartial ? 'dash-strip-partial' : 'dash-strip-bar'}`}
-                style={{ height: `${Math.max(2, (bar.cost / max) * 100)}%` }}/>
+              {bar.cost > 0 && <div className={`w-full ${bar.isPartial ? 'dash-strip-partial' : 'dash-strip-bar'}`}
+                style={{ height: `${Math.max(2, (bar.cost / max) * 100)}%` }}/>}
+              <span className="dash-strip-base" data-chart-baseline=""/>
             </div>
             <span className="fs-meta text-dim whitespace-nowrap">{bar.isPartial ? 'Today, so far' : formatDay(bar.date)}</span>
           </li>
@@ -1016,7 +1021,7 @@ function buildFailedTile(base, error) {
 // 타일 2 — 7일 작업 결과. 판정과 임계는 ui.jsx 공용 규칙 소비 (Task results 와 동일 분모).
 function buildOutcomeTile(outcomesState) {
   const base = {
-    id: 'outcomes', label: 'Task results', window: '7 d', target: 'outcomes', targetLabel: 'Task results',
+    id: 'outcomes', label: 'Task results', window: '7d', target: 'outcomes', targetLabel: 'Task results',
     region: 'outcomes', source: 'task results',
   };
   const pending = buildPendingTile(base, outcomesState);
@@ -1093,7 +1098,7 @@ function getSharePct(numerator, denominator) {
 // 타일 3 — 함대. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0.
 function buildFleetTile(agentsState) {
   const base = {
-    id: 'fleet', label: 'Fleet', window: '7 d', target: 'agents', targetLabel: 'Agents',
+    id: 'fleet', label: 'Fleet', window: '7d', target: 'agents', targetLabel: 'Agents',
     region: 'agents', source: 'the fleet summary',
   };
   const pending = buildPendingTile(base, agentsState);
@@ -1165,10 +1170,10 @@ function describeSpendTrend(harness) {
   const prior = Number(kpi.yesterday_same_time_cost_usd);
   if (kpi.today_cost_usd == null || kpi.yesterday_same_time_cost_usd == null) return 'Change on yesterday unavailable — the reading carries no spend';
   if (!(prior > 0)) return 'No spend yesterday by this time to compare against';
-  const change = Math.round(((Number(kpi.today_cost_usd) - prior) / prior) * 100);
+  const change = ((Number(kpi.today_cost_usd) - prior) / prior) * 100;
   const comparand = `${formatUsdCompact(prior)} yesterday by this time`;
   if (change === 0) return `Level with ${comparand}`;
-  return `${change > 0 ? 'Up' : 'Down'} ${Math.abs(change)}% on ${comparand}`;
+  return `${change > 0 ? 'Up' : 'Down'} ${window.UI.formatPct(Math.abs(change))} on ${comparand}`;
 }
 
 // the verdict trips on the larger of so-far and pace → the lead line states that same figure

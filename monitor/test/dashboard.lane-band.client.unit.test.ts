@@ -567,7 +567,7 @@ test("the harness tile names its down parts instead of restating the count", () 
 test("tile labels carry no window text — the window is its own field so the heading case cannot swallow it", () => {
   const tiles = dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING });
   for (const tile of tiles) assert.ok(!/\(/.test(tile.label), `${tile.id} label: ${tile.label}`);
-  const windowed = tiles.filter((t) => (t as Tile & { window?: string }).window === "7 d").map((t) => t.id);
+  const windowed = tiles.filter((t) => (t as Tile & { window?: string }).window === "7d").map((t) => t.id);
   assert.deepEqual([...windowed], ["outcomes", "fleet"]);
 });
 
@@ -817,6 +817,8 @@ test("the spend tile states its move against yesterday by this time from the she
     { name: "up on yesterday", today: 12, yesterday: 10, trend: /^Up 20% on \$10\.00 yesterday by this time$/ },
     { name: "down on yesterday", today: 5, yesterday: 20, trend: /^Down 75% on \$20\.00 yesterday by this time$/ },
     { name: "level with yesterday", today: 10, yesterday: 10, trend: /^Level with \$10\.00 yesterday by this time$/ },
+    { name: "a fractional move keeps one decimal", today: 10.5, yesterday: 9, trend: /^Up 16\.7% on \$9\.00 yesterday by this time$/ },
+    { name: "a move under a tenth of a point is still a move", today: 10.001, yesterday: 10, trend: /^Up <0\.1% on \$10\.00 yesterday by this time$/ },
   ];
   for (const row of rows) {
     const harness = { ...HEALTHY, kpi: { today_cost_usd: row.today, yesterday_same_time_cost_usd: row.yesterday } };
