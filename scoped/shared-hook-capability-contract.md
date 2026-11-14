@@ -39,7 +39,7 @@ What a PreToolUse hook receives on an `Agent` tool call. Agent calls only: no ot
 
 What a command hook bound with `asyncRewake: true` does, per session kind. Bound by `queue-listener.sh` on `SessionStart` and `Stop` (`lib/ga-env.sh` → `EXPECTED_HOOK_BINDING_OPTIONS`).
 
-- **Provenance**: isolated probe on CLI 2.1.322, 2026-11-13, model haiku.
+- **Provenance**: isolated probe on CLI 2.1.322, 2026-11-13, model haiku, plus two lifetime runs of the same kit on the same CLI: 1b (2026-11-13, one run per configuration) and 1c (2026-11-13 22:11 to 2026-11-14 21:19 KST, one run per event).
   - The stand-in hook was a stub that slept and exited with a planned code; no queue call was made.
   - Settings: `--setting-sources project` + `--settings` holding only the stub bindings, `claudeMdExcludes` for every CLAUDE.md and rules file, `--strict-mcp-config` with an empty config. No user or project hook of the machine ran.
   - Session kinds: `-p` (`CLAUDE_CODE_ENTRYPOINT` `sdk-cli`) and an interactive pty in a private tmux server (`cli`, `--permission-mode default`).
@@ -56,9 +56,14 @@ What a command hook bound with `asyncRewake: true` does, per session kind. Bound
   - The wake starts a new turn that carries `<task-notification><summary>Stop hook feedback</summary>…` plus a system reminder `Stop hook blocking error from command "<event>": <stderr>`, so stderr reaches the model.
   - A draft typed into the input box stays unsent.
   - `--bg` sessions: unmeasured. A `--bg` start enters the owner's real job list, so it is not isolatable.
-- **Timeout** (P3): at the binding `timeout` the host sends the hook SIGTERM, measured at 20 s: no wake, no orphan, and the session stays idle.
-  - Longest honoured, within the 666 s bound tested: a `timeout` of 1200 let a `SessionStart` hook run 666 s, past the 600 s command default, and its `exit 2` then woke a session idle for 11 minutes. A 60-minute lifetime: unmeasured.
-  - A hook that ignores SIGTERM, or a child outside the hook's process group: unmeasured.
+- **Timeout** (P3): at the binding `timeout` the host sends the hook SIGTERM: no wake, no orphan, and the session stays idle.
+  - Measured at 20 s, and (1b) at 3600 s: a hook sleeping 3700 s under `timeout` 3600 got SIGTERM at exactly 3600 s, no wake followed, and the session was still alive and idle 4 minutes later.
+  - A `timeout` of 1200 let a `SessionStart` hook run 666 s, past the 600 s command default, and its `exit 2` then woke a session idle for 11 minutes.
+  - 1b: under `timeout` 7200 or 86400 a hook ran about 3755 s, on `SessionStart` and on `Stop`, and its `exit 2` then woke a session idle for 62 minutes.
+  - 1b: values up to 1e10 were accepted with no clamp, no fall-back to the 600 s default and no early fire — `timeout` 2147483 and 2147484 with a 60 s run, 1e10 and 2147484 with a 700 s run, each ran to its `exit 2` and woke the session.
+  - 1c, the longest measured: under `timeout` 86400 a hook ran 82860 s (23 h 01 min) on `SessionStart` and on `Stop`, logging a heartbeat every 1800 s with no gap and receiving no signal; its `exit 2` woke the idle session once, 3 s after the exit, with no repeated wake and no early kill, and the session stayed usable.
+  - Static read (1b): the async timer is the binding `timeout` in milliseconds, and the only clamp found (60 s) belongs to `SessionEnd`. [UNCHECKED: static read, not an executed path]
+  - Unmeasured: a lifetime past 82860 s; any lifetime across a system sleep — the Mac did not sleep during the 1c window (sleep prevented, no sleep or wake event logged), so the host timer's behaviour across a sleep is unknown; a hook that ignores SIGTERM, or a child outside the hook's process group.
 - **Wake during a busy turn** (P4): no interruption, and nothing lost.
   - On a turn making tool calls, the wake is folded into that same turn as a `queued_command` attachment between tool calls. The turn ran on to its own end, and the model did not act on the folded text.
   - On a turn with no tool call, the wake waits for the turn to end, then starts its own turn.
@@ -68,6 +73,8 @@ What a command hook bound with `asyncRewake: true` does, per session kind. Bound
   - `queue-listener.sh` does not rest on that rewrite alone: it also refuses a `CLAUDE_PID` process whose argv carries `-p` or `--print` (`is_print_mode_process`).
   - At `/exit` and at a SIGTERM to the session process, the running async hook receives SIGTERM and exits; no orphan is left.
 - **Background-job idle supervision** (P6): unmeasured. It needs a `--bg` session left about an hour, in the owner's real job list.
+- **Interactive idle supervision**: no idle stop seen — 8 sessions idle up to 64 minutes (1b) and two sessions idle about 23 hours (1c) stayed alive.
+- **A woken turn ends with a `Stop` fire**: the wake turn fired `Stop` (1b, on `Stop`), and a `Stop` hook logged the woken turn's end 3 s after the wake on both events (1c).
 - **Overlapping `Stop` instances** (P7): a `Stop` that fires while the previous turn's async `Stop` hook still runs starts a second instance. The first is not cancelled and runs to its own end.
 - **Background command exit** (interactive): a `run_in_background` Bash command finishing in an idle interactive session starts a turn on its own.
 - **Re-probe**: after a CLI upgrade, re-run the probe before a hook relies on any line above.
