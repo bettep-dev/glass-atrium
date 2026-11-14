@@ -339,7 +339,7 @@ function loopResultMetaO(result) {
   if (result === 'verified') return { tone: 'ok', symbol: '✓', icon: 'check', label: 'Passed' };
   if (result === 'reject' || result === 'fail') return { tone: 'crit', symbol: '✕', icon: 'x', label: result === 'fail' ? 'Failed' : 'Declined' };
   if (typeof result === 'string' && result.endsWith('_dryrun')) return { tone: 'warn', symbol: '⚠', icon: 'warn', label: 'Dry run' };
-  return { tone: 'info', symbol: 'ℹ', icon: 'info', label: result || '—' };
+  return { tone: 'info', symbol: 'ℹ', icon: 'info', label: result || window.UI.EMPTY_VALUE_TEXT };
 }
 
 // 비-actionable pseudo-agent ID — attribution-fallback 버킷 (실 agent 아님).
@@ -962,8 +962,8 @@ function getBandTrendO(tile, priorTile) {
   if (priorTile.population < LOW_N_MIN) return 'No comparison';
   const points = (tile.count / tile.population - priorTile.count / priorTile.population) * 100;
   if (Math.abs(points) < 0.05) return 'Level';
-  // U+2212 minus → read as "minus", never as a dash
-  return `${points > 0 ? '+' : '\u2212'}${Math.abs(points).toFixed(1)} pt`;
+  // U+2212 minus → read as "minus", never as a dash; the points figure in the Dashboard trend's form
+  return `${points > 0 ? '+' : '\u2212'}${window.UI.formatDecimal(Math.abs(points))} pts`;
 }
 
 // One stat row card — needs you · failed or blocked · the volume facts; the window once in the sub-line.
@@ -1259,11 +1259,11 @@ function AgentFailureRowO({ row, view }) {
   );
 }
 
-// Bar fill = the shared breakage rule over this row's own count · low-sample rows claim no tone.
+// Bar fill = the shared breakage rule over this row's own count → crit only over the stated share, else a quantity in --data · low-sample rows claim no tone.
 function getFailureRateFillO(row) {
   if (row.isLowSample) return '--faint';
   const { outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
-  return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--ok';
+  return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--data';
 }
 
 function AgentFailureRateCellO({ row, view }) {

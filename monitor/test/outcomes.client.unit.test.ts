@@ -648,7 +648,7 @@ function flattenO(node: unknown, out: RecordedElementO[] = []): RecordedElementO
 
 describe("AgentFailureRateCellO: the bar fill follows the shared breakage rule, not a fixed crit", () => {
   const rows = [
-    { name: "a sampled row under the crit share fills ok", failed: 1, blocked: 0, total: 50, isLowSample: false, fill: "--ok" },
+    { name: "a sampled row under the crit share fills the data colour, no severity", failed: 1, blocked: 0, total: 50, isLowSample: false, fill: "--data" },
     { name: "a sampled row at the crit share fills crit", failed: 2, blocked: 3, total: 100, isLowSample: false, fill: "--crit" },
     { name: "a sampled row well over the crit share fills crit", failed: 10, blocked: 10, total: 50, isLowSample: false, fill: "--crit" },
     { name: "a low-sample row claims no tone whatever its rate", failed: 5, blocked: 0, total: 10, isLowSample: true, fill: "--faint" },
@@ -660,6 +660,12 @@ describe("AgentFailureRateCellO: the bar fill follows the shared breakage rule, 
       assert.equal((bar?.props.style as { background: string }).background, `rgb(var(${row.fill}))`);
     });
   }
+});
+
+test("a loop event with no result reads None, never a dash", () => {
+  const getMeta = (rendered as unknown as { loopResultMetaO: (r: unknown) => { label: string } }).loopResultMetaO;
+  for (const result of [null, undefined, ""]) assert.equal(getMeta(result).label, "None", String(result));
+  assert.equal(getMeta("queued").label, "queued", "an unknown result keeps its own word");
 });
 
 describe("AttributionBreakdownO: only a landed window may say it has no breakdown", () => {

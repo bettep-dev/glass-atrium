@@ -550,6 +550,19 @@ test("the rejected column header's basis ellipsizes with its full text in the ti
   assert.equal(basis.props.title, "last 30 days", "a clipped basis keeps its whole text in the title");
 });
 
+test("the drawer keeps the full review stamp in the title only", () => {
+  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 1, approval_tier: "auto", reviewed_at: "2026-09-10T05:20:07Z" }));
+  const stamped = findAll(tree, (el) => typeof el.props.title === "string" && el.props.title.includes("2026-09-10 14:20:07"));
+  assert.equal(stamped.length, 1);
+  assert.equal(visibleText(stamped[0]), "09-10 14:20");
+});
+
+test("a learning status the board does not know keeps its word, and a missing one reads None", () => {
+  const getBadge = (sandbox as unknown as { learningStatusBadgeI: (s: unknown) => { label: string } }).learningStatusBadgeI;
+  assert.equal(getBadge(null).label, "None");
+  assert.equal(getBadge("archived").label, "archived");
+});
+
 test("the drawer names the approval tier in words, never echoing the raw tier key", () => {
   const text = visibleText(sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 1, approval_tier: "auto" })));
 
@@ -566,6 +579,7 @@ describe("the drawer prints each field in words, never the stored machine key", 
     cycle_date: "2026-09-10",
     haiku_status: "skipped:quota-limit",
     cost_guard_state: "warn",
+    reviewed_at: "2026-09-10T05:20:07Z",
   };
   const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
   const terms = findAll(tree, (el) => el.type === "dt");
@@ -577,6 +591,7 @@ describe("the drawer prints each field in words, never the stored machine key", 
     { name: "model check", label: "Model check", printed: "Skipped — quota limit", mono: false },
     { name: "cost guard", label: "Cost guard", printed: "Quota or budget cap hit", mono: false },
     { name: "cycle date", label: "Cycle date", printed: "2026-09-10", mono: false },
+    { name: "review time in the Day + time form", label: "Reviewed at", printed: "09-10 14:20", mono: false },
     { name: "target file path", label: "Target file", printed: row.target_file, mono: true },
   ];
   for (const item of rows) {

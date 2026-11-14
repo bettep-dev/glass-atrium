@@ -2183,7 +2183,7 @@ function learningStatusBadgeI(status) {
 		rejected: { tone: "crit", label: "Declined" },
 		identified: { tone: "info", label: "Spotted" },
 	};
-	const meta = map[status] || { tone: "info", label: status || "—" };
+	const meta = map[status] || { tone: "info", label: status || window.UI.EMPTY_VALUE_TEXT };
 	return { tone: `text-${meta.tone}`, symbol: TONE_GLYPH[meta.tone], label: meta.label };
 }
 
@@ -2217,7 +2217,7 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 					<React.Fragment key={k}>
 						<dt className={labelCls}>{k}</dt>
 						<dd className={`fs-body text-ink break-words${mono ? " font-mono" : ""}`}>
-							{String(v)}
+							{typeof v === "object" ? v : String(v)}
 						</dd>
 					</React.Fragment>
 				))}
@@ -2366,7 +2366,11 @@ function buildDetailPropsI(row) {
 			["Cost guard", getDetailWordsI("costGuard", row?.cost_guard_state)],
 			[
 				"Reviewed at",
-				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : null,
+				row?.reviewed_at ? (
+					<span title={window.UI.formatKstFull(row.reviewed_at)}>
+						{window.UI.formatKstDateTime(row.reviewed_at)}
+					</span>
+				) : null,
 			],
 		],
 		sections: [

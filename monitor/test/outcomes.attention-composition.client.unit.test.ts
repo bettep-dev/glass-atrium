@@ -1224,9 +1224,9 @@ describe("StatusBandO: every tile states one share delta, its comparison window 
   const tileText = (key: string): string => getTileText(band, key);
   const rows = [
     // 30/200 = 15% now vs 10/100 = 10%
-    { name: "a share that rose states its signed points", key: "attention", delta: /\+5\.0 pt\b/ },
+    { name: "a share that rose states its signed points", key: "attention", delta: /\+5 pts\b/ },
     // Done: 150/200 = 75% vs 80/100 = 80%
-    { name: "a share that fell states its signed points", key: "done", delta: /\u22125\.0 pt\b/ },
+    { name: "a share that fell states its signed points", key: "done", delta: /\u22125 pts\b/ },
     // Failed or blocked: 12/200 = 6% vs 6/100 = 6%
     { name: "an unchanged share reads as level", key: "broken", delta: /\bLevel\b/ },
   ];
@@ -1250,7 +1250,7 @@ describe("StatusBandO: every tile states one share delta, its comparison window 
     const heroText = getTileText(unread, "attention");
     assert.match(heroText, /Needs you/);
     assert.doesNotMatch(heroText, / pt\b|\bLevel\b|No comparison/, "an unread prior count is never read as zero");
-    assert.match(getTileText(unread, "done"), /\u22125\.0 pt/);
+    assert.match(getTileText(unread, "done"), /\u22125 pts/);
   });
   test("a share beside its own count drops the fraction", () => {
     assert.match(tileText("attention"), /\b15%/);
