@@ -1775,3 +1775,23 @@ describe("a Cost series mark carries the data colour; a tone marks only a bar ov
     assert.deepEqual([...getPaints(chart), ...getPaints(legend)].filter((paint) => /--(?:accent|info)\b/.test(paint)), []);
   });
 });
+
+// WCAG 1.4.1: a crit and a warn alarm row differ by glyph shape and by a spoken severity word, never by colour alone
+test("each Cost alarm row draws its tone's own glyph, hidden from assistive tech, and speaks the tone's severity word first", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const ui = cost.window.UI as { TONE_ICON: Record<string, string>; ALERT_SEVERITY_WORD: Record<string, string> };
+  const tones = ["crit", "warn"];
+  const tree = renderIn(mod, "AlarmLaneC", { rows: tones.map((tone) => ({ key: tone, tone, text: `${tone} alarm text` })) });
+  const rows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
+
+  assert.equal(rows.length, tones.length);
+  for (const [i, row] of rows.entries()) {
+    const tone = tones[i];
+    const [glyph] = findNodes(row, (n) => n.props.className === "alarm-row-glyph");
+    const [icon] = findNodes(glyph, (n) => n.props.atom === "Icon");
+    const [word] = findNodes(row, (n) => n.props.className === "sr-only");
+    assert.equal(glyph.props["aria-hidden"], "true", `${tone} glyph is hidden from assistive tech`);
+    assert.equal(icon.props.name, ui.TONE_ICON[tone], `${tone} row draws its tone's glyph`);
+    assert.equal(collectText(word).trim(), `${ui.ALERT_SEVERITY_WORD[tone]}:`, `${tone} row speaks its severity word`);
+  }
+});

@@ -329,7 +329,7 @@ function isParseErrorCritDay(row) {
 }
 
 function AlarmLaneC({ rows }) {
-  const { Icon } = window.UI;
+  const { Icon, TONE_ICON, ALERT_SEVERITY_WORD } = window.UI;
 
   if (rows.length === 0) {
     return null;
@@ -339,8 +339,10 @@ function AlarmLaneC({ rows }) {
     <div className="border-y border-line">
       {rows.map((r) => (
         <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
-          <span className="alarm-row-glyph"><Icon name="warn" size={16}/></span>
-          <div className="fs-body text-ink"><window.UI.DayTokens>{r.text}</window.UI.DayTokens></div>
+          <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[r.tone]} size={16}/></span>
+          <div className="fs-body text-ink">
+            <span className="sr-only">{`${ALERT_SEVERITY_WORD[r.tone]}: `}</span><window.UI.DayTokens>{r.text}</window.UI.DayTokens>
+          </div>
         </div>
       ))}
     </div>
