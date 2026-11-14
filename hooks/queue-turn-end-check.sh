@@ -2,8 +2,8 @@
 # queue-turn-end-check.sh — Stop hook, at most one block per turn end, carrying either line or both, never an item's
 # text: (1) an interactive or background main-session turn that called a tool and whose final message's last
 # non-blank line is no [QUEUE-VERDICT] form, or names an id that is not an item of this session, is asked for its
-# verdict once per turn; (2) while an item this session posted awaits the owner and no wait of this Claude process
-# runs, the wait command.
+# verdict once per turn; (2) while an item this session posted awaits the owner and neither a wait nor a listener of
+# this Claude process runs or is starting, the wait command — a fallback for sessions no listener serves.
 # The verdict check confirms only that a verdict is stated and its ids are this session's items, never the judgment.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_wait_state).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
@@ -178,8 +178,9 @@ set_foreign_ids() {
   done
 }
 
-# <session id> → wait_reason: the wait command while an item of this session awaits the owner, no wait of this Claude
-# process runs, and this process was not told about these items within NUDGE_INTERVAL_MIN
+# <session id> → wait_reason: the wait command while an item of this session awaits the owner, neither a wait nor a
+# listener of this Claude process runs or is starting, and this process was not told about these items within
+# NUDGE_INTERVAL_MIN
 set_wait_reason() {
   local items nudge_key wait_state stamp newest item
   items="$(queue_get_awaiting_items "$1")"
@@ -187,8 +188,11 @@ set_wait_reason() {
   nudge_key="$(queue_get_pid)"
   nudge_key="${nudge_key:-${NUDGE_NO_PID_KEY}}"
   wait_state="$(queue_get_wait_state "$1")"
-  # a running listener (queue-listener.sh) is no wait: it only announces, and the nudged wait takes its lock over
-  [[ "${wait_state}" != live ]] || return 0
+  # a listener announces the same answered items a wait would claim → a nudged wait beside it only costs turns
+  [[ "${wait_state}" != live && "${wait_state}" != listener ]] || return 0
+  # this turn's Stop starts the next listener in no set order, so its lock may not be taken yet
+  # shellcheck disable=SC2310  # a mark it cannot read counts as none → the nudge, the fallback
+  if queue_is_listener_started "$1"; then return 0; fi
   stamp="$(queue_get_awaiting_dir "$1")/.nudged"
   newest="${items%%$'\n'*}"
   # shellcheck disable=SC2310  # not due and a failed check both end the turn normally

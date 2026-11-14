@@ -573,6 +573,8 @@ listen_for_answers() {
   session_id="$(require_session_id)"
   set_wait_holder "${session_id}" "${QUEUE_LISTENER_KIND}"
   take_wait_lock
+  # shellcheck disable=SC2310  # an unwritten mark only leaves the turn-end check nudging a wait, its fallback
+  queue_put_listening_mark "${session_id}" "${WAIT_OWNER}" 2>/dev/null || warn "no listening mark could be written"
   trap stop_listening EXIT
   trap 'exit 0' HUP INT TERM
   LISTEN_OUT="$(mktemp)" || fail 1 "no scratch file for the listener's polls"

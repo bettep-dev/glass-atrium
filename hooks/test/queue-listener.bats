@@ -139,7 +139,7 @@ expected_rearm() {
   export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
   run_hook
   [[ "${status}" -eq 2 && -z "${output}" && "${stderr}" == "$(expected_rearm)" && "$(request_count)" -ge 2 &&
-    -z "$(lock_record)" ]] || {
+  -z "$(lock_record)" ]] || {
     echo "status=${status} out=${output} err=${stderr} requests=$(request_count) lock=$(lock_record)"
     return 1
   }
@@ -196,6 +196,24 @@ expected_rearm() {
   }
 }
 
+@test "a running listener marks its session as listened to by its own Claude process, the mark the turn-end check reads" {
+  start_stub
+  start_hook listener
+  await_requests 1
+  local row found
+  # <row>:<1 when the mark names the Claude process the check runs for>
+  for row in its-own-process:1 another-process:0; do
+    if [[ "${row%%:*}" == another-process ]]; then start_owner; fi
+    found=0
+    # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
+    if (source "${GA}/scripts/lib/queue-session.sh" && queue_is_listener_started "${SESSION_ID}"); then found=1; fi
+    [[ "${found}" == "${row##*:}" ]] || {
+      echo "row ${row}: found=${found} for CLAUDE_PID ${CLAUDE_PID}"
+      return 1
+    }
+  done
+}
+
 @test "a session-run wait takes over from a listener, which ends without a wake, and a listener meeting a running wait ends at once" {
   start_stub
   export ATRIUM_QUEUE_WAIT_BOUND_S=30
@@ -228,20 +246,20 @@ expected_rearm() {
   start_stub
   export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
   set_reply 200 '{"answeredWaiting":2}'
-  local row started elapsed
-  # <row>:<the wake's earliest second> — 0 at the first poll, 2 only once the lifetime has run out
-  for row in first:0 second:0 capped:2 still-capped:2 changed-count:0 another-process:0; do
+  local row before polls expected
+  # <row>:<1 when the wake waits for the lifetime end> — at the first poll, else only at the re-arm after 2+ polls
+  for row in first:0 second:0 capped:1 still-capped:1 changed-count:0 another-process:0; do
     case "${row%%:*}" in
       changed-count) set_reply 200 '{"answeredWaiting":4}' ;;
       another-process) start_owner ;;
       *) ;;
     esac
-    started="${SECONDS}"
+    before="$(request_count)"
     run_hook
-    elapsed=$((SECONDS - started))
-    [[ "${status}" -eq 2 && "${stderr}" == "$(expected_wake "$(tail -n +2 "${BATS_TEST_TMPDIR}/reply" | jq -r '.answeredWaiting')")" ]] &&
-      if [[ "${row##*:}" == 0 ]]; then ((elapsed <= 1)); else ((elapsed >= 2)); fi || {
-      echo "row ${row}: status=${status} after ${elapsed} s err=${stderr}"
+    polls=$(($(request_count) - before))
+    expected="$(expected_wake "$(tail -n +2 "${BATS_TEST_TMPDIR}/reply" | jq -r '.answeredWaiting')")"
+    [[ "${status}" -eq 2 && "${stderr}" == "${expected}" ]] && ((${row##*:} == 1 ? polls >= 2 : polls == 1)) || {
+      echo "row ${row}: status=${status} after ${polls} poll(s) err=${stderr}"
       return 1
     }
   done

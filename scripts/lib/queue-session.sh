@@ -31,6 +31,8 @@ readonly QUEUE_TERMINAL_STATUSES=' delivered seen withdrawn '
 readonly QUEUE_WAIT_RESOLVED_STATUSES=' open answered '
 # the holder kind a listener's lock record ends with ("…|owner start|listen"); a session-run wait's record has none
 readonly QUEUE_LISTENER_KIND=listen
+# a listener's mark in its session's awaiting set: "<owner pid>|<its start>" of the Claude process it listens for
+readonly QUEUE_LISTENING_MARK=.listening
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
 # space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
@@ -290,6 +292,25 @@ queue_get_awaiting_dir() {
   [[ "$1" =~ ${QUEUE_UUID_SHAPE} ]] || return 1
   root="$(queue_get_root)"
   printf '%s/data/queue/awaiting/%s\n' "${root}" "$1"
+}
+
+# <session id> <owner "pid|its start"> → the listening mark: a listener of that Claude process started for the session
+queue_put_listening_mark() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  mkdir -p -- "${dir}" && printf '%s\n' "$2" >"${dir}/${QUEUE_LISTENING_MARK}"
+}
+
+# <session id> → 0 when the listening mark names this Claude process (CLAUDE_PID with its start): each turn end of
+# such a process starts a fresh listener (hooks/queue-listener.sh), in whatever order parallel Stop hooks start
+queue_is_listener_started() {
+  local dir owner_pid mark started
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  owner_pid="$(queue_get_pid)"
+  [[ -n "${owner_pid}" && -f "${dir}/${QUEUE_LISTENING_MARK}" ]] || return 1
+  mark="$(<"${dir}/${QUEUE_LISTENING_MARK}")"
+  started="$(queue_get_start_time "${owner_pid}")"
+  [[ -n "${started}" && "${mark}" == "${owner_pid}|${started}" ]]
 }
 
 # <session id> <item id> → marks the posted item awaiting
