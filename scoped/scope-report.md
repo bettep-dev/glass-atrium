@@ -29,13 +29,12 @@ Canonical rule text for the REPORT scope (glass-atrium-intel-reporter). A sectio
 Canonical in `agents/glass-atrium-intel-reporter.md`: the baseline requirement list at `### Visual-Maximization Floor`, the content-driven escalation at `### Content-driven escalation`, the d8 validator-safe color rule at `### d8 validator-safe color contract`.
 
 - **Residual anti-slop patterns (a supplement to the SoT, not a mirror of it)**:
-  - purple/indigo/lavender AI-brand gradients
-  - gradient text on headings (`background-clip:text`)
   - equal `grid-cols-3` (prefer asymmetric 1fr/3fr)
   - `rgba(0,0,0,X)` shadows on dark surfaces
-  - at most 1 gradient per layer, 2 stops max
+  - at most 1 gradient per layer, 2 stops max, within one hue
   - decoration stacking (one treatment per element)
-- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, which carries the purple/indigo gradient and gradient-text patterns for admin consoles only; the residual list covers document HTML.
+- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`; the residual list holds only what the SoT lacks.
+  - Hue-to-hue gradients (the purple/indigo/lavender AI-brand case included) and gradient text on headings are not on the residual list: they are the SoT's **Canvas/color tropes** entry, which binds document HTML too.
   - Glassmorphism is not on the residual list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
 
 ### Dark base default

@@ -287,6 +287,13 @@ export function getArrivalFixture(): QueueFixture {
   return { ...rest, items: [...rest.items, report], sessions };
 }
 
+/** Nothing open: the In delivery band alone, its first row an order, and an order between its two answered decisions → stepping passes over orders. */
+export function getOrderFirstFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const second = { ...ANSWERED_DECISION, id: 160, askedAt: getAt(18), title: "배포 전 업데이터 점검 순서" };
+  return { ...rest, items: [...IN_DELIVERY_ORDER, ANSWERED_DECISION, ...NOT_RECEIVED_ORDER, second], orders: [...rest.orders, ...NOT_RECEIVED_ORDER] };
+}
+
 /** The order the owner types in states 06–08, to `gersona` and `yoaida` (mockup v5 §18.3). */
 export const FIXTURE_ORDER_TEXT = "오늘 결정한 내용은 내일 오전 보고에 한 줄씩 정리해 주세요.";
 
@@ -315,8 +322,18 @@ export function getEmptyFixture(): QueueFixture {
 
 /** The rest state with `atrium` no longer answering: its rail row `Not reachable`. */
 export function getUnreachableFixture(): QueueFixture {
+  return getPatchedRestFixture(SESSION_IDS.atrium, { state: "stale", lastActivityAt: getAt(14) });
+}
+
+/** The rest state after `yoaida` was replaced: its row listed, no longer taking a message (a tick on it is dropped). */
+export function getStoppedFixture(): QueueFixture {
+  return getPatchedRestFixture(SESSION_IDS.yoaida, { state: "exited", exitReason: "replaced", isSelectable: false });
+}
+
+// the rest state with one session row patched by id
+function getPatchedRestFixture(id: string, patch: Partial<QueueFixture["sessions"][number]>): QueueFixture {
   const rest = getRestFixture();
-  return { ...rest, sessions: rest.sessions.map((row) => (row.id === SESSION_IDS.atrium ? { ...row, state: "stale" as const, lastActivityAt: getAt(14) } : row)) };
+  return { ...rest, sessions: rest.sessions.map((row) => (row.id === id ? { ...row, ...patch } : row)) };
 }
 
 /**
@@ -351,8 +368,9 @@ if (EDGE_LONG_TITLE.length !== ITEM_TITLE_MAX) throw new Error(`the long-title f
 
 /** Item ids and send ids of the edge cases, for the tests that select them. */
 export const EDGE_IDS = {
-  nineOptions: 301, approval: 302, longTitle: 303, linkedReport: 304, declaredReport: 305, threeReceipts: 310, eightImages: 320,
+  nineOptions: 301, approval: 302, longTitle: 303, linkedReport: 304, declaredReport: 305, threeReceipts: 310, eightImages: 320, sevenRecipients: 330, longOrder: 340,
   threeReceiptsSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b10", eightImagesSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b11",
+  sevenRecipientsSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b12", longOrderSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b13",
 } as const;
 
 // eight distinct ids over the three asset files → an order at the per-order image limit
@@ -415,14 +433,32 @@ const EIGHT_IMAGE_ORDER = buildOrderCopies(EDGE_IDS.eightImages, {
   to: [["atrium", { status: "answered", deliveredAt: null }]],
 });
 
+// spec §9.3 → Five recipients or more: one roll-up line, `7 sessions · 5 received · 1 not yet` + `⚠ 1 not received`
+const SEVEN_RECIPIENT_ORDER = buildOrderCopies(EDGE_IDS.sevenRecipients, {
+  sendId: EDGE_IDS.sevenRecipientsSend, minutesAgo: 16, text: "다음 배포 전에 각 저장소의 변경 기록을 한 줄씩 정리해 주세요.",
+  to: [
+    ["gersona", { deliveredAt: getAt(15) }], ["atrium", { deliveredAt: getAt(15) }], ["aidl", { deliveredAt: getAt(14) }],
+    ["portfolio", { deliveredAt: getAt(13) }], ["atrium", { session: EDGE_SESSIONS.twin.view, deliveredAt: getAt(14) }],
+    ["yoaida", { status: "answered", deliveredAt: null }],
+    ["atrium", { session: EDGE_SESSIONS.longName.view, status: "unacked", deviation: "unacked", canResend: true }],
+  ],
+});
+
+// spec §9.3: past ORDERS_Q.CLAMP_LINES the bubble clamps, `Show all 31 lines` under it
+const LONG_ORDER_TEXT = Array.from({ length: 31 }, (_, index) => `${index + 1}. 화면 ${index + 1}의 글자 크기와 줄 간격을 한 단계씩 줄이고 결과를 캡처로 남겨 주세요.`).join("\n");
+const LONG_ORDER = buildOrderCopies(EDGE_IDS.longOrder, {
+  sendId: EDGE_IDS.longOrderSend, minutesAgo: 12, text: LONG_ORDER_TEXT,
+  to: [["gersona", { deliveredAt: getAt(11) }]],
+});
+
 /** The rest state plus every edge case of spec 44063 §14.4 the rest state leaves out, its new sessions at the rail's end. */
 export function getEdgeFixture(): QueueFixture {
   const rest = getRestFixture();
-  const listed = THREE_RECEIPT_ORDER.filter((copy) => copy.status !== "delivered");
+  const orders = [...THREE_RECEIPT_ORDER, ...EIGHT_IMAGE_ORDER, ...SEVEN_RECIPIENT_ORDER, ...LONG_ORDER];
   return {
     ...rest,
-    items: [...rest.items, ...EDGE_ITEMS, ...listed, ...EIGHT_IMAGE_ORDER],
+    items: [...rest.items, ...EDGE_ITEMS, ...orders.filter((copy) => copy.status !== "delivered")],
     sessions: [...rest.sessions, ...Object.values(EDGE_SESSIONS).map((session) => session.row)],
-    orders: [...rest.orders, ...THREE_RECEIPT_ORDER, ...EIGHT_IMAGE_ORDER],
+    orders: [...rest.orders, ...orders],
   };
 }

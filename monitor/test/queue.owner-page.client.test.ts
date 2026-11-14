@@ -1,5 +1,6 @@
 // Queue owner page: the nav slot, card precedence text, resume records and the card controls, read from the shipped
 // queue.jsx through test/lib/render-screen.ts.
+// "spec §N" in this file = the Queue desk design spec, clauded-docs 44063 (Atrium Monitor documents, outside the repo).
 //
 // Runner: npx tsx --test test/queue.owner-page.client.test.ts
 
@@ -121,8 +122,11 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       settle: record("settle"),
       selectRow: record("selectRow"),
       sessions: buildSessions(),
-      orders: { isOpen: false, open: record("openOrders") },
+      orders: buildOrders({ focus: record("focusOrders") }),
       reload: record("reload"),
+      back: record("back"),
+      list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [] },
+      steps: { index: 0, count: 1, prevId: null, nextId: null },
       ...overrides,
     },
   };
@@ -131,18 +135,14 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
 // the queue with a loaded list, its bands and the first row selected, as useQueueStateQ hands it to the desk
 function withList(queue: Record<string, unknown>, items: unknown[], nextCursor: number | null = null) {
   const groups = call<Array<{ rows: Array<{ id: number }> }>>("getGroupsQ", items);
-  return { ...queue, list: { status: "ready", data: { items, nextCursor }, newIds: [] }, filter: { profile: "", session: "" }, setFilter: () => undefined, groups, sheet: getSheet(groups, ""), selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
+  return { ...queue, list: { status: "ready", data: { items, nextCursor }, newIds: [] }, filter: { profile: "" }, setFilter: () => undefined, groups, sheet: getSheet(groups, ""), selectedId: groups[0]?.rows[0]?.id ?? null, status: "" };
 }
 
-const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }>("getSheetStateQ", groups, hashId, { item: null, isHandled: false });
+const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }>("getSheetStateQ", groups, hashId, null);
 
-// the Card atom's head and foot ride its props → rendered beside its body, so one tree holds the whole sheet
-function renderSheet(props: unknown): RenderedNode {
-  const tree = render("ItemSheetQ", props);
-  const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
-  const slots = ["title", "sub", "right", "foot"].map((key) => renderScreen(card?.props[key])).filter((node): node is RenderedNode => node !== null && typeof node !== "string");
-  return { type: "Fragment", props: {}, children: [tree, ...slots] } as RenderedNode;
-}
+// the sheet is its own card markup → one tree holds its head, body and foot
+const renderSheet = (props: unknown): RenderedNode => render("ItemSheetQ", props);
+const byClass = (tree: RenderedNode, name: string) => findNodes(tree, (node) => String(node.props?.className ?? "").split(" ").includes(name));
 
 const buttonLabelled = (tree: RenderedNode, label: string) => findNodes(tree, (node) => node.type === "button" && collectText(node).trim() === label);
 
@@ -206,7 +206,7 @@ describe("Later", () => {
   }
 });
 
-describe("after Send the focus moves to the next awaiting row", () => {
+describe("after Send the next awaiting item is found in list order", () => {
   const items = [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" }), buildItem({ id: 3 }), buildItem({ id: 4 })];
   const rows = [
     { name: "skips a row no longer awaiting", id: 1, expected: 3 },
@@ -216,26 +216,25 @@ describe("after Send the focus moves to the next awaiting row", () => {
   for (const row of rows) test(row.name, () => assert.equal(call("getNextAwaitingIdQ", row.list ?? items, row.id), row.expected));
 });
 
-test("after Send the focus skips a row the active filter hides", async () => {
+test("after Send the next open item the active filter shows takes the sheet, in band order", async () => {
   const module = (await loadScreenModule(QUEUE_SRC, {
     window: { UI: uiStub() },
     fetch: async () => ({ status: 200, json: async () => ({ ok: true }) }),
   })) as ScreenModule;
   const personal = buildSession({ id: "9b2e7c41-0d3a-4c55-8e1f-2a6b9c4d7e10", profileLabel: "personal" });
-  const items = [buildItem({ id: 1 }), buildItem({ id: 2, session: personal }), buildItem({ id: 3 })];
-  const focus: unknown[] = [];
+  const items = [buildItem({ id: 1 }), buildItem({ id: 4, kind: "report" }), buildItem({ id: 2, session: personal }), buildItem({ id: 3 })];
+  const opened: unknown[] = [];
   const actions = (module.useQueueActionsQ as (deps: unknown) => { answerItem: (id: number, body: unknown) => Promise<void> })({
-    list: { status: "ready", data: { items, nextCursor: null } },
-    filter: { profile: "work-dev", session: "" },
+    groups: call("getGroupsQ", call("getVisibleItemsQ", items, { profile: "work-dev" })),
     setList: () => undefined,
     setDrafts: () => undefined,
-    setFocus: (next: unknown) => focus.push(next),
     setStatus: () => undefined,
-    selectItem: () => undefined,
+    openItem: (id: unknown) => opened.push(["open", id]),
+    closeSheet: () => opened.push(["close"]),
     reload: () => undefined,
   });
   await actions.answerItem(1, { code: "R1" });
-  assert.deepEqual(getPlain(focus), [{ id: 3 }]);
+  assert.deepEqual(getPlain(opened), [["open", 3]]);
 });
 
 test("a draft held in page state reappears when its item is selected again", () => {
@@ -488,7 +487,7 @@ describe("recent automatic resumes", () => {
 
   test("the record lists the server's resume rows in its order, each with account, worktree and item title", () => {
     const resumes = [row(9, "Pick the lock order", 2, "acked"), row(4, "Pick the index", 1, "sent")];
-    const text = collectText(render("RecentResumesQ", { region: { ...READY_RESUMES, data: resumes }, onRetry: () => undefined }));
+    const text = collectText(render("RecentResumesQ", { region: { ...READY_RESUMES, data: resumes }, onRead: () => undefined }));
     const lines = text.split("Automatic resume ").slice(1);
     assert.equal(lines.length, 2, text);
     assert.match(lines[0] ?? "", /\.claude-work · atrium\/hooks · attempt 2 · spawned · acknowledged\s+— Pick the lock order/);
@@ -502,10 +501,33 @@ describe("recent automatic resumes", () => {
   ];
   for (const view of views) {
     test(view.name, () => {
-      const tree = render("RecentResumesQ", { region: view.region, onRetry: () => undefined });
+      const tree = render("RecentResumesQ", { region: view.region, onRead: () => undefined });
       assert.equal(findNodes(tree, (node) => node.props?.atom === view.atom).length > 0, view.isShown);
     });
   }
+
+  test("opening the drawer re-reads the record", () => {
+    let reads = 0;
+    const tree = render("RecentResumesQ", { region: { ...READY_RESUMES, data: [row(9, "Pick the lock order", 1, "acked")] }, onRead: () => { reads += 1; } });
+    const [button] = buttonLabelled(tree, "Automatic resumes 1");
+    (button?.props.onClick as () => void)();
+    assert.equal(reads, 1);
+  });
+
+  // spec §4.4: the foot button's count and ⚠ follow the page's own tick, as the list does
+  test("the page's tick reads the resume record beside the list, the sessions, the count and the thread", async () => {
+    const reads: string[] = [];
+    const read = (name: string, answer: unknown = undefined) => async () => { reads.push(name); return answer; };
+    const isGood = await (screen.getPageReadQ as (deps: unknown) => Promise<boolean>)({
+      readList: read("list", { isGood: true, arrived: [], turned: [] }),
+      readResumes: read("resumes"),
+      sessions: { read: read("sessions") },
+      orders: { reread: read("thread") },
+      onReadQueueCount: read("count"),
+      setStatus: () => undefined,
+    });
+    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "list", "resumes", "sessions", "thread"]]);
+  });
 
   test("the record is read from the resume route, whatever the owner list holds", async () => {
     const urls: string[] = [];
@@ -533,15 +555,24 @@ describe("screen", () => {
   });
 
   // the list carries no delivery flag → a page alert here would read as a delivery outage that does not exist
-  test("a loaded list renders one list card with one row per item under bands, and the selected item on the sheet", () => {
+  test("a loaded list renders the list alone at rest, one row per item under bands, and no sheet", () => {
     const items = [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report", linkedDocIds: [43944] })];
     const queue = withList(buildQueue().queue, items);
-    const list = render("QueueListQ", { queue });
-    assert.deepEqual(findNodes(list, (node) => node.props?.role === "option").map((node) => node.props.id), ["queue-row-1", "queue-row-2"]);
-    assert.deepEqual(findNodes(list, (node) => node.props?.className === "queue-band").map((node) => collectText(node)), ["Decisions 1", "Reports 1"]);
-    assert.equal(findNodes(list, (node) => node.props?.atom === "AlertCard").length, 0);
-    const sheet = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "2") } });
-    const [link] = findNodes(sheet, (node) => node.type === "a" && node.props.className === "prose-link");
+    const pane = render("MiddlePaneQ", { queue });
+    const [slot] = byClass(pane, "queue-list-slot");
+    assert.deepEqual(findNodes(pane, (node) => node.props?.role === "option").map((node) => node.props.id), ["queue-row-1", "queue-row-2"]);
+    assert.deepEqual(findNodes(pane, (node) => node.props?.className === "queue-band").map((node) => collectText(node)), ["Decisions 1", "Reports 1"]);
+    assert.equal(findNodes(pane, (node) => node.props?.atom === "AlertCard").length, 0);
+    assert.deepEqual([slot?.props.hidden, byClass(pane, "queue-sheet").length], [undefined, 0]);
+  });
+
+  test("an opened row puts the list away, still mounted, and its sheet takes the pane", () => {
+    const items = [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report", linkedDocIds: [43944] })];
+    const listed = withList(buildQueue().queue, items);
+    const pane = render("MiddlePaneQ", { queue: { ...listed, sheet: getSheet(listed.groups, "2"), selectedId: 2 } });
+    const [slot] = byClass(pane, "queue-list-slot");
+    const [link] = findNodes(pane, (node) => node.type === "a" && node.props.className === "prose-link");
+    assert.deepEqual([slot?.props.hidden, findNodes(slot as RenderedNode, (node) => node.props?.role === "option").length], [true, 2]);
     assert.equal(link?.props.href, "#clauded-docs?doc=43944");
   });
 });
@@ -584,7 +615,7 @@ describe("an owner action's answer", () => {
       name: "a page-origin refusal keeps the draft and shows on the card",
       status: 403,
       body: { error: "forbidden" },
-      error: { id: 41, message: "The monitor refused this action. Refresh and try again." },
+      error: { id: 41, message: "The monitor refused this action. Try again." },
     },
     {
       name: "a refusal keeps the draft and shows the reason on the card",
@@ -593,13 +624,14 @@ describe("an owner action's answer", () => {
       error: { id: 41, message: "Refused: the code is not one of this item's options." },
     },
   ];
+  // spec §4.4: a refused act is followed by a read at once, so the refusal line is true when it is read
   for (const row of refusals) {
-    test(row.name, async () => {
+    test(`${row.name}, and re-reads the page at once`, async () => {
       const result = await run(row.status, row.body);
       assert.equal(result.isDone, false);
       assert.deepEqual(result.drafts, draft);
       assert.deepEqual(result.busy, { id: null, error: row.error });
-      assert.equal(result.reloads, 0);
+      assert.equal(result.reloads, 1);
     });
   }
 });
@@ -708,15 +740,22 @@ describe("report reply", () => {
 describe("action refusal copy", () => {
   const rows = [
     { name: "the server's worded reason is shown", answer: { status: 400, data: { error: "free_text_not_allowed", reason: "this report takes no reply" } }, expected: "Refused: this report takes no reply." },
-    { name: "a refusal with no reason shows fixed copy", answer: { status: 400, data: { error: "invalid_input", issues: [] } }, expected: "The monitor refused this action. Refresh and try again." },
-    { name: "a refusal with no body shows fixed copy", answer: { status: 400, data: null }, expected: "The monitor refused this action. Refresh and try again." },
-    { name: "a state change names the refresh", answer: { status: 409, data: { error: "conflict", reason: "item is answered" } }, expected: "Refused: the item changed state. Refresh to see where it is now." },
+    { name: "a refusal with no reason shows fixed copy", answer: { status: 400, data: { error: "invalid_input", issues: [] } }, expected: "The monitor refused this action. Try again." },
+    { name: "a refusal with no body shows fixed copy", answer: { status: 400, data: null }, expected: "The monitor refused this action. Try again." },
+    { name: "a state change says the list shows where the item is now", answer: { status: 409, data: { error: "conflict", reason: "item is answered" } }, expected: "Refused: the item changed state. The list shows where it is now." },
   ];
-  for (const row of rows) test(row.name, () => assert.equal(call("getActionErrorQ", row.answer), row.expected));
+  // spec §10: the page has no Refresh, so no refusal line names one
+  for (const row of rows) {
+    test(row.name, () => {
+      const line = call<string>("getActionErrorQ", row.answer);
+      assert.equal(line, row.expected);
+      assert.doesNotMatch(line, /refresh/i);
+    });
+  }
 });
 
 describe("refusal lines", () => {
-  const message = "Refused: the item changed state. Refresh to see where it is now.";
+  const message = "Refused: the item changed state. The list shows where it is now.";
   const rows = [
     { name: "a refused sheet action", node: () => renderSheet({ item: buildItem({ id: 1 }), queue: buildQueue({ busy: { id: null, error: { id: 1, message } } }).queue }) },
     {
@@ -747,10 +786,10 @@ describe("queue filter bar", () => {
     return { bar, triggers, picks };
   };
 
-  // the rail is the Session filter → the bar holds the Account axis alone (spec §9.1 → Scope)
+  // the rail's ticks are the session scope → the bar holds the Account axis alone (spec §4.1 → Filters)
   const rows = [
-    { name: "at defaults the Account trigger reads All and the reset stays hidden", filter: { profile: "", session: "" }, account: "All", isApplied: false },
-    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal", session: "" }, account: "personal", isApplied: true },
+    { name: "at defaults the Account trigger reads All and the reset stays hidden", filter: { profile: "" }, account: "All", isApplied: false },
+    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal" }, account: "personal", isApplied: true },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -761,14 +800,14 @@ describe("queue filter bar", () => {
     });
   }
 
-  test("Reset filters returns the account to All and keeps the rail's scope", () => {
-    const { bar, picks } = renderBar({ profile: "personal", session: SESSION_ID });
+  test("Reset filters returns the account to All", () => {
+    const { bar, picks } = renderBar({ profile: "personal" });
     (bar?.props.onReset as () => void)();
-    assert.deepEqual(getPlain(picks), [{ profile: "", session: SESSION_ID }]);
+    assert.deepEqual(getPlain(picks), [{ profile: "" }]);
   });
 
   test("a chosen value no loaded item carries stays an option, so its trigger still names it", () => {
-    const { triggers } = renderBar({ profile: "archived", session: "" });
+    const { triggers } = renderBar({ profile: "archived" });
     assert.equal(triggers.Account?.value, "archived");
     assert.ok((triggers.Account?.options as Array<{ key: string }>).some((option) => option.key === "archived"));
   });
@@ -784,9 +823,8 @@ describe("filter state in the hash", () => {
     return { module, location };
   };
   const rows = [
-    { name: "both axes round-trip through the screen query", start: "#queue", filter: { profile: "work-dev", session: SESSION_ID } },
-    { name: "one axis round-trips and the other stays All", start: "#queue?profile=old", filter: { profile: "", session: SESSION_ID } },
-    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal", filter: { profile: "", session: "" } },
+    { name: "the account round-trips through the screen query", start: "#queue", filter: { profile: "work-dev" } },
+    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal", filter: { profile: "" } },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -797,11 +835,11 @@ describe("filter state in the hash", () => {
     });
   }
 
-  // one hash writer merges every key → a filter write never erases the selected item or the mode (spec §4.3 → Selection)
+  // one hash writer merges every key → a filter write never erases the selected item or the ticks (spec §4.3 → Selection)
   const mergeRows = [
-    { name: "a filter write keeps the selected item and the mode", start: "#queue?item=41&view=orders&to=a,b", patch: { profile: "work-dev", session: "" }, expected: { session: "", profile: "work-dev", item: "41", to: "a,b", view: "orders" } },
-    { name: "an item write keeps the filter", start: "#queue?profile=personal&session=s1", patch: { item: "7" }, expected: { session: "s1", profile: "personal", item: "7", to: "", view: "" } },
-    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { session: "", profile: "personal", item: "", to: "", view: "" } },
+    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev" }, expected: { profile: "work-dev", item: "41", to: "a,b" } },
+    { name: "an item write keeps the filter and the ticks", start: "#queue?profile=personal&to=s1", patch: { item: "7" }, expected: { profile: "personal", item: "7", to: "s1" } },
+    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { profile: "personal", item: "", to: "" } },
   ];
   for (const row of mergeRows) {
     test(row.name, async () => {
@@ -809,6 +847,20 @@ describe("filter state in the hash", () => {
       (module.setHashStateQ as (patch: unknown) => void)(row.patch);
       assert.ok(location.hash.startsWith("#queue"), location.hash);
       assert.deepEqual(getPlain((module.getHashStateQ as () => unknown)()), row.expected);
+    });
+  }
+
+  // Orders is always open and the ticks are the one selection (spec §9.1, §9.2) → an old link's view= or session= names no state, and the first write leaves it out
+  const oldLinks = [
+    { name: "an old link's view= opens nothing and leaves the hash at the first write", start: "#queue?view=orders&item=41" },
+    { name: "an old link's session= scopes nothing and leaves the hash at the first write", start: "#queue?session=s1&item=41" },
+  ];
+  for (const row of oldLinks) {
+    test(row.name, async () => {
+      const { module, location } = await load(row.start);
+      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), { profile: "" });
+      (module.setHashStateQ as (patch: unknown) => void)({ item: "" });
+      assert.equal(location.hash, "#queue");
     });
   }
 });
@@ -848,17 +900,26 @@ describe("list groups", () => {
 describe("selection", () => {
   const groups = call("getGroupsQ", [buildItem({ id: 5, kind: "report" }), buildItem({ id: 3 }), buildItem({ id: 8, kind: "message", status: "delivered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" })]);
   const rows = [
-    { name: "a loaded item named in the hash is selected", hashId: "5", expected: 5 },
-    { name: "a copy named in the hash selects its folded row", hashId: "8", expected: 7 },
-    { name: "an item the list does not hold falls back to the first row of the first group", hashId: "99", expected: 3 },
-    { name: "no item in the hash selects the first row of the first group", hashId: "", expected: 3 },
+    { name: "a loaded item named in the hash opens on the sheet", hashId: "5", expected: 5 },
+    { name: "an order named in the hash opens nothing, since an order has no sheet", hashId: "8", expected: null },
+    { name: "an item the list does not hold opens nothing", hashId: "99", expected: null },
+    { name: "no item in the hash opens nothing, so the pane is the list", hashId: "", expected: null },
   ];
   for (const row of rows) test(row.name, () => assert.equal(call("getSelectedIdQ", groups, row.hashId), row.expected));
-  test("an empty list selects nothing", () => assert.equal(call("getSelectedIdQ", [], ""), null));
+
+  // the neighbours are the list's rows that open on a sheet, in list order; an order's row is stepped over
+  const stepItems = [buildItem({ id: 3 }), buildItem({ id: 5, kind: "report" }), buildItem({ id: 9, kind: "message", status: "answered", sendId: "s" }), buildItem({ id: 11, status: "answered", answer: { code: "R1", text: null } })];
+  const stepRows = [
+    { name: "the first sheet row has no previous", id: 3, lastIndex: -1, expected: { index: 0, count: 3, prevId: null, nextId: 5 } },
+    { name: "stepping passes over an order's row both ways", id: 5, lastIndex: -1, expected: { index: 1, count: 3, prevId: 3, nextId: 11 } },
+    { name: "the last sheet row has no next", id: 11, lastIndex: -1, expected: { index: 2, count: 3, prevId: 5, nextId: null } },
+    { name: "an item gone from the list steps to the rows that stood beside it", id: 4, lastIndex: 1, expected: { index: -1, count: 3, prevId: 3, nextId: 5 } },
+  ];
+  for (const row of stepRows) test(`stepping: ${row.name}`, () => assert.deepEqual(call("getStepsQ", call("getGroupsQ", stepItems), row.id, row.lastIndex), row.expected));
 
   const presses = [
-    { name: "an order to a session opens the Orders mode at it", item: { kind: "message", status: "answered", sendId: "s" }, opens: 1 },
-    { name: "an order written on a report opens the Orders mode at it", item: { kind: "report", status: "answered", answer: { code: null, text: "ship it" } }, opens: 1 },
+    { name: "an order to a session shows its entry in Orders", item: { kind: "message", status: "answered", sendId: "s" }, opens: 1 },
+    { name: "an order written on a report shows its entry in Orders", item: { kind: "report", status: "answered", answer: { code: null, text: "ship it" } }, opens: 1 },
     { name: "an answered decision opens on the sheet", item: { status: "answered", answer: { code: "R1", text: null } }, opens: 0 },
     { name: "an open decision opens on the sheet", item: {}, opens: 0 },
   ];
@@ -873,10 +934,14 @@ describe("selection", () => {
     });
   }
 
-  test("an order's recipients are every session its send went to, also those the list's scope leaves out", () => {
-    const items = [buildItem({ id: 8, kind: "message", status: "answered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" }), buildItem({ id: 9, kind: "message", status: "answered", sendId: "t", session: buildSession({ id: "c3" }) })];
-    assert.deepEqual(call("getOrderRecipientIdsQ", items, 8), [SESSION_ID, "b2"]);
-  });
+  // spec §9.2 → Showing one order: the ticks only grow, by the order's session, when they leave every recipient out; nothing ticked shows every order
+  const items = [buildItem({ id: 8, kind: "message", status: "answered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" }), buildItem({ id: 9, kind: "message", status: "answered", sendId: "t", session: buildSession({ id: "c3" }) })];
+  const shows = [
+    { name: "nothing ticked stays so: the thread already holds every order", ids: [], copyId: 8, expected: [] },
+    { name: "a ticked recipient keeps the ticks as they are", ids: ["c3", SESSION_ID], copyId: 8, expected: ["c3", SESSION_ID] },
+    { name: "ticks that leave the order out gain the shown copy's session", ids: ["c3"], copyId: 8, expected: ["c3", "b2"] },
+  ];
+  for (const row of shows) test(`showing an order's entry: ${row.name}`, () => assert.deepEqual(call("getShowTicksQ", row.ids, items, row.copyId), row.expected));
 
   test("the thread entry an opened order aims at is the one holding any of its copies; one not loaded → none", () => {
     const entries = call<unknown[]>("getThreadEntriesQ", [buildItem({ id: 8, kind: "message", status: "answered", sendId: "s" }), buildItem({ id: 7, kind: "message", status: "answered", sendId: "s" })]);
@@ -890,51 +955,43 @@ describe("what the sheet shows", () => {
   const answered = buildItem({ id: 3, status: "answered", answeredAt: "2026-11-12T12:20:00.000Z" });
   const rows = [
     { name: "an open item on the sheet that the read no longer holds stays on it as left the queue", items: [arrived], hashId: "3", expected: { kind: "left", id: 3 } },
-    { name: "a default-selected item that is answered elsewhere stays on the sheet as left the queue", items: [arrived, answered], hashId: "", expected: { kind: "left", id: 3 } },
-    { name: "a held item still open keeps the sheet when a new row arrives before it", items: [arrived, held], hashId: "", expected: { kind: "item", id: 3 } },
-    { name: "a row the owner selected replaces the held item", items: [arrived], hashId: "2", expected: { kind: "item", id: 2 } },
+    { name: "an opened item that is answered elsewhere stays on the sheet as left the queue", items: [arrived, answered], hashId: "3", expected: { kind: "left", id: 3 } },
+    { name: "a held item still open keeps the sheet when a new row arrives before it", items: [arrived, held], hashId: "3", expected: { kind: "item", id: 3 } },
+    { name: "a row the owner opened replaces the held item", items: [arrived], hashId: "2", expected: { kind: "item", id: 2 } },
+    { name: "nothing in the hash leaves the held item off the sheet", items: [arrived, held], hashId: "", expected: { kind: "none", id: null } },
+    // spec §4.3: the ticks change → the sheet gives way to the list once its item's session falls out of scope, never to the left-the-queue line
+    { name: "a held item whose session the ticks leave out gives way to the list", items: [arrived], hashId: "3", ids: ["b2"], expected: { kind: "none", id: null } },
+    { name: "a held item whose session stays ticked keeps the sheet", items: [arrived, held], hashId: "3", ids: [SESSION_ID], expected: { kind: "item", id: 3 } },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, { item: held, isHandled: false });
+      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, held, row.ids ?? []);
       assert.deepEqual({ kind: sheet.kind, id: sheet.id }, row.expected);
     });
   }
 
-  test("the owner's last open item handled leaves the sheet all handled", () => {
-    const sheet = call<{ kind: string; id: number | null }>("getSheetStateQ", call("getGroupsQ", [answered]), "", { item: null, isHandled: true });
-    assert.deepEqual({ kind: sheet.kind, id: sheet.id }, { kind: "handled", id: null });
-  });
-
   test("an item that left the queue keeps its sheet, its foot one line and no composer", () => {
     const { queue } = buildQueue();
     const tree = render("QueueSheetQ", { queue: { ...withList(queue, [arrived]), sheet: { kind: "left", id: 3, item: held } } });
-    const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
-    const foot = renderScreen(card?.props.foot) as RenderedNode;
-    assert.equal(collectText(renderScreen(card?.props.title) as RenderedNode).includes("Decision"), true, "the held item's letterhead");
+    const [foot] = byClass(tree, "card-foot");
+    const [head] = findNodes(tree, (node) => node.type === "h2");
+    assert.equal(collectText(head as RenderedNode).includes("Decision"), true, "the held item's letterhead");
     assert.equal(collectText(foot).replace(/\s+/g, " ").trim(), "ℹ This item left the queue.");
     assert.equal(findNodes(foot, (node) => node.type === "button" || node.type === "textarea").length, 0);
   });
 
-  const handledRows = [
-    { name: "all handled counts what is still on its way", items: [answered, buildItem({ id: 9, kind: "message", status: "answered", sendId: "s-9" })], hint: "2 answers and orders are still on their way." },
-    { name: "all handled says one thing on its way in the singular", items: [answered], hint: "1 answer or order is still on its way." },
-    { name: "all handled with nothing on its way carries no count line", items: [], hint: undefined },
-  ];
-  test("with no row on the sheet, the first row holds the list's one tab stop", () => {
+  test("with no row opened yet, the first row holds the list's one tab stop and no row is current", () => {
     const queue = withList(buildQueue().queue, [answered, buildItem({ id: 9, kind: "message", status: "answered", sendId: "s-9" })]);
-    const list = render("QueueListQ", { queue: { ...queue, sheet: { kind: "handled", id: null }, selectedId: null } });
-    assert.deepEqual(findNodes(list, (node) => node.props?.role === "option").map((node) => node.props.tabIndex), [0, -1]);
+    const list = render("QueueListQ", { queue: { ...queue, selectedId: null } });
+    const options = findNodes(list, (node) => node.props?.role === "option");
+    assert.deepEqual([options.map((node) => node.props.tabIndex), options.map((node) => node.props["aria-selected"])], [[0, -1], [false, false]]);
   });
 
-  for (const row of handledRows) {
-    test(row.name, () => {
-      const queue = withList(buildQueue().queue, row.items);
-      const tree = render("QueueSheetQ", { queue: { ...queue, sheet: { kind: "handled", id: null } } });
-      const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
-      assert.deepEqual({ message: empty?.props.message, hint: empty?.props.hint }, { message: "All handled", hint: row.hint });
-    });
-  }
+  test("with no item opened the sheet renders nothing", () => {
+    const queue = withList(buildQueue().queue, [answered]);
+    const tree = render("QueueSheetQ", { queue: { ...queue, sheet: { kind: "none", id: null } } });
+    assert.deepEqual([byClass(tree, "queue-sheet").length, findNodes(tree, (node) => node.type === "h2").length], [0, 0]);
+  });
 });
 
 describe("after the owner acts on the last open item", () => {
@@ -945,20 +1002,19 @@ describe("after the owner acts on the last open item", () => {
     })) as ScreenModule;
     const selected: unknown[] = [];
     const actions = (module.useQueueActionsQ as (deps: unknown) => Record<string, (id: number, body?: unknown) => Promise<void>>)({
-      list: { status: "ready", data: { items: [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" })], nextCursor: null } },
-      filter: { profile: "", session: "" },
+      groups: call("getGroupsQ", [buildItem({ id: 1 }), buildItem({ id: 2, status: "answered" })]),
       setList: () => undefined,
       setDrafts: () => undefined,
-      setFocus: () => undefined,
       setStatus: () => undefined,
-      selectItem: (id: unknown) => selected.push(id),
+      openItem: (id: unknown) => selected.push(id),
+      closeSheet: () => selected.push("list"),
       reload: () => undefined,
     });
     await actions[action]!(1, { code: "R1" });
     return selected;
   };
 
-  test("an answer selects nothing, so the sheet says all handled", async () => assert.deepEqual(await act("answerItem"), [null]));
+  test("an answer with nothing left open returns the list", async () => assert.deepEqual(await act("answerItem"), ["list"]));
   test("a later keeps the item selected, since it is still open", async () => assert.deepEqual(await act("later"), []));
 });
 
@@ -967,6 +1023,20 @@ describe("Show more", () => {
     const [button] = buttonLabelled(render("ShowMoreQ", { count: 100, isBusy: false, onMore: () => undefined }), "Show more");
     assert.equal(button?.props.className, "btn ghost sm");
   });
+
+  // spec §12.5 in progress: the rest look, the -ing label, focus kept (no disabled), and a press reads nothing more
+  const loads = [
+    { name: "Show more", render: "ShowMoreQ", props: (onPress: () => void) => ({ count: 100, isBusy: true, onMore: onPress }) },
+    { name: "Show earlier", render: "ShowEarlierQ", props: (onPress: () => void) => ({ isBusy: true, onShow: onPress }) },
+  ];
+  for (const row of loads) {
+    test(`${row.name} in progress reads Loading…, stays focusable and starts no second read`, () => {
+      let presses = 0;
+      const [button] = buttonLabelled(render(row.render, row.props(() => { presses += 1; })), "Loading…");
+      (button?.props.onClick as (() => void) | undefined)?.();
+      assert.deepEqual([button?.props["aria-busy"], button?.props.disabled, presses], [true, undefined, 0]);
+    });
+  }
 
   test("the next page after the cursor joins the loaded list in queue order", async () => {
     const urls: string[] = [];
@@ -1070,13 +1140,13 @@ describe("the page re-reads itself", () => {
     assert.equal(data.nextCursor, 9);
   });
 
-  const readOnce = async (list: Record<string, unknown>, status: number, body: unknown, isMarked = true) => {
+  const readOnce = async (list: Record<string, unknown>, status: number, body: unknown) => {
     const module = (await loadScreenModule(QUEUE_SRC, { window: { UI: uiStub() }, fetch: async () => ({ status, json: async () => body }) })) as ScreenModule;
     let current = list;
     const setList = (next: unknown) => {
       current = typeof next === "function" ? (next as (prev: unknown) => Record<string, unknown>)(current) : (next as Record<string, unknown>);
     };
-    const result = await (module.getListQ as (deps: unknown) => Promise<{ isGood: boolean; arrived: Array<{ id: number }> }>)({ setList, getList: () => current, isMarked });
+    const result = await (module.getListQ as (deps: unknown) => Promise<{ isGood: boolean; arrived: Array<{ id: number }> }>)({ setList, getList: () => current });
     return { list: getPlain(current) as Record<string, unknown> & { data: { items: Array<{ id: number }> } | null; newIds: number[] }, result: getPlain(result) };
   };
   const loadedList = (overrides: Record<string, unknown> = {}) =>
@@ -1097,19 +1167,16 @@ describe("the page re-reads itself", () => {
     assert.equal(result.isGood, true);
   });
 
-  test("an arrival is marked New and reported; an unmarked read reports none and marks none", async () => {
+  test("an arrival is marked New and reported", async () => {
     const answer = { items: [buildItem({ id: 1 }), buildItem({ id: 6 })], nextCursor: null };
     const marked = await readOnce(loadedList({ newIds: [1] }), 200, answer);
     assert.deepEqual(marked.list.newIds, [1, 6]);
     assert.deepEqual(marked.result.arrived.map((item) => item.id), [6]);
-    const unmarked = await readOnce(loadedList(), 200, answer, false);
-    assert.deepEqual(unmarked.list.newIds, []);
-    assert.deepEqual(unmarked.result.arrived, []);
   });
 
   test("a New mark goes with its row when a read no longer has it", async () => {
-    const { list } = await readOnce(loadedList({ newIds: [1] }), 200, { items: [buildItem({ id: 2 })], nextCursor: null }, false);
-    assert.deepEqual(list.newIds, []);
+    const { list } = await readOnce(loadedList({ newIds: [1] }), 200, { items: [buildItem({ id: 2 })], nextCursor: null });
+    assert.deepEqual(list.newIds, [2]);
   });
 
   const notes = [
@@ -1152,7 +1219,7 @@ describe("the page re-reads itself", () => {
     { name: "a New row under the visible part is one new below", rows: [rowAt(7, 820)], expected: { count: 1, direction: "below", id: 7 } },
     { name: "New rows over the visible part are counted, and Show goes to the nearest", rows: [rowAt(3, -200), rowAt(4, 112)], expected: { count: 2, direction: "above", id: 4 } },
     { name: "New rows on both sides name the side below, nearest first", rows: [rowAt(3, 40), rowAt(9, 1200), rowAt(8, 900)], expected: { count: 2, direction: "below", id: 8 } },
-    { name: "a list put away by the Orders mode has no visible part to leave", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: null },
+    { name: "a list put away by an open sheet has no visible part to leave", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: null },
   ];
   for (const row of offViews) test(`off-view note: ${row.name}`, () => assert.deepEqual(call("getOffViewQ", row.body ?? listBody, row.rows), row.expected));
 
@@ -1186,11 +1253,11 @@ describe("the page re-reads itself", () => {
     const started: string[] = [];
     const start = (label: string) => () => { started.push(label); return Promise.resolve(label); };
     const join = screen.getJoinedReadQ as (flight: unknown, start: () => Promise<unknown>, isFresh?: boolean) => Promise<unknown>;
-    const first = join(flight, start("tick"));
-    const joined = join(flight, start("refresh"));
-    const fresh = join(flight, start("action"), true);
-    assert.deepEqual(await Promise.all([first, joined, fresh]), ["tick", "tick", "action"]);
-    assert.deepEqual(started, ["tick", "action"]);
+    const first = join(flight, start("action"), true);
+    const joined = join(flight, start("tick"));
+    const fresh = join(flight, start("next action"), true);
+    assert.deepEqual(await Promise.all([first, joined, fresh]), ["action", "action", "next action"]);
+    assert.deepEqual(started, ["action", "next action"]);
     assert.equal(flight.current, null);
   });
 
@@ -1203,9 +1270,11 @@ describe("the page re-reads itself", () => {
       clearTimeout: () => undefined,
     })) as ScreenModule;
     const answers = [false, false, false, true];
-    (module.createReadClockQ as (tick: () => Promise<boolean | undefined>) => unknown)(async () => answers.shift());
+    const settled: number[] = [];
+    (module.createReadClockQ as (tick: () => Promise<boolean | undefined>, onSettle: (fails: number) => void) => unknown)(async () => answers.shift(), (fails) => settled.push(fails));
     for (let index = 0; index < 4; index += 1) await (due as unknown as () => Promise<void>)();
     assert.deepEqual(delays, [15_000, 15_000, 15_000, 60_000, 15_000]);
+    assert.deepEqual(settled, [1, 2, 3, 0], "the failures in a row the header line words its interval from");
   });
 
   test("a tick that throws counts as a failed read and still schedules the next one, which runs", async () => {
@@ -1228,22 +1297,6 @@ describe("the page re-reads itself", () => {
     assert.deepEqual(ticks, ["throws", "throws", "throws", "lands"]);
     assert.deepEqual(delays, [15_000, 15_000, 15_000, 60_000, 15_000]);
   });
-
-  const arrivalRows = [
-    { name: "one arrival in the Orders head names its kind and session", arrived: [buildItem({ session: buildSession({ name: "yoaida" }) })], text: "New Decision from yoaida Show" },
-    { name: "several arrivals in the Orders head are counted", arrived: [buildItem({ id: 1 }), buildItem({ id: 2, kind: "report" })], text: "New 2 items Show" },
-    { name: "no arrival leaves the Orders head's status line empty", arrived: [], text: "" },
-  ];
-  for (const row of arrivalRows) {
-    test(row.name, () => {
-      const shown: unknown[] = [];
-      const tree = render("OrdersArrivalQ", { arrived: row.arrived, onShow: () => shown.push(true) });
-      const [line] = findNodes(tree, (node) => node.props?.role === "status");
-      assert.equal(collectText(line as RenderedNode).replace(/\s+/g, " ").trim(), row.text);
-      for (const button of buttonLabelled(tree, "Show")) (button.props.onClick as () => void)();
-      assert.equal(shown.length, row.arrived.length > 0 ? 1 : 0);
-    });
-  }
 
   test("an arrived row carries the solid New badge at the start of its meta line, and its name leads with New", () => {
     const row = call<{ id: number }>("getSingleRowQ", buildItem());
@@ -1382,23 +1435,40 @@ describe("page header freshness", () => {
   const getHeader = (queue: Record<string, unknown>) => {
     const [header] = findNodes(render("QueueHeaderQ", { queue: { reload: () => undefined, sessions: buildSessions(), ...queue } }), (node) => node.props?.atom === "PageHeader");
     const freshness = header?.props.freshness as { props: Record<string, unknown> };
-    const refresh = header?.props.refresh as { props: Record<string, unknown> };
-    const stamp = collectText(renderScreen(freshness) as RenderedNode).replace(/\s+/g, " ");
-    return { stamp, isBusy: refresh.props.isBusy };
+    const line = renderScreen(freshness) as RenderedNode;
+    const stamp = collectText(line).replace(/\s+/g, " ");
+    const regions = findNodes(line, (node) => node.props?.role === "status");
+    return { stamp, header, regions: regions.map((node) => [collectText(node).replace(/\s+/g, " "), node.props.title]) };
   };
 
   // the freshness slot holds the page's own cadence; only a failed list read with rows on screen replaces it
   const rows = [
-    { name: "a failed resume re-read leaves the header on the page's cadence", queue: { list: list(), resumes: resumes({ data: [], error: "HTTP 503 database_unavailable" }) }, stamp: /^Checks every 15s$/, isBusy: false },
-    { name: "a failed list read with rows loaded says the page is not updated and when it last read", queue: { list: list({ data: { items: [] }, readAt: "2026-11-13T12:29:00.000Z", error: { detail: "HTTP 500" } }), resumes: resumes() }, stamp: /^⚠ Not updated · last read 21:29$/, isBusy: false },
-    { name: "a resume read in flight keeps Refresh busy", queue: { list: list(), resumes: resumes({ busy: true }) }, stamp: /^Checks every 15s$/, isBusy: true },
-    { name: "both reads landed shows the page's cadence", queue: { list: list(), resumes: resumes() }, stamp: /^Checks every 15s$/, isBusy: false },
+    { name: "a failed resume re-read leaves the header on the page's cadence", queue: { list: list(), resumes: resumes({ data: [], error: "HTTP 503 database_unavailable" }) }, stamp: /^Checks every 15s$/ },
+    { name: "a failed list read with rows loaded says the page is not updated, when it last read and when it tries again", queue: { list: list({ data: { items: [] }, readAt: "2026-11-13T12:29:00.000Z", error: { detail: "HTTP 500" } }), resumes: resumes(), failedChecks: 1 }, stamp: /^⚠ Not updated · last read 21:29 · trying again every 15s$/ },
+    { name: "three failed checks in a row say the slower step", queue: { list: list({ data: { items: [] }, readAt: "2026-11-13T12:29:00.000Z", error: { detail: "HTTP 500" } }), resumes: resumes(), failedChecks: 3 }, stamp: /^⚠ Not updated · last read 21:29 · trying again every 60s$/ },
+    { name: "both reads landed shows the page's cadence", queue: { list: list(), resumes: resumes() }, stamp: /^Checks every 15s$/ },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const { stamp, isBusy } = getHeader(row.queue);
-      assert.match(stamp.trim(), row.stamp);
-      assert.equal(isBusy, row.isBusy);
+      assert.match(getHeader(row.queue).stamp.trim(), row.stamp);
+    });
+  }
+
+  // spec §3.1: the page checks by itself on its own cadence (POLL_Q) and after each owner act → a manual read has nothing to add
+  test("the header holds the status line and no Refresh, a read in flight included", () => {
+    const { header } = getHeader({ list: list({ status: "loading" }), resumes: resumes({ busy: true }) });
+    assert.deepEqual([header?.props.freshness === undefined, header?.props.refresh, header?.props.actions, header?.props.primary], [false, undefined, undefined, undefined]);
+  });
+
+  // spec §3.1: one status region in both forms, so a turn to failed and back is said once; its title carries the last read
+  const lines = [
+    { name: "the cadence line", list: list({ readAt: "2026-11-13T12:30:15.000Z" }) },
+    { name: "the failed-check line", list: list({ readAt: "2026-11-13T12:30:15.000Z", error: { detail: "HTTP 500" } }) },
+  ];
+  for (const row of lines) {
+    test(`${row.name} is a status region whose title names the last read`, () => {
+      const { stamp, regions } = getHeader({ list: row.list, resumes: resumes(), failedChecks: 1 });
+      assert.deepEqual(regions, [[stamp, `Last read ${(realUi.formatKstFull as (iso: string) => string)("2026-11-13T12:30:15.000Z")}`]]);
     });
   }
 });
@@ -1446,12 +1516,12 @@ function buildSessions(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// the Orders mode as useOrdersQ hands it to the desk, open by default
+// Orders as useOrdersQ hands it to the desk
 function buildOrders(overrides: Record<string, unknown> = {}) {
   return {
-    isOpen: true, open: () => undefined, close: () => undefined, showEarlier: () => undefined, resend: () => undefined,
+    focus: () => undefined, aim: null, aimAt: () => undefined, clearAim: () => undefined, showEarlier: () => undefined, resend: () => undefined,
     thread: { status: "ready", items: [], nextCursor: null, error: null },
-    composer: { text: "", isBusy: false, error: null }, setText: () => undefined, setImages: () => undefined, send: () => undefined, reply: null, linkReply: () => undefined, read: () => undefined, ...overrides,
+    composer: { text: "", isBusy: false, error: null }, setText: () => undefined, setImages: () => undefined, send: () => undefined, read: () => undefined, ...overrides,
   };
 }
 
@@ -1470,11 +1540,9 @@ function renderCard(name: string, props: unknown): RenderedNode {
 }
 
 // the rail as the desk renders it: the page's scope, ticks and list
-function renderRail(sessions: Record<string, unknown> = {}, filter = { profile: "", session: "" }, items: unknown[] = [], isOrders = false) {
-  const filters: unknown[] = [];
-  const { queue } = buildQueue({ sessions: buildSessions(sessions), orders: { isOpen: isOrders, open: () => undefined } });
-  const tree = renderCard("SessionsRegionQ", { queue: { ...withList(queue, items), filter, setFilter: (next: unknown) => filters.push(next) } });
-  return { tree, filters: () => getPlain(filters) };
+function renderRail(sessions: Record<string, unknown> = {}) {
+  const { queue } = buildQueue({ sessions: buildSessions(sessions) });
+  return { tree: renderCard("SessionsRegionQ", { queue: withList(queue, []) }) };
 }
 
 const railRowOf = (tree: RenderedNode, id: string) => findNodes(tree, (node) => node.props?.["data-session"] === id)[0] as RenderedNode;
@@ -1512,11 +1580,27 @@ describe("sessions rail rows", () => {
     });
   }
 
-  test("a row that takes no message has no checkbox, and every other row's box is named for the order", () => {
+  test("a row that takes no message has no checkbox, and every other row's box is named Select and its session", () => {
     const { tree } = renderRail({ isEndedShown: true });
     const boxOf = (id: string) => findNodes(railRowOf(tree, id), (node) => node.type === "input" && node.props.type === "checkbox")[0];
-    assert.equal(boxOf(SESSION_ID)?.props["aria-label"], "Order to nightly-docs-sweep");
+    assert.equal(boxOf(SESSION_ID)?.props["aria-label"], "Select nightly-docs-sweep");
     assert.equal(boxOf(REPLACED_ID), undefined);
+  });
+
+  // spec §9.1: one control per row — the row is its checkbox's label, so a press anywhere on it ticks; a row that takes no message is no control
+  test("a row is its checkbox's label and holds no button, and a row that takes no message is no label", () => {
+    const { tree } = renderRail({ isEndedShown: true });
+    const controls = (id: string) => findNodes(railRowOf(tree, id), (node) => node.type === "button" || node.type === "input").map((node) => node.type);
+    assert.deepEqual([railRowOf(tree, SESSION_ID).type, controls(SESSION_ID)], ["label", ["input"]]);
+    assert.deepEqual([railRowOf(tree, REPLACED_ID).type, controls(REPLACED_ID)], ["div", []]);
+  });
+
+  test("every box of the rail shares one description of what a tick does", () => {
+    const { tree } = renderRail({ isEndedShown: true });
+    const described = findNodes(tree, (node) => node.type === "input" && node.props.type === "checkbox").map((node) => node.props["aria-describedby"]);
+    const [hint] = findNodes(tree, (node) => node.props?.id === described[0]);
+    assert.ok(described.length === 3 && described.every((id) => id === described[0]), String(described));
+    assert.equal(collectText(hint as RenderedNode), "Ticked sessions set whose reports and orders are shown and who receives the next order. With none ticked, every session is shown and no order can be sent.");
   });
 
   test("ticking a row calls the toggle with that row's id", () => {
@@ -1546,39 +1630,69 @@ describe("sessions rail rows", () => {
   });
 });
 
-describe("the rail as the session scope", () => {
-  test("pressing a row scopes the list to that session and keeps the account", () => {
-    const { tree, filters } = renderRail({}, { profile: "work-dev", session: "" });
-    const [button] = findNodes(railRowOf(tree, SESSION_ID), (node) => node.type === "button");
-    (button?.props.onClick as () => void)();
-    assert.deepEqual(filters(), [{ profile: "work-dev", session: SESSION_ID }]);
+describe("the ticks as the one selection", () => {
+  const gersona = buildSession({ id: "a1", name: "gersona" });
+  const yoaida = buildSession({ id: "b2", name: "yoaida" });
+  const atrium = buildSession({ id: "c3", name: "atrium" });
+  const items = [buildItem({ id: 1, session: gersona }), buildItem({ id: 2, session: yoaida }), buildItem({ id: 3, session: atrium })];
+  // spec §9.1: the ticked sessions are the list's scope; nothing ticked → every session's items
+  const scopes = [
+    { name: "nothing ticked shows every session's items", ids: [], expected: [1, 2, 3] },
+    { name: "two ticked show theirs and leave a third session's out", ids: ["a1", "b2"], expected: [1, 2] },
+  ];
+  for (const row of scopes) {
+    test(`the list's scope: ${row.name}`, () => {
+      assert.deepEqual(call<Array<{ id: number }>>("getVisibleItemsQ", items, { profile: "" }, row.ids).map((item) => item.id), row.expected);
+    });
+  }
+
+  const rails = [buildSessionRow({ id: "a1", name: "gersona" }), buildSessionRow({ id: "b2", name: "yoaida" })];
+  const titles = [
+    { name: "nothing ticked reads All sessions", ids: [], title: "All sessions" },
+    { name: "one tick names its session", ids: ["b2"], title: "yoaida" },
+    { name: "several ticks name them all in tick order", ids: ["b2", "a1"], title: "yoaida, gersona" },
+  ];
+  for (const row of titles) test(`the list's head: ${row.name}`, () => assert.equal(call("getScopeTitleQ", rails, row.ids), row.title));
+
+  test("no rail row and no band is aria-current, whatever is ticked", () => {
+    const { tree } = renderRail({ selectedIds: [SESSION_ID] });
+    assert.equal(findNodes(tree, (node) => node.props?.["aria-current"] !== undefined).length, 0);
   });
 
-  test("the scoped row and only it is current, and All sessions is current with no scope", () => {
-    const current = (session: string) => findNodes(renderRail({}, { profile: "", session }).tree, (node) => node.props?.["aria-current"] === "true").map((node) => collectText(node));
-    assert.ok(current(SESSION_ID).length === 1 && current(SESSION_ID)[0]?.includes("nightly-docs-sweep"), String(current(SESSION_ID)));
-    assert.ok(current("").length === 1 && current("")[0]?.includes("All sessions"), String(current("")));
-  });
-
-  test("All sessions clears the scope", () => {
-    const { tree, filters } = renderRail({}, { profile: "", session: SESSION_ID });
-    const [band] = findNodes(tree, (node) => node.type === "button" && collectText(node).includes("All sessions"));
-    (band?.props.onClick as () => void)();
-    assert.deepEqual(filters(), [{ profile: "", session: "" }]);
-  });
-
-  // master box: every live session that takes a message; an ended one is ticked on its own row
+  // master box (spec §9.1): nothing ticked → every live session that takes a message; anything ticked → every tick cleared, an ended one's too
+  const live = buildSessionRow({ id: "d4", name: "aidl" });
+  const masterRows = [...SESSION_ROWS, live];
   const masters = [
-    { name: "none ticked ticks every live session", ids: [], next: [SESSION_ID], state: "none" },
-    { name: "an ended tick alone stays and the live ones join it", ids: [ENDED_ID], next: [ENDED_ID, SESSION_ID], state: "none" },
-    { name: "every live session ticked unticks them and keeps the ended tick", ids: [ENDED_ID, SESSION_ID], next: [ENDED_ID], state: "all" },
+    { name: "none ticked ticks every live session", ids: [], next: [SESSION_ID, "d4"], state: "none" },
+    { name: "an ended tick alone clears", ids: [ENDED_ID], next: [], state: "some" },
+    { name: "some live ticked clears every tick", ids: [SESSION_ID, ENDED_ID], next: [], state: "some" },
+    { name: "every live session ticked clears them all", ids: [SESSION_ID, "d4"], next: [], state: "all" },
   ];
   for (const row of masters) {
     test(`the master box: ${row.name}`, () => {
-      assert.equal(call("getMasterTickQ", row.ids, SESSION_ROWS), row.state);
-      assert.deepEqual(call("putMasterTickQ", row.ids, SESSION_ROWS), row.next);
+      assert.equal(call("getMasterTickQ", row.ids, masterRows), row.state);
+      assert.deepEqual(call("putMasterTickQ", row.ids, masterRows), row.next);
     });
   }
+
+  test("the master box is named for every live session, and absent while no session takes a message", () => {
+    const masterOf = (rows: unknown[]) => findNodes(renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } }).tree, (node) => node.props?.["aria-label"] === "Select all live sessions").length;
+    assert.deepEqual([masterOf(SESSION_ROWS), masterOf([SESSION_ROWS[2]])], [1, 0]);
+  });
+
+  // spec §9.1 → In the address: a tick on a session that no longer takes a message is dropped and said in the status line
+  const dropped = [
+    { name: "one", ids: [SESSION_ID, REPLACED_ID], line: "⚠ nightly-docs-sweep no longer takes orders and was unticked." },
+    { name: "none", ids: [SESSION_ID], line: null },
+  ];
+  for (const row of dropped) test(`a dropped tick's status line: ${row.name}`, () => assert.equal(call("getDroppedNoteQ", row.ids, SESSION_ROWS), row.line));
+
+  // spec §9.2: the recipients changed under a draft → the note says so once
+  const changes = [
+    { name: "to two sessions", names: ["gersona", "yoaida"], note: "Recipients changed: now gersona and yoaida." },
+    { name: "to none", names: [], note: "No session ticked now: this order has no recipient." },
+  ];
+  for (const row of changes) test(`the recipients-changed note: ${row.name}`, () => assert.equal(call("getRecipientsNoteQ", row.names), row.note));
 
   test("the master box shows the mixed state while only some live sessions are ticked", () => {
     const rows = [buildSessionRow(), buildSessionRow({ id: ENDED_ID, state: "live" })];
@@ -1594,11 +1708,27 @@ describe("the rail as the session scope", () => {
   });
 });
 
+// a count the rail has not read is no claim → no `0 live · 0 ended` over its placeholder or its outage
+describe("the rail head", () => {
+  const headSub = (region: unknown) => {
+    const { queue } = buildQueue({ sessions: buildSessions({ region }) });
+    const tree = render("SessionsRegionQ", { queue: withList(queue, []) });
+    return findNodes(tree, (node) => node.props?.atom === "Card")[0]?.props.sub;
+  };
+  const live = SESSION_ROWS.filter((row) => row.state !== "exited").length;
+  const rows = [
+    { name: "a first read in flight states no count", region: { status: "loading", data: null, error: null, busy: true }, expected: undefined },
+    { name: "a failed first read states no count", region: { status: "error", data: null, error: { message: "down" }, busy: false }, expected: undefined },
+    { name: "a read rail states its live and ended counts", region: { status: "ready", data: { sessions: SESSION_ROWS, hasMore: false }, error: null, busy: false }, expected: `${live} live · ${SESSION_ROWS.length - live} ended` },
+  ];
+  for (const row of rows) test(row.name, () => assert.equal(headSub(row.region), row.expected));
+});
+
 describe("the rail foot", () => {
   const resumes = (results: string[]) => ({ status: "ready", busy: false, error: null, data: results.map((result, index) => ({ item: { id: index + 1, title: "Rebase" }, session: { profileLabel: "work-dev", cwdTail: "wt/a" }, attempt: 1, sentAt: "2026-11-12T12:20:11.204Z", result, abortReason: null, bgId: null })) });
   const footButton = (region: unknown) => {
     const { queue } = buildQueue({ resumes: region });
-    const tree = renderCard("SessionsRegionQ", { queue: { ...withList(queue, []), filter: { profile: "", session: "" }, setFilter: () => undefined } });
+    const tree = renderCard("SessionsRegionQ", { queue: withList(queue, []) });
     return findNodes(tree, (node) => node.type === "button" && collectText(node).includes("Automatic resumes")).map((node) => collectText(node));
   };
   const rows = [
@@ -1611,10 +1741,10 @@ describe("the rail foot", () => {
 
 describe("order composer", () => {
   const shown = SESSION_ROWS;
-  test("the targets are the ticked rows on show, never a hidden ended row or a replaced row", () => {
+  // one tick set → list scope, thread and recipients agree: a ticked ended row stays a recipient while its band is folded
+  test("the targets are every ticked row that takes a message, an ended one included, never a replaced row", () => {
     const ticked = [SESSION_ID, ENDED_ID, REPLACED_ID];
     assert.deepEqual(call("getSendTargetsQ", shown, ticked), { ids: [SESSION_ID, ENDED_ID], names: ["nightly-docs-sweep", "atrium-hooks"], endedCount: 1 });
-    assert.deepEqual(call("getSendTargetsQ", [shown[0]], ticked), { ids: [SESSION_ID], names: ["nightly-docs-sweep"], endedCount: 0 });
   });
 
   // spec §9.2 → Foot: the send button names who the order goes to
@@ -1637,48 +1767,28 @@ describe("order composer", () => {
   ];
   for (const row of invalids) test(`a send press: ${row.name}`, () => assert.deepEqual(call("getOrderInvalidQ", row.targets, row.text), row.invalid));
 
-  // spec §9.2 → The Re: line: a reply while the report's session is the one tick; a second tick or the ✕ makes it a plain order
-  const REPORT = buildItem({ id: 61, kind: "report", title: "Nightly sweep done", options: [], session: buildSession({ name: "atrium" }) });
-  const replyComposer = (reply: unknown, ids: string[]) => {
-    const { queue, calls } = buildQueue({ drafts: { 61: { text: "ship it" } }, orders: buildOrders({ reply, composer: { text: "typed order", isBusy: false, error: null }, send: (...args: unknown[]) => calls.push(["orderSend", ...args]), dropReply: () => calls.push(["dropReply"]) }) });
-    const targets = { ids, names: ids.map((id) => (id === SESSION_ID ? "atrium" : "yoaida")), endedCount: 0 };
+  // spec §4.5 → the Orders composer sends a new order to the ticked sessions; it never answers or closes a report
+  test("the Orders composer sends the typed order to the ticked sessions and no item action", () => {
+    const { queue, calls } = buildQueue({ orders: buildOrders({ composer: { text: "typed order", isBusy: false, error: null }, send: (...args: unknown[]) => calls.push(["orderSend", ...args]) }) });
     const listed = withList(queue, []);
     const box = call("getOrderBoxQ", listed);
-    return { tree: render("OrderComposerQ", { queue: listed, targets, box, tray: call("getTrayQ", { fieldId: "queue-order-text", box }) }), calls };
-  };
-  const replies = [
-    { name: "the report's session alone → the Re: line, the report's draft and its own Send order", reply: { item: REPORT, isDropped: false }, ids: [SESSION_ID], line: true, text: "ship it", note: "Sends this to atrium and closes the report.", sent: ["settle", 61, "reply", { text: "ship it" }] },
-    { name: "a second tick → a plain order, the report stays open", reply: { item: REPORT, isDropped: false }, ids: [SESSION_ID, ENDED_ID], line: false, text: "ship it", note: "Not a reply any more: the report stays open.", sent: ["orderSend", { sessionIds: [SESSION_ID, ENDED_ID], text: "ship it" }] },
-    { name: "the ✕ pressed → a plain order from the order box", reply: { item: REPORT, isDropped: true }, ids: [SESSION_ID], line: false, text: "typed order", note: "Not a reply any more: the report stays open.", sent: ["orderSend", { sessionIds: [SESSION_ID], text: "typed order" }] },
-    { name: "no report → the order box", reply: null, ids: [SESSION_ID], line: false, text: "typed order", note: "Goes to atrium.", sent: ["orderSend", { sessionIds: [SESSION_ID], text: "typed order" }] },
-  ];
-  for (const row of replies) {
-    test(`an order from a report: ${row.name}`, () => {
-      const { tree, calls } = replyComposer(row.reply, row.ids);
-      const text = collectText(tree);
-      assert.equal(text.includes("Re: Nightly sweep done"), row.line, text);
-      assert.equal(findNodes(tree, (node) => node.props?.["aria-label"] === "Do not link this order to the report").length, row.line ? 1 : 0);
-      assert.equal(findNodes(tree, (node) => node.type === "textarea")[0]?.props.value, row.text);
-      assert.ok(text.includes(row.note), text);
-      const [send] = findNodes(tree, (node) => node.type === "button" && String(node.props.className).includes("primary"));
-      (send?.props.onClick as () => void)();
-      assert.deepEqual(getPlain(calls.filter((one) => ["settle", "orderSend"].includes(String(one[0])))[0]?.slice(0, row.sent.length)), row.sent);
-    });
-  }
-
-  test("the ✕ on the Re: line drops the link", () => {
-    const { tree, calls } = replyComposer({ item: REPORT, isDropped: false }, [SESSION_ID]);
-    const [drop] = findNodes(tree, (node) => node.props?.["aria-label"] === "Do not link this order to the report");
-    (drop?.props.onClick as () => void)();
-    assert.deepEqual(getPlain(calls.filter((one) => one[0] === "dropReply")), [["dropReply"]]);
+    const targets = { ids: [SESSION_ID], names: ["atrium"], endedCount: 0 };
+    const tree = render("OrderComposerQ", { queue: listed, targets, box, tray: call("getTrayQ", { fieldId: "queue-order-text", box }) });
+    assert.equal(collectText(tree).includes("Re:"), false);
+    const [send] = findNodes(tree, (node) => node.type === "button" && String(node.props.className).includes("primary"));
+    (send?.props.onClick as () => void)();
+    assert.deepEqual(getPlain(calls.filter((one) => ["settle", "orderSend"].includes(String(one[0])))).map((one) => (one as unknown[]).slice(0, 2)), [["orderSend", { sessionIds: [SESSION_ID], text: "typed order" }]]);
   });
 
+  // spec §10 → Rail "no session takes a message": the note says so, not "tick one"; before the rail loads nothing is known
   const notes = [
-    { name: "none ticked", count: 0, note: "Tick sessions in the rail." },
-    { name: "one ticked", count: 1, note: "Goes to s0." },
-    { name: "several ticked", count: 2, note: "Each ticked session gets its own copy." },
+    { name: "none ticked", count: 0, rows: [buildSessionRow()], note: "Tick a session in the rail to address this order." },
+    { name: "none ticked before the rail loads", count: 0, rows: null, note: "Tick a session in the rail to address this order." },
+    { name: "no session takes a message", count: 0, rows: [buildSessionRow({ isSelectable: false }), buildSessionRow({ id: REPLACED_ID, state: "exited", exitReason: "replaced", isSelectable: false })], note: "No session can take an order right now." },
+    { name: "one ticked", count: 1, rows: [buildSessionRow()], note: "Goes to s0." },
+    { name: "several ticked", count: 2, rows: [buildSessionRow()], note: "Each ticked session gets its own copy." },
   ];
-  for (const row of notes) test(`the note at rest: ${row.name}`, () => assert.equal(call("getOrderNoteQ", targetsOf(row.count)), row.note));
+  for (const row of notes) test(`the note at rest: ${row.name}`, () => assert.equal(call("getOrderNoteQ", targetsOf(row.count), row.rows), row.note));
 
   test("the page's per-send target cap is the send route's: the cap passes and one more is refused", () => {
     const text = "rebase on main";
@@ -1686,6 +1796,20 @@ describe("order composer", () => {
     assert.equal(messageBodySchema.safeParse({ sessionIds: ids(MAX_TARGETS), text }).success, true);
     assert.equal(messageBodySchema.safeParse({ sessionIds: ids(MAX_TARGETS + 1), text }).success, false);
   });
+});
+
+// spec §4.5 → two composers on one screen: the sheet's label names the item, the Orders label the people
+describe("the two composers told apart", () => {
+  const labels = [
+    { name: "a decision's box is about the decision", item: buildItem({ id: 3, isFreeTextAllowed: true }), label: "Your own answer or a note on this decision (optional)" },
+    { name: "a report's box is an order on the report, to its session", item: buildItem({ id: 5, kind: "report", options: [], isFreeTextAllowed: true, session: buildSession({ name: "yoaida" }) }), label: "Order to yoaida on this report (optional)" },
+  ];
+  for (const row of labels) {
+    test(`the sheet's label: ${row.name}`, () => {
+      const [label] = findNodes(renderSheet({ item: row.item, queue: buildQueue().queue }), (node) => node.type === "label" && String(node.props.className).includes("field-label"));
+      assert.equal(collectText(label as RenderedNode), row.label);
+    });
+  }
 });
 
 describe("an order send's answer", () => {
@@ -1700,15 +1824,16 @@ describe("an order send's answer", () => {
     })) as ScreenModule;
     let composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null };
     const statuses: unknown[] = [];
-    const counts = { sent: 0 };
+    const counts = { sent: 0, refused: 0 };
     const isDone = await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
       body: { sessionIds: [SESSION_ID, ENDED_ID], text: "rebase on main" },
       names: ["gersona", "yoaida"],
       setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); },
       setStatus: (next: unknown) => statuses.push(next),
       onSent: () => { counts.sent += 1; },
+      onRefused: () => { counts.refused += 1; },
     });
-    return { isDone, posts: getPlain(posts), composer: getPlain(composer), statuses: getPlain(statuses), sent: counts.sent };
+    return { isDone, posts: getPlain(posts), composer: getPlain(composer), statuses: getPlain(statuses), sent: counts.sent, refused: counts.refused };
   };
 
   // spec §9.3 → After sending: the ticks stay, so the next line goes to the same sessions; the list's status line names them
@@ -1718,20 +1843,21 @@ describe("an order send's answer", () => {
     assert.equal(result.isDone, true);
     assert.deepEqual(result.composer, { text: "", isBusy: false, error: null });
     assert.deepEqual(result.statuses, [{ text: "✓ Order sent to gersona and yoaida", orderId: 81 }]);
-    assert.equal(result.sent, 1);
+    assert.deepEqual([result.sent, result.refused], [1, 0]);
   });
 
   const refusals = [
     { name: "a replaced target names the server's reason", status: 409, answer: { error: "session_replaced", reason: "a replaced session takes no message" }, error: "Refused: a replaced session takes no message." },
     { name: "an unknown target names the server's reason", status: 404, answer: { error: "unknown_session", reason: "every target must be a registered session" }, error: "Refused: every target must be a registered session." },
-    { name: "a refusal with no reason shows fixed copy", status: 403, answer: { error: "forbidden" }, error: "The monitor refused this order. Refresh the session list and try again." },
+    { name: "a refusal with no reason shows fixed copy", status: 403, answer: { error: "forbidden" }, error: "The monitor refused this order. Try again." },
   ];
+  // spec §4.4: a refused send is followed by a read at once
   for (const row of refusals) {
-    test(`a refused send keeps the text: ${row.name}`, async () => {
+    test(`a refused send keeps the text and re-reads the page: ${row.name}`, async () => {
       const result = await run(row.status, row.answer);
       assert.equal(result.isDone, false);
       assert.deepEqual(result.composer, { text: "rebase on main", isBusy: false, error: row.error });
-      assert.deepEqual([result.statuses, result.sent], [[], 0]);
+      assert.deepEqual([result.statuses, result.sent, result.refused], [[], 0, 1]);
     });
   }
 
@@ -1747,46 +1873,32 @@ describe("an order send's answer", () => {
   for (const row of sentLines) test(`the sent line names every recipient: ${row.name}`, () => assert.equal(call("getOrderSentStatusQ", row.names), row.line));
 });
 
-describe("the Orders mode", () => {
+describe("Orders", () => {
   const OTHER_ID = "3d8a51c2-7e04-4b19-a6c3-5f2e9d0b8a17";
   const named = (name: string, id = SESSION_ID) => buildSession({ id, name });
   const copy = (overrides: Record<string, unknown>) => buildItem({ kind: "message", status: "answered", options: [], answeredAt: "2026-11-12T12:26:04.118Z", ...overrides });
 
-  const modes = [
-    { name: "open puts the list and the sheet away, mounted, and shows the order view", isOpen: true, hidden: true, views: 1 },
-    { name: "closed shows the list and the sheet and no order view", isOpen: false, hidden: undefined, views: 0 },
-  ];
-  for (const row of modes) {
-    test(row.name, () => {
-      const tree = render("QueueDeskQ", { queue: { ...withList(buildQueue().queue, [buildItem({ id: 1 })]), orders: buildOrders({ isOpen: row.isOpen }) } });
-      const [away] = findNodes(tree, (node) => node.props?.className === "queue-away");
-      assert.equal(away?.props.hidden, row.hidden);
-      assert.deepEqual(findNodes(away as RenderedNode, (node) => ["QueueListQ", "QueueSheetQ"].includes(node.type)).map((node) => node.type), ["QueueListQ", "QueueSheetQ"]);
-      assert.equal(findNodes(tree, (node) => node.type === "OrdersViewQ").length, row.views);
-    });
-  }
-
-  const returns = [
-    { name: "the opener still on the page takes the focus back", stored: { opener: { isConnected: true, name: "New order" }, openerSession: null }, expected: "New order" },
-    { name: "a rail row the mode re-rendered takes it back through its session", stored: { opener: { isConnected: false }, openerSession: OTHER_ID }, expected: "rail main" },
-    { name: "an opener gone with no rail row → the selected row", stored: { opener: { isConnected: false }, openerSession: null }, expected: "row 41" },
-  ];
-  for (const row of returns) {
-    test(`leaving the mode: ${row.name}`, () => {
-      const rail = { getAttribute: () => OTHER_ID, querySelector: (selector: string) => (selector === ".queue-rail-main" ? { name: "rail main" } : null) };
-      const root = { querySelectorAll: () => [{ getAttribute: () => SESSION_ID, querySelector: () => null }, rail], getElementById: (id: string) => (id === "queue-row-41" ? { name: "row 41" } : null) };
-      assert.equal(call<{ name: string }>("getReturnFocusQ", row.stored, root, 41).name, row.expected);
-    });
-  }
-
-  test("the list's and the sheet's scroll positions stored on entering are set again on leaving", () => {
-    const bodies: Record<string, { scrollTop: number }> = { ".queue-list > .card-body": { scrollTop: 412 }, ".queue-sheet > .card-body": { scrollTop: 96 } };
-    const root = { querySelector: (selector: string) => bodies[selector] ?? null };
-    const stored = (screen.getPaneScrollsQ as (r: unknown) => unknown)(root);
-    for (const body of Object.values(bodies)) body.scrollTop = 0;
-    (screen.setPaneScrollsQ as (r: unknown, s: unknown) => void)(root, stored);
-    assert.deepEqual(Object.values(bodies).map((body) => body.scrollTop), [412, 96]);
+  // spec §3.1 → three panes always: nothing is put away for Orders, and nothing opens or closes it
+  test("the desk holds Orders beside the middle pane at rest, with nothing put away and no mode", () => {
+    const tree = render("QueueDeskQ", { queue: withList(buildQueue().queue, [buildItem({ id: 1 })]) });
+    const [desk] = findNodes(tree, (node) => typeof node.props?.className === "string" && node.props.className.startsWith("queue-desk"));
+    assert.equal(desk?.props.className, "queue-desk");
+    assert.equal(findNodes(tree, (node) => node.props?.hidden === true && node.type === "div" && node.props.className !== "queue-list-slot").length, 0);
+    assert.equal(findNodes(tree, (node) => node.type === "OrdersViewQ").length, 1);
   });
+
+  const heads = [
+    { name: "nothing ticked → to every session", ids: [], sub: "to every session" },
+    { name: "the ticked sessions by name", ids: [SESSION_ID, ENDED_ID], sub: "to nightly-docs-sweep, atrium-hooks" },
+  ];
+  for (const row of heads) {
+    test(`the Orders head names whose orders the thread holds, with no Close and no Clear: ${row.name}`, () => {
+      const tree = renderOrders({}, { selectedIds: row.ids, isEndedShown: true });
+      const [card] = findNodes(tree, (node) => node.props?.atom === "Card");
+      assert.equal(collectText(renderScreen(card?.props.sub) as RenderedNode), row.sub);
+      assert.deepEqual(["Close", "Clear", "New order"].map((label) => buttonLabelled(tree, label).length), [0, 0, 0]);
+    });
+  }
 
   test("the history read asks for the ticked sessions' orders a page at a time, and Show earlier continues from the cursor", async () => {
     const urls: string[] = [];
@@ -1875,6 +1987,39 @@ describe("the Orders mode", () => {
     assert.deepEqual(getPlain(resent), [[92]]);
   });
 
+  // the page's one action state (queue.busy) names the copy a resend is for → only that recipient's row shows it
+  const resendStates = [
+    {
+      name: "in flight → the pressed recipient's Resend and Resend to 2 read Resending… and take no press; the other row's stays",
+      busy: { id: 92, error: null },
+      rows: [["queue-recipient", [["Resend", false, true]], ""], ["queue-recipient", [["Resending…", true, false]], ""]],
+      all: [["Resending…", true, false]],
+    },
+    {
+      name: "refused → the reason under that recipient only, every Resend back at rest",
+      busy: { id: null, error: { id: 92, message: "Refused: atrium ended." } },
+      rows: [["queue-recipient", [["Resend", false, true]], ""], ["queue-recipient", [["Resend", false, true]], ""], ["queue-recipient-refusal", [], "✕ Refused: atrium ended."]],
+      all: [["Resend to 2", false, true]],
+    },
+  ];
+  for (const row of resendStates) {
+    test(`a recipient's resend: ${row.name}`, () => {
+      const thread = { status: "ready", nextCursor: null, error: null, items: [
+        copy({ id: 91, sendId: "s3", status: "unacked", canResend: true, session: named("yoaida", OTHER_ID) }),
+        copy({ id: 92, sendId: "s3", status: "unacked", canResend: true, session: named("atrium", ENDED_ID) }),
+      ] };
+      const { queue } = buildQueue({ busy: row.busy, orders: buildOrders({ thread }) });
+      const tree = renderCard("OrdersViewQ", { queue: withList(queue, []) });
+      const looks = (node: RenderedNode) => findNodes(node, (inner) => inner.type === "button").map((button) => [collectText(button).trim(), button.props["aria-busy"] === true, typeof button.props.onClick === "function"]);
+      const [list] = findNodes(tree, (node) => node.props?.className === "queue-recipients");
+      const items = findNodes(list as RenderedNode, (node) => node.type === "li").map((item) => [item.props.className, looks(item), findNodes(item, (inner) => inner.type === "p" && inner.props.role === "alert").map((line) => collectText(line).replace(/\s+/g, " ").trim()).join("")]);
+      assert.deepEqual(items, row.rows);
+      const inList = new Set(findNodes(list as RenderedNode, (node) => node.type === "button"));
+      const all = findNodes(tree, (node) => node.type === "button" && !inList.has(node) && /^Resend/.test(collectText(node).trim()));
+      assert.deepEqual(all.flatMap(looks), row.all);
+    });
+  }
+
   const lines = (count: number) => Array.from({ length: count }, (_, index) => `step ${index + 1}`).join("\n");
   const clamps = [
     { name: "12 lines show in full with no disclosure", body: lines(12), isClamped: false, more: [] },
@@ -1934,29 +2079,18 @@ describe("the Orders mode", () => {
     assert.deepEqual(groups.map((group) => [group.label, group.entries.map((entry) => entry.id)]), [["2026-11-10", [1]], ["2026-11-11", [2]], ["Yesterday", [3]], ["Today", [4]]]);
   });
 
-  const toBars = [
-    { name: "the ticked names, an ended one tagged", ids: [SESSION_ID, ENDED_ID], text: ["nightly-docs-sweep, atrium-hooks", "Ended"], clear: 1 },
-    { name: "no tick says so and keeps no Clear to press", ids: [], text: ["No session ticked"], clear: 0 },
+  // spec §9.2 → Label line: every receiving session by name, an ended one tagged; none → said, all of it dim
+  const labelLines = [
+    { name: "the ticked names, an ended one tagged", ids: [SESSION_ID, ENDED_ID], text: "New order to nightly-docs-sweep, atrium-hooks Ended" },
+    { name: "no tick says so", ids: [], text: "New order · no session ticked" },
   ];
-  for (const row of toBars) {
-    test(`the To bar: ${row.name}`, () => {
-      const tree = render("ToBarQ", { rows: SESSION_ROWS, selectedIds: row.ids, onClear: () => undefined });
-      const text = collectText(tree);
-      for (const part of row.text) assert.ok(text.includes(part), text);
-      assert.equal(buttonLabelled(tree, "Clear").filter((node) => !node.props.hidden).length, row.clear);
+  for (const row of labelLines) {
+    test(`the Orders composer's label line: ${row.name}`, () => {
+      const tree = renderOrders({}, { selectedIds: row.ids, isEndedShown: true });
+      const [label] = findNodes(tree, (node) => node.type === "label" && String(node.props.className).includes("field-label"));
+      assert.equal(collectText(label as RenderedNode).replace(/\s+/g, " ").trim(), row.text);
     });
   }
-
-  test("in the mode a rail row is the box's label: a press ticks it, and no row is the list's scope", () => {
-    const toggled: unknown[] = [];
-    const { tree } = renderRail({ toggle: (id: string) => toggled.push(id) }, { profile: "", session: SESSION_ID }, [], true);
-    const row = railRowOf(tree, SESSION_ID);
-    assert.equal(row.type, "label");
-    const [box] = findNodes(row, (node) => node.type === "input" && node.props.type === "checkbox");
-    (box?.props.onChange as () => void)();
-    assert.deepEqual(toggled, [SESSION_ID]);
-    assert.equal(findNodes(tree, (node) => node.props?.["aria-current"] === "true").length, 0);
-  });
 });
 
 // a focused element on the desk: `inside` = the selectors it sits within, `session` = the rail row it sits in
@@ -2007,35 +2141,37 @@ describe("desk keys", () => {
     { name: "Esc in the sheet goes back to the selected row", key: "Escape", target: sheet, expected: { name: "back" } },
     { name: "Esc in the sheet's field goes back too", key: "Escape", target: buildKeyTarget({ tag: "TEXTAREA", inside: [".queue-sheet"] }), expected: { name: "back" } },
     { name: "Esc on the list does nothing", key: "Escape", expected: null },
-    { name: "Esc in the Orders mode closes it from anywhere on the desk", key: "Escape", isOrdersOpen: true, expected: { name: "close" } },
-    { name: "an open dialog takes the Esc first", key: "Escape", isOrdersOpen: true, target: buildKeyTarget({ inside: ['[role="dialog"]'] }), expected: null },
+    { name: "Esc in Orders gives the focus back to the middle pane", key: "Escape", target: buildKeyTarget({ inside: [".queue-orders"] }), expected: { name: "leave" } },
+    { name: "Esc in the Orders box gives it back too", key: "Escape", target: buildKeyTarget({ tag: "TEXTAREA", inside: [".queue-orders"] }), expected: { name: "leave" } },
+    { name: "an open dialog takes the Esc first", key: "Escape", target: buildKeyTarget({ inside: ['[role="dialog"]', ".queue-orders"] }), expected: null },
     { name: "an open dialog takes the letters too", key: "j", target: buildKeyTarget({ inside: ['[role="dialog"]'] }), expected: null },
-    { name: "a key another handler took is left alone", key: "Escape", isOrdersOpen: true, defaultPrevented: true, expected: null },
+    { name: "a key another handler took is left alone", key: "Escape", target: sheet, defaultPrevented: true, expected: null },
     { name: "Enter on a row goes into the sheet", key: "Enter", target: buildKeyTarget({ inside: ['[role="option"]'] }), expected: { name: "enter" } },
     { name: "Enter elsewhere is the control's own", key: "Enter", target: sheet, expected: null },
     { name: "Cmd+Enter in the sheet presses its send", key: "Enter", metaKey: true, target: sheet, expected: { name: "send" } },
-    { name: "Ctrl+Enter in the order view presses its send", key: "Enter", ctrlKey: true, isOrdersOpen: true, target: buildKeyTarget({ inside: [".queue-orders"] }), expected: { name: "send" } },
+    { name: "Ctrl+Enter in Orders presses its send", key: "Enter", ctrlKey: true, target: buildKeyTarget({ inside: [".queue-orders"] }), expected: { name: "send" } },
     { name: "Cmd+Enter on the list does nothing", key: "Enter", metaKey: true, target: buildKeyTarget({ inside: ['[role="option"]'] }), expected: null },
-    { name: "the Orders mode keeps N", key: "n", isOrdersOpen: true, expected: { name: "new" } },
-    { name: "the Orders mode leaves the list's letters", key: "j", isOrdersOpen: true, expected: null },
-    { name: "the Orders mode leaves the option digits", key: "1", isOrdersOpen: true, expected: null },
+    { name: "Orders keeps N", key: "n", target: buildKeyTarget({ inside: [".queue-orders"] }), expected: { name: "new" } },
+    { name: "Orders leaves the list's letters", key: "j", target: buildKeyTarget({ inside: [".queue-orders"] }), expected: null },
+    { name: "Orders leaves the option digits", key: "1", target: buildKeyTarget({ inside: [".queue-orders"] }), expected: null },
   ];
   for (const row of rows) {
     test(`a desk key: ${row.name}`, () => {
       const event = { key: row.key, metaKey: row.metaKey ?? false, ctrlKey: row.ctrlKey ?? false, altKey: row.altKey ?? false, defaultPrevented: row.defaultPrevented ?? false, target: row.target ?? desk };
-      assert.deepEqual(call("getDeskKeyQ", event, { isOrdersOpen: row.isOrdersOpen ?? false, isKeysOn: row.isKeysOn ?? true }), row.expected);
+      assert.deepEqual(call("getDeskKeyQ", event, { isKeysOn: row.isKeysOn ?? true }), row.expected);
     });
   }
 
   const decision = buildItem({ id: 3 });
   const report = buildItem({ id: 5, kind: "report", options: [] });
   const order = buildItem({ id: 9, kind: "message", status: "answered", sendId: "s", options: [], session: buildSession({ id: ENDED_ID }) });
-  // the desk with `selected` on the sheet; `calls` records every queue act a key makes
+  // the desk with `selected` on the sheet (0 → the list, nothing open); `calls` records every queue act a key makes
   const deskWith = (selected: number, sessions: Record<string, unknown> = {}) => {
-    const built = buildQueue({ sessions: buildSessions(sessions), openOrderRow: (row: { id: number }) => built.calls.push(["openOrderRow", row.id]), openReplyOrder: (item: { id: number }) => built.calls.push(["openReplyOrder", item.id]) });
+    const built = buildQueue({ sessions: buildSessions(sessions), openOrderRow: (row: { id: number }) => built.calls.push(["openOrderRow", row.id]) });
     const listed = withList(built.queue, [decision, report, order]);
     const groups = listed.groups as Array<{ rows: Array<{ id: number }> }>;
-    return { calls: built.calls, queue: { ...listed, sheet: getSheet(groups, String(selected)), selectedId: selected } };
+    const sheet = getSheet(groups, selected ? String(selected) : "");
+    return { calls: built.calls, queue: { ...listed, sheet, selectedId: selected || null, steps: call("getStepsQ", groups, sheet.id, -1) } };
   };
   const press = (name: string, selected: number, extra: Record<string, unknown> = {}) => {
     keyActs.length = 0;
@@ -2044,26 +2180,30 @@ describe("desk keys", () => {
     return { calls: getPlain(calls), acts: [...keyActs] };
   };
 
-  const steps = [
-    { name: "J on a decision selects the report after it", action: "next", selected: 3, expected: 5 },
-    { name: "K on the report selects the decision before it", action: "prev", selected: 5, expected: 3 },
-    { name: "J on the last row stays on it", action: "next", selected: 9, expected: 9 },
+  const sheetSteps = [
+    { name: "J on a decision's sheet opens the report after it", action: "next", selected: 3, expected: [["selectRow", 5]] },
+    { name: "K on the report's sheet opens the decision before it", action: "prev", selected: 5, expected: [["selectRow", 3]] },
+    { name: "J on the last sheet passes over the order's row and opens nothing", action: "next", selected: 5, expected: [] },
   ];
-  for (const row of steps) test(`a key's act: ${row.name}`, () => assert.deepEqual(press(row.action, row.selected).calls, [["selectRow", row.expected]]));
+  for (const row of sheetSteps) test(`a key's act: ${row.name}`, () => assert.deepEqual(press(row.action, row.selected).calls, row.expected));
 
-  test("Enter on a decision's row focuses its picked option, else its first", () => {
-    keyRoot.elements = { ".queue-sheet input[type=radio]": keyElement("first option") };
-    assert.deepEqual(press("enter", 3).acts, ["focus first option"]);
-    keyRoot.elements = { ".queue-sheet input[type=radio]:checked": keyElement("picked option"), ".queue-sheet input[type=radio]": keyElement("first option") };
-    assert.deepEqual(press("enter", 3).acts, ["focus picked option"]);
-  });
+  const rowTarget = (id: number) => ({ ...buildKeyTarget({ inside: ['[role="option"]'] }), closest: (selector: string) => (selector === '[role="option"]' ? { id: `queue-row-${id}` } : null) });
+  const listSteps = [
+    { name: "J on the list focuses the row after the focused one and opens nothing", action: "next", target: rowTarget(3), expected: "focus row 5" },
+    { name: "K on the list focuses the row before the focused one", action: "prev", target: rowTarget(9), expected: "focus row 5" },
+    { name: "J with no row focused focuses the first row", action: "next", target: undefined, expected: "focus row 3" },
+  ];
+  for (const row of listSteps) {
+    test(`a key's act: ${row.name}`, () => {
+      keyRoot.elements = { "#queue-row-3": keyElement("row 3"), "#queue-row-5": keyElement("row 5"), "#queue-row-9": keyElement("row 9") };
+      const pressed = press(row.action, 0, { target: row.target });
+      assert.deepEqual([pressed.acts, pressed.calls], [[row.expected], []]);
+    });
+  }
 
-  test("Enter on a report's row focuses the sheet's primary button", () => {
-    keyRoot.elements = { ".queue-sheet .queue-composer .btn.primary": keyElement("Mark as read") };
-    assert.deepEqual(press("enter", 5).acts, ["focus Mark as read"]);
-  });
+  test("Enter on a row opens its sheet", () => assert.deepEqual(press("enter", 0, { target: rowTarget(5) }).calls, [["selectRow", 5]]));
 
-  test("Enter on an order's row opens the Orders mode at its entry", () => assert.deepEqual(press("enter", 9).calls, [["openOrderRow", 9]]));
+  test("Enter on an order's row shows its entry in Orders and opens no sheet", () => assert.deepEqual(press("enter", 0, { target: rowTarget(9) }).calls, [["openOrderRow", 9]]));
 
   const picks = [
     { name: "a digit on an open decision picks that option", selected: 3, index: 1, expected: [["setDraft", 3, { code: "R2", error: null }]] },
@@ -2088,14 +2228,74 @@ describe("desk keys", () => {
     assert.deepEqual(press("field", 5).acts, ["focus field"]);
   });
 
-  test("Esc from the sheet focuses the selected row", () => {
-    keyRoot.elements = { "#queue-row-5": keyElement("row 5") };
-    assert.deepEqual(press("back", 5).acts, ["focus row 5"]);
-  });
+  test("Esc from the sheet goes back to the list", () => assert.deepEqual(press("back", 5).calls, [["back"]]));
 
   test("Cmd+Enter presses the primary button of the pane holding the focus", () => {
     keyRoot.elements = { ".queue-composer .btn.primary": keyElement("Send answer") };
     assert.deepEqual(press("send", 3, { target: sheet }).acts, ["click Send answer"]);
+  });
+
+  // spec §9.2 → Foot, §11: in Orders the send key answers as a press of the send button does, inked or not
+  // → the rendered order composer, a key on its box bubbling to the desk as the page wires it
+  const ordersKeyDesk = async (targets: { ids: string[]; names: string[]; endedCount: number }) => {
+    const focused: string[] = [];
+    const sent: unknown[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: uiStub(), document: { querySelector: (selector: string) => ({ focus: () => focused.push(selector) }), getElementById: (id: string) => ({ focus: () => focused.push(`#${id}`) }) } },
+    })) as ScreenModule;
+    const composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null };
+    const orders = buildOrders({ composer, putError: (error: unknown) => { composer.error = error; }, send: (body: unknown) => sent.push(getPlain(body)) });
+    const queue = withList(buildQueue({ orders }).queue, []);
+    const draw = () => {
+      const box = (module.getOrderBoxQ as (q: unknown) => unknown)(queue);
+      const tray = (module.getTrayQ as (o: unknown) => unknown)({ fieldId: "queue-order-text", box });
+      return renderScreen((module.React as typeof screen.React).createElement(module.OrderComposerQ as Component, { queue, targets, box, tray })) as RenderedNode;
+    };
+    const tree = draw();
+    // the pane's querySelector, read off the rendered composer by the selector's last part (classes and one attribute)
+    const pane = {
+      querySelector: (selector: string) => {
+        const last = selector.trim().split(/\s+/).pop() ?? "";
+        const attr = /\[([\w-]+)="([^"]*)"\]/.exec(last);
+        const classes = last.replace(/\[.*\]/, "").split(".").filter(Boolean);
+        const [node] = findNodes(tree, (one) => {
+          const names = String(one.props?.className ?? "").split(/\s+/);
+          return (classes.length > 0 || attr !== null) && classes.every((name) => names.includes(name)) && (!attr || one.props?.[attr[1]] === attr[2]);
+        });
+        return node ? { click: () => (node.props.onClick as (() => void) | undefined)?.(), focus: () => focused.push(selector) } : null;
+      },
+    };
+    const inOrders = (tag: string) => ({ tagName: tag, type: "", isContentEditable: false, closest: (selector: string) => (selector.split(",").some((part) => part.trim() === ".queue-orders") ? pane : null) });
+    // the key on `target`: the box's own handler first when the focus is in it, then the desk's unless the box took it
+    const pressSend = (target: ReturnType<typeof inOrders>) => {
+      const event = { key: "Enter", metaKey: true, ctrlKey: false, altKey: false, defaultPrevented: false, target, preventDefault() { this.defaultPrevented = true; } };
+      if (target.tagName === "TEXTAREA") {
+        const [field] = findNodes(tree, (one) => one.type === "textarea");
+        (field?.props.onKeyDown as (e: unknown) => void)(event);
+      }
+      const action = (module.getDeskKeyQ as (e: unknown, o: unknown) => { name: string } | null)(event, { isKeysOn: true });
+      if (action) (module.putDeskKeyQ as (a: unknown, c: unknown) => void)(action, { queue, target, root: pane });
+    };
+    return { focused, sent, composer, draw, pressSend, inOrders };
+  };
+
+  const untickedSends = [
+    { name: "in the Orders box", tag: "TEXTAREA" },
+    { name: "elsewhere in Orders", tag: "DIV" },
+  ];
+  for (const row of untickedSends) {
+    test(`Cmd+Enter ${row.name} with nothing ticked sends nothing, says the tick is missing and focuses the rail, as the button does`, async () => {
+      const desk = await ordersKeyDesk({ ids: [], names: [], endedCount: 0 });
+      desk.pressSend(desk.inOrders(row.tag));
+      assert.deepEqual([desk.sent, desk.composer.error, desk.focused], [[], "Tick at least one session in the rail.", [".queue-sessions .ctl-checkbox"]]);
+      assert.equal(collectText(desk.draw()).includes("Tick at least one session in the rail."), true);
+    });
+  }
+
+  test("Cmd+Enter in the Orders box with a session ticked sends the order once", async () => {
+    const desk = await ordersKeyDesk({ ids: [SESSION_ID], names: ["atrium"], endedCount: 0 });
+    desk.pressSend(desk.inOrders("TEXTAREA"));
+    assert.deepEqual([desk.sent, desk.composer.error], [[{ sessionIds: [SESSION_ID], text: "rebase on main" }], null]);
   });
 
   const named = [
@@ -2109,13 +2309,18 @@ describe("desk keys", () => {
     });
   }
 
-  test("N opens the Orders mode and keeps the ticks", () => assert.deepEqual(press("new", 3).calls, [["openOrders"]]));
-
-  test("O on an open report opens the mode with the Re: line", () => assert.deepEqual(press("order", 5).calls, [["openReplyOrder", 5]]));
+  // spec §9.2 → Reaching it: N and O put the caret in the Orders box from the list and from a sheet; there is no mode
+  const carets = [
+    { name: "N from the list keeps the ticks", selected: 0 },
+    { name: "N from a sheet keeps the ticks", selected: 3 },
+  ];
+  for (const row of carets) test(`a key's act: ${row.name}`, () => assert.deepEqual(press("new", row.selected).calls, [["focusOrders"]]));
 
   const ticks = [
-    { name: "O on a decision adds its session to the ticks, then opens the mode", selected: 3, target: desk, ticked: [OTHER_TICK_ID], expected: [OTHER_TICK_ID, SESSION_ID] },
+    { name: "O on a decision adds its session to the ticks, then the caret to Orders", selected: 3, target: desk, ticked: [OTHER_TICK_ID], expected: [OTHER_TICK_ID, SESSION_ID] },
+    { name: "O on an open report adds its session, with no Re: line", selected: 5, target: desk, ticked: [OTHER_TICK_ID], expected: [OTHER_TICK_ID, SESSION_ID] },
     { name: "O on a rail row adds that row's session", selected: 3, target: buildKeyTarget({ session: ENDED_ID }), ticked: [], expected: [ENDED_ID] },
+    { name: "O on a focused list row adds that row's session", selected: 0, target: rowTarget(5), ticked: [OTHER_TICK_ID], expected: [OTHER_TICK_ID, SESSION_ID] },
     { name: "O on a session already ticked keeps the ticks as they are", selected: 3, target: desk, ticked: [SESSION_ID], expected: [SESSION_ID] },
     { name: "O on a session that takes no message ticks nothing", selected: 3, target: buildKeyTarget({ session: REPLACED_ID }), ticked: [], expected: [] },
   ];
@@ -2124,20 +2329,33 @@ describe("desk keys", () => {
       let ticked = row.ticked;
       const setSelectedIds = (update: (ids: string[]) => string[]) => { ticked = update(ticked); };
       const { calls } = press("order", row.selected, { target: row.target, sessions: { selectedIds: row.ticked, setSelectedIds } });
-      assert.deepEqual([getPlain(ticked), calls], [row.expected, [["openOrders"]]]);
+      assert.deepEqual([getPlain(ticked), calls], [row.expected, [["focusOrders"]]]);
     });
   }
 
-  test("a key pressed on the desk reaches the queue, and the desk's Esc still closes the mode", () => {
+  test("a key pressed on the desk reaches the queue: N puts the caret in Orders", () => {
     const { calls, queue } = deskWith(3);
-    const closes: string[] = [];
-    const tree = render("QueueDeskQ", { queue: { ...queue, orders: { ...buildOrders({ isOpen: true, close: () => closes.push("close") }), open: () => calls.push(["openOrders"]) }, keys: { isOn: true } } });
-    const event = (key: string) => ({ key, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, target: desk, preventDefault: () => undefined });
+    const tree = render("QueueDeskQ", { queue: { ...queue, orders: buildOrders({ focus: () => calls.push(["focusOrders"]) }), keys: { isOn: true } } });
     const [root] = findNodes(tree, (node) => typeof node.props?.className === "string" && node.props.className.startsWith("queue-desk"));
-    (root?.props.onKeyDown as (e: unknown) => void)(event("n"));
-    (root?.props.onKeyDown as (e: unknown) => void)(event("Escape"));
-    assert.deepEqual([getPlain(calls), closes], [[["openOrders"]], ["close"]]);
+    (root?.props.onKeyDown as (e: unknown) => void)({ key: "n", metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, target: desk, preventDefault: () => undefined });
+    assert.deepEqual(getPlain(calls), [["focusOrders"]]);
   });
+
+  // spec §9.2 → Esc in the pane gives the focus back to the middle pane: the sheet's body, or the list's current row
+  const leaves = [
+    { name: "with a sheet open, to its body", selected: 5, elements: { ".queue-sheet > .card-body": "sheet body", "#queue-row-5": "row 5" }, expected: ["focus sheet body"] },
+    { name: "on the list, to the current row", selected: 0, current: 3, elements: { "#queue-row-3": "row 3" }, expected: ["focus row 3"] },
+    { name: "on the list with no current row, to its tab stop", selected: 0, elements: { '.queue-listbox [tabindex="0"]': "first row" }, expected: ["focus first row"] },
+  ];
+  for (const row of leaves) {
+    test(`Esc in Orders gives the focus back to the middle pane: ${row.name}`, () => {
+      keyActs.length = 0;
+      keyRoot.elements = Object.fromEntries(Object.entries(row.elements).map(([selector, name]) => [selector, keyElement(name)]));
+      const { queue } = deskWith(row.selected);
+      (screen.putDeskKeyQ as (a: unknown, c: unknown) => void)({ name: "leave" }, { queue: { ...queue, selectedId: row.selected || (row.current ?? null) }, target: desk, root: keyRoot });
+      assert.deepEqual([...keyActs], row.expected);
+    });
+  }
 
   // the list card's ⓘ holds the key list and the switch
   const renderKeyList = (isOn: boolean, toggle: () => unknown = () => undefined) => {
@@ -2187,7 +2405,7 @@ describe("desk keys", () => {
 });
 
 describe("sessions region", () => {
-  test("the list read follows the Account filter and drops ticks on rows no longer listed or selectable", async () => {
+  test("the list read follows the Account filter, drops ticks on rows no longer listed or selectable, and says the dropped one", async () => {
     const urls: string[] = [];
     const module = (await loadScreenModule(QUEUE_SRC, {
       URLSearchParams,
@@ -2199,14 +2417,18 @@ describe("sessions region", () => {
     })) as ScreenModule;
     let region: unknown = realUi.INITIAL_REGION_STATE;
     let selectedIds = ["9b2e7c41-0d3a-4c55-8e1f-2a6b9c4d7e10", SESSION_ID, REPLACED_ID];
+    const lines: string[] = [];
     await (module.getSessionsQ as (deps: unknown) => Promise<void>)({
       profile: "work dev",
       setRegion: (next: (prev: unknown) => unknown) => { region = next(region); },
+      getIds: () => selectedIds,
       setSelectedIds: (next: (prev: string[]) => string[]) => { selectedIds = next(selectedIds); },
+      onDropped: (line: string) => lines.push(line),
     });
     assert.deepEqual(urls, ["/api/queue/owner/sessions?profile=work+dev"]);
     assert.equal((getPlain(region) as { data: { sessions: unknown[] } }).data.sessions.length, 3);
     assert.deepEqual(getPlain(selectedIds), [SESSION_ID]);
+    assert.deepEqual(lines, ["⚠ nightly-docs-sweep no longer takes orders and was unticked."]);
   });
 
   const views = [
@@ -2221,11 +2443,13 @@ describe("sessions region", () => {
     });
   }
 
-  test("the desk reads Sessions, then the list, then the sheet, and the recent resumes open from the Sessions foot", () => {
+  test("the desk reads Sessions, then the middle pane, then Orders, and the recent resumes open from the Sessions foot", () => {
     const tree = render("QueueDeskQ", { queue: withList(buildQueue().queue, [buildItem({ id: 1 })]) });
-    const order = findNodes(tree, (node) => ["SessionsRegionQ", "RecentResumesQ", "QueueListQ", "QueueSheetQ"].includes(node.type)).map((node) => node.type);
-    assert.deepEqual(order, ["SessionsRegionQ", "QueueListQ", "QueueSheetQ"]);
+    const order = findNodes(tree, (node) => ["SessionsRegionQ", "RecentResumesQ", "QueueListQ", "QueueSheetQ", "OrdersViewQ"].includes(node.type)).map((node) => node.type);
+    assert.deepEqual(order, ["SessionsRegionQ", "QueueListQ", "QueueSheetQ", "OrdersViewQ"]);
   });
+
+  test("the Sessions head holds no New order", () => assert.equal(buttonLabelled(renderRail().tree, "New order").length, 0));
 });
 
 test("a row's age carries no verb", () => {
@@ -2465,7 +2689,7 @@ describe("images in an order's bubble", () => {
 // the review of the built page against mockup v5 and spec 44063 (§4.2, §4.3, §7, §9.1–§9.4, §10)
 describe("marks and counts on the desk", () => {
   test("the master box in its mixed state draws a dash, and a ticked box a check", () => {
-    const iconsOf = (props: Record<string, unknown>) => findNodes(render("CheckboxBoxQ", { onChange: () => undefined, ariaLabel: "Order to all live sessions", ...props }), (node) => node.props?.atom === "Icon").map((node) => node.props.name);
+    const iconsOf = (props: Record<string, unknown>) => findNodes(render("CheckboxBoxQ", { onChange: () => undefined, ariaLabel: "Select all live sessions", ...props }), (node) => node.props?.atom === "Icon").map((node) => node.props.name);
     assert.deepEqual([iconsOf({ isChecked: false, isMixed: true }), iconsOf({ isChecked: true }), iconsOf({ isChecked: false })], [["minus"], ["check"], []]);
   });
 
@@ -2477,7 +2701,7 @@ describe("marks and counts on the desk", () => {
   test("the All sessions band shows no count at zero and folds a failed receipt into the compact warning", () => {
     const bandOf = (notReceived: number, awaiting: number) => render("AllSessionsBandQ", {
       rows: [buildSessionRow({ count: { awaiting, inDelivery: 0 } })], sessions: { selectedIds: [], setSelectedIds: () => undefined },
-      view: { scope: "", isOrders: false }, notReceived, onScope: () => undefined,
+      view: { scope: "" }, notReceived, onScope: () => undefined,
     });
     const badges = (tree: RenderedNode) => findNodes(tree, (node) => node.props?.atom === "Badge").map((node) => ({ text: collectText(node).replace(/\s+/g, " ").trim(), title: node.props.title }));
     assert.deepEqual(badges(bandOf(0, 0)), []);
@@ -2516,17 +2740,58 @@ describe("In delivery rows", () => {
 describe("the sheet's letterhead and record", () => {
   const item = buildItem({ status: "unacked", canResend: true, answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", answerRecord: { route: "answer", signal: "fetch_metadata" }, session: buildSession({ name: "aidl", state: "live" }) });
 
-  test("an answered decision's letterhead holds the receipt badge alone after the name", () => {
+  test("an answered decision's date line holds the receipt badge alone", () => {
     const facts = findNodes(render("LetterheadFactsQ", { item }), (node) => node.props?.atom === "Badge").map((node) => collectText(node));
     assert.deepEqual([facts, collectText(render("LetterheadFactsQ", { item })).includes("Answer R1")], [["Not received"], false]);
   });
 
-  test("the letterhead time reads the spec's dated form and its title carries the answer record", () => {
+  test("the date line's time reads the spec's dated form and its title carries the answer record", () => {
     const tree = render("LetterheadTimeQ", { item });
     const [time] = findNodes(tree, (node) => typeof node.props?.title === "string");
     assert.equal(time?.props.title, "Answered 2026-11-12 21:26 KST through the monitor (same-origin request)");
     assert.ok(collectText(tree).endsWith("2026-11-12 21:26 KST"), collectText(tree));
   });
+
+  test("the sheet's date line comes first in its body: the facts, then the time", () => {
+    const tree = renderSheet({ item, queue: buildQueue().queue });
+    const [line] = byClass(tree, "queue-date-line");
+    const [body] = byClass(tree, "queue-sheet-body");
+    assert.deepEqual([body?.children[0] === line, collectText(line as RenderedNode).replace(/\s+/g, " ").trim()], [true, "Not received Answered 2026-11-12 21:26 KST"]);
+  });
+
+  test("the sheet's head holds the way back, the kind tag and name as its h2, the position and the stepping", () => {
+    const { calls, queue } = buildQueue({ steps: { index: 0, count: 8, prevId: null, nextId: 7 } });
+    const tree = renderSheet({ item: buildItem(), queue });
+    const [head] = byClass(tree, "card-head");
+    const buttons = findNodes(head as RenderedNode, (node) => node.type === "button");
+    for (const button of buttons) if (!button.props.disabled) (button.props.onClick as () => void)();
+    assert.deepEqual(buttons.map((button) => [button.props["aria-label"], button.props.title, Boolean(button.props.disabled)]), [["Back to the list", "Esc", false], ["Previous item", "K", true], ["Next item", "J", false]]);
+    assert.equal(collectText(findNodes(head as RenderedNode, (node) => node.type === "h2")[0] as RenderedNode).replace(/\s+/g, " ").trim(), "Decision from glass-atrium");
+    assert.ok(collectText(head as RenderedNode).includes("1 of 8"));
+    assert.deepEqual(getPlain(calls), [["back"], ["selectRow", 7]]);
+  });
+
+  test("rows that arrived while the sheet is open are counted on the way back", () => {
+    const { queue } = buildQueue({ list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [50, 51] } });
+    const [back] = findNodes(renderSheet({ item: buildItem(), queue }), (node) => node.type === "button" && node.props.title === "Esc");
+    assert.deepEqual([back?.props["aria-label"], findNodes(back as RenderedNode, (node) => node.props?.atom === "Badge").map((node) => collectText(node))], ["Back to the list, 2 new in the list", ["2"]]);
+  });
+
+  // the session's facts ride its name; the id or the account shows only while it tells two loaded sessions apart
+  const twin = buildSession({ id: "b7c6d5e4-0000-4000-8000-000000000001" });
+  const elsewhere = buildSession({ id: "c1d2e3f4-0000-4000-8000-000000000002", name: "aidl", profileLabel: ".claude-personal" });
+  const nameRows = [
+    { name: "a name no other loaded session carries stands alone", items: [buildItem()], expected: "glass-atrium" },
+    { name: "a name two loaded sessions share takes the 8-character id", items: [buildItem(), buildItem({ id: 42, session: twin })], expected: "glass-atrium · 6f1c2a9e" },
+    { name: "items from more than one account add the account", items: [buildItem(), buildItem({ id: 42, session: elsewhere })], expected: "glass-atrium · work-dev" },
+  ];
+  for (const row of nameRows) {
+    test(`the sheet's session name: ${row.name}`, () => {
+      const { queue } = buildQueue({ list: { status: "ready", data: { items: row.items, nextCursor: null }, newIds: [] } });
+      const [name] = byClass(renderSheet({ item: row.items[0], queue }), "queue-letter-name");
+      assert.equal(collectText(name as RenderedNode).replace(/\s+/g, " ").trim(), row.expected);
+    });
+  }
 
   test("the record is no visible line, and a not received answer says why and what to run", () => {
     const text = collectText(render("CardStateQ", { item, cliPath: CLI_PATH }));
@@ -2548,15 +2813,6 @@ describe("loading and empty states", () => {
     assert.deepEqual([placeholder?.props.label, card?.props.sub ?? null], ["the queue", null]);
   });
 
-  test("the empty sheet is one line with the secondary New order", () => {
-    const { queue } = buildQueue();
-    const opened: unknown[] = [];
-    const tree = render("QueueSheetQ", { queue: { ...withList(queue, []), sheet: { kind: "empty", id: null }, orders: { ...(queue as { orders: object }).orders, open: () => opened.push(true) } } });
-    const text = collectText(tree);
-    for (const button of buttonLabelled(tree, "New order")) (button.props.onClick as () => void)();
-    assert.deepEqual([text.includes("Nothing selected"), text.includes("Pick a row, or give an order."), opened.length], [true, true, 1]);
-  });
-
   test("an empty thread names the ticked sessions and asks for the first order", () => {
     const tree = render("ThreadEmptyQ", { names: ["aidl"] });
     const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
@@ -2568,7 +2824,7 @@ describe("loading and empty states", () => {
   });
 });
 
-describe("the Orders mode after a send", () => {
+describe("Orders after a send", () => {
   test("a taken send's status line carries the quiet Show to its order, and the box takes the focus back", async () => {
     const focused: string[] = [];
     const module = (await loadScreenModule(QUEUE_SRC, {
@@ -2584,11 +2840,6 @@ describe("the Orders mode after a send", () => {
     const report = buildItem({ id: 61, kind: "report", session: buildSession({ name: "yoaida" }) });
     const lines = ["seen", "reply", "later"].map((action) => call("getActionStatusQ", report, action));
     assert.deepEqual(lines, ["Marked as read", { text: "✓ Order sent to yoaida", orderId: 61 }, "Moved to the end of Reports"]);
-  });
-
-  test("the arrival sits in the head's sub slot with no separator left hanging", () => {
-    const text = collectText(render("OrdersArrivalQ", { arrived: [buildItem({ kind: "report", session: buildSession({ name: "yoaida" }) })], onShow: () => undefined }));
-    assert.equal(text.replace(/\s+/g, " ").trim(), "New Report from yoaida Show");
   });
 
   test("a recipient's Resend is an edged small button", () => {

@@ -29,6 +29,8 @@ skills_policy:
 maxTurns: 80
 ---
 
+<!-- Some AI Slop Tropes rows (gradient/glow, eyebrow label, decorative sparkle and badge, nested radius, chart-series color) and the content-moment and brand-evidence rules adapt ideas from "unslop" by Damir Sokolovsky (@heydamir) — https://github.com/heydamir/unslop · https://heydamir.design/unslop — CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); reworded and restructured. -->
+
 # Visual Design Specialist Agent
 
 > Design token source of truth: ~/.claude/agents/glass-atrium-dev-front.md (implementation tokens for color, state layers, typography and mobile UX)
@@ -71,6 +73,8 @@ Produce brand-consistent visual design deliverables in three stages: visual phil
   - Why: borrowed direction is what the **Specificity** axis and the AI Slop Tropes catch.
 - **Fallback inference oracle**: when no token or rule covers a decision, resolve it from the project DESIGN.md's Visual Theme & Atmosphere / philosophy, never from a generic default.
 - **Scarcity as rationale**: ration every strong signal — accent hue, heavy weight, motion flourish, oversized type; a second strong signal needs the same justification as an extra accent color.
+  - Product UI default: the kept flourish sits on a content moment the product supplies, not on chrome, unless the selected direction is `brutalist-experimental`, whose posture puts the strong signal in structure (full-strength borders, asymmetric columns).
+    - A CTA's functional accent (`### Color, state and hierarchy`) is not that flourish.
 - **Section minimalism**: the standard-minimum sections, named as `agents/templates/DESIGN.md` heads them (Visual Theme & Atmosphere, Color, Typography, Components, Anti-Patterns), are required; open per-system categories (motion, audio, interaction patterns) only when the system needs them.
   - DESIGN.md consumers preserve unrecognized sections rather than dropping them.
 
@@ -198,6 +202,13 @@ Produce brand-consistent visual design deliverables in three stages: visual phil
   - A step-11 or step-12 text token on a step-1/2 background skips the solve (that reference's **Fallback**), never the verify.
 - **Disliked-color guard**: dark, saturated yellow-greens read as sickly bile — raise the lightness before emit.
 - **Context-Rooted Gate**: full-scratch is the last resort and states why.
+  - Which gathered patterns count as brand evidence → **Visual Vocabulary Match**.
+- **Visual Vocabulary Match**: an existing-UI element that matches an entry under `### AI Slop Tropes` is not brand evidence — carry it forward only when a brand spec, a supplied asset or the user names it.
+  - A brand spec here is the project `DESIGN.md` or a supplied brand guide; a tokens file only records the values in use, so it names nothing.
+  - Unnamed → ask once per task. With no one to ask, the default splits by level, and the assumption is disclosed:
+    - decoration-level (gradient, glow, sparkle, decoration badge, eyebrow label) → not carried;
+    - system-level (primary font, button shape, radius family, page ground) → carried, so the new part matches the product it extends, and reported as a finding with the system-wide replacement proposed.
+  - Existing parts are not restyled unasked: report the trope as a finding.
 
 ## Product UI/UX Rules
 
@@ -291,7 +302,9 @@ Post-emit domain self-rubric for the designer's own iteration, weighted toward v
 **Canvas/color tropes**:
 
 - Warm beige / cream / peach / pink / orange-brown canvas treatments, unless the brand justifies them
-- Aggressive gradient backgrounds
+- Hue-to-hue surface gradients, gradient text, colored glow/shadow, blurred color washes behind content, neon borders — on UI screens (product UI, web pages, HTML deliverables); canvas artwork follows its philosophy
+  - Not the trope: a tone shift inside one hue · a gradient or glow/shadow the brand spec or the selected direction's posture names
+  - Replacement: flat surfaces. A brand-sourced purple or indigo keeps its hue and narrows only its spread — Brand-conflict at most, never AI-signature.
 - Pure-black `#000` text
 
 **Layout/container tropes**:
@@ -300,6 +313,8 @@ Post-emit domain self-rubric for the designer's own iteration, weighted toward v
 - SVG-as-illustration when a placeholder would do (SVG-drawn imagery compensating for missing assets — use labeled placeholder)
 - 3+ consecutive blocks of the same section type (card / list / chart) — redesign the layout
 - Mixed radius families in one view — keep one radius family per view, scaled by element role (smaller controls < larger surfaces < full-pill avatars/tags); sharp and rounded corners never mix on sibling elements
+  - An inner shape that hugs an outer corner across a gap smaller than that corner's radius gets the radius left after subtracting the gap, rounded to the nearest radius token; at a larger gap the role scale above decides
+- Off-ladder spacing values — the rule is `### UI priorities` → **Spacing rhythm**
 
 **Font tropes**:
 
@@ -311,8 +326,9 @@ Post-emit domain self-rubric for the designer's own iteration, weighted toward v
 - Off-white page background chosen as a default — a background taken from the brand palette or the selected direction's `--bg` is not the trope
 - Italic accent words inside headlines
 - Numbered "01 / 02 / 03" section labels
-- Monospace labels as the default label treatment — a selected direction whose posture names mono (editorial-monocle metadata, tech-utility code/IDs) is not the trope
+- Monospace or letter-spaced uppercase (eyebrow) labels as the default label treatment — a selected direction whose posture names the treatment (editorial-monocle metadata and kicker, tech-utility code/IDs) is not the trope
 - Pill-shaped buttons — status pills and full-pill avatars/tags are not buttons; admin-console status pills also stay out of table cells
+- A decorative sparkle icon, and `PRO` / `New` / `Beta` badges used as decoration — a sparkle marking AI-generated content and a badge carrying a real state are not the trope
 
 **Content tropes**:
 
@@ -326,6 +342,7 @@ Post-emit domain self-rubric for the designer's own iteration, weighted toward v
 - **Lucide/Hero Icons uniform stroke-width**: all icons identical 1.5px stroke creating monotone iconography — vary stroke or mix icon families; on admin consoles one set on a size-keyed stroke ladder passes, never a family mix [R6 — IDs per `#### Admin-console tropes (data screens)` → **Source IDs**]
 - **AI-generated 3D floating mesh / glowing geometric objects**: blender-style render of nondescript 3D shapes used as hero — placeholder for actual product imagery
 - **Vibe-Coding layout**: centered everything + excessive whitespace + identical padding on all sections — no compositional rhythm
+- **Landing, hero and brand-mark rows** (extending the **AI-generated 3D floating mesh** and **Vibe-Coding layout** entries): before speccing or reviewing a landing page, hero, marketing section or brand mark, Read `~/.claude/agents/references/design-slop-landing.md` — an extension of this SoT
 - **Glassmorphism overuse**: blur + gradient + shadow stacked on a single element regardless of context — backdrop-filter performance cost + low contrast
 
 **Workflow tropes**:
@@ -436,11 +453,12 @@ Post-emit domain self-rubric for the designer's own iteration, weighted toward v
 - A chart where one number would do, or one that misfits the question → chart only a pattern a single number cannot show, its type picked by the question: trend, comparison, composition, distribution [S19]
 - A decorative sparkline → none; a sparkline draws a real series only [S19, R7]
 - False precision (`3.14159%`) → only the digits the decision needs (`3.1%`) [S19]
+- Rainbow or all-accent chart series → trend/single-emphasis: lead series in the strong data color, the rest neutral steps (judgment, unsourced); comparison/composition: distinct data hues + a second channel + the **Multi-mode trigger** colorblind mode [S1]; data-color tokens, not the UI accent
 
 ##### Color, type and decoration
 
 - Purple/indigo gradients, gradient text, glow, glass, blur → flat surfaces [R1–R4, R6–R11]
-  - Exception: a brand-sourced purple or indigo keeps its hue and narrows only its spread — Brand-conflict at most, never AI-signature.
+  - The brand-purple exception is the general one under **Canvas/color tropes**.
 - One accent spread over tabs, current page, selected row and borders → selected and current marks in the brand color or strong ink; the accent stays on text links and focus rings [R3, R4, R6, R9, R10 — two of them on the spread itself]
 - A near-black canvas with glowing accents → calm surfaces with no glow or neon (e.g. one light surface on a single-theme light system); a dark theme itself passes [R5, R7, R8, R9]
 - Inter or system fonts only, italic or serif accent words, letter-spaced uppercase eyebrow labels → the project font, no italics, no eyebrow labels [R1–R4, R6–R11]

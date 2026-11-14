@@ -444,6 +444,18 @@ before(async () => {
 			return reply.code(500).send({ error: "health fixture failure" });
 		return { ...healthFixture.hookFailures, days: HOOK_FAIL_WINDOW_DAYS, timezone: "UTC" };
 	});
+	// pricing advisory — every model priced, so the advisory adds one quiet line and no verdict
+	app.get("/api/health/unpriced-models", async () => {
+		recordHealthHit("/api/health/unpriced-models");
+		return {
+			days: HOOK_FAIL_WINDOW_DAYS,
+			limit: 50,
+			roster_available: true,
+			models: [],
+			model_count: 0,
+			timezone: "UTC",
+		};
+	});
 	await app.ready();
 	serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
@@ -1670,9 +1682,10 @@ const ABSORBED_HEALTH_PATHS = [
 	"/api/health/hook-chain",
 	"/api/health/daemon-payload?daemon=autoagent",
 	"/api/health/hook-failures",
+	"/api/health/unpriced-models",
 ];
 
-test("T7 the map requests all five health responses it absorbed", async () => {
+test("T7 the map requests every health response it absorbed", async () => {
 	await openMap(getLiveFixture());
 	await waitForPartVerdict("pg");
 	// 앵커는 판정 넷으로 서므로 페이로드 왕복이 아직 안 끝났을 수 있음 — 기한을 두고 기다림.

@@ -202,7 +202,7 @@ const MAP_PAYLOAD_DAEMON = "autoagent";
 // 설계도/live/큐 fetch 는 이 틱을 타지 않음: 준정적 데이터를 60s 마다 다시 끌 이유가 없음.
 const HEALTH_POLL_MS = 60_000;
 
-// 맵의 health fetch 표 — health.jsx:42-47 의 다섯 URL 과 같은 집합.
+// The map's health fetch table: the five health endpoints the map absorbed plus the pricing advisory; this function owns the set.
 // 함수로 둠: 페이로드 URL 이 선택 데몬을 달고 나가야 하고(T9c 드릴다운),
 // 목록이 코드 안에 흩어지면 흡수 완결성을 셀 자리가 없어짐.
 // 데몬 이름은 응답에서 온 값이라 인코딩해 실음 — 이름 안의 `&`/공백이 그냥 붙으면 질의가
@@ -215,12 +215,13 @@ function getMapHealthEndpoints(payloadDaemon) {
 		"/api/health",
 		`/api/health/daemon-payload?daemon=${encodeURIComponent(payloadDaemon)}&limit=10`,
 		"/api/health/hook-failures?days=30&limit=50",
+		// pricing advisory — same 30-day window as the failure log it stands beside
+		"/api/health/unpriced-models?days=30&limit=50",
 	];
 }
 
-// 표에서 페이로드 URL 이 앉은 자리 — 다섯 중 드릴다운 데몬을 따라 움직이는 유일한 항목이고,
-// 두 요청 무리(머리글이 서 있는 넷 · 드릴다운 하나)를 가르는 기준임. 목록은 언제나 위 표에서
-// 파생시킴: URL 을 effect 안에 다시 적으면 흡수 표(T7)와 갈라져 한쪽만 고쳐지는 자리가 생김.
+// 표에서 페이로드 URL 이 앉은 자리 — 드릴다운 데몬을 따라 움직이는 유일한 항목, 폴링 무리와 드릴다운을 가르는 기준.
+// 두 무리의 목록은 언제나 위 표에서 파생 — URL 을 effect 안에 다시 적으면 흡수 표(T7)와 갈라짐.
 const MAP_PAYLOAD_URL_INDEX = 3;
 
 // 행 확장 본문 — 부품 명부의 kind 중 펼칠 내용이 있는 것만 등록함. 없는 kind(pg · browser)는
@@ -235,6 +236,7 @@ const HEALTH_ROW_DETAILS = {
 		<>
 			<HookChainDetail state={states.hookState} />
 			<HookFailureDetail state={states.hookFailState} />
+			<PricingAdvisoryDetail state={states.unpricedModelState} />
 		</>
 	),
 };
@@ -285,8 +287,19 @@ function getHookFailureRows(state) {
 		hookName: failure?.hook_name || "—",
 		targetTable: failure?.target_table || "—",
 		kind: getHookFailKind(failure?.error_kind),
+		reason: failure?.payload_ref || null,
 		retryAttempted: Boolean(failure?.retry_attempted),
 	}));
+}
+
+// window total — the breakdown is the uncapped GROUP BY, the failures list is LIMIT-capped
+// floor at the listed count → a breakdown read a moment before a new row never undercounts the list shown
+function getHookFailureTotal(data, listedCount) {
+	const breakdown = data?.error_kind_breakdown;
+	if (!Array.isArray(breakdown)) return listedCount;
+
+	const total = breakdown.reduce((sum, entry) => sum + (Number(entry?.count) || 0), 0);
+	return Math.max(total, listedCount);
 }
 
 // 확장 영역의 실행 줄 — 선택 데몬의 payload 응답을 날짜 + 사유로 접음.
@@ -350,6 +363,8 @@ function ScreenArchitecture(
 	const [pgState, setPgState] = useStateAR(INITIAL_REGION_STATE);
 	const [payloadState, setPayloadState] = useStateAR(INITIAL_REGION_STATE);
 	const [hookFailState, setHookFailState] = useStateAR(INITIAL_REGION_STATE);
+	// pricing advisory — rides the health poll, never a headline fact (no part verdict, no stamp)
+	const [unpricedModelState, setUnpricedModelState] = useStateAR(INITIAL_REGION_STATE);
 
 	// 페이로드 드릴다운 대상 — 확장 행이 고름 (T9c). 접어도 되돌리지 않음: 되돌리면 다섯 응답이
 	// 한 번 더 나가고 방금 읽은 실패가 표에서도 지워짐.
@@ -403,18 +418,22 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick]);
 
-	// 머리글이 서 있는 health 응답 4종 — 병렬 발화. 수동 Refresh(refreshTick)와 60s 폴링(healthTick)
-	// 에서만 다시 나감. 드릴다운(payloadDaemon)은 일부러 deps 에 없음: 행 하나를 펼쳤다고 이 넷이
-	// 다시 나가면 왕복 동안 표의 PG·브라우저 판정이 빈 칸으로 떨어져 방금 읽은 실패를 조작자가
-	// 다시 못 봄. 세터 순서는 아래 URL 순서와 짝임.
+	// 폴링 health 무리 — getMapHealthEndpoints 에서 드릴다운 자리를 뺀 나머지, 병렬 발화 · refreshTick·healthTick 에서만 다시 나감.
+	// payloadDaemon 은 일부러 deps 에 없음 — 행을 펼쳐 이 무리가 다시 나가면 왕복 동안 PG·브라우저 판정이 빈 칸으로 떨어짐.
+	// 세터 순서 = 아래 URL 순서.
 	useEffectAR(() => {
 		const ctrl = new AbortController();
 		healthAbortRef.current?.abort();
 		healthAbortRef.current = ctrl;
 
-		const setters = [setDaemonHealthState, setHookState, setPgState, setHookFailState];
-		// 표에서 페이로드 자리만 덜어냄. 데몬 이름을 싣는 URL 은 방금 덜어낸 그 하나뿐이라
-		// 어느 이름으로 표를 세우든 남는 넷은 같음 — 그래서 payloadDaemon 이 여기 필요 없음.
+		const setters = [
+			setDaemonHealthState,
+			setHookState,
+			setPgState,
+			setHookFailState,
+			setUnpricedModelState,
+		];
+		// 데몬 이름을 싣는 URL 은 덜어낸 페이로드 자리뿐 → 남는 목록은 이름과 무관, payloadDaemon 불요.
 		const urls = getMapHealthEndpoints(MAP_PAYLOAD_DAEMON).filter(
 			(_url, index) => index !== MAP_PAYLOAD_URL_INDEX,
 		);
@@ -427,7 +446,7 @@ function ScreenArchitecture(
 					if (ctrl.signal.aborted) return;
 					setter((s) => putRegionData(s, ctrl, data));
 					// a failed read is no reading — the stamp keeps the last one that answered.
-					setHealthAsOf(new Date().toISOString());
+					if (setter !== setUnpricedModelState) setHealthAsOf(new Date().toISOString());
 				})
 				.catch((err) => setter((s) => putRegionFailure(s, ctrl, err)));
 		});
@@ -435,8 +454,8 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick, healthTick]);
 
-	// 드릴다운 응답 1종 — 위 넷과 달리 선택 데몬을 따라 다시 나감 (T9c). 자기 요청만 중단함:
-	// 머리글의 넷과 abort 컨트롤러를 함께 쓰면 행을 펼칠 때 그쪽 왕복까지 끊겨 같은 공백이 생김.
+	// 드릴다운 요청 — 폴링 무리와 달리 선택 데몬을 따라 다시 나감 (T9c).
+	// 자기 요청만 중단 — 폴링 무리와 abort 컨트롤러를 공유하면 행을 펼칠 때 그쪽 왕복까지 끊김.
 	useEffectAR(() => {
 		const ctrl = new AbortController();
 		payloadAbortRef.current?.abort();
@@ -894,6 +913,7 @@ function ScreenArchitecture(
 					payloadState={payloadState}
 					hookState={hookState}
 					hookFailState={hookFailState}
+					unpricedModelState={unpricedModelState}
 					onClose={closeDetail}
 				/>
 			)}
@@ -1600,15 +1620,17 @@ function HookFailureDetail({ state }) {
 
 	const days = state.data?.days;
 	const lastFailure = state.data?.last_failure_ts || null;
+	const total = getHookFailureTotal(state.data, rows.length);
 
 	return (
 		<div className="arch-hook-fails">
 			<div className="arch-hook-head fs-meta text-dim">
 				{/* 0 도 사실로 냄 — 창이 비었다는 것 자체가 아래 최종기록과 짝을 이루는 문장임 */}
-				<span className="text-ink">
-					{rows.length} {rows.length === 1 ? "failure" : "failures"} in the last{" "}
+				<span className="text-ink" data-hook-fail-total="">
+					{total} {total === 1 ? "failure" : "failures"} in the last{" "}
 					<window.UI.NoWrap>{days ?? "—"} days</window.UI.NoWrap>
 				</span>
+				{rows.length < total && <span>showing newest {rows.length}</span>}
 				{lastFailure ? (
 					<span>
 						Last failure{" "}
@@ -1644,6 +1666,11 @@ function HookFailureDetail({ state }) {
 								<StatusDot status={row.kind.tone} />
 								{row.kind.label}
 							</span>
+							{row.reason && (
+								<span className="font-mono break-all" data-hook-fail-reason="">
+									{row.reason}
+								</span>
+							)}
 							{row.retryAttempted && (
 								<span className="fs-meta text-faint">retried</span>
 							)}
@@ -1652,6 +1679,79 @@ function HookFailureDetail({ state }) {
 				</ul>
 			)}
 		</div>
+	);
+}
+
+/**
+ * Pricing advisory — model ids cost-tracker priced with no pricing.json row (/api/health/unpriced-models).
+ * Own line outside the failure log: a missing price row is no failed write → never in the failure count or tone.
+ * Model ids are server text → JSX text children only, so React escapes them.
+ * In flight with nothing held → no line: the advisory is no headline fact to wait on.
+ */
+function PricingAdvisoryDetail({ state }) {
+	const { formatRelativeTime, formatKstFull } = window.UI;
+	if (!state || (state.status !== "ready" && state.status !== "error")) return null;
+
+	return (
+		<div className="arch-hook-fails" data-pricing-advisory="">
+			<PricingAdvisoryBody state={state} />
+			{state.status === "ready" && (state.data?.models || []).length > 0 && (
+				<ul className="arch-hook-fail-list">
+					{state.data.models.map((entry) => (
+						<li key={entry.model} className="arch-hook-head fs-meta text-dim">
+							<span className="font-mono text-ink break-all">{entry.model}</span>
+							<span>
+								{entry.event_count} cost {entry.event_count === 1 ? "event" : "events"}
+							</span>
+							<time dateTime={entry.last_seen_at} title={formatKstFull(entry.last_seen_at)}>
+								{formatRelativeTime(entry.last_seen_at)}
+							</time>
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}
+
+// advisory heading sentence — one per state the read can land in
+function PricingAdvisoryBody({ state }) {
+	const { StatusDot } = window.UI;
+	const data = state.data;
+	if (state.status === "error")
+		return (
+			<span className="fs-meta text-dim">
+				Couldn't read the pricing advisory: {state.error}
+			</span>
+		);
+
+	if (data?.roster_available === false)
+		return (
+			<span className="fs-meta text-dim">
+				Pricing advisory unavailable — the pricing table couldn't be read, so unpriced models
+				can't be listed.
+			</span>
+		);
+
+	const count = data?.model_count ?? 0;
+	if (count === 0)
+		return (
+			<span className="fs-meta text-dim">
+				Every model run in the last {data?.days ?? "—"} days has a pricing row.
+			</span>
+		);
+
+	return (
+		<span className="arch-hook-head fs-meta text-dim">
+			<span className="inline-flex items-center text-ink">
+				<StatusDot status="warn" />
+				Pricing advisory
+			</span>
+			<span>
+				{count} {count === 1 ? "model" : "models"} ran in the last {data.days} days with no
+				row in hooks/pricing.json.
+			</span>
+		</span>
 	);
 }
 
@@ -1671,6 +1771,7 @@ function NodePartHealth({
 	payloadState,
 	hookState,
 	hookFailState,
+	unpricedModelState,
 }) {
 	const { Badge, StatusDot, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
 		window.UI;
@@ -1767,7 +1868,12 @@ function NodePartHealth({
 									className="arch-part-detail"
 									data-health-detail={row.id}
 									data-daemon-detail={row.daemonName || undefined}>
-									{renderDetail(row, { payloadState, hookState, hookFailState })}
+									{renderDetail(row, {
+										payloadState,
+										hookState,
+										hookFailState,
+										unpricedModelState,
+									})}
 								</div>
 							)}
 						</div>
@@ -1876,6 +1982,7 @@ function DetailModal({
 	payloadState,
 	hookState,
 	hookFailState,
+	unpricedModelState,
 	onClose,
 }) {
 	// detail undefined 시 React state batching edge case 방어.
@@ -1901,6 +2008,7 @@ function DetailModal({
 				payloadState={payloadState}
 				hookState={hookState}
 				hookFailState={hookFailState}
+				unpricedModelState={unpricedModelState}
 			/>
 		);
 
@@ -1934,6 +2042,7 @@ function NodeDetailBody({
 	payloadState,
 	hookState,
 	hookFailState,
+	unpricedModelState,
 }) {
 	const { DetailField } = window.UI;
 	// node_ids 바인딩 기반 — 라벨/이름 fuzzy 매칭 폐기 (F32). 한 노드에 복수 daemon 바인딩 가능 (F39).
@@ -1957,6 +2066,7 @@ function NodeDetailBody({
 				payloadState={payloadState}
 				hookState={hookState}
 				hookFailState={hookFailState}
+				unpricedModelState={unpricedModelState}
 			/>
 			<FlowSummary
 				inbound={inbound}

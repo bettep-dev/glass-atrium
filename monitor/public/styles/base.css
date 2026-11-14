@@ -446,41 +446,40 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 
 /* the Queue desk (§7.11) — the screen fills the viewport under main's padding and never scrolls; each pane scrolls its own body.
-   Three columns at every width: the rail fixed per step, the sheet one page (the measure + its two 32 gutters) giving way before the list
-   goes under its minimum, the list the rest. The 66ch resolves on the desk's 15px text, the sheet text's own size */
+   The rail fixed per step, the middle pane the rest: the list, or the opened row's sheet in its place */
 .queue-screen {
 	display: flex;
 	flex-direction: column;
 	height: calc(100dvh - 2 * var(--gap-page));
 	min-height: 608px;
 }
+/* three fixed-role columns at every width (spec §3.2): the rail and Orders step with the viewport, the middle pane takes the rest */
 .queue-desk {
 	--queue-rail-w: 208px;
-	--queue-list-min: 320px;
-	--queue-sheet-max: calc(var(--measure-prose) + 2 * var(--space-8));
+	--queue-orders-w: 320px;
 	flex: 1 1 auto;
 	min-height: 560px;
 	min-width: 1012px;
 	display: grid;
-	grid-template-columns: var(--queue-rail-w) minmax(var(--queue-list-min), 1fr) min(var(--queue-sheet-max), calc(100% - var(--queue-rail-w) - var(--queue-list-min) - 2 * var(--gap-section)));
+	grid-template-columns: var(--queue-rail-w) minmax(0, 1fr) var(--queue-orders-w);
 	grid-template-rows: minmax(0, 1fr);
 	gap: var(--gap-section);
 	font-size: var(--fs-body);
 }
 @media (min-width: 1440px) {
-	.queue-desk { --queue-rail-w: 232px; --queue-list-min: 360px; }
+	.queue-desk { --queue-rail-w: 232px; --queue-orders-w: 344px; }
 }
 @media (min-width: 1728px) {
-	.queue-desk { --queue-rail-w: 248px; }
+	.queue-desk { --queue-rail-w: 248px; --queue-orders-w: 360px; }
 }
 @media (min-width: 2240px) {
-	.queue-desk { --queue-rail-w: 264px; }
+	.queue-desk { --queue-rail-w: 264px; --queue-orders-w: 376px; }
 }
 @media (min-width: 2560px) {
-	.queue-desk { --queue-rail-w: 280px; }
+	.queue-desk { --queue-rail-w: 280px; --queue-orders-w: 392px; }
 }
 /* the Sessions rail (spec §9.1): the All sessions band, a row per session (name 14/600, the solid waiting count, line 2 13/dim),
-   the box column at the row's end under the head's New order. A row is 68 — the list row's own geometry */
+   the box column at the row's end. A row is 68 — the list row's own geometry */
 .queue-sessions > .card-foot {
 	justify-content: space-between;
 }
@@ -498,13 +497,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: 0 0 auto;
 	contain: none;
 }
-.queue-rail-scope {
+.queue-rail-all {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-1_5);
-	align-self: stretch;
-	font: inherit;
-	color: inherit;
 }
 /* the band is the 32 row: a control in it fills the band's line, never pushes it past 32 */
 .queue-rail-band > .disclosure {
@@ -517,10 +513,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	width: 24px;
 	margin-inline-start: auto;
 }
+/* one control per row (spec §9.1): the row is its box's label → name · waiting count · box on line 1, line 2 under the first two */
 .queue-rail-row {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) 24px;
+	grid-template-columns: minmax(0, 1fr) auto 24px;
 	column-gap: var(--space-2);
+	row-gap: var(--space-1);
 	align-items: start;
 	padding: var(--space-3) var(--space-4);
 }
@@ -530,18 +528,20 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-rail-row:hover {
 	background: rgb(var(--sunken));
 }
-.queue-rail-row:has(.queue-rail-main[aria-current="true"]) {
-	background: var(--tint-select);
+.queue-rail-row > .queue-rail-name { grid-area: 1 / 1; }
+.queue-rail-row > .queue-rail-count { grid-area: 1 / 2; }
+.queue-rail-row > .queue-rail-box { grid-area: 1 / 3; }
+/* the row is the control → its ring, inset since the card clips it, stands for the box's (spec §9.1, §11) */
+.queue-rail-row:has(.ctl-checkbox:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: calc(-1 * var(--focus-ring-offset));
 }
-.queue-rail-main {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
-	column-gap: var(--space-2);
-	row-gap: var(--space-1);
-	min-width: 0;
-	text-align: start;
-	font: inherit;
-	color: inherit;
+.queue-rail-row .ctl-checkbox:focus-visible {
+	outline: none;
+}
+/* the tint beside the checked box, never the cue alone */
+.queue-rail-row:has(.ctl-checkbox:checked) {
+	background: var(--tint-select);
 }
 .queue-rail-name {
 	display: flex;
@@ -567,7 +567,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	align-items: center;
 }
 .queue-rail-line {
-	grid-column: 1 / -1;
+	grid-area: 2 / 1 / 3 / 3;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
@@ -579,29 +579,14 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-rail-box > .inline-target {
 	min-height: var(--lh-row);
 }
-.queue-rail-chevron {
-	flex: none;
-	color: rgb(var(--ink));
-}
-/* the Orders mode (spec §9.2): the list and the sheet put away — hidden, still mounted — and their room given to the order view */
-.queue-away {
+/* the list stays mounted under a sheet (spec §3.3): hidden, its rows and state kept */
+.queue-list-slot {
 	display: contents;
 }
-.queue-away[hidden] {
+.queue-list-slot[hidden] {
 	display: none;
 }
-.queue-desk.is-orders {
-	grid-template-columns: var(--queue-rail-w) minmax(0, 1fr);
-}
-/* in the mode a rail row is one target, the box's label; a ticked row carries the select tint beside its checked box */
-.queue-rail-row.is-pick,
-.queue-rail-band.is-pick {
-	cursor: pointer;
-}
-.queue-desk.is-orders .queue-rail-row:has(.ctl-checkbox:checked) {
-	background: var(--tint-select);
-}
-/* the order view: one 720 column in the middle of the card for head, To bar, thread and composer; the hairlines still run edge to edge */
+/* Orders (spec §9.2): its own column on the card's 16 inline column; the thread is the body's one scroller */
 .queue-orders {
 	display: flex;
 	flex-direction: column;
@@ -609,23 +594,17 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-height: 0;
 }
 .queue-orders-card {
-	--queue-thread-w: 720px;
-	--card-pad: max(var(--space-6), calc((100% - var(--queue-thread-w)) / 2));
 	flex: 1 1 auto;
 }
-.queue-arrival {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--space-2);
+.queue-orders-scope {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 .queue-loading > [role="status"] {
 	justify-content: flex-start;
 	padding: var(--space-4) var(--card-pad);
-}
-.queue-orders-card > .card-bar {
-	border-top: 1px solid rgb(var(--line));
-	border-bottom: 1px solid rgb(var(--line));
-	padding-block: 0;
 }
 .queue-orders-card > .card-body {
 	display: flex;
@@ -634,34 +613,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-height: 0;
 	max-height: none;
 	overflow: hidden;
-}
-.queue-to {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-1) var(--space-2);
-	min-height: var(--card-head-h);
-}
-.queue-to-label {
-	font-size: var(--fs-meta);
-	font-weight: 600;
-	color: rgb(var(--dim));
-}
-.queue-to-name {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--space-1);
-	font-size: var(--fs-control);
-	font-weight: 600;
-	color: rgb(var(--ink));
-}
-.queue-to-clear {
-	margin-inline-start: auto;
-}
-/* zero ticks: Clear is gone from the tab order and the accessibility tree, its slot kept */
-.queue-to-clear[hidden] {
-	display: inline-flex;
-	visibility: hidden;
 }
 /* the thread: the body's one scroller, oldest at the top, the newest directly above the composer */
 .queue-thread {
@@ -734,9 +685,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-radius: var(--radius-card);
 	color: rgb(var(--ink));
 }
-/* --queue-clamp-lines comes from the page (ORDERS_Q.CLAMP_LINES) → one owner of the count */
+/* --queue-clamp-lines comes from the page (ORDERS_Q.CLAMP_LINES) → one owner of the count.
+   A line clamp, never a height in lines: the gaps between paragraphs and list items would cut the last line through */
 .queue-bubble.is-clamped > .prose-text {
-	max-height: calc(var(--queue-clamp-lines) * 1lh);
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: var(--queue-clamp-lines);
 	overflow: hidden;
 }
 /* an order's images inside its bubble, under its text (§9.8): 96 squares, wrapping */
@@ -832,21 +786,43 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-roll-up {
 	text-align: end;
 }
+/* the counts and their chevron one unbroken unit; the amber badge takes its own line when both do not fit */
+.queue-roll-up > summary {
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	row-gap: var(--gap-stack);
+}
+.queue-roll-up-counts {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	white-space: nowrap;
+}
 .queue-recipients {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
 	gap: var(--gap-stack);
+	max-width: 100%;
 }
 .queue-recipient {
 	display: flex;
 	align-items: center;
 	gap: var(--space-1_5);
+	max-width: 100%;
 	min-height: 24px;
 	font-size: var(--fs-meta);
 	color: rgb(var(--dim));
 }
+/* the name yields → one cut line, the full name in its title (as on the rail); the receipt and Resend keep their width */
+.queue-recipient > :not(.queue-recipient-name) {
+	flex: none;
+}
 .queue-recipient-name {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 	font-weight: 600;
 	color: rgb(var(--ink));
 }
@@ -909,17 +885,16 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-row[aria-selected="true"] {
 	background: var(--tint-select);
 }
-/* rows the card clips (list rows, rail rows and their band, thread entries) → the ring drawn inside them (spec §11) */
-.queue-row:focus-visible,
-.queue-rail-main:focus-visible,
-.queue-rail-scope:focus-visible,
-.queue-order:focus-visible {
+/* rows the card clips (list rows, rail rows and their band) → the ring drawn inside them (spec §11) */
+.queue-row:focus-visible {
 	outline-offset: calc(-1 * var(--focus-ring-offset));
 }
-/* an entry takes focus only from the page (an order opened from its row) → the ring shows on every such focus, a mouse open included */
+/* an entry takes focus only from the page (an order opened from its row) → the ring shows on every such focus, a mouse open included;
+   drawn outside the entry, in the thread's padding and gap → clear of the time line and of Resend's own edge */
 .queue-order:focus {
 	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
-	outline-offset: calc(-1 * var(--focus-ring-offset));
+	outline-offset: var(--space-1_5);
+	border-radius: var(--radius-card);
 }
 .queue-row-title,
 .queue-sheet-title,
@@ -969,6 +944,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--dim));
 	white-space: nowrap;
 	overflow: hidden;
+}
+/* facts wider than their room → the dim text yields with an ellipsis, a badge stays whole (spec §9.4) */
+.queue-row-facts-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.queue-row-facts > .pill {
+	flex: none;
 }
 .queue-row-sep {
 	color: rgb(var(--dim));
@@ -1022,23 +1006,50 @@ details[open] > summary.disclosure > .disclosure-chevron {
 		grid-row: 1;
 	}
 }
-/* the sheet: one page wide, one column on a 32 inline column shared by its head, body and foot */
+/* the sheet: one page column — the 66ch measure centred in the pane, gutters of at least 32 — shared by its head, body and foot (spec §3.2).
+   Registered → the ch resolves here on the desk's 15px text, not on the 13/14px of the head and foot that read it; the % on each of them */
+@property --queue-page-pad {
+	syntax: "<length-percentage>";
+	inherits: true;
+	initial-value: 0px;
+}
 .queue-sheet {
-	--card-pad: var(--space-8);
+	--queue-page-pad: max(var(--space-8), calc((100% - var(--measure-prose)) / 2));
+	--card-pad: var(--queue-page-pad);
 }
-.queue-sheet.is-collapsed {
-	align-self: start;
+.queue-sheet-head {
+	flex-wrap: nowrap;
 }
-.queue-sheet.is-collapsed:has(.queue-sheet-empty) > .card-body {
-	padding: var(--space-2) var(--card-pad);
+.queue-sheet-head > .card-title,
+.queue-letter {
+	min-width: 0;
 }
-.queue-sheet-empty {
+.queue-letter-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.queue-steps {
+	flex: none;
 	display: flex;
-	flex-wrap: wrap;
 	align-items: center;
-	gap: var(--space-1) var(--space-2);
-	min-height: var(--ctl-min-h);
+	gap: var(--space-1);
+	margin-inline-start: auto;
+}
+.queue-steps > .tabular-nums {
+	margin-inline-end: var(--space-2);
+}
+/* the letterhead's second line: what the item holds at its start, when at its end */
+.queue-date-line {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	min-height: var(--lh-row);
 	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
 }
 /* the key list: the meanings in one column directly after the keys */
 .queue-keys {
@@ -1058,9 +1069,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	margin: 0;
 	color: rgb(var(--dim));
 }
-.queue-sheet-empty > .btn {
-	margin-inline-start: auto;
-}
 .queue-sheet .card-title {
 	font-size: var(--fs-control);
 }
@@ -1070,7 +1078,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	gap: var(--space-2);
 }
 .queue-sheet > .card-body {
-	padding: var(--space-6) var(--space-8) var(--space-8);
+	padding: var(--space-4) var(--card-pad) var(--space-8);
+}
+.queue-sheet-body > .queue-sheet-title {
+	margin-top: var(--space-2);
 }
 .queue-sheet-body > * + * {
 	margin-top: var(--space-3);
@@ -1178,22 +1189,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	display: block;
 	margin-bottom: var(--gap-label);
 }
-/* the order's label line with its Re: link → one line: label · the report's title (ellipsis) · the ✕ */
-.queue-compose-label {
-	display: flex;
-	align-items: center;
-	gap: var(--space-1_5);
-	min-width: 0;
-	margin-bottom: var(--gap-label);
-}
-.queue-compose-re {
-	min-width: 0;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	font-size: var(--fs-meta);
-	font-weight: 400;
-	color: rgb(var(--dim));
+/* the Orders label line: the receiving sessions are names → ink 600 inside the dim label (spec §9.2) */
+.queue-order-to {
+	font-weight: 600;
+	color: rgb(var(--ink));
 }
 .queue-compose-row {
 	display: flex;
@@ -1203,6 +1202,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .queue-compose-row > .queue-compose-box {
 	flex: 1 1 220px;
+}
+/* Orders: the button under the box at every width (spec §4.5) → a short label never stands beside it and the shape holds on a tick */
+.queue-orders .queue-compose-row > .queue-compose-box {
+	flex-basis: 100%;
 }
 .queue-compose-buttons {
 	flex: none;
@@ -1228,6 +1231,54 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: none;
 	white-space: nowrap;
 }
+/* §12.5 — on the Queue screen every button carries a 1px edge at rest; three ranks, six states, colours only (no size, no shadow).
+   The edge walks control edge → faint → ink as the pointer commits; the primary's fill walks ink → dim → faint.
+   The drawer's own close button (.detail-head) stays the system's. */
+.queue-screen .btn.ghost:not(.detail-head .btn, .queue-compose-add) {
+	border-color: rgb(var(--control-edge));
+}
+.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .queue-compose-add):hover {
+	border-color: rgb(var(--faint));
+}
+.queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):hover {
+	background: rgb(var(--dim));
+	border-color: rgb(var(--dim));
+}
+/* :is(.btn, .btn.ghost) → outranks the quiet hover edge while held */
+.queue-screen :is(.btn, .btn.ghost):not(.primary, [aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .queue-compose-add):active {
+	background: rgb(var(--sunken));
+	border-color: rgb(var(--ink));
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):active {
+	background: rgb(var(--faint));
+	border-color: rgb(var(--faint));
+	color: rgb(var(--surface));
+}
+/* in progress → its rank's rest look under the pointer */
+.queue-screen .btn[aria-busy="true"]:hover {
+	background: rgb(var(--elev));
+	border-color: rgb(var(--control-edge));
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.ghost[aria-busy="true"]:hover {
+	background: transparent;
+	color: rgb(var(--dim));
+}
+.queue-screen .btn.primary[aria-busy="true"]:hover {
+	background: rgb(var(--ink));
+	border-color: rgb(var(--ink));
+	color: rgb(var(--surface));
+}
+/* disabled → the press sign (the control edge) goes; the label stays readable at full strength (half strength is 2.34:1 light) */
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn),
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn):is(:hover, :active) {
+	opacity: 1;
+	background: transparent;
+	border-color: rgb(var(--line));
+	color: rgb(var(--faint));
+	cursor: not-allowed;
+}
 /* a box that takes images (§9.8): Add images on its last line at its end, 4 from the edge; the text keeps that 40 free */
 .queue-compose-box.has-images {
 	position: relative;
@@ -1235,10 +1286,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-compose-box.has-images > .queue-compose-text {
 	padding-inline-end: calc(var(--ctl-min-h) + 2 * var(--space-1));
 }
+/* a glyph inside the one bordered field → no edge of its own (spec §12.5): the ghost's hover fill, the selection tint while held */
 .queue-compose-add {
 	position: absolute;
 	inset-inline-end: var(--space-1);
 	inset-block-end: var(--space-1);
+}
+/* .btn.ghost in the selector → outranks the system's .btn.ghost:hover, which still matches under a held pointer */
+.queue-screen .btn.ghost.queue-compose-add:active {
+	background: var(--tint-select);
 }
 /* a file hanging over the composer (or the order card) → ink edge + the selection tint */
 .queue-compose-box.is-drop {
@@ -1318,11 +1374,20 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	line-height: var(--lh-row);
 	color: rgb(var(--dim));
 }
+/* the note takes the wrap; Try again keeps its label on one line */
 .queue-note-failure {
 	display: flex;
 	align-items: center;
 	gap: var(--space-2);
 	min-width: 0;
+}
+.queue-note-failure > :first-child {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.queue-note-failure > .btn {
+	flex: none;
+	white-space: nowrap;
 }
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
