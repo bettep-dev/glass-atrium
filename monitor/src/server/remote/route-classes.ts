@@ -5,9 +5,10 @@ import { createHash } from "node:crypto";
 
 /**
  * page = reachable from a registered device · agent = local sessions, hooks, scripts · remote-admin = Mac page only ·
- * remote-pre-auth = remote listener, no registered device · remote-device = remote listener, acts on the caller or reduces access.
+ * remote-pre-auth = remote listener, no registered device · remote-device = remote listener, acts on the caller or reduces access ·
+ * remote-cli = loopback only, the glass-atrium CLI (fixed header, no browser header), reduce-only.
  */
-export type RouteClass = "page" | "agent" | "remote-admin" | "remote-pre-auth" | "remote-device";
+export type RouteClass = "page" | "agent" | "remote-admin" | "remote-pre-auth" | "remote-device" | "remote-cli";
 
 export interface ReviewedRoute {
   readonly route: string;
@@ -40,6 +41,13 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     cid: "2026-11-14T1640_lan-route-classes_a93f",
     rowCount: 102,
     sha256: "3d234a90e3476fabcf110784cedbfbc535753e1bde142da98578bc95dbcfc61a",
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S3",
+    cid: "2026-11-14T2145_lan-cli-channel_5f0c",
+    rowCount: 105,
+    sha256: "7801ce43f3335b0f6fe0aad59b39425b951fe49ad60116cb601f5dc66ccc9e32",
   },
 ];
 
@@ -146,6 +154,9 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /api/remote/session", cls: "remote-device", reason: "remote only; the caller's CSRF value, id and label only; fetch metadata, when present, same-origin; no-store" },
   { route: "POST /api/remote/logout", cls: "remote-device", reason: "remote only; page origin + CSRF, empty body; revokes the gate's admitted device only; one Set-Cookie expiring it" },
   { route: "POST /api/remote/off", cls: "remote-device", reason: "remote only; page origin + CSRF, empty body; revokes every device, caller included, and closes the listener even on a failed revoke or audit" },
+  { route: "GET /api/remote/cli/devices", cls: "remote-cli", reason: "loopback only; fixed CLI header, no fetch metadata, Origin, Referer or Cookie, loopback Host and socket, rate limit, no-store; remote.devices_listed as the CLI; id, label, created, last seen only" },
+  { route: "DELETE /api/remote/cli/devices/:id", cls: "remote-cli", reason: "loopback only; same gate, decimal id, no body; the page's revoke act (sockets closed) audited as the CLI; one device_not_found" },
+  { route: "POST /api/remote/cli/devices/revoke-all", cls: "remote-cli", reason: "loopback only; same gate, empty body; the page's revoke-all act audited as the CLI; the count only" },
 ];
 
 /** `METHOD /path` keys the remote gate answers without a registered device → only rows the reviewer classed remote-pre-auth. */

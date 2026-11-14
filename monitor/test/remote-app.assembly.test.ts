@@ -109,9 +109,13 @@ async function seedDecision(): Promise<bigint> {
 }
 
 describe("routes owned by the loopback listener", () => {
-  test("the remote app registers none of the remote-admin routes", () => {
-    const adminRoutes = REVIEWED_ROUTES.filter((entry) => entry.cls === "remote-admin").map((entry) => entry.route);
-    assert.ok(adminRoutes.length > 0, "the table classes remote-admin routes");
+  test("the remote app registers none of the remote-admin or remote-cli routes", () => {
+    const adminRoutes = REVIEWED_ROUTES.filter((entry) => entry.cls === "remote-admin" || entry.cls === "remote-cli").map((entry) => entry.route);
+    assert.deepEqual(
+      ["remote-admin", "remote-cli"].map((cls) => REVIEWED_ROUTES.some((entry) => entry.cls === cls)),
+      [true, true],
+      "the table classes remote-admin and remote-cli routes",
+    );
     const present = adminRoutes.filter((route) => {
       const [method = "", url = ""] = route.split(" ");
       return app.hasRoute({ method: method as "GET", url });

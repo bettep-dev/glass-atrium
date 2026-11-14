@@ -9,6 +9,7 @@ import Fastify, { type RouteOptions } from "fastify";
 import { registerSurface } from "../src/server/app.js";
 import { disconnectPrisma } from "../src/server/db.js";
 import { registerRemoteAdminRoutes } from "../src/server/remote/admin-routes.js";
+import { registerRemoteCliRoutes } from "../src/server/remote/cli-routes.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 import { registerRemoteDeviceRoutes } from "../src/server/remote/routes.js";
@@ -21,8 +22,14 @@ import {
 
 after(() => disconnectPrisma());
 
-// the reviewer's signed lines past the first 94 rows, verbatim and in order (verdict CID 2026-11-14T1640_lan-route-classes_a93f)
+// the reviewer's signed lines past the first 94 rows, verbatim and in order
+// (verdict CIDs 2026-11-14T1640_lan-route-classes_a93f, then 2026-11-14T2145_lan-cli-channel_5f0c from row 103)
 const FIRST_SIGNED_ROW_COUNT = 94;
+const SIGNED_CLI_LINES = [
+  "GET /api/remote/cli/devices remote-cli",
+  "DELETE /api/remote/cli/devices/:id remote-cli",
+  "POST /api/remote/cli/devices/revoke-all remote-cli",
+];
 const SIGNED_REMOTE_LINES = [
   "POST /api/remote/registration remote-admin",
   "GET /api/remote/devices remote-admin",
@@ -32,6 +39,7 @@ const SIGNED_REMOTE_LINES = [
   "GET /api/remote/session remote-device",
   "POST /api/remote/logout remote-device",
   "POST /api/remote/off remote-device",
+  ...SIGNED_CLI_LINES,
 ];
 
 /** Every `METHOD path` the loopback and remote assemblies register, HEAD included as Fastify exposes it. */
@@ -44,12 +52,16 @@ async function collectLiveRoutes(): Promise<Set<string>> {
   });
   try {
     await registerSurface(app);
+    const devices = { list: async () => [], revoke: async () => false, revokeAll: async () => [] };
+    const audit = { insertEvent: async () => undefined };
     await registerRemoteAdminRoutes(app, {
       codes: new RegistrationCodes(),
-      devices: { list: async () => [], revoke: async () => false, revokeAll: async () => [] },
+      devices,
       connections: new DeviceConnections(),
-      audit: { insertEvent: async () => undefined },
+      audit,
+      getAccess: () => ({ enabled: false, trusted: [] }),
     });
+    await registerRemoteCliRoutes(app, { devices, connections: new DeviceConnections(), audit });
     await registerRemoteDeviceRoutes(app, {
       registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
       device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
@@ -97,9 +109,24 @@ describe("reviewer sign-offs", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
     assert.deepEqual(
       { reviewer: latest?.reviewer, stream: latest?.stream, cid: latest?.cid },
-      { reviewer: "glass-atrium-sec-guard", stream: "S3", cid: "2026-11-14T1640_lan-route-classes_a93f" },
+      { reviewer: "glass-atrium-sec-guard", stream: "S3", cid: "2026-11-14T2145_lan-cli-channel_5f0c" },
     );
   });
+
+  test("the earlier sign-offs keep their row counts and digests, so the cli lines only append", () => {
+    assert.deepEqual(
+      ROUTE_CLASS_SIGNOFFS.slice(0, 2).map((signoff) => [signoff.rowCount, signoff.sha256]),
+      [
+        [94, "b76036b059ce1c7e0e5f860d94c8afcc678e1b98b8212d21854a7a72d24179fc"],
+        [102, "3d234a90e3476fabcf110784cedbfbc535753e1bde142da98578bc95dbcfc61a"],
+      ],
+    );
+  });
+});
+
+test("the remote-cli class holds exactly the three signed lines, so a fourth cli route fails", () => {
+  const cli = REVIEWED_ROUTES.filter((entry) => entry.cls === "remote-cli").map((entry) => `${entry.route} ${entry.cls}`);
+  assert.deepEqual(cli, SIGNED_CLI_LINES);
 });
 
 test("each route has exactly one class entry", () => {

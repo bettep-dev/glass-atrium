@@ -117,9 +117,10 @@ describe("opening and closing with the network", () => {
   test("turning off closes the listener and no later check reopens it while the process lives", async () => {
     const { controller, opened } = buildHarness();
     await controller.sync();
+    const wasTurnedOff = controller.isTurnedOff;
     await controller.turnOff();
     await controller.sync();
-    assert.deepEqual([opened.length, getOpenAddresses(opened)], [1, []]);
+    assert.deepEqual([opened.length, getOpenAddresses(opened), wasTurnedOff, controller.isTurnedOff], [1, [], false, true]);
   });
 
   test("stop closes the open listener", async () => {

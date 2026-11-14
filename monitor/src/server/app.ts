@@ -15,6 +15,7 @@ import { registerRequestGuards } from "./request-guards.js";
 import { getMonitorPort } from "./monitor-port.js";
 import { type ListenerContext, buildHostAllowlistHook, setListenerContext } from "./queue/request-gate.js";
 import { type RemoteAdminDeps, registerRemoteAdminRoutes } from "./remote/admin-routes.js";
+import { registerRemoteCliRoutes } from "./remote/cli-routes.js";
 import { type RemoteGateDeps, registerRemoteGate } from "./remote/gate.js";
 import { type RemoteTls, getRemoteServerOptions, setRemoteSocketLimits } from "./remote/listener.js";
 import { type RemoteDeviceDeps, type RemoteRegistrationDeps, registerRemoteDeviceRoutes } from "./remote/routes.js";
@@ -27,7 +28,7 @@ const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
 const STATIC_FRAME_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } as const;
 
 export interface LoopbackAppOptions {
-  /** the Mac page's remote-access admin routes; absent → not registered (tests building the bare surface) */
+  /** the Mac page's remote-access admin routes and the CLI's remote-cli routes; absent → neither registered (tests building the bare surface) */
   readonly admin?: RemoteAdminDeps;
 }
 
@@ -41,7 +42,10 @@ export async function buildApp(port: number = getMonitorPort(), options: Loopbac
   registerRequestGuards(app);
 
   await registerSurface(app);
-  if (options.admin !== undefined) await registerRemoteAdminRoutes(app, options.admin);
+  if (options.admin !== undefined) {
+    await registerRemoteAdminRoutes(app, options.admin);
+    await registerRemoteCliRoutes(app, options.admin);
+  }
 
   // audit-trail hook — mutating write 를 monitor.audit_log 에 fire-and-forget 기록(mutation 미차단)
   registerAuditLogHook(app);

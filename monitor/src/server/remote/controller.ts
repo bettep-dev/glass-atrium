@@ -45,6 +45,11 @@ export class RemoteListenerController {
 
   constructor(private readonly deps: RemoteControllerDeps) {}
 
+  /** true once a device's off has run → the Mac page shows the feature off until the process restarts */
+  get isTurnedOff(): boolean {
+    return this.#isTurnedOff;
+  }
+
   /** One network check; checks run one at a time and never reject → safe to call from a timer. */
   sync(): Promise<void> {
     return this.#enqueue(() => this.#sync());

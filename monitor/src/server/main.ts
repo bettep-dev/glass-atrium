@@ -18,6 +18,7 @@ import { listActiveDevices, revokeAllDevices, revokeDevice } from "./remote/devi
 import { buildRemoteAuditWriter } from "./middleware/audit-log.js";
 import type { RemoteListenerController } from "./remote/controller.js";
 import { RegistrationCodes } from "./remote/registration-code.js";
+import { getRemoteSettings } from "./remote/settings.js";
 import { startRemoteAccess } from "./remote/start.js";
 
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
@@ -45,6 +46,8 @@ let remoteAccess: RemoteListenerController | null = null;
 const deviceConnections = new DeviceConnections();
 // one owner → the Mac's loopback page opens the code the remote code POST consumes
 const registrationCodes = new RegistrationCodes();
+// read once → the boot record, the listener and the Mac page's view agree on one state
+const remoteSettings = getRemoteSettings(process.env, PORT);
 
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
@@ -81,6 +84,7 @@ async function main(): Promise<void> {
       devices: { list: () => listActiveDevices(getPrisma()), revoke: (id) => revokeDevice(getPrisma(), id), revokeAll: () => revokeAllDevices(getPrisma()) },
       connections: deviceConnections,
       audit: buildRemoteAuditWriter(),
+      getAccess: () => ({ enabled: remoteSettings.enabled && remoteAccess?.isTurnedOff !== true, trusted: remoteSettings.trusted }),
     },
   });
   attachShutdown(app);
@@ -117,7 +121,7 @@ async function main(): Promise<void> {
 
   // after the loopback listener → a remote failure never takes the Mac's own page down
   try {
-    remoteAccess = await startRemoteAccess({ monitorPort: PORT, connections: deviceConnections, codes: registrationCodes, log: app.log });
+    remoteAccess = await startRemoteAccess({ settings: remoteSettings, connections: deviceConnections, codes: registrationCodes, log: app.log });
   } catch (error) {
     app.log.error({ err: error }, "remote access start failed — remote listener stays closed");
   }

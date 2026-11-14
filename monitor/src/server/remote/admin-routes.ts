@@ -8,6 +8,7 @@ import type { DeviceConnections } from "./connections.js";
 import type { DeviceListing } from "./devices.js";
 import type { RemoteAuditEvent, RemoteAuditResult } from "./gate.js";
 import { WindowLimiter } from "./limits.js";
+import type { TrustedNetwork } from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
 
 export const REMOTE_ADMIN_PATH = {
@@ -34,16 +35,26 @@ export interface RemoteAdminDeps {
   /** shared with the remote gate → a revoke ends the device's open sockets at once */
   readonly connections: Pick<DeviceConnections, "close">;
   readonly audit: { insertEvent(event: RemoteAuditEvent): Promise<void> };
+  /** the Mac page's view of the feature: on in this process, and the networks it opens on */
+  readonly getAccess: () => RemoteAccessState;
   readonly now?: () => number;
 }
 
-interface DeviceParams {
+export interface RemoteAccessState {
+  readonly enabled: boolean;
+  readonly trusted: readonly TrustedNetwork[];
+}
+
+/** The acts the Mac page and the CLI share → one code path per act (revoke → close sockets → audit). */
+export type DeviceActDeps = Pick<RemoteAdminDeps, "devices" | "connections" | "audit">;
+
+export interface DeviceParams {
   readonly id: string;
 }
 
 // none of these routes takes input beyond the path id → any body is refused before the handler
-const ADMIN_BODY_LIMIT_BYTES = 64;
-const DEVICE_PARAMS_SCHEMA = {
+export const ADMIN_BODY_LIMIT_BYTES = 64;
+export const DEVICE_PARAMS_SCHEMA = {
   params: {
     type: "object",
     required: ["id"],
@@ -62,11 +73,11 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
     const openLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.REGISTRATION_OPEN, deps.now ?? Date.now);
     const options = { bodyLimit: ADMIN_BODY_LIMIT_BYTES };
     scope.post(REMOTE_ADMIN_PATH.REGISTRATION, options, (request, reply) => openRegistration(request, reply, { deps, openLimiter }));
-    scope.get(REMOTE_ADMIN_PATH.DEVICES, () => listDevices(deps));
+    scope.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ ...(await getDeviceList(deps)), access: deps.getAccess() }));
     scope.delete<{ Params: DeviceParams }>(REMOTE_ADMIN_PATH.DEVICE, { ...options, schema: DEVICE_PARAMS_SCHEMA }, (request, reply) =>
-      revokeOne(request, reply, deps),
+      revokeOne(request, reply, { deps, actor: AUDIT_ACTOR }),
     );
-    scope.post(REMOTE_ADMIN_PATH.REVOKE_ALL, options, (request) => revokeAll(request, deps));
+    scope.post(REMOTE_ADMIN_PATH.REVOKE_ALL, options, (request) => revokeAll(request, { deps, actor: AUDIT_ACTOR }));
   });
 }
 
@@ -77,7 +88,7 @@ async function refuseUnlessMacPage(request: FastifyRequest, reply: FastifyReply)
   return undefined;
 }
 
-function hasBody(request: FastifyRequest): boolean {
+export function hasBody(request: FastifyRequest): boolean {
   const length = request.headers["content-length"];
   return request.headers["transfer-encoding"] !== undefined || (length !== undefined && length !== "0");
 }
@@ -90,7 +101,7 @@ async function openRegistration(
   if (!input.openLimiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
   try {
     // row first → a registration the trail does not show is never opened
-    await input.deps.audit.insertEvent(buildAdminEvent(request, "remote.registration_opened", "success"));
+    await input.deps.audit.insertEvent(buildAdminEvent(request, { actor: AUDIT_ACTOR, actionKind: "remote.registration_opened", result: "success" }));
   } catch (error) {
     request.log.error({ err: error }, "remote registration not opened: audit row not written");
     return reply.code(503).send({ error: "audit_unavailable" });
@@ -98,7 +109,7 @@ async function openRegistration(
   return reply.send({ code: input.deps.codes.open() });
 }
 
-async function listDevices(deps: RemoteAdminDeps): Promise<{ devices: Record<string, string>[] }> {
+export async function getDeviceList(deps: Pick<RemoteAdminDeps, "devices">): Promise<{ devices: Record<string, string>[] }> {
   const devices = await deps.devices.list();
   return {
     devices: devices.map((device) => ({
@@ -110,28 +121,35 @@ async function listDevices(deps: RemoteAdminDeps): Promise<{ devices: Record<str
   };
 }
 
-async function revokeOne(request: FastifyRequest<{ Params: DeviceParams }>, reply: FastifyReply, deps: RemoteAdminDeps): Promise<FastifyReply> {
+interface DeviceAct {
+  readonly deps: DeviceActDeps;
+  /** names the channel in the audit row → page and CLI revokes stay distinguishable */
+  readonly actor: string;
+}
+
+export async function revokeOne(request: FastifyRequest<{ Params: DeviceParams }>, reply: FastifyReply, act: DeviceAct): Promise<FastifyReply> {
   const id = BigInt(request.params.id);
-  const isRevoked = await deps.devices.revoke(id);
-  if (isRevoked) deps.connections.close(id);
-  recordEvent(request, deps, { ...buildAdminEvent(request, "remote.revoke", isRevoked ? "success" : "blocked"), targetId: id });
+  const isRevoked = await act.deps.devices.revoke(id);
+  if (isRevoked) act.deps.connections.close(id);
+  const event = buildAdminEvent(request, { actor: act.actor, actionKind: "remote.revoke", result: isRevoked ? "success" : "blocked" });
+  recordEvent(request, act.deps, { ...event, targetId: id });
   return isRevoked ? reply.send({ revoked: 1 }) : reply.code(404).send({ error: "device_not_found" });
 }
 
-async function revokeAll(request: FastifyRequest, deps: RemoteAdminDeps): Promise<{ revoked: number }> {
-  const revoked = await deps.devices.revokeAll();
-  for (const id of revoked) deps.connections.close(id);
-  const event = buildAdminEvent(request, "remote.revoke", "success");
-  recordEvent(request, deps, { ...event, payload: { method: request.method, route: REMOTE_ADMIN_PATH.REVOKE_ALL, count: revoked.length } });
+export async function revokeAll(request: FastifyRequest, act: DeviceAct): Promise<{ revoked: number }> {
+  const revoked = await act.deps.devices.revokeAll();
+  for (const id of revoked) act.deps.connections.close(id);
+  const event = buildAdminEvent(request, { actor: act.actor, actionKind: "remote.revoke", result: "success" });
+  recordEvent(request, act.deps, { ...event, payload: { method: request.method, route: request.routeOptions.url ?? "", count: revoked.length } });
   return { revoked: revoked.length };
 }
 
-function buildAdminEvent(request: FastifyRequest, actionKind: string, result: RemoteAuditResult): RemoteAuditEvent {
-  return { actor: AUDIT_ACTOR, actionKind, result, payload: { method: request.method, route: request.routeOptions.url ?? "" } };
+export function buildAdminEvent(request: FastifyRequest, event: { actor: string; actionKind: string; result: RemoteAuditResult }): RemoteAuditEvent {
+  return { ...event, payload: { method: request.method, route: request.routeOptions.url ?? "" } };
 }
 
-// after the revoke, fire-and-forget → an audit failure never keeps a device registered
-function recordEvent(request: FastifyRequest, deps: RemoteAdminDeps, event: RemoteAuditEvent): void {
+// after the act, fire-and-forget → an audit failure never keeps a device registered or a reply from going out
+export function recordEvent(request: FastifyRequest, deps: Pick<DeviceActDeps, "audit">, event: RemoteAuditEvent): void {
   deps.audit.insertEvent(event).catch((error: unknown) => {
     request.log.warn({ err: error, actionKind: event.actionKind }, "remote audit event not recorded");
   });

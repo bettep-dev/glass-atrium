@@ -23,6 +23,7 @@ const CLASSES = new Map<string, RouteClass>([
   ["POST /api/queue/owner/items/:id/answer", "page"],
   ["POST /api/queue/items", "agent"],
   ["POST /api/remote/registration", "remote-admin"],
+  ["POST /api/remote/cli/devices/revoke-all", "remote-cli"],
   ["POST /api/remote/register", "remote-pre-auth"],
   ["GET /api/remote/session", "remote-device"],
   ["POST /api/remote/logout", "remote-device"],
@@ -75,6 +76,7 @@ async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Ha
   app.post("/api/queue/owner/items/:id/answer", record("answer"));
   app.post("/api/queue/items", record("items"));
   app.post("/api/remote/registration", record("registration"));
+  app.post("/api/remote/cli/devices/revoke-all", record("cli-revoke-all"));
   app.post("/api/remote/register", record("register"));
   app.get("/api/remote/session", async (request) => {
     handled.push("session");
@@ -184,6 +186,7 @@ describe("route classes", () => {
   const denied = [
     { name: "an agent route", url: "/api/queue/items" },
     { name: "a remote-admin route", url: "/api/remote/registration" },
+    { name: "a remote-cli route", url: "/api/remote/cli/devices/revoke-all" },
     { name: "an unclassified path", url: "/api/unknown" },
   ];
   for (const row of denied) {
@@ -193,7 +196,7 @@ describe("route classes", () => {
       const response = await send(harness, { method: "POST", url: row.url, headers: asPageMutation(presented), payload: {} });
       assert.equal(response.statusCode, 403);
       assert.deepEqual(response.json(), { error: "route_not_available" });
-      assert.deepEqual(harness.handled, []);
+      assert.deepEqual([harness.handled, harness.events.map((event) => event.actionKind)], [[], ["remote.route_denied"]]);
     });
   }
 });

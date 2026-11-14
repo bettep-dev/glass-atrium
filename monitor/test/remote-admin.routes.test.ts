@@ -25,6 +25,7 @@ import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 
 const PORT = 16199;
 const MAC_PAGE = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin" };
+const ACCESS = { enabled: true, trusted: [{ gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33" }] };
 
 class Rollback extends Error {}
 
@@ -55,6 +56,7 @@ function buildAdminDeps(): RemoteAdminDeps {
         events.push(event);
       },
     },
+    getAccess: () => ACCESS,
     now,
   };
 }
@@ -247,6 +249,11 @@ describe("listing devices", () => {
         [String(kept.id), "Owner iPhone", ["createdAt", "id", "label", "lastSeenAt"]],
       ]);
     });
+  });
+
+  test("carries the feature state and the trusted networks for the Mac's page", async () => {
+    const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.DEVICES });
+    assert.deepEqual(JSON.parse(response.body).access, ACCESS);
   });
 });
 
