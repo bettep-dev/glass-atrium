@@ -18,9 +18,9 @@ import { registerWikiRoutes } from "./wiki.js";
 // model-config: "Models & limits" settings screen — per-domain model assignment + USD limits.
 import { registerModelConfigRoutes } from "./model-config.js";
 // queue: owner report/decision queue — encapsulated plugin (its Host and page-origin hooks stay inside /api/queue/*).
-import { registerQueueRoutes, resolveQueueRouteOptions } from "./queue.js";
+import { type QueueRouteOptions, registerQueueRoutes, resolveQueueRouteOptions } from "./queue.js";
 
-export async function registerRoutes(app: FastifyInstance): Promise<void> {
+export async function registerRoutes(app: FastifyInstance, queue: QueueRouteOptions = resolveQueueRouteOptions()): Promise<void> {
   await registerHealthRoute(app);
   await registerDashboardRoutes(app);
   await registerHealthDetailRoutes(app);
@@ -33,5 +33,5 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await registerImprovementRoutes(app);
   await registerWikiRoutes(app);
   await registerModelConfigRoutes(app);
-  await registerQueueRoutes(app, resolveQueueRouteOptions());
+  await registerQueueRoutes(app, queue);
 }
