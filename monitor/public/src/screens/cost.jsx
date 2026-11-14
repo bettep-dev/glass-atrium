@@ -1389,7 +1389,10 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
               <TableCell view={view} kind="row-header">Total</TableCell>
               <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatCost(totalCost)}</TableCell>
               <TableCell view={view} kind="span" start={2} textRole="meta" className="text-faint">
-                Sessions not summed — a session using several models counts under each
+                {/* contain: inline-size → the sentence wraps inside the cell and never widens a column (Model names stay on one line) */}
+                <span className="block" style={{ contain: 'inline-size' }}>
+                  Sessions not summed — a session using several models counts under each
+                </span>
               </TableCell>
             </TableRow>
           )}>

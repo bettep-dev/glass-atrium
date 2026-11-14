@@ -359,6 +359,26 @@ describe("calm fixture — nothing is running hot", () => {
     assert.doesNotMatch(ledger.foot[2], /^(?:None|—|)$/, "the shared cell gives the reason in words");
   });
 
+  for (const width of [1440, 1920]) {
+    test(`at ${width}px the Total row's reason takes no width from the ledger's columns`, async () => {
+      await ctx.page.setViewportSize({ width, height: 900 });
+      const widths = await ctx.page.evaluate(() => {
+        const table = Array.from(document.querySelectorAll(".cost-screen table.tbl"))
+          .find((t) => (t.querySelector("caption")?.textContent || "").startsWith("Cost by model"))!;
+        // no named helper inside evaluate → tsx would wrap it in an undefined __name call
+        const heads = Array.from(table.querySelectorAll("thead th"));
+        const reason = table.querySelector("tfoot :is(th, td):last-child")!;
+        const withReason = heads.map((th) => Math.round(th.getBoundingClientRect().width));
+        const text = reason.innerHTML;
+        reason.innerHTML = "";
+        const withoutReason = heads.map((th) => Math.round(th.getBoundingClientRect().width));
+        reason.innerHTML = text;
+        return { withReason, withoutReason };
+      });
+      assert.deepEqual(widths.withReason, widths.withoutReason, "the columns size from their cells, never from the foot sentence");
+    });
+  }
+
   for (const width of [1440, 1024]) {
     test(`at ${width}px the by-model head sticks to the viewport top after a page scroll`, async () => {
       await ctx.page.setViewportSize({ width, height: 900 });
