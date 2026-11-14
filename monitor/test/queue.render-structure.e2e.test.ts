@@ -1292,7 +1292,7 @@ describe("queue page on the mockup fixtures", () => {
         };
       });
       await page.close();
-      columns.push({ width: viewport.width, starts: facts.starts, ends: facts.ends, column: 16 + Math.min(facts.inner - 32, 720) });
+      columns.push({ width: viewport.width, starts: facts.starts, ends: facts.ends, column: 16 + Math.min(facts.inner - 32, ORDERS.COLUMN_MAX) });
     }
 
     assert.ok(columns.some(({ column }) => column === 16 + ORDERS.COLUMN_MAX), "a desk width wide enough for the 720 cap");
