@@ -234,8 +234,9 @@ function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
 const CHART_VIEW_W = 100;
 const CHART_MAX_TICKS = 7;
 const CHART_PLOT_FILL = 0.85;
-// bar inset per side, in slot widths
+// bar inset per side, in slot widths → a bar fills the rest of its slot
 const CHART_BAR_INSET = 0.1;
+const CHART_BAR_FILL = 1 - 2 * CHART_BAR_INSET;
 /** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
 const CHART_TICK_MIN_GAP_PX = 8;
 // ponytail: fixed per-char estimate of a --fs-meta sans tnum day label (Pretendard digit 0.614em × 13px ≈ 7.98px) → measure with canvas if labels grow wide or --fs-meta grows
@@ -286,7 +287,7 @@ function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
 function getChartTickLeft(index, count, kind, anchor) {
   if (kind !== 'bars' || anchor === 'middle') return getChartX(index, count, kind);
   const barLeft = getChartBarLeft(index, count);
-  return anchor === 'start' ? barLeft : barLeft + (CHART_VIEW_W / count) * (1 - 2 * CHART_BAR_INSET);
+  return anchor === 'start' ? barLeft : barLeft + getChartBarWidth(count);
 }
 
 function getFittingTicks(labels, kind, widthPx, maxTicks) {
@@ -345,7 +346,7 @@ function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
   const anchor = getChartTickAnchor(index, visibleTicksCount);
   // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead;
   // a band axis carries offset = half the band → the edge label sits on the bar's outer edge (Recharts' default 10% gap = CHART_BAR_INSET)
-  const barHalf = (payload.offset ?? 0) * (1 - 2 * CHART_BAR_INSET);
+  const barHalf = (payload.offset ?? 0) * CHART_BAR_FILL;
   const labelX = anchor === 'middle' ? x : payload.coordinate + (anchor === 'start' ? -barHalf : barHalf);
   return <text x={labelX} y={y} dy="0.71em" textAnchor={anchor} style={CHART_AXIS_TICK_STYLE}>
     {payload.value}
@@ -376,6 +377,10 @@ function getChartBarLeft(index, count) {
   return index * slot + slot * CHART_BAR_INSET;
 }
 
+function getChartBarWidth(count) {
+  return (CHART_VIEW_W / count) * CHART_BAR_FILL;
+}
+
 // null values lift the pen → a gap, never a line drawn through a missing day
 function getChartLinePath(values, getY) {
   let isPenDown = false;
@@ -387,15 +392,10 @@ function getChartLinePath(values, getY) {
   }).join(' ');
 }
 
-/**
- * Chart paint roles (design.md §4.3) — a quantity series takes `data`, the hovered mark `hover`,
- * a threshold or normal line `reference`; `underStroke` keeps a line over bars on the card ground.
- */
+/** Chart paint roles (design.md §4.3) the shared plot reads — a quantity series takes `data`, the hovered mark `hover`. */
 const CHART_COLOR = Object.freeze({
   data: 'rgb(var(--data))',
   hover: 'rgb(var(--ink))',
-  reference: 'rgb(var(--faint))',
-  underStroke: 'rgb(var(--elev))',
 });
 
 function ChartPlot({ points, kind, h, activeIndex }) {
@@ -416,7 +416,7 @@ function ChartPlot({ points, kind, h, activeIndex }) {
 
 // a zero day draws nothing — a 1px stub would read as a measured sliver; the baseline already marks zero
 function ChartBars({ values, h, getY, activeIndex }) {
-  const width = (CHART_VIEW_W / values.length) * (1 - 2 * CHART_BAR_INSET);
+  const width = getChartBarWidth(values.length);
   return <>{values.map((value, i) => {
     if (value === null || value === 0) return null;
     const y = getY(value);
@@ -681,7 +681,7 @@ function KPI({
   ) : !hasValue ? null : (
     <div className="kpi-main">
       <KpiValue unit={unit} tone={isUnknown ? undefined : tone} isWord={isWord} isFaint={isUnknown}>
-        {isUnknown ? (value ?? (state === 'empty' ? EMPTY_VALUE_TEXT : NOT_LOADED_TEXT)) : value}
+        {isUnknown ? (value ?? getAbsentText(state === 'empty' ? 'none' : 'not-loaded')) : value}
       </KpiValue>
       {badge}
     </div>
@@ -731,27 +731,30 @@ function KPI({
 const EMPTY_VALUE_TEXT = 'None';
 const NOT_LOADED_TEXT = 'Not loaded';
 
+/** The word for a kind of nothing — 'none' = known and empty · anything else (never read) = Not loaded, never claimed empty. */
+function getAbsentText(kind) {
+  return kind === 'none' ? EMPTY_VALUE_TEXT : NOT_LOADED_TEXT;
+}
+
 /**
  * The look of "nothing" in a value slot — never a dash, a dot or a blank (design.md §12.2).
  * @param kind - 'none' = known and empty · 'not-loaded' = never read; required → a missing kind reads Not loaded, never claims empty
  * @param title - the cause, on hover
  */
 function AbsentValue({ kind, title }) {
-  return <span className="text-faint" title={title}>{kind === 'none' ? EMPTY_VALUE_TEXT : NOT_LOADED_TEXT}</span>;
+  return <span className="text-faint" title={title}>{getAbsentText(kind)}</span>;
 }
 
 /**
  * One card's top-line numbers, a hairline between stats — never a tile per stat.
- * @param stats - each { label, value, unit?, context?, href?, key?, absent? }: context = the one period or delta line,
- *   href → the value is a Link to its drill-down; an absent value reads None, or Not loaded with absent 'not-loaded'
- *   (the context line then states the cause); a 0 stays 0
+ * @param stats - each { label, value, unit?, context?, href?, key? }: context = the one period or delta line,
+ *   href → the value is a Link to its drill-down; an absent value reads None; a 0 stays 0
  */
 function StatRow({ stats, className = '' }) {
   return <dl className={`stat-row ${className}`.trim()}>
     {stats.map((stat) => {
       const isAbsent = stat.value == null;
-      const absentText = stat.absent === 'not-loaded' ? NOT_LOADED_TEXT : EMPTY_VALUE_TEXT;
-      const value = <>{isAbsent ? absentText : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
+      const value = <>{isAbsent ? EMPTY_VALUE_TEXT : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
       return <div key={stat.key ?? stat.label} className="stat">
         <dt className="stat-label">{stat.label}</dt>
         <dd className={`stat-value${isAbsent ? ' text-faint' : ''}`}>{stat.href ? <Link href={stat.href}>{value}</Link> : value}</dd>
@@ -3066,7 +3069,7 @@ window.UI = {
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
-  getDisplayName, hasFieldValue, DetailField, AbsentValue, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
+  getDisplayName, hasFieldValue, DetailField, AbsentValue, getAbsentText, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,

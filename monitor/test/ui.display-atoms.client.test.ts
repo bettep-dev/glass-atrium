@@ -155,13 +155,6 @@ describe("stat row", () => {
       assert.equal(collectText(getValues(tree)[0]).trim(), row.text);
     });
   }
-
-  test("an unread value reads Not loaded in faint ink, never None", () => {
-    const tree = render("StatRow", { stats: [{ label: "Spend", value: null, absent: "not-loaded", context: "Cost read failed" }] });
-    const value = getValues(tree)[0];
-    assert.equal(collectText(value).trim(), "Not loaded");
-    assert.ok(findNodes(value, (n) => /\btext-faint\b/.test(String(n.props.className))).length > 0, "faint ink");
-  });
 });
 
 describe("absent value", () => {
