@@ -333,10 +333,12 @@ describe("sheet state lines", () => {
     assert.doesNotMatch(text, /Answered|Replied|Sent as/);
   });
 
-  test("an approval-class decision's note slot says to confirm once more in the session's terminal", () => {
+  test("an approval-class decision's note slot says an approving answer approves the stated action once, with no terminal step", () => {
     const text = (item: unknown) => collectText(render("SheetFootQ", { item, draft: {}, queue: buildQueue().queue, isBusy: false, error: null }));
-    assert.match(text(buildItem({ isApprovalClass: true })), /Approval: after you answer here, confirm once more in glass-atrium's terminal\./);
-    assert.doesNotMatch(text(buildItem()), /confirm once more/);
+    const approval = text(buildItem({ isApprovalClass: true }));
+    assert.match(approval, /Approval: an approving answer here approves the stated action, once; glass-atrium does not ask again in its terminal\./);
+    assert.doesNotMatch(approval, /confirm once more/);
+    assert.doesNotMatch(text(buildItem()), /Approval:/);
   });
 });
 
@@ -361,7 +363,6 @@ describe("sheet precedence notes", () => {
   const pending = (skipReason: unknown, extra: Record<string, unknown> = {}) => buildItem({ status: "resume_pending", skipReason, ...extra });
   const rows = [
     { name: "a used attempt asks for Resend", item: pending({ kind: "resume_used" }), expected: [["automatic resume used — Resend to try again"]] },
-    { name: "an approval item needs the terminal", item: pending({ kind: "approval" }), expected: [["approval needs your terminal: resume the session yourself"]] },
     { name: "a resume in flight shows no text", item: pending({ kind: "in_flight" }), expected: [] },
     { name: "no marked occupant gives the generic worktree line", item: pending({ kind: "shared_worktree", markedOccupants: [], hasUnmarkedOccupant: true }), expected: [generic] },
     { name: "a marked occupant is named", item: pending({ kind: "shared_worktree", markedOccupants: [occupant], hasUnmarkedOccupant: false }), expected: [markedLine] },

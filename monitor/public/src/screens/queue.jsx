@@ -57,7 +57,6 @@ const ABORT_REASON_LABEL_Q = {
 };
 
 const SKIP_TEXT_Q = {
-	approval: "approval needs your terminal: resume the session yourself",
 	resume_used: "automatic resume used — Resend to try again",
 	shared_worktree: "another session is live or resuming in this worktree: this one resumes automatically once that one has ended",
 };
@@ -1936,7 +1935,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 		<ComposerQ field={item.isFreeTextAllowed ? { id: `queue-text-${item.id}`, label: "Your own answer or a note on this decision (optional)" } : null}
 			text={draft.text ?? ""} onText={(text) => queue.setDraft(item.id, { text, error: null })} isBusy={isBusy}
 			buttons={[...resend, { label: "Send answer", isInk: true, onPress: onSend }]}
-			note={<ComposerNoteQ error={error ?? draft.error} info={item.isApprovalClass ? `Approval: after you answer here, confirm once more in ${name}'s terminal.` : null} rest={rest} />}
+			note={<ComposerNoteQ error={error ?? draft.error} info={item.isApprovalClass ? `Approval: an approving answer here approves the stated action, once; ${name} does not ask again in its terminal.` : null} rest={rest} />}
 			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} />
 	);
 }
@@ -2137,7 +2136,7 @@ function getRemoveIdQ(fieldId, key) {
 	return `${fieldId}-remove-${key}`;
 }
 
-// one line: a refusal or a missing control (crit alert), else what the images need, else the approval reminder (info), else the line at rest
+// one line: a refusal or a missing control (crit alert), else what the images need, else the approval note (info), else the line at rest
 function ComposerNoteQ({ error, info = null, rest, tray = null, fieldId = "" }) {
 	if (error) return <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ>;
 	const image = tray ? getImageNoteQ(tray.shots, tray.isOver) : null;

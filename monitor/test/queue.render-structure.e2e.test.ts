@@ -2229,7 +2229,7 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { codes: ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"], picked: 0, hasCount: true });
     });
 
-    test("an approval-class decision carries the Approval tag on its row and its date line, and its note says to confirm in the terminal", async () => {
+    test("an approval-class decision carries the Approval tag on its row and its date line, and its note says an approving answer approves the stated action once", async () => {
       const page = await openEdgePage(harness);
       await selectRow(page, EDGE_IDS.approval);
       const shown = await page.evaluate((id) => ({
@@ -2240,7 +2240,7 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
 
       assert.deepEqual({ row: shown.row, letterhead: shown.letterhead }, { row: ["Approval"], letterhead: ["Decision", "Approval"] });
-      assert.match(shown.note, /Approval: after you answer here, confirm once more in aidl's terminal\./);
+      assert.match(shown.note, /Approval: an approving answer here approves the stated action, once; aidl does not ask again in its terminal\./);
     });
 
     test("a 200-character title takes two lines on its 88 row with the whole title in its tooltip, and wraps in full at 20/28 on the sheet", async () => {
