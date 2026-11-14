@@ -47,3 +47,14 @@ test("a covered route's resource names the target table", async () => {
     assert.equal((await tx.auditLog.findUniqueOrThrow({ where: { id } })).targetTable, "model-config");
   });
 });
+
+test("an event row records the outcome at once and names the device row it concerns", async () => {
+  await runRolledBack(async (tx) => {
+    await buildRemoteAuditWriter(tx).insertEvent({ actor: "loopback", actionKind: "remote.revoke", result: "success", targetId: 4n });
+    const row = await tx.auditLog.findFirstOrThrow({ where: { actionKind: "remote.revoke" }, orderBy: { id: "desc" } });
+    assert.deepEqual(
+      { actor: row.actor, resultCode: row.resultCode, targetTable: row.targetTable, targetId: row.targetId },
+      { actor: "loopback", resultCode: "success", targetTable: "remote_devices", targetId: 4n },
+    );
+  });
+});

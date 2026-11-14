@@ -254,5 +254,18 @@ export function buildRemoteAuditWriter(db: Prisma.TransactionClient = getPrisma(
     setResult: async (id, result) => {
       await db.auditLog.update({ where: { id }, data: { resultCode: result } });
     },
+    insertEvent: async ({ actor, actionKind, result, payload, targetId }) => {
+      await db.auditLog.create({
+        data: {
+          eventTs: new Date(),
+          actor,
+          actionKind,
+          targetTable: targetId === undefined ? null : "remote_devices",
+          targetId: targetId ?? null,
+          payload: payload === undefined ? undefined : { ...payload },
+          resultCode: result,
+        },
+      });
+    },
   };
 }

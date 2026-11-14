@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 
 import Fastify, { type FastifyInstance, type InjectOptions } from "fastify";
 
-import { registerRemoteGate, type RemoteAuditEntry } from "../src/server/remote/gate.js";
+import { registerRemoteGate, type RemoteAuditEntry, type RemoteAuditEvent } from "../src/server/remote/gate.js";
 import type { RouteClass } from "../src/server/remote/route-classes.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
 import { CSRF_HEADER, DEVICE_COOKIE, getCsrfToken } from "../src/server/remote/session.js";
@@ -29,6 +29,7 @@ interface Harness {
   readonly app: FastifyInstance;
   readonly handled: string[];
   readonly audits: { entry: RemoteAuditEntry; result?: string; isHandledFirst: boolean }[];
+  readonly events: RemoteAuditEvent[];
   readonly devices: Map<string, DeviceSummary>;
   readonly clock: { now: number };
   issueDevice: () => string;
@@ -38,6 +39,7 @@ async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Ha
   const app = Fastify();
   const handled: string[] = [];
   const audits: Harness["audits"] = [];
+  const events: RemoteAuditEvent[] = [];
   const devices = new Map<string, DeviceSummary>();
   const clock = { now: START };
   await registerRemoteGate(app, {
@@ -54,6 +56,9 @@ async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Ha
       },
       setResult: async (id, result) => {
         audits[Number(id) - 1]!.result = result;
+      },
+      insertEvent: async (event) => {
+        events.push(event);
       },
     },
     now: () => clock.now,
@@ -78,7 +83,7 @@ async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Ha
     devices.set(presented, { id: BigInt(issued), label: `device ${issued}` });
     return presented;
   };
-  return { app, handled, audits, devices, clock, issueDevice };
+  return { app, handled, audits, events, devices, clock, issueDevice };
 }
 
 function asDevice(presented: string, extra: Record<string, string> = {}): Record<string, string> {
@@ -148,6 +153,15 @@ describe("registration", () => {
     assert.deepEqual(harness.handled, ["register"]);
   });
 
+  test("an unknown device cookie is audited as an auth failure with the source address, an absent cookie is not", async () => {
+    const harness = await buildHarness();
+    await send(harness, { method: "GET", url: "/api/health", headers: { host: HOST } });
+    await send(harness, { method: "GET", url: "/api/health", headers: asDevice(randomBytes(32).toString("base64url")) });
+    assert.deepEqual(harness.events, [
+      { actor: "remote:-@192.168.0.31", actionKind: "remote.auth_failure", result: "blocked", payload: { method: "GET", route: "/api/health" } },
+    ]);
+  });
+
   test("a revoked device is refused on its next request", async () => {
     const harness = await buildHarness();
     const presented = harness.issueDevice();
@@ -173,6 +187,15 @@ describe("route classes", () => {
       assert.deepEqual(harness.handled, []);
     });
   }
+});
+
+test("a denied route is audited with the device as actor", async () => {
+  const harness = await buildHarness();
+  const presented = harness.issueDevice();
+  await send(harness, { method: "POST", url: "/api/queue/items", headers: asPageMutation(presented), payload: {} });
+  assert.deepEqual(harness.events, [
+    { actor: "remote:1@192.168.0.31", actionKind: "remote.route_denied", result: "blocked", payload: { method: "POST", route: "/api/queue/items" } },
+  ]);
 });
 
 describe("mutations from a registered device", () => {

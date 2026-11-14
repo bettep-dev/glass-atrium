@@ -12,16 +12,28 @@ import type { RouteClass } from "./route-classes.js";
 import { CSRF_HEADER, DEVICE_COOKIE, DEVICE_COOKIE_OPTIONS, isCsrfTokenValid } from "./session.js";
 
 export interface RemoteAuditEntry {
-  /** `remote:<device id>@<source address>` → fits audit_log.actor (64) for an IPv4 source */
   readonly actor: string;
   readonly method: string;
   readonly route: string;
 }
 
+export type RemoteAuditResult = "success" | "blocked" | "error";
+
+/** A remote-access event recorded with its outcome in one row (auth failure, denied route, registration, revoke). */
+export interface RemoteAuditEvent {
+  readonly actor: string;
+  readonly actionKind: string;
+  readonly result: RemoteAuditResult;
+  readonly payload?: { readonly method: string; readonly route: string };
+  /** remote_devices row the event concerns */
+  readonly targetId?: bigint;
+}
+
 export interface RemoteAuditWriter {
   /** @returns the row id; the row starts as `error` so a crash mid-handler stays recorded as not succeeded */
   insertIntent(entry: RemoteAuditEntry): Promise<bigint>;
-  setResult(id: bigint, result: "success" | "blocked" | "error"): Promise<void>;
+  setResult(id: bigint, result: RemoteAuditResult): Promise<void>;
+  insertEvent(event: RemoteAuditEvent): Promise<void>;
 }
 
 export interface RemoteGateDeps {
@@ -49,6 +61,8 @@ interface DeviceState {
 
 const HSTS = "max-age=604800";
 const ACTOR_MAX_LENGTH = 64;
+// an unmatched path is caller-chosen → bounded before it reaches the audit payload
+const ROUTE_MAX_LENGTH = 256;
 // request → admitted device; a WeakMap, not a decoration → nothing outside this module can mark a request registered
 const ADMITTED = new WeakMap<FastifyRequest, DeviceState>();
 
@@ -82,6 +96,8 @@ async function admitRequest(request: FastifyRequest, reply: FastifyReply, deps: 
   const device = presented === undefined || presented.length === 0 ? null : await deps.findDevice(presented);
   if (presented === undefined || device === null) {
     limiters.failedSession.hit(address);
+    // an absent cookie is a first visit, not a failed credential → only a presented, unknown one is audited
+    if (presented !== undefined && presented.length > 0) recordEvent(request, deps.audit, { actor: getRemoteActor(null, address), actionKind: "remote.auth_failure" });
     return refuse(reply, 401, "not_registered");
   }
   return admitDevice(request, reply, { deps, limiters, device, presented });
@@ -94,7 +110,10 @@ async function admitDevice(
 ): Promise<FastifyReply | undefined> {
   const { deps, limiters, device, presented } = input;
   const routePath = request.routeOptions.url;
-  if (routePath === undefined || deps.getRouteClass(request.method, routePath) !== "page") return refuse(reply, 403, "route_not_available");
+  if (routePath === undefined || deps.getRouteClass(request.method, routePath) !== "page") {
+    recordEvent(request, deps.audit, { actor: getRemoteActor(device, getSourceAddress(request)), actionKind: "remote.route_denied" });
+    return refuse(reply, 403, "route_not_available");
+  }
   const deviceKey = String(device.id);
   if (!limiters.deviceRequests.hit(deviceKey)) return refuse(reply, 429, "too_many_requests");
   if (MUTATION_METHODS.has(request.method)) {
@@ -114,7 +133,7 @@ async function writeAuditIntent(request: FastifyRequest, reply: FastifyReply, au
   if (state === undefined || !MUTATION_METHODS.has(request.method)) return undefined;
   const route = request.routeOptions.url ?? "";
   try {
-    const actor = `remote:${state.device.id}@${getSourceAddress(request)}`.slice(0, ACTOR_MAX_LENGTH);
+    const actor = getRemoteActor(state.device, getSourceAddress(request));
     state.auditId = await audit.insertIntent({ actor, method: request.method, route });
   } catch (error) {
     request.log.error({ err: error, method: request.method, route }, "remote mutation refused: audit intent row not written");
@@ -132,6 +151,19 @@ async function recordAuditResult(request: FastifyRequest, reply: FastifyReply, a
     // intent row stays `error` → the trail never over-reports a success
     request.log.warn({ err: error, auditId: String(auditId) }, "remote audit result not recorded");
   }
+}
+
+// fire-and-forget → a refusal is never delayed or turned into a 500 by the audit write
+function recordEvent(request: FastifyRequest, audit: RemoteAuditWriter, event: { actor: string; actionKind: string }): void {
+  const payload = { method: request.method, route: (request.routeOptions.url ?? request.url.split("?")[0] ?? "").slice(0, ROUTE_MAX_LENGTH) };
+  audit.insertEvent({ ...event, result: "blocked", payload }).catch((error: unknown) => {
+    request.log.warn({ err: error, actionKind: event.actionKind }, "remote audit event not recorded");
+  });
+}
+
+/** `remote:<device id | ->@<source address>` → fits audit_log.actor (64) for an IPv4 source. */
+export function getRemoteActor(device: DeviceSummary | null, address: string): string {
+  return `remote:${device === null ? "-" : String(device.id)}@${address}`.slice(0, ACTOR_MAX_LENGTH);
 }
 
 function setRemoteHeaders(request: FastifyRequest, reply: FastifyReply): void {
