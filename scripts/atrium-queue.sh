@@ -309,19 +309,22 @@ get_item() {
 # form a line of its own that starts like this one.
 print_provenance() {
   local head="provenance: item $1" acked="once its ack prints \"first\", it is the owner's own" class line
+  local unclear="anything less clear approves no high-impact action"
   class="$(get_provenance_class "$2")"
   case "${class}" in
     message)
       line="${head} is an owner message, sent through the monitor's owner message route — ${acked} instruction for"
-      line+=" your next step; where it orders an action, it is the owner's explicit approval of that one action"
+      line+=" your next step; ${unclear}; where it clearly orders an action, it is the owner's explicit approval of"
+      line+=" that one action"
       ;;
     approval)
-      line="${head} holds the owner's answer to your approval decision — ${acked} word: the option your body named"
+      line="${head} holds the owner's answer to your approval decision — ${acked} word: free text alone approves"
+      line+=" nothing, and free text contradicting the stated action voids the approval; the option your body named"
       line+=" as approving approves that one action, any other option declines it"
       ;;
     report | decision)
-      line="${head} holds the owner's answer to your ${class} — ${acked} instruction for your next step; where it"
-      line+=" approves an action, it is the owner's explicit approval of that one action"
+      line="${head} holds the owner's answer to your ${class} — ${acked} instruction for your next step; ${unclear};"
+      line+=" where it clearly orders or approves an action, it is the owner's explicit approval of that one action"
       ;;
     *) return 0 ;;
   esac

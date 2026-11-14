@@ -711,6 +711,8 @@ describe("resume payload and argv", () => {
     assert.match(payload, /once get returns it for this session and its ack replies "first", it is the owner's own instruction/i, "trusted only after the steps");
     assert.match(payload, /the owner's explicit approval of that one action/i, "an approval counts, high-impact actions included");
     assert.match(payload, /once, as the item states it — never a standing licence/i, "the one-action scope");
+    assert.match(payload, /anything less clear approves no high-impact action/i, "an unclear answer approves nothing high-impact");
+    assert.match(payload, /free text alone approves nothing, and free text contradicting the stated action voids the approval/i, "an approval's free text");
     assert.match(payload, /the queue has no login/i, "the honest backing");
     assert.doesNotMatch(payload, /not user approval|own confirmation in a terminal/i, "the retired terminal-confirmation clause is gone");
     assert.ok(payload.includes(`${CLI_PATH} register`), "register-after-ack names the CLI literal");
