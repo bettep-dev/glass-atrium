@@ -1510,7 +1510,6 @@ function RowFactsQ({ facts }) {
 			<span key={fact.text}>
 				{index > 0 && !facts[index - 1].badge && " · "}
 				{fact.mark && <span aria-hidden="true" className={`text-${fact.mark}`}>{`${TONE_GLYPH[fact.mark]} `}</span>}
-				{fact.dot && <span aria-hidden="true" className={`text-${fact.dot}`}>{"● "}</span>}
 				{fact.text}
 			</span>
 		)))}</>;
@@ -2156,7 +2155,7 @@ function SessionsBodyQ({ queue, rows }) {
 	);
 }
 
-/** The head of the roster, the whole band its master box's label (spec §9.1); no live session that takes a message → no box. */
+/** The head of the roster, the whole band its master box's label (spec §9.1): the box in the rows' box column, the label on their names' column; no live session that takes a message → no box. */
 function AllSessionsBandQ({ rows, sessions, notReceived }) {
 	const { Badge } = window.UI;
 	const master = getMasterTickQ(sessions.selectedIds, rows);
@@ -2166,13 +2165,12 @@ function AllSessionsBandQ({ rows, sessions, notReceived }) {
 	const warn = notReceived > 0 && <Badge fill="warn" title={getNotReceivedFactQ(notReceived).text}>{notReceived}<span className="sr-only">{" not received"}</span></Badge>;
 	return (
 		<Band className="queue-band queue-rail-band">
-			<span className="queue-rail-all">All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}</span>
-			{warn}
 			{isMasterShown && (
 				<span className="queue-rail-box">
 					<span className="inline-target"><CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Select all live sessions" describedBy={RAIL_HINT_Q.ID} /></span>
 				</span>
 			)}
+			<span className="queue-rail-all">All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}{warn}</span>
 		</Band>
 	);
 }
@@ -2217,26 +2215,31 @@ function getNotReceivedBySessionQ(items) {
 	return counts;
 }
 
-/** One session, one control (spec §9.1): the whole row is its box's label, so a press anywhere ticks it; a row that takes no message is no control. */
+/**
+ * One session, one control (spec §9.1): the whole row is its box's label, so a press anywhere ticks it; a row that takes no message is no control.
+ * From the start: box · state mark · name · count; a row with no box keeps its mark and name in place.
+ */
 function SessionRailRowQ({ row, view, sessions }) {
 	const where = [row.profileLabel, row.cwd, row.id].filter(Boolean).join(" · ");
 	const Row = row.isSelectable ? "label" : "div";
 	return (
 		<Row className="queue-rail-row" data-session={row.id} title={where}>
-			<RailRowFaceQ row={row} view={view} where={where} />
 			{row.isSelectable && (
 				<span className="queue-rail-box">
 					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={RAIL_HINT_Q.ID} /></span>
 				</span>
 			)}
+			<RailRowFaceQ row={row} view={view} where={where} />
 		</Row>
 	);
 }
 
+// the mark is live or not by shape and colour together; line 2 says the state in words → the mark is hidden from screen readers
 function RailRowFaceQ({ row, view, where }) {
 	const { Badge } = window.UI;
 	return (
 		<>
+			<span aria-hidden="true" className={`queue-rail-mark${row.state === "live" ? " is-live" : ""}`} />
 			<span className="queue-rail-name">
 				<SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} />
 			</span>
@@ -2268,7 +2271,7 @@ function getSessionLineQ(row, notReceived) {
 	const age = { text: formatRelativeTime(row.lastActivityAt) };
 	if (notReceived > 0) return [getNotReceivedFactQ(notReceived)];
 	if (row.state === "stale") return [{ text: "Not reachable", badge: "warn" }, age];
-	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live, dot: "ok" }, row.count.inDelivery > 0 ? { text: `${row.count.inDelivery} in delivery` } : age];
+	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live }, row.count.inDelivery > 0 ? { text: `${row.count.inDelivery} in delivery` } : age];
 	if (row.markerSetAt) return [{ text: "Resume not yet registered" }];
 	return [{ text: getSessionStateLabelQ(row), badge: "tag" }, age];
 }

@@ -1564,8 +1564,8 @@ describe("sessions rail rows", () => {
   const lines = [
     { name: "something not received leads", row: { state: "live", count: { awaiting: 0, inDelivery: 2 } }, notReceived: 1, first: { text: "1 not received", badge: "warn" } },
     { name: "an unreachable session says so", row: { state: "stale" }, notReceived: 0, first: { text: "Not reachable", badge: "warn" } },
-    { name: "a live session with orders on the way counts them", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, first: { text: "Live", dot: "ok" }, second: "1 in delivery" },
-    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, first: { text: "Live", dot: "ok" } },
+    { name: "a live session with orders on the way counts them", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, first: { text: "Live" }, second: "1 in delivery" },
+    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, first: { text: "Live" } },
     { name: "an automatic resume not yet registered says so", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, notReceived: 0, first: { text: "Resume not yet registered" } },
     { name: "an ended session wears its exit word", row: { state: "exited", exitReason: "dead" }, notReceived: 0, first: { text: "Ended · process gone", badge: "tag" } },
   ];
@@ -1591,6 +1591,30 @@ describe("sessions rail rows", () => {
     assert.deepEqual([railRowOf(tree, SESSION_ID).type, controls(SESSION_ID)], ["label", ["input"]]);
     assert.deepEqual([railRowOf(tree, REPLACED_ID).type, controls(REPLACED_ID)], ["div", []]);
   });
+
+  // spec §9.1: checkbox · state mark · name · count from the row's start; a row that takes no message has no box, its mark and name in place
+  test("a row reads its box, its state mark, its name and its count from the start, and a row that takes no message starts at its mark", () => {
+    const rows = [buildSessionRow({ state: "live", count: { awaiting: 2, inDelivery: 0 } }), buildSessionRow({ id: REPLACED_ID, name: "gersona", isSelectable: false, count: { awaiting: 3, inDelivery: 0 } })];
+    const { tree } = renderRail({ isEndedShown: true, region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
+    const slots = (id: string) => findNodes(railRowOf(tree, id), (node) => /^queue-rail-(box|mark|name|count)(\s|$)/.test(String(node.props?.className ?? "")))
+      .map((node) => String(node.props.className).split(" ")[0]);
+    assert.deepEqual([slots(SESSION_ID), slots(REPLACED_ID)], [["queue-rail-box", "queue-rail-mark", "queue-rail-name", "queue-rail-count"], ["queue-rail-mark", "queue-rail-name", "queue-rail-count"]]);
+  });
+
+  // spec §9.1: live → the filled mark; not live (not reachable, ended, a resume not yet registered) → the hollow ring
+  const marks = [
+    { name: "a live session wears the filled mark", row: { state: "live" }, isLive: true },
+    { name: "a session not reachable wears the ring", row: { state: "stale" }, isLive: false },
+    { name: "an ended session wears the ring", row: { state: "exited", exitReason: "dead" }, isLive: false },
+    { name: "a resume not yet registered wears the ring", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, isLive: false },
+  ];
+  for (const row of marks) {
+    test(`state mark: ${row.name}`, () => {
+      const { tree } = renderRail({ isEndedShown: true, region: { status: "ready", data: { sessions: [buildSessionRow(row.row)], hasMore: false }, error: null, busy: false } });
+      const [mark] = findNodes(railRowOf(tree, SESSION_ID), (node) => String(node.props?.className ?? "").startsWith("queue-rail-mark"));
+      assert.deepEqual([String(mark?.props.className).split(" ").includes("is-live"), mark?.props["aria-hidden"]], [row.isLive, "true"]);
+    });
+  }
 
   test("every box of the rail shares one description of what a tick does", () => {
     const { tree } = renderRail({ isEndedShown: true });
@@ -2690,9 +2714,10 @@ describe("marks and counts on the desk", () => {
     assert.deepEqual([iconsOf({ isChecked: false, isMixed: true }), iconsOf({ isChecked: true }), iconsOf({ isChecked: false })], [["minus"], ["check"], []]);
   });
 
-  test("a live session's line 2 leads with the ok-toned dot, never the received check", () => {
+  // spec §9.1: the mark stands before the name → line 2 says the state in words alone
+  test("a live session's line 2 starts with the word Live and holds no mark", () => {
     const text = collectText(render("RowFactsQ", { facts: call("getSessionLineQ", buildSessionRow({ state: "live" }), 0) })).replace(/\s+/g, " ").trim();
-    assert.ok(text.startsWith("● Live") && !text.includes("✓"), text);
+    assert.ok(text.startsWith("Live") && !/[●○✓]/.test(text), text);
   });
 
   test("the All sessions band shows no count at zero and folds a failed receipt into the compact warning", () => {

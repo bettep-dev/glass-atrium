@@ -1249,6 +1249,53 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual({ controls, ticked, unticked }, { controls: ["INPUT:checkbox"], ticked: true, unticked: false });
   });
 
+  // spec §9.1, §14.4: a department reads left to right — its box, whether it is live, its name, and the count that waits at the row's end
+  test("in a rail row the box stands left of the state mark, the mark left of the name and the count at the row's end; the All sessions label, the Ended label and every name start at one x; a live mark is ok, any other a faint ring, and no line 2 holds a mark", async (t) => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await page.locator(".queue-rail-band .disclosure").click();
+    await page.locator('.queue-rail-band .disclosure[aria-expanded="true"]').waitFor();
+    const facts = await page.evaluate(() => {
+      const paint = (token: string) => {
+        const probe = document.body.appendChild(Object.assign(document.createElement("div"), { style: `color: rgb(var(${token}))` }));
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      };
+      const [ok, faint] = [paint("--ok"), paint("--faint")];
+      const rows = [...document.querySelectorAll<HTMLElement>(".queue-rail-row")];
+      const rect = (row: Element, selector: string) => row.querySelector(selector)?.getBoundingClientRect();
+      const starts = [".queue-rail-all", ".queue-rail-band .disclosure > span:last-child", ".queue-rail-name-text"].flatMap((selector) => [...document.querySelectorAll(selector)].map((node) => Math.round(node.getBoundingClientRect().left)));
+      return {
+        outOfOrder: rows.filter((row) => {
+          const [box, mark, name] = [rect(row, ".queue-rail-box"), rect(row, ".queue-rail-mark"), rect(row, ".queue-rail-name-text")];
+          return !(mark && name && (!box || box.right <= mark.left) && mark.right <= name.left);
+        }).map((row) => row.dataset.session),
+        countGaps: [...new Set(rows.flatMap((row) => {
+          const count = rect(row, ".queue-rail-count");
+          return count ? [Math.round(row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight) - count.right)] : [];
+        }))],
+        starts: new Set(starts).size,
+        ringsAndDots: rows.map((row) => {
+          const mark = getComputedStyle(row.querySelector(".queue-rail-mark") as Element);
+          const isLive = (row.querySelector(".queue-rail-line")?.textContent ?? "").startsWith("Live");
+          return isLive ? mark.backgroundColor === ok : mark.borderTopColor === faint && mark.backgroundColor === "rgba(0, 0, 0, 0)";
+        }),
+        lineMarks: rows.filter((row) => /[●○]/.test(row.querySelector(".queue-rail-line")?.textContent ?? "")).length,
+        kinds: new Set(rows.map((row) => (row.querySelector(".queue-rail-line")?.textContent ?? "").startsWith("Live"))).size,
+        heights: rows.map((row) => `${row.querySelector(".queue-rail-line")?.textContent}: ${Math.round(row.getBoundingClientRect().height)}`),
+      };
+    });
+    await page.close();
+    t.diagnostic(`rail row heights at 1440 with Ended open: ${facts.heights.join(" | ")}`);
+
+    assert.equal(facts.kinds, 2, "live and not-live rows are both on the rail");
+    assert.deepEqual(
+      { outOfOrder: facts.outOfOrder, countGaps: facts.countGaps, starts: facts.starts, marks: facts.ringsAndDots.every(Boolean), lineMarks: facts.lineMarks },
+      { outOfOrder: [], countGaps: [0], starts: 1, marks: true, lineMarks: 0 },
+    );
+  });
+
   // spec §4.3, §14.4: opening a report changes no tick → the composer's address holds across a press, a step, an order row and the way back
   test("pressing a row, stepping, pressing an order row and Back to the list leave every rail box as it was, and the Orders label line and send button unchanged", async () => {
     harness.fixture = getRestFixture();
