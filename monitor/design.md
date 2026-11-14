@@ -352,7 +352,7 @@
 - **finder** (merged tree 기준): hit 마다 읽고 아래 분류에 넣는다. 분류 밖 hit = 새 위반.
   - finder 1 (alpha tint · inset stripe): `grep -rnE "var\(--(crit|warn|ok|info|[$]\{[^}]+\})\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
     - 보간 tone (`var(--${…})`) 도 잡는다.
-    - 허용 hit: over-threshold chart mark (`cost.jsx` session outlier `Cell` + its legend swatch · log-integrity `critBar`) · `improvement.jsx` reject spark stroke (Learning, its lane's call) · the amber badge tint (`tokens.css` → `--tint-warn`, 위 Amber badge).
+    - 허용 hit: over-threshold chart mark (`cost.jsx` session outlier `Cell` + its legend swatch · log-integrity `critBar`) · the amber badge tint (`tokens.css` → `--tint-warn`, 위 Amber badge).
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
     - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`). No chart stroke.
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
@@ -568,7 +568,7 @@
 - base: padding 6px 12px · min-height `--ctl-min-h` 32 · `--radius-control` 6 · `--fs-control` 14 · 500 · `--elev` fill · 1px `--control-edge` · transition 120ms (hover 표준). hover: `--sunken` + border `--faint`. glass 불필요.
 - Tiers (§12.3): primary `.primary` = `--ink` fill + `--surface` text, the one commit action per surface · secondary = base `.btn`, elev fill + 1px `--control-edge` (fill + border is an open decision) · quiet `.ghost` = 투명 · `--dim` → hover `--sunken` + `--ink`, every action inside a bar or header line.
 - Queue screen (`.queue-screen`, its image viewer's bar included; a drawer's own close excluded): every button carries a 1px edge at rest — the quiet one `--control-edge` too. Hover / pressed walk the edge control edge → `--faint` → `--ink` and the primary's fill `--ink` → `--dim` → `--faint`. Disabled = no fill · `--line` edge · `--faint` label at full opacity. In progress (`aria-busy`) = the rest look with the `…ing…` label. Other screens keep the system button.
-- `.danger`: `--crit` fill + `--elev` knock-out text (light 는 흰색, `.alert-card` glyph 와 같은 방식) — light 5.05 · dark 6.32.
+- `.danger`: `--crit` fill + `--elev` knock-out text (light 는 흰색) — light 5.05 · dark 6.32.
 - **red-outline destructive** (§4.2 destructive action): `.btn` variant 아닌 screen-local inline style — crit 텍스트 + crit border, fill 없음.
   - `agents.jsx` → `DELETE_OUTLINE_STYLE` "Delete" · `improvement.jsx` → `REJECT_OUTLINE_STYLE` "Reject": `.btn` 의 `--elev` 위 light 5.05 · dark 6.32 · hover `--sunken` light 4.63 · dark 6.62.
   - `model-config.jsx` → `DiscardConfirmMC` "Discard changes": `background: transparent` → `.detail-foot` `--sunken` 위, rest · hover light 4.63 · dark 6.62.
@@ -646,7 +646,7 @@
 - **`.alarm-row`**: the alarm row written by class on a screen — `.alarm-row-glyph` slot first, the content next; tone via `data-tone` on the row.
 - **Dashboard alarm list** ("Needs you", §12.7): one list card (no visible head, region `aria-label="Needs you"`), one alarm row per alarm, worst first, action = Link to the owning page.
 - **`AlertCard({ tone, surface, title, body, subjects, details, actions, hasLiveHost })`**: 조건부 알림 카드의 유일한 atom — `.alert-card` 를 직접 조립하지 않는다.
-  - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(카드 · 패널 안 `.sub-card.bg-sunken.is-inset`).
+  - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(카드 · 패널 안 `.sub-card.bg-sunken`).
   - tone: `crit` · `warn` · `info` · `ok` · `neutral`(glyph `--dim`). title 앞 sr-only 단어 (Critical / Warning / Notice / Resolved).
   - role: `hasLiveHost` 면 없음, 아니면 crit = `alert` · 그 외 = `status`.
   - `subjects` = neutral `Badge` chip · `details` = 접힌 Details 의 raw 오류 · `actions` = `.btn.sm` 최대 2개.
@@ -895,7 +895,7 @@
 - [ ] 목록은 S/M/L slot 의 row budget + `Show all N` foot, stretched 행 안 중첩 스크롤 없음.
 
 **색 · severity**
-- [ ] severity = glyph + 색 + 단어. tone 은 glyph 에만 — shell · stripe · fill · border 아님 (예외는 §4.2 의 허용 예외 · finder 허용 hit 목록 그대로 — light alert-card well 포함). §4.2 finder 1 · 1b · 2 · 3 은 허용 hit 만.
+- [ ] severity = glyph + 색 + 단어. tone 은 glyph 에만 — shell · stripe · fill · border 아님 (예외는 §4.2 의 허용 예외 · finder 허용 hit 목록 그대로). §4.2 finder 1 · 1b · 2 · 3 은 허용 hit 만.
 - [ ] accent 는 링크 · focus ring 에만, selected · current mark 는 ink (§12.4) · 한 view 에 한 fact 한 자리 (§12.7).
 - [ ] severity 요소를 glass/blur 위에 올리지 않음 · `--cat-*` 는 분류(차트)에만, cat-2/4 text 금지 · focus 는 `--focus-ring` (`--accent` 아님).
 

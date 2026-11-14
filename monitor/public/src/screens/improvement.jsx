@@ -1485,7 +1485,7 @@ function RejectSparkI({ trend }) {
 			<path
 				d={path}
 				fill="none"
-				stroke="rgb(var(--crit) / 0.6)"
+				stroke="rgb(var(--data))"
 				strokeWidth="1.4"
 				strokeLinecap="round"
 				strokeLinejoin="round"

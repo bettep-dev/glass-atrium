@@ -230,12 +230,22 @@ test("on the icon rail the first nav count pins to the item's top right and ever
   assert.equal(getDecl(later, "clip"), "rect(0 0 0 0)");
 });
 
+// spec 44084 §3.2: the row adds up from the control, line and spacing tokens, so a token move keeps the 48 row whole
+test("the shared alarm-row geometry takes every length from a token", () => {
+  const selectors = [".alert-card-grid", ".alarm-row-glyph", ".alarm-row > .alarm-row-glyph + *"];
+  for (const selector of selectors) {
+    const bodies = getRuleBodies(BASE_CSS, selector);
+    assert.ok(bodies.length > 0, `${selector} has a rule`);
+    assert.doesNotMatch(bodies.join(";"), /(?<![\w-])\d+(\.\d+)?(px|rem|em)\b/, `${selector} writes no length literal`);
+  }
+});
+
 test("an alert card carries its tone only on its bare glyph, and the glyph clears 3:1 on --elev and --sunken in both themes", () => {
   const TONE_TOKEN = { crit: "--crit", warn: "--warn", info: "--info", ok: "--ok", neutral: "--dim" } as const;
-  const shells = [".alert-card", ".alert-card.is-inset"].map((s) => getRuleBodies(BASE_CSS, s).join(";"));
+  const shell = getRuleBodies(BASE_CSS, ".alert-card").join(";");
   const glyph = getRuleBodies(BASE_CSS, ".alert-card-glyph").join(";");
 
-  for (const shell of shells) assert.doesNotMatch(shell, /border|background/, "card shell stays neutral: no stripe, tone fill or tone border");
+  assert.doesNotMatch(shell, /border|background/, "card shell stays neutral: no stripe, tone fill or tone border");
   assert.equal(getDecl(glyph, "color"), "rgb(var(--alert-tone))", "the glyph is drawn in the card's tone");
   assert.doesNotMatch(glyph, /background|border|box-shadow/, "no well, fill or radius behind the glyph");
   for (const [tone, token] of Object.entries(TONE_TOKEN)) {

@@ -2384,10 +2384,10 @@ button.kpi:hover {
 	align-items: center;
 	height: var(--ctl-min-h);
 }
-/* 6px → the 20 title line centres on the 32 first line */
+/* half the 32 first line less the 20 title line → the title centres on the glyph slot */
 .alarm-row > .alarm-row-glyph + *,
 .alert-card-content {
-	padding-block: 6px;
+	padding-block: calc((var(--ctl-min-h) - var(--lh-row)) / 2);
 }
 /* two classes → outrank a same-element .fs-body (15 × 1.45 = 21.75), so the title line stays the 20 the row adds up to */
 .alarm-row > .alarm-row-glyph + *,

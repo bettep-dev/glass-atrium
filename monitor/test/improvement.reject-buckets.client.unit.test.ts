@@ -199,6 +199,14 @@ for (const row of sparkRows) {
   });
 }
 
+// design.md §4.3: rejections per day are a quantity series, and a severity colour is never a series colour
+test("the rejection sparkline draws its series in the data colour", () => {
+  const spark = sandbox.RejectSparkI({ trend: [2, 5, 1].map((reject) => ({ reject })) });
+  const line = spark.props.children as RecordedElement;
+
+  assert.equal(line.props.stroke, "rgb(var(--data))");
+});
+
 // The board renders safety from the actionable feed and only applied / rejected from the
 // terminal feed, so a terminal row grouped anywhere else leaves the board.
 const terminalRows = [

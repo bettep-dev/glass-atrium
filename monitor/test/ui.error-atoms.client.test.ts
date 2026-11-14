@@ -200,15 +200,16 @@ describe("an alert card leads its title with a visually-hidden severity word, so
 
 describe("an alert card renders each optional slot only when given, on the surface the caller picked", () => {
   const rows = [
-    { name: "title only, raised", props: { surface: "raised" }, shell: "card", subjects: 0, details: 0, actions: 0 },
-    { name: "every slot, inset", props: { surface: "inset", subjects: ["hooks", "rules"], details: "ENOENT", actions: "Retry" }, shell: "sub-card", subjects: 2, details: 1, actions: 1 },
+    { name: "title only, raised", props: { surface: "raised" }, shell: ["card", "alert-card"], subjects: 0, details: 0, actions: 0 },
+    { name: "every slot, inset", props: { surface: "inset", subjects: ["hooks", "rules"], details: "ENOENT", actions: "Retry" }, shell: ["sub-card", "bg-sunken", "alert-card"], subjects: 2, details: 1, actions: 1 },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const tree = render("AlertCard", { tone: "warn", title: "Harness drift", ...row.props });
       const [chips] = getByClass(tree, "alert-card-subjects");
 
-      assert.ok(String(getByClass(tree, "alert-card")[0].props.className).split(/\s+/).includes(row.shell), "shell");
+      // spec 44084 §3.2: the shell is the surface's card classes alone — the retired well geometry left no inset modifier
+      assert.deepEqual(String(getByClass(tree, "alert-card")[0].props.className).trim().split(/\s+/), row.shell, "shell");
       assert.equal(chips ? chips.children.length : 0, row.subjects, "subject chips");
       assert.equal(findNodes(tree, (n) => n.type === "details").length, row.details, "details");
       assert.equal(getByClass(tree, "alert-card-actions").length, row.actions, "actions");

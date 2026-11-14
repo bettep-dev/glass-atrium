@@ -2603,7 +2603,7 @@ const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice',
 function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, details, actions, hasLiveHost = false, onFocus, className = '' }) {
   const role = hasLiveHost ? undefined : tone === 'crit' ? 'alert' : 'status';
   const isInset = surface === 'inset';
-  const shell = isInset ? 'sub-card bg-sunken alert-card is-inset' : 'card alert-card';
+  const shell = isInset ? 'sub-card bg-sunken alert-card' : 'card alert-card';
 
   return (
     <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
