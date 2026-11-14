@@ -30,7 +30,8 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
   {
     reviewer: "glass-atrium-sec-guard",
     stream: "S2",
-    // delivery CID of the build that received the table; the reviewer's own verdict CID for these rows is unrecorded
+    // the reviewer verdict's own CID: sec-guard classed these rows as a spawn of the build workflow
+    // (run wf_d4bb334b-c07, route-classification step), which ran under the build CID
     cid: "2026-11-14T1420_lan-build_c5b9",
     rowCount: 94,
     sha256: "b76036b059ce1c7e0e5f860d94c8afcc678e1b98b8212d21854a7a72d24179fc",

@@ -11,7 +11,38 @@ import {
   getLocalHostName,
   getNetworkIdentity,
   isPrivateIPv4,
+  runCommand,
 } from "../src/server/remote/network.js";
+
+/** Exits at once, reads no stdin → the child is often gone before the parent's stdin write or shutdown lands. */
+const NON_READING_BINARY = "/usr/bin/true";
+
+/**
+ * A scheduling race, not a deterministic fault → concurrent batches add the CPU contention that widens it.
+ * - Batch of 64 → 192 pipe fds, under the stock macOS soft limit of 256.
+ * - Old code (stdin ended, no error listener): this test went red in 4 of 10 runs; the input test below in every run.
+ */
+const NON_READING_BATCH = 64;
+const NON_READING_RUNS = 6_400;
+
+/** Above the 64 KiB pipe buffer → the write cannot complete before the child exits, so EPIPE is certain, not a race. */
+const UNREAD_INPUT = "x".repeat(1 << 20);
+
+/** Runs `body`, then one more timer turn for a late stream error; @returns every uncaught exception and unhandled rejection seen. */
+async function getProcessFaults(body: () => Promise<void>): Promise<unknown[]> {
+  const faults: unknown[] = [];
+  const onFault = (fault: unknown): void => void faults.push(fault);
+  process.on("uncaughtException", onFault);
+  process.on("unhandledRejection", onFault);
+  try {
+    await body();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } finally {
+    process.off("uncaughtException", onFault);
+    process.off("unhandledRejection", onFault);
+  }
+  return faults;
+}
 
 const ROUTE_OUTPUT = [
   "   route to: default",
@@ -166,4 +197,21 @@ test("the Bonjour host name is the .local name the Host allowlist admits, and an
     assert.equal(await getLocalHostName(run), row.expected, row.name);
     assert.deepEqual(calls, [["/usr/sbin/scutil", "--get", "LocalHostName"]], row.name);
   }
+});
+
+test("the real command runner survives a child that exits without reading stdin", async () => {
+  const faults = await getProcessFaults(async () => {
+    for (let started = 0; started < NON_READING_RUNS; started += NON_READING_BATCH) {
+      const outputs = await Promise.all(Array.from({ length: NON_READING_BATCH }, () => runCommand(NON_READING_BINARY, [])));
+      assert.deepEqual(new Set(outputs), new Set([""]));
+    }
+  });
+  assert.deepEqual(faults, []);
+});
+
+test("the real command runner survives stdin input its child never reads", async () => {
+  const faults = await getProcessFaults(async () => {
+    assert.equal(await runCommand(NON_READING_BINARY, [], UNREAD_INPUT), "");
+  });
+  assert.deepEqual(faults, []);
 });

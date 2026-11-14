@@ -40,6 +40,9 @@ const IPV4_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
 export const runCommand: CommandRunner = async (file, args, input) => {
   const pending = execFileAsync(file, [...args], { env: COMMAND.ENV, timeout: COMMAND.TIMEOUT_MS });
+  // child gone before the write lands → EPIPE on stdin; unheard, it is an uncaughtException that exits the monitor.
+  // Exit code and stdout still decide the result → an unread input parses to nothing → closed.
+  pending.child.stdin?.on("error", () => {});
   pending.child.stdin?.end(input ?? "");
   const { stdout } = await pending;
   return stdout;
@@ -114,8 +117,9 @@ function getArpHardwareAddress(output: string, gateway: string, networkInterface
 
 /**
  * configd's record of the primary service's router → the same ARP-resolved address, kept by the system.
- * A Homebrew node process (the LaunchAgent's binary) gets "no entry" from arp for a gateway platform binaries see;
- * configd is read over IPC, not the network, so it answers there. Must name this gateway on this interface.
+ * - Homebrew node (the LaunchAgent's binary) → arp "no entry" for a gateway platform binaries see
+ * - configd over IPC, not the network → readable there
+ * - Match required: this gateway on this interface
  */
 async function getConfigdHardwareAddress(run: CommandRunner, gateway: string, networkInterface: string): Promise<string | null> {
   const global = await run(COMMAND.SCUTIL, [], "show State:/Network/Global/IPv4\nquit\n");
