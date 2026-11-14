@@ -40,9 +40,9 @@ readonly WAIT_MUTEX_TRIES=200
 # test seam shapes (get_seam_s): a whole positive number of seconds, or one that may be 0
 readonly SEAM_POSITIVE_SHAPE='^[1-9][0-9]*$'
 readonly SEAM_WHOLE_SHAPE='^[0-9]+$'
-# ponytail: inside the longest measured asyncRewake lifetime (666 s, binding timeout 1200 in lib/ga-env.sh) → raise both
-# together once a longer one is measured
-readonly LISTEN_LIFETIME_S=600
+# inside the longest measured asyncRewake lifetime (82860 s under binding timeout 86400, lib/ga-env.sh), a margin of one
+# hour under that timeout → the host's SIGTERM never ends a listener before its re-arm wake
+readonly LISTEN_LIFETIME_S=82800
 # the same answer count to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
 # a claim or a count read back at 0 starts the bound over (drop_announce_record)
 readonly LISTEN_ANNOUNCE_MAX=2

@@ -288,11 +288,11 @@ ga_init_env() {
   # take the options as the matcher. Managed keys = the keys a row declares (asyncRewake, timeout —
   # test/hook-bindings-complete.bats holds the allowlist); every other command key stays the user's own.
   # Read through get_expected_binding_option_rows (lib/ga-config-hooks.sh), never directly.
-  # queue-listener.sh: the host SIGTERMs an asyncRewake hook at its timeout → 1200 s, the longest measured to let a
-  # wake land, outlasts the listener's own lifetime (scripts/atrium-queue.sh → LISTEN_LIFETIME_S)
+  # queue-listener.sh: the host SIGTERMs an asyncRewake hook at its timeout → 86400 s, the timeout a measured wake
+  # was measured landing after 82860 s, outlasts the listener's own lifetime (scripts/atrium-queue.sh → LISTEN_LIFETIME_S)
   EXPECTED_HOOK_BINDING_OPTIONS=(
-    "SessionStart	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":1200}"
-    "Stop	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":1200}"
+    "SessionStart	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":86400}"
+    "Stop	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":86400}"
   )
   readonly EXPECTED_HOOK_BINDING_OPTIONS
 
