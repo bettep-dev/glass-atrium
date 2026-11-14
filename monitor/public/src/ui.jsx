@@ -1514,7 +1514,8 @@ function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPic
     <button type="button" className="filter-trigger" {...menu.triggerProps}>
       <span className="filter-trigger-axis">{axis}</span>
       <span className="filter-trigger-value">{value}</span>
-      <DisclosureChevron isOpen={menu.isOpen} />
+      {/* points at the menu it opens and never turns — aria-expanded and the sunken fill carry the open state */}
+      <Icon name="chevD" size={DISCLOSURE_CHEVRON_PX} className="filter-trigger-chevron text-dim" />
     </button>
     {menu.isOpen && <MenuPanel id={menu.menuId} label={axis} kind={kind} items={items}
       rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}

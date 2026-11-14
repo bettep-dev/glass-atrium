@@ -253,6 +253,27 @@ describe("no Show, Audience or search state moves the Documents search, a trigge
   }
 });
 
+describe("a menu trigger points its chevron down, in the box the fold chevron reserves", () => {
+  test("every filter trigger draws the down glyph, never the fold's turning chevron", () => {
+    const tree = renderScreen((docsScreen.DocListCardCD as Component)(LIST_CARD_PROPS)) as RenderedNode;
+    const triggers = findNodes(tree, (n) => n.type === "FilterTrigger");
+    assert.ok(triggers.length >= 2, `${triggers.length} triggers`);
+    for (const trigger of triggers) {
+      const axis = String(trigger.props.axis);
+      assert.deepEqual(findNodes(trigger, (n) => n.type === "Icon").map((n) => n.props.name), ["chevD"], axis);
+      assert.equal(findNodes(trigger, (n) => /\bdisclosure-chevron\b/.test(String(n.props.className ?? ""))).length, 0, axis);
+    }
+  });
+
+  test("the trigger's chevron keeps the fold chevron's width and height", async () => {
+    await setCardWidth(1300);
+    const fold = await readBox("details.doc-version-history > summary .disclosure-chevron");
+    const chevrons = await page.$$eval(`${TOOLBAR} .filter-trigger > svg`, (els) => els.map((el) => el.getBoundingClientRect().toJSON() as DOMRect));
+    assert.ok(chevrons.length >= 2, `${chevrons.length} trigger chevrons`);
+    for (const chevron of chevrons) assert.deepEqual([chevron.width, chevron.height], [fold.width, fold.height]);
+  });
+});
+
 describe("the ledger's row controls keep their tier boxes", () => {
   const LINEAGE = "#docs-list button.doc-lineage";
 

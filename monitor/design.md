@@ -1029,7 +1029,7 @@
 | Link | navigation to another page or document ("Task results →") | ink text, trailing →, underline on hover, no box, inline height |
 | Inline link | a document reference inside body text (`ProseText`, §7.13) | `a.prose-link`: ink text, always underlined (1 px, offset 0.2em; 2 px on hover), no arrow — the underline is its non-colour cue |
 | Search (bar) | free-text filter in a filter bar or card head | sunken fill + leading search icon, no border, h32, radius 6; focus ring on focus |
-| Filter trigger | one filter axis on a bar (Show, Audience, Agent, Result, Sort) | quiet: axis label 14/500 dim + value ink + chevron, no colon; sunken fill on hover and while open; option list = menu with ✓ on the chosen value(s) |
+| Filter trigger | one filter axis on a bar (Show, Audience, Agent, Result, Sort) | quiet: axis label 14/500 dim + value ink + down chevron (never turns; the fold chevron is `DisclosureChevron`), no colon; sunken fill on hover and while open; option list = menu with ✓ on the chosen value(s) |
 | Segmented control | a page-wide window (range 7d/30d/90d) — not a list filter | sunken track, no outer edge, h32, items 14/500 dim; selected = raised thumb + 1px `--control-edge` + ink text |
 | Tab | switch between distinct views (Operator / Instrumentation; drawer sections) | label only, 14/500 dim; selected ink + 2px ink underline; no box, no icon; below the page header |
 | Form input / select | a field in a form (model-config, doc editor) | elev fill, 1px `--control-edge`, h32, radius 6, sans 14 value; label above |

@@ -1817,7 +1817,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	color: rgb(var(--ink));
 }
 /* value ↔ chevron = the 6 glyph gap of 14px text, over the 4 inline-label gap */
-.filter-trigger > .disclosure-chevron {
+.filter-trigger > .filter-trigger-chevron {
 	margin-inline-start: calc(var(--space-1_5) - var(--gap-label-inline));
 }
 
