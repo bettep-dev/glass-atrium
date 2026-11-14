@@ -1306,7 +1306,8 @@ function HeadStatusO({ tone, title, children }) {
   const glyph = HEAD_STATUS_GLYPHS_O[tone];
   return <span data-role="head-status" className="inline-flex items-center gap-label-inline fs-meta text-dim" title={title}>
     {glyph && <span className={`text-${tone}`} aria-hidden="true"><GlyphO name={glyph}/></span>}
-    {children}
+    {/* one inline span → the flex gap sits after the glyph only, never between the sentence's own runs */}
+    <span>{children}</span>
   </span>;
 }
 
@@ -1314,8 +1315,10 @@ function AttributionHealthCard({ state, period, onRetry, shared }) {
   const { Card } = window.UI;
 
   const summary = state.status === 'ready' ? state.data?.window_summary : null;
-  const omissionRate = summary ? summary.literal_omission_rate : null;
-  const badge = attributionOmissionBadgeO(omissionRate);
+  // an unread or failed region claims no rate → Not loaded; None only over a read window with no attributed records
+  const badge = summary
+    ? attributionOmissionBadgeO(summary.literal_omission_rate)
+    : { colorVar: null, text: <window.UI.AbsentValue kind="not-loaded" title={`Record attribution for the last ${period} days is not loaded yet or failed to load`}/> };
 
   return (
     <div id={REGION_CARD_IDS.attribution} className="mb-section">

@@ -544,3 +544,26 @@ test("a loading skeleton pulses through its gated class, never through an inline
   assert.ok(pulsing.length > 0, "the loading screen draws pulsing skeletons");
   assert.equal(inline.length, 0, "no element animates through its own style");
 });
+
+describe("the Record attribution head reads None only over a read window with no records, and Not loaded while the region is unread", () => {
+  const rows = [
+    { name: "loading", state: { status: "loading", busy: true, data: null, error: null }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false },
+    { name: "failed", state: { status: "error", busy: false, data: null, error: SERVER_ERROR }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false },
+    { name: "read, no attributed records", state: { status: "ready", busy: false, data: { window_summary: { literal_omission_rate: null } }, error: null }, kinds: [], text: /None$/, hasGlyph: true },
+    { name: "read, a measured share", state: { status: "ready", busy: false, data: { window_summary: { literal_omission_rate: 0.0123 } }, error: null }, kinds: [], text: /1\.2% /, hasGlyph: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const tree = renderScreen(create(mod.AttributionHealthCard as Component, { state: row.state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+      const [status] = findNodes(tree, (n) => n.props["data-role"] === "head-status");
+      const absentKinds = findNodes(status, (n) => n.type === "AbsentValue").map((n) => n.props.kind);
+      const elementChildren = status.children.filter((child) => typeof child !== "string");
+      assert.deepEqual(absentKinds, row.kinds);
+      assert.match(collectText(status).trim(), row.text);
+      assert.doesNotMatch(collectText(status), row.hasGlyph ? /Not loaded/ : /None/);
+      assert.equal(elementChildren.length, row.hasGlyph ? 2 : 1, "the glyph, then the sentence as one inline element");
+    });
+  }
+});
