@@ -329,7 +329,7 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
           <p className="fs-body">{tile.note}</p>
         </CardInfo>
       )}
-      state={getTileKpiState(tile.status)} loadingLabel={tile.label.toLowerCase()} isBusy={tile.isBusy}
+      state={getTileKpiState(tile)} loadingLabel={tile.label.toLowerCase()} isBusy={tile.isBusy}
       value={<StatusTileValue tile={tile}/>} unit={tile.unit}
       badge={hasBadge && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
       delta={tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
@@ -338,12 +338,14 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   );
 }
 
-// tile status → the shared KPI state. unavailable and empty stay 'ready': their builders author the value
-// (a dash, or a low-n count that is still a real figure), so only a failed read takes the KPI's unknown dash.
+// tile status → the shared KPI state. unavailable and empty keep their builder's value (a low-n count is still a real
+// figure); a None or Not loaded word takes the KPI's unknown state → faint ink, never a verdict glyph.
 const TILE_KPI_STATE = { loading: 'loading', error: 'error' };
 
-function getTileKpiState(status) {
-  return TILE_KPI_STATE[status] ?? 'ready';
+function getTileKpiState(tile) {
+  const { NOT_LOADED_TEXT, EMPTY_VALUE_TEXT } = window.UI;
+  if (Object.hasOwn(TILE_KPI_STATE, tile.status)) return TILE_KPI_STATE[tile.status];
+  return tile.value === NOT_LOADED_TEXT || tile.value === EMPTY_VALUE_TEXT ? 'empty' : 'ready';
 }
 
 // a detail with no text renders no node → no blank line and no reserve; the hint still closes the slot, on the foot
@@ -1040,7 +1042,8 @@ const OUTCOME_COUNTING_NOTE = 'Counts only writer-emitted outcomes — records t
 
 function describeOutcomeValue(rate) {
   if (rate.status === 'low-n') return formatInt(rate.writerTotal);
-  if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return '—';
+  // empty or no writer-reported outcome → known to hold nothing, the share has no denominator
+  if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return window.UI.EMPTY_VALUE_TEXT;
   return getSharePct(rate.breakage, rate.writerTotal);
 }
 

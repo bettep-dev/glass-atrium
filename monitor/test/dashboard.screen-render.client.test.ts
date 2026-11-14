@@ -32,6 +32,8 @@ function uiStub(): unknown {
       get: (_target, name: string) =>
         name === "KPI"
           ? realUi.KPI
+          : name === "NOT_LOADED_TEXT" || name === "EMPTY_VALUE_TEXT"
+          ? realUi[name]
           : name === "TONE_ICON"
           ? new Proxy({}, { get: () => "dot" })
           : name === "getRegionView"
@@ -148,6 +150,20 @@ test("every drill is an anchor to its screen's hash; a plain click routes in-app
   }
 });
 
+test("a tile whose value is a word for nothing paints it in faint ink, and a real figure stays in ink", () => {
+  const rows = [
+    { name: "an unread tile", value: "Not loaded", status: "unavailable", isFaint: true },
+    { name: "an empty tile", value: "None", status: "unavailable", isFaint: true },
+    { name: "a figure", value: "40", status: "ready", isFaint: false },
+  ];
+  for (const row of rows) {
+    const tree = render("StatusTile", { tile: { ...READY_TILE, status: row.status, value: row.value }, onNav: () => {}, onRetry: () => {} });
+    const [value] = findNodes(tree, isKpiValue);
+    assert.equal(Boolean(value.props.isFaint), row.isFaint, row.name);
+    assert.equal(collectText(value), row.value, `${row.name} keeps its own words`);
+  }
+});
+
 test("a tile heads with an h2 whose window rides the aside beside the uppercase label, and leads with the KPI-scale value", () => {
   const tree = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
   const headings = findNodes(tree, (n) => n.type === "h2");
@@ -171,6 +187,7 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
     resolveOutcomeRate: (data: unknown) => data,
     formatInt: (n: number) => String(n),
     formatPct: realUi.formatPct,
+    EMPTY_VALUE_TEXT: realUi.EMPTY_VALUE_TEXT,
     LOW_N_MIN: 20,
     OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
     OUTCOME_OPEN_CAVEAT_WARN_SHARE: 0.1,
@@ -197,6 +214,13 @@ test("the Task results tile headlines a bare failed share on one line, with its 
   const lowN = buildOutcomeTile({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
   assert.equal(lowN.value, "12", "too small a sample still shows how many there are");
   assert.match(String(lowN.detail), /too few to judge/i);
+});
+
+test("a Task results tile with nothing to judge reads None, never a dash", () => {
+  for (const status of ["empty", "unavailable"]) {
+    const tile = buildOutcomeTile({ status: "ready", data: { status, tone: "neutral", writerTotal: 0, breakage: 0, openCaveats: 0 } });
+    assert.equal(tile.value, "None", `${status}: the share has no writer-reported outcomes behind it`);
+  }
 });
 
 function renderResultPanel(byResult: Array<{ result: string; count: number }>): RenderedNode {
