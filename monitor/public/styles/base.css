@@ -446,37 +446,43 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 
 /* the Queue desk (§7.11) — the screen fills the viewport under main's padding and never scrolls; each pane scrolls its own body.
-   The rail fixed per step, the middle pane the rest: the list, or the opened row's sheet in its place */
+   The rail fixed per step, the middle pane one fixed page: the list, or the opened row's sheet in its place */
 .queue-screen {
 	display: flex;
 	flex-direction: column;
 	height: calc(100dvh - 2 * var(--gap-page));
 	min-height: 608px;
 }
-/* three fixed-role columns at every width (spec §3.2): the rail and Orders step with the viewport, the middle pane takes the rest */
+/* three fixed-role columns at every width (spec §3.2): the rail steps with the viewport; the middle pane is the 66ch page and its two
+   32 gutters, yielding only where Orders would drop under its minimum; Orders takes the rest. The ch resolves on the desk's 15px text */
 .queue-desk {
 	--queue-rail-w: 208px;
-	--queue-orders-w: 320px;
+	--queue-page-max: calc(var(--measure-prose) + 2 * var(--space-8));
+	--queue-orders-min: 320px;
+	--queue-thread-w: 720px;
 	flex: 1 1 auto;
 	min-height: 560px;
 	min-width: 1012px;
 	display: grid;
-	grid-template-columns: var(--queue-rail-w) minmax(0, 1fr) var(--queue-orders-w);
+	grid-template-columns:
+		var(--queue-rail-w)
+		min(var(--queue-page-max), calc(100% - var(--queue-rail-w) - var(--queue-orders-min) - 2 * var(--gap-section)))
+		minmax(var(--queue-orders-min), 1fr);
 	grid-template-rows: minmax(0, 1fr);
 	gap: var(--gap-section);
 	font-size: var(--fs-body);
 }
 @media (min-width: 1440px) {
-	.queue-desk { --queue-rail-w: 232px; --queue-orders-w: 344px; }
+	.queue-desk { --queue-rail-w: 232px; }
 }
 @media (min-width: 1728px) {
-	.queue-desk { --queue-rail-w: 248px; --queue-orders-w: 360px; }
+	.queue-desk { --queue-rail-w: 248px; }
 }
 @media (min-width: 2240px) {
-	.queue-desk { --queue-rail-w: 264px; --queue-orders-w: 376px; }
+	.queue-desk { --queue-rail-w: 264px; }
 }
 @media (min-width: 2560px) {
-	.queue-desk { --queue-rail-w: 280px; --queue-orders-w: 392px; }
+	.queue-desk { --queue-rail-w: 280px; }
 }
 /* the Sessions rail (spec §9.1): the All sessions band, a row per session (name 14/600, the solid waiting count, line 2 13/dim),
    the box column at the row's end. A row is 68 — the list row's own geometry */
@@ -593,8 +599,16 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-width: 0;
 	min-height: 0;
 }
+/* head, thread and composer on one content column from the 16 start inset, at most --queue-thread-w: the free width at the far end only (spec §3.2).
+   Unregistered → the % resolves at each user against its containing block, for all three the card's inner width */
 .queue-orders-card {
+	--queue-orders-end: max(var(--card-pad), calc(100% - var(--card-pad) - var(--queue-thread-w)));
 	flex: 1 1 auto;
+}
+.queue-orders-card > .card-head,
+.queue-orders-card .queue-thread,
+.queue-orders-card .queue-composer {
+	padding-inline-end: var(--queue-orders-end);
 }
 .queue-orders-scope {
 	display: block;
@@ -832,9 +846,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	overflow-y: auto;
 	overscroll-behavior: contain;
 }
-.queue-list {
-	container-type: inline-size;
-}
 .queue-list > .card-body {
 	overflow-anchor: auto;
 }
@@ -978,44 +989,9 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-row[aria-selected="true"] .queue-row-chevron {
 	color: rgb(var(--ink));
 }
-/* the one-line form on a list 880 wide: the meta line's parts become columns, 44 high, no column header */
-@container (min-width: 880px) {
-	.queue-row {
-		grid-template-columns: minmax(0, 1fr) 160px 220px 88px 16px;
-		column-gap: var(--space-4);
-	}
-	.queue-row-title {
-		display: block;
-		white-space: nowrap;
-		text-overflow: ellipsis;
-	}
-	.queue-row-meta {
-		display: contents;
-	}
-	.queue-row-who:empty {
-		display: block;
-	}
-	.queue-row-sep {
-		display: none;
-	}
-	.queue-row-age {
-		text-align: end;
-	}
-	.queue-row-chevron {
-		grid-column: 5;
-		grid-row: 1;
-	}
-}
-/* the sheet: one page column — the 66ch measure centred in the pane, gutters of at least 32 — shared by its head, body and foot (spec §3.2).
-   Registered → the ch resolves here on the desk's 15px text, not on the 13/14px of the head and foot that read it; the % on each of them */
-@property --queue-page-pad {
-	syntax: "<length-percentage>";
-	inherits: true;
-	initial-value: 0px;
-}
+/* the sheet: one page column shared by its head, body and foot, on a constant 32 inset — the pane is cut to the measure (spec §3.2) */
 .queue-sheet {
-	--queue-page-pad: max(var(--space-8), calc((100% - var(--measure-prose)) / 2));
-	--card-pad: var(--queue-page-pad);
+	--card-pad: var(--space-8);
 }
 .queue-sheet-head {
 	flex-wrap: nowrap;
@@ -1200,12 +1176,9 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	align-items: flex-end;
 	gap: var(--gap-control);
 }
+/* the button beside its box wherever the box keeps 220, under it below that (spec §4.5) */
 .queue-compose-row > .queue-compose-box {
 	flex: 1 1 220px;
-}
-/* Orders: the button under the box at every width (spec §4.5) → a short label never stands beside it and the shape holds on a tick */
-.queue-orders .queue-compose-row > .queue-compose-box {
-	flex-basis: 100%;
 }
 .queue-compose-buttons {
 	flex: none;

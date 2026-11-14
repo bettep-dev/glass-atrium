@@ -649,15 +649,23 @@ async function focusByKeyboard(page: Page, target: Locator): Promise<void> {
   await target.focus();
 }
 
-/** Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268; the rail and Orders per step, two gaps of 16, the middle pane the rest. */
+/**
+ * Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268, two gaps of 16; the rail per step;
+ * the middle pane the page — 66ch of the desk's text + two 32 gutters, measured in the page — or, below a 1505 window,
+ * what Orders' 320 leaves; Orders the rest.
+ */
 const DESK_WIDTHS = [
-  { viewport: { width: 1280, height: 800 }, rail: 208, middle: 452, orders: 320 },
-  { viewport: VIEWPORTS[0], rail: 232, middle: 564, orders: 344 },
-  { viewport: { width: 1568, height: 759 }, rail: 232, middle: 692, orders: 344 },
-  { viewport: VIEWPORTS[1], rail: 248, middle: 820, orders: 360 },
-  { viewport: VIEWPORTS[2], rail: 248, middle: 1012, orders: 360 },
-  { viewport: { width: 2560, height: 1440 }, rail: 280, middle: 1588, orders: 392 },
+  { viewport: { width: 1280, height: 800 }, rail: 208, middle: 452 },
+  { viewport: VIEWPORTS[0], rail: 232, middle: 588 },
+  { viewport: { width: 1568, height: 759 }, rail: 232, middle: "page" },
+  { viewport: VIEWPORTS[1], rail: 248, middle: "page" },
+  { viewport: VIEWPORTS[2], rail: 248, middle: "page" },
+  { viewport: { width: 2240, height: 1260 }, rail: 264, middle: "page" },
+  { viewport: { width: 2560, height: 1440 }, rail: 280, middle: "page" },
 ] as const;
+const SHELL_INLINE = 268;
+const ORDERS_MIN = 320;
+const ORDERS_COLUMN_MAX = 720;
 
 interface DeskFacts {
   isScrolled: boolean;
@@ -665,9 +673,10 @@ interface DeskFacts {
   list: number[] | null;
   sheet: number[] | null;
   orders: number[] | null;
+  page: number;
 }
 
-// each pane's painted box as [x, width]; a pane not rendered → null
+// each pane's painted box as [x, width]; a pane not rendered → null. `page`: 66ch of the desk's own text + two 32 gutters
 async function getDeskFacts(page: Page): Promise<DeskFacts> {
   return page.evaluate(() => {
     const box = (selector: string) => {
@@ -676,8 +685,12 @@ async function getDeskFacts(page: Page): Promise<DeskFacts> {
       const rect = element.getBoundingClientRect();
       return [Math.round(rect.left), Math.round(rect.width)];
     };
+    const desk = document.querySelector(".queue-desk") as HTMLElement;
+    const probe = desk.appendChild(Object.assign(document.createElement("span"), { style: "position: absolute; width: calc(66ch + 64px)" }));
+    const measure = probe.getBoundingClientRect().width;
+    probe.remove();
     const scrollers = [document.scrollingElement, document.querySelector("main")].filter((node): node is Element => node !== null);
-    return { isScrolled: scrollers.some((node) => node.scrollHeight > node.clientHeight), rail: box(".queue-sessions"), list: box(".queue-list"), sheet: box(".queue-sheet"), orders: box(".queue-orders") };
+    return { isScrolled: scrollers.some((node) => node.scrollHeight > node.clientHeight), rail: box(".queue-sessions"), list: box(".queue-list"), sheet: box(".queue-sheet"), orders: box(".queue-orders"), page: Math.round(measure) };
   });
 }
 
@@ -715,7 +728,10 @@ async function getSheetFacts(page: Page): Promise<SheetFacts> {
     const rect = (selector: string) => (document.querySelector(selector) as HTMLElement).getBoundingClientRect();
     const text = document.querySelector(".queue-sheet .prose-text") as HTMLElement;
     const foot = document.querySelector(".queue-sheet > .card-foot")?.getBoundingClientRect();
-    const card = rect(".queue-sheet");
+    // the gutters from the card's inner edges, inside its 1 px border
+    const sheet = document.querySelector(".queue-sheet") as HTMLElement;
+    const card = sheet.getBoundingClientRect();
+    const edge = { left: sheet.clientLeft, right: sheet.offsetWidth - sheet.clientWidth - sheet.clientLeft };
     const first = rect(".queue-sheet-head > .btn");
     const last = rect(".queue-steps > .btn:last-child");
     return {
@@ -724,7 +740,7 @@ async function getSheetFacts(page: Page): Promise<SheetFacts> {
       isFootInView: foot !== undefined && foot.bottom <= window.innerHeight && foot.height > 0,
       starts: [...new Set([".queue-sheet-head > .btn", ".queue-date-line", ".queue-sheet-title", ".queue-sheet .prose-text", ".queue-sheet .queue-compose-box", ".queue-sheet .queue-note"].map((selector) => Math.round(rect(selector).left)))],
       ends: [...new Set([".queue-steps > .btn:last-child", ".queue-date-line > :last-child", ".queue-sheet .queue-note"].map((selector) => Math.round(rect(selector).right)))],
-      gutters: [Math.round(first.left - card.left), Math.round(card.right - last.right)],
+      gutters: [Math.round(first.left - card.left - edge.left), Math.round(card.right - edge.right - last.right)],
     };
   });
 }
@@ -863,7 +879,11 @@ async function captureCloseUp(harness: Harness, dir: string, state: CloseUpState
     await state.setUp?.(page, harness);
     const element = page.locator(state.closeUp).first();
     await element.screenshot({ path: join(dir, getShotName(VIEWPORTS[0], state)), animations: "disabled" });
-    return await element.evaluate((node) => ({ width: Math.round(node.getBoundingClientRect().width), height: Math.round(node.getBoundingClientRect().height) }));
+    // the whole CSS pixels the box touches → what the screenshot clip covers, a fractional edge included
+    return await element.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return { width: Math.ceil(rect.right) - Math.floor(rect.left), height: Math.ceil(rect.bottom) - Math.floor(rect.top) };
+    });
   } finally {
     await page.close();
   }
@@ -975,8 +995,11 @@ describe("queue page on the mockup fixtures", () => {
       const opened = await getDeskFacts(page);
       await page.close();
       const size = `${row.viewport.width}x${row.viewport.height}`;
-      assert.deepEqual([rest.isScrolled, rest.rail?.[1], rest.list?.[1], rest.sheet, rest.orders?.[1]], [false, row.rail, row.middle, null, row.orders], `${size} at rest`);
-      assert.deepEqual(opened, { isScrolled: false, rail: rest.rail, list: null, sheet: rest.list, orders: rest.orders }, `${size} with a row opened`);
+      const middle = row.middle === "page" ? rest.page : row.middle;
+      const orders = row.viewport.width - SHELL_INLINE - row.rail - middle - 32;
+      assert.ok(orders >= ORDERS_MIN, `${size}: Orders ${orders} keeps its minimum`);
+      assert.deepEqual([rest.isScrolled, rest.rail?.[1], rest.list?.[1], rest.sheet, rest.orders?.[1]], [false, row.rail, middle, null, orders], `${size} at rest`);
+      assert.deepEqual(opened, { ...rest, list: null, sheet: rest.list }, `${size} with a row opened`);
     }
   });
 
@@ -992,8 +1015,8 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual({ text: sheet.text, title: sheet.title, isFootInView: sheet.isFootInView }, { text: ["15px", "24px", "true"], title: ["20px", "28px"], isFootInView: true });
   });
 
-  // spec §3.2: one page column for head, body and foot, centred in the pane at every width
-  test("the sheet's head, date line, title, text, box and note start at one x and end at one x, on equal gutters of at least 32, at every desk width", async () => {
+  // spec §3.2: one page column for head, body and foot, the pane's constant 32 inset on both sides at every width
+  test("the sheet's head, date line, title, text, box and note start at one x and end at one x, on gutters of 32, at every desk width", async () => {
     harness.fixture = getRestFixture();
     const columns = [];
     for (const { viewport } of DESK_WIDTHS) {
@@ -1001,10 +1024,10 @@ describe("queue page on the mockup fixtures", () => {
       await selectRow(page, 101);
       const { starts, ends, gutters } = await getSheetFacts(page);
       await page.close();
-      columns.push({ width: viewport.width, starts: starts.length, ends: ends.length, isEqual: Math.abs(gutters[0]! - gutters[1]!) <= 1, isWide: Math.min(...gutters) >= 32 });
+      columns.push({ width: viewport.width, starts: starts.length, ends: ends.length, gutters });
     }
 
-    assert.deepEqual(columns, columns.map(({ width }) => ({ width, starts: 1, ends: 1, isEqual: true, isWide: true })));
+    assert.deepEqual(columns, columns.map(({ width }) => ({ width, starts: 1, ends: 1, gutters: [32, 32] })));
   });
 
   // spec §4.3 / §14.4: the stepping counts the rows that open on a sheet; an order's row is never on the sheet
@@ -1057,13 +1080,18 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(back, { top, focus: id, current: [id], hash: "#queue", isSheet: false });
   });
 
-  test("list rows take their one-line form, 44 high, once the list is 880 wide", async () => {
+  // spec §3.2 / §4.2: the list shares the fixed middle pane → never wide enough for another row form
+  test("list rows are 68 or 88 high at every desk width, 2560 included", async () => {
     harness.fixture = getRestFixture();
-    const page = await openQueuePage(harness, { width: 2560, height: 1440 }, getRestReadyText());
-    const rowHeights = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
-    await page.close();
+    const heights = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText());
+      const { rowHeights } = await getListFacts(page);
+      await page.close();
+      heights.push({ width: viewport.width, isRowHeight: rowHeights.length > 0 && rowHeights.every((height) => height === 68 || height === 88), rowHeights });
+    }
 
-    assert.deepEqual(rowHeights, [44]);
+    assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
   });
 
   // spec §11: the desk's keys on the real page, and the inset ring on the rows the cards clip
@@ -1109,29 +1137,47 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual([returned.id, returned.offset], [rowIds[1], "-2px"], "Esc in Orders gives the focus back to the middle pane: the list's current row");
   });
 
-  test("rail rows are 68; Orders is rendered at rest beside the list on its card's 16 column, and an opened row hides the list alone", async () => {
+  test("rail rows are 68; Orders is rendered at rest beside the list, and an opened row hides the list alone", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await page.locator(".queue-order").first().waitFor();
     const shown = () => page.evaluate(() => [".queue-list", ".queue-sheet", ".queue-orders"].map((selector) => (document.querySelector(selector)?.getClientRects().length ?? 0) > 0));
     const rest = await shown();
-    const facts = await page.evaluate(() => {
-      // the inset from the card's inner edge, inside its 1 px border
-      const element = document.querySelector(".queue-orders-card") as HTMLElement;
-      const card = element.getBoundingClientRect();
-      const edge = element.clientLeft;
-      const orders = [...document.querySelectorAll(".queue-order")];
-      return {
-        railRows: [...new Set([...document.querySelectorAll(".queue-rail-row")].map((row) => Math.round(row.getBoundingClientRect().height)))],
-        insets: [Math.round((document.querySelector(".queue-orders-card > .card-head .card-title") as HTMLElement).getBoundingClientRect().left - card.left - edge), Math.round(card.right - edge - (orders[orders.length - 1] as HTMLElement).getBoundingClientRect().right)],
-      };
-    });
+    const railRows = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-rail-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
     await selectRow(page, 103);
     const opened = await shown();
     await page.close();
 
-    assert.deepEqual(facts, { railRows: [68], insets: [16, 16] });
+    assert.deepEqual(railRows, [68]);
     assert.deepEqual({ rest, opened }, { rest: [true, false, true], opened: [false, true, true] });
+  });
+
+  // spec §3.2: one content column from the card's 16 start inset, the whole pane up to 720, the free width at the far end beyond it
+  test("Orders' title, day labels, box and note start 16 in, on one column that is the pane less its two 16 insets and never wider than 720, at every desk width", async () => {
+    harness.fixture = getRestFixture();
+    const columns = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText());
+      await waitForAllOrders(page);
+      const facts = await page.evaluate(() => {
+        // offsets from the card's inner edge, inside its 1 px border
+        const element = document.querySelector(".queue-orders-card") as HTMLElement;
+        const start = element.getBoundingClientRect().left + element.clientLeft;
+        const offset = (x: number) => Math.round(x - start);
+        const rects = (selector: string) => [...document.querySelectorAll(selector)].map((node) => node.getBoundingClientRect());
+        const orders = rects(".queue-order");
+        return {
+          inner: element.clientWidth,
+          starts: [...new Set([".queue-orders-card > .card-head .card-title", ".queue-day", ".queue-orders .queue-compose-box", ".queue-orders .queue-note"].flatMap((selector) => rects(selector).map((rect) => offset(rect.left))))],
+          ends: [...new Set([".queue-orders-card > .card-head > .card-head-text", ".queue-orders .queue-compose-row", ".queue-orders .queue-note"].flatMap((selector) => rects(selector).map((rect) => offset(rect.right))).concat(offset(orders[orders.length - 1]!.right)))],
+        };
+      });
+      await page.close();
+      columns.push({ width: viewport.width, starts: facts.starts, ends: facts.ends, column: 16 + Math.min(facts.inner - 32, 720) });
+    }
+
+    assert.ok(columns.some(({ column }) => column === 16 + ORDERS_COLUMN_MAX), "a desk width wide enough for the 720 cap");
+    assert.deepEqual(columns, columns.map(({ width, column }) => ({ width, starts: [16], ends: [column], column })));
   });
 
   // spec §9.1: one control per row — the row is its box's label
@@ -1554,21 +1600,26 @@ describe("queue page on the mockup fixtures", () => {
     assert.equal(isUnder, true, "the Orders button falls under its box");
   });
 
-  // spec §4.5 → under the box "always so in the Orders pane": the short rest label must not stand beside the box on a wide window
-  for (const viewport of [VIEWPORTS[0], { width: 2240, height: 1260 }, WIDE_WINDOW]) {
-    test(`the Orders send button stands under its box with nothing ticked at ${viewport.width}`, async () => {
-      harness.fixture = getRestFixture();
+  // spec §3.2 / §4.5: the button stands beside its box wherever the box keeps 220 px there, and under it below that
+  test("the Orders send button stands beside its box exactly where the box keeps 220 px beside it, under it at 1440 and beside it from 1728, with nothing ticked", async () => {
+    harness.fixture = getRestFixture();
+    const rows: Array<{ width: number; label: string | null | undefined; isBeside: boolean; isRoom: boolean; room: number }> = [];
+    for (const { viewport } of DESK_WIDTHS) {
       const page = await openQueuePage(harness, viewport, getRestReadyText());
       const facts = await page.evaluate(() => {
-        const button = document.querySelector(".queue-orders .queue-compose-buttons .btn") as HTMLElement;
-        const box = document.querySelector(".queue-orders .queue-compose-box") as HTMLElement;
-        return { label: button.textContent, isUnder: button.getBoundingClientRect().top >= box.getBoundingClientRect().bottom };
+        const rect = (selector: string) => (document.querySelector(`.queue-orders ${selector}`) as HTMLElement).getBoundingClientRect();
+        const [row, box, buttons] = [rect(".queue-compose-row"), rect(".queue-compose-box"), rect(".queue-compose-buttons")];
+        const gap = parseFloat(getComputedStyle(document.querySelector(".queue-orders .queue-compose-row") as Element).columnGap);
+        return { label: document.querySelector(".queue-orders .queue-compose-buttons .btn")?.textContent, isBeside: buttons.top < box.bottom, room: row.width - gap - buttons.width };
       });
       await page.close();
+      rows.push({ width: viewport.width, label: facts.label, isBeside: facts.isBeside, isRoom: facts.room >= 220, room: Math.round(facts.room) });
+    }
+    const at = (width: number) => rows.find((row) => row.width === width)?.isBeside;
 
-      assert.deepEqual(facts, { label: "Send order", isUnder: true });
-    });
-  }
+    assert.deepEqual(rows.filter((row) => row.label !== "Send order" || row.isBeside !== row.isRoom), [], JSON.stringify(rows));
+    assert.deepEqual([at(1440), at(1728), at(2240), at(2560)], [false, true, true, true]);
+  });
 
   // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest, hovered or held;
   // held under the pointer it takes the selection tint, never the ghost's hover fill
@@ -1931,9 +1982,9 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(images, Array.from({ length: 8 }, (_, index) => `96x96 Open image ${index + 1} of 8: queue-edge-0${index + 1}.webp`));
     });
 
-    // the 220 facts column cannot hold `2 of 3 received` and its `⚠ 1 not received` → the dim text yields, never the warning
-    test("a one-line row keeps every badge of its facts whole, and the last fact text yields first to the column, ending in an ellipsis", async () => {
-      const page = await openEdgePage(harness, VIEWPORTS[2]);
+    // the narrowest list, at the minimum window: the meta line's dim text yields to `2 of 3 received` and its `⚠ 1 not received`, never the warning
+    test("a list row keeps every badge of its facts whole, and the last fact text yields first to the column, ending in an ellipsis, at 1280", async () => {
+      const page = await openEdgePage(harness, MIN_WINDOW);
       const rows = await page.evaluate(() => [...document.querySelectorAll(".queue-row-facts")].map((facts) => {
         const box = facts.getBoundingClientRect();
         const badges = [...facts.querySelectorAll(".pill")].map((badge) => ({
@@ -1956,10 +2007,8 @@ describe("queue page on the mockup fixtures", () => {
         const isEarlyCut = last !== undefined && getClip(last).getBoundingClientRect().right > getExtent(last).left + 0.5 && cut.some((span) => span !== last);
         return { text: facts.textContent, badges, isEarlyCut, cutWithoutEllipsis: cut.filter((span) => getComputedStyle(getClip(span)).textOverflow !== "ellipsis").length };
       }));
-      const height = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
       await page.close();
 
-      assert.deepEqual(height, [44], "the list is in its one-line form");
       assert.ok(rows.some((row) => row.badges.some((badge) => badge.text?.includes("not received")) && /received/.test(row.text?.replace(/⚠.*$/, "") ?? "")), "a row carries a count and its warning");
       assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => !badge.isWhole).map((badge) => `${row.text}: ${badge.text}`)), [], "every badge whole");
       assert.deepEqual(rows.filter((row) => row.cutWithoutEllipsis > 0).map((row) => row.text), [], "a cut fact text ends in an ellipsis");
