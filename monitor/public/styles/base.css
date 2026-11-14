@@ -1267,25 +1267,24 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	gap: var(--gap-control);
 	margin-inline-start: auto;
 }
-/* a send label in parts (queue.jsx → getSendPartsQ) on one line: the session name gives way first, down to 3ch, then the resume tail */
+/* a send label in parts (queue.jsx → getSendPartsQ) on one clipped line: only the session name gives way, down to 3ch;
+   a resume tail with no room beside that floor wraps below the line → dropped whole, never cut (the whole label in the title) */
 .queue-send-label {
 	display: flex;
+	flex-wrap: wrap;
 	min-width: 0;
+	max-height: 1lh;
 	overflow: hidden;
 	white-space: pre;
 }
 .queue-send-label > span {
 	flex: none;
 }
+/* line-break size = the 3ch floor → the tail keeps the line while the floor leaves it room; the name then grows to its text */
 .queue-send-label > .queue-send-name {
-	flex: 0 1000 auto;
+	flex: 1 1 3ch;
 	min-width: 3ch;
-}
-.queue-send-label > .queue-send-tail {
-	flex: 0 1 auto;
-	min-width: 0;
-}
-.queue-send-label > :is(.queue-send-name, .queue-send-tail) {
+	max-width: max-content;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }

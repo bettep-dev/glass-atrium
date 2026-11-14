@@ -975,7 +975,7 @@ function getSendLabelQ(targets) {
 /**
  * The send label as the pieces the button cuts `{ head, name, tail }`; nothing ticked → null.
  * One target by name, several by count · an ended target is resumed to take the order → `tail` says how many before the owner sends.
- * Too narrow a row → `name` gives way first, then `tail`; `head` (the verb and a count) stays whole.
+ * Too narrow a row → only `name` gives way (base.css → .queue-send-label); `tail` shows whole or drops whole, `head` (the verb and a count) stays whole.
  */
 function getSendPartsQ({ ids, names, endedCount }) {
 	if (ids.length === 0) return null;

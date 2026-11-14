@@ -120,6 +120,8 @@ const DESK_STATES: QueueState[] = [
   { nn: "27e", name: "stress-long-order", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "Show all 31 lines") },
   // the 100-character session ticked: its name cut inside the send button beside a box that keeps its 220
   { nn: "27f", name: "stress-long-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickOrdersTo(page, [EDGE_LONG_SESSION_NAME]) },
+  // an ended session among two ticked: the resume tail has no room beside the 220 box at this pane, so it drops whole
+  { nn: "27g", name: "stress-ended-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickOrdersTo(page, ["gersona", "portfolio"]) },
   { nn: "28a", name: "wide-list", viewports: [WIDE_WINDOW] },
   { nn: "28b", name: "wide-report", viewports: [WIDE_WINDOW], setUp: (page) => selectRow(page, 101) },
 ];
@@ -1961,6 +1963,39 @@ describe("queue page on the mockup fixtures", () => {
     });
     assert.deepEqual(new Set(rows.map((row) => row.isWide)), new Set([false, true]), "the sweep crosses the 420 pane");
     assert.deepEqual(rows, expected);
+  });
+
+  // a commit button never ends in a broken word: the resume tail stays whole on the label's line while the name at its 3ch floor
+  // leaves it room, and drops whole below that; the verb and count never give way. portfolio is the edge fixture's ended session
+  test("the Orders send label's resume tail shows whole or not at all, dropped only where the name at its floor leaves it no room, and the head stays whole, from 1440 to 1920", async () => {
+    const ticks = [["portfolio"], ["gersona", "portfolio"]];
+    const rows = [];
+    for (const width of [1440, 1568, 1605, 1645, 1690, 1728, 1920]) {
+      for (const names of ticks) {
+        const page = await openEdgePage(harness, { width, height: 900 });
+        await page.locator(".queue-rail-band .disclosure").click();
+        await tickSessions(page, names);
+        const facts = await page.evaluate(() => {
+          const label = document.querySelector(".queue-orders .queue-send-label") as HTMLElement;
+          const [head, tail] = [label.firstElementChild as HTMLElement, label.querySelector(".queue-send-tail") as HTMLElement];
+          const name = label.querySelector(".queue-send-name") as HTMLElement | null;
+          const [box, headBox, tailBox] = [label.getBoundingClientRect(), head.getBoundingClientRect(), tail.getBoundingClientRect()];
+          const floor = name === null ? 0 : parseFloat(getComputedStyle(name).minWidth);
+          const isOnLine = tailBox.top < box.bottom - 0.5 && tailBox.right <= box.right + 0.5;
+          const isWhole = isOnLine && tail.scrollWidth <= tail.clientWidth;
+          return {
+            hasRoom: headBox.width + floor + tail.scrollWidth <= label.clientWidth + 0.5,
+            tail: isWhole ? "whole" : isOnLine ? "cut" : "dropped",
+            isHeadWhole: headBox.right <= box.right + 0.5,
+          };
+        });
+        await page.close();
+        rows.push({ width, names: names.join(","), ...facts });
+      }
+    }
+
+    assert.deepEqual(new Set(rows.map((row) => row.hasRoom)), new Set([false, true]), "the sweep crosses the width where the tail fits");
+    assert.deepEqual(rows, rows.map((row) => ({ ...row, tail: row.hasRoom ? "whole" : "dropped", isHeadWhole: true })));
   });
 
   // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest, hovered or held;
