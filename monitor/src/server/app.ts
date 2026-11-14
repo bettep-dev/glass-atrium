@@ -25,16 +25,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Before every route → the queue plugin copies the parsers the guards leave (text/plain removed) at its load
   registerRequestGuards(app);
 
-  await app.register(fastifyStatic, {
-    root: PUBLIC_ROOT,
-    prefix: "/",
-    index: ["index.html"],
-    setHeaders: (response) => {
-      for (const [name, value] of Object.entries(STATIC_FRAME_HEADERS)) response.setHeader(name, value);
-    },
-  });
-
-  await registerRoutes(app);
+  await registerSurface(app);
 
   // audit-trail hook — mutating write 를 monitor.audit_log 에 fire-and-forget 기록(mutation 미차단)
   registerAuditLogHook(app);
@@ -43,4 +34,17 @@ export async function buildApp(): Promise<FastifyInstance> {
   registerBrowserShutdownHook(app);
 
   return app;
+}
+
+/** The page and API surface (static shell + every route) → the remote route classes are checked against this set. */
+export async function registerSurface(app: FastifyInstance): Promise<void> {
+  await app.register(fastifyStatic, {
+    root: PUBLIC_ROOT,
+    prefix: "/",
+    index: ["index.html"],
+    setHeaders: (response) => {
+      for (const [name, value] of Object.entries(STATIC_FRAME_HEADERS)) response.setHeader(name, value);
+    },
+  });
+  await registerRoutes(app);
 }
