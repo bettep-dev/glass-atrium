@@ -18,6 +18,7 @@ import type { DeviceSummary } from "../src/server/remote/devices.js";
 import { REVIEWED_ROUTES, getRouteClass } from "../src/server/remote/route-classes.js";
 import { CSRF_HEADER, DEVICE_COOKIE, getCsrfToken } from "../src/server/remote/session.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
+import { createStandInTls } from "./lib/remote-tls.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
 const HOST = "owner-mac.local:16146";
@@ -28,12 +29,16 @@ const fixtureRoot = mkdtempSync(path.join(tmpdir(), "remote-app-"));
 const trackedSessionIds: string[] = [];
 const devices = new Map<string, DeviceSummary>();
 let app: FastifyInstance;
+let tlsDir = "";
 
 before(async () => {
   await lockQueueRows();
   const getHosts = () => new Set([HOST]);
   const getPageOrigins = () => new Set([ORIGIN]);
+  const tls = await createStandInTls();
+  tlsDir = tls.dir;
   app = await buildRemoteApp({
+    tls,
     listener: { kind: "remote", getHosts, getPageOrigins },
     gate: {
       getHosts,
@@ -62,6 +67,7 @@ after(async () => {
   await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
+  deleteDirectory(tlsDir);
 });
 
 function issueDevice(): string {

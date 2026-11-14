@@ -14,6 +14,7 @@ import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { registerRequestGuards } from "./request-guards.js";
 import { type ListenerContext, setListenerContext } from "./queue/request-gate.js";
 import { type RemoteGateDeps, registerRemoteGate } from "./remote/gate.js";
+import { type RemoteTls, getRemoteServerOptions, setRemoteSocketLimits } from "./remote/listener.js";
 import type { QueueRouteOptions } from "./routes/queue.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 const REMOTE_BODY_LIMIT_BYTES = 96 * 1024;
 
 export interface RemoteAppOptions {
+  readonly tls: RemoteTls;
   readonly listener: ListenerContext;
   readonly gate: RemoteGateDeps;
   readonly queue?: QueueRouteOptions;
@@ -54,7 +56,8 @@ export interface RemoteAppOptions {
  * Owns no shared resource → no browser shutdown hook, no queue scheduler; closing it leaves the loopback app untouched.
  */
 export async function buildRemoteApp(options: RemoteAppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ loggerInstance: logger, bodyLimit: REMOTE_BODY_LIMIT_BYTES });
+  const app = Fastify({ loggerInstance: logger, bodyLimit: REMOTE_BODY_LIMIT_BYTES, ...getRemoteServerOptions(options.tls) });
+  setRemoteSocketLimits(app);
   setListenerContext(app, options.listener);
   await registerRemoteGate(app, options.gate);
   // same parser set as loopback → a cross-origin text/plain simple request gets 415
