@@ -107,6 +107,8 @@ const DESK_STATES: QueueState[] = [
     },
   },
   { nn: "20", name: "arrival-on-desk", isClockDriven: true, setUp: (page, harness) => arriveItem(page, harness) },
+  // §4.4: past the visible part, the status line is the arrival's only sign → `1 new below` + Show, on the short windows where it lands there
+  { nn: "20b", name: "arrival-off-view", viewports: [VIEWPORTS[0], OWNER_WINDOW], getFixture: getEdgeFixture, isClockDriven: true, setUp: (page, harness) => arriveOffView(page, harness) },
   { nn: "21b", name: "empty-queue", getFixture: getEmptyFixture },
   { nn: "24", name: "first-load", isFirstLoad: true },
   { nn: "26", name: "not-reachable", getFixture: getUnreachableFixture },
@@ -346,7 +348,17 @@ const PARTS: CloseUpState[] = [
       await page.locator('.queue-rail-band .disclosure[aria-expanded="true"]').waitFor();
     },
   },
+  // a row that takes no message (Replaced, under the open Ended band): its box column stands empty, the state mark and name on the others' columns
+  {
+    nn: "29", name: "rail-not-selectable", closeUp: ".queue-sessions", getFixture: getStoppedFixture,
+    setUp: async (page) => {
+      await page.locator(".queue-rail-band .disclosure").click();
+      await page.locator(".queue-rail-row", { hasText: "Replaced" }).waitFor();
+    },
+  },
   { nn: "29", name: "list-band-rows", closeUp: ".queue-list > .card-body" },
+  // the list's 104 name column holding a 100-character name, cut, and a name the session did not register, start directory under it
+  { nn: "29", name: "list-name-column", closeUp: ".queue-list > .card-body", getFixture: getNameColumnFixture },
   { nn: "29", name: "sheet-report", closeUp: ".queue-sheet", setUp: (page) => selectRow(page, 101) },
   { nn: "29", name: "option-recommended", closeUp: ".queue-sheet .queue-option:has-text('Recommended')", setUp: (page) => selectRow(page, 103) },
   { nn: "29", name: "composer-sheet", closeUp: ".queue-sheet .queue-composer", setUp: (page) => selectRow(page, 101) },
@@ -636,6 +648,17 @@ async function arriveOffView(page: Page, harness: Harness): Promise<void> {
   harness.fixture = getArrivalFixture(getEdgeFixture());
   await page.clock.fastForward(15_000);
   await page.locator(".queue-status-new", { hasText: "1 new below" }).waitFor({ timeout: READY_TIMEOUT_MS });
+}
+
+// the edge state with its first open item from the 100-character name and its second from a session that registered no name
+function getNameColumnFixture(): QueueFixture {
+  const edge = getEdgeFixture();
+  const longSession = edge.items.find((item) => item.session.id === EDGE_SESSION_IDS.longName)?.session;
+  const [first, second] = edge.items.filter((item) => item.status === "open");
+  if (!longSession || !first || !second) throw new Error("the edge fixture lost its long-named session or its two open items");
+  const nameless = { ...second.session, id: "d4e5f6a7-0000-4000-8000-000000000003", name: "atrium-hooks", isNameRegistered: false };
+  const sessions = new Map([[first.id, longSession], [second.id, nameless]]);
+  return { ...edge, items: edge.items.map((item) => ({ ...item, session: sessions.get(item.id) ?? item.session })) };
 }
 
 async function typeReportOrder(page: Page): Promise<void> {
@@ -2145,11 +2168,7 @@ describe("queue page on the mockup fixtures", () => {
     // spec §4.2, §14.4: the name column is 104 at every width a list stands in; the 12 gap puts every title 116 further in.
     // The edge fixture's 100-character session is only one recipient of a seven-session order, whose row reads `7 sessions` → one open item is sent from it here
     test("with nothing ticked every list row leads with its session name in a 104 box at one x, every title and meta line at one x 116 further in, and a 100-character name cut inside its box, at 1280 and 1568", async () => {
-      const edge = getEdgeFixture();
-      const longSession = edge.items.find((item) => item.session.id === EDGE_SESSION_IDS.longName)?.session;
-      const sent = edge.items.find((item) => item.status === "open");
-      assert.ok(longSession && sent, "the edge fixture holds the long-named session and an open item");
-      const fixture = { ...edge, items: edge.items.map((item) => (item.id === sent.id ? { ...item, session: longSession } : item)) };
+      const fixture = getNameColumnFixture();
       const shown = [];
       for (const viewport of [MIN_WINDOW, { width: 1568, height: 759 }]) {
         harness.fixture = fixture;
