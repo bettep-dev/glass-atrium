@@ -12,7 +12,8 @@ import { registerRoutes } from "./routes/index.js";
 import { registerBrowserShutdownHook } from "./clauded-docs/browser-pool.js";
 import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { registerRequestGuards } from "./request-guards.js";
-import { type ListenerContext, setListenerContext } from "./queue/request-gate.js";
+import { getMonitorPort } from "./monitor-port.js";
+import { type ListenerContext, buildHostAllowlistHook, setListenerContext } from "./queue/request-gate.js";
 import { type RemoteGateDeps, registerRemoteGate } from "./remote/gate.js";
 import { type RemoteTls, getRemoteServerOptions, setRemoteSocketLimits } from "./remote/listener.js";
 import type { QueueRouteOptions } from "./routes/queue.js";
@@ -23,8 +24,11 @@ const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
 // a meta CSP cannot carry frame-ancestors → a framed Queue page would send same-origin owner actions a neighbour page could click into
 const STATIC_FRAME_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } as const;
 
-export async function buildApp(): Promise<FastifyInstance> {
+export async function buildApp(port: number = getMonitorPort()): Promise<FastifyInstance> {
   const app = Fastify({ loggerInstance: logger, disableRequestLogging: false });
+
+  // a tunnel, proxy or rebound page reaching 127.0.0.1 carries its own Host → refused before any route, login-free API included
+  app.addHook("onRequest", buildHostAllowlistHook(port));
 
   // Before every route → the queue plugin copies the parsers the guards leave (text/plain removed) at its load
   registerRequestGuards(app);
@@ -38,6 +42,21 @@ export async function buildApp(): Promise<FastifyInstance> {
   registerBrowserShutdownHook(app);
 
   return app;
+}
+
+const HOT_ROUTES = ["/api/improvement", "/api/clauded-docs"] as const;
+
+/**
+ * Boot pre-warm self-calls (in-process, no socket) → pays each hot route's first query-shape compile before a real request.
+ * @returns the URLs that did not answer 2xx → main.ts logs them; an empty list means every route warmed
+ */
+export async function warmHotRoutes(app: FastifyInstance, port: number): Promise<string[]> {
+  const host = `127.0.0.1:${port}`;
+  const responses = await Promise.allSettled(HOT_ROUTES.map((url) => app.inject({ method: "GET", url, headers: { host } })));
+  return HOT_ROUTES.filter((_url, index) => {
+    const response = responses[index];
+    return response?.status !== "fulfilled" || response.value.statusCode < 200 || response.value.statusCode >= 300;
+  });
 }
 
 // every remote mutation but the image upload, whose route keeps its own limit

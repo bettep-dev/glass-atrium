@@ -5,7 +5,7 @@ import "dotenv/config";
 
 import type { FastifyInstance } from "fastify";
 
-import { buildApp } from "./app.js";
+import { buildApp, warmHotRoutes } from "./app.js";
 import { logger } from "./logger.js";
 import { assertSessionTimezoneIsUtc, disconnectPrisma, getPrisma } from "./db.js";
 import { probeBrowserLaunch } from "./clauded-docs/browser-pool.js";
@@ -63,7 +63,7 @@ async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<v
 }
 
 async function main(): Promise<void> {
-  const app = await buildApp();
+  const app = await buildApp(PORT);
   attachShutdown(app);
   // Top-level handlers — log + exit so launchd respawns cleanly.
   process.on("unhandledRejection", (reason) => {
@@ -129,11 +129,12 @@ async function prewarmPool(app: FastifyInstance): Promise<void> {
   try {
     // 1) 커넥션 생성 + SELECT 1 shape compile (min:1 floor 가 유지할 첫 커넥션 확보)
     await getPrisma().$queryRaw`SELECT 1`;
-    // 2) hot-route self-call — app.inject = 외부 TCP/port 노출 없이 in-process handler 실행 · Promise.allSettled = 한 route 실패가 다른 warmup 미차단
-    await Promise.allSettled([
-      app.inject({ method: "GET", url: "/api/improvement" }),
-      app.inject({ method: "GET", url: "/api/clauded-docs" }),
-    ]);
+    // 2) hot-route self-call — app.inject = 외부 TCP/port 노출 없이 in-process handler 실행 · 한 route 실패가 다른 warmup 미차단
+    const unwarmed = await warmHotRoutes(app, PORT);
+    if (unwarmed.length > 0) {
+      app.log.warn({ unwarmed }, "pool pre-warm incomplete — these hot routes did not answer 2xx");
+      return;
+    }
     app.log.info("pool pre-warm complete");
   } catch (error) {
     // log+continue: pre-warm 은 성능 최적화일 뿐 정합성 요건 아님 → 실패해도 boot 진행
