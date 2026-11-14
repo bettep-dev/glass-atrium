@@ -1672,10 +1672,12 @@ function SheetHeadQ({ item, queue }) {
 	const arrived = queue.list.newIds.length;
 	return (
 		<div className="card-head queue-sheet-head">
-			<button type="button" className="btn ghost sm icon" aria-label={arrived > 0 ? `Back to the list, ${arrived} new in the list` : "Back to the list"} title="Back to the list (Esc)" onClick={queue.back}>
-				<Icon name="arrow-left" size={16} />
-			</button>
-			{arrived > 0 && <span aria-hidden="true"><Badge fill="solid">{arrived}</Badge></span>}
+			<span className="queue-back">
+				<button type="button" className="btn ghost sm icon" aria-label={arrived > 0 ? `Back to the list, ${arrived} new in the list` : "Back to the list"} title="Back to the list (Esc)" onClick={queue.back}>
+					<Icon name="arrow-left" size={16} />
+				</button>
+				{arrived > 0 && <span aria-hidden="true"><Badge fill="solid">{arrived}</Badge></span>}
+			</span>
 			<h2 className="card-title"><LetterheadQ item={item} nameNote={getNameNoteQ(item.session, queue)} /></h2>
 			<span className="queue-steps">
 				{steps.index >= 0 && <span className="fs-meta text-dim tabular-nums">{`${steps.index + 1} of ${steps.count}`}</span>}

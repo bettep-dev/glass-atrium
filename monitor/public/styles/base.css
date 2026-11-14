@@ -1041,6 +1041,13 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-sheet-head {
 	flex-wrap: nowrap;
 }
+/* the arrival count sits on the arrow's square, the head's gap and 8 more before the kind tag → it reads with the way back (§4.3) */
+.queue-back {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	margin-inline-end: var(--space-2);
+}
 .queue-sheet-head > .card-title,
 .queue-letter {
 	min-width: 0;

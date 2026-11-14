@@ -751,13 +751,13 @@ async function getSheetFacts(page: Page): Promise<SheetFacts> {
     const sheet = document.querySelector(".queue-sheet") as HTMLElement;
     const card = sheet.getBoundingClientRect();
     const edge = { left: sheet.clientLeft, right: sheet.offsetWidth - sheet.clientWidth - sheet.clientLeft };
-    const first = rect(".queue-sheet-head > .btn");
+    const first = rect(".queue-sheet-head > :first-child");
     const last = rect(".queue-steps > .btn:last-child");
     return {
       text: [style(".queue-sheet .prose-text").fontSize, style(".queue-sheet .prose-text").lineHeight, String(text.getBoundingClientRect().width <= 590)],
       title: [style(".queue-sheet-title").fontSize, style(".queue-sheet-title").lineHeight],
       isFootInView: foot !== undefined && foot.bottom <= window.innerHeight && foot.height > 0,
-      starts: [...new Set([".queue-sheet-head > .btn", ".queue-date-line", ".queue-sheet-title", ".queue-sheet .prose-text", ".queue-sheet .queue-compose-box", ".queue-sheet .queue-note"].map((selector) => Math.round(rect(selector).left)))],
+      starts: [...new Set([".queue-sheet-head > :first-child", ".queue-date-line", ".queue-sheet-title", ".queue-sheet .prose-text", ".queue-sheet .queue-compose-box", ".queue-sheet .queue-note"].map((selector) => Math.round(rect(selector).left)))],
       ends: [...new Set([".queue-steps > .btn:last-child", ".queue-date-line > :last-child", ".queue-sheet .queue-note"].map((selector) => Math.round(rect(selector).right)))],
       gutters: [Math.round(first.left - card.left - edge.left), Math.round(card.right - edge.right - last.right)],
     };
@@ -1516,6 +1516,27 @@ describe("queue page on the mockup fixtures", () => {
       await page.locator("#queue-row-150").waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
       assert.deepEqual(await page.locator('[role="option"] .pill').filter({ hasText: /^New$/ }).count(), 0, "no row paints New");
       assert.deepEqual(await page.locator('[role="option"][aria-selected="true"]').evaluateAll((rows) => rows.map((row) => row.id)), ["queue-row-101"]);
+    } finally {
+      await page.close();
+    }
+  });
+
+  // spec §4.3: the count belongs to the way back → bound to the arrow by proximity, never read as part of the letterhead after it
+  test("the arrival count on an open sheet stands at least twice as near the back arrow's glyph as the kind tag after it", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
+    try {
+      await selectRow(page, 101);
+      await arriveItem(page, harness);
+      await page.getByRole("button", { name: "Back to the list, 1 new in the list" }).waitFor();
+      const gaps = await page.evaluate(() => {
+        const head = document.querySelector(".queue-sheet-head") as HTMLElement;
+        const box = (selector: string) => (head.querySelector(selector) as Element).getBoundingClientRect();
+        const [glyph, count, tag] = [box("button svg"), box("[aria-hidden='true'] .pill"), box(".queue-letter .pill")];
+        return { afterArrow: Math.round(count.left - glyph.right), beforeTag: Math.round(tag.left - count.right) };
+      });
+
+      assert.ok(gaps.afterArrow > 0 && gaps.beforeTag >= 2 * gaps.afterArrow, JSON.stringify(gaps));
     } finally {
       await page.close();
     }
