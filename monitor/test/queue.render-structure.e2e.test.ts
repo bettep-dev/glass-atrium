@@ -1871,25 +1871,29 @@ describe("queue page on the mockup fixtures", () => {
     assert.equal(isUnder, true, "the Orders button falls under its box");
   });
 
-  // spec §3.2 / §4.5: the button stands beside its box wherever the box keeps 220 px there, and under it below that
-  test("the Orders send button stands beside its box exactly where the box keeps 220 px beside it, under it at 1440 and beside it from 1728, with nothing ticked", async () => {
+  // spec §3.2 / §4.5 / §18.5: the pane's width decides the form — beside from a 420 pane, under below it — never the button's label,
+  // so a tick that lengthens the label moves nothing
+  test("the Orders send button stands beside its box from a 420 pane and under it below, the same with nothing ticked and with two sessions ticked", async () => {
     harness.fixture = getRestFixture();
-    const rows: Array<{ width: number; label: string | null | undefined; isBeside: boolean; isRoom: boolean; room: number }> = [];
+    const rows: Array<{ width: number; ticked: number; label: string | null | undefined; isBeside: boolean; isWide: boolean }> = [];
     for (const { viewport } of DESK_WIDTHS) {
-      const page = await openQueuePage(harness, viewport, getRestReadyText());
-      const facts = await page.evaluate(() => {
-        const rect = (selector: string) => (document.querySelector(`.queue-orders ${selector}`) as HTMLElement).getBoundingClientRect();
-        const [row, box, buttons] = [rect(".queue-compose-row"), rect(".queue-compose-box"), rect(".queue-compose-buttons")];
-        const gap = parseFloat(getComputedStyle(document.querySelector(".queue-orders .queue-compose-row") as Element).columnGap);
-        return { label: document.querySelector(".queue-orders .queue-compose-buttons .btn")?.textContent, isBeside: buttons.top < box.bottom, room: row.width - gap - buttons.width };
-      });
-      await page.close();
-      rows.push({ width: viewport.width, label: facts.label, isBeside: facts.isBeside, isRoom: facts.room >= 220, room: Math.round(facts.room) });
+      for (const ticked of [[], ORDER_TO]) {
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        await tickSessions(page, ticked);
+        const facts = await page.evaluate(() => {
+          const rect = (selector: string) => (document.querySelector(`.queue-orders ${selector}`) as HTMLElement).getBoundingClientRect();
+          const pane = document.querySelector(".queue-orders-card") as HTMLElement;
+          return { label: document.querySelector(".queue-orders .queue-compose-buttons .btn")?.textContent, isBeside: rect(".queue-compose-buttons").top < rect(".queue-compose-box").bottom, pane: pane.clientWidth };
+        });
+        await page.close();
+        rows.push({ width: viewport.width, ticked: ticked.length, label: facts.label, isBeside: facts.isBeside, isWide: facts.pane >= 420 });
+      }
     }
-    const at = (width: number) => rows.find((row) => row.width === width)?.isBeside;
+    const at = (width: number) => rows.filter((row) => row.width === width).map((row) => row.isBeside);
 
-    assert.deepEqual(rows.filter((row) => row.label !== "Send order" || row.isBeside !== row.isRoom), [], JSON.stringify(rows));
-    assert.deepEqual([at(1440), at(1728), at(2240), at(2560)], [false, true, true, true]);
+    assert.deepEqual(rows.filter((row) => row.isBeside !== row.isWide), [], JSON.stringify(rows));
+    assert.deepEqual(new Set(rows.map((row) => `${row.ticked}:${row.label}`)), new Set(["0:Send order", "2:Send to 2 sessions"]));
+    assert.deepEqual([at(1440), at(1568), at(1728), at(2560)], [[false, false], [false, false], [true, true], [true, true]]);
   });
 
   // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest, hovered or held;

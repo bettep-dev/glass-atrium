@@ -637,6 +637,21 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-orders-card {
 	--queue-orders-end: max(var(--card-pad), calc(100% - var(--card-pad) - var(--queue-thread-w)));
 	flex: 1 1 auto;
+	container: queue-orders / inline-size;
+}
+/* Orders' composer takes its form from the pane's width, never from the button's label → a tick that lengthens the label moves
+   nothing: the button under the box below a 420 pane, beside it from there (spec §3.2 / §4.5) */
+.queue-orders-card .queue-compose-row > .queue-compose-box {
+	flex-basis: 100%;
+}
+@container queue-orders (min-width: 420px) {
+	.queue-orders-card .queue-compose-row {
+		flex-wrap: nowrap;
+	}
+	.queue-orders-card .queue-compose-row > .queue-compose-box {
+		flex: 1 1 0;
+		min-width: 0;
+	}
 }
 .queue-orders-card > .card-head,
 .queue-orders-card .queue-thread,
