@@ -22,6 +22,8 @@
   --cat-2:    13 148 136;
   --cat-3:    37  99 235;
   --cat-4:   219  39 119;
+  /* chart data colour — a series mark that carries a quantity, never a severity; the --faint value held as its own token (≥3:1 on elev/surface/sunken) */
+  --data:    112 106 101;
 
   /* ── Tier 2 — Elevation (신규 · additive, §3.2) ─────────────────── */
   --elev-2: 252 252 251;          /* kind A primitive: 다크 전용 raised-2 fill (라이트는 elev 255 천장이라 미사용) */
@@ -131,6 +133,15 @@
   --tint-select: rgb(var(--ink) / 0.08);  /* here, or mine: a selected or scoped row, a picked option, a ticked rail row */
   --tint-fill:   rgb(var(--ink) / 0.10);  /* a filled shell: the tag badge, the owner's order bubble */
   --tint-warn:   rgb(var(--warn) / 0.16); /* did not arrive or cannot be reached — the amber badge, always with ⚠ and a word */
+  /* row-state ladder — opened · checked · both; ceiling 0.066 → light warn glyph and dark empty pip stay ≥3:1 on the fill */
+  --tint-row-1: rgb(var(--ink) / 0.02);
+  --tint-row-2: rgb(var(--ink) / 0.055);
+  --tint-row-3: rgb(var(--ink) / 0.066);
+  /* hour-grid heat ramp — ink at four steps: step 1 ≥3:1 on elev, each step ≥1.4:1 over the one below; dark alphas in [data-theme="dark"] */
+  --heat-1: rgb(var(--ink) / 0.48);
+  --heat-2: rgb(var(--ink) / 0.60);
+  --heat-3: rgb(var(--ink) / 0.74);
+  --heat-4: rgb(var(--ink) / 0.88);
 }
 [data-theme="dark"] {
   --surface:  12  10   9;
@@ -154,6 +165,12 @@
   --cat-2:    45 212 191;
   --cat-3:    96 165 250;
   --cat-4:   244 114 182;
+  --data:    160 154 150;
+  /* heat ramp, dark alphas — follows the alias rule, so it wins on every dark scope */
+  --heat-1: rgb(var(--ink) / 0.36);
+  --heat-2: rgb(var(--ink) / 0.50);
+  --heat-3: rgb(var(--ink) / 0.65);
+  --heat-4: rgb(var(--ink) / 0.80);
 
   /* ── Tier 2 dark overrides (신규 · additive, §3.2) ─────────────── */
   --elev-2: 36 32 30;             /* 다크: elev(28 25 23) 위 한 휘도 step ↑ */

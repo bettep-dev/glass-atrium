@@ -88,6 +88,8 @@
   --crit: 216 33 34;  --warn: 210 113 0;  --ok: 5 150 105;  --info: 8 145 178;
   /* categorical — chart fill only */
   --cat-1: 124 58 237;  --cat-2: 13 148 136;  --cat-3: 37 99 235;  --cat-4: 219 39 119;
+  /* chart data — a series mark that carries a quantity (§4.3); the --faint value as its own token */
+  --data: 112 106 101;
   /* elevation · glass primitives */
   --elev-2: 252 252 251;  --overlay-surface: 255 255 255;
   --glass-border: 255 255 255;   /* deprecated — no caller; S3 close deletes it */
@@ -100,6 +102,7 @@
   --pip-empty: 120 113 108;
   --crit: 248 113 113;  --warn: 251 191 36;  --ok: 52 211 153;  --info: 34 211 238;
   --cat-1: 167 139 250;  --cat-2: 45 212 191;  --cat-3: 96 165 250;  --cat-4: 244 114 182;
+  --data: 160 154 150;
   --elev-2: 36 32 30;  --overlay-surface: 28 25 23;
   --glass-border: 255 255 255;   /* deprecated — no caller; S3 close deletes it */
 }
@@ -119,6 +122,10 @@
   --tint-select: rgb(var(--ink) / 0.08);      /* here, or mine — a selected or scoped row, a picked option (§12.4) */
   --tint-fill:   rgb(var(--ink) / 0.10);      /* a filled shell — the tag badge, the owner's order bubble (§7.3) */
   --tint-warn:   rgb(var(--warn) / 0.16);     /* did not arrive — the amber badge, always with ⚠ and a word (§4.2) */
+  --tint-row-1: rgb(var(--ink) / 0.02);       /* row-state ladder: opened row (§7.5) */
+  --tint-row-2: rgb(var(--ink) / 0.055);      /* checked row */
+  --tint-row-3: rgb(var(--ink) / 0.066);      /* opened and checked — the ceiling (§4.1) */
+  --heat-1: rgb(var(--ink) / 0.48);  --heat-2: rgb(var(--ink) / 0.60);  --heat-3: rgb(var(--ink) / 0.74);  --heat-4: rgb(var(--ink) / 0.88);   /* hour-grid ramp, light alphas */
 }
 :root {
   /* shadow (kind B box-shadow list) */
@@ -128,6 +135,7 @@
 }
 [data-theme="dark"] {
   --surface-raised-2: var(--elev-2);          /* dark: 휘도 step (36 > 28) */
+  --heat-1: rgb(var(--ink) / 0.36);  --heat-2: rgb(var(--ink) / 0.50);  --heat-3: rgb(var(--ink) / 0.65);  --heat-4: rgb(var(--ink) / 0.80);   /* hour-grid ramp, dark alphas — declared after the alias rule, so it wins on every dark scope */
   --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);   /* deprecated — no caller; S3 close deletes it */
   --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25);
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
@@ -136,7 +144,11 @@
 
 - **dark 휘도 서열**: `base(--surface 12) < sunken(24) < raised(--elev 28) < raised-2(--elev-2 36)` → z 가 오를수록 R 값 단조 증가, 휘도 step 단독으로 elevation 성립.
 - **light raised-2 인버전 회피**: `--elev` 255 가 천장이라 `--elev-2` 252 는 raised 보다 어둡다 → light raised-2 는 fill 을 바꾸지 않고 `--shadow-raised-2` 로만 표현. `--elev-2` fill 은 dark 전용.
-- **The three tints**: an existing colour at a fixed alpha, declared in the alias rule so a nested dark scope re-tints them; text on a tint is always ink. No colour token is added.
+- **Tints**: an existing colour at a fixed alpha, declared in the alias rule so a nested dark scope re-tints them; text on a tint is always ink.
+  - `--tint-select` · `--tint-fill` · `--tint-warn` — the three shell and selection tints.
+  - `--tint-row-1` … `--tint-row-3` — the row-state ladder, one alpha in both themes; contrast §4.1.
+  - `--heat-1` … `--heat-4` — the hour-grid ramp, ink at four steps; the only tints whose alpha differs by theme (dark alphas in `[data-theme="dark"]`).
+- `--data` is the one colour primitive added after the base set: the `--faint` value held as its own token, so the chart data colour can move without moving metadata text.
 - shadow 의 내부 `rgba()` 농도는 의도적으로 alpha-비합성 — box-shadow 는 `<alpha-value>` 보간 대상이 아니므로 테마별 값에 baked-in.
 
 ### 3.2a 토큰 종류 2종 (Dual Token Convention)
@@ -262,6 +274,9 @@
 | `--focus-ring` | focus outline — theme-owned, accent 와 분리 |
 | `--selected-fill` / `--selected-ink` | checkbox checked / mixed fill only (`.ctl-checkbox`); toggles mark selection by thumb or edge (§7.6) |
 | `--pip-empty` | 빈 stage pip — 불투명 면(surface · elev · sunken · elev-2)에서 ≥ 3:1 |
+| `--data` | chart data colour — every series mark that carries a quantity, not a severity (§4.3); ≥ 3:1 on elev · surface · sunken |
+| `--heat-1` … `--heat-4` | hour-grid density ramp — ink at four steps; step 1 ≥ 3:1 on `--elev`, each step ≥ 1.4:1 over the one below |
+| `--tint-row-1` / `-2` / `-3` | ledger row states on `--elev` — opened · checked · both; every row mark on them keeps its floor (table below) |
 | `--control-edge` | alias of `--pip-empty` — the resting edge of the secondary `.btn`, of the selected `.seg` thumb and of the form-field family (`.field`, `.field-select`, the `.field-affix` wrapper; never a bar search, §12.3), ≥ 3:1 on every opaque surface (WCAG 1.4.11) and one step under the `--faint` hover edge |
 
 - **계산된 명암비** (WCAG 2.2 상대휘도):
@@ -274,6 +289,7 @@
 | `--focus-ring` (≥3:1 UI) | 5.17 / 4.95 / 4.74 | 6.88 / 7.77 / 7.20 / 6.35 |
 | `--pip-empty` (≥3:1 UI) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
 | `--control-edge` → `--pip-empty` (≥3:1 UI, resting toggle and field edge) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
+| `--data` (≥3:1 UI) | 5.33 / 5.11 / 4.89 | 6.29 / 7.11 / 6.59 / 5.81 |
 | `--selected-ink` on `--selected-fill` | 16.74 | 13.26 |
 | `--crit` (텍스트 ≥4.5 — 단어를 싣는 유일한 tone) | 5.05 / 4.83 / 4.63 | 6.32 / 7.14 / 6.62 / 5.84 |
 | `--warn` (glyph ≥3:1) | 3.44 / 3.29 / 3.15 | 10.48 / 11.83 / 10.97 / 9.67 |
@@ -281,7 +297,24 @@
 | `--info` (glyph ≥3:1) | 3.68 / 3.53 / 3.38 | 9.68 / 10.93 / 10.13 / 8.94 |
 
 - 모든 텍스트 쌍 ≥ 4.5 (AA), 모든 UI 쌍 ≥ 3.0 — 불투명 토큰 면 기준.
-- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정. `--control-edge` 는 alias 를 target 으로 풀어 light elev · surface · sunken 과 dark 에 elev-2 를 더해 ≥ 3.0, `--faint` hover edge 가 그보다 한 step 위임을 고정. 렌더된 값은 `test/ui.control-state.e2e.test.ts` 가 고정 — toggle 은 card 위, field family 는 elev · surface · sunken 위, 두 테마 모두 ≥ 3.0.
+- **Heat ramp** (composited on `--elev`, ≥ 3:1 UI at step 1, ≥ 1.4:1 per step):
+
+| | Light | Dark |
+|---|---|---|
+| `--heat-1` on `--elev` | 3.16 | 3.25 |
+| step 2 / 3 / 4 over the step below | 1.45 / 1.62 / 1.65 | 1.55 / 1.52 / 1.44 |
+| `--heat-4` on `--elev` | 12.26 | 11.01 |
+
+- **Row-state ladder** (composited on `--elev`; text ≥ 4.5, glyph and pip ≥ 3.0):
+
+| Fill, dark / light | ink | dim | faint | crit glyph | warn glyph | empty pip |
+|---|---|---|---|---|---|---|
+| `--tint-row-1` | 15.96 / 16.81 | 11.19 / 7.34 | 6.00 / 5.13 | 6.03 / 4.85 | 9.99 / 3.31 | 3.47 / 3.55 |
+| `--tint-row-2` | 14.52 / 15.67 | 10.18 / 6.84 | 5.46 / 4.78 | 5.48 / 4.52 | 9.08 / 3.08 | 3.16 / 3.31 |
+| `--tint-row-3` | 14.05 / 15.33 | 9.85 / 6.69 | 5.28 / 4.67 | 5.31 / 4.42 | 8.79 / 3.02 | 3.06 / 3.24 |
+
+  - Ceiling: `--tint-row-3` stays at or under 0.066 — the light warn glyph reaches 3.0 at 0.07, the dark empty pip at 0.072. `--tint-select` (0.08) is no row state: the light warn glyph on it is 2.93.
+- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정. `--control-edge` 는 alias 를 target 으로 풀어 light elev · surface · sunken 과 dark 에 elev-2 를 더해 ≥ 3.0, `--faint` hover edge 가 그보다 한 step 위임을 고정. 렌더된 값은 `test/ui.control-state.e2e.test.ts` 가 고정 — toggle 은 card 위, field family 는 elev · surface · sunken 위, 두 테마 모두 ≥ 3.0. `test/tokens.contrast.unit.test.ts` also pins `--data` on elev · surface · sunken, the heat ramp's step-1 and per-step floors, and every row-state ladder pair above, in both themes.
 
 ### 4.2 Severity (crit / warn / info / ok) — 색만 쓰지 말 것
 
@@ -334,6 +367,7 @@
 ### 4.3 Categorical — 차트 · 식별 전용
 
 - `--cat-1..4` (값 §3.1) = 분류 시각화 (chart fill · swatch) 전용, 위험도용 아님.
+- `--data` (값 §3.1) = the chart data colour: one neutral token for every series mark that carries a quantity, not a severity or a category. ≥ 3:1 on elev · surface · sunken (§4.1). A severity colour is never a series colour.
 - `--cat-2` 3.74:1 · `--cat-4` 4.60:1 on light `--elev` (sunken 3.43 / 4.21) → **fill/swatch 한정, text 색 금지**.
 - **agent 식별은 `AgentName` 텍스트로만** (§3.3) — 이니셜 아바타 없음. 모든 이름이 `glass-atrium-` 으로 시작해 이니셜이 전부 G (`agents.screen-render.client.test.ts`).
 
@@ -1134,7 +1168,8 @@
   - selected row → the checked checkbox; current page → ink label at 500 vs dim at 400.
 - Every selected state also carries a non-colour cue (edge, ✓ glyph, checkbox or weight).
 - Tints (composited on `--elev`): ink on `--tint-select` 13.47 (dark) / 14.89 (light) · dim 9.44 / 6.50 · ink on `--tint-fill` 12.64 / 14.28 · dim 8.87 / 6.23 · ink on `--tint-warn` 11.74 / 14.60 · surface on ink (solid badge) 18.92 / 16.74. Faint on `--tint-fill` is 4.35 in light → a tinted shell holds no faint text.
-- Regression: `test/tokens.contrast.unit.test.ts` (base-look pairs on every surface, ring on surface, the tints and badge fills on every ground they stand on).
+- Heat ramp and row-state ladder (composited on `--elev`): `--heat-1` 3.25 (dark) / 3.16 (light), each step ≥ 1.44 / 1.45 over the one below · lowest row-state pairs warn glyph 3.02 (light, `--tint-row-3`) · empty pip 3.06 (dark, `--tint-row-3`) · faint 4.67 (light) — full tables §4.1.
+- Regression: `test/tokens.contrast.unit.test.ts` (base-look pairs on every surface, ring on surface, the tints and badge fills on every ground they stand on, `--data`, the heat ramp, the row-state ladder).
 
 ---
 
