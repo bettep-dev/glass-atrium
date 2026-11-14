@@ -14,6 +14,7 @@ import type { FastifyInstance } from "fastify";
 
 import { buildRemoteApp } from "../src/server/app.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
 import { REVIEWED_ROUTES, getRouteClass } from "../src/server/remote/route-classes.js";
 import { CSRF_HEADER, DEVICE_COOKIE, getCsrfToken } from "../src/server/remote/session.js";
@@ -46,6 +47,7 @@ before(async () => {
       findDevice: async (presented) => devices.get(presented) ?? null,
       getRouteClass,
       preAuthRoutes: new Set(),
+      connections: new DeviceConnections(),
       audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
     },
     queue: {

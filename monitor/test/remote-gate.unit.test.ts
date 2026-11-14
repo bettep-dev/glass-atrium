@@ -9,6 +9,7 @@ import Fastify, { type FastifyInstance, type InjectOptions } from "fastify";
 
 import { registerRemoteGate, type RemoteAuditEntry, type RemoteAuditEvent } from "../src/server/remote/gate.js";
 import type { RouteClass } from "../src/server/remote/route-classes.js";
+import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
 import { CSRF_HEADER, DEVICE_COOKIE, getCsrfToken } from "../src/server/remote/session.js";
 
@@ -48,6 +49,7 @@ async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Ha
     findDevice: async (presented) => devices.get(presented) ?? null,
     getRouteClass: (method, path) => CLASSES.get(`${method === "HEAD" ? "GET" : method} ${path}`) ?? null,
     preAuthRoutes: new Set(["POST /api/remote/register"]),
+    connections: new DeviceConnections(),
     audit: {
       insertIntent: async (entry) => {
         if (options.isAuditDown === true) throw new Error("audit_log unreachable");

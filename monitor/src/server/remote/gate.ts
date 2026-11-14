@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { MUTATION_METHODS, getPageOriginSignal } from "../request-guards.js";
 import { deriveResultCode } from "../middleware/audit-log.js";
+import type { DeviceConnections } from "./connections.js";
 import type { DeviceSummary } from "./devices.js";
 import { REMOTE_LIMITS, WindowLimiter } from "./limits.js";
 import type { RouteClass } from "./route-classes.js";
@@ -44,6 +45,8 @@ export interface RemoteGateDeps {
   /** `METHOD /path` keys answered without a registered device (sign-in page, its assets, the code POST) */
   readonly preAuthRoutes: ReadonlySet<string>;
   readonly audit: RemoteAuditWriter;
+  /** shared with the loopback revoke routes → a cut-off device loses its open sockets at once */
+  readonly connections: DeviceConnections;
   readonly now?: () => number;
 }
 
@@ -123,6 +126,7 @@ async function admitDevice(
     if (!isFromPage || !isCsrfTokenValid(presented, Array.isArray(csrf) ? csrf[0] : csrf)) return refuse(reply, 403, "not_page_origin");
   }
   ADMITTED.set(request, { device });
+  deps.connections.track(device.id, request.socket);
   // re-sent on every admitted request → the browser's 400-day clock restarts on use
   reply.setCookie(DEVICE_COOKIE.NAME, presented, DEVICE_COOKIE_OPTIONS);
   return undefined;
