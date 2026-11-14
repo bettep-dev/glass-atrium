@@ -13,6 +13,8 @@ Run this before any UI decision — component implementation, page layout, anima
 | neither exists | proceed on framework defaults, and flag the absence in `[COMPLETION]` `concerns` |
 
 - Why the flag: it lets an operator ask glass-atrium-design-designer to author the missing document.
+- With no `DESIGN.md`, check framework defaults against the trope SoT: `~/.glass-atrium/agents/glass-atrium-design-designer.md` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, its `#### Admin-console tropes (data screens)` bundle on console screens only.
+  - Remove a matched trope and invent no new direction: the `concerns` flag stays the route to one.
 - Re-deriving a token value from a screenshot, a mockup, a description, or memory instead of reading the document is FORBIDDEN.
 
 ## Token Lookup Order
