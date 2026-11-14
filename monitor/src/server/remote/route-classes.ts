@@ -32,7 +32,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /api/health", cls: "page", reason: "page boot fetch; handler read: DB probe, version, browser-launch state, timezone — discloses system state, so not pre-auth" },
   { route: "GET /api/health/daemons", cls: "page", reason: "page calls it; handler read: daemon_runs read plus an existence stat of the auth secrets file (never opened)" },
   { route: "GET /api/health/wiki-reports", cls: "page", reason: "page calls it; handler read: read-only daemon_runs query, days allowlisted" },
-  { route: "GET /api/health/hook-chain", cls: "page", reason: "page calls it; handler read: returns only the hooks block of ~/.claude/settings.json (command strings) plus the absolute settings path — sensitive read, see notes" },
+  { route: "GET /api/health/hook-chain", cls: "page", reason: "page calls it; handler read: returns only the hooks block of the Claude Code settings file (command strings) plus its absolute path — sensitive read, see notes" },
   { route: "GET /api/health/daemon-payload", cls: "page", reason: "page calls it; handler read: read-only payload rows, daemon allowlisted, limit clamped" },
   { route: "GET /api/health/hook-failures", cls: "page", reason: "page calls it; handler read: read-only hook_failures query, bounded" },
   { route: "GET /api/health/unpriced-models", cls: "page", reason: "page calls it; handler read: read-only cost_events query, bounded" },
