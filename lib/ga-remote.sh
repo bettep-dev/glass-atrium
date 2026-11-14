@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ga-remote.sh — monitor access from other devices on a trusted Wi-Fi (plan clauded-docs/44077):
+# ga-remote.sh — monitor access from other devices on a trusted Wi-Fi:
 # the value rules shared by the env renderer and the CLI, the key material, and the `glass-atrium remote` CLI.
 # Sourced library: sets no shell options. Every system tool runs by absolute path with a fixed argv.
 
@@ -252,7 +252,7 @@ ga_remote_apply_config() {
   ga_remote_run launchctl kickstart -k "gui/${UID}/com.glass-atrium.monitor" >/dev/null
 }
 
-# --- the CLI channel: the monitor's loopback remote-cli routes (cli-channel-verdict.md, shape b) ------
+# --- the CLI channel: the monitor's loopback remote-cli routes ---------------------------------------
 
 GA_REMOTE_CLI_HEADER='X-Glass-Atrium-Cli: remote-access'
 GA_REMOTE_CLI_PATH='/api/remote/cli/devices'
