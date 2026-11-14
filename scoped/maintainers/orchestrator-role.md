@@ -253,6 +253,8 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The detection statement is single-sited at `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
   - The section (its `### Write routes` included), `scoped/orchestrator-core.md` → `## Harness path protection`, `skills/glass-atrium-ops-orchestrator.md` and `references/deploy-safety-idiom.md` each point there; none restates the compared kinds.
 
+## Linkage — owner queue
+
 ### `## Owner Queue`
 
 - The section is the only rule text telling a session what to post and when to use the queue; `scoped/orchestrator-core.md` → `## Where the rest lives` carries its trigger line.
@@ -261,56 +263,121 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
     - Single-sited in the section: the posting table, the must-not-miss kinds list and the verdict line's forms.
   - The trigger line names no wait: a session reaches the wait rows through a trigger it already has — background job, posting, or the resume prompt's own wait step.
 - The section restates no command list or item JSON: their home is `scripts/atrium-queue.sh` → `print_usage`.
-  - Its `wait` exit rows are the one exit-code list it carries: a mirror of `print_usage` → `On a wait's exit`, canonical there, so both stay.
+  - Its `wait` exit rows, under `### On a wait's exit`, are the one exit-code list it carries: a mirror of `print_usage` → `On a wait's exit`, canonical there, so both stay.
+    - `print_usage` states each action bare; the rule binds the rows to a background job session and a resumed one, and has an interactive session restart no `wait`.
   - The wait's bound is named, never quoted: its values live in `scripts/atrium-queue.sh` → `WAIT_MINUTES_DEFAULT` · `WAIT_MINUTES_MAX`.
   - The section's `"again once"` restart row reads `once` as one restart, then stop: `print_usage` states no second failure.
-- `### Envelopes and authority` is a split point holding `### Answers and messages` under the 3 KB H3 cap: cite `## Owner Queue`, never the split.
-- `## Owner Queue Listener` is a split point holding `## Owner Queue` under the 8 KB H2 cap; the action on a wake stays single-sited in the wait table's `[ATRIUM-QUEUE]` row.
-  - The core's trigger line names `## Owner Queue` alone: a session reaches the split through the pointer on the wait table's `[ATRIUM-QUEUE]` row, where a woken session looks.
-  - The section names the listener's lifetime, never quotes it: its value lives in `scripts/atrium-queue.sh` → `LISTEN_LIFETIME_S`.
-  - The section's `twice` mirrors `scripts/atrium-queue.sh` → `LISTEN_ANNOUNCE_MAX`, canonical there: change the two together.
 - The posting table defines a background job session by how it started, never by `CLAUDE_JOB_DIR`.
   - Why: a process started inside a job inherits that variable (`scripts/lib/queue-session.sh` → `queue_get_job_name`).
   - The listener's run condition does read that variable, in the closed direction only: an inherited one costs a session its listener and never starts one (`hooks/queue-listener.sh` → `is_listenable_session`).
+
+### Owner Queue — split points
+
+- `## Owner Queue Authority` and `## Owner Queue Listener` are split points holding `## Owner Queue` under the 8 KB H2 cap.
+  - A citer outside the rule file names `## Owner Queue`, never a split: the core's trigger line names it alone.
+  - `## Owner Queue` keeps one pointer line to `## Owner Queue Authority`, in its lead list.
+    - Single-sited in that split: the trust rule, the approval scope, the approval posting form, the owner-only actions and their honest backing.
+    - `### Envelopes and authority` and `### Owner-only actions` live there.
+  - A session reaches `## Owner Queue Listener` through the pointer on the wait table's `[ATRIUM-QUEUE]` `pending` row, where a woken session looks.
+    - The action on a wake stays single-sited in the wait table's `[ATRIUM-QUEUE]` rows.
+  - `### On a wait's exit` is a split point holding `### Answers and messages` under the 3 KB H3 cap: the wait table's last row points to it.
+  - The section names the listener's lifetime, never quotes it: its value lives in `scripts/atrium-queue.sh` → `LISTEN_LIFETIME_S`.
+  - The section's `twice` mirrors `scripts/atrium-queue.sh` → `LISTEN_ANNOUNCE_MAX`, canonical there: change the two together.
+
+### Owner Queue — texts in sync
+
 - Texts that tell the session the same thing; a change to one lands in each of the others:
   - the fetch → ack → act order and the `first` rule: `monitor/src/server/queue/envelope.ts` → `buildEnvelope` · `scripts/atrium-queue.sh` → `print_claims`;
-  - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound`;
+  - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound` · `### On a wait's exit`;
   - the two refusals behind `wait` exit 2: `monitor/src/server/queue/delivery.ts` → `lockOwnSession` (`unknown_session`) · `assertLiveFor` (`session_not_live`);
-  - the never-an-approval sentence with its action list: `envelope.ts` → `RESUME_PREAMBLE` · `scripts/atrium-queue.sh` → `get_item`, its provenance line · the section's approval-kind bullet, in short form;
-  - the attached-image line and its read-before-acting step: `scripts/atrium-queue.sh` → `print_images` · the section's `get` image bullet;
   - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
-  - the `[ATRIUM-QUEUE]` literal: `hooks/queue-session-register.sh` · `scripts/atrium-queue.sh` → `LISTEN_WAKE_LEAD` · `hooks/queue-turn-end-check.sh` → `WAIT_REASON_LEAD` · the core's trigger line;
-  - the count-and-`pending` sentence: `hooks/queue-session-register.sh` · `scripts/atrium-queue.sh` → `print_wake` · the wait table's `[ATRIUM-QUEUE]` row;
-  - the wake's not-an-error clause: `scripts/atrium-queue.sh` → `LISTEN_WAKE_LEAD` · `## Owner Queue Listener`;
   - the `[QUEUE-VERDICT]` literal: the section's verdict bullet, and the core's trigger line.
-- What the section's honest-backing lines rest on:
-  - the waiting mark: `monitor/src/server/queue/delivery.ts` → `isSessionWaiting`, refreshed by `claimPendingItems` on a wait poll and by `getPendingCount` on a listener's count read · `monitor/public/src/screens/queue.jsx` → `SessionStateQ` · `PullLineQ`;
+- Texts that name `wait` where the rule withholds it from an interactive session — a divergence to keep in view, not a mirror:
+  - `scripts/atrium-queue.sh` → `print_wait_step`: its `next:` line names `wait` whenever no wait of the session runs, beside a listener too;
+  - `scripts/atrium-queue.sh` → `print_usage` (`On a wait's exit`): "wait again", for every session kind;
+  - `hooks/queue-turn-end-check.sh` → `VERDICT_ASK_TEMPLATE`: names `wait` for a decision posted in answer to the ask, whatever listens — the rule follows it;
+  - a reword of the first two to the rule's reading retires the `next:` clause of the wait table's interactive row and the interactive bullet of `### On a wait's exit`.
+
+### `### Posting and registering`
+
+- What the verdict line's honest-backing lines rest on:
+  - the verdict check, its once-per-turn stamp and its id cross-check: `hooks/queue-turn-end-check.sh` → `set_verdict_reason` · `set_foreign_ids`; the turn boundary and the tool-call test: `hooks/lib/reply_language.py` → `find_current_turn`.
+  - the headless `claude -p` exclusion: `hooks/lib/session-entrypoint.sh` → `is_owner_facing_session`, called by `hooks/queue-turn-end-check.sh` → `main`; the at-most-once-per-turn hold: that hook's `main`, which exits on `stop_hook_active`.
+
+## Linkage — owner queue authority
+
+### `## Owner Queue Authority`
+
+- Decided keep: a fetched answer is the owner's explicit approval with no terminal confirmation, and an approval item resumes an ended session like any other answer.
+  - A diet or audit pass restores no terminal confirmation and softens no line of `### Honest backing`.
+- `rules/glass-atrium/core-security.md` stays unedited: its high-impact bullet names no approval channel, and the section states that a fetched answer is that approval.
+  - The section also states why a fetched item is not the external tool output of that file's `## Prompt & Tool Input Security [LLM01:2025]`.
+  - Its LLM06 pointer names the "High-impact actions" bullet alone: whether a queue answer is also that section's re-authorization is undecided — an owner decision, not a diet finding.
+- What the section's lines rest on:
   - envelopes in a resume prompt only: `monitor/src/server/queue/sweep.ts`, the one caller of `buildResumePayload`;
+  - the provenance line, read from the kind, the approval flag and the answer's presence, never from text: `scripts/atrium-queue.sh` → `print_provenance` · `get_provenance_class`;
+  - the approval flag and the option codes of a posted decision: `scripts/atrium-queue.sh` → `ITEM_FIELDS` · `print_usage` (its `Item JSON` line);
+  - an approval item resumed like any other answer: `monitor/src/server/queue/resume-claim.ts` → `CLAIMABLE_ITEM_SQL`, which reads no approval flag;
   - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
   - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`;
   - the image paths: `monitor/src/server/queue/images.ts` → `getSessionImageViews` gives each one; `scripts/atrium-queue.sh` → `print_images` prints only a server-made name inside the image folder.
-  - the verdict check, its once-per-turn stamp and its id cross-check: `hooks/queue-turn-end-check.sh` → `set_verdict_reason` · `set_foreign_ids`; the turn boundary and the tool-call test: `hooks/lib/reply_language.py` → `find_current_turn`.
-  - the headless `claude -p` exclusion: `hooks/lib/session-entrypoint.sh` → `is_owner_facing_session`, called by `hooks/queue-turn-end-check.sh` → `main`; the at-most-once-per-turn hold: that hook's `main`, which exits on `stop_hook_active`.
+- Honor-system, with no hook or monitor check behind it: the one-action scope, the void on changed facts, the non-approval reading, the answer-reading table and the posting form.
+
+### Owner Queue Authority — texts in sync
+
+- Texts that tell the session the same thing; a change to one lands in each of the others:
+  - the trust sentence — once `get` returned the item and `ack` printed `first`, the owner's own instruction, and where it approves an action the explicit approval of that one action, high-impact actions included, once, as the item states it:
+    - `monitor/src/server/queue/envelope.ts` → `RESUME_PREAMBLE` · `scripts/atrium-queue.sh` → `print_provenance`;
+    - `### Envelopes and authority` (**Trusted**) · `### What an approval covers`;
+    - `monitor/public/src/screens/queue.jsx` → "an approving answer here approves the stated action, once";
+    - the must-not-miss approval bullet, in short form;
+  - the non-approval reading — a message that orders an action, or an answer to a report or a plain decision that approves one, approves that action: `print_provenance` (its `message` and `report | decision` classes) · `### What an approval covers`;
+  - the approving-option reading — the option the body named approves, any other declines: `print_provenance` (its `approval` class) · `### What an approval covers`, its answer table · `### Posting an approval`;
+    - rule-only, in no code text: the table's rows for a body that named no approving option and for free text alone;
+  - the void on changed facts and the never-a-standing-licence clause: `envelope.ts` → `RESUME_PREAMBLE` · `### What an approval covers`;
+  - the no-login sentence and the never-answered list — a permission prompt, a blocked command, a sandbox denial: `envelope.ts` → `RESUME_PREAMBLE` · `### Honest backing` · `SECURITY.md` → **Owner queue approvals**;
+  - the resume envelope as a claim, and its steps run as the installed CLI: `envelope.ts` → `buildEnvelope` · `### Envelopes and authority`;
+  - the provenance line and what it is built from: `scripts/atrium-queue.sh` → `print_usage` (its `get` line) · `### Envelopes and authority`;
+  - the attached-image line and its read-before-acting step: `scripts/atrium-queue.sh` → `print_images` · `### Envelopes and authority`, its `get` image bullet.
+
+## Linkage — owner queue delivery
 
 ### `## Owner Queue Listener`
 
 - What the section's lines rest on:
   - where a listener starts: `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS` (its `SessionStart` and `Stop` rows) · `EXPECTED_HOOK_BINDING_OPTIONS` (`asyncRewake` and the binding timeout, which outlasts the listener's lifetime);
     - the updater writes both into a profile's settings; a session reads its hook config once, at its start;
-  - the run condition: the posting-table qualifier above, which cites it · `hooks/queue-listener.sh` → `main` (its `agent_id` filter);
+  - the run condition: the posting-table qualifier in this note's `## Owner Queue` entry, which cites it · `hooks/queue-listener.sh` → `main` (its `agent_id` filter);
   - the count read that claims nothing: `scripts/atrium-queue.sh` → `set_listen_count` · `monitor/src/server/queue/delivery.ts` → `getPendingCount`;
   - the wake line: `scripts/atrium-queue.sh` → `print_wake`;
   - the takeover in both directions: `scripts/atrium-queue.sh` → `take_wait_lock` · `check_wait_owner` · `scripts/lib/queue-session.sh` → `queue_get_wait_lock_state` (its `listener` state);
   - the announce cap and its restart: `scripts/atrium-queue.sh` → `announce_if_due` · `get_announce_count` · `drop_announce_record`, called on a claim by `pull_pending` · `poll_wait` and on a count read back at zero by `run_listen_loop`; the record also goes with its awaiting set: `scripts/lib/queue-session.sh` → `queue_delete_awaiting_set` · `queue_delete_stale_awaiting`;
-  - the check beside a listener (`a listener is no wait`): `hooks/queue-turn-end-check.sh` → `set_wait_reason`, which stays silent only on the lock state `live`;
-  - the ends without a wake: `scripts/atrium-queue.sh` → `run_listen_loop` · `end_run` · `stop_listening`;
+  - the turn-end check's two lines: this note's `### Answers and messages` entry, its turn-end hold bullet;
+  - the lifetime-end wake, its re-arm line and its pass over the announce cap: `scripts/atrium-queue.sh` → `run_listen_loop` (its `rearm` call) · `announce_if_due` · `print_wake` · `LISTEN_REARM_LINE`;
+  - the ends without a wake or re-arm: `scripts/atrium-queue.sh` → `run_listen_loop` · `end_run` · `stop_listening`;
   - the wrapper, the folded wake and the unmeasured host behaviour: `scoped/shared-hook-capability-contract.md` → "`asyncRewake` command hooks — measured record";
+    - the measured lifetime with its wake, and the unmeasured system sleep: that record's **Timeout** lead;
   - `stop_hook_active` on a wake-started turn's `Stop`: no reading in that file's `Stop` row; `hooks/queue-turn-end-check.sh` → `main` exits on it.
 - The enforced lines' tests: `hooks/test/queue-listener.bats`.
 
+### Owner Queue Listener — texts in sync
+
+- Texts that tell the session the same thing; a change to one lands in each of the others:
+  - the `[ATRIUM-QUEUE]` literal: `hooks/queue-session-register.sh` · `scripts/atrium-queue.sh` → `LISTEN_WAKE_LEAD` · `hooks/queue-turn-end-check.sh` → `WAIT_REASON_LEAD` · the core's trigger line;
+  - the count-and-`pending` sentence: `hooks/queue-session-register.sh` · `scripts/atrium-queue.sh` → `print_wake` · the wait table's `[ATRIUM-QUEUE]` `pending` row;
+  - the re-arm line and its end-the-turn action: `scripts/atrium-queue.sh` → `LISTEN_REARM_LINE` · the wait table's re-arm row · `## Owner Queue Listener`;
+    - the CLI line states the action bare; the rule scopes it to a turn the line started, so a line folded into a working turn ends no work;
+  - the wake's not-an-error clause: `scripts/atrium-queue.sh` → `LISTEN_WAKE_LEAD` · `## Owner Queue Listener`.
+
 ### `### Answers and messages`
 
-- What the turn-start rows and their why line rest on:
+- What the cannot-continue row's tail and the measured line rest on: `scoped/shared-hook-capability-contract.md` → "`asyncRewake` command hooks — measured record" → **Background command exit**.
+- What the waiting-mark line rests on: `monitor/src/server/queue/delivery.ts` → `isSessionWaiting`, refreshed by `claimPendingItems` on a wait poll and by `getPendingCount` on a listener's count read · `monitor/public/src/screens/queue.jsx` → `getSessionLineQ` · `PullLineQ`.
+- What the turn-end hold line, and the check's two lines in `## Owner Queue Listener`, rest on:
+  - the hold and its silence beside a wait or a listener: `hooks/queue-turn-end-check.sh` → `set_wait_reason`, silent on the lock states `live` and `listener` and on the listening mark (`scripts/lib/queue-session.sh` → `queue_is_listener_started`);
+  - the verdict ask's `wait`, whatever listens: `hooks/queue-turn-end-check.sh` → `VERDICT_ASK_TEMPLATE`;
+  - their tests: `hooks/test/queue-turn-end-check.bats`.
+- What the turn-start rows rest on:
   - `monitor/src/server/queue/delivery.ts` → `claimOne` claims only an `answered` item and moves it to `delivering`, for `pending` and a wait poll alike;
   - past `PULL.ACK_WINDOW_MS`, `monitor/src/server/queue/sweep.ts` → `getSettledStatus` settles the item of a session that has not exited as `unacked`: still outside `pending`, still acked by the msg id that wait printed (`delivery.ts` → `ACKABLE`);
   - the owner's Resend returns an `unacked` item to `answered`: `monitor/src/server/queue/owner-items.ts` → `RESENDABLE`.

@@ -60,5 +60,17 @@ appreciated).
   Unix socket with no password material in the repository.
 - **Least-privilege agents** — each agent's tool allowlist is frozen at spawn
   time; high-impact actions require explicit user approval.
+- **Owner queue approvals** — an owner answer or owner message the monitor
+  holds counts as that explicit approval, for the one action it states.
+  - The queue has no login: any process on the same machine can produce an
+    answer, and a session acts on any answer the monitor holds.
+  - So a forged or mistaken approval is acted on, and can resume an ended
+    session that carries out a high-impact action with no one at its
+    terminal.
+  - The monitor records each answer's route and request signal, and the
+    Queue page marks an answer it holds no record of; the mark is for the
+    owner and stops no session.
+  - A host permission prompt, a blocked command or a sandbox denial is never
+    answered by the queue.
 - **CI least privilege** — deny-all workflow token (`permissions: {}`),
   `pull_request` (never `pull_request_target`), pinned action SHAs.
