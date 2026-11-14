@@ -397,5 +397,5 @@ remote_env_line() {
   chmod 644 "${SANDBOX}/monitor/.env"
   run_render
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
-  [[ "$(stat -f '%Lp' "${SANDBOX}/monitor/.env")" == "600" ]]
+  [[ "$(perl -e 'printf "%o", (stat $ARGV[0])[2] & 07777' -- "${SANDBOX}/monitor/.env")" == "600" ]]
 }

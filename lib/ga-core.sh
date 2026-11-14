@@ -50,6 +50,11 @@ source "${__ga_core_libdir}/ga-doctor.sh" || {
   printf "%s\n" "FATAL: cannot source ga-doctor.sh" >&2
   return 1
 }
+# shellcheck source=lib/ga-remote.sh
+source "${__ga_core_libdir}/ga-remote.sh" || {
+  printf "%s\n" "FATAL: cannot source ga-remote.sh" >&2
+  return 1
+}
 unset __ga_core_libdir
 
 # remove_node_modules — uninstall teardown: rm -rf monitor/node_modules to reclaim disk. node_modules
