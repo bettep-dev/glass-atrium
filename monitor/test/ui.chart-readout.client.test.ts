@@ -293,6 +293,28 @@ describe("a bar plot draws only the days that carry a quantity, over one baselin
   }
 });
 
+describe("a series mark carries the data colour, never a tone or the accent", () => {
+  const getMarkPaints = (tree: RenderedNode): string[] =>
+    findNodes(tree, (n) => n.type === "rect" || n.type === "path").map((n) => String(n.props.fill === "none" ? n.props.stroke : n.props.fill));
+
+  for (const kind of ["line", "bars"]) {
+    test(`${kind}: every mark paints --data at full strength, whatever tone a caller still passes`, () => {
+      const tree = render("TrendChart", { label: "Runs", points: WEEK, kind, tone: "warn" });
+      const paints = getMarkPaints(tree);
+      assert.ok(paints.length > 0, "the plot draws marks");
+      assert.deepEqual([...new Set(paints)], ["rgb(var(--data))"]);
+      assert.ok(findNodes(tree, (n) => n.type === "rect").every((n) => n.props.opacity === undefined), "no bar is faded below the token");
+    });
+  }
+
+  test("the hovered bar takes ink and the other days keep the data colour", () => {
+    const points = WEEK.map((point) => ({ ...point }));
+    const svg = render("ChartPlot", { points, kind: "bars", h: 64, activeIndex: 2 });
+    const fills = findNodes(svg, (n) => n.type === "rect").map((n) => n.props.fill);
+    assert.deepEqual(fills, points.map((_, i) => (i === 2 ? "rgb(var(--ink))" : "rgb(var(--data))")));
+  });
+});
+
 describe("the optional y-scale states the plotted extent", () => {
   const rows: Array<{ name: string; values: Array<number | null>; kind: string; top: number; bottom: number }> = [
     { name: "a line runs from its low to its high", values: [80, 90, 85, 95], kind: "line", top: 95, bottom: 80 },

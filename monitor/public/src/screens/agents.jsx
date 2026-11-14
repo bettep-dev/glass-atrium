@@ -1268,7 +1268,7 @@ function LatencyBars({ agents }) {
               {LATENCY_LAYERS.map((layer) => (
                 <div
                   key={layer.key}
-                  className="absolute h-full bg-info rounded-full"
+                  className="absolute h-full bg-data rounded-full"
                   style={{ width: `${((Number(a[layer.field]) || 0) / maxMs) * 100}%`, opacity: layer.opacity }}
                 />
               ))}
@@ -1279,7 +1279,7 @@ function LatencyBars({ agents }) {
       <div className="flex gap-control-group mt-block fs-meta text-faint">
         {LATENCY_LAYERS.slice().reverse().map((layer) => (
           <span key={layer.key} className="flex items-center gap-label-inline">
-            <span className="w-2 h-2 bg-info rounded-full" style={{ opacity: layer.opacity }}/>
+            <span className="w-2 h-2 bg-data rounded-full" style={{ opacity: layer.opacity }}/>
             {layer.label}
           </span>
         ))}
@@ -1852,7 +1852,6 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
             label={`${agent.agent_name || drawerAgent} runs per day`}
             points={trend.map((value, i) => ({ label: trendDates?.[i] ?? '', value }))}
             kind="bars"
-            tone={getTrendTone(agent.status, getSummaryRateAg(agent).tone)}
             formatValue={(v) => `${formatIntAg(v)} runs`}
           />
         ) : (
@@ -2208,7 +2207,7 @@ function MergedBreakageBody({ merged, days }) {
                 </span>
               </div>
               <div className="h-1.5 bg-sunken rounded-full overflow-hidden">
-                <div className="h-full bg-crit/70" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}/>
+                <div className="h-full bg-data" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}/>
               </div>
             </div>
           );
@@ -2723,7 +2722,7 @@ const QH_TIMELINE = Object.freeze({
       value: 'Rate (%)',
       angle: 90,
       position: 'insideRight',
-      fill: 'rgb(var(--crit))',
+      fill: 'rgb(var(--dim))',
       style: { textAnchor: 'middle', fontSize: 'var(--fs-meta)' },
     },
   },
@@ -2823,19 +2822,13 @@ function QualityHealthTimelineChart({ rows }) {
             tickLine={false}
             width={56}
           />
-          <Tooltip content={<QualityHealthTimelineTooltip/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
-          <Bar yAxisId="count" dataKey="empty_metric_count"   stackId="rf" fill={`rgb(var(--warn) / 0.85)`}   isAnimationActive={false}/>
-          <Bar yAxisId="count" dataKey="polar_mismatch_count" stackId="rf" fill={`rgb(var(--accent) / 0.85)`} isAnimationActive={false}/>
-          <Line
-            yAxisId="ratio"
-            type="monotone"
-            dataKey="review_flag_ratio_pct"
-            stroke="rgb(var(--crit))"
-            strokeWidth={1.5}
-            strokeDasharray="4 3"
-            dot={false}
-            isAnimationActive={false}
-          />
+          <Tooltip content={<QualityHealthTimelineTooltip/>} cursor={{ fill: 'rgb(var(--ink) / 0.06)' }} isAnimationActive={false}/>
+          {/* one quantity per day (flag reasons) → one data colour; the tooltip names each reason's count */}
+          <Bar yAxisId="count" dataKey="empty_metric_count"   stackId="rf" fill="rgb(var(--data))" isAnimationActive={false}/>
+          <Bar yAxisId="count" dataKey="polar_mismatch_count" stackId="rf" fill="rgb(var(--data))" isAnimationActive={false}/>
+          {/* card-ground under-stroke → the ink rate line clears 3:1 where it crosses a --data bar (design.md §4.3) */}
+          <Line yAxisId="ratio" type="linear" dataKey="review_flag_ratio_pct" stroke="rgb(var(--elev))" strokeWidth={3.5} dot={false} activeDot={false} legendType="none" isAnimationActive={false}/>
+          <Line yAxisId="ratio" type="linear" dataKey="review_flag_ratio_pct" stroke="rgb(var(--ink))" strokeWidth={1.5} dot={false} isAnimationActive={false}/>
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -2860,16 +2853,16 @@ function QualityHealthTimelineTooltip({ active, payload }) {
         {formatIntAg(row.empty_metric_count + row.polar_mismatch_count)} of {formatIntAg(row.total_count)} have a recorded reason
       </div>
       <div style={tooltipRowStyle}>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--warn))' }}/>
+        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--data))' }}/>
         No self-check {formatIntAg(row.empty_metric_count)} of {formatIntAg(row.total_count)} runs
         <span style={{ color: 'rgb(var(--faint))' }}>· {formatPctAg(row.empty_metric_ratio_pct)}</span>
       </div>
       <div style={tooltipRowStyle}>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
+        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--data))' }}/>
         Confidence mismatch {formatIntAg(row.polar_mismatch_count)} of {formatIntAg(row.total_count)} runs
       </div>
       <div style={{ ...tooltipRowStyle, marginTop: 4 }}>
-        <span style={{ width: 10, borderTop: '1.5px dashed rgb(var(--crit))' }}/>
+        <span style={{ width: 10, borderTop: '1.5px solid rgb(var(--ink))' }}/>
         Flagged rate {formatPctAg(row.review_flag_ratio_pct)}
       </div>
     </div>

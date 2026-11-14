@@ -383,7 +383,18 @@ function getChartLinePath(values, getY) {
   }).join(' ');
 }
 
-function ChartPlot({ points, kind, h, color, activeIndex }) {
+/**
+ * Chart paint roles (design.md §4.3) — a quantity series takes `data`, the hovered mark `hover`,
+ * a threshold or normal line `reference`; `underStroke` keeps a line over bars on the card ground.
+ */
+const CHART_COLOR = Object.freeze({
+  data: 'rgb(var(--data))',
+  hover: 'rgb(var(--ink))',
+  reference: 'rgb(var(--faint))',
+  underStroke: 'rgb(var(--elev))',
+});
+
+function ChartPlot({ points, kind, h, activeIndex }) {
   const values = points.map((point) => (Number.isFinite(point.value) ? point.value : null));
   const finite = values.filter((value) => value !== null);
   const min = kind === 'bars' || finite.length === 0 ? 0 : Math.min(...finite);
@@ -393,20 +404,20 @@ function ChartPlot({ points, kind, h, color, activeIndex }) {
   return <svg width="100%" height={h} viewBox={`0 0 ${CHART_VIEW_W} ${h}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block' }}>
     {kind === 'bars' && <line data-chart-baseline="" x1={0} x2={CHART_VIEW_W} y1={h - 0.5} y2={h - 0.5} stroke="rgb(var(--line))" strokeWidth="1" vectorEffect="non-scaling-stroke"/>}
     {kind === 'bars'
-      ? <ChartBars values={values} h={h} getY={getY} color={color} activeIndex={activeIndex}/>
-      : <path d={getChartLinePath(values, getY)} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>}
+      ? <ChartBars values={values} h={h} getY={getY} activeIndex={activeIndex}/>
+      : <path d={getChartLinePath(values, getY)} fill="none" stroke={CHART_COLOR.data} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>}
     {crossX !== null && <line x1={crossX} x2={crossX} y1={0} y2={h} stroke={toneVarColor('neutral')} strokeDasharray="3 3" vectorEffect="non-scaling-stroke"/>}
   </svg>;
 }
 
 // a zero day draws nothing — a 1px stub would read as a measured sliver; the baseline already marks zero
-function ChartBars({ values, h, getY, color, activeIndex }) {
+function ChartBars({ values, h, getY, activeIndex }) {
   const width = (CHART_VIEW_W / values.length) * (1 - 2 * CHART_BAR_INSET);
   return <>{values.map((value, i) => {
     if (value === null || value === 0) return null;
     const y = getY(value);
-    const opacity = activeIndex === null || activeIndex === i ? 0.85 : 0.45;
-    return <rect key={i} x={getChartBarLeft(i, values.length)} y={y} width={width} height={h - y} fill={color} opacity={opacity}/>;
+    const fill = activeIndex === i ? CHART_COLOR.hover : CHART_COLOR.data;
+    return <rect key={i} x={getChartBarLeft(i, values.length)} y={y} width={width} height={h - y} fill={fill}/>;
   })}</>;
 }
 
@@ -467,14 +478,14 @@ function useChartReadout(count, kind) {
  * @param formatValue - formats values in the readout, the accessible summary and the y-scale
  * @param yScale - true adds a max/min label column beside the plot
  */
-function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
+function TrendChart({ label, points, kind = 'line', h = 64, formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
   const count = points ? points.length : 0;
   const { activeIndex, handlers } = useChartReadout(count, kind);
   if (count === 0) return <p className="text-faint" style={{ fontSize: 'var(--fs-meta)', margin: 0 }}>No data in range</p>;
   const readout = activeIndex === null ? '' : getChartReadout(points[activeIndex], formatValue);
   const scale = yScale ? getChartYScale(points, kind, formatValue) : null;
   const plot = <div {...getChartImageProps(label, points, formatValue)} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
-    <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
+    <ChartPlot points={points} kind={kind} h={h} activeIndex={activeIndex}/>
   </div>;
   const ticks = <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>;
   return <figure className="trend-chart" style={{ margin: 0, minWidth: 0 }}>

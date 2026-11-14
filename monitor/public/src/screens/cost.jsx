@@ -843,9 +843,9 @@ function CostTrendChart({ rows, bandOn }) {
               <Line
                 type="linear"
                 dataKey="rollingMean"
-                stroke="rgb(var(--dim))"
+                stroke="rgb(var(--faint))"
                 strokeDasharray="4 4"
-                strokeWidth={1.5}
+                strokeWidth={1}
                 dot={false}
                 isAnimationActive={false}
                 connectNulls={false}
@@ -854,17 +854,17 @@ function CostTrendChart({ rows, bandOn }) {
             <Line
               type="linear"
               dataKey="completeCost"
-              stroke="rgb(var(--accent))"
+              stroke="rgb(var(--data))"
               strokeWidth={2}
-              dot={{ r: 2, fill: 'rgb(var(--accent))', stroke: 'none' }}
-              activeDot={{ r: 4 }}
+              dot={{ r: 2, fill: 'rgb(var(--data))', stroke: 'none' }}
+              activeDot={{ r: 4, fill: 'rgb(var(--ink))', stroke: 'none' }}
               isAnimationActive={false}
               connectNulls={false}
             />
             <Line
               type="linear"
               dataKey="partialCost"
-              stroke="rgb(var(--accent))"
+              stroke="rgb(var(--data))"
               strokeWidth={2}
               strokeDasharray="4 3"
               dot={renderPartialDot}
@@ -895,7 +895,7 @@ function renderPartialDot({ cx, cy, index, payload }) {
       cy={cy}
       r={payload && payload.isPartial ? 3.5 : 0}
       fill="rgb(var(--elev))"
-      stroke="rgb(var(--accent))"
+      stroke="rgb(var(--data))"
       strokeWidth={1.5}
     />
   );
@@ -906,16 +906,16 @@ function CostTrendLegendC({ bandOn, rows }) {
   return (
     <div className="flex items-center gap-x-block gap-y-list flex-wrap mt-label fs-meta text-dim">
       <span className="flex items-center gap-label-inline">
-        <span aria-hidden="true" style={{ width: 14, height: 2, background: 'rgb(var(--accent))' }}/>
+        <span aria-hidden="true" style={{ width: 14, height: 2, background: 'rgb(var(--data))' }}/>
         Daily cost
       </span>
       <span className="flex items-center gap-label-inline">
-        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgb(var(--accent))' }}/>
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgb(var(--data))' }}/>
         Today so far
       </span>
       {bandOn && (
         <span className="flex items-center gap-label-inline">
-          <span aria-hidden="true" style={{ width: 14, borderTop: '1.5px dashed rgb(var(--dim))' }}/>
+          <span aria-hidden="true" style={{ width: 14, borderTop: '1px dashed rgb(var(--faint))' }}/>
           7-day average
         </span>
       )}
@@ -941,7 +941,7 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
     <div className={tooltip.className} style={tooltip.style}>
       <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
       <div className={tooltip.rowClassName}>
-        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--data))' }}/>
         {row.isPartial ? 'Today so far' : 'Daily cost'} {row.actual === null ? 'no data' : formatUsdC(row.actual)}
       </div>
       {hasBand && (
@@ -1155,7 +1155,7 @@ function TokenStackedColumn({ points, order }) {
           tickLine={false}
           width={48}
         />
-        <Tooltip content={<TokenTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
+        <Tooltip content={<TokenTooltipC/>} cursor={{ fill: 'rgb(var(--ink) / 0.06)' }} isAnimationActive={false}/>
         {order.map((cat) => (
           <Bar
             key={cat.key}
@@ -1935,8 +1935,8 @@ function SessionHistogramDrawerC({ bins, total, onClose }) {
 function SessionHistogramLegendC() {
   const outlierFloor = SESSION_COST_BINS.find((b) => b.isOutlier)?.min;
   const items = [
-    { key: 'typical', color: 'rgb(var(--accent) / 0.85)', label: 'Sessions per cost band' },
-    { key: 'outlier', color: 'rgb(var(--warn) / 0.85)', label: `Outlier bands — $${outlierFloor} or more per session` },
+    { key: 'typical', color: 'rgb(var(--data))', label: 'Sessions per cost band' },
+    { key: 'outlier', color: 'rgb(var(--warn) / 0.85)', tone: 'warn', label: `Outlier bands — $${outlierFloor} or more per session` },
   ];
 
   return (
@@ -1944,6 +1944,7 @@ function SessionHistogramLegendC() {
       {items.map((item) => (
         <li key={item.key} className="flex items-center gap-label-inline">
           <span className="inline-block w-3 h-3 rounded-sm" style={{ background: item.color }} aria-hidden="true"/>
+          {item.tone && <span className={`text-${item.tone}`} aria-hidden="true">{window.UI.TONE_GLYPH[item.tone]}</span>}
           {item.label}
         </li>
       ))}
@@ -1975,10 +1976,10 @@ function SessionDistributionChart({ bins }) {
           tickLine={false}
           width={36}
         />
-        <Tooltip content={<SessionBinTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
+        <Tooltip content={<SessionBinTooltipC/>} cursor={{ fill: 'rgb(var(--ink) / 0.06)' }} isAnimationActive={false}/>
         <Bar dataKey="count" isAnimationActive={false}>
           {bins.map((b, i) => (
-            <Cell key={i} fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--accent) / 0.85)'}/>
+            <Cell key={i} fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--data))'}/>
           ))}
         </Bar>
       </BarChart>
@@ -2090,9 +2091,9 @@ const PARSE_ERROR_THRESHOLD_LABEL = `Threshold (${PARSE_ERROR_CRIT_THRESHOLD * 1
 
 // Legend ↔ chart share these → the swatches cannot drift from the bars and line
 const PARSE_ERROR_COLOR = {
-  bar: 'rgb(var(--accent) / 0.65)',
-  critBar: 'rgb(var(--crit) / 0.85)',
-  threshold: 'rgb(var(--crit))', // crit tone → the line and the days that cross it read as one alarm
+  bar: 'rgb(var(--data))',
+  critBar: 'rgb(var(--crit) / 0.85)', // over the stated threshold → the one mark that takes a tone
+  threshold: 'rgb(var(--faint))', // a reference line, never a series colour
 };
 
 function ParseErrorLegendC({ hasCritDay }) {
@@ -2101,10 +2102,10 @@ function ParseErrorLegendC({ hasCritDay }) {
     <ul className="flex flex-wrap gap-x-block gap-y-list mt-label fs-meta text-dim" aria-label="Log integrity legend">
       <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
       {hasCritDay && (
-        <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
+        <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/><span className="text-crit" aria-hidden="true">{window.UI.TONE_GLYPH.crit}</span>Day over threshold</li>
       )}
       <li className="flex items-center gap-label-inline">
-        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, borderTop: `1px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
         {PARSE_ERROR_THRESHOLD_LABEL}
       </li>
     </ul>
@@ -2132,7 +2133,7 @@ function ParseErrorChart({ rows }) {
           tickLine={false}
           width={36}
         />
-        <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
+        <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--ink) / 0.06)' }} isAnimationActive={false}/>
         <Bar yAxisId="count" dataKey="error_count" isAnimationActive={false}>
           {rows.map((r, i) => (
             <Cell key={i} fill={r.isCrit ? PARSE_ERROR_COLOR.critBar : PARSE_ERROR_COLOR.bar}/>
@@ -2144,7 +2145,7 @@ function ParseErrorChart({ rows }) {
           dataKey="threshold_count"
           name={PARSE_ERROR_THRESHOLD_LABEL}
           stroke={PARSE_ERROR_COLOR.threshold}
-          strokeWidth={1.5}
+          strokeWidth={1}
           strokeDasharray="4 3"
           dot={false}
           isAnimationActive={false}

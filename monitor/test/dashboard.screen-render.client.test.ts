@@ -229,6 +229,24 @@ function renderResultPanel(byResult: Array<{ result: string; count: number }>): 
   return renderScreen(rateMod.React.createElement(rateMod.ResultPanel as Component, { panel })) as RenderedNode;
 }
 
+test("spend and result bars carry the data colour; today's partial day keeps its outline in it", () => {
+  const strip = (mod.buildSpendStrip as (points: unknown) => unknown)(
+    ["2026-09-22", "2026-09-23", "2026-09-24"].map((date, i) => ({ date, cost_usd: 12.5 + i, session_count: 1 })),
+  );
+  const spend = render("SpendStrip", { strip });
+  const results = renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }, { result: "needs_context", count: 1 }]);
+  const tracks = findNodes(spend, (n) => classOf(n).includes("dash-strip-track"));
+  assert.equal(tracks.length, 3);
+  for (const track of tracks) assert.match(classOf(track), /\btext-data\b/, "the bar and the dashed outline inherit --data");
+  assert.equal(findNodes(spend, (n) => classOf(n).includes("dash-strip-partial")).length, 1, "only today is outlined");
+  const fills = findNodes(results, (n) => classOf(n).includes("dash-result-fill"));
+  assert.equal(fills.length, findNodes(results, (n) => classOf(n).includes("dash-result-row")).length, "one bar per result row");
+  for (const fill of fills) assert.match(classOf(fill), /\btext-data\b/, "the row's word names the result, not its bar's colour");
+  for (const node of [...findNodes(spend, () => true), ...findNodes(results, () => true)]) {
+    assert.doesNotMatch(classOf(node), /\btext-(?:info|ok|warn|crit)\b/);
+  }
+});
+
 describe("the week results panel", () => {
   const rowTexts = (tree: RenderedNode) =>
     findNodes(tree, (n) => classOf(n).includes("dash-result-row")).map((row) => collectText(row).replace(/\s+/g, " ").trim());

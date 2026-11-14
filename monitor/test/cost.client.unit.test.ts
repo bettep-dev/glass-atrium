@@ -1720,3 +1720,58 @@ test("a refreshing region dims at the 120ms state timing, and only when motion i
   assert.deepEqual(tokens.filter((t) => /^(?:transition|duration-|animate-)/.test(t)), [], "every motion utility is gated");
   assert.ok(tokens.includes("motion-safe:duration-[120ms]"), "the dim eases at the state timing");
 });
+
+describe("a Cost series mark carries the data colour; a tone marks only a bar over its stated threshold", () => {
+  const getPaints = (tree: RenderedNode | null): string[] => findNodes(tree, () => true).flatMap((n) => {
+    const style = n.props.style as Record<string, unknown> | undefined;
+    const dot = n.props.dot as Record<string, unknown> | undefined;
+    const cursor = n.props.cursor as Record<string, unknown> | undefined;
+    return [n.props.fill, n.props.stroke, style?.background, style?.border, style?.borderTop, dot?.fill, cursor?.fill]
+      .filter((paint) => typeof paint === "string").map(String);
+  });
+  const trendRows = [
+    { date: "01-05", fullDate: "2026-01-05", actual: 12, completeCost: 12, partialCost: null, isPartial: false, rollingMean: 10, upperBand: 14, lowerBand: 6 },
+    { date: "01-06", fullDate: "2026-01-06", actual: 4, completeCost: null, partialCost: 4, isPartial: true, rollingMean: 10, upperBand: 14, lowerBand: 6 },
+  ];
+
+  test("the daily spend line and today's dashed segment take --data, the 7-day normal is a 1px dashed faint reference", async () => {
+    const tree = renderIn(await loadCostRender(), "CostTrendChart", { rows: trendRows, bandOn: true });
+    const lines = findNodes(tree, (n) => n.type === "recharts-Line");
+    const byKey = Object.fromEntries(lines.map((line) => [line.props.dataKey, line.props]));
+    assert.equal(byKey.completeCost.stroke, "rgb(var(--data))");
+    assert.equal(byKey.partialCost.stroke, "rgb(var(--data))");
+    assert.ok(byKey.partialCost.strokeDasharray, "today's partial day stays dashed");
+    assert.deepEqual([byKey.rollingMean.stroke, byKey.rollingMean.strokeWidth, Boolean(byKey.rollingMean.strokeDasharray)], ["rgb(var(--faint))", 1, true]);
+    assert.deepEqual((byKey.completeCost.activeDot as Record<string, unknown>).fill, "rgb(var(--ink))", "the hovered day takes ink");
+    assert.deepEqual(getPaints(tree).filter((paint) => /--(?:accent|info)\b/.test(paint)), [], "the accent paints no chart mark");
+  });
+
+  test("the session histogram paints its bands --data and only the outlier bands, over their stated floor, warn", async () => {
+    const mod = await loadCostRender();
+    const bins = [{ label: "$0–1", count: 9, isOutlier: false }, { label: "$50+", count: 1, isOutlier: true }];
+    const chart = renderIn(mod, "SessionDistributionChart", { bins });
+    const cells = findNodes(chart, (n) => n.type === "recharts-Cell").map((n) => n.props.fill);
+    assert.equal(cells[0], "rgb(var(--data))");
+    assert.match(String(cells[1]), /--warn/);
+    const legend = renderIn(mod, "SessionHistogramLegendC", {});
+    const [outlierKey] = findNodes(legend, (n) => n.type === "li" && /Outlier/.test(collectText(n)));
+    assert.ok(findNodes(outlierKey, (n) => /\btext-warn\b/.test(String(n.props.className ?? "")) && collectText(n).trim() === "\u26a0").length === 1,
+      "the warn mark is keyed by its glyph beside the words");
+    assert.deepEqual([...getPaints(chart), ...getPaints(legend)].filter((paint) => /--(?:accent|info)\b/.test(paint)), []);
+  });
+
+  test("log integrity: readable-day bars take --data, the threshold is a faint reference, crit marks only a day over it", async () => {
+    const mod = await loadCostRender();
+    const rows = [{ date: "01-05", error_count: 2, threshold_count: 5, isCrit: false }, { date: "01-06", error_count: 9, threshold_count: 5, isCrit: true }];
+    const chart = renderIn(mod, "ParseErrorChart", { rows });
+    assert.deepEqual(findNodes(chart, (n) => n.type === "recharts-Cell").map((n) => /--crit/.test(String(n.props.fill)) ? "crit" : n.props.fill),
+      ["rgb(var(--data))", "crit"]);
+    const [threshold] = findNodes(chart, (n) => n.type === "recharts-Line");
+    assert.deepEqual([threshold.props.stroke, threshold.props.strokeWidth], ["rgb(var(--faint))", 1]);
+    const legend = renderIn(mod, "ParseErrorLegendC", { hasCritDay: true });
+    const [critKey] = findNodes(legend, (n) => n.type === "li" && /over threshold/.test(collectText(n)));
+    assert.ok(findNodes(critKey, (n) => /\btext-crit\b/.test(String(n.props.className ?? "")) && collectText(n).trim() === "\u2715").length === 1,
+      "the crit mark is keyed by its glyph beside the words");
+    assert.deepEqual([...getPaints(chart), ...getPaints(legend)].filter((paint) => /--(?:accent|info)\b/.test(paint)), []);
+  });
+});

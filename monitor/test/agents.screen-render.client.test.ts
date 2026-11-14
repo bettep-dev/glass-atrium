@@ -1584,22 +1584,22 @@ function getPerformanceProps(trend: number[] | null, trendDates: string[]): Reco
   };
 }
 
-describe("the drawer trend chart takes its tone from the status and the failed share, with no rate band of its own", () => {
+describe("the drawer trend chart paints runs in the data colour, whatever the status or failed share", () => {
   const rows = [
-    { name: "50% at n=4 stays neutral: a low sample carries no tone, whatever its rate", agent: { runs: 4, success_pct: 50 }, tone: "neutral" },
-    { name: "98% at n=50 stays neutral: under the crit step", agent: { runs: 50, success_pct: 98 }, tone: "neutral" },
-    { name: "92% at n=50 is crit: over the crit step", agent: { runs: 50, success_pct: 92 }, tone: "crit" },
-    { name: "an errored agent is crit whatever its rate", agent: { status: "error", runs: 50, success_pct: 98 }, tone: "crit" },
+    { name: "a low sample", agent: { runs: 4, success_pct: 50 } },
+    { name: "a rate under the crit step", agent: { runs: 50, success_pct: 98 } },
+    { name: "a rate over the crit step", agent: { runs: 50, success_pct: 92 } },
+    { name: "an errored agent", agent: { status: "error", runs: 50, success_pct: 98 } },
   ];
   for (const row of rows) {
-    test(row.name, async () => {
+    test(`${row.name}: the chart carries no tone, so a severity never becomes the series colour`, async () => {
       const tree = await renderComponent("AgentPerformanceSection", {
         ...getPerformanceProps([3, 5, 2], ["2026-09-22", "2026-09-23", "2026-09-24"]),
         agent: { ...PERFORMANCE_AGENT, ...row.agent },
       });
       const charts = findAtoms(tree, "TrendChart");
       assert.equal(charts.length, 1, "one trend chart");
-      assert.equal(charts[0].props.tone, row.tone);
+      assert.equal(charts[0].props.tone, undefined);
     });
   }
 });
@@ -1681,6 +1681,43 @@ test("a drawer duration with nothing behind it reads None when its row was read 
   const performance = await renderComponent("AgentPerformanceSection", getPerformanceProps(null, []));
   const [p95] = metricValueOf(performance, "P95");
   assert.deepEqual(absentKinds(p95 ?? null), ["not-loaded"], "the drawer P95 before the latency read says Not loaded");
+});
+
+// a chart mark that resolves to a tone or the accent paints severity or emphasis as a series colour
+const getToneOrAccentPaints = (tree: RenderedNode | string | null): string[] =>
+  findNodes(tree, () => true).flatMap((n) => {
+    const paints = [n.props.fill, n.props.stroke, (n.props.style as Record<string, unknown> | undefined)?.background]
+      .map(String).filter((paint) => /--(?:accent|info|crit|warn|ok)\b/.test(paint));
+    const classes = String(n.props.className ?? "").split(/\s+/).filter((name) => /^bg-(?:accent|info|crit|warn|ok)\b/.test(name));
+    return [...paints, ...classes];
+  });
+
+test("review-flag chart: the reason bars carry the data colour and the rate is a straight ink line over a card-ground under-stroke", async () => {
+  const tree = await renderComponent("QualityHealthTimelineChart", { rows: REVIEW_FLAG_ROWS });
+  const bars = findAtoms(tree, "Bar");
+  assert.equal(bars.length, 2, "both flag reasons stack");
+  for (const bar of bars) assert.equal(bar.props.fill, "rgb(var(--data))", `${bar.props.dataKey} bar`);
+  const rateLines = findAtoms(tree, "Line").filter((line) => line.props.dataKey === "review_flag_ratio_pct");
+  assert.deepEqual(rateLines.map((line) => [line.props.stroke, line.props.strokeWidth]),
+    [["rgb(var(--elev))", 3.5], ["rgb(var(--ink))", 1.5]], "the under-stroke is drawn first, the ink line over it");
+  for (const line of rateLines) {
+    assert.equal(line.props.type, "linear", "no smoothing");
+    assert.equal(line.props.dot, false, "no dots");
+    assert.equal(line.props.strokeDasharray, undefined, "a solid series line");
+  }
+  assert.deepEqual(getToneOrAccentPaints(tree), [], "no mark of a quantity takes a tone or the accent");
+});
+
+test("latency layers and failure-category bars carry the data colour, never a tone", async () => {
+  const latency = await renderComponent("LatencyBars", { agents: [{ agent_name: "glass-atrium-dev-react", p50_ms: 1000, p95_ms: 3000, p99_ms: 5000 }] });
+  const breakage = await renderComponent("MergedBreakageBody", {
+    merged: { total: 5, failTotal: 4, blockedTotal: 1, reasons: [{ category: "timeout", count: 3, failCount: 3, blockedCount: 0 }, { category: "tool_error", count: 2, failCount: 1, blockedCount: 1 }] },
+    days: 30,
+  });
+  const dataMarks = (tree: RenderedNode | string | null) => findNodes(tree, (n) => /\bbg-data\b/.test(String(n.props.className ?? ""))).length;
+  assert.equal(dataMarks(latency), 6, "three latency layers and their three keys");
+  assert.equal(dataMarks(breakage), 2, "one bar per failure category");
+  assert.deepEqual([...getToneOrAccentPaints(latency), ...getToneOrAccentPaints(breakage)], []);
 });
 
 test("review-flag chart is a focusable image named by the flagged-rate range, latest, low and high", async () => {
@@ -2412,7 +2449,7 @@ test("an empty failure-cause window reads as the shared empty state with no tone
   assert.deepEqual(getTintedNodes(empty), [], "an empty state carries no tone border");
 });
 
-test("the day tooltip floats on the overlay surface and keys the flagged rate by its dashed swatch beside neutral text", async () => {
+test("the day tooltip floats on the overlay surface and keys the flagged rate by its line swatch beside neutral text", async () => {
   const row = {
     fullDate: "2026-09-24", total_count: 20, review_flagged_count: 3, empty_metric_count: 5, polar_mismatch_count: 4,
     review_flag_ratio_pct: 15, empty_metric_ratio_pct: 25,
@@ -2425,9 +2462,10 @@ test("the day tooltip floats on the overlay surface and keys the flagged rate by
   assert.equal(rootStyle.borderRadius, "var(--radius-tile)", "the tile radius token");
   const [flagged] = findNodes(tree, (n) => n.type === "div" && /^Flagged rate/.test(collectText(n).trim()));
   assert.doesNotMatch(String((flagged?.props.style as Record<string, unknown> | undefined)?.color ?? ""), /--crit/, "the rate words stay neutral");
-  const swatches = findNodes(flagged, (n) => n.type === "span" && /--crit/.test(JSON.stringify(n.props.style ?? {})));
-  assert.equal(swatches.length, 1, "the crit tone rides the series swatch");
-  assert.match(JSON.stringify(swatches[0]?.props.style), /dashed/, "the swatch draws the dashed series line");
+  const swatches = findNodes(flagged, (n) => n.type === "span" && /--ink/.test(JSON.stringify(n.props.style ?? {})));
+  assert.equal(swatches.length, 1, "the ink of the rate line rides the series swatch");
+  assert.match(JSON.stringify(swatches[0]?.props.style), /solid/, "the swatch draws the solid series line");
+  assert.deepEqual(getToneOrAccentPaints(tree), [], "the reason keys show the bar's data colour, never a tone or the accent");
 });
 
 test("the review-flag chart's tooltip follows the pointer without motion, like its series", async () => {

@@ -1633,7 +1633,6 @@ function SparseTrendW({ label, series, dates, stat }) {
 				<TrendChart
 					label={label}
 					kind="bars"
-					tone="info"
 					points={series.map((value, i) => ({ label: dates[i] || "", value }))}
 					formatValue={formatCountW}
 					yScale

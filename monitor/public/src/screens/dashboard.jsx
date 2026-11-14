@@ -481,7 +481,7 @@ function SpendStrip({ strip }) {
         {strip.bars.map((bar) => (
           <li key={bar.date} className="flex flex-col items-center gap-1 min-w-0">
             <span className="fs-meta tabular-nums whitespace-nowrap">{formatUsdCompact(bar.cost)}</span>
-            <div className="dash-strip-track w-full flex items-end text-info" aria-hidden="true">
+            <div className="dash-strip-track w-full flex items-end text-data" aria-hidden="true">
               <div className={`w-full ${bar.isPartial ? 'dash-strip-partial' : 'dash-strip-bar'}`}
                 style={{ height: `${Math.max(2, (bar.cost / max) * 100)}%` }}/>
             </div>
@@ -493,12 +493,13 @@ function SpendStrip({ strip }) {
   );
 }
 
+// a result's bar is a quantity → the data colour; the label word names the result
 const RESULT_ROW_META = {
-  done: { label: 'Done', tone: 'ok' },
-  done_with_concerns: { label: 'Done with caveats', tone: 'warn' },
-  fail: { label: 'Failed', tone: 'crit' },
-  blocked: { label: 'Blocked', tone: 'crit' },
-  needs_context: { label: 'Needs info', tone: 'info' },
+  done: { label: 'Done' },
+  done_with_concerns: { label: 'Done with caveats' },
+  fail: { label: 'Failed' },
+  blocked: { label: 'Blocked' },
+  needs_context: { label: 'Needs info' },
 };
 
 function ResultPanel({ panel }) {
@@ -510,12 +511,12 @@ function ResultPanel({ panel }) {
       </p>
       <ul className="flex flex-col gap-1.5">
         {panel.rows.map((row) => {
-          const meta = RESULT_ROW_META[row.result] ?? { label: row.result, tone: 'info' };
+          const meta = RESULT_ROW_META[row.result] ?? { label: row.result };
           return (
             <li key={row.result} className="dash-result-row fs-body">
               <span>{meta.label}</span>
               <div aria-hidden="true">
-                <div className={`dash-result-fill text-${meta.tone}`} style={{ width: `${(row.count / panel.writerTotal) * 100}%` }}/>
+                <div className="dash-result-fill text-data" style={{ width: `${(row.count / panel.writerTotal) * 100}%` }}/>
               </div>
               <span className="tabular-nums text-right">{formatInt(row.count)}</span>
             </li>

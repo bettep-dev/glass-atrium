@@ -944,7 +944,6 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 				visual: (
 					<TrendChart
 						label="Share of scored cycles rejected, per day"
-						tone="warn"
 						kind="bars"
 						h={112}
 						yScale
