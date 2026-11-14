@@ -42,6 +42,8 @@ const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "hasRegionRows"
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 // Count text rides the shipped formatter, so a KPI sub reads as it does on the page.
 UI_SCALARS.formatInt = REAL_UI.formatInt;
+UI_SCALARS.formatPct = REAL_UI.formatPct;
+UI_SCALARS.formatDecimal = REAL_UI.formatDecimal;
 // Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
 for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
 // The status band rides the shipped stat row → labels, values and context lines render as on the page.
@@ -1086,6 +1088,28 @@ test("the drawer's rework count sums revisions across runs rather than repeating
   assert.match(text, /reworks\s*7 in 46 runs/, text);
 });
 
+test("the drawer's average rework and flag share read at most one decimal", async () => {
+  const revisionRows = [
+    { agent: "glass-atrium-dev-react", revision_bucket: "0", occurrence_count: 40 },
+    { agent: "glass-atrium-dev-react", revision_bucket: "1", occurrence_count: 5 },
+    { agent: "glass-atrium-dev-react", revision_bucket: "2", occurrence_count: 1 },
+  ];
+  const mod = await loadAgentsScreen({ formatInt: (n: number) => String(n) });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(
+    React.createElement(mod.AgentQualitySignalsSection as Component, {
+      drawerAgent: "glass-atrium-dev-react",
+      revisionState: { status: "ready", data: { rows: revisionRows }, error: null },
+      reviewByAgentState: { status: "ready", data: { rows: [{ agent: "glass-atrium-dev-react", review_flagged_count: 10, total_count: 40 }] }, error: null },
+      onRetry: () => undefined,
+    }),
+  );
+  const text = collectText(tree);
+  assert.match(text, /\(avg 0\.2\)/, `7 reworks over 46 runs is 0.152 → one decimal: ${text}`);
+  assert.match(text, /25%/, `a 10-of-40 flag share drops the .0: ${text}`);
+  assert.doesNotMatch(text, /25\.0%/, text);
+});
+
 test("the health verdict pill labels its index instead of trailing a bare number", async () => {
   const tree = await renderComponent("QualityHealthVerdictPill", {
     entry: { healthIndex: 0.9, dominantDriver: { kind: "flag", value: 0.22 } },
@@ -1405,14 +1429,14 @@ test("the instrumentation head names the first loaded source's lead figure withi
   const rows = [
     { name: "unfinished runs warn", l: lifecycle(20, 8), r: review, tone: "warn", sub: "12 runs with no record" },
     { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no record" },
-    { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14.0% flagged" },
+    { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14% flagged" },
     { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus sound" },
     { name: "activations never lengthen a head that already has a lead", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no record" },
     { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "2.5% activation false-positive" },
     { name: "a window with no activations states that, never a rate over an empty denominator", l: loading, r: loading, a: ACTIVATIONS_EMPTY, tone: "neutral", sub: "no activations" },
-    { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14.0% flagged" },
+    { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14% flagged" },
     { name: "widest: a 5-digit orphan total", l: lifecycle(99_999, 0), r: review, a: ACTIVATIONS_READY, tone: "warn", sub: "99,999 runs with no record" },
-    { name: "widest: a full false-positive share leads alone", l: loading, r: loading, a: ACTIVATIONS_ALL_FALSE, tone: "neutral", sub: "100.0% activation false-positive" },
+    { name: "widest: a full false-positive share leads alone", l: loading, r: loading, a: ACTIVATIONS_ALL_FALSE, tone: "neutral", sub: "100% activation false-positive" },
   ];
   for (const row of rows) {
     const got = verdict(row.l, row.r, row.a);
@@ -1432,7 +1456,7 @@ test("the Instrumentation fold body carries every clause the head leaves out, an
   const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] }, error: null };
   const rows = [
     { name: "read", l: idle, r: idle, a: ACTIVATIONS_READY, line: /activation false-positive 2\.5% of 1,200 activations · last 30d/ },
-    { name: "every source read", l: lifecycle, r: review, a: ACTIVATIONS_READY, line: /^1,873 runs with no completion record · 14\.0% flagged · activation false-positive 2\.5% of 1,200 activations · last 30d$/ },
+    { name: "every source read", l: lifecycle, r: review, a: ACTIVATIONS_READY, line: /^1,873 runs with no completion record · 14% flagged · activation false-positive 2\.5% of 1,200 activations · last 30d$/ },
     { name: "read with no activations", l: idle, r: idle, a: ACTIVATIONS_EMPTY, line: /no activations · last 30d/ },
     { name: "failed", l: idle, r: idle, a: ACTIVATIONS_FAILED, line: /Activation rate unavailable/ },
     { name: "not yet read", l: idle, r: idle, a: idle, line: /Activation rate unavailable/ },
@@ -1664,7 +1688,7 @@ test("review-flag chart is a focusable image named by the flagged-rate range, la
   const [image] = findNodes(tree, (n) => n.props.role === "img");
   assert.equal(image?.props.tabIndex, 0);
   assert.equal(image?.props["aria-label"],
-    "Daily flagged rate, 2 days from 2026-09-23 to 2026-09-24: latest 12.5%, low 5.0%, high 12.5%");
+    "Daily flagged rate, 2 days from 2026-09-23 to 2026-09-24: latest 12.5%, low 5%, high 12.5%");
 });
 
 test("a drawer metric sits flat on its section rather than as a card inside a card", async () => {
@@ -1684,9 +1708,9 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
   const ready = { status: "ready", data: [], error: null };
   const agents = [{ agent_id: "a", runs: 600, needs_context_count: 2 }, { agent_id: "b", runs: 400, needs_context_count: 1 }];
   const rows = [
-    { name: "none crossed", overCap: 0, tone: null, ratePct: "0.0" },
+    { name: "none crossed", overCap: 0, tone: null, ratePct: "0" },
     { name: "3 of 1,000 stays under the 5% step", overCap: 3, tone: null, ratePct: "0.3" },
-    { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", ratePct: "6.0" },
+    { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", ratePct: "6" },
   ];
   for (const row of rows) {
     const overageByAgent = new Map(Array.from({ length: row.overCap }, (_, i) => [`run-${i}`, { overage_count: 1 }]));
@@ -1741,6 +1765,8 @@ test("the success cell shows the rate alone, its fraction kept in the tooltip", 
   const mod = await loadAgentsScreen();
   const rows = [
     { name: "a measured rate", agent: { success_pct: 97.5, runs: 40, needs_context_count: 0 }, text: "97.5%", title: /^passed 39 ÷ denominator 40 / },
+    { name: "a near-total rate never rounds up to the whole", agent: { success_pct: 99.975, runs: 4000, needs_context_count: 0 }, text: ">99.9%", title: /^passed 3999 ÷ denominator 4000 / },
+    { name: "a whole rate keeps the column's one decimal", agent: { success_pct: 100, runs: 40, needs_context_count: 0 }, text: "100.0%", title: /^passed 40 ÷ denominator 40 / },
     { name: "no outcome to rate", agent: { success_pct: 0, runs: 0, needs_context_count: 0 }, text: "None", title: /success rate undefined/ },
   ];
   for (const row of rows) {
@@ -2042,7 +2068,7 @@ test("the drawer's breakage headline names what it counts and sets the blocked p
     drawerAgent: agent, failureByAgent: new Map([[agent, row]]), failureState: { status: "ready", data: { rows: [] }, error: null },
     detailState: idle, blockedState: idle, days: 30, onRetry: () => undefined,
   });
-  assert.match(collectText(findAtoms(tree, "Badge")[0]), /^8\s+failed or blocked\s+·\s+20\.0\s*%/);
+  assert.match(collectText(findAtoms(tree, "Badge")[0]), /^8\s+failed or blocked\s+·\s+20\s*%/);
   assert.match(collectText(tree), /of which\s+5\s+blocked — a compliant halt, not a defect/);
 });
 
@@ -2058,7 +2084,7 @@ test("with reconstructed rows present, the drawer's writer headline and its all-
 
   assert.doesNotMatch(collectText(findAtoms(tree, "Badge")[0]), /%/, "the writer-basis badge carries no all-records rate");
   assert.match(text, /3\s+reconstructed, left out of this count/, "the headline names what it leaves out");
-  assert.match(text, /All records,\s+3\s+reconstructed included ·\s+20\.0\s*%\s+of outcomes\s*Failed\s*3\s*Blocked\s*5/, "the rate and the Failed/Blocked figures sit under their basis caption");
+  assert.match(text, /All records,\s+3\s+reconstructed included ·\s+20\s*%\s+of outcomes\s*Failed\s*3\s*Blocked\s*5/, "the rate and the Failed/Blocked figures sit under their basis caption");
 });
 
 test("a top concern reads as plain text, without the stray punctuation a cut fragment starts with", async () => {
