@@ -96,7 +96,8 @@ function getArpHardwareAddress(output: string, gateway: string, networkInterface
   return null;
 }
 
-function getNormalizedHardwareAddress(text: string): string | null {
+/** Lower-case, each octet zero-padded; null unless six hex octets. */
+export function getNormalizedHardwareAddress(text: string): string | null {
   const octets = text.toLowerCase().split(":");
   if (octets.length !== 6 || octets.some((octet) => !/^[0-9a-f]{1,2}$/.test(octet))) return null;
   return octets.map((octet) => octet.padStart(2, "0")).join(":");
