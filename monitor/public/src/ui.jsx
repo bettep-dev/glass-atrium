@@ -341,8 +341,10 @@ function getChartXAxisProps(labels) {
 /** Recharts XAxis `tick` renderer — ends anchored by visible order, like the HTML tick row. */
 function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
   const anchor = getChartTickAnchor(index, visibleTicksCount);
-  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead
-  const labelX = anchor === 'middle' ? x : payload.coordinate;
+  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead;
+  // a band axis carries offset = half the band → the edge label sits on the bar's outer edge (Recharts' default 10% gap = CHART_BAR_INSET)
+  const barHalf = (payload.offset ?? 0) * (1 - 2 * CHART_BAR_INSET);
+  const labelX = anchor === 'middle' ? x : payload.coordinate + (anchor === 'start' ? -barHalf : barHalf);
   return <text x={labelX} y={y} dy="0.71em" textAnchor={anchor} style={CHART_AXIS_TICK_STYLE}>
     {payload.value}
   </text>;

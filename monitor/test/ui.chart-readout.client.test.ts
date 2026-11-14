@@ -189,6 +189,20 @@ describe("edge ticks anchor by visible order, so neither end label spills past t
     }
   });
 
+  test("on a bar axis the end labels line up with their bar's outer edge, not its centre", () => {
+    // the Agents review-flags capture: band 68.75px (Recharts offset = half of it), bar inset 10% a side → bar 89–144 around centre 116.5
+    const band = { coordinate: 116.5, offset: 34.375 };
+    const rows = [
+      { name: "first bar: label starts on the bar's left edge", index: 0, x: 89 },
+      { name: "last bar: label ends on the bar's right edge", index: 13, x: 144 },
+      { name: "interior bar: label centred on Recharts' x", index: 6, x: 40 },
+    ];
+    for (const row of rows) {
+      const text = render("ChartAxisTick", { x: 40, y: 8, payload: { value: "11-01", ...band }, index: row.index, visibleTicksCount: 14 });
+      assert.equal(text.props.x, row.x, row.name);
+    }
+  });
+
   test("the shared x-axis gap adds half the widest label to the minimum gap", () => {
     for (const labels of [["09-01", "09-30"], ["2026-09-01", "09-30"], []]) {
       const props = getChartXAxisProps(labels);
