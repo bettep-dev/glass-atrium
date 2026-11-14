@@ -3,10 +3,19 @@
 import pino, { type LoggerOptions } from "pino";
 import type { FastifyBaseLogger } from "fastify";
 
-const LOGGER_OPTIONS: LoggerOptions = {
+import { CSRF_HEADER } from "./remote/session.js";
+
+// device cookie, its CSRF echo and the registration code → bare, request-nested and response-nested shapes
+const SESSION_REDACT_PATHS = ["headers", "req.headers", "res.headers"].flatMap((base) => [
+  `${base}.cookie`,
+  `${base}["set-cookie"]`,
+  `${base}["${CSRF_HEADER}"]`,
+]);
+
+export const LOGGER_OPTIONS: LoggerOptions = {
   // SECURITY: never expose secrets; redact known sensitive keys at the logger layer.
   redact: {
-    paths: ["password", "token", "authorization", "*.password", "*.token"],
+    paths: ["password", "token", "authorization", "*.password", "*.token", ...SESSION_REDACT_PATHS, "body.code", "*.body.code"],
     censor: "[REDACTED]",
   },
   level: process.env.LOG_LEVEL ?? "info",
