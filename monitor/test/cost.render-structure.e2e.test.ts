@@ -617,17 +617,22 @@ describe("hot fixture — today is running over the normal", () => {
     assert.equal(lanePrecedesStats, true, "the lane leads — the spend stats follow it");
   });
 
-  test("the log-integrity threshold line and the days over it draw in one tone", async () => {
+  test("the log-integrity threshold is a faint reference line and only the day over it takes the crit tone", async () => {
     const tones = await ctx.page.evaluate((selector) => {
       const title = Array.from(document.querySelectorAll(selector))
         .find((t) => (t.textContent || "").trim() === "Log integrity");
       const card = title?.closest(".cost-inst");
       const line = card?.querySelector(".recharts-line-curve");
       const bar = card?.querySelector(".recharts-bar-rectangle path");
-      return { line: line ? getComputedStyle(line).stroke : "", bar: bar ? getComputedStyle(bar).fill : "" };
+      const root = getComputedStyle(document.documentElement);
+      return {
+        line: line ? getComputedStyle(line).stroke : "", bar: bar ? getComputedStyle(bar).fill : "",
+        faint: root.getPropertyValue("--faint").trim(), crit: root.getPropertyValue("--crit").trim(),
+      };
     }, CARD_TITLE_SELECTOR);
     assert.ok(tones.line && tones.bar, `both marks render (line ${tones.line} · bar ${tones.bar})`);
-    assert.equal(getToneKey(tones.line), getToneKey(tones.bar));
+    assert.equal(getToneKey(tones.line), getToneKey(tones.faint), "a reference line, never a series or severity colour");
+    assert.equal(getToneKey(tones.bar), getToneKey(tones.crit), "the day over the threshold is the one mark that takes a tone");
   });
 
   test("a fired lane changes nothing about the tier order or the chart count", async () => {
