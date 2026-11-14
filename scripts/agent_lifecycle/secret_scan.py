@@ -10,6 +10,12 @@ the one entry point the hooks cannot reach.
 Patterns are a DELIBERATE MIRROR of `validate-secret-scan.sh` PATTERNS (the SoT),
 the same mirror discipline `detect-secret-file-write.sh` already documents — there
 is no shared lib to import (the hooks are bash). Update both on a pattern change.
+
+SEC-013's precision is deliberately not mirrored: the hook's Write|Edit channel
+classifies each generic-assignment value and adds a quoted-literal generator, while
+this scanner applies the generic pattern bare. It is therefore stricter than the
+hook on reference values (casts, lookups, placeholders) and looser on the quoted
+literals only the added generator reaches — never assume it is the stricter side.
 """
 
 from __future__ import annotations
