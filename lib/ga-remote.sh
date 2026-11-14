@@ -74,6 +74,8 @@ ga_remote_run() {
     tmutil) /usr/bin/tmutil "$@" ;;
     curl) /usr/bin/curl "$@" ;;
     launchctl) /bin/launchctl "$@" ;;
+    lsof) /usr/sbin/lsof "$@" ;;
+    socketfilterfw) /usr/libexec/ApplicationFirewall/socketfilterfw "$@" ;;
     *) return 127 ;;
   esac
 }
@@ -534,10 +536,16 @@ ga_remote_uninstall() {
 
 # Doctor rows, one "<ok|warn|FAIL>|<text>" per line; reads only, never repairs.
 ga_remote_get_doctor_rows() {
-  local dir enabled
+  local dir enabled port listen
   enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
+  port="$(atrium_toml_get "[remote_access]" "port")" || port=""
+  listen="$(_ga_remote_get_listen_names "${port:-${GA_REMOTE_PORT_DEFAULT}}")"
   if [[ "${enabled}" != "true" ]]; then
-    printf 'ok|remote access off — the monitor listens on loopback only\n'
+    if [[ -n "${listen}" ]]; then
+      printf 'FAIL|remote access off but a listener is open on %s — restart the monitor\n' "${listen}"
+    else
+      printf 'ok|remote access off — the monitor listens on loopback only\n'
+    fi
     return 0
   fi
   dir="$(ga_remote_get_key_dir)"
@@ -547,6 +555,59 @@ ga_remote_get_doctor_rows() {
   fi
   _ga_remote_get_key_rows "${dir}"
   _ga_remote_get_leaf_rows "${dir}"
+  _ga_remote_get_network_rows "${dir}" "${listen}"
+  _ga_remote_get_firewall_row
+}
+
+# Addresses listening on the TCP port, space-joined ("*:<port>" = all interfaces); empty when none.
+_ga_remote_get_listen_names() {
+  local out
+  out="$(ga_remote_run lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null)" || out=""
+  printf '%s\n' "${out}" | awk 'NR > 1 && $9 != "" { print $9 }' | sort -u | paste -sd ' ' -
+}
+
+# Leaf names the current Wi-Fi address; the listener is open only on a trusted network, bound to that address.
+_ga_remote_get_network_rows() {
+  local dir="$1" listen="$2" names address identity entry trusted
+  names="$(ga_remote_get_leaf_names 2>/dev/null)" || names=""
+  address="${names#* }"
+  if [[ -n "${names}" ]] && ga_remote_is_leaf_for "${dir}" "${dir}/leaf.pem" "${names% *}" "${address}"; then
+    printf 'ok|remote access certificate names the current Wi-Fi address %s\n' "${address}"
+  else
+    printf "warn|remote access certificate does not name the current Wi-Fi address %s — run 'glass-atrium remote reissue'\n" "${address:-(unreadable)}"
+  fi
+  identity="$(ga_remote_get_network_identity 2>/dev/null)" || identity=""
+  entry="${identity#* }"
+  entry="${entry% *}@${identity##* }"
+  trusted="$(atrium_toml_get "[remote_access]" "trusted_networks")" || trusted=""
+  if [[ -z "${identity}" || ",${trusted//[[:space:]]/}," != *",${entry},"* ]]; then
+    _ga_remote_print_untrusted_row "${listen}"
+  elif [[ "${listen}" == *"*:"* ]]; then
+    printf 'FAIL|remote listener bound to all interfaces (%s) — restart the monitor\n' "${listen}"
+  elif [[ -n "${names}" && "${listen}" == "${address}:"* && "${listen}" != *" "* ]]; then
+    printf 'ok|remote listener bound to the Wi-Fi address only (%s)\n' "${listen}"
+  else
+    printf 'warn|trusted network but the remote listener is not on %s (%s) — check the monitor log\n' "${address:-the Wi-Fi address}" "${listen:-closed}"
+  fi
+}
+
+_ga_remote_print_untrusted_row() {
+  if [[ -n "$1" ]]; then
+    printf 'FAIL|current network not trusted but a remote listener is open on %s — restart the monitor\n' "$1"
+  else
+    printf 'ok|current network not trusted — remote listener closed\n'
+  fi
+}
+
+# Read only: the doctor reports the macOS application firewall and never changes it.
+_ga_remote_get_firewall_row() {
+  local state
+  state="$(ga_remote_run socketfilterfw --getglobalstate 2>/dev/null)" || state=""
+  if [[ "${state}" == *"enabled"* ]]; then
+    printf 'ok|macOS firewall on\n'
+  else
+    printf 'warn|macOS firewall off or unreadable — System Settings → Network → Firewall\n'
+  fi
 }
 
 _ga_remote_get_key_rows() {

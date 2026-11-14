@@ -20,6 +20,8 @@ setup() {
   WIFI_ADDRESS="192.168.0.10"
   HOST_NAME="Test-Mac"
   EXCLUDED='[Excluded]'
+  LISTEN_NAME="192.168.0.10:16146"
+  FIREWALL_OUT='Firewall is enabled. (State = 1)'
   IS_TERMINAL=false
   DRY_RUN=false
   PSQL_RC=0
@@ -41,6 +43,11 @@ setup() {
         [[ "$1" != "isexcluded" ]] || printf '%s    %s\n' "${EXCLUDED}" "$2"
         ;;
       launchctl) printf 'launchctl %s\n' "$*" >>"${CALLS}" ;;
+      lsof)
+        [[ -n "${LISTEN_NAME}" ]] || return 1
+        printf 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 501 owner 23u IPv4 0x1 0t0 TCP %s (LISTEN)\n' "${LISTEN_NAME}"
+        ;;
+      socketfilterfw) printf '%s\n' "${FIREWALL_OUT}" ;;
       *) return 127 ;;
     esac
   }
@@ -244,7 +251,8 @@ doctor_level_for() {
   printf '%s\n' "${rows}" | awk -F'|' -v want="$1" 'index($2, want) { print $1; exit }'
 }
 
-@test "doctor reports off as ok and checks nothing else" {
+@test "doctor reports off as ok when no remote listener is open, and checks nothing else" {
+  LISTEN_NAME=""
   run ga_remote_get_doctor_rows
   [[ "${status}" -eq 0 && "${output}" == "ok|remote access off"* && "${#lines[@]}" -eq 1 ]] || {
     echo "${output}"
@@ -260,11 +268,16 @@ doctor_level_for() {
     'no backup exclusion|included|warn|Time Machine'
     'Mac renamed|renamed|warn|reissue'
     'leaf near expiry|near-expiry|warn|expires within'
+    'Wi-Fi address changed|moved|warn|current Wi-Fi address'
+    'listener on all interfaces|all-interfaces|FAIL|all interfaces'
+    'untrusted network with the listener open|untrusted|FAIL|not trusted'
+    'untrusted network with the listener closed|untrusted-closed|ok|listener closed'
+    'firewall off|firewall-off|warn|firewall'
   )
   local row name breakage level text actual
   for row in "${rows[@]}"; do
     IFS='|' read -r name breakage level text <<<"${row}"
-    turn_on_config ""
+    turn_on_config "192.168.0.1@00:1b:2c:0d:4e:5f"
     create_keys
     case "${breakage}" in
       rm-keys) mv -- "${KEY_DIR}/leaf.pem" "${SANDBOX}/leaf.pem.aside" ;;
@@ -272,6 +285,11 @@ doctor_level_for() {
       included) EXCLUDED='[Included]' ;;
       renamed) HOST_NAME="Other-Mac" ;;
       near-expiry) GA_REMOTE_REISSUE_AHEAD_SECONDS=$((900 * 86400)) ;;
+      moved) WIFI_ADDRESS="192.168.0.77" LISTEN_NAME="192.168.0.77:16146" ;;
+      all-interfaces) LISTEN_NAME="*:16146" ;;
+      untrusted) ARP_OUT='? (192.168.0.1) at 0:aa:bb:cc:dd:ee on en1 ifscope [ethernet]' ;;
+      untrusted-closed) ARP_OUT='? (192.168.0.1) at 0:aa:bb:cc:dd:ee on en1 ifscope [ethernet]' LISTEN_NAME="" ;;
+      firewall-off) FIREWALL_OUT='Firewall is disabled. (State = 0)' ;;
       *) ;;
     esac
     actual="$(doctor_level_for "${text}")"
@@ -288,7 +306,17 @@ doctor_level_for() {
     if ga_guard_path "${KEY_DIR}"; then rm -rf -- "${KEY_DIR:?}"; fi
     printf '[ports]\nmonitor = 16145\n' >"${SANDBOX}/config.toml"
     EXCLUDED='[Excluded]' HOST_NAME="Test-Mac" GA_REMOTE_REISSUE_AHEAD_SECONDS=$((30 * 86400))
+    WIFI_ADDRESS="192.168.0.10" LISTEN_NAME="192.168.0.10:16146" FIREWALL_OUT='Firewall is enabled. (State = 1)'
+    ARP_OUT='? (192.168.0.1) at 0:1b:2c:d:4e:5f on en1 ifscope [ethernet]'
   done
+}
+
+@test "doctor reports off as FAIL while a remote listener is still open on the remote port" {
+  run ga_remote_get_doctor_rows
+  [[ "${status}" -eq 0 && "${output}" == "FAIL|remote access off but a listener is open"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 # --- updater ------------------------------------------------------------------------------------------
