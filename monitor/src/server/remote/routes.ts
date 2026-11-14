@@ -4,6 +4,7 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { deriveResultCode } from "../middleware/audit-log.js";
 import type { DeviceConnections } from "./connections.js";
 import { DEVICE, type DeviceCreation, type DeviceSummary } from "./devices.js";
 import { type RemoteAuditEvent, type RemoteAuditWriter, getAdmittedDevice, getRemoteActor, getSourceAddress } from "./gate.js";
@@ -35,7 +36,7 @@ export interface RemoteRoutesDeps {
   readonly registration: RemoteRegistrationDeps;
   readonly device: RemoteDeviceDeps;
   readonly connections: Pick<DeviceConnections, "close">;
-  readonly audit: Pick<RemoteAuditWriter, "insertEvent">;
+  readonly audit: RemoteAuditWriter;
   readonly now?: () => number;
 }
 
@@ -56,6 +57,9 @@ const REGISTER_ROUTE_OPTIONS = {
   },
 } as const;
 
+// registration → its audit row id, written once the code is spent and closed with the response status
+const REGISTER_AUDIT = new WeakMap<FastifyRequest, bigint>();
+
 // off requests whose handler began → a request refused before it (a body, a failed gate) never closes the listener
 const OFF_REQUESTS = new WeakSet<FastifyRequest>();
 
@@ -73,6 +77,7 @@ export async function registerRemoteDeviceRoutes(app: FastifyInstance, deps: Rem
       const isWithinBudget = perAddress.hit(getSourceAddress(request)) && total.hit("all");
       return isWithinBudget ? undefined : reply.code(429).send({ error: "too_many_requests" });
     },
+    onResponse: (request, reply) => closeRegisterAudit(request, reply, deps),
     handler: (request, reply) => register(request, reply, deps),
   });
   app.get(REMOTE_DEVICE_PATH.SESSION, (request, reply) => readSession(request, reply));
@@ -93,7 +98,8 @@ async function register(request: FastifyRequest<{ Body: RegisterBody }>, reply: 
     recordEvent(request, deps, { actor: anonymous, actionKind: "remote.registration_failure", result: "blocked" });
     return reply.code(400).send({ error: "registration_refused" });
   }
-  // the code is spent from here on → every outcome below leaves a row
+  // the code is spent from here on → every outcome below leaves a row, the first before any device exists
+  if (!(await writeRegisterAudit(request, deps, anonymous))) return reply.code(503).send({ error: "audit_unavailable" });
   const created = await deps.registration.createDevice(label).catch((error: unknown) => {
     recordEvent(request, deps, { actor: anonymous, actionKind: "remote.registration_failure", result: "error" });
     throw error;
@@ -115,6 +121,27 @@ function issueDevice(request: FastifyRequest, reply: FastifyReply, input: { deps
   });
   reply.setCookie(DEVICE_COOKIE.NAME, input.created.token, DEVICE_COOKIE_OPTIONS);
   return reply.code(201).send({ device: { id: String(device.id), label: device.label } });
+}
+
+async function writeRegisterAudit(request: FastifyRequest, deps: RemoteRoutesDeps, actor: string): Promise<boolean> {
+  try {
+    REGISTER_AUDIT.set(request, await deps.audit.insertIntent({ actor, method: request.method, route: REMOTE_DEVICE_PATH.REGISTER }));
+    return true;
+  } catch (error) {
+    request.log.error({ err: error }, "remote registration refused: audit row not written before the device");
+    return false;
+  }
+}
+
+// a thrown createDevice reaches here as a 500 → the row reads error, never success
+async function closeRegisterAudit(request: FastifyRequest, reply: FastifyReply, deps: RemoteRoutesDeps): Promise<void> {
+  const auditId = REGISTER_AUDIT.get(request);
+  if (auditId === undefined) return;
+  try {
+    await deps.audit.setResult(auditId, deriveResultCode(reply.statusCode));
+  } catch (error) {
+    request.log.warn({ err: error, auditId: String(auditId) }, "remote registration audit result not recorded");
+  }
 }
 
 async function readSession(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {

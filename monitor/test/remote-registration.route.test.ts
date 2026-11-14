@@ -36,7 +36,10 @@ const now = () => clock;
 let codes = new RegistrationCodes({ now });
 let db: Prisma.TransactionClient = getPrisma();
 let isStoreDown = false;
+let isAuditDown = false;
 const events: RemoteAuditEvent[] = [];
+// intent rows, their results and device inserts, in call order
+const timeline: string[] = [];
 let app: FastifyInstance;
 let tlsDir = "";
 
@@ -56,8 +59,14 @@ before(async () => {
       preAuthRoutes: REMOTE_PRE_AUTH_ROUTES,
       connections: new DeviceConnections(),
       audit: {
-        insertIntent: async () => 1n,
-        setResult: async () => undefined,
+        insertIntent: async ({ route }) => {
+          if (isAuditDown) throw new Error("audit store unavailable");
+          timeline.push(`intent ${route}`);
+          return 7n;
+        },
+        setResult: async (id, result) => {
+          timeline.push(`result ${id} ${result}`);
+        },
         insertEvent: async (event) => {
           events.push(event);
         },
@@ -66,7 +75,10 @@ before(async () => {
     },
     registration: {
       codes: { consume: (entry) => codes.consume(entry) },
-      createDevice: (label) => (isStoreDown ? Promise.reject(new Error("device store unavailable")) : createDevice(db, label)),
+      createDevice: (label) => {
+        timeline.push("createDevice");
+        return isStoreDown ? Promise.reject(new Error("device store unavailable")) : createDevice(db, label);
+      },
     },
     device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
   });
@@ -78,7 +90,9 @@ beforeEach(() => {
   clock += 60 * 60_000;
   codes = new RegistrationCodes({ now });
   events.length = 0;
+  timeline.length = 0;
   isStoreDown = false;
+  isAuditDown = false;
 });
 
 after(async () => {
@@ -157,6 +171,25 @@ describe("an accepted code", () => {
     const response = await postRegistration({ code: codes.open(), label: LABEL });
     assert.deepEqual([response.statusCode, response.headers["set-cookie"]], [500, undefined]);
     assert.deepEqual(getEventRows(), [["remote.registration_failure", "error", `remote:-@${PHONE}`]]);
+  });
+});
+
+describe("the registration audit row", () => {
+  test("is written before the device is created and closed with the outcome after it", async () => {
+    await runRolledBack(async () => {
+      const response = await postRegistration({ code: codes.open(), label: LABEL });
+      assert.equal(response.statusCode, 201, response.body);
+      assert.deepEqual(timeline, ["intent /api/remote/register", "createDevice", "result 7 success"]);
+    });
+  });
+
+  test("that cannot be written answers 503 and creates no device or cookie", async () => {
+    isAuditDown = true;
+    await runRolledBack(async () => {
+      const response = await postRegistration({ code: codes.open(), label: LABEL });
+      assert.deepEqual([response.statusCode, JSON.parse(response.body), response.headers["set-cookie"]], [503, { error: "audit_unavailable" }, undefined]);
+      assert.deepEqual([timeline, await db.remoteDevice.count()], [[], 0]);
+    });
   });
 });
 

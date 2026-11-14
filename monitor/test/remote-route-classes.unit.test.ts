@@ -66,7 +66,7 @@ async function collectLiveRoutes(): Promise<Set<string>> {
       registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
       device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
       connections: new DeviceConnections(),
-      audit: { insertEvent: async () => undefined },
+      audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
     });
     await app.ready();
   } finally {
