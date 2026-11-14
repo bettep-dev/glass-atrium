@@ -2847,7 +2847,6 @@ describe("the sheet's letterhead and record", () => {
     { name: "the viewer's previous image", tree: () => renderViewer(), label: "Previous image", glyph: "chevron-left", title: "Previous image (←)" },
     { name: "the viewer's next image", tree: () => renderViewer(), label: "Next image", glyph: "chevron-right", title: "Next image (→)" },
     { name: "the viewer's close", tree: () => renderViewer(), label: "Close", glyph: "x", title: "Close (Esc)" },
-    { name: "a failed upload's retry", tree: () => render("ImageFailureLineQ", { text: "shot-3.png could not be uploaded.", retryId: "box-retry", onRetry: () => undefined }), label: "Try again", glyph: "refresh", title: "Try again" },
   ];
   for (const row of iconControls) {
     test(`${row.name} is a ghost icon button: one glyph, no text, named for its act, its tooltip the name and its key`, () => {
@@ -2857,6 +2856,14 @@ describe("the sheet's letterhead and record", () => {
       assert.deepEqual([classes.includes("ghost") && classes.includes("icon"), collectText(button as RenderedNode).trim(), glyphs, button?.props.title], [true, "", [row.glyph], row.title]);
     });
   }
+
+  // spec §9.8 / §12.5: re-sending a file is a re-send → it keeps its word, the quiet tier, never a bare glyph
+  test("a failed upload's Try again is a quiet word button: its word on its face and no glyph", () => {
+    const tree = render("ImageFailureLineQ", { text: "shot-3.png could not be uploaded.", retryId: "box-retry", onRetry: () => undefined });
+    const [button] = findNodes(tree, (node) => node.type === "button");
+    const classes = String(button?.props.className ?? "").split(" ");
+    assert.deepEqual([classes.includes("ghost"), classes.includes("icon"), collectText(button as RenderedNode).trim(), findNodes(button as RenderedNode, (node) => node.props?.atom === "Icon").length], [true, false, "Try again", 0]);
+  });
 
   // the session's facts ride its name; the id or the account shows only while it tells two loaded sessions apart
   const twin = buildSession({ id: "b7c6d5e4-0000-4000-8000-000000000001" });

@@ -2084,12 +2084,12 @@ function ComposerNoteQ({ error, info = null, rest, tray = null, fieldId = "" }) 
 	return <p className="fs-meta">{rest}</p>;
 }
 
+// re-sending a file is a re-send → it keeps its word (spec §12.5), the quiet tier
 function ImageFailureLineQ({ text, retryId, onRetry }) {
-	const { Icon } = window.UI;
 	return (
 		<span className="queue-note-failure">
 			<ToneLineQ tone="crit" role="alert" isTextToned>{text}</ToneLineQ>
-			<button id={retryId} type="button" className="btn ghost sm icon" aria-label="Try again" title="Try again" onClick={onRetry}><Icon name="refresh" size={16} /></button>
+			<button id={retryId} type="button" className="btn ghost sm" onClick={onRetry}>Try again</button>
 		</span>
 	);
 }

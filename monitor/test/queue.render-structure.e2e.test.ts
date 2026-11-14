@@ -1749,7 +1749,7 @@ describe("queue page on the mockup fixtures", () => {
       const hasListText = await page.evaluate(() => [...document.querySelectorAll("button")].some((button) => /\bList\b/.test(button.textContent ?? "")));
 
       const byName = new Map([...atRest, ...onSheet, ...onFailure, ...inViewer].map((look) => [look.name, look]));
-      assert.deepEqual([...byName.keys()].sort(), ["Add images", "Back to the list", "Close", "Keyboard shortcuts", "Next image", "Next item", "Previous image", "Previous item", "Try again"]);
+      assert.deepEqual([...byName.keys()].sort(), ["Add images", "Back to the list", "Close", "Keyboard shortcuts", "Next image", "Next item", "Previous image", "Previous item"]);
       const looks = [...byName.values()];
       const expected = looks.map((look) => ({
         ...look, size: [32, 32], text: "", isEdgeless: true, fill: "rgba(0, 0, 0, 0)", glyph: look.isDisabled ? tokens.faint : tokens.dim, isDrawn: true,
@@ -1938,21 +1938,25 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(facts, { isShrunk: true, isAtEnd: true });
   });
 
-  // spec §9.8 → Upload failed, §12.5: the note takes the wrap; Try again stays a whole 32 px square beside it
-  test("a failed upload's Try again is a 32 px icon button beside a wrapping note", async () => {
+  // spec §9.8 → Upload failed, §12.5: the note takes the wrap; Try again keeps its word, whole on one line beside it, on the quiet edge
+  test("a failed upload's Try again is a quiet word button with its edge, on one line beside a wrapping note", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     harness.refusals.set("upload", { status: 500, body: { error: "server" } });
     try {
       await addOrderFiles(page, [{ ...getImageFile(0), name: "a-screenshot-named-long-enough-to-wrap-the-note.png" }]);
       await page.locator(".queue-thumb-failed").first().waitFor();
+      const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
       const facts = await page.getByRole("button", { name: "Try again" }).evaluate((button) => {
-        const box = button.getBoundingClientRect();
+        const [box, style] = [button.getBoundingClientRect(), getComputedStyle(button)];
         const note = (button.previousElementSibling as HTMLElement).getBoundingClientRect();
         const lineHeight = parseFloat(getComputedStyle(button.previousElementSibling as HTMLElement).lineHeight);
-        return { id: button.id, size: [Math.round(box.width), Math.round(box.height)], isBeside: box.left >= note.right, isNoteWrapped: note.height > lineHeight * 1.5 };
+        return {
+          id: button.id, text: button.textContent?.trim(), isOneLine: box.height < lineHeight * 2, edge: `${style.borderTopWidth} ${style.borderTopColor}`,
+          isBeside: box.left >= note.right, isNoteWrapped: note.height > lineHeight * 1.5,
+        };
       });
-      assert.deepEqual(facts, { id: `${ORDER_BOX_ID}-retry`, size: [32, 32], isBeside: true, isNoteWrapped: true });
+      assert.deepEqual(facts, { id: `${ORDER_BOX_ID}-retry`, text: "Try again", isOneLine: true, edge: `1px ${tokens.controlEdge}`, isBeside: true, isNoteWrapped: true });
     } finally {
       harness.refusals.clear();
       await page.close();
