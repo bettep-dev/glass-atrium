@@ -19,7 +19,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WIKI_SRC = resolve(__dirname, "../public/src/screens/wiki.jsx");
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
-const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
+const uiModule = (await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown>; React: { createElement: (t: unknown, p: unknown) => unknown } };
+const realUi = uiModule.UI;
 
 // window.UI stub — components resolve to transparent host elements; state helpers and constants stay real.
 function uiStub(): unknown {
@@ -103,6 +104,19 @@ test("the notes-per-day chart fills its panel with one dated bar per day and kee
     );
     assert.ok(collectText(tree).includes(`peak ${peak} on ${peakDate}`), "the visible caption carries the peak value and date");
   }
+});
+
+test("a day with no notes draws no bar on the notes-per-day chart, only the shared baseline", async () => {
+  const mod = await loadWikiScreen();
+  const series = [1, 0, 9, 3, 0, 0, 4];
+  const dates = series.map((_, i) => `2026-09-0${i + 1}`);
+  const tree = renderScreen(mod.React.createElement(mod.SparseTrendW as Component, { label: "Notes per day", series, dates }));
+  const [chart] = findNodes(tree, (n) => n.props.atom === "TrendChart");
+
+  const drawn = renderScreen(uiModule.React.createElement(realUi.TrendChart, chart.props));
+
+  assert.equal(findNodes(drawn, (n) => n.type === "rect").length, series.filter((count) => count > 0).length, "one bar per day with notes");
+  assert.equal(findNodes(drawn, (n) => n.props["data-chart-baseline"] !== undefined).length, 1);
 });
 
 test("a series with too few active days states the gap through the shared empty state instead of a chart", async () => {

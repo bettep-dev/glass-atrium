@@ -261,6 +261,38 @@ describe("tick labels thin out before they collide", () => {
   });
 });
 
+describe("a bar plot draws only the days that carry a quantity, over one baseline", () => {
+  const rows: Array<{ name: string; values: Array<number | null> }> = [
+    { name: "zero and missing days among filled ones draw no bar", values: [3, 0, 5, null, 2, 0, 7] },
+    { name: "a range of only zero days draws no bar at all", values: [0, 0, 0, 0] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const points = row.values.map((value, i) => ({ label: `09-${String(i + 1).padStart(2, "0")}`, value }));
+      const tree = render("TrendChart", { label: "Runs", points, kind: "bars" });
+      const slotWidth = 100 / points.length;
+      const barDays = findNodes(tree, (n) => n.type === "rect").map((n) => Math.floor(Number(n.props.x) / slotWidth));
+      const filledDays = row.values.flatMap((value, i) => (value ? [i] : []));
+      assert.deepEqual(barDays, filledDays, "one bar per day with a non-zero value, in its own slot");
+      const baselines = findNodes(tree, (n) => n.props["data-chart-baseline"] !== undefined);
+      assert.equal(baselines.length, 1, "one baseline under the bars");
+      assert.equal(baselines[0].props.stroke, "rgb(var(--line))");
+    });
+  }
+
+  for (const count of [7, 30]) {
+    test(`${count} bars: the first tick label's left edge sits on the first bar's left edge, measured or not`, () => {
+      const points = Array.from({ length: count }, (_, i) => ({ label: `09-${String(i + 1).padStart(2, "0")}`, value: i + 1 }));
+      const tree = render("TrendChart", { label: "Runs", points, kind: "bars" });
+      const firstBarLeft = Number(findNodes(tree, (n) => n.type === "rect")[0].props.x);
+      const [firstTick] = findNodes(tree, (n) => n.props["data-chart-tick"] !== undefined);
+      assert.equal(parseFloat((firstTick.props.style as { left: string }).left), firstBarLeft, "unmeasured row");
+      const measured = getChartTickLayout(points.map((point) => point.label), "bars", 480)[0];
+      assert.equal(measured.left, firstBarLeft, "measured row");
+    });
+  }
+});
+
 describe("the optional y-scale states the plotted extent", () => {
   const rows: Array<{ name: string; values: Array<number | null>; kind: string; top: number; bottom: number }> = [
     { name: "a line runs from its low to its high", values: [80, 90, 85, 95], kind: "line", top: 95, bottom: 80 },

@@ -234,6 +234,8 @@ function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
 const CHART_VIEW_W = 100;
 const CHART_MAX_TICKS = 7;
 const CHART_PLOT_FILL = 0.85;
+// bar inset per side, in slot widths
+const CHART_BAR_INSET = 0.1;
 /** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
 const CHART_TICK_MIN_GAP_PX = 8;
 // ponytail: fixed per-char estimate of a --fs-meta sans tnum day label (Pretendard digit 0.614em × 13px ≈ 7.98px) → measure with canvas if labels grow wide or --fs-meta grows
@@ -274,7 +276,15 @@ function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
   const ticks = widthPx > 0 ? getFittingTicks(labels, kind, widthPx, maxTicks) : getChartTicks(count, maxTicks);
   // a lone survivor of a crowded row is the latest day, which sits on the right edge
   const getAnchor = (order) => (ticks.length === 1 && count > 1 ? 'end' : getChartTickAnchor(order, ticks.length));
-  return ticks.map((index, order) => ({ index, left: getChartX(index, count, kind), anchor: getAnchor(order) }));
+  return ticks.map((index, order) => {
+    const anchor = getAnchor(order);
+    return { index, left: getChartTickLeft(index, count, kind, anchor), anchor };
+  });
+}
+
+// a start-anchored bar label begins on its bar's left edge, not mid-bar → the first date stays under its own bar
+function getChartTickLeft(index, count, kind, anchor) {
+  return kind === 'bars' && anchor === 'start' ? getChartBarLeft(index, count) : getChartX(index, count, kind);
 }
 
 function getFittingTicks(labels, kind, widthPx, maxTicks) {
@@ -294,8 +304,8 @@ function getFittingTicks(labels, kind, widthPx, maxTicks) {
 function isTickRowClear(ticks, labels, kind, widthPx) {
   const boxes = ticks.map((index, order) => {
     const width = labels[index].length * CHART_TICK_CHAR_PX;
-    const x = (getChartX(index, labels.length, kind) / CHART_VIEW_W) * widthPx;
     const anchor = getChartTickAnchor(order, ticks.length);
+    const x = (getChartTickLeft(index, labels.length, kind, anchor) / CHART_VIEW_W) * widthPx;
     const start = anchor === 'start' ? x : anchor === 'end' ? x - width : x - width / 2;
     return { start, end: start + width };
   });
@@ -357,6 +367,11 @@ function getChartX(index, count, kind) {
   return count > 1 ? (index / (count - 1)) * CHART_VIEW_W : CHART_VIEW_W / 2;
 }
 
+function getChartBarLeft(index, count) {
+  const slot = CHART_VIEW_W / count;
+  return index * slot + slot * CHART_BAR_INSET;
+}
+
 // null values lift the pen → a gap, never a line drawn through a missing day
 function getChartLinePath(values, getY) {
   let isPenDown = false;
@@ -376,6 +391,7 @@ function ChartPlot({ points, kind, h, color, activeIndex }) {
   const getY = (value) => h - ((value - min) / range) * h * CHART_PLOT_FILL - 1;
   const crossX = activeIndex === null ? null : getChartX(activeIndex, points.length, kind);
   return <svg width="100%" height={h} viewBox={`0 0 ${CHART_VIEW_W} ${h}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block' }}>
+    {kind === 'bars' && <line data-chart-baseline="" x1={0} x2={CHART_VIEW_W} y1={h - 0.5} y2={h - 0.5} stroke="rgb(var(--line))" strokeWidth="1" vectorEffect="non-scaling-stroke"/>}
     {kind === 'bars'
       ? <ChartBars values={values} h={h} getY={getY} color={color} activeIndex={activeIndex}/>
       : <path d={getChartLinePath(values, getY)} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>}
@@ -383,14 +399,15 @@ function ChartPlot({ points, kind, h, color, activeIndex }) {
   </svg>;
 }
 
+// a zero day draws nothing — a 1px stub would read as a measured sliver; the baseline already marks zero
 function ChartBars({ values, h, getY, color, activeIndex }) {
-  const slot = CHART_VIEW_W / values.length;
-  return values.map((value, i) => {
-    if (value === null) return null;
+  const width = (CHART_VIEW_W / values.length) * (1 - 2 * CHART_BAR_INSET);
+  return <>{values.map((value, i) => {
+    if (value === null || value === 0) return null;
     const y = getY(value);
     const opacity = activeIndex === null || activeIndex === i ? 0.85 : 0.45;
-    return <rect key={i} x={i * slot + slot * 0.1} y={y} width={slot * 0.8} height={h - y} fill={color} opacity={opacity}/>;
-  });
+    return <rect key={i} x={getChartBarLeft(i, values.length)} y={y} width={width} height={h - y} fill={color} opacity={opacity}/>;
+  })}</>;
 }
 
 function ChartTicks({ points, kind, maxTicks }) {
