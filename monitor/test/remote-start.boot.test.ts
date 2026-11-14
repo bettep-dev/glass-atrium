@@ -4,6 +4,9 @@
 
 import test, { after, describe } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import "dotenv/config";
 
@@ -16,7 +19,8 @@ import { DeviceConnections } from "../src/server/remote/connections.js";
 import { createDevice, listActiveDevices, revokeAllDevices } from "../src/server/remote/devices.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 import { getRemoteSettings } from "../src/server/remote/settings.js";
-import { putBootAccessState, startRemoteAccess } from "../src/server/remote/start.js";
+import { isDeviceOff, putBootAccessState, setDeviceOff, startRemoteAccess } from "../src/server/remote/start.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
 
 const MONITOR_PORT = 16145;
 const OFF = getRemoteSettings({ ATRIUM_REMOTE_ACCESS: "off", ATRIUM_REMOTE_PORT: "16146", ATRIUM_REMOTE_TRUSTED_NETWORKS: "" }, MONITOR_PORT);
@@ -96,5 +100,50 @@ describe("booting with remote access on", () => {
         [["Owner iPhone"], [["remote.access_enabled", "success", { trustedNetworkCount: 2 }]]],
       );
     });
+  });
+});
+
+describe("a device's off across a restart", () => {
+  test("boots closed with config on, revoking every device and opening nothing", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "remote-off-"));
+    try {
+      await setDeviceOff(dataDir);
+      await runRolledBack(async (tx) => {
+        await addDevices(tx, ["Owner iPhone"]);
+        const controller = await startRemoteAccess({ settings: ON, connections: new DeviceConnections(), codes: new RegistrationCodes(), log, db: tx, dataDir });
+        assert.deepEqual([controller, await listActiveDevices(tx)], [null, []]);
+      });
+    } finally {
+      deleteDirectory(dataDir);
+    }
+  });
+
+  test("is read only from the exact off state, so the CLI's on, a missing file or other text keep config in charge", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "remote-off-"));
+    const rows = [
+      { name: "a device turned access off", content: "off\n", expected: true },
+      { name: "the CLI turned access on again", content: "on\n", expected: false },
+      { name: "unexpected text", content: "OFF please\n", expected: false },
+      { name: "no state file", content: null, expected: false },
+    ];
+    try {
+      for (const row of rows) {
+        const rowDir = await mkdtemp(path.join(dataDir, "row-"));
+        if (row.content !== null) await writeFile(path.join(rowDir, "access-state"), row.content);
+        assert.equal(await isDeviceOff(rowDir), row.expected, row.name);
+      }
+    } finally {
+      deleteDirectory(dataDir);
+    }
+  });
+
+  test("is written owner-only", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "remote-off-"));
+    try {
+      await setDeviceOff(dataDir);
+      assert.equal((await stat(path.join(dataDir, "access-state"))).mode & 0o777, 0o600);
+    } finally {
+      deleteDirectory(dataDir);
+    }
   });
 });

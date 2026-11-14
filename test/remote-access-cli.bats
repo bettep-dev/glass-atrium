@@ -200,6 +200,18 @@ file_sum() { cksum <"$1"; }
   [[ "${output}" == *"1 active device(s)"* ]] || return 1
 }
 
+@test "on replaces a device's off with on, owner-only, so the next monitor start follows config" {
+  start_monitor_stub
+  stub_route 'GET /api/remote/cli/devices 200 {"devices":[]}'
+  mkdir -p "${KEY_DIR}"
+  printf 'off\n' >"${KEY_DIR}/access-state"
+  IS_TERMINAL=true
+  run ga_remote_main on <<<"on"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(cat "${KEY_DIR}/access-state")" == "on" ]] || return 1
+  [[ "$(ga_remote_get_mode "${KEY_DIR}/access-state")" == "600" ]] || return 1
+}
+
 @test "trust shows the identity and the accident-guard notice, then appends it once" {
   IS_TERMINAL=true
   run ga_remote_main trust <<<"trust"

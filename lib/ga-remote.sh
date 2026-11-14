@@ -388,13 +388,18 @@ ga_remote_cmd_on() {
     || printf "remote: no trusted network yet — run 'glass-atrium remote trust' on the Wi-Fi to open on\n"
 }
 
-# Keys, the default port and enabled = true in config.toml; no restart (the caller owns it).
+# Keys, the on access state, the default port and enabled = true in config.toml; no restart (the caller owns it).
 ga_remote_enable() {
   local dir port
   dir="$(ga_remote_get_key_dir)"
   if ! ga_remote_create_ca "${dir}" || { ga_remote_is_leaf_due "${dir}" && ! ga_remote_issue_leaf "${dir}"; }; then
     printf 'remote: the certificates could not be created — nothing changed\n' >&2
     return 7
+  fi
+  # a device's off outlives monitor restarts until this on replaces it
+  if ! (umask 077 && printf 'on\n' >"${dir}/access-state" && chmod 600 "${dir}/access-state"); then
+    printf 'remote: the access state could not be written — access stays off\n' >&2
+    return 1
   fi
   port="$(atrium_toml_get "[remote_access]" "port")"
   if { [[ -z "${port}" ]] && ! ga_remote_set_config port "${GA_REMOTE_PORT_DEFAULT}"; } \

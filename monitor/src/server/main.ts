@@ -84,7 +84,8 @@ async function main(): Promise<void> {
       devices: { list: () => listActiveDevices(getPrisma()), revoke: (id) => revokeDevice(getPrisma(), id), revokeAll: () => revokeAllDevices(getPrisma()) },
       connections: deviceConnections,
       audit: buildRemoteAuditWriter(),
-      getAccess: () => ({ enabled: remoteSettings.enabled && remoteAccess?.isTurnedOff !== true, trusted: remoteSettings.trusted }),
+      // null after boot → off in config, a device's off that outlived a restart, or a failed start
+      getAccess: () => ({ enabled: remoteAccess !== null && !remoteAccess.isTurnedOff, trusted: remoteSettings.trusted }),
     },
   });
   attachShutdown(app);

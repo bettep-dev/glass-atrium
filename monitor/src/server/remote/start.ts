@@ -1,6 +1,7 @@
 // Remote access wiring: one fresh remote app per open (a closed Fastify instance cannot listen again), driven by the
 // listener controller on a timer. main.ts calls startRemoteAccess once, after the loopback listener is up.
 
+import { readFile, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +39,9 @@ const REMOTE_DATA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 const NETWORK_CHECK_MS = 10_000;
 // differs from the page and CLI actors → a boot-time act is told apart in the audit trail
 const BOOT_ACTOR = "monitor-boot";
+// "off" once a device turned access off → outlives a restart; the CLI's on writes "on"
+const ACCESS_STATE_FILE = "access-state";
+const DEVICE_OFF = "off";
 
 export interface BootAccessDeps {
   readonly revokeAll: () => Promise<bigint[]>;
@@ -82,8 +86,12 @@ export async function startRemoteAccess(input: {
   readonly codes: RegistrationCodes;
   readonly log: FastifyBaseLogger;
   readonly db?: Prisma.TransactionClient;
+  /** leaf and access-state directory; tests pass a temporary one, production the fixed data dir */
+  readonly dataDir?: string;
 }): Promise<RemoteListenerController | null> {
-  const { settings } = input;
+  const dataDir = input.dataDir ?? REMOTE_DATA_DIR;
+  // a device's off holds over config on until the CLI turns access on again
+  const settings = input.settings.enabled && (await isDeviceOff(dataDir)) ? { ...input.settings, enabled: false } : input.settings;
   const getDb = () => input.db ?? getPrisma();
   await putBootAccessState(settings, {
     revokeAll: () => revokeAllDevices(getDb()),
@@ -101,20 +109,33 @@ export async function startRemoteAccess(input: {
       revoke: (id) => revokeDevice(getDb(), id),
       revokeAll: () => revokeAllDevices(getDb()),
       // the opener is built before the controller it serves → bound late, set before any listener opens
-      turnOff: () => void controller.turnOff(),
+      turnOff: () => {
+        void controller.turnOff();
+        setDeviceOff(dataDir).catch((error: unknown) => input.log.error({ err: error }, "remote off not persisted: the listener reopens at the next restart"));
+      },
     },
   });
   const controller: RemoteListenerController = new RemoteListenerController({
     settings,
     readIdentity: () => getNetworkIdentity(),
     getAddress: (networkInterface) => getInterfaceAddress(networkInterfaces(), networkInterface),
-    readTls: () => readRemoteTls(REMOTE_DATA_DIR),
+    readTls: () => readRemoteTls(dataDir),
     open,
     log: input.log,
   });
   await controller.sync();
   setInterval(() => void controller.sync(), NETWORK_CHECK_MS).unref();
   return controller;
+}
+
+/** true only for the exact off a device wrote; a missing or unreadable file leaves config in charge */
+export async function isDeviceOff(dataDir: string): Promise<boolean> {
+  const state = await readFile(path.join(dataDir, ACCESS_STATE_FILE), "utf8").catch(() => "");
+  return state.trim() === DEVICE_OFF;
+}
+
+export async function setDeviceOff(dataDir: string): Promise<void> {
+  await writeFile(path.join(dataDir, ACCESS_STATE_FILE), `${DEVICE_OFF}\n`, { mode: 0o600 });
 }
 
 /**
