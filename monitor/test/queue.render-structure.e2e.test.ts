@@ -23,8 +23,8 @@ import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNotReceivedFixture,
-  getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture, type QueueFixture,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
+  getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -351,15 +351,14 @@ const PARTS: CloseUpState[] = [
     nn: "29", name: "rail-ended-open", closeUp: ".queue-sessions",
     setUp: async (page) => {
       await tickSessions(page, ["gersona"]);
-      await page.locator(".queue-rail-band .disclosure").click();
-      await page.locator('.queue-rail-band .disclosure[aria-expanded="true"]').waitFor();
+      await openEndedBand(page);
     },
   },
   // a row that takes no message (Replaced, under the open Ended band): its box column stands empty, the state mark and name on the others' columns
   {
     nn: "29", name: "rail-not-selectable", closeUp: ".queue-sessions", getFixture: getStoppedFixture,
     setUp: async (page) => {
-      await page.locator(".queue-rail-band .disclosure").click();
+      await openEndedBand(page);
       await page.locator(".queue-rail-row", { hasText: "Replaced" }).waitFor();
     },
   },
@@ -611,8 +610,14 @@ async function tickOrdersTo(page: Page, names: string[]): Promise<void> {
 
 // gersona and the edge fixture's ended portfolio, ticked once the Ended band is open
 async function tickEndedOrdersTo(page: Page): Promise<void> {
-  await page.locator(".queue-rail-band .disclosure").click();
+  await openEndedBand(page);
   await tickOrdersTo(page, ["gersona", "portfolio"]);
+}
+
+// the Ended band opened → its rows on the rail
+async function openEndedBand(page: Page): Promise<void> {
+  await page.locator(".queue-rail-band .disclosure").click();
+  await page.locator('.queue-rail-band .disclosure[aria-expanded="true"]').waitFor();
 }
 
 // a capture taken before the bubbles' images decode shows empty squares
@@ -661,17 +666,6 @@ async function arriveOffView(page: Page, harness: Harness): Promise<void> {
   harness.fixture = getArrivalFixture(getEdgeFixture());
   await page.clock.fastForward(15_000);
   await page.locator(".queue-status-new", { hasText: "1 new below" }).waitFor({ timeout: READY_TIMEOUT_MS });
-}
-
-// the edge state with its first open item from the 100-character name and its second from a session that registered no name
-function getNameColumnFixture(): QueueFixture {
-  const edge = getEdgeFixture();
-  const longSession = edge.items.find((item) => item.session.id === EDGE_SESSION_IDS.longName)?.session;
-  const [first, second] = edge.items.filter((item) => item.status === "open");
-  if (!longSession || !first || !second) throw new Error("the edge fixture lost its long-named session or its two open items");
-  const nameless = { ...second.session, id: "d4e5f6a7-0000-4000-8000-000000000003", name: "atrium-hooks", isNameRegistered: false };
-  const sessions = new Map([[first.id, longSession], [second.id, nameless]]);
-  return { ...edge, items: edge.items.map((item) => ({ ...item, session: sessions.get(item.id) ?? item.session })) };
 }
 
 async function typeReportOrder(page: Page): Promise<void> {
@@ -879,10 +873,11 @@ function getRankLook(tokens: ButtonFacts["tokens"], button: ButtonFacts["buttons
 
 interface IconLook { name: string; title: string; size: number[]; text: string; isEdgeless: boolean; fill: string; glyph: string; isDrawn: boolean; isDisabled: boolean }
 
-// every painted glyph-only button of the Queue screen, its image viewer's bar included
-function getIconLooks(): IconLook[] {
-  return [...document.querySelectorAll(".queue-screen .btn.icon")]
-    .filter((element) => element.getClientRects().length > 0)
+// every painted glyph-only button of the Queue screen, its image viewer's bar included; colour transitions settled first → the state's own colours
+async function getIconLooks(): Promise<IconLook[]> {
+  const buttons = [...document.querySelectorAll(".queue-screen .btn.icon")].filter((element) => element.getClientRects().length > 0);
+  await Promise.all(buttons.flatMap((element) => element.getAnimations().map((animation) => animation.finished)));
+  return buttons
     .map((element) => {
       const style = getComputedStyle(element);
       const box = element.getBoundingClientRect();
@@ -902,14 +897,32 @@ function getIconLooks(): IconLook[] {
     });
 }
 
-// the colour a fill token (`--tint-select`, `--tint-fill`) computes to on this page → compared with an icon button's fill
-function getTokenFill(token: string): string {
+// the colour a token computes to on this page through one property → `background-color` for a fill (`var(--tint-select)`), `color` for a triplet (`rgb(var(--ok))`)
+function getTokenPaint({ property, value }: { property: "background-color" | "color"; value: string }): string {
   const probe = document.createElement("div");
-  probe.style.background = `var(${token})`;
+  probe.style.setProperty(property, value);
   document.body.append(probe);
-  const fill = getComputedStyle(probe).backgroundColor;
+  const paint = getComputedStyle(probe).getPropertyValue(property);
   probe.remove();
-  return fill;
+  return paint;
+}
+
+// the two fills under the pointer, in token order: `--tint-select` hovered, `--tint-fill` held
+async function getTintFills(page: Page): Promise<string[]> {
+  return Promise.all(["--tint-select", "--tint-fill"].map((token) => page.evaluate(getTokenPaint, { property: "background-color" as const, value: `var(${token})` })));
+}
+
+// the keyboard ring as painted: whether :focus-visible holds, the outline's colour, style and width, its offset
+async function getFocusRing(target: Locator): Promise<{ isVisible: boolean; outline: string; offset: string }> {
+  return target.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { isVisible: element.matches(":focus-visible"), outline: `${style.outlineColor} ${style.outlineStyle} ${style.outlineWidth}`, offset: style.outlineOffset };
+  });
+}
+
+// the `--focus-ring` triplet in computed-colour form (`r, g, b`)
+async function getRingToken(page: Page): Promise<string> {
+  return page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--focus-ring").trim().split(/\s+/).join(", "));
 }
 
 async function openEdgePage(harness: Harness, viewport: { width: number; height: number } = VIEWPORTS[0]): Promise<Page> {
@@ -1306,16 +1319,9 @@ describe("queue page on the mockup fixtures", () => {
   test("in a rail row the box stands left of the state mark, the mark left of the name and the count at the row's end; the All sessions label, the Ended label and every name start at one x; a live mark is ok, any other a faint ring, and no line 2 holds a mark", async (t) => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    await page.locator(".queue-rail-band .disclosure").click();
-    await page.locator('.queue-rail-band .disclosure[aria-expanded="true"]').waitFor();
-    const facts = await page.evaluate(() => {
-      const paint = (token: string) => {
-        const probe = document.body.appendChild(Object.assign(document.createElement("div"), { style: `color: rgb(var(${token}))` }));
-        const color = getComputedStyle(probe).color;
-        probe.remove();
-        return color;
-      };
-      const [ok, faint] = [paint("--ok"), paint("--faint")];
+    await openEndedBand(page);
+    const paints = await Promise.all(["--ok", "--faint"].map((token) => page.evaluate(getTokenPaint, { property: "color" as const, value: `rgb(var(${token}))` })));
+    const facts = await page.evaluate(([ok, faint]) => {
       const rows = [...document.querySelectorAll<HTMLElement>(".queue-rail-row")];
       const rect = (row: Element, selector: string) => row.querySelector(selector)?.getBoundingClientRect();
       // where each label's text is painted, not its box → a label centred inside a column-wide box is caught
@@ -1344,7 +1350,7 @@ describe("queue page on the mockup fixtures", () => {
         kinds: new Set(rows.map((row) => (row.querySelector(".queue-rail-line")?.textContent ?? "").startsWith("Live"))).size,
         heights: rows.map((row) => `${row.querySelector(".queue-rail-line")?.textContent}: ${Math.round(row.getBoundingClientRect().height)}`),
       };
-    });
+    }, paints);
     await page.close();
     t.diagnostic(`rail row heights at 1440 with Ended open: ${facts.heights.join(" | ")}`);
 
@@ -1803,12 +1809,9 @@ describe("queue page on the mockup fixtures", () => {
     await selectRow(page, 103);
     const button = page.getByRole("button", { name: "Answer later" });
     await focusByKeyboard(page, button);
-    const focused = await button.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { isVisible: element.matches(":focus-visible"), outline: `${style.outlineColor} ${style.outlineStyle} ${style.outlineWidth}`, offset: style.outlineOffset };
-    });
+    const focused = await getFocusRing(button);
     const look = await getSettledLook(button);
-    const ringToken = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--focus-ring").trim().split(/\s+/).join(", "));
+    const ringToken = await getRingToken(page);
     const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
     await page.close();
 
@@ -1858,12 +1861,11 @@ describe("queue page on the mockup fixtures", () => {
     await selectRow(page, 103);
     const button = page.getByRole("button", { name: "Next item" });
     const read = async () => {
-      const look = await getSettledLook(button);
-      const isEdgeless = await button.evaluate((element) => parseFloat(getComputedStyle(element).borderTopWidth) === 0 || getComputedStyle(element).borderTopColor === "rgba(0, 0, 0, 0)");
-      return { fill: look.fill, glyph: look.label, isEdgeless };
+      const look = (await page.evaluate(getIconLooks)).find((icon) => icon.name === "Next item");
+      return { fill: look?.fill, glyph: look?.glyph, isEdgeless: look?.isEdgeless };
     };
     const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
-    const [tint, tintFill] = await Promise.all(["--tint-select", "--tint-fill"].map((token) => page.evaluate(getTokenFill, token)));
+    const [tint, tintFill] = await getTintFills(page);
     await button.hover();
     const hovered = await read();
     await page.mouse.down();
@@ -1872,11 +1874,8 @@ describe("queue page on the mockup fixtures", () => {
     await page.mouse.up();
     const back = page.getByRole("button", { name: "Back to the list" });
     await focusByKeyboard(page, back);
-    const focused = await back.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { isVisible: element.matches(":focus-visible"), outline: `${style.outlineColor} ${style.outlineStyle} ${style.outlineWidth}`, offset: style.outlineOffset };
-    });
-    const ringToken = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--focus-ring").trim().split(/\s+/).join(", "));
+    const focused = await getFocusRing(back);
+    const ringToken = await getRingToken(page);
     await page.close();
 
     assert.deepEqual({ hovered, held, focused }, {
@@ -1973,7 +1972,7 @@ describe("queue page on the mockup fixtures", () => {
     for (const width of [1440, 1568, 1605, 1645, 1728, 1920]) {
       for (const tick of ticks) {
         const page = await openEdgePage(harness, { width, height: 900 });
-        await page.locator(".queue-rail-band .disclosure").click();
+        await openEndedBand(page);
         await tickSessions(page, tick.names);
         const facts = await page.evaluate(() => {
           const rect = (selector: string) => (document.querySelector(`.queue-orders ${selector}`) as HTMLElement).getBoundingClientRect();
@@ -2013,7 +2012,7 @@ describe("queue page on the mockup fixtures", () => {
     for (const width of [1440, 1568, 1605, 1645, 1690, 1728, 1920]) {
       for (const names of ticks) {
         const page = await openEdgePage(harness, { width, height: 900 });
-        await page.locator(".queue-rail-band .disclosure").click();
+        await openEndedBand(page);
         await tickSessions(page, names);
         const facts = await page.evaluate(() => {
           const element = (selector: string) => document.querySelector(`.queue-orders ${selector}`) as HTMLElement;
@@ -2051,21 +2050,18 @@ describe("queue page on the mockup fixtures", () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const add = page.locator(".queue-orders .queue-compose-add");
+    const [tint, tintFill] = await getTintFills(page);
+    const tokenByFill = new Map([[tint, "--tint-select"], [tintFill, "--tint-fill"]]);
     // the button's colour transition settled first → the look the state ends on, never a mid-fade blend
-    const getLook = () => add.evaluate(async (element) => {
-      await Promise.all(element.getAnimations().map((animation) => animation.finished));
-      const style = getComputedStyle(element);
-      const alpha = style.borderTopColor.startsWith("rgba") ? Number(style.borderTopColor.split(",").at(-1)?.replace(")", "")) : 1;
-      const fills = ["--tint-select", "--tint-fill"].map((token) => {
-        const probe = document.createElement("div");
-        probe.style.background = `var(${token})`;
-        element.parentElement?.append(probe);
-        const fill = getComputedStyle(probe).backgroundColor;
-        probe.remove();
-        return [token, fill];
+    const getLook = async () => {
+      const look = await add.evaluate(async (element) => {
+        await Promise.all(element.getAnimations().map((animation) => animation.finished));
+        const style = getComputedStyle(element);
+        const alpha = style.borderTopColor.startsWith("rgba") ? Number(style.borderTopColor.split(",").at(-1)?.replace(")", "")) : 1;
+        return { isEdgeless: parseFloat(style.borderTopWidth) === 0 || alpha === 0, fill: style.backgroundColor };
       });
-      return { isEdgeless: parseFloat(style.borderTopWidth) === 0 || alpha === 0, fill: fills.find(([, fill]) => fill === style.backgroundColor)?.[0] ?? null };
-    });
+      return { ...look, fill: tokenByFill.get(look.fill) ?? null };
+    };
     const rest = await getLook();
     await add.hover();
     const hovered = await getLook();
