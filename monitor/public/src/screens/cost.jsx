@@ -2261,7 +2261,7 @@ const STOP_REASON_META = {
 };
 
 function turnStopReasonMeta(reason) {
-  const meta = STOP_REASON_META[reason] || { label: reason || '—', colorVar: '--faint', desc: '' };
+  const meta = STOP_REASON_META[reason || 'unknown'] || { label: reason, colorVar: '--faint', desc: '' };
   return { ...meta, raw: reason || '' };
 }
 

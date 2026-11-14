@@ -867,6 +867,14 @@ test("stop reasons read as plain words, with the raw id kept as the secondary la
   }
 });
 
+test("a turn with no stop reason reads as not recorded, never a dash", () => {
+  for (const reason of [null, ""]) {
+    const meta = cost.turnStopReasonMeta(reason);
+    assert.strictEqual(meta.label, cost.turnStopReasonMeta("unknown").label, `${JSON.stringify(reason)} takes the unrecorded label`);
+    assert.strictEqual(meta.raw, "");
+  }
+});
+
 test("a log-integrity bar reads as over threshold exactly when it rises above the threshold line on the same count axis", () => {
   const rows = [
     { event_date: "2026-09-01", error_count: 6, total_count: 100 },
