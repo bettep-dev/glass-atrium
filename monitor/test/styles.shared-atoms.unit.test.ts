@@ -223,10 +223,9 @@ test("the current nav item sits on the select tint while hover keeps the sunken 
   assert.deepEqual([getDecl(hover, "background"), getDecl(hover, "color")], ["rgb(var(--sunken))", "rgb(var(--ink))"]);
 });
 
-test("on the icon rail the first nav count pins to the item's top right and every later count is clipped", () => {
-  const first = getRuleBodies(BASE_CSS, ".shell-sidebar .nav-count").join(";");
+// where the kept count sits (under its icon, never over it) is measured in dashboard.render-density.e2e
+test("on the icon rail every nav count after the first is clipped", () => {
   const later = getRuleBodies(BASE_CSS, ".shell-sidebar .nav-count ~ .nav-count").join(";");
-  assert.deepEqual([getDecl(first, "position"), getDecl(first, "top"), getDecl(first, "right")], ["absolute", "0", "0"]);
   assert.equal(getDecl(later, "clip"), "rect(0 0 0 0)");
 });
 

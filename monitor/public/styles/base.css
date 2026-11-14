@@ -2317,15 +2317,15 @@ button.kpi:hover {
 		clip: rect(0 0 0 0);
 		white-space: nowrap;
 	}
+	/* the count stacks under the icon → the icon stays whole, so two counted rows still differ by their icon */
 	.shell-sidebar .nav-item {
 		position: relative;
+		flex-direction: column;
 		justify-content: center;
+		gap: var(--space-0_5);
 		padding: 8px 0;
 	}
 	.shell-sidebar .nav-count {
-		position: absolute;
-		top: 0;
-		right: 0;
 		margin-left: 0;
 	}
 }

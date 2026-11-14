@@ -433,7 +433,7 @@ describe("the nav counts", () => {
   const rows = [
     { name: "a lone warn count stays quiet", badges: [SLOT.warn], solid: [false] },
     { name: "a lone crit count is solid", badges: [SLOT.crit], solid: [true] },
-    { name: "a crit count after a warn count is the solid one", badges: [SLOT.warn, SLOT.crit], solid: [false, true] },
+    { name: "a crit count raised after a warn count is drawn first, and solid", badges: [SLOT.warn, SLOT.crit], solid: [true, false] },
     { name: "of two crit counts only the first is solid", badges: [SLOT.crit, SLOT.crit], solid: [true, false] },
   ];
   for (const row of rows) {

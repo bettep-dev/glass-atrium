@@ -3057,7 +3057,7 @@ function resolveOutcomeRate(data) {
 
 window.UI = {
   Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
-  SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
+  SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone, SEVERITY_RANK,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,

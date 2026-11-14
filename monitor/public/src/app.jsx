@@ -91,6 +91,12 @@ function getNavSolidIndex(item, badges) {
 	return item.badgeFill ? -1 : badges.findIndex((b) => b.badgeTone === "crit");
 }
 
+// the icon rail keeps only an item's first count → worst tone first (stable: equal tones keep their source order)
+function getNavBadgesWorstFirst(badges) {
+	const { SEVERITY_RANK } = window.UI;
+	return [...badges].sort((a, b) => (SEVERITY_RANK[b.badgeTone] || 0) - (SEVERITY_RANK[a.badgeTone] || 0));
+}
+
 function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 	const { Icon, Badge, getBadgeCount } = window.UI;
 	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState), ...queueBadges };
@@ -117,15 +123,16 @@ function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 							Object.prototype.hasOwnProperty.call(dynamicBadges, n.id);
 						const dyn = hasDyn ? dynamicBadges[n.id] : null;
 						// 합성 신호는 `badges` 배열, 단일 신호는 `badge`/`badgeTone` — 둘 다 동일 슬롯 렌더.
-						const badges =
+						const badges = getNavBadgesWorstFirst(
 							dyn?.badges ??
-							(hasDyn
-								? dyn?.badge
-									? [dyn]
-									: []
-								: n.badge
-									? [{ badge: n.badge, badgeTone: n.badgeTone }]
-									: []);
+								(hasDyn
+									? dyn?.badge
+										? [dyn]
+										: []
+									: n.badge
+										? [{ badge: n.badge, badgeTone: n.badgeTone }]
+										: []),
+						);
 						const solidIndex = getNavSolidIndex(n, badges);
 						return (
 							<button

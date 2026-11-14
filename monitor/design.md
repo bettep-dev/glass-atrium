@@ -603,7 +603,7 @@
 
 ### 7.7 Sidebar — `.shell-sidebar` · `.nav-item`
 
-- 폭 220px. **< 1200px 에서 56px icon rail**: 라벨은 제거하지 않고 clip (`.rail-hide`) → 접근 이름 유지. 첫 `.nav-count` 는 우상단, 나머지 `.nav-count` 는 clip.
+- 폭 220px. **< 1200px 에서 56px icon rail**: 라벨은 제거하지 않고 clip (`.rail-hide`) → 접근 이름 유지. 항목의 count 는 가장 나쁜 tone 이 먼저 → 첫 `.nav-count` (항목의 최악 tone) 는 아이콘 아래에 쌓여 아이콘을 가리지 않고, 나머지 `.nav-count` 는 clip.
 - 면: `bg-elev` 불투명 · `border-r` · sticky, glass 금지.
 - `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · current = `--tint-select` + ink + 500, `aria-current="page"`; hover = `--sunken` + ink.
 - Icons (`app.jsx` → `NAV`): Learning `repeat` · Wiki `book-open` · System map `network` · Task results `target`.

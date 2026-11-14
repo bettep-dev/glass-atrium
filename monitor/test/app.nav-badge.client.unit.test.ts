@@ -571,7 +571,7 @@ test("a nav count is solid exactly when it is its item's first crit count, and o
   const warn = app.getHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 3 }) }));
   const agents = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")]));
   const rows = [
-    { name: "a down part with failures and a suspended agent", harness: crit, fills: ["solid", "quiet", "solid"] },
+    { name: "a down part with failures and a suspended agent", harness: crit, fills: ["solid", "solid", "quiet"] },
     { name: "failures with no down part", harness: warn, fills: ["solid", "quiet"] },
   ];
   const toneByGlyph = new Map(Object.entries(app.ui.TONE_GLYPH).map(([tone, glyph]) => [glyph, tone]));
@@ -592,4 +592,19 @@ test("a nav count is solid exactly when it is its item's first crit count, and o
       }
     });
   }
+});
+
+// The icon rail keeps only an item's first count (base.css rail block) → the first count is the item's worst.
+test("an item's counts run worst tone first, so the count the rail keeps is the worst one", () => {
+  const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));
+  const tree = renderSidebar(harness, ready(buildBreakerSummary([])));
+  const [mapItem] = findNodes(tree, (n) => n.props?.key === "architecture");
+  const toneByGlyph = new Map(Object.entries(app.ui.TONE_GLYPH).map(([tone, glyph]) => [glyph, tone]));
+  const tones = findNodes(mapItem, (n) => getClassTokens(n).includes("nav-count")).map((count) => {
+    const [glyph] = count.children.filter(isRenderedNode);
+    return toneByGlyph.get(collectText(glyph.children).join("").trim()) ?? "";
+  });
+
+  assert.deepStrictEqual(new Set(tones), new Set(["warn", "crit"]), "precondition: the item carries a warn and a crit count");
+  assert.deepStrictEqual(tones, ["crit", "warn"]);
 });

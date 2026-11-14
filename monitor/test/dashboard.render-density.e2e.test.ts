@@ -323,3 +323,41 @@ describe("Type floor on the Dashboard page, shell and Tweaks panel included", ()
     for (const size of sizes.labels) assert.equal(size, sizes.control, `a nav label draws at ${size}, not ${sizes.control}`);
   });
 });
+
+// At the icon rail a count must never cover its row's icon: two rows told apart only by the icon would read alike.
+describe("Nav counts at the icon rail", () => {
+  test("at 1024 every visible count leaves its icon whole and stays inside its row, and a two-count row keeps its crit count", async () => {
+    const page = await browser.newPage({ viewport: { width: 1024, height: 768 } });
+    const kpi = { ...(PAYLOADS["/api/dashboard/kpi"] as Record<string, unknown>), last_1h_fail_count: 3 };
+    const live = PAYLOADS["/api/architecture/live"] as { daemons: Record<string, unknown>[] };
+    const downLive = { ...live, daemons: live.daemons.map((d, i) => (i === 0 ? { ...d, effective_status: "error" } : d)) };
+    await page.route("**/api/dashboard/kpi", (route) => route.fulfill({ json: kpi }));
+    await page.route("**/api/architecture/live", (route) => route.fulfill({ json: downLive }));
+    await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+    await page.locator(".nav-item .nav-count").nth(1).waitFor({ state: "attached", timeout: 30_000 });
+    const rows = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll(".nav-item")).filter((item) => item.querySelector(".nav-count")).map((item) => {
+        const icon = (item.querySelector("svg") as Element).getBoundingClientRect();
+        const row = item.getBoundingClientRect();
+        const visible = Array.from(item.querySelectorAll(".nav-count")).filter((c) => getComputedStyle(c).clip === "auto"); // the rail clips extra counts, it does not unbox them
+        return {
+          label: item.getAttribute("title"),
+          counts: item.querySelectorAll(".nav-count").length,
+          visibleText: visible.map((c) => (c.textContent ?? "").trim()),
+          // overlap area of each visible count with the icon box — inline: a named helper here gains an esbuild __name the page lacks
+          coveredPx: Math.round(visible.map((c) => c.getBoundingClientRect()).reduce((sum, r) => sum + Math.max(0, Math.min(r.right, icon.right) - Math.max(r.left, icon.left)) * Math.max(0, Math.min(r.bottom, icon.bottom) - Math.max(r.top, icon.top)), 0)),
+          isInside: visible.every((c) => { const r = c.getBoundingClientRect(); return r.left >= row.left && r.right <= row.right && r.top >= row.top && r.bottom <= row.bottom; }),
+        };
+      });
+    });
+    await page.close();
+    const map = rows.find((r) => r.label === "System map");
+    assert.equal(map?.counts, 2, "precondition: System map carries a warn and a crit count");
+    assert.match(map?.visibleText.join("|") ?? "", /^✕/, "the rail keeps the crit count");
+    for (const row of rows) {
+      assert.equal(row.visibleText.length, 1, `${row.label}: the rail shows one count`);
+      assert.equal(row.coveredPx, 0, `${row.label}: the count covers ${row.coveredPx} px² of the icon`);
+      assert.ok(row.isInside, `${row.label}: the count stays inside its row`);
+    }
+  });
+});
