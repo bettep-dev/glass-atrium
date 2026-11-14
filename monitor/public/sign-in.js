@@ -1,5 +1,5 @@
 // Remote sign-in — turns the code shown on the Mac into this device's registration cookie, then opens the monitor.
-// Pre-auth page → a plain script with no shell globals (ui.jsx sits behind registration); the server keeps every code refusal opaque.
+// Pre-auth page → a plain script on its own; the server keeps every code refusal opaque.
 (() => {
 	"use strict";
 

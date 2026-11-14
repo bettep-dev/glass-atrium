@@ -16,8 +16,8 @@ import { chromium } from "playwright";
 
 const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const REGISTER_PATH = "/api/remote/register";
-// the pre-auth file list put to the reviewer → once signed, the remote app serves each one as an exact route, no device needed
-const SIGN_IN_FILES = ["/sign-in.html", "/sign-in.js", "/sign-in.css", "/styles/tokens.css", "/styles/base.css"];
+// the signed pre-auth file list → the remote app serves each one as an exact route, no device needed; every other file needs a registered device
+const SIGN_IN_FILES = ["/sign-in.html", "/sign-in.js", "/sign-in.css"];
 const WAIT_TIMEOUT_MS = 15_000;
 
 const REFUSALS = [
@@ -51,16 +51,21 @@ after(async () => {
 });
 
 describe("sign-in page load", () => {
-  test("loads only its own pre-auth files, all of them, with no CSP block", async () => {
+  test("requests exactly its three pre-auth files and nothing else, each once, with no CSP block", async () => {
     await withPage(async (page) => {
+      const requested: string[] = [];
       const loaded = new Map<string, number>();
       const blocked: string[] = [];
-      page.on("response", (response) => loaded.set(new URL(response.url()).pathname, response.status()));
+      // every request the page makes, any origin → an off-origin or extra same-origin fetch shows up here even though withPage aborts it
+      page.on("request", (request) => requested.push(request.url()));
+      page.on("response", (response) => loaded.set(response.url(), response.status()));
       page.on("console", (message) => /Content Security Policy/i.test(message.text()) && blocked.push(message.text()));
 
-      await page.goto(`${serverUrl}/sign-in.html`, { waitUntil: "load" });
+      await page.goto(`${serverUrl}/sign-in.html`, { waitUntil: "networkidle" });
 
-      assert.deepEqual([...loaded.keys()].sort(), [...SIGN_IN_FILES].sort(), "same-origin requests on load = the signed file list");
+      const expected = SIGN_IN_FILES.map((path) => `${serverUrl}${path}`).sort();
+      assert.deepEqual([...requested].sort(), expected, "every request on load = the signed file list, nothing more");
+      assert.deepEqual([...loaded.keys()].sort(), expected, "every signed file answered");
       assert.ok([...loaded.values()].every((status) => status === 200), `every file served: ${JSON.stringify([...loaded])}`);
       assert.deepEqual(blocked, []);
     });

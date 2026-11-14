@@ -2,15 +2,13 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8" />
-<!-- One narrow form, no desktop layout to keep → device width, unlike the shell's fixed 1280 -->
+<!-- One narrow form → device width -->
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <!-- Pre-auth page: served to any device on the trusted Wi-Fi → its own files only, no inline script or style, no CDN -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'" />
 <meta name="referrer" content="no-referrer" />
 <title>Register this device · Atrium Monitor</title>
 <link rel="icon" href="data:," />
-<link rel="stylesheet" href="/styles/tokens.css" />
-<link rel="stylesheet" href="/styles/base.css" />
 <link rel="stylesheet" href="/sign-in.css" />
 <script src="/sign-in.js" defer></script>
 </head>
