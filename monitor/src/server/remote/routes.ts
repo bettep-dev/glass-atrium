@@ -33,6 +33,8 @@ export interface RemoteDeviceDeps {
 }
 
 export interface RemoteRoutesDeps {
+  /** the gate's pre-auth keys → each `GET <file>` row outside /api/ becomes an exact route serving that public/ file */
+  readonly preAuthRoutes: ReadonlySet<string>;
   readonly registration: RemoteRegistrationDeps;
   readonly device: RemoteDeviceDeps;
   readonly connections: Pick<DeviceConnections, "close">;
@@ -70,6 +72,7 @@ export async function registerRemoteDeviceRoutes(app: FastifyInstance, deps: Rem
   const now = deps.now ?? Date.now;
   const perAddress = new WindowLimiter(REMOTE_LIMITS.CODE_PER_ADDRESS, now);
   const total = new WindowLimiter(REMOTE_LIMITS.CODE_TOTAL, now);
+  registerSignInFiles(app, deps.preAuthRoutes);
   app.post<{ Body: RegisterBody }>(REMOTE_DEVICE_PATH.REGISTER, {
     ...REGISTER_ROUTE_OPTIONS,
     // onRequest → counted before the body is read, so an oversize or malformed entry still spends budget
@@ -87,6 +90,15 @@ export async function registerRemoteDeviceRoutes(app: FastifyInstance, deps: Rem
   app.post(REMOTE_DEVICE_PATH.OFF, { ...EMPTY_BODY_OPTIONS, onResponse: (request) => finishOff(request, deps) }, (request, reply) =>
     turnOff(request, reply, deps),
   );
+}
+
+// exact routes, never the page wildcard → a sign-in file matches by its whole path, and no other file rides along
+function registerSignInFiles(app: FastifyInstance, preAuthRoutes: ReadonlySet<string>): void {
+  for (const key of preAuthRoutes) {
+    const [method, url] = key.split(" ");
+    if (method !== "GET" || url === undefined || url.startsWith("/api/")) continue;
+    app.get(url, (_request, reply) => reply.sendFile(url.slice(1)));
+  }
 }
 
 async function register(request: FastifyRequest<{ Body: RegisterBody }>, reply: FastifyReply, deps: RemoteRoutesDeps): Promise<FastifyReply> {

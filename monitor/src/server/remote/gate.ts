@@ -65,6 +65,7 @@ interface DeviceState {
 
 const HSTS = "max-age=604800";
 const STATIC_WILDCARD = "/*";
+const SIGN_IN_PAGE = "/sign-in.html";
 const ACTOR_MAX_LENGTH = 64;
 // an unmatched path is caller-chosen → bounded before it reaches the audit payload
 const ROUTE_MAX_LENGTH = 256;
@@ -94,22 +95,31 @@ async function admitRequest(request: FastifyRequest, reply: FastifyReply, deps: 
   const address = getSourceAddress(request);
   if (limiters.failedSession.isBlocked(address)) return refuse(reply, 429, "too_many_requests");
   const routePath = request.routeOptions.url;
-  if (routePath !== undefined && deps.preAuthRoutes.has(`${request.method} ${routePath}`)) {
+  // HEAD follows its GET, as getRouteClass does → a GET row also answers the HEAD Fastify exposes for it
+  const preAuthMethod = request.method === "HEAD" ? "GET" : request.method;
+  if (routePath !== undefined && deps.preAuthRoutes.has(`${preAuthMethod} ${routePath}`)) {
     if (!limiters.preAuth.hit(address)) return refuse(reply, 429, "too_many_requests");
     // no device yet → no CSRF value; the page origin alone stands between a neighbour page and the code POST
     const isFromPage = !MUTATION_METHODS.has(request.method) || getPageOriginSignal(request.headers, deps.getPageOrigins()) !== null;
     return isFromPage ? undefined : refuse(reply, 403, "not_page_origin");
   }
   const presented = request.cookies[DEVICE_COOKIE.NAME];
-  if (presented === undefined || presented.length === 0) return refuse(reply, 401, "not_registered");
+  if (presented === undefined || presented.length === 0) return refuseUnregistered(request, reply, deps);
   const device = await deps.findDevice(presented);
   if (device === null) {
     // an absent cookie is a first visit, not a failed credential → only a presented, unknown one counts and is audited
     limiters.failedSession.hit(address);
     recordEvent(request, deps.audit, { actor: getRemoteActor(null, address), actionKind: "remote.auth_failure" });
-    return refuse(reply, 401, "not_registered");
+    return refuseUnregistered(request, reply, deps);
   }
   return admitDevice(request, reply, { deps, limiters, device, presented });
+}
+
+// the bare address an owner types → the sign-in page when its row is signed; any other path gets the 401
+function refuseUnregistered(request: FastifyRequest, reply: FastifyReply, deps: RemoteGateDeps): FastifyReply {
+  const isRootDocument = (request.method === "GET" || request.method === "HEAD") && request.url === "/";
+  if (isRootDocument && deps.preAuthRoutes.has(`GET ${SIGN_IN_PAGE}`)) return reply.code(303).redirect(SIGN_IN_PAGE);
+  return refuse(reply, 401, "not_registered");
 }
 
 async function admitDevice(

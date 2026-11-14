@@ -96,8 +96,15 @@ export async function buildRemoteApp(options: RemoteAppOptions): Promise<Fastify
   // same parser set as loopback → a cross-origin text/plain simple request gets 415
   app.removeContentTypeParser("text/plain");
   await registerSurface(app, options.queue);
-  const { audit, connections, now } = options.gate;
-  await registerRemoteDeviceRoutes(app, { registration: options.registration, device: options.device, audit, connections, ...(now === undefined ? {} : { now }) });
+  const { audit, connections, now, preAuthRoutes } = options.gate;
+  await registerRemoteDeviceRoutes(app, {
+    preAuthRoutes,
+    registration: options.registration,
+    device: options.device,
+    audit,
+    connections,
+    ...(now === undefined ? {} : { now }),
+  });
   return app;
 }
 

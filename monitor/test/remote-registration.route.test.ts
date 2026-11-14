@@ -43,12 +43,23 @@ const timeline: string[] = [];
 let app: FastifyInstance;
 let tlsDir = "";
 
+// the sign-in rows put to the reviewer (GET; HEAD follows its GET) → production serves them once signed into REVIEWED_ROUTES
+const SIGN_IN_FILES = ["/sign-in.html", "/sign-in.js", "/sign-in.css", "/styles/tokens.css", "/styles/base.css"];
+const SIGN_IN_PRE_AUTH: ReadonlySet<string> = new Set([...REMOTE_PRE_AUTH_ROUTES, ...SIGN_IN_FILES.map((file) => `GET ${file}`)]);
+
+let signInApp: FastifyInstance;
+
 before(async () => {
-  const getHosts = () => new Set([HOST]);
-  const getPageOrigins = () => new Set([ORIGIN]);
   const tls = await createStandInTls();
   tlsDir = tls.dir;
-  app = await buildRemoteApp({
+  app = await buildStandIn(tls, REMOTE_PRE_AUTH_ROUTES);
+  signInApp = await buildStandIn(tls, SIGN_IN_PRE_AUTH);
+});
+
+async function buildStandIn(tls: Awaited<ReturnType<typeof createStandInTls>>, preAuthRoutes: ReadonlySet<string>): Promise<FastifyInstance> {
+  const getHosts = () => new Set([HOST]);
+  const getPageOrigins = () => new Set([ORIGIN]);
+  const standIn = await buildRemoteApp({
     tls,
     listener: { kind: "remote", getHosts, getPageOrigins },
     gate: {
@@ -56,7 +67,7 @@ before(async () => {
       getPageOrigins,
       findDevice: (presented) => findActiveDevice(db, presented),
       getRouteClass,
-      preAuthRoutes: REMOTE_PRE_AUTH_ROUTES,
+      preAuthRoutes,
       connections: new DeviceConnections(),
       audit: {
         insertIntent: async ({ route }) => {
@@ -82,8 +93,9 @@ before(async () => {
     },
     device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
   });
-  await app.ready();
-});
+  await standIn.ready();
+  return standIn;
+}
 
 // past every limiter window and block → no case inherits another's budget
 beforeEach(() => {
@@ -97,6 +109,7 @@ beforeEach(() => {
 
 after(async () => {
   await app.close();
+  await signInApp.close();
   await disconnectPrisma();
   deleteDirectory(tlsDir);
 });
@@ -276,5 +289,47 @@ describe("code entry limits", () => {
         assert.equal(accepted.statusCode, 201, `${row.name}: ${accepted.body}`);
       }
     });
+  });
+});
+
+describe("an unregistered device with the sign-in rows in place", () => {
+  test("gets exactly the sign-in files, GET and HEAD, and every other static path stays 401", async () => {
+    const rows = [
+      ...SIGN_IN_FILES.flatMap((url) => [
+        { name: `GET ${url}`, method: "GET" as const, url, status: 200 },
+        { name: `HEAD ${url}`, method: "HEAD" as const, url, status: 200 },
+      ]),
+      { name: "the page shell", method: "GET" as const, url: "/index.html", status: 401 },
+      { name: "an app source file", method: "GET" as const, url: "/src/app.jsx", status: 401 },
+      { name: "a trailing slash on a sign-in file", method: "GET" as const, url: "/sign-in.html/", status: 401 },
+      { name: "a sign-in file in another case", method: "GET" as const, url: "/SIGN-IN.HTML", status: 401 },
+      { name: "a path that walks out of a sign-in prefix", method: "GET" as const, url: "/styles/../index.html", status: 401 },
+    ];
+    for (const row of rows) {
+      const response = await signInApp.inject({ method: row.method, url: row.url, remoteAddress: PHONE, headers: { host: HOST } });
+      assert.equal(response.statusCode, row.status, `${row.name}: ${response.body}`);
+    }
+  });
+
+  test("is sent from / to the sign-in page, registers there, and the cookie then opens /", async () => {
+    await runRolledBack(async () => {
+      const first = await signInApp.inject({ method: "GET", url: "/", remoteAddress: PHONE, headers: { host: HOST } });
+      const page = await signInApp.inject({ method: "GET", url: first.headers.location ?? "", remoteAddress: PHONE, headers: { host: HOST } });
+      const registered = await signInApp.inject({ method: "POST", url: "/api/remote/register", remoteAddress: PHONE, headers: PAGE_HEADERS, payload: { code: codes.open(), label: LABEL } });
+      const cookie = registered.cookies.find((entry) => entry.name === DEVICE_COOKIE.NAME);
+      const opened = await signInApp.inject({ method: "GET", url: "/", remoteAddress: PHONE, headers: { host: HOST, cookie: `${DEVICE_COOKIE.NAME}=${cookie?.value ?? ""}` } });
+      assert.deepEqual(
+        [first.statusCode, first.headers.location, page.statusCode, registered.statusCode, opened.statusCode],
+        [303, "/sign-in.html", 200, 201, 200],
+      );
+      assert.match(page.body, /<form/);
+    });
+  });
+});
+
+describe("without the sign-in rows", () => {
+  test("an unregistered GET of / and of a sign-in file stays 401", async () => {
+    const answers = await Promise.all(["/", "/sign-in.html"].map((url) => app.inject({ method: "GET", url, remoteAddress: PHONE, headers: { host: HOST } })));
+    assert.deepEqual(answers.map((answer) => answer.statusCode), [401, 401]);
   });
 });

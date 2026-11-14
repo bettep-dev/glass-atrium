@@ -16,7 +16,7 @@ import { chromium } from "playwright";
 
 const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const REGISTER_PATH = "/api/remote/register";
-// the exact pre-auth file list the remote gate serves without a registered device → the reviewer signs these paths
+// the pre-auth file list put to the reviewer → once signed, the remote app serves each one as an exact route, no device needed
 const SIGN_IN_FILES = ["/sign-in.html", "/sign-in.js", "/sign-in.css", "/styles/tokens.css", "/styles/base.css"];
 const WAIT_TIMEOUT_MS = 15_000;
 

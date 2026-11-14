@@ -14,6 +14,7 @@ import { DeviceConnections } from "../src/server/remote/connections.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 import { registerRemoteDeviceRoutes } from "../src/server/remote/routes.js";
 import {
+  REMOTE_PRE_AUTH_ROUTES,
   REVIEWED_ROUTES,
   ROUTE_CLASS_SIGNOFFS,
   getRouteClass,
@@ -63,6 +64,7 @@ async function collectLiveRoutes(): Promise<Set<string>> {
     });
     await registerRemoteCliRoutes(app, { devices, connections: new DeviceConnections(), audit });
     await registerRemoteDeviceRoutes(app, {
+      preAuthRoutes: REMOTE_PRE_AUTH_ROUTES,
       registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
       device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
       connections: new DeviceConnections(),
