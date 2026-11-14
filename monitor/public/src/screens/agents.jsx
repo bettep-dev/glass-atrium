@@ -663,7 +663,7 @@ function AgentAlarmRow({ alarm }) {
       <AgentName name={alarm.agent}/>
       <span className="text-faint fs-meta">
         {formatConsecutiveFails(alarm.consecutive_fails)}
-        {alarm.suspended_at ? ` · since ${alarm.suspended_at}` : ''}
+        {alarm.suspended_at && <> · since <SuspendedStampAg iso={alarm.suspended_at}/></>}
       </span>
       <span className="text-faint fs-meta">
         {alarm.suspended ? 'stop routing · clear the marker, then edit the body' : 'one more fail suspends it'}
@@ -1556,10 +1556,16 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
       <Badge role="status" tone={getBreakerTone(breaker)}>{getBreakerLabel(breaker)}</Badge>
       <span className="text-faint fs-meta">
         {formatConsecutiveFails(breaker.consecutive_fails)}
-        {breaker.suspended_at ? ` · suspended ${breaker.suspended_at}` : ''}
+        {breaker.suspended_at && <> · suspended <SuspendedStampAg iso={breaker.suspended_at}/></>}
       </span>
     </div>
   );
+}
+
+// the breaker marker's raw server stamp → the shared Day + time form, the full stamp on hover
+function SuspendedStampAg({ iso }) {
+  const { formatKstDateTime, formatKstFull } = window.UI;
+  return <span title={formatKstFull(iso)}>{formatKstDateTime(iso)}</span>;
 }
 
 // a reading without its fail count claims no state → neutral, never ok / safe to route
@@ -1827,10 +1833,10 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
   // latency 행 (p50/p95/p99) — 미페어 시 error/empty 독립 표기.
   const latency = (readyData(latencyState)?.agents ?? []).find((a) => a.agent_id === drawerAgent) || null;
   const p95Sec = latency?.p95_ms != null ? Number(latency.p95_ms) / 1000 : null;
-  // no P95 in a read latency payload → None; the payload not read yet → Not loaded
-  const p95Display = p95Sec == null
-    ? <window.UI.AbsentValue kind={readyData(latencyState) ? 'none' : 'not-loaded'}/>
-    : formatDurationSecAg(p95Sec);
+  // no P95 in a read latency payload → None; an unread payload → its loading look or Not loaded
+  const p95Display = readyData(latencyState)
+    ? (p95Sec == null ? <window.UI.AbsentValue kind="none"/> : formatDurationSecAg(p95Sec))
+    : getUnreadValueAg(latencyState, 'response-time');
   const trend = trendByAgent ? trendByAgent.get(drawerAgent) : null;
   const hasTrend = Array.isArray(trend) && trend.length > 0;
   const crossing = getCrossingMetricsAg(overageState, overageByAgent, drawerAgent);
@@ -1867,15 +1873,23 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
   );
 }
 
-// unread overage source → unavailable, never a 0 that reads as no crossing
+// unread overage source → its loading look or Not loaded, never a 0 that reads as no crossing
 function getCrossingMetricsAg(overageState, overageByAgent, agentId) {
   if (overageState?.status !== 'ready') {
-    const unread = <window.UI.AbsentValue kind="not-loaded" title="The budget-crossing read did not load"/>;
+    const unread = getUnreadValueAg(overageState, 'budget-crossing');
     return { count: unread, peak: unread };
   }
   const overage = overageByAgent?.get(agentId);
   const count = overage ? overage.overage_count : 0;
   return { count: formatIntAg(count), peak: count > 0 ? `${formatPctAg(overage.max_crossed_pct)} of budget` : <window.UI.AbsentValue kind="none"/> };
+}
+
+// a drawer value whose read has not landed: in flight → the loading look; failed → Not loaded, its cause on hover
+function getUnreadValueAg(state, source) {
+  const { getRegionView, getErrorCopy, LoadingPlaceholder, AbsentValue } = window.UI;
+  if (getRegionView(state) === 'loading') return <LoadingPlaceholder label={source} className="justify-start"/>;
+  const { sentence, detail } = getErrorCopy(state?.error, `the ${source} read`);
+  return <AbsentValue kind="not-loaded" title={`${sentence} ${detail}`}/>;
 }
 
 // latency p50/p95/p99 한 줄 — 페어링 없으면 inline empty (Performance 내부 독립 degrade).

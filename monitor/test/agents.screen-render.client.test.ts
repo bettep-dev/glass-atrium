@@ -44,6 +44,8 @@ for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 UI_SCALARS.formatInt = REAL_UI.formatInt;
 UI_SCALARS.formatPct = REAL_UI.formatPct;
 UI_SCALARS.formatDecimal = REAL_UI.formatDecimal;
+// A failed read's cause rides the shipped error copy, so a Not-loaded title reads as it does on the page.
+UI_SCALARS.getErrorCopy = REAL_UI.getErrorCopy;
 // Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
 for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
 // The status band rides the shipped stat row → labels, values and context lines render as on the page.
@@ -1488,27 +1490,43 @@ test("the Instrumentation fold body carries every clause the head leaves out, an
   }
 });
 
-test("the drawer's Performance section states the agent's budget crossings and peak, and an unread overage source marks both Not loaded rather than 0", async () => {
+test("the drawer's Performance section states the agent's budget crossings, peak and P95; a read in flight shows the loading look, a failed read marks Not loaded with its cause, never 0", async () => {
   const agent = { agent_id: "glass-atrium-dev-react", agent_name: "glass-atrium-dev-react", runs: 40, needs_context_count: 0, invocations: 40 };
   const summaryState = { status: "ready", data: { agents: [agent] }, error: null };
-  const latencyState = { status: "ready", data: { agents: [] }, error: null };
+  const latencyRead = { status: "ready", data: { agents: [{ agent_id: agent.agent_id, p95_ms: 42000 }] }, error: null };
+  const overageRead = { status: "ready", data: { rows: [] }, error: null };
+  const inFlight = { status: "loading", busy: true, data: null, error: null };
+  const failed = { status: "error", busy: false, data: null, error: { message: "HTTP 503 Service Unavailable" } };
   const crossed = new Map([["glass-atrium-dev-react", { overage_count: 3, max_crossed_pct: 140 }]]);
   const rows = [
-    { name: "crossed", state: { status: "ready", data: { rows: [] }, error: null }, map: crossed, count: "3", peak: "140% of budget" },
-    { name: "loaded with no crossing", state: { status: "ready", data: { rows: [] }, error: null }, map: new Map(), count: "0", peak: "absent:none" },
-    { name: "overage read failed", state: { status: "error", data: null, error: { message: "HTTP 503" } }, map: new Map(), count: "absent:not-loaded", peak: "absent:not-loaded" },
+    { name: "crossed", overage: overageRead, latency: latencyRead, map: crossed, count: "3", peak: "140% of budget", p95: "formatted" },
+    { name: "loaded with no crossing", overage: overageRead, latency: { ...latencyRead, data: { agents: [] } }, map: new Map(), count: "0", peak: "absent:none", p95: "absent:none" },
+    { name: "reads in flight", overage: inFlight, latency: inFlight, map: new Map(), count: "loading", peak: "loading", p95: "loading" },
+    { name: "reads failed", overage: failed, latency: failed, map: new Map(), count: "absent:not-loaded", peak: "absent:not-loaded", p95: "absent:not-loaded" },
   ];
   for (const row of rows) {
     const tree = await renderComponent("AgentPerformanceSection", {
-      agent, drawerAgent: agent.agent_id, summaryState, latencyState, overageState: row.state, overageByAgent: row.map, onRetry: () => undefined,
+      agent, drawerAgent: agent.agent_id, summaryState, latencyState: row.latency, overageState: row.overage, overageByAgent: row.map, onRetry: () => undefined,
     });
-    // an absent value is the shared AbsentValue element → read back as its kind
+    const values = (label: string) => findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === label)[0]?.props.value as
+      { type?: { name?: string }; props?: { kind?: string; title?: string } } | string;
+    // an absent value is the shared AbsentValue element → read back as its kind; the loading look as "loading"
     const metric = (label: string) => {
-      const value = findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === label)[0]?.props.value as { props?: { kind?: string } } | string;
-      return typeof value === "object" && value?.props?.kind ? `absent:${value.props.kind}` : value;
+      const value = values(label);
+      if (typeof value !== "object") return value;
+      if (value?.type?.name === "LoadingPlaceholder") return "loading";
+      // the P95 rides the stubbed formatDuration atom → a read value reads back as "formatted"
+      return value?.props?.kind ? `absent:${value.props.kind}` : "formatted";
     };
     assert.equal(metric("Budget crossings"), row.count, `${row.name}: count`);
     assert.equal(metric("Peak crossing"), row.peak, `${row.name}: peak`);
+    assert.equal(metric("P95"), row.p95, `${row.name}: P95`);
+    if (row.overage === failed) {
+      for (const label of ["Budget crossings", "Peak crossing", "P95"]) {
+        const value = values(label) as { props?: { title?: string } };
+        assert.match(String(value?.props?.title), /HTTP 503/, `${label}: the failed read's own cause is in the title`);
+      }
+    }
   }
 });
 
@@ -1681,10 +1699,7 @@ test("review-flag chart dates take the shared day-axis tick, end-keeping interva
   }
 });
 
-const metricValueOf = (tree: RenderedNode | string | null, label: string) =>
-  findNodes(tree, (n) => n.type === "div" && /flex-col/.test(String(n.props.className)) && collectText(n).startsWith(label));
-
-test("a drawer duration with nothing behind it reads None when its row was read and Not loaded when it was not, never a dash", async () => {
+test("a read drawer latency row with nothing behind a percentile reads None, never a dash", async () => {
   const absentKinds = (tree: RenderedNode | string | null) => findAtoms(tree, "AbsentValue").map((n) => n.props.kind);
   const latencyRow = await renderComponent("AgentLatencyRow", {
     latency: { agent_id: "solo", agent_name: "solo", p50_ms: 1000, p95_ms: null, p99_ms: null },
@@ -1692,10 +1707,6 @@ test("a drawer duration with nothing behind it reads None when its row was read 
   });
   assert.deepEqual(absentKinds(latencyRow), ["none", "none"], "a read latency row with no P95 or P99 holds None");
   assert.ok(!collectText(latencyRow).includes("\u2014"), "no dash stands in a value slot");
-
-  const performance = await renderComponent("AgentPerformanceSection", getPerformanceProps(null, []));
-  const [p95] = metricValueOf(performance, "P95");
-  assert.deepEqual(absentKinds(p95 ?? null), ["not-loaded"], "the drawer P95 before the latency read says Not loaded");
 });
 
 // a chart mark that resolves to a tone or the accent paints severity or emphasis as a series colour
@@ -2520,6 +2531,29 @@ describe("Agents values take the shared number, date and nothing forms", () => {
     const tree = renderScreen(React.createElement(mod.AgentAlarmRow as Component, { alarm: { agent: "glass-atrium-dev-shell" } }));
     assert.doesNotMatch(collectText(tree), /undefined/);
     assert.deepEqual(findAtoms(tree, "AbsentValue").map((n) => n.props.kind), ["not-loaded"]);
+  });
+
+  describe("a breaker's suspension stamp prints in the Day + time form, the full stamp in its title", () => {
+    const stamp = "2026-11-13T22:05:41.318Z";
+    const rows = [
+      { name: "alarm row", atom: "AgentAlarmRow", props: { alarm: { agent: "glass-atrium-dev-shell", suspended: true, consecutive_fails: 3, suspended_at: stamp } } },
+      { name: "drawer breaker line", atom: "AgentCircuitBreakerLine", props: { agent: { agent_id: "glass-atrium-dev-shell", circuit_breaker: { suspended: true, consecutive_fails: 3, suspended_at: stamp } }, summaryState: { status: "ready", data: {}, error: null } } },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const overrides = { ...formOverrides(), formatKstDateTime: REAL_UI.formatKstDateTime, formatKstFull: REAL_UI.formatKstFull };
+        const mod = await loadAgentsScreen(overrides);
+        const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+        const tree = renderScreen(React.createElement(mod[row.atom] as Component, row.props));
+        const text = collectText(tree);
+        const day = (REAL_UI.formatKstDateTime as (iso: string) => string)(stamp);
+        assert.match(day, /^\d{2}-\d{2} \d{2}:\d{2}$/);
+        assert.ok(text.includes(day), `${text} carries ${day}`);
+        assert.ok(!text.includes(stamp), "the raw server stamp never reaches the screen");
+        const full = (REAL_UI.formatKstFull as (iso: string) => string)(stamp);
+        assert.equal(findNodes(tree, (n) => n.props.title === full).length, 1, "the full stamp rides the title");
+      });
+    }
   });
 
   describe("a breaker badge claims a state only from a fail count it read", () => {
