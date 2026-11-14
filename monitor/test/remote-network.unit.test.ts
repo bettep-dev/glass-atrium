@@ -100,7 +100,7 @@ test("the listener opens only when on, trusted, readable and private", () => {
 
 test("the Bonjour host name is the .local name the Host allowlist admits, and an unreadable or unusable one is none", async () => {
   const rows = [
-    { name: "local host name, lower-cased", output: "Bettepui-Macmini\n", expected: "bettepui-macmini.local" },
+    { name: "local host name, lower-cased", output: "Studio-Mac\n", expected: "studio-mac.local" },
     { name: "command failed", output: new Error("scutil exited 1"), expected: null },
     { name: "empty name", output: "\n", expected: null },
     { name: "name with a character no Host can carry", output: "owner mac\n", expected: null },
