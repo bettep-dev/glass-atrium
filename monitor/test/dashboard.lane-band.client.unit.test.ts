@@ -215,18 +215,19 @@ test("every tile drills to its own screen in a fixed order", () => {
 });
 
 test("loading, error and unavailable each read differently and none reads as a value", () => {
-  const states: [string, unknown, string][] = [
-    ["loading", LOADING, "loading"],
-    ["error", ERRORED, "error"],
-    ["unavailable", ready({ meta: {} }), "unavailable"],
+  // a first read in flight is the loading state, not a value → only a finished, unread read says Not loaded
+  const states: [string, unknown, string, string | null][] = [
+    ["loading", LOADING, "loading", null],
+    ["error", ERRORED, "error", "Not loaded"],
+    ["unavailable", ready({ meta: {} }), "unavailable", "Not loaded"],
   ];
-  for (const [name, agentsState, expected] of states) {
+  for (const [name, agentsState, expected, value] of states) {
     const tile = tileOf(
       dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }),
       "fleet",
     );
     assert.equal(tile.status, expected, name);
-    assert.equal(tile.value, "—", `${name} must not render a number nobody loaded`);
+    assert.equal(tile.value, value, `${name} must not render a number nobody loaded`);
     assert.equal(tile.tone, "neutral", `${name} carries no verdict tone`);
   }
 });
@@ -281,7 +282,7 @@ test("the fleet tile reads unavailable when the breaker state is, never a zero s
   for (const breaker of [undefined, { source: "unavailable", registry_agents: 0, suspended_count: 0, streak_count: 0, alarms: [] }]) {
     const tile = fleetTile(breaker);
     assert.equal(tile.status, "unavailable");
-    assert.equal(tile.value, "—");
+    assert.equal(tile.value, "Not loaded");
     assert.equal(tile.tone, "neutral");
   }
 });
@@ -289,7 +290,8 @@ test("the fleet tile reads unavailable when the breaker state is, never a zero s
 // The tile skeleton belongs to the first-poll wait; the tile must not call that wait 'unavailable'.
 test("the harness tile is loading exactly while the fold is, and unavailable only after", () => {
   const empty = { ...HEALTHY, partsOk: 0, partsChecked: 0, uncheckedNames: ["PostgreSQL"] };
-  for (const [foldStatus, expected] of [["loading", "loading"], ["unavailable", "unavailable"]]) {
+  const folds: [string, string, string | null][] = [["loading", "loading", null], ["unavailable", "unavailable", "Not loaded"]];
+  for (const [foldStatus, expected, value] of folds) {
     const tile = tileOf(
       dash.buildTiles({
         harness: { ...empty, status: foldStatus },
@@ -298,7 +300,7 @@ test("the harness tile is loading exactly while the fold is, and unavailable onl
       "harness",
     );
     assert.equal(tile.status, expected, foldStatus);
-    assert.equal(tile.value, "—", `${foldStatus} must not render a count nobody polled`);
+    assert.equal(tile.value, value, `${foldStatus} must not render a count nobody polled`);
     assert.equal(tile.tone, "neutral");
     assert.equal(tile.canRetry === true, foldStatus === "unavailable", `${foldStatus}: only a lost reading offers Retry`);
   }
@@ -392,10 +394,10 @@ test("the outcome tile leads with the failed share and moves the verdict into it
     }),
     "outcomes",
   );
-  assert.match(tile.value, /^20\.0%/, "the failed share is the headline");
+  assert.equal(tile.value, "20%", "the failed share is the headline, its .0 dropped");
   assert.equal(tile.badge, "Failures above alert line");
   assert.match(String(tile.detail), /40 of 200 failed or blocked · alert at 5%/, "the detail names both results the share counts");
-  assert.match(tile.hint, /^Open caveats 5\.0% \(10\) · alert 10%$/, "the caveat alert line sits beside the caveat share");
+  assert.match(tile.hint, /^Open caveats 5% \(10\) · alert 10%$/, "the caveat alert line sits beside the caveat share");
   assert.doesNotMatch(tile.hint, /writer-emitted/, "the counting rule moves out of the visible hint");
   assert.match(String(tile.note), /writer-emitted/, "and into the tile's ⓘ drawer note");
 });
@@ -509,13 +511,13 @@ test("a harness hint too short to name every unread source names the first and c
 
 test("the spend alarm detail is the leg that crossed the cut, as one figure plus a label within the 32-char cap", () => {
   const rows = [
-    { name: "the 3-hour pace leads", today: 1_300, pace: 1_450, figure: "$1,450.00", label: /at the last 3 hours' rate/ },
-    { name: "so-far leads", today: 1_500, pace: 900, figure: "$1,500.00", label: /so far/ },
+    { name: "the 3-hour pace leads", today: 1_300, pace: 1_450, figure: "$1,450", label: /at the last 3 hours' rate/ },
+    { name: "so-far leads", today: 1_500, pace: 900, figure: "$1,500", label: /so far/ },
   ];
   for (const row of rows) {
     const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(row.today, 1_000, row.pace), installKind: "hidden" });
     const detail = String(alarm.detail);
-    const figure = detail.match(/^\$[\d,]+\.\d{2}/)?.[0] ?? "";
+    const figure = detail.match(/^\$[\d,.]+/)?.[0] ?? "";
     assert.equal(figure, row.figure, `${row.name}: "${detail}" leads with the figure that crossed the cut`);
     const label = detail.slice(figure.length);
     assert.match(label, row.label, `${row.name}: the label names its leg`);
@@ -848,8 +850,8 @@ const CURRENT_20PCT = {
 
 test("the outcome tile's delta compares failed-or-blocked shares and names both windows", () => {
   const rows = [
-    { name: "share up", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "fail", count: 5 }, { result: "done", count: 95 }] }, trend: /^Up 15\.0 pts/ },
-    { name: "share down", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "blocked", count: 30 }, { result: "done", count: 70 }] }, trend: /^Down 10\.0 pts/ },
+    { name: "share up", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "fail", count: 5 }, { result: "done", count: 95 }] }, trend: /^Up 15 pts/ },
+    { name: "share down", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "blocked", count: 30 }, { result: "done", count: 70 }] }, trend: /^Down 10 pts/ },
     { name: "same share on half the count", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "fail", count: 20 }, { result: "done", count: 80 }] }, trend: /^Level/ },
     { name: "prior reconstructed rows left out", prior: { total: 150, reconstructed_total: 50, by_result: [{ result: "fail", count: 30, reconstructed_count: 10 }, { result: "done", count: 120, reconstructed_count: 40 }] }, trend: /^Level/ },
   ];

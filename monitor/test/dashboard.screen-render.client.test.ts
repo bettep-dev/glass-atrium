@@ -170,8 +170,7 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
   UI: {
     resolveOutcomeRate: (data: unknown) => data,
     formatInt: (n: number) => String(n),
-    // ui.jsx contract "x% (n/d)" → the tile must drop the denominator tail itself
-    formatPctWithDenominator: (num: number, den: number) => `${((num / den) * 100).toFixed(1)}% (${num}/${den})`,
+    formatPct: realUi.formatPct,
     LOW_N_MIN: 20,
     OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
     OUTCOME_OPEN_CAVEAT_WARN_SHARE: 0.1,

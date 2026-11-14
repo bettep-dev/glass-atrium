@@ -5,7 +5,7 @@
 const { useState: useStateD, useEffect: useEffectD, useRef: useRefD, useCallback: useCallbackD } = React;
 
 // 숫자 포맷 — ui.jsx 공용 SoT 소비 (ui.js 가 dashboard.js 보다 먼저 로드 → window.UI 가용).
-const formatUsd = window.UI.formatUsd;
+const formatUsdCompact = window.UI.formatUsdCompact;
 const formatInt = window.UI.formatInt;
 
 // Update 컨트롤 상수 (P3-T4) — poll 간격 · stale 컷오프 · 엔드포인트.
@@ -297,12 +297,12 @@ function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }
 // the band outlives every recovery → a banner Retry that leaves on success hands focus here
 const DASH_STATUS_BAND_ID = 'dash-status';
 
-// a banner-carried outage is stated once, above → the tile stays flat with its unknown dash
+// a banner-carried outage is stated once, above → the tile stays flat with its Not loaded value
 const POINTER = { BANNER: 'see the notice above', RESULTS_TILE: 'see the Task results tile' };
 const SHARED_FAILURE_HINT = `Not loaded — ${POINTER.BANNER}.`;
 
 // 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
-// 값 자리는 never 0-for-unknown: 미수신은 '—' 로 남는다.
+// 값 자리는 never 0-for-unknown: 미수신은 Not loaded 로 남는다.
 function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
   const { KPI, RetryButton, CardInfo, Badge, DateRange } = window.UI;
   const cardId = getTileCardId(tile);
@@ -478,7 +478,7 @@ function SpendStrip({ strip }) {
       <ol className="grid grid-cols-7 gap-1" aria-label={`Spend per day, ${strip.span}`}>
         {strip.bars.map((bar) => (
           <li key={bar.date} className="flex flex-col items-center gap-1 min-w-0">
-            <span className="fs-meta font-mono whitespace-nowrap">{window.UI.formatUsdCompact(bar.cost)}</span>
+            <span className="fs-meta tabular-nums whitespace-nowrap">{formatUsdCompact(bar.cost)}</span>
             <div className="dash-strip-track w-full flex items-end text-info" aria-hidden="true">
               <div className={`w-full ${bar.isPartial ? 'dash-strip-partial' : 'dash-strip-bar'}`}
                 style={{ height: `${Math.max(2, (bar.cost / max) * 100)}%` }}/>
@@ -515,7 +515,7 @@ function ResultPanel({ panel }) {
               <div aria-hidden="true">
                 <div className={`dash-result-fill text-${meta.tone}`} style={{ width: `${(row.count / panel.writerTotal) * 100}%` }}/>
               </div>
-              <span className="font-mono text-right">{formatInt(row.count)}</span>
+              <span className="tabular-nums text-right">{formatInt(row.count)}</span>
             </li>
           );
         })}
@@ -539,7 +539,7 @@ function BreakageAgents({ agents }) {
               aria-label={`${row.agent}: ${formatInt(row.count)} failed or blocked — open its task results`}>
               <span className="truncate">{row.agent}</span>
             </a>
-            <span className="font-mono">{formatInt(row.count)}</span>
+            <span className="tabular-nums">{formatInt(row.count)}</span>
           </li>
         ))}
       </ul>
@@ -908,14 +908,14 @@ function buildHarnessTile(harness) {
     source: 'harness health',
   };
   if (harness && harness.status === 'loading') {
-    return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
+    return { ...base, status: 'loading', tone: 'neutral', value: null, hint: null };
   }
   if (harness && harness.status !== 'ready' && harness.error != null) {
     return buildFailedTile(base, harness.error);
   }
   if (!harness || harness.status !== 'ready') {
     // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
-    return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Harness readings unavailable.', canRetry: true };
+    return { ...base, status: 'unavailable', tone: 'neutral', value: window.UI.NOT_LOADED_TEXT, hint: 'Harness readings unavailable.', canRetry: true };
   }
   return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
 }
@@ -996,7 +996,7 @@ function joinPartNames(names) {
 // a cold error stays 'error' through its Retry (getRegionView) → the focused Retry card never becomes a loader
 function buildPendingTile(base, state) {
   const view = state ? window.UI.getRegionView(state) : 'loading';
-  if (view === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: '—', hint: null };
+  if (view === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: null, hint: null };
   if (view === 'error') return buildFailedTile(base, state.error);
   return null;
 }
@@ -1005,7 +1005,7 @@ function buildPendingTile(base, state) {
 function buildFailedTile(base, error) {
   const copy = window.UI.getErrorCopy(error, base.source);
   return {
-    ...base, status: 'error', tone: 'neutral', value: '—', detail: copy.sentence, hint: copy.next, failureDetail: copy.detail ?? undefined,
+    ...base, status: 'error', tone: 'neutral', value: window.UI.NOT_LOADED_TEXT, detail: copy.sentence, hint: copy.next, failureDetail: copy.detail ?? undefined,
     error, canRetry: true,
   };
 }
@@ -1065,7 +1065,7 @@ function describeOutcomeTrend(rate, prior) {
   const priorRate = window.UI.resolveOutcomeRate(prior);
   if (!Object.hasOwn(OUTCOME_VERDICT, priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
   const points = (rate.breakage / rate.writerTotal - priorRate.breakage / priorRate.writerTotal) * 100;
-  const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${Math.abs(points).toFixed(1)} pts`;
+  const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${window.UI.formatDecimal(Math.abs(points))} pts`;
   return `${change} since ${formatDay(prior.period_end)} vs ${getSharePct(priorRate.breakage, priorRate.writerTotal)} in ${priorRange}`;
 }
 
@@ -1073,16 +1073,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // server-anchored YYYY-MM-DD → MM-DD; never re-derived from the browser clock
 function formatDay(date) {
-  return String(date).slice(5, 10);
+  return window.UI.formatKstDay(date);
 }
 
 function formatAlertLine(share) {
-  return `${Math.round(share * 100)}%`;
+  return window.UI.formatPct(share * 100);
 }
 
-// headline share without its " (n/d)" tail → a 28px value stays on one line; the counts ride the detail line
+// headline share without its counts → a 28px value stays on one line; the counts ride the detail line
+// callers pass a writer total past the low-n gate → the denominator is never 0
 function getSharePct(numerator, denominator) {
-  return window.UI.formatPctWithDenominator(numerator, denominator).split(' (')[0];
+  return window.UI.formatPct((numerator / denominator) * 100);
 }
 
 // 타일 3 — 함대. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0.
@@ -1098,7 +1099,7 @@ function buildFleetTile(agentsState) {
   const suspended = Number(breaker?.suspended_count);
   const streak = Number(breaker?.streak_count);
   if (breaker?.source !== 'loaded' || !Number.isFinite(suspended) || !Number.isFinite(streak)) {
-    return { ...base, status: 'unavailable', tone: 'neutral', value: '—', hint: 'Suspension state unavailable.' };
+    return { ...base, status: 'unavailable', tone: 'neutral', value: window.UI.NOT_LOADED_TEXT, hint: 'Suspension state unavailable.' };
   }
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
   const agentCount = Number(meta.total_agents);
@@ -1139,7 +1140,7 @@ function buildSpendTile(costState, harness) {
 
   const pace = resolveSpendPace(costState);
   const tone = { hot: 'warn', normal: 'ok' }[pace.status] ?? 'neutral';
-  const reading = { ...base, status: 'ready', tone, value: formatUsd(pace.today), trend: describeSpendTrend(harness) };
+  const reading = { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), trend: describeSpendTrend(harness) };
   if (pace.status === 'no-basis') {
     return { ...reading, hint: 'No spend in 7 days — no baseline' };
   }
@@ -1161,7 +1162,7 @@ function describeSpendTrend(harness) {
   if (kpi.today_cost_usd == null || kpi.yesterday_same_time_cost_usd == null) return 'Change on yesterday unavailable — the reading carries no spend';
   if (!(prior > 0)) return 'No spend yesterday by this time to compare against';
   const change = Math.round(((Number(kpi.today_cost_usd) - prior) / prior) * 100);
-  const comparand = `${formatUsd(prior)} yesterday by this time`;
+  const comparand = `${formatUsdCompact(prior)} yesterday by this time`;
   if (change === 0) return `Level with ${comparand}`;
   return `${change > 0 ? 'Up' : 'Down'} ${Math.abs(change)}% on ${comparand}`;
 }
@@ -1169,13 +1170,13 @@ function describeSpendTrend(harness) {
 // the verdict trips on the larger of so-far and pace → the lead line states that same figure
 // the leg that crossed the cut → one figure and its window; the tile beside it carries the 7-day basis
 function describeSpendAlarm(spend) {
-  if (spend.pace >= spend.today) return `${formatUsd(spend.pace)}/day at the last 3 hours' rate`;
-  return `${formatUsd(spend.today)} spent so far today`;
+  if (spend.pace >= spend.today) return `${formatUsdCompact(spend.pace)}/day at the last 3 hours' rate`;
+  return `${formatUsdCompact(spend.today)} spent so far today`;
 }
 
 function describeSpendPace(pace) {
   const judged = Math.max(pace.today, pace.pace);
-  return `On pace for ${formatUsd(judged)} today, ${(judged / pace.basis).toFixed(1)}× the 7-day average (${formatUsd(pace.basis)})`;
+  return `On pace for ${formatUsdCompact(judged)} today, ${(judged / pace.basis).toFixed(1)}× the 7-day average (${formatUsdCompact(pace.basis)})`;
 }
 
 // 헤더 우측 중립 텍스트 — 설치 버전. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
