@@ -1370,6 +1370,8 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
   const modelRows = buildModelCostRows(rows);
   const { top } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
+  const formatCost = getMoneyColumnFormatC([...top.map((r) => r.cost_usd), totalCost]);
+  const formatAvg = getMoneyColumnFormatC(top.map(getAvgPerSessionC).filter((v) => v !== null));
 
   return (
     // the body is flush for the ledger → the labels and the share block take the card padding themselves
@@ -1385,13 +1387,13 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
           foot={(view) => (
             <TableRow view={view}>
               <TableCell view={view} kind="row-header">Total</TableCell>
-              <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatUsdC(totalCost)}</TableCell>
-              {/* A session spanning several models sits in each model's count → the column does not sum. */}
-              <TableCell view={view} textRole="meta" label="Sessions" isNumeric><NoneCellC/></TableCell>
-              <TableCell view={view} textRole="meta" label="Avg / session" isNumeric><NoneCellC/></TableCell>
+              <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatCost(totalCost)}</TableCell>
+              <TableCell view={view} kind="span" start={2} textRole="meta" className="text-faint">
+                Sessions not summed — a session using several models counts under each
+              </TableCell>
             </TableRow>
           )}>
-          {(view) => top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view}/>)}
+          {(view) => top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view} formatCost={formatCost} formatAvg={formatAvg}/>)}
         </Table>
       </Stack>
     </Stack>
@@ -1405,6 +1407,15 @@ const MODEL_COLUMNS = Object.freeze([
   { key: 'avg', label: 'Avg / session', isNumeric: true },
 ]);
 
+function getAvgPerSessionC(r) {
+  return r.session_count > 0 ? r.cost_usd / r.session_count : null;
+}
+
+// one precision per money column (spec 44084 §2.1) → any cell under $100 keeps cents in every cell, so the total checks against its rows
+function getMoneyColumnFormatC(values) {
+  return values.some((v) => Math.abs(v) < 100) ? window.UI.formatUsd : formatUsdC;
+}
+
 // an empty cell reads None in faint ink, never blank or a dash
 function NoneCellC() {
   return <span className="text-faint">None</span>;
@@ -1414,10 +1425,10 @@ function NoneCellC() {
  * One ledger row — token columns behind the row's own expand.
  * The default table stays at the four columns a spend decision needs.
  */
-function ModelCostRow({ r, view }) {
+function ModelCostRow({ r, view, formatCost = formatUsdC, formatAvg = formatUsdC }) {
   const { DisclosureChevron, TableRow, TableCell } = window.UI;
   const [expanded, setExpanded] = useStateC(false);
-  const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
+  const avgPerSession = getAvgPerSessionC(r);
 
   return (
     <>
@@ -1433,12 +1444,12 @@ function ModelCostRow({ r, view }) {
             <span>{r.model}</span>
           </button>
         </TableCell>
-        <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatUsdC(r.cost_usd)}</TableCell>
+        <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatCost(r.cost_usd)}</TableCell>
         <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
           {r.session_count === null ? <NoneCellC/> : formatIntC(r.session_count)}
         </TableCell>
         <TableCell view={view} textRole="meta" label="Avg / session" isNumeric>
-          {avgPerSession === null ? <NoneCellC/> : formatUsdC(avgPerSession)}
+          {avgPerSession === null ? <NoneCellC/> : formatAvg(avgPerSession)}
         </TableCell>
       </TableRow>
       {expanded && (
@@ -1581,11 +1592,11 @@ function CacheHitBody({ state, days, failures, onRetry }) {
       </div>
       {flatRate === null ? (
         <div style={{ width: '100%', height: 220 }}
-          {...window.UI.getChartImageProps(getGapNameC('Daily cache hit rate', ratePoints), ratePoints, formatRatePctC)}>
+          {...window.UI.getChartImageProps(getGapNameC('Daily cache hit rate', ratePoints), ratePoints, (v) => window.UI.formatPct(v))}>
           <CacheHitChart rows={chartRows} yDomain={yDomain}/>
         </div>
       ) : (
-        <div className="fs-meta text-dim">{`Flat at ${formatRatePctC(flatRate)} every day with data — no line to draw.`}</div>
+        <div className="fs-meta text-dim">{`Flat at ${window.UI.formatPct(flatRate)} every day with data — no line to draw.`}</div>
       )}
     </Stack>
   );
@@ -1605,16 +1616,12 @@ function computeCacheYDomain(chartRows) {
   return [Math.max(0, min - pad), Math.min(100, max + pad)];
 }
 
-function formatRatePctC(value) {
-  return `${value.toFixed(1)}%`;
-}
-
 // Every day with data reads as one figure at the shown precision → a sentence, not a 220px flat line; null otherwise.
 function getFlatCacheRate(chartRows) {
   const vals = chartRows.map((r) => r.rate_pct).filter(Number.isFinite);
   if (vals.length === 0) return null;
-  const labels = new Set(vals.map(formatRatePctC));
-  return labels.size === 1 ? Math.round(vals[0] * 10) / 10 : null;
+  const labels = new Set(vals.map((v) => window.UI.formatPct(v)));
+  return labels.size === 1 ? vals[0] : null;
 }
 
 // Widest tick label ("100.0%") sets the axis width → the top label is never clipped.
@@ -1725,9 +1732,8 @@ function getSpendConcentration(sessions, topN) {
 
 function getSpendConcentrationText(concentration, sessionCount) {
   if (!concentration) return null;
-  const pct = Math.round(concentration.share * 100);
   const who = concentration.count === 1 ? 'The costliest session' : `The costliest ${concentration.count} sessions`;
-  return `${who} of ${formatIntC(sessionCount)} ${concentration.count === 1 ? 'holds' : 'hold'} ${pct}% of the spend in this window.`;
+  return `${who} of ${formatIntC(sessionCount)} ${concentration.count === 1 ? 'holds' : 'hold'} ${window.UI.formatPct(concentration.share * 100)} of the spend in this window.`;
 }
 
 function SessionDistributionCard({ state, days, failures, onRetry }) {

@@ -343,14 +343,20 @@ describe("calm fixture — nothing is running hot", () => {
     }
   });
 
-  test("the ledger Total row carries no session count — per-model counts do not sum", async () => {
-    const totalCells = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen table.tbl tfoot :is(th, td)")).map((cell) =>
-        (cell.textContent || "").trim(),
-      ),
-    );
-    assert.strictEqual(totalCells[0], "Total");
-    assert.deepStrictEqual(totalCells.slice(2), ["None", "None"]);
+  test("the ledger Total row sums only the cost column, in that column's precision, and says why the counts are not summed", async () => {
+    const ledger = await ctx.page.evaluate(() => {
+      const table = Array.from(document.querySelectorAll(".cost-screen table.tbl"))
+        .find((t) => (t.querySelector("caption")?.textContent || "").startsWith("Cost by model"));
+      return {
+        foot: Array.from(table?.querySelectorAll("tfoot :is(th, td)") ?? []).map((cell) => (cell.textContent || "").trim()),
+        costs: Array.from(table?.querySelectorAll("tbody tr > td:nth-child(2)") ?? []).map((cell) => (cell.textContent || "").trim()),
+      };
+    });
+    assert.strictEqual(ledger.foot[0], "Total");
+    assert.ok(ledger.costs.some((text) => /^\$\d{1,2}\.\d\d$/.test(text)), `a row under $100: ${ledger.costs.join(" | ")}`);
+    for (const text of [...ledger.costs, ledger.foot[1]]) assert.match(text, /\.\d\d$/, `one precision down the cost column: ${text}`);
+    assert.strictEqual(ledger.foot.length, 3, "the two count columns share one cell");
+    assert.doesNotMatch(ledger.foot[2], /^(?:None|—|)$/, "the shared cell gives the reason in words");
   });
 
   for (const width of [1440, 1024]) {

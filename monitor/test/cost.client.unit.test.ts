@@ -1500,7 +1500,7 @@ test("a flat hit-rate strip collapses to one line instead of an empty chart", as
   const flat = CACHE_ROWS.map((r) => ({ ...r, cache_hit_rate: 1 }));
   const tree = renderIn(mod, "CacheHitBody", { state: ready({ rows: flat }), days: 30, onRetry: () => {} });
   assert.equal(findNodes(tree, isChart).length, 0);
-  assert.match(collectText(tree), /100\.0%.*every day/);
+  assert.match(collectText(tree), /Flat at 100% every day/);
 });
 
 // --- Cost & usage: every figure pair agrees or names its difference; the legend lists only drawn series ---
@@ -1528,8 +1528,15 @@ describe("the cost trend y-axis steps in round amounts", () => {
 
 test("a hit-rate series that reads as one figure at the shown precision is flat, one that reads as two is not", () => {
   const toRows = (values: (number | null)[]) => values.map((rate_pct) => ({ rate_pct }));
-  assert.strictEqual(cost.getFlatCacheRate(toRows([99.97, 100, null, 99.99])), 100, "every day reads 100.0%");
-  assert.strictEqual(cost.getFlatCacheRate(toRows([99.5, 100])), null, "99.5% and 100.0% are two figures");
+  assert.strictEqual(cost.getFlatCacheRate(toRows([100, 100, null, 100])), 100, "every day reads 100%");
+  assert.strictEqual(cost.getFlatCacheRate(toRows([99.97, 100, 99.99])), null, "a day under 100 reads >99.9%, a second figure beside 100%");
+  assert.strictEqual(cost.getFlatCacheRate(toRows([99.5, 100])), null, "99.5% and 100% are two figures");
+});
+
+test("the spend concentration sentence prints its share through formatPct, so a share short of the whole never reads 100%", () => {
+  const getText = (cost as unknown as { getSpendConcentrationText: (c: unknown, n: number) => string }).getSpendConcentrationText;
+  assert.match(getText({ share: 0.9996, count: 1 }, 40), /holds >99\.9% of the spend/);
+  assert.match(getText({ share: 0.4125, count: 3 }, 40), /hold 41\.3% of the spend/);
 });
 
 test("the cache tile says the list-price total matches the recorded total when both read the same, and names the gap when not", () => {
