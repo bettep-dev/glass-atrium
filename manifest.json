@@ -1752,7 +1752,7 @@
     "scripts/agent_lifecycle/registry_ops.py": "0af073ddbe8da490a59ce44dd9d5b832f2c4f39a03bafb4a6aab2d7b6bb50fca",
     "scripts/agent_lifecycle/scaffold.py": "f91a50cb51c65a5977235faec30f4c0bc4e68a718f8a8aa66bc87b7e85f5fddb",
     "scripts/agent_lifecycle/scope_infer.py": "533b4a5b2098841dbee1e8ad29c7c68ffee84626f4a41cdfb4214329153044f8",
-    "scripts/agent_lifecycle/secret_scan.py": "85ebdda540a3f6710b3d43b9e8f8d833a453303ff80ec57cbf71d8a6285d6513",
+    "scripts/agent_lifecycle/secret_scan.py": "fcba81eddb4c2249da07e2a007b1fa3c44c814e251541978b84686a7c69989a2",
     "scripts/agent_lifecycle/stanza.py": "a1035a5c6ee6b8cdc017104397647844af4275ebb2d60ce72d25c8f10c046edc",
     "scripts/agent_lifecycle/subproc.py": "5c86ee14c844398c2e2f06c7fb7bc4fda030f8784c445b98884b66f8f021cd56",
     "scripts/agent_lifecycle/transaction.py": "d7660a665426ed298d36d3084a737c3a10cca83955e9ceabce1f6cec829302e7",
