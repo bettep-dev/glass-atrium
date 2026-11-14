@@ -3632,6 +3632,24 @@ update_render_parity() {
   update_render_oneshot_plist >/dev/null 2>&1 || update_log "WARN: one-shot plist render failed"
 }
 
+# Reissue the remote leaf while access is on and the leaf is due (expiry, address or name); never turns
+# access on and never creates a CA. Best-effort + loud like the renders.
+update_reissue_remote_leaf() {
+  local dir
+  [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 0
+  if ! declare -F ga_remote_issue_leaf >/dev/null; then
+    # shellcheck source=/dev/null
+    source "${_update_script_dir}/../lib/ga-remote.sh"
+  fi
+  dir="$(ga_remote_get_key_dir)"
+  [[ -f "${dir}/ca.key" ]] || return 0
+  # shellcheck disable=SC2310  # a failed due check or reissue is reported here, never an abort
+  if ga_remote_is_leaf_due "${dir}" && ! ga_remote_issue_leaf "${dir}"; then
+    update_log "WARN: remote leaf reissue failed — the current leaf stays; run 'glass-atrium remote reissue'"
+  fi
+  return 0
+}
+
 # Refresh the monitor's launchd job. PROBE with `launchctl print` first: loaded →
 # `kickstart -k` (restart in place); NOT loaded → `bootstrap` (kickstart -k is
 # non-idempotent when unloaded, so the probe picks the correct verb). Best-effort +
@@ -3859,6 +3877,7 @@ update_post_step() {
   fi
   update_heartbeat
   update_render_parity
+  update_reissue_remote_leaf
   update_refresh_monitor_launchd
   update_refresh_resident_launchd
   update_log "post-step: install-parity complete"

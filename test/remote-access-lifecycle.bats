@@ -357,3 +357,37 @@ doctor_level_for() {
     }
   done
 }
+
+@test "the updater reissues the leaf only when access is on and the leaf no longer names the current address" {
+  local rows=('on, leaf for an old address|on|192.168.0.23|reissued' 'on, current leaf|on|192.168.0.10|kept'
+    'off, leaf for an old address|off|192.168.0.23|kept')
+  local row name state address expected leaf_before
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name state address expected <<<"${row}"
+    printf '[ports]\nmonitor = 16145\n' >"${SANDBOX}/config.toml"
+    WIFI_ADDRESS="192.168.0.10"
+    create_keys
+    [[ "${state}" == "off" ]] || turn_on_config "192.168.0.1@00:1b:2c:0d:4e:5f"
+    WIFI_ADDRESS="${address}"
+    leaf_before="$(file_sum "${KEY_DIR}/leaf.pem")"
+    declare -f ga_remote_run >"${SANDBOX}/stubs.sh"
+    ROUTE_OUT="${ROUTE_OUT}" WIFI_ADDRESS="${WIFI_ADDRESS}" HOST_NAME="Test-Mac" CALLS="${CALLS}" \
+      run bash -c 'source "$1/scripts/update.sh" && source "$1/scripts/lib/atrium-config.sh" && source "$1/lib/ga-remote.sh" \
+        && source "$2" && update_reissue_remote_leaf' _ "${GA}" "${SANDBOX}/stubs.sh"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
+    if [[ "${expected}" == "reissued" ]]; then
+      ga_remote_is_leaf_for "${KEY_DIR}" "${KEY_DIR}/leaf.pem" "test-mac.local" "${address}" || {
+        echo "${name}: the leaf does not name ${address}"
+        return 1
+      }
+    else
+      [[ "$(file_sum "${KEY_DIR}/leaf.pem")" == "${leaf_before}" ]] || {
+        echo "${name}: leaf changed"
+        return 1
+      }
+    fi
+  done
+}
