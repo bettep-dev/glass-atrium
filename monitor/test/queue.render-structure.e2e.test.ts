@@ -24,7 +24,7 @@ import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
-  getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 
@@ -377,17 +377,30 @@ const PARTS: CloseUpState[] = [
   },
 ];
 
-const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...PARTS.flatMap((state) => [state, getLightState(state)])];
+// the pause glyph beside the Not yet tag at device scale 2: the solid two bars, read at a glance
+const NOT_LISTENING_PARTS: CloseUpState[] = [
+  {
+    nn: "35", name: "not-listening-pair", closeUp: `#queue-order-${NOT_LISTENING_IDS.mixedOrder}`, getFixture: getNotListeningFixture,
+    setUp: (page) => page.locator(`#queue-order-${NOT_LISTENING_IDS.mixedOrder}`).scrollIntoViewIfNeeded(),
+  },
+];
 
-// spec §18.4 35 (Not listening stream only) at 1440 and 1920 in both themes: each Not listening surface in one frame with its Not yet twin
-// — the rail's two rows, the list's roll-ups, the mixed order's recipients, the composer with a listening and a not-listening tick, the two
-// answered sheets — and plan 44080's approval note
-const TWIN_VIEWPORTS = [VIEWPORTS[0], VIEWPORTS[2]] as const;
+const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...[...PARTS, ...NOT_LISTENING_PARTS].flatMap((state) => [state, getLightState(state)])];
+
+// spec §18.4 35 (Not listening stream only) at 1280, 1440 and 1920 in both themes: each Not listening surface in one frame with its Not yet
+// twin — the rail's two rows, the list's roll-ups, the mixed order's recipients, the composer with a listening and a not-listening tick, the two
+// answered sheets — then a list row with both badges, the five-or-more roll-up, the composer's other ticks, no session listening, the approval note
+const TWIN_VIEWPORTS = [MIN_WINDOW, VIEWPORTS[0], VIEWPORTS[2]] as const;
 const TWIN_DARK_STATES: QueueState[] = [
   { nn: "35a", name: "not-listening-desk", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => showNotListeningDesk(page) },
   { nn: "35b", name: "not-listening-composer", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["gersona", "nightly"]) },
   { nn: "35c", name: "not-listening-sheet", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => selectRow(page, NOT_LISTENING_IDS.answeredDecision) },
   { nn: "35d", name: "listening-sheet", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => selectRow(page, 108) },
+  { nn: "35e", name: "two-badge-row", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningEdgeFixture, setUp: (page) => page.locator(`#queue-row-${NOT_LISTENING_IDS.twoBadgeOrder}`).scrollIntoViewIfNeeded() },
+  { nn: "35f", name: "roll-up-not-listening", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningEdgeFixture, setUp: (page) => page.locator(`#queue-order-${NOT_LISTENING_IDS.rollUpOrder}`).scrollIntoViewIfNeeded() },
+  { nn: "35g", name: "composer-one-not-listening", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["nightly"]) },
+  { nn: "35h", name: "composer-not-listening-first", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["sixmon", "nightly"]) },
+  { nn: "35i", name: "none-listening", viewports: TWIN_VIEWPORTS, getFixture: getNoneListeningFixture, setUp: (page) => showNotListeningDesk(page) },
   { nn: "36", name: "approval-note", viewports: TWIN_VIEWPORTS, getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.approval) },
 ];
 const TWIN_STATES = TWIN_DARK_STATES.flatMap((state) => [state, getLightState(state)]);
@@ -2251,10 +2264,13 @@ describe("queue page on the mockup fixtures", () => {
         const painted: string[] = [];
         for (let node = walker.nextNode(); node; node = walker.nextNode()) if (!node.parentElement?.closest(".sr-only")) painted.push(node.textContent ?? "");
         const glyph = badge.firstElementChild;
+        const shapes = glyph?.tagName === "svg" ? [...glyph.children] : [];
         return {
           name: row.querySelector(".queue-recipient-name")?.textContent,
           word: [...badge.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join(""),
           isGlyphDrawn: glyph?.tagName === "svg" && glyph.childElementCount > 0,
+          // solid in the badge's ink: every shape filled in the word's colour, none drawn as a hairline
+          isGlyphSolid: shapes.length > 0 && shapes.every((shape) => getComputedStyle(shape).fill === getComputedStyle(badge).color && getComputedStyle(shape).stroke === "none"),
           title: badge.getAttribute("title"),
           background: getComputedStyle(badge).backgroundColor,
           isSentencePainted: painted.join("").includes("delivers at"),
@@ -2263,8 +2279,8 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
 
       assert.deepEqual(rows.map(({ background: _background, ...row }) => row), [
-        { name: "gersona", word: "Not yet", isGlyphDrawn: false, title: null, isSentencePainted: false },
-        { name: "sixmon", word: "Not listening", isGlyphDrawn: true, title: SENTENCE, isSentencePainted: false },
+        { name: "gersona", word: "Not yet", isGlyphDrawn: false, isGlyphSolid: false, title: null, isSentencePainted: false },
+        { name: "sixmon", word: "Not listening", isGlyphDrawn: true, isGlyphSolid: true, title: SENTENCE, isSentencePainted: false },
       ]);
       assert.equal(rows[0]?.background, rows[1]?.background, "one tag fill for both");
     });
@@ -2306,6 +2322,30 @@ describe("queue page on the mockup fixtures", () => {
 
       assert.deepEqual(shown, { tagged: [["nightly", "Not listening"]], note: "nightly is not listening: it gets this at its next turn end or restart." });
       assert.deepEqual(posts, ["/api/queue/owner/messages/send"]);
+    });
+
+    test("in the composer's label each ticked name stays on one line with its badge, and the comma between names follows the badge, at 1280 and 1440", async () => {
+      const shown: Array<{ at: number; text: string; lines: number }> = [];
+      for (const viewport of [MIN_WINDOW, VIEWPORTS[0]]) {
+        for (const names of [["gersona", "nightly"], ["sixmon", "nightly"]]) {
+          harness.fixture = getNotListeningFixture();
+          const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+          await tickOrdersTo(page, names);
+          const tos = await page.evaluate(() => [...document.querySelectorAll(".queue-orders .queue-order-to")].map((to) => {
+            const range = document.createRange();
+            range.selectNodeContents(to);
+            // the badge and the name sit a few px apart on one line → a new line is a step of more than 10 in the boxes' middles
+            const middles = [...range.getClientRects()].filter((rect) => rect.width > 0).map((rect) => (rect.top + rect.bottom) / 2).sort((a, b) => a - b);
+            const lines = 1 + middles.filter((middle, index) => index > 0 && middle - (middles[index - 1] ?? middle) > 10).length;
+            return { text: (to.textContent ?? "").replace(/\s+/g, " ").trim(), lines };
+          }));
+          await page.close();
+          shown.push(...tos.map((to) => ({ at: viewport.width, ...to })));
+        }
+      }
+
+      assert.deepEqual(shown.filter((to) => to.lines !== 1), [], "one line per name and its badge");
+      assert.deepEqual(shown.filter((to) => to.at === MIN_WINDOW.width).map((to) => to.text).slice(2), ["sixmon, Not listening,", "nightly, Not listening"]);
     });
 
     test("an order to two sessions that do not listen reads 0 of 2 received and 2 not listening; the ended session's resume copy reads Not yet; nothing of the state is amber", async () => {
@@ -2369,7 +2409,16 @@ describe("queue page on the mockup fixtures", () => {
 
     test("an approval-class decision carries the Approval tag on its row and its date line, and its note says an approving answer approves the stated action once", async () => {
       const page = await openEdgePage(harness);
+      // the space between `2 options` and the Approval tag; the open sheet takes the list's box → the row is read first
+      const getGap = (selector: string) => page.evaluate((within) => {
+        const facts = document.querySelector(within);
+        const tag = facts?.querySelector(".pill--tag");
+        const count = [...(facts?.querySelectorAll("span") ?? [])].find((span) => /^\d+ options$/.test(span.textContent ?? ""));
+        return tag && count ? Math.round(tag.getBoundingClientRect().left - count.getBoundingClientRect().right) : null;
+      }, selector);
+      const rowGap = await getGap(`#queue-row-${EDGE_IDS.approval} .queue-row-facts`);
       await selectRow(page, EDGE_IDS.approval);
+      const dateGap = await getGap(".queue-sheet .queue-date-facts");
       const shown = await page.evaluate((id) => ({
         row: [...document.querySelectorAll(`#queue-row-${id} .queue-row-facts .pill--tag`)].map((badge) => badge.textContent),
         letterhead: [...document.querySelectorAll(".queue-sheet > .card-head .pill--tag, .queue-date-line .pill--tag")].map((badge) => badge.textContent),
@@ -2378,6 +2427,7 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
 
       assert.deepEqual({ row: shown.row, letterhead: shown.letterhead }, { row: ["Approval"], letterhead: ["Decision", "Approval"] });
+      assert.deepEqual([rowGap, dateGap], [6, 6], "the date line keeps the row's 6 between the count and the tag");
       assert.match(shown.note, /Approval: an approving answer here approves the stated action, once; aidl does not ask again in its terminal\./);
     });
 
@@ -2633,35 +2683,63 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(images, Array.from({ length: 8 }, (_, index) => `96x96 Open image ${index + 1} of 8: queue-edge-0${index + 1}.webp`));
     });
 
-    // the narrowest list, at the minimum window: the meta line's dim text yields to `2 of 3 received` and its `⚠ 1 not received`, never the warning
-    test("a list row keeps every badge of its facts whole, and the last fact text yields first to the column, ending in an ellipsis, at 1280", async () => {
-      const page = await openEdgePage(harness, MIN_WINDOW);
-      const rows = await page.evaluate(() => [...document.querySelectorAll(".queue-row-facts")].map((facts) => {
-        const box = facts.getBoundingClientRect();
-        const badges = [...facts.querySelectorAll(".pill")].map((badge) => ({
-          text: badge.textContent,
-          isWhole: badge.getBoundingClientRect().right <= box.right + 0.5 && badge.scrollWidth <= badge.clientWidth,
-        }));
-        // a fact's laid-out text against the nearest box that clips it, whichever span holds the fact
-        const texts = [...facts.querySelectorAll("span")].filter((span) => span.textContent && !span.closest(".pill, [aria-hidden]") && ![...span.children].some((child) => !child.matches("[aria-hidden]")));
-        const getClip = (span: Element) => {
-          for (let node: Element | null = span; node && node !== facts.parentElement; node = node.parentElement) if (getComputedStyle(node).overflowX === "hidden") return node;
-          return facts;
-        };
-        const getExtent = (span: Element) => {
-          const range = document.createRange();
-          range.selectNodeContents(span);
-          return range.getBoundingClientRect();
-        };
-        const cut = texts.filter((span) => getExtent(span).right > getClip(span).getBoundingClientRect().right + 0.5);
-        const last = texts.at(-1);
-        const isEarlyCut = last !== undefined && getClip(last).getBoundingClientRect().right > getExtent(last).left + 0.5 && cut.some((span) => span !== last);
-        return { text: facts.textContent, badges, isEarlyCut, cutWithoutEllipsis: cut.filter((span) => getComputedStyle(getClip(span)).textOverflow !== "ellipsis").length };
-      }));
-      await page.close();
+    // the narrowest list, at the minimum window: the dim text yields first, then a not-listening count badge down to its glyph and count;
+    // the amber `⚠ n not received` and every other badge stay whole
+    test("a list row keeps its amber and every fixed badge whole; its fact text yields first, then the not-listening count badge, each cut ending in an ellipsis, at 1280", async () => {
+      type FactsRow = {
+        text: string | null;
+        badges: Array<{ text: string | null; isWarn: boolean; isYielding: boolean; isWhole: boolean; isCutInPlace: boolean }>;
+        textRoom: number;
+        isEarlyCut: boolean;
+        cutWithoutEllipsis: number;
+      };
+      const rows: FactsRow[] = [];
+      for (const getFixture of [getEdgeFixture, getNotListeningEdgeFixture]) {
+        harness.fixture = getFixture();
+        const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+        rows.push(...await page.evaluate(() => [...document.querySelectorAll(".queue-row-facts")].map((facts) => {
+          const box = facts.getBoundingClientRect();
+          const textBox = facts.querySelector(".queue-row-facts-text");
+          const badges = [...facts.querySelectorAll(".pill")].map((badge) => {
+            const words = badge.querySelector(".pill-words");
+            // any overflow paints the ellipsis, a sub-pixel one included → the words' laid-out text against their box, to the hundredth
+            const isWordsCut = words !== null && (() => {
+              const range = document.createRange();
+              range.selectNodeContents(words);
+              return range.getBoundingClientRect().right > words.getBoundingClientRect().right + 0.01;
+            })();
+            return {
+              text: badge.textContent,
+              isWarn: badge.classList.contains("pill--warn"),
+              isYielding: words !== null,
+              isWhole: badge.getBoundingClientRect().right <= box.right + 0.5 && badge.scrollWidth <= badge.clientWidth && !isWordsCut,
+              isCutInPlace: words !== null && badge.getBoundingClientRect().right <= box.right + 0.5 && words.clientWidth > 0 && getComputedStyle(words).textOverflow === "ellipsis",
+            };
+          });
+          // a fact's laid-out text against the nearest box that clips it, whichever span holds the fact
+          const texts = [...facts.querySelectorAll("span")].filter((span) => span.textContent && !span.closest(".pill, [aria-hidden]") && ![...span.children].some((child) => !child.matches("[aria-hidden]")));
+          const getClip = (span: Element) => {
+            for (let node: Element | null = span; node && node !== facts.parentElement; node = node.parentElement) if (getComputedStyle(node).overflowX === "hidden") return node;
+            return facts;
+          };
+          const getExtent = (span: Element) => {
+            const range = document.createRange();
+            range.selectNodeContents(span);
+            return range.getBoundingClientRect();
+          };
+          const cut = texts.filter((span) => getExtent(span).right > getClip(span).getBoundingClientRect().right + 0.5);
+          const last = texts.at(-1);
+          const isEarlyCut = last !== undefined && getClip(last).getBoundingClientRect().right > getExtent(last).left + 0.5 && cut.some((span) => span !== last);
+          return { text: facts.textContent, badges, textRoom: textBox?.getBoundingClientRect().width ?? 0, isEarlyCut, cutWithoutEllipsis: cut.filter((span) => getComputedStyle(getClip(span)).textOverflow !== "ellipsis").length };
+        })));
+        await page.close();
+      }
 
+      const isBoth = (row: FactsRow) => row.badges.some((badge) => badge.isWarn) && row.badges.some((badge) => badge.isYielding);
       assert.ok(rows.some((row) => row.badges.some((badge) => badge.text?.includes("not received")) && /received/.test(row.text?.replace(/⚠.*$/, "") ?? "")), "a row carries a count and its warning");
-      assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => !badge.isWhole).map((badge) => `${row.text}: ${badge.text}`)), [], "every badge whole");
+      assert.ok(rows.some(isBoth), "a row carries a not-listening count badge beside its warning");
+      assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => !badge.isWhole && !badge.isCutInPlace).map((badge) => `${row.text}: ${badge.text}`)), [], "every badge whole, a not-listening count badge at most cut in place");
+      assert.deepEqual(rows.filter((row) => row.badges.some((badge) => badge.isYielding && !badge.isWhole) && row.textRoom > 0.5).map((row) => row.text), [], "the badge yields only once the fact text has yielded all its room");
       assert.deepEqual(rows.filter((row) => row.cutWithoutEllipsis > 0).map((row) => row.text), [], "a cut fact text ends in an ellipsis");
       assert.deepEqual(rows.filter((row) => row.isEarlyCut).map((row) => row.text), [], "an earlier fact text is cut only once the last one has yielded all its room");
     });

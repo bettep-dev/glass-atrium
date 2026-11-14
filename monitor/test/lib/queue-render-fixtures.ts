@@ -482,9 +482,10 @@ export const NOT_LISTENING_SESSION_IDS = {
 
 /** Item ids and send ids of the not-listening cases, for the tests that select them. */
 export const NOT_LISTENING_IDS = {
-  answeredDecision: 401, mixedOrder: 410, deafOrder: 420, resumeOrder: 430, unreachableOrder: 440,
+  answeredDecision: 401, mixedOrder: 410, deafOrder: 420, resumeOrder: 430, unreachableOrder: 440, twoBadgeOrder: 450, rollUpOrder: 460,
   mixedSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b20", deafSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b21",
   resumeSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b22", unreachableSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b23",
+  twoBadgeSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b24", rollUpSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b25",
 } as const;
 
 function buildNotListeningSession(id: string, name: string, state: "live" | "stale", inDelivery: number): { view: OwnerSessionView; row: OwnerSessionRow } {
@@ -531,6 +532,45 @@ const NOT_LISTENING_ORDERS = [
     to: [["atrium", { session: NOT_LISTENING_SESSIONS.relay.view, status: "answered", deliveredAt: null }]],
   }),
 ];
+
+const NOT_LISTENING_EDGE_ORDERS = [
+  // one copy not listening beside one not received → the list row's two badges
+  ...buildOrderCopies(NOT_LISTENING_IDS.twoBadgeOrder, {
+    sendId: NOT_LISTENING_IDS.twoBadgeSend, minutesAgo: 3, text: "두 세션 모두 어제 남긴 실패 로그를 다시 올려 주세요.",
+    to: [
+      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+      ["yoaida", { status: "unacked", deviation: "unacked", canResend: true, deliveredAt: null }],
+    ],
+  }),
+  // seven recipients → the roll-up line, its not-listening recipient still listed under it
+  ...buildOrderCopies(NOT_LISTENING_IDS.rollUpOrder, {
+    sendId: NOT_LISTENING_IDS.rollUpSend, minutesAgo: 1, text: "오늘 배포 전 각 세션의 남은 작업을 한 줄로 보고해 주세요.",
+    to: [
+      ["gersona", { deliveredAt: getAt(1) }], ["atrium", { deliveredAt: getAt(1) }], ["aidl", { deliveredAt: getAt(1) }], ["yoaida", { deliveredAt: getAt(1) }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, deliveredAt: getAt(1) }],
+      ["portfolio", { status: "resume_pending", deviation: "resume_pending", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+    ],
+  }),
+];
+
+/** The not-listening state plus a list row with both badges and an order to seven sessions. */
+export function getNotListeningEdgeFixture(): QueueFixture {
+  const base = getNotListeningFixture();
+  return { ...base, items: [...base.items, ...NOT_LISTENING_EDGE_ORDERS], orders: [...base.orders, ...NOT_LISTENING_EDGE_ORDERS] };
+}
+
+/** The not-listening state with no session listening — the page right after a deploy restarts the monitor. */
+export function getNoneListeningFixture(): QueueFixture {
+  const base = getNotListeningFixture();
+  const deafen = (item: OwnerItemView): OwnerItemView => ({ ...item, session: { ...item.session, isWaiting: false } });
+  return {
+    ...base,
+    items: base.items.map(deafen),
+    orders: base.orders.map(deafen),
+    sessions: base.sessions.map((row) => ({ ...row, isWaiting: false })),
+  };
+}
 
 /** The rest state plus §14.4's not-listening cases: three live sessions and a not-reachable one that do not listen, beside listening `gersona`. */
 export function getNotListeningFixture(): QueueFixture {

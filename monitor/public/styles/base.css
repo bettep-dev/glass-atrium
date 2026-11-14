@@ -1044,14 +1044,27 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	white-space: nowrap;
 	overflow: hidden;
 }
-/* facts wider than their room → the dim text yields with an ellipsis, a badge stays whole (spec §9.4) */
+/* facts wider than their room → the dim text yields with an ellipsis, a badge stays whole (spec §9.4);
+   a zero basis → the text takes only the room the badges leave, never shrinking a badge while it has any */
 .queue-row-facts-text {
+	flex: 1 1 0;
+	max-width: max-content;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
 .queue-row-facts > .pill {
 	flex: none;
+}
+/* two badges past the room → the not-listening count gives way next, down to its glyph and `1…`; the amber one never does */
+.queue-row-facts > .pill--yield {
+	flex: 0 1 auto;
+	min-width: calc(12px + var(--space-1) + 2 * var(--space-2) + 2ch);
+}
+.pill--yield > .pill-words {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 .queue-row-age {
 	margin-inline-start: auto;
@@ -1109,6 +1122,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	margin-inline-end: var(--space-2);
 }
 /* the letterhead's second line: what the item holds at its start, when at its end */
+/* the count and its tag keep the row's spacing (.queue-row-facts) */
+.queue-date-facts {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1_5);
+}
 .queue-date-line {
 	display: flex;
 	align-items: center;
@@ -1261,6 +1280,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-order-to {
 	font-weight: 600;
 	color: rgb(var(--ink));
+	white-space: nowrap;
 }
 .queue-compose-row {
 	--queue-box-min: 220px;

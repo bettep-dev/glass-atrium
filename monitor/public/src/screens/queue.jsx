@@ -47,7 +47,7 @@ function getNotListeningFactQ(text, isSpoken = false) {
 	return isSpoken ? { ...fact, spoken: `, ${NOT_LISTENING_Q.DELIVERS}` } : fact;
 }
 
-/** A session that hears nothing until its next turn end or restart: live or not reachable, with no wait or listener polling (plan 44076). */
+/** A session that hears nothing until its next turn end or restart: live or not reachable, with no wait or listener polling. */
 function isNotListeningQ(session) {
 	return session.state !== "exited" && !session.isWaiting;
 }
@@ -1539,13 +1539,14 @@ function RowFactsLineQ({ facts }) {
 }
 
 // a settled receipt is a mark and a word, no shell (spec §9.4) → the mark rides the text, hidden from screen readers
+// `isYielding` → in a row's facts the words give way, glyph and count kept, once the dim text has none left (base.css → .pill--yield)
 function RowFactsQ({ facts }) {
-	const { Badge, Icon, TONE_GLYPH } = window.UI;
+	const { Badge, TONE_GLYPH } = window.UI;
 	return <>{facts.map((fact, index) => (fact.badge
 		? (
-			<Badge key={fact.text} fill={fact.badge} title={fact.title}>
-				{fact.glyph && <Icon name={fact.glyph} size={12} />}
-				{fact.text}
+			<Badge key={fact.text} fill={fact.badge} title={fact.title} className={fact.isYielding ? "pill--yield" : ""}>
+				{fact.glyph && getPauseGlyphQ()}
+				{fact.isYielding ? <span className="pill-words">{fact.text}</span> : fact.text}
 				{fact.spoken && <span className="sr-only">{fact.spoken}</span>}
 			</Badge>
 		)
@@ -1556,6 +1557,16 @@ function RowFactsQ({ facts }) {
 				{fact.text}
 			</span>
 		)))}</>;
+}
+
+// two solid bars in the badge's ink at the 12 box → reads as a pause at device scale 1, where an outline glyph's hairlines blur grey
+function getPauseGlyphQ() {
+	return (
+		<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+			<rect x="2" y="1.5" width="3" height="9" rx="0.5" fill="currentColor" />
+			<rect x="7" y="1.5" width="3" height="9" rx="0.5" fill="currentColor" />
+		</svg>
+	);
 }
 
 /**
@@ -1587,7 +1598,7 @@ function getReceiptFactsQ(copies) {
 	const notListening = getReceiptCountQ(receipts, "notListening");
 	const failed = getReceiptCountQ(receipts, "notReceived");
 	const count = { text: received + notListening + failed === 0 ? RECEIPT_Q.notYet : `${received} of ${receipts.length} received` };
-	return [count, ...(notListening > 0 ? [getNotListeningFactQ(`${notListening} not listening`)] : []), ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
+	return [count, ...(notListening > 0 ? [{ ...getNotListeningFactQ(`${notListening} not listening`), isYielding: true }] : []), ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
 }
 
 function getReceiptFactQ(receipt) {
@@ -2709,7 +2720,7 @@ function useRecipientsNoteQ(targets, box, isReady) {
 	return [note, setNote];
 }
 
-// `New order to gersona, yoaida` — every name, an ended or not-listening one tagged; none → said in dim (spec §9.2 → Label line)
+// `New order to gersona, yoaida` — every name, an ended or not-listening one tagged after it, the comma after the tag; none → said in dim (spec §9.2 → Label line)
 function OrderLabelQ({ rows }) {
 	const { Badge } = window.UI;
 	if (rows.length === 0) return <>New order · no session ticked</>;
@@ -2717,11 +2728,15 @@ function OrderLabelQ({ rows }) {
 		<>
 			{"New order to "}
 			{rows.map((row, index) => (
-				<span key={row.id} className="queue-order-to">
-					{`${row.name}${index < rows.length - 1 ? ", " : ""}`}
-					{row.state === "exited" && <> <Badge fill="tag">Ended</Badge></>}
-					{isNotListeningQ(row) && <><span className="sr-only">,</span> <RowFactsQ facts={[getNotListeningFactQ(RECEIPT_Q.notListening)]} /></>}
-				</span>
+				<React.Fragment key={row.id}>
+					{index > 0 && " "}
+					<span className="queue-order-to">
+						{row.name}
+						{row.state === "exited" && <> <Badge fill="tag">Ended</Badge></>}
+						{isNotListeningQ(row) && <><span className="sr-only">,</span> <RowFactsQ facts={[getNotListeningFactQ(RECEIPT_Q.notListening)]} /></>}
+						{index < rows.length - 1 && ","}
+					</span>
+				</React.Fragment>
 			))}
 		</>
 	);

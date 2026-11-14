@@ -276,15 +276,17 @@ describe("receipt words", () => {
   }
 
   // spec §9.4: the same tag fill as Not yet, with a pause glyph before its word and the sentence in its title, never as visible text
-  test("a not-listening receipt is the tag badge led by the pause glyph, its sentence in its title and for screen readers only", () => {
+  test("a not-listening receipt is the tag badge led by the solid pause glyph, its sentence in its title and for screen readers only", () => {
     const tree = render("RowFactsQ", { facts: [call("getReceiptFactQ", "notListening")] });
     const [badge] = findNodes(tree, (node) => node.props?.atom === "Badge");
-    const [glyph] = findNodes(badge as RenderedNode, (node) => node.props?.atom === "Icon");
+    const [svg] = findNodes(badge as RenderedNode, (node) => node.type === "svg");
+    // two bars filled in the badge's ink, no outline
+    const bars = findNodes(svg as RenderedNode, (node) => node.type === "rect" && node.props.fill === "currentColor" && node.props.stroke === undefined);
     // the glyph, then the word, then the spoken sentence
     const [spoken] = findNodes(badge as RenderedNode, (node) => node.props?.className === "sr-only");
     assert.deepEqual(
-      { fill: badge?.props.fill, title: badge?.props.title, glyph: glyph?.props.name, order: (badge?.children ?? []).map((child) => (typeof child === "string" ? child : (child.props?.atom ?? child.type))), spoken: collectText(spoken as RenderedNode) },
-      { fill: "tag", title: "Not listening — delivers at its next turn end or restart", glyph: "pause", order: ["Icon", "Not listening", "span"], spoken: ", delivers at its next turn end or restart" },
+      { fill: badge?.props.fill, title: badge?.props.title, glyph: bars.length, order: (badge?.children ?? []).map((child) => (typeof child === "string" ? child : (child.props?.atom ?? child.type))), spoken: collectText(spoken as RenderedNode) },
+      { fill: "tag", title: "Not listening — delivers at its next turn end or restart", glyph: 2, order: ["svg", "Not listening", "span"], spoken: ", delivers at its next turn end or restart" },
     );
   });
 
@@ -2196,6 +2198,12 @@ describe("Orders", () => {
     { name: "the ticked names, an ended one tagged", ids: [SESSION_ID, ENDED_ID], text: "New order to nightly-docs-sweep, atrium-hooks Ended" },
     { name: "no tick says so", ids: [], text: "New order · no session ticked" },
     { name: "a ticked session that does not listen is tagged, its name read with it", ids: [OTHER_RAIL_ID, SESSION_ID], text: "New order to nightly-docs-sweep, yoaida, Not listening", rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false })] },
+    {
+      name: "a tagged name that is not last keeps its tag before the comma",
+      ids: [ENDED_ID, OTHER_RAIL_ID, SESSION_ID],
+      text: "New order to atrium-hooks Ended, yoaida, Not listening, nightly-docs-sweep",
+      rows: [SESSION_ROWS[1], buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false }), SESSION_ROWS[0]],
+    },
   ];
   for (const row of labelLines) {
     test(`the Orders composer's label line: ${row.name}`, () => {
