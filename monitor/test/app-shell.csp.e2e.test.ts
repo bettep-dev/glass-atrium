@@ -157,6 +157,17 @@ describe("the shell loads every pinned script under its CSP", () => {
     await shell.page.close();
   });
 
+  // an icon name the pinned Lucide catalogue lacks renders an empty svg → the item shows no glyph
+  test("every primary nav icon draws a glyph from the pinned Lucide catalogue", async () => {
+    const shell = await openShell("dashboard");
+    await shell.page.waitForSelector(NAV_ITEM, { timeout: WAIT_TIMEOUT_MS });
+    const glyphless = await shell.page.$$eval(NAV_ITEM, (items) =>
+      items.filter((item) => (item.querySelector("svg")?.childElementCount ?? 0) === 0).map((item) => item.getAttribute("title")),
+    );
+    assert.deepEqual(glyphless, []);
+    await shell.page.close();
+  });
+
   test("a diagram renders through mermaid and the lazily injected ELK bundle", async () => {
     const shell = await openShell("dashboard");
     const svg = await shell.page.evaluate(async () => {

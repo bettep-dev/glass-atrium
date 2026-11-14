@@ -212,6 +212,24 @@ test("an alarm row is a flat hairline row whose tone rides on its glyph, never a
   }
 });
 
+// spec 44084 §5: --surface-raised-2 equals the light sidebar fill, so the current item takes the select tint instead
+test("the current nav item sits on the select tint while hover keeps the sunken fill, both in ink", () => {
+  const current = getRuleBodies(BASE_CSS, ".nav-item.active").join(";");
+  const hover = getRuleBodies(BASE_CSS, ".nav-item:hover").join(";");
+  assert.deepEqual(
+    [getDecl(current, "background"), getDecl(current, "color"), getDecl(current, "font-weight")],
+    ["var(--tint-select)", "rgb(var(--ink))", "500"],
+  );
+  assert.deepEqual([getDecl(hover, "background"), getDecl(hover, "color")], ["rgb(var(--sunken))", "rgb(var(--ink))"]);
+});
+
+test("on the icon rail the first nav count pins to the item's top right and every later count is clipped", () => {
+  const first = getRuleBodies(BASE_CSS, ".shell-sidebar .nav-count").join(";");
+  const later = getRuleBodies(BASE_CSS, ".shell-sidebar .nav-count ~ .nav-count").join(";");
+  assert.deepEqual([getDecl(first, "position"), getDecl(first, "top"), getDecl(first, "right")], ["absolute", "0", "0"]);
+  assert.equal(getDecl(later, "clip"), "rect(0 0 0 0)");
+});
+
 test("an alert card carries its tone only on its bare glyph, and the glyph clears 3:1 on --elev and --sunken in both themes", () => {
   const TONE_TOKEN = { crit: "--crit", warn: "--warn", info: "--info", ok: "--ok", neutral: "--dim" } as const;
   const shells = [".alert-card", ".alert-card.is-inset"].map((s) => getRuleBodies(BASE_CSS, s).join(";"));
@@ -285,10 +303,8 @@ test("a transient shell stays neutral in every tone, and a toast's tone rides on
 
   const glyph = getRuleBodies(BASE_CSS, ".doc-toast-glyph").join(";");
   for (const tone of ["crit", "warn", "info", "ok"]) {
-    for (const shell of [".doc-toast", ".nav-badge"]) {
-      const toned = getRuleBodies(BASE_CSS, `${shell}.${tone}`).join(";");
-      assert.doesNotMatch(toned, /(^|[;\s])(background|border|border-color|color)\s*:/, `${shell}.${tone} paints its shell or text`);
-    }
+    const toned = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
+    assert.doesNotMatch(toned, /(^|[;\s])(background|border|border-color|color)\s*:/, `.doc-toast.${tone} paints its shell or text`);
     const toneRule = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
     assert.equal(getDecl(toneRule, "--toast-tone"), `var(--${tone})`, `.doc-toast.${tone} names its glyph tone`);
     for (const [theme, block] of THEMES) {

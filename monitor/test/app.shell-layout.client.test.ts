@@ -352,7 +352,8 @@ const downWhileUnread = (stores: Record<string, { status: string; error?: string
   failCount1h: 0,
 });
 
-const findNavBadges = (tree: RenderedNode) => findNodes(tree, (n) => /\bnav-badge\b/.test(String(n.props.className ?? "")));
+// the rendered count shells, not the Badge elements that produce them
+const findNavBadges = (tree: RenderedNode) => findNodes(tree, (n) => ["pill", "nav-count"].every((name) => String(n.props.className ?? "").split(" ").includes(name)));
 
 test("a page Retry also re-reads the harness, so a recovered harness reaches the nav on that action", async () => {
   const harnessFetch = createHarnessFetch({ isHealthy: false });
@@ -393,17 +394,15 @@ describe("the Queue nav item", () => {
   function getNavBadge(tree: RenderedNode, label: string): RenderedNode {
     const [item] = findNodes(tree, (n) => n.type === "button" && n.props.title === label);
     assert.ok(item, `the nav renders ${label}`);
-    const [badge] = findNodes(item, (n) => /\b(pill|nav-badge)\b/.test(classOf(n)));
+    const [badge] = findNodes(item, (n) => classOf(n).split(" ").includes("pill"));
     assert.ok(badge, `${label} carries a badge`);
     return badge;
   }
 
-  test("carries its count as the solid round count badge, capped at 99+, while another item keeps the edged nav badge", async () => {
-    const tree = await renderNav();
-    const [queue, agents] = [getNavBadge(tree, "Queue"), getNavBadge(tree, "Agents")];
-    assert.deepEqual(["pill--solid", "pill--num", "nav-badge"].map((name) => classOf(queue).split(" ").includes(name)), [true, true, false]);
+  test("carries its warn count as the solid round count badge, capped at 99+", async () => {
+    const queue = getNavBadge(await renderNav(), "Queue");
+    assert.deepEqual(["pill--solid", "pill--num", "nav-count"].map((name) => classOf(queue).split(" ").includes(name)), [true, true, true]);
     assert.match(collectText(queue), /99\+/);
-    assert.deepEqual(["nav-badge", "pill--solid"].map((name) => classOf(agents).split(" ").includes(name)), [true, false]);
   });
 
   test("the deviation glyph leads the count inside the badge in the badge's own colour, and assistive tech hears the full description", async () => {
@@ -413,5 +412,74 @@ describe("the Queue nav item", () => {
     assert.ok(glyph, "the glyph renders inside the badge");
     assert.deepEqual([glyph.props["aria-hidden"], classOf(glyph)], ["true", ""]);
     assert.equal(collectText(description), `, ${QUEUE_SLOT.description}`);
+  });
+});
+
+describe("the nav counts", () => {
+  const SLOT = {
+    warn: { badge: "4", badgeTone: "warn", glyph: "⚠", title: "4 failed", description: "4 failed" },
+    crit: { badge: "2", badgeTone: "crit", glyph: "✕", title: "2 down", description: "2 down" },
+    many: { badge: "140", badgeTone: "warn", glyph: "⚠", title: "140 failed", description: "140 failed" },
+  };
+  const getClasses = (n: RenderedNode) => String(n.props.className ?? "").split(" ");
+  async function renderAgentCounts(badges: unknown[]): Promise<RenderedNode[]> {
+    const getQueueNavBadge = () => ({ agents: { badges } });
+    const { render } = await mountShell({ screens: () => ({ QueueNav: { getQueueNavBadge } }) });
+    const [item] = findNodes(render(), (n) => n.type === "button" && n.props.title === "Agents");
+    return findNodes(item, (n) => getClasses(n).includes("pill"));
+  }
+
+  // spec 44084 §12.2b: crit → solid, warn → quiet, one solid disc per item
+  const rows = [
+    { name: "a lone warn count stays quiet", badges: [SLOT.warn], solid: [false] },
+    { name: "a lone crit count is solid", badges: [SLOT.crit], solid: [true] },
+    { name: "a crit count after a warn count is the solid one", badges: [SLOT.warn, SLOT.crit], solid: [false, true] },
+    { name: "of two crit counts only the first is solid", badges: [SLOT.crit, SLOT.crit], solid: [true, false] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const counts = await renderAgentCounts(row.badges);
+      assert.deepEqual(counts.map((n) => getClasses(n).includes("pill--solid")), row.solid);
+      for (const count of counts) assert.deepEqual(["nav-count", "pill--num"].map((name) => getClasses(count).includes(name)), [true, true], "every nav numeral takes the round count shape");
+    });
+  }
+
+  test("a quiet count above 99 reads 99+, and its title and assistive-tech description stay whole", async () => {
+    const [count] = await renderAgentCounts([SLOT.many]);
+    const [description] = findNodes(count, (n) => getClasses(n).includes("sr-only"));
+    assert.deepEqual([getClasses(count).includes("pill--solid"), count.props.title], [false, SLOT.many.title]);
+    assert.match(collectText(count), /^⚠\s+99\+/);
+    assert.equal(collectText(description), `, ${SLOT.many.description}`);
+  });
+});
+
+describe("the nav current item", () => {
+  test("only the current route's item is aria-current page, and it follows navigation", async () => {
+    const { render, navigateByHash } = await mountShell();
+    const getCurrent = () => findNodes(render(), (n) => n.type === "button" && n.props["aria-current"] !== undefined).map((n) => [n.props.title, n.props["aria-current"]]);
+    const onDashboard = getCurrent();
+    navigateByHash("#cost");
+
+    assert.deepEqual([onDashboard, getCurrent()], [[["Dashboard", "page"]], [["Cost & usage", "page"]]]);
+  });
+});
+
+describe("the nav icons", () => {
+  // owner decision, spec 44084 §12.2a; Task results keeps target
+  test("each destination draws the owner-approved icon", async () => {
+    const drawn: Record<string, string> = {};
+    const { render } = await mountShell({
+      screens: (react, ui) => ({
+        UI: { ...ui, Icon: ({ name }: { name: string }) => react.createElement("svg", { "data-icon": name }) },
+      }),
+    });
+    for (const item of findNodes(render(), (n) => n.type === "button" && /\bnav-item\b/.test(String(n.props.className ?? "")))) {
+      const [icon] = findNodes(item, (n) => n.type === "svg");
+      drawn[String(item.props.title)] = String(icon?.props["data-icon"]);
+    }
+    assert.deepEqual(
+      { learning: drawn.Learning, wiki: drawn.Wiki, map: drawn["System map"], results: drawn["Task results"] },
+      { learning: "repeat", wiki: "book-open", map: "network", results: "target" },
+    );
   });
 });

@@ -553,7 +553,7 @@
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
 - 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes · pressed = ink edge + ink text, no fill inversion).
 - **fill** (`Badge fill`): `quiet` (default — the neutral shell above) · `solid` = `.pill--solid`, `--ink` shell + `--surface` text — waits for the owner · `tag` = `.pill--tag`, `--tint-fill` + ink — a fact worth a glance · `warn` = `.pill--warn`, `--tint-warn` + ink, led by an ink `⚠` the atom draws — did not arrive. Every fill is 13 / 600, line 1, 20 high, no border.
-  - **Count shape** (`role="count"` with a fill): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
+  - **Count shape** (`role="count"` with a fill, and the quiet nav count): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
   - Never two solid badges on one row; a badge always holds a word or a number. The accent never fills a badge — it is the owner's run-time choice, so text on it has no guaranteed contrast.
 - glass 위에 올리지 않는다 (AP-6).
 
@@ -597,11 +597,13 @@
 
 ### 7.7 Sidebar — `.shell-sidebar` · `.nav-item`
 
-- 폭 220px. **< 1200px 에서 56px icon rail**: 라벨은 제거하지 않고 clip (`.rail-hide`) → 접근 이름 유지. 첫 배지는 우상단, 나머지 배지는 clip.
+- 폭 220px. **< 1200px 에서 56px icon rail**: 라벨은 제거하지 않고 clip (`.rail-hide`) → 접근 이름 유지. 첫 `.nav-count` 는 우상단, 나머지 `.nav-count` 는 clip.
 - 면: `bg-elev` 불투명 · `border-r` · sticky, glass 금지.
-- `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · hover/active = `--sunken` + `--ink`, active 500.
-- A nav entry with `badgeFill` (`app.jsx` → `NAV`, the Queue) renders its numeral as the filled count `Badge` (`.nav-count`): solid, `99+` cap, its glyph in the badge's own text colour. Every other entry keeps `.nav-badge`.
-- `.nav-badge`: mono `--fs-meta` · `--sunken` · 1px `--line` · pill radius (mono and border retiring → §12.2 sans + §12.3 Badge fill only, S2c) — tone 과 무관한 neutral shell. 내용 = tone glyph (`text-<tone>`, aria-hidden, tone 있는 배지는 모두) + 값 + sr-only 설명 (`title` 동반).
+- `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · current = `--tint-select` + ink + 500, `aria-current="page"`; hover = `--sunken` + ink.
+- Icons (`app.jsx` → `NAV`): Learning `repeat` · Wiki `book-open` · System map `network` · Task results `target`.
+- `.nav-count`: every nav numeral is `Badge role="count"` in the Count shape (§7.3) — sans tnum 13, fill only, no border; `99+` cap; content = tone glyph (aria-hidden) + value + sr-only description (`title` beside it).
+  - quiet (`.nav-count.pill--num`): `--sunken` shell, dim numeral, the glyph in `text-<tone>` — a warn or ok count.
+  - solid (`.pill--solid`): the item's first crit count, and every count of an entry with `badgeFill` (the Queue); `--ink` shell, `--surface` numeral at 600, the glyph in the badge's own colour. At most one solid per item.
 
 ### 7.8 DetailSurface — drawer · fullscreen · confirm (`.detail-*`)
 
@@ -1057,7 +1059,7 @@
 - Focus: the one focus rule (§9.1) — the ring shows iff `:focus-visible` matches.
 - Selection is never a box or a stripe:
   - selected row = sunken fill + checked checkbox (multi-select tables); opened row (drawer open) = sunken fill + `aria-current="true"` + the drawer itself as the cue; a ledger with both states takes the `--tint-row-*` ladder (§7.5); hover stays `--sunken`;
-  - nav item = elev-2 fill + ink;
+  - nav current item = `--tint-select` + ink + 500 (§7.7); hover `--sunken` + ink;
   - selected segment / tab / current page = §12.3 and §12.6.
 - Accent marks text links and the focus ring only; selected and current marks use strong ink.
 - Status by colour alone is forbidden: a tone always rides a glyph + word; a bare coloured dot is never a status.
@@ -1160,9 +1162,7 @@
 - Principle 7 and §8 `.live-dot` ambient loop + §7.7 sidebar `.live-dot` → no ambient loop.
 - `PageVerdict` usage (§7.9 neighbourhood) → §12.7.
 - Retiring, marked in place until the owning stream lands:
-  - mono numbers → §12.2 sans tnum: §7.7 `.nav-badge` (S2c)
   - §7.2 `.kpi-delta` / `.kpi-hint` mono → §12.8 stat row context line (S2c)
-  - §7.7 `.nav-badge` 1px `--line` → §12.3 Badge, fill only (S2c)
   - pressed-toggle ✓ glyph (§7.4 · §7.6 · §7.16) → built with the S2a controls
   - tokens `--shadow-raised`, `--glass-border` (§3.1 · §3.2 · §6.4) → no caller; S3 close deletes them
 

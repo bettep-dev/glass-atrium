@@ -1,16 +1,16 @@
 // 앱 셸 — sidebar + screen routing + Tweaks panel
 const { useState: useS, useEffect: useE, useRef: useR, useCallback: useC } = React;
 
-// NAV 메뉴 — id=해시 라우팅 키 · badge=폴링 주입 · badgeFill = a filled Badge in place of the edged nav numeral (items waiting for the owner)
+// NAV 메뉴 — id=해시 라우팅 키 · badge=폴링 주입 · badgeFill = every count of the item filled (items waiting for the owner)
 const NAV = [
 	{ id: "dashboard", label: "Dashboard", icon: "dashboard" },
 	{ id: "cost", label: "Cost & usage", icon: "coin" },
 	{ id: "model-config", label: "Models & budgets", icon: "cog" },
 	{ id: "agents", label: "Agents", icon: "bot" },
 	{ id: "outcomes", label: "Task results", icon: "target" },
-	{ id: "improvement", label: "Learning", icon: "spark" },
-	{ id: "wiki", label: "Wiki", icon: "brain" },
-	{ id: "architecture", label: "System map", icon: "git" },
+	{ id: "improvement", label: "Learning", icon: "repeat" },
+	{ id: "wiki", label: "Wiki", icon: "book-open" },
+	{ id: "architecture", label: "System map", icon: "network" },
 	{ id: "clauded-docs", label: "Documents", icon: "file-text" },
 	{ id: "queue", label: "Queue", icon: "inbox", badgeFill: "solid" },
 ];
@@ -86,6 +86,11 @@ function parseHashScreen() {
 	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
+// one solid disc per item (spec 44084 §12.2b) → the item's first crit count; -1 when none or the item fills all its counts
+function getNavSolidIndex(item, badges) {
+	return item.badgeFill ? -1 : badges.findIndex((b) => b.badgeTone === "crit");
+}
+
 function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 	const { Icon, Badge, getBadgeCount } = window.UI;
 	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState), ...queueBadges };
@@ -121,10 +126,12 @@ function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 								: n.badge
 									? [{ badge: n.badge, badgeTone: n.badgeTone }]
 									: []);
+						const solidIndex = getNavSolidIndex(n, badges);
 						return (
 							<button
 								key={n.id}
 								className={`nav-item ${active === n.id ? "active" : ""}`}
+								aria-current={active === n.id ? "page" : undefined}
 								onClick={() => onNav(n.id)}
 								title={n.label}
 							>
@@ -132,21 +139,19 @@ function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 								{/* min-w-0 + truncate — 영문 라벨 + 복수 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
 								<span className="rail-hide flex-1 min-w-0 truncate">{n.label}</span>
 								{badges.map((b, i) => {
-									// edged shell → tone on the glyph only · filled shell → the glyph in the badge's own text colour, the numeral capped
-									const isFilled = Boolean(n.badgeFill);
-									const numeral = isFilled && /^\d+$/.test(b.badge) ? getBadgeCount(Number(b.badge)) : b.badge;
-									const glyph = b.glyph && <span aria-hidden="true" className={isFilled ? undefined : `text-${b.badgeTone}`}>{`${b.glyph} `}</span>;
+									// quiet shell → tone on the glyph only · solid shell → the glyph in the badge's own text colour
+									const fill = n.badgeFill ?? (i === solidIndex ? "solid" : "quiet");
+									const isQuiet = fill === "quiet";
+									// the quiet Badge path skips getBadgeCount → the cap is applied here for every fill
+									const numeral = /^\d+$/.test(b.badge) ? getBadgeCount(Number(b.badge)) : b.badge;
+									const glyph = b.glyph && <span aria-hidden="true" className={isQuiet ? `text-${b.badgeTone}` : undefined}>{`${b.glyph} `}</span>;
 									// description = what AT hears instead of the bare numeral
 									const text = <span aria-hidden={b.description ? "true" : undefined}>{numeral}</span>;
 									const description = b.description && <span className="sr-only">{`, ${b.description}`}</span>;
-									return isFilled ? (
-										<Badge key={i} fill={n.badgeFill} role="count" title={b.title} className="nav-count">
+									return (
+										<Badge key={i} fill={fill} role="count" title={b.title} className={isQuiet ? "nav-count pill--num" : "nav-count"}>
 											{glyph}{text}{description}
 										</Badge>
-									) : (
-										<span key={i} className="nav-badge shrink-0" title={b.title}>
-											{glyph}{text}{description}
-										</span>
 									);
 								})}
 							</button>

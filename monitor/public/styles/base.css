@@ -2309,7 +2309,6 @@ button.kpi:hover {
 		justify-content: center;
 	}
 	.shell-sidebar .rail-hide,
-	.shell-sidebar .nav-badge ~ .nav-badge,
 	.shell-sidebar .nav-count ~ .nav-count {
 		position: absolute;
 		width: 1px;
@@ -2323,7 +2322,7 @@ button.kpi:hover {
 		justify-content: center;
 		padding: 8px 0;
 	}
-	.shell-sidebar :is(.nav-badge, .nav-count) {
+	.shell-sidebar .nav-count {
 		position: absolute;
 		top: 0;
 		right: 0;
@@ -2350,25 +2349,16 @@ button.kpi:hover {
 	background: rgb(var(--sunken));
 	color: rgb(var(--ink));
 }
+/* --surface-raised-2 equals the light sidebar fill → the select tint; weight 500 + aria-current carry it beyond the fill */
 .nav-item.active {
-	background: rgb(var(--sunken));
+	background: var(--tint-select);
 	color: rgb(var(--ink));
 	font-weight: 500;
 }
-/* the filled nav numeral (Queue) — the Badge family's solid count, at the row end like the edged one */
+/* every nav numeral — the Badge count shape (quiet, or solid for the Queue and a crit count), at the row end */
 .nav-count {
 	margin-left: auto;
 	flex: none;
-}
-.nav-badge {
-	margin-left: auto;
-	font-family: "JetBrains Mono", monospace;
-	font-size: var(--fs-meta);
-	background: rgb(var(--sunken));
-	border: 1px solid rgb(var(--line));
-	padding: 0 var(--space-1_5);
-	border-radius: 999px;
-	color: rgb(var(--dim));
 }
 
 /* one alarm-row geometry (§7.9) — glyph · content · actions on a 32 first line between 8 paddings: a one-line row is 48.

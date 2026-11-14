@@ -442,6 +442,8 @@ const renderSidebar = (harness: unknown, agentsState: unknown): unknown => {
     surface.React.createElement = stubCreate;
   }
 };
+const getClassTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
+const TONE = { NAMES: ["ok", "warn", "crit", "info"], TEXT_CLASSES: ["text-ok", "text-warn", "text-crit", "text-info"] };
 const renderSidebarText = (harness: unknown, agentsState: unknown): string[] =>
   collectText(renderSidebar(harness, agentsState));
 
@@ -459,7 +461,7 @@ test("the rendered Agents nav badge's tooltip names every agent it counts", () =
   const alarms = [buildBreakerAlarm("glass-atrium-qa-debugger", "suspended"), buildBreakerAlarm("glass-atrium-dev-node", "streak")];
   const tree = renderSidebar(app.getHarness(allHealthy()), ready(buildBreakerSummary(alarms)));
   const [agentsItem] = findNodes(tree, (n) => n.props?.key === "agents");
-  const [agentsBadge] = findNodes(agentsItem, (n) => String(n.props?.className ?? "").includes("nav-badge"));
+  const [agentsBadge] = findNodes(agentsItem, (n) => getClassTokens(n).includes("nav-count"));
   const title = String(agentsBadge?.props?.title ?? "");
 
   assert.ok(agentsBadge, "the Agents item renders its badge");
@@ -495,7 +497,7 @@ test("the rendered Agents badge describes itself to assistive tech and tells sus
     await t.test(row.name, () => {
       const tree = renderSidebar(app.getHarness(allHealthy()), ready(buildBreakerSummary(row.alarms)));
       const [agentsItem] = findNodes(tree, (n) => n.props?.key === "agents");
-      const [agentsBadge] = findNodes(agentsItem, (n) => String(n.props?.className ?? "").includes("nav-badge"));
+      const [agentsBadge] = findNodes(agentsItem, (n) => getClassTokens(n).includes("nav-count"));
       const spoken = collectReadText(agentsItem, isAriaHidden).join("");
 
       assert.match(spoken, /unsafe to route/);
@@ -562,31 +564,31 @@ test("every toned nav badge carries its tone's glyph, whichever store raised it"
   for (const b of badges) assert.strictEqual(b.glyph, app.ui.TONE_GLYPH[b.badgeTone], `${b.source} ${b.badgeTone} badge glyph`);
 });
 
-const getClassTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
-const TONE = { NAMES: ["ok", "warn", "crit", "info"], TEXT_CLASSES: ["text-ok", "text-warn", "text-crit", "text-info"] };
-
-// The badge shell and numeral stay neutral on the sunken surface (light warn 2.51, crit 3.52 as tinted text).
-test("the sidebar's nav badges put their tone on the glyph only, never on the shell or the numeral", async (t) => {
+// Quiet counts sit on --sunken, where a toned numeral is sub-AA (light warn 2.51, crit 3.52) → tone on the glyph only.
+// A crit count is the item's one solid disc (spec 44084 §12.2b): ink shell, its glyph in the badge's own colour.
+test("a nav count is solid exactly when it is its item's first crit count, and only a quiet count tints its glyph", async (t) => {
   const crit = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));
   const warn = app.getHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 3 }) }));
   const agents = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")]));
   const rows = [
-    { name: "a down part with failures and a suspended agent", harness: crit },
-    { name: "failures with no down part", harness: warn },
+    { name: "a down part with failures and a suspended agent", harness: crit, fills: ["solid", "quiet", "solid"] },
+    { name: "failures with no down part", harness: warn, fills: ["solid", "quiet"] },
   ];
+  const toneByGlyph = new Map(Object.entries(app.ui.TONE_GLYPH).map(([tone, glyph]) => [glyph, tone]));
   for (const row of rows) {
     await t.test(row.name, () => {
-      const tree = renderSidebar(row.harness, agents);
-      const badges = findNodes(tree, (n) => getClassTokens(n).includes("nav-badge"));
-      assert.ok(badges.length >= 2, "precondition: the render reaches the toned badges");
-      for (const badge of badges) {
-        const [glyph, ...words] = badge.children.filter(isRenderedNode);
-        const tone = getClassTokens(glyph).find((c) => TONE.TEXT_CLASSES.includes(c))?.slice("text-".length) ?? "";
-        assert.ok(tone === "warn" || tone === "crit", `a badge glyph carries a raised tone, not "${tone}"`);
-        assert.strictEqual(collectText(glyph.children).join("").trim(), app.ui.TONE_GLYPH[tone], `a ${tone} badge's glyph is its tone's shape`);
-        assert.deepStrictEqual(getClassTokens(badge).filter((c) => TONE.NAMES.includes(c)), [], `a ${tone} badge shell names no tone`);
-        assert.strictEqual(badge.props?.style, undefined, `a ${tone} badge paints no inline tone fill`);
-        for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE.TEXT_CLASSES.includes(c)), [], `a ${tone} badge's numeral stays neutral`);
+      const counts = findNodes(renderSidebar(row.harness, agents), (n) => getClassTokens(n).includes("nav-count"));
+      assert.deepStrictEqual(counts.map((n) => n.props?.fill ?? "quiet"), row.fills);
+      for (const count of counts) {
+        const [glyph, ...words] = count.children.filter(isRenderedNode);
+        const tone = toneByGlyph.get(collectText(glyph.children).join("").trim()) ?? "";
+        const isSolid = count.props?.fill === "solid";
+        assert.ok(tone === "warn" || tone === "crit", `a count glyph is a raised tone's shape, not "${tone}"`);
+        assert.strictEqual(isSolid, tone === "crit", `a ${tone} count is ${isSolid ? "solid" : "quiet"}`);
+        assert.deepStrictEqual(getClassTokens(glyph).filter((c) => TONE.TEXT_CLASSES.includes(c)), isSolid ? [] : [`text-${tone}`], `a ${tone} count's glyph colour`);
+        assert.deepStrictEqual(getClassTokens(count).filter((c) => TONE.NAMES.includes(c)), [], `a ${tone} count shell names no tone`);
+        assert.strictEqual(count.props?.style, undefined, `a ${tone} count paints no inline tone fill`);
+        for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE.TEXT_CLASSES.includes(c)), [], `a ${tone} count's numeral stays neutral`);
       }
     });
   }

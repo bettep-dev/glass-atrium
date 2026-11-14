@@ -15,7 +15,7 @@ const LUCIDE_ALIAS = {
   chevD: 'ChevronDown', arrowU: 'ArrowUp', arrowD: 'ArrowDown', minus: 'Minus',
   check: 'Check', x: 'X', play: 'Play', refresh: 'RefreshCw', download: 'Download', filter: 'Filter',
   search: 'Search', moon: 'Moon', sun: 'Sun', cog: 'Settings', info: 'Info', warn: 'TriangleAlert',
-  crit: 'CircleAlert', user: 'User', db: 'Database', chip: 'Cpu', git: 'GitFork', flame: 'Flame',
+  crit: 'CircleAlert', user: 'User', db: 'Database', chip: 'Cpu', flame: 'Flame',
   ban: 'Ban', pause: 'Pause', plus: 'Plus', circle: 'Circle',
 };
 
