@@ -2556,11 +2556,12 @@ describe("Agents values take the shared number, date and nothing forms", () => {
     }
   });
 
-  describe("a breaker alarm row claims a state or the next failure's effect only from a fail count it read", () => {
+  // the screen never reads the suspension threshold, so a streak row names no fail count to suspension
+  describe("a breaker alarm row claims a state or the next failure's effect only from a fail count it read, never a count to suspension", () => {
     const rows = [
       { name: "suspended", alarm: { suspended: true, consecutive_fails: 3 }, tone: "crit", label: "suspended", isNextFailClaimed: false },
       { name: "a fail streak", alarm: { consecutive_fails: 2 }, tone: "warn", label: "fail streak", isNextFailClaimed: true },
-      { name: "a read zero", alarm: { consecutive_fails: 0 }, tone: "ok", label: "safe to route", isNextFailClaimed: true },
+      { name: "a one-fail streak", alarm: { consecutive_fails: 1 }, tone: "warn", label: "fail streak", isNextFailClaimed: true },
       { name: "no count in the reading", alarm: {}, tone: "neutral", label: "count not loaded", isNextFailClaimed: false },
       { name: "a null count", alarm: { consecutive_fails: null }, tone: "neutral", label: "count not loaded", isNextFailClaimed: false },
     ];
@@ -2570,8 +2571,10 @@ describe("Agents values take the shared number, date and nothing forms", () => {
         const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
         const tree = renderScreen(React.createElement(mod.AgentAlarmRow as Component, { alarm: { agent: "glass-atrium-dev-shell", ...row.alarm } }));
         const [badge] = findAtoms(tree, "Badge");
+        const text = collectText(tree);
         assert.deepEqual({ tone: badge.props.tone, label: collectText(badge) }, { tone: row.tone, label: row.label });
-        assert.equal(/one more fail suspends it/.test(collectText(tree)), row.isNextFailClaimed, "the next-fail line follows the read count");
+        assert.equal(text.includes("more fails suspend it"), row.isNextFailClaimed, "the next-fail line follows the read count");
+        assert.doesNotMatch(text, /\b(one|two|\d+) more fails?\b/i, "no fail count to suspension is claimed");
       });
     }
   });

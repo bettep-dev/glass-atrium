@@ -671,10 +671,11 @@ function AgentAlarmRow({ alarm }) {
   );
 }
 
-// the next-fail claim needs the fail count it was read with → an unread count makes no claim
+// the next-fail claim needs the fail count it was read with → an unread count makes no claim;
+// the payload carries no suspension threshold, so a streak never names how many fails remain
 function getAlarmNextStepAg(alarm) {
   if (alarm.suspended) return 'stop routing · clear the marker, then edit the body';
-  return Number.isFinite(alarm.consecutive_fails) ? 'one more fail suspends it' : null;
+  return Number.isFinite(alarm.consecutive_fails) ? 'more fails suspend it' : null;
 }
 
 /**
