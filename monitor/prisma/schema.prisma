@@ -1440,7 +1440,7 @@ model QueueItem {
   options           Json?
   recommendedCode   String?         @map("recommended_code") @db.VarChar(2)
   isFreeTextAllowed Boolean         @map("free_text_allowed")
-  // Approves a high-impact action → the card says the terminal confirmation is still needed; never auto-resumed
+  // Approves a high-impact action → the card carries the Approval tag; the answer is the owner's approval of that one action, resumed like any other
   isApprovalClass   Boolean         @default(false) @map("approval_class")
   status            QueueItemStatus @default(open)
   // Owned sequence queue_items_queue_position_seq → insert default; Later sets nextval() on the same sequence

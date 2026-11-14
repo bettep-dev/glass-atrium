@@ -335,7 +335,7 @@ describe("automatic resume of an exited session", () => {
     }
   });
 
-  test("the resume batch lists only exited sessions holding a claimable item, so items waiting on the owner never crowd it", async () => {
+  test("the resume batch lists only exited sessions holding a claimable item, approval class included, so items waiting on the owner never crowd it", async () => {
     const claimableId = await seedSession();
     await seedItem(claimableId, "resume_pending");
     const approvalId = await seedSession();
@@ -350,7 +350,7 @@ describe("automatic resume of an exited session", () => {
 
     const listed = await findClaimableSessionIds({ sessionIds: [claimableId, approvalId, usedId, liveId] });
 
-    assert.deepEqual(listed, [claimableId]);
+    assert.deepEqual(listed, [claimableId, approvalId]);
   });
 
   test("two resume-pending items of one session go out in one spawn carrying both envelopes, and no second spawn runs while it is in flight", async () => {
@@ -397,22 +397,19 @@ describe("automatic resume of an exited session", () => {
     assert.equal(harness.fake.calls.length, 1);
   });
 
-  test("an approval-class item is never resumed, carries the terminal reason, and waits answered for the session's pull once its row registers live", async () => {
-    const identity = await spawnLiveProcess();
-    const cwd = newFixtureDir("approval");
-    const sessionId = await seedSession({ cwd, identity });
+  test("an approval-class item resumes an exited session like any other answer: no skip reason, then one spawn carrying its envelope", async () => {
+    const sessionId = await seedSession({ cwd: newFixtureDir("approval") });
     const itemId = await seedItem(sessionId, "resume_pending", { isApprovalClass: true });
     const harness = buildHarness([sessionId]);
 
-    await runPasses(harness, 3);
     const skip = await getSkipReason(itemId);
-    await registerSession({ sessionId, pid: identity.pid, cwd }, dir.home);
-    await runPasses(harness, 1);
+    await runPasses(harness, 3);
 
-    assert.equal(harness.fake.calls.length, 0);
-    assert.deepEqual(skip, { kind: "approval" });
-    assert.equal(await getStatus(itemId), "answered");
-    assert.equal(await getPrisma().queueDelivery.count({ where: { itemId } }), 0);
+    const [row] = await getResumeRows(itemId);
+    assert.equal(skip, null);
+    assert.equal(harness.fake.calls.length, 1);
+    assert.ok(row !== undefined && (harness.fake.calls[0]?.args[3] ?? "").includes(`${CLI_PATH} ack ${itemId} ${row.msgId}`), "the spawn carries the approval item's envelope");
+    assert.equal(await getStatus(itemId), "delivering");
   });
 });
 
