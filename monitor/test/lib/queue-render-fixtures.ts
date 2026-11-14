@@ -279,9 +279,8 @@ export function getNotReceivedFixture(): QueueFixture {
   return { ...rest, items: [...rest.items, ...NOT_RECEIVED_ORDER], orders: [...rest.orders, ...NOT_RECEIVED_ORDER] };
 }
 
-/** The rest state plus a report `yoaida` posts after the page first read it, its rail count raised with it. */
-export function getArrivalFixture(): QueueFixture {
-  const rest = getRestFixture();
+/** A state (the rest state by default) plus a report `yoaida` posts after the page first read it, its rail count raised with it. */
+export function getArrivalFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
   const report = buildItem(150, "yoaida", { kind: "report", askedAt: getAt(0), title: "야간 정리 작업 완료 — 끝난 작업 폴더 4개 정리", body: "- 끝난 작업 폴더 4개를 정리했습니다." });
   const sessions = rest.sessions.map((row) => (row.id === SESSION_IDS.yoaida ? { ...row, count: { ...row.count, awaiting: row.count.awaiting + 1 } } : row));
   return { ...rest, items: [...rest.items, report], sessions };
@@ -461,4 +460,14 @@ export function getEdgeFixture(): QueueFixture {
     sessions: [...rest.sessions, ...Object.values(EDGE_SESSIONS).map((session) => session.row)],
     orders: [...rest.orders, ...orders],
   };
+}
+
+/** The edge state with its first open item from the 100-character name and its second from a session that registered no name. */
+export function getNameColumnFixture(): QueueFixture {
+  const edge = getEdgeFixture();
+  const [first, second] = edge.items.filter((item) => item.status === "open");
+  if (!first || !second) throw new Error("the edge fixture lost its two open items");
+  const nameless: OwnerSessionView = { ...buildEdgeSession("d4e5f6a7-0000-4000-8000-000000000003", "atrium-hooks", 0).view, isNameRegistered: false };
+  const sessions = new Map([[first.id, EDGE_SESSIONS.longName.view], [second.id, nameless]]);
+  return { ...edge, items: edge.items.map((item) => ({ ...item, session: sessions.get(item.id) ?? item.session })) };
 }

@@ -1167,14 +1167,14 @@ describe("the page re-reads itself", () => {
     assert.equal(result.isGood, true);
   });
 
-  test("an arrival is marked New and reported", async () => {
+  test("an arrival is tracked and reported", async () => {
     const answer = { items: [buildItem({ id: 1 }), buildItem({ id: 6 })], nextCursor: null };
     const marked = await readOnce(loadedList({ newIds: [1] }), 200, answer);
     assert.deepEqual(marked.list.newIds, [1, 6]);
     assert.deepEqual(marked.result.arrived.map((item) => item.id), [6]);
   });
 
-  test("a New mark goes with its row when a read no longer has it", async () => {
+  test("an arrival stops being tracked when a read no longer has its row", async () => {
     const { list } = await readOnce(loadedList({ newIds: [1] }), 200, { items: [buildItem({ id: 2 })], nextCursor: null });
     assert.deepEqual(list.newIds, [2]);
   });
@@ -1214,16 +1214,25 @@ describe("the page re-reads itself", () => {
   const listBody = { top: 180, bottom: 820 };
   const rowAt = (id: number, top: number) => ({ id, top, bottom: top + 68 });
   const offViews = [
-    { name: "a New row inside the visible part needs no note", rows: [rowAt(7, 400)], expected: null },
-    { name: "a New row cut by an edge still shows, so needs no note", rows: [rowAt(7, 790)], expected: null },
-    { name: "a New row under the visible part is one new below", rows: [rowAt(7, 820)], expected: { count: 1, direction: "below", id: 7 } },
-    { name: "New rows over the visible part are counted, and Show goes to the nearest", rows: [rowAt(3, -200), rowAt(4, 112)], expected: { count: 2, direction: "above", id: 4 } },
-    { name: "New rows on both sides name the side below, nearest first", rows: [rowAt(3, 40), rowAt(9, 1200), rowAt(8, 900)], expected: { count: 2, direction: "below", id: 8 } },
+    { name: "an arrival's row inside the visible part needs no note", rows: [rowAt(7, 400)], expected: null },
+    { name: "an arrival's row cut by an edge still shows, so needs no note", rows: [rowAt(7, 790)], expected: null },
+    { name: "an arrival's row under the visible part is one new below", rows: [rowAt(7, 820)], expected: { count: 1, direction: "below", id: 7 } },
+    { name: "arrivals' rows over the visible part are counted, and Show goes to the nearest", rows: [rowAt(3, -200), rowAt(4, 112)], expected: { count: 2, direction: "above", id: 4 } },
+    { name: "arrivals' rows on both sides name the side below, nearest first", rows: [rowAt(3, 40), rowAt(9, 1200), rowAt(8, 900)], expected: { count: 2, direction: "below", id: 8 } },
     { name: "a list put away by an open sheet has no visible part to leave", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: null },
   ];
   for (const row of offViews) test(`off-view note: ${row.name}`, () => assert.deepEqual(call("getOffViewQ", row.body ?? listBody, row.rows), row.expected));
 
-  test("the off-view note says how many New rows sit on which side, and its Show moves to the nearest", () => {
+  // spec §4.4: an arrival is tracked until its row has been in the shown list's visible part
+  const seen = [
+    { name: "a row inside the visible part has been seen", rows: [rowAt(7, 400)], expected: [7] },
+    { name: "a row cut by an edge shows, so has been seen", rows: [rowAt(7, 790), rowAt(8, 140)], expected: [7, 8] },
+    { name: "a row wholly past an edge has not been seen", rows: [rowAt(7, 820), rowAt(8, 112)], expected: [] },
+    { name: "a list put away by an open sheet shows no row", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: [] },
+  ];
+  for (const row of seen) test(`arrival seen: ${row.name}`, () => assert.deepEqual(call("getInViewIdsQ", row.body ?? listBody, row.rows), row.expected));
+
+  test("the off-view note says how many arrivals sit on which side, and its Show moves to the nearest", () => {
     const shown: number[] = [];
     const queue = { ...withList(buildQueue(), [buildItem()]), status: "New report from yoaida: Nightly sweep done" };
     const tree = render("ListFootQ", { queue, offView: { count: 1, direction: "below", id: 7 }, onShowNew: (id: number) => shown.push(id) });
@@ -1298,18 +1307,6 @@ describe("the page re-reads itself", () => {
     assert.deepEqual(delays, [15_000, 15_000, 15_000, 60_000, 15_000]);
   });
 
-  test("an arrived row carries the solid New badge at the start of its meta line, and its name leads with New", () => {
-    const row = call<{ id: number }>("getSingleRowQ", buildItem());
-    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
-    const rowOf = (isNew: boolean) => {
-      const [option] = findNodes(render("QueueRowQ", { row, isSelected: false, isNew, view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
-      return { label: String(option?.props["aria-label"]), badges: findNodes(option as RenderedNode, (node) => node.props?.atom === "Badge" && node.props.fill === "solid").map((node) => collectText(node)) };
-    };
-    assert.deepEqual(rowOf(true).badges, ["New"]);
-    assert.match(rowOf(true).label, /^New, Decision from /);
-    assert.deepEqual(rowOf(false).badges, []);
-    assert.doesNotMatch(rowOf(false).label, /^New/);
-  });
 });
 
 describe("drafts kept in session storage", () => {
@@ -1567,8 +1564,8 @@ describe("sessions rail rows", () => {
   const lines = [
     { name: "something not received leads", row: { state: "live", count: { awaiting: 0, inDelivery: 2 } }, notReceived: 1, first: { text: "1 not received", badge: "warn" } },
     { name: "an unreachable session says so", row: { state: "stale" }, notReceived: 0, first: { text: "Not reachable", badge: "warn" } },
-    { name: "a live session with orders on the way counts them", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, first: { text: "Live", dot: "ok" }, second: "1 in delivery" },
-    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, first: { text: "Live", dot: "ok" } },
+    { name: "a live session with orders on the way counts them", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, first: { text: "Live" }, second: "1 in delivery" },
+    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, first: { text: "Live" } },
     { name: "an automatic resume not yet registered says so", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, notReceived: 0, first: { text: "Resume not yet registered" } },
     { name: "an ended session wears its exit word", row: { state: "exited", exitReason: "dead" }, notReceived: 0, first: { text: "Ended · process gone", badge: "tag" } },
   ];
@@ -1594,6 +1591,30 @@ describe("sessions rail rows", () => {
     assert.deepEqual([railRowOf(tree, SESSION_ID).type, controls(SESSION_ID)], ["label", ["input"]]);
     assert.deepEqual([railRowOf(tree, REPLACED_ID).type, controls(REPLACED_ID)], ["div", []]);
   });
+
+  // spec §9.1: checkbox · state mark · name · count from the row's start; a row that takes no message has no box, its mark and name in place
+  test("a row reads its box, its state mark, its name and its count from the start, and a row that takes no message starts at its mark", () => {
+    const rows = [buildSessionRow({ state: "live", count: { awaiting: 2, inDelivery: 0 } }), buildSessionRow({ id: REPLACED_ID, name: "gersona", isSelectable: false, count: { awaiting: 3, inDelivery: 0 } })];
+    const { tree } = renderRail({ isEndedShown: true, region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
+    const slots = (id: string) => findNodes(railRowOf(tree, id), (node) => /^queue-rail-(box|mark|name|count)(\s|$)/.test(String(node.props?.className ?? "")))
+      .map((node) => String(node.props.className).split(" ")[0]);
+    assert.deepEqual([slots(SESSION_ID), slots(REPLACED_ID)], [["queue-rail-box", "queue-rail-mark", "queue-rail-name", "queue-rail-count"], ["queue-rail-mark", "queue-rail-name", "queue-rail-count"]]);
+  });
+
+  // spec §9.1: live → the filled mark; not live (not reachable, ended, a resume not yet registered) → the hollow ring
+  const marks = [
+    { name: "a live session wears the filled mark", row: { state: "live" }, isLive: true },
+    { name: "a session not reachable wears the ring", row: { state: "stale" }, isLive: false },
+    { name: "an ended session wears the ring", row: { state: "exited", exitReason: "dead" }, isLive: false },
+    { name: "a resume not yet registered wears the ring", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, isLive: false },
+  ];
+  for (const row of marks) {
+    test(`state mark: ${row.name}`, () => {
+      const { tree } = renderRail({ isEndedShown: true, region: { status: "ready", data: { sessions: [buildSessionRow(row.row)], hasMore: false }, error: null, busy: false } });
+      const [mark] = findNodes(railRowOf(tree, SESSION_ID), (node) => String(node.props?.className ?? "").startsWith("queue-rail-mark"));
+      assert.deepEqual([String(mark?.props.className).split(" ").includes("is-live"), mark?.props["aria-hidden"]], [row.isLive, "true"]);
+    });
+  }
 
   test("every box of the rail shares one description of what a tick does", () => {
     const { tree } = renderRail({ isEndedShown: true });
@@ -1754,7 +1775,7 @@ describe("order composer", () => {
     { name: "several targets count them", targets: { ids: [SESSION_ID, ENDED_ID], names: ["gersona", "yoaida"], endedCount: 0 }, label: "Send to 2 sessions" },
     { name: "an ended target among them", targets: { ids: [SESSION_ID, ENDED_ID], names: ["gersona", "yoaida"], endedCount: 1 }, label: "Send to 2 sessions · resumes 1 ended" },
   ];
-  for (const row of labels) test(`the send label: ${row.name}`, () => assert.equal(call("getSendLabelQ", row.targets), row.label));
+  for (const row of labels) test(`the send label: ${row.name}`, () => assert.equal(call("getSendLabelQ", call("getSendPartsQ", row.targets)), row.label));
 
   const MAX_TARGETS = vm.runInContext("MESSAGE_Q.MAX_TARGETS", screen) as number;
   const targetsOf = (count: number) => ({ ids: Array.from({ length: count }, () => randomUUID()), names: Array.from({ length: count }, (_v, index) => `s${index}`), endedCount: 0 });
@@ -2369,7 +2390,7 @@ describe("desk keys", () => {
     const { card, info } = renderKeyList(true);
     const listed = findNodes(info, (node) => node.type === "dt").map((node) => collectText(node).trim());
     const letters = Object.keys(getPlain(vm.runInContext("DESK_LETTERS_Q", screen as unknown as vm.Context) as Record<string, string>));
-    assert.equal(card?.props.infoLabel, "Keyboard shortcuts");
+    assert.deepEqual([card?.props.infoLabel, card?.props.infoTitle], ["Keyboard shortcuts", "Keyboard shortcuts"]);
     for (const letter of letters) assert.ok(listed.some((label) => label.split(/[ /]+/).includes(letter.toUpperCase())), `key ${letter.toUpperCase()} is listed`);
     for (const chord of ["Enter", "Esc", "1 – 9", "Cmd / Ctrl + Enter", "↓ / ↑", "Home / End"]) assert.ok(listed.includes(chord), `${chord} is listed`);
   });
@@ -2693,9 +2714,10 @@ describe("marks and counts on the desk", () => {
     assert.deepEqual([iconsOf({ isChecked: false, isMixed: true }), iconsOf({ isChecked: true }), iconsOf({ isChecked: false })], [["minus"], ["check"], []]);
   });
 
-  test("a live session's line 2 leads with the ok-toned dot, never the received check", () => {
+  // spec §9.1: the mark stands before the name → line 2 says the state in words alone
+  test("a live session's line 2 starts with the word Live and holds no mark", () => {
     const text = collectText(render("RowFactsQ", { facts: call("getSessionLineQ", buildSessionRow({ state: "live" }), 0) })).replace(/\s+/g, " ").trim();
-    assert.ok(text.startsWith("● Live") && !text.includes("✓"), text);
+    assert.ok(text.startsWith("Live") && !/[●○✓]/.test(text), text);
   });
 
   test("the All sessions band shows no count at zero and folds a failed receipt into the compact warning", () => {
@@ -2729,12 +2751,46 @@ describe("In delivery rows", () => {
     assert.deepEqual(call("getRowFactsQ", { item: copies[0], copies }, false), [{ text: "Order" }, { text: "Not yet" }]);
   });
 
-  test("a row's meta line puts ` · ` between the session name and its facts", () => {
-    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+  // spec §4.2: who, then what — the name in its own column ahead of the title, the meta line under the title holding the facts alone
+  test("a row's session name stands in its own column before the title, and its meta line holds only its facts, ` · ` between them", () => {
+    const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
     const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
-    const [meta] = findNodes(tree, (node) => node.props?.className === "queue-row-meta");
-    assert.match(collectText(meta as RenderedNode), /gersona · 2 options/);
+    const [option] = findNodes(tree, (node) => node.props?.role === "option");
+    const slots = (option?.children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [String((child as RenderedNode).props?.className ?? "")] : []));
+    const [who] = byClass(tree, "queue-row-who");
+    const [meta] = byClass(tree, "queue-row-meta");
+    assert.deepEqual([slots.slice(0, 3), collectText(who as RenderedNode)], [["queue-row-who", "queue-row-title", "queue-row-meta"], "gersona"]);
+    assert.match(collectText(meta as RenderedNode).replace(/\s+/g, " ").trim(), /^work-dev · 2 options \d/);
   });
+
+  test("with exactly one session ticked a row paints no name column", () => {
+    const view = { isNameShown: false, isAccountShown: false, tabStopId: 41 };
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
+    assert.deepEqual([byClass(tree, "queue-row-who").length, collectText(tree).includes("gersona")], [0, false]);
+  });
+
+  // spec §4.4: an arrival carries no mark of its own — no badge on its face, no New in its name
+  test("an arrived row paints no badge and its name has no New", () => {
+    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report" })), isSelected: false, isNew: true, view, onSelect: () => undefined, onOrder: () => undefined, onSeen: () => undefined });
+    const [option] = findNodes(tree, (node) => node.props?.role === "option");
+    assert.deepEqual([findNodes(tree, (node) => node.props?.atom === "Badge").length, /\bNew\b/.test(String(option?.props["aria-label"]))], [0, false]);
+  });
+
+  // spec §4.2: a name the session did not register is its start directory's, said under it; one name stands for one session alone
+  const whoRows = [
+    { name: "an unregistered name of one session says start directory under it", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 1, lines: ["atrium-hooks", "start directory"] },
+    { name: "a registered name stands alone", session: { name: "gersona", isNameRegistered: true }, copies: 1, lines: ["gersona"] },
+    { name: "an order to several sessions names their count, never a directory", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 2, lines: ["2 sessions"] },
+  ];
+  for (const row of whoRows) {
+    test(`row name column: ${row.name}`, () => {
+      const item = buildItem({ kind: "message", sendId: "send-1", session: buildSession(row.session) });
+      const copies = Array.from({ length: row.copies }, (_, index) => ({ ...item, id: item.id + index }));
+      const tree = render("RowWhoQ", { row: { id: item.id, item, copies } });
+      assert.deepEqual(findNodes(tree, (node) => typeof node.props?.className === "string" && /^queue-row-(name|dir)$/.test(node.props.className)).map((node) => collectText(node)), row.lines);
+    });
+  }
 });
 
 describe("the sheet's letterhead and record", () => {
@@ -2765,16 +2821,48 @@ describe("the sheet's letterhead and record", () => {
     const [head] = byClass(tree, "card-head");
     const buttons = findNodes(head as RenderedNode, (node) => node.type === "button");
     for (const button of buttons) if (!button.props.disabled) (button.props.onClick as () => void)();
-    assert.deepEqual(buttons.map((button) => [button.props["aria-label"], button.props.title, Boolean(button.props.disabled)]), [["Back to the list", "Esc", false], ["Previous item", "K", true], ["Next item", "J", false]]);
+    assert.deepEqual(buttons.map((button) => [button.props["aria-label"], button.props.title, Boolean(button.props.disabled)]), [["Back to the list", "Back to the list (Esc)", false], ["Previous item", "Previous item (K)", true], ["Next item", "Next item (J)", false]]);
     assert.equal(collectText(findNodes(head as RenderedNode, (node) => node.type === "h2")[0] as RenderedNode).replace(/\s+/g, " ").trim(), "Decision from glass-atrium");
     assert.ok(collectText(head as RenderedNode).includes("1 of 8"));
     assert.deepEqual(getPlain(calls), [["back"], ["selectRow", 7]]);
   });
 
-  test("rows that arrived while the sheet is open are counted on the way back", () => {
+  // the count rides the back control's name; its painted badge stands beside the glyph-only square, hidden from the name's reader
+  test("rows that arrived while the sheet is open are counted on the way back, in its name and in a badge beside it", () => {
     const { queue } = buildQueue({ list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [50, 51] } });
-    const [back] = findNodes(renderSheet({ item: buildItem(), queue }), (node) => node.type === "button" && node.props.title === "Esc");
-    assert.deepEqual([back?.props["aria-label"], findNodes(back as RenderedNode, (node) => node.props?.atom === "Badge").map((node) => collectText(node))], ["Back to the list, 2 new in the list", ["2"]]);
+    const [head] = byClass(renderSheet({ item: buildItem(), queue }), "card-head");
+    const [back] = findNodes(head as RenderedNode, (node) => node.type === "button" && /^Back to the list/.test(String(node.props["aria-label"])));
+    const hidden = findNodes(head as RenderedNode, (node) => node.props?.["aria-hidden"] === "true" && findNodes(node, (child) => child.props?.atom === "Badge").length > 0);
+    assert.deepEqual(
+      [back?.props["aria-label"], findNodes(back as RenderedNode, (node) => node.props?.atom === "Badge").length, hidden.map((node) => collectText(node))],
+      ["Back to the list, 2 new in the list", 0, ["2"]],
+    );
+  });
+
+  // spec §12.5: a glyph-only control → no text on its face, one glyph, the act in its name, the name and its key in its tooltip
+  const iconControls = [
+    { name: "the way back", tree: () => renderSheet({ item: buildItem(), queue: buildQueue().queue }), label: "Back to the list", glyph: "arrow-left", title: "Back to the list (Esc)" },
+    { name: "the previous item", tree: () => renderSheet({ item: buildItem(), queue: buildQueue({ steps: { index: 1, count: 3, prevId: 5, nextId: 7 } }).queue }), label: "Previous item", glyph: "chevron-up", title: "Previous item (K)" },
+    { name: "the next item", tree: () => renderSheet({ item: buildItem(), queue: buildQueue({ steps: { index: 1, count: 3, prevId: 5, nextId: 7 } }).queue }), label: "Next item", glyph: "chevron-down", title: "Next item (J)" },
+    { name: "the viewer's previous image", tree: () => renderViewer(), label: "Previous image", glyph: "chevron-left", title: "Previous image (←)" },
+    { name: "the viewer's next image", tree: () => renderViewer(), label: "Next image", glyph: "chevron-right", title: "Next image (→)" },
+    { name: "the viewer's close", tree: () => renderViewer(), label: "Close", glyph: "x", title: "Close (Esc)" },
+  ];
+  for (const row of iconControls) {
+    test(`${row.name} is a ghost icon button: one glyph, no text, named for its act, its tooltip the name and its key`, () => {
+      const [button] = findNodes(row.tree(), (node) => node.type === "button" && node.props["aria-label"] === row.label);
+      const classes = String(button?.props.className ?? "").split(" ");
+      const glyphs = findNodes(button as RenderedNode, (node) => node.props?.atom === "Icon").map((node) => node.props.name);
+      assert.deepEqual([classes.includes("ghost") && classes.includes("icon"), collectText(button as RenderedNode).trim(), glyphs, button?.props.title], [true, "", [row.glyph], row.title]);
+    });
+  }
+
+  // spec §9.8 / §12.5: re-sending a file is a re-send → it keeps its word, the quiet tier, never a bare glyph
+  test("a failed upload's Try again is a quiet word button: its word on its face and no glyph", () => {
+    const tree = render("ImageFailureLineQ", { text: "shot-3.png could not be uploaded.", retryId: "box-retry", onRetry: () => undefined });
+    const [button] = findNodes(tree, (node) => node.type === "button");
+    const classes = String(button?.props.className ?? "").split(" ");
+    assert.deepEqual([classes.includes("ghost"), classes.includes("icon"), collectText(button as RenderedNode).trim(), findNodes(button as RenderedNode, (node) => node.props?.atom === "Icon").length], [true, false, "Try again", 0]);
   });
 
   // the session's facts ride its name; the id or the account shows only while it tells two loaded sessions apart
@@ -2854,10 +2942,15 @@ describe("Orders after a send", () => {
 
   test("the viewer is one picture over one foot bar: name · size · place, previous / next and Close", () => {
     const steps: unknown[] = [];
-    const images = IMAGE_ID.map((id, index) => ({ id, name: `shot-${index + 1}.png`, bytes: 1024 * 1024, width: 800, height: 600 }));
-    const tree = render("ImageViewerQ", { images, index: 1, onStep: (next: unknown) => steps.push(next), onClose: () => undefined });
+    const tree = renderViewer((next: unknown) => steps.push(next));
     const [surface] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
     for (const label of ["Previous image", "Next image"]) for (const button of findNodes(tree, (node) => node.props?.["aria-label"] === label)) (button.props.onClick as () => void)();
-    assert.deepEqual([surface?.props.bare, surface?.props.footer ?? null, steps, buttonLabelled(tree, "✕ Close").length, collectText(tree).split("shot-2.png").length - 1], [true, null, [0, 2], 1, 1]);
+    const closes = findNodes(tree, (node) => node.type === "button" && node.props["aria-label"] === "Close");
+    assert.deepEqual([surface?.props.bare, surface?.props.footer ?? null, steps, closes.length, collectText(tree).split("shot-2.png").length - 1], [true, null, [0, 2], 1, 1]);
   });
 });
+
+function renderViewer(onStep: (next: unknown) => unknown = () => undefined): RenderedNode {
+  const images = IMAGE_ID.map((id, index) => ({ id, name: `shot-${index + 1}.png`, bytes: 1024 * 1024, width: 800, height: 600 }));
+  return render("ImageViewerQ", { images, index: 1, onStep, onClose: () => undefined });
+}

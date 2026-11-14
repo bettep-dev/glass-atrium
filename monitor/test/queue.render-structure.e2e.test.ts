@@ -23,8 +23,8 @@ import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNotReceivedFixture,
-  getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture, type QueueFixture,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
+  getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -77,7 +77,8 @@ const ORDER_TO = ["gersona", "yoaida"];
 const DESK_STATES: QueueState[] = [
   { nn: "01", name: "rest", viewports: [...VIEWPORTS, OWNER_WINDOW, MIN_WINDOW] },
   { nn: "02", name: "decision-picked", setUp: (page) => pickWithNote(page) },
-  { nn: "03", name: "report", viewports: [...VIEWPORTS, OWNER_WINDOW], setUp: (page) => selectRow(page, 101) },
+  // §18.5 reads the panes with a report open at 1280 too → the minimum beside §18.4's sizes
+  { nn: "03", name: "report", viewports: [...VIEWPORTS, OWNER_WINDOW, MIN_WINDOW], setUp: (page) => selectRow(page, 101) },
   {
     nn: "04", name: "rail-ticked",
     setUp: async (page) => {
@@ -106,6 +107,8 @@ const DESK_STATES: QueueState[] = [
     },
   },
   { nn: "20", name: "arrival-on-desk", isClockDriven: true, setUp: (page, harness) => arriveItem(page, harness) },
+  // §4.4: past the visible part, the status line is the arrival's only sign → `1 new below` + Show, on the short windows where it lands there
+  { nn: "20b", name: "arrival-off-view", viewports: [VIEWPORTS[0], OWNER_WINDOW], getFixture: getEdgeFixture, isClockDriven: true, setUp: (page, harness) => arriveOffView(page, harness) },
   { nn: "21b", name: "empty-queue", getFixture: getEmptyFixture },
   { nn: "24", name: "first-load", isFirstLoad: true },
   { nn: "26", name: "not-reachable", getFixture: getUnreachableFixture },
@@ -115,6 +118,13 @@ const DESK_STATES: QueueState[] = [
   { nn: "27c", name: "stress-nine-options", getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.nineOptions) },
   { nn: "27d", name: "stress-seven-sessions", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "7 sessions · 5 received · 1 not yet") },
   { nn: "27e", name: "stress-long-order", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "Show all 31 lines") },
+  // the 100-character session ticked: its name cut inside the send button beside a box that keeps its 220
+  { nn: "27f", name: "stress-long-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickOrdersTo(page, [EDGE_LONG_SESSION_NAME]) },
+  // an ended session among two ticked (portfolio sits in the folded Ended band): the resume tail has no room beside the 220 box,
+  // so it drops whole and the button hugs `Send to 2 sessions`, the box taking the rest
+  { nn: "27g", name: "stress-ended-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickEndedOrdersTo(page) },
+  // the same two ticked on the wider pane: the button's room holds the resume tail, shown whole
+  { nn: "27h", name: "stress-ended-send-whole", viewports: [VIEWPORTS[2]], getFixture: getEdgeFixture, setUp: (page) => tickEndedOrdersTo(page) },
   { nn: "28a", name: "wide-list", viewports: [WIDE_WINDOW] },
   { nn: "28b", name: "wide-report", viewports: [WIDE_WINDOW], setUp: (page) => selectRow(page, 101) },
 ];
@@ -286,7 +296,7 @@ const LOOK_STATES: QueueState[] = [
   { nn: "25f", name: "key-list", setUp: (page) => page.getByRole("button", { name: /Keyboard shortcuts/ }).click() },
 ];
 
-// spec §12.5 close-ups: on an open decision the head holds ← List (secondary), Previous (disabled) and Next (quiet); the foot the primary
+// spec §12.5 close-ups: on an open decision the head holds icon buttons (back, Previous disabled, Next); the foot the primary and the quiet later
 const SHEET_HEAD = ".queue-sheet-head";
 const SHEET_FOOT = ".queue-sheet .card-foot";
 const NEXT_ITEM = ".queue-sheet-head [aria-label='Next item']";
@@ -294,8 +304,8 @@ const BUTTON_STATES: CloseUpState[] = [
   { nn: "29", name: "buttons-rest-head", closeUp: SHEET_HEAD, setUp: (page) => selectRow(page, 103) },
   { nn: "29", name: "buttons-rest-foot", closeUp: SHEET_FOOT, setUp: (page) => selectRow(page, 103) },
   ...[
-    { rank: "quiet", closeUp: SHEET_HEAD, target: NEXT_ITEM },
-    { rank: "secondary", closeUp: SHEET_HEAD, target: ".queue-sheet-head [aria-label='Back to the list']" },
+    { rank: "icon", closeUp: SHEET_HEAD, target: NEXT_ITEM },
+    { rank: "quiet", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.ghost` },
     { rank: "primary", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.primary` },
   ].flatMap(getRankCloseUps),
   {
@@ -336,7 +346,25 @@ function getRankCloseUps({ rank, closeUp, target }: { rank: string; closeUp: str
 // spec §18.4 29's other close-ups, each in both themes
 const PARTS: CloseUpState[] = [
   { nn: "29", name: "rail-ticked", closeUp: ".queue-sessions", setUp: (page) => tickSessions(page, ["gersona"]) },
+  // §18.4 29's live and ended rows on one rail: a ticked live row and the ended rows under the open Ended band
+  {
+    nn: "29", name: "rail-ended-open", closeUp: ".queue-sessions",
+    setUp: async (page) => {
+      await tickSessions(page, ["gersona"]);
+      await openEndedBand(page);
+    },
+  },
+  // a row that takes no message (Replaced, under the open Ended band): its box column stands empty, the state mark and name on the others' columns
+  {
+    nn: "29", name: "rail-not-selectable", closeUp: ".queue-sessions", getFixture: getStoppedFixture,
+    setUp: async (page) => {
+      await openEndedBand(page);
+      await page.locator(".queue-rail-row", { hasText: "Replaced" }).waitFor();
+    },
+  },
   { nn: "29", name: "list-band-rows", closeUp: ".queue-list > .card-body" },
+  // the list's 104 name column holding a 100-character name, cut, and a name the session did not register, start directory under it
+  { nn: "29", name: "list-name-column", closeUp: ".queue-list > .card-body", getFixture: getNameColumnFixture },
   { nn: "29", name: "sheet-report", closeUp: ".queue-sheet", setUp: (page) => selectRow(page, 101) },
   { nn: "29", name: "option-recommended", closeUp: ".queue-sheet .queue-option:has-text('Recommended')", setUp: (page) => selectRow(page, 103) },
   { nn: "29", name: "composer-sheet", closeUp: ".queue-sheet .queue-composer", setUp: (page) => selectRow(page, 101) },
@@ -387,6 +415,7 @@ interface Harness {
   heldRead: Promise<void> | null;
   /** Set → the session and order reads wait on it too, so the desk's first load holds all three placeholders. */
   heldDesk: Promise<void> | null;
+  heldAct: Promise<void> | null;
   /** True → the item list read answers the server's outage, so the page's check fails. */
   isListDown: boolean;
   /** Set → the first page of the item list offers this cursor, so the list foot shows Show more. */
@@ -397,7 +426,7 @@ interface Harness {
 async function openHarness(): Promise<Harness> {
   const app = Fastify({ logger: false });
   const harness: Harness = {
-    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, isListDown: false, moreCursor: null, uploads: 0,
+    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, heldAct: null, isListDown: false, moreCursor: null, uploads: 0,
   };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
@@ -476,6 +505,7 @@ function registerWriteRoutes(app: FastifyInstance, harness: Harness): void {
   app.post<{ Params: { id: string; action: string } }>("/api/queue/owner/items/:id/:action", async (request, reply) => {
     const refusal = harness.refusals.get("action");
     if (refusal !== undefined) return reply.code(refusal.status).send(refusal.body);
+    await harness.heldAct;
     const id = Number(request.params.id);
     const act = (item: OwnerItemView) => (item.id === id ? getActedItem(item, request.params.action) : [item]);
     const orders = request.params.action === "resend" ? harness.fixture.orders.flatMap(act) : harness.fixture.orders;
@@ -578,6 +608,18 @@ async function tickOrdersTo(page: Page, names: string[]): Promise<void> {
   await waitForImages(page);
 }
 
+// gersona and the edge fixture's ended portfolio, ticked once the Ended band is open
+async function tickEndedOrdersTo(page: Page): Promise<void> {
+  await openEndedBand(page);
+  await tickOrdersTo(page, ["gersona", "portfolio"]);
+}
+
+// the Ended band opened → its rows on the rail
+async function openEndedBand(page: Page): Promise<void> {
+  await page.locator(".queue-rail-band .disclosure").click();
+  await page.locator('.queue-rail-band .disclosure[aria-expanded="true"]').waitFor();
+}
+
 // a capture taken before the bubbles' images decode shows empty squares
 async function waitForImages(page: Page): Promise<void> {
   await page.waitForFunction(() => [...document.querySelectorAll("img")].every((img) => img.complete));
@@ -619,6 +661,13 @@ async function arriveItem(page: Page, harness: Harness): Promise<void> {
   await page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS });
 }
 
+// the edge state's long list, scrolled to its top → the report arriving at the end of its band lands past the visible part
+async function arriveOffView(page: Page, harness: Harness): Promise<void> {
+  harness.fixture = getArrivalFixture(getEdgeFixture());
+  await page.clock.fastForward(15_000);
+  await page.locator(".queue-status-new", { hasText: "1 new below" }).waitFor({ timeout: READY_TIMEOUT_MS });
+}
+
 async function typeReportOrder(page: Page): Promise<void> {
   await selectRow(page, 101);
   await page.locator("#queue-reply-101").fill(REPLY_TEXT);
@@ -649,15 +698,22 @@ async function focusByKeyboard(page: Page, target: Locator): Promise<void> {
   await target.focus();
 }
 
-/** Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268; the rail and Orders per step, two gaps of 16, the middle pane the rest. */
+/**
+ * Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268, two gaps of 16; the rail per step;
+ * the middle pane the page — 66ch of the desk's text + two 32 gutters, measured in the page — or, below a 1505 window,
+ * what Orders' 320 leaves; Orders the rest.
+ */
 const DESK_WIDTHS = [
-  { viewport: { width: 1280, height: 800 }, rail: 208, middle: 452, orders: 320 },
-  { viewport: VIEWPORTS[0], rail: 232, middle: 564, orders: 344 },
-  { viewport: { width: 1568, height: 759 }, rail: 232, middle: 692, orders: 344 },
-  { viewport: VIEWPORTS[1], rail: 248, middle: 820, orders: 360 },
-  { viewport: VIEWPORTS[2], rail: 248, middle: 1012, orders: 360 },
-  { viewport: { width: 2560, height: 1440 }, rail: 280, middle: 1588, orders: 392 },
+  { viewport: { width: 1280, height: 800 }, rail: 208, middle: 452 },
+  { viewport: VIEWPORTS[0], rail: 232, middle: 588 },
+  { viewport: { width: 1568, height: 759 }, rail: 232, middle: "page" },
+  { viewport: VIEWPORTS[1], rail: 248, middle: "page" },
+  { viewport: VIEWPORTS[2], rail: 248, middle: "page" },
+  { viewport: { width: 2240, height: 1260 }, rail: 264, middle: "page" },
+  { viewport: { width: 2560, height: 1440 }, rail: 280, middle: "page" },
 ] as const;
+const SHELL_INLINE = 268;
+const ORDERS = { MIN: 320, COLUMN_MAX: 720 };
 
 interface DeskFacts {
   isScrolled: boolean;
@@ -665,9 +721,10 @@ interface DeskFacts {
   list: number[] | null;
   sheet: number[] | null;
   orders: number[] | null;
+  page: number;
 }
 
-// each pane's painted box as [x, width]; a pane not rendered → null
+// each pane's painted box as [x, width]; a pane not rendered → null. `page`: 66ch of the desk's own text + two 32 gutters
 async function getDeskFacts(page: Page): Promise<DeskFacts> {
   return page.evaluate(() => {
     const box = (selector: string) => {
@@ -676,8 +733,12 @@ async function getDeskFacts(page: Page): Promise<DeskFacts> {
       const rect = element.getBoundingClientRect();
       return [Math.round(rect.left), Math.round(rect.width)];
     };
+    const desk = document.querySelector(".queue-desk") as HTMLElement;
+    const probe = desk.appendChild(Object.assign(document.createElement("span"), { style: "position: absolute; width: calc(66ch + 64px)" }));
+    const measure = probe.getBoundingClientRect().width;
+    probe.remove();
     const scrollers = [document.scrollingElement, document.querySelector("main")].filter((node): node is Element => node !== null);
-    return { isScrolled: scrollers.some((node) => node.scrollHeight > node.clientHeight), rail: box(".queue-sessions"), list: box(".queue-list"), sheet: box(".queue-sheet"), orders: box(".queue-orders") };
+    return { isScrolled: scrollers.some((node) => node.scrollHeight > node.clientHeight), rail: box(".queue-sessions"), list: box(".queue-list"), sheet: box(".queue-sheet"), orders: box(".queue-orders"), page: Math.round(measure) };
   });
 }
 
@@ -715,16 +776,19 @@ async function getSheetFacts(page: Page): Promise<SheetFacts> {
     const rect = (selector: string) => (document.querySelector(selector) as HTMLElement).getBoundingClientRect();
     const text = document.querySelector(".queue-sheet .prose-text") as HTMLElement;
     const foot = document.querySelector(".queue-sheet > .card-foot")?.getBoundingClientRect();
-    const card = rect(".queue-sheet");
-    const first = rect(".queue-sheet-head > .btn");
+    // the gutters from the card's inner edges, inside its 1 px border
+    const sheet = document.querySelector(".queue-sheet") as HTMLElement;
+    const card = sheet.getBoundingClientRect();
+    const edge = { left: sheet.clientLeft, right: sheet.offsetWidth - sheet.clientWidth - sheet.clientLeft };
+    const first = rect(".queue-sheet-head > :first-child");
     const last = rect(".queue-steps > .btn:last-child");
     return {
       text: [style(".queue-sheet .prose-text").fontSize, style(".queue-sheet .prose-text").lineHeight, String(text.getBoundingClientRect().width <= 590)],
       title: [style(".queue-sheet-title").fontSize, style(".queue-sheet-title").lineHeight],
       isFootInView: foot !== undefined && foot.bottom <= window.innerHeight && foot.height > 0,
-      starts: [...new Set([".queue-sheet-head > .btn", ".queue-date-line", ".queue-sheet-title", ".queue-sheet .prose-text", ".queue-sheet .queue-compose-box", ".queue-sheet .queue-note"].map((selector) => Math.round(rect(selector).left)))],
+      starts: [...new Set([".queue-sheet-head > :first-child", ".queue-date-line", ".queue-sheet-title", ".queue-sheet .prose-text", ".queue-sheet .queue-compose-box", ".queue-sheet .queue-note"].map((selector) => Math.round(rect(selector).left)))],
       ends: [...new Set([".queue-steps > .btn:last-child", ".queue-date-line > :last-child", ".queue-sheet .queue-note"].map((selector) => Math.round(rect(selector).right)))],
-      gutters: [Math.round(first.left - card.left), Math.round(card.right - last.right)],
+      gutters: [Math.round(first.left - card.left - edge.left), Math.round(card.right - edge.right - last.right)],
     };
   });
 }
@@ -776,9 +840,9 @@ function getButtonFacts(): ButtonFacts {
     if (element.classList.contains("primary")) return "primary";
     return element.classList.contains("ghost") ? "quiet" : "secondary";
   };
-  // Add images is a glyph inside the bordered box, ranked by its own §12.5 row (no edge) → its own test, never a quiet button here
+  // a glyph-only button has its own §12.5 row (no edge) → the icon tests, never a word rank here
   const buttons = [...document.querySelectorAll(".queue-screen .btn")]
-    .filter((element) => element.getClientRects().length > 0 && !element.closest(".detail-head") && !element.matches(".queue-compose-add"))
+    .filter((element) => element.getClientRects().length > 0 && !element.closest(".detail-head") && !element.matches(".icon"))
     .map((element) => {
       const style = getComputedStyle(element);
       return {
@@ -804,6 +868,60 @@ function getRankLook(tokens: ButtonFacts["tokens"], button: ButtonFacts["buttons
   const edge = { primary: tokens.ink, secondary: tokens.controlEdge, quiet: tokens.controlEdge, disabled: tokens.line }[button.rank];
   const label = { quiet: tokens.dim, disabled: tokens.faint }[button.rank as "quiet" | "disabled"] ?? button.look.label;
   return { edgeWidth: "1px", edge, label, opacity: "1" };
+}
+
+interface IconLook { name: string; title: string; size: number[]; text: string; isEdgeless: boolean; fill: string; glyph: string; isDrawn: boolean; isDisabled: boolean }
+
+// every painted glyph-only button of the Queue screen, its image viewer's bar included; colour transitions settled first → the state's own colours
+async function getIconLooks(): Promise<IconLook[]> {
+  const buttons = [...document.querySelectorAll(".queue-screen .btn.icon")].filter((element) => element.getClientRects().length > 0);
+  await Promise.all(buttons.flatMap((element) => element.getAnimations().map((animation) => animation.finished)));
+  return buttons
+    .map((element) => {
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      const svg = element.querySelector("svg");
+      return {
+        name: element.getAttribute("aria-label") ?? "",
+        title: element.getAttribute("title") ?? "",
+        size: [Math.round(box.width), Math.round(box.height)],
+        text: (element.textContent ?? "").trim(),
+        isEdgeless: parseFloat(style.borderTopWidth) === 0 || style.borderTopColor === "rgba(0, 0, 0, 0)",
+        fill: style.backgroundColor,
+        glyph: style.color,
+        // an unknown Lucide name draws an empty svg with no error → a drawn glyph has child shapes
+        isDrawn: svg !== null && svg.childElementCount > 0,
+        isDisabled: (element as HTMLButtonElement).disabled,
+      };
+    });
+}
+
+// the colour a token computes to on this page through one property → `background-color` for a fill (`var(--tint-select)`), `color` for a triplet (`rgb(var(--ok))`)
+function getTokenPaint({ property, value }: { property: "background-color" | "color"; value: string }): string {
+  const probe = document.createElement("div");
+  probe.style.setProperty(property, value);
+  document.body.append(probe);
+  const paint = getComputedStyle(probe).getPropertyValue(property);
+  probe.remove();
+  return paint;
+}
+
+// the two fills under the pointer, in token order: `--tint-select` hovered, `--tint-fill` held
+async function getTintFills(page: Page): Promise<string[]> {
+  return Promise.all(["--tint-select", "--tint-fill"].map((token) => page.evaluate(getTokenPaint, { property: "background-color" as const, value: `var(${token})` })));
+}
+
+// the keyboard ring as painted: whether :focus-visible holds, the outline's colour, style and width, its offset
+async function getFocusRing(target: Locator): Promise<{ isVisible: boolean; outline: string; offset: string }> {
+  return target.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { isVisible: element.matches(":focus-visible"), outline: `${style.outlineColor} ${style.outlineStyle} ${style.outlineWidth}`, offset: style.outlineOffset };
+  });
+}
+
+// the `--focus-ring` triplet in computed-colour form (`r, g, b`)
+async function getRingToken(page: Page): Promise<string> {
+  return page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--focus-ring").trim().split(/\s+/).join(", "));
 }
 
 async function openEdgePage(harness: Harness, viewport: { width: number; height: number } = VIEWPORTS[0]): Promise<Page> {
@@ -863,7 +981,11 @@ async function captureCloseUp(harness: Harness, dir: string, state: CloseUpState
     await state.setUp?.(page, harness);
     const element = page.locator(state.closeUp).first();
     await element.screenshot({ path: join(dir, getShotName(VIEWPORTS[0], state)), animations: "disabled" });
-    return await element.evaluate((node) => ({ width: Math.round(node.getBoundingClientRect().width), height: Math.round(node.getBoundingClientRect().height) }));
+    // the whole CSS pixels the box touches → what the screenshot clip covers, a fractional edge included
+    return await element.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return { width: Math.ceil(rect.right) - Math.floor(rect.left), height: Math.ceil(rect.bottom) - Math.floor(rect.top) };
+    });
   } finally {
     await page.close();
   }
@@ -975,8 +1097,11 @@ describe("queue page on the mockup fixtures", () => {
       const opened = await getDeskFacts(page);
       await page.close();
       const size = `${row.viewport.width}x${row.viewport.height}`;
-      assert.deepEqual([rest.isScrolled, rest.rail?.[1], rest.list?.[1], rest.sheet, rest.orders?.[1]], [false, row.rail, row.middle, null, row.orders], `${size} at rest`);
-      assert.deepEqual(opened, { isScrolled: false, rail: rest.rail, list: null, sheet: rest.list, orders: rest.orders }, `${size} with a row opened`);
+      const middle = row.middle === "page" ? rest.page : row.middle;
+      const orders = row.viewport.width - SHELL_INLINE - row.rail - middle - 32;
+      assert.ok(orders >= ORDERS.MIN, `${size}: Orders ${orders} keeps its minimum`);
+      assert.deepEqual([rest.isScrolled, rest.rail?.[1], rest.list?.[1], rest.sheet, rest.orders?.[1]], [false, row.rail, middle, null, orders], `${size} at rest`);
+      assert.deepEqual(opened, { ...rest, list: null, sheet: rest.list }, `${size} with a row opened`);
     }
   });
 
@@ -992,8 +1117,8 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual({ text: sheet.text, title: sheet.title, isFootInView: sheet.isFootInView }, { text: ["15px", "24px", "true"], title: ["20px", "28px"], isFootInView: true });
   });
 
-  // spec §3.2: one page column for head, body and foot, centred in the pane at every width
-  test("the sheet's head, date line, title, text, box and note start at one x and end at one x, on equal gutters of at least 32, at every desk width", async () => {
+  // spec §3.2: one page column for head, body and foot, the pane's constant 32 inset on both sides at every width
+  test("the sheet's head, date line, title, text, box and note start at one x and end at one x, on gutters of 32, at every desk width", async () => {
     harness.fixture = getRestFixture();
     const columns = [];
     for (const { viewport } of DESK_WIDTHS) {
@@ -1001,10 +1126,10 @@ describe("queue page on the mockup fixtures", () => {
       await selectRow(page, 101);
       const { starts, ends, gutters } = await getSheetFacts(page);
       await page.close();
-      columns.push({ width: viewport.width, starts: starts.length, ends: ends.length, isEqual: Math.abs(gutters[0]! - gutters[1]!) <= 1, isWide: Math.min(...gutters) >= 32 });
+      columns.push({ width: viewport.width, starts: starts.length, ends: ends.length, gutters });
     }
 
-    assert.deepEqual(columns, columns.map(({ width }) => ({ width, starts: 1, ends: 1, isEqual: true, isWide: true })));
+    assert.deepEqual(columns, columns.map(({ width }) => ({ width, starts: 1, ends: 1, gutters: [32, 32] })));
   });
 
   // spec §4.3 / §14.4: the stepping counts the rows that open on a sheet; an order's row is never on the sheet
@@ -1033,7 +1158,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §3.3 / §14.4: the list keeps its place while a report is read
-  test("← List shows the list at the scroll it had, the row just read focused and current, and the hash without item", async () => {
+  test("Back to the list shows the list at the scroll it had, the row just read focused and current, and the hash without item", async () => {
     const page = await openEdgePage(harness);
     const top = await page.evaluate(() => {
       const body = document.querySelector(".queue-list > .card-body") as HTMLElement;
@@ -1057,13 +1182,35 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(back, { top, focus: id, current: [id], hash: "#queue", isSheet: false });
   });
 
-  test("list rows take their one-line form, 44 high, once the list is 880 wide", async () => {
+  // spec §3.2 / §4.2: the list shares the fixed middle pane → never wide enough for another row form
+  test("list rows are 68 or 88 high at every desk width, 2560 included", async () => {
     harness.fixture = getRestFixture();
-    const page = await openQueuePage(harness, { width: 2560, height: 1440 }, getRestReadyText());
-    const rowHeights = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
+    const heights = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText());
+      const { rowHeights } = await getListFacts(page);
+      await page.close();
+      heights.push({ width: viewport.width, isRowHeight: rowHeights.length > 0 && rowHeights.every((height) => height === 68 || height === 88), rowHeights });
+    }
+
+    assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
+  });
+
+  // spec §4.2: who, then what — the session name in one fixed column at the row's start, the title and its meta line to its right
+  test("with exactly one session ticked no row paints a name, and every title starts where the band labels start", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await tickSessions(page, ["gersona"]);
+    const facts = await page.evaluate(() => {
+      const band = document.querySelector(".queue-listbox .queue-band") as HTMLElement;
+      const labelStart = Math.round(band.getBoundingClientRect().left + parseFloat(getComputedStyle(band).paddingLeft));
+      const titles = [...document.querySelectorAll(".queue-row-title")].map((title) => Math.round(title.getBoundingClientRect().left));
+      return { names: document.querySelectorAll(".queue-row-who").length, titleStarts: [...new Set(titles)], labelStart, rows: titles.length };
+    });
     await page.close();
 
-    assert.deepEqual(rowHeights, [44]);
+    assert.ok(facts.rows > 0, "the ticked session has rows");
+    assert.deepEqual({ names: facts.names, titleStarts: facts.titleStarts }, { names: 0, titleStarts: [facts.labelStart] });
   });
 
   // spec §11: the desk's keys on the real page, and the inset ring on the rows the cards clip
@@ -1109,29 +1256,47 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual([returned.id, returned.offset], [rowIds[1], "-2px"], "Esc in Orders gives the focus back to the middle pane: the list's current row");
   });
 
-  test("rail rows are 68; Orders is rendered at rest beside the list on its card's 16 column, and an opened row hides the list alone", async () => {
+  test("rail rows are 68; Orders is rendered at rest beside the list, and an opened row hides the list alone", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await page.locator(".queue-order").first().waitFor();
     const shown = () => page.evaluate(() => [".queue-list", ".queue-sheet", ".queue-orders"].map((selector) => (document.querySelector(selector)?.getClientRects().length ?? 0) > 0));
     const rest = await shown();
-    const facts = await page.evaluate(() => {
-      // the inset from the card's inner edge, inside its 1 px border
-      const element = document.querySelector(".queue-orders-card") as HTMLElement;
-      const card = element.getBoundingClientRect();
-      const edge = element.clientLeft;
-      const orders = [...document.querySelectorAll(".queue-order")];
-      return {
-        railRows: [...new Set([...document.querySelectorAll(".queue-rail-row")].map((row) => Math.round(row.getBoundingClientRect().height)))],
-        insets: [Math.round((document.querySelector(".queue-orders-card > .card-head .card-title") as HTMLElement).getBoundingClientRect().left - card.left - edge), Math.round(card.right - edge - (orders[orders.length - 1] as HTMLElement).getBoundingClientRect().right)],
-      };
-    });
+    const railRows = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-rail-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
     await selectRow(page, 103);
     const opened = await shown();
     await page.close();
 
-    assert.deepEqual(facts, { railRows: [68], insets: [16, 16] });
+    assert.deepEqual(railRows, [68]);
     assert.deepEqual({ rest, opened }, { rest: [true, false, true], opened: [false, true, true] });
+  });
+
+  // spec §3.2: one content column from the card's 16 start inset, the whole pane up to 720, the free width at the far end beyond it
+  test("Orders' title, day labels, box and note start 16 in, on one column that is the pane less its two 16 insets and never wider than 720, at every desk width", async () => {
+    harness.fixture = getRestFixture();
+    const columns = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText());
+      await waitForAllOrders(page);
+      const facts = await page.evaluate(() => {
+        // offsets from the card's inner edge, inside its 1 px border
+        const element = document.querySelector(".queue-orders-card") as HTMLElement;
+        const start = element.getBoundingClientRect().left + element.clientLeft;
+        const offset = (x: number) => Math.round(x - start);
+        const rects = (selector: string) => [...document.querySelectorAll(selector)].map((node) => node.getBoundingClientRect());
+        const orders = rects(".queue-order");
+        return {
+          inner: element.clientWidth,
+          starts: [...new Set([".queue-orders-card > .card-head .card-title", ".queue-day", ".queue-orders .queue-compose-box", ".queue-orders .queue-note"].flatMap((selector) => rects(selector).map((rect) => offset(rect.left))))],
+          ends: [...new Set([".queue-orders-card > .card-head > .card-head-text", ".queue-orders .queue-compose-row", ".queue-orders .queue-note"].flatMap((selector) => rects(selector).map((rect) => offset(rect.right))).concat(offset(orders[orders.length - 1]!.right)))],
+        };
+      });
+      await page.close();
+      columns.push({ width: viewport.width, starts: facts.starts, ends: facts.ends, column: 16 + Math.min(facts.inner - 32, ORDERS.COLUMN_MAX) });
+    }
+
+    assert.ok(columns.some(({ column }) => column === 16 + ORDERS.COLUMN_MAX), "a desk width wide enough for the 720 cap");
+    assert.deepEqual(columns, columns.map(({ width, column }) => ({ width, starts: [16], ends: [column], column })));
   });
 
   // spec §9.1: one control per row — the row is its box's label
@@ -1149,8 +1314,54 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual({ controls, ticked, unticked }, { controls: ["INPUT:checkbox"], ticked: true, unticked: false });
   });
 
-  // spec §4.3, §14.4: opening a report changes no tick → the composer's address holds across a press, a step, an order row and ← List
-  test("pressing a row, stepping, pressing an order row and ← List leave every rail box as it was, and the Orders label line and send button unchanged", async () => {
+  // spec §9.1, §14.4: a department reads left to right — its box, whether it is live, its name, and the count that waits at the row's end
+  test("in a rail row the box stands left of the state mark, the mark left of the name and the count at the row's end; the All sessions label, the Ended label and every name start at one x; a live mark is ok, any other a faint ring, and no line 2 holds a mark", async (t) => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await openEndedBand(page);
+    const paints = await Promise.all(["--ok", "--faint"].map((token) => page.evaluate(getTokenPaint, { property: "color" as const, value: `rgb(var(${token}))` })));
+    const facts = await page.evaluate(([ok, faint]) => {
+      const rows = [...document.querySelectorAll<HTMLElement>(".queue-rail-row")];
+      const rect = (row: Element, selector: string) => row.querySelector(selector)?.getBoundingClientRect();
+      // where each label's text is painted, not its box → a label centred inside a column-wide box is caught
+      const getTextLeft = (node: Element) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return Math.round(range.getBoundingClientRect().left);
+      };
+      const starts = [".queue-rail-all", ".queue-rail-band .disclosure > span:last-child", ".queue-rail-name-text"].flatMap((selector) => [...document.querySelectorAll(selector)].map(getTextLeft));
+      return {
+        outOfOrder: rows.filter((row) => {
+          const [box, mark, name] = [rect(row, ".queue-rail-box"), rect(row, ".queue-rail-mark"), rect(row, ".queue-rail-name-text")];
+          return !(mark && name && (!box || box.right <= mark.left) && mark.right <= name.left);
+        }).map((row) => row.dataset.session),
+        countGaps: [...new Set(rows.flatMap((row) => {
+          const count = rect(row, ".queue-rail-count");
+          return count ? [Math.round(row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight) - count.right)] : [];
+        }))],
+        starts: new Set(starts).size,
+        ringsAndDots: rows.map((row) => {
+          const mark = getComputedStyle(row.querySelector(".queue-rail-mark") as Element);
+          const isLive = (row.querySelector(".queue-rail-line")?.textContent ?? "").startsWith("Live");
+          return isLive ? mark.backgroundColor === ok : mark.borderTopColor === faint && mark.backgroundColor === "rgba(0, 0, 0, 0)";
+        }),
+        lineMarks: rows.filter((row) => /[●○]/.test(row.querySelector(".queue-rail-line")?.textContent ?? "")).length,
+        kinds: new Set(rows.map((row) => (row.querySelector(".queue-rail-line")?.textContent ?? "").startsWith("Live"))).size,
+        heights: rows.map((row) => `${row.querySelector(".queue-rail-line")?.textContent}: ${Math.round(row.getBoundingClientRect().height)}`),
+      };
+    }, paints);
+    await page.close();
+    t.diagnostic(`rail row heights at 1440 with Ended open: ${facts.heights.join(" | ")}`);
+
+    assert.equal(facts.kinds, 2, "live and not-live rows are both on the rail");
+    assert.deepEqual(
+      { outOfOrder: facts.outOfOrder, countGaps: facts.countGaps, starts: facts.starts, marks: facts.ringsAndDots.every(Boolean), lineMarks: facts.lineMarks },
+      { outOfOrder: [], countGaps: [0], starts: 1, marks: true, lineMarks: 0 },
+    );
+  });
+
+  // spec §4.3, §14.4: opening a report changes no tick → the composer's address holds across a press, a step, an order row and the way back
+  test("pressing a row, stepping, pressing an order row and Back to the list leave every rail box as it was, and the Orders label line and send button unchanged", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await tickSessions(page, ORDER_TO);
@@ -1329,7 +1540,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §18.4 row 20: the arrival reaches the row, the rail and the nav on the same tick, and moves nothing the owner holds
-  test("the page's own 15 s read marks an arrival New and raises its session's and the nav's counts; an open sheet stays and ← List counts it", async () => {
+  test("the page's own 15 s read raises an arrival's session's and the nav's counts and paints New on no row; an open sheet stays and the way back counts it", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
     try {
@@ -1341,10 +1552,70 @@ describe("queue page on the mockup fixtures", () => {
       await assert.doesNotReject(rail.filter({ hasText: /^2$/ }).waitFor({ timeout: READY_TIMEOUT_MS }), "yoaida's rail count reads 2");
       await assert.doesNotReject(page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS }), "the nav count reads 8");
       const back = page.getByRole("button", { name: "Back to the list, 1 new in the list" });
-      assert.deepEqual([await back.count(), await page.evaluate(() => window.location.hash)], [1, "#queue?item=101"], "the sheet unmoved, the arrival counted on ← List");
+      assert.deepEqual([await back.count(), await page.evaluate(() => window.location.hash)], [1, "#queue?item=101"], "the sheet unmoved, the arrival counted on the way back");
       await back.click();
-      assert.deepEqual(await page.locator("#queue-row-150 .queue-row-who .pill--solid").allTextContents(), ["New"]);
+      await page.locator("#queue-row-150").waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
+      assert.deepEqual(await page.locator('[role="option"] .pill').filter({ hasText: /^New$/ }).count(), 0, "no row paints New");
       assert.deepEqual(await page.locator('[role="option"][aria-selected="true"]').evaluateAll((rows) => rows.map((row) => row.id)), ["queue-row-101"]);
+    } finally {
+      await page.close();
+    }
+  });
+
+  // spec §4.3: the count belongs to the way back → bound to the arrow by proximity, never read as part of the letterhead after it
+  test("the arrival count on an open sheet stands at least twice as near the back arrow's glyph as the kind tag after it", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
+    try {
+      await selectRow(page, 101);
+      await arriveItem(page, harness);
+      await page.getByRole("button", { name: "Back to the list, 1 new in the list" }).waitFor();
+      const gaps = await page.evaluate(() => {
+        const head = document.querySelector(".queue-sheet-head") as HTMLElement;
+        const box = (selector: string) => (head.querySelector(selector) as Element).getBoundingClientRect();
+        const [glyph, count, tag] = [box("button svg"), box("[aria-hidden='true'] .pill"), box(".queue-letter .pill")];
+        return { afterArrow: Math.round(count.left - glyph.right), beforeTag: Math.round(tag.left - count.right) };
+      });
+
+      assert.ok(gaps.afterArrow > 0 && gaps.beforeTag >= 2 * gaps.afterArrow, JSON.stringify(gaps));
+    } finally {
+      await page.close();
+    }
+  });
+
+  // spec §4.4: an arrival is tracked until its row has been in the shown list's visible part — not only until it is focused
+  test("an arrival whose row has shown in the list is no longer counted on the way back of the next sheet", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
+    try {
+      await selectRow(page, 101);
+      await arriveItem(page, harness);
+      await page.getByRole("button", { name: "Back to the list, 1 new in the list" }).click();
+      await page.locator("#queue-row-150").waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
+      await selectRow(page, 101);
+
+      assert.deepEqual(await page.locator(".queue-sheet-head button").first().getAttribute("aria-label"), "Back to the list");
+    } finally {
+      await page.close();
+    }
+  });
+
+  // spec §4.4: past the visible part the status line names the arrival's side, and its Show brings the row into view with the focus
+  test("an arrival below the list's visible part is said as 1 new below with Show, and Show puts its row in view, focused, and ends the note", async () => {
+    harness.fixture = getEdgeFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture), true);
+    try {
+      await arriveOffView(page, harness);
+      const said = await page.locator(".queue-status-line").innerText();
+      await page.getByRole("button", { name: "Show the new item below" }).click();
+      await page.locator(".queue-status-new").waitFor({ state: "detached" });
+      const row = await page.evaluate(() => {
+        const [body, box] = [".queue-list > .card-body", "#queue-row-150"].map((selector) => (document.querySelector(selector) as HTMLElement).getBoundingClientRect());
+        return { isFocused: document.activeElement?.id === "queue-row-150", isInView: box!.top >= body!.top && box!.bottom <= body!.bottom };
+      });
+
+      assert.match(said.replace(/\s+/g, " "), /1 new below Show$/);
+      assert.deepEqual(row, { isFocused: true, isInView: true });
     } finally {
       await page.close();
     }
@@ -1408,6 +1679,36 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(heads, heads.map(({ width }) => ({ width, list: [48, 48, 48], sheet: [48, 48, 48] })));
   });
 
+  // spec §4.1: a scope title wider than the pane gives way on the head's one line → the list's head and first band stay level with Orders'
+  test("the list head stays one 48 line under a scope title wider than the pane: the title cut with its whole text in the tooltip, the waiting count whole and the keys button inside the head, at every desk width", async () => {
+    harness.fixture = getEdgeFixture();
+    const heads = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      const page = await openEdgePage(harness, viewport);
+      await tickSessions(page, [EDGE_LONG_SESSION_NAME]);
+      const heights = await getHeadHeights(page, [".queue-list", ".queue-orders-card"]);
+      const facts = await page.evaluate(() => {
+        const head = document.querySelector(".queue-list > .card-head") as HTMLElement;
+        const title = head.querySelector(".card-title") as HTMLElement;
+        const sub = head.querySelector(".card-sub") as HTMLElement;
+        const keys = head.querySelector("button") as HTMLElement;
+        return {
+          isTitleCut: title.scrollWidth > title.clientWidth && getComputedStyle(title).textOverflow === "ellipsis",
+          tooltip: (title.querySelector("[title]") as HTMLElement | null)?.title ?? title.title,
+          sub: sub.textContent,
+          isSubWhole: sub.clientWidth > 0 && sub.scrollWidth <= sub.clientWidth,
+          isKeysInHead: keys.getBoundingClientRect().right <= head.getBoundingClientRect().right,
+        };
+      });
+      await page.close();
+      heads.push({ width: viewport.width, heights, ...facts });
+    }
+
+    assert.deepEqual(heads, heads.map(({ width, sub }) => ({
+      width, heights: [48, 48], isTitleCut: true, tooltip: EDGE_LONG_SESSION_NAME, sub: /^\d+ waiting$/.test(sub ?? "") ? sub : "N waiting", isSubWhole: true, isKeysInHead: true,
+    })));
+  });
+
   test("a badge is 20 high in every fill", async () => {
     harness.fixture = getNotReceivedFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
@@ -1435,23 +1736,38 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(ends, ends.map((row) => ({ ...row, queue: row.docs })));
   });
 
-  test("every button of the open decision's desk has a 1 px edge at rest in its rank's colour, a quiet label is dim, and a disabled one keeps a faint label at full strength on the line edge", async () => {
+  // an answer held in flight → its composer's other button disabled; the not-received order's Resend → a secondary on the same desk
+  test("every word button of the open decision's desk has a 1 px edge at rest in its rank's colour, a quiet label is dim, and a disabled one keeps a faint label at full strength on the line edge", async () => {
+    harness.fixture = getNotReceivedFixture();
+    let release = () => {};
+    harness.heldAct = new Promise((resolve) => { release = resolve; });
+    try {
+      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+      await pickWithNote(page);
+      await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
+      await page.locator(".queue-sheet [aria-busy='true']").waitFor();
+      await page.mouse.move(0, 0);
+      // the 0.12 s edge transition into the disabled look settled first → never a mid-step colour
+      await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)).then(() => undefined));
+      const facts = await page.evaluate(getButtonFacts);
+      release();
+      await page.close();
+
+      const looks = facts.buttons.map((button) => ({ name: button.name, look: button.look }));
+      const expected = facts.buttons.map((button) => ({ name: button.name, look: getRankLook(facts.tokens, button) }));
+      assert.deepEqual(looks, expected);
+      assert.deepEqual([...new Set(facts.buttons.map((button) => button.rank))].sort(), ["disabled", "primary", "quiet", "secondary"], "the open sheet shows every rank");
+    } finally {
+      release();
+      harness.heldAct = null;
+    }
+  });
+
+  test("a quiet word button hovered takes the sunken fill and an ink label, and held down an ink edge", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await selectRow(page, 103);
-    const facts = await page.evaluate(getButtonFacts);
-    await page.close();
-
-    const looks = facts.buttons.map((button) => ({ name: button.name, look: button.look }));
-    const expected = facts.buttons.map((button) => ({ name: button.name, look: getRankLook(facts.tokens, button) }));
-    assert.deepEqual(looks, expected);
-    assert.deepEqual([...new Set(facts.buttons.map((button) => button.rank))].sort(), ["disabled", "primary", "quiet", "secondary"], "the open sheet shows every rank");
-  });
-
-  test("a quiet button hovered takes the sunken fill and an ink label, and held down an ink edge", async () => {
-    harness.fixture = getRestFixture();
-    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    const button = page.getByRole("button", { name: "Keyboard shortcuts" });
+    const button = page.getByRole("button", { name: "Answer later" });
     const read = () => getSettledLook(button);
     const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
     await button.hover();
@@ -1486,21 +1802,123 @@ describe("queue page on the mockup fixtures", () => {
     }
   });
 
-  test("a button reached by keyboard wears the focus ring outside its rest edge", async () => {
+  test("a word button reached by keyboard wears the focus ring outside its rest edge", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    const button = page.getByRole("button", { name: "Keyboard shortcuts" });
-    await button.focus();
-    const focused = await button.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { isVisible: element.matches(":focus-visible"), outline: `${style.outlineColor} ${style.outlineStyle} ${style.outlineWidth}`, offset: style.outlineOffset };
-    });
+    await selectRow(page, 103);
+    const button = page.getByRole("button", { name: "Answer later" });
+    await focusByKeyboard(page, button);
+    const focused = await getFocusRing(button);
     const look = await getSettledLook(button);
-    const ringToken = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--focus-ring").trim().split(/\s+/).join(", "));
+    const ringToken = await getRingToken(page);
     const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
     await page.close();
 
     assert.deepEqual({ ...focused, edge: look.edge }, { isVisible: true, outline: `rgb(${ringToken}) solid 2px`, offset: "2px", edge: tokens.controlEdge });
+  });
+
+  // spec §12.5, §14.4: each icon button read where it is painted — the list head, the open sheet's head, a failed upload, the viewer's bar
+  test("every icon button is a 32 square holding a drawn glyph, dim and with no edge or fill at rest, faint when disabled, named and with a tooltip; no button reads List", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    harness.refusals.set("upload", { status: 500, body: { error: "server" } });
+    try {
+      const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+      const atRest = await page.evaluate(getIconLooks);
+      await page.locator(".queue-bubble-image img").first().waitFor();
+      await page.locator(".queue-bubble-image").first().click();
+      await page.locator(".queue-viewer img").waitFor();
+      const inViewer = await page.evaluate(getIconLooks);
+      await page.keyboard.press("Escape");
+      await selectRow(page, 103);
+      const onSheet = await page.evaluate(getIconLooks);
+      await addOrderFiles(page, [getImageFile(0)]);
+      await page.getByRole("button", { name: "Try again" }).waitFor();
+      const onFailure = await page.evaluate(getIconLooks);
+      const hasListText = await page.evaluate(() => [...document.querySelectorAll("button")].some((button) => /\bList\b/.test(button.textContent ?? "")));
+
+      const byName = new Map([...atRest, ...onSheet, ...onFailure, ...inViewer].map((look) => [look.name, look]));
+      assert.deepEqual([...byName.keys()].sort(), ["Add images", "Back to the list", "Close", "Keyboard shortcuts", "Next image", "Next item", "Previous image", "Previous item"]);
+      const looks = [...byName.values()];
+      const expected = looks.map((look) => ({
+        ...look, size: [32, 32], text: "", isEdgeless: true, fill: "rgba(0, 0, 0, 0)", glyph: look.isDisabled ? tokens.faint : tokens.dim, isDrawn: true,
+        title: look.title.startsWith(look.name) ? look.title : `${look.name} …`,
+      }));
+      assert.deepEqual(looks, expected);
+      assert.ok(looks.some((look) => look.isDisabled), "a disabled icon button is read: Previous on the first sheet row");
+      assert.equal(hasListText, false);
+    } finally {
+      harness.refusals.clear();
+      await page.close();
+    }
+  });
+
+  // the hover square is the pointer's only shape cue once the edge is gone → the selection tint a person can see, held one step stronger
+  test("an icon button hovered takes the selection tint and an ink glyph, held the stronger tag fill, and by keyboard the ring, never an edge", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await selectRow(page, 103);
+    const button = page.getByRole("button", { name: "Next item" });
+    const read = async () => {
+      const look = (await page.evaluate(getIconLooks)).find((icon) => icon.name === "Next item");
+      return { fill: look?.fill, glyph: look?.glyph, isEdgeless: look?.isEdgeless };
+    };
+    const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+    const [tint, tintFill] = await getTintFills(page);
+    await button.hover();
+    const hovered = await read();
+    await page.mouse.down();
+    const held = await read();
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    const back = page.getByRole("button", { name: "Back to the list" });
+    await focusByKeyboard(page, back);
+    const focused = await getFocusRing(back);
+    const ringToken = await getRingToken(page);
+    await page.close();
+
+    assert.deepEqual({ hovered, held, focused }, {
+      hovered: { fill: tint, glyph: tokens.ink, isEdgeless: true },
+      held: { fill: tintFill, glyph: tokens.ink, isEdgeless: true },
+      focused: { isVisible: true, outline: `rgb(${ringToken}) solid 2px`, offset: "2px" },
+    });
+  });
+
+  // spec §12.5 Reach: the system drawer opened on the Queue screen keeps its own close button → the system ghost's sunken fill, never the Queue tints
+  test("the Automatic resumes drawer's close button hovered and held takes the system ghost's sunken fill and ink glyph, and the Queue's icon buttons keep their tints", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+    const [tint, tintFill] = await getTintFills(page);
+    const readFill = async (button: Locator) => {
+      const look = await getSettledLook(button);
+      return { fill: look.fill, glyph: look.label };
+    };
+    await page.getByRole("button", { name: /^Automatic resumes/ }).click();
+    const close = page.getByRole("dialog", { name: "Recent automatic resumes" }).getByRole("button", { name: "Close details" });
+    await close.hover();
+    const closeHovered = await readFill(close);
+    await page.mouse.down();
+    const closeHeld = await readFill(close);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "Recent automatic resumes" }).waitFor({ state: "detached" });
+    const keys = page.getByRole("button", { name: "Keyboard shortcuts" });
+    await keys.hover();
+    const keysHovered = await readFill(keys);
+    await page.mouse.down();
+    const keysHeld = await readFill(keys);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await page.close();
+
+    assert.deepEqual({ closeHovered, closeHeld, keysHovered, keysHeld }, {
+      closeHovered: { fill: tokens.sunken, glyph: tokens.ink },
+      closeHeld: { fill: tokens.sunken, glyph: tokens.ink },
+      keysHovered: { fill: tint, glyph: tokens.ink },
+      keysHeld: { fill: tintFill, glyph: tokens.ink },
+    });
   });
 
   test("the page header holds no button and one status line, Checks every 15s, and no Queue button is named New order, Clear or Refresh", async () => {
@@ -1554,40 +1972,132 @@ describe("queue page on the mockup fixtures", () => {
     assert.equal(isUnder, true, "the Orders button falls under its box");
   });
 
-  // spec §4.5 → under the box "always so in the Orders pane": the short rest label must not stand beside the box on a wide window
-  for (const viewport of [VIEWPORTS[0], { width: 2240, height: 1260 }, WIDE_WINDOW]) {
-    test(`the Orders send button stands under its box with nothing ticked at ${viewport.width}`, async () => {
-      harness.fixture = getRestFixture();
-      const page = await openQueuePage(harness, viewport, getRestReadyText());
-      const facts = await page.evaluate(() => {
-        const button = document.querySelector(".queue-orders .queue-compose-buttons .btn") as HTMLElement;
-        const box = document.querySelector(".queue-orders .queue-compose-box") as HTMLElement;
-        return { label: button.textContent, isUnder: button.getBoundingClientRect().top >= box.getBoundingClientRect().bottom };
-      });
-      await page.close();
+  // spec §3.2 / §4.5 / §18.5: the pane's width decides the form — beside from a 420 pane, under below it — never the button's label,
+  // so a tick that lengthens the label moves nothing
+  test("the Orders send button stands beside its box from a 420 pane and under it below, the same with nothing ticked and with two sessions ticked", async () => {
+    harness.fixture = getRestFixture();
+    const rows: Array<{ width: number; ticked: number; label: string | null | undefined; isBeside: boolean; isWide: boolean }> = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      for (const ticked of [[], ORDER_TO]) {
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        await tickSessions(page, ticked);
+        const facts = await page.evaluate(() => {
+          const rect = (selector: string) => (document.querySelector(`.queue-orders ${selector}`) as HTMLElement).getBoundingClientRect();
+          const pane = document.querySelector(".queue-orders-card") as HTMLElement;
+          return { label: document.querySelector(".queue-orders .queue-compose-buttons .btn")?.textContent, isBeside: rect(".queue-compose-buttons").top < rect(".queue-compose-box").bottom, pane: pane.clientWidth };
+        });
+        await page.close();
+        rows.push({ width: viewport.width, ticked: ticked.length, label: facts.label, isBeside: facts.isBeside, isWide: facts.pane >= 420 });
+      }
+    }
+    const at = (width: number) => rows.filter((row) => row.width === width).map((row) => row.isBeside);
 
-      assert.deepEqual(facts, { label: "Send order", isUnder: true });
+    assert.deepEqual(rows.filter((row) => row.isBeside !== row.isWide), [], JSON.stringify(rows));
+    assert.deepEqual(new Set(rows.map((row) => `${row.ticked}:${row.label}`)), new Set(["0:Send order", "2:Send to 2 sessions"]));
+    assert.deepEqual([at(1440), at(1568), at(1728), at(2560)], [[false, false], [false, false], [true, true], [true, true]]);
+  });
+
+  // spec §3.2 / §4.5: the label gives way, never the box — beside the button the box keeps its 220, under it the whole row;
+  // a 100-character name is cut inside the button, the whole label in its title. 1605 and 1645 put the pane at about 420 and 460
+  test("the Orders send label stays inside its row and leaves the box 220 beside it or the whole row under it, a 100-character name cut with the whole label in the title, from 1440 to 1920", async () => {
+    const ticks = [
+      { names: [EDGE_LONG_SESSION_NAME], label: `Send to ${EDGE_LONG_SESSION_NAME}`, isCut: true },
+      { names: ["gersona", "portfolio"], label: "Send to 2 sessions · resumes 1 ended", isCut: false },
+    ];
+    const rows = [];
+    for (const width of [1440, 1568, 1605, 1645, 1728, 1920]) {
+      for (const tick of ticks) {
+        const page = await openEdgePage(harness, { width, height: 900 });
+        await openEndedBand(page);
+        await tickSessions(page, tick.names);
+        const facts = await page.evaluate(() => {
+          const rect = (selector: string) => (document.querySelector(`.queue-orders ${selector}`) as HTMLElement).getBoundingClientRect();
+          const [row, box, button] = [rect(".queue-compose-row"), rect(".queue-compose-box"), rect(".queue-compose-buttons .btn")];
+          const send = document.querySelector(".queue-orders .queue-compose-buttons .btn") as HTMLElement;
+          const name = document.querySelector(".queue-orders .queue-send-name") as HTMLElement | null;
+          const isBeside = button.top < box.bottom;
+          return {
+            isWide: (document.querySelector(".queue-orders-card") as HTMLElement).clientWidth >= 420,
+            isBeside,
+            isBoxKept: isBeside ? box.width >= 220 : Math.abs(box.width - row.width) < 1,
+            isInRow: button.left >= row.left - 0.5 && button.right <= row.right + 0.5,
+            label: send.textContent,
+            title: send.title,
+            isCut: name !== null && getComputedStyle(name).textOverflow === "ellipsis" && name.scrollWidth > name.clientWidth,
+          };
+        });
+        await page.close();
+        rows.push({ width, ...facts });
+      }
+    }
+
+    const expected = rows.map(({ width, isWide }, index) => {
+      const tick = ticks[index % ticks.length]!;
+      return { width, isWide, isBeside: isWide, isBoxKept: true, isInRow: true, label: tick.label, title: tick.label, isCut: tick.isCut };
     });
-  }
+    assert.deepEqual(new Set(rows.map((row) => row.isWide)), new Set([false, true]), "the sweep crosses the 420 pane");
+    assert.deepEqual(rows, expected);
+  });
+
+  // a commit button never ends in a broken word nor in blank: the resume tail stays whole where the button's room (the row less
+  // the 220 box beside it, the whole row under it) holds it beside the head and the name at its 3ch floor, and a dropped tail
+  // leaves no width behind → the button ends where its shown label ends. portfolio is the edge fixture's ended session
+  test("the Orders send button holds the label it shows: the resume tail whole where the button's room holds it beside the name at its floor, else dropped with no blank left, and the head whole, from 1440 to 1920", async () => {
+    const ticks = [["portfolio"], ["gersona", "portfolio"]];
+    const rows = [];
+    for (const width of [1440, 1568, 1605, 1645, 1690, 1728, 1920]) {
+      for (const names of ticks) {
+        const page = await openEdgePage(harness, { width, height: 900 });
+        await openEndedBand(page);
+        await tickSessions(page, names);
+        const facts = await page.evaluate(() => {
+          const element = (selector: string) => document.querySelector(`.queue-orders ${selector}`) as HTMLElement;
+          const [row, box, button, label] = [element(".queue-compose-row"), element(".queue-compose-box"), element(".queue-compose-buttons .btn"), element(".queue-send-label")];
+          const [head, tail] = [label.firstElementChild as HTMLElement, label.querySelector(".queue-send-tail") as HTMLElement];
+          const name = label.querySelector(".queue-send-name") as HTMLElement | null;
+          const [rowBox, boxBox, buttonBox, labelBox] = [row, box, button, label].map((node) => node.getBoundingClientRect());
+          const [headBox, tailBox, nameBox] = [head.getBoundingClientRect(), tail.getBoundingClientRect(), name?.getBoundingClientRect()];
+          const floor = name === null ? 0 : parseFloat(getComputedStyle(name).minWidth);
+          const style = getComputedStyle(button);
+          const [padStart, padEnd, edgeStart, edgeEnd] = [style.paddingLeft, style.paddingRight, style.borderLeftWidth, style.borderRightWidth].map(parseFloat);
+          const room = rowBox.width - (buttonBox.top < boxBox.bottom ? 220 + parseFloat(getComputedStyle(row).columnGap) : 0);
+          const isOnLine = tailBox.top < labelBox.bottom - 0.5 && tailBox.right <= labelBox.right + 0.5;
+          const isWhole = isOnLine && tail.scrollWidth <= tail.clientWidth;
+          const shownEnd = Math.max(headBox.right, nameBox?.right ?? 0, isWhole ? tailBox.right : 0);
+          return {
+            hasRoom: padStart + padEnd + edgeStart + edgeEnd + headBox.width + Math.min(name?.scrollWidth ?? 0, floor) + tailBox.width <= room + 0.5,
+            tail: isWhole ? "whole" : isOnLine ? "cut" : "dropped",
+            blankEnd: Math.round(buttonBox.right - edgeEnd - padEnd - shownEnd),
+            isHeadWhole: headBox.right <= labelBox.right + 0.5,
+          };
+        });
+        await page.close();
+        rows.push({ width, names: names.join(","), ...facts });
+      }
+    }
+
+    assert.deepEqual(new Set(rows.map((row) => row.hasRoom)), new Set([false, true]), "the sweep crosses the width where the tail fits");
+    assert.deepEqual(rows, rows.map((row) => ({ ...row, tail: row.hasRoom ? "whole" : "dropped", blankEnd: 0, isHeadWhole: true })));
+  });
 
   // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest, hovered or held;
-  // held under the pointer it takes the selection tint, never the ghost's hover fill
-  test("Add images draws no edge of its own inside the order box, at rest or under the pointer, and takes the selection tint while held", async () => {
+  // under the pointer it takes the icon button's fills: the selection tint, held the stronger tag fill
+  test("Add images draws no edge of its own inside the order box, at rest or under the pointer, and takes the selection tint hovered and the tag fill held", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const add = page.locator(".queue-orders .queue-compose-add");
+    const [tint, tintFill] = await getTintFills(page);
+    const tokenByFill = new Map([[tint, "--tint-select"], [tintFill, "--tint-fill"]]);
     // the button's colour transition settled first → the look the state ends on, never a mid-fade blend
-    const getLook = () => add.evaluate(async (element) => {
-      await Promise.all(element.getAnimations().map((animation) => animation.finished));
-      const style = getComputedStyle(element);
-      const alpha = style.borderTopColor.startsWith("rgba") ? Number(style.borderTopColor.split(",").at(-1)?.replace(")", "")) : 1;
-      const tint = document.createElement("div");
-      tint.style.background = "var(--tint-select)";
-      element.parentElement?.append(tint);
-      const isTinted = style.backgroundColor === getComputedStyle(tint).backgroundColor;
-      tint.remove();
-      return { isEdgeless: parseFloat(style.borderTopWidth) === 0 || alpha === 0, isTinted };
-    });
+    const getLook = async () => {
+      const look = await add.evaluate(async (element) => {
+        await Promise.all(element.getAnimations().map((animation) => animation.finished));
+        const style = getComputedStyle(element);
+        const alpha = style.borderTopColor.startsWith("rgba") ? Number(style.borderTopColor.split(",").at(-1)?.replace(")", "")) : 1;
+        return { isEdgeless: parseFloat(style.borderTopWidth) === 0 || alpha === 0, fill: style.backgroundColor };
+      });
+      return { ...look, fill: tokenByFill.get(look.fill) ?? null };
+    };
     const rest = await getLook();
     await add.hover();
     const hovered = await getLook();
@@ -1596,9 +2106,9 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual({ rest, hovered, held }, {
-      rest: { isEdgeless: true, isTinted: false },
-      hovered: { isEdgeless: true, isTinted: false },
-      held: { isEdgeless: true, isTinted: true },
+      rest: { isEdgeless: true, fill: null },
+      hovered: { isEdgeless: true, fill: "--tint-select" },
+      held: { isEdgeless: true, fill: "--tint-fill" },
     });
   });
 
@@ -1638,20 +2148,25 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(facts, { isShrunk: true, isAtEnd: true });
   });
 
-  // spec §9.8 → Upload failed: the note takes the wrap; the quiet Try again keeps its label on one line
-  test("a failed upload's Try again keeps its label on one line beside a wrapping note", async () => {
+  // spec §9.8 → Upload failed, §12.5: the note takes the wrap; Try again keeps its word, whole on one line beside it, on the quiet edge
+  test("a failed upload's Try again is a quiet word button with its edge, on one line beside a wrapping note", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     harness.refusals.set("upload", { status: 500, body: { error: "server" } });
     try {
       await addOrderFiles(page, [{ ...getImageFile(0), name: "a-screenshot-named-long-enough-to-wrap-the-note.png" }]);
       await page.locator(".queue-thumb-failed").first().waitFor();
-      const lines = await page.locator(`#${ORDER_BOX_ID}-retry`).evaluate((button) => {
-        const range = document.createRange();
-        range.selectNodeContents(button);
-        return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+      const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+      const facts = await page.getByRole("button", { name: "Try again" }).evaluate((button) => {
+        const [box, style] = [button.getBoundingClientRect(), getComputedStyle(button)];
+        const note = (button.previousElementSibling as HTMLElement).getBoundingClientRect();
+        const lineHeight = parseFloat(getComputedStyle(button.previousElementSibling as HTMLElement).lineHeight);
+        return {
+          id: button.id, text: button.textContent?.trim(), isOneLine: box.height < lineHeight * 2, edge: `${style.borderTopWidth} ${style.borderTopColor}`,
+          isBeside: box.left >= note.right, isNoteWrapped: note.height > lineHeight * 1.5,
+        };
       });
-      assert.equal(lines, 1);
+      assert.deepEqual(facts, { id: `${ORDER_BOX_ID}-retry`, text: "Try again", isOneLine: true, edge: `1px ${tokens.controlEdge}`, isBeside: true, isNoteWrapped: true });
     } finally {
       harness.refusals.clear();
       await page.close();
@@ -1808,6 +2323,34 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 68, isCut: true, isInsideRail: true });
     });
 
+    // spec §4.2, §14.4: the name column is 104 at every width a list stands in; the 12 gap puts every title 116 further in.
+    // The edge fixture's 100-character session is only one recipient of a seven-session order, whose row reads `7 sessions` → one open item is sent from it here
+    test("with nothing ticked every list row leads with its session name in a 104 box at one x, every title and meta line at one x 116 further in, and a 100-character name cut inside its box, at 1280 and 1568", async () => {
+      const fixture = getNameColumnFixture();
+      const shown = [];
+      for (const viewport of [MIN_WINDOW, { width: 1568, height: 759 }]) {
+        harness.fixture = fixture;
+        const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
+        const facts = await page.evaluate((longName) => {
+          const rows = [...document.querySelectorAll(".queue-row")];
+          const box = (row: Element, selector: string) => (row.querySelector(selector) as HTMLElement).getBoundingClientRect();
+          const long = [...document.querySelectorAll<HTMLElement>(".queue-row-name")].find((name) => name.title === longName);
+          const longBox = long?.closest(".queue-row-who")?.getBoundingClientRect();
+          return {
+            isNameFirst: rows.length > 0 && rows.every((row) => row.firstElementChild?.matches(".queue-row-who")),
+            widths: [...new Set(rows.map((row) => Math.round(box(row, ".queue-row-who").width)))],
+            nameStarts: new Set(rows.map((row) => Math.round(box(row, ".queue-row-who").left))).size,
+            titleOffsets: [...new Set(rows.flatMap((row) => [".queue-row-title", ".queue-row-meta"].map((selector) => Math.round(box(row, selector).left - box(row, ".queue-row-who").left))))],
+            isLongCut: long !== undefined && longBox !== undefined && getComputedStyle(long).textOverflow === "ellipsis" && long.scrollWidth > long.clientWidth && long.getBoundingClientRect().right <= longBox.right + 0.5,
+          };
+        }, EDGE_LONG_SESSION_NAME);
+        await page.close();
+        shown.push({ width: viewport.width, ...facts });
+      }
+
+      assert.deepEqual(shown, shown.map(({ width }) => ({ width, isNameFirst: true, widths: [104], nameStarts: 1, titleOffsets: [116], isLongCut: true })));
+    });
+
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it
     test("a 100-character session name stays on one cut line in its thread recipient row, its full name in the title, its receipt and Resend whole", async () => {
       const page = await openEdgePage(harness);
@@ -1828,6 +2371,27 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
 
       assert.deepEqual(shown, { title: EDGE_LONG_SESSION_NAME, isOneLine: true, isCut: true, areOthersWhole: true, isInsideThread: true });
+    });
+
+    // spec §9.3 Bubble: the clamp clips at the text's box → a numbered list's widest marker (two digits past 9) stays inside it
+    test("a clamped order bubble's numbered list holds its widest marker inside the clipped text box", async () => {
+      const page = await openEdgePage(harness, VIEWPORTS[2]);
+      await showThreadText(page, "Show all 31 lines");
+      const lists = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-bubble.is-clamped > .prose-text")].flatMap((prose) => {
+        const clipLeft = prose.getBoundingClientRect().left + prose.clientLeft;
+        return [...prose.querySelectorAll("ol")].map((list) => {
+          const items = [...list.children] as HTMLElement[];
+          const widest = `${list.start + items.length - 1}. `;
+          const context = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+          const marker = getComputedStyle(items.at(-1) as Element, "::marker");
+          context.font = `${marker.fontWeight} ${marker.fontSize} ${marker.fontFamily}`;
+          return { widest, overhang: Math.round(clipLeft - ((items.at(-1) as HTMLElement).getBoundingClientRect().left - context.measureText(widest).width)) };
+        });
+      }));
+      await page.close();
+
+      assert.ok(lists.some((list) => list.widest.length > 3), `a clamped list numbers past 9: ${JSON.stringify(lists)}`);
+      assert.deepEqual(lists.filter((list) => list.overhang > 0), [], JSON.stringify(lists));
     });
 
     // spec §9.3 Bubble: a long order shows 12 whole lines under its clamp, block gaps between paragraphs and list items included
@@ -1931,9 +2495,9 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(images, Array.from({ length: 8 }, (_, index) => `96x96 Open image ${index + 1} of 8: queue-edge-0${index + 1}.webp`));
     });
 
-    // the 220 facts column cannot hold `2 of 3 received` and its `⚠ 1 not received` → the dim text yields, never the warning
-    test("a one-line row keeps every badge of its facts whole, and the last fact text yields first to the column, ending in an ellipsis", async () => {
-      const page = await openEdgePage(harness, VIEWPORTS[2]);
+    // the narrowest list, at the minimum window: the meta line's dim text yields to `2 of 3 received` and its `⚠ 1 not received`, never the warning
+    test("a list row keeps every badge of its facts whole, and the last fact text yields first to the column, ending in an ellipsis, at 1280", async () => {
+      const page = await openEdgePage(harness, MIN_WINDOW);
       const rows = await page.evaluate(() => [...document.querySelectorAll(".queue-row-facts")].map((facts) => {
         const box = facts.getBoundingClientRect();
         const badges = [...facts.querySelectorAll(".pill")].map((badge) => ({
@@ -1941,7 +2505,7 @@ describe("queue page on the mockup fixtures", () => {
           isWhole: badge.getBoundingClientRect().right <= box.right + 0.5 && badge.scrollWidth <= badge.clientWidth,
         }));
         // a fact's laid-out text against the nearest box that clips it, whichever span holds the fact
-        const texts = [...facts.querySelectorAll("span")].filter((span) => span.textContent && !span.closest(".pill, .queue-row-sep, [aria-hidden]") && ![...span.children].some((child) => !child.matches("[aria-hidden]")));
+        const texts = [...facts.querySelectorAll("span")].filter((span) => span.textContent && !span.closest(".pill, [aria-hidden]") && ![...span.children].some((child) => !child.matches("[aria-hidden]")));
         const getClip = (span: Element) => {
           for (let node: Element | null = span; node && node !== facts.parentElement; node = node.parentElement) if (getComputedStyle(node).overflowX === "hidden") return node;
           return facts;
@@ -1956,10 +2520,8 @@ describe("queue page on the mockup fixtures", () => {
         const isEarlyCut = last !== undefined && getClip(last).getBoundingClientRect().right > getExtent(last).left + 0.5 && cut.some((span) => span !== last);
         return { text: facts.textContent, badges, isEarlyCut, cutWithoutEllipsis: cut.filter((span) => getComputedStyle(getClip(span)).textOverflow !== "ellipsis").length };
       }));
-      const height = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-row")].map((row) => Math.round(row.getBoundingClientRect().height)))]);
       await page.close();
 
-      assert.deepEqual(height, [44], "the list is in its one-line form");
       assert.ok(rows.some((row) => row.badges.some((badge) => badge.text?.includes("not received")) && /received/.test(row.text?.replace(/⚠.*$/, "") ?? "")), "a row carries a count and its warning");
       assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => !badge.isWhole).map((badge) => `${row.text}: ${badge.text}`)), [], "every badge whole");
       assert.deepEqual(rows.filter((row) => row.cutWithoutEllipsis > 0).map((row) => row.text), [], "a cut fact text ends in an ellipsis");
