@@ -527,6 +527,18 @@ assert_no_corpus_failures() {
     'const @PW@ = const.Hx72kq9Lmz;'
   must_block SEC-013 "SQL bind with a digit-bearing name" /repo/db/revoke.sql \
     'UPDATE sessions SET revoked = true WHERE @TK@ = :Hx72kq9Lmz;'
+  must_block SEC-013 "char codes passed to String.fromCharCode" /repo/src/db.ts \
+    'const @PW@ = String.fromCharCode(104,120,55,50,107,113,57,76);'
+  must_block SEC-013 "four three-digit call arguments" /repo/src/db.ts \
+    'const @PW@ = f(123,456,789,101);'
+  must_block SEC-013 "three three-digit subscripts" /repo/src/db.ts \
+    'const @PW@ = a[123][456][789];'
+  must_pass "SQL numeric cast with precision and scale" /repo/db/clients.sql \
+    'SELECT @SC@::numeric(10, 2) FROM api_clients;'
+  must_block SEC-013 "key word as a path qualifier before a constructor with a numeric argument" /repo/src/config.rs \
+    'let k = @PW@::new(12345678);'
+  must_block SEC-013 "SQL cast followed by a comma-joined token" /repo/db/clients.sql \
+    'SELECT @SC@::text,Hx72kq9Lmz FROM api_clients;'
   assert_no_corpus_failures
 }
 
@@ -579,6 +591,28 @@ assert_no_corpus_failures() {
     "final Hx72kq9Lmz = loadKey();@NL@final conf = '''@NL@@PW@: Hx72kq9Lmz@NL@''';"
   must_block SEC-013 "template literal whose interpolation holds a backtick in a comment" /repo/src/config.ts \
     'const Hx72kq9Lmz = loadKey();@NL@const env = `${a /* ` */}@NL@DB_@PWU@=Hx72kq9Lmz@NL@`;@NL@const z = `q`;'
+  must_pass "regex literal holding quotes, then an object key bound to a declared variable" /repo/src/auth/client.ts \
+    "const re = /['\"\`]/g;@NL@const accessToken = await getAccessToken();@NL@return { @TK@: accessToken };"
+  must_pass "division, then an object key bound to a declared variable" /repo/src/auth/client.ts \
+    'const half = total / 2;@NL@const accessToken = await getAccessToken();@NL@return { @TK@: accessToken };'
+  must_block SEC-013 "TypeScript regex literal holding a backtick before a template literal" /repo/src/config.ts \
+    'const Hx72kq9Lmz = loadKey();@NL@const re = /`/;@NL@const env = `@NL@DB_@PWU@=Hx72kq9Lmz@NL@`;'
+  must_block SEC-013 "TypeScript regex literal holding a quote before a template opener on its line" /repo/src/config.ts \
+    "const Hx72kq9Lmz = loadKey();@NL@const re = /'/, env = \`@NL@DB_@PWU@=Hx72kq9Lmz@NL@\`;"
+  must_block SEC-013 "Go raw string ending in a backslash, then a raw-string body" /repo/cmd/server/main.go \
+    'var Hx72kq9Lmz = loadKey()@NL@var dir = `C:\`@NL@var conf = `@NL@@PW@: Hx72kq9Lmz@NL@`'
+  must_block SEC-013 "Ruby percent literal spanning lines" /repo/app/config.rb \
+    'Hx72kq9Lmz = load_key@NL@conf = %q{@NL@@PW@: Hx72kq9Lmz@NL@}'
+  must_block SEC-013 "Ruby block comment" /repo/app/config.rb \
+    'Hx72kq9Lmz = load_key@NL@=begin@NL@@PW@: Hx72kq9Lmz@NL@=end'
+  must_block SEC-013 "Rust byte raw string ending in a backslash, then a string body" /repo/src/config.rs \
+    'let Hx72kq9Lmz = load_key();@NL@let dir = br"C:\";@NL@let conf = "@NL@@PW@: Hx72kq9Lmz@NL@";'
+  must_block SEC-013 "SQL string ending in a backslash, then a string body" /repo/db/fn.sql \
+    "SELECT 1 AS Hx72kq9Lmz;@NL@SELECT 'C:\\';@NL@SELECT '@NL@@PW@ = Hx72kq9Lmz;@NL@';"
+  must_block SEC-013 "C# interpolated verbatim string, at-sign first" /repo/src/Config.cs \
+    'var Hx72kq9Lmz = LoadKey();@NL@var conf = @$"@NL@@PW@: Hx72kq9Lmz@NL@";'
+  must_block SEC-013 "a multi-line form left open at the end of the text" /repo/src/config.ts \
+    'const Hx72kq9Lmz = loadKey();@NL@DB_@PWU@=Hx72kq9Lmz@NL@const z = `'
   assert_no_corpus_failures
 }
 
@@ -595,6 +629,16 @@ assert_no_corpus_failures() {
   check_edit_row SEC-013 "splice into a triple-quoted string" /repo/app/config.py ANCHOR '@PW@: Hx72kq9Lmz'
   put_edit_target "${CORPUS_ROOT}/repo/src/comment.ts" 'const Hx72kq9Lmz = loadKey();@NL@/* ANCHOR */'
   check_edit_row SEC-013 "splice point inside a comment" /repo/src/comment.ts ANCHOR 'DB_@PWU@=Hx72kq9Lmz'
+  check_edit_row SEC-013 "unknown context: typed declaration then literal" /repo/src/comment.ts ANCHOR \
+    'const @PW@: string = "Hx72kq9Lmz!";'
+  check_edit_row SEC-013 "unknown context: prefix-lettered literal" /repo/src/comment.ts ANCHOR '@PW@ = b"Hx72kq9Lmz"'
+  check_edit_row SEC-013 "unknown context: parenthesised literal" /repo/src/comment.ts ANCHOR \
+    'const @PW@ = ("Hx72kq9Lmz");'
+  check_edit_row SEC-013 "unknown context: wrapper call around a letters-only literal" /repo/src/comment.ts ANCHOR \
+    'const @PW@ = derive("correcthorsebattery");'
+  check_edit_row SEC-013 "unknown context: colon-equals declaration" /repo/src/comment.ts ANCHOR '@PW@ := "Hx72kq9Lmz"'
+  check_edit_row SEC-013 "unknown context: multi-word literal" /repo/src/comment.ts ANCHOR \
+    'const @PW@ = "open sesame please";'
   check_edit_row SEC-013 "target file missing" /repo/src/missing.ts ANCHOR \
     'const Hx72kq9Lmz = loadKey();@NL@DB_@PWU@=Hx72kq9Lmz'
   put_edit_target "${CORPUS_ROOT}/repo/src/other.ts" 'const a = 1;'
@@ -702,11 +746,71 @@ Edit with a list as new_string${us}2${us}SEC-017${us}{"tool_name":"Edit","tool_i
 Edit with a number as new_string${us}2${us}SEC-017${us}{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/a.ts","old_string":"x","new_string":42}}
 Edit with null new_string${us}2${us}SEC-017${us}{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/a.ts","old_string":"x","new_string":null}}
 Write with a file_path that is not a string${us}2${us}SEC-017${us}{"tool_name":"Write","tool_input":{"file_path":42,"content":"x"}}
+Edit also carrying content${us}2${us}SEC-017${us}{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/a.ts","old_string":"x","new_string":"y","content":"z"}}
+Write also carrying new_string${us}2${us}SEC-017${us}{"tool_name":"Write","tool_input":{"file_path":"/repo/src/a.ts","content":"x","new_string":"y"}}
 empty stdin${us}0${us}${us}
 Write with empty content${us}0${us}${us}{"tool_name":"Write","tool_input":{"file_path":"/repo/src/a.ts","content":""}}
 Edit deleting text (empty new_string)${us}0${us}${us}{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/a.ts","old_string":"x","new_string":""}}
 EOF
   assert_no_corpus_failures
+}
+
+@test "generic credential corpus: a module file in the session's working directory cannot replace the scan's own imports" {
+  local mod text envelope work="${BATS_TEST_TMPDIR}/cwd"
+  text="$(expand_corpus_text 'const @PW@ = "Xk9#mQ2!vL7%pR4z";')"
+  envelope="$(build_envelope Write "${CORPUS_ROOT}/repo/src/db.ts" "${text}")"
+  for mod in bisect json re; do
+    mkdir -p "${work}/${mod}"
+    printf 'print("clear")\nraise SystemExit(0)\n' >"${work}/${mod}/${mod}.py"
+    run bash -c 'cd "${1}" && bash "${2}"' _ "${work}/${mod}" "${HOOK_SH}" <<<"${envelope}"
+    [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || {
+      echo "${mod}.py in cwd: exit ${status} ${output}"
+      return 1
+    }
+  done
+}
+
+# Generated content whose cost grows with its size; a hook past the budget would block a benign file.
+# Args: $1=rows $2=key word
+build_generated_rows() {
+  python3 -c '
+import sys
+n, key = int(sys.argv[1]), sys.argv[2]
+print("".join("  { %s: accessToken },\n" % key for _ in range(n)) + "const accessToken = 1;", end="")
+' "$@"
+}
+
+@test "generic credential corpus: many keys bound to one identifier declared last are judged well inside the scan budget" {
+  local text envelope start
+  text="$(build_generated_rows 12000 "to""ken")"
+  envelope="$(build_envelope Write "${CORPUS_ROOT}/repo/src/rows.ts" "${text}")"
+  start="${SECONDS}"
+  run bash "${HOOK_SH}" <<<"${envelope}"
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  ((SECONDS - start < 5)) || {
+    echo "took $((SECONDS - start)) s"
+    return 1
+  }
+}
+
+@test "generic credential corpus: one long line of quoted words after a key blocks well inside the scan budget" {
+  local text envelope start words
+  words="$(python3 -c 'print(", ".join(["\"abcdefghij\""] * 12000), end="")')"
+  text="$(expand_corpus_text "const @PW@ = x, w = [${words}];")"
+  envelope="$(build_envelope Write "${CORPUS_ROOT}/repo/src/words.ts" "${text}")"
+  start="${SECONDS}"
+  run bash "${HOOK_SH}" <<<"${envelope}"
+  [[ "${status}" -eq 2 && "${output}" == *"SEC-013"* ]] || {
+    echo "exit ${status} ${output}"
+    return 1
+  }
+  ((SECONDS - start < 5)) || {
+    echo "took $((SECONDS - start)) s"
+    return 1
+  }
 }
 
 @test "generic credential corpus: non-ASCII source content passes under the C locale on Write and Edit" {

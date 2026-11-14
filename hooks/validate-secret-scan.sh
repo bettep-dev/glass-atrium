@@ -131,7 +131,7 @@ scan_generic_credential() {
   src="$(get_classifier_src)" || block_unavailable "Secret scan unavailable: the classifier source failed"
   # Classifier stderr dropped: a traceback can quote the scanned text; its status alone decides.
   # GA-ABSORB[handled@scan_generic_credential-rc-branch]: a non-zero classifier status blocks as SEC-017 below
-  out="$(python3 -c "${src}" "${pattern}" "${flagged}" "${SECRETS_FILE}" <<<"${INPUT}" 2>/dev/null)" || rc=$?
+  out="$(python3 -I -c "${src}" "${pattern}" "${flagged}" "${SECRETS_FILE}" <<<"${INPUT}" 2>/dev/null)" || rc=$?
   ((rc == 0)) || block_unavailable "Secret scan unavailable: the credential classifier failed"
   [[ "${out}" == "clear" ]] || block_generic_credential "${out}"
 }
@@ -252,7 +252,7 @@ CHAIN_SEP = re.compile(r"\??\.")
 SIZE = re.compile(r"[0-9]{1,3}(?=[,)\]])")
 IDENT = re.compile(r"([A-Za-z_$][\w$]*)" + TRAIL, re.A)
 BIND = re.compile(r":([A-Za-z_]\w*)" + TRAIL, re.A)
-CAST = re.compile(r":(?:[a-z_]+|[A-Z_]+)[0-9]{0,2}(?:\([0-9, ]*\))?(?:\[\])?(?=[\s,;()\[\]]|$)")
+CAST = re.compile(r":(?:[a-z_]+|[A-Z_]+)[0-9]{0,2}(?:\([0-9]{1,3}(?:,\s?[0-9]{1,3})?\))?(?:\[\])?(?=[\s,;()\[\]]|$)")
 WORD = re.compile(r"(?<![\w$])[A-Za-z_$][\w$]*", re.A)
 KEY_NAME = re.compile(r"[A-Za-z_.\-]+")
 LOOKUP = re.compile(r"(?:(?:\.get|\bgetenv|\bENV\.fetch)\s*\(|(?:\benviron|\bprocess\.env|\bENV|\benv|\bconfig|\bsettings)\s*\[)\s*[bBrRuUfF]{0,2}$")
@@ -260,15 +260,16 @@ QUOTED = re.compile(r"""(["'`])([^"'`\n]*?)\1""")
 MARKER = re.compile(r"(?:fake|dummy|fixture)[-_][A-Za-z0-9_-]+", re.I)
 TEST_SUFFIX = re.compile(r"[^.]+(?:\.[^.]+)*\.(?:test|spec)\.[A-Za-z0-9]+")
 TEST_DIRS = {"test", "tests", "__tests__"}
-CLIKE = {"ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "java", "kt", "kts", "swift", "cs",
+CLIKE = {"ts", "tsx", "js", "jsx", "mjs", "cjs", "java", "kt", "kts", "swift", "cs",
          "scala", "dart", "c", "cc", "cpp", "h", "hpp"}
-CODE = {"clike", "rs", "py", "rb", "php"}
+CODE = {"clike", "go", "rs", "py", "rb", "php"}
 REF_FAMILIES = CODE | {"sql"}
 OPENER = {fam: re.compile(src) for fam, src in {
-    "clike": r'//|/\*|"""|\'\'\'|@"|R"[^()\\\s"]{0,16}\(|["\'`]',
-    "rs": r'//|/\*|(?<!\w)r#*"|["\']',
+    "clike": r'//|/\*|"""|\'\'\'|\$?@\$?"|R"[^()\\\s"]{0,16}\(|["\'`/]',
+    "go": r'//|/\*|["\'`]',
+    "rs": r'//|/\*|(?<!\w)b?r#*"|["\']',
     "py": r"#|\"\"\"|'''|[\"']",
-    "rb": r'#|<<[-~]?([\'"]?)([A-Za-z_]\w*)\1|["\'`]',
+    "rb": r'#|(?m:^=begin(?!\S))|<<[-~]?([\'"]?)([A-Za-z_]\w*)\1|%[qQwWiIsrx]?[^\w\s]|["\'`/]',
     "php": r'//|#|/\*|<<<[ \t]*([\'"]?)([A-Za-z_]\w*)\1|["\'`]',
     "sql": r'--|/\*|\$(?:[A-Za-z_]\w*)?\$|["\']',
     "shell": r'<<-?[ \t]*([\'"]?)([A-Za-z_]\w*)\1|["\']',
@@ -279,6 +280,15 @@ LINE_COMMENTS = {"//", "#", "--"}
 TEMPLATE_STOP = re.compile(r"[\\`]|\$\{")
 INTERP_STOP = re.compile(r"""[`"'{}]|//|/\*""")
 VERBATIM_BODY = re.compile(r'(?:""|[^"])*')
+SQL_BODY = {q: re.compile("(?:%s%s|[^%s])*" % (q, q, q)) for q in "'\""}
+REGEX_BODY = re.compile(r"(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\[\n])*")
+REGEX_AFTER = set("(,=:[!&|?{};+-*%~^")
+REGEX_KEYWORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw",
+                  "yield", "await", "if", "unless", "when", "and", "or", "not"}
+LAST_WORD = re.compile(r"\w+$")
+BLOCK_COMMENT_END = re.compile(r"^=end(?!\S).*$", re.M)
+PAIRS = {"(": ")", "[": "]", "{": "}", "<": ">"}
+LOOKUP_WINDOW = 64
 MAX_FILE = 1 << 20
 QUOTE_BODY = {}
 
@@ -292,22 +302,38 @@ def get_family(path):
         return "clike"
     if ext in ("py", "pyi"):
         return "py"
-    if ext in ("rs", "rb", "php", "sql"):
+    if ext in ("go", "rs", "rb", "php", "sql"):
         return ext
     return "shell" if ext in ("sh", "bash", "zsh", "ksh") else "plain"
 
 
-# Comment and string spans (start, end, kind, delimiter length, closed); everything outside is code.
+# Comment and string spans (start, end, kind, delimiter length, closed) + doubt; everything outside is code.
+# Doubt: a reference-family text whose lexing cannot be trusted (a multi-line form still open at the end,
+# a regex with no close, a backslash whose meaning depends on the SQL dialect) → judged as one string.
 def get_spans(text, fam):
-    spans, i = [], 0
+    spans, i, is_doubt = [], 0, False
     while True:
         m = OPENER[fam].search(text, i)
         if not m:
-            return spans
-        end, closed = get_span_end(text, m, fam)
-        kind = "c" if m.group(0) in LINE_COMMENTS or m.group(0) == "/*" else "s"
-        spans.append((m.start(), end, kind, len(m.group(0)), closed))
+            return spans, is_doubt and fam in REF_FAMILIES
+        found = get_span_end(text, m, fam)
+        if found is None:
+            i = m.end()  # a division or modulo operator
+            continue
+        end, closed = found
+        tok = m.group(0)
+        kind = "c" if tok in LINE_COMMENTS or tok in ("/*", "=begin") else "s"
+        is_doubt = is_doubt or (not closed and end >= len(text) and not is_line_bound(tok, fam))
+        spans.append((m.start(), end, kind, len(tok), closed))
         i = max(end, m.end())
+
+
+# A form that ends at its line's end without a closing delimiter: a line comment or a single-line quote.
+def is_line_bound(tok, fam):
+    if tok in LINE_COMMENTS:
+        return True
+    is_multi = tok in MULTI_LINE_QUOTES.get(fam, "") or (tok == "`" and fam in ("clike", "go"))
+    return len(tok) == 1 and tok in "\"'`" and not is_multi
 
 
 def get_span_end(text, m, fam):
@@ -316,15 +342,24 @@ def get_span_end(text, m, fam):
         return get_found(text.find("\n", body), 0, len(text))
     if tok == "/*":
         return get_found(text.find("*/", body), 2, len(text))
+    if tok == "=begin":
+        close = BLOCK_COMMENT_END.search(text, body)
+        return (close.end(), True) if close else (len(text), False)
     if tok.startswith("<<"):
         return get_heredoc_end(text, m, fam)
+    if tok == "/":
+        return get_regex_end(text, m.start())
+    if tok.startswith("%"):
+        return get_percent_end(text, m)
     if tok == "`" and fam == "clike":
         return get_template_end(text, body)
-    if tok == '@"':
+    if tok.endswith('"') and "@" in tok:
         return get_verbatim_end(text, body)
-    close = get_raw_close(tok)
+    close = get_raw_close(tok, fam)
     if close:
         return get_found(text.find(close, body), len(close), len(text))
+    if fam == "sql":
+        return get_sql_quote_end(text, body, tok)
     return get_quote_end(text, body, tok, len(tok) == 3 or tok in MULTI_LINE_QUOTES.get(fam, ""))
 
 
@@ -332,13 +367,88 @@ def get_found(at, width, n):
     return (n, False) if at < 0 else (at + width, width > 0)
 
 
-# Delimiter that closes a raw form with no escapes: SQL dollar quote, C++ raw string, Rust raw string.
-def get_raw_close(tok):
+# Delimiter that closes a raw form with no escapes: SQL dollar quote, C++ raw string, Rust (byte) raw string,
+# Go raw string.
+def get_raw_close(tok, fam):
     if tok.startswith("$"):
         return tok
     if tok.startswith('R"'):
         return ")" + tok[2:-1] + '"'
-    return '"' + tok[1:-1] if tok.startswith("r") else None
+    if tok == "`" and fam == "go":
+        return tok
+    raw = tok[1:] if tok.startswith("br") else tok
+    return '"' + raw[1:-1] if raw.startswith("r") else None
+
+
+# A slash where an operand is due opens a regex literal. After a closing paren (a division, or a regex after an
+# if-condition) and before a > (a JSX tag close, or a regex) either reading is possible, so a quote before the
+# next slash on the line is doubt.
+def get_regex_end(text, at):
+    is_tag_close = text.startswith(">", at + 1)
+    if is_tag_close or not is_operand_due(text, at):
+        line_end = get_found(text.find("\n", at), 0, len(text))[0]
+        is_ambiguous = is_tag_close or text[get_prev(text, at)] == ")"
+        nxt = text.find("/", at + 1, line_end) if is_ambiguous else -1
+        is_doubt = nxt >= 0 and any(q in text[at + 1:nxt] for q in "\"'`")
+        return (len(text), False) if is_doubt else None
+    e = REGEX_BODY.match(text, at + 1).end()
+    return (e + 1, True) if text.startswith("/", e) else (len(text), False)
+
+
+def get_prev(text, at):
+    j = at - 1
+    while j >= 0 and text[j] in " \t\r\n":
+        j -= 1
+    return j
+
+
+# An operand is due after an operator, an opening bracket, an arrow or a keyword; a postfix ! (non-null
+# assertion) and a > closing a JSX tag end an operand.
+def is_operand_due(text, at):
+    j = get_prev(text, at)
+    if j < 0:
+        return True
+    c, before = text[j], text[j - 1:j]
+    if c == ">":
+        return before == "="
+    if c == "!" and (before.isalnum() or before in ("_", "$", ")", "]")):
+        return False
+    if c in REGEX_AFTER:
+        return True
+    word = LAST_WORD.search(text, max(0, j - 8), j + 1)
+    return bool(word) and word.group(0) in REGEX_KEYWORDS
+
+
+# Ruby percent literal: bracket delimiters nest; a bare % with no type letter is modulo after an operand.
+def get_percent_end(text, m):
+    tok = m.group(0)
+    if len(tok) == 2 and not is_operand_due(text, m.start()):
+        return None
+    opener = tok[-1]
+    close, depth, i = PAIRS.get(opener, opener), 1, m.end()
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 1
+        elif c == close:
+            depth -= 1
+            if not depth:
+                return i + 1, True
+        elif c == opener:
+            depth += 1
+        i += 1
+    return len(text), False
+
+
+# Standard SQL doubles a quote and has no backslash escape; where a backslash dialect would close the string
+# elsewhere, the dialect decides → doubt.
+def get_sql_quote_end(text, i, q):
+    e = SQL_BODY[q].match(text, i).end()
+    if e >= len(text):
+        return len(text), False
+    if "\\" in text[i:e] and get_quote_end(text, i, q, True)[0] != e + 1:
+        return len(text), False
+    return e + 1, True
 
 
 # A heredoc ends only on a line holding its tag alone; PHP also ends at the tag before a non-word character.
@@ -421,7 +531,8 @@ def get_edit_text(scan, ti):
     old = ti.get("old_string")
     src = read_text(scan.path) if scan.path.startswith("/") else None
     hits = get_hits(src, old, ti.get("replace_all") is True) if src is not None and isinstance(old, str) and old else []
-    if not hits or any(s < h < e for h in hits for s, e, *_ in get_spans(src, scan.fam)):
+    spans, is_doubt = get_spans(src, scan.fam) if hits else ([], True)
+    if is_doubt or any(s < h < e for h in hits for s, e, *_ in spans):
         return scan.blob, 0, True  # no readable splice point outside a string or comment → judged as a string
     return src[:hits[0]] + scan.blob + src[hits[0] + len(old):], hits[0], False
 
@@ -465,12 +576,15 @@ class Scan:
         self.fam = get_family(self.path)
         self.is_secrets_file = is_secrets_name(os.path.basename(self.path))
         self.blob = get_text(ti, "content") + get_text(ti, "new_string")
-        is_edit = env.get("tool_name") == "Edit" and not get_text(ti, "content")
+        is_edit = env.get("tool_name") == "Edit"
         self.text, self.offset, is_doubt = get_edit_text(self, ti) if is_edit else (self.blob, 0, False)
-        self.spans = [(0, len(self.text), "s", 0, False)] if is_doubt else get_spans(self.text, self.fam)
+        spans, is_text_doubt = get_spans(self.text, self.fam)
+        self.is_doubt = is_doubt or is_text_doubt
+        self.spans = [(0, len(self.text), "s", 0, False)] if self.is_doubt else spans
         self.starts = [s[0] for s in self.spans]
         self.words = self.values = self.is_test = None
-        self.tail_end, self.tail = -1, {}
+        self.refs = {}
+        self.tail_end, self.tail, self.tail_block = -1, {}, -1
 
     def get_span_at(self, x):
         idx = bisect.bisect_right(self.starts, x) - 1
@@ -482,12 +596,21 @@ class Scan:
         return self.is_test
 
     # Another occurrence in code, outside every candidate's value: a declaration or use site.
+    # Two such sites per name suffice whatever `at` is, so each name's occurrences are walked once.
     def has_other(self, name, at):
         if self.words is None:
             self.words, self.values = {}, get_value_runs(self.text)
             for w in WORD.finditer(self.text):
                 self.words.setdefault(w.group(0), []).append(w.start())
-        return any(p != at and self.get_span_at(p) < 0 and not self.is_in_value(p) for p in self.words.get(name, ()))
+        refs = self.refs.get(name)
+        if refs is None:
+            refs = self.refs[name] = []
+            for p in self.words.get(name, ()):
+                if self.get_span_at(p) < 0 and not self.is_in_value(p):
+                    refs.append(p)
+                    if len(refs) == 2:
+                        break
+        return any(p != at for p in refs)
 
     def is_in_value(self, p):
         idx = bisect.bisect_right(self.values[0], p) - 1
@@ -530,7 +653,7 @@ def judge_quoted(scan, idx):
     if len("".join(content.split())) < 8:
         return None
     line_start = scan.text.rfind("\n", 0, s) + 1
-    if scan.fam in CODE and KEY_NAME.fullmatch(content) and LOOKUP.search(scan.text[line_start:s]):
+    if scan.fam in CODE and KEY_NAME.fullmatch(content) and LOOKUP.search(scan.text, max(line_start, s - LOOKUP_WINDOW), s):
         return "clear"  # a lookup's first argument or subscript, key-name-shaped
     if PLACEHOLDER.fullmatch(content.strip()) and not scan.is_secrets_file:
         return "clear"
@@ -546,16 +669,22 @@ def judge_comment(scan, idx, line_end):
     return verdict
 
 
-# Every quoted literal after the separator on the line, whatever precedes it; each line's spans are judged once.
+# Every quoted literal after the separator on the line, whatever precedes it; each line's spans are judged once,
+# right to left, up to the first block, which covers every key before it.
 def judge_tail(scan, line, pos, e):
     line_end = pos + len(line)
     if scan.tail_end != line_end:
-        scan.tail_end, scan.tail, verdict = line_end, {}, None
+        scan.tail_end, scan.tail, scan.tail_block, verdict = line_end, {}, -1, None
         first, last = bisect.bisect_left(scan.starts, pos), bisect.bisect_left(scan.starts, line_end)
         for idx in range(last - 1, first - 1, -1):
+            check_deadline()
             own = judge_quoted(scan, idx) if scan.spans[idx][2] == "s" else judge_comment(scan, idx, line_end)
             verdict = scan.tail[idx] = merge(verdict, own)
-    return scan.tail.get(bisect.bisect_left(scan.starts, pos + e))
+            if verdict == "block":
+                scan.tail_block = idx
+                break
+    k = bisect.bisect_left(scan.starts, pos + e)
+    return "block" if k <= scan.tail_block else scan.tail.get(k)
 
 
 def is_name_ref(scan, name, at):
@@ -574,12 +703,18 @@ def is_reference(scan, value, at, is_open):
     if m:
         return scan.has_other(m.group(1), at)
     end = get_chain_end(scan, value, 0, at, is_open)
-    return end >= 0 and TRAIL_RUN.fullmatch(value, end) is not None
+    return end >= 0 and TRAIL_RUN.fullmatch(value, end) is not None and get_size_digits(value) <= 3
+
+
+# Digits outside every name: the chain's size arguments, bounded together so a number split into pieces
+# never clears.
+def get_size_digits(value):
+    return sum(c.isdigit() for c in WORD.sub("", value))
 
 
 # Member, call and subscript chain → its end in value, or -1. Every digit-bearing name must occur elsewhere
-# in code; an argument is a chain or a size of at most three digits; a run that stops at a quote may end
-# inside an argument list, the quoted argument being judged as a literal after the separator.
+# in code; an argument is a chain or a size; a run that stops at a quote may end inside an argument list,
+# the quoted argument being judged as a literal after the separator.
 def get_chain_end(scan, value, i, at, is_open):
     m = CHAIN_NAME.match(value, i)
     if not m or not is_name_ref(scan, m.group(0), at + i):
@@ -614,10 +749,12 @@ def get_args_end(scan, value, i, at, is_open, close):
 
 
 # The value at the separator: a type cast, a quoted literal, or an unquoted run classified by shape.
+# A cast clears only when the run ends at its type; anything joined after the type is judged with the run.
 def judge_value(scan, line, pos, v, is_cast):
     run = RUN.match(line, v)
     value = run.group(0) if run else ""
-    if is_cast and scan.fam in REF_FAMILIES and CAST.match(line, v):
+    cast = CAST.match(line, v) if is_cast and scan.fam in REF_FAMILIES else None
+    if cast and (cast.end() >= run.end() or TRAIL_RUN.fullmatch(line, cast.end(), run.end())):
         return "clear"
     idx = scan.get_span_at(pos + v)
     if idx >= 0:
@@ -633,17 +770,26 @@ def judge_value(scan, line, pos, v, is_cast):
     return judge_literal(scan, value)
 
 
-# A key in a comment, or a key and value inside one enclosing string, is judged as a literal.
+# A key in a comment, or a key and value inside one enclosing string, is judged as a literal. In doubt the
+# text may be code, so every quoted literal after the separator is judged too, as on a code line.
 def judge_enclosed(scan, line, v):
     q = 1 if line[v:v + 1] in ('"', "'") else 0
     run = RUN.match(line, v + q)
-    return judge_literal(scan, run.group(0)) if run and len(run.group(0)) >= 8 else None
+    verdict = judge_literal(scan, run.group(0)) if run and len(run.group(0)) >= 8 else None
+    for lit in QUOTED.finditer(line, v) if scan.is_doubt else ():
+        if len("".join(lit.group(2).split())) >= 8:
+            verdict = merge(verdict, judge_literal(scan, lit.group(2)))
+    return verdict
+
+
+def check_deadline():
+    if time.monotonic() > DEADLINE:
+        sys.exit(4)  # past the scan budget → the shell blocks as scan unavailable
 
 
 # One key position → (verdict over its value and later literals, whether the value itself was judged).
 def judge_key(scan, line, pos, m):
-    if time.monotonic() > DEADLINE:
-        sys.exit(4)  # past the scan budget → the shell blocks as scan unavailable
+    check_deadline()
     sep = SEP.match(line, m.start() + len(m.group(1)))
     if not sep:
         return None, False
@@ -708,6 +854,8 @@ fi
 
 # Default (Write|Edit): scan combined content + new_string. An envelope the scan cannot read exits 3 and
 # blocks (fail-closed); only the degenerate-empty set passes: empty stdin ({}), an empty content or new_string.
+# tool_name alone picks the Edit context, so an Edit carrying content or a Write carrying new_string is unreadable.
+# python3 -I: no module from the session's cwd can stand in for the scan's own imports.
 EXTRACT_PY='
 import json, sys
 try:
@@ -719,8 +867,8 @@ if not isinstance(d, dict):
 if not d:
     sys.exit(0)
 ti = d.get("tool_input")
-need = {"Write": "content", "Edit": "new_string"}.get(d.get("tool_name"))
-if not isinstance(ti, dict) or (need and not isinstance(ti.get(need), str)):
+need, other = {"Write": ("content", "new_string"), "Edit": ("new_string", "content")}.get(d.get("tool_name"), ("", ""))
+if not isinstance(ti, dict) or (need and not isinstance(ti.get(need), str)) or other in ti:
     sys.exit(3)
 if any(k in ti and not isinstance(ti[k], str) for k in ("content", "new_string", "file_path")):
     sys.exit(3)
@@ -729,7 +877,7 @@ print(ti.get("content", "") + ti.get("new_string", ""))
 extract_rc=0
 # Extraction stderr dropped: a parse traceback can quote the envelope; its status alone decides.
 # GA-ABSORB[handled@extract_rc-branch]: a non-zero status blocks as SEC-017 on the next line
-CONTENT=$(printf '%s\n' "${INPUT}" | python3 -c "${EXTRACT_PY}" 2>/dev/null) || extract_rc=$?
+CONTENT=$(printf '%s\n' "${INPUT}" | python3 -I -c "${EXTRACT_PY}" 2>/dev/null) || extract_rc=$?
 ((extract_rc == 0)) || block_unavailable "Secret scan unavailable: malformed Write|Edit hook input"
 
 scan_content "${CONTENT}"
