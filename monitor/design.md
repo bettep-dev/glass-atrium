@@ -209,7 +209,7 @@
 | 수치 | `KPI` · `KpiValue` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.kpi*` |
 | 표 | `Table` · `TableHead` | `.tbl` |
 | 페이지 | `PageHeader` · `PageVerdict` (retiring, §12.7) · `SectionLabel` · `EmptyState` | `.page-verdict*` · `.section-label` · `.placeholder` (deprecated, §12.5) |
-| 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` mono `--faint` (mono retiring → §12.2 sans, S2c) · `.btn.ghost.sm` |
+| 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` sans tnum `--faint` (§12.2) · `.btn.ghost.sm` |
 | 로딩 | `LoadingPlaceholder` · `SkeletonRows` | `role="status"` `.fs-meta` `--dim` · inline bar |
 | 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
 | 기타 | `Icon` · `ChipGroup` (filter chips retiring, §12.3) · `DetailField` | `.seg` |
@@ -222,7 +222,7 @@
 - **`AgentName`**: `glass-atrium-` prefix 를 뗀 짧은 이름 + 전체 이름은 sr-only 텍스트 · `title`. agent 식별은 이 텍스트로만 (아바타 없음 — §4.3).
 - **`MiniBars`**: `Sparkline` 과 같은 60×22 SVG 막대 · `label` 있으면 `role="img"`, 없으면 aria-hidden.
 - **신선도**:
-  - `FreshnessStamp` = "as of HH:MM" · `--fs-meta` mono `--faint` (mono retiring → §12.2 sans, S2c) · nowrap. 선행 glyph 만 색 — Fresh ✓ `--ok` · Stale / Partial ⚠ `--warn` · Not read ✕ `--crit` · Loading / Refreshing `…` `--faint`. 단어 sr-only, 전체 시각 `title`. 새로고침 중엔 직전 stamp 유지 + `aria-busy`.
+  - `FreshnessStamp` = "as of HH:MM" · `--fs-meta` sans tnum `--faint` (§12.2) · nowrap. 선행 glyph 만 색 — Fresh ✓ `--ok` · Stale / Partial ⚠ `--warn` · Not read ✕ `--crit` · Loading / Refreshing `…` `--faint`. 단어 sr-only, 전체 시각 `title`. 새로고침 중엔 직전 stamp 유지 + `aria-busy`.
   - `RefreshButton` = `btn ghost sm` 고정 폭 `w-28` · 라벨 끝 정렬(`justify-end`) → 보이는 라벨 끝이 콘텐츠 열 오른쪽 가장자리에 맞음 · refresh icon `motion-safe:animate-spin` · 라벨 "Refreshing…"(직전 read 있음) / "Loading…"(첫 read).
 - **로딩**:
   - `LoadingPlaceholder` = `role="status"` · `--fs-meta` `--dim` · refresh icon `motion-safe:animate-spin` + "Loading <label>…" · `minHeight` 로 settled 높이 예약 → layout shift 0.
@@ -345,7 +345,7 @@
 - **Badge 3 role** (`ui.jsx` → `Badge`):
   - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone, 라벨 `--dim`. `glyph` false 면 tone 없음 (라벨도 neutral). tone 있는 `Pill` → glyph 가 있는 status `Badge`.
   - `metadata` — 서술 속성 (agent-only · md · model id): neutral · glyph 없음 · 소문자.
-  - `count` — 순수 수량: neutral · glyph 없음 · mono tabular (retiring → §12.2 / §12.3, S2c); a count in prose or a row retires to a plain sans tnum number (§12.3).
+  - `count` — 순수 수량: neutral · glyph 없음 · sans tabular (§12.2, look → §12.3 Count); a count in prose or a row retires to a plain sans tnum number (§12.3).
   - 변형: `absent`(무테 · 무배경 · `--faint`) · `interactive`(`<button>`).
 - **alert-card glyph well** (`base.css` → `.alert-card`): light = tone **solid well + `--elev` knock-out glyph** (tinted light well 은 `--warn` glyph 를 0.12 tint 위 3.01 로 떨어뜨린다) · dark = tone 0.12 tinted well + tone glyph.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
@@ -414,7 +414,7 @@
 - **weight (≤ 3 · signature 1)**: 400 regular · 500 medium (label · nav active · button · badge) · 600 semibold (card title · KPI value · page title). signature = 600 + sans tnum 수치. glass 표면 위 라벨은 한 step 무겁게 (600).
 - **수치**: value:unit — the unit sits beside its value one step down in faint ink (20 ↔ 13 · 15 ↔ 13, §12.2); `.kpi-value` 32 ↔ `.unit` 16 holds only until the stat row replaces the KPI grid.
 - **page header** (`PageHeader`): h1 = `--fs-display` 600 · line-height `--ctl-min-h` 32, one line box with the back link, the status pill and the header controls · no sub-line or intro sentence after the h1; a meta line carries only new facts (count, id, time) — layout §12.3.
-- **chart tick**: `CHART_AXIS_TICK_STYLE` = `--fs-meta` · JetBrains Mono (retiring → §12.2 sans tnum, S2c) · `--faint`. 겹침 판정 문자 폭 `CHART_TICK_CHAR_PX` 8 · tick 간 최소 간격 `CHART_TICK_MIN_GAP_PX` 8.
+- **chart tick**: `CHART_AXIS_TICK_STYLE` = `--fs-meta` · sans by inheritance + `tabular-nums` (§12.2) · `--faint`. 겹침 판정 문자 폭 `CHART_TICK_CHAR_PX` 8 (Pretendard tnum digit 0.614em × 13 ≈ 7.98) · tick 간 최소 간격 `CHART_TICK_MIN_GAP_PX` 8.
 
 ### 5.3 카피 규칙 (Copy Rules)
 
@@ -552,7 +552,7 @@
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · no border · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
-- 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (mono tabular — retiring → §12.2 / §12.3 Count, S2c; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes · pressed = ink edge + ink text, no fill inversion).
+- 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes · pressed = ink edge + ink text, no fill inversion).
 - **fill** (`Badge fill`): `quiet` (default — the neutral shell above) · `solid` = `.pill--solid`, `--ink` shell + `--surface` text — waits for the owner · `tag` = `.pill--tag`, `--tint-fill` + ink — a fact worth a glance · `warn` = `.pill--warn`, `--tint-warn` + ink, led by an ink `⚠` the atom draws — did not arrive. Every fill is 13 / 600, line 1, 20 high, no border.
   - **Count shape** (`role="count"` with a fill): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
   - Never two solid badges on one row; a badge always holds a word or a number. The accent never fills a badge — it is the owner's run-time choice, so text on it has no guaranteed contrast.
@@ -573,7 +573,7 @@
 
 ### 7.5 Table — `Table` · `TableHead` (`.tbl`)
 
-- `.tbl`: `--fs-control` · line-height `--lh-row` 20 · `td` height `--row-h` 40 · 하단 1px `--line` · `.num` mono (retiring → §12.2 sans tnum, S2d) 우측 정렬 nowrap.
+- `.tbl`: `--fs-control` · line-height `--lh-row` 20 · `td` height `--row-h` 40 · 하단 1px `--line` · `.num` sans tnum (§12.2) 우측 정렬 nowrap.
   - cell padding: block `--tbl-pad-block` (8 less half the rule) · inline 12 interior, 16 at the edge columns · a cell holding a 32px control takes `--tbl-ctl-pad-block` (4 less half the rule).
   - `.tbl--own-face`: geometry-only routing — padding, row height and alignment from `.tbl`, body size · header face · row states from the table's own classes.
 - `th`: `--fs-meta` · sentence case · 500 · `--dim` on `--sunken` · `TableHead` 가 `scope="col"`.
@@ -1153,7 +1153,7 @@
 - Principle 7 and §8 `.live-dot` ambient loop + §7.7 sidebar `.live-dot` → no ambient loop.
 - `PageVerdict` usage (§7.9 neighbourhood) → §12.7.
 - Retiring, marked in place until the owning stream lands:
-  - mono numbers → §12.2 sans tnum: §3.3 `FreshnessStamp` (S2c) · §4.2 `Badge` `count` (S2c, look → §12.3) · §5.2 chart tick (S2c) · §7.3 `.pill--count` (S2c, look → §12.3 Count) · §7.5 `.num` (S2d) · §7.7 `.nav-badge` (S2c)
+  - mono numbers → §12.2 sans tnum: §7.7 `.nav-badge` (S2c)
   - §7.2 `.kpi-delta` / `.kpi-hint` mono → §12.8 stat row context line (S2c)
   - §7.7 `.nav-badge` 1px `--line` → §12.3 Badge, fill only (S2c)
   - pressed-toggle ✓ glyph (§7.4 · §7.6 · §7.16) → built with the S2a controls

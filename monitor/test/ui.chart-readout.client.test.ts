@@ -201,12 +201,20 @@ describe("edge ticks anchor by visible order, so neither end label spills past t
 });
 
 describe("tick labels thin out before they collide", () => {
-  // a JetBrains Mono glyph advances 0.6em, so the estimate must cover 0.6 × the meta step ticks render at
-  test("the per-character label estimate is never narrower than a mono glyph at the meta step", () => {
+  // a Pretendard tabular digit advances 1258/2048 em (0.614em, v1.3.9 font metrics), the widest glyph a day label holds
+  const SANS_TNUM_DIGIT_EM = 1258 / 2048;
+  test("the per-character label estimate is never narrower than a sans tabular digit at the meta step", () => {
     const tokens = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
     const metaPx = Number(tokens.match(/--fs-meta\s*:\s*(\d+)px/)?.[1]);
     assert.ok(metaPx > 0, "tokens.css declares --fs-meta in px");
-    assert.ok(CHART_TICK_CHAR_PX >= metaPx * 0.6, `${CHART_TICK_CHAR_PX}px per char under a ${metaPx * 0.6}px glyph`);
+    assert.ok(CHART_TICK_CHAR_PX >= metaPx * SANS_TNUM_DIGIT_EM, `${CHART_TICK_CHAR_PX}px per char under a ${metaPx * SANS_TNUM_DIGIT_EM}px digit`);
+  });
+
+  test("a tick inherits the sans face and sets tabular figures, so the digit estimate holds", () => {
+    const tick = render("ChartAxisTick", { x: 10, y: 4, payload: { value: "09-18", coordinate: 10 }, index: 0, visibleTicksCount: 2 });
+    const style = tick.props.style as Record<string, unknown>;
+    assert.equal(style.fontFamily, undefined, "no face of its own");
+    assert.equal(style.fontVariantNumeric, "tabular-nums");
   });
 
   const dayLabels = (count: number): string[] => Array.from({ length: count }, (_, i) => `09-${String(i + 1).padStart(2, "0")}`);

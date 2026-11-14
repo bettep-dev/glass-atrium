@@ -236,7 +236,7 @@ const CHART_MAX_TICKS = 7;
 const CHART_PLOT_FILL = 0.85;
 /** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
 const CHART_TICK_MIN_GAP_PX = 8;
-// ponytail: fixed per-char estimate of a --fs-meta mono day label (13px × 0.6em ≈ 7.8px, rounded up for fallback faces) → measure with canvas if labels grow wide
+// ponytail: fixed per-char estimate of a --fs-meta sans tnum day label (Pretendard digit 0.614em × 13px ≈ 7.98px) → measure with canvas if labels grow wide or --fs-meta grows
 const CHART_TICK_CHAR_PX = 8;
 const CHART_TICK_SHIFT = { start: '0', middle: '-50%', end: '-100%' };
 
@@ -315,7 +315,8 @@ function getChartImageProps(name, points, formatValue = String) {
   return { role: 'img', tabIndex: 0, 'aria-label': getChartSummary(name, points, formatValue) };
 }
 
-const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontFamily: "'JetBrains Mono', monospace" };
+// sans by inheritance; tabular figures keep every digit at the width CHART_TICK_CHAR_PX assumes
+const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontVariantNumeric: 'tabular-nums' };
 
 /**
  * Recharts XAxis props for a day axis: shared tick, both ends kept, and a gap that holds with edge anchoring.
@@ -694,16 +695,30 @@ function KPI({
   );
 }
 
+const EMPTY_VALUE_TEXT = 'None';
+const NOT_LOADED_TEXT = 'Not loaded';
+
+/**
+ * The look of "nothing" in a value slot — never a dash, a dot or a blank (design.md §12.2).
+ * @param kind - 'none' = known and empty · 'not-loaded' = never read; required → a missing kind reads Not loaded, never claims empty
+ * @param title - the cause, on hover
+ */
+function AbsentValue({ kind, title }) {
+  return <span className="text-faint" title={title}>{kind === 'none' ? EMPTY_VALUE_TEXT : NOT_LOADED_TEXT}</span>;
+}
+
 /**
  * One card's top-line numbers, a hairline between stats — never a tile per stat.
- * @param stats - each { label, value, unit?, context?, href?, key? }: context = the one period or delta line,
- *   href → the value is a Link to its drill-down; an absent value reads None, a 0 stays 0
+ * @param stats - each { label, value, unit?, context?, href?, key?, absent? }: context = the one period or delta line,
+ *   href → the value is a Link to its drill-down; an absent value reads None, or Not loaded with absent 'not-loaded'
+ *   (the context line then states the cause); a 0 stays 0
  */
 function StatRow({ stats, className = '' }) {
   return <dl className={`stat-row ${className}`.trim()}>
     {stats.map((stat) => {
       const isAbsent = stat.value == null;
-      const value = <>{isAbsent ? 'None' : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
+      const absentText = stat.absent === 'not-loaded' ? NOT_LOADED_TEXT : EMPTY_VALUE_TEXT;
+      const value = <>{isAbsent ? absentText : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
       return <div key={stat.key ?? stat.label} className="stat">
         <dt className="stat-label">{stat.label}</dt>
         <dd className={`stat-value${isAbsent ? ' text-faint' : ''}`}>{stat.href ? <Link href={stat.href}>{value}</Link> : value}</dd>
@@ -1982,7 +1997,7 @@ function tzShortLabel(tz) {
   }
 }
 
-// formatToParts 채택 — locale 문자열 quirk 무관하게 MM/DD HH:mm 레이아웃 직접 조립
+// formatToParts 채택 — locale 문자열 quirk 무관하게 MM-DD HH:mm 레이아웃 직접 조립
 function kstParts(iso) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
@@ -1997,11 +2012,21 @@ function kstParts(iso) {
   return { year: pick('year'), month: pick('month'), day: pick('day'), hour, minute: pick('minute'), second: pick('second') };
 }
 
-// UTC ISO → "MM/DD HH:mm" (표시 tz)
+// UTC ISO → "MM-DD HH:mm" (표시 tz)
 function formatKstDateTime(iso) {
   const p = kstParts(iso);
   if (!p) return iso || '—';
-  return `${p.month}/${p.day} ${p.hour}:${p.minute}`;
+  return `${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
+const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// UTC ISO → "MM-DD" (표시 tz) · a bare YYYY-MM-DD day key is already a display-zone day → no zone shift
+function formatKstDay(iso) {
+  if (DAY_KEY_PATTERN.test(String(iso))) return String(iso).slice(5);
+  const p = kstParts(iso);
+  if (!p) return iso || '—';
+  return `${p.month}-${p.day}`;
 }
 
 // UTC ISO → "HH:mm" (표시 tz)
@@ -2688,6 +2713,26 @@ function formatUsdCompact(value) {
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
+/**
+ * A percentage (value already in percent) — at most one decimal, `.0` dropped; never rounds a non-zero to 0% or a part to 100%.
+ * @param fixedDigits - a table column's fixed decimals, so every cell of the column has one precision
+ */
+function formatPct(value, fixedDigits) {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n)) return '—';
+  const unit = 10 ** -(fixedDigits ?? 1);
+  if (n !== 0 && Math.abs(n) < unit / 2) return `<${formatDecimal(unit, fixedDigits)}%`;
+  if (n < 100 && n >= 100 - unit / 2) return `>${formatDecimal(100 - unit, fixedDigits)}%`;
+  return `${formatDecimal(n, fixedDigits)}%`;
+}
+
+/** An average or ratio — at most one decimal, `.0` dropped, thousands separators; fixedDigits as formatPct. */
+function formatDecimal(value, fixedDigits) {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n)) return '—';
+  return n.toLocaleString('en-US', { minimumFractionDigits: fixedDigits ?? 0, maximumFractionDigits: fixedDigits ?? 1 });
+}
+
 // 콤마 정수 (1,234,567) — 비숫자/NaN/음수 → '—' (가짜 0 금지, wiki 가드 승격)
 function formatInt(value) {
   const n = Number(value);
@@ -2986,7 +3031,7 @@ window.UI = {
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
-  getDisplayName, hasFieldValue, DetailField,
+  getDisplayName, hasFieldValue, DetailField, AbsentValue, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
@@ -2996,8 +3041,8 @@ window.UI = {
   getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
-  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
-  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
+  formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
+  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatPct, formatDecimal,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,

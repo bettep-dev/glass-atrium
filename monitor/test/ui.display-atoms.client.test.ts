@@ -155,4 +155,28 @@ describe("stat row", () => {
       assert.equal(collectText(getValues(tree)[0]).trim(), row.text);
     });
   }
+
+  test("an unread value reads Not loaded in faint ink, never None", () => {
+    const tree = render("StatRow", { stats: [{ label: "Spend", value: null, absent: "not-loaded", context: "Cost read failed" }] });
+    const value = getValues(tree)[0];
+    assert.equal(collectText(value).trim(), "Not loaded");
+    assert.ok(findNodes(value, (n) => /\btext-faint\b/.test(String(n.props.className))).length > 0, "faint ink");
+  });
+});
+
+describe("absent value", () => {
+  const rows = [
+    { name: "an empty value", kind: "none", text: "None" },
+    { name: "an unread value", kind: "not-loaded", text: "Not loaded" },
+    { name: "a value whose caller names no kind is not claimed empty", kind: undefined, text: "Not loaded" },
+  ];
+  for (const row of rows) {
+    test(`each kind of nothing has its own words, in faint ink with the cause on hover: ${row.name}`, () => {
+      const tree = render("AbsentValue", { kind: row.kind, title: "Outcomes read failed" });
+      const span = findNodes(tree, (n) => n.type === "span")[0];
+      assert.equal(collectText(span).trim(), row.text);
+      assert.match(String(span.props.className), /\btext-faint\b/);
+      assert.equal(span.props.title, "Outcomes read failed");
+    });
+  }
 });
