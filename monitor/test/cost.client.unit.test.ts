@@ -153,6 +153,7 @@ interface CostHelpers {
   getTokenStackOrder: (
     shares: ReadonlyArray<{ key: string; total: number }>,
   ) => ReadonlyArray<{ key: string; total: number }>;
+  getHotVerdictText: (ratio: number | null, paceRatio: number | null) => string;
   getTurnHeadline: (
     turns: { avg_turns_per_session?: number; turn_session_count?: number },
     sessionPopulation: number,
@@ -983,7 +984,7 @@ interface RenderModule {
 // the spend stats and the ledgers are models over shared atoms → the real stat row, loading row, Stack and table atoms render, other atoms stay stubs
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
-const REAL_ATOMS = new Set(["StatRow", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
+const REAL_ATOMS = new Set(["StatRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
 
 // real ui.jsx helpers, with every rendered atom a host element carrying its props (the stat row anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
@@ -1056,6 +1057,38 @@ test("a cold-failed KPI payload retrying reads as failed on its stats, never a s
   assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 0, "no stat reads as loading beside the card");
 });
 
+test("a spend stat that read nothing says so in faint words — Not loaded for a failed read, None for an empty one — never a dash", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const rows = [
+    { name: "a failed read", status: "error", word: "Not loaded" },
+    { name: "a window with no spend", status: "empty", word: "None" },
+    { name: "a figure with no basis", status: "unavailable", word: "None" },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "SpendStatValueC", { stat: { key: "today", label: "Today", status: row.status } });
+    assert.equal(collectText(tree).trim(), row.word, row.name);
+    assert.equal(findNodes(tree, (n) => n.type === "span" && hasFaintClass(n) && collectText(n) === row.word).length, 1, `${row.name}: the word is faint`);
+    assert.equal(findNodes(tree, (n) => n.props["aria-hidden"] === "true").length, 0, `${row.name}: nothing is hidden from a screen reader`);
+  }
+});
+
+function hasFaintClass(node: RenderedNode): boolean {
+  return String(node.props.className ?? "").split(/\s+/).includes("text-faint");
+}
+
+test("the running-hot sentence writes its share and its multiple in the shared forms", () => {
+  const rows = [
+    { name: "a multiple", ratio: 0.81, pace: 3.1, text: "Today is 81% of the 7-day daily normal so far, on pace for 3.1\u00d7 it." },
+    { name: "a share under the cut", ratio: 0.5, pace: 0.875, text: "Today is 50% of the 7-day daily normal so far, on pace for 87.5% of it." },
+  ];
+  for (const row of rows) assert.equal(cost.getHotVerdictText(row.ratio, row.pace), row.text, row.name);
+});
+
+test("an average turn count drops a trailing .0", () => {
+  const { value } = cost.getTurnHeadline({ avg_turns_per_session: 4, turn_session_count: 10 }, 10);
+  assert.strictEqual(value, "4");
+});
+
 describe("an instrumentation card sets its figures in one stat row, never a tile grid", () => {
   const readStats = (tree: RenderedNode) => findNodes(tree, isStat).map((stat) => {
     const [label] = findNodes(stat, (n) => n.props.className === "stat-label");
@@ -1086,7 +1119,7 @@ describe("an instrumentation card sets its figures in one stat row, never a tile
         stop_reason_session_count: 412,
         turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
       },
-      stats: [["Avg turns per logged event", "3.25"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
+      stats: [["Avg turns per logged event", "3.3"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
     },
   ];
 

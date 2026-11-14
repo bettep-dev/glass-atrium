@@ -372,7 +372,7 @@ function getTileStatus(state, value, isEmpty) {
   return value === null || value === undefined ? 'unavailable' : 'ready';
 }
 
-// Non-ready tiles say why in words; the value slot stays an em dash so it never reads as measured.
+// Non-ready tiles say why in words; the value slot holds None or Not loaded so it never reads as measured.
 function getTileNote(status, unavailableNote) {
   if (status === 'error') return 'Unavailable — this payload failed to load.';
   if (status === 'empty') return 'No cost recorded in this window.';
@@ -431,11 +431,12 @@ function getDayHoursLeft(fetchedAt, timeZone) {
 // So-far clause always; the pace clause joins it only when a pace figure exists.
 function getHotVerdictText(ratio, paceRatio) {
   if (ratio === null) return '';
-  const soFar = `${(ratio * 100).toFixed(0)}% of the 7-day daily normal so far`;
+  const { formatPct } = window.UI;
+  const soFar = `${formatPct(ratio * 100)} of the 7-day daily normal so far`;
   if (paceRatio === null) return `Today is ${soFar}.`;
   const pace = paceRatio >= HOT_RATIO_CUT
-    ? `on pace for ${paceRatio.toFixed(1)}x it`
-    : `on pace for ${(paceRatio * 100).toFixed(0)}% of it`;
+    ? `on pace for ${paceRatio.toFixed(1)}\u00d7 it`
+    : `on pace for ${formatPct(paceRatio * 100)} of it`;
   return `Today is ${soFar}, ${pace}.`;
 }
 
@@ -555,7 +556,7 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     {
       key: 'cache', label: `Cache share, last ${modelDays} days`,
       status: getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty),
-      value: cacheShare.share === null ? null : `${(cacheShare.share * 100).toFixed(0)}%`,
+      value: cacheShare.share === null ? null : window.UI.formatPct(cacheShare.share * 100),
       hint: cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`,
       // the window ("30 days") stays one token; the sentence wraps around it
       info: cacheShare.totalCost === null ? null : (
@@ -608,7 +609,7 @@ function SpendStatNotesC({ stats }) {
   );
 }
 
-// stat model → one StatRow stat; a non-ready stat says why on its context line, under the unknown dash
+// stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
 function buildStatC(stat) {
   const { DayTokens } = window.UI;
   const isReady = stat.status === 'ready';
@@ -621,21 +622,13 @@ function buildStatC(stat) {
 
 // Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm lane holds the words.
 function SpendStatValueC({ stat }) {
-  const { Icon, TONE_ICON, LoadingPlaceholder } = window.UI;
+  const { Icon, TONE_ICON, LoadingPlaceholder, AbsentValue } = window.UI;
   // loading is stated once, through the shared placeholder — inline-flex keeps it on the stat's start edge
   if (stat.status === 'loading') {
     return <div className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()}/></div>;
   }
-  // the unknown dash names its cause on the context line; a failed read is named here as well
-  if (stat.status !== 'ready') {
-    const isFailed = stat.status === 'error';
-    return (
-      <span className="text-faint">
-        <span aria-hidden={isFailed ? 'true' : undefined}>—</span>
-        {isFailed && <span className="sr-only">Not loaded</span>}
-      </span>
-    );
-  }
+  // a failed read is Not loaded, a read that holds nothing is None → the context line names the cause
+  if (stat.status !== 'ready') return <AbsentValue kind={stat.status === 'error' ? 'not-loaded' : 'none'}/>;
   if (!stat.tone) return stat.value;
   const toneLabel = stat.tone === 'crit' ? 'Running hot' : 'Heading above normal';
   return (
@@ -663,7 +656,7 @@ function TrendDeltaTextC({ delta, prior, noun }) {
     <>
       <span className="mr-label-inline" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
-      <DayTokens>{`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}</DayTokens>
+      <DayTokens>{`${window.UI.formatPct(Math.abs(delta))} vs ${span}, cut at this time of day`}</DayTokens>
     </>
   );
 }
@@ -1073,8 +1066,7 @@ function getTokenStackOrder(shares) {
 }
 
 function formatTokenShareC(share) {
-  const pct = share * 100;
-  return pct > 0 && pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%`;
+  return window.UI.formatPct(share * 100, 1);
 }
 
 // Input/Output are invisible against cache read on the shared axis → their shares stated as text.
@@ -1249,7 +1241,7 @@ function CategoryShareRowC({ rows }) {
       <div
         className="flex h-2 rounded-sm overflow-hidden bg-sunken"
         role="img"
-        aria-label={rows.map((r) => `${r.label} ${(r.pct * 100).toFixed(0)}%`).join(', ')}>
+        aria-label={rows.map((r) => `${r.label} ${window.UI.formatPct(r.pct * 100)}`).join(', ')}>
         {rows.map((r) => (
           <div key={r.key} style={{ width: `${r.pct * 100}%`, background: `rgb(var(${r.colorVar}) / 0.8)` }}/>
         ))}
@@ -1258,7 +1250,7 @@ function CategoryShareRowC({ rows }) {
         {rows.map((r) => (
           <span key={r.key} className="flex items-center gap-label-inline fs-meta text-dim">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
-            {r.label} {(r.pct * 100).toFixed(0)}% · {formatUsdC(r.cost)}
+            {r.label} {window.UI.formatPct(r.pct * 100)} · {formatUsdC(r.cost)}
           </span>
         ))}
       </div>
@@ -1580,7 +1572,7 @@ function CacheHitBody({ state, days, failures, onRetry }) {
     <Stack gap="block">
       <div className="flex items-baseline gap-label">
         <div className="fs-stat font-semibold tabular-nums">
-          {pooledRate === null ? '—' : (pooledRate * 100).toFixed(1) + '%'}
+          {pooledRate === null ? <window.UI.AbsentValue kind="none"/> : window.UI.formatPct(pooledRate * 100)}
         </div>
         <div className="fs-meta text-dim">pooled hit rate</div>
         {gapLabel && <div className="fs-meta text-faint">{gapLabel}</div>}
@@ -1694,7 +1686,7 @@ function CacheHitTooltipC({ active, payload }) {
     <div className={tooltip.className} style={tooltip.style}>
       <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
       <div className="text-dim">
-        Hit rate {ratePct === null || ratePct === undefined ? 'no data' : ratePct.toFixed(1) + '%'}
+        Hit rate {ratePct === null || ratePct === undefined ? 'no data' : window.UI.formatPct(ratePct)}
       </div>
       <div className="text-dim">
         cache_read {formatTokenCompactC(row.total_cache_read)} · input {formatTokenCompactC(row.total_input)}
@@ -2174,7 +2166,7 @@ function ParseErrorTooltipC({ active, payload }) {
         Errors {formatIntC(row.error_count)} / total {formatIntC(row.total_count)}
       </div>
       <div className="text-dim">
-        Rate {row.error_ratio_pct.toFixed(2)}% · threshold {formatIntC(Math.ceil(row.threshold_count))}{row.isCrit ? ' · over threshold' : ''}
+        Rate {window.UI.formatPct(row.error_ratio_pct)} · threshold {formatIntC(Math.ceil(row.threshold_count))}{row.isCrit ? ' · over threshold' : ''}
       </div>
     </div>
   );
@@ -2318,7 +2310,7 @@ function getTurnHeadline(turns, sessionPopulation) {
   if (counted === 0) {
     return { value: null, note: 'No session in this window logged a turn count.' };
   }
-  const value = (Number(turns.avg_turns_per_session) || 0).toFixed(1);
+  const value = window.UI.formatDecimal(Number(turns.avg_turns_per_session) || 0);
   const note = counted >= sessionPopulation
     ? `turns per session, across ${formatIntC(counted)} sessions`
     : `turns per session, over the ${formatIntC(counted)} of ${formatIntC(sessionPopulation)} sessions that logged a turn count`;
@@ -2330,7 +2322,7 @@ function getTurnHeadline(turns, sessionPopulation) {
 function TurnAggregateRow({ turns, sessionPopulation }) {
   const headline = getTurnHeadline(turns, sessionPopulation);
   const secondary = [
-    { label: 'Avg turns per logged event', value: (Number(turns.avg_turns) || 0).toFixed(2) },
+    { label: 'Avg turns per logged event', value: window.UI.formatDecimal(Number(turns.avg_turns) || 0) },
     { label: 'Most turns in one event', value: formatIntC(Number(turns.max_turns) || 0) },
     { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
   ];
@@ -2393,10 +2385,10 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
             <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
               {formatIntC(sessions)}
               {sessionShare !== null && (
-                <span className="text-dim"> · {(sessionShare * 100).toFixed(0)}%</span>
+                <span className="text-dim"> · {window.UI.formatPct(sessionShare * 100, 0)}</span>
               )}
             </TableCell>
-            <TableCell view={view} textRole="meta" label="Event share" isNumeric>{(pct * 100).toFixed(1)}%</TableCell>
+            <TableCell view={view} textRole="meta" label="Event share" isNumeric>{window.UI.formatPct(pct * 100, 1)}</TableCell>
           </TableRow>
         );
       })}
