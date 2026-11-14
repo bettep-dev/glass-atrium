@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 
 import Fastify, { type FastifyInstance, type InjectOptions } from "fastify";
 
-import { registerRemoteGate, type RemoteAuditEntry, type RemoteAuditEvent } from "../src/server/remote/gate.js";
+import { getAdmittedDevice, registerRemoteGate, type RemoteAuditEntry, type RemoteAuditEvent } from "../src/server/remote/gate.js";
 import type { RouteClass } from "../src/server/remote/route-classes.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
@@ -23,7 +23,9 @@ const CLASSES = new Map<string, RouteClass>([
   ["POST /api/queue/owner/items/:id/answer", "page"],
   ["POST /api/queue/items", "agent"],
   ["POST /api/remote/registration", "remote-admin"],
-  ["POST /api/remote/register", "page"],
+  ["POST /api/remote/register", "remote-pre-auth"],
+  ["GET /api/remote/session", "remote-device"],
+  ["POST /api/remote/logout", "remote-device"],
 ]);
 
 interface Harness {
@@ -74,6 +76,11 @@ async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Ha
   app.post("/api/queue/items", record("items"));
   app.post("/api/remote/registration", record("registration"));
   app.post("/api/remote/register", record("register"));
+  app.get("/api/remote/session", async (request) => {
+    handled.push("session");
+    return { id: String(getAdmittedDevice(request)?.id) };
+  });
+  app.post("/api/remote/logout", record("logout"));
   app.get("/api/framed", async (_request, reply) => {
     reply.header("content-security-policy", "sandbox; frame-ancestors 'self'");
     return { ok: true };
@@ -191,6 +198,23 @@ describe("route classes", () => {
   }
 });
 
+describe("remote-device routes", () => {
+  test("a registered device reaches them, and the handler reads the device the gate admitted", async () => {
+    const harness = await buildHarness();
+    harness.issueDevice();
+    const presented = harness.issueDevice();
+    const read = await send(harness, { method: "GET", url: "/api/remote/session", headers: asDevice(presented) });
+    const logout = await send(harness, { method: "POST", url: "/api/remote/logout", headers: asPageMutation(presented) });
+    assert.deepEqual([read.statusCode, read.json(), logout.statusCode, harness.handled], [200, { id: "2" }, 200, ["session", "logout"]]);
+  });
+
+  test("an unregistered request gets 401 from them", async () => {
+    const harness = await buildHarness();
+    const response = await send(harness, { method: "GET", url: "/api/remote/session", headers: { host: HOST } });
+    assert.deepEqual([response.statusCode, harness.handled], [401, []]);
+  });
+});
+
 test("a denied route is audited with the device as actor", async () => {
   const harness = await buildHarness();
   const presented = harness.issueDevice();
@@ -250,15 +274,24 @@ describe("mutations from a registered device", () => {
 });
 
 describe("rate limits", () => {
-  test("an address with 20 failed session checks gets 429 for 15 minutes, even with a valid device", async () => {
+  test("an address presenting 20 unknown device cookies gets 429 for 15 minutes, even with a valid device", async () => {
     const harness = await buildHarness();
     const presented = harness.issueDevice();
     for (let index = 0; index < 20; index += 1) {
-      await send(harness, { method: "GET", url: "/api/health", headers: { host: HOST } });
+      await send(harness, { method: "GET", url: "/api/health", headers: asDevice(`unknown-${index}-${"x".repeat(32)}`) });
     }
     assert.equal((await send(harness, { method: "GET", url: "/api/health", headers: asDevice(presented) })).statusCode, 429);
     harness.clock.now += 15 * 60_000 + 1;
     assert.equal((await send(harness, { method: "GET", url: "/api/health", headers: asDevice(presented) })).statusCode, 200);
+  });
+
+  test("requests with no device cookie never block the address, so its sign-in and code POST still answer", async () => {
+    const harness = await buildHarness();
+    for (let index = 0; index < 30; index += 1) {
+      await send(harness, { method: "GET", url: "/api/health", headers: { host: HOST } });
+    }
+    const register = await send(harness, { method: "POST", url: "/api/remote/register", headers: { host: HOST, "sec-fetch-site": "same-origin" }, payload: {} });
+    assert.deepEqual([register.statusCode, harness.handled], [200, ["register"]]);
   });
 
   test("the 61st pre-auth request from one address in a minute gets 429", async () => {

@@ -38,8 +38,8 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     reviewer: "glass-atrium-sec-guard",
     stream: "S3",
     cid: "2026-11-14T1640_lan-route-classes_a93f",
-    rowCount: 98,
-    sha256: "f9fde5d98f1f33f74db6e2246425c05a42a90e8d87fed9f17aa51ff41f36d252",
+    rowCount: 102,
+    sha256: "3d234a90e3476fabcf110784cedbfbc535753e1bde142da98578bc95dbcfc61a",
   },
 ];
 
@@ -142,7 +142,16 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /api/remote/devices", cls: "remote-admin", reason: "loopback only; same Sec-Fetch-Site rule although a GET; returns id, label, created, last seen only" },
   { route: "DELETE /api/remote/devices/:id", cls: "remote-admin", reason: "loopback only; same rule, decimal id, no body; remote.revoke after the revoke, audit failure never blocks it; one device_not_found" },
   { route: "POST /api/remote/devices/revoke-all", cls: "remote-admin", reason: "loopback only; same rule, empty body; remote.revoke with the count only" },
+  { route: "POST /api/remote/register", cls: "remote-pre-auth", reason: "remote only; remote Host, pre-auth limit, page-origin signal, 3/min/address and 10/min total before body parse, 1 KiB strict schema; one opaque refusal" },
+  { route: "GET /api/remote/session", cls: "remote-device", reason: "remote only; the caller's CSRF value, id and label only; fetch metadata, when present, same-origin; no-store" },
+  { route: "POST /api/remote/logout", cls: "remote-device", reason: "remote only; page origin + CSRF, empty body; revokes the gate's admitted device only; one Set-Cookie expiring it" },
+  { route: "POST /api/remote/off", cls: "remote-device", reason: "remote only; page origin + CSRF, empty body; revokes every device, caller included, and closes the listener even on a failed revoke or audit" },
 ];
+
+/** `METHOD /path` keys the remote gate answers without a registered device → only rows the reviewer classed remote-pre-auth. */
+export const REMOTE_PRE_AUTH_ROUTES: ReadonlySet<string> = new Set(
+  REVIEWED_ROUTES.filter((entry) => entry.cls === "remote-pre-auth").map((entry) => entry.route),
+);
 
 const CLASS_BY_ROUTE: ReadonlyMap<string, RouteClass> = new Map(REVIEWED_ROUTES.map((entry) => [entry.route, entry.cls]));
 

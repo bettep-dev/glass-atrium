@@ -42,7 +42,7 @@ export interface RemoteGateDeps {
   readonly getPageOrigins: () => ReadonlySet<string>;
   readonly findDevice: (presented: string) => Promise<DeviceSummary | null>;
   readonly getRouteClass: (method: string, routePath: string) => RouteClass | null;
-  /** `METHOD /path` keys answered without a registered device (sign-in page, its assets, the code POST) */
+  /** `METHOD /path` keys answered without a registered device → route-classes.ts REMOTE_PRE_AUTH_ROUTES */
   readonly preAuthRoutes: ReadonlySet<string>;
   readonly audit: RemoteAuditWriter;
   /** shared with the loopback revoke routes → a cut-off device loses its open sockets at once */
@@ -63,6 +63,7 @@ interface DeviceState {
 }
 
 const HSTS = "max-age=604800";
+const STATIC_WILDCARD = "/*";
 const ACTOR_MAX_LENGTH = 64;
 // an unmatched path is caller-chosen → bounded before it reaches the audit payload
 const ROUTE_MAX_LENGTH = 256;
@@ -99,11 +100,12 @@ async function admitRequest(request: FastifyRequest, reply: FastifyReply, deps: 
     return isFromPage ? undefined : refuse(reply, 403, "not_page_origin");
   }
   const presented = request.cookies[DEVICE_COOKIE.NAME];
-  const device = presented === undefined || presented.length === 0 ? null : await deps.findDevice(presented);
-  if (presented === undefined || device === null) {
+  if (presented === undefined || presented.length === 0) return refuse(reply, 401, "not_registered");
+  const device = await deps.findDevice(presented);
+  if (device === null) {
+    // an absent cookie is a first visit, not a failed credential → only a presented, unknown one counts and is audited
     limiters.failedSession.hit(address);
-    // an absent cookie is a first visit, not a failed credential → only a presented, unknown one is audited
-    if (presented !== undefined && presented.length > 0) recordEvent(request, deps.audit, { actor: getRemoteActor(null, address), actionKind: "remote.auth_failure" });
+    recordEvent(request, deps.audit, { actor: getRemoteActor(null, address), actionKind: "remote.auth_failure" });
     return refuse(reply, 401, "not_registered");
   }
   return admitDevice(request, reply, { deps, limiters, device, presented });
@@ -116,7 +118,10 @@ async function admitDevice(
 ): Promise<FastifyReply | undefined> {
   const { deps, limiters, device, presented } = input;
   const routePath = request.routeOptions.url;
-  if (routePath === undefined || deps.getRouteClass(request.method, routePath) !== "page") {
+  // an /api/ path no route claims falls through to the static wildcard → never a page file, refused like an unknown route
+  const isUnclaimedApi = routePath === STATIC_WILDCARD && request.url.startsWith("/api/");
+  const routeClass = routePath === undefined || isUnclaimedApi ? null : deps.getRouteClass(request.method, routePath);
+  if (routeClass !== "page" && routeClass !== "remote-device") {
     recordEvent(request, deps.audit, { actor: getRemoteActor(device, getSourceAddress(request)), actionKind: "remote.route_denied" });
     return refuse(reply, 403, "route_not_available");
   }
@@ -166,6 +171,11 @@ function recordEvent(request: FastifyRequest, audit: RemoteAuditWriter, event: {
   audit.insertEvent({ ...event, result: "blocked", payload }).catch((error: unknown) => {
     request.log.warn({ err: error, actionKind: event.actionKind }, "remote audit event not recorded");
   });
+}
+
+/** The device the gate admitted this request for; null on loopback, pre-auth and refused requests. */
+export function getAdmittedDevice(request: FastifyRequest): DeviceSummary | null {
+  return ADMITTED.get(request)?.device ?? null;
 }
 
 /** `remote:<device id | ->@<source address>` → fits audit_log.actor (64) for an IPv4 source. */

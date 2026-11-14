@@ -40,6 +40,7 @@ type ListenTarget = { readonly target: Target } | { readonly reason: ListenReaso
 
 export class RemoteListenerController {
   #current: OpenListener | null = null;
+  #isTurnedOff = false;
   #queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: RemoteControllerDeps) {}
@@ -47,6 +48,12 @@ export class RemoteListenerController {
   /** One network check; checks run one at a time and never reject → safe to call from a timer. */
   sync(): Promise<void> {
     return this.#enqueue(() => this.#sync());
+  }
+
+  /** A device's off: closes now and every later check stays closed until the process restarts. */
+  turnOff(): Promise<void> {
+    this.#isTurnedOff = true;
+    return this.#enqueue(() => this.#close("turned_off"));
   }
 
   stop(): Promise<void> {
@@ -59,6 +66,7 @@ export class RemoteListenerController {
   }
 
   async #sync(): Promise<void> {
+    if (this.#isTurnedOff) return;
     try {
       const found = await this.#getTarget();
       if (!("target" in found)) return await this.#close(found.reason);

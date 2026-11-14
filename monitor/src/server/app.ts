@@ -17,7 +17,7 @@ import { type ListenerContext, buildHostAllowlistHook, setListenerContext } from
 import { type RemoteAdminDeps, registerRemoteAdminRoutes } from "./remote/admin-routes.js";
 import { type RemoteGateDeps, registerRemoteGate } from "./remote/gate.js";
 import { type RemoteTls, getRemoteServerOptions, setRemoteSocketLimits } from "./remote/listener.js";
-import { type RemoteRegistrationDeps, registerRemoteDeviceRoutes } from "./remote/routes.js";
+import { type RemoteDeviceDeps, type RemoteRegistrationDeps, registerRemoteDeviceRoutes } from "./remote/routes.js";
 import type { QueueRouteOptions } from "./routes/queue.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -75,6 +75,7 @@ export interface RemoteAppOptions {
   readonly listener: ListenerContext;
   readonly gate: RemoteGateDeps;
   readonly registration: RemoteRegistrationDeps;
+  readonly device: RemoteDeviceDeps;
   readonly queue?: QueueRouteOptions;
 }
 
@@ -91,7 +92,8 @@ export async function buildRemoteApp(options: RemoteAppOptions): Promise<Fastify
   // same parser set as loopback → a cross-origin text/plain simple request gets 415
   app.removeContentTypeParser("text/plain");
   await registerSurface(app, options.queue);
-  await registerRemoteDeviceRoutes(app, { ...options.registration, audit: options.gate.audit, ...(options.gate.now === undefined ? {} : { now: options.gate.now }) });
+  const { audit, connections, now } = options.gate;
+  await registerRemoteDeviceRoutes(app, { registration: options.registration, device: options.device, audit, connections, ...(now === undefined ? {} : { now }) });
   return app;
 }
 

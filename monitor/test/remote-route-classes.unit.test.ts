@@ -11,6 +11,7 @@ import { disconnectPrisma } from "../src/server/db.js";
 import { registerRemoteAdminRoutes } from "../src/server/remote/admin-routes.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
+import { registerRemoteDeviceRoutes } from "../src/server/remote/routes.js";
 import {
   REVIEWED_ROUTES,
   ROUTE_CLASS_SIGNOFFS,
@@ -33,7 +34,7 @@ const SIGNED_REMOTE_LINES = [
   "POST /api/remote/off remote-device",
 ];
 
-/** Every `METHOD path` the production surface registers, HEAD included as Fastify exposes it. */
+/** Every `METHOD path` the loopback and remote assemblies register, HEAD included as Fastify exposes it. */
 async function collectLiveRoutes(): Promise<Set<string>> {
   const app = Fastify({ logger: false });
   const routes = new Set<string>();
@@ -46,6 +47,12 @@ async function collectLiveRoutes(): Promise<Set<string>> {
     await registerRemoteAdminRoutes(app, {
       codes: new RegistrationCodes(),
       devices: { list: async () => [], revoke: async () => false, revokeAll: async () => [] },
+      connections: new DeviceConnections(),
+      audit: { insertEvent: async () => undefined },
+    });
+    await registerRemoteDeviceRoutes(app, {
+      registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
+      device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
       connections: new DeviceConnections(),
       audit: { insertEvent: async () => undefined },
     });

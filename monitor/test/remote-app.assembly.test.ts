@@ -12,7 +12,7 @@ import "dotenv/config";
 
 import type { FastifyInstance } from "fastify";
 
-import { buildRemoteApp } from "../src/server/app.js";
+import { buildApp, buildRemoteApp } from "../src/server/app.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
@@ -52,6 +52,7 @@ before(async () => {
       audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
     },
     registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
+    device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
     queue: {
       port: 16145,
       homeDir: path.join(fixtureRoot, "home"),
@@ -116,6 +117,22 @@ describe("routes owned by the loopback listener", () => {
       return app.hasRoute({ method: method as "GET", url });
     });
     assert.deepEqual(present, []);
+  });
+
+  test("the loopback app registers none of the remote-pre-auth or remote-device routes", async () => {
+    const remoteOnly = REVIEWED_ROUTES.filter((entry) => entry.cls === "remote-pre-auth" || entry.cls === "remote-device").map((entry) => entry.route);
+    assert.ok(remoteOnly.length > 0, "the table classes remote-only routes");
+    const loopback = await buildApp(16145);
+    try {
+      await loopback.ready();
+      const present = remoteOnly.filter((route) => {
+        const [method = "", url = ""] = route.split(" ");
+        return loopback.hasRoute({ method: method as "GET", url });
+      });
+      assert.deepEqual(present, []);
+    } finally {
+      await loopback.close();
+    }
   });
 });
 

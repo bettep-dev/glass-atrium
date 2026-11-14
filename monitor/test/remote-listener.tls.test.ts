@@ -61,6 +61,7 @@ async function openStandIn(
       audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
     },
     registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
+    device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
   });
   await app.listen({ host: STAND_IN, port: 0 });
   port = (app.server.address() as AddressInfo).port;
@@ -179,6 +180,7 @@ test("the opener admits only the bound address and the .local name at the remote
       connections: new DeviceConnections(),
     },
     registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
+    device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
   });
   const first = await open(STAND_IN, tls);
   const rows = [

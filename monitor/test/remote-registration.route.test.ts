@@ -16,8 +16,7 @@ import { DeviceConnections } from "../src/server/remote/connections.js";
 import { DEVICE, createDevice, findActiveDevice } from "../src/server/remote/devices.js";
 import type { RemoteAuditEvent } from "../src/server/remote/gate.js";
 import { REGISTRATION_CODE, RegistrationCodes } from "../src/server/remote/registration-code.js";
-import { getRouteClass } from "../src/server/remote/route-classes.js";
-import { REMOTE_PRE_AUTH_ROUTES } from "../src/server/remote/routes.js";
+import { REMOTE_PRE_AUTH_ROUTES, getRouteClass } from "../src/server/remote/route-classes.js";
 import { DEVICE_COOKIE } from "../src/server/remote/session.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { createStandInTls } from "./lib/remote-tls.js";
@@ -36,6 +35,7 @@ let clock = Date.parse("2026-11-14T06:00:00.000Z");
 const now = () => clock;
 let codes = new RegistrationCodes({ now });
 let db: Prisma.TransactionClient = getPrisma();
+let isStoreDown = false;
 const events: RemoteAuditEvent[] = [];
 let app: FastifyInstance;
 let tlsDir = "";
@@ -64,7 +64,11 @@ before(async () => {
       },
       now,
     },
-    registration: { codes: { consume: (entry) => codes.consume(entry) }, createDevice: (label) => createDevice(db, label) },
+    registration: {
+      codes: { consume: (entry) => codes.consume(entry) },
+      createDevice: (label) => (isStoreDown ? Promise.reject(new Error("device store unavailable")) : createDevice(db, label)),
+    },
+    device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
   });
   await app.ready();
 });
@@ -74,6 +78,7 @@ beforeEach(() => {
   clock += 60 * 60_000;
   codes = new RegistrationCodes({ now });
   events.length = 0;
+  isStoreDown = false;
 });
 
 after(async () => {
@@ -137,13 +142,21 @@ describe("an accepted code", () => {
     });
   });
 
-  test("past the active-device cap issues no cookie", async () => {
+  test("past the active-device cap issues no cookie and audits the spent code as a refused registration", async () => {
     await runRolledBack(async () => {
       for (let index = 0; index < DEVICE.MAX_ACTIVE; index += 1) await createDevice(db, `Device ${index}`);
       const response = await postRegistration({ code: codes.open(), label: LABEL });
       assert.deepEqual([response.statusCode, JSON.parse(response.body)], [409, { error: "device_limit_reached" }]);
       assert.equal(response.headers["set-cookie"], undefined);
+      assert.deepEqual(getEventRows(), [["remote.registration_failure", "blocked", `remote:-@${PHONE}`]]);
     });
+  });
+
+  test("a device store failure issues no cookie and audits the spent code as an errored registration", async () => {
+    isStoreDown = true;
+    const response = await postRegistration({ code: codes.open(), label: LABEL });
+    assert.deepEqual([response.statusCode, response.headers["set-cookie"]], [500, undefined]);
+    assert.deepEqual(getEventRows(), [["remote.registration_failure", "error", `remote:-@${PHONE}`]]);
   });
 });
 

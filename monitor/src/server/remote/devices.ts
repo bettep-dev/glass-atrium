@@ -6,6 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Prisma } from "../../generated/prisma/client.js";
 
 export const DEVICE = {
+  // plan 44077 conditions table, "Device cap" row (simplified: 10)
   MAX_ACTIVE: 10,
   // letters (any script), digits, space, hyphen, underscore, period → no markup or quote can reach the page
   LABEL_PATTERN: /^[\p{L}\p{N} ._-]{1,32}$/u,
@@ -32,7 +33,9 @@ export type DeviceCreation =
   | { readonly outcome: "cap_reached" };
 
 /**
- * Registers a device after an accepted registration code.
+ * Registers a device after an accepted registration code, usable at once — no Mac confirmation step:
+ * plan 44077 "Registration" → "The owner's act" (entering a code shown only on the Mac's own page is the owner's act;
+ * the new device appears in the Mac's devices list).
  * Cap check and insert are two statements → the single-use code keeps registrations from racing past the cap.
  */
 export async function createDevice(db: DeviceDb, label: string): Promise<DeviceCreation> {
