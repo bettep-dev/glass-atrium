@@ -866,10 +866,10 @@ function getIconLooks(): IconLook[] {
     });
 }
 
-// the colour var(--tint-select) computes to on this page → compared with a held icon button's fill
-function getTintSelect(): string {
+// the colour a fill token (`--tint-select`, `--tint-fill`) computes to on this page → compared with an icon button's fill
+function getTokenFill(token: string): string {
   const probe = document.createElement("div");
-  probe.style.background = "var(--tint-select)";
+  probe.style.background = `var(${token})`;
   document.body.append(probe);
   const fill = getComputedStyle(probe).backgroundColor;
   probe.remove();
@@ -1764,7 +1764,8 @@ describe("queue page on the mockup fixtures", () => {
     }
   });
 
-  test("an icon button hovered takes the sunken fill and an ink glyph, held the selection tint, and by keyboard the ring, never an edge", async () => {
+  // the hover square is the pointer's only shape cue once the edge is gone → the selection tint a person can see, held one step stronger
+  test("an icon button hovered takes the selection tint and an ink glyph, held the stronger tag fill, and by keyboard the ring, never an edge", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await selectRow(page, 103);
@@ -1775,7 +1776,7 @@ describe("queue page on the mockup fixtures", () => {
       return { fill: look.fill, glyph: look.label, isEdgeless };
     };
     const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
-    const tint = await page.evaluate(getTintSelect);
+    const [tint, tintFill] = await Promise.all(["--tint-select", "--tint-fill"].map((token) => page.evaluate(getTokenFill, token)));
     await button.hover();
     const hovered = await read();
     await page.mouse.down();
@@ -1792,8 +1793,8 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual({ hovered, held, focused }, {
-      hovered: { fill: tokens.sunken, glyph: tokens.ink, isEdgeless: true },
-      held: { fill: tint, glyph: tokens.ink, isEdgeless: true },
+      hovered: { fill: tint, glyph: tokens.ink, isEdgeless: true },
+      held: { fill: tintFill, glyph: tokens.ink, isEdgeless: true },
       focused: { isVisible: true, outline: `rgb(${ringToken}) solid 2px`, offset: "2px" },
     });
   });
@@ -1871,8 +1872,8 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest, hovered or held;
-  // held under the pointer it takes the selection tint, never the ghost's hover fill
-  test("Add images draws no edge of its own inside the order box, at rest or under the pointer, and takes the selection tint while held", async () => {
+  // under the pointer it takes the icon button's fills: the selection tint, held the stronger tag fill
+  test("Add images draws no edge of its own inside the order box, at rest or under the pointer, and takes the selection tint hovered and the tag fill held", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const add = page.locator(".queue-orders .queue-compose-add");
@@ -1881,12 +1882,15 @@ describe("queue page on the mockup fixtures", () => {
       await Promise.all(element.getAnimations().map((animation) => animation.finished));
       const style = getComputedStyle(element);
       const alpha = style.borderTopColor.startsWith("rgba") ? Number(style.borderTopColor.split(",").at(-1)?.replace(")", "")) : 1;
-      const tint = document.createElement("div");
-      tint.style.background = "var(--tint-select)";
-      element.parentElement?.append(tint);
-      const isTinted = style.backgroundColor === getComputedStyle(tint).backgroundColor;
-      tint.remove();
-      return { isEdgeless: parseFloat(style.borderTopWidth) === 0 || alpha === 0, isTinted };
+      const fills = ["--tint-select", "--tint-fill"].map((token) => {
+        const probe = document.createElement("div");
+        probe.style.background = `var(${token})`;
+        element.parentElement?.append(probe);
+        const fill = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return [token, fill];
+      });
+      return { isEdgeless: parseFloat(style.borderTopWidth) === 0 || alpha === 0, fill: fills.find(([, fill]) => fill === style.backgroundColor)?.[0] ?? null };
     });
     const rest = await getLook();
     await add.hover();
@@ -1896,9 +1900,9 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual({ rest, hovered, held }, {
-      rest: { isEdgeless: true, isTinted: false },
-      hovered: { isEdgeless: true, isTinted: false },
-      held: { isEdgeless: true, isTinted: true },
+      rest: { isEdgeless: true, fill: null },
+      hovered: { isEdgeless: true, fill: "--tint-select" },
+      held: { isEdgeless: true, fill: "--tint-fill" },
     });
   });
 

@@ -1300,10 +1300,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--faint));
 	cursor: not-allowed;
 }
-/* a glyph button: no edge in any state (the ghost's transparent one); hover = the ghost's sunken fill + ink glyph; held = the selection tint;
+/* a glyph button: no edge in any state (the ghost's transparent one) → the hover square is the pointer's only shape cue, so it takes
+   the selection tint a person can see (the sunken fill is 1.05:1 on the card) + ink glyph; held = the tag fill, one step stronger;
    disabled = a faint glyph on no fill */
-.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"]):active {
+.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"]):hover {
 	background: var(--tint-select);
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"]):active {
+	background: var(--tint-fill);
 	color: rgb(var(--ink));
 }
 .queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]),
