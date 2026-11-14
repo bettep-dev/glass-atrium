@@ -77,7 +77,8 @@ const ORDER_TO = ["gersona", "yoaida"];
 const DESK_STATES: QueueState[] = [
   { nn: "01", name: "rest", viewports: [...VIEWPORTS, OWNER_WINDOW, MIN_WINDOW] },
   { nn: "02", name: "decision-picked", setUp: (page) => pickWithNote(page) },
-  { nn: "03", name: "report", viewports: [...VIEWPORTS, OWNER_WINDOW], setUp: (page) => selectRow(page, 101) },
+  // §18.5 reads the panes with a report open at 1280 too → the minimum beside §18.4's sizes
+  { nn: "03", name: "report", viewports: [...VIEWPORTS, OWNER_WINDOW, MIN_WINDOW], setUp: (page) => selectRow(page, 101) },
   {
     nn: "04", name: "rail-ticked",
     setUp: async (page) => {
@@ -336,6 +337,15 @@ function getRankCloseUps({ rank, closeUp, target }: { rank: string; closeUp: str
 // spec §18.4 29's other close-ups, each in both themes
 const PARTS: CloseUpState[] = [
   { nn: "29", name: "rail-ticked", closeUp: ".queue-sessions", setUp: (page) => tickSessions(page, ["gersona"]) },
+  // §18.4 29's live and ended rows on one rail: a ticked live row and the ended rows under the open Ended band
+  {
+    nn: "29", name: "rail-ended-open", closeUp: ".queue-sessions",
+    setUp: async (page) => {
+      await tickSessions(page, ["gersona"]);
+      await page.locator(".queue-rail-band .disclosure").click();
+      await page.locator('.queue-rail-band .disclosure[aria-expanded="true"]').waitFor();
+    },
+  },
   { nn: "29", name: "list-band-rows", closeUp: ".queue-list > .card-body" },
   { nn: "29", name: "sheet-report", closeUp: ".queue-sheet", setUp: (page) => selectRow(page, 101) },
   { nn: "29", name: "option-recommended", closeUp: ".queue-sheet .queue-option:has-text('Recommended')", setUp: (page) => selectRow(page, 103) },
@@ -1265,7 +1275,13 @@ describe("queue page on the mockup fixtures", () => {
       const [ok, faint] = [paint("--ok"), paint("--faint")];
       const rows = [...document.querySelectorAll<HTMLElement>(".queue-rail-row")];
       const rect = (row: Element, selector: string) => row.querySelector(selector)?.getBoundingClientRect();
-      const starts = [".queue-rail-all", ".queue-rail-band .disclosure > span:last-child", ".queue-rail-name-text"].flatMap((selector) => [...document.querySelectorAll(selector)].map((node) => Math.round(node.getBoundingClientRect().left)));
+      // where each label's text is painted, not its box → a label centred inside a column-wide box is caught
+      const getTextLeft = (node: Element) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return Math.round(range.getBoundingClientRect().left);
+      };
+      const starts = [".queue-rail-all", ".queue-rail-band .disclosure > span:last-child", ".queue-rail-name-text"].flatMap((selector) => [...document.querySelectorAll(selector)].map(getTextLeft));
       return {
         outOfOrder: rows.filter((row) => {
           const [box, mark, name] = [rect(row, ".queue-rail-box"), rect(row, ".queue-rail-mark"), rect(row, ".queue-rail-name-text")];

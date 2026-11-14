@@ -527,8 +527,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-rail-band > .disclosure > .disclosure-chevron {
 	justify-self: center;
 }
+/* a button centres its text → start, so the label starts on the names' x */
 .queue-rail-band > .disclosure > span {
 	grid-column: 3;
+	text-align: start;
 }
 .queue-rail-box {
 	grid-column: 1;
