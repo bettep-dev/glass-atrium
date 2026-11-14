@@ -1223,6 +1223,15 @@ describe("the page re-reads itself", () => {
   ];
   for (const row of offViews) test(`off-view note: ${row.name}`, () => assert.deepEqual(call("getOffViewQ", row.body ?? listBody, row.rows), row.expected));
 
+  // spec §4.4: an arrival is tracked until its row has been in the shown list's visible part
+  const seen = [
+    { name: "a row inside the visible part has been seen", rows: [rowAt(7, 400)], expected: [7] },
+    { name: "a row cut by an edge shows, so has been seen", rows: [rowAt(7, 790), rowAt(8, 140)], expected: [7, 8] },
+    { name: "a row wholly past an edge has not been seen", rows: [rowAt(7, 820), rowAt(8, 112)], expected: [] },
+    { name: "a list put away by an open sheet shows no row", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: [] },
+  ];
+  for (const row of seen) test(`arrival seen: ${row.name}`, () => assert.deepEqual(call("getInViewIdsQ", row.body ?? listBody, row.rows), row.expected));
+
   test("the off-view note says how many New rows sit on which side, and its Show moves to the nearest", () => {
     const shown: number[] = [];
     const queue = { ...withList(buildQueue(), [buildItem()]), status: "New report from yoaida: Nightly sweep done" };
@@ -1298,18 +1307,6 @@ describe("the page re-reads itself", () => {
     assert.deepEqual(delays, [15_000, 15_000, 15_000, 60_000, 15_000]);
   });
 
-  test("an arrived row carries the solid New badge at the start of its meta line, and its name leads with New", () => {
-    const row = call<{ id: number }>("getSingleRowQ", buildItem());
-    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
-    const rowOf = (isNew: boolean) => {
-      const [option] = findNodes(render("QueueRowQ", { row, isSelected: false, isNew, view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
-      return { label: String(option?.props["aria-label"]), badges: findNodes(option as RenderedNode, (node) => node.props?.atom === "Badge" && node.props.fill === "solid").map((node) => collectText(node)) };
-    };
-    assert.deepEqual(rowOf(true).badges, ["New"]);
-    assert.match(rowOf(true).label, /^New, Decision from /);
-    assert.deepEqual(rowOf(false).badges, []);
-    assert.doesNotMatch(rowOf(false).label, /^New/);
-  });
 });
 
 describe("drafts kept in session storage", () => {
@@ -2729,11 +2726,22 @@ describe("In delivery rows", () => {
     assert.deepEqual(call("getRowFactsQ", { item: copies[0], copies }, false), [{ text: "Order" }, { text: "Not yet" }]);
   });
 
-  test("a row's meta line puts ` · ` between the session name and its facts", () => {
-    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+  // spec §4.2: who, then what — the name in its own column ahead of the title, the meta line under the title holding the facts alone
+  test("a row's session name stands in its own column before the title, and its meta line holds only its facts, ` · ` between them", () => {
+    const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
     const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
-    const [meta] = findNodes(tree, (node) => node.props?.className === "queue-row-meta");
-    assert.match(collectText(meta as RenderedNode), /gersona · 2 options/);
+    const [option] = findNodes(tree, (node) => node.props?.role === "option");
+    const slots = (option?.children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [String((child as RenderedNode).props?.className ?? "")] : []));
+    const [who] = byClass(tree, "queue-row-who");
+    const [meta] = byClass(tree, "queue-row-meta");
+    assert.deepEqual([slots.slice(0, 3), collectText(who as RenderedNode)], [["queue-row-who", "queue-row-title", "queue-row-meta"], "gersona"]);
+    assert.match(collectText(meta as RenderedNode).replace(/\s+/g, " ").trim(), /^work-dev · 2 options \d/);
+  });
+
+  test("with exactly one session ticked a row paints no name column", () => {
+    const view = { isNameShown: false, isAccountShown: false, tabStopId: 41 };
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
+    assert.deepEqual([byClass(tree, "queue-row-who").length, collectText(tree).includes("gersona")], [0, false]);
   });
 });
 

@@ -876,15 +876,21 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	top: 0;
 	z-index: 1;
 }
-/* a row: title 14/600 (two lines at most) over its meta line; 68 with a one-line title, 88 with two */
+/* a row (spec §4.2): who, then what — the session name in a 104 column, the title 14/600 (two lines at most) over its meta line beside it;
+   68 with a one-line title, 88 with two. 12 after the name, 8 before the chevron */
 .queue-row {
+	--queue-name-w: 104px;
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) 16px;
-	column-gap: var(--space-2);
+	grid-template-columns: var(--queue-name-w) minmax(0, 1fr) 16px;
+	column-gap: var(--space-3);
 	row-gap: var(--space-1);
 	align-items: center;
 	padding: var(--space-3) var(--card-pad);
 	cursor: pointer;
+}
+/* one session ticked → the head names it, so no name column: the titles start on the bands' inset */
+.queue-row:not(:has(> .queue-row-who)) {
+	grid-template-columns: minmax(0, 1fr) 16px;
 }
 /* the hairline is drawn inside the row → a row stays 68 or 88 */
 .queue-row + .queue-row {
@@ -916,7 +922,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	overflow-wrap: anywhere;
 }
 .queue-row-title {
-	grid-column: 1;
+	grid-area: 1 / -3 / 2 / -2;
 	display: -webkit-box;
 	-webkit-box-orient: vertical;
 	-webkit-line-clamp: 2;
@@ -927,7 +933,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--ink));
 }
 .queue-row-meta {
-	grid-column: 1;
+	grid-area: 2 / -3 / 3 / -2;
 	display: flex;
 	align-items: center;
 	gap: var(--space-1_5);
@@ -935,17 +941,26 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-size: var(--fs-meta);
 	line-height: var(--lh-row);
 }
+/* the name on the title's first line, 13/600 ink; an unregistered name's mark under it in 13/400 dim */
 .queue-row-who {
-	flex: 0 1 auto;
+	grid-area: 1 / 1 / 3 / 2;
+	align-self: start;
+	display: flex;
+	flex-direction: column;
 	min-width: 0;
+	font-size: var(--fs-meta);
 	font-weight: 600;
+	line-height: var(--lh-row);
 	color: rgb(var(--ink));
-	white-space: nowrap;
+}
+.queue-row-name {
 	overflow: hidden;
+	white-space: nowrap;
 	text-overflow: ellipsis;
 }
-.queue-row-who:empty {
-	display: none;
+.queue-row-dir {
+	font-weight: 400;
+	color: rgb(var(--dim));
 }
 .queue-row-facts {
 	display: flex;
@@ -965,9 +980,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-row-facts > .pill {
 	flex: none;
 }
-.queue-row-sep {
-	color: rgb(var(--dim));
-}
 .queue-row-age {
 	margin-inline-start: auto;
 	color: rgb(var(--faint));
@@ -979,8 +991,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--dim));
 }
 .queue-row-chevron {
-	grid-column: 2;
-	grid-row: 1 / span 2;
+	grid-area: 1 / -2 / 3 / -1;
+	margin-inline-start: calc(var(--space-2) - var(--space-3));
 	color: transparent;
 }
 .queue-row:hover .queue-row-chevron {

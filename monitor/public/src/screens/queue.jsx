@@ -627,7 +627,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const ticks = usePageTickQ({ readList, readResumes, sessions, orders, setStatus, onReadQueueCount });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const setImages = useCallbackQ((id, update) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], images: update(prev[id]?.images ?? []) } })), []);
-	// opening a row or focusing it is the owner seeing it → its New mark goes (spec §4.4)
+	// opening a row, focusing it or its row showing in the list is the owner seeing it → the arrival ends (spec §4.4)
 	const setSeen = useCallbackQ((id) => setList((prev) => (prev.newIds.includes(id) ? { ...prev, newIds: prev.newIds.filter((other) => other !== id) } : prev)), []);
 	const selectRow = useCallbackQ((id) => { openItem(id); setSeen(id); }, [openItem, setSeen]);
 	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders });
@@ -731,7 +731,7 @@ async function getPageReadQ({ readList, readResumes, sessions, orders, setStatus
 	return read.isGood;
 }
 
-// a turn to Not received outranks an arrival: it asks for an act, and an arrival keeps its New mark on its row
+// a turn to Not received outranks an arrival: it asks for an act, and the arrival stays tracked for the off-view note and the way back
 function setReadStatusQ(read, setStatus) {
 	if (read.turned.length > 0) setStatus({ text: getNotReceivedNoteQ(read.turned), orderId: read.turned[0].id });
 	else if (read.arrived.length > 0) setStatus(getArrivalNoteQ(read.arrived));
@@ -1165,7 +1165,7 @@ function useFilterQ() {
  * One read of the list, merged by item id into the list as it stands when the answer lands (getMergedDataQ).
  * A failure with rows loaded keeps them and their read time; with none loaded it is the list's error state.
  * @param getList - the list now; absent → nothing loaded
- * @returns `{ isGood, arrived, turned }` — `arrived` the items this read marked New, in server order; `turned` as getMergedDataQ
+ * @returns `{ isGood, arrived, turned }` — `arrived` the items this read tracks as arrivals, in server order; `turned` as getMergedDataQ
  */
 async function getListQ({ setList, getList = () => EMPTY_LIST_Q }) {
 	if (getList().data === null) setList((prev) => ({ ...prev, status: "loading" }));
@@ -1295,7 +1295,7 @@ function QueueListQ({ queue }) {
 	const items = queue.list.data?.items ?? [];
 	const ids = queue.sessions.selectedIds;
 	const visible = getVisibleItemsQ(items, queue.filter, ids);
-	const offView = useOffViewNewQ(queue.list.newIds, queue.sheet.kind !== "none");
+	const offView = useOffViewNewQ(queue.list.newIds, queue.sheet.kind !== "none", queue.setSeen);
 	return (
 		<Card className="queue-pane queue-list" title={getScopeTitleQ(queue.sessions.region.data?.sessions ?? [], ids)} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
@@ -1307,22 +1307,25 @@ function QueueListQ({ queue }) {
 }
 
 /**
- * The New rows outside the list body's visible part (spec §4.4), measured when the marks change, on scroll and when the list returns from a sheet.
- * @returns `{ count, direction, id }` as getOffViewQ, null while every New row shows
+ * The arrivals outside the list body's visible part (spec §4.4), measured when they change, on scroll and when the list returns from a sheet.
+ * An arrival whose row shows has been seen → `onSeen` ends it.
+ * @returns `{ count, direction, id }` as getOffViewQ, null while every arrival shows
  */
-function useOffViewNewQ(newIds, isHidden) {
+function useOffViewNewQ(newIds, isHidden, onSeen) {
 	const [offView, setOffView] = useStateQ(null);
 	useEffectQ(() => {
 		const body = document.querySelector(PANE_Q.LIST_BODY);
 		if (!body || isHidden || newIds.length === 0) return void setOffView(null);
 		const measure = () => {
-			const next = getOffViewQ(body.getBoundingClientRect(), getRowBoxesQ(newIds));
+			const [view, rows] = [body.getBoundingClientRect(), getRowBoxesQ(newIds)];
+			for (const id of getInViewIdsQ(view, rows)) onSeen(id);
+			const next = getOffViewQ(view, rows);
 			setOffView((prev) => (prev?.count === next?.count && prev?.direction === next?.direction && prev?.id === next?.id ? prev : next));
 		};
 		measure();
 		body.addEventListener("scroll", measure, { passive: true });
 		return () => body.removeEventListener("scroll", measure);
-	}, [newIds, isHidden]);
+	}, [newIds, isHidden, onSeen]);
 	return offView;
 }
 
@@ -1336,7 +1339,7 @@ function getRowBoxesQ(ids) {
 /**
  * A row cut by an edge still shows; only one wholly past an edge is off view. Both sides → the side below, where arrivals land.
  * @param view - the list body's box; zero high while an open sheet puts the list away
- * @returns `{ count, direction, id }` — `id` the off-view New row nearest the visible part · null when none
+ * @returns `{ count, direction, id }` — `id` the off-view arrival nearest the visible part · null when none
  */
 function getOffViewQ(view, rows) {
 	if (view.bottom <= view.top) return null;
@@ -1344,6 +1347,12 @@ function getOffViewQ(view, rows) {
 	const above = rows.filter((row) => row.bottom <= view.top).sort((a, b) => b.bottom - a.bottom);
 	const [side, direction] = below.length > 0 ? [below, "below"] : [above, "above"];
 	return side.length === 0 ? null : { count: side.length, direction, id: side[0].id };
+}
+
+// the complement of getOffViewQ: a row not wholly past an edge shows · none while an open sheet puts the list away (zero high)
+function getInViewIdsQ(view, rows) {
+	if (view.bottom <= view.top) return [];
+	return rows.filter((row) => row.top < view.bottom && row.bottom > view.top).map((row) => row.id);
 }
 
 // Show on the off-view note → the row in view and focused; the selection stays where it is
@@ -1439,26 +1448,19 @@ function QueueGroupQ({ group, queue, view }) {
 }
 
 // an order's row shows its entry in Orders, the list staying (spec §9.2); every other row opens its sheet in the list's place
-// an arrival not yet opened or focused leads its meta line and its name with New (spec §4.4)
+// who, then what (spec §4.2): the name column first, left out with one session ticked; an arrival paints no mark (§4.4), focusing it ends it
 function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, onSeen }) {
-	const { Icon, Badge, formatRelativeTime, formatKstDateTime } = window.UI;
+	const { Icon, formatRelativeTime, formatKstDateTime } = window.UI;
 	const { item } = row;
 	const facts = getRowFactsQ(row, view.isAccountShown);
 	return (
 		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={row.id === view.tabStopId ? 0 : -1}
-			aria-label={`${isNew ? "New, " : ""}${getRowLabelQ(row, facts, view.isNameShown)}`} className="queue-row"
+			aria-label={getRowLabelQ(row, facts, view.isNameShown)} className="queue-row"
 			onFocus={isNew ? () => onSeen?.(row.id) : undefined} onClick={() => (getKindWordQ(item) === "Order" ? onOrder(row) : onSelect(row.id))}>
+			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} /></span>}
 			<span className="queue-row-title" title={item.title}>{item.title}</span>
 			<span className="queue-row-meta">
-				<span className="queue-row-who">
-					{isNew && <Badge fill="solid">New</Badge>}
-					{isNew && view.isNameShown && " "}
-					{view.isNameShown && <RowWhoQ row={row} />}
-				</span>
-				<span className="queue-row-facts">
-					{view.isNameShown && facts.length > 0 && <span aria-hidden="true" className="queue-row-sep">·</span>}
-					<RowFactsLineQ facts={facts} />
-				</span>
+				<span className="queue-row-facts"><RowFactsLineQ facts={facts} /></span>
 				<span className="queue-row-age" title={formatKstDateTime(item.askedAt)}>{formatRelativeTime(item.askedAt)}</span>
 			</span>
 			<Icon name="chevR" size={16} className="queue-row-chevron" />
@@ -1466,9 +1468,16 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, on
 	);
 }
 
+// one cut line, the whole name in its tooltip; no registered name → `start directory` under it, so it never reads as one the session chose
 function RowWhoQ({ row }) {
-	if (row.copies.length > 1) return `${row.copies.length} sessions`;
-	return <ItemSessionNameQ session={row.item.session} />;
+	const { session } = row.item;
+	const name = row.copies.length > 1 ? `${row.copies.length} sessions` : session.name;
+	return (
+		<>
+			<span className="queue-row-name" title={name}>{name}</span>
+			{row.copies.length === 1 && session.isNameRegistered === false && <span className="queue-row-dir">start directory</span>}
+		</>
+	);
 }
 
 // no registered name → the start-directory name, marked so it never reads as one the session chose

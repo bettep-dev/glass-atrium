@@ -1131,6 +1131,23 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
   });
 
+  // spec §4.2: who, then what — the session name in one fixed column at the row's start, the title and its meta line to its right
+  test("with exactly one session ticked no row paints a name, and every title starts where the band labels start", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await tickSessions(page, ["gersona"]);
+    const facts = await page.evaluate(() => {
+      const band = document.querySelector(".queue-listbox .queue-band") as HTMLElement;
+      const labelStart = Math.round(band.getBoundingClientRect().left + parseFloat(getComputedStyle(band).paddingLeft));
+      const titles = [...document.querySelectorAll(".queue-row-title")].map((title) => Math.round(title.getBoundingClientRect().left));
+      return { names: document.querySelectorAll(".queue-row-who").length, titleStarts: [...new Set(titles)], labelStart, rows: titles.length };
+    });
+    await page.close();
+
+    assert.ok(facts.rows > 0, "the ticked session has rows");
+    assert.deepEqual({ names: facts.names, titleStarts: facts.titleStarts }, { names: 0, titleStarts: [facts.labelStart] });
+  });
+
   // spec §11: the desk's keys on the real page, and the inset ring on the rows the cards clip
   test("J / K move the focus on the list, Enter opens the sheet, J steps it, a digit picks, Esc returns to the row, N puts the caret in Orders and Esc gives the focus back to the middle pane", async () => {
     harness.fixture = getRestFixture();
@@ -1412,7 +1429,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §18.4 row 20: the arrival reaches the row, the rail and the nav on the same tick, and moves nothing the owner holds
-  test("the page's own 15 s read marks an arrival New and raises its session's and the nav's counts; an open sheet stays and the way back counts it", async () => {
+  test("the page's own 15 s read raises an arrival's session's and the nav's counts and paints New on no row; an open sheet stays and the way back counts it", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
     try {
@@ -1426,7 +1443,8 @@ describe("queue page on the mockup fixtures", () => {
       const back = page.getByRole("button", { name: "Back to the list, 1 new in the list" });
       assert.deepEqual([await back.count(), await page.evaluate(() => window.location.hash)], [1, "#queue?item=101"], "the sheet unmoved, the arrival counted on the way back");
       await back.click();
-      assert.deepEqual(await page.locator("#queue-row-150 .queue-row-who .pill--solid").allTextContents(), ["New"]);
+      await page.locator("#queue-row-150").waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
+      assert.deepEqual(await page.locator('[role="option"] .pill').filter({ hasText: /^New$/ }).count(), 0, "no row paints New");
       assert.deepEqual(await page.locator('[role="option"][aria-selected="true"]').evaluateAll((rows) => rows.map((row) => row.id)), ["queue-row-101"]);
     } finally {
       await page.close();
@@ -1983,6 +2001,38 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 68, isCut: true, isInsideRail: true });
     });
 
+    // spec §4.2, §14.4: the name column is 104 at every width a list stands in; the 12 gap puts every title 116 further in.
+    // The edge fixture's 100-character session is only one recipient of a seven-session order, whose row reads `7 sessions` → one open item is sent from it here
+    test("with nothing ticked every list row leads with its session name in a 104 box at one x, every title and meta line at one x 116 further in, and a 100-character name cut inside its box, at 1280 and 1568", async () => {
+      const edge = getEdgeFixture();
+      const longSession = edge.items.find((item) => item.session.id === EDGE_SESSION_IDS.longName)?.session;
+      const sent = edge.items.find((item) => item.status === "open");
+      assert.ok(longSession && sent, "the edge fixture holds the long-named session and an open item");
+      const fixture = { ...edge, items: edge.items.map((item) => (item.id === sent.id ? { ...item, session: longSession } : item)) };
+      const shown = [];
+      for (const viewport of [MIN_WINDOW, { width: 1568, height: 759 }]) {
+        harness.fixture = fixture;
+        const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
+        const facts = await page.evaluate((longName) => {
+          const rows = [...document.querySelectorAll(".queue-row")];
+          const box = (row: Element, selector: string) => (row.querySelector(selector) as HTMLElement).getBoundingClientRect();
+          const long = [...document.querySelectorAll<HTMLElement>(".queue-row-name")].find((name) => name.title === longName);
+          const longBox = long?.closest(".queue-row-who")?.getBoundingClientRect();
+          return {
+            isNameFirst: rows.length > 0 && rows.every((row) => row.firstElementChild?.matches(".queue-row-who")),
+            widths: [...new Set(rows.map((row) => Math.round(box(row, ".queue-row-who").width)))],
+            nameStarts: new Set(rows.map((row) => Math.round(box(row, ".queue-row-who").left))).size,
+            titleOffsets: [...new Set(rows.flatMap((row) => [".queue-row-title", ".queue-row-meta"].map((selector) => Math.round(box(row, selector).left - box(row, ".queue-row-who").left))))],
+            isLongCut: long !== undefined && longBox !== undefined && getComputedStyle(long).textOverflow === "ellipsis" && long.scrollWidth > long.clientWidth && long.getBoundingClientRect().right <= longBox.right + 0.5,
+          };
+        }, EDGE_LONG_SESSION_NAME);
+        await page.close();
+        shown.push({ width: viewport.width, ...facts });
+      }
+
+      assert.deepEqual(shown, shown.map(({ width }) => ({ width, isNameFirst: true, widths: [104], nameStarts: 1, titleOffsets: [116], isLongCut: true })));
+    });
+
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it
     test("a 100-character session name stays on one cut line in its thread recipient row, its full name in the title, its receipt and Resend whole", async () => {
       const page = await openEdgePage(harness);
@@ -2116,7 +2166,7 @@ describe("queue page on the mockup fixtures", () => {
           isWhole: badge.getBoundingClientRect().right <= box.right + 0.5 && badge.scrollWidth <= badge.clientWidth,
         }));
         // a fact's laid-out text against the nearest box that clips it, whichever span holds the fact
-        const texts = [...facts.querySelectorAll("span")].filter((span) => span.textContent && !span.closest(".pill, .queue-row-sep, [aria-hidden]") && ![...span.children].some((child) => !child.matches("[aria-hidden]")));
+        const texts = [...facts.querySelectorAll("span")].filter((span) => span.textContent && !span.closest(".pill, [aria-hidden]") && ![...span.children].some((child) => !child.matches("[aria-hidden]")));
         const getClip = (span: Element) => {
           for (let node: Element | null = span; node && node !== facts.parentElement; node = node.parentElement) if (getComputedStyle(node).overflowX === "hidden") return node;
           return facts;
