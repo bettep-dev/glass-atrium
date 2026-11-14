@@ -350,9 +350,11 @@
 - **alert-card glyph** (`base.css` → `.alert-card-glyph`): bare tone glyph on the card surface — no well, fill or radius (§12.3 Icons). 명암비 (raised `--elev` / inset `--sunken`): light warn 3.44 / 3.15 · ok 3.77 / 3.45 · info 3.68 / 3.38 · crit 5.05 / 4.63 · dark ≥ 6.32.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
 - **finder** (merged tree 기준): hit 마다 읽고 아래 분류에 넣는다. 분류 밖 hit = 새 위반.
-  - finder 1 (alpha tint · inset stripe): `grep -rnE "var\(--(crit|warn|ok|info|[$]\{[^}]+\})\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
-    - 보간 tone (`var(--${…})`) 도 잡는다.
-    - 허용 hit: over-threshold chart mark (`cost.jsx` session outlier `Cell` + its legend swatch · log-integrity `critBar`) · the amber badge tint (`tokens.css` → `--tint-warn`, 위 Amber badge).
+  - finder 1 (alpha tint · inset stripe): `grep -rnE "var\((--(crit|warn|ok|info)|(--)?[$]\{[^}]+\})\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
+    - 보간 tone 은 두 형태 모두 잡는다: `var(--${…})` · 변수가 `--` 를 담은 `var(${…})`.
+    - 허용 hit: over-threshold chart mark (`cost.jsx` session outlier `Cell` + its legend swatch · log-integrity `critBar` · `agents.jsx` → `LegendSwatch`, the fail-share legend) · the amber badge tint (`tokens.css` → `--tint-warn`, 위 Amber badge).
+    - 허용 hit: categorical fill (`cost.jsx` token-type chart fill · category share bar — `--cat-*` only, §4.3).
+    - 허용 hit: the bar atoms themselves (`ui.jsx` → `Bar` fill · `BulletBar` fill and zone bands) — the tone arrives from the caller through `BAR_TONE_VAR`, so each caller's tone is read at its call site under §4.3 (a severity tone only over a stated threshold).
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
     - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`). No chart stroke.
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.

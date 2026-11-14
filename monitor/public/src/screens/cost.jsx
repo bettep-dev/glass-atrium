@@ -2385,11 +2385,11 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
               </div>
             </TableCell>
             <TableCell view={view} textRole="meta" label="Events" isNumeric>
-              {/* inline bar normalised to the max row (sandbox-safe, no chart runtime) */}
+              {/* inline bar normalised to the max row (sandbox-safe, no chart runtime) · a quantity → --data, never the reason's colour */}
               <div className="flex items-center justify-end gap-label">
                 <span
                   className="inline-block h-1.5 rounded-sm"
-                  style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: `rgb(var(${meta.colorVar}) / 0.7)` }}
+                  style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: 'rgb(var(--data))' }}
                 />
                 <span className="tabular-nums">{formatIntC(events)}</span>
               </div>

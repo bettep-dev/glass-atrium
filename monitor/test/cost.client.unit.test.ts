@@ -1802,3 +1802,20 @@ test("each Cost alarm row draws its tone's own glyph, hidden from assistive tech
     assert.equal(collectText(word).trim(), `${ui.ALERT_SEVERITY_WORD[tone]}:`, `${tone} row speaks its severity word`);
   }
 });
+
+test("every stop-reason Events bar is a quantity mark in the data colour, whatever its reason", async () => {
+  const mod = (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+  })) as RenderModule;
+  const reasons = ["end_turn", "tool_use", "no_assistant_in_turn", null];
+  const data = {
+    stop_reasons: reasons.map((stop_reason, i) => ({ stop_reason, event_count: 400 - i * 90, session_count: 120 - i * 20 })),
+    stop_reason_session_count: 412,
+    turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
+  };
+  const tree = renderIn(mod, "TurnStatsBody", { state: ready(data), days: 30, onRetry: () => {} });
+  const bars = findNodes(tree, (n) => (n.props.style as { maxWidth?: unknown } | undefined)?.maxWidth === 120);
+
+  assert.equal(bars.length, reasons.length, "one Events bar per stop reason");
+  assert.deepEqual([...new Set(bars.map((n) => (n.props.style as { background: string }).background))], ["rgb(var(--data))"]);
+});
