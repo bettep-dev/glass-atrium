@@ -295,14 +295,17 @@ describe("a bar plot draws only the days that carry a quantity, over one baselin
   }
 
   for (const count of [7, 30]) {
-    test(`${count} bars: the first tick label's left edge sits on the first bar's left edge, measured or not`, () => {
+    test(`${count} bars: the end tick labels sit on the outer edges of the first and last bars, measured or not`, () => {
       const points = Array.from({ length: count }, (_, i) => ({ label: `09-${String(i + 1).padStart(2, "0")}`, value: i + 1 }));
       const tree = render("TrendChart", { label: "Runs", points, kind: "bars" });
-      const firstBarLeft = Number(findNodes(tree, (n) => n.type === "rect")[0].props.x);
-      const [firstTick] = findNodes(tree, (n) => n.props["data-chart-tick"] !== undefined);
-      assert.equal(parseFloat((firstTick.props.style as { left: string }).left), firstBarLeft, "unmeasured row");
-      const measured = getChartTickLayout(points.map((point) => point.label), "bars", 480)[0];
-      assert.equal(measured.left, firstBarLeft, "measured row");
+      const bars = findNodes(tree, (n) => n.type === "rect");
+      const lastBar = bars[bars.length - 1];
+      const edges = { first: Number(bars[0].props.x), last: Number(lastBar.props.x) + Number(lastBar.props.width) };
+      const ticks = findNodes(tree, (n) => n.props["data-chart-tick"] !== undefined);
+      const tickLeft = (tick: RenderedNode) => parseFloat((tick.props.style as { left: string }).left);
+      assert.deepEqual({ first: tickLeft(ticks[0]), last: tickLeft(ticks[ticks.length - 1]) }, edges, "unmeasured row");
+      const measured = getChartTickLayout(points.map((point) => point.label), "bars", 480);
+      assert.deepEqual({ first: measured[0].left, last: measured[measured.length - 1].left }, edges, "measured row");
     });
   }
 });

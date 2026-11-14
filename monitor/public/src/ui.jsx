@@ -282,9 +282,11 @@ function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
   });
 }
 
-// a start-anchored bar label begins on its bar's left edge, not mid-bar → the first date stays under its own bar
+// an edge-anchored bar label sits on its bar's outer edge, not mid-bar → each end date stays under its own bar, as ChartAxisTick does
 function getChartTickLeft(index, count, kind, anchor) {
-  return kind === 'bars' && anchor === 'start' ? getChartBarLeft(index, count) : getChartX(index, count, kind);
+  if (kind !== 'bars' || anchor === 'middle') return getChartX(index, count, kind);
+  const barLeft = getChartBarLeft(index, count);
+  return anchor === 'start' ? barLeft : barLeft + (CHART_VIEW_W / count) * (1 - 2 * CHART_BAR_INSET);
 }
 
 function getFittingTicks(labels, kind, widthPx, maxTicks) {
