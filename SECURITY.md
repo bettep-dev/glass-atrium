@@ -85,8 +85,12 @@ and `glass-atrium update` never turns it on.
   `.local` names and private address ranges). Each device trusts the CA
   certificate once; the CA and leaf keys stay owner-only under
   `monitor/data/remote-access/` and are excluded from Time Machine.
-  `glass-atrium doctor` checks their modes, the exclusion, the host name in
-  the leaf and its expiry ahead of time.
+  The running monitor and the updater reissue the leaf silently 30 days
+  before expiry and when the Wi-Fi address or the Bonjour name changes;
+  devices trust the CA, so nothing is asked again. `glass-atrium doctor`
+  checks the key modes, the exclusion, the leaf's host name, address and
+  expiry, the listener's bound address against the trusted network, and the
+  firewall state (read-only).
 - **Loopback stays login-free** — a request on the remote listener is never
   judged as loopback.
 - **Uninstall** removes the keys and the device rows; remove the CA trust on
