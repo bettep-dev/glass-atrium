@@ -56,6 +56,17 @@ UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
 UI_SCALARS.getChartImageProps = REAL_UI.getChartImageProps;
 UI_SCALARS.ChartAxisTick = REAL_UI.ChartAxisTick;
 UI_SCALARS.getChartXAxisProps = REAL_UI.getChartXAxisProps;
+// A word for nothing rides the shipped atom and its words → still found as the AbsentValue atom, painted as on the page.
+UI_SCALARS.EMPTY_VALUE_TEXT = REAL_UI.EMPTY_VALUE_TEXT;
+UI_SCALARS.AbsentValue = Object.defineProperty(
+  (props: Record<string, unknown>) => ({
+    __element: true,
+    type: "ui-atom",
+    props: { ...props, atom: "AbsentValue", children: (REAL_UI.AbsentValue as (p: unknown) => unknown)(props) },
+  }),
+  "name",
+  { value: "AbsentValue" },
+);
 // Paired cards cap their lists with the shipped slot budget.
 UI_SCALARS.CARD_SLOTS = REAL_UI.CARD_SLOTS;
 UI_SCALARS.getSlotRows = REAL_UI.getSlotRows;
@@ -633,8 +644,6 @@ test("the ledger opens sorted by breakages, riskiest agents first", async () => 
   assert.deepEqual(sorted, [["Failed", "descending", "arrow-down"]], "the Failed or blocked head shows the breakage sort it opens on");
 });
 
-const NOT_LOADED_WORD = "not loaded";
-
 function renderLoadRow(mod: Record<string, unknown>, failureStatus: string, trendStatus: string): RenderedNode | string | null {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   return renderScreen(
@@ -646,7 +655,7 @@ function renderLoadRow(mod: Record<string, unknown>, failureStatus: string, tren
   );
 }
 
-test("an unread breakage or trend payload shows 'not loaded', and only a loaded zero reads None", async () => {
+test("an unread breakage or trend payload shows the shared Not loaded mark, and only a loaded zero reads None", async () => {
   const mod = await loadAgentsScreen();
   const rows = [
     { name: "both loading", failureStatus: "loading", trendStatus: "loading", notLoaded: 2 },
@@ -656,7 +665,7 @@ test("an unread breakage or trend payload shows 'not loaded', and only a loaded 
   ];
   for (const row of rows) {
     const tree = renderLoadRow(mod, row.failureStatus, row.trendStatus);
-    const marks = findNodes(tree, (n) => n.type === "span" && collectText(n) === NOT_LOADED_WORD);
+    const marks = findAtoms(tree, "AbsentValue").filter((n) => n.props.kind === "not-loaded" && collectText(n) === "Not loaded");
     assert.equal(marks.length, row.notLoaded, `${row.name}: not-loaded marks`);
     const failCell = findNodes(tree, (n) => n.type === "td" && String(n.props?.title ?? "").length > 0)
       .find((n) => /breakage/.test(String(n.props.title)));

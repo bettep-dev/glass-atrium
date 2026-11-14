@@ -833,16 +833,6 @@ function StatusStatValueAg({ label, status, feeder, value, tone, error, busy, fa
   </>;
 }
 
-// Unread payload mark — None would read as a loaded zero.
-function NotLoadedMarkAg({ title }) {
-  return <span className="text-faint fs-meta" title={title}>not loaded</span>;
-}
-
-// An empty table cell's word — never blank, never a dash.
-function NoneMarkAg({ title }) {
-  return <span className="text-faint" title={title}>None</span>;
-}
-
 function getNotLoadedTitleAg(what, status) {
   return status === 'error' ? `${what} failed to load` : `${what} still loading`;
 }
@@ -1121,7 +1111,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
       </TableCell>
       <TableCell view={view} isNumeric>{formatIntAg(runs)}</TableCell>
       <TableCell view={view} isNumeric title={`${noRecord.title} · ${formatInvocationsTitle(invocations, days)}`}>
-        {noRecord.count == null ? <NoneMarkAg/> : formatIntAg(noRecord.count)}
+        {noRecord.count == null ? <window.UI.AbsentValue kind="none"/> : formatIntAg(noRecord.count)}
       </TableCell>
       <TableCell view={view} isNumeric title={successTitle}>
         <span className="inline-flex items-center justify-end gap-label-inline">
@@ -1132,7 +1122,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
       </TableCell>
       <TableCell view={view} isNumeric className="tbl-bar-cell" title={failTitle}>
         {!isFailureRead ? (
-          <NotLoadedMarkAg title={failTitle}/>
+          <window.UI.AbsentValue kind="not-loaded" title={failTitle}/>
         ) : breakage.count > 0 ? (
           <span className="inline-flex items-baseline justify-end gap-label-inline">
             <FailShareGlyph tone={failTone} label={getFailShareLabel('failed')}/>
@@ -1140,7 +1130,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
             {blockedCount > 0 && <span className="fs-meta text-dim">{formatIntAg(blockedCount)} blocked</span>}
           </span>
         ) : (
-          <NoneMarkAg/>
+          <window.UI.AbsentValue kind="none"/>
         )}
         {/* 0 → None, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = failed tone. */}
         {isFailureRead && breakage.count > 0 && (
@@ -1168,7 +1158,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
               <span>{formatDurationSecAg(p95Sec)}</span>
             </span>
           ) : (
-            <NoneMarkAg/>
+            <window.UI.AbsentValue kind="none"/>
           )}
         </span>
         {/* Fill-bar against the crit cut — the response-time card's comparison, per row. */}
@@ -1182,11 +1172,11 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
       </TableCell>
       <TableCell view={view}>
         {!isTrendRead ? (
-          <NotLoadedMarkAg title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
+          <window.UI.AbsentValue kind="not-loaded" title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
         ) : hasTrend ? (
           <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color="rgb(var(--data))" label={`${agent.agent_name} runs per day, last 7 days`}/>
         ) : (
-          <NoneMarkAg title="no 7-day daily success-rate breakdown"/>
+          <window.UI.AbsentValue kind="none" title="no 7-day daily success-rate breakdown"/>
         )}
       </TableCell>
     </TableRow>
@@ -2478,13 +2468,13 @@ function SuccessRateCell({ view, agent, taskType, cell }) {
   const cellProps = { view, textRole: 'meta', label: taskType, isNumeric: true };
 
   if (!cell || cell.totalCount === 0) {
-    return <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — no data`}><NoneMarkAg/></window.UI.TableCell>;
+    return <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — no data`}><window.UI.AbsentValue kind="none"/></window.UI.TableCell>;
   }
   // denominator 0 (only non-success/fail results) → rate undefined — None, never a fabricated 0%
   if (cell.pooledRate === null) {
     return (
       <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — nothing conclusive to rate (no success/fail · ${cell.totalCount} total)`}>
-        <NoneMarkAg/> <span className="text-dim">· {cell.totalCount}</span>
+        <window.UI.AbsentValue kind="none"/> <span className="text-dim">· {cell.totalCount}</span>
       </window.UI.TableCell>
     );
   }
@@ -2639,7 +2629,7 @@ function resolveLastBreakage(pair, failureByAgent) {
   if (pair.lastFailureDate) {
     return { text: window.UI.formatKstDay(pair.lastFailureDate), title: `Last fail event_date (client-derived · blocked not included) ${pair.lastFailureDate}`, fromServer: false };
   }
-  return { text: 'None', title: 'no failure data', fromServer: false };
+  return { text: window.UI.EMPTY_VALUE_TEXT, title: 'no failure data', fromServer: false };
 }
 
 // thead 컬럼 driver — alignment / width / 라벨만 다르고 sticky 스타일은 공통.
@@ -3058,7 +3048,7 @@ function LifecycleStatsRow({ view, row, onSelect, focusProps }) {
         {orphanCount > 0 ? `${formatIntAg(orphanCount)} · ${formatPctAg(orphanRatio * 100, 0)}` : '0'}
       </TableCell>
       <TableCell view={view} isNumeric textRole="meta" className="text-dim">
-        {p95Sec == null ? <NoneMarkAg/> : formatDurationSecAg(p95Sec)}
+        {p95Sec == null ? <window.UI.AbsentValue kind="none"/> : formatDurationSecAg(p95Sec)}
       </TableCell>
     </TableRow>
   );
@@ -3510,7 +3500,7 @@ function getFailShareTone(failedCount, denominator) {
 // a rate alone — its passed ÷ denominator fraction stays in the cell's tooltip
 function formatRateAg(numerator, denominator) {
   const den = Number(denominator);
-  if (!Number.isFinite(den) || den <= 0) return 'None';
+  if (!Number.isFinite(den) || den <= 0) return window.UI.EMPTY_VALUE_TEXT;
   return formatPctAg(((Number(numerator) || 0) / den) * 100, 1);
 }
 

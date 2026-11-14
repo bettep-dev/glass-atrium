@@ -1457,7 +1457,9 @@ test("the missing-report head status reads None over no attributed records and a
 });
 
 test("attribution day labels and ledger times use the dash day form", () => {
-  assert.strictEqual(forms.attributionDayLabelO("2026-11-14"), "11-14");
+  // a top-level const alias stays off the context object → read it back through the module's own scope
+  const attributionDayLabelO = vm.runInContext("attributionDayLabelO", helpers as unknown as vm.Context) as (day: string) => string;
+  assert.strictEqual(attributionDayLabelO("2026-11-14"), "11-14");
   assert.match(String(forms.formatTimestampO("2026-11-14T04:20:00.000Z")), /^\d{2}-\d{2} \d{2}:\d{2}$/);
   assert.strictEqual(forms.formatTimestampO(null), null, "no record time → the caller shows None");
 });

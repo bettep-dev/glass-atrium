@@ -1419,16 +1419,12 @@ function getMoneyColumnFormatC(values) {
   return values.some((v) => Math.abs(v) < 100) ? window.UI.formatUsd : formatUsdC;
 }
 
-// an empty cell reads None in faint ink, never blank or a dash
-function NoneCellC() {
-  return <span className="text-faint">None</span>;
-}
-
 /**
  * One ledger row — token columns behind the row's own expand.
  * The default table stays at the four columns a spend decision needs.
+ * formatCost / formatAvg are required: the card picks one precision per money column (getMoneyColumnFormatC).
  */
-function ModelCostRow({ r, view, formatCost = formatUsdC, formatAvg = formatUsdC }) {
+function ModelCostRow({ r, view, formatCost, formatAvg }) {
   const { DisclosureChevron, TableRow, TableCell } = window.UI;
   const [expanded, setExpanded] = useStateC(false);
   const avgPerSession = getAvgPerSessionC(r);
@@ -1449,10 +1445,10 @@ function ModelCostRow({ r, view, formatCost = formatUsdC, formatAvg = formatUsdC
         </TableCell>
         <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatCost(r.cost_usd)}</TableCell>
         <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
-          {r.session_count === null ? <NoneCellC/> : formatIntC(r.session_count)}
+          {r.session_count === null ? <window.UI.AbsentValue kind="none"/> : formatIntC(r.session_count)}
         </TableCell>
         <TableCell view={view} textRole="meta" label="Avg / session" isNumeric>
-          {avgPerSession === null ? <NoneCellC/> : formatAvg(avgPerSession)}
+          {avgPerSession === null ? <window.UI.AbsentValue kind="none"/> : formatAvg(avgPerSession)}
         </TableCell>
       </TableRow>
       {expanded && (
@@ -1880,7 +1876,7 @@ function SessionRowC({ session, view, focusProps, onOpen }) {
       <TableCell view={view} textRole="meta" label="Cost" isNumeric className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</TableCell>
       <TableCell view={view} textRole="meta" label="Tokens" isNumeric>{formatTokenCompactC(session.total_tokens)}</TableCell>
       <TableCell view={view} textRole="meta" label="Last seen" isNumeric title={lastSeen ? formatKstFull(lastSeen) : undefined}>
-        {lastSeen ? formatRelativeTime(lastSeen) : <NoneCellC/>}
+        {lastSeen ? formatRelativeTime(lastSeen) : <window.UI.AbsentValue kind="none"/>}
       </TableCell>
     </TableRow>
   );

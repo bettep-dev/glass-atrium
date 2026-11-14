@@ -1001,7 +1001,8 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
     .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   const reasons = buildNeedsYouReasonsO(analyticsState.data, attentionState.status === 'ready' ? attentionState.data : null);
   const unloadedText = getUnloadedSummaryO(attentionState.status);
-  const stats = tiles.map((tile) => buildBandStatO(tile, isLoading, tile.key === 'attention' ? unloadedText : window.UI.NOT_LOADED_TEXT));
+  // only the needs-you count names its own wait; every other unread count takes the shared Not loaded mark
+  const stats = tiles.map((tile) => buildBandStatO(tile, isLoading, tile.key === 'attention' ? unloadedText : null));
   const isAttentionFailed = getRegionView(attentionState) === 'error';
 
   return (
@@ -1050,13 +1051,15 @@ function BandStatLabelO({ tile }) {
 }
 
 // a reachable count jumps to its ledger section → a link-styled control, never a button tile
-// unloadedText → a pending or failed count says so instead of a dash that reads as data
+// an unread count says so instead of a dash that reads as data: unloadedText when the tile names its own wait, else Not loaded
 function BandStatValueO({ tile, isLoading, unloadedText }) {
-  const { LoadingPlaceholder } = window.UI;
+  const { LoadingPlaceholder, AbsentValue } = window.UI;
   if (isLoading) {
     return <span className="inline-flex"><LoadingPlaceholder label={tile.label.toLowerCase()}/></span>;
   }
-  if (tile.count === null || tile.count === undefined) return <span className="fs-body text-dim">{unloadedText}</span>;
+  if (tile.count === null || tile.count === undefined) {
+    return unloadedText ? <span className="fs-body text-faint">{unloadedText}</span> : <AbsentValue kind="not-loaded"/>;
+  }
   const count = formatIntO(tile.count);
   if (!tile.jumpTo || tile.count === 0) return count;
   return (
@@ -1086,8 +1089,8 @@ function buildNeedsYouReasonsO(data, attention) {
   return remainder <= 0 ? reasons : [...reasons, { key: 'other', label: 'Changed between reads', count: remainder, tone: 'neutral' }];
 }
 
+// callers pass a population past their own > 0 check (buildBandStatO) → the share always has a denominator
 function formatShareO(count, population) {
-  if (!(population > 0)) return null;
   return formatPctO((count / population) * 100);
 }
 
@@ -3337,9 +3340,7 @@ function isoDayKeyO(date) {
 }
 
 // 'YYYY-MM-DD' → 'MM-DD' (축 라벨용)
-function attributionDayLabelO(day) {
-  return window.UI.formatKstDay(day);
-}
+const attributionDayLabelO = window.UI.formatKstDay;
 
 // ----- 분석 섹션 helpers -----------------------------------------------------
 
