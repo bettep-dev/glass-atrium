@@ -731,7 +731,7 @@ function markPartialDay(rows) {
   }));
 }
 
-// One decimal count for every tick of an axis → "$0" never sits beside "$0.00"; under $100 ticks step in cents.
+// One precision per axis (design.md §12.2 Axis precision) → "$0" never sits beside "$0.00"; under $100 ticks step in cents.
 function getUsdAxisFormatter(maxValue) {
   const decimals = maxValue >= 100 ? 0 : 2;
   return (value) => '$' + (Number(value) || 0).toLocaleString('en-US', {
@@ -1036,7 +1036,7 @@ function getTokenDayPoints(points) {
 
 const TOKEN_AXIS_UNITS = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
 
-// Unit + decimals fixed by the data max → one unit per axis, ≤5 chars inside the 48px axis.
+// Unit + decimals fixed by the data max (design.md §12.2 Axis precision) → one unit per axis, ≤5 chars inside the 48px axis.
 function getTokenAxisFormatter(maxValue) {
   const [unit, suffix] = TOKEN_AXIS_UNITS.find(([u]) => maxValue >= u) || [1, ''];
   const decimals = maxValue / unit >= 10 ? 0 : 1;
@@ -1650,7 +1650,7 @@ function getRoundStepC(raw) {
 function CacheHitChart({ rows, yDomain = [0, 100] }) {
   const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
-  // 실측 도메인 폭이 좁으면(<5%p) 소수 1자리 눈금, 넓으면 정수 눈금.
+  // 실측 도메인 폭이 좁으면(<5%p) 소수 1자리 눈금, 넓으면 정수 눈금 — 한 축 한 정밀도 (design.md §12.2 Axis precision).
   const narrow = yDomain[1] - yDomain[0] < 5;
 
   return (
@@ -1666,7 +1666,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <YAxis
           domain={yDomain}
           ticks={getCacheTicks(yDomain)}
-          tickFormatter={(v) => v.toFixed(narrow ? 1 : 0) + '%'}
+          tickFormatter={(v) => window.UI.formatPct(v, narrow ? 1 : 0)}
           tick={axisTickStyle}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
@@ -2006,7 +2006,7 @@ function SessionBinTooltipC({ active, payload }) {
   return (
     <div className={tooltip.className} style={tooltip.style}>
       <div className="mb-label text-ink font-semibold">{bin.label}</div>
-      <div className="text-dim">{bin.count.toLocaleString('en-US')} sessions</div>
+      <div className="text-dim">{formatIntC(bin.count)} sessions</div>
     </div>
   );
 }

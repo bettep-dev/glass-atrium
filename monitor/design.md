@@ -1021,6 +1021,9 @@
 - **Colour hierarchy** (three per block at most): `ink` value / title · `dim` label and secondary prose · `faint` tertiary (units, timestamps, footnotes).
 - Weights 400 · 500 · 600 only; a state change never changes weight (pagination current page excepted, §12.6).
 - **Density** comes from row height only: the compact toggle (`data-density`) swaps `--row-h` 40 → `--row-h-compact` 32; type sizes hold.
+- **Axis precision**: every tick on one chart axis shares one precision, picked from the axis's own range — the money-column rule applied to a tick set, so `$0` never sits beside `$50.00` and `99%` never beside `99.5%`.
+  - Money: whole dollars at an axis max of $100 or more, else cents (`cost.jsx` → `getUsdAxisFormatter`); tokens: one unit and 0 or 1 decimal per axis (`getTokenAxisFormatter`); percent: `formatPct(value, fixedDigits)`.
+  - A lone value outside an axis — a tooltip, a readout, a stat — keeps its lone form (`formatUsdCompact`, `formatTokenCompact`, `formatPct(value)`).
 
 ### 12.3 Component taxonomy — one look each
 
