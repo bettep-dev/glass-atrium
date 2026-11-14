@@ -1,0 +1,88 @@
+/* Remote sign-in page — layout only; controls take the shell's .field / .btn / .section-label from base.css */
+body.sign-in {
+	margin: 0;
+	background: rgb(var(--surface));
+	color: rgb(var(--ink));
+}
+
+.sign-in-main {
+	box-sizing: border-box;
+	max-width: var(--measure-prose);
+	margin-inline: auto;
+	padding: var(--gap-page);
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-group-above);
+}
+
+.sign-in-head {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-label);
+}
+
+.sign-in-title {
+	margin: 0;
+	font-size: var(--fs-display);
+	font-weight: 600;
+}
+
+.sign-in-lead {
+	margin: 0;
+	color: rgb(var(--dim));
+}
+
+.sign-in-form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-control-group);
+}
+
+.sign-in-trust {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-group-below);
+}
+
+.sign-in-field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-stack);
+}
+
+.sign-in-field .field {
+	box-sizing: border-box;
+	width: 100%;
+}
+
+.sign-in-hint,
+.sign-in-status {
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+
+.sign-in-submit {
+	align-self: flex-start;
+}
+
+/* reserved line → a message never shifts the form */
+.sign-in-status {
+	margin: 0;
+	min-height: 1lh;
+}
+
+.sign-in-status.is-error {
+	color: rgb(var(--crit));
+}
+
+.sign-in-trust p,
+.sign-in-steps {
+	margin: 0;
+}
+
+.sign-in-steps {
+	padding-inline-start: var(--space-6);
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-list);
+}
