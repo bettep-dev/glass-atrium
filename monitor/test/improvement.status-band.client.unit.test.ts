@@ -213,11 +213,11 @@ test("a ready tile ellipsizes its label text with the full label in the title, a
     status: "ready",
     label: "Applied (7 days)",
     value: "3",
-    population: { type: "span", props: { children: ["of 6 cycles · last ", "10/28, 04:30 AM"] } },
-    populationTitle: "of 6 cycles · last 10/28, 04:30 AM",
+    population: { type: "span", props: { children: ["of 6 cycles · last ", "10-28 04:30"] } },
+    populationTitle: "of 6 cycles · last 10-28 04:30",
     basis: "Cycles started in the last 7 days",
   });
-  assert.match(String(stamped.props.hintTitle), /^of 6 cycles · last 10\/28, 04:30 AM\n/, "a node hint's title is its caller's plain-string twin");
+  assert.match(String(stamped.props.hintTitle), /^of 6 cycles · last 10-28 04:30\n/, "a node hint's title is its caller's plain-string twin");
 });
 
 // the population line is body text, not a micro caption
@@ -293,7 +293,7 @@ test("the applied tile names a one-cycle week in the singular", () => {
   assert.match(textOf(applied?.props.population), /^of 1 cycle · last /);
 });
 
-// the last-cycle clock time is one unbreakable token → "09:05 AM" never splits before AM
+// the last-cycle stamp is one unbreakable token → "09-16 19:05" never splits between day and time
 test("the applied tile keeps its last-cycle stamp whole in one nowrap token", () => {
   const band = sandbox.StatusBandI({
     statsState: {
@@ -310,7 +310,7 @@ test("the applied tile keeps its last-cycle stamp whole in one nowrap token", ()
   const tokens = collectElements(applied?.props.population, []).filter((el) => el.type === sandbox.window.UI.NoWrap);
 
   assert.equal(tokens.length, 1, "the stamp renders in exactly one nowrap span");
-  assert.match(textOf(tokens[0]), /\d{2}:05/, "the nowrap span carries the clock time");
+  assert.match(textOf(tokens[0]), /^\d{2}-\d{2} \d{2}:05$/, "the nowrap span carries the MM-DD HH:mm stamp");
   assert.ok(textOf(applied?.props.population).trimEnd().endsWith(textOf(tokens[0])), "the whole stamp sits in the span");
 });
 

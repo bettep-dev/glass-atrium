@@ -106,13 +106,13 @@ const ROWS = {
       name: "a count cut at the row limit reads as the latest cycles, dated in the hover title",
       days: ["2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"],
       perDay: FETCH_CAP / 4,
-      expected: { text: `Last ${FETCH_CAP} cycles`, title: `Last ${FETCH_CAP} cycles · 09/20–09/23` },
+      expected: { text: `Last ${FETCH_CAP} cycles`, title: `Last ${FETCH_CAP} cycles · 09-20 – 09-23` },
     },
     {
       name: "a count under the row limit reads as every recorded cycle",
       days: ["2026-09-24", "2026-09-25"],
       perDay: 2,
-      expected: { text: "All 4 cycles", title: "All 4 cycles · 09/24–09/25" },
+      expected: { text: "All 4 cycles", title: "All 4 cycles · 09-24 – 09-25" },
     },
     {
       name: "a span across a year boundary names its years, so no month-day pair is ambiguous",
@@ -183,7 +183,7 @@ test("both loop cards head their numbers with the same stated basis", () => {
   }
 });
 
-test("the trend plots one chart of the daily reject share, ticked by MM/DD and thinned to five", () => {
+test("the trend plots one chart of the daily reject share, ticked by MM-DD and thinned to five", () => {
   const events = [
     ...getEvents(["2026-09-23", "2026-09-24", "2026-09-25"], 3),
     { event_ts: "2026-09-26T00:00:00Z", eval_result: "skipped" },
@@ -198,7 +198,7 @@ test("the trend plots one chart of the daily reject share, ticked by MM/DD and t
   const points = charts[0].props.points as Array<{ label: string; value: number | null }>;
   assert.deepEqual(
     Array.from(points, (p) => p.label),
-    ["09/23", "09/24", "09/25", "09/26"],
+    ["09-23", "09-24", "09-25", "09-26"],
   );
   assert.deepEqual(
     Array.from(points, (p) => (p.value === null ? null : Math.round(p.value * 1000) / 1000)),
@@ -255,6 +255,7 @@ test("the trend plots from a zero baseline with room to read, and short y labels
   assert.equal(chart?.props.kind, "bars", "a share per day starts at zero, never at the lowest day");
   assert.ok(Number(chart?.props.h) >= 96, "a 64px plot flattens a daily share");
   assert.equal(formatValue(0.8), "80%", "the axis names the share once; labels stay short enough to fit");
+  assert.equal(formatValue(0.125), "12.5%", "a share reads in the shared one-decimal percentage form");
 });
 
 function getPrintedText(node: RecordedElement): string {

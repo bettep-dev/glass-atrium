@@ -846,17 +846,10 @@ function TilePlaceholderI({ status, label, owner, onRetry }) {
 	);
 }
 
-// 마지막 사이클 시각 — 값이 없으면 "unknown". 0 이나 오래된 스탬프로 대체하지 않는다.
+// 마지막 사이클 시각 (MM-DD HH:mm, 표시 tz) — 값이 없으면 "unknown". 0 이나 오래된 스탬프로 대체하지 않는다.
 function formatCycleStampI(iso) {
-	if (!iso) return "unknown";
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return "unknown";
-	return d.toLocaleString(undefined, {
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-	});
+	if (!iso || Number.isNaN(new Date(iso).getTime())) return "unknown";
+	return window.UI.formatKstDateTime(iso);
 }
 
 function getCycleCountTextI(count) {
@@ -956,7 +949,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 						h={112}
 						yScale
 						maxTicks={5}
-						formatValue={(v) => `${Math.round(v * 100)}%`}
+						formatValue={(v) => window.UI.formatPct(v * 100)}
 						points={points}
 					/>
 				),
@@ -1343,8 +1336,8 @@ function AppliedHistoryRowI({ row, onClick }) {
 						name={row.target_agent}
 						className="font-mono text-dim truncate shrink-0 max-w-[10rem]"
 					/>
-					<span className="font-mono text-faint tnum shrink-0">
-						{row.cycle_date ? formatDateI(row.cycle_date) : "—"}
+					<span className="text-faint tnum shrink-0">
+						{row.cycle_date ? formatDateI(row.cycle_date) : <window.UI.AbsentValue kind="none" title="No cycle date recorded" />}
 					</span>
 				</>
 			}
@@ -1376,7 +1369,7 @@ function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
 		<div className="i-applied-hero i-col-header">
 			<span
-				className="fs-stat tnum font-mono text-ink"
+				className="fs-stat tnum text-ink"
 				style={{ lineHeight: 1 }}
 			>
 				{formatIntI(count)}
@@ -1403,7 +1396,7 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 		? `last ${formatIntI(windowDays)} days`
 		: `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
 	return (
-		<div className="i-col-header gap-1.5 fs-meta font-mono uppercase tracking-wider whitespace-nowrap min-w-0">
+		<div className="i-col-header gap-1.5 fs-meta uppercase tracking-wider whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
 			<span className="text-ink tnum">{formatIntI(count)}</span>
@@ -1584,7 +1577,7 @@ function CompactProposalCardI({ row, onClick }) {
 				<>
 					<span className="font-mono text-faint shrink-0">#{row.id}</span>
 					{row.cycle_date && (
-						<span className="font-mono text-faint tnum shrink-0">
+						<span className="text-faint tnum shrink-0">
 							{formatDateI(row.cycle_date)}
 						</span>
 					)}
@@ -1792,7 +1785,7 @@ function confidenceBadgeMetaI(value) {
 		return build("info", "n/a", "Not measured for this suggestion");
 	}
 	const v = Number(value);
-	const pct = `${(v * 100).toFixed(0)}%`;
+	const pct = window.UI.formatPct(v * 100);
 	if (v >= 0.7) return build("ok", `Confidence ${pct}`, `${v.toFixed(4)} (high)`);
 	if (v >= 0.4) return build("warn", `Confidence ${pct}`, `${v.toFixed(4)} (medium)`);
 	return build("crit", `Confidence ${pct}`, `${v.toFixed(4)} (low)`);
@@ -1879,7 +1872,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				metric: cards.map(([sym, tone, label, value]) => (
 					<span key={label} className="inline-flex items-baseline gap-1">
 						<SymI s={sym} className={tone} size={13} />
-						<span className="fs-stat font-semibold text-ink font-mono">{formatIntI(value)}</span>
+						<span className="fs-stat font-semibold text-ink tnum">{formatIntI(value)}</span>
 						<span className="fs-meta text-dim">{label}</span>
 					</span>
 				)),
@@ -2046,7 +2039,7 @@ function LedgerPlainRowsI({ rows }) {
 						{truncateI(patternNameI(r.pattern_signature, r.agent), 120)}
 					</span>
 					<window.UI.AgentName name={r.agent} className="text-dim whitespace-nowrap" />
-					<span className="font-mono fs-meta text-faint shrink-0 tnum">
+					<span className="fs-meta text-faint shrink-0 tnum">
 						{formatDateFullI(r.discovered_date)}
 					</span>
 				</li>
@@ -2369,13 +2362,12 @@ function buildDetailPropsI(row) {
 			["Target agent", row?.target_agent],
 			["Target file", row?.target_file, true],
 			// cycle_date = date-only string → tz-safe formatDateFullI · reviewed_at = UTC instant → formatKstFull
-			["Cycle date", row?.cycle_date ? formatDateFullI(row.cycle_date) : null, true],
+			["Cycle date", row?.cycle_date ? formatDateFullI(row.cycle_date) : null],
 			["Model check", getModelCheckWordsI(row?.haiku_status)],
 			["Cost guard", getDetailWordsI("costGuard", row?.cost_guard_state)],
 			[
 				"Reviewed at",
 				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : null,
-				true,
 			],
 		],
 		sections: [
@@ -2831,7 +2823,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 				<SymI s={badge.symbol} size={11} />
 			</span>
 			<span
-				className="fs-meta font-mono text-dim tnum shrink-0"
+				className="fs-meta text-dim tnum shrink-0"
 				title="Times this pattern was seen"
 			>
 				×{formatIntI(freq)}
@@ -2950,12 +2942,12 @@ function getLoopBasisI(aggregate) {
 	return { text, title: `${text} · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}` };
 }
 
-// MM/DD drops the year → a span across a year boundary states its years instead
+// MM-DD drops the year → a span across a year boundary states its years instead
 function getDateSpanI(first, last) {
 	const firstYear = String(first).slice(0, 4);
 	const lastYear = String(last).slice(0, 4);
 	if (firstYear !== lastYear) return `${firstYear}–${lastYear}`;
-	return `${formatDateI(first)}–${formatDateI(last)}`;
+	return `${formatDateI(first)} – ${formatDateI(last)}`;
 }
 
 // newest request per region setter → a superseded answer cannot move the stamp either
@@ -3032,19 +3024,19 @@ function groupByColumnI(proposals) {
 // 공용 formatInt 위임 (ui.jsx SoT) — 로컬 재구현 폐기. 음수/NaN → '—' 가드 승격 상속.
 const formatIntI = window.UI.formatInt;
 // date-only "YYYY-MM-DD" 문자열 전용 (cycle_date · discovered_date · window_start/end ·
-// latest_window_end — 서버 formatDateOnly 직렬화). new Date 파싱 회피 → tz 일자 shift 차단
-// (UTC 자정 문자열을 브라우저 로컬로 해석하면 음수 오프셋에서 전날로 밀림). 문자열에서 MM/DD 만 추출.
+// latest_window_end — 서버 formatDateOnly 직렬화). day key 만 formatKstDay 로 → zone shift 없는 MM-DD
+// (UTC 자정 문자열을 브라우저 로컬로 해석하면 음수 오프셋에서 전날로 밀림).
 function formatDateI(iso) {
 	const s = String(iso ?? "");
-	const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-	return m ? `${m[2]}/${m[3]}` : s;
+	const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+	return m ? window.UI.formatKstDay(m[0]) : s;
 }
-// formatDateI 와 동일한 tz-safe 문자열 추출 — 연도까지 포함 (YYYY/MM/DD).
-// discovered_date 표시 전용 (First seen 컬럼) → 연도 식별 필요.
+// formatDateI 와 동일한 tz-safe 문자열 추출 — 연도까지 포함 (YYYY-MM-DD, formatKstDate 형).
+// 연도 식별이 필요한 곳 전용 (First seen 컬럼 · drawer Cycle date).
 function formatDateFullI(iso) {
 	const s = String(iso ?? "");
-	const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-	return m ? `${m[1]}/${m[2]}/${m[3]}` : s;
+	const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+	return m ? m[0] : s;
 }
 // signatures are "<label>|<agent>" — the agent already has its own cell
 function patternLabelI(signature, agent) {

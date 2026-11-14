@@ -54,6 +54,7 @@ interface Sandbox {
   BoardRowI: Component;
   HeldCauseStripI: Component;
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
+  confidenceBadgeMetaI: (value: unknown) => { label: string };
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -255,6 +256,38 @@ test("applied and declined rows render through one row atom with the prose set i
   }
 });
 
+test("board rows print a cycle date in the day form and sans figures, and a missing date as None", () => {
+  const dated = [
+    sandbox.AppliedHistoryRowI({ row: { id: 7, target_agent: AGENT, cycle_date: "2026-09-20" }, onClick: () => {} }),
+    sandbox.CompactProposalCardI({ row: { id: 8, cycle_date: "2026-09-21" }, onClick: () => {} }),
+  ];
+  for (const [i, tree] of dated.entries()) {
+    const day = `09-${20 + i}`;
+    const [stamp] = findAll(expand(tree), (el) => el.type === "span" && visibleText(el) === day);
+    assert.ok(stamp, `row ${i}: the date reads ${day}`);
+    assert.doesNotMatch(classOf(stamp), /\bfont-mono\b/, `row ${i}: a date is set in sans`);
+  }
+
+  const undated = expand(sandbox.AppliedHistoryRowI({ row: { id: 9, target_agent: AGENT }, onClick: () => {} }));
+  const absent = findAll(undated, (el) => el.type === sandbox.window.UI.AbsentValue);
+  assert.equal(absent.length, 1, "a row with no cycle date shows the nothing atom");
+  assert.equal(absent[0].props.kind, "none", "a loaded row without a date is known-empty");
+  assert.ok(!visibleText(undated).includes("—"), visibleText(undated));
+});
+
+describe("a suggestion's confidence reads in the shared percentage form", () => {
+  const rows = [
+    { name: "a fractional share keeps one decimal", value: 0.734, label: "Confidence 73.4%" },
+    { name: "a whole share drops the .0", value: 0.7, label: "Confidence 70%" },
+    { name: "a non-zero share never rounds to 0%", value: 0.0004, label: "Confidence <0.1%" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(sandbox.confidenceBadgeMetaI(row.value).label, row.label);
+    });
+  }
+});
+
 test("a board column may shrink below its content so long rows ellipsise instead of overflowing", () => {
   const column = { key: "rejected", label: "Rejected", symbol: "✕", variant: "compact" };
   const tree = sandbox.KanbanColumnI({ column, rows: [], onRowClick: () => {} });
@@ -266,6 +299,7 @@ test("the applied count sits below the status band's figure size", () => {
   const [count] = findAll(tree, (el) => el.props.children === "9");
   assert.ok(count, "count cell missing");
   assert.doesNotMatch(classOf(count), /\bfs-display\b/);
+  assert.doesNotMatch(classOf(count), /\bfont-mono\b/, "a count is set in sans figures");
 });
 
 test("loop output cards reflow instead of squeezing three abreast", () => {
@@ -468,8 +502,10 @@ test("ledger rows set their label at the body size, leaving the meta size to the
 
   assert.match(classOf(item), /\bfs-body\b/);
   assert.doesNotMatch(classOf(item), /\bfs-meta\b/);
-  const [stamp] = findAll(item, (el) => /\bfont-mono\b/.test(classOf(el)));
+  const [stamp] = findAll(item, (el) => visibleText(el) === "2026-09-10" && el.type === "span");
+  assert.ok(stamp, "the first-seen date reads YYYY-MM-DD");
   assert.match(classOf(stamp), /\bfs-meta\b/);
+  assert.doesNotMatch(classOf(stamp), /\bfont-mono\b/, "a date is set in sans");
 });
 
 test("a live candidate group heads its rows at the body size", () => {
@@ -540,7 +576,7 @@ describe("the drawer prints each field in words, never the stored machine key", 
     { name: "classification", label: "Classification", printed: "Recommended to apply", mono: false },
     { name: "model check", label: "Model check", printed: "Skipped — quota limit", mono: false },
     { name: "cost guard", label: "Cost guard", printed: "Quota or budget cap hit", mono: false },
-    { name: "cycle date", label: "Cycle date", printed: "2026/09/10", mono: true },
+    { name: "cycle date", label: "Cycle date", printed: "2026-09-10", mono: false },
     { name: "target file path", label: "Target file", printed: row.target_file, mono: true },
   ];
   for (const item of rows) {
