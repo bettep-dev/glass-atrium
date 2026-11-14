@@ -2432,7 +2432,7 @@ function SuccessRateLegend() {
       <window.UI.Cluster gap="control-group" className="items-center">
         <span className="text-faint">Legend</span>
         <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
-        <LegendSwatch colorVar="--faint" label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
+        <LegendSwatch colorVar="--data"  label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
       </window.UI.Cluster>
       <p>n = passed + failed; reconstructed records and other results are left out, so it can sit below the ledger's count</p>
     </window.UI.Stack>
@@ -2485,7 +2485,7 @@ function SuccessRateCell({ view, agent, taskType, cell }) {
       aria-label={ariaLabel}>
       {/* wide: sparkline over rate over sample, each unbroken → a column is as wide as its longest line · stacked: one inline fact, no sparkline */}
       <div className={isStacked ? 'inline-flex items-center gap-label-inline' : 'flex flex-col items-end gap-stack'}>
-        {!isStacked && <SuccessRateSparkline points={cell.points} colorVar={isCrit ? '--crit' : '--faint'} name={`${agent} ${taskType}`}/>}
+        {!isStacked && <SuccessRateSparkline points={cell.points} colorVar={isCrit ? '--crit' : '--data'} name={`${agent} ${taskType}`}/>}
         <div className="flex items-center gap-label-inline whitespace-nowrap">
           <FailShareGlyph tone={failShareTone}/>
           <span className="font-semibold">{formatPctAg(cell.pooledRate * 100, 0)}</span>

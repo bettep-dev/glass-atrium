@@ -1455,8 +1455,8 @@ function RejectBucketSplitI({ summary }) {
 	);
 }
 
-// reject 단일-시리즈 소형 인라인 SVG 스파크 (T5). 출처 = loopAggregate.trend 의 reject 계열.
-// stroke = --crit/0.6 (심볼 톤 · --warn 아님, T7). 데이터 2포인트 미만/null → 생략(카운트는 유지).
+// reject 단일-시리즈 소형 인라인 SVG 스파크 · 출처 = loopAggregate.trend 의 reject 계열 · 2포인트 미만 → 생략(카운트는 유지)
+// stroke = --data — reject 건수는 수량 시리즈, 임계 초과 표식 아님 → severity 색 금지 (design.md §4.3)
 function RejectSparkI({ trend }) {
 	const reject = Array.isArray(trend)
 		? trend.map((d) => Number(d.reject) || 0)

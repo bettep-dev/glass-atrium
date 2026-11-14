@@ -1131,10 +1131,25 @@ test("the matrix legend states which outcomes its n leaves out", async () => {
   assert.match(collectText(tree), /reconstructed/);
 });
 
-test("the matrix legend carries only the crit step and its below-the-step swatch", async () => {
-  const tree = await renderComponent("SuccessRateLegend", {});
-  const swatches = findNodes(tree, (n) => n.type === "LegendSwatch").map((n) => n.props.colorVar);
-  assert.deepEqual(swatches, ["--crit", "--faint"]);
+test("a matrix sparkline draws the data colour unless its pair is over the fail-share step, and the legend keys exactly those two colours", async () => {
+  const cases = [
+    { name: "over the step", successCount: 19, failureCount: 1, stroke: "--crit" },
+    { name: "under the step", successCount: 39, failureCount: 1, stroke: "--data" },
+    { name: "n below LOW_N_MIN", successCount: 2, failureCount: 1, stroke: "--data" },
+  ];
+  const drawn = new Set<string>();
+  for (const c of cases) {
+    const rateDenominator = c.successCount + c.failureCount;
+    const cell = { ...c, rateDenominator, totalCount: rateDenominator, pooledRate: c.successCount / rateDenominator, reconstructed: 0, points: [{ rate: 0.9 }, { rate: 0.95 }] };
+    const tree = await renderComponent("SuccessRateCell", { view: { isStacked: false, columnCount: 10 }, agent: "dev-react", taskType: "feature", cell });
+    const [spark] = findNodes(tree, (n) => /daily success rate/.test(String(n.props?.["aria-label"] ?? "")));
+    const strokes = findNodes(spark, (n) => /^rgb\(var\(--/.test(String(n.props?.stroke ?? ""))).map((n) => String(n.props.stroke).match(/--[a-z-]+/)?.[0]);
+    assert.deepEqual([...new Set(strokes)], [c.stroke], `${c.name}: sparkline stroke`);
+    drawn.add(c.stroke);
+  }
+  const legend = await renderComponent("SuccessRateLegend", {});
+  const swatches = findNodes(legend, (n) => n.type === "LegendSwatch").map((n) => n.props.colorVar);
+  assert.deepEqual(swatches, [...drawn]);
 });
 
 test("a compatibility requirement rides a short row tag with the full text on hover, never a truncated sentence", async () => {
