@@ -443,6 +443,12 @@ const renderSidebar = (harness: unknown, agentsState: unknown): unknown => {
   }
 };
 const getClassTokens = (n: RenderedNode): string[] => String(n.props?.className ?? "").split(/\s+/).filter(Boolean);
+// a nav count's leading glyph → the tone whose shape it draws ("" for none)
+const getCountTone = (count: RenderedNode): string => {
+  const toneByGlyph = new Map(Object.entries(app.ui.TONE_GLYPH).map(([tone, glyph]) => [glyph, tone]));
+  const [glyph] = count.children.filter(isRenderedNode);
+  return toneByGlyph.get(collectText(glyph.children).join("").trim()) ?? "";
+};
 const TONE = { NAMES: ["ok", "warn", "crit", "info"], TEXT_CLASSES: ["text-ok", "text-warn", "text-crit", "text-info"] };
 const renderSidebarText = (harness: unknown, agentsState: unknown): string[] =>
   collectText(renderSidebar(harness, agentsState));
@@ -574,14 +580,13 @@ test("a nav count is solid exactly when it is its item's first crit count, and o
     { name: "a down part with failures and a suspended agent", harness: crit, fills: ["solid", "solid", "quiet"] },
     { name: "failures with no down part", harness: warn, fills: ["solid", "quiet"] },
   ];
-  const toneByGlyph = new Map(Object.entries(app.ui.TONE_GLYPH).map(([tone, glyph]) => [glyph, tone]));
   for (const row of rows) {
     await t.test(row.name, () => {
       const counts = findNodes(renderSidebar(row.harness, agents), (n) => getClassTokens(n).includes("nav-count"));
       assert.deepStrictEqual(counts.map((n) => n.props?.fill ?? "quiet"), row.fills);
       for (const count of counts) {
         const [glyph, ...words] = count.children.filter(isRenderedNode);
-        const tone = toneByGlyph.get(collectText(glyph.children).join("").trim()) ?? "";
+        const tone = getCountTone(count);
         const isSolid = count.props?.fill === "solid";
         assert.ok(tone === "warn" || tone === "crit", `a count glyph is a raised tone's shape, not "${tone}"`);
         assert.strictEqual(isSolid, tone === "crit", `a ${tone} count is ${isSolid ? "solid" : "quiet"}`);
@@ -599,11 +604,7 @@ test("an item's counts run worst tone first, so the count the rail keeps is the 
   const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));
   const tree = renderSidebar(harness, ready(buildBreakerSummary([])));
   const [mapItem] = findNodes(tree, (n) => n.props?.key === "architecture");
-  const toneByGlyph = new Map(Object.entries(app.ui.TONE_GLYPH).map(([tone, glyph]) => [glyph, tone]));
-  const tones = findNodes(mapItem, (n) => getClassTokens(n).includes("nav-count")).map((count) => {
-    const [glyph] = count.children.filter(isRenderedNode);
-    return toneByGlyph.get(collectText(glyph.children).join("").trim()) ?? "";
-  });
+  const tones = findNodes(mapItem, (n) => getClassTokens(n).includes("nav-count")).map(getCountTone);
 
   assert.deepStrictEqual(new Set(tones), new Set(["warn", "crit"]), "precondition: the item carries a warn and a crit count");
   assert.deepStrictEqual(tones, ["crit", "warn"]);

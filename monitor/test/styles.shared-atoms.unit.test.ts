@@ -314,8 +314,7 @@ test("a transient shell stays neutral in every tone, and a toast's tone rides on
   for (const tone of ["crit", "warn", "info", "ok"]) {
     const toned = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
     assert.doesNotMatch(toned, /(^|[;\s])(background|border|border-color|color)\s*:/, `.doc-toast.${tone} paints its shell or text`);
-    const toneRule = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
-    assert.equal(getDecl(toneRule, "--toast-tone"), `var(--${tone})`, `.doc-toast.${tone} names its glyph tone`);
+    assert.equal(getDecl(toned, "--toast-tone"), `var(--${tone})`, `.doc-toast.${tone} names its glyph tone`);
     for (const [theme, block] of THEMES) {
       const fg = getTriplet(block, `--${tone}`);
       const ratio = contrastRatio(fg, getTriplet(block, "--overlay-surface"));
