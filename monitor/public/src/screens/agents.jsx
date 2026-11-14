@@ -656,6 +656,7 @@ function AgentAlarmLane({ failures, state, onRetry }) {
 
 function AgentAlarmRow({ alarm }) {
   const { Badge, AgentName } = window.UI;
+  const nextStep = getAlarmNextStepAg(alarm);
 
   return (
     <window.UI.Cluster>
@@ -665,11 +666,15 @@ function AgentAlarmRow({ alarm }) {
         {formatConsecutiveFails(alarm.consecutive_fails)}
         {alarm.suspended_at && <> · since <SuspendedStampAg iso={alarm.suspended_at}/></>}
       </span>
-      <span className="text-faint fs-meta">
-        {alarm.suspended ? 'stop routing · clear the marker, then edit the body' : 'one more fail suspends it'}
-      </span>
+      {nextStep && <span className="text-faint fs-meta">{nextStep}</span>}
     </window.UI.Cluster>
   );
+}
+
+// the next-fail claim needs the fail count it was read with → an unread count makes no claim
+function getAlarmNextStepAg(alarm) {
+  if (alarm.suspended) return 'stop routing · clear the marker, then edit the body';
+  return Number.isFinite(alarm.consecutive_fails) ? 'one more fail suspends it' : null;
 }
 
 /**
