@@ -193,7 +193,7 @@ describe("an alert card leads its title with a visually-hidden severity word, so
 
       assert.equal(collectText(getByClass(title, "sr-only")[0]).trim(), row.word, "hidden severity word");
       assert.match(collectText(title), new RegExp(`^${row.word}\\s*Harness drift$`), "the word leads the title");
-      assert.equal(getByClass(tree, "alert-card")[0].props["data-tone"], row.tone, "tone rides on the card for its well");
+      assert.equal(getByClass(tree, "alert-card")[0].props["data-tone"], row.tone, "tone rides on the card for its glyph");
     });
   }
 });

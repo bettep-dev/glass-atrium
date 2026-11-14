@@ -317,7 +317,7 @@ test("a part's health verdict carries its tone on a tone-shaped glyph, its word 
   }
 });
 
-// The row keeps its alert role and its data hooks; the shared AlertCard owns the look, tone riding its glyph well only.
+// The row keeps its alert role and its data hooks; the shared AlertCard owns the look, tone riding its bare glyph only.
 test("an alarm row is a bare alert wrapper around one page-level AlertCard that leaves the announcing to it", async () => {
   const mod = await loadArch();
   const row = { key: "live-overlay", tone: "crit", title: "Couldn't load the live overlay", note: "The live endpoint did not answer.", detail: "ECONNREFUSED", badges: ["daemon"], retry: true };

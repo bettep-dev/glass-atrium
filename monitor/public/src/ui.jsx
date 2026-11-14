@@ -2563,7 +2563,7 @@ function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetI
 const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice' };
 
 /**
- * The one conditional-alert card: tone rides only on the glyph well, the shell stays neutral.
+ * The one conditional-alert card, drawn as the alarm row: tone rides only on the bare glyph, the shell stays neutral.
  * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel
  * @param subjects - names of affected parts, shown as neutral chips
  * @param details - raw error kept behind a collapsed Details
@@ -2578,7 +2578,7 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
   return (
     <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
       <div className="alert-card-grid">
-        <span className="alert-card-well" aria-hidden="true">
+        <span className="alert-card-glyph" aria-hidden="true">
           <Icon name={TONE_ICON[tone]} size={isInset ? 14 : 16}/>
         </span>
         <div className="alert-card-content">

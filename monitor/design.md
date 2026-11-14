@@ -347,7 +347,7 @@
   - `metadata` — 서술 속성 (agent-only · md · model id): neutral · glyph 없음 · 소문자.
   - `count` — 순수 수량: neutral · glyph 없음 · sans tabular (§12.2, look → §12.3 Count); a count in prose or a row retires to a plain sans tnum number (§12.3).
   - 변형: `absent`(무테 · 무배경 · `--faint`) · `interactive`(`<button>`).
-- **alert-card glyph well** (`base.css` → `.alert-card`): light = tone **solid well + `--elev` knock-out glyph** (tinted light well 은 `--warn` glyph 를 0.12 tint 위 3.01 로 떨어뜨린다) · dark = tone 0.12 tinted well + tone glyph.
+- **alert-card glyph** (`base.css` → `.alert-card-glyph`): bare tone glyph on the card surface — no well, fill or radius (§12.3 Icons). 명암비 (raised `--elev` / inset `--sunken`): light warn 3.44 / 3.15 · ok 3.77 / 3.45 · info 3.68 / 3.38 · crit 5.05 / 4.63 · dark ≥ 6.32.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
 - **finder** (merged tree 기준): hit 마다 읽고 아래 분류에 넣는다. 분류 밖 hit = 새 위반.
   - finder 1 (alpha tint · inset stripe): `grep -rnE "var\(--(crit|warn|ok|info|[$]\{[^}]+\})\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
@@ -361,7 +361,6 @@
   - finder 3 (full-opacity tone **fill** — `background` · SVG `fill` · `bg-<tone>`): `grep -rnE "(background(-color)?|fill) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info|alert-tone)\)\)|(background|backgroundColor|fill) *[:=] *[\"'{][^\"'}]*rgb\(var\(--(crit|warn|ok|info)\)\)|bg-(crit|warn|ok|info)\b[^/]" public/src public/styles`.
     - 허용 hit — full-opacity tone fill 의 전체 목록:
       - 차트 data mark: `wiki.jsx` status mix 막대 · `agents.jsx` latency `bg-info` 막대와 범례 swatch · quality-health 차트 (`RATIO` 축 라벨 · tooltip key swatch).
-      - light alert-card glyph well (`--alert-well-fill`, 위 alert-card 항목) — `--elev` knock-out glyph 를 담는 glyph carrier. dark 는 0.12 tint 라 hit 아님.
       - destructive action `.btn.danger` (§7.4) · System map 링 badge glyph (`text.arch-ring-glyph` fill = glyph 의 tone).
 
 ### 4.3 Categorical — 차트 · 식별 전용
@@ -580,10 +579,10 @@
 - sticky head (`isHeadSticky` → `STICKY_TH_STYLE`): 불투명 `--elev`, z 1 — 스크롤 시 본문을 가리지 않게.
 - row: cursor pointer · hover `--sunken` · 마지막 행 border 없음. **row blur 금지.**
 - **행 상태 fill** (clauded-docs ledger, stripe 없음): selector `.tbl tbody tr.doc-row` 로 공용 hover 를 이기고 hover 중에도 유지.
-  - viewer 행 (`.is-selected`): `--accent` 0.035 + 제목 600 + `aria-current="true"`.
-  - checked (`.is-multi-selected`): `--accent` 0.07 · 비-색 cue = checkbox. viewer + checked = 0.11.
+  - viewer 행 (`.is-selected`): `--tint-row-1` + 제목 600 + `aria-current="true"`.
+  - checked (`.is-multi-selected`): `--tint-row-2` · 비-색 cue = checkbox. viewer + checked = `--tint-row-3`.
   - 삭제 대기 (`.is-pending-delete`): 행 opacity 없음 — 제목 line-through + `aria-busy` + 제목 앞 crit glyph.
-  - accent ladder 상한 = light warn glyph ≥ 3:1 (런타임 기본 accent 59 130 246 → α ≤ 0.12). binding: light both warn 3.03 · dark both pip 3.22 · light both pip 3.26 · light both faint 4.70. 사용자가 고른 다른 accent 는 측정 밖.
+  - the row-state ladder takes no stripe, border or accent; its fills, the text and glyph pairs on each and the `--tint-row-3` ceiling: §4.1 table.
 - 그룹 행 (`.is-grouped`, `model-config.jsx`): 하단 border 없음.
 - caption: 기본 sr-only, `isCaptionShown` 이면 section-label 스타일.
 - sortable column header (Task results Time): `btn ghost sm tbl-sort` inside the `th` (`aria-sort` on the `th`) · pulled back by the `.sm` inline padding + 1px edge → the label stays on the column's text axis (body cells · card head at an edge column), the 32 box overhangs into the cell padding.
@@ -628,19 +627,27 @@
 
 - 둘 다 불투명 면 위, blur 금지.
 - Attention placement: §12.7 — `PageVerdict` retires on every screen; cross-page attention = the Dashboard "Needs you" list + nav badges.
-- **`.alarm-row`**: flat hairline 행 — grid (glyph · 본문 · 액션) · gap 12 · padding 12px 16px · 하단 1px `--line`. tone 은 선행 glyph 색에만 (`data-tone`), stripe · tinted fill 없음.
+- **Alarm row — one geometry** for `.alarm-row` and `.alert-card-grid` (`base.css`):
+  - grid `auto minmax(0, 1fr) auto` (glyph · content · actions) · column gap `--space-3` · padding `--space-2` × `--card-pad`.
+  - first line box 32 (`--ctl-min-h`): the 16 glyph (its 32 slot), the 20 title line (content offset 6) and a 32 action centre on it → a one-line row is 48, the card-head height; with a detail line ≈ 70 (8 + 6 + 20 + 4 + 18.2 + 6 + 8 — the detail keeps `--fs-meta` × 1.4).
+  - glyph: `Icon` `TONE_ICON[tone]` 16 (inset `AlertCard` 14), bare, `aria-hidden`, `color: rgb(var(--<tone>))` — no well, fill or radius; tone on the glyph only (명암비 §4.2).
+  - title `--fs-body` 500 ink, one sentence, sr-only tone word first · detail `--fs-meta` dim, max 72ch, only a fact the title does not hold.
+  - actions at the row end: one Link (ink, trailing →) when the fix is on another page, else at most two `.btn.sm` · at a container width ≤ 36rem they drop under the content.
+  - between rows of a list: one hairline `--line`, none after the last.
+  - states: firing · held (the title is followed by `Last known` in plain `--fs-meta` dim, the glyph keeps its tone, Retry stays) · resolved (the row is removed, no "all clear" row) · empty list (the list card is not rendered).
+- **`.alarm-row`**: the alarm row written by class on a screen — `.alarm-row-glyph` slot first, the content next; tone via `data-tone` on the row.
+- **Dashboard alarm list** ("Needs you", §12.7): one list card (no visible head, region `aria-label="Needs you"`), one alarm row per alarm, worst first, action = Link to the owning page.
 - **`AlertCard({ tone, surface, title, body, subjects, details, actions, hasLiveHost })`**: 조건부 알림 카드의 유일한 atom — `.alert-card` 를 직접 조립하지 않는다.
   - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(카드 · 패널 안 `.sub-card.bg-sunken.is-inset`).
-  - tone: `crit` · `warn` · `info` · `ok` · `neutral`(well `--dim`). title 앞 sr-only 단어 (Critical / Warning / Notice / Resolved).
+  - tone: `crit` · `warn` · `info` · `ok` · `neutral`(glyph `--dim`). title 앞 sr-only 단어 (Critical / Warning / Notice / Resolved).
   - role: `hasLiveHost` 면 없음, 아니면 crit = `alert` · 그 외 = `status`.
   - `subjects` = neutral `Badge` chip · `details` = 접힌 Details 의 raw 오류 · `actions` = `.btn.sm` 최대 2개.
   - 화면 배너 함수는 AlertCard 의 얇은 wrapper (screen-local tint 배너 금지):
-    - `raised`: dashboard alarm 카드 · `PageErrorBanner` (§3.3) · `AwaitingBannerI` · `ParkedLoopBannerI` · `DriftBannerMC` · `ErrorBannerMC` · `SilentChannelRowO` · `BlockedBannerO` · System map alarm lane `AlarmRowAR`.
+    - `raised`: `PageErrorBanner` (§3.3) · `AwaitingBannerI` · `ParkedLoopBannerI` · `DriftBannerMC` · `ErrorBannerMC` · `SilentChannelRowO` · `BlockedBannerO` · System map alarm lane `AlarmRowAR`.
     - `inset`: `AgentDeleteConfirmPanel` 안내 · 실패 · `ErrorBannerCD` · 문서 viewer superseded 알림.
   - 고유 role 이 필요한 행은 AlertCard 를 감싼다: `AlarmRowAR` = `.arch-alarm-row` wrapper (`role="alert"` + `data-alarm` / `data-alarm-tone`, tint · border · padding 없음) 안에 `hasLiveHost` AlertCard.
-- **`.alert-card`**: grid (well · content · actions) · padding 12px 16px.
-  - well: 32×32 `--radius-tile` · `.is-inset` 이면 24×24 `--radius-control`. 채움 규칙 §4.2.
-  - content: gap 4 · title line-height 20 · body max 72ch. container query (≤ 36rem) 에서 액션이 content 아래로.
+- **`.alert-card`**: the alarm row (above) on a card shell — the `.alert-card-grid` holds the padding, the shell none · `surface="inset"` keeps its `.sub-card.bg-sunken` shell.
+  - content: gap 4 · body max 72ch · container query (≤ 36rem) 에서 액션이 content 아래로.
   - 진입 150ms opacity (`detailFade`), reduced-motion 시 정지.
 
 ### 7.10 Empty state — `EmptyState` (`.placeholder`)
@@ -1049,7 +1056,7 @@
 
 - Focus: the one focus rule (§9.1) — the ring shows iff `:focus-visible` matches.
 - Selection is never a box or a stripe:
-  - selected row = sunken fill + checked checkbox (multi-select tables); opened row (drawer open) = sunken fill + `aria-current="true"` + the drawer itself as the cue;
+  - selected row = sunken fill + checked checkbox (multi-select tables); opened row (drawer open) = sunken fill + `aria-current="true"` + the drawer itself as the cue; a ledger with both states takes the `--tint-row-*` ladder (§7.5); hover stays `--sunken`;
   - nav item = elev-2 fill + ink;
   - selected segment / tab / current page = §12.3 and §12.6.
 - Accent marks text links and the focus ring only; selected and current marks use strong ink.
@@ -1109,7 +1116,7 @@
   - A display name and its id never sit together: model name only (id → `title` tooltip and drawer).
   - No percentage-of-percentage or window-arithmetic prose: one delta ("+0.2 pt") with its comparison window inside ⓘ.
   - A fraction "(182/14,318)" is dropped when the count is already shown.
-  - Counting method, sampling window, lane caps, glyph legends → ⓘ (`CardInfo`).
+  - Counting method, sampling window, lane caps, glyph legends → ⓘ (`CardInfo`) — except the System map legend, the key to the canvas, which stays on the page (§7.14).
   - A source repeated per row ("Read from daemon-config.json" ×6) → once in the card foot.
   - One-row summary rails that re-group the table beside them are removed.
 - **Charts**: only a pattern one number cannot show, typed by the question (trend, comparison, composition, distribution); a sparkline draws a real series or is removed.

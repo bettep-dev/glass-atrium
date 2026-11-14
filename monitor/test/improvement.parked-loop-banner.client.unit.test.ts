@@ -123,7 +123,7 @@ test("the warning is not hidden behind a hover-only tooltip", () => {
 //
 // Tone rides on a glyph or a severity bar and NEVER on text — severity hue as text
 // fails AA on the light theme. Every banner on the screen is the shared AlertCard,
-// whose glyph well alone carries the tone; the lane is a plain stack of them.
+// whose bare glyph alone carries the tone; the lane is a plain stack of them.
 
 const TEXT_CLASS = {
   SEVERITY: /\btext-(warn|crit|ok)\b/,
@@ -141,7 +141,7 @@ function collectElements(node: unknown, out: RecordedElement[]): RecordedElement
   return out;
 }
 
-test("the parked-loop banner is the shared alert card, its warn tone on the glyph well alone", () => {
+test("the parked-loop banner is the shared alert card, its warn tone on the glyph alone", () => {
   assert.ok(isElement(banner), "a populated cap must render the banner");
   assert.equal(banner.type, sandbox.window.UI.AlertCard, "a screen-local banner shell duplicates the alert card");
   assert.equal(banner.props.tone, "warn");

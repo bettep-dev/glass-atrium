@@ -267,7 +267,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .btn.danger {
 	background: rgb(var(--crit));
-	color: rgb(var(--elev)); /* knock-out like the alert-card glyph — white on the pale dark-theme crit is 2.77 */
+	color: rgb(var(--elev)); /* knock-out — white on the pale dark-theme crit is 2.77 */
 	border-color: rgb(var(--crit));
 }
 .btn.ghost {
@@ -2371,85 +2371,66 @@ button.kpi:hover {
 	color: rgb(var(--dim));
 }
 
-/* flat hairline alarm row — tone rides on the leading glyph, never a stripe or tinted fill */
-.alarm-row {
+/* one alarm-row geometry (§7.9) — glyph · content · actions on a 32 first line between 8 paddings: a one-line row is 48.
+   Tone rides on the bare leading glyph, never a stripe, a tinted fill or a tile */
+.alarm-row,
+.alert-card-grid {
 	display: grid;
-	grid-template-columns: auto 1fr auto;
-	gap: 12px;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	column-gap: var(--space-3);
 	align-items: start;
-	padding: 12px 16px;
+	padding: var(--space-2) var(--card-pad);
+}
+.alarm-row {
 	border-bottom: 1px solid rgb(var(--line));
 }
 .alarm-row:last-child {
 	border-bottom: none;
 }
-.alarm-row-glyph {
+/* a 32 slot → the glyph centres on the first line */
+.alarm-row-glyph,
+.alert-card-glyph {
 	display: inline-flex;
-	padding-top: 2px;
-	line-height: 1;
+	align-items: center;
+	height: var(--ctl-min-h);
+}
+/* 6px → the 20 title line centres on the 32 first line */
+.alarm-row > .alarm-row-glyph + *,
+.alert-card-content {
+	padding-block: 6px;
+}
+/* two classes → outrank a same-element .fs-body (15 × 1.45 = 21.75), so the title line stays the 20 the row adds up to */
+.alarm-row > .alarm-row-glyph + *,
+.alert-card-title.alert-card-title {
+	line-height: var(--lh-row);
 }
 .alarm-row[data-tone="crit"] .alarm-row-glyph { color: rgb(var(--crit)); }
 .alarm-row[data-tone="warn"] .alarm-row-glyph { color: rgb(var(--warn)); }
 .alarm-row[data-tone="info"] .alarm-row-glyph { color: rgb(var(--info)); }
 .alarm-row[data-tone="ok"] .alarm-row-glyph { color: rgb(var(--ok)); }
 
-/* alert card — tone rides on the glyph well; never a stripe, a tinted card fill or a tone border.
-   light: solid well + knock-out glyph (a tinted light well leaves --warn at 2.81:1) · dark: tinted well + tone glyph */
+/* alert card — the alarm row on a card shell: the grid holds the padding, the shell stays neutral (no stripe, tinted fill or
+   tone border) and the bare glyph takes the tone — ≥ 3.15:1 on --elev and --sunken in both themes */
 .alert-card {
 	--alert-tone: var(--crit);
-	--alert-well-fill: rgb(var(--alert-tone));
-	--alert-glyph: rgb(var(--elev));
 	container-type: inline-size;
-	padding: 12px 16px;
+	padding: 0;
 	/* motion: effects-fast — an opacity-only entry, stopped under reduced motion */
 	animation: detailFade 150ms cubic-bezier(0.2, 0, 0, 1);
-}
-[data-theme="dark"] .alert-card {
-	--alert-well-fill: rgb(var(--alert-tone) / 0.12);
-	--alert-glyph: rgb(var(--alert-tone));
 }
 .alert-card[data-tone="crit"] { --alert-tone: var(--crit); }
 .alert-card[data-tone="warn"] { --alert-tone: var(--warn); }
 .alert-card[data-tone="info"] { --alert-tone: var(--info); }
 .alert-card[data-tone="ok"] { --alert-tone: var(--ok); }
 .alert-card[data-tone="neutral"] { --alert-tone: var(--dim); }
-.alert-card.is-inset {
-	padding: 12px;
+.alert-card-glyph {
+	color: rgb(var(--alert-tone));
 }
-.alert-card-grid {
-	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
-	column-gap: 12px;
-	align-items: start;
-}
-.alert-card-well {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: var(--ctl-min-h);
-	height: var(--ctl-min-h);
-	border-radius: var(--radius-tile);
-	background: var(--alert-well-fill);
-	color: var(--alert-glyph);
-}
-.alert-card.is-inset .alert-card-well {
-	width: 24px;
-	height: 24px;
-	border-radius: var(--radius-control);
-}
-/* 6px → the 20px title line centres on the 32px well (2px on the 24px inset well) */
 .alert-card-content {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
 	min-width: 0;
-	padding-top: 6px;
-}
-.alert-card.is-inset .alert-card-content {
-	padding-top: 2px;
-}
-.alert-card-title {
-	line-height: 20px;
 }
 .alert-card-body {
 	max-width: 72ch;

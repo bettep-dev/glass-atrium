@@ -87,6 +87,21 @@ const ERROR_DETAILS_ROWS = [
   { name: "an alert card", id: "details-alert", markup: render(ui.AlertCard, { tone: "crit", title: "Couldn't load outcomes.", details: ERROR_DETAIL }) },
 ] as const;
 
+// the alarm row as AlertCard draws it (raised and inset) and as a screen writes it by class; the detail line is
+// the one fact the title does not hold
+const RETRY = React.createElement("button", { type: "button", className: "btn sm" }, "Retry");
+const ALARM_ROWS = [
+  { name: "a raised alert card with one line and an action", id: "alarm-card-line", height: 48, glyph: 16,
+    markup: render(ui.AlertCard, { tone: "warn", title: "$842 so far today", actions: RETRY }) },
+  { name: "a raised alert card with a detail line", id: "alarm-card-detail", height: 70, glyph: 16,
+    markup: render(ui.AlertCard, { tone: "crit", title: "1 harness part is down", body: "Hook Chain" }) },
+  { name: "an inset alert card with one line and an action", id: "alarm-card-inset", height: 48, glyph: 14,
+    markup: render(ui.AlertCard, { tone: "info", surface: "inset", title: "This document was superseded", actions: RETRY }) },
+  { name: "a hairline alarm row", id: "alarm-row-line", height: 48, glyph: 16,
+    markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
+      `<div class="fs-body text-ink">$842 so far today</div></div>` },
+] as const;
+
 // column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
 // thead.tbl-head (its own rule and inline padding, as the matrix and crosstab tables carry), and the sortable and control cases
 const headTable = (row: string, tableAttrs: string, theadAttrs: string, cells: string): string =>
@@ -151,6 +166,7 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   ${COMPACT_ROWS.map((row) => row.markup).join("\n  ")}
   ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
     `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
+  ${ALARM_ROWS.map((row) => `<div id="${row.id}" style="width: 640px;">${row.markup}</div>`).join("\n  ")}
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
@@ -287,6 +303,65 @@ describe("the shared error-details summary is the disclosure atom", () => {
     test(`${row.name}: the chevron turns a quarter only while the details are open`, async () => {
       assert.equal((await readSummary(row.id)).chevronTurn, 0, "closed");
       assert.equal((await readSummary(`${row.id}-open`)).chevronTurn, 90, "open");
+    });
+  }
+});
+
+// one alarm-row geometry for the alert card and the hairline row: 8 above and below a 32 first line that the glyph, the title line and
+// the action share, the tone on a bare glyph and nothing painted behind it
+describe("an alarm row is one 32 line between 8 paddings, its tone on a bare glyph", () => {
+  interface AlarmReading {
+    height: number; lineCentre: number; glyphCentre: number; glyphWidth: number; titleCentre: number; actionCentre: number | null;
+    paintedInGlyphColumn: string[]; isGlyphHidden: boolean; glyphColor: string; toneColor: string;
+  }
+
+  const readAlarm = (id: string): Promise<AlarmReading> =>
+    page.$eval(`#${id}`, (host) => {
+      const row = host.querySelector(".alert-card-grid, .alarm-row");
+      const [slot, content] = row ? [row.children[0], row.children[1]] : [];
+      const svg = slot?.querySelector("svg");
+      if (!row || !slot || !content || !svg) throw new Error(`fixture #${host.id} lacks its row, glyph or content`);
+      const title = content.querySelector(".alert-card-title") ?? content;
+      const action = row.querySelector("button")?.getBoundingClientRect();
+      const rowBox = row.getBoundingClientRect();
+      const glyphBox = svg.getBoundingClientRect();
+      const root = getComputedStyle(document.documentElement);
+      const tone = row.closest("[data-tone]")?.getAttribute("data-tone") ?? "";
+      return {
+        height: rowBox.height,
+        lineCentre: rowBox.top + parseFloat(getComputedStyle(row).paddingTop) + parseFloat(root.getPropertyValue("--ctl-min-h")) / 2,
+        glyphCentre: (glyphBox.top + glyphBox.bottom) / 2,
+        glyphWidth: glyphBox.width,
+        titleCentre: title.getBoundingClientRect().top + parseFloat(getComputedStyle(title).paddingTop) + parseFloat(getComputedStyle(title).lineHeight) / 2,
+        actionCentre: action ? (action.top + action.bottom) / 2 : null,
+        paintedInGlyphColumn: [slot, ...slot.querySelectorAll("*")].map((el) => getComputedStyle(el).backgroundColor)
+          .filter((color) => color !== "rgba(0, 0, 0, 0)"),
+        isGlyphHidden: slot.getAttribute("aria-hidden") === "true" || svg.getAttribute("aria-hidden") === "true",
+        glyphColor: getComputedStyle(svg).color,
+        toneColor: `rgb(${root.getPropertyValue(`--${tone}`).trim().split(/\s+/).join(", ")})`,
+      };
+    });
+
+  for (const row of ALARM_ROWS) {
+    test(`${row.name} is ${row.height} tall`, async () => {
+      const { height } = await readAlarm(row.id);
+      assert.ok(Math.abs(height - row.height) < 0.5, `row height ${height}`);
+    });
+
+    test(`${row.name}: the glyph, the title line and any action centre on the first 32 line`, async () => {
+      const alarm = await readAlarm(row.id);
+      const centres = { glyph: alarm.glyphCentre, title: alarm.titleCentre, ...(alarm.actionCentre === null ? {} : { action: alarm.actionCentre }) };
+      for (const [part, centre] of Object.entries(centres)) {
+        assert.ok(Math.abs(centre - alarm.lineCentre) < 1, `${part} centre ${centre} vs line centre ${alarm.lineCentre}`);
+      }
+    });
+
+    test(`${row.name}: a bare ${row.glyph} glyph in the tone colour, hidden from the reader, nothing painted behind it`, async () => {
+      const alarm = await readAlarm(row.id);
+      assert.equal(alarm.glyphWidth, row.glyph);
+      assert.equal(alarm.glyphColor, alarm.toneColor, "the tone rides on the glyph");
+      assert.ok(alarm.isGlyphHidden, "the glyph is decoration; the title carries the severity word");
+      assert.deepEqual(alarm.paintedInGlyphColumn, [], "no well, fill or tile in the glyph column");
     });
   }
 });
