@@ -25,7 +25,7 @@ export interface RemoteAuditEvent {
   readonly actor: string;
   readonly actionKind: string;
   readonly result: RemoteAuditResult;
-  readonly payload?: { readonly method: string; readonly route: string };
+  readonly payload?: { readonly method: string; readonly route: string; readonly count?: number };
   /** remote_devices row the event concerns */
   readonly targetId?: bigint;
 }

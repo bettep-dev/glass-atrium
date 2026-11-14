@@ -14,6 +14,7 @@ import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { registerRequestGuards } from "./request-guards.js";
 import { getMonitorPort } from "./monitor-port.js";
 import { type ListenerContext, buildHostAllowlistHook, setListenerContext } from "./queue/request-gate.js";
+import { type RemoteAdminDeps, registerRemoteAdminRoutes } from "./remote/admin-routes.js";
 import { type RemoteGateDeps, registerRemoteGate } from "./remote/gate.js";
 import { type RemoteTls, getRemoteServerOptions, setRemoteSocketLimits } from "./remote/listener.js";
 import { type RemoteRegistrationDeps, registerRemoteDeviceRoutes } from "./remote/routes.js";
@@ -25,7 +26,12 @@ const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
 // a meta CSP cannot carry frame-ancestors → a framed Queue page would send same-origin owner actions a neighbour page could click into
 const STATIC_FRAME_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } as const;
 
-export async function buildApp(port: number = getMonitorPort()): Promise<FastifyInstance> {
+export interface LoopbackAppOptions {
+  /** the Mac page's remote-access admin routes; absent → not registered (tests building the bare surface) */
+  readonly admin?: RemoteAdminDeps;
+}
+
+export async function buildApp(port: number = getMonitorPort(), options: LoopbackAppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({ loggerInstance: logger, disableRequestLogging: false });
 
   // a tunnel, proxy or rebound page reaching 127.0.0.1 carries its own Host → refused before any route, login-free API included
@@ -35,6 +41,7 @@ export async function buildApp(port: number = getMonitorPort()): Promise<Fastify
   registerRequestGuards(app);
 
   await registerSurface(app);
+  if (options.admin !== undefined) await registerRemoteAdminRoutes(app, options.admin);
 
   // audit-trail hook — mutating write 를 monitor.audit_log 에 fire-and-forget 기록(mutation 미차단)
   registerAuditLogHook(app);

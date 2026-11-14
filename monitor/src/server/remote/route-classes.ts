@@ -3,8 +3,11 @@
 
 import { createHash } from "node:crypto";
 
-/** page = reachable from a registered device · agent = local sessions, hooks, scripts · remote-admin = Mac page only. */
-export type RouteClass = "page" | "agent" | "remote-admin";
+/**
+ * page = reachable from a registered device · agent = local sessions, hooks, scripts · remote-admin = Mac page only ·
+ * remote-pre-auth = remote listener, no registered device · remote-device = remote listener, acts on the caller or reduces access.
+ */
+export type RouteClass = "page" | "agent" | "remote-admin" | "remote-pre-auth" | "remote-device";
 
 export interface ReviewedRoute {
   readonly route: string;
@@ -16,16 +19,29 @@ export interface RouteClassSignoff {
   readonly reviewer: string;
   readonly stream: string;
   readonly cid: string;
-  /** SHA-256 over the `route cls` lines of REVIEWED_ROUTES, in order (getRouteClassDigest). */
+  /** leading REVIEWED_ROUTES rows this sign-off covers → a later sign-off appends rows, never edits signed ones */
+  readonly rowCount: number;
+  /** SHA-256 over the `route cls` lines of those rows, in order (getRouteClassDigest). */
   readonly sha256: string;
 }
 
-export const ROUTE_CLASS_SIGNOFF: RouteClassSignoff = {
-  reviewer: "glass-atrium-sec-guard",
-  stream: "S2",
-  cid: "2026-11-14T1420_lan-build_c5b9",
-  sha256: "b76036b059ce1c7e0e5f860d94c8afcc678e1b98b8212d21854a7a72d24179fc",
-};
+export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S2",
+    // delivery CID of the build that received the table; the reviewer's own verdict CID for these rows is unrecorded
+    cid: "2026-11-14T1420_lan-build_c5b9",
+    rowCount: 94,
+    sha256: "b76036b059ce1c7e0e5f860d94c8afcc678e1b98b8212d21854a7a72d24179fc",
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S3",
+    cid: "2026-11-14T1640_lan-route-classes_a93f",
+    rowCount: 98,
+    sha256: "f9fde5d98f1f33f74db6e2246425c05a42a90e8d87fed9f17aa51ff41f36d252",
+  },
+];
 
 export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /*", cls: "page", reason: "app.ts read: static wildcard serves all of monitor/public (shell, bundles, sources); behind registration as a whole — sign-in assets need their own exact-path allowlist, not this wildcard" },
@@ -122,6 +138,10 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/queue/owner/items/:id/later", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
   { route: "POST /api/queue/owner/items/:id/seen", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
   { route: "POST /api/queue/owner/items/:id/resend", cls: "page", reason: "page function, re-queues a delivery to a local session (same resume path as answer); route read: empty body schema" },
+  { route: "POST /api/remote/registration", cls: "remote-admin", reason: "loopback only; Sec-Fetch-Site exactly same-origin, empty body, open-rate limit; audit row before the code, no row → no code; code in this response body only, no-store" },
+  { route: "GET /api/remote/devices", cls: "remote-admin", reason: "loopback only; same Sec-Fetch-Site rule although a GET; returns id, label, created, last seen only" },
+  { route: "DELETE /api/remote/devices/:id", cls: "remote-admin", reason: "loopback only; same rule, decimal id, no body; remote.revoke after the revoke, audit failure never blocks it; one device_not_found" },
+  { route: "POST /api/remote/devices/revoke-all", cls: "remote-admin", reason: "loopback only; same rule, empty body; remote.revoke with the count only" },
 ];
 
 const CLASS_BY_ROUTE: ReadonlyMap<string, RouteClass> = new Map(REVIEWED_ROUTES.map((entry) => [entry.route, entry.cls]));

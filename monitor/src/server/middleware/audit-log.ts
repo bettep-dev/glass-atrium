@@ -11,7 +11,7 @@ import type { RemoteAuditWriter } from "../remote/gate.js";
 import { MUTATION_METHODS } from "../request-guards.js";
 
 // Single audit actor — the monitor web server is the sole write-action origin.
-const AUDIT_ACTOR = "monitor-web";
+export const AUDIT_ACTOR = "monitor-web";
 
 // VarChar64 defensive cap on action_kind — resource+verb never reaches it, but a malformed/oversized route key must not throw a length error into the path.
 const ACTION_KIND_MAX = 64;

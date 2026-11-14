@@ -14,6 +14,8 @@ import { isLoopbackHost } from "./host-guard.js";
 import { getMonitorPort } from "./monitor-port.js";
 import { type QueueScheduler, getSweepDeps, startQueueScheduler } from "./queue/scheduler.js";
 import { DeviceConnections } from "./remote/connections.js";
+import { listActiveDevices, revokeAllDevices, revokeDevice } from "./remote/devices.js";
+import { buildRemoteAuditWriter } from "./middleware/audit-log.js";
 import type { RemoteListenerController } from "./remote/controller.js";
 import { RegistrationCodes } from "./remote/registration-code.js";
 import { startRemoteAccess } from "./remote/start.js";
@@ -73,7 +75,14 @@ async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<v
 }
 
 async function main(): Promise<void> {
-  const app = await buildApp(PORT);
+  const app = await buildApp(PORT, {
+    admin: {
+      codes: registrationCodes,
+      devices: { list: () => listActiveDevices(getPrisma()), revoke: (id) => revokeDevice(getPrisma(), id), revokeAll: () => revokeAllDevices(getPrisma()) },
+      connections: deviceConnections,
+      audit: buildRemoteAuditWriter(),
+    },
+  });
   attachShutdown(app);
   // Top-level handlers — log + exit so launchd respawns cleanly.
   process.on("unhandledRejection", (reason) => {

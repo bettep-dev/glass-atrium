@@ -107,6 +107,18 @@ async function seedDecision(): Promise<bigint> {
   return item.id;
 }
 
+describe("routes owned by the loopback listener", () => {
+  test("the remote app registers none of the remote-admin routes", () => {
+    const adminRoutes = REVIEWED_ROUTES.filter((entry) => entry.cls === "remote-admin").map((entry) => entry.route);
+    assert.ok(adminRoutes.length > 0, "the table classes remote-admin routes");
+    const present = adminRoutes.filter((route) => {
+      const [method = "", url = ""] = route.split(" ");
+      return app.hasRoute({ method: method as "GET", url });
+    });
+    assert.deepEqual(present, []);
+  });
+});
+
 describe("the surface behind the gate", () => {
   test("every classified route and an unknown path refuse an unregistered request with no data", async () => {
     const probes = [
