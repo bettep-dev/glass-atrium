@@ -967,11 +967,20 @@ function getSendTargetsQ(rows, selectedIds) {
 	return { ids: targets.map((row) => row.id), names: targets.map((row) => row.name), endedCount: targets.filter((row) => row.state === "exited").length };
 }
 
-// one target by name, several by count · an ended target is resumed to take the order → the label says how many before the owner sends
-function getSendLabelQ({ ids, names, endedCount }) {
-	if (ids.length === 0) return "Send order";
-	const label = ids.length === 1 ? `Send to ${names[0]}` : `Send to ${ids.length} sessions`;
-	return endedCount > 0 ? `${label} · resumes ${endedCount} ended` : label;
+function getSendLabelQ(targets) {
+	const parts = getSendPartsQ(targets);
+	return parts ? `${parts.head}${parts.name}${parts.tail}` : "Send order";
+}
+
+/**
+ * The send label as the pieces the button cuts `{ head, name, tail }`; nothing ticked → null.
+ * One target by name, several by count · an ended target is resumed to take the order → `tail` says how many before the owner sends.
+ * Too narrow a row → `name` gives way first, then `tail`; `head` (the verb and a count) stays whole.
+ */
+function getSendPartsQ({ ids, names, endedCount }) {
+	if (ids.length === 0) return null;
+	const tail = endedCount > 0 ? ` · resumes ${endedCount} ended` : "";
+	return ids.length === 1 ? { head: "Send to ", name: names[0], tail } : { head: `Send to ${ids.length} sessions`, name: "", tail };
 }
 
 /** What a send press lacks `{ message, focus }` — `focus` names the control that fixes it (`rail` / `box`); nothing missing → null. */
@@ -1975,7 +1984,8 @@ function putInvalidQ(queue, id, message, targetId) {
  * One composer for every field the owner writes in: label, the box and its buttons on one row, the reserved note line.
  * Buttons are always enabled; while sending they read `Sending…` and carry aria-disabled. Cmd / Ctrl + Enter presses the ink button.
  * @param field - `{ id, label }` of the box; null → buttons alone
- * @param buttons - `{ label, isInk, keyName, onPress }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter
+ * @param buttons - `{ label, isInk, keyName, onPress, parts }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter;
+ *   `parts` (getSendPartsQ) → the label may be cut to its row, the whole label in the button's title
  * @param later - the quiet button at the end of the note line, `{ label, keyName, onPress }`
  */
 function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null }) {
@@ -1995,8 +2005,8 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 				<div className="queue-compose-buttons">
 					{buttons.map((button) => (
 						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined}
-							aria-busy={(isBusy && button.isInk) || undefined} onClick={isBusy ? undefined : button.onPress}>
-							{isBusy && button.isInk ? "Sending…" : button.label}
+							aria-busy={(isBusy && button.isInk) || undefined} title={button.parts ? button.label : undefined} onClick={isBusy ? undefined : button.onPress}>
+							{isBusy && button.isInk ? "Sending…" : getButtonTextQ(button)}
 						</button>
 					))}
 				</div>
@@ -2011,6 +2021,18 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 
 function getFieldLabelQ(field) {
 	return <label htmlFor={field.id} className="field-label">{field.label}</label>;
+}
+
+// a label in parts (getSendPartsQ) → one cut line inside the button; its text stays the whole label, so the accessible name does too
+function getButtonTextQ({ label, parts }) {
+	if (!parts) return label;
+	return (
+		<span className="queue-send-label">
+			<span>{parts.head}</span>
+			{parts.name && <span className="queue-send-name">{parts.name}</span>}
+			{parts.tail && <span className="queue-send-tail">{parts.tail}</span>}
+		</span>
+	);
 }
 
 /** The bordered box: the thumbnails row while images are attached, the text, and `Add images` where the use takes images. */
@@ -2596,7 +2618,7 @@ function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }
 	return (
 		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: <OrderLabelQ rows={rows.filter((row) => targets.ids.includes(row.id))} /> }} tray={tray}
 			text={box.text} onText={onText} isBusy={box.isBusy}
-			buttons={[{ label: getSendLabelQ(targets), isInk: box.text.trim() !== "" && targets.ids.length > 0, keyName: "send", onPress: onSend }]}
+			buttons={[{ label: getSendLabelQ(targets), parts: getSendPartsQ(targets), isInk: box.text.trim() !== "" && targets.ids.length > 0, keyName: "send", onPress: onSend }]}
 			note={<ComposerNoteQ error={box.error} info={changed} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets, isReady ? rows : null)} />} />
 	);
 }

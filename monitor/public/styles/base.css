@@ -640,9 +640,18 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	container: queue-orders / inline-size;
 }
 /* Orders' composer takes its form from the pane's width, never from the button's label → a tick that lengthens the label moves
-   nothing: the button under the box below a 420 pane, beside it from there (spec §3.2 / §4.5) */
+   nothing: the button under the box below a 420 pane, beside it from there (spec §3.2 / §4.5).
+   The label gives way, never the box: beside, the box keeps --queue-box-min and the button the rest of the row; under, the whole row */
 .queue-orders-card .queue-compose-row > .queue-compose-box {
 	flex-basis: 100%;
+}
+.queue-orders-card .queue-compose-buttons {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+.queue-orders-card .queue-compose-buttons > .btn {
+	min-width: 0;
+	max-width: 100%;
 }
 @container queue-orders (min-width: 420px) {
 	.queue-orders-card .queue-compose-row {
@@ -650,7 +659,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	}
 	.queue-orders-card .queue-compose-row > .queue-compose-box {
 		flex: 1 1 0;
-		min-width: 0;
+		min-width: var(--queue-box-min);
 	}
 }
 .queue-orders-card > .card-head,
@@ -1242,6 +1251,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--ink));
 }
 .queue-compose-row {
+	--queue-box-min: 220px;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: flex-end;
@@ -1249,13 +1259,35 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 /* the button beside its box wherever the box keeps 220, under it below that (spec §4.5) */
 .queue-compose-row > .queue-compose-box {
-	flex: 1 1 220px;
+	flex: 1 1 var(--queue-box-min);
 }
 .queue-compose-buttons {
 	flex: none;
 	display: flex;
 	gap: var(--gap-control);
 	margin-inline-start: auto;
+}
+/* a send label in parts (queue.jsx → getSendPartsQ) on one line: the session name gives way first, down to 3ch, then the resume tail */
+.queue-send-label {
+	display: flex;
+	min-width: 0;
+	overflow: hidden;
+	white-space: pre;
+}
+.queue-send-label > span {
+	flex: none;
+}
+.queue-send-label > .queue-send-name {
+	flex: 0 1000 auto;
+	min-width: 3ch;
+}
+.queue-send-label > .queue-send-tail {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+.queue-send-label > :is(.queue-send-name, .queue-send-tail) {
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 .queue-note {
 	display: flex;

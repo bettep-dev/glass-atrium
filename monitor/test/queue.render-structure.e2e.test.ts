@@ -118,6 +118,8 @@ const DESK_STATES: QueueState[] = [
   { nn: "27c", name: "stress-nine-options", getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.nineOptions) },
   { nn: "27d", name: "stress-seven-sessions", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "7 sessions · 5 received · 1 not yet") },
   { nn: "27e", name: "stress-long-order", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "Show all 31 lines") },
+  // the 100-character session ticked: its name cut inside the send button beside a box that keeps its 220
+  { nn: "27f", name: "stress-long-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickOrdersTo(page, [EDGE_LONG_SESSION_NAME]) },
   { nn: "28a", name: "wide-list", viewports: [WIDE_WINDOW] },
   { nn: "28b", name: "wide-report", viewports: [WIDE_WINDOW], setUp: (page) => selectRow(page, 101) },
 ];
@@ -1917,6 +1919,48 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(rows.filter((row) => row.isBeside !== row.isWide), [], JSON.stringify(rows));
     assert.deepEqual(new Set(rows.map((row) => `${row.ticked}:${row.label}`)), new Set(["0:Send order", "2:Send to 2 sessions"]));
     assert.deepEqual([at(1440), at(1568), at(1728), at(2560)], [[false, false], [false, false], [true, true], [true, true]]);
+  });
+
+  // spec §3.2 / §4.5: the label gives way, never the box — beside the button the box keeps its 220, under it the whole row;
+  // a 100-character name is cut inside the button, the whole label in its title. 1605 and 1645 put the pane at about 420 and 460
+  test("the Orders send label stays inside its row and leaves the box 220 beside it or the whole row under it, a 100-character name cut with the whole label in the title, from 1440 to 1920", async () => {
+    const ticks = [
+      { names: [EDGE_LONG_SESSION_NAME], label: `Send to ${EDGE_LONG_SESSION_NAME}`, isCut: true },
+      { names: ["gersona", "portfolio"], label: "Send to 2 sessions · resumes 1 ended", isCut: false },
+    ];
+    const rows = [];
+    for (const width of [1440, 1568, 1605, 1645, 1728, 1920]) {
+      for (const tick of ticks) {
+        const page = await openEdgePage(harness, { width, height: 900 });
+        await page.locator(".queue-rail-band .disclosure").click();
+        await tickSessions(page, tick.names);
+        const facts = await page.evaluate(() => {
+          const rect = (selector: string) => (document.querySelector(`.queue-orders ${selector}`) as HTMLElement).getBoundingClientRect();
+          const [row, box, button] = [rect(".queue-compose-row"), rect(".queue-compose-box"), rect(".queue-compose-buttons .btn")];
+          const send = document.querySelector(".queue-orders .queue-compose-buttons .btn") as HTMLElement;
+          const name = document.querySelector(".queue-orders .queue-send-name") as HTMLElement | null;
+          const isBeside = button.top < box.bottom;
+          return {
+            isWide: (document.querySelector(".queue-orders-card") as HTMLElement).clientWidth >= 420,
+            isBeside,
+            isBoxKept: isBeside ? box.width >= 220 : Math.abs(box.width - row.width) < 1,
+            isInRow: button.left >= row.left - 0.5 && button.right <= row.right + 0.5,
+            label: send.textContent,
+            title: send.title,
+            isCut: name !== null && getComputedStyle(name).textOverflow === "ellipsis" && name.scrollWidth > name.clientWidth,
+          };
+        });
+        await page.close();
+        rows.push({ width, ...facts });
+      }
+    }
+
+    const expected = rows.map(({ width, isWide }, index) => {
+      const tick = ticks[index % ticks.length]!;
+      return { width, isWide, isBeside: isWide, isBoxKept: true, isInRow: true, label: tick.label, title: tick.label, isCut: tick.isCut };
+    });
+    assert.deepEqual(new Set(rows.map((row) => row.isWide)), new Set([false, true]), "the sweep crosses the 420 pane");
+    assert.deepEqual(rows, expected);
   });
 
   // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest, hovered or held;
