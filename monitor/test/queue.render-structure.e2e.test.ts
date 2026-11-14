@@ -631,6 +631,13 @@ async function arriveItem(page: Page, harness: Harness): Promise<void> {
   await page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS });
 }
 
+// the edge state's long list, scrolled to its top → the report arriving at the end of its band lands past the visible part
+async function arriveOffView(page: Page, harness: Harness): Promise<void> {
+  harness.fixture = getArrivalFixture(getEdgeFixture());
+  await page.clock.fastForward(15_000);
+  await page.locator(".queue-status-new", { hasText: "1 new below" }).waitFor({ timeout: READY_TIMEOUT_MS });
+}
+
 async function typeReportOrder(page: Page): Promise<void> {
   await selectRow(page, 101);
   await page.locator("#queue-reply-101").fill(REPLY_TEXT);
@@ -1509,6 +1516,44 @@ describe("queue page on the mockup fixtures", () => {
       await page.locator("#queue-row-150").waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
       assert.deepEqual(await page.locator('[role="option"] .pill').filter({ hasText: /^New$/ }).count(), 0, "no row paints New");
       assert.deepEqual(await page.locator('[role="option"][aria-selected="true"]').evaluateAll((rows) => rows.map((row) => row.id)), ["queue-row-101"]);
+    } finally {
+      await page.close();
+    }
+  });
+
+  // spec §4.4: an arrival is tracked until its row has been in the shown list's visible part — not only until it is focused
+  test("an arrival whose row has shown in the list is no longer counted on the way back of the next sheet", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
+    try {
+      await selectRow(page, 101);
+      await arriveItem(page, harness);
+      await page.getByRole("button", { name: "Back to the list, 1 new in the list" }).click();
+      await page.locator("#queue-row-150").waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
+      await selectRow(page, 101);
+
+      assert.deepEqual(await page.locator(".queue-sheet-head button").first().getAttribute("aria-label"), "Back to the list");
+    } finally {
+      await page.close();
+    }
+  });
+
+  // spec §4.4: past the visible part the status line names the arrival's side, and its Show brings the row into view with the focus
+  test("an arrival below the list's visible part is said as 1 new below with Show, and Show puts its row in view, focused, and ends the note", async () => {
+    harness.fixture = getEdgeFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture), true);
+    try {
+      await arriveOffView(page, harness);
+      const said = await page.locator(".queue-status-line").innerText();
+      await page.getByRole("button", { name: "Show the new item below" }).click();
+      await page.locator(".queue-status-new").waitFor({ state: "detached" });
+      const row = await page.evaluate(() => {
+        const [body, box] = [".queue-list > .card-body", "#queue-row-150"].map((selector) => (document.querySelector(selector) as HTMLElement).getBoundingClientRect());
+        return { isFocused: document.activeElement?.id === "queue-row-150", isInView: box!.top >= body!.top && box!.bottom <= body!.bottom };
+      });
+
+      assert.match(said.replace(/\s+/g, " "), /1 new below Show$/);
+      assert.deepEqual(row, { isFocused: true, isInView: true });
     } finally {
       await page.close();
     }

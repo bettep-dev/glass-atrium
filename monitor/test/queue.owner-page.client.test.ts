@@ -2768,6 +2768,29 @@ describe("In delivery rows", () => {
     const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
     assert.deepEqual([byClass(tree, "queue-row-who").length, collectText(tree).includes("gersona")], [0, false]);
   });
+
+  // spec §4.4: an arrival carries no mark of its own — no badge on its face, no New in its name
+  test("an arrived row paints no badge and its name has no New", () => {
+    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report" })), isSelected: false, isNew: true, view, onSelect: () => undefined, onOrder: () => undefined, onSeen: () => undefined });
+    const [option] = findNodes(tree, (node) => node.props?.role === "option");
+    assert.deepEqual([findNodes(tree, (node) => node.props?.atom === "Badge").length, /\bNew\b/.test(String(option?.props["aria-label"]))], [0, false]);
+  });
+
+  // spec §4.2: a name the session did not register is its start directory's, said under it; one name stands for one session alone
+  const whoRows = [
+    { name: "an unregistered name of one session says start directory under it", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 1, lines: ["atrium-hooks", "start directory"] },
+    { name: "a registered name stands alone", session: { name: "gersona", isNameRegistered: true }, copies: 1, lines: ["gersona"] },
+    { name: "an order to several sessions names their count, never a directory", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 2, lines: ["2 sessions"] },
+  ];
+  for (const row of whoRows) {
+    test(`row name column: ${row.name}`, () => {
+      const item = buildItem({ kind: "message", sendId: "send-1", session: buildSession(row.session) });
+      const copies = Array.from({ length: row.copies }, (_, index) => ({ ...item, id: item.id + index }));
+      const tree = render("RowWhoQ", { row: { id: item.id, item, copies } });
+      assert.deepEqual(findNodes(tree, (node) => typeof node.props?.className === "string" && /^queue-row-(name|dir)$/.test(node.props.className)).map((node) => collectText(node)), row.lines);
+    });
+  }
 });
 
 describe("the sheet's letterhead and record", () => {

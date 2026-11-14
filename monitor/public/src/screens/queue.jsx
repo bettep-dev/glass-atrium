@@ -1337,22 +1337,33 @@ function getRowBoxesQ(ids) {
 }
 
 /**
- * A row cut by an edge still shows; only one wholly past an edge is off view. Both sides → the side below, where arrivals land.
+ * The arrivals whose row does not show (isRowShownQ), by side. Both sides → the side below, where arrivals land.
  * @param view - the list body's box; zero high while an open sheet puts the list away
  * @returns `{ count, direction, id }` — `id` the off-view arrival nearest the visible part · null when none
  */
 function getOffViewQ(view, rows) {
-	if (view.bottom <= view.top) return null;
-	const below = rows.filter((row) => row.top >= view.bottom).sort((a, b) => a.top - b.top);
-	const above = rows.filter((row) => row.bottom <= view.top).sort((a, b) => b.bottom - a.bottom);
+	if (isListAwayQ(view)) return null;
+	const hidden = rows.filter((row) => !isRowShownQ(view, row));
+	const below = hidden.filter((row) => row.top >= view.bottom).sort((a, b) => a.top - b.top);
+	const above = hidden.filter((row) => row.top < view.bottom).sort((a, b) => b.bottom - a.bottom);
 	const [side, direction] = below.length > 0 ? [below, "below"] : [above, "above"];
 	return side.length === 0 ? null : { count: side.length, direction, id: side[0].id };
 }
 
-// the complement of getOffViewQ: a row not wholly past an edge shows · none while an open sheet puts the list away (zero high)
+// the arrivals whose row shows → seen · none while an open sheet puts the list away
 function getInViewIdsQ(view, rows) {
-	if (view.bottom <= view.top) return [];
-	return rows.filter((row) => row.top < view.bottom && row.bottom > view.top).map((row) => row.id);
+	if (isListAwayQ(view)) return [];
+	return rows.filter((row) => isRowShownQ(view, row)).map((row) => row.id);
+}
+
+// an open sheet puts the list away: its body is zero high
+function isListAwayQ(view) {
+	return view.bottom <= view.top;
+}
+
+// a row cut by an edge still shows; only one wholly past an edge does not
+function isRowShownQ(view, row) {
+	return row.top < view.bottom && row.bottom > view.top;
 }
 
 // Show on the off-view note → the row in view and focused; the selection stays where it is
