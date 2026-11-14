@@ -13,8 +13,10 @@
 # Requires: bats (brew install bats-core), bash 3.2+, python3 (fail-closed
 # precondition — the hook itself exits 2 without python3).
 #
-# Hermetic strategy: the hook reads ONLY stdin — no file is written; content/
-# command strings are pattern-scanned in place. Credential fixtures are
+# Hermetic strategy: the hook reads stdin, and for the SEC-013 classifier also the
+# Edit target file and the .git ancestors of file_path → corpus rows run against a
+# per-test tree under BATS_TEST_TMPDIR that carries its own .git root, and every
+# Edit row splices into a real target file there. Credential fixtures are
 # SYNTHETIC and RUNTIME-ASSEMBLED from split fragments so no secret-shaped
 # literal ever sits in this file (it would trip the very gate under test on
 # the test file's own write). The generic-assignment fixture is assembled in
@@ -33,6 +35,9 @@ setup() {
   CRED_FIXTURE="password"
   CRED_FIXTURE="${CRED_FIXTURE}=supersecret123"
   CORPUS_UTF8_LOCALE="$(find_utf8_locale)" || CORPUS_UTF8_LOCALE=""
+  # shellcheck disable=SC2154  # BATS_TEST_TMPDIR is set by bats per test
+  CORPUS_ROOT="${BATS_TEST_TMPDIR}/root"
+  mkdir -p "${CORPUS_ROOT}/repo/.git"
 }
 
 # First UTF-8 locale the host has → the corpus runs under it and under C (grep's [[:space:]] is locale-dependent).
@@ -145,38 +150,68 @@ expand_corpus_text() {
 }
 
 # Build a Write or Edit envelope; raw UTF-8, as the harness sends it.
-# Args: $1=Write|Edit $2=file_path ("-" = key absent) $3=text
+# Args: $1=Write|Edit $2=file_path ("-" = key absent) $3=text $4=old_string (Edit) $5=replace_all true|false (Edit)
 build_envelope() {
   python3 -c '
 import json, sys
 tool, path, text = sys.argv[1:4]
-ti = {"content": text} if tool == "Write" else {"old_string": "// edit anchor", "new_string": text}
+old = sys.argv[4] if len(sys.argv) > 4 else "// edit anchor"
+ti = {"content": text} if tool == "Write" else {"old_string": old, "new_string": text}
+if tool == "Edit" and sys.argv[5:6] == ["true"]:
+    ti["replace_all"] = True
 if path != "-":
     ti["file_path"] = path
 print(json.dumps({"tool_name": tool, "tool_input": ti}, ensure_ascii=False))
 ' "$@"
 }
 
-# Run one row on both channels under a UTF-8 locale and under C;
-# a miss appends "<channel> | <locale> | <row> | exit N" to CORPUS_FAILURES.
-# Args: $1=expected code ("" = must pass) $2=row name $3=file_path ("-" = none) $4=template
-check_corpus_row() {
-  local code="${1}" name="${2}" path="${3}" text tool loc envelope is_hit
+# Write an Edit target file from a corpus template. Args: $1=absolute path $2=template
+put_edit_target() {
+  mkdir -p "${1%/*}"
+  expand_corpus_text "${2}" >"${1}"
+}
+
+# Run one envelope under a UTF-8 locale and under C; a miss appends "<label> | <locale> | exit N" to CORPUS_FAILURES.
+# Args: $1=expected code ("" = must pass) $2=row label $3=envelope
+run_both_locales() {
+  local code="${1}" loc is_hit
   [[ -n "${CORPUS_UTF8_LOCALE}" ]] || {
-    CORPUS_FAILURES+=("no UTF-8 locale on this host | ${name}")
+    CORPUS_FAILURES+=("no UTF-8 locale on this host | ${2}")
     return 0
   }
+  for loc in "${CORPUS_UTF8_LOCALE}" C; do
+    run env LC_ALL="${loc}" bash "${HOOK_SH}" <<<"${3}"
+    is_hit=0
+    [[ -z "${code}" && "${status}" -eq 0 ]] && is_hit=1
+    [[ -n "${code}" && "${status}" -eq 2 && "${output}" == *"${code}"* ]] && is_hit=1
+    ((is_hit == 1)) || CORPUS_FAILURES+=("${2} | ${loc} | exit ${status}")
+  done
+}
+
+# Run one row as a Write and as an Edit; a /repo/ path maps under the corpus root, where the Edit
+# target holds only the edit anchor, so the post-edit file is the row text.
+# Args: $1=expected code ("" = must pass) $2=row name $3=file_path ("-" = none) $4=template
+check_corpus_row() {
+  local code="${1}" name="${2}" path="${3}" text tool envelope
   text="$(expand_corpus_text "${4}")"
+  if [[ "${path}" == /repo/* ]]; then
+    path="${CORPUS_ROOT}${path}"
+    put_edit_target "${path}" "// edit anchor"
+  fi
   for tool in Write Edit; do
     envelope="$(build_envelope "${tool}" "${path}" "${text}")"
-    for loc in "${CORPUS_UTF8_LOCALE}" C; do
-      run env LC_ALL="${loc}" bash "${HOOK_SH}" <<<"${envelope}"
-      is_hit=0
-      [[ -z "${code}" && "${status}" -eq 0 ]] && is_hit=1
-      [[ -n "${code}" && "${status}" -eq 2 && "${output}" == *"${code}"* ]] && is_hit=1
-      ((is_hit == 1)) || CORPUS_FAILURES+=("${tool} | ${loc} | ${name} | exit ${status}")
-    done
+    run_both_locales "${code}" "${tool} | ${name}" "${envelope}"
   done
+}
+
+# Run one Edit that splices new_string into a target under the corpus root.
+# Args: $1=expected code ("" = must pass) $2=row name $3=target path below the root $4=old_string
+#       $5=new_string template $6=replace_all (default false)
+check_edit_row() {
+  local envelope text
+  text="$(expand_corpus_text "${5}")"
+  envelope="$(build_envelope Edit "${CORPUS_ROOT}${3}" "${text}" "${4}" "${6:-false}")"
+  run_both_locales "${1}" "Edit | ${2}" "${envelope}"
 }
 
 must_pass() { check_corpus_row "" "$@"; }
@@ -460,6 +495,124 @@ assert_no_corpus_failures() {
   assert_no_corpus_failures
 }
 
+@test "generic credential corpus: a call, subscript, member or bind clears only when every digit-bearing part is a reference" {
+  CORPUS_FAILURES=()
+  must_pass "call whose argument is a small size" /repo/src/auth/keys.ts \
+    'const @SC@ = crypto.randomBytes(32);'
+  must_block SEC-013 "numeric literal wrapped in int()" /repo/app/settings.py \
+    '@PW@ = int(12345678)'
+  must_block SEC-013 "numeric literal wrapped in String()" /repo/src/db.ts \
+    'const @AK@ = String(12345678);'
+  must_block SEC-013 "hex literal wrapped in BigInt()" /repo/src/db.ts \
+    'const @TK@ = BigInt(0x9f86d0818);'
+  must_block SEC-013 "numeric literal wrapped in bytes()" /repo/app/settings.py \
+    '@PW@ = bytes(12345678)'
+  must_block SEC-013 "numeric literal wrapped in Integer()" /repo/app/config.rb \
+    '@PW@ = Integer(12345678)'
+  must_block SEC-013 "empty call then a numeric literal" /repo/src/db.ts \
+    'const @PW@ = f()+12345678;'
+  must_block SEC-013 "digit-bearing token as the callee" /repo/src/config.ts \
+    'DB_@PWU@=Hx72kq9Lmz()'
+  must_block SEC-013 "digit-bearing token subscripted" /repo/src/config.ts \
+    'DB_@PWU@=Hx72kq9Lmz[0]'
+  must_block SEC-013 "digit-bearing token with a member call" /repo/src/config.ts \
+    'DB_@PWU@=Hx72kq9Lmz.x()'
+  must_block SEC-013 "short callee with a symbol-bearing unquoted argument" /repo/src/db.ts \
+    'const @PW@ = f(Hx#72kq!9Lmz);'
+  must_block SEC-013 "short subscript with a symbol-bearing unquoted run" /repo/src/db.ts \
+    'const @PW@ = a[Hx#72kq!9Lmz];'
+  must_block SEC-013 "the key's own name as the member root" /repo/src/config.ts \
+    'DB_@PWU@=DB_@PWU@.Hx72kq9Lmz'
+  must_block SEC-013 "a language keyword as the member root" /repo/src/db.ts \
+    'const @PW@ = const.Hx72kq9Lmz;'
+  must_block SEC-013 "SQL bind with a digit-bearing name" /repo/db/revoke.sql \
+    'UPDATE sessions SET revoked = true WHERE @TK@ = :Hx72kq9Lmz;'
+  assert_no_corpus_failures
+}
+
+# shellcheck disable=SC2016  # templates carry literal ${…} on purpose
+@test "generic credential corpus: a placeholder clears only with an env-name body outside dotenv and secrets files" {
+  CORPUS_FAILURES=()
+  must_pass "placeholder naming env words with short digit suffixes" /repo/config/app.yaml \
+    '  @PW@: ${S3_@SCU@_V2}'
+  must_block SEC-013 "dollar-brace wrapping a lower-case hex value in yaml" /repo/config/app.yaml \
+    '  @PW@: ${deadbeef12345678}'
+  must_block SEC-013 "dollar-brace wrapping an upper-case base32 value in yaml" /repo/config/app.yaml \
+    '  @PW@: ${JBSWY3DPEHPK3PXP}'
+  must_block SEC-013 "quoted double-brace wrapping a lower-case hex value in yaml" /repo/config/app.yaml \
+    '  @PW@: "{{deadbeef12345678}}"'
+  must_block SEC-013 "dollar-brace wrapping a lower-case hex value in dotenv" /repo/.env \
+    'DB_@PWU@=${deadbeef12345678}'
+  must_block SEC-013 "env-name placeholder in a dotenv file" /repo/.env \
+    'DB_@PWU@=${DB_@PWU@}'
+  must_block SEC-013 "env-name placeholder in a secrets-named yaml" /repo/config/secrets.yaml \
+    '@PW@: ${DB_@PWU@}'
+  assert_no_corpus_failures
+}
+
+# shellcheck disable=SC2016  # templates carry literal ${…} and backticks on purpose
+@test "generic credential corpus: a multi-line string form is read as a string, so its body never clears by shape" {
+  CORPUS_FAILURES=()
+  must_pass "Ruby heredoc closed on its own tag line, then an env lookup" /repo/app/config.rb \
+    'conf = <<~EOS@NL@  hello@NL@EOS@NL@@PW@ = ENV.fetch("DB_@PWU@")'
+  must_pass "Rust lifetime quotes, then an env lookup" /repo/src/config.rs \
+    "fn f<'a>(x: &'a str) -> &'a str { x }@NL@let @TK@ = env.get(\"API_@TKU@\");"
+  must_block SEC-013 "Python triple-quoted body with an escaped quote before its close" /repo/app/config.py \
+    'Hx72kq9Lmz = load_key()@NL@CONFIG = """@NL@say \""" then@NL@@PW@: Hx72kq9Lmz@NL@"""'
+  must_block SEC-013 "Ruby squiggly heredoc with a line that starts with its tag" /repo/app/config.rb \
+    'Hx72kq9Lmz = load_key@NL@conf = <<~EOS@NL@  EOS marks the end@NL@  @PW@: Hx72kq9Lmz@NL@EOS'
+  must_block SEC-013 "SQL dollar-quoted body" /repo/db/fn.sql \
+    'SELECT 1 AS Hx72kq9Lmz;@NL@DO $$@NL@BEGIN@NL@  @PW@ = Hx72kq9Lmz;@NL@END $$;'
+  must_block SEC-013 "Ruby double-quoted string spanning lines" /repo/app/config.rb \
+    'Hx72kq9Lmz = load_key@NL@conf = "@NL@@PW@: Hx72kq9Lmz@NL@"'
+  must_block SEC-013 "PHP single-quoted string spanning lines" /repo/app/config.php \
+    "Hx72kq9Lmz();@NL@\$conf = '@NL@@PW@: Hx72kq9Lmz@NL@';"
+  must_block SEC-013 "Rust string spanning lines" /repo/src/config.rs \
+    'let Hx72kq9Lmz = load_key();@NL@let conf = "@NL@@PW@: Hx72kq9Lmz@NL@";'
+  must_block SEC-013 "Rust raw string" /repo/src/config.rs \
+    'let Hx72kq9Lmz = load_key();@NL@let conf = r#"@NL@@PW@: Hx72kq9Lmz@NL@"#;'
+  must_block SEC-013 "C# verbatim string" /repo/src/Config.cs \
+    'var Hx72kq9Lmz = LoadKey();@NL@var conf = @"@NL@@PW@: Hx72kq9Lmz@NL@";'
+  must_block SEC-013 "C++ raw string" /repo/src/config.cpp \
+    'auto Hx72kq9Lmz = load_key();@NL@auto conf = R"cfg(@NL@@PW@: Hx72kq9Lmz@NL@)cfg";'
+  must_block SEC-013 "Dart triple-single-quoted string" /repo/lib/config.dart \
+    "final Hx72kq9Lmz = loadKey();@NL@final conf = '''@NL@@PW@: Hx72kq9Lmz@NL@''';"
+  must_block SEC-013 "template literal whose interpolation holds a backtick in a comment" /repo/src/config.ts \
+    'const Hx72kq9Lmz = loadKey();@NL@const env = `${a /* ` */}@NL@DB_@PWU@=Hx72kq9Lmz@NL@`;@NL@const z = `q`;'
+  assert_no_corpus_failures
+}
+
+# shellcheck disable=SC2016  # templates carry literal backticks on purpose
+@test "generic credential corpus: an Edit is judged in its target's context, and an unknown context as a string" {
+  local anchors="" i
+  CORPUS_FAILURES=()
+  put_edit_target "${CORPUS_ROOT}/repo/src/declared.ts" 'const Hx72kq9Lmz = loadKey();@NL@// edit anchor@NL@'
+  check_edit_row "" "bare identifier declared elsewhere in the target" /repo/src/declared.ts \
+    '// edit anchor' 'DB_@PWU@=Hx72kq9Lmz'
+  put_edit_target "${CORPUS_ROOT}/repo/src/template.ts" 'const Hx72kq9Lmz = loadKey();@NL@const env = `@NL@ANCHOR@NL@`;'
+  check_edit_row SEC-013 "splice into a template literal" /repo/src/template.ts ANCHOR 'DB_@PWU@=Hx72kq9Lmz'
+  put_edit_target "${CORPUS_ROOT}/repo/app/config.py" 'Hx72kq9Lmz = load_key()@NL@CONFIG = """@NL@ANCHOR@NL@"""'
+  check_edit_row SEC-013 "splice into a triple-quoted string" /repo/app/config.py ANCHOR '@PW@: Hx72kq9Lmz'
+  put_edit_target "${CORPUS_ROOT}/repo/src/comment.ts" 'const Hx72kq9Lmz = loadKey();@NL@/* ANCHOR */'
+  check_edit_row SEC-013 "splice point inside a comment" /repo/src/comment.ts ANCHOR 'DB_@PWU@=Hx72kq9Lmz'
+  check_edit_row SEC-013 "target file missing" /repo/src/missing.ts ANCHOR \
+    'const Hx72kq9Lmz = loadKey();@NL@DB_@PWU@=Hx72kq9Lmz'
+  put_edit_target "${CORPUS_ROOT}/repo/src/other.ts" 'const a = 1;'
+  check_edit_row SEC-013 "old_string absent from the target" /repo/src/other.ts ANCHOR \
+    'const Hx72kq9Lmz = loadKey();@NL@DB_@PWU@=Hx72kq9Lmz'
+  for ((i = 0; i < 51; i++)); do anchors+="ANCHOR@NL@"; done
+  put_edit_target "${CORPUS_ROOT}/repo/src/many.ts" "const env = \`@NL@${anchors}\`;"
+  check_edit_row SEC-013 "replace_all over 50 anchors inside a template literal" /repo/src/many.ts ANCHOR \
+    'Hx72kq9Lmz;@NL@DB_@PWU@=Hx72kq9Lmz' true
+  put_edit_target "${CORPUS_ROOT}/repo/src/big.ts" 'const Hx72kq9Lmz = loadKey();@NL@// edit anchor@NL@'
+  printf '%*s\n' 1100000 '' >>"${CORPUS_ROOT}/repo/src/big.ts"
+  check_edit_row SEC-013 "target over the size cap" /repo/src/big.ts '// edit anchor' 'DB_@PWU@=Hx72kq9Lmz'
+  put_edit_target "${CORPUS_ROOT}/repo/src/locked.ts" 'const Hx72kq9Lmz = loadKey();@NL@// edit anchor@NL@'
+  chmod 000 "${CORPUS_ROOT}/repo/src/locked.ts"
+  check_edit_row SEC-013 "unreadable target" /repo/src/locked.ts '// edit anchor' 'DB_@PWU@=Hx72kq9Lmz'
+  assert_no_corpus_failures
+}
+
 @test "generic credential corpus: the marker leg clears only a fake, dummy or fixture prefix in a closed test-path set" {
   CORPUS_FAILURES=()
   must_pass "dummy-marked value in a .test.ts file" /repo/src/auth/login.test.ts \
@@ -504,6 +657,10 @@ assert_no_corpus_failures() {
     '@PW@: fake-pw-4821'
   must_block SEC-013 "dotenv basename carrying the test word as its suffix" /repo/test/.env.test \
     'DB_@PWU@=fake-pw-4821'
+  must_block SEC-013 "dotenv suffix inside a longer basename in a test path" /repo/test/fixtures/app.env.local \
+    'DB_@PWU@=fake-pw-4821'
+  must_block SEC-013 "test-named directory with no project root above it" /nonexistent-ga-root/tests/login.ts \
+    "const user = { @PW@: 'fake-pw-4821' };"
   must_block SEC-013 "fixtures segment with no test segment" /repo/fixtures/users.yml \
     '@PW@: fake-pw-4821'
   must_block SEC-013 "stem ending in the test word with no separator" /repo/src/auth/logintest.ts \
