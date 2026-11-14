@@ -713,8 +713,7 @@ const DESK_WIDTHS = [
   { viewport: { width: 2560, height: 1440 }, rail: 280, middle: "page" },
 ] as const;
 const SHELL_INLINE = 268;
-const ORDERS_MIN = 320;
-const ORDERS_COLUMN_MAX = 720;
+const ORDERS = { MIN: 320, COLUMN_MAX: 720 };
 
 interface DeskFacts {
   isScrolled: boolean;
@@ -1100,7 +1099,7 @@ describe("queue page on the mockup fixtures", () => {
       const size = `${row.viewport.width}x${row.viewport.height}`;
       const middle = row.middle === "page" ? rest.page : row.middle;
       const orders = row.viewport.width - SHELL_INLINE - row.rail - middle - 32;
-      assert.ok(orders >= ORDERS_MIN, `${size}: Orders ${orders} keeps its minimum`);
+      assert.ok(orders >= ORDERS.MIN, `${size}: Orders ${orders} keeps its minimum`);
       assert.deepEqual([rest.isScrolled, rest.rail?.[1], rest.list?.[1], rest.sheet, rest.orders?.[1]], [false, row.rail, middle, null, orders], `${size} at rest`);
       assert.deepEqual(opened, { ...rest, list: null, sheet: rest.list }, `${size} with a row opened`);
     }
@@ -1296,7 +1295,7 @@ describe("queue page on the mockup fixtures", () => {
       columns.push({ width: viewport.width, starts: facts.starts, ends: facts.ends, column: 16 + Math.min(facts.inner - 32, 720) });
     }
 
-    assert.ok(columns.some(({ column }) => column === 16 + ORDERS_COLUMN_MAX), "a desk width wide enough for the 720 cap");
+    assert.ok(columns.some(({ column }) => column === 16 + ORDERS.COLUMN_MAX), "a desk width wide enough for the 720 cap");
     assert.deepEqual(columns, columns.map(({ width, column }) => ({ width, starts: [16], ends: [column], column })));
   });
 
@@ -1882,6 +1881,43 @@ describe("queue page on the mockup fixtures", () => {
       hovered: { fill: tint, glyph: tokens.ink, isEdgeless: true },
       held: { fill: tintFill, glyph: tokens.ink, isEdgeless: true },
       focused: { isVisible: true, outline: `rgb(${ringToken}) solid 2px`, offset: "2px" },
+    });
+  });
+
+  // spec §12.5 Reach: the system drawer opened on the Queue screen keeps its own close button → the system ghost's sunken fill, never the Queue tints
+  test("the Automatic resumes drawer's close button hovered and held takes the system ghost's sunken fill and ink glyph, and the Queue's icon buttons keep their tints", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+    const [tint, tintFill] = await getTintFills(page);
+    const readFill = async (button: Locator) => {
+      const look = await getSettledLook(button);
+      return { fill: look.fill, glyph: look.label };
+    };
+    await page.getByRole("button", { name: /^Automatic resumes/ }).click();
+    const close = page.getByRole("dialog", { name: "Recent automatic resumes" }).getByRole("button", { name: "Close details" });
+    await close.hover();
+    const closeHovered = await readFill(close);
+    await page.mouse.down();
+    const closeHeld = await readFill(close);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog", { name: "Recent automatic resumes" }).waitFor({ state: "detached" });
+    const keys = page.getByRole("button", { name: "Keyboard shortcuts" });
+    await keys.hover();
+    const keysHovered = await readFill(keys);
+    await page.mouse.down();
+    const keysHeld = await readFill(keys);
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    await page.close();
+
+    assert.deepEqual({ closeHovered, closeHeld, keysHovered, keysHeld }, {
+      closeHovered: { fill: tokens.sunken, glyph: tokens.ink },
+      closeHeld: { fill: tokens.sunken, glyph: tokens.ink },
+      keysHovered: { fill: tint, glyph: tokens.ink },
+      keysHeld: { fill: tintFill, glyph: tokens.ink },
     });
   });
 

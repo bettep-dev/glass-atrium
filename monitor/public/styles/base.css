@@ -1378,12 +1378,13 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-color: rgb(var(--line));
 }
 /* a glyph button: no edge in any state (the ghost's transparent one) → the hover square is the pointer's only shape cue, so it takes
-   the selection tint a person can see (the sunken fill is 1.05:1 on the card) + ink glyph; held = the tag fill, one step stronger */
-.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"]):hover {
+   the selection tint a person can see (the sunken fill is 1.05:1 on the card) + ink glyph; held = the tag fill, one step stronger;
+   the drawer's own close button (.detail-head) stays the system's, as with the word buttons */
+.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"], .detail-head .btn):hover {
 	background: var(--tint-select);
 	color: rgb(var(--ink));
 }
-.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"]):active {
+.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"], .detail-head .btn):active {
 	background: var(--tint-fill);
 	color: rgb(var(--ink));
 }
