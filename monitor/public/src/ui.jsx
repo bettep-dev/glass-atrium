@@ -2128,15 +2128,16 @@ function getDayTokenNodes(children, place) {
 }
 
 /**
- * A plain sentence with every day-count token kept whole in its own NoWrap; text content stays the sentence.
+ * A plain sentence with every day-count token kept whole in its own NoWrap, all in one inline span; text content stays the sentence.
  * @param children - the sentence; a list of children (nested lists too) and a Fragment (nested too) are read part by part,
  *   and any other non-string part (an element, null) renders as is
  */
 function DayTokens({ children }) {
   const parts = getDayTokenNodes(children, '');
   if (parts.length <= 1) return parts[0] ?? null;
+  // one inline span, not a Fragment → in a flex parent with a gap the sentence stays one item instead of one per part;
   // spread, not a list → a caller's own unkeyed element part needs no key
-  return React.createElement(React.Fragment, null, ...parts);
+  return React.createElement('span', null, ...parts);
 }
 
 /**

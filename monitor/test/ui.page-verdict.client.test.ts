@@ -256,6 +256,15 @@ describe("DayTokens", () => {
     });
   }
 
+  // in a flex row with a gap each top-level part is its own flex item → the sentence must arrive as one inline box
+  test("a sentence split around its day tokens renders as one inline span, so a flex parent lays it out as one item", () => {
+    for (const row of ROWS) {
+      const [box] = renderTokens(row.sentence).children as RenderedNode[]; // the atom's own output, under its component node
+      assert.equal(box.type, "span", `"${row.sentence}" is one inline box`);
+      assert.equal(box.props.className, undefined, `"${row.sentence}" wrapper adds no style of its own`);
+    }
+  });
+
   test("a sentence with no day token, or a non-string child, renders as it came", () => {
     assert.equal(findNodes(renderTokens("Spend is on track."), isNoWrap).length, 0);
     assert.equal(rawText(renderTokens("Spend is on track.")), "Spend is on track.");
