@@ -641,7 +641,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 /* Orders' composer takes its form from the pane's width, never from the button's label → a tick that lengthens the label moves
    nothing: the button under the box below a 420 pane, beside it from there (spec §3.2 / §4.5).
-   The label gives way, never the box: beside, the box keeps --queue-box-min and the button the rest of the row; under, the whole row */
+   The label gives way, never the box: the button as wide as the label it shows, at most the row less --queue-box-min beside, the whole row under */
 .queue-orders-card .queue-compose-row > .queue-compose-box {
 	flex-basis: 100%;
 }
@@ -1276,26 +1276,28 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	gap: var(--gap-control);
 	margin-inline-start: auto;
 }
-/* a send label in parts (queue.jsx → getSendPartsQ) on one clipped line: only the session name gives way, down to 3ch;
-   a resume tail with no room beside that floor wraps below the line → dropped whole, never cut (the whole label in the title) */
+/* a send label in parts (queue.jsx → getSendPartsQ) on one line: only the session name gives way, down to 3ch;
+   a resume tail the button's room cannot hold (queue.jsx → getSendTailFitQ) is dropped whole, never cut (the whole label in the title) */
 .queue-send-label {
+	position: relative;
 	display: flex;
-	flex-wrap: wrap;
 	min-width: 0;
-	max-height: 1lh;
 	overflow: hidden;
 	white-space: pre;
 }
 .queue-send-label > span {
 	flex: none;
 }
-/* line-break size = the 3ch floor → the tail keeps the line while the floor leaves it room; the name then grows to its text */
 .queue-send-label > .queue-send-name {
-	flex: 1 1 3ch;
+	flex: 0 1 auto;
 	min-width: 3ch;
-	max-width: max-content;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+/* out of flow past the label's end → clipped, no width taken from the button; still laid out, so its width stays measurable */
+.queue-send-label > .queue-send-tail.is-dropped {
+	position: absolute;
+	inset-inline-start: 100%;
 }
 .queue-note {
 	display: flex;

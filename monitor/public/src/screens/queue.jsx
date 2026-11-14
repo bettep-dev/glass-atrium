@@ -975,7 +975,7 @@ function getSendLabelQ(targets) {
 /**
  * The send label as the pieces the button cuts `{ head, name, tail }`; nothing ticked → null.
  * One target by name, several by count · an ended target is resumed to take the order → `tail` says how many before the owner sends.
- * Too narrow a row → only `name` gives way (base.css → .queue-send-label); `tail` shows whole or drops whole, `head` (the verb and a count) stays whole.
+ * Too narrow a row → only `name` gives way (base.css → .queue-send-label); `tail` shows whole or drops whole (getSendTailFitQ), `head` (the verb and a count) stays whole.
  */
 function getSendPartsQ({ ids, names, endedCount }) {
 	if (ids.length === 0) return null;
@@ -2024,16 +2024,54 @@ function getFieldLabelQ(field) {
 	return <label htmlFor={field.id} className="field-label">{field.label}</label>;
 }
 
-// a label in parts (getSendPartsQ) → one cut line inside the button; its text stays the whole label, so the accessible name does too
 function getButtonTextQ({ label, parts }) {
-	if (!parts) return label;
+	return parts ? <SendLabelQ parts={parts} /> : label;
+}
+
+// a label in parts (getSendPartsQ) → one cut line inside the button; a dropped tail leaves the flow, never the text → the accessible name stays whole
+function SendLabelQ({ parts }) {
+	const [ref, isTailShown] = useSendTailQ(parts);
 	return (
-		<span className="queue-send-label">
+		<span ref={ref} className="queue-send-label">
 			<span>{parts.head}</span>
 			{parts.name && <span className="queue-send-name">{parts.name}</span>}
-			{parts.tail && <span className="queue-send-tail">{parts.tail}</span>}
+			{parts.tail && <span className={`queue-send-tail${isTailShown ? "" : " is-dropped"}`}>{parts.tail}</span>}
 		</span>
 	);
+}
+
+// judged before paint, again whenever the row's width or the head's own width moves (a pane resize, a font arriving)
+function useSendTailQ(parts) {
+	const ref = useRefQ(null);
+	const [isTailShown, setTailShown] = useStateQ(true);
+	useLayoutEffectQ(() => {
+		const label = ref.current;
+		if (!label || !parts.tail) return undefined;
+		const judge = () => setTailShown(getSendTailFitQ(label));
+		judge();
+		if (typeof ResizeObserver === "undefined") return undefined;
+		const observer = new ResizeObserver(judge);
+		observer.observe(label.closest(".queue-compose-row"));
+		observer.observe(label.firstElementChild);
+		return () => observer.disconnect();
+	}, [parts.head, parts.name, parts.tail]);
+	return [ref, isTailShown];
+}
+
+/**
+ * Whether the button's room holds the resume tail beside the head and the name at its 3ch floor (spec §4.5): the row less the box
+ * floor and the gap while the button stands beside the box, the whole row under it → decided where the button's width is, so a
+ * dropped tail takes none of it. Reads the same in either state: a dropped tail still lays out its own width, out of flow.
+ */
+function getSendTailFitQ(label) {
+	const [button, row] = [label.closest(".btn"), label.closest(".queue-compose-row")];
+	const [box, name, tail] = [row.querySelector(".queue-compose-box"), label.querySelector(".queue-send-name"), label.querySelector(".queue-send-tail")];
+	const [rowStyle, buttonStyle] = [getComputedStyle(row), getComputedStyle(button)];
+	const isBeside = box !== null && button.getBoundingClientRect().top < box.getBoundingClientRect().bottom;
+	const room = row.getBoundingClientRect().width - (isBeside ? parseFloat(rowStyle.getPropertyValue("--queue-box-min")) + parseFloat(rowStyle.columnGap) : 0);
+	const chrome = ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"].reduce((sum, key) => sum + parseFloat(buttonStyle[key]), 0);
+	const floor = name === null ? 0 : Math.min(name.scrollWidth, parseFloat(getComputedStyle(name).minWidth));
+	return chrome + label.firstElementChild.getBoundingClientRect().width + floor + tail.getBoundingClientRect().width <= room;
 }
 
 /** The bordered box: the thumbnails row while images are attached, the text, and `Add images` where the use takes images. */

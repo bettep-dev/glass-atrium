@@ -120,11 +120,11 @@ const DESK_STATES: QueueState[] = [
   { nn: "27e", name: "stress-long-order", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "Show all 31 lines") },
   // the 100-character session ticked: its name cut inside the send button beside a box that keeps its 220
   { nn: "27f", name: "stress-long-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickOrdersTo(page, [EDGE_LONG_SESSION_NAME]) },
-  // an ended session among two ticked (portfolio sits in the folded Ended band): the resume tail has no room beside the 220 box, so it drops whole
-  { nn: "27g", name: "stress-ended-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: async (page) => {
-    await page.locator(".queue-rail-band .disclosure").click();
-    await tickOrdersTo(page, ["gersona", "portfolio"]);
-  } },
+  // an ended session among two ticked (portfolio sits in the folded Ended band): the resume tail has no room beside the 220 box,
+  // so it drops whole and the button hugs `Send to 2 sessions`, the box taking the rest
+  { nn: "27g", name: "stress-ended-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickEndedOrdersTo(page) },
+  // the same two ticked on the wider pane: the button's room holds the resume tail, shown whole
+  { nn: "27h", name: "stress-ended-send-whole", viewports: [VIEWPORTS[2]], getFixture: getEdgeFixture, setUp: (page) => tickEndedOrdersTo(page) },
   { nn: "28a", name: "wide-list", viewports: [WIDE_WINDOW] },
   { nn: "28b", name: "wide-report", viewports: [WIDE_WINDOW], setUp: (page) => selectRow(page, 101) },
 ];
@@ -607,6 +607,12 @@ async function tickOrdersTo(page: Page, names: string[]): Promise<void> {
   await tickSessions(page, names);
   await page.locator(".queue-thread").waitFor();
   await waitForImages(page);
+}
+
+// gersona and the edge fixture's ended portfolio, ticked once the Ended band is open
+async function tickEndedOrdersTo(page: Page): Promise<void> {
+  await page.locator(".queue-rail-band .disclosure").click();
+  await tickOrdersTo(page, ["gersona", "portfolio"]);
 }
 
 // a capture taken before the bubbles' images decode shows empty squares
@@ -1998,9 +2004,10 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(rows, expected);
   });
 
-  // a commit button never ends in a broken word: the resume tail stays whole on the label's line while the name at its 3ch floor
-  // leaves it room, and drops whole below that; the verb and count never give way. portfolio is the edge fixture's ended session
-  test("the Orders send label's resume tail shows whole or not at all, dropped only where the name at its floor leaves it no room, and the head stays whole, from 1440 to 1920", async () => {
+  // a commit button never ends in a broken word nor in blank: the resume tail stays whole where the button's room (the row less
+  // the 220 box beside it, the whole row under it) holds it beside the head and the name at its 3ch floor, and a dropped tail
+  // leaves no width behind → the button ends where its shown label ends. portfolio is the edge fixture's ended session
+  test("the Orders send button holds the label it shows: the resume tail whole where the button's room holds it beside the name at its floor, else dropped with no blank left, and the head whole, from 1440 to 1920", async () => {
     const ticks = [["portfolio"], ["gersona", "portfolio"]];
     const rows = [];
     for (const width of [1440, 1568, 1605, 1645, 1690, 1728, 1920]) {
@@ -2009,17 +2016,24 @@ describe("queue page on the mockup fixtures", () => {
         await page.locator(".queue-rail-band .disclosure").click();
         await tickSessions(page, names);
         const facts = await page.evaluate(() => {
-          const label = document.querySelector(".queue-orders .queue-send-label") as HTMLElement;
+          const element = (selector: string) => document.querySelector(`.queue-orders ${selector}`) as HTMLElement;
+          const [row, box, button, label] = [element(".queue-compose-row"), element(".queue-compose-box"), element(".queue-compose-buttons .btn"), element(".queue-send-label")];
           const [head, tail] = [label.firstElementChild as HTMLElement, label.querySelector(".queue-send-tail") as HTMLElement];
           const name = label.querySelector(".queue-send-name") as HTMLElement | null;
-          const [box, headBox, tailBox] = [label.getBoundingClientRect(), head.getBoundingClientRect(), tail.getBoundingClientRect()];
+          const [rowBox, boxBox, buttonBox, labelBox] = [row, box, button, label].map((node) => node.getBoundingClientRect());
+          const [headBox, tailBox, nameBox] = [head.getBoundingClientRect(), tail.getBoundingClientRect(), name?.getBoundingClientRect()];
           const floor = name === null ? 0 : parseFloat(getComputedStyle(name).minWidth);
-          const isOnLine = tailBox.top < box.bottom - 0.5 && tailBox.right <= box.right + 0.5;
+          const style = getComputedStyle(button);
+          const [padStart, padEnd, edgeStart, edgeEnd] = [style.paddingLeft, style.paddingRight, style.borderLeftWidth, style.borderRightWidth].map(parseFloat);
+          const room = rowBox.width - (buttonBox.top < boxBox.bottom ? 220 + parseFloat(getComputedStyle(row).columnGap) : 0);
+          const isOnLine = tailBox.top < labelBox.bottom - 0.5 && tailBox.right <= labelBox.right + 0.5;
           const isWhole = isOnLine && tail.scrollWidth <= tail.clientWidth;
+          const shownEnd = Math.max(headBox.right, nameBox?.right ?? 0, isWhole ? tailBox.right : 0);
           return {
-            hasRoom: headBox.width + floor + tail.scrollWidth <= label.clientWidth + 0.5,
+            hasRoom: padStart + padEnd + edgeStart + edgeEnd + headBox.width + Math.min(name?.scrollWidth ?? 0, floor) + tailBox.width <= room + 0.5,
             tail: isWhole ? "whole" : isOnLine ? "cut" : "dropped",
-            isHeadWhole: headBox.right <= box.right + 0.5,
+            blankEnd: Math.round(buttonBox.right - edgeEnd - padEnd - shownEnd),
+            isHeadWhole: headBox.right <= labelBox.right + 0.5,
           };
         });
         await page.close();
@@ -2028,7 +2042,7 @@ describe("queue page on the mockup fixtures", () => {
     }
 
     assert.deepEqual(new Set(rows.map((row) => row.hasRoom)), new Set([false, true]), "the sweep crosses the width where the tail fits");
-    assert.deepEqual(rows, rows.map((row) => ({ ...row, tail: row.hasRoom ? "whole" : "dropped", isHeadWhole: true })));
+    assert.deepEqual(rows, rows.map((row) => ({ ...row, tail: row.hasRoom ? "whole" : "dropped", blankEnd: 0, isHeadWhole: true })));
   });
 
   // spec §4.5 / §12.5: Add images is a glyph inside the one bordered field → no edge of its own, at rest, hovered or held;
