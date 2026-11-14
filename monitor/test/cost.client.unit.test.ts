@@ -1779,7 +1779,7 @@ describe("a Cost series mark carries the data colour; a tone marks only a bar ov
 // WCAG 1.4.1: a crit and a warn alarm row differ by glyph shape and by a spoken severity word, never by colour alone
 test("each Cost alarm row draws its tone's own glyph, hidden from assistive tech, and speaks the tone's severity word first", async () => {
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
-  const ui = cost.window.UI as { TONE_ICON: Record<string, string>; ALERT_SEVERITY_WORD: Record<string, string> };
+  const ui = { TONE_ICON: realUi.TONE_ICON as Record<string, string>, ALERT_SEVERITY_WORD: realUi.ALERT_SEVERITY_WORD as Record<string, string> };
   const tones = ["crit", "warn"];
   const tree = renderIn(mod, "AlarmLaneC", { rows: tones.map((tone) => ({ key: tone, tone, text: `${tone} alarm text` })) });
   const rows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
