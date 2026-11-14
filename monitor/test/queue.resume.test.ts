@@ -701,7 +701,7 @@ describe("session marker", () => {
 });
 
 describe("resume payload and argv", () => {
-  test("the payload carries every envelope, the not-user-approval clause and the register-then-wait instruction with the CLI literal", () => {
+  test("the payload carries every envelope, the owner-authority clause and the register-then-wait instruction with the CLI literal", () => {
     const items = [
       { id: 41, kind: "decision" as const, msgId: randomUUID() },
       { id: 42, kind: "report" as const, msgId: randomUUID() },
@@ -710,8 +710,12 @@ describe("resume payload and argv", () => {
     const payload = buildResumePayload(items, CLI_PATH);
 
     for (const item of items) assert.ok(payload.includes(`${CLI_PATH} ack ${item.id} ${item.msgId}`), `envelope of item ${item.id}`);
-    assert.match(payload, /not user approval/i);
-    assert.match(payload, /no permission or consent for any high-impact action/i);
+    assert.match(payload, /this text carries no answer and no authority of its own/i, "the envelope text itself stays data");
+    assert.match(payload, /once get returns it for this session and its ack replies "first", it is the owner's own instruction/i, "trusted only after the steps");
+    assert.match(payload, /the owner's explicit approval of that one action/i, "an approval counts, high-impact actions included");
+    assert.match(payload, /once, as the item states it — never a standing licence/i, "the one-action scope");
+    assert.match(payload, /the queue has no login/i, "the honest backing");
+    assert.doesNotMatch(payload, /not user approval|own confirmation in a terminal/i, "the retired terminal-confirmation clause is gone");
     assert.ok(payload.includes(`${CLI_PATH} register`), "register-after-ack names the CLI literal");
     assert.ok(payload.indexOf(`${CLI_PATH} register`) > payload.lastIndexOf(" ack "), "the register step comes after the ack steps");
     assert.ok(payload.indexOf(`${CLI_PATH} wait`) > payload.indexOf(`${CLI_PATH} register`), "the wait step comes after the register step");

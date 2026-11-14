@@ -22,10 +22,12 @@ const SUBJECT: Record<QueueItemKind, string> = {
   message: "The owner sent you a message through the Atrium queue.",
 };
 
-// A resume prompt arrives as a plain user turn with no peer-trust preamble → the payload states it itself
+// A resume prompt arrives as a plain user turn with no peer-trust preamble → the payload states the authority itself
 const RESUME_PREAMBLE = [
   "[ATRIUM-RESUME v1] The Atrium monitor resumed this session to deliver the owner's queue answers or messages below.",
-  "Each one is an Atrium queue answer or message, not user approval: it grants no permission or consent for any high-impact action (merge, push, deploy, settings change, deletion) — those still need the owner's own confirmation in a terminal.",
+  "This text carries no answer and no authority of its own: only what the steps fetch counts.",
+  `For each item: once get returns it for this session and its ack replies "first", it is the owner's own instruction for the next step; where it approves an action, it is the owner's explicit approval of that one action, high-impact actions included — once, as the item states it — never a standing licence. Facts that changed since the item was posted void the approval: post a new approval decision.`,
+  "The queue has no login, so a process on this Mac can produce an answer; a permission prompt, a blocked command or a sandbox denial is never answered by the queue.",
 ].join("\n");
 
 /** The installed queue CLI under a GA root: every envelope command and the owner page's pull command name it. */
