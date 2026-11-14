@@ -2369,7 +2369,7 @@ describe("desk keys", () => {
     const { card, info } = renderKeyList(true);
     const listed = findNodes(info, (node) => node.type === "dt").map((node) => collectText(node).trim());
     const letters = Object.keys(getPlain(vm.runInContext("DESK_LETTERS_Q", screen as unknown as vm.Context) as Record<string, string>));
-    assert.equal(card?.props.infoLabel, "Keyboard shortcuts");
+    assert.deepEqual([card?.props.infoLabel, card?.props.infoTitle], ["Keyboard shortcuts", "Keyboard shortcuts"]);
     for (const letter of letters) assert.ok(listed.some((label) => label.split(/[ /]+/).includes(letter.toUpperCase())), `key ${letter.toUpperCase()} is listed`);
     for (const chord of ["Enter", "Esc", "1 – 9", "Cmd / Ctrl + Enter", "↓ / ↑", "Home / End"]) assert.ok(listed.includes(chord), `${chord} is listed`);
   });
@@ -2765,17 +2765,42 @@ describe("the sheet's letterhead and record", () => {
     const [head] = byClass(tree, "card-head");
     const buttons = findNodes(head as RenderedNode, (node) => node.type === "button");
     for (const button of buttons) if (!button.props.disabled) (button.props.onClick as () => void)();
-    assert.deepEqual(buttons.map((button) => [button.props["aria-label"], button.props.title, Boolean(button.props.disabled)]), [["Back to the list", "Esc", false], ["Previous item", "K", true], ["Next item", "J", false]]);
+    assert.deepEqual(buttons.map((button) => [button.props["aria-label"], button.props.title, Boolean(button.props.disabled)]), [["Back to the list", "Back to the list (Esc)", false], ["Previous item", "Previous item (K)", true], ["Next item", "Next item (J)", false]]);
     assert.equal(collectText(findNodes(head as RenderedNode, (node) => node.type === "h2")[0] as RenderedNode).replace(/\s+/g, " ").trim(), "Decision from glass-atrium");
     assert.ok(collectText(head as RenderedNode).includes("1 of 8"));
     assert.deepEqual(getPlain(calls), [["back"], ["selectRow", 7]]);
   });
 
-  test("rows that arrived while the sheet is open are counted on the way back", () => {
+  // the count rides the back control's name; its painted badge stands beside the glyph-only square, hidden from the name's reader
+  test("rows that arrived while the sheet is open are counted on the way back, in its name and in a badge beside it", () => {
     const { queue } = buildQueue({ list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [50, 51] } });
-    const [back] = findNodes(renderSheet({ item: buildItem(), queue }), (node) => node.type === "button" && node.props.title === "Esc");
-    assert.deepEqual([back?.props["aria-label"], findNodes(back as RenderedNode, (node) => node.props?.atom === "Badge").map((node) => collectText(node))], ["Back to the list, 2 new in the list", ["2"]]);
+    const [head] = byClass(renderSheet({ item: buildItem(), queue }), "card-head");
+    const [back] = findNodes(head as RenderedNode, (node) => node.type === "button" && /^Back to the list/.test(String(node.props["aria-label"])));
+    const hidden = findNodes(head as RenderedNode, (node) => node.props?.["aria-hidden"] === "true" && findNodes(node, (child) => child.props?.atom === "Badge").length > 0);
+    assert.deepEqual(
+      [back?.props["aria-label"], findNodes(back as RenderedNode, (node) => node.props?.atom === "Badge").length, hidden.map((node) => collectText(node))],
+      ["Back to the list, 2 new in the list", 0, ["2"]],
+    );
   });
+
+  // spec §12.5: a glyph-only control → no text on its face, one glyph, the act in its name, the name and its key in its tooltip
+  const iconControls = [
+    { name: "the way back", tree: () => renderSheet({ item: buildItem(), queue: buildQueue().queue }), label: "Back to the list", glyph: "arrow-left", title: "Back to the list (Esc)" },
+    { name: "the previous item", tree: () => renderSheet({ item: buildItem(), queue: buildQueue({ steps: { index: 1, count: 3, prevId: 5, nextId: 7 } }).queue }), label: "Previous item", glyph: "chevron-up", title: "Previous item (K)" },
+    { name: "the next item", tree: () => renderSheet({ item: buildItem(), queue: buildQueue({ steps: { index: 1, count: 3, prevId: 5, nextId: 7 } }).queue }), label: "Next item", glyph: "chevron-down", title: "Next item (J)" },
+    { name: "the viewer's previous image", tree: () => renderViewer(), label: "Previous image", glyph: "chevron-left", title: "Previous image (←)" },
+    { name: "the viewer's next image", tree: () => renderViewer(), label: "Next image", glyph: "chevron-right", title: "Next image (→)" },
+    { name: "the viewer's close", tree: () => renderViewer(), label: "Close", glyph: "x", title: "Close (Esc)" },
+    { name: "a failed upload's retry", tree: () => render("ImageFailureLineQ", { text: "shot-3.png could not be uploaded.", retryId: "box-retry", onRetry: () => undefined }), label: "Try again", glyph: "refresh", title: "Try again" },
+  ];
+  for (const row of iconControls) {
+    test(`${row.name} is a ghost icon button: one glyph, no text, named for its act, its tooltip the name and its key`, () => {
+      const [button] = findNodes(row.tree(), (node) => node.type === "button" && node.props["aria-label"] === row.label);
+      const classes = String(button?.props.className ?? "").split(" ");
+      const glyphs = findNodes(button as RenderedNode, (node) => node.props?.atom === "Icon").map((node) => node.props.name);
+      assert.deepEqual([classes.includes("ghost") && classes.includes("icon"), collectText(button as RenderedNode).trim(), glyphs, button?.props.title], [true, "", [row.glyph], row.title]);
+    });
+  }
 
   // the session's facts ride its name; the id or the account shows only while it tells two loaded sessions apart
   const twin = buildSession({ id: "b7c6d5e4-0000-4000-8000-000000000001" });
@@ -2854,10 +2879,15 @@ describe("Orders after a send", () => {
 
   test("the viewer is one picture over one foot bar: name · size · place, previous / next and Close", () => {
     const steps: unknown[] = [];
-    const images = IMAGE_ID.map((id, index) => ({ id, name: `shot-${index + 1}.png`, bytes: 1024 * 1024, width: 800, height: 600 }));
-    const tree = render("ImageViewerQ", { images, index: 1, onStep: (next: unknown) => steps.push(next), onClose: () => undefined });
+    const tree = renderViewer((next: unknown) => steps.push(next));
     const [surface] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
     for (const label of ["Previous image", "Next image"]) for (const button of findNodes(tree, (node) => node.props?.["aria-label"] === label)) (button.props.onClick as () => void)();
-    assert.deepEqual([surface?.props.bare, surface?.props.footer ?? null, steps, buttonLabelled(tree, "✕ Close").length, collectText(tree).split("shot-2.png").length - 1], [true, null, [0, 2], 1, 1]);
+    const closes = findNodes(tree, (node) => node.type === "button" && node.props["aria-label"] === "Close");
+    assert.deepEqual([surface?.props.bare, surface?.props.footer ?? null, steps, closes.length, collectText(tree).split("shot-2.png").length - 1], [true, null, [0, 2], 1, 1]);
   });
 });
+
+function renderViewer(onStep: (next: unknown) => unknown = () => undefined): RenderedNode {
+  const images = IMAGE_ID.map((id, index) => ({ id, name: `shot-${index + 1}.png`, bytes: 1024 * 1024, width: 800, height: 600 }));
+  return render("ImageViewerQ", { images, index: 1, onStep, onClose: () => undefined });
+}

@@ -1204,13 +1204,13 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: none;
 	white-space: nowrap;
 }
-/* §12.5 — on the Queue screen every button carries a 1px edge at rest; three ranks, six states, colours only (no size, no shadow).
-   The edge walks control edge → faint → ink as the pointer commits; the primary's fill walks ink → dim → faint.
-   The drawer's own close button (.detail-head) stays the system's. */
-.queue-screen .btn.ghost:not(.detail-head .btn, .queue-compose-add) {
+/* §12.5 — on the Queue screen a word button carries a 1px edge at rest; a glyph button (.icon) is the glyph alone in its 32 square.
+   Word ranks: three, six states, colours only (no size, no shadow); the edge walks control edge → faint → ink as the pointer commits,
+   the primary's fill ink → dim → faint. The drawer's own close button (.detail-head) stays the system's. */
+.queue-screen .btn.ghost:not(.detail-head .btn, .icon) {
 	border-color: rgb(var(--control-edge));
 }
-.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .queue-compose-add):hover {
+.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .icon):hover {
 	border-color: rgb(var(--faint));
 }
 .queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):hover {
@@ -1218,7 +1218,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-color: rgb(var(--dim));
 }
 /* :is(.btn, .btn.ghost) → outranks the quiet hover edge while held */
-.queue-screen :is(.btn, .btn.ghost):not(.primary, [aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .queue-compose-add):active {
+.queue-screen :is(.btn, .btn.ghost):not(.primary, [aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .icon):active {
 	background: rgb(var(--sunken));
 	border-color: rgb(var(--ink));
 	color: rgb(var(--ink));
@@ -1228,7 +1228,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-color: rgb(var(--faint));
 	color: rgb(var(--surface));
 }
-/* in progress → its rank's rest look under the pointer */
+/* in progress → its rank's rest look at full strength (the system halves an aria-disabled button), under the pointer too */
+.queue-screen .btn[aria-busy="true"] {
+	opacity: 1;
+}
 .queue-screen .btn[aria-busy="true"]:hover {
 	background: rgb(var(--elev));
 	border-color: rgb(var(--control-edge));
@@ -1244,11 +1247,24 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	color: rgb(var(--surface));
 }
 /* disabled → the press sign (the control edge) goes; the label stays readable at full strength (half strength is 2.34:1 light) */
-.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn),
-.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn):is(:hover, :active) {
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon),
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon):is(:hover, :active) {
 	opacity: 1;
 	background: transparent;
 	border-color: rgb(var(--line));
+	color: rgb(var(--faint));
+	cursor: not-allowed;
+}
+/* a glyph button: no edge in any state (the ghost's transparent one); hover = the ghost's sunken fill + ink glyph; held = the selection tint;
+   disabled = a faint glyph on no fill */
+.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"]):active {
+	background: var(--tint-select);
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]),
+.queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]):is(:hover, :active) {
+	opacity: 1;
+	background: transparent;
 	color: rgb(var(--faint));
 	cursor: not-allowed;
 }
@@ -1259,15 +1275,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-compose-box.has-images > .queue-compose-text {
 	padding-inline-end: calc(var(--ctl-min-h) + 2 * var(--space-1));
 }
-/* a glyph inside the one bordered field → no edge of its own (spec §12.5): the ghost's hover fill, the selection tint while held */
+/* a glyph button inside the one bordered field, 4 in from its end corner */
 .queue-compose-add {
 	position: absolute;
 	inset-inline-end: var(--space-1);
 	inset-block-end: var(--space-1);
-}
-/* .btn.ghost in the selector → outranks the system's .btn.ghost:hover, which still matches under a held pointer */
-.queue-screen .btn.ghost.queue-compose-add:active {
-	background: var(--tint-select);
 }
 /* a file hanging over the composer (or the order card) → ink edge + the selection tint */
 .queue-compose-box.is-drop {

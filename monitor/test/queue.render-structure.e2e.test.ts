@@ -286,7 +286,7 @@ const LOOK_STATES: QueueState[] = [
   { nn: "25f", name: "key-list", setUp: (page) => page.getByRole("button", { name: /Keyboard shortcuts/ }).click() },
 ];
 
-// spec §12.5 close-ups: on an open decision the head holds ← List (secondary), Previous (disabled) and Next (quiet); the foot the primary
+// spec §12.5 close-ups: on an open decision the head holds icon buttons (back, Previous disabled, Next); the foot the primary and the quiet later
 const SHEET_HEAD = ".queue-sheet-head";
 const SHEET_FOOT = ".queue-sheet .card-foot";
 const NEXT_ITEM = ".queue-sheet-head [aria-label='Next item']";
@@ -294,8 +294,8 @@ const BUTTON_STATES: CloseUpState[] = [
   { nn: "29", name: "buttons-rest-head", closeUp: SHEET_HEAD, setUp: (page) => selectRow(page, 103) },
   { nn: "29", name: "buttons-rest-foot", closeUp: SHEET_FOOT, setUp: (page) => selectRow(page, 103) },
   ...[
-    { rank: "quiet", closeUp: SHEET_HEAD, target: NEXT_ITEM },
-    { rank: "secondary", closeUp: SHEET_HEAD, target: ".queue-sheet-head [aria-label='Back to the list']" },
+    { rank: "icon", closeUp: SHEET_HEAD, target: NEXT_ITEM },
+    { rank: "quiet", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.ghost` },
     { rank: "primary", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.primary` },
   ].flatMap(getRankCloseUps),
   {
@@ -387,6 +387,7 @@ interface Harness {
   heldRead: Promise<void> | null;
   /** Set → the session and order reads wait on it too, so the desk's first load holds all three placeholders. */
   heldDesk: Promise<void> | null;
+  heldAct: Promise<void> | null;
   /** True → the item list read answers the server's outage, so the page's check fails. */
   isListDown: boolean;
   /** Set → the first page of the item list offers this cursor, so the list foot shows Show more. */
@@ -397,7 +398,7 @@ interface Harness {
 async function openHarness(): Promise<Harness> {
   const app = Fastify({ logger: false });
   const harness: Harness = {
-    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, isListDown: false, moreCursor: null, uploads: 0,
+    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, heldAct: null, isListDown: false, moreCursor: null, uploads: 0,
   };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
@@ -476,6 +477,7 @@ function registerWriteRoutes(app: FastifyInstance, harness: Harness): void {
   app.post<{ Params: { id: string; action: string } }>("/api/queue/owner/items/:id/:action", async (request, reply) => {
     const refusal = harness.refusals.get("action");
     if (refusal !== undefined) return reply.code(refusal.status).send(refusal.body);
+    await harness.heldAct;
     const id = Number(request.params.id);
     const act = (item: OwnerItemView) => (item.id === id ? getActedItem(item, request.params.action) : [item]);
     const orders = request.params.action === "resend" ? harness.fixture.orders.flatMap(act) : harness.fixture.orders;
@@ -792,9 +794,9 @@ function getButtonFacts(): ButtonFacts {
     if (element.classList.contains("primary")) return "primary";
     return element.classList.contains("ghost") ? "quiet" : "secondary";
   };
-  // Add images is a glyph inside the bordered box, ranked by its own §12.5 row (no edge) → its own test, never a quiet button here
+  // a glyph-only button has its own §12.5 row (no edge) → the icon tests, never a word rank here
   const buttons = [...document.querySelectorAll(".queue-screen .btn")]
-    .filter((element) => element.getClientRects().length > 0 && !element.closest(".detail-head") && !element.matches(".queue-compose-add"))
+    .filter((element) => element.getClientRects().length > 0 && !element.closest(".detail-head") && !element.matches(".icon"))
     .map((element) => {
       const style = getComputedStyle(element);
       return {
@@ -820,6 +822,41 @@ function getRankLook(tokens: ButtonFacts["tokens"], button: ButtonFacts["buttons
   const edge = { primary: tokens.ink, secondary: tokens.controlEdge, quiet: tokens.controlEdge, disabled: tokens.line }[button.rank];
   const label = { quiet: tokens.dim, disabled: tokens.faint }[button.rank as "quiet" | "disabled"] ?? button.look.label;
   return { edgeWidth: "1px", edge, label, opacity: "1" };
+}
+
+interface IconLook { name: string; title: string; size: number[]; text: string; isEdgeless: boolean; fill: string; glyph: string; isDrawn: boolean; isDisabled: boolean }
+
+// every painted glyph-only button of the Queue screen, its image viewer's bar included
+function getIconLooks(): IconLook[] {
+  return [...document.querySelectorAll(".queue-screen .btn.icon")]
+    .filter((element) => element.getClientRects().length > 0)
+    .map((element) => {
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      const svg = element.querySelector("svg");
+      return {
+        name: element.getAttribute("aria-label") ?? "",
+        title: element.getAttribute("title") ?? "",
+        size: [Math.round(box.width), Math.round(box.height)],
+        text: (element.textContent ?? "").trim(),
+        isEdgeless: parseFloat(style.borderTopWidth) === 0 || style.borderTopColor === "rgba(0, 0, 0, 0)",
+        fill: style.backgroundColor,
+        glyph: style.color,
+        // an unknown Lucide name draws an empty svg with no error → a drawn glyph has child shapes
+        isDrawn: svg !== null && svg.childElementCount > 0,
+        isDisabled: (element as HTMLButtonElement).disabled,
+      };
+    });
+}
+
+// the colour var(--tint-select) computes to on this page → compared with a held icon button's fill
+function getTintSelect(): string {
+  const probe = document.createElement("div");
+  probe.style.background = "var(--tint-select)";
+  document.body.append(probe);
+  const fill = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  return fill;
 }
 
 async function openEdgePage(harness: Harness, viewport: { width: number; height: number } = VIEWPORTS[0]): Promise<Page> {
@@ -1056,7 +1093,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §3.3 / §14.4: the list keeps its place while a report is read
-  test("← List shows the list at the scroll it had, the row just read focused and current, and the hash without item", async () => {
+  test("Back to the list shows the list at the scroll it had, the row just read focused and current, and the hash without item", async () => {
     const page = await openEdgePage(harness);
     const top = await page.evaluate(() => {
       const body = document.querySelector(".queue-list > .card-body") as HTMLElement;
@@ -1195,8 +1232,8 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual({ controls, ticked, unticked }, { controls: ["INPUT:checkbox"], ticked: true, unticked: false });
   });
 
-  // spec §4.3, §14.4: opening a report changes no tick → the composer's address holds across a press, a step, an order row and ← List
-  test("pressing a row, stepping, pressing an order row and ← List leave every rail box as it was, and the Orders label line and send button unchanged", async () => {
+  // spec §4.3, §14.4: opening a report changes no tick → the composer's address holds across a press, a step, an order row and the way back
+  test("pressing a row, stepping, pressing an order row and Back to the list leave every rail box as it was, and the Orders label line and send button unchanged", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await tickSessions(page, ORDER_TO);
@@ -1375,7 +1412,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §18.4 row 20: the arrival reaches the row, the rail and the nav on the same tick, and moves nothing the owner holds
-  test("the page's own 15 s read marks an arrival New and raises its session's and the nav's counts; an open sheet stays and ← List counts it", async () => {
+  test("the page's own 15 s read marks an arrival New and raises its session's and the nav's counts; an open sheet stays and the way back counts it", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
     try {
@@ -1387,7 +1424,7 @@ describe("queue page on the mockup fixtures", () => {
       await assert.doesNotReject(rail.filter({ hasText: /^2$/ }).waitFor({ timeout: READY_TIMEOUT_MS }), "yoaida's rail count reads 2");
       await assert.doesNotReject(page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS }), "the nav count reads 8");
       const back = page.getByRole("button", { name: "Back to the list, 1 new in the list" });
-      assert.deepEqual([await back.count(), await page.evaluate(() => window.location.hash)], [1, "#queue?item=101"], "the sheet unmoved, the arrival counted on ← List");
+      assert.deepEqual([await back.count(), await page.evaluate(() => window.location.hash)], [1, "#queue?item=101"], "the sheet unmoved, the arrival counted on the way back");
       await back.click();
       assert.deepEqual(await page.locator("#queue-row-150 .queue-row-who .pill--solid").allTextContents(), ["New"]);
       assert.deepEqual(await page.locator('[role="option"][aria-selected="true"]').evaluateAll((rows) => rows.map((row) => row.id)), ["queue-row-101"]);
@@ -1481,23 +1518,38 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(ends, ends.map((row) => ({ ...row, queue: row.docs })));
   });
 
-  test("every button of the open decision's desk has a 1 px edge at rest in its rank's colour, a quiet label is dim, and a disabled one keeps a faint label at full strength on the line edge", async () => {
+  // an answer held in flight → its composer's other button disabled; the not-received order's Resend → a secondary on the same desk
+  test("every word button of the open decision's desk has a 1 px edge at rest in its rank's colour, a quiet label is dim, and a disabled one keeps a faint label at full strength on the line edge", async () => {
+    harness.fixture = getNotReceivedFixture();
+    let release = () => {};
+    harness.heldAct = new Promise((resolve) => { release = resolve; });
+    try {
+      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+      await pickWithNote(page);
+      await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
+      await page.locator(".queue-sheet [aria-busy='true']").waitFor();
+      await page.mouse.move(0, 0);
+      // the 0.12 s edge transition into the disabled look settled first → never a mid-step colour
+      await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)).then(() => undefined));
+      const facts = await page.evaluate(getButtonFacts);
+      release();
+      await page.close();
+
+      const looks = facts.buttons.map((button) => ({ name: button.name, look: button.look }));
+      const expected = facts.buttons.map((button) => ({ name: button.name, look: getRankLook(facts.tokens, button) }));
+      assert.deepEqual(looks, expected);
+      assert.deepEqual([...new Set(facts.buttons.map((button) => button.rank))].sort(), ["disabled", "primary", "quiet", "secondary"], "the open sheet shows every rank");
+    } finally {
+      release();
+      harness.heldAct = null;
+    }
+  });
+
+  test("a quiet word button hovered takes the sunken fill and an ink label, and held down an ink edge", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await selectRow(page, 103);
-    const facts = await page.evaluate(getButtonFacts);
-    await page.close();
-
-    const looks = facts.buttons.map((button) => ({ name: button.name, look: button.look }));
-    const expected = facts.buttons.map((button) => ({ name: button.name, look: getRankLook(facts.tokens, button) }));
-    assert.deepEqual(looks, expected);
-    assert.deepEqual([...new Set(facts.buttons.map((button) => button.rank))].sort(), ["disabled", "primary", "quiet", "secondary"], "the open sheet shows every rank");
-  });
-
-  test("a quiet button hovered takes the sunken fill and an ink label, and held down an ink edge", async () => {
-    harness.fixture = getRestFixture();
-    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    const button = page.getByRole("button", { name: "Keyboard shortcuts" });
+    const button = page.getByRole("button", { name: "Answer later" });
     const read = () => getSettledLook(button);
     const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
     await button.hover();
@@ -1532,11 +1584,12 @@ describe("queue page on the mockup fixtures", () => {
     }
   });
 
-  test("a button reached by keyboard wears the focus ring outside its rest edge", async () => {
+  test("a word button reached by keyboard wears the focus ring outside its rest edge", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    const button = page.getByRole("button", { name: "Keyboard shortcuts" });
-    await button.focus();
+    await selectRow(page, 103);
+    const button = page.getByRole("button", { name: "Answer later" });
+    await focusByKeyboard(page, button);
     const focused = await button.evaluate((element) => {
       const style = getComputedStyle(element);
       return { isVisible: element.matches(":focus-visible"), outline: `${style.outlineColor} ${style.outlineStyle} ${style.outlineWidth}`, offset: style.outlineOffset };
@@ -1547,6 +1600,76 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual({ ...focused, edge: look.edge }, { isVisible: true, outline: `rgb(${ringToken}) solid 2px`, offset: "2px", edge: tokens.controlEdge });
+  });
+
+  // spec §12.5, §14.4: each icon button read where it is painted — the list head, the open sheet's head, a failed upload, the viewer's bar
+  test("every icon button is a 32 square holding a drawn glyph, dim and with no edge or fill at rest, faint when disabled, named and with a tooltip; no button reads List", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    harness.refusals.set("upload", { status: 500, body: { error: "server" } });
+    try {
+      const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+      const atRest = await page.evaluate(getIconLooks);
+      await page.locator(".queue-bubble-image img").first().waitFor();
+      await page.locator(".queue-bubble-image").first().click();
+      await page.locator(".queue-viewer img").waitFor();
+      const inViewer = await page.evaluate(getIconLooks);
+      await page.keyboard.press("Escape");
+      await selectRow(page, 103);
+      const onSheet = await page.evaluate(getIconLooks);
+      await addOrderFiles(page, [getImageFile(0)]);
+      await page.getByRole("button", { name: "Try again" }).waitFor();
+      const onFailure = await page.evaluate(getIconLooks);
+      const hasListText = await page.evaluate(() => [...document.querySelectorAll("button")].some((button) => /\bList\b/.test(button.textContent ?? "")));
+
+      const byName = new Map([...atRest, ...onSheet, ...onFailure, ...inViewer].map((look) => [look.name, look]));
+      assert.deepEqual([...byName.keys()].sort(), ["Add images", "Back to the list", "Close", "Keyboard shortcuts", "Next image", "Next item", "Previous image", "Previous item", "Try again"]);
+      const looks = [...byName.values()];
+      const expected = looks.map((look) => ({
+        ...look, size: [32, 32], text: "", isEdgeless: true, fill: "rgba(0, 0, 0, 0)", glyph: look.isDisabled ? tokens.faint : tokens.dim, isDrawn: true,
+        title: look.title.startsWith(look.name) ? look.title : `${look.name} …`,
+      }));
+      assert.deepEqual(looks, expected);
+      assert.ok(looks.some((look) => look.isDisabled), "a disabled icon button is read: Previous on the first sheet row");
+      assert.equal(hasListText, false);
+    } finally {
+      harness.refusals.clear();
+      await page.close();
+    }
+  });
+
+  test("an icon button hovered takes the sunken fill and an ink glyph, held the selection tint, and by keyboard the ring, never an edge", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+    await selectRow(page, 103);
+    const button = page.getByRole("button", { name: "Next item" });
+    const read = async () => {
+      const look = await getSettledLook(button);
+      const isEdgeless = await button.evaluate((element) => parseFloat(getComputedStyle(element).borderTopWidth) === 0 || getComputedStyle(element).borderTopColor === "rgba(0, 0, 0, 0)");
+      return { fill: look.fill, glyph: look.label, isEdgeless };
+    };
+    const tokens = await page.evaluate(getButtonFacts).then((facts) => facts.tokens);
+    const tint = await page.evaluate(getTintSelect);
+    await button.hover();
+    const hovered = await read();
+    await page.mouse.down();
+    const held = await read();
+    await page.mouse.move(0, 0);
+    await page.mouse.up();
+    const back = page.getByRole("button", { name: "Back to the list" });
+    await focusByKeyboard(page, back);
+    const focused = await back.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { isVisible: element.matches(":focus-visible"), outline: `${style.outlineColor} ${style.outlineStyle} ${style.outlineWidth}`, offset: style.outlineOffset };
+    });
+    const ringToken = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--focus-ring").trim().split(/\s+/).join(", "));
+    await page.close();
+
+    assert.deepEqual({ hovered, held, focused }, {
+      hovered: { fill: tokens.sunken, glyph: tokens.ink, isEdgeless: true },
+      held: { fill: tint, glyph: tokens.ink, isEdgeless: true },
+      focused: { isVisible: true, outline: `rgb(${ringToken}) solid 2px`, offset: "2px" },
+    });
   });
 
   test("the page header holds no button and one status line, Checks every 15s, and no Queue button is named New order, Clear or Refresh", async () => {
@@ -1689,20 +1812,21 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(facts, { isShrunk: true, isAtEnd: true });
   });
 
-  // spec §9.8 → Upload failed: the note takes the wrap; the quiet Try again keeps its label on one line
-  test("a failed upload's Try again keeps its label on one line beside a wrapping note", async () => {
+  // spec §9.8 → Upload failed, §12.5: the note takes the wrap; Try again stays a whole 32 px square beside it
+  test("a failed upload's Try again is a 32 px icon button beside a wrapping note", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     harness.refusals.set("upload", { status: 500, body: { error: "server" } });
     try {
       await addOrderFiles(page, [{ ...getImageFile(0), name: "a-screenshot-named-long-enough-to-wrap-the-note.png" }]);
       await page.locator(".queue-thumb-failed").first().waitFor();
-      const lines = await page.locator(`#${ORDER_BOX_ID}-retry`).evaluate((button) => {
-        const range = document.createRange();
-        range.selectNodeContents(button);
-        return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+      const facts = await page.getByRole("button", { name: "Try again" }).evaluate((button) => {
+        const box = button.getBoundingClientRect();
+        const note = (button.previousElementSibling as HTMLElement).getBoundingClientRect();
+        const lineHeight = parseFloat(getComputedStyle(button.previousElementSibling as HTMLElement).lineHeight);
+        return { id: button.id, size: [Math.round(box.width), Math.round(box.height)], isBeside: box.left >= note.right, isNoteWrapped: note.height > lineHeight * 1.5 };
       });
-      assert.equal(lines, 1);
+      assert.deepEqual(facts, { id: `${ORDER_BOX_ID}-retry`, size: [32, 32], isBeside: true, isNoteWrapped: true });
     } finally {
       harness.refusals.clear();
       await page.close();

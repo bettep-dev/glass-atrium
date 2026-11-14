@@ -1298,7 +1298,7 @@ function QueueListQ({ queue }) {
 	const offView = useOffViewNewQ(queue.list.newIds, queue.sheet.kind !== "none");
 	return (
 		<Card className="queue-pane queue-list" title={getScopeTitleQ(queue.sessions.region.data?.sessions ?? [], ids)} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
-			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts"
+			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
 			bar={isListBarShownQ(items, queue.filter) ? <QueueFilterBarQ items={items} filter={queue.filter} onFilter={queue.setFilter} /> : null}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} visible={visible} />
@@ -1646,21 +1646,22 @@ function ItemSheetQ({ item, queue, cliPath, hasLeft = false }) {
 	);
 }
 
-// `← List` (with the count of rows that arrived meanwhile) · the h2 · the position and previous / next (spec §4.3)
+// the way back (its arrival count in its name, painted beside the glyph-only square) · the h2 · the position and previous / next (spec §4.3, §12.5)
 function SheetHeadQ({ item, queue }) {
 	const { Badge, Icon } = window.UI;
 	const { steps } = queue;
 	const arrived = queue.list.newIds.length;
 	return (
 		<div className="card-head queue-sheet-head">
-			<button type="button" className="btn sm" aria-label={arrived > 0 ? `Back to the list, ${arrived} new in the list` : "Back to the list"} title="Esc" onClick={queue.back}>
-				<span aria-hidden="true">←</span> List{arrived > 0 && <Badge fill="solid">{arrived}</Badge>}
+			<button type="button" className="btn ghost sm icon" aria-label={arrived > 0 ? `Back to the list, ${arrived} new in the list` : "Back to the list"} title="Back to the list (Esc)" onClick={queue.back}>
+				<Icon name="arrow-left" size={16} />
 			</button>
+			{arrived > 0 && <span aria-hidden="true"><Badge fill="solid">{arrived}</Badge></span>}
 			<h2 className="card-title"><LetterheadQ item={item} nameNote={getNameNoteQ(item.session, queue)} /></h2>
 			<span className="queue-steps">
 				{steps.index >= 0 && <span className="fs-meta text-dim tabular-nums">{`${steps.index + 1} of ${steps.count}`}</span>}
-				<button type="button" className="btn ghost sm icon" aria-label="Previous item" title="K" disabled={steps.prevId === null} onClick={() => queue.selectRow(steps.prevId)}><Icon name="chevron-up" size={16} /></button>
-				<button type="button" className="btn ghost sm icon" aria-label="Next item" title="J" disabled={steps.nextId === null} onClick={() => queue.selectRow(steps.nextId)}><Icon name="chevron-down" size={16} /></button>
+				<button type="button" className="btn ghost sm icon" aria-label="Previous item" title="Previous item (K)" disabled={steps.prevId === null} onClick={() => queue.selectRow(steps.prevId)}><Icon name="chevron-up" size={16} /></button>
+				<button type="button" className="btn ghost sm icon" aria-label="Next item" title="Next item (J)" disabled={steps.nextId === null} onClick={() => queue.selectRow(steps.nextId)}><Icon name="chevron-down" size={16} /></button>
 			</span>
 		</div>
 	);
@@ -2065,10 +2066,11 @@ function ComposerNoteQ({ error, info = null, rest, tray = null, fieldId = "" }) 
 }
 
 function ImageFailureLineQ({ text, retryId, onRetry }) {
+	const { Icon } = window.UI;
 	return (
 		<span className="queue-note-failure">
 			<ToneLineQ tone="crit" role="alert" isTextToned>{text}</ToneLineQ>
-			<button id={retryId} type="button" className="btn ghost sm" onClick={onRetry}>Try again</button>
+			<button id={retryId} type="button" className="btn ghost sm icon" aria-label="Try again" title="Try again" onClick={onRetry}><Icon name="refresh" size={16} /></button>
 		</span>
 	);
 }
@@ -2485,9 +2487,9 @@ function ViewerBarQ({ image, index, count, onStep, onClose }) {
 	return (
 		<div className="queue-viewer-bar">
 			<span className="queue-viewer-name">{`${image.name} · ${getSizeTextQ(image.bytes)} · ${index + 1} of ${count}`}</span>
-			<button type="button" className="btn ghost sm icon" aria-label="Previous image" disabled={index === 0} onClick={() => onStep(index - 1)}><Icon name="chevron-left" size={16} /></button>
-			<button type="button" className="btn ghost sm icon" aria-label="Next image" disabled={index === count - 1} onClick={() => onStep(index + 1)}><Icon name="chevron-right" size={16} /></button>
-			<button type="button" className="btn sm" onClick={onClose}>✕ Close</button>
+			<button type="button" className="btn ghost sm icon" aria-label="Previous image" title="Previous image (←)" disabled={index === 0} onClick={() => onStep(index - 1)}><Icon name="chevron-left" size={16} /></button>
+			<button type="button" className="btn ghost sm icon" aria-label="Next image" title="Next image (→)" disabled={index === count - 1} onClick={() => onStep(index + 1)}><Icon name="chevron-right" size={16} /></button>
+			<button type="button" className="btn ghost sm icon" aria-label="Close" title="Close (Esc)" onClick={onClose}><Icon name="x" size={16} /></button>
 		</div>
 	);
 }

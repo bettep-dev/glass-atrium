@@ -978,8 +978,9 @@ let cardTitleSeq = 0;
  * One-line card header: title + meta, then the ⓘ trigger and actions on the right.
  * @param info - long explanation moved off the card; opens in the detail drawer
  * @param infoLabel - trigger name and drawer title
+ * @param infoTitle - the trigger's tooltip; unset → no tooltip
  */
-function CardHead({ title, sub, info, infoLabel = 'How this is counted', right }) {
+function CardHead({ title, sub, info, infoLabel = 'How this is counted', infoTitle, right }) {
   const titleIdRef = useRef(null);
   if (titleIdRef.current === null) titleIdRef.current = `card-title-${++cardTitleSeq}`;
 
@@ -989,18 +990,18 @@ function CardHead({ title, sub, info, infoLabel = 'How this is counted', right }
       {sub && <span className="card-sub" title={window.UI.titleOf(sub)}>{sub}</span>}
     </div>
     {(info || right) && <div className="ml-auto flex items-center gap-2 shrink-0">
-      {info && <CardInfo label={infoLabel} describedBy={titleIdRef.current}>{info}</CardInfo>}
+      {info && <CardInfo label={infoLabel} title={infoTitle} describedBy={titleIdRef.current}>{info}</CardInfo>}
       {right}
     </div>}
   </div>;
 }
 
 // ⓘ trigger: a real button (click + keyboard), named by `label`, described by the card title → opens the detail drawer.
-function CardInfo({ label, describedBy, children }) {
+function CardInfo({ label, title, describedBy, children }) {
   const [isOpen, setOpen] = useState(false);
 
   return <>
-    <button type="button" className="btn ghost sm icon" aria-label={label} aria-describedby={describedBy}
+    <button type="button" className="btn ghost sm icon" aria-label={label} title={title} aria-describedby={describedBy}
       aria-haspopup="dialog" aria-expanded={isOpen} onClick={() => setOpen(true)}>
       <Icon name="info" size={16} />
     </button>
@@ -1027,11 +1028,11 @@ function getSlotRows(items, size = 'M') {
  * @param bar - filter bar or toolbar between the head and the body
  * @param foot - "Show all N" / "Other" / one footnote
  */
-function Card({ size, title, sub, info, infoLabel, right, bar, foot, isFlush = false, children, className = '' }) {
+function Card({ size, title, sub, info, infoLabel, infoTitle, right, bar, foot, isFlush = false, children, className = '' }) {
   const sizeClass = CARD_SLOTS[size] ? `card--${size.toLowerCase()}` : '';
 
   return <div className={`card ${sizeClass} ${className}`.replace(/\s+/g, ' ').trim()}>
-    {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} right={right} />}
+    {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} infoTitle={infoTitle} right={right} />}
     {bar && <div className="card-bar">{bar}</div>}
     <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
     {foot && <div className="card-foot">{foot}</div>}
