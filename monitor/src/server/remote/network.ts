@@ -31,6 +31,7 @@ export interface ListenDecision {
 const COMMAND = {
   ROUTE: "/sbin/route",
   ARP: "/usr/sbin/arp",
+  SCUTIL: "/usr/sbin/scutil",
   ENV: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LC_ALL: "C" },
   TIMEOUT_MS: 2_000,
 } as const;
@@ -54,6 +55,17 @@ export async function getNetworkIdentity(run: CommandRunner = runCommand): Promi
     return hardwareAddress === null ? null : { gateway, hardwareAddress, interface: networkInterface };
   } catch {
     // a failed or timed-out read is "unreadable" by design → closed, never an error path
+    return null;
+  }
+}
+
+/** The Mac's Bonjour name (`<LocalHostName>.local`, lower-case) → the name a device types; null when unreadable. */
+export async function getLocalHostName(run: CommandRunner = runCommand): Promise<string | null> {
+  try {
+    const name = (await run(COMMAND.SCUTIL, ["--get", "LocalHostName"])).trim().toLowerCase();
+    // a DNS label only → the value lands in the Host allowlist and the page origin
+    return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name) ? `${name}.local` : null;
+  } catch {
     return null;
   }
 }

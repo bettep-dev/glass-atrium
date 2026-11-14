@@ -8,6 +8,7 @@ import {
   type CommandRunner,
   type NetworkIdentity,
   getListenDecision,
+  getLocalHostName,
   getNetworkIdentity,
   isPrivateIPv4,
 } from "../src/server/remote/network.js";
@@ -95,4 +96,23 @@ test("the listener opens only when on, trusted, readable and private", () => {
     { name: "no address", input: { ...open, address: null }, expected: { open: false, reason: "address_not_private" } },
   ];
   for (const row of rows) assert.deepEqual(getListenDecision(row.input), row.expected, row.name);
+});
+
+test("the Bonjour host name is the .local name the Host allowlist admits, and an unreadable or unusable one is none", async () => {
+  const rows = [
+    { name: "local host name, lower-cased", output: "Bettepui-Macmini\n", expected: "bettepui-macmini.local" },
+    { name: "command failed", output: new Error("scutil exited 1"), expected: null },
+    { name: "empty name", output: "\n", expected: null },
+    { name: "name with a character no Host can carry", output: "owner mac\n", expected: null },
+  ];
+  for (const row of rows) {
+    const calls: string[][] = [];
+    const run: CommandRunner = async (file, args) => {
+      calls.push([file, ...args]);
+      if (row.output instanceof Error) throw row.output;
+      return row.output;
+    };
+    assert.equal(await getLocalHostName(run), row.expected, row.name);
+    assert.deepEqual(calls, [["/usr/sbin/scutil", "--get", "LocalHostName"]], row.name);
+  }
 });
