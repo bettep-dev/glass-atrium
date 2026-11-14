@@ -33,7 +33,7 @@ export interface RemoteDeviceDeps {
 }
 
 export interface RemoteRoutesDeps {
-  /** the gate's pre-auth keys → each `GET <file>` row outside /api/ becomes an exact route serving that public/ file */
+  /** the gate's pre-auth keys → each `GET <file>` row outside /api/ (SIGN_IN_FILES only) becomes an exact route serving that public/ file */
   readonly preAuthRoutes: ReadonlySet<string>;
   readonly registration: RemoteRegistrationDeps;
   readonly device: RemoteDeviceDeps;
@@ -92,11 +92,16 @@ export async function registerRemoteDeviceRoutes(app: FastifyInstance, deps: Rem
   );
 }
 
+/** The only files a pre-auth key may serve (signed sign-in rows) → the shared stylesheets name the feature set. */
+export const SIGN_IN_FILES: ReadonlySet<string> = new Set(["/sign-in.html", "/sign-in.js", "/sign-in.css"]);
+
 // exact routes, never the page wildcard → a sign-in file matches by its whole path, and no other file rides along
+// any other non-/api/ pre-auth key → startup fails rather than serve an unsigned file before registration
 function registerSignInFiles(app: FastifyInstance, preAuthRoutes: ReadonlySet<string>): void {
   for (const key of preAuthRoutes) {
-    const [method, url] = key.split(" ");
-    if (method !== "GET" || url === undefined || url.startsWith("/api/")) continue;
+    const [method, url = ""] = key.split(" ");
+    if (url.startsWith("/api/")) continue;
+    if (method !== "GET" || !SIGN_IN_FILES.has(url)) throw new Error(`remote listener refused: pre-auth file key outside the sign-in list: ${key}`);
     app.get(url, (_request, reply) => reply.sendFile(url.slice(1)));
   }
 }

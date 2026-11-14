@@ -196,12 +196,14 @@ export function getRemoteActor(device: DeviceSummary | null, address: string): s
 
 function setRemoteHeaders(request: FastifyRequest, reply: FastifyReply): void {
   reply.header("strict-transport-security", HSTS);
+  reply.header("x-content-type-options", "nosniff");
   // a handler's own CSP (document sandbox, static frame denial) is kept as set
   if (!reply.hasHeader("content-security-policy")) {
     reply.header("content-security-policy", "frame-ancestors 'none'");
     reply.header("x-frame-options", "DENY");
   }
-  if (request.url.startsWith("/api/")) reply.header("cache-control", "no-store");
+  // API → never stored; a page file → revalidated each load, so a device never runs a stale shell or sign-in file
+  reply.header("cache-control", request.url.startsWith("/api/") ? "no-store" : "no-cache");
 }
 
 // returned from the async hook → Fastify stops the chain at this reply

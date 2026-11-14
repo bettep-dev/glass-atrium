@@ -43,17 +43,20 @@ const timeline: string[] = [];
 let app: FastifyInstance;
 let tlsDir = "";
 
-// the sign-in rows put to the reviewer (GET; HEAD follows its GET) → production serves them once signed into REVIEWED_ROUTES
-const SIGN_IN_FILES = ["/sign-in.html", "/sign-in.js", "/sign-in.css", "/styles/tokens.css", "/styles/base.css"];
-const SIGN_IN_PRE_AUTH: ReadonlySet<string> = new Set([...REMOTE_PRE_AUTH_ROUTES, ...SIGN_IN_FILES.map((file) => `GET ${file}`)]);
-
-let signInApp: FastifyInstance;
+// the signed sign-in rows (GET; HEAD follows its GET), verdict CID 2026-11-15T0140_lan-signin-routes_c18e
+const SIGN_IN_FILES = ["/sign-in.html", "/sign-in.js", "/sign-in.css"];
+const SIGN_IN_HEADERS = {
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-frame-options": "DENY",
+  "strict-transport-security": "max-age=604800",
+  "x-content-type-options": "nosniff",
+  "cache-control": "no-cache",
+};
 
 before(async () => {
   const tls = await createStandInTls();
   tlsDir = tls.dir;
   app = await buildStandIn(tls, REMOTE_PRE_AUTH_ROUTES);
-  signInApp = await buildStandIn(tls, SIGN_IN_PRE_AUTH);
 });
 
 async function buildStandIn(tls: Awaited<ReturnType<typeof createStandInTls>>, preAuthRoutes: ReadonlySet<string>): Promise<FastifyInstance> {
@@ -109,7 +112,6 @@ beforeEach(() => {
 
 after(async () => {
   await app.close();
-  await signInApp.close();
   await disconnectPrisma();
   deleteDirectory(tlsDir);
 });
@@ -292,32 +294,63 @@ describe("code entry limits", () => {
   });
 });
 
-describe("an unregistered device with the sign-in rows in place", () => {
-  test("gets exactly the sign-in files, GET and HEAD, and every other static path stays 401", async () => {
+describe("an unregistered device and the signed sign-in rows", () => {
+  function getUnregistered(method: "GET" | "HEAD" | "POST" | "PUT" | "DELETE", url: string, remoteAddress = PHONE) {
+    return app.inject({ method, url, remoteAddress, headers: { host: HOST } });
+  }
+
+  test("condition 1: the shared stylesheets, the shell and a trailing-slash variant answer 401, as do other static paths", async () => {
+    const urls = ["/styles/base.css", "/styles/tokens.css", "/index.html", "/sign-in.html/", "/src/app.jsx", "/SIGN-IN.HTML", "/styles/../index.html"];
+    const answers = await Promise.all(urls.map((url) => getUnregistered("GET", url)));
+    assert.deepEqual(answers.map((answer, index) => [urls[index], answer.statusCode]), urls.map((url) => [url, 401]));
+  });
+
+  test("condition 3: each signed file answers GET and HEAD 200 with the signed headers, and refuses POST, PUT and DELETE", async () => {
+    for (const url of SIGN_IN_FILES) {
+      for (const method of ["GET", "HEAD"] as const) {
+        const response = await getUnregistered(method, url);
+        assert.equal(response.statusCode, 200, `${method} ${url}: ${response.body}`);
+        const headers = Object.fromEntries(Object.keys(SIGN_IN_HEADERS).map((name) => [name, response.headers[name]]));
+        assert.deepEqual(headers, SIGN_IN_HEADERS, `${method} ${url}`);
+      }
+      for (const method of ["POST", "PUT", "DELETE"] as const) {
+        const response = await getUnregistered(method, url);
+        assert.ok(response.statusCode >= 400 && response.statusCode < 500, `${method} ${url}: ${response.statusCode}`);
+      }
+    }
+  });
+
+  test("condition 4: GET and HEAD of exactly / answer 303 to the sign-in page; a query or another path answers 401", async () => {
     const rows = [
-      ...SIGN_IN_FILES.flatMap((url) => [
-        { name: `GET ${url}`, method: "GET" as const, url, status: 200 },
-        { name: `HEAD ${url}`, method: "HEAD" as const, url, status: 200 },
-      ]),
-      { name: "the page shell", method: "GET" as const, url: "/index.html", status: 401 },
-      { name: "an app source file", method: "GET" as const, url: "/src/app.jsx", status: 401 },
-      { name: "a trailing slash on a sign-in file", method: "GET" as const, url: "/sign-in.html/", status: 401 },
-      { name: "a sign-in file in another case", method: "GET" as const, url: "/SIGN-IN.HTML", status: 401 },
-      { name: "a path that walks out of a sign-in prefix", method: "GET" as const, url: "/styles/../index.html", status: 401 },
+      { method: "GET" as const, url: "/", status: 303, location: "/sign-in.html" },
+      { method: "HEAD" as const, url: "/", status: 303, location: "/sign-in.html" },
+      { method: "GET" as const, url: "/?x=1", status: 401, location: undefined },
+      { method: "GET" as const, url: "/api/health", status: 401, location: undefined },
+      { method: "POST" as const, url: "/", status: 401, location: undefined },
     ];
     for (const row of rows) {
-      const response = await signInApp.inject({ method: row.method, url: row.url, remoteAddress: PHONE, headers: { host: HOST } });
-      assert.equal(response.statusCode, row.status, `${row.name}: ${response.body}`);
+      const response = await getUnregistered(row.method, row.url);
+      assert.deepEqual([response.statusCode, response.headers.location], [row.status, row.location], `${row.method} ${row.url}`);
     }
+  });
+
+  test("condition 5: the 61st pre-auth GET from one address within a minute answers 429", async () => {
+    const statuses: number[] = [];
+    for (let index = 0; index < 61; index += 1) statuses.push((await getUnregistered("GET", SIGN_IN_FILES[index % 3] ?? "", "192.168.5.5")).statusCode);
+    assert.deepEqual([statuses.slice(0, 60).every((status) => status === 200), statuses[60]], [true, 429]);
+  });
+
+  test("condition 6: the gate's pre-auth set is exactly the three sign-in files and the code POST", () => {
+    assert.deepEqual([...REMOTE_PRE_AUTH_ROUTES].sort(), ["GET /sign-in.css", "GET /sign-in.html", "GET /sign-in.js", "POST /api/remote/register"]);
   });
 
   test("is sent from / to the sign-in page, registers there, and the cookie then opens /", async () => {
     await runRolledBack(async () => {
-      const first = await signInApp.inject({ method: "GET", url: "/", remoteAddress: PHONE, headers: { host: HOST } });
-      const page = await signInApp.inject({ method: "GET", url: first.headers.location ?? "", remoteAddress: PHONE, headers: { host: HOST } });
-      const registered = await signInApp.inject({ method: "POST", url: "/api/remote/register", remoteAddress: PHONE, headers: PAGE_HEADERS, payload: { code: codes.open(), label: LABEL } });
+      const first = await getUnregistered("GET", "/");
+      const page = await getUnregistered("GET", first.headers.location ?? "");
+      const registered = await app.inject({ method: "POST", url: "/api/remote/register", remoteAddress: PHONE, headers: PAGE_HEADERS, payload: { code: codes.open(), label: LABEL } });
       const cookie = registered.cookies.find((entry) => entry.name === DEVICE_COOKIE.NAME);
-      const opened = await signInApp.inject({ method: "GET", url: "/", remoteAddress: PHONE, headers: { host: HOST, cookie: `${DEVICE_COOKIE.NAME}=${cookie?.value ?? ""}` } });
+      const opened = await app.inject({ method: "GET", url: "/", remoteAddress: PHONE, headers: { host: HOST, cookie: `${DEVICE_COOKIE.NAME}=${cookie?.value ?? ""}` } });
       assert.deepEqual(
         [first.statusCode, first.headers.location, page.statusCode, registered.statusCode, opened.statusCode],
         [303, "/sign-in.html", 200, 201, 200],
@@ -327,9 +360,13 @@ describe("an unregistered device with the sign-in rows in place", () => {
   });
 });
 
-describe("without the sign-in rows", () => {
-  test("an unregistered GET of / and of a sign-in file stays 401", async () => {
-    const answers = await Promise.all(["/", "/sign-in.html"].map((url) => app.inject({ method: "GET", url, remoteAddress: PHONE, headers: { host: HOST } })));
-    assert.deepEqual(answers.map((answer) => answer.statusCode), [401, 401]);
+describe("the sign-in file routes", () => {
+  test("refuse to start on a pre-auth file key outside the fixed three-file list", async () => {
+    const tls = await createStandInTls();
+    try {
+      await assert.rejects(buildStandIn(tls, new Set([...REMOTE_PRE_AUTH_ROUTES, "GET /styles/base.css"])), /pre-auth file/);
+    } finally {
+      deleteDirectory(tls.dir);
+    }
   });
 });
