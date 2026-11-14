@@ -120,8 +120,11 @@ const DESK_STATES: QueueState[] = [
   { nn: "27e", name: "stress-long-order", getFixture: getEdgeFixture, setUp: (page) => showThreadText(page, "Show all 31 lines") },
   // the 100-character session ticked: its name cut inside the send button beside a box that keeps its 220
   { nn: "27f", name: "stress-long-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickOrdersTo(page, [EDGE_LONG_SESSION_NAME]) },
-  // an ended session among two ticked: the resume tail has no room beside the 220 box at this pane, so it drops whole
-  { nn: "27g", name: "stress-ended-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: (page) => tickOrdersTo(page, ["gersona", "portfolio"]) },
+  // an ended session among two ticked (portfolio sits in the folded Ended band): the resume tail has no room beside the 220 box, so it drops whole
+  { nn: "27g", name: "stress-ended-send", viewports: [VIEWPORTS[1]], getFixture: getEdgeFixture, setUp: async (page) => {
+    await page.locator(".queue-rail-band .disclosure").click();
+    await tickOrdersTo(page, ["gersona", "portfolio"]);
+  } },
   { nn: "28a", name: "wide-list", viewports: [WIDE_WINDOW] },
   { nn: "28b", name: "wide-report", viewports: [WIDE_WINDOW], setUp: (page) => selectRow(page, 101) },
 ];
