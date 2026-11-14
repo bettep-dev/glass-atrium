@@ -755,6 +755,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	-webkit-line-clamp: var(--queue-clamp-lines);
 	overflow: hidden;
 }
+/* the clamp clips at the text's box, where an outside marker hangs → the numbered list's inset holds a two-digit marker */
+.queue-bubble > .prose-text ol {
+	padding-inline-start: var(--space-6);
+}
 /* an order's images inside its bubble, under its text (§9.8): 96 squares, wrapping */
 .queue-bubble-images {
 	--queue-thumb: 96px;

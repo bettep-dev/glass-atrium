@@ -2196,6 +2196,27 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { title: EDGE_LONG_SESSION_NAME, isOneLine: true, isCut: true, areOthersWhole: true, isInsideThread: true });
     });
 
+    // spec §9.3 Bubble: the clamp clips at the text's box → a numbered list's widest marker (two digits past 9) stays inside it
+    test("a clamped order bubble's numbered list holds its widest marker inside the clipped text box", async () => {
+      const page = await openEdgePage(harness, VIEWPORTS[2]);
+      await showThreadText(page, "Show all 31 lines");
+      const lists = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-bubble.is-clamped > .prose-text")].flatMap((prose) => {
+        const clipLeft = prose.getBoundingClientRect().left + prose.clientLeft;
+        return [...prose.querySelectorAll("ol")].map((list) => {
+          const items = [...list.children] as HTMLElement[];
+          const widest = `${list.start + items.length - 1}. `;
+          const context = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+          const marker = getComputedStyle(items.at(-1) as Element, "::marker");
+          context.font = `${marker.fontWeight} ${marker.fontSize} ${marker.fontFamily}`;
+          return { widest, overhang: Math.round(clipLeft - ((items.at(-1) as HTMLElement).getBoundingClientRect().left - context.measureText(widest).width)) };
+        });
+      }));
+      await page.close();
+
+      assert.ok(lists.some((list) => list.widest.length > 3), `a clamped list numbers past 9: ${JSON.stringify(lists)}`);
+      assert.deepEqual(lists.filter((list) => list.overhang > 0), [], JSON.stringify(lists));
+    });
+
     // spec §9.3 Bubble: a long order shows 12 whole lines under its clamp, block gaps between paragraphs and list items included
     test("a 31-line order's clamped bubble shows 12 whole lines and no line cut through", async () => {
       const page = await openEdgePage(harness);
