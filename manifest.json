@@ -2073,7 +2073,7 @@
     "test/install-acceptance-doctor-stub.bats": "03470f5bdb7791b81a6a6a94d16962bb0a1fef0f5952c9995a1e928c56a48ac7",
     "test/install-acceptance-untracked-listed.bats": "31d6b4e0e126871d7c18596708792b0c2151361ec509c0285f1510974ebf32de",
     "test/install-acceptance.sh": "34e1b8d70a567b8c7d7c712c9e4a41acb73bdd35c886a8e41f507ed5380ba2ea",
-    "test/install-bootstrap-subcommand.bats": "5510b5b34bf54d869f8c55768ae89018819c6d84755642a75709f2ab6b702453",
+    "test/install-bootstrap-subcommand.bats": "e4fb4d9170c758c8e689e0678042e70d8ebff4bd1d1de60c568719464e255781",
     "test/install-orphan-ownership-exec-harness.sh": "03cd0e55bee5c2358f007358a56a0a415a1d77e6b3ac3718afd7ff48d81694fb",
     "test/install-orphan-ownership.bats": "6b90eafdc327bf6a5ba0d83623e94714399cc4070cdf2b6405ba64e13680ff0e",
     "test/install-prune.bats": "0fecdbe8b873e62646a3b8da6ebf47deae62585648b3fbc056486bde45ba40d9",
