@@ -1473,7 +1473,7 @@ test("the Instrumentation fold body carries every clause the head leaves out, an
   }
 });
 
-test("the drawer's Performance section states the agent's budget crossings and peak, and an unread overage source says unavailable rather than 0", async () => {
+test("the drawer's Performance section states the agent's budget crossings and peak, and an unread overage source marks both Not loaded rather than 0", async () => {
   const agent = { agent_id: "glass-atrium-dev-react", agent_name: "glass-atrium-dev-react", runs: 40, needs_context_count: 0, invocations: 40 };
   const summaryState = { status: "ready", data: { agents: [agent] }, error: null };
   const latencyState = { status: "ready", data: { agents: [] }, error: null };
@@ -1481,7 +1481,7 @@ test("the drawer's Performance section states the agent's budget crossings and p
   const rows = [
     { name: "crossed", state: { status: "ready", data: { rows: [] }, error: null }, map: crossed, count: "3", peak: "140% of budget" },
     { name: "loaded with no crossing", state: { status: "ready", data: { rows: [] }, error: null }, map: new Map(), count: "0", peak: "absent:none" },
-    { name: "overage read failed", state: { status: "error", data: null, error: { message: "HTTP 503" } }, map: new Map(), count: "unavailable", peak: "unavailable" },
+    { name: "overage read failed", state: { status: "error", data: null, error: { message: "HTTP 503" } }, map: new Map(), count: "absent:not-loaded", peak: "absent:not-loaded" },
   ];
   for (const row of rows) {
     const tree = await renderComponent("AgentPerformanceSection", {
@@ -2494,4 +2494,45 @@ test("an openable lifecycle row eases its hover fill at the 120ms state timing, 
   const [row] = findNodes(tree, (n) => n.type === "tr" && String(n.props?.title ?? "").startsWith("glass-atrium-dev-react"));
   assert.match(String(row?.props.className), /\bhover:bg-sunken\b/, "the row keeps its hover fill");
   assert.deepEqual(getMotionGateGaps(tree), []);
+});
+
+describe("Agents values take the shared number, date and nothing forms", () => {
+  const formOverrides = () => ({ formatPct: REAL_UI.formatPct, formatKstDay: REAL_UI.formatKstDay });
+
+  test("an alarm whose reading carries no fail count marks the count Not loaded, never the word undefined", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+    const tree = renderScreen(React.createElement(mod.AgentAlarmRow as Component, { alarm: { agent: "glass-atrium-dev-shell" } }));
+    assert.doesNotMatch(collectText(tree), /undefined/);
+    assert.deepEqual(findAtoms(tree, "AbsentValue").map((n) => n.props.kind), ["not-loaded"]);
+  });
+
+  test("a fractional budget crossing peak prints through formatPct in the drawer and on the P95 bar", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const getCrossing = mod.getCrossingMetricsAg as (s: unknown, m: unknown, id: string) => { count: unknown; peak: unknown };
+    const ready = getCrossing({ status: "ready" }, new Map([["a", { overage_count: 3, max_crossed_pct: 112.46 }]]), "a");
+    assert.equal(ready.peak, "112.5% of budget");
+    const row = renderSummaryRow(mod, { overage_count: 3, max_crossed_pct: 112.46 });
+    const label = String(findNodes(row, (n) => n.props?.atom === "Bar" && String(n.props.ariaLabel).startsWith("p95"))[0]?.props.ariaLabel);
+    assert.match(label, /peak 112\.5% of budget/);
+  });
+
+  test("a client-derived last failure date prints in the Day form", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const last = (mod.resolveLastBreakage as (p: unknown, m: unknown) => { text: string; title: string })({ agent: "a", lastFailureDate: "2026-11-13" }, null);
+    assert.equal(last.text, "11-13");
+    assert.match(last.title, /2026-11-13/, "the full date stays in the title");
+  });
+
+  test("the revision mix paints every segment in the data colour and names each bucket's count", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+    const buckets = { bucket_0: 12, bucket_1: 3, bucket_2: 0, bucket_3: 1, "bucket_4+": 2 };
+    const tree = renderScreen(React.createElement(mod.RevisionInlineMiniBar as Component, { buckets, total: 18 }));
+    const segments = findNodes(tree, (n) => typeof (n.props?.style as { background?: string } | undefined)?.background === "string");
+    assert.equal(segments.length, 4, "a zero bucket draws no segment");
+    for (const segment of segments) assert.match(String((segment.props.style as { background: string }).background), /var\(--data\)/);
+    const [img] = findNodes(tree, (n) => n.props?.role === "img");
+    assert.match(String(img.props["aria-label"]), /0 revisions: 12.*1 revision: 3.*3 revisions: 1.*4\+ revisions: 2/);
+  });
 });

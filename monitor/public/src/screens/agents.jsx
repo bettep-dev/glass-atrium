@@ -33,12 +33,13 @@ const TASK_TYPE_COLUMNS = [
 ];
 
 // revision_count 분포 — server enum 순서 (stacked bar bottom→top).
+// a quantity, not a severity → one --data hue, an ordered alpha ramp tells the buckets apart (spec 44084 §7)
 const REVISION_BUCKETS = [
-  { key: '0',  label: '0',  colorVar: '--ok'   },
-  { key: '1',  label: '1',  colorVar: '--info' },
-  { key: '2',  label: '2',  colorVar: '--warn' },
-  { key: '3',  label: '3',  colorVar: '--accent' },
-  { key: '4+', label: '4+', colorVar: '--crit' },
+  { key: '0',  label: '0',  alpha: 1 },
+  { key: '1',  label: '1',  alpha: 0.8 },
+  { key: '2',  label: '2',  alpha: 0.6 },
+  { key: '3',  label: '3',  alpha: 0.45 },
+  { key: '4+', label: '4+', alpha: 0.3 },
 ];
 
 const MATRIX_AGENT_CAP = 25;
@@ -1069,7 +1070,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
   // Budget crossing folds into the P95 fill-bar label — a separate pill beside a ✓ glyph read as a contradiction.
   const overageCount = overage ? Number(overage.overage_count) || 0 : 0;
   const overageNote = overageCount > 0
-    ? `${overageCount} tool_use-budget crossing${overageCount === 1 ? '' : 's'} in the last ${days}d · peak ${Number(overage.max_crossed_pct) || 0}% of budget`
+    ? `${overageCount} tool_use-budget crossing${overageCount === 1 ? '' : 's'} in the last ${days}d · peak ${formatPctAg(Number(overage.max_crossed_pct) || 0)} of budget`
     : null;
   // 추세 데이터 — null 이면 미렌더 (추정값 주입 금지).
   const hasTrend = Array.isArray(trend) && trend.length > 0;
@@ -1571,7 +1572,9 @@ function getBreakerLabel(breaker) {
   return breaker.consecutive_fails > 0 ? 'fail streak' : 'safe to route';
 }
 
+// an alarm read without its count → Not loaded, never a printed `undefined`
 function formatConsecutiveFails(count) {
+  if (!Number.isFinite(count)) return <window.UI.AbsentValue kind="not-loaded" title="The breaker reading carries no fail count"/>;
   return `${count} consecutive ${count === 1 ? 'fail' : 'fails'}`;
 }
 
@@ -1863,10 +1866,13 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
 
 // unread overage source → unavailable, never a 0 that reads as no crossing
 function getCrossingMetricsAg(overageState, overageByAgent, agentId) {
-  if (overageState?.status !== 'ready') return { count: 'unavailable', peak: 'unavailable' };
+  if (overageState?.status !== 'ready') {
+    const unread = <window.UI.AbsentValue kind="not-loaded" title="The budget-crossing read did not load"/>;
+    return { count: unread, peak: unread };
+  }
   const overage = overageByAgent?.get(agentId);
   const count = overage ? overage.overage_count : 0;
-  return { count: formatIntAg(count), peak: count > 0 ? `${formatIntAg(overage.max_crossed_pct)}% of budget` : <window.UI.AbsentValue kind="none"/> };
+  return { count: formatIntAg(count), peak: count > 0 ? `${formatPctAg(overage.max_crossed_pct)} of budget` : <window.UI.AbsentValue kind="none"/> };
 }
 
 // latency p50/p95/p99 한 줄 — 페어링 없으면 inline empty (Performance 내부 독립 degrade).
@@ -2608,7 +2614,7 @@ function resolveLastBreakage(pair, failureByAgent) {
     return { text: formatRelativeTimeAg(serverTs), title: `Last failure (fail+blocked) ${window.UI.formatKstFull(serverTs)}`, fromServer: true };
   }
   if (pair.lastFailureDate) {
-    return { text: pair.lastFailureDate, title: `Last fail event_date (client-derived · blocked not included) ${pair.lastFailureDate}`, fromServer: false };
+    return { text: window.UI.formatKstDay(pair.lastFailureDate), title: `Last fail event_date (client-derived · blocked not included) ${pair.lastFailureDate}`, fromServer: false };
   }
   return { text: 'None', title: 'no failure data', fromServer: false };
 }
@@ -2877,7 +2883,7 @@ function RevisionInlineMiniBar({ buckets, total }) {
     <div
       className="flex h-1.5 rounded-full overflow-hidden bg-sunken"
       role="img"
-      aria-label={`revision distribution — ${total} total`}>
+      aria-label={`revision distribution — ${total} total · ${getRevisionMixText(buckets)}`}>
       {REVISION_BUCKETS.map((b) => {
         const count = buckets[`bucket_${b.key}`] || 0;
         if (count === 0) return null;
@@ -2887,7 +2893,7 @@ function RevisionInlineMiniBar({ buckets, total }) {
             key={b.key}
             style={{
               width: `${widthPct}%`,
-              background: `rgb(var(${b.colorVar}) / 0.85)`,
+              background: `rgb(var(--data) / ${b.alpha})`,
             }}
             title={`revision=${b.label}: ${count} (${formatPctAg(widthPct)})`}
           />
@@ -2895,6 +2901,14 @@ function RevisionInlineMiniBar({ buckets, total }) {
       })}
     </div>
   );
+}
+
+// every drawn bucket in words → the mix reads without telling the alpha steps apart
+function getRevisionMixText(buckets) {
+  return REVISION_BUCKETS
+    .filter((b) => (buckets[`bucket_${b.key}`] || 0) > 0)
+    .map((b) => `${b.label} revision${b.label === '1' ? '' : 's'}: ${buckets[`bucket_${b.key}`]}`)
+    .join(', ');
 }
 
 // LifecycleStats (col-span-2) — orphan spawn gap + duration 분포 (/api/agents/lifecycle-stats).
