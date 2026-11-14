@@ -672,6 +672,7 @@ describe("AttributionBreakdownO: only a landed window may say it has no breakdow
   const silentRows = [
     { name: "loading renders nothing", state: { status: "loading", data: null } },
     { name: "an error renders nothing", state: { status: "error", data: null, error: "HTTP 500" } },
+    { name: "a payload without its window summary renders nothing", state: { status: "ready", data: { days_series: [] } } },
   ];
   for (const row of silentRows) {
     test(row.name, () => {

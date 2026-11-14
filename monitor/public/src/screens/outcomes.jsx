@@ -1332,8 +1332,11 @@ function AttributionHealthCard({ state, period, onRetry, shared }) {
   );
 }
 
-// first read in flight → no head (the body's skeleton is the loading look) · failed → Not loaded + its cause ·
-// read → the window's rate, a summary-less payload read as the empty window, as the body reads it
+// a ready payload without window_summary → nothing read for the window: Not loaded in head and body, never the empty window
+const ATTRIBUTION_NO_SUMMARY_TITLE_O = 'The attribution read landed with no window summary, so the window was not read';
+
+// first read in flight → no head (the body's skeleton is the loading look) · failed or summary-less → Not loaded + its cause ·
+// read → the window's rate
 function getAttributionHeadBadgeO(state, period) {
   const { getRegionView, getErrorCopy, AbsentValue } = window.UI;
   const view = getRegionView(state);
@@ -1342,7 +1345,9 @@ function getAttributionHeadBadgeO(state, period) {
     const { sentence, detail } = getErrorCopy(state.error, `record attribution for the last ${period} days`);
     return { colorVar: null, text: <AbsentValue kind="not-loaded" title={`${sentence} ${detail}`}/> };
   }
-  return attributionOmissionBadgeO(state.data.window_summary?.literal_omission_rate);
+  const summary = state.data?.window_summary;
+  if (!summary) return { colorVar: null, text: <AbsentValue kind="not-loaded" title={ATTRIBUTION_NO_SUMMARY_TITLE_O}/> };
+  return attributionOmissionBadgeO(summary.literal_omission_rate);
 }
 
 function AttributionHealthBody({ state, onRetry, shared }) {
@@ -1354,8 +1359,11 @@ function AttributionHealthBody({ state, onRetry, shared }) {
     return <RegionErrorO source="reporting health" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
   }
 
-  const summary = state.data?.window_summary || null;
-  const totalAttributed = Number(summary?.total_attributed) || 0;
+  const summary = state.data?.window_summary;
+  if (!summary) {
+    return <window.UI.AbsentValue kind="not-loaded" title={ATTRIBUTION_NO_SUMMARY_TITLE_O}/>;
+  }
+  const totalAttributed = Number(summary.total_attributed) || 0;
 
   // 귀속 기록된 실행 0건 (빈 window) → 안내 indicator.
   if (totalAttributed === 0) {
@@ -1378,12 +1386,12 @@ function AttributionHealthBody({ state, onRetry, shared }) {
   );
 }
 
-// Reporting-health detail breakdown — silent on loading/error/empty, which the status cards above already report.
+// Reporting-health detail breakdown — silent on loading/error/a summary-less payload, which the status cards above already report.
 function AttributionBreakdownO({ state }) {
-  if (state.status !== 'ready') return null;
-
   const summary = state.data?.window_summary;
-  if (!summary || !(Number(summary.total_attributed) > 0)) {
+  if (state.status !== 'ready' || !summary) return null;
+
+  if (!(Number(summary.total_attributed) > 0)) {
     return <EmptyStateO message="No daily breakdown in this period."/>;
   }
 

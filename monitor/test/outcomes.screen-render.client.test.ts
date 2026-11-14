@@ -545,11 +545,11 @@ test("a loading skeleton pulses through its gated class, never through an inline
   assert.equal(inline.length, 0, "no element animates through its own style");
 });
 
-describe("the Record attribution head reads None only over a read window with no records, Not loaded with its cause after a failed read, and nothing while the first read is in flight", () => {
+describe("the Record attribution head reads None only over a read window with no records, Not loaded with its cause after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
   const rows = [
     { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: SERVER_ERROR },
     { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, kinds: [], text: /None$/, hasGlyph: true, isBodyEmpty: true },
-    { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { rows: [] }, error: null }, kinds: [], text: /None$/, hasGlyph: true, isBodyEmpty: true },
+    { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { days_series: [] }, error: null }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: "no window summary", isBodyEmpty: false },
     { name: "read, a measured share", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, kinds: [], text: /1\.2% /, hasGlyph: true, isBodyEmpty: false },
   ];
   const renderCard = async (state: unknown) => {
@@ -563,6 +563,14 @@ describe("the Record attribution head reads None only over a read window with no
     const tree = await renderCard({ status: "loading", busy: true, data: null, error: null });
     assert.equal(getHeads(tree).length, 0);
     assert.doesNotMatch(collectText(tree), /Not loaded|None/);
+  });
+
+  test("a payload without its window summary: the body reads Not loaded with the same cause, as the head does", async () => {
+    const tree = await renderCard({ status: "ready", busy: false, data: { days_series: [] }, error: null });
+    const [head] = getHeads(tree);
+    const bodyAbsent = findNodes(tree, (n) => n.type === "AbsentValue").filter((n) => !findNodes(head, (h) => h === n).length);
+    assert.deepEqual(bodyAbsent.map((n) => n.props.kind), ["not-loaded"]);
+    assert.ok(String(bodyAbsent[0]?.props.title).includes("no window summary"), "the body states the cause in its title");
   });
 
   for (const row of rows) {
