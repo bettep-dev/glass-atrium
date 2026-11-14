@@ -187,7 +187,7 @@ file_sum() { cksum <"$1"; }
 
 @test "on creates the keys, writes enabled and the default port owner-only, restarts and prints the device count" {
   start_monitor_stub
-  stub_route 'GET /api/remote/cli/devices 200 {"devices":[{"id":3,"label":"phone","createdAt":"2026-11-14","lastSeenAt":null}]}'
+  stub_route 'GET /api/remote/cli/devices 200 {"devices":[{"id":"3","label":"phone","createdAt":"2026-11-14T05:20:11.123Z","lastSeenAt":"2026-11-14T06:01:02.456Z"}]}'
   IS_TERMINAL=true
   run ga_remote_main on <<<"on"
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
@@ -250,24 +250,36 @@ file_sum() { cksum <"$1"; }
     and ([.headers | keys[] | select(test("^(origin|referer|cookie|sec-fetch-.*)$"))] | length == 0)' "${REQUESTS}"
 }
 
-@test "revoke builds a request only for a bounded decimal id" {
+@test "revoke builds a request only for a decimal id within the monitor's bound" {
   start_monitor_stub
   local id
-  for id in '1;rm' '0' '-1' 'abc' '1234567890' '' '../x'; do
+  for id in '1;rm' '0' '-1' 'abc' '1234567890123456789' '' '../x'; do
     run ga_remote_main revoke "${id}"
     [[ "${status}" -eq 2 ]] || { echo "id '${id}': ${status}"; return 1; }
   done
   [[ ! -s "${REQUESTS}" ]] || return 1
+  stub_route 'DELETE /api/remote/cli/devices/123456789012345678 200 {"revoked":1}'
+  run ga_remote_main revoke 123456789012345678
+  [[ "${status}" -eq 0 && "${output}" == *"revoked device 123456789012345678"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "revoke reports revoked only when the monitor answers revoked:1, and not-found on its 404" {
+  start_monitor_stub
   stub_route 'DELETE /api/remote/cli/devices/7 204 '
-  run ga_remote_main revoke 7
-  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
-  run ga_remote_main revoke 8
-  [[ "${status}" -eq 1 && "${output}" == *"not found"* ]] || { echo "${output}"; return 1; }
+  stub_route 'DELETE /api/remote/cli/devices/9 200 {"revoked":0}'
+  local rows=('no confirmation body|7|5|NOT revoked' 'zero revoked|9|5|NOT revoked' 'unknown device|8|1|not found')
+  local row name id expected_status expected_text
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name id expected_status expected_text <<<"${row}"
+    run ga_remote_main revoke "${id}"
+    [[ "${status}" -eq "${expected_status}" && "${output}" == *"${expected_text}"* ]] \
+      || { echo "${name}: ${status} ${output}"; return 1; }
+  done
 }
 
 @test "list prints labels as data with control characters stripped" {
   start_monitor_stub
-  stub_route 'GET /api/remote/cli/devices 200 {"devices":[{"id":1,"label":"ph\u001b[31mone","createdAt":"c","lastSeenAt":"s"}]}'
+  stub_route 'GET /api/remote/cli/devices 200 {"devices":[{"id":"1","label":"ph\u001b[31mone","createdAt":"c","lastSeenAt":"s"}]}'
   run ga_remote_main list
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "${output}" == *$'1\tph[31mone\tc\ts'* && "${output}" != *$'\e'* ]] || return 1

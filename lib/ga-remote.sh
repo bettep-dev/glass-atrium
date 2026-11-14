@@ -328,17 +328,22 @@ ga_remote_cmd_list() {
 
 ga_remote_cmd_revoke() {
   local id="$1" reply status
-  if ! [[ "${id}" =~ ^[1-9][0-9]{0,8}$ ]]; then
+  # same bound as the route's id pattern (admin-routes.ts → DEVICE_PARAMS_SCHEMA)
+  if ! [[ "${id}" =~ ^[1-9][0-9]{0,17}$ ]]; then
     printf 'remote: revoke takes one device id (decimal digits)\n' >&2
     return 2
   fi
   reply="$(ga_remote_call_monitor DELETE "${GA_REMOTE_CLI_PATH}/${id}")" || status="none"
   status="${status:-${reply##*$'\n'}}"
-  case "${status}" in
-    200 | 204) printf 'remote: revoked device %s\n' "${id}" ;;
-    404) printf 'remote: device %s not found (unknown or already revoked)\n' "${id}" >&2 && return 1 ;;
-    *) printf 'remote: the monitor did not confirm — device %s was NOT revoked\n' "${id}" >&2 && return 5 ;;
-  esac
+  if [[ "${status}" == "200" ]] && printf '%s' "${reply%$'\n'*}" | jq -e '.revoked == 1' >/dev/null 2>&1; then
+    printf 'remote: revoked device %s\n' "${id}"
+  elif [[ "${status}" == "404" ]]; then
+    printf 'remote: device %s not found (unknown or already revoked)\n' "${id}" >&2
+    return 1
+  else
+    printf 'remote: the monitor did not confirm — device %s was NOT revoked\n' "${id}" >&2
+    return 5
+  fi
 }
 
 ga_remote_cmd_revoke_all() {
