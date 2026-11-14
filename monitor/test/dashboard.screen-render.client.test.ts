@@ -32,7 +32,7 @@ function uiStub(): unknown {
       get: (_target, name: string) =>
         name === "KPI"
           ? realUi.KPI
-          : name === "NOT_LOADED_TEXT" || name === "EMPTY_VALUE_TEXT"
+          : name === "getAbsentText"
           ? realUi[name]
           : name === "TONE_ICON"
           ? new Proxy({}, { get: () => "dot" })
@@ -150,17 +150,18 @@ test("every drill is an anchor to its screen's hash; a plain click routes in-app
   }
 });
 
-test("a tile whose value is a word for nothing paints it in faint ink, and a real figure stays in ink", () => {
+test("a tile whose value is marked absent paints that kind's word in faint ink, and a real figure stays in ink", () => {
   const rows = [
-    { name: "an unread tile", value: "Not loaded", status: "unavailable", isFaint: true },
-    { name: "an empty tile", value: "None", status: "unavailable", isFaint: true },
-    { name: "a figure", value: "40", status: "ready", isFaint: false },
+    { name: "an unread tile", value: null, absent: "not-loaded", status: "unavailable", isFaint: true, text: "Not loaded" },
+    { name: "an empty tile", value: null, absent: "none", status: "unavailable", isFaint: true, text: "None" },
+    { name: "a figure", value: "40", absent: undefined, status: "ready", isFaint: false, text: "40" },
   ];
   for (const row of rows) {
-    const tree = render("StatusTile", { tile: { ...READY_TILE, status: row.status, value: row.value }, onNav: () => {}, onRetry: () => {} });
+    const tile = { ...READY_TILE, status: row.status, value: row.value, absent: row.absent };
+    const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
     const [value] = findNodes(tree, isKpiValue);
     assert.equal(Boolean(value.props.isFaint), row.isFaint, row.name);
-    assert.equal(collectText(value), row.value, `${row.name} keeps its own words`);
+    assert.equal(collectText(value), row.text, `${row.name} reads its own words`);
   }
 });
 
@@ -187,7 +188,8 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
     resolveOutcomeRate: (data: unknown) => data,
     formatInt: (n: number) => String(n),
     formatPct: realUi.formatPct,
-    EMPTY_VALUE_TEXT: realUi.EMPTY_VALUE_TEXT,
+    RESULT_META: realUi.RESULT_META,
+    resolveResultMeta: realUi.resolveResultMeta,
     LOW_N_MIN: 20,
     OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
     OUTCOME_OPEN_CAVEAT_WARN_SHARE: 0.1,
@@ -219,7 +221,8 @@ test("the Task results tile headlines a bare failed share on one line, with its 
 test("a Task results tile with nothing to judge reads None, never a dash", () => {
   for (const status of ["empty", "unavailable"]) {
     const tile = buildOutcomeTile({ status: "ready", data: { status, tone: "neutral", writerTotal: 0, breakage: 0, openCaveats: 0 } });
-    assert.equal(tile.value, "None", `${status}: the share has no writer-reported outcomes behind it`);
+    assert.equal(tile.absent, "none", `${status}: the share has no writer-reported outcomes behind it`);
+    assert.equal(tile.value, null, `${status}: no figure stands in for the missing share`);
   }
 });
 

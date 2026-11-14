@@ -343,13 +343,12 @@ function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
 }
 
 // tile status → the shared KPI state. unavailable and empty keep their builder's value (a low-n count is still a real
-// figure); a None or Not loaded word takes the KPI's unknown state → faint ink, never a verdict glyph.
+// figure); a tile whose builder marked its value absent takes the KPI's unknown state → faint ink, never a verdict glyph.
 const TILE_KPI_STATE = { loading: 'loading', error: 'error' };
 
 function getTileKpiState(tile) {
-  const { NOT_LOADED_TEXT, EMPTY_VALUE_TEXT } = window.UI;
   if (Object.hasOwn(TILE_KPI_STATE, tile.status)) return TILE_KPI_STATE[tile.status];
-  return tile.value === NOT_LOADED_TEXT || tile.value === EMPTY_VALUE_TEXT ? 'empty' : 'ready';
+  return tile.absent ? 'empty' : 'ready';
 }
 
 // a detail with no text renders no node → no blank line and no reserve; the hint still closes the slot, on the foot
@@ -401,8 +400,9 @@ function getTileCardId(tile) {
 }
 
 // the value slot — the figure never breaks; unit, badge and trend ride the shared KPI rows beside and below it
+// absent: 'none' | 'not-loaded' → the shared word for that kind of nothing, in place of a value
 function StatusTileValue({ tile }) {
-  return <span className="whitespace-nowrap">{tile.value}</span>;
+  return <span className="whitespace-nowrap">{tile.absent ? window.UI.getAbsentText(tile.absent) : tile.value}</span>;
 }
 
 // the week behind the triage band → each panel states its own span (the strip 7 days, the results 7 days + today)
@@ -498,15 +498,7 @@ function SpendStrip({ strip }) {
   );
 }
 
-// a result's bar is a quantity → the data colour; the label word names the result
-const RESULT_ROW_META = {
-  done: { label: 'Done' },
-  done_with_concerns: { label: 'Done with caveats' },
-  fail: { label: 'Failed' },
-  blocked: { label: 'Blocked' },
-  needs_context: { label: 'Needs info' },
-};
-
+// a result's bar is a quantity → the data colour; the label word (ui.jsx RESULT_META) names the result
 function ResultPanel({ panel }) {
   if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, <window.UI.DayTokens>{panel.span}</window.UI.DayTokens>.</p>;
   return (
@@ -516,10 +508,9 @@ function ResultPanel({ panel }) {
       </p>
       <ul className="flex flex-col gap-1.5">
         {panel.rows.map((row) => {
-          const meta = RESULT_ROW_META[row.result] ?? { label: row.result };
           return (
             <li key={row.result} className="dash-result-row fs-body">
-              <span>{meta.label}</span>
+              <span>{window.UI.resolveResultMeta(row.result).label}</span>
               <div aria-hidden="true">
                 <div className="dash-result-fill text-data" style={{ width: `${(row.count / panel.writerTotal) * 100}%` }}/>
               </div>
@@ -923,7 +914,7 @@ function buildHarnessTile(harness) {
   }
   if (!harness || harness.status !== 'ready') {
     // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
-    return { ...base, status: 'unavailable', tone: 'neutral', value: window.UI.NOT_LOADED_TEXT, hint: 'Harness readings unavailable.', canRetry: true };
+    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', hint: 'Harness readings unavailable.', canRetry: true };
   }
   return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
 }
@@ -1013,7 +1004,7 @@ function buildPendingTile(base, state) {
 function buildFailedTile(base, error) {
   const copy = window.UI.getErrorCopy(error, base.source);
   return {
-    ...base, status: 'error', tone: 'neutral', value: window.UI.NOT_LOADED_TEXT, detail: copy.sentence, hint: copy.next, failureDetail: copy.detail ?? undefined,
+    ...base, status: 'error', tone: 'neutral', value: null, absent: 'not-loaded', detail: copy.sentence, hint: copy.next, failureDetail: copy.detail ?? undefined,
     error, canRetry: true,
   };
 }
@@ -1032,7 +1023,7 @@ function buildOutcomeTile(outcomesState) {
   // trend stays a plain string; the range token rides beside it so the render keeps it whole
   return {
     ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, badge: OUTCOME_VERDICT[rate.status],
-    value: describeOutcomeValue(rate), detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
+    value: describeOutcomeValue(rate), absent: isOutcomeJudgeable(rate) ? undefined : 'none', detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
     trend, trendRange: trend ? window.UI.formatDayRange(prior) : null, note: OUTCOME_COUNTING_NOTE,
   };
 }
@@ -1046,10 +1037,14 @@ const OUTCOME_TILE_STATUS = {
 const OUTCOME_VERDICT = { ok: 'Below alert lines', warn: 'Caveats above alert line', crit: 'Failures above alert line' };
 const OUTCOME_COUNTING_NOTE = 'Counts only writer-emitted outcomes — records the agent reported itself; synthesized records are left out.';
 
+// empty or no writer-reported outcome → known to hold nothing (absent 'none'), the share has no denominator
+function isOutcomeJudgeable(rate) {
+  return rate.status === 'low-n' || Object.hasOwn(OUTCOME_VERDICT, rate.status);
+}
+
 function describeOutcomeValue(rate) {
   if (rate.status === 'low-n') return formatInt(rate.writerTotal);
-  // empty or no writer-reported outcome → known to hold nothing, the share has no denominator
-  if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return window.UI.EMPTY_VALUE_TEXT;
+  if (!isOutcomeJudgeable(rate)) return null;
   return getSharePct(rate.breakage, rate.writerTotal);
 }
 
@@ -1081,9 +1076,7 @@ function describeOutcomeTrend(rate, prior) {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // server-anchored YYYY-MM-DD → MM-DD; never re-derived from the browser clock
-function formatDay(date) {
-  return window.UI.formatKstDay(date);
-}
+const formatDay = window.UI.formatKstDay;
 
 function formatAlertLine(share) {
   return window.UI.formatPct(share * 100);
@@ -1108,7 +1101,7 @@ function buildFleetTile(agentsState) {
   const suspended = Number(breaker?.suspended_count);
   const streak = Number(breaker?.streak_count);
   if (breaker?.source !== 'loaded' || !Number.isFinite(suspended) || !Number.isFinite(streak)) {
-    return { ...base, status: 'unavailable', tone: 'neutral', value: window.UI.NOT_LOADED_TEXT, hint: 'Suspension state unavailable.' };
+    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', hint: 'Suspension state unavailable.' };
   }
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
   const agentCount = Number(meta.total_agents);
@@ -1211,7 +1204,7 @@ function toHarnessRegion(harness) {
 // known results always get a row, zero included → an absent Failed reads as none, not as missing
 function buildResultPanel(data) {
   const byResult = new Map((data?.by_result ?? []).map((row) => [row.result, row]));
-  const order = Object.keys(RESULT_ROW_META);
+  const order = Object.keys(window.UI.RESULT_META);
   const results = [...order, ...[...byResult.keys()].filter((result) => !order.includes(result))];
   const rows = results.map((result) => ({ result, count: window.UI.getWriterCount(byResult.get(result)) }));
   const start = data?.prior_window?.period_end;

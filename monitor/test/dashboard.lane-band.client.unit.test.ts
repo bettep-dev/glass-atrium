@@ -31,7 +31,8 @@ interface Tile {
   label: string;
   status: string;
   tone: string;
-  value: string;
+  value: string | null;
+  absent?: "none" | "not-loaded";
   hint: string;
   detail?: string | null;
   trend?: string | null;
@@ -218,16 +219,17 @@ test("loading, error and unavailable each read differently and none reads as a v
   // a first read in flight is the loading state, not a value → only a finished, unread read says Not loaded
   const states: [string, unknown, string, string | null][] = [
     ["loading", LOADING, "loading", null],
-    ["error", ERRORED, "error", "Not loaded"],
-    ["unavailable", ready({ meta: {} }), "unavailable", "Not loaded"],
+    ["error", ERRORED, "error", "not-loaded"],
+    ["unavailable", ready({ meta: {} }), "unavailable", "not-loaded"],
   ];
-  for (const [name, agentsState, expected, value] of states) {
+  for (const [name, agentsState, expected, absent] of states) {
     const tile = tileOf(
       dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }),
       "fleet",
     );
     assert.equal(tile.status, expected, name);
-    assert.equal(tile.value, value, `${name} must not render a number nobody loaded`);
+    assert.equal(tile.value, null, `${name} must not render a number nobody loaded`);
+    assert.equal(tile.absent ?? null, absent, `${name}: only a finished, unread read is marked not loaded`);
     assert.equal(tile.tone, "neutral", `${name} carries no verdict tone`);
   }
 });
@@ -282,7 +284,8 @@ test("the fleet tile reads unavailable when the breaker state is, never a zero s
   for (const breaker of [undefined, { source: "unavailable", registry_agents: 0, suspended_count: 0, streak_count: 0, alarms: [] }]) {
     const tile = fleetTile(breaker);
     assert.equal(tile.status, "unavailable");
-    assert.equal(tile.value, "Not loaded");
+    assert.equal(tile.absent, "not-loaded");
+    assert.equal(tile.value, null);
     assert.equal(tile.tone, "neutral");
   }
 });
@@ -290,8 +293,8 @@ test("the fleet tile reads unavailable when the breaker state is, never a zero s
 // The tile skeleton belongs to the first-poll wait; the tile must not call that wait 'unavailable'.
 test("the harness tile is loading exactly while the fold is, and unavailable only after", () => {
   const empty = { ...HEALTHY, partsOk: 0, partsChecked: 0, uncheckedNames: ["PostgreSQL"] };
-  const folds: [string, string, string | null][] = [["loading", "loading", null], ["unavailable", "unavailable", "Not loaded"]];
-  for (const [foldStatus, expected, value] of folds) {
+  const folds: [string, string, string | null][] = [["loading", "loading", null], ["unavailable", "unavailable", "not-loaded"]];
+  for (const [foldStatus, expected, absent] of folds) {
     const tile = tileOf(
       dash.buildTiles({
         harness: { ...empty, status: foldStatus },
@@ -300,7 +303,8 @@ test("the harness tile is loading exactly while the fold is, and unavailable onl
       "harness",
     );
     assert.equal(tile.status, expected, foldStatus);
-    assert.equal(tile.value, value, `${foldStatus} must not render a count nobody polled`);
+    assert.equal(tile.value, null, `${foldStatus} must not render a count nobody polled`);
+    assert.equal(tile.absent ?? null, absent, `${foldStatus}: only a lost reading is marked not loaded`);
     assert.equal(tile.tone, "neutral");
     assert.equal(tile.canRetry === true, foldStatus === "unavailable", `${foldStatus}: only a lost reading offers Retry`);
   }
