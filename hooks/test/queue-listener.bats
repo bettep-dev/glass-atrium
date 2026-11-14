@@ -3,8 +3,8 @@
 # The owner queue's listener (SessionStart and Stop hook, bound asyncRewake) against a stand-in monitor: it runs only
 # in an interactive main session, announces this session's answered items by count without claiming them, wakes the
 # session with one fixed line (exit 2) at most twice per answer count per Claude process until a claim or a zero count
-# starts that bound over, yields to a newer listener and to a session-run wait, and ends quietly — never with a wake —
-# on a signal, its lifetime or a monitor failure.
+# starts that bound over, yields to a newer listener and to a session-run wait, ends quietly on a signal, a takeover or
+# a monitor failure, and at its lifetime end wakes the session once more to re-arm.
 #
 # Run via: bats hooks/test/queue-listener.bats
 # Requires: bats, bash 3.2+, jq, curl, python3, perl
@@ -70,6 +70,11 @@ expected_wake() {
     "${WAKE_LEAD}" "$1" "${GA_ROOT}/scripts/atrium-queue.sh"
 }
 
+expected_rearm() {
+  printf '%s the listener re-arms and nothing arrived for this session: end the turn with no other action' \
+    "${WAKE_LEAD}"
+}
+
 @test "the listener exits at once with no monitor call for a subagent, a non-cli or unnamed entrypoint, a background job, a print-mode process or an undecidable session" {
   start_stub
   local bg_parent_file="${BATS_TEST_TMPDIR}/bg-child" row
@@ -128,12 +133,13 @@ expected_wake() {
   }
 }
 
-@test "with nothing answered the listener polls quietly and ends itself at its lifetime with exit 0, its lock released" {
+@test "with nothing answered the listener polls quietly and at its lifetime end wakes the session once to re-arm, its lock released" {
   start_stub
   # the lifetime is read in whole seconds → 3 s fits two 1 s polls wherever in a second the run starts
   export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
   run_hook
-  [[ "${status}" -eq 0 && -z "${output}" && -z "${stderr}" && "$(request_count)" -ge 2 && -z "$(lock_record)" ]] || {
+  [[ "${status}" -eq 2 && -z "${output}" && "${stderr}" == "$(expected_rearm)" && "$(request_count)" -ge 2 &&
+    -z "$(lock_record)" ]] || {
     echo "status=${status} out=${output} err=${stderr} requests=$(request_count) lock=$(lock_record)"
     return 1
   }
@@ -143,13 +149,13 @@ expected_wake() {
   start_stub
   export ATRIUM_QUEUE_WAIT_POLL_S=0 ATRIUM_QUEUE_LISTEN_LIFETIME_S=2
   run_hook
-  [[ "${status}" -eq 0 && -z "${stderr}" && "$(request_count)" -eq 1 ]] || {
+  [[ "${status}" -eq 2 && "${stderr}" == "$(expected_rearm)" && "$(request_count)" -eq 1 ]] || {
     echo "status=${status} err=${stderr} requests=$(request_count)"
     return 1
   }
 }
 
-@test "a TERM ends the listener and its child at once with exit 0, no wake and its lock released" {
+@test "a TERM ends the listener and its child at once with exit 0, no wake or re-arm, and its lock released" {
   start_stub
   export ATRIUM_QUEUE_WAIT_POLL_S=60
   start_hook listener
@@ -172,7 +178,7 @@ expected_wake() {
   ! kill -0 "${child}" 2>/dev/null && [[ -z "$(lock_record)" ]]
 }
 
-@test "the newest listener of a Claude process takes over and the older one ends silently with no wake" {
+@test "the newest listener of a Claude process takes over and the older one ends silently with no wake or re-arm" {
   start_stub
   start_hook older
   local older="${BG_PID}"
@@ -218,22 +224,24 @@ expected_wake() {
   [[ "$(jq -r 'select(.path == "/api/queue/pending/count") | .path' "${BATS_TEST_TMPDIR}/requests.log" | wc -l)" == "${before}" ]]
 }
 
-@test "the same answers are announced at most twice per Claude process, while a changed count or another process is announced anew" {
+@test "the same answers are announced at most twice per Claude process until the re-arm names them again at the lifetime end, while a changed count or another process is announced anew" {
   start_stub
-  export ATRIUM_QUEUE_LISTEN_LIFETIME_S=2
+  export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
   set_reply 200 '{"answeredWaiting":2}'
-  local row expected
-  for row in first:2 second:2 capped:0 changed-count:2 another-process:2; do
+  local row started elapsed
+  # <row>:<the wake's earliest second> — 0 at the first poll, 2 only once the lifetime has run out
+  for row in first:0 second:0 capped:2 still-capped:2 changed-count:0 another-process:0; do
     case "${row%%:*}" in
       changed-count) set_reply 200 '{"answeredWaiting":4}' ;;
       another-process) start_owner ;;
       *) ;;
     esac
+    started="${SECONDS}"
     run_hook
-    expected=""
-    if [[ "${row##*:}" == 2 ]]; then expected="$(expected_wake "$(jq -r '.answeredWaiting' <<<"$(tail -n +2 "${BATS_TEST_TMPDIR}/reply")")")"; fi
-    [[ "${status}" -eq "${row##*:}" && "${stderr}" == "${expected}" ]] || {
-      echo "row ${row}: status=${status} err=${stderr}"
+    elapsed=$((SECONDS - started))
+    [[ "${status}" -eq 2 && "${stderr}" == "$(expected_wake "$(tail -n +2 "${BATS_TEST_TMPDIR}/reply" | jq -r '.answeredWaiting')")" ]] &&
+      if [[ "${row##*:}" == 0 ]]; then ((elapsed <= 1)); else ((elapsed >= 2)); fi || {
+      echo "row ${row}: status=${status} after ${elapsed} s err=${stderr}"
       return 1
     }
   done
@@ -264,7 +272,7 @@ expected_wake() {
       else
         set_reply 200 '{"answeredWaiting":0,"items":[]}'
         run_hook
-        [[ "${status}" -eq 0 && -z "${stderr}" ]] || {
+        [[ "${status}" -eq 2 && "${stderr}" == "$(expected_rearm)" ]] || {
           echo "row ${row} round ${round} read-zero: status=${status} err=${stderr}"
           return 1
         }
@@ -273,7 +281,7 @@ expected_wake() {
   done
 }
 
-@test "an unreachable, failing, refusing or garbled monitor ends the listener with exit 0 and one stderr line" {
+@test "an unreachable, failing, refusing or garbled monitor ends the listener with exit 0, one stderr line and no re-arm" {
   local row
   export ATRIUM_QUEUE_LISTEN_GRACE_S=0
   for row in unreachable:- failing:500 refusing:409 unknown:404 garbled:200; do

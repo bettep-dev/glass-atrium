@@ -44,11 +44,13 @@ readonly SEAM_WHOLE_SHAPE='^[0-9]+$'
 # hour under that timeout → the host's SIGTERM never ends a listener before its re-arm wake
 readonly LISTEN_LIFETIME_S=82800
 # the same answer count to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
-# a claim or a count read back at 0 starts the bound over (drop_announce_record)
+# a claim or a count read back at 0 starts the bound over (drop_announce_record), and the lifetime end's re-arm names
+# the count again regardless → answers whose wakes went unheeded are named once more per lifetime
 readonly LISTEN_ANNOUNCE_MAX=2
 # a session's register runs beside the listener at its start → a refusal this early may be the register not yet landed
 readonly LISTEN_REFUSAL_GRACE_S=30
 readonly LISTEN_WAKE_LEAD='[ATRIUM-QUEUE] harness: this is the owner-queue wake, not an error —'
+readonly LISTEN_REARM_LINE='the listener re-arms and nothing arrived for this session: end the turn with no other action'
 # set by listen_for_answers: every end but the wake exits 0
 is_listening=false
 listen_child=""
@@ -560,7 +562,9 @@ end_wait_at_bound() {
 }
 
 # The harness listener (hooks/queue-listener.sh execs this step): holds the session's wait lock as a listener and polls
-# the session's answered count, claiming nothing, until a wake, its lifetime, a takeover or its owner's end.
+# the session's answered count, claiming nothing, until a wake, a takeover or its owner's end; at its lifetime end it
+# wakes the session once to re-arm, and that turn's Stop starts a fresh listener. A signal, a takeover and a monitor
+# failure each exit 0 before the lifetime end is reached → none of them is ever followed by a re-arm.
 listen_for_answers() {
   local session_id body
   is_listening=true
@@ -589,6 +593,8 @@ run_listen_loop() {
     if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}"; else drop_announce_record "$1"; fi
     run_child sleep "${poll_s}"
   done
+  check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
+  announce_if_due "$1" "${listen_count}" rearm
 }
 
 # <value> <default> <shape> → the value when it matches the shape, else the default
@@ -630,29 +636,34 @@ set_listen_count() {
   esac
 }
 
-# <session id> <count> → wakes the session (exit 2) unless this Claude process was told this count LISTEN_ANNOUNCE_MAX
-# times; the owner check, the announce record and the lock's release share one hold of the waits mutex → a listener
-# another took over never announces
+# <session id> <count> [rearm] → wakes the session (exit 2) unless this Claude process was told this count
+# LISTEN_ANNOUNCE_MAX times; a re-arm wakes regardless, with the re-arm line at count 0. The owner check, the announce
+# record and the lock's release share one hold of the waits mutex → a listener another took over never wakes
 announce_if_due() {
   local record told state
-  # shellcheck disable=SC2310  # a mutex held past its bound → no announce this round
+  # shellcheck disable=SC2310  # a mutex held past its bound → no wake this round
   take_waits_mutex || return 0
   state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   [[ "${state}" == mine ]] || end_run 5
   record="$(queue_get_awaiting_dir "$1")/.announced"
   told="$(get_announce_count "${record}" "$2")"
-  if ((told >= LISTEN_ANNOUNCE_MAX)); then
+  if ((told >= LISTEN_ANNOUNCE_MAX)) && [[ "${3:-}" != rearm ]]; then
     drop_waits_mutex
     return 0
   fi
-  # the record lands before the wake → a failed write never turns into an unbounded one
-  if ! (mkdir -p -- "${record%/*}" && printf '%s %s %s\n' "$2" "$((told + 1))" "${WAIT_OWNER}" >"${record}") 2>/dev/null; then
-    fail 1 "no announce record could be written at ${record}"
-  fi
+  if (($2 > 0 && told < LISTEN_ANNOUNCE_MAX)); then put_announce_record "${record}" "$2" "$((told + 1))"; fi
   if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
   drop_waits_mutex
   print_wake "$2"
   exit 2
+}
+
+# <announce record> <count> <times told> → the record lands before the wake → a failed write never turns into an
+# unbounded one
+put_announce_record() {
+  if ! (mkdir -p -- "${1%/*}" && printf '%s %s %s\n' "$2" "$3" "${WAIT_OWNER}" >"$1") 2>/dev/null; then
+    fail 1 "no announce record could be written at $1"
+  fi
 }
 
 # <announce record> <count> → how often this Claude process was told this count; 0 for another count or process
@@ -675,12 +686,18 @@ drop_announce_record() {
   if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
 }
 
-# subshell write → no interrupt from an un-waited child reaches it; the exit comes from the caller's code path
+# <count> → the wake line: the count and the pending command, or the re-arm line at 0; subshell write → no interrupt
+# from an un-waited child reaches it, and the exit comes from the caller's code path
 print_wake() {
-  local cli
-  cli="$(queue_get_cli_path)"
-  (printf '%s %s owner queue answer(s) or message(s) wait for this session — fetch them with: %s pending\n' \
-    "${LISTEN_WAKE_LEAD}" "$1" "${cli}") >&2 || true
+  local cli line
+  if (($1 == 0)); then
+    line="${LISTEN_WAKE_LEAD} ${LISTEN_REARM_LINE}"
+  else
+    cli="$(queue_get_cli_path)"
+    printf -v line '%s %s owner queue answer(s) or message(s) wait for this session — fetch them with: %s pending' \
+      "${LISTEN_WAKE_LEAD}" "$1" "${cli}"
+  fi
+  (printf '%s\n' "${line}") >&2 || true
 }
 
 # EXIT trap of the listener: its poll child, its lock record and its scratch file go
