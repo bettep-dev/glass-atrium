@@ -484,15 +484,18 @@ details[open] > summary.disclosure > .disclosure-chevron {
 @media (min-width: 2560px) {
 	.queue-desk { --queue-rail-w: 280px; }
 }
-/* the Sessions rail (spec §9.1): the All sessions band, a row per session (name 14/600, the solid waiting count, line 2 13/dim),
-   the box column at the row's end. A row is 68 — the list row's own geometry */
+/* the Sessions rail (spec §9.1): the All sessions band, a row per session (name 14/600, the solid waiting count, line 2 13/dim).
+   A row is 68 — the list row's own geometry. The bands and the rows share the box, state-mark and name columns → the box or the
+   Ended chevron in the box column, a band's label on the names' column */
+.queue-sessions {
+	--queue-rail-cols: 24px 12px minmax(0, 1fr);
+}
 .queue-sessions > .card-foot {
 	justify-content: space-between;
 }
-/* the bands share the rows' first three columns → the box or the Ended chevron in the box column, the label on the names' column */
 .queue-rail-band {
 	display: grid;
-	grid-template-columns: 24px 12px minmax(0, 1fr);
+	grid-template-columns: var(--queue-rail-cols);
 	column-gap: var(--space-2);
 	padding-inline: var(--space-4);
 }
@@ -541,7 +544,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 /* one control per row (spec §9.1): the row is its box's label → box · state mark · name · waiting count on line 1, line 2 under the name */
 .queue-rail-row {
 	display: grid;
-	grid-template-columns: 24px 12px minmax(0, 1fr) auto;
+	grid-template-columns: var(--queue-rail-cols) auto;
 	column-gap: var(--space-2);
 	row-gap: var(--space-1);
 	align-items: start;
@@ -1359,18 +1362,23 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-color: rgb(var(--ink));
 	color: rgb(var(--surface));
 }
-/* disabled → the press sign (the control edge) goes; the label stays readable at full strength (half strength is 2.34:1 light) */
+/* disabled → the press sign goes; the label or glyph stays readable at full strength (half strength is 2.34:1 light), on no fill */
 .queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon),
-.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon):is(:hover, :active) {
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon):is(:hover, :active),
+.queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]),
+.queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]):is(:hover, :active) {
 	opacity: 1;
 	background: transparent;
-	border-color: rgb(var(--line));
 	color: rgb(var(--faint));
 	cursor: not-allowed;
 }
+/* a word button's press sign is its control edge → the line edge once disabled; a glyph button has no edge in any state */
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon),
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon):is(:hover, :active) {
+	border-color: rgb(var(--line));
+}
 /* a glyph button: no edge in any state (the ghost's transparent one) → the hover square is the pointer's only shape cue, so it takes
-   the selection tint a person can see (the sunken fill is 1.05:1 on the card) + ink glyph; held = the tag fill, one step stronger;
-   disabled = a faint glyph on no fill */
+   the selection tint a person can see (the sunken fill is 1.05:1 on the card) + ink glyph; held = the tag fill, one step stronger */
 .queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"]):hover {
 	background: var(--tint-select);
 	color: rgb(var(--ink));
@@ -1378,13 +1386,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"]):active {
 	background: var(--tint-fill);
 	color: rgb(var(--ink));
-}
-.queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]),
-.queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]):is(:hover, :active) {
-	opacity: 1;
-	background: transparent;
-	color: rgb(var(--faint));
-	cursor: not-allowed;
 }
 /* a box that takes images (§9.8): Add images on its last line at its end, 4 from the edge; the text keeps that 40 free */
 .queue-compose-box.has-images {
