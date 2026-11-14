@@ -910,6 +910,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-list > .card-body {
 	overflow-anchor: auto;
 }
+/* one 48 line level with Orders' head (spec §4.1): a scope title wider than the pane is cut, its whole text in its tooltip;
+   the waiting count and the keys button keep the line */
+.queue-list > .card-head {
+	flex-wrap: nowrap;
+}
+.queue-list > .card-head > .card-head-text > .card-sub {
+	flex: none;
+	contain: none;
+}
 .queue-list > .card-foot {
 	justify-content: space-between;
 }

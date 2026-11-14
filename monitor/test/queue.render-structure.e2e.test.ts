@@ -1665,6 +1665,36 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(heads, heads.map(({ width }) => ({ width, list: [48, 48, 48], sheet: [48, 48, 48] })));
   });
 
+  // spec §4.1: a scope title wider than the pane gives way on the head's one line → the list's head and first band stay level with Orders'
+  test("the list head stays one 48 line under a scope title wider than the pane: the title cut with its whole text in the tooltip, the waiting count whole and the keys button inside the head, at every desk width", async () => {
+    harness.fixture = getEdgeFixture();
+    const heads = [];
+    for (const { viewport } of DESK_WIDTHS) {
+      const page = await openEdgePage(harness, viewport);
+      await tickSessions(page, [EDGE_LONG_SESSION_NAME]);
+      const heights = await getHeadHeights(page, [".queue-list", ".queue-orders-card"]);
+      const facts = await page.evaluate(() => {
+        const head = document.querySelector(".queue-list > .card-head") as HTMLElement;
+        const title = head.querySelector(".card-title") as HTMLElement;
+        const sub = head.querySelector(".card-sub") as HTMLElement;
+        const keys = head.querySelector("button") as HTMLElement;
+        return {
+          isTitleCut: title.scrollWidth > title.clientWidth && getComputedStyle(title).textOverflow === "ellipsis",
+          tooltip: (title.querySelector("[title]") as HTMLElement | null)?.title ?? title.title,
+          sub: sub.textContent,
+          isSubWhole: sub.clientWidth > 0 && sub.scrollWidth <= sub.clientWidth,
+          isKeysInHead: keys.getBoundingClientRect().right <= head.getBoundingClientRect().right,
+        };
+      });
+      await page.close();
+      heads.push({ width: viewport.width, heights, ...facts });
+    }
+
+    assert.deepEqual(heads, heads.map(({ width, sub }) => ({
+      width, heights: [48, 48], isTitleCut: true, tooltip: EDGE_LONG_SESSION_NAME, sub: /^\d+ waiting$/.test(sub ?? "") ? sub : "N waiting", isSubWhole: true, isKeysInHead: true,
+    })));
+  });
+
   test("a badge is 20 high in every fill", async () => {
     harness.fixture = getNotReceivedFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
