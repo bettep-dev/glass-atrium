@@ -1676,7 +1676,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
   }
 
   const statusTone = mapStatusToTone(agent.status);
-  const lastRun = agent.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : '—';
+  const lastRun = agent.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : <window.UI.AbsentValue kind="none"/>;
   const phaseLabel = agent.dual_phase ? 'dual-phase' : 'single-phase';
 
   // 단일 success-rate hero — Performance 의 분모 산식 동일 (needs_context 제외).
@@ -1822,7 +1822,10 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
   // latency 행 (p50/p95/p99) — 미페어 시 error/empty 독립 표기.
   const latency = (readyData(latencyState)?.agents ?? []).find((a) => a.agent_id === drawerAgent) || null;
   const p95Sec = latency?.p95_ms != null ? Number(latency.p95_ms) / 1000 : null;
-  const p95Display = p95Sec == null ? '—' : formatDurationSecAg(p95Sec);
+  // no P95 in a read latency payload → None; the payload not read yet → Not loaded
+  const p95Display = p95Sec == null
+    ? <window.UI.AbsentValue kind={readyData(latencyState) ? 'none' : 'not-loaded'}/>
+    : formatDurationSecAg(p95Sec);
   const trend = trendByAgent ? trendByAgent.get(drawerAgent) : null;
   const hasTrend = Array.isArray(trend) && trend.length > 0;
   const crossing = getCrossingMetricsAg(overageState, overageByAgent, drawerAgent);
@@ -1832,7 +1835,7 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
       {/* 단일 2-col 리듬 — success-rate 박스 제거 (hero 소유). */}
       <div className="grid grid-cols-2 gap-block">
         <DetailMetric label="Total runs" value={formatIntAg(agent.runs)}/>
-        <DetailMetric label="Launches" value={invocations == null ? '—' : formatIntAg(invocations)}/>
+        <DetailMetric label="Launches" value={invocations == null ? <window.UI.AbsentValue kind="not-loaded" title="Launch count is not in the loaded agent summary"/> : formatIntAg(invocations)}/>
         <DetailMetric label="Needs info" value={formatIntAg(needsContextCount)}/>
         <DetailMetric label="P95" value={p95Display}/>
         <DetailMetric label="Budget crossings" value={crossing.count}/>
@@ -1865,7 +1868,7 @@ function getCrossingMetricsAg(overageState, overageByAgent, agentId) {
   if (overageState?.status !== 'ready') return { count: 'unavailable', peak: 'unavailable' };
   const overage = overageByAgent?.get(agentId);
   const count = overage ? overage.overage_count : 0;
-  return { count: formatIntAg(count), peak: count > 0 ? `${formatIntAg(overage.max_crossed_pct)}% of budget` : '—' };
+  return { count: formatIntAg(count), peak: count > 0 ? `${formatIntAg(overage.max_crossed_pct)}% of budget` : <window.UI.AbsentValue kind="none"/> };
 }
 
 // latency p50/p95/p99 한 줄 — 페어링 없으면 inline empty (Performance 내부 독립 degrade).
@@ -1880,7 +1883,7 @@ function AgentLatencyRow({ latency, state, onRetry }) {
   if (!latency || (latency.p50_ms == null && latency.p95_ms == null && latency.p99_ms == null)) {
     return <DrawerSectionEmpty message="No paired response-time data (no Start↔Stop events)."/>;
   }
-  const fmt = (ms) => ms == null ? '—' : formatDurationMsAg(ms);
+  const fmt = (ms) => ms == null ? <window.UI.AbsentValue kind="none"/> : formatDurationMsAg(ms);
   return (
     <div className="space-y-block">
       <div className="grid grid-cols-3 gap-block">
@@ -1975,7 +1978,7 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
             </div>
             <DrawerInfoRow
               label="last breakage"
-              value={failure.last_breakage_at ? formatRelativeTimeAg(failure.last_breakage_at) : '—'}
+              value={failure.last_breakage_at ? formatRelativeTimeAg(failure.last_breakage_at) : <window.UI.AbsentValue kind="none"/>}
               title={failure.last_breakage_at || undefined}
             />
             {topConcerns.length > 0 && (
@@ -2038,7 +2041,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
 
   // agent_type == agent_id == drawerAgent (현 cycle convention).
   const row = (readyData(lifecycleState)?.rows ?? []).find((r) => r.agent_type === drawerAgent) || null;
-  const lastRun = agent?.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : '—';
+  const lastRun = agent?.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : <window.UI.AbsentValue kind="none"/>;
 
   if (!row) {
     return (
@@ -2062,7 +2065,7 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
   // finished/started 비율 — orphanTone(누수 심각도)을 fill 톤으로 재사용, BulletBar 의 shape 보강.
   const finishedRatio = startCount > 0 ? completedCount / startCount : 0;
 
-  const fmtDur = (sec) => sec == null ? '—' : formatDurationSecAg(sec);
+  const fmtDur = (sec) => sec == null ? <window.UI.AbsentValue kind="none"/> : formatDurationSecAg(sec);
 
   return (
     <div>
@@ -2725,7 +2728,7 @@ const QH_TIMELINE = Object.freeze({
     },
   },
   // an SVG presentation attribute cannot resolve a var() → the meta token rides the CSS style
-  TICK_STYLE: { fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace', style: { fontSize: 'var(--fs-meta)' } },
+  TICK_STYLE: { fill: 'rgb(var(--faint))', style: { fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' } },
 });
 
 // Titled like its Lifecycle sibling → the flagged total never reads as an orphan tile.
@@ -3051,7 +3054,7 @@ const tooltipStyle = {
   padding: '8px 12px',
   // 툴팁 = HTML DOM div → 11.5px→var(--fs-meta)(11px) 매핑 (밀도 높은 보조 콘텐츠 tier · cost.jsx tooltipStyle 동일 선례).
   fontSize: 'var(--fs-meta)',
-  fontFamily: 'JetBrains Mono, monospace',
+  fontVariantNumeric: 'tabular-nums',
   boxShadow: 'var(--shadow-overlay)',
 };
 

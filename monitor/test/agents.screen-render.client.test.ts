@@ -1456,14 +1456,18 @@ test("the drawer's Performance section states the agent's budget crossings and p
   const crossed = new Map([["glass-atrium-dev-react", { overage_count: 3, max_crossed_pct: 140 }]]);
   const rows = [
     { name: "crossed", state: { status: "ready", data: { rows: [] }, error: null }, map: crossed, count: "3", peak: "140% of budget" },
-    { name: "loaded with no crossing", state: { status: "ready", data: { rows: [] }, error: null }, map: new Map(), count: "0", peak: "—" },
+    { name: "loaded with no crossing", state: { status: "ready", data: { rows: [] }, error: null }, map: new Map(), count: "0", peak: "absent:none" },
     { name: "overage read failed", state: { status: "error", data: null, error: { message: "HTTP 503" } }, map: new Map(), count: "unavailable", peak: "unavailable" },
   ];
   for (const row of rows) {
     const tree = await renderComponent("AgentPerformanceSection", {
       agent, drawerAgent: agent.agent_id, summaryState, latencyState, overageState: row.state, overageByAgent: row.map, onRetry: () => undefined,
     });
-    const metric = (label: string) => findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === label)[0]?.props.value;
+    // an absent value is the shared AbsentValue element → read back as its kind
+    const metric = (label: string) => {
+      const value = findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === label)[0]?.props.value as { props?: { kind?: string } } | string;
+      return typeof value === "object" && value?.props?.kind ? `absent:${value.props.kind}` : value;
+    };
     assert.equal(metric("Budget crossings"), row.count, `${row.name}: count`);
     assert.equal(metric("Peak crossing"), row.peak, `${row.name}: peak`);
   }
@@ -1632,7 +1636,27 @@ test("review-flag chart dates take the shared day-axis tick, end-keeping interva
       assert.equal(part.fontSize, undefined, "no numeric size beside the token");
       assert.equal(part.style?.fontSize, "var(--fs-meta)");
     }
+    const tick = axis.props.tick as { fontFamily?: unknown; style?: { fontFamily?: unknown; fontVariantNumeric?: unknown } };
+    assert.equal(tick.fontFamily ?? tick.style?.fontFamily, undefined, "the tick numerals inherit the sans face");
+    assert.equal(tick.style?.fontVariantNumeric, "tabular-nums", "the tick numerals keep tabular figures");
   }
+});
+
+const metricValueOf = (tree: RenderedNode | string | null, label: string) =>
+  findNodes(tree, (n) => n.type === "div" && /flex-col/.test(String(n.props.className)) && collectText(n).startsWith(label));
+
+test("a drawer duration with nothing behind it reads None when its row was read and Not loaded when it was not, never a dash", async () => {
+  const absentKinds = (tree: RenderedNode | string | null) => findAtoms(tree, "AbsentValue").map((n) => n.props.kind);
+  const latencyRow = await renderComponent("AgentLatencyRow", {
+    latency: { agent_id: "solo", agent_name: "solo", p50_ms: 1000, p95_ms: null, p99_ms: null },
+    state: { status: "ready", data: { rows: [] } }, onRetry: () => undefined,
+  });
+  assert.deepEqual(absentKinds(latencyRow), ["none", "none"], "a read latency row with no P95 or P99 holds None");
+  assert.ok(!collectText(latencyRow).includes("\u2014"), "no dash stands in a value slot");
+
+  const performance = await renderComponent("AgentPerformanceSection", getPerformanceProps(null, []));
+  const [p95] = metricValueOf(performance, "P95");
+  assert.deepEqual(absentKinds(p95 ?? null), ["not-loaded"], "the drawer P95 before the latency read says Not loaded");
 });
 
 test("review-flag chart is a focusable image named by the flagged-rate range, latest, low and high", async () => {
