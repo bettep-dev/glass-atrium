@@ -1,4 +1,4 @@
-// Fastify server entry — single-origin localhost; bind 127.0.0.1 ONLY (never 0.0.0.0 / ::).
+// Fastify server entry — the login-free app binds 127.0.0.1 ONLY (never 0.0.0.0 / ::); the opt-in remote listener is remote/start.ts.
 // Static public/ at /, API at /api/*; graceful shutdown SIGINT/SIGTERM -> queue scheduler stop, app.close() + prisma.$disconnect().
 
 import "dotenv/config";
@@ -13,6 +13,9 @@ import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 import { isLoopbackHost } from "./host-guard.js";
 import { getMonitorPort } from "./monitor-port.js";
 import { type QueueScheduler, getSweepDeps, startQueueScheduler } from "./queue/scheduler.js";
+import { DeviceConnections } from "./remote/connections.js";
+import type { RemoteListenerController } from "./remote/controller.js";
+import { startRemoteAccess } from "./remote/start.js";
 
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
 const PORT = getMonitorPort();
@@ -34,6 +37,9 @@ if (!isLoopbackHost(HOST)) {
   process.exit(1);
 }
 let queueScheduler: QueueScheduler | null = null;
+let remoteAccess: RemoteListenerController | null = null;
+// one owner → the remote gate tracks device sockets here and a cut-off closes them
+const deviceConnections = new DeviceConnections();
 
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
@@ -52,6 +58,7 @@ function attachShutdown(app: FastifyInstance): void {
 async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<void> {
   try {
     await queueScheduler?.stop();
+    await remoteAccess?.stop();
     await app.close();
     await disconnectPrisma();
     app.log.info({ signal }, "graceful shutdown complete");
@@ -95,6 +102,13 @@ async function main(): Promise<void> {
 
   // after listen → a DB gate failure above exits before any sweep runs
   queueScheduler = startQueueScheduler(getSweepDeps());
+
+  // after the loopback listener → a remote failure never takes the Mac's own page down
+  try {
+    remoteAccess = await startRemoteAccess({ monitorPort: PORT, connections: deviceConnections, log: app.log });
+  } catch (error) {
+    app.log.error({ err: error }, "remote access start failed — remote listener stays closed");
+  }
 
   // boot-stage chromium launch probe — playwright 업그레이드 후 브라우저 바이너리 드리프트를 부팅 시점에 loud 표면화 (/api/health browser 필드 + health 카드).
   await probeStartupBrowser(app);

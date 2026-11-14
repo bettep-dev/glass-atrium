@@ -5,10 +5,11 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { X509Certificate, randomBytes } from "node:crypto";
 import http from "node:http";
+import { createServer } from "node:net";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import type { Socket } from "node:net";
-import type { TLSSocket } from "node:tls";
+import { type PeerCertificate, type TLSSocket, checkServerIdentity as checkTlsIdentity } from "node:tls";
 
 import type { FastifyInstance } from "fastify";
 
@@ -18,6 +19,7 @@ import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
 import { type RemoteTls, setRemoteCertificate } from "../src/server/remote/listener.js";
 import { getRouteClass } from "../src/server/remote/route-classes.js";
+import { buildRemoteOpener } from "../src/server/remote/start.js";
 import { DEVICE_COOKIE } from "../src/server/remote/session.js";
 import { createStandInTls } from "./lib/remote-tls.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -138,4 +140,55 @@ test("cutting off one device closes its open connections and leaves another devi
   } finally {
     await app.close();
   }
+});
+
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer().listen(0, STAND_IN, () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+    probe.on("error", reject);
+  });
+}
+
+function getStatusForHost(port: number, ca: Buffer, host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    // the client takes its TLS name from the Host header → identity is checked against the stand-in leaf's address instead
+    const checkServerIdentity = (_name: string, cert: PeerCertificate) => checkTlsIdentity(STAND_IN, cert);
+    const options = { host: STAND_IN, port, path: "/api/health", ca, agent: false, headers: { host }, checkServerIdentity };
+    const request = https.get(options, (response) => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode ?? 0));
+    });
+    request.on("error", reject);
+  });
+}
+
+test("the opener admits only the bound address and the .local name at the remote port, and reopens on a fresh instance", async () => {
+  const tls = await getTls();
+  const port = await getFreePort();
+  const open = buildRemoteOpener({
+    port,
+    hostName: "owner-mac.local",
+    gate: {
+      findDevice: async () => null,
+      audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
+      connections: new DeviceConnections(),
+    },
+  });
+  const first = await open(STAND_IN, tls);
+  const rows = [
+    { name: "bound address at the remote port", host: `${STAND_IN}:${port}`, status: 401 },
+    { name: ".local name at the remote port", host: `owner-mac.local:${port}`, status: 401 },
+    { name: "rebound name", host: `attacker.example:${port}`, status: 403 },
+    { name: "bound address at the loopback monitor port", host: `${STAND_IN}:16145`, status: 403 },
+  ];
+  try {
+    for (const row of rows) assert.equal(await getStatusForHost(port, tls.cert, row.host), row.status, row.name);
+  } finally {
+    await first.close();
+  }
+  const reopened = await open(STAND_IN, tls);
+  await reopened.close();
 });
