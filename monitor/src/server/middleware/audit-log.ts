@@ -4,7 +4,9 @@
 // Hook failure = silent log only. Scope: mutating methods (POST/PUT/PATCH/DELETE) on covered routes only (reads/other routes ignored).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import type { RemoteAuditWriter } from "../remote/gate.js";
 // Shared with the request gate — this hook must observe exactly the set the gate judges.
 import { MUTATION_METHODS } from "../request-guards.js";
 
@@ -83,7 +85,7 @@ function extractRouteKey(request: FastifyRequest): string | null {
  *   2xx → success · 4xx → blocked (validation / not-found / forbidden) · 5xx → error.
  *   1xx/3xx fall through to success (no mutation rejection occurred).
  */
-function deriveResultCode(statusCode: number): "success" | "blocked" | "error" {
+export function deriveResultCode(statusCode: number): "success" | "blocked" | "error" {
   if (statusCode >= 500) {
     return "error";
   }
@@ -227,4 +229,30 @@ async function insertAudit(app: FastifyInstance, snapshot: AuditSnapshot): Promi
       "audit-log middleware: INSERT failed (continuing in degraded mode)",
     );
   }
+}
+
+/**
+ * Remote listener audit rows, awaited by the remote gate before the handler (unlike the loopback hook above).
+ * Intent row inserted as `error` → a crash mid-handler stays recorded as not succeeded; the result follows.
+ */
+export function buildRemoteAuditWriter(db: Prisma.TransactionClient = getPrisma()): RemoteAuditWriter {
+  return {
+    insertIntent: async ({ actor, method, route }) => {
+      const row = await db.auditLog.create({
+        data: {
+          eventTs: new Date(),
+          actor,
+          actionKind: "remote.mutation",
+          targetTable: ROUTE_RESOURCE.get(route) ?? null,
+          payload: { method, route },
+          resultCode: "error",
+        },
+        select: { id: true },
+      });
+      return row.id;
+    },
+    setResult: async (id, result) => {
+      await db.auditLog.update({ where: { id }, data: { resultCode: result } });
+    },
+  };
 }
