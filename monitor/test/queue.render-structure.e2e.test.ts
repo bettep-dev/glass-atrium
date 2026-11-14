@@ -24,7 +24,8 @@ import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
-  getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture, type QueueFixture,
+  getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -376,9 +377,22 @@ const PARTS: CloseUpState[] = [
   },
 ];
 
-const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...PARTS.flatMap((state) => [state, getLightCloseUp(state)])];
+const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...PARTS.flatMap((state) => [state, getLightState(state)])];
 
-function getLightCloseUp(state: CloseUpState): CloseUpState {
+// spec §18.4 35 (Not listening stream only) at 1440 and 1920 in both themes: each Not listening surface in one frame with its Not yet twin
+// — the rail's two rows, the list's roll-ups, the mixed order's recipients, the composer with a listening and a not-listening tick, the two
+// answered sheets — and plan 44080's approval note
+const TWIN_VIEWPORTS = [VIEWPORTS[0], VIEWPORTS[2]] as const;
+const TWIN_DARK_STATES: QueueState[] = [
+  { nn: "35a", name: "not-listening-desk", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => showNotListeningDesk(page) },
+  { nn: "35b", name: "not-listening-composer", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["gersona", "nightly"]) },
+  { nn: "35c", name: "not-listening-sheet", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => selectRow(page, NOT_LISTENING_IDS.answeredDecision) },
+  { nn: "35d", name: "listening-sheet", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => selectRow(page, 108) },
+  { nn: "36", name: "approval-note", viewports: TWIN_VIEWPORTS, getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.approval) },
+];
+const TWIN_STATES = TWIN_DARK_STATES.flatMap((state) => [state, getLightState(state)]);
+
+function getLightState<T extends QueueState>(state: T): T {
   return {
     ...state,
     name: `${state.name}-light`,
@@ -389,7 +403,7 @@ function getLightCloseUp(state: CloseUpState): CloseUpState {
   };
 }
 
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES];
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
@@ -686,6 +700,12 @@ async function hangFileOverComposer(page: Page): Promise<void> {
   });
   await page.dispatchEvent(`#${ORDER_BOX_ID}`, "dragover", { dataTransfer: transfer });
   await page.locator(".queue-compose-box.is-drop").waitFor();
+}
+
+// the list's In delivery rows and the mixed order's entry in view together
+async function showNotListeningDesk(page: Page): Promise<void> {
+  await page.locator(`#queue-row-${NOT_LISTENING_IDS.deafOrder}`).scrollIntoViewIfNeeded();
+  await page.locator(`#queue-order-${NOT_LISTENING_IDS.mixedOrder}`).scrollIntoViewIfNeeded();
 }
 
 async function setLightTheme(page: Page): Promise<void> {
@@ -2212,6 +2232,122 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.ok(bubbles.length > 0 && bubbles.every(({ width, limit }) => width <= limit + 0.5), JSON.stringify(bubbles));
+  });
+
+  // spec 44063 §9.1–§9.4 and §14.4 (Not listening stream only): Not listening and Not yet side by side on every surface
+  describe("on the not-listening fixtures", () => {
+    const SENTENCE = "Not listening — delivers at its next turn end or restart";
+    const openNotListeningPage = (): Promise<Page> => {
+      harness.fixture = getNotListeningFixture();
+      return openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    };
+
+    test("under one order a listening recipient holds the tag Not yet and a not-listening one the tag Not listening: the same fill, told apart by its glyph and words, its sentence only in the title", async () => {
+      const page = await openNotListeningPage();
+      await page.locator(`#queue-order-${NOT_LISTENING_IDS.mixedOrder}`).scrollIntoViewIfNeeded();
+      const rows = await page.evaluate((id) => [...document.querySelectorAll(`#queue-order-${id} .queue-recipient`)].map((row) => {
+        const badge = row.querySelector(".pill--tag") as HTMLElement;
+        const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+        const painted: string[] = [];
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) if (!node.parentElement?.closest(".sr-only")) painted.push(node.textContent ?? "");
+        const glyph = badge.firstElementChild;
+        return {
+          name: row.querySelector(".queue-recipient-name")?.textContent,
+          word: [...badge.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join(""),
+          isGlyphDrawn: glyph?.tagName === "svg" && glyph.childElementCount > 0,
+          title: badge.getAttribute("title"),
+          background: getComputedStyle(badge).backgroundColor,
+          isSentencePainted: painted.join("").includes("delivers at"),
+        };
+      }), NOT_LISTENING_IDS.mixedOrder);
+      await page.close();
+
+      assert.deepEqual(rows.map(({ background: _background, ...row }) => row), [
+        { name: "gersona", word: "Not yet", isGlyphDrawn: false, title: null, isSentencePainted: false },
+        { name: "sixmon", word: "Not listening", isGlyphDrawn: true, title: SENTENCE, isSentencePainted: false },
+      ]);
+      assert.equal(rows[0]?.background, rows[1]?.background, "one tag fill for both");
+    });
+
+    test("a live session that does not listen paints Live and the badge on its rail line with nothing in delivery, its mark still the live dot; a listening one's line holds no badge", async () => {
+      const page = await openNotListeningPage();
+      const rows = await page.evaluate((ids) => ids.map((id) => {
+        const row = document.querySelector(`.queue-rail-row[data-session="${id}"]`) as HTMLElement;
+        const mark = row.querySelector(".queue-rail-mark") as HTMLElement;
+        return {
+          // the line is a flex row spaced by its gap → its parts read one by one
+          line: [...(row.querySelector(".queue-rail-line")?.children ?? [])].map((part) => part.textContent?.trim()),
+          badges: [...row.querySelectorAll(".queue-rail-line .pill")].map((badge) => badge.textContent),
+          isMarkOk: getComputedStyle(mark).backgroundColor === `rgb(${getComputedStyle(document.documentElement).getPropertyValue("--ok").trim().split(/\s+/).join(", ")})`,
+          box: row.querySelector("input")?.getAttribute("aria-label"),
+        };
+      }), [NOT_LISTENING_SESSION_IDS.nightly, FIXTURE_SESSION_IDS.gersona]);
+      await page.close();
+
+      assert.deepEqual(rows[0], { line: ["Live", "Not listening"], badges: ["Not listening"], isMarkOk: true, box: "Select nightly, not listening" });
+      assert.deepEqual([rows[1]?.badges, rows[1]?.isMarkOk, rows[1]?.box], [[], true, "Select gersona"]);
+    });
+
+    test("with a not-listening session ticked the composer's label paints the badge after its name and the note the sentence, and a send still posts the order", async () => {
+      const page = await openNotListeningPage();
+      await tickOrdersTo(page, ["nightly"]);
+      const posts: string[] = [];
+      page.on("request", (request) => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
+      const shown = await page.evaluate(() => ({
+        tagged: [...document.querySelectorAll(".queue-orders .queue-order-to")].map((to) => [to.firstChild?.textContent, to.querySelector(".pill--tag")?.textContent]),
+        note: [...document.querySelectorAll(".queue-orders .card-foot p")].map((line) => line.textContent).find((text) => text?.includes("not listening")),
+      }));
+      await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
+      await page.locator(".queue-orders").getByRole("button", { name: /^Send to nightly/ }).click();
+      await page.waitForResponse((response) => response.url().endsWith("/api/queue/owner/messages/send"));
+      await page.close();
+
+      assert.deepEqual(shown, { tagged: [["nightly", "Not listening"]], note: "nightly is not listening: it gets this at its next turn end or restart." });
+      assert.deepEqual(posts, ["/api/queue/owner/messages/send"]);
+    });
+
+    test("an order to two sessions that do not listen reads 0 of 2 received and 2 not listening; the ended session's resume copy reads Not yet; nothing of the state is amber", async () => {
+      const page = await openNotListeningPage();
+      const shown = await page.evaluate((ids) => {
+        const textOf = (selector: string) => (document.querySelector(selector)?.textContent ?? "").replace(/\s+/g, " ").trim();
+        const amber = [ids.mixedOrder, ids.deafOrder, ids.resumeOrder].flatMap((id) => [...document.querySelectorAll(`#queue-row-${id} .pill--warn, #queue-order-${id} .pill--warn`)]);
+        return {
+          deaf: textOf(`#queue-row-${ids.deafOrder} .queue-row-facts`),
+          mixed: textOf(`#queue-row-${ids.mixedOrder} .queue-row-facts`),
+          resume: textOf(`#queue-order-${ids.resumeOrder} .queue-recipient .pill`),
+          amber: amber.length,
+        };
+      }, { mixedOrder: NOT_LISTENING_IDS.mixedOrder, deafOrder: NOT_LISTENING_IDS.deafOrder, resumeOrder: NOT_LISTENING_IDS.resumeOrder });
+      await page.close();
+
+      assert.match(shown.deaf, /0 of 2 received.*2 not listening/);
+      assert.match(shown.mixed, /0 of 2 received.*1 not listening/);
+      assert.deepEqual([shown.resume, shown.amber], ["Not yet", 0]);
+    });
+
+    test("an answered decision whose session does not listen says so in its date line and under the answer, before the pull line; its listening twin reads Not yet and that its session picks it up", async () => {
+      const page = await openNotListeningPage();
+      const sheetOf = async (id: number) => {
+        await selectRow(page, id);
+        await page.locator(`.queue-sheet .queue-date-line`).waitFor();
+        const shown = await page.evaluate(() => ({
+          receipt: document.querySelector(".queue-sheet .queue-date-line .pill--tag")?.firstChild?.nodeName === "svg"
+            ? `⏸ ${[...(document.querySelector(".queue-sheet .queue-date-line .pill--tag")?.childNodes ?? [])].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join("")}`
+            : document.querySelector(".queue-sheet .queue-date-line .pill--tag")?.textContent,
+          lines: [...document.querySelectorAll(".queue-sheet p.fs-meta")].map((line) => line.textContent ?? ""),
+        }));
+        await page.getByRole("button", { name: "Back to the list" }).click();
+        return shown;
+      };
+      const deaf = await sheetOf(NOT_LISTENING_IDS.answeredDecision);
+      const listening = await sheetOf(108);
+      await page.close();
+
+      const deafLine = deaf.lines.findIndex((line) => line === "sixmon is not listening: it gets this answer at its next turn end or restart.");
+      const pullLine = deaf.lines.findIndex((line) => line.startsWith("Run in that session:"));
+      assert.deepEqual([deaf.receipt, deafLine >= 0, pullLine > deafLine], ["⏸ Not listening", true, true], JSON.stringify(deaf));
+      assert.deepEqual([listening.receipt, listening.lines.includes("The session is listening: it picks up this answer on its own.")], ["Not yet", true], JSON.stringify(listening));
+    });
   });
 
   // spec 44063 §14.4's edge cases: what the page shows for each, beside the rest state

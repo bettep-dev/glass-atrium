@@ -471,3 +471,77 @@ export function getNameColumnFixture(): QueueFixture {
   const sessions = new Map([[first.id, EDGE_SESSIONS.longName.view], [second.id, nameless]]);
   return { ...edge, items: edge.items.map((item) => ({ ...item, session: sessions.get(item.id) ?? item.session })) };
 }
+
+// spec 44063 §14.4, Not listening stream only: live and not-reachable sessions with no wait or listener polling (isWaiting false)
+export const NOT_LISTENING_SESSION_IDS = {
+  sixmon: "e1f2a3b4-3c4d-4e5f-9a6b-4d5e6f7a8b91",
+  hermes: "f2a3b4c5-4d5e-4f6a-8b7c-5e6f7a8b9c02",
+  nightly: "a3b4c5d6-5e6f-4a7b-9c8d-6f7a8b9c0d13",
+  relay: "b4c5d6e7-6f7a-4b8c-8d9e-7a8b9c0d1e24",
+} as const;
+
+/** Item ids and send ids of the not-listening cases, for the tests that select them. */
+export const NOT_LISTENING_IDS = {
+  answeredDecision: 401, mixedOrder: 410, deafOrder: 420, resumeOrder: 430, unreachableOrder: 440,
+  mixedSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b20", deafSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b21",
+  resumeSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b22", unreachableSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b23",
+} as const;
+
+function buildNotListeningSession(id: string, name: string, state: "live" | "stale", inDelivery: number): { view: OwnerSessionView; row: OwnerSessionRow } {
+  const view: OwnerSessionView = { ...buildSessionView("atrium"), id, name, state, isWaiting: false };
+  const row: OwnerSessionRow = { ...buildSessionRow("atrium", { awaiting: 0, inDelivery }, 7), id, sessionIdPrefix: id.slice(0, 8), name, state, isWaiting: false };
+  return { view, row };
+}
+
+const NOT_LISTENING_SESSIONS = {
+  sixmon: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.sixmon, "sixmon", "live", 3),
+  hermes: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.hermes, "hermes", "live", 1),
+  nightly: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.nightly, "nightly", "live", 0),
+  relay: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.relay, "relay", "stale", 1),
+};
+
+// an answered decision whose live session does not listen: the sheet's date line and its line under `Your answer`
+const NOT_LISTENING_DECISION = {
+  ...ANSWERED_DECISION, id: NOT_LISTENING_IDS.answeredDecision, session: NOT_LISTENING_SESSIONS.sixmon.view, askedAt: getAt(27), answeredAt: getAt(8),
+  title: "[계측] 대기 세션 알림 주기 정하기",
+};
+
+const NOT_LISTENING_ORDERS = [
+  // one order, a listening and a not-listening recipient
+  ...buildOrderCopies(NOT_LISTENING_IDS.mixedOrder, {
+    sendId: NOT_LISTENING_IDS.mixedSend, minutesAgo: 6, text: "오늘 바뀐 설정을 각 세션 보고에 한 줄씩 붙여 주세요.",
+    to: [["gersona", { status: "answered", deliveredAt: null }], ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }]],
+  }),
+  // two copies, both waiting for sessions that do not listen → `0 of 2 received` · `2 not listening`
+  ...buildOrderCopies(NOT_LISTENING_IDS.deafOrder, {
+    sendId: NOT_LISTENING_IDS.deafSend, minutesAgo: 5, text: "식스몬과 헤르메스 모두 오늘 받은 메시지를 다시 확인해 주세요.",
+    to: [
+      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, status: "answered", deliveredAt: null }],
+    ],
+  }),
+  // an ended session's copy its automatic resume is still to start → `Not yet`
+  ...buildOrderCopies(NOT_LISTENING_IDS.resumeOrder, {
+    sendId: NOT_LISTENING_IDS.resumeSend, minutesAgo: 4, text: "포트폴리오 배포 기록을 오늘 날짜로 정리해 주세요.",
+    to: [["portfolio", { status: "resume_pending", deviation: "resume_pending", deliveredAt: null }]],
+  }),
+  // a not-reachable session that does not listen
+  ...buildOrderCopies(NOT_LISTENING_IDS.unreachableOrder, {
+    sendId: NOT_LISTENING_IDS.unreachableSend, minutesAgo: 2, text: "중계 세션은 다시 연결되면 남은 일을 보고해 주세요.",
+    to: [["atrium", { session: NOT_LISTENING_SESSIONS.relay.view, status: "answered", deliveredAt: null }]],
+  }),
+];
+
+/** The rest state plus §14.4's not-listening cases: three live sessions and a not-reachable one that do not listen, beside listening `gersona`. */
+export function getNotListeningFixture(): QueueFixture {
+  const rest = getRestFixture();
+  // the mixed order's listening copy and the ended session's resume copy are in delivery too
+  const added = new Set<string>([SESSION_IDS.gersona, SESSION_IDS.portfolio]);
+  const sessions = rest.sessions.map((row) => (added.has(row.id) ? { ...row, count: { ...row.count, inDelivery: row.count.inDelivery + 1 } } : row));
+  return {
+    ...rest,
+    items: [...rest.items, NOT_LISTENING_DECISION, ...NOT_LISTENING_ORDERS],
+    sessions: [...sessions, ...Object.values(NOT_LISTENING_SESSIONS).map((session) => session.row)],
+    orders: [...rest.orders, ...NOT_LISTENING_ORDERS],
+  };
+}

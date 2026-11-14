@@ -33,10 +33,23 @@ const LIST_GROUPS_Q = {
 };
 
 // one vocabulary on every surface (spec §9.4): whether a recipient has the order, never why it waits
-const RECEIPT_Q = { received: "Received", notYet: "Not yet", notReceived: "Not received" };
+const RECEIPT_Q = { received: "Received", notYet: "Not yet", notListening: "Not listening", notReceived: "Not received" };
+// the sentence is the badge's title and, under a recipient, spoken only (spec §9.3: no sentence under a recipient)
+const NOT_LISTENING_Q = { DELIVERS: "delivers at its next turn end or restart", GLYPH: "pause" };
 
 function getNotReceivedFactQ(count) {
 	return { text: `${count} not received`, badge: "warn" };
+}
+
+/** A not-listening tag badge: the pause glyph before `text`, the sentence in its title; `isSpoken` → screen readers also hear the sentence. */
+function getNotListeningFactQ(text, isSpoken = false) {
+	const fact = { text, badge: "tag", glyph: NOT_LISTENING_Q.GLYPH, title: `${RECEIPT_Q.notListening} — ${NOT_LISTENING_Q.DELIVERS}` };
+	return isSpoken ? { ...fact, spoken: `, ${NOT_LISTENING_Q.DELIVERS}` } : fact;
+}
+
+/** A session that hears nothing until its next turn end or restart: live or not reachable, with no wait or listener polling (plan 44076). */
+function isNotListeningQ(session) {
+	return session.state !== "exited" && !session.isWaiting;
 }
 
 function getReceiptCountQ(receipts, receipt) {
@@ -993,9 +1006,13 @@ function getOrderInvalidQ(targets, text) {
 
 /** The composer's note at rest · `rows` null → the rail not read yet, so no claim that nobody takes an order (spec §10). */
 function getOrderNoteQ({ ids, names }, rows = null) {
-	if (ids.length === 1) return `Goes to ${names[0]}.`;
-	if (ids.length > 1) return "Each ticked session gets its own copy.";
-	return rows?.some((row) => row.isSelectable) === false ? "No session can take an order right now." : "Tick a session in the rail to address this order.";
+	if (ids.length === 0) return rows?.some((row) => row.isSelectable) === false ? "No session can take an order right now." : "Tick a session in the rail to address this order.";
+	const notListening = (rows ?? []).filter((row) => ids.includes(row.id) && isNotListeningQ(row)).map((row) => row.name);
+	if (ids.length === 1) return notListening.length > 0 ? `${notListening[0]} is not listening: it gets this at its next turn end or restart.` : `Goes to ${names[0]}.`;
+	const each = "Each ticked session gets its own copy.";
+	if (notListening.length === 0) return each;
+	const who = notListening.length === 1 ? `${notListening[0]} is not listening: it gets it at its` : `${getNameListQ(notListening)} are not listening: they get it at their`;
+	return `${each} ${who} next turn end or restart.`;
 }
 
 function getOrderSentStatusQ(names) {
@@ -1523,9 +1540,15 @@ function RowFactsLineQ({ facts }) {
 
 // a settled receipt is a mark and a word, no shell (spec §9.4) → the mark rides the text, hidden from screen readers
 function RowFactsQ({ facts }) {
-	const { Badge, TONE_GLYPH } = window.UI;
+	const { Badge, Icon, TONE_GLYPH } = window.UI;
 	return <>{facts.map((fact, index) => (fact.badge
-		? <Badge key={fact.text} fill={fact.badge}>{fact.text}</Badge>
+		? (
+			<Badge key={fact.text} fill={fact.badge} title={fact.title}>
+				{fact.glyph && <Icon name={fact.glyph} size={12} />}
+				{fact.text}
+				{fact.spoken && <span className="sr-only">{fact.spoken}</span>}
+			</Badge>
+		)
 		: (
 			<span key={fact.text}>
 				{index > 0 && !facts[index - 1].badge && " · "}
@@ -1556,28 +1579,32 @@ function getDeliveryFactsQ(item, copies) {
 	return [{ text: route }, ...getReceiptFactsQ(copies)];
 }
 
-// one copy → only a Not received shows · several → `2 of 3 received` (all waiting → the word Not yet), any not received → its own warning after the count
+// one copy → only a Not listening or a Not received shows · several → `2 of 3 received` (all waiting → the word Not yet), then `n not listening`, then any not received
 function getReceiptFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
-	if (receipts.length === 1) return receipts[0] === "notReceived" ? [getReceiptFactQ(receipts[0])] : [];
+	if (receipts.length === 1) return receipts[0] === "notReceived" || receipts[0] === "notListening" ? [getReceiptFactQ(receipts[0])] : [];
 	const received = getReceiptCountQ(receipts, "received");
+	const notListening = getReceiptCountQ(receipts, "notListening");
 	const failed = getReceiptCountQ(receipts, "notReceived");
-	const count = { text: received === 0 && failed === 0 ? RECEIPT_Q.notYet : `${received} of ${receipts.length} received` };
-	return [count, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
+	const count = { text: received + notListening + failed === 0 ? RECEIPT_Q.notYet : `${received} of ${receipts.length} received` };
+	return [count, ...(notListening > 0 ? [getNotListeningFactQ(`${notListening} not listening`)] : []), ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
 }
 
 function getReceiptFactQ(receipt) {
 	if (receipt === "received") return { text: RECEIPT_Q.received, mark: "ok" };
+	if (receipt === "notListening") return getNotListeningFactQ(RECEIPT_Q.notListening, true);
 	return { text: RECEIPT_Q[receipt], badge: receipt === "notYet" ? "tag" : "warn" };
 }
 
 /**
  * The receipt of one copy: `received` once its session acknowledged it; `notReceived` once the queue recorded it did not get there
- * (unacked, expired, or the set canResend names); every other state → `notYet`.
+ * (unacked, expired, or the set canResend names); `notListening` while an answered or held copy's session does not listen;
+ * every other state → `notYet` (delivering → being taken now; an ended session's copy → a resume starts it).
  */
 function getReceiptQ(item) {
 	if (item.status === "delivered") return "received";
 	if (item.canResend || item.status === "unacked" || item.status === "expired") return "notReceived";
+	if ((item.status === "answered" || item.status === "held") && isNotListeningQ(item.session)) return "notListening";
 	return "notYet";
 }
 
@@ -1853,6 +1880,7 @@ function CardStateQ({ item, cliPath }) {
 	return (
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
+			{getReceiptQ(item) === "notListening" && <p className="fs-meta text-dim">{`${item.session.name} is not listening: it gets this answer at its next turn end or restart.`}</p>}
 			<PullLineQ item={item} cliPath={cliPath} />
 			{notes.length === 0 && <NotReceivedLineQ item={item} cliPath={cliPath} />}
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
@@ -1860,11 +1888,11 @@ function CardStateQ({ item, cliPath }) {
 	);
 }
 
-// an answered item waits for its live session's pull: a waiting session claims it at its next poll, any other one needs the owner to run the pull
+// an answered item waits for its live session's pull: a listening session (a wait or a listener) picks it up itself, any other one needs the owner to run the pull
 function PullLineQ({ item, cliPath }) {
 	const { MachineString } = window.UI;
 	if (item.status !== "answered" || item.session.state !== "live") return null;
-	if (item.session.isWaiting) return <p className="fs-meta text-dim">The session is waiting: its next poll takes this answer.</p>;
+	if (item.session.isWaiting) return <p className="fs-meta text-dim">The session is listening: it picks up this answer on its own.</p>;
 	if (!cliPath) return null;
 	return <p className="fs-meta text-dim">Run in that session: <MachineString>{`${getShellWordQ(cliPath)} pending`}</MachineString></p>;
 }
@@ -2299,7 +2327,7 @@ function SessionRailRowQ({ row, view, sessions }) {
 		<Row className="queue-rail-row" data-session={row.id} title={where}>
 			{row.isSelectable && (
 				<span className="queue-rail-box">
-					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={RAIL_HINT_Q.ID} /></span>
+					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}${isNotListeningQ(row) ? ", not listening" : ""}`} describedBy={RAIL_HINT_Q.ID} /></span>
 				</span>
 			)}
 			<RailRowFaceQ row={row} view={view} where={where} />
@@ -2336,15 +2364,17 @@ function SessionNameQ({ row, isIdShown }) {
 }
 
 /**
- * Line 2 of a rail row, the first matching condition (spec §9.1): not received · not reachable · live with orders on the way ·
- * live · a resume not yet registered · ended. Facts in the row-facts shape.
+ * Line 2 of a rail row, the first matching condition (spec §9.1): not received · not reachable · live and not listening (with nothing
+ * in delivery too) · live with orders on the way · live · a resume not yet registered · ended. Facts in the row-facts shape.
  */
 function getSessionLineQ(row, notReceived) {
 	const { formatRelativeTime } = window.UI;
 	const age = { text: formatRelativeTime(row.lastActivityAt) };
 	if (notReceived > 0) return [getNotReceivedFactQ(notReceived)];
 	if (row.state === "stale") return [{ text: "Not reachable", badge: "warn" }, age];
-	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live }, row.count.inDelivery > 0 ? { text: `${row.count.inDelivery} in delivery` } : age];
+	const delivery = row.count.inDelivery > 0 ? [{ text: `${row.count.inDelivery} in delivery` }] : [];
+	if (row.state === "live" && !row.isWaiting) return [{ text: SESSION_STATE_LABEL_Q.live }, getNotListeningFactQ(RECEIPT_Q.notListening), ...delivery];
+	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live }, ...(delivery.length > 0 ? delivery : [age])];
 	if (row.markerSetAt) return [{ text: "Resume not yet registered" }];
 	return [{ text: getSessionStateLabelQ(row), badge: "tag" }, age];
 }
@@ -2584,12 +2614,12 @@ function getSteppedIndexQ(index, count, key) {
 	return next === index || next < 0 || next >= count ? null : next;
 }
 
-/** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received stay listed under it. */
+/** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received and not listening stay listed under it. */
 function RecipientsQ({ copies, busy, onResend }) {
 	const { DisclosureChevron } = window.UI;
 	const resendable = copies.filter((copy) => copy.canResend).map((copy) => copy.id);
 	const isRolledUp = copies.length >= ORDERS_Q.ROLL_UP_FROM;
-	const isOutside = (copy) => !isRolledUp || getReceiptQ(copy) === "notReceived";
+	const isOutside = (copy) => !isRolledUp || ["notReceived", "notListening"].includes(getReceiptQ(copy));
 	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} busy={busy} onResend={onResend} />)}</ul>;
 	const [counts, ...badges] = getRollUpFactsQ(copies);
 	return (
@@ -2606,11 +2636,11 @@ function RecipientsQ({ copies, busy, onResend }) {
 	);
 }
 
-// `7 sessions · 5 received · 1 not yet` + the amber `1 not received`; a zero count is left out
+// `7 sessions · 5 received · 1 not yet · 1 not listening` + the amber `1 not received`; a zero count is left out
 function getRollUpFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
 	const counted = (receipt) => getReceiptCountQ(receipts, receipt);
-	const parts = [`${copies.length} sessions`, `${counted("received")} received`, `${counted("notYet")} not yet`].filter((part, index) => index === 0 || !part.startsWith("0 "));
+	const parts = [`${copies.length} sessions`, `${counted("received")} received`, `${counted("notYet")} not yet`, `${counted("notListening")} not listening`].filter((part, index) => index === 0 || !part.startsWith("0 "));
 	const failed = counted("notReceived");
 	return [{ text: parts.join(" · ") }, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
 }
@@ -2679,7 +2709,7 @@ function useRecipientsNoteQ(targets, box, isReady) {
 	return [note, setNote];
 }
 
-// `New order to gersona, yoaida` — every name, an ended one tagged; none → said in dim (spec §9.2 → Label line)
+// `New order to gersona, yoaida` — every name, an ended or not-listening one tagged; none → said in dim (spec §9.2 → Label line)
 function OrderLabelQ({ rows }) {
 	const { Badge } = window.UI;
 	if (rows.length === 0) return <>New order · no session ticked</>;
@@ -2690,6 +2720,7 @@ function OrderLabelQ({ rows }) {
 				<span key={row.id} className="queue-order-to">
 					{`${row.name}${index < rows.length - 1 ? ", " : ""}`}
 					{row.state === "exited" && <> <Badge fill="tag">Ended</Badge></>}
+					{isNotListeningQ(row) && <><span className="sr-only">,</span> <RowFactsQ facts={[getNotListeningFactQ(RECEIPT_Q.notListening)]} /></>}
 				</span>
 			))}
 		</>
