@@ -34,6 +34,7 @@ interface BandSandbox {
   TilePlaceholderI: (props: {
     status: string;
     label: string;
+    owner?: string;
     onRetry?: unknown;
   }) => RecordedElement;
   StatusTileI: (props: Record<string, unknown>) => RecordedElement;
@@ -150,6 +151,18 @@ test("the three non-ready states render distinctly", () => {
   assert.match(unavailable?.text ?? "", /Not measured/);
   assert.ok(!unavailable?.placeholder);
   assert.equal(unavailable?.retry.length, 0);
+});
+
+// Spec 44084 §2.2: a value slot never holds a dash — every non-ready, non-loading tile here
+// lacks a value it could not read, so its slot reads Not loaded in faint ink.
+test("an unread, failed or announced tile's value slot reads Not loaded in faint ink, never a dash", () => {
+  for (const status of ["error", "unavailable", "announced"]) {
+    const tile = sandbox.TilePlaceholderI({ status, label: "Held, needs a human", owner: "ledger", onRetry: () => {} });
+    const tree = (tile.type as (props: Record<string, unknown>) => unknown)(tile.props);
+    const slot = collectElements(tree, []).find((el) => el.type === sandbox.window.UI.KpiValue);
+    assert.equal(slot?.props.children, sandbox.window.UI.NOT_LOADED_TEXT, `a ${status} tile's value slot`);
+    assert.equal(slot?.props.isFaint, true, `a ${status} tile's value is faint`);
+  }
 });
 
 // The "no unloaded zero" half, stated as the relationship that carries it: for every

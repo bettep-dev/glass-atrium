@@ -91,11 +91,11 @@ test("the value row always precedes the delta, the hint and the foot, whatever o
   assert.ok(text.indexOf("3") < text.indexOf("of 12 cycles"), "the figure reads before its hint");
 });
 
-test("loading, error and empty keep the label and hint rows; loading holds the value row with a strut, the others show a faint dash", () => {
+test("loading, error and empty keep the label and hint rows; loading holds the value row with a strut, the others show a faint absent word — None when empty, Not loaded when failed — never a dash", () => {
   const states = [
-    { state: "loading", hasStrut: true, dash: false },
-    { state: "error", hasStrut: false, dash: true },
-    { state: "empty", hasStrut: false, dash: true },
+    { state: "loading", hasStrut: true, absentText: null },
+    { state: "error", hasStrut: false, absentText: "Not loaded" },
+    { state: "empty", hasStrut: false, absentText: "None" },
   ];
   for (const row of states) {
     const tree = render("KPI", { label: "Spend", value: "0", hint: "Not loaded", state: row.state, loadingLabel: "spend" });
@@ -104,11 +104,11 @@ test("loading, error and empty keep the label and hint rows; loading holds the v
     assert.equal(struts.length, row.hasStrut ? 1 : 0, `${row.state}: strut`);
     assert.equal(findNodes(tree, (n) => n.type === "LoadingPlaceholder").length, row.hasStrut ? 1 : 0, `${row.state}: placeholder`);
     const values = findNodes(tree, (n) => n.type === "div" && hasKpiScale(n));
-    if (row.dash) {
+    if (row.absentText) {
       assert.equal(collectText(values[0]).trim(), "0", `${row.state}: an authored value is kept`);
       assert.ok(hasClass(values[0], "text-faint"), `${row.state}: the unknown value is faint`);
       const bare = render("KPI", { label: "Spend", state: row.state });
-      assert.equal(collectText(findNodes(bare, (n) => n.type === "div" && hasKpiScale(n))[0]).trim(), "—", `${row.state}: no value → the dash, never 0`);
+      assert.equal(collectText(findNodes(bare, (n) => n.type === "div" && hasKpiScale(n))[0]).trim(), row.absentText, `${row.state}: no value → the state's absent word, never 0 or a dash`);
     }
     const root = findNodes(tree, (n) => hasClass(n, "kpi"))[0];
     assert.equal(root.props["aria-busy"], row.state === "loading" ? "true" : undefined, `${row.state}: busy only while loading`);

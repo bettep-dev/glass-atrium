@@ -623,7 +623,7 @@ function AgentName({ name, className = '' }) {
 }
 
 // Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
-// isWord → a word value at --fs-stat sans on the same baseline · isFaint → the unknown dash of a non-ready state.
+// isWord → a word value at --fs-stat sans on the same baseline · isFaint → the faint ink of a non-ready state.
 // A word rides its own span inside the figure's line box → the box (and its baseline) is the figure's, whatever the word's size.
 function KpiValue({ children, unit, tone, isWord = false, isFaint = false }) {
   const className = `kpi-value${isWord ? ' kpi-value--word' : ''}${isFaint ? ' text-faint' : ''}`;
@@ -645,7 +645,7 @@ const KPI_SPARK = { w: 68, h: 26 };
  *   4 hint       after the value, always; the caller's own face (hintFace) is kept; ≤2 lines + title for a plain hint,
  *                or a node hint passing isHintClamped with its whole text in hintTitle
  *   5 foot       drill link / Retry, pinned to the tile bottom
- * state: 'ready' | 'loading' | 'error' | 'empty' — error and empty show the faint unknown dash, never a 0.
+ * state: 'ready' | 'loading' | 'error' | 'empty' — with no value, empty reads None and error reads Not loaded, faint, never a 0 or a dash.
  * onClick → the tile is a button (no info or foot inside it then); otherwise a group labelled by its label row.
  * aria-label → the tile's own accessible name (a sentence the label row cannot carry), on the button or the group.
  * hasValue=false → a fact-list tile: no value row, the hint carries the facts; the label row and states stay.
@@ -681,7 +681,7 @@ function KPI({
   ) : !hasValue ? null : (
     <div className="kpi-main">
       <KpiValue unit={unit} tone={isUnknown ? undefined : tone} isWord={isWord} isFaint={isUnknown}>
-        {isUnknown ? (value ?? '—') : value}
+        {isUnknown ? (value ?? (state === 'empty' ? EMPTY_VALUE_TEXT : NOT_LOADED_TEXT)) : value}
       </KpiValue>
       {badge}
     </div>

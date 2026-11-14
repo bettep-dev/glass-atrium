@@ -814,7 +814,8 @@ function StatusTileI({ status, tone, symbol, label, value, population, populatio
 // 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
 // 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
 // The ready tile's own KPI anatomy carries every state → the label row and tile height hold when the value lands.
-const TILE_PLACEHOLDER_STATE_I = { loading: "loading", error: "error", unavailable: "empty", announced: "error" };
+// unavailable = a payload that carried no value for this tile → a value not read, so Not loaded like error and announced
+const TILE_PLACEHOLDER_STATE_I = { loading: "loading", error: "error", unavailable: "error", announced: "error" };
 
 function TilePlaceholderI({ status, label, owner, onRetry }) {
 	const { KPI } = window.UI;
