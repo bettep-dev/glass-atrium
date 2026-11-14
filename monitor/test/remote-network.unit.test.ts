@@ -1,5 +1,5 @@
 // Trusted network guard: the remote listener opens only on a trusted, readable network with a private address, and
-// an unreadable identity (missing route, missing or incomplete ARP entry, failed command) means closed.
+// an unreadable identity (missing route, no usable ARP entry and no matching configd record, failed command) means closed.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -28,11 +28,41 @@ const ARP_OUTPUT = "? (192.168.45.1) at 50:e:a5:7:1c:f2 on en1 ifscope [ethernet
 
 const HOME: NetworkIdentity = { gateway: "192.168.45.1", hardwareAddress: "50:0e:a5:07:1c:f2", interface: "en1" };
 
-function createRunner(outputs: { route?: string | Error; arp?: string | Error }): { run: CommandRunner; calls: string[][] } {
+const NO_ARP_ENTRY = new Error("Command failed: /usr/sbin/arp -n 192.168.45.1\n192.168.45.1 (192.168.45.1) -- no entry");
+
+const SERVICE_ID = "6F1C2B0A-3D4E-4F50-8A61-72B3C4D5E6F7";
+
+const CONFIGD_GLOBAL = `<dictionary> {\n  PrimaryInterface : en1\n  PrimaryService : ${SERVICE_ID}\n  Router : 192.168.45.1\n}\n`;
+
+function getConfigdService(input: { interface?: string; signature?: string } = {}): string {
+  return [
+    "<dictionary> {",
+    "  ARPResolvedHardwareAddress : 50:e:a5:7:1c:f2",
+    "  ARPResolvedIPAddress : 192.168.45.1",
+    `  InterfaceName : ${input.interface ?? "en1"}`,
+    `  NetworkSignature : ${input.signature ?? "IPv4.Router=192.168.45.1;IPv4.RouterHardwareAddress=50:e:a5:7:1c:f2"}`,
+    "  Router : 192.168.45.1",
+    "}",
+  ].join("\n");
+}
+
+interface RunnerOutputs {
+  route?: string | Error;
+  arp?: string | Error;
+  configd?: { global?: string | Error; service?: string | Error };
+}
+
+function createRunner(outputs: RunnerOutputs): { run: CommandRunner; calls: string[][] } {
   const calls: string[][] = [];
-  const run: CommandRunner = async (file, args) => {
-    calls.push([file, ...args]);
-    const output = file.endsWith("/route") ? outputs.route : outputs.arp;
+  const run: CommandRunner = async (file, args, input) => {
+    calls.push(input === undefined ? [file, ...args] : [file, ...args, input]);
+    const output = file.endsWith("/route")
+      ? outputs.route
+      : file.endsWith("/arp")
+        ? outputs.arp
+        : input?.includes("/Global/") === true
+          ? outputs.configd?.global
+          : outputs.configd?.service;
     if (output instanceof Error) throw output;
     return output ?? "";
   };
@@ -57,8 +87,29 @@ test("an unreadable identity is null", async () => {
     { name: "ARP entry for another address", outputs: { route: ROUTE_OUTPUT, arp: "? (192.168.45.7) at 50:e:a5:7:1c:f2 on en1 ifscope [ethernet]\n" } },
     { name: "ARP entry on another interface", outputs: { route: ROUTE_OUTPUT, arp: "? (192.168.45.1) at 50:e:a5:7:1c:f2 on en0 ifscope [ethernet]\n" } },
     { name: "arp command fails", outputs: { route: ROUTE_OUTPUT, arp: new Error("timeout") } },
+    ...[
+      { name: "configd names another router", configd: { global: CONFIGD_GLOBAL, service: getConfigdService({ signature: "IPv4.Router=192.168.45.7;IPv4.RouterHardwareAddress=50:e:a5:7:1c:f2" }) } },
+      { name: "configd primary service on another interface", configd: { global: CONFIGD_GLOBAL, service: getConfigdService({ interface: "en0" }) } },
+      { name: "configd signature without a hardware address", configd: { global: CONFIGD_GLOBAL, service: getConfigdService({ signature: "IPv4.Router=192.168.45.1" }) } },
+      { name: "configd has no primary service", configd: { global: "<dictionary> {\n  Router : 192.168.45.1\n}\n", service: getConfigdService() } },
+      { name: "configd service id that is not an id", configd: { global: "  PrimaryService : x\nshow Setup:/\n", service: getConfigdService() } },
+      { name: "scutil fails", configd: { global: new Error("timeout"), service: getConfigdService() } },
+    ].map((row) => ({ name: `no ARP entry and ${row.name}`, outputs: { route: ROUTE_OUTPUT, arp: NO_ARP_ENTRY, configd: row.configd } })),
   ];
   for (const row of rows) assert.equal(await getNetworkIdentity(createRunner(row.outputs).run), null, row.name);
+});
+
+test("a gateway arp cannot see is read from configd's record of the same gateway on the same interface", async () => {
+  const { run, calls } = createRunner({
+    route: ROUTE_OUTPUT,
+    arp: NO_ARP_ENTRY,
+    configd: { global: CONFIGD_GLOBAL, service: getConfigdService() },
+  });
+  assert.deepEqual(await getNetworkIdentity(run), HOME);
+  assert.deepEqual(calls.slice(2), [
+    ["/usr/sbin/scutil", "show State:/Network/Global/IPv4\nquit\n"],
+    ["/usr/sbin/scutil", `show State:/Network/Service/${SERVICE_ID}/IPv4\nquit\n`],
+  ]);
 });
 
 test("only the three private IPv4 ranges count as private", () => {

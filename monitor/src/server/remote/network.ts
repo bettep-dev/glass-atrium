@@ -1,13 +1,13 @@
 // Trusted-network guard for the remote listener: an accident guard against opening on a café Wi-Fi, not authentication.
-// Identity = default gateway IP + its ARP hardware address (the Wi-Fi name is redacted without a Location grant).
+// Identity = default gateway IP + its ARP hardware address, from arp or configd (the Wi-Fi name is redacted without a Location grant).
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-/** Runs a fixed binary with a fixed argv, no shell. Injected so tests never read the real network. */
-export type CommandRunner = (file: string, args: readonly string[]) => Promise<string>;
+/** Runs a fixed binary with a fixed argv and optional stdin, no shell. Injected so tests never read the real network. */
+export type CommandRunner = (file: string, args: readonly string[], input?: string) => Promise<string>;
 
 export interface NetworkIdentity {
   readonly gateway: string;
@@ -38,8 +38,10 @@ const COMMAND = {
 
 const IPV4_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
-export const runCommand: CommandRunner = async (file, args) => {
-  const { stdout } = await execFileAsync(file, [...args], { env: COMMAND.ENV, timeout: COMMAND.TIMEOUT_MS });
+export const runCommand: CommandRunner = async (file, args, input) => {
+  const pending = execFileAsync(file, [...args], { env: COMMAND.ENV, timeout: COMMAND.TIMEOUT_MS });
+  pending.child.stdin?.end(input ?? "");
+  const { stdout } = await pending;
   return stdout;
 };
 
@@ -50,8 +52,10 @@ export async function getNetworkIdentity(run: CommandRunner = runCommand): Promi
     const gateway = /^\s*gateway:\s*(\S+)\s*$/m.exec(route)?.[1];
     const networkInterface = /^\s*interface:\s*(\S+)\s*$/m.exec(route)?.[1];
     if (gateway === undefined || networkInterface === undefined || !IPV4_PATTERN.test(gateway)) return null;
-    const arp = await run(COMMAND.ARP, ["-n", gateway]);
-    const hardwareAddress = getArpHardwareAddress(arp, gateway, networkInterface);
+    const arp = await run(COMMAND.ARP, ["-n", gateway]).catch(() => "");
+    const hardwareAddress =
+      getArpHardwareAddress(arp, gateway, networkInterface) ??
+      (await getConfigdHardwareAddress(run, gateway, networkInterface));
     return hardwareAddress === null ? null : { gateway, hardwareAddress, interface: networkInterface };
   } catch {
     // a failed or timed-out read is "unreadable" by design → closed, never an error path
@@ -106,6 +110,21 @@ function getArpHardwareAddress(output: string, gateway: string, networkInterface
     if (address !== null) return address;
   }
   return null;
+}
+
+/**
+ * configd's record of the primary service's router → the same ARP-resolved address, kept by the system.
+ * A Homebrew node process (the LaunchAgent's binary) gets "no entry" from arp for a gateway platform binaries see;
+ * configd is read over IPC, not the network, so it answers there. Must name this gateway on this interface.
+ */
+async function getConfigdHardwareAddress(run: CommandRunner, gateway: string, networkInterface: string): Promise<string | null> {
+  const global = await run(COMMAND.SCUTIL, [], "show State:/Network/Global/IPv4\nquit\n");
+  const serviceId = /^\s*PrimaryService : ([0-9A-Fa-f-]{1,64})\s*$/m.exec(global)?.[1];
+  if (serviceId === undefined) return null;
+  const service = await run(COMMAND.SCUTIL, [], `show State:/Network/Service/${serviceId}/IPv4\nquit\n`);
+  if (/^\s*InterfaceName : (\S+)\s*$/m.exec(service)?.[1] !== networkInterface) return null;
+  const signature = /IPv4\.Router=([^;\s]+);IPv4\.RouterHardwareAddress=([0-9A-Fa-f:]+)/.exec(service);
+  return signature?.[1] === gateway ? getNormalizedHardwareAddress(signature[2] ?? "") : null;
 }
 
 /** Lower-case, each octet zero-padded; null unless six hex octets. */
