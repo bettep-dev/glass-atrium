@@ -13,26 +13,60 @@ const HOME: NetworkIdentity = { gateway: "192.168.0.1", hardwareAddress: "50:0e:
 const OFFICE: NetworkIdentity = { gateway: "10.20.0.1", hardwareAddress: "a4:5e:60:11:22:33", interface: "en1" };
 const LEAF: RemoteTls = { key: Buffer.from("leaf key A"), cert: Buffer.from("leaf cert A") };
 
+const REISSUED: RemoteTls = { key: Buffer.from("leaf key R"), cert: Buffer.from("leaf cert R") };
+const HOUR_MS = 3_600_000;
+
+interface HarnessState {
+  identity: NetworkIdentity | null;
+  address: string | null;
+  hostName: string | null;
+  tls: RemoteTls | null;
+  failOpen: boolean;
+  isLeafDue: boolean;
+  failReissue: boolean;
+  now: number;
+}
+
 interface Harness {
   readonly controller: RemoteListenerController;
-  readonly state: { identity: NetworkIdentity | null; address: string | null; tls: RemoteTls | null; failOpen: boolean };
-  readonly opened: { address: string; closed: boolean; tls: RemoteTls[] }[];
+  readonly state: HarnessState;
+  readonly opened: { address: string; hostName: string | null; closed: boolean; tls: RemoteTls[] }[];
+  readonly reissues: { count: number };
 }
 
 function buildHarness(trusted: readonly NetworkIdentity[] = [HOME, OFFICE], enabled = true): Harness {
-  const state: Harness["state"] = { identity: HOME, address: "192.168.0.10", tls: LEAF, failOpen: false };
+  const state: HarnessState = {
+    identity: HOME,
+    address: "192.168.0.10",
+    hostName: "studio-mac.local",
+    tls: LEAF,
+    failOpen: false,
+    isLeafDue: false,
+    failReissue: false,
+    now: 0,
+  };
   const opened: Harness["opened"] = [];
+  const reissues = { count: 0 };
   const controller = new RemoteListenerController({
     settings: { enabled, trusted },
     readIdentity: async () => state.identity,
+    readHostName: async () => state.hostName,
     getAddress: () => state.address,
     readTls: async () => {
       if (state.tls === null) throw new Error("ENOENT leaf.pem");
       return state.tls;
     },
-    open: async (address, tls): Promise<RemoteListenerHandle> => {
+    isLeafDue: () => state.isLeafDue,
+    reissueLeaf: async () => {
+      reissues.count += 1;
+      if (state.failReissue) throw new Error("openssl exited 1");
+      state.tls = REISSUED;
+      state.isLeafDue = false;
+    },
+    getNow: () => state.now,
+    open: async (address, hostName, tls): Promise<RemoteListenerHandle> => {
       if (state.failOpen) throw new Error("EADDRNOTAVAIL");
-      const record = { address, closed: false, tls: [tls] };
+      const record = { address, hostName, closed: false, tls: [tls] };
       opened.push(record);
       return {
         close: async () => {
@@ -42,7 +76,7 @@ function buildHarness(trusted: readonly NetworkIdentity[] = [HOME, OFFICE], enab
       };
     },
   });
-  return { controller, state, opened };
+  return { controller, state, opened, reissues };
 }
 
 function getOpenAddresses(opened: Harness["opened"]): string[] {
@@ -123,6 +157,17 @@ describe("opening and closing with the network", () => {
     assert.deepEqual([opened.length, getOpenAddresses(opened), wasTurnedOff, controller.isTurnedOff], [1, [], false, true]);
   });
 
+  test("a Bonjour rename closes the listener and reopens it under the new name", async () => {
+    const { controller, state, opened } = buildHarness();
+    await controller.sync();
+    state.hostName = "studio-mac-2.local";
+    await controller.sync();
+    assert.deepEqual(opened.map((record) => [record.hostName, record.closed]), [
+      ["studio-mac.local", true],
+      ["studio-mac-2.local", false],
+    ]);
+  });
+
   test("stop closes the open listener", async () => {
     const { controller, opened } = buildHarness();
     await controller.sync();
@@ -155,6 +200,50 @@ describe("the leaf on disk", () => {
     await controller.sync();
     assert.deepEqual(getOpenAddresses(opened), []);
   });
+});
+
+describe("reissuing a due leaf", () => {
+  test("a due leaf is reissued before the listener opens, which then serves the reissued leaf", async () => {
+    const { controller, state, opened, reissues } = buildHarness();
+    state.isLeafDue = true;
+    await controller.sync();
+    assert.deepEqual([reissues.count, opened[0]?.tls], [1, [REISSUED]]);
+  });
+
+  test("a leaf falling due on an open listener is reissued and handed over without reopening", async () => {
+    const { controller, state, opened } = buildHarness();
+    await controller.sync();
+    state.isLeafDue = true;
+    await controller.sync();
+    assert.deepEqual([opened.length, opened[0]?.tls], [1, [LEAF, REISSUED]]);
+  });
+
+  test("a failed reissue still opens the listener with the current leaf", async () => {
+    const { controller, state, opened } = buildHarness();
+    state.isLeafDue = true;
+    state.failReissue = true;
+    await controller.sync();
+    assert.deepEqual(getOpenAddresses(opened), ["192.168.0.10"]);
+    assert.deepEqual(opened[0]?.tls, [LEAF]);
+  });
+
+  const retryRows = [
+    { name: "not retried on a later check of the same network and name", change: (state: HarnessState) => (state.now += 60_000), attempts: 1 },
+    { name: "retried an hour later", change: (state: HarnessState) => (state.now += HOUR_MS), attempts: 2 },
+    { name: "retried at once when the Wi-Fi address changes", change: (state: HarnessState) => (state.address = "192.168.0.23"), attempts: 2 },
+    { name: "retried at once when Bonjour renames the Mac", change: (state: HarnessState) => (state.hostName = "studio-mac-2.local"), attempts: 2 },
+  ];
+  for (const row of retryRows) {
+    test(`a failed reissue is ${row.name}`, async () => {
+      const { controller, state, reissues } = buildHarness();
+      state.isLeafDue = true;
+      state.failReissue = true;
+      await controller.sync();
+      row.change(state);
+      await controller.sync();
+      assert.equal(reissues.count, row.attempts);
+    });
+  }
 });
 
 describe("the interface address", () => {

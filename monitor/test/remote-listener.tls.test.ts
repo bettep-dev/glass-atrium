@@ -3,12 +3,16 @@
 
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { X509Certificate, randomBytes } from "node:crypto";
 import http from "node:http";
 import { createServer } from "node:net";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import type { Socket } from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { type PeerCertificate, type TLSSocket, checkServerIdentity as checkTlsIdentity } from "node:tls";
 
 import type { FastifyInstance } from "fastify";
@@ -17,7 +21,7 @@ import { buildRemoteApp } from "../src/server/app.js";
 import { disconnectPrisma } from "../src/server/db.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
-import { type RemoteTls, setRemoteCertificate } from "../src/server/remote/listener.js";
+import { LEAF_REISSUE_AHEAD_MS, type RemoteTls, isLeafDue, setRemoteCertificate } from "../src/server/remote/listener.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 import { getRouteClass } from "../src/server/remote/route-classes.js";
 import { buildRemoteOpener } from "../src/server/remote/start.js";
@@ -173,7 +177,6 @@ test("the opener admits only the bound address and the .local name at the remote
   const port = await getFreePort();
   const open = buildRemoteOpener({
     port,
-    hostName: "owner-mac.local",
     gate: {
       findDevice: async () => null,
       audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
@@ -182,7 +185,7 @@ test("the opener admits only the bound address and the .local name at the remote
     registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
     device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
   });
-  const first = await open(STAND_IN, tls);
+  const first = await open(STAND_IN, "owner-mac.local", tls);
   const rows = [
     { name: "bound address at the remote port", host: `${STAND_IN}:${port}`, status: 401 },
     { name: ".local name at the remote port", host: `owner-mac.local:${port}`, status: 401 },
@@ -194,6 +197,28 @@ test("the opener admits only the bound address and the .local name at the remote
   } finally {
     await first.close();
   }
-  const reopened = await open(STAND_IN, tls);
+  const reopened = await open(STAND_IN, "owner-mac.local", tls);
   await reopened.close();
+});
+
+test("a leaf is due when it expires within 30 days or no longer names the current host and address", async () => {
+  const current = await createStandInTls({ address: "192.168.0.10", hostName: "studio-mac.local", days: 400 });
+  const expiring = await createStandInTls({ address: "192.168.0.10", hostName: "studio-mac.local", days: 20 });
+  fixtureDirs.push(current.dir, expiring.dir);
+  const here = { hostName: "studio-mac.local", address: "192.168.0.10" };
+  const rows = [
+    { name: "current names, more than 30 days left", cert: current.cert, names: here, isDue: false },
+    { name: "host name unreadable → only the address is checked", cert: current.cert, names: { ...here, hostName: null }, isDue: false },
+    { name: "expires within 30 days", cert: expiring.cert, names: here, isDue: true },
+    { name: "the Wi-Fi address changed", cert: current.cert, names: { ...here, address: "192.168.0.23" }, isDue: true },
+    { name: "Bonjour renamed the Mac", cert: current.cert, names: { ...here, hostName: "studio-mac-2.local" }, isDue: true },
+    { name: "an unparseable leaf", cert: Buffer.from("not a certificate"), names: here, isDue: true },
+  ];
+  for (const row of rows) assert.equal(isLeafDue(row.cert, row.names, Date.now()), row.isDue, row.name);
+});
+
+test("the monitor reissues a leaf as far ahead of expiry as the CLI and the updater do", async () => {
+  const library = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "lib", "ga-remote.sh");
+  const { stdout } = await promisify(execFile)("/bin/bash", ["-c", 'source "$1" && printf "%s" "${GA_REMOTE_REISSUE_AHEAD_SECONDS}"', "_", library]);
+  assert.equal(Number(stdout) * 1000, LEAF_REISSUE_AHEAD_MS);
 });
