@@ -545,25 +545,34 @@ test("a loading skeleton pulses through its gated class, never through an inline
   assert.equal(inline.length, 0, "no element animates through its own style");
 });
 
-describe("the Record attribution head reads None only over a read window with no records, and Not loaded while the region is unread", () => {
+describe("the Record attribution head reads None only over a read window with no records, Not loaded with its cause after a failed read, and nothing while the first read is in flight", () => {
   const rows = [
-    { name: "loading", state: { status: "loading", busy: true, data: null, error: null }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false },
-    { name: "failed", state: { status: "error", busy: false, data: null, error: SERVER_ERROR }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false },
-    { name: "read, no attributed records", state: { status: "ready", busy: false, data: { window_summary: { literal_omission_rate: null } }, error: null }, kinds: [], text: /None$/, hasGlyph: true },
-    { name: "read, a measured share", state: { status: "ready", busy: false, data: { window_summary: { literal_omission_rate: 0.0123 } }, error: null }, kinds: [], text: /1\.2% /, hasGlyph: true },
+    { name: "loading", state: { status: "loading", busy: true, data: null, error: null }, hasHead: false },
+    { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, hasHead: true, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: SERVER_ERROR },
+    { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, hasHead: true, kinds: [], text: /None$/, hasGlyph: true, isBodyEmpty: true },
+    { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { rows: [] }, error: null }, hasHead: true, kinds: [], text: /None$/, hasGlyph: true, isBodyEmpty: true },
+    { name: "read, a measured share", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, hasHead: true, kinds: [], text: /1\.2% /, hasGlyph: true, isBodyEmpty: false },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
       const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
       const tree = renderScreen(create(mod.AttributionHealthCard as Component, { state: row.state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
-      const [status] = findNodes(tree, (n) => n.props["data-role"] === "head-status");
-      const absentKinds = findNodes(status, (n) => n.type === "AbsentValue").map((n) => n.props.kind);
+      const heads = findNodes(tree, (n) => n.props["data-role"] === "head-status");
+      assert.equal(heads.length, row.hasHead ? 1 : 0, "a first read in flight leaves the head to the body's skeleton");
+      if (!row.hasHead) return;
+      const [status] = heads;
+      const absent = findNodes(status, (n) => n.type === "AbsentValue");
       const elementChildren = status.children.filter((child) => typeof child !== "string");
-      assert.deepEqual(absentKinds, row.kinds);
+      assert.deepEqual(absent.map((n) => n.props.kind), row.kinds);
       assert.match(collectText(status).trim(), row.text);
       assert.doesNotMatch(collectText(status), row.hasGlyph ? /Not loaded/ : /None/);
       assert.equal(elementChildren.length, row.hasGlyph ? 2 : 1, "the glyph, then the sentence as one inline element");
+      if (row.title) assert.ok(String(absent[0]?.props.title).includes(row.title), "the failed read's own cause is in the title");
+      if (row.isBodyEmpty !== undefined) {
+        const isBodyEmpty = /No attributed runs in this period/.test(collectText(tree));
+        assert.equal(isBodyEmpty, row.isBodyEmpty, "the head reads None exactly when the body reads the window as empty");
+      }
     });
   }
 });

@@ -1313,28 +1313,36 @@ function HeadStatusO({ tone, title, children }) {
 
 function AttributionHealthCard({ state, period, onRetry, shared }) {
   const { Card } = window.UI;
-
-  const summary = state.status === 'ready' ? state.data?.window_summary : null;
-  // an unread or failed region claims no rate → Not loaded; None only over a read window with no attributed records
-  const badge = summary
-    ? attributionOmissionBadgeO(summary.literal_omission_rate)
-    : { colorVar: null, text: <window.UI.AbsentValue kind="not-loaded" title={`Record attribution for the last ${period} days is not loaded yet or failed to load`}/> };
+  const badge = getAttributionHeadBadgeO(state, period);
 
   return (
     <div id={REGION_CARD_IDS.attribution} className="mb-section">
       <Card
         title="Record attribution"
-        right={
+        right={badge && (
           <HeadStatusO
             tone={toneFromColorVarO(badge.colorVar)}
             title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
             Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}
           </HeadStatusO>
-        }>
+        )}>
         <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
       </Card>
     </div>
   );
+}
+
+// first read in flight → no head (the body's skeleton is the loading look) · failed → Not loaded + its cause ·
+// read → the window's rate, a summary-less payload read as the empty window, as the body reads it
+function getAttributionHeadBadgeO(state, period) {
+  const { getRegionView, getErrorCopy, AbsentValue } = window.UI;
+  const view = getRegionView(state);
+  if (view === 'loading') return null;
+  if (view === 'error') {
+    const { sentence, detail } = getErrorCopy(state.error, `record attribution for the last ${period} days`);
+    return { colorVar: null, text: <AbsentValue kind="not-loaded" title={`${sentence} ${detail}`}/> };
+  }
+  return attributionOmissionBadgeO(state.data.window_summary?.literal_omission_rate);
 }
 
 function AttributionHealthBody({ state, onRetry, shared }) {

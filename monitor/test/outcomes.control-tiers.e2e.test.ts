@@ -75,7 +75,9 @@ const CROSSTAB = getMarkup("CrosstabCard", {
   onRetry: noop, shared: {},
 });
 const LOADING = { status: "loading", data: null, error: null };
-const ATTRIBUTION = getMarkup("AttributionHealthCard", { state: LOADING, period: 30, onRetry: noop, shared: {} });
+// a read window → the head carries its status (a first read in flight leaves the head empty)
+const ATTRIBUTION_READ = { ...READY, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } } };
+const ATTRIBUTION = getMarkup("AttributionHealthCard", { state: ATTRIBUTION_READ, period: 30, onRetry: noop, shared: {} });
 const CHANNELS = getMarkup("ChannelLivenessCard", { state: LOADING, onRetry: noop, shared: {} });
 
 const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
