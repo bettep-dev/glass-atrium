@@ -34,6 +34,13 @@ const statRow = renderToStaticMarkup(h(UI.StatRow, { stats: [
   { label: "Runs", value: "1,284", href: "#/runs" },
   { label: "Median run", value: "38", unit: "s" },
 ] }));
+// the Record attribution band at a width where its longest label wraps and only some stats carry a context line
+const statWrap = renderToStaticMarkup(h(UI.StatRow, { stats: [
+  { label: "Recorded properly", value: "90.7%", context: "1,812 of 1,998" },
+  { label: "Untraceable", value: "1.3%" },
+  { label: "Synthesized", value: "3.6%", context: "72 of 1,998" },
+  { label: "Missing", value: "4.4%" },
+] }));
 const badges = renderToStaticMarkup(h("div", null,
   h(UI.Badge, { role: "metadata" }, "html"),
   h(UI.Badge, { role: "count" }, "1,284"),
@@ -67,7 +74,7 @@ const empties = renderToStaticMarkup(h("div", null,
 ));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div style="padding: 24px; width: 900px;">${statRow}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -118,7 +125,7 @@ describe("the current page", () => {
 });
 
 describe("the stat row", () => {
-  const getStats = () => page.$$eval(".stat", (els) => els.map((el) => {
+  const getStats = () => page.$$eval("#stats .stat", (els) => els.map((el) => {
     const style = getComputedStyle(el);
     const box = el.getBoundingClientRect();
     return { left: box.left, top: box.top, start: style.borderLeftWidth, above: style.borderTopWidth, background: style.backgroundColor, shadow: style.boxShadow };
@@ -138,6 +145,21 @@ describe("the stat row", () => {
       assert.ok(stats.every((stat) => stat.background === "rgba(0, 0, 0, 0)" && stat.shadow === "none"), "no stat draws a tile");
     });
   }
+
+  test("a label that wraps keeps every value of its row on one line, the label shown whole", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const stats = await page.$$eval("#stat-wrap .stat", (els) => els.map((el) => {
+      const [label, value] = [el.querySelector(".stat-label"), el.querySelector(".stat-value")];
+      // the text's own height, not the label box's → the box may grow to the row's tallest label
+      const text = document.createRange();
+      if (label) text.selectNodeContents(label);
+      return { textHeight: text.getBoundingClientRect().height, isLabelClipped: !label || label.scrollWidth > label.clientWidth, valueTop: value?.getBoundingClientRect().top ?? Number.NaN };
+    }));
+
+    assert.ok(stats[0].textHeight > stats[1].textHeight + 1, `the long label wraps: ${stats.map((stat) => stat.textHeight).join(", ")}px`);
+    assert.ok(stats.every((stat) => !stat.isLabelClipped), "no label is clipped");
+    assert.ok(stats.every((stat) => Math.abs(stat.valueTop - stats[0].valueTop) < 1), `value tops ${stats.map((stat) => stat.valueTop).join(", ")}`);
+  });
 });
 
 describe("the page header", () => {

@@ -1123,6 +1123,7 @@
 - Show what the owner acts on; demote everything else to an ⓘ popover, a drawer, or delete it.
 - **Stat row** replaces the four-tile KPI grid:
   - One card, its stats divided by vertical hairlines, each = label 13/500 dim · value `--fs-stat` + unit · one context line (period or delta).
+  - The stats share one label row, one value line and one context row: a label that wraps lowers the row's value line, never only its own value; a label wraps, never truncates.
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
   - A stat that opens a drill-down is a Link-styled value, not a button tile.
 - Rules:
