@@ -1562,13 +1562,16 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
   );
 }
 
+// a reading without its fail count claims no state → neutral, never ok / safe to route
 function getBreakerTone(breaker) {
   if (breaker.suspended) return 'crit';
+  if (!Number.isFinite(breaker.consecutive_fails)) return 'neutral';
   return breaker.consecutive_fails > 0 ? 'warn' : 'ok';
 }
 
 function getBreakerLabel(breaker) {
   if (breaker.suspended) return 'suspended';
+  if (!Number.isFinite(breaker.consecutive_fails)) return 'count not loaded';
   return breaker.consecutive_fails > 0 ? 'fail streak' : 'safe to route';
 }
 
@@ -1633,7 +1636,7 @@ function getDrawerHealthVerdictAg(entry, hasSignal, failure) {
   }
 
   const health = qualityHealthVerdict(entry.healthIndex);
-  const indexPct = (entry.healthIndex * 100).toFixed(0);
+  const indexPct = formatDecimalAg(entry.healthIndex * 100, 0);
   const driver = [failDriver, qualityHealthDriverPhrase(entry.dominantDriver)].filter(Boolean).join(' · ');
   if (failCount > 0) return { tone: 'crit', label: 'Needs attention', driver, indexPct };
   return { tone: health.tone, label: health.label, driver, indexPct };

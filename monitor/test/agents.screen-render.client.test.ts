@@ -2507,6 +2507,25 @@ describe("Agents values take the shared number, date and nothing forms", () => {
     assert.deepEqual(findAtoms(tree, "AbsentValue").map((n) => n.props.kind), ["not-loaded"]);
   });
 
+  describe("a breaker badge claims a state only from a fail count it read", () => {
+    const rows = [
+      { name: "suspended", alarm: { suspended: true, consecutive_fails: 3 }, tone: "crit", label: "suspended" },
+      { name: "a fail streak", alarm: { consecutive_fails: 2 }, tone: "warn", label: "fail streak" },
+      { name: "a read zero", alarm: { consecutive_fails: 0 }, tone: "ok", label: "safe to route" },
+      { name: "no count in the reading", alarm: {}, tone: "neutral", label: "count not loaded" },
+      { name: "a null count", alarm: { consecutive_fails: null }, tone: "neutral", label: "count not loaded" },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const mod = await loadAgentsScreen(formOverrides());
+        const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+        const tree = renderScreen(React.createElement(mod.AgentAlarmRow as Component, { alarm: { agent: "glass-atrium-dev-shell", ...row.alarm } }));
+        const [badge] = findAtoms(tree, "Badge");
+        assert.deepEqual({ tone: badge.props.tone, label: collectText(badge) }, { tone: row.tone, label: row.label });
+      });
+    }
+  });
+
   test("the revision mix draws every bucket in the one data colour, split by separators, with each count in visible text", async () => {
     const mod = await loadAgentsScreen(formOverrides());
     const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
