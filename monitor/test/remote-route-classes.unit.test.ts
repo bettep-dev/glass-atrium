@@ -3,6 +3,9 @@
 
 import test, { after, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import Fastify, { type RouteOptions } from "fastify";
 
@@ -146,4 +149,41 @@ test("an unknown route has no class and HEAD reads its GET class", () => {
     { name: "loopback admin route", method: "DELETE", path: "/api/remote/devices/:id", expected: "remote-admin" },
   ] as const;
   for (const row of rows) assert.equal(getRouteClass(row.method, row.path), row.expected, row.name);
+});
+
+const PUBLIC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+// a base the page appends a computed sub-path to (queue.jsx → sendOwnerRequestQ) → covered when a class sits under it
+const PAGE_API_BASES = new Set(["/api/queue/owner"]);
+const API_LITERAL = /(["'`])(\/api\/[^"'`]*?)\1/g;
+
+/** Every `/api/` path literal in the page sources, query dropped and `${…}` segments read as a route parameter. */
+async function collectPageApiPaths(): Promise<Set<string>> {
+  const entries = await readdir(path.join(PUBLIC_ROOT, "src"), { recursive: true });
+  const files = [...entries.filter((entry) => /\.jsx?$/.test(entry)).map((entry) => path.join("src", entry)), "sign-in.js"];
+  const sources = await Promise.all(files.map((file) => readFile(path.join(PUBLIC_ROOT, file), "utf8")));
+  const paths = new Set<string>();
+  for (const source of sources) {
+    for (const match of source.matchAll(API_LITERAL)) {
+      const pathPart = (match[2] ?? "").split("?")[0] ?? "";
+      paths.add(pathPart.replace(/\$\{[^}]*\}/g, ":param"));
+    }
+  }
+  return paths;
+}
+
+function isClassedPath(pagePath: string, classedPaths: readonly string[]): boolean {
+  if (PAGE_API_BASES.has(pagePath)) return classedPaths.some((route) => route.startsWith(`${pagePath}/`));
+  const segments = pagePath.split("/");
+  return classedPaths.some((route) => {
+    const routeSegments = route.split("/");
+    return routeSegments.length === segments.length && routeSegments.every((part, index) => part === segments[index] || part.startsWith(":") || segments[index] === ":param");
+  });
+}
+
+test("every API path the page calls has a route class, so a new page call cannot fail unseen on a phone", async () => {
+  const classedPaths = REVIEWED_ROUTES.map((entry) => entry.route.split(" ")[1] ?? "");
+  const pagePaths = await collectPageApiPaths();
+  const unclassed = [...pagePaths].filter((pagePath) => !isClassedPath(pagePath, classedPaths));
+  assert.ok(pagePaths.size > 50, `page API literals found: ${pagePaths.size}`);
+  assert.deepEqual(unclassed, [], "classify these page calls in remote/route-classes.ts with a reviewer sign-off");
 });
