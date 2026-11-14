@@ -42,8 +42,8 @@ export async function registerSurface(app: FastifyInstance): Promise<void> {
     root: PUBLIC_ROOT,
     prefix: "/",
     index: ["index.html"],
-    setHeaders: (response) => {
-      for (const [name, value] of Object.entries(STATIC_FRAME_HEADERS)) response.setHeader(name, value);
+    setHeaders: (reply) => {
+      reply.headers(STATIC_FRAME_HEADERS);
     },
   });
   await registerRoutes(app);
