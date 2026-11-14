@@ -13,6 +13,8 @@ const NAV = [
 	{ id: "architecture", label: "System map", icon: "git" },
 	{ id: "clauded-docs", label: "Documents", icon: "file-text" },
 	{ id: "queue", label: "Queue", icon: "inbox", badgeFill: "solid" },
+	// isLoopbackOnly → its routes answer the Mac page alone, so the remote page never lists it
+	{ id: "remote-access", label: "Remote access", icon: "smartphone", isLoopbackOnly: true },
 ];
 
 // EDITMODE 마커 — host 프로토콜이 디스크 위 JSON 블록 재기록
@@ -34,6 +36,7 @@ const Screens = {
 	architecture: window.ScreenArchitecture,
 	"clauded-docs": window.ScreenClaudedDocs,
 	queue: window.ScreenQueue,
+	"remote-access": window.ScreenRemoteAccess,
 };
 
 const NAV_BADGE_POLL_MS = 60_000;
@@ -83,7 +86,7 @@ function onSkipToContent(event) {
 // hash 형식 `#screen?per-screen-query` — '?' 앞부분만 screen id
 function parseHashScreen() {
 	const raw = window.location.hash.replace(/^#/, "").split("?")[0];
-	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
+	return NAV_ITEMS.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
 function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
@@ -105,7 +108,7 @@ function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 			</div>
 			<nav aria-label="Primary" className="flex-1 p-2 overflow-y-auto">
 				<div className="space-y-0.5">
-					{NAV.map((n) => {
+					{NAV_ITEMS.map((n) => {
 						// dynamicBadges 키 존재 = polled (null 이어도 정적 fallback 차단)
 						const hasDyn =
 							dynamicBadges &&
@@ -258,9 +261,10 @@ function agentsToNavBadges(agentsState) {
 	return { agents: { badge: String(unsafeCount), badgeTone, glyph, source: "breaker", title, description: title } };
 }
 
-// remote device page — the shared CSRF wrapper goes in before any screen sends a mutation
-window.UI.installRemoteFetch(window);
-const IS_REMOTE_PAGE = window.UI.isRemotePage(window.location);
+// remote device page — the shared CSRF wrapper goes in before any screen sends a mutation; no UI (a sandbox reading NAV) → loopback
+window.UI?.installRemoteFetch(window);
+const IS_REMOTE_PAGE = window.UI?.isRemotePage(window.location) === true;
+const NAV_ITEMS = IS_REMOTE_PAGE ? NAV.filter((item) => !item.isLoopbackOnly) : NAV;
 const REMOTE_ACT_URL = { logout: "/api/remote/logout", off: "/api/remote/off" };
 // red-outline destructive (design.md §7.4) → turning off cuts every device, this one included
 const TURN_OFF_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
@@ -460,7 +464,7 @@ function App() {
 	});
 
 	const Screen = Screens[active];
-	const activeNav = NAV.find((n) => n.id === active);
+	const activeNav = NAV_ITEMS.find((n) => n.id === active);
 
 	// min-h-[100dvh] — architecture (h-full) 가 부모 높이를 배로 끌어올리는 것 차단
 	// dvh — iOS Safari 주소창 가변 영역 안전 (vh 흔들림 회피)
