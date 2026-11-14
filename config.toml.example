@@ -102,3 +102,14 @@ time = "04:30"
 
 [daemon.wiki-compile]
 time = "04:50"
+
+[remote_access]
+# Monitor access from other devices on a trusted Wi-Fi: HTTPS, registered devices only, opt-in.
+# Absent table or key → off; on only for `enabled = true` with a valid port. Change it with
+# `glass-atrium remote on|off|trust` (the updater never turns it on).
+# ga:optional
+enabled = false
+# HTTPS port on the Wi-Fi address; 1024-65535, never the monitor port
+# ga:optional
+port = 16146
+# trusted_networks = "<gateway IPv4>@<gateway hardware address>,…" — written only by `glass-atrium remote trust`

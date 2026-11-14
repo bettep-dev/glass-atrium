@@ -315,3 +315,87 @@ example_time() {
     return 1
   }
 }
+
+# ---------------------------------------------------------------------------
+# ATRIUM_REMOTE_* ← [remote_access] — every key on every render, off unless exactly on
+# ---------------------------------------------------------------------------
+
+# Append a [remote_access] table to the sandbox config. Args: the table's body lines.
+write_remote_table() {
+  {
+    printf '\n[remote_access]\n'
+    printf '%s\n' "$@"
+  } >>"${SANDBOX}/config.toml"
+}
+
+remote_env_line() {
+  grep -E "^$1=" "${SANDBOX}/monitor/.env" || true
+}
+
+@test "remote keys render on only for enabled = true with a valid port, and off for every other table" {
+  local rows=(
+    'absent table|__NONE__|off||'
+    'enabled with port and two networks|enabled = true;port = 16146;trusted_networks = "192.168.0.1@0a:1b:2c:3d:4e:5f, 10.0.0.1@aa:bb:cc:dd:ee:ff"|on|16146|192.168.0.1@0a:1b:2c:3d:4e:5f,10.0.0.1@aa:bb:cc:dd:ee:ff'
+    'enabled false|enabled = false;port = 16146|off|16146|'
+    'enabled as a near-miss string|enabled = "yes";port = 16146|off|16146|'
+    'enabled without a port|enabled = true|off||'
+  )
+  local row name body access port trusted line
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name body access port trusted <<<"${row}"
+    write_config "auto"
+    if [[ "${body}" != "__NONE__" ]]; then
+      IFS=';' read -r -a lines <<<"${body}"
+      write_remote_table "${lines[@]}"
+    fi
+    run_render
+    [[ "${status}" -eq 0 ]] || { echo "${name}: ${output}"; return 1; }
+    line="$(remote_env_line ATRIUM_REMOTE_ACCESS)"
+    [[ "${line}" == "ATRIUM_REMOTE_ACCESS=${access}" ]] || { echo "${name}: ${line}"; return 1; }
+    line="$(remote_env_line ATRIUM_REMOTE_PORT)"
+    [[ "${line}" == "ATRIUM_REMOTE_PORT=${port}" ]] || { echo "${name}: ${line}"; return 1; }
+    line="$(remote_env_line ATRIUM_REMOTE_TRUSTED_NETWORKS)"
+    [[ "${line}" == "ATRIUM_REMOTE_TRUSTED_NETWORKS=${trusted}" ]] || { echo "${name}: ${line}"; return 1; }
+  done
+}
+
+@test "removing the [remote_access] table after it was on renders the feature off" {
+  write_remote_table 'enabled = true' 'port = 16146'
+  run_render
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  grep -q '^ATRIUM_REMOTE_ACCESS=on$' "${SANDBOX}/monitor/.env"
+  write_config "auto"
+  run_render
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  grep -q '^ATRIUM_REMOTE_ACCESS=off$' "${SANDBOX}/monitor/.env"
+}
+
+@test "an invalid remote port or trusted entry fails the render and writes no key" {
+  local rows=(
+    'port below 1024|port = 80'
+    'port equal to the monitor port|port = 17842'
+    'port not a number|port = "16146a"'
+    'public gateway|trusted_networks = "8.8.8.8@aa:bb:cc:dd:ee:ff"'
+    'short hardware address|trusted_networks = "192.168.0.1@aa:bb:cc:dd:ee"'
+    'unpadded hardware address|trusted_networks = "192.168.0.1@a:bb:cc:dd:ee:ff"'
+    'octet out of range|trusted_networks = "192.168.0.256@aa:bb:cc:dd:ee:ff"'
+  )
+  local row name body env_file="${SANDBOX}/monitor/.env"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name body <<<"${row}"
+    write_config "auto"
+    write_remote_table 'enabled = true' "${body}"
+    if ga_guard_path "${env_file}"; then rm -f -- "${env_file:?}"; fi
+    run_render
+    [[ "${status}" -ne 0 ]] || { echo "${name}: rendered"; return 1; }
+    [[ ! -f "${SANDBOX}/monitor/.env" ]] || { echo "${name}: .env written"; return 1; }
+  done
+}
+
+@test "the rendered .env is owner-only" {
+  printf 'DATABASE_URL=postgresql:///x?host=/tmp\n' >"${SANDBOX}/monitor/.env"
+  chmod 644 "${SANDBOX}/monitor/.env"
+  run_render
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(stat -f '%Lp' "${SANDBOX}/monitor/.env")" == "600" ]]
+}

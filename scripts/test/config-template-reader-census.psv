@@ -26,3 +26,5 @@
 [ports]|monitor|scripts/lib/atrium-config.sh|atrium_config_port '[ports]' 'monitor'|
 [ports]|wiki_fakechat|lib/ga-daemons.sh|wiki_fakechat|
 [release]|repo|scripts/publish-release.sh|[release].repo|
+[remote_access]|enabled|scripts/render-monitor-env.sh|atrium_toml_get "[remote_access]" "enabled"|
+[remote_access]|port|scripts/render-monitor-env.sh|atrium_toml_get "[remote_access]" "port"|
