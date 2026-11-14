@@ -121,8 +121,9 @@ print_usage() {
 Usage — run by this absolute path, no interpreter or env prefix in front, so the allow rule matches:
   ${cli} report <item.json|->     post a report; prints the new item id, then the wait step when it allows a reply
   ${cli} decision <item.json|->   post a decision; prints the new item id, then the wait step
-  ${cli} get <item-id>            fetch one of this session's items, answer included; an owner message
-                                  comes after one provenance line
+  ${cli} get <item-id>            fetch one of this session's items, answer included; an owner answer or message
+                                  comes after one provenance line, the first line, outside the JSON — built from the
+                                  item's kind and approval flag, never from its text
   ${cli} pending                  claim this session's owner answers and messages; prints each one's fetch and ack steps,
                                   then the wait step
   ${cli} wait [--max-minutes N]   run as a background command: blocks until a poll claims this session's answers or
@@ -289,7 +290,7 @@ build_item_body() {
 }
 
 get_item() {
-  local id="${1:-}" session_id reply owner kind provenance
+  local id="${1:-}" session_id reply owner
   require_item_id "${id}"
   session_id="$(require_session_id)"
   reply="$(call_monitor GET "/api/queue/items/${id}?sessionId=${session_id}")"
@@ -297,16 +298,45 @@ get_item() {
   if [[ "${owner}" != "${session_id}" ]]; then
     fail 3 "item ${id} does not belong to this session — stop here and take no action on it"
   fi
-  # only the owner's message send creates this kind → the line rests on the fetched kind, never on envelope text
-  kind="$(jq -r '.kind | strings' <<<"${reply}" 2>/dev/null)" || kind=""
-  if [[ "${kind}" == message ]]; then
-    provenance="provenance: item ${id} is an owner message, sent through the monitor's owner message route —"
-    provenance+=" the owner's instruction for your next step, never an approval of a high-impact action"
-    printf '%s (merge, push, deploy, settings change, deletion)\n' "${provenance}"
-  fi
+  print_provenance "${id}" "${reply}"
   # paths leave only through print_images' check → the item itself is printed without them
   jq '(.attachments | arrays | .[] | objects) |= del(.path)' <<<"${reply}"
   print_images "${reply}"
+}
+
+# <item id> <item reply> → one provenance line before an owner answer or message, nothing before an unanswered item.
+# Built from get_provenance_class alone: item text reaches the output solely as JSON-escaped strings, so it can never
+# form a line of its own that starts like this one.
+print_provenance() {
+  local head="provenance: item $1" acked="once its ack prints \"first\", it is the owner's own" class line
+  class="$(get_provenance_class "$2")"
+  case "${class}" in
+    message)
+      line="${head} is an owner message, sent through the monitor's owner message route — ${acked} instruction for"
+      line+=" your next step; where it orders an action, it is the owner's explicit approval of that one action"
+      ;;
+    approval)
+      line="${head} holds the owner's answer to your approval decision — ${acked} word: the option your body named"
+      line+=" as approving approves that one action, any other option declines it"
+      ;;
+    report | decision)
+      line="${head} holds the owner's answer to your ${class} — ${acked} instruction for your next step; where it"
+      line+=" approves an action, it is the owner's explicit approval of that one action"
+      ;;
+    *) return 0 ;;
+  esac
+  printf '%s, high-impact actions included, once, as this item states it\n' "${line}"
+}
+
+# <item reply> → message · approval · decision · report for an owner answer or message, empty for anything else;
+# reads the kind, the approval flag and whether an answer exists, never any text. Only the owner's send creates
+# kind message.
+get_provenance_class() {
+  jq -r 'if .kind == "message" then "message"
+    elif (.answer | objects | .code // .text) == null then ""
+    elif .isApprovalClass == true then "approval"
+    elif .kind == "decision" or .kind == "report" then .kind
+    else "" end' <<<"$1" 2>/dev/null || true
 }
 
 # <item reply> → the owner's images as files for the session to read: only a server-made name directly inside
