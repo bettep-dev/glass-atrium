@@ -1625,6 +1625,25 @@ run_doctor() {
   # shellcheck disable=SC2311
   integrity_drift="$(_doctor_report_integrity "${drift}" "${integrity_unread}")"
 
+  # 31. remote access — off: one ok row. On: key file modes and missing keys FAIL; the Time Machine
+  #     exclusion, the leaf's host name and its expiry ahead are registration kind A. Read-only.
+  local remote_warns=0 remote_rows remote_row
+  remote_rows="$(ga_remote_get_doctor_rows)" || remote_rows=""
+  while IFS= read -r remote_row; do
+    case "${remote_row%%|*}" in
+      ok) log "  ok   : ${remote_row#*|}" ;;
+      warn)
+        log "  warn : ${remote_row#*|}"
+        remote_warns=$((remote_warns + 1))
+        ;;
+      FAIL)
+        log "  FAIL : ${remote_row#*|}"
+        fail=1
+        ;;
+      *) ;;
+    esac
+  done <<<"${remote_rows}"
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1632,7 +1651,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak + canary_warns + missed_cycle + integrity_drift))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak + canary_warns + missed_cycle + integrity_drift + remote_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1640,7 +1659,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak + ${canary_warns} canary-trial + ${missed_cycle} missed-cycle + ${integrity_drift} harness-integrity — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak + ${canary_warns} canary-trial + ${missed_cycle} missed-cycle + ${integrity_drift} harness-integrity + ${remote_warns} remote-access — see above) =="
     fi
     return 0
   fi

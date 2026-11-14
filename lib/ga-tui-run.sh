@@ -546,7 +546,8 @@ build_step_plan() {
       )
       ;;
     uninstall)
-      # run_uninstall body: manifest containment gate → launchd teardown → detached-daemon stop → DB drop →
+      # run_uninstall body: manifest containment gate → launchd teardown → detached-daemon stop →
+      # remote access keys + device rows → DB drop →
       # node_modules removal → manifest-link removal → orphan sweep → empty-dir
       # cleanup → update-state teardown → hook un-wire → shell-rc PATH-line removal.
       # launchd teardown runs FIRST, then the detached-daemon stop reaches the tmux
@@ -564,6 +565,7 @@ build_step_plan() {
         "Check manifest containment"
         "Tear down launchd jobs"
         "Stop detached daemons"
+        "Remove remote access keys"
         "Drop databases"
         "Remove node_modules"
         "Remove manifest symlinks"
@@ -577,6 +579,7 @@ build_step_plan() {
         "Checking manifest containment…"
         "Tearing down launchd jobs…"
         "Stopping detached daemons…"
+        "Removing remote access keys…"
         "Dropping databases…"
         "Removing node_modules…"
         "Removing manifest symlinks…"
@@ -590,6 +593,7 @@ build_step_plan() {
         "require_contained_manifest_keys"
         "unload_launchd_jobs"
         "stop_detached_daemons"
+        "ga_remote_uninstall"
         "drop_databases"
         "remove_node_modules"
         "remove_manifest_links"

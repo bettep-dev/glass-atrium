@@ -372,18 +372,12 @@ ga_remote_cmd_off() {
 }
 
 ga_remote_cmd_on() {
-  local dir port count trusted
+  local count trusted
   ga_remote_require_confirmation on \
     "Turn on monitor access for registered devices on trusted Wi-Fi networks? Type 'on' to confirm: " || return 4
-  dir="$(ga_remote_get_key_dir)"
-  if ! ga_remote_create_ca "${dir}" || { ga_remote_is_leaf_due "${dir}" && ! ga_remote_issue_leaf "${dir}"; }; then
-    printf 'remote: the certificates could not be created — nothing changed\n' >&2
-    return 7
-  fi
-  port="$(atrium_toml_get "[remote_access]" "port")"
-  if [[ -z "${port}" ]] && ! ga_remote_set_config port "${GA_REMOTE_PORT_DEFAULT}"; then return 1; fi
-  if ! ga_remote_set_config enabled true || ! ga_remote_apply_config; then
-    printf 'remote: on was not applied (config.toml or the monitor restart failed)\n' >&2
+  ga_remote_enable || return
+  if ! ga_remote_apply_config; then
+    printf 'remote: on was not applied (the monitor restart failed)\n' >&2
     return 1
   fi
   count="$(ga_remote_cmd_list 2>/dev/null)" || count=""
@@ -394,7 +388,39 @@ ga_remote_cmd_on() {
     || printf "remote: no trusted network yet — run 'glass-atrium remote trust' on the Wi-Fi to open on\n"
 }
 
+# Keys, the default port and enabled = true in config.toml; no restart (the caller owns it).
+ga_remote_enable() {
+  local dir port
+  dir="$(ga_remote_get_key_dir)"
+  if ! ga_remote_create_ca "${dir}" || { ga_remote_is_leaf_due "${dir}" && ! ga_remote_issue_leaf "${dir}"; }; then
+    printf 'remote: the certificates could not be created — nothing changed\n' >&2
+    return 7
+  fi
+  port="$(atrium_toml_get "[remote_access]" "port")"
+  if { [[ -z "${port}" ]] && ! ga_remote_set_config port "${GA_REMOTE_PORT_DEFAULT}"; } \
+    || ! ga_remote_set_config enabled true; then
+    printf 'remote: config.toml could not be written — access stays off\n' >&2
+    return 1
+  fi
+}
+
 ga_remote_cmd_trust() {
+  local rc=0
+  ga_remote_trust_network || rc=$?
+  ((rc == GA_REMOTE_ALREADY_TRUSTED)) && return 0
+  ((rc == 0)) || return "${rc}"
+  if ! ga_remote_apply_config; then
+    printf 'remote: trust was not applied (the monitor restart failed)\n' >&2
+    return 1
+  fi
+  printf 'remote: network trusted\n'
+}
+
+GA_REMOTE_ALREADY_TRUSTED=9
+
+# Show the current network's identity, confirm by the typed word, append it to the trusted list; no restart.
+# Returns GA_REMOTE_ALREADY_TRUSTED when the list already holds it (nothing written).
+ga_remote_trust_network() {
   local identity entry current list
   if ! identity="$(ga_remote_get_network_identity)"; then
     printf 'remote: network identity unreadable (no default gateway, a public gateway, or no ARP entry) — nothing written\n' >&2
@@ -412,13 +438,12 @@ ga_remote_cmd_trust() {
   fi
   if [[ ",${list}," == *",${entry},"* ]]; then
     printf 'remote: this network is already trusted\n'
-    return 0
+    return "${GA_REMOTE_ALREADY_TRUSTED}"
   fi
-  if ! ga_remote_set_config trusted_networks "\"${list:+${list},}${entry}\"" || ! ga_remote_apply_config; then
-    printf 'remote: trust was not applied (config.toml or the monitor restart failed)\n' >&2
+  if ! ga_remote_set_config trusted_networks "\"${list:+${list},}${entry}\""; then
+    printf 'remote: config.toml could not be written — nothing trusted\n' >&2
     return 1
   fi
-  printf 'remote: network trusted\n'
 }
 
 ga_remote_cmd_reissue() {
@@ -433,4 +458,122 @@ ga_remote_cmd_reissue() {
     return 7
   fi
   printf 'remote: leaf reissued; the monitor serves it from its next network check\n'
+}
+
+# --- install lifecycle (lib/ga-core.sh → run_install · run_uninstall · lib/ga-doctor.sh → run_doctor) ---
+
+# Installer opt-in, default No: only a yes typed on a terminal turns access on; no restart here (the
+# install's own later steps render the env and start the monitor).
+ga_remote_install_opt_in() {
+  local reply="" rc=0 enabled
+  enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
+  if [[ "${enabled}" == "true" ]]; then
+    printf 'remote access: already on — kept (glass-atrium remote off turns it off)\n' >&2
+    return 0
+  fi
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_remote_is_terminal; then
+    printf 'Open the monitor to your own registered devices on a trusted Wi-Fi (HTTPS, local CA)? [y/N]: ' >&2
+    IFS= read -r reply || reply=""
+  fi
+  if [[ "${reply}" != "y" && "${reply}" != "Y" ]]; then
+    printf "remote access: off — the monitor stays loopback-only (later: 'glass-atrium remote on')\n" >&2
+    return 0
+  fi
+  ga_remote_enable || return
+  ga_remote_trust_network || rc=$?
+  ((rc == 0 || rc == GA_REMOTE_ALREADY_TRUSTED)) \
+    || printf "remote access: no trusted network yet — run 'glass-atrium remote trust' on the Wi-Fi\n" >&2
+  ga_remote_print_device_steps
+}
+
+# Per-device steps: carry the CA certificate over, compare the fingerprint, trust it once, open the address.
+ga_remote_print_device_steps() {
+  local dir fingerprint names port
+  dir="$(ga_remote_get_key_dir)"
+  fingerprint="$(ga_remote_run openssl x509 -fingerprint -sha256 -noout -in "${dir}/ca.pem")" || fingerprint=""
+  names="$(ga_remote_get_leaf_names)" || names="<this-mac>.local -"
+  port="$(atrium_toml_get "[remote_access]" "port")"
+  printf '%s\n' 'Each device, once:' \
+    "  1. Send ${dir}/ca.pem to the device (AirDrop, or a cable) — the certificate only, never a .key file." \
+    "  2. Check that the device shows this SHA-256 fingerprint: ${fingerprint#*=}" \
+    '  3. iPhone/iPad: Settings → General → VPN & Device Management → install the profile, then' \
+    '     Settings → General → About → Certificate Trust Settings → turn on Glass Atrium Local CA.' \
+    '     Android: Settings → Security → Encryption & credentials → Install a certificate → CA certificate.' \
+    "  4. Open https://${names% *}:${port:-${GA_REMOTE_PORT_DEFAULT}} and enter the code the Mac's monitor page shows." >&2
+}
+
+# Uninstall: the device rows (before the pre-drop backup copies them), the key dir, access off, and the
+# owner's per-device step. Never fails the uninstall.
+ga_remote_uninstall() {
+  local dir enabled
+  dir="$(ga_remote_get_key_dir)"
+  if "${DRY_RUN:-false}"; then
+    printf 'dry-run: remote access keys (%s) and device rows left in place\n' "${dir}" >&2
+    return 0
+  fi
+  if ! psql -h "${PG_SOCKET:-}" -d "${DB_NAME:-glass_atrium}" -v ON_ERROR_STOP=1 -qtA >/dev/null 2>&1 \
+    <<<'DELETE FROM monitor.remote_devices;'; then
+    printf 'uninstall: remote access device rows were not deleted (database unreachable or table absent)\n' >&2
+  fi
+  # shellcheck disable=SC2310  # guard verdict branched on — a refusal is a skip, never an abort
+  if ga_guard_path "${dir}"; then rm -rf -- "${dir:?}"; fi
+  enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
+  if [[ "${enabled}" == "true" ]]; then
+    ga_remote_set_config enabled false || printf 'uninstall: [remote_access].enabled could not be set to false\n' >&2
+  fi
+  printf '%s\n' 'uninstall: remote access keys removed. On each device that trusted it, remove the' \
+    '  Glass Atrium Local CA (iPhone/iPad: Settings → General → VPN & Device Management; Android:' \
+    '  Settings → Security → Encryption & credentials → User credentials).' >&2
+}
+
+# Doctor rows, one "<ok|warn|FAIL>|<text>" per line; reads only, never repairs.
+ga_remote_get_doctor_rows() {
+  local dir enabled
+  enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
+  if [[ "${enabled}" != "true" ]]; then
+    printf 'ok|remote access off — the monitor listens on loopback only\n'
+    return 0
+  fi
+  dir="$(ga_remote_get_key_dir)"
+  if [[ ! -f "${dir}/ca.pem" || ! -f "${dir}/leaf.pem" || ! -f "${dir}/leaf.key" ]]; then
+    printf "FAIL|remote access on but its certificates are missing (%s) — run 'glass-atrium remote reissue'\n" "${dir}"
+    return 0
+  fi
+  _ga_remote_get_key_rows "${dir}"
+  _ga_remote_get_leaf_rows "${dir}"
+}
+
+_ga_remote_get_key_rows() {
+  local dir="$1" loose excluded
+  loose="$(ga_remote_get_loose_modes "${dir}")" || loose="${dir}"
+  loose="${loose//$'\n'/ }"
+  if [[ -n "${loose}" ]]; then
+    printf 'FAIL|remote access key files not owner-only: %s— chmod 700 the dir, 600 each file\n' "${loose}"
+  else
+    printf 'ok|remote access key files owner-only\n'
+  fi
+  excluded="$(ga_remote_run tmutil isexcluded "${dir}" 2>/dev/null)" || excluded=""
+  if [[ "${excluded}" == *"[Excluded]"* ]]; then
+    printf 'ok|remote access key dir excluded from Time Machine\n'
+  else
+    printf "warn|remote access key dir not excluded from Time Machine — run 'tmutil addexclusion %s'\n" "${dir}"
+  fi
+}
+
+_ga_remote_get_leaf_rows() {
+  local dir="$1" host text
+  host="$(ga_remote_run scutil --get LocalHostName 2>/dev/null)" || host=""
+  host="$(printf '%s' "${host}" | tr '[:upper:]' '[:lower:]')"
+  text="$(ga_remote_run openssl x509 -in "${dir}/leaf.pem" -noout -text 2>/dev/null)" || text=""
+  if [[ -n "${host}" && "${text}" == *"DNS:${host}.local"* ]]; then
+    printf 'ok|remote access certificate names %s.local\n' "${host}"
+  else
+    printf "warn|remote access certificate does not name this Mac's local host name (%s.local) — run 'glass-atrium remote reissue'\n" "${host}"
+  fi
+  if ga_remote_run openssl x509 -checkend "${GA_REMOTE_REISSUE_AHEAD_SECONDS}" -noout -in "${dir}/leaf.pem" >/dev/null 2>&1; then
+    printf 'ok|remote access certificate valid beyond %s days\n' "$((GA_REMOTE_REISSUE_AHEAD_SECONDS / 86400))"
+  else
+    printf "warn|remote access certificate expires within %s days — run 'glass-atrium remote reissue'\n" "$((GA_REMOTE_REISSUE_AHEAD_SECONDS / 86400))"
+  fi
 }
