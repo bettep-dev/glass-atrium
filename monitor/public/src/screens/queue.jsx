@@ -967,9 +967,9 @@ function getSendTargetsQ(rows, selectedIds) {
 	return { ids: targets.map((row) => row.id), names: targets.map((row) => row.name), endedCount: targets.filter((row) => row.state === "exited").length };
 }
 
-function getSendLabelQ(targets) {
-	const parts = getSendPartsQ(targets);
-	return parts ? `${parts.head}${parts.name}${parts.tail}` : "Send order";
+// the send label whole, from its parts (getSendPartsQ) → the button's accessible name and title
+function getSendLabelQ(parts) {
+	return parts ?`${parts.head}${parts.name}${parts.tail}` : "Send order";
 }
 
 /**
@@ -1489,24 +1489,24 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, on
 	);
 }
 
-// one cut line, the whole name in its tooltip; no registered name → `start directory` under it, so it never reads as one the session chose
+// one cut line, the whole name in its tooltip; an order to several sessions names their count, never a directory
 function RowWhoQ({ row }) {
-	const { session } = row.item;
-	const name = row.copies.length > 1 ? `${row.copies.length} sessions` : session.name;
-	return (
-		<>
-			<span className="queue-row-name" title={name}>{name}</span>
-			{row.copies.length === 1 && session.isNameRegistered === false && <span className="queue-row-dir">start directory</span>}
-		</>
-	);
+	const count = row.copies.length;
+	if (count > 1) return <span className="queue-row-name" title={`${count} sessions`}>{`${count} sessions`}</span>;
+	return <ItemSessionNameQ session={row.item.session} isStacked />;
 }
 
-// no registered name → the start-directory name, marked so it never reads as one the session chose
-function ItemSessionNameQ({ session }) {
+/**
+ * No registered name → the start-directory name, marked so it never reads as one the session chose.
+ * `isStacked` → the list's name column: the name one cut line with its tooltip, the marker its own line under it.
+ */
+function ItemSessionNameQ({ session, isStacked = false }) {
+	const hasMark = session.isNameRegistered === false;
+	if (!isStacked) return <>{session.name}{hasMark && <span className="font-normal text-dim">{" start directory"}</span>}</>;
 	return (
 		<>
-			{session.name}
-			{session.isNameRegistered === false && <span className="font-normal text-dim">{" start directory"}</span>}
+			<span className="queue-row-name" title={session.name}>{session.name}</span>
+			{hasMark && <span className="queue-row-dir">start directory</span>}
 		</>
 	);
 }
@@ -2644,6 +2644,7 @@ function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }
 	const { orders } = queue;
 	const [changed, setChanged] = useRecipientsNoteQ(targets, box, isReady);
 	const onText = (text) => { setChanged(null); box.setText(text); };
+	const parts = getSendPartsQ(targets);
 	const onSend = () => {
 		const invalid = getOrderInvalidQ(targets, box.text);
 		if (invalid === null) {
@@ -2657,7 +2658,7 @@ function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }
 	return (
 		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: <OrderLabelQ rows={rows.filter((row) => targets.ids.includes(row.id))} /> }} tray={tray}
 			text={box.text} onText={onText} isBusy={box.isBusy}
-			buttons={[{ label: getSendLabelQ(targets), parts: getSendPartsQ(targets), isInk: box.text.trim() !== "" && targets.ids.length > 0, keyName: "send", onPress: onSend }]}
+			buttons={[{ label: getSendLabelQ(parts), parts, isInk: box.text.trim() !== "" && targets.ids.length > 0, keyName: "send", onPress: onSend }]}
 			note={<ComposerNoteQ error={box.error} info={changed} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets, isReady ? rows : null)} />} />
 	);
 }

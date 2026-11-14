@@ -1167,14 +1167,14 @@ describe("the page re-reads itself", () => {
     assert.equal(result.isGood, true);
   });
 
-  test("an arrival is marked New and reported", async () => {
+  test("an arrival is tracked and reported", async () => {
     const answer = { items: [buildItem({ id: 1 }), buildItem({ id: 6 })], nextCursor: null };
     const marked = await readOnce(loadedList({ newIds: [1] }), 200, answer);
     assert.deepEqual(marked.list.newIds, [1, 6]);
     assert.deepEqual(marked.result.arrived.map((item) => item.id), [6]);
   });
 
-  test("a New mark goes with its row when a read no longer has it", async () => {
+  test("an arrival stops being tracked when a read no longer has its row", async () => {
     const { list } = await readOnce(loadedList({ newIds: [1] }), 200, { items: [buildItem({ id: 2 })], nextCursor: null });
     assert.deepEqual(list.newIds, [2]);
   });
@@ -1214,11 +1214,11 @@ describe("the page re-reads itself", () => {
   const listBody = { top: 180, bottom: 820 };
   const rowAt = (id: number, top: number) => ({ id, top, bottom: top + 68 });
   const offViews = [
-    { name: "a New row inside the visible part needs no note", rows: [rowAt(7, 400)], expected: null },
-    { name: "a New row cut by an edge still shows, so needs no note", rows: [rowAt(7, 790)], expected: null },
-    { name: "a New row under the visible part is one new below", rows: [rowAt(7, 820)], expected: { count: 1, direction: "below", id: 7 } },
-    { name: "New rows over the visible part are counted, and Show goes to the nearest", rows: [rowAt(3, -200), rowAt(4, 112)], expected: { count: 2, direction: "above", id: 4 } },
-    { name: "New rows on both sides name the side below, nearest first", rows: [rowAt(3, 40), rowAt(9, 1200), rowAt(8, 900)], expected: { count: 2, direction: "below", id: 8 } },
+    { name: "an arrival's row inside the visible part needs no note", rows: [rowAt(7, 400)], expected: null },
+    { name: "an arrival's row cut by an edge still shows, so needs no note", rows: [rowAt(7, 790)], expected: null },
+    { name: "an arrival's row under the visible part is one new below", rows: [rowAt(7, 820)], expected: { count: 1, direction: "below", id: 7 } },
+    { name: "arrivals' rows over the visible part are counted, and Show goes to the nearest", rows: [rowAt(3, -200), rowAt(4, 112)], expected: { count: 2, direction: "above", id: 4 } },
+    { name: "arrivals' rows on both sides name the side below, nearest first", rows: [rowAt(3, 40), rowAt(9, 1200), rowAt(8, 900)], expected: { count: 2, direction: "below", id: 8 } },
     { name: "a list put away by an open sheet has no visible part to leave", body: { top: 0, bottom: 0 }, rows: [rowAt(7, 0)], expected: null },
   ];
   for (const row of offViews) test(`off-view note: ${row.name}`, () => assert.deepEqual(call("getOffViewQ", row.body ?? listBody, row.rows), row.expected));
@@ -1232,7 +1232,7 @@ describe("the page re-reads itself", () => {
   ];
   for (const row of seen) test(`arrival seen: ${row.name}`, () => assert.deepEqual(call("getInViewIdsQ", row.body ?? listBody, row.rows), row.expected));
 
-  test("the off-view note says how many New rows sit on which side, and its Show moves to the nearest", () => {
+  test("the off-view note says how many arrivals sit on which side, and its Show moves to the nearest", () => {
     const shown: number[] = [];
     const queue = { ...withList(buildQueue(), [buildItem()]), status: "New report from yoaida: Nightly sweep done" };
     const tree = render("ListFootQ", { queue, offView: { count: 1, direction: "below", id: 7 }, onShowNew: (id: number) => shown.push(id) });
@@ -1775,7 +1775,7 @@ describe("order composer", () => {
     { name: "several targets count them", targets: { ids: [SESSION_ID, ENDED_ID], names: ["gersona", "yoaida"], endedCount: 0 }, label: "Send to 2 sessions" },
     { name: "an ended target among them", targets: { ids: [SESSION_ID, ENDED_ID], names: ["gersona", "yoaida"], endedCount: 1 }, label: "Send to 2 sessions · resumes 1 ended" },
   ];
-  for (const row of labels) test(`the send label: ${row.name}`, () => assert.equal(call("getSendLabelQ", row.targets), row.label));
+  for (const row of labels) test(`the send label: ${row.name}`, () => assert.equal(call("getSendLabelQ", call("getSendPartsQ", row.targets)), row.label));
 
   const MAX_TARGETS = vm.runInContext("MESSAGE_Q.MAX_TARGETS", screen) as number;
   const targetsOf = (count: number) => ({ ids: Array.from({ length: count }, () => randomUUID()), names: Array.from({ length: count }, (_v, index) => `s${index}`), endedCount: 0 });
