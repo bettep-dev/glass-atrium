@@ -15,6 +15,7 @@ import { getMonitorPort } from "./monitor-port.js";
 import { type QueueScheduler, getSweepDeps, startQueueScheduler } from "./queue/scheduler.js";
 import { DeviceConnections } from "./remote/connections.js";
 import type { RemoteListenerController } from "./remote/controller.js";
+import { RegistrationCodes } from "./remote/registration-code.js";
 import { startRemoteAccess } from "./remote/start.js";
 
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
@@ -40,6 +41,8 @@ let queueScheduler: QueueScheduler | null = null;
 let remoteAccess: RemoteListenerController | null = null;
 // one owner → the remote gate tracks device sockets here and a cut-off closes them
 const deviceConnections = new DeviceConnections();
+// one owner → the Mac's loopback page opens the code the remote code POST consumes
+const registrationCodes = new RegistrationCodes();
 
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
@@ -105,7 +108,7 @@ async function main(): Promise<void> {
 
   // after the loopback listener → a remote failure never takes the Mac's own page down
   try {
-    remoteAccess = await startRemoteAccess({ monitorPort: PORT, connections: deviceConnections, log: app.log });
+    remoteAccess = await startRemoteAccess({ monitorPort: PORT, connections: deviceConnections, codes: registrationCodes, log: app.log });
   } catch (error) {
     app.log.error({ err: error }, "remote access start failed — remote listener stays closed");
   }

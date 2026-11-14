@@ -150,7 +150,7 @@ describe("registration", () => {
 
   test("the enumerated pre-auth route answers without a device", async () => {
     const harness = await buildHarness();
-    const response = await send(harness, { method: "POST", url: "/api/remote/register", headers: { host: HOST }, payload: {} });
+    const response = await send(harness, { method: "POST", url: "/api/remote/register", headers: { host: HOST, "sec-fetch-site": "same-origin" }, payload: {} });
     assert.equal(response.statusCode, 200);
     assert.deepEqual(harness.handled, ["register"]);
   });
@@ -265,7 +265,7 @@ describe("rate limits", () => {
     const harness = await buildHarness();
     const statuses = [];
     for (let index = 0; index < 61; index += 1) {
-      statuses.push((await send(harness, { method: "POST", url: "/api/remote/register", headers: { host: HOST }, payload: {} })).statusCode);
+      statuses.push((await send(harness, { method: "POST", url: "/api/remote/register", headers: { host: HOST, "sec-fetch-site": "same-origin" }, payload: {} })).statusCode);
     }
     assert.deepEqual([statuses[59], statuses[60]], [200, 429]);
   });

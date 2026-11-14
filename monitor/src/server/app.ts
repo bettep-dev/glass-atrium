@@ -16,6 +16,7 @@ import { getMonitorPort } from "./monitor-port.js";
 import { type ListenerContext, buildHostAllowlistHook, setListenerContext } from "./queue/request-gate.js";
 import { type RemoteGateDeps, registerRemoteGate } from "./remote/gate.js";
 import { type RemoteTls, getRemoteServerOptions, setRemoteSocketLimits } from "./remote/listener.js";
+import { type RemoteRegistrationDeps, registerRemoteDeviceRoutes } from "./remote/routes.js";
 import type { QueueRouteOptions } from "./routes/queue.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -66,6 +67,7 @@ export interface RemoteAppOptions {
   readonly tls: RemoteTls;
   readonly listener: ListenerContext;
   readonly gate: RemoteGateDeps;
+  readonly registration: RemoteRegistrationDeps;
   readonly queue?: QueueRouteOptions;
 }
 
@@ -82,6 +84,7 @@ export async function buildRemoteApp(options: RemoteAppOptions): Promise<Fastify
   // same parser set as loopback → a cross-origin text/plain simple request gets 415
   app.removeContentTypeParser("text/plain");
   await registerSurface(app, options.queue);
+  await registerRemoteDeviceRoutes(app, { ...options.registration, audit: options.gate.audit, ...(options.gate.now === undefined ? {} : { now: options.gate.now }) });
   return app;
 }
 

@@ -13,11 +13,13 @@ import { buildRemoteAuditWriter } from "../middleware/audit-log.js";
 import type { QueueRouteOptions } from "../routes/queue.js";
 import type { DeviceConnections } from "./connections.js";
 import { type RemoteListenerHandle, RemoteListenerController, getInterfaceAddress } from "./controller.js";
-import { findActiveDevice } from "./devices.js";
+import { createDevice, findActiveDevice } from "./devices.js";
 import type { RemoteGateDeps } from "./gate.js";
 import { type RemoteTls, readRemoteTls, setRemoteCertificate } from "./listener.js";
 import { getLocalHostName, getNetworkIdentity } from "./network.js";
+import type { RegistrationCodes } from "./registration-code.js";
 import { getRouteClass } from "./route-classes.js";
+import { REMOTE_PRE_AUTH_ROUTES, type RemoteRegistrationDeps } from "./routes.js";
 import { getRemoteSettings } from "./settings.js";
 
 export interface RemoteOpenerInput {
@@ -25,14 +27,13 @@ export interface RemoteOpenerInput {
   /** `<name>.local`; null → only the numeric address is admitted */
   readonly hostName: string | null;
   readonly gate: Pick<RemoteGateDeps, "findDevice" | "audit" | "connections">;
+  readonly registration: RemoteRegistrationDeps;
   readonly queue?: QueueRouteOptions;
 }
 
 // leaf files written by the installer (owner-only directory, git-ignored); fixed → no env or config can point elsewhere
 const REMOTE_DATA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "remote-access");
 const NETWORK_CHECK_MS = 10_000;
-// sign-in surface: empty until the registration routes and the sign-in page land → every remote route needs a device
-const PRE_AUTH_ROUTES: ReadonlySet<string> = new Set();
 
 export function buildRemoteOpener(input: RemoteOpenerInput): (address: string, tls: RemoteTls) => Promise<RemoteListenerHandle> {
   return async (address, tls) => {
@@ -43,7 +44,8 @@ export function buildRemoteOpener(input: RemoteOpenerInput): (address: string, t
     const app = await buildRemoteApp({
       tls,
       listener: { kind: "remote", getHosts, getPageOrigins },
-      gate: { ...input.gate, getHosts, getPageOrigins, getRouteClass, preAuthRoutes: PRE_AUTH_ROUTES },
+      gate: { ...input.gate, getHosts, getPageOrigins, getRouteClass, preAuthRoutes: REMOTE_PRE_AUTH_ROUTES },
+      registration: input.registration,
       ...(input.queue === undefined ? {} : { queue: input.queue }),
     });
     try {
@@ -63,6 +65,7 @@ export function buildRemoteOpener(input: RemoteOpenerInput): (address: string, t
 export async function startRemoteAccess(input: {
   readonly monitorPort: number;
   readonly connections: DeviceConnections;
+  readonly codes: RegistrationCodes;
   readonly log: FastifyBaseLogger;
 }): Promise<RemoteListenerController | null> {
   const settings = getRemoteSettings(process.env, input.monitorPort);
@@ -71,6 +74,7 @@ export async function startRemoteAccess(input: {
     port: settings.port,
     hostName: await getLocalHostName(),
     gate: { findDevice: (presented) => findActiveDevice(getPrisma(), presented), audit: buildRemoteAuditWriter(), connections: input.connections },
+    registration: { codes: input.codes, createDevice: (label) => createDevice(getPrisma(), label) },
   });
   const controller = new RemoteListenerController({
     settings,

@@ -18,6 +18,7 @@ import { disconnectPrisma } from "../src/server/db.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
 import { type RemoteTls, setRemoteCertificate } from "../src/server/remote/listener.js";
+import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 import { getRouteClass } from "../src/server/remote/route-classes.js";
 import { buildRemoteOpener } from "../src/server/remote/start.js";
 import { DEVICE_COOKIE } from "../src/server/remote/session.js";
@@ -59,6 +60,7 @@ async function openStandIn(
       preAuthRoutes: new Set(),
       audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
     },
+    registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
   });
   await app.listen({ host: STAND_IN, port: 0 });
   port = (app.server.address() as AddressInfo).port;
@@ -176,6 +178,7 @@ test("the opener admits only the bound address and the .local name at the remote
       audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
       connections: new DeviceConnections(),
     },
+    registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
   });
   const first = await open(STAND_IN, tls);
   const rows = [

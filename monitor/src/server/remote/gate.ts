@@ -93,7 +93,10 @@ async function admitRequest(request: FastifyRequest, reply: FastifyReply, deps: 
   if (limiters.failedSession.isBlocked(address)) return refuse(reply, 429, "too_many_requests");
   const routePath = request.routeOptions.url;
   if (routePath !== undefined && deps.preAuthRoutes.has(`${request.method} ${routePath}`)) {
-    return limiters.preAuth.hit(address) ? undefined : refuse(reply, 429, "too_many_requests");
+    if (!limiters.preAuth.hit(address)) return refuse(reply, 429, "too_many_requests");
+    // no device yet → no CSRF value; the page origin alone stands between a neighbour page and the code POST
+    const isFromPage = !MUTATION_METHODS.has(request.method) || getPageOriginSignal(request.headers, deps.getPageOrigins()) !== null;
+    return isFromPage ? undefined : refuse(reply, 403, "not_page_origin");
   }
   const presented = request.cookies[DEVICE_COOKIE.NAME];
   const device = presented === undefined || presented.length === 0 ? null : await deps.findDevice(presented);
@@ -185,7 +188,7 @@ function refuse(reply: FastifyReply, statusCode: number, error: string): Fastify
   return reply.code(statusCode).send({ error });
 }
 
-// socket address only → no forwarded header can name the source
-function getSourceAddress(request: FastifyRequest): string {
+/** Socket address only → no forwarded header can name the source. */
+export function getSourceAddress(request: FastifyRequest): string {
   return request.socket.remoteAddress ?? "";
 }

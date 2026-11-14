@@ -16,6 +16,7 @@ import { buildRemoteApp } from "../src/server/app.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
+import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 import { REVIEWED_ROUTES, getRouteClass } from "../src/server/remote/route-classes.js";
 import { CSRF_HEADER, DEVICE_COOKIE, getCsrfToken } from "../src/server/remote/session.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -50,6 +51,7 @@ before(async () => {
       connections: new DeviceConnections(),
       audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
     },
+    registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
     queue: {
       port: 16145,
       homeDir: path.join(fixtureRoot, "home"),
