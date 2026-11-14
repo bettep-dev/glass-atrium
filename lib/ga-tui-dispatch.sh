@@ -282,13 +282,20 @@ _confirm_pregate() {
   # stop any idle spinner BEFORE rmcup so no idle child paints into the frame this pre-gate drops
   # (idempotent no-op when none is open).
   stop_idle_spinner
+  _run_cooked confirm_typed "${token}" "${prompt}" || rc=$?
+  return "${rc}"
+}
+
+# Run one command with the alt-screen dropped and the terminal cooked, then re-enter the alt-screen +
+# raw mode (the box runs next, or nav resumes). Returns the command's status.
+_run_cooked() {
+  local rc=0
   tp rmcup
   tp cnorm
   stty "${TTY_SAVED}" <"${TTY}" 2>/dev/null || true
   RAW_ACTIVE=false
   reset_plate_geometry
-  confirm_typed "${token}" "${prompt}" || rc=$?
-  # Re-enter the alt-screen + raw mode (the box runs next, or nav resumes).
+  "$@" || rc=$?
   tp smcup
   tp civis
   stty -echo -icanon <"${TTY}" 2>/dev/null || true
@@ -407,7 +414,31 @@ dispatch_action_install_panel() {
   # log() lines that would otherwise scroll the alt-screen on return-to-nav. On a restore failure
   # the captured remediation is surfaced to stderr (loud-fail preserved).
   run_gate_quiet restore_launchd_monitor || _gate_surface_on_fail
+  [[ "${status}" -ne 0 ]] || tui_remote_opt_in_gate
   return "${status}"
+}
+
+# Remote access opt-in after a successful TUI install — the plan's steps read no terminal (stdin is
+# EOF), so the question runs here in cooked mode on ${TTY}. Access already on → nothing asked.
+tui_remote_opt_in_gate() {
+  local enabled
+  enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
+  [[ "${enabled}" != "true" ]] || return 0
+  _run_cooked _tui_remote_ask
+}
+
+# The opt-in on ${TTY}; a yes restarts the monitor so its env renders the remote keys.
+_tui_remote_ask() {
+  local enabled
+  # shellcheck disable=SC2310,SC2094  # refusal leaves access off, never an abort; ${TTY} is a terminal, read and written alike
+  ga_remote_install_opt_in <"${TTY}" >>"${TTY}" 2>&1 || true
+  enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
+  # shellcheck disable=SC2310  # verdict branched on — a failed restart is reported, never an abort
+  if [[ "${enabled}" == "true" ]] && ! ga_remote_apply_config; then
+    printf "remote access: on in config.toml, but the monitor restart failed — run 'glass-atrium remote on'\n" >>"${TTY}"
+  fi
+  printf 'press any key to return to the menu …' >>"${TTY}"
+  IFS= read -rsn1 _ <"${TTY}" || true
 }
 
 # _gate_surface_on_fail — on a gate failure, surface the captured GATE_QUIET_LOG tail to the REAL

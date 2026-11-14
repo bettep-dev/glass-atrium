@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# shellcheck disable=SC2154,SC2329,SC2312  # bats injects BATS_*/status/output; the stubs are called by the sourced libs
+# shellcheck source-path=SCRIPTDIR disable=SC2154,SC2329,SC2312,SC2034  # bats injects BATS_*/status/output; the stubs and globals are read by the sourced libs
 # Remote access across the install lifecycle: the installer opt-in, uninstall, the doctor rows and the updater.
 # Hermetic: a sandbox GA_ROOT, real LibreSSL in that sandbox, stubbed route/arp/scutil/ipconfig/tmutil/launchctl/psql.
 # No real key folder, no real install, no database.
@@ -78,24 +78,42 @@ turn_on_config() {
   for row in "${rows[@]}"; do
     IFS='|' read -r name IS_TERMINAL answer <<<"${row}"
     run ga_remote_install_opt_in <<<"${answer}"
-    [[ "${status}" -eq 0 && "${output}" == *"loopback-only"* ]] || { echo "${name}: ${status} ${output}"; return 1; }
-    [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" ]] || { echo "${name}: config written"; return 1; }
-    [[ ! -e "${KEY_DIR}" ]] || { echo "${name}: keys created"; return 1; }
+    [[ "${status}" -eq 0 && "${output}" == *"loopback-only"* ]] || {
+      echo "${name}: ${status} ${output}"
+      return 1
+    }
+    [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" ]] || {
+      echo "${name}: config written"
+      return 1
+    }
+    [[ ! -e "${KEY_DIR}" ]] || {
+      echo "${name}: keys created"
+      return 1
+    }
   done
 }
 
 @test "a yes at install creates the keys, turns access on, trusts the Wi-Fi and prints the CA fingerprint, without a restart" {
   IS_TERMINAL=true
   run ga_remote_install_opt_in <<<$'y\ntrust'
-  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 1
   [[ "$(atrium_toml_get "[remote_access]" "port")" == "16146" ]] || return 1
   [[ "$(atrium_toml_get "[remote_access]" "trusted_networks")" == "192.168.0.1@00:1b:2c:0d:4e:5f" ]] || return 1
   [[ -z "$(ga_remote_get_loose_modes "${KEY_DIR}")" ]] || return 1
   local fingerprint
   fingerprint="$(/usr/bin/openssl x509 -fingerprint -sha256 -noout -in "${KEY_DIR}/ca.pem")"
-  [[ "${output}" == *"${fingerprint#*=}"* && "${output}" == *"https://test-mac.local:16146"* ]] || { echo "${output}"; return 1; }
-  ! grep -q apply "${CALLS}" || { echo "restarted during install"; return 1; }
+  [[ "${output}" == *"${fingerprint#*=}"* && "${output}" == *"https://test-mac.local:16146"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  ! grep -q apply "${CALLS}" || {
+    echo "restarted during install"
+    return 1
+  }
 }
 
 @test "a re-install with access already on asks nothing and keeps the config" {
@@ -105,8 +123,71 @@ turn_on_config() {
   local config_before
   config_before="$(file_sum "${SANDBOX}/config.toml")"
   run ga_remote_install_opt_in </dev/null
-  [[ "${status}" -eq 0 && "${output}" == *"already on"* && "${output}" != *"[y/N]"* ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 0 && "${output}" == *"already on"* && "${output}" != *"[y/N]"* ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" ]] || return 1
+}
+
+# The TUI's install steps read no terminal (stdin pinned to EOF), so the TUI asks after its install
+# panel instead: lift the panel and the gate out of the dispatch lib and run them with stub chrome.
+run_tui_install_panel() {
+  local plan_rc="$1" enabled="$2" answer="$3" body="${SANDBOX}/panel.sh"
+  awk '/^(dispatch_action_install_panel|tui_remote_opt_in_gate|_tui_remote_ask|_run_cooked)\(\) \{/ { f = 1 } f { print } f && /^}/ { f = 0 }' \
+    "${GA}/lib/ga-tui-dispatch.sh" >"${body}"
+  printf '%s\n' "${answer}" >"${SANDBOX}/tty"
+  printf '%s\n' "${enabled}" >"${SANDBOX}/enabled"
+  PLAN_RC="${plan_rc}" STATE="${SANDBOX}" TTY="${SANDBOX}/tty" bash -c '
+    apply_plate_geometry() { :; }
+    enter_run_state() { :; }
+    start_idle_spinner() { :; }
+    stop_idle_spinner() { :; }
+    run_gate_quiet() { :; }
+    run_action_panel() { return "${PLAN_RC}"; }
+    tp() { :; }
+    stty() { :; }
+    reset_plate_geometry() { :; }
+    atrium_toml_get() { cat "${STATE}/enabled"; }
+    ga_remote_install_opt_in() {
+      local reply
+      IFS= read -r reply || reply=""
+      printf "asked\n" >>"${STATE}/calls.log"
+      [[ "${reply}" != "y" ]] || printf "true\n" >"${STATE}/enabled"
+    }
+    ga_remote_apply_config() { printf "applied\n" >>"${STATE}/calls.log"; }
+    source "$1"
+    rc=0
+    dispatch_action_install_panel || rc=$?
+    printf "%s\n" "${rc}"
+  ' _ "${body}"
+}
+
+@test "the TUI asks the opt-in only after an install that succeeded with access off, and a yes restarts the monitor" {
+  local rows=(
+    'install failed|3|false|y|-|3'
+    'owner answers no|0|false|n|asked|0'
+    'owner answers yes|0|false|y|asked applied|0'
+    'access already on|0|true|y|-|0'
+  )
+  local row name plan_rc enabled answer want_calls want_rc got_rc calls
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name plan_rc enabled answer want_calls want_rc <<<"${row}"
+    : >"${CALLS}"
+    got_rc="$(run_tui_install_panel "${plan_rc}" "${enabled}" "${answer}")" || {
+      echo "${name}: panel did not run"
+      return 1
+    }
+    calls="$(tr '\n' ' ' <"${CALLS}")"
+    [[ "${calls% }" == "${want_calls#-}" ]] || {
+      echo "${name}: calls '${calls}', want '${want_calls}'"
+      return 1
+    }
+    [[ "${got_rc}" == "${want_rc}" ]] || {
+      echo "${name}: returned ${got_rc}, want ${want_rc}"
+      return 1
+    }
+  done
 }
 
 # --- uninstall ----------------------------------------------------------------------------------------
@@ -115,18 +196,30 @@ turn_on_config() {
   turn_on_config "192.168.0.1@00:1b:2c:0d:4e:5f"
   create_keys
   run ga_remote_uninstall
-  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ ! -e "${KEY_DIR}" ]] || return 1
-  grep -q 'psql .*DELETE FROM monitor.remote_devices' "${CALLS}" || { cat "${CALLS}"; return 1; }
+  grep -q 'psql .*DELETE FROM monitor.remote_devices' "${CALLS}" || {
+    cat "${CALLS}"
+    return 1
+  }
   [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "false" ]] || return 1
-  [[ "${output}" == *"Glass Atrium Local CA"* && "${output}" == *"each device"* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"Glass Atrium Local CA"* && "${output}" == *"each device"* ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "uninstall still removes the keys when the device rows cannot be deleted, and says so" {
   create_keys
   PSQL_RC=2
   run ga_remote_uninstall
-  [[ "${status}" -eq 0 && "${output}" == *"device rows were not deleted"* ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 0 && "${output}" == *"device rows were not deleted"* ]] || {
+    echo "${output}"
+    return 1
+  }
   [[ ! -e "${KEY_DIR}" ]] || return 1
 }
 
@@ -135,7 +228,10 @@ turn_on_config() {
   create_keys
   DRY_RUN=true
   run ga_remote_uninstall
-  [[ "${status}" -eq 0 && -f "${KEY_DIR}/ca.key" ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 0 && -f "${KEY_DIR}/ca.key" ]] || {
+    echo "${output}"
+    return 1
+  }
   ! grep -q psql "${CALLS}" || return 1
   [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 1
 }
@@ -150,7 +246,10 @@ doctor_level_for() {
 
 @test "doctor reports off as ok and checks nothing else" {
   run ga_remote_get_doctor_rows
-  [[ "${status}" -eq 0 && "${output}" == "ok|remote access off"* && "${#lines[@]}" -eq 1 ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 0 && "${output}" == "ok|remote access off"* && "${#lines[@]}" -eq 1 ]] || {
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "doctor rows: each broken property of an enabled setup gets its own level, a sound setup only ok rows" {
@@ -176,9 +275,15 @@ doctor_level_for() {
       *) ;;
     esac
     actual="$(doctor_level_for "${text}")"
-    [[ "${actual}" == "${level}" ]] || { echo "${name}: '${actual}' — $(ga_remote_get_doctor_rows)"; return 1; }
+    [[ "${actual}" == "${level}" ]] || {
+      echo "${name}: '${actual}' — $(ga_remote_get_doctor_rows)"
+      return 1
+    }
     if [[ "${breakage}" == "" ]]; then
-      ! ga_remote_get_doctor_rows | grep -qv '^ok|' || { echo "${name}: $(ga_remote_get_doctor_rows)"; return 1; }
+      ! ga_remote_get_doctor_rows | grep -qv '^ok|' || {
+        echo "${name}: $(ga_remote_get_doctor_rows)"
+        return 1
+      }
     fi
     if ga_guard_path "${KEY_DIR}"; then rm -rf -- "${KEY_DIR:?}"; fi
     printf '[ports]\nmonitor = 16145\n' >"${SANDBOX}/config.toml"
@@ -205,10 +310,22 @@ doctor_level_for() {
     keys_before="$(cat "${KEY_DIR}"/* 2>/dev/null | cksum)"
     ATRIUM_UPDATE_RENDER_LAUNCHD="${SANDBOX}/render-launchd" ATRIUM_UPDATE_RENDER_MONITOR_ENV="${GA}/scripts/render-monitor-env.sh" \
       run bash -c 'source "$1/scripts/update.sh" && update_render_oneshot_plist() { :; } && update_render_parity' _ "${GA}"
-    [[ "${status}" -eq 0 ]] || { echo "${name}: ${output}"; return 1; }
-    [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" ]] || { echo "${name}: config changed"; return 1; }
-    [[ "$(cat "${KEY_DIR}"/* 2>/dev/null | cksum)" == "${keys_before}" ]] || { echo "${name}: keys changed"; return 1; }
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output}"
+      return 1
+    }
+    [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" ]] || {
+      echo "${name}: config changed"
+      return 1
+    }
+    [[ "$(cat "${KEY_DIR}"/* 2>/dev/null | cksum)" == "${keys_before}" ]] || {
+      echo "${name}: keys changed"
+      return 1
+    }
     access="$(grep -E '^ATRIUM_REMOTE_ACCESS=' "${SANDBOX}/monitor/.env")"
-    [[ "${access}" == "ATRIUM_REMOTE_ACCESS=${state}" ]] || { echo "${name}: ${access}"; return 1; }
+    [[ "${access}" == "ATRIUM_REMOTE_ACCESS=${state}" ]] || {
+      echo "${name}: ${access}"
+      return 1
+    }
   done
 }
