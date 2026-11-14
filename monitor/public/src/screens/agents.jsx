@@ -1073,7 +1073,6 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
     : null;
   // 추세 데이터 — null 이면 미렌더 (추정값 주입 금지).
   const hasTrend = Array.isArray(trend) && trend.length > 0;
-  const trendColor = trendBarColor(agent.status, failShareTone);
   const runs = Number(agent.runs) || 0;
   const noRecord = { count: invocations == null ? null : Math.max(0, Number(invocations) - runs) };
   noRecord.title = noRecord.count == null
@@ -1178,7 +1177,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
         {!isTrendRead ? (
           <NotLoadedMarkAg title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
         ) : hasTrend ? (
-          <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color={trendColor} label={`${agent.agent_name} runs per day, last 7 days`}/>
+          <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color="rgb(var(--data))" label={`${agent.agent_name} runs per day, last 7 days`}/>
         ) : (
           <NoneMarkAg title="no 7-day daily success-rate breakdown"/>
         )}
@@ -3603,17 +3602,6 @@ const formatDurationSecAg = (sec) => window.UI.formatDuration(sec);
 
 // latency_ms → 인간화 (<1s "NNNms" · ≥60s "Mm Ss") — 공용 formatDuration('ms') 위임, p50/p95/p99 표시.
 const formatDurationMsAg = (ms) => window.UI.formatDuration(ms, 'ms');
-
-// MiniBars 추세 색상 — error → crit · 그 외 fail-share tone · 미판정 → neutral.
-// 추세 verdict → tone KEY → registry CSS 색(rgb(var(--tone))). 하드코딩 rgb 리터럴 제거 →
-//   테마/톤 토큰 변경 시 trend bar 자동 리페인트 (색 SoT = ui.jsx toneVarColor/tokens.css).
-function trendBarColor(status, failShareTone) {
-  return window.UI.toneVarColor(getTrendTone(status, failShareTone));
-}
-
-function getTrendTone(status, failShareTone) {
-  return status === 'error' ? 'crit' : failShareTone || 'neutral';
-}
 
 // Last seven reported dates, oldest first — shared by the series map and the drawer's day labels.
 function getTrendDates(rows) {

@@ -490,7 +490,7 @@ test("the summary row marks the shared crit step from its own failed share, and 
     const toned = findNodes(tree, (n) => /\btext-(ok|warn)\b/.test(String(n.props?.className ?? "")));
     assert.equal(toned.length, 0, `${c.why}: the success numeral carries no second scale`);
     const [trendBars] = findAtoms(tree, "MiniBars");
-    assert.equal(trendBars?.props.color, toneVarColor(c.crit ? "crit" : "neutral"), `${c.why}: the trend bars carry no band of their own`);
+    assert.equal(trendBars?.props.color, "rgb(var(--data))", `${c.why}: the runs-per-day bars are a quantity → the data colour, never the row's severity`);
   }
 });
 

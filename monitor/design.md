@@ -371,6 +371,8 @@
   - second series over bars = straight `--ink` 1.5px polyline (no smoothing, no dots) over a 3.5px `--elev` under-stroke → its neighbour is the card ground (17.49 / 16.74), never a `--data` bar (3.28 / 2.66).
   - reference line (threshold · normal) = 1px dashed `--faint` · hovered mark + readout = `--ink` · `--accent` paints no chart mark.
   - severity colour only on a mark itself over a stated threshold, keyed by glyph + word in the legend (`cost.jsx` session outlier band · log-integrity day over threshold).
+  - a share-of-states stack keeps each state's tone, every segment keyed by its glyph + word — a split of one total by state, not a quantity series (`wiki.jsx` status mix · `outcomes.jsx` attribution mix · grader breakdown).
+  - a bar atom asks for the data colour by `tone="data"` (`ui.jsx` → `BAR_TONE_VAR`), never `neutral` (= `--faint`, a text role).
 - `--cat-2` 3.74:1 · `--cat-4` 4.60:1 on light `--elev` (sunken 3.43 / 4.21) → **fill/swatch 한정, text 색 금지**.
 - **agent 식별은 `AgentName` 텍스트로만** (§3.3) — 이니셜 아바타 없음. 모든 이름이 `glass-atrium-` 으로 시작해 이니셜이 전부 G (`agents.screen-render.client.test.ts`).
 

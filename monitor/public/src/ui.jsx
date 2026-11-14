@@ -500,7 +500,8 @@ function TrendChart({ label, points, kind = 'line', h = 64, formatValue = String
 
 // tone KEY → 색상 토큰 var 명. neutral 은 비측정/중립 막대용 muted line(--faint).
 // rgb(var(--token) / opacity) 소비 — 하우스 비례막대 관용구(cost.jsx TurnStopReasonTable) 그대로.
-const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint' };
+// data = the chart data colour (design.md §4.3), not a tone — a quantity bar that carries no severity
+const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint', data:'--data' };
 
 // tone KEY → 인라인 CSS 색 문자열 `rgb(var(--tone))` — SVG fill/stroke 등 하드코딩 rgb 리터럴 대체.
 //   테마/토큰 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).

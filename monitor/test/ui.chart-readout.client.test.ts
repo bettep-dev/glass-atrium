@@ -313,6 +313,13 @@ describe("a series mark carries the data colour, never a tone or the accent", ()
     const fills = findNodes(svg, (n) => n.type === "rect").map((n) => n.props.fill);
     assert.deepEqual(fills, points.map((_, i) => (i === 2 ? "rgb(var(--ink))" : "rgb(var(--data))")));
   });
+
+  test("a bullet bar asked for the data colour fills with --data", () => {
+    const tree = render("BulletBar", { value: 0.6, target: 0.5, tone: "data", showValue: false, ariaLabel: "Peak 60/day" });
+    const fills = findNodes(tree, (n) => /^rgb\(var\(--/.test(String((n.props.style as Record<string, unknown> | undefined)?.background ?? "")))
+      .map((n) => String((n.props.style as Record<string, unknown>).background));
+    assert.equal(fills[0], "rgb(var(--data) / 0.75)", "the value fill; the target marker after it is not a series mark");
+  });
 });
 
 describe("the optional y-scale states the plotted extent", () => {

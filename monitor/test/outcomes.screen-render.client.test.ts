@@ -483,6 +483,7 @@ test("each recording channel's busiest recent day is drawn against the watch flo
     const { value, target } = bar.props as { value: number; target: number };
     assert.ok(value >= 0 && value <= 1 && target > 0 && target <= 1, `${row.name}: bar stays on its track`);
     assert.equal(value >= target, row.peak >= floor, `${row.name}: fill reaches the floor marker only at or above the floor`);
+    assert.equal(bar.props.tone, "data", `${row.name}: the busiest day is a quantity → the data colour; liveness rides the row's glyph and word`);
   }
 });
 
