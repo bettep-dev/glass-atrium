@@ -2407,7 +2407,7 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { codes: ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"], picked: 0, hasCount: true });
     });
 
-    test("an approval-class decision carries the Approval tag on its row and its date line, and its note says an approving answer approves the stated action once", async () => {
+    test("an approval-class decision carries the Approval tag on its row and its date line, and its note says in ink after an info glyph that an approving answer approves the stated action once", async () => {
       const page = await openEdgePage(harness);
       // the space between `2 options` and the Approval tag; the open sheet takes the list's box → the row is read first
       const getGap = (selector: string) => page.evaluate((within) => {
@@ -2423,12 +2423,25 @@ describe("queue page on the mockup fixtures", () => {
         row: [...document.querySelectorAll(`#queue-row-${id} .queue-row-facts .pill--tag`)].map((badge) => badge.textContent),
         letterhead: [...document.querySelectorAll(".queue-sheet > .card-head .pill--tag, .queue-date-line .pill--tag")].map((badge) => badge.textContent),
         note: document.querySelector(".queue-sheet .queue-note-text")?.textContent ?? "",
+        // the sentence's own colour against the ink and the glyph's against the info token, both in the theme on show
+        tones: (() => {
+          const line = document.querySelector(".queue-sheet .queue-note-text > p") as HTMLElement;
+          const getToken = (name: string) => `rgb(${getComputedStyle(line).getPropertyValue(name).trim().split(/\s+/).join(", ")})`;
+          const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+          let sentence: Node | null = walker.nextNode();
+          while (sentence !== null && !sentence.textContent?.startsWith("Approval:")) sentence = walker.nextNode();
+          return {
+            text: sentence?.parentElement ? getComputedStyle(sentence.parentElement).color === getToken("--ink") : false,
+            glyph: getComputedStyle(line.querySelector("[aria-hidden]") as Element).color === getToken("--info"),
+          };
+        })(),
       }), EDGE_IDS.approval);
       await page.close();
 
       assert.deepEqual({ row: shown.row, letterhead: shown.letterhead }, { row: ["Approval"], letterhead: ["Decision", "Approval"] });
       assert.deepEqual([rowGap, dateGap], [6, 6], "the date line keeps the row's 6 between the count and the tag");
       assert.match(shown.note, /Approval: an approving answer here approves the stated action, once; aidl does not ask again in its terminal\./);
+      assert.deepEqual(shown.tones, { text: true, glyph: true }, "the sentence in ink, its glyph in info");
     });
 
     test("a 200-character title takes two lines on its 88 row with the whole title in its tooltip, and wraps in full at 20/28 on the sheet", async () => {

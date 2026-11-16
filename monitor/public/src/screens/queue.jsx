@@ -1970,11 +1970,13 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	};
 	const resend = item.canResend ? [{ label: "Resend", onPress: () => queue.send(item.id, "resend") }] : [];
 	const rest = `${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to ${name}.`;
+	// the pick is itself the approval, nobody asks again in a terminal → this one info line in ink (spec §6 → Note slot)
+	const approval = item.isApprovalClass ? <span className="text-ink">{`Approval: an approving answer here approves the stated action, once; ${name} does not ask again in its terminal.`}</span> : null;
 	return (
 		<ComposerQ field={item.isFreeTextAllowed ? { id: `queue-text-${item.id}`, label: "Your own answer or a note on this decision (optional)" } : null}
 			text={draft.text ?? ""} onText={(text) => queue.setDraft(item.id, { text, error: null })} isBusy={isBusy}
 			buttons={[...resend, { label: "Send answer", isInk: true, onPress: onSend }]}
-			note={<ComposerNoteQ error={error ?? draft.error} info={item.isApprovalClass ? `Approval: an approving answer here approves the stated action, once; ${name} does not ask again in its terminal.` : null} rest={rest} />}
+			note={<ComposerNoteQ error={error ?? draft.error} info={approval} rest={rest} />}
 			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} />
 	);
 }
