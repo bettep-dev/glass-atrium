@@ -62,12 +62,12 @@ function getLearningLog(live: number, inert: number, held: number) {
 }
 
 interface ColumnReading {
-  sections: number;
+  sections: string[];
   topGap: number;
   bottomGap: number;
 }
 
-// every ledger column: its section count, the gap above the first section and below the last
+// every ledger column: its sections by the first word of their head, the gap above the first section and below the last
 async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]> {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
@@ -86,7 +86,7 @@ async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]>
         const box = column.getBoundingClientRect();
         const sections = [...column.children].map((section) => section.getBoundingClientRect());
         return {
-          sections: sections.length,
+          sections: [...column.children].map((section) => (section.textContent ?? "").trim().split(/\s/)[0]!),
           topGap: sections[0]!.top - box.top,
           bottomGap: box.bottom - sections[sections.length - 1]!.bottom,
         };
@@ -97,21 +97,21 @@ async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]>
   }
 }
 
-// held and recurrence fill the first column, live and inert the second · the named column is the shorter one:
+// held leads the first column, live then inert the second · the named column is the shorter one:
 // a lone section keeps its free space below, a later section pins to the bottom
 const rows = [
   {
-    name: "a lone held section beside a long live list stays at the column top",
+    name: "the held section alone in the first column stays at its top beside a long live list",
     learningLog: getLearningLog(10, 1, 1),
     column: 0,
-    sections: 1,
+    sections: ["Held"],
     isBottomPinned: false,
   },
   {
-    name: "live and inert beside a taller held table start at the column top and end on the shared bottom edge",
+    name: "live then inert in the second column start at its top and end on the shared bottom edge beside a taller held table",
     learningLog: getLearningLog(1, 1, 3),
     column: 1,
-    sections: 2,
+    sections: ["Live", "Inert"],
     isBottomPinned: true,
   },
 ];
@@ -121,7 +121,7 @@ for (const row of rows) {
     const columns = await getColumnReadings(row.learningLog);
     assert.equal(columns.length, 2, "the ledger pairs its held rows with its candidates");
     const reading = columns[row.column]!;
-    assert.equal(reading.sections, row.sections, "the case renders the intended section count");
+    assert.deepEqual(reading.sections, row.sections, "the column holds the intended sections, in order");
 
     assert.ok(reading.topGap <= EDGE_TOLERANCE_PX, `the first section starts ${Math.round(reading.topGap)}px below the column top`);
     assert.equal(

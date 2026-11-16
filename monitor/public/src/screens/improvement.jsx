@@ -79,8 +79,7 @@ const KANBAN_COLUMNS = [
 	},
 ];
 
-// AWAITING(safety) 은 그리드 밖 ROW-1 배너/스트립으로 이관 (T2) → 종결 그리드는
-// applied·rejected 2트랙만 순회 (T3). safety 엔트리 label/symbol 은 ROW-1 이 소비.
+// AWAITING(safety) 행은 보드 머리의 AwaitingListI 가 소비 → 종결 그리드는 applied·rejected 2트랙만 순회.
 const TERMINAL_COLUMNS = KANBAN_COLUMNS.filter((col) => col.key !== "safety");
 
 // 카드 액션 가능 status (mutation 엔드포인트 actionable set 미러 — routes/improvement.ts
@@ -472,7 +471,6 @@ function ScreenImprovement({ onNav }) {
 							styleRef={styleRef}
 							corpusAuditState={corpusAuditState}
 							onOpenInstrumentation={() => setView("instrumentation")}
-							onRetry={regionRetry}
 						/>
 						<div className="flex-1 min-h-0" id="improvement-board">
 							<KanbanCardI
@@ -531,12 +529,6 @@ function getSuccessToastI(action, id, body) {
 const sumCountsI = (list) =>
 	list.reduce((sum, b) => sum + Number(b.count ?? 0), 0);
 
-// ----- Status band (Skim) — 화면을 여는 이유 네 가지에 타일 하나씩. --------
-//
-// 각 타일은 자기 payload 의 상태(loading / error / unavailable / ready)를 따로 렌더한다:
-// 한 payload 가 죽었을 때 나머지가 0 으로 읽히면 밴드 전체가 거짓말이 된다. 숫자는 항상
-// 자기 모집단을 데리고 다닌다 — 이웃 타일끼리 게이트가 다르기 때문이다.
-
 // Loop status — only the counts that change the next action, one stat row; the alarm itself lives in the card that owns the rows (spec 44084 §3.1).
 function StatusBandI({ asOf, statsState, listState, learningLogState, suppression, awaiting, styleRef, corpusAuditState, onOpenInstrumentation }) {
 	const { Card, StatRow } = window.UI;
@@ -562,10 +554,10 @@ function getBandStatsI({ asOf, statsState, listState, learningLogState, suppress
 	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
 	const heldBuckets = getSuppressionListI(suppression, "parked");
 	const heldNeedingHuman = getHeldNeedingHumanI(suppression);
-	const appliedLead = joinHeldI(appliedHeld, `of ${getCycleCountTextI(Number(s.cycle_total_7d ?? 0))} · last `);
+	const appliedLead = getHeldTextI(appliedHeld, `of ${getCycleCountTextI(Number(s.cycle_total_7d ?? 0))} · last `);
 	return [
 		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", status: bandTileStatusI(listState, listState.data),
-			value: formatIntI(awaiting), context: joinHeldI(awaitingHeld, "Pending or snoozed suggestions") }),
+			value: formatIntI(awaiting), context: getHeldTextI(awaitingHeld, "Pending or snoozed suggestions") }),
 		buildBandStatI({ key: "applied", label: "Applied, 7d", owner: "loop output", status: bandTileStatusI(statsState, statsState.data),
 			value: formatIntI(Number(s.cycles_generated_applied_7d ?? 0)),
 			context: <>{appliedLead}<window.UI.NoWrap>{formatCycleStampI(s.latest_cycle_started_at)}</window.UI.NoWrap></> }),
@@ -575,7 +567,7 @@ function getBandStatsI({ asOf, statsState, listState, learningLogState, suppress
 	];
 }
 
-function joinHeldI(held, text) {
+function getHeldTextI(held, text) {
 	return held ? `${held} · ${text}` : text;
 }
 
@@ -1028,8 +1020,8 @@ function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
 	);
 }
 
-// 종결 레인 — variant 라우팅(T4): full → AppliedHistoryRowI · compact → CompactProposalCardI(폴백 full).
-// 헤더는 레인별 분기(T6 APPLIED hero · Rejected 중립 헤더 + reject 스파크) · Bar 부피막대 폐기(DR-3).
+// 종결 레인 — variant 라우팅: full → AppliedHistoryRowI · compact → CompactProposalCardI(폴백 full).
+// 두 레인 헤더는 같은 한 줄 모양 · Rejected 만 원인 분할 + reject 스파크를 더한다.
 function KanbanColumnI({
 	column,
 	rows,
@@ -1813,7 +1805,7 @@ function HeldCauseTableI({ buckets }) {
 	);
 }
 
-// Per-cause row list — every group folds the same way; the strip above already states status.
+// Per-cause row list — every group folds the same way; the cause table above already states the counts.
 function HeldCauseGroupI({ bucket, rows }) {
 	return (
 		<details className="mt-1.5">

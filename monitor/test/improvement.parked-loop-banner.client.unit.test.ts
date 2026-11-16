@@ -409,7 +409,6 @@ test("the status band never announces a failure the owning group already announc
     learningLogState: failed,
     suppression: null,
     awaiting: 0,
-    onRetry: () => {},
   });
   const buttons = collect(band, (el) => el.type === "button");
   assert.equal(buttons.length, 0, "a retry per stat repeats the group's banner");

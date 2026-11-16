@@ -25,6 +25,7 @@ interface RecordedElement {
 interface BandSandbox {
   React: { createElement: unknown };
   window: { UI: Record<string, unknown> };
+  document: Record<string, unknown>;
   tileStatusI: (state: { status: string }, value: unknown) => string;
   StatusBandI: (props: Record<string, unknown>) => RecordedElement;
   InstrumentationViewI: (props: Record<string, unknown>) => RecordedElement | null;
@@ -96,8 +97,6 @@ test("a tile's state follows its own payload, and a missing value is never ready
   assert.equal(sandbox.tileStatusI({ status: "ready" }, undefined), "unavailable");
   assert.equal(sandbox.tileStatusI({ status: "ready" }, { n: 1 }), "ready");
 });
-
-// The discriminating assertion: three non-ready states must be told apart, and none
 
 const LANDED = { status: "ready", busy: false, error: null, data: {} };
 const STATS_DATA = {
@@ -211,6 +210,57 @@ describe("a failed refresh over held numbers marks them Last known", () => {
       const warmError = getBandStats({ asOf, ...row.props }).get(row.key);
       assert.doesNotMatch(textOf(settled?.context), /Last known/);
       assert.match(textOf(warmError?.context), /^Last known · /);
+    });
+  }
+});
+
+test("clicking the held count keeps the hash and moves focus to the held section without a scroll jump", () => {
+  const suppression = { pending_total: 0, parked: NEEDS_HUMAN, parked_patterns: [] };
+  const jump = getBandStats({ suppression }).get("held")?.value as RecordedElement;
+  const link = (jump.type as (props: Record<string, unknown>) => RecordedElement)(jump.props);
+  const attributes = new Map<string, string>();
+  const calls: unknown[][] = [];
+  const section = {
+    hasAttribute: (name: string) => attributes.has(name),
+    setAttribute: (name: string, value: string) => attributes.set(name, value),
+    scrollIntoView: (options: unknown) => calls.push(["scroll", options]),
+    focus: (options: unknown) => calls.push(["focus", options]),
+  };
+  const heldId = String(link.props.href).replace(/^#/, "");
+  sandbox.document.getElementById = (id: string) => (id === heldId ? section : null);
+  let isDefaultPrevented = false;
+
+  (link.props.onClick as (event: unknown) => void)({ preventDefault: () => { isDefaultPrevented = true; } });
+
+  assert.equal(isDefaultPrevented, true, "the default navigation would hand the hash router an unknown screen");
+  assert.equal(attributes.get("tabindex"), "-1", "a plain section takes focus only through tabindex -1");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [["scroll", { block: "nearest" }], ["focus", { preventScroll: true }]]);
+});
+
+// a held corpus reading under a failed refresh takes the shared freshness rule; the strip then shows it only while it alerts
+describe("the corpus growth gauge keeps the shared freshness rule over a failed refresh", () => {
+  const asOf = new Date().toISOString();
+  const corpus = (verdict: Record<string, unknown>) => ({
+    styleRefGradeBadgeI: () => ({ symbol: "✓", tone: "text-ok", label: "ok", hint: "h1" }),
+    getCorpusGrowthVerdictI: () => ({ ...verdict, hint: "h2" }),
+  });
+  const allClear = { symbol: "✓", tone: "text-ok", label: "within threshold" };
+  const alert = { symbol: "⚠", tone: "text-warn", label: "trend alert" };
+  const rows = [
+    { name: "a settled all-clear keeps its label and stays off the strip", verdict: allClear, error: null, label: /^within threshold$/, tone: "text-ok", isOnStrip: false },
+    { name: "an all-clear held under a failed read reads Last known and stays off the strip", verdict: allClear, error: "HTTP 500", label: /^Last known$/, tone: "text-faint", isOnStrip: false },
+    { name: "an alert held under a failed read keeps its tone and stays on the strip", verdict: alert, error: "HTTP 500", label: /^Last known: trend alert$/, tone: "text-warn", isOnStrip: true },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const corpusAuditState = { status: "ready", data: { audits: [{ id: 1 }] }, error: row.error };
+      const chip = sandbox.getInstrumentationChipsI(corpus(row.verdict), null, corpusAuditState, asOf).find((c) => c.key === "corpus");
+      (sandbox.window as Record<string, unknown>).ImprovementInstrumentationVerdicts = corpus(row.verdict);
+      const strip = sandbox.InstrumentationStripI({ styleRef: null, corpusAuditState, at: asOf, onOpen: () => {} });
+
+      assert.match(String(chip?.label), row.label);
+      assert.equal(chip?.tone, row.tone);
+      assert.equal(textOf(strip).includes("Corpus growth"), row.isOnStrip);
     });
   }
 });
