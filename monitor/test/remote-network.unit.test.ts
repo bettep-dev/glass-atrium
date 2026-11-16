@@ -1,9 +1,10 @@
 // Trusted network guard: the remote listener opens only on a trusted, readable network with a private address, and
 // an unreadable identity (missing route, no usable ARP entry and no matching configd record, failed command) means closed.
 
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 
+import { logger } from "../src/server/logger.js";
 import {
   type CommandRunner,
   type NetworkIdentity,
@@ -207,6 +208,17 @@ test("the real command runner survives a child that exits without reading stdin"
     }
   });
   assert.deepEqual(faults, []);
+});
+
+test("an unread stdin write is logged at debug with the command it went to", async () => {
+  const debug = mock.method(logger, "debug", () => undefined);
+  try {
+    await runCommand(NON_READING_BINARY, [], UNREAD_INPUT);
+  } finally {
+    debug.mock.restore();
+  }
+  const logged = debug.mock.calls.map((call) => (call.arguments[0] as { file?: string; err?: { code?: string } }));
+  assert.deepEqual(logged.map((entry) => [entry.file, entry.err?.code]), [[NON_READING_BINARY, "EPIPE"]]);
 });
 
 test("the real command runner survives stdin input its child never reads", async () => {

@@ -4,6 +4,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { logger } from "../logger.js";
+
 const execFileAsync = promisify(execFile);
 
 /** Runs a fixed binary with a fixed argv and optional stdin, no shell. Injected so tests never read the real network. */
@@ -42,7 +44,9 @@ export const runCommand: CommandRunner = async (file, args, input) => {
   const pending = execFileAsync(file, [...args], { env: COMMAND.ENV, timeout: COMMAND.TIMEOUT_MS });
   // child gone before the write lands → EPIPE on stdin; unheard, it is an uncaughtException that exits the monitor.
   // Exit code and stdout still decide the result → an unread input parses to nothing → closed.
-  pending.child.stdin?.on("error", () => {});
+  pending.child.stdin?.on("error", (error) => {
+    logger.debug({ err: error, file }, "command stdin not written: child closed its input");
+  });
   pending.child.stdin?.end(input ?? "");
   const { stdout } = await pending;
   return stdout;
