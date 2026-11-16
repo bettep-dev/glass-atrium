@@ -4,6 +4,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { isLoopbackHost } from "../host-guard.js";
+import { setNoStoreHeader } from "../response-headers.js";
 import { DEVICE_PARAMS_SCHEMA, type DeviceActDeps, type DeviceParams, getDeviceList, revokeAll, revokeOne } from "./admin-routes.js";
 import { recordEvent } from "./gate.js";
 import { WindowLimiter } from "./limits.js";
@@ -37,10 +38,7 @@ export async function registerRemoteCliRoutes(app: FastifyInstance, deps: Remote
   await app.register(async (scope) => {
     const limiter = new WindowLimiter(REMOTE_CLI_LIMITS.REQUESTS, deps.now ?? Date.now);
     scope.addHook("onRequest", (request, reply) => refuseUnlessCli(request, reply, limiter));
-    scope.addHook("onSend", async (_request, reply, payload) => {
-      reply.header("cache-control", "no-store");
-      return payload;
-    });
+    scope.addHook("onSend", setNoStoreHeader);
     const act = { deps, actor: REMOTE_CLI_ACTOR };
     const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
     scope.get(REMOTE_CLI_PATH.DEVICES, (request) => listDevices(request, deps));

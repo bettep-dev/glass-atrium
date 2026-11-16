@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { MUTATION_METHODS, getPageOriginSignal } from "../request-guards.js";
 import { type AuditChangeCarrier, type AuditTarget, deriveResultCode, extractTargetId } from "../middleware/audit-log.js";
+import { FRAME_DENY_HEADERS } from "../response-headers.js";
 import type { DeviceConnections } from "./connections.js";
 import type { DeviceSummary } from "./devices.js";
 import { REMOTE_LIMITS, WindowLimiter } from "./limits.js";
@@ -266,10 +267,7 @@ function setRemoteHeaders(request: FastifyRequest, reply: FastifyReply): void {
   reply.header("strict-transport-security", HSTS);
   reply.header("x-content-type-options", "nosniff");
   // a handler's own CSP (document sandbox, static frame denial) is kept as set
-  if (!reply.hasHeader("content-security-policy")) {
-    reply.header("content-security-policy", "frame-ancestors 'none'");
-    reply.header("x-frame-options", "DENY");
-  }
+  if (!reply.hasHeader("content-security-policy")) reply.headers(FRAME_DENY_HEADERS);
   // API → never stored; a page file → revalidated each load, so a device never runs a stale shell or sign-in file
   reply.header("cache-control", request.url.startsWith("/api/") ? "no-store" : "no-cache");
 }

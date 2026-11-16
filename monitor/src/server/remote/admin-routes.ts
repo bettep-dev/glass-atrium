@@ -4,6 +4,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { AUDIT_ACTOR } from "../middleware/audit-log.js";
+import { setNoStoreHeader } from "../response-headers.js";
 import type { DeviceConnections } from "./connections.js";
 import type { DeviceListing } from "./devices.js";
 import { type RemoteAuditEvent, getRoutePayload, recordEvent } from "./gate.js";
@@ -65,10 +66,7 @@ export const DEVICE_PARAMS_SCHEMA = {
 export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: RemoteAdminDeps): Promise<void> {
   await app.register(async (scope) => {
     scope.addHook("onRequest", refuseUnlessMacPage);
-    scope.addHook("onSend", async (_request, reply, payload) => {
-      reply.header("cache-control", "no-store");
-      return payload;
-    });
+    scope.addHook("onSend", setNoStoreHeader);
     const openLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.REGISTRATION_OPEN, deps.now ?? Date.now);
     const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
     scope.post(REMOTE_ADMIN_PATH.REGISTRATION, options, (request, reply) => openRegistration(request, reply, { deps, openLimiter }));

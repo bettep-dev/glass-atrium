@@ -12,6 +12,7 @@ import { registerRoutes } from "./routes/index.js";
 import { registerBrowserShutdownHook } from "./clauded-docs/browser-pool.js";
 import { registerAuditLogHook } from "./middleware/audit-log.js";
 import { registerRequestGuards } from "./request-guards.js";
+import { FRAME_DENY_HEADERS } from "./response-headers.js";
 import { getMonitorPort } from "./monitor-port.js";
 import { type ListenerContext, buildHostAllowlistHook, setListenerContext } from "./queue/request-gate.js";
 import { type RemoteAdminDeps, registerRemoteAdminRoutes } from "./remote/admin-routes.js";
@@ -23,9 +24,6 @@ import type { QueueRouteOptions } from "./routes/queue.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
-
-// a meta CSP cannot carry frame-ancestors → a framed Queue page would send same-origin owner actions a neighbour page could click into
-const STATIC_FRAME_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } as const;
 
 export interface LoopbackAppOptions {
   /** the Mac page's remote-access admin routes and the CLI's remote-cli routes; absent → neither registered (tests building the bare surface) */
@@ -115,7 +113,7 @@ export async function registerSurface(app: FastifyInstance, queue?: QueueRouteOp
     prefix: "/",
     index: ["index.html"],
     setHeaders: (reply) => {
-      reply.headers(STATIC_FRAME_HEADERS);
+      reply.headers(FRAME_DENY_HEADERS);
     },
   });
   await registerRoutes(app, queue);
