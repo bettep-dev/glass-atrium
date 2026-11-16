@@ -2949,7 +2949,7 @@ window.UI = {
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
-  getDisplayName, hasFieldValue, DetailField, StatToneGlyph, AbsentValue, getAbsentText, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
+  getDisplayName, hasFieldValue, DetailField, StatToneGlyph, AbsentValue, EMPTY_VALUE_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
