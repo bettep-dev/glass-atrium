@@ -87,9 +87,9 @@ function getPart(id: string, tone: string | null): PartRow {
 test("the Part health head status follows the stamp's freshness: a failed re-read over a flagged part reads Last known", () => {
   const parts = [getPart("pg", "crit"), getPart("hooks", "ok")];
   const rows = [
-    { name: "settled read", regions: [HELD, HELD], expected: "1 down" },
-    { name: "re-read failed over held data", regions: [FAILED_OVER_HELD, HELD], expected: "1 down · Last known" },
-    { name: "every re-read failed", regions: [FAILED_OVER_HELD, FAILED_OVER_HELD], expected: "1 down · Last known" },
+    { name: "settled read", regions: [HELD, HELD], expected: "1 critical" },
+    { name: "re-read failed over held data", regions: [FAILED_OVER_HELD, HELD], expected: "1 critical · Last known" },
+    { name: "every re-read failed", regions: [FAILED_OVER_HELD, FAILED_OVER_HELD], expected: "1 critical · Last known" },
   ];
 
   for (const row of rows) {
