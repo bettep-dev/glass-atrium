@@ -212,7 +212,7 @@
 | 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` sans tnum `--faint` (§12.2) · `.btn.ghost.sm` |
 | 로딩 | `LoadingPlaceholder` · `SkeletonRows` | `role="status"` `.fs-meta` `--dim` · inline bar |
 | 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
-| 기타 | `Icon` · `ChipGroup` (filter chips retiring, §12.3) · `DetailField` | `.seg` |
+| 기타 | `Icon` · `DetailField` | `.seg` |
 | control row · inline target | — (class only) | `.control-row` · `.inline-target` (§7.15 · §7.16) |
 | 본문 텍스트 | `ProseText` · parser `getProseBlocks` | `.prose-text` · `.prose-text--compact` · `.prose-pre` · `a.prose-link` (§7.13) |
 
@@ -773,7 +773,7 @@
 | C32 segment · `.seg` option (page-wide range) | 32 | 6 / 8 | 14 / 18 / 500 in every state | no group ring; selected = raised thumb + inset 1px control edge; focus outline inset −2 |
 | C32 field · `.field`, `.field-select`, `.field-affix` (form inputs) | 32 | 6 / 8; select inline-end = chevron gutter | 14 / 18 / 400 | 1px border resting on the control edge; focus = border color plus global outline |
 | C32 bar search (filter bar or card head) | 32 | 6 / 8; inline-start = icon gutter | 14 / 18 / 400 | no border: sunken fill + leading faint search icon; focus = global outline |
-| C32 interactive pill · `.pill--interactive` (filter chip, stage picker, lineage, file-count disclosure) | 32 | 0 / 8 | 13 / 1 / 500 | transparent 1px edge, constant; pressed = ink edge + ink text |
+| C32 interactive pill · `.pill--interactive` (stage picker, lineage, file-count disclosure) | 32 | 0 / 8 | 13 / 1 / 500 | transparent 1px edge, constant; pressed = ink edge + ink text |
 | C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
 | C32 tab | 32 | 6 / 8 | 14 / 18 / 500 | label only; selected = ink + 2px ink underline, constant thickness |
 | C40 button · `.btn.lg` (a composer's buttons only) | 40 (`--ctl-h-lg`) | 8 / 16 | 14 / 22 (`--lh-ctl-lg`) / 500 | as C32 button |
@@ -1065,7 +1065,7 @@
 | Attribute | a non-interactive tag ("est. rate", "html", "Requires setup") | plain 13 dim text, ⓘ when it needs a reason |
 | Read-only value | a setting that cannot change here ("CLI default") | plain text value — never a disabled bordered field |
 
-- Retire: the `.pill` border, `.pill--ctl-h`, `ChipGroup` filter chips, the Filters popover, `Badge role="count"` in prose, `Badge role="status"` in table cells, the `.seg` outer ring, the bordered `.field` as a bar search, the `--selected-fill` inversion on toggles.
+- Retire: the `.pill` border, `.pill--ctl-h`, the Filters popover, `Badge role="count"` in prose, `Badge role="status"` in table cells, the `.seg` outer ring, the bordered `.field` as a bar search, the `--selected-fill` inversion on toggles.
 - **Filter bar**:
   - Every filter axis is a trigger on the bar showing its value; too many axes for one line → the bar wraps, never one "Filters · N" button.
   - Reset filters (quiet) shows only while a filter is applied; at defaults it is hidden with its slot kept.

@@ -31,7 +31,7 @@ const SCREEN_CSS = findNodes(renderScreen((docsScreen.ScreenClaudedDocs as Compo
   .join("\n");
 
 // The app loads Tailwind preflight and utilities from its CDN and .fs-meta from ui.jsx; these are the rules the measured
-// geometry depends on, at their shipped values — ChipGroup and the checkbox lay out on the utilities; role keys come from the shim.
+// geometry depends on, at their shipped values — the checkbox lays out on the utilities; role keys come from the shim.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
   svg { display: block; vertical-align: middle; }

@@ -1385,27 +1385,6 @@ function putRowKeyFocus(event, { index, count, onActivate, onActiveChange }) {
   onActiveChange?.(action.focus === 'row' ? action.index : index);
 }
 
-// Filter chips: one Tab stop for the group, arrows move between chips, state rides aria-pressed.
-function ChipGroup({ label, chips, onToggle, className = '' }) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const onKeyDown = (event) => {
-    const buttons = [...event.currentTarget.querySelectorAll('button')];
-    const index = buttons.indexOf(event.target);
-    const next = getRovingIndex(event.key, index < 0 ? null : index, buttons.length);
-
-    if (next === undefined) return;
-    event.preventDefault();
-    buttons[next].focus();
-    setActiveIndex(next);
-  };
-  return <div role="toolbar" aria-label={label} onKeyDown={onKeyDown} className={`flex flex-wrap items-center gap-1 ${className}`.trim()}>
-    {chips.map((chip, i) => <button key={chip.key} type="button" className="pill pill--interactive" aria-pressed={chip.isPressed}
-      tabIndex={getRovingTabIndex(i, activeIndex, chips.length)} onFocus={() => setActiveIndex(i)} onClick={() => onToggle(chip.key)}>
-      {chip.label}
-    </button>)}
-  </div>;
-}
-
 /**
  * Arrow press inside a roving single-choice set (segmented range, tabs) → chooses and focuses the next item.
  * Choice follows focus, so the set keeps one Tab stop on its chosen item.
@@ -3094,7 +3073,7 @@ window.UI = {
   Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone, SEVERITY_RANK,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
-  getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
+  getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
   getDisplayName, hasFieldValue, DetailField, StatToneGlyph, AbsentValue, getAbsentText, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
