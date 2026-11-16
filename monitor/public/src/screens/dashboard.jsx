@@ -122,7 +122,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const waveStates = [costState, agentsState, outcomesState, updateState, spendDaysState, heatmapState];
   const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarms = buildAlarms({ harness, costState, installKind, outcomesState, agentsState });
-  const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
+  const alarmReadiness = getAlarmReadiness({ harness, costState, updateState }, alarms);
   const stats = buildStats({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const weekPanels = [{ source: 'daily spend', error: spendDaysState.error }, { source: 'runs by hour', error: heatmapState.error }];
   const sharedFailure = getPageSharedFailure(stats, weekPanels);
@@ -159,7 +159,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-strip-bar { background: currentColor; border-radius: 2px; }
         /* today is still accruing → an outlined bar, never a filled one that reads as a closed day */
         .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
-        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: 0.5rem; }
+        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: var(--gap-label-inline); }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
         /* the label track grows to its widest label → a folded "Wed ×2" stays on one line instead of spilling into the first cell */
@@ -290,19 +290,28 @@ function UnreadAlarmsCard({ unread }) {
 }
 
 const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] });
-const ALARM_SOURCE_LABELS = { harness: 'harness health', costState: "today's spend", updateState: 'install state' };
+// each source of the lane → its label and the one alarm row it can raise
+const ALARM_SOURCES = {
+  harness: { label: 'harness health', alarmId: 'harness' },
+  costState: { label: "today's spend", alarmId: 'spend' },
+  updateState: { label: 'install state', alarmId: 'install' },
+};
 
 /**
  * Whether the lane may claim an all-clear: 'loading' while any source is unsettled,
  * 'unknown' once one settled without an answer, 'read' only when every source answered.
+ * @param alarms - the listed rows; a source whose held row is listed hides nothing more
  * @returns unread - labels of the sources that settled without an answer
  */
-function getAlarmReadiness(sources) {
-  const entries = Object.entries(ALARM_SOURCE_LABELS).map(([key, label]) => ({ source: sources[key], label }));
+function getAlarmReadiness(sources, alarms = []) {
+  const entries = Object.entries(ALARM_SOURCES).map(([key, meta]) => ({ ...meta, source: sources[key] }));
   if (entries.some(({ source }) => !source || source.status === 'loading')) return ALARM_READINESS_LOADING;
 
   // a held reading whose latest read failed is unread too — its all-clear is stale
-  const unread = entries.filter(({ source }) => source.status !== 'ready' || source.error != null).map(({ label }) => label);
+  const heldAlarmIds = new Set(alarms.filter((alarm) => alarm.isHeld).map((alarm) => alarm.id));
+  const unread = entries
+    .filter(({ source, alarmId }) => (source.status !== 'ready' || source.error != null) && !heldAlarmIds.has(alarmId))
+    .map(({ label }) => label);
   return { status: unread.length > 0 ? 'unknown' : 'read', unread };
 }
 

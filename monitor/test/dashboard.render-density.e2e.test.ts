@@ -288,6 +288,28 @@ describe("Alarm rows at 1440×900", () => {
   });
 });
 
+// A result row spaces its label, bar and count by the inline label role key (design.md §12.1), never a ladder step
+describe("The results panel rows at 1440×900", () => {
+  test("space their label, bar and count by --gap-label-inline", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      const gaps = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.columnGap = "var(--gap-label-inline)";
+        document.body.append(probe);
+        const token = getComputedStyle(probe).columnGap;
+        probe.remove();
+        const rows = Array.from(document.querySelectorAll("#dash-week-results .dash-result-row")).map((el) => getComputedStyle(el).columnGap);
+        return { token, rows };
+      });
+      assert.ok(gaps.rows.length > 0, "the panel renders its rows");
+      for (const gap of gaps.rows) assert.equal(gap, gaps.token, `row gap ${gap}, role key ${gaps.token}`);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
 // Runs by hour reads as a grid of squares: no cell outgrows the cap, and the panel sits beside the results from xl
 const HOUR_CELL_MAX_PX = 20;
 

@@ -535,7 +535,7 @@ test("stat labels carry no window text — the window is its own field the row j
 
 interface FailureHelpers {
   getPageSharedFailure: (stats: Stat[], panels?: Array<{ source: string; error: string | null }>) => { sources: string[]; error: string } | null;
-  getAlarmReadiness: (sources: Record<string, unknown>) => { status: string; unread: string[] };
+  getAlarmReadiness: (sources: Record<string, unknown>, alarms?: Alarm[]) => { status: string; unread: string[] };
 }
 const failure = dash as unknown as FailureHelpers;
 
@@ -748,6 +748,21 @@ test("a partly unread harness never reads healthy, and the lane cannot claim an 
   const readiness = failure.getAlarmReadiness({ harness, costState: kpi(1, 10), updateState: ready({}) });
   assert.equal(readiness.status, "unknown");
   assert.ok(readiness.unread.includes("harness health"));
+});
+
+describe("a source whose held alarm the list already shows is not announced as unread again", () => {
+  const rows = [
+    { name: "hot spend held over a failed cost read", costState: held(kpi(500, 10), "HTTP 502"), isUnread: false },
+    { name: "calm spend held over a failed cost read", costState: held(kpi(1, 10), "HTTP 502"), isUnread: true },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sources = { harness: HEALTHY, costState: row.costState, updateState: ready({}) };
+      const alarms = dash.buildAlarms({ ...sources, installKind: "hidden" });
+      const readiness = failure.getAlarmReadiness(sources, alarms);
+      assert.equal(readiness.unread.includes("today's spend"), row.isUnread, readiness.unread.join(" · "));
+    });
+  }
 });
 
 test("the harness stat dims and reads busy while the shell re-reads it, like a region stat refreshing over held data", () => {
