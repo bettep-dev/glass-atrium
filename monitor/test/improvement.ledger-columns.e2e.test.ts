@@ -97,25 +97,19 @@ async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]>
   }
 }
 
-// the named column is the shorter one: a lone section keeps its free space below, a later section pins to the bottom
+// held and recurrence fill the first column, live and inert the second · the named column is the shorter one:
+// a lone section keeps its free space below, a later section pins to the bottom
 const rows = [
   {
-    name: "a short live list alone in its column stays at the column top",
-    learningLog: getLearningLog(1, 1, 2),
+    name: "a lone held section beside a long live list stays at the column top",
+    learningLog: getLearningLog(10, 1, 1),
     column: 0,
     sections: 1,
     isBottomPinned: false,
   },
   {
-    name: "an inert section alone beside a long live list stays at the column top",
-    learningLog: getLearningLog(10, 1, 0),
-    column: 1,
-    sections: 1,
-    isBottomPinned: false,
-  },
-  {
-    name: "a two-section column beside a long live list starts at its top and ends on the shared bottom edge",
-    learningLog: getLearningLog(10, 1, 1),
+    name: "live and inert beside a taller held table start at the column top and end on the shared bottom edge",
+    learningLog: getLearningLog(1, 1, 3),
     column: 1,
     sections: 2,
     isBottomPinned: true,
@@ -125,7 +119,7 @@ const rows = [
 for (const row of rows) {
   test(`${row.name} at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
     const columns = await getColumnReadings(row.learningLog);
-    assert.equal(columns.length, 2, "the ledger pairs its live list with a side column");
+    assert.equal(columns.length, 2, "the ledger pairs its held rows with its candidates");
     const reading = columns[row.column]!;
     assert.equal(reading.sections, row.sections, "the case renders the intended section count");
 
@@ -138,7 +132,7 @@ for (const row of rows) {
   });
 }
 
-// On the inert list, pattern names and agents of different lengths still put every agent and every date on one column edge
+// On the opened inert list, labels and agents of different lengths still put every agent and every date on one column edge
 test(`inert rows line their agent and date up in columns whatever the pattern and agent lengths, at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
   const shapes = [
     ["short", "glass-atrium-dev-db"],
@@ -168,14 +162,14 @@ test(`inert rows line their agent and date up in columns whatever the pattern an
   try {
     const page = await browser.newPage({ viewport: { width: SIDE_BY_SIDE_WIDTH, height: 900 } });
     await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
-    await page.waitForSelector(COLUMNS, { timeout: 30_000 });
+    await page.waitForSelector("#improvement-pattern-ledger details", { timeout: 30_000 });
     await page.evaluate(() => document.fonts.ready);
-    // the list right after the section head that names the inert rows — the innermost div opening with its label
+    // the disclosure whose summary names the inert rows, opened, then its row list
     const rows = await page.evaluate(() => {
-      const head = [...document.querySelectorAll<HTMLElement>("#improvement-pattern-ledger div")]
-        .filter((el) => (el.textContent ?? "").startsWith("Inert —"))
-        .at(-1)!;
-      return [...head.nextElementSibling!.children].map((item) => {
+      const fold = [...document.querySelectorAll<HTMLDetailsElement>("#improvement-pattern-ledger details")]
+        .find((el) => (el.querySelector("summary")?.textContent ?? "").includes("Inert —"))!;
+      fold.open = true;
+      return [...fold.querySelector("ul")!.children].map((item) => {
         const [name, agent, date] = [...item.children].map((cell) => cell.getBoundingClientRect());
         return { nameRight: name!.right, agentLeft: agent!.left, dateLeft: date!.left, height: item.getBoundingClientRect().height };
       });

@@ -483,7 +483,7 @@ describe("board and action surfaces leave their tone on the glyph", () => {
     },
     {
       name: "the board head's awaiting status",
-      render: () => component("AwaitingStatusI")({ count: 2 }),
+      render: () => component("HeadStatusI")({ count: 2, words: "awaiting" }),
     },
     {
       name: "the operations-view instrumentation strip",

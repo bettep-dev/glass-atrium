@@ -52,7 +52,7 @@ interface Sandbox {
   StatusBandI: Component;
   RejectedHeaderI: Component;
   BoardRowI: Component;
-  HeldCauseStripI: Component;
+  HeldCauseTableI: Component;
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
   confidenceBadgeMetaI: (value: unknown) => { label: string };
 }
@@ -555,14 +555,14 @@ test("a suggestion board row sets its title at the body size, leaving ids and da
   assert.doesNotMatch(classOf(title), /\bfs-meta\b/);
 });
 
-test("a held cause reads as one label line, its remedy kept off the strip for the ledger's drawer", () => {
+test("a held cause reads as one table row of cause, held count and agents, its remedy kept for the ledger's drawer", () => {
   const hint = "Raise the cap after a human reads the rows";
-  const tree = sandbox.HeldCauseStripI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
-  const text = visibleText(tree);
+  const tree = sandbox.HeldCauseTableI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
+  const [row] = findAll(tree, (el) => el.type === "tr" && visibleText(el).includes("Repeat-apply cap"));
 
-  assert.match(text, /Repeat-apply cap/);
-  assert.match(text, /2 held/);
-  assert.doesNotMatch(text, /Raise the cap/, "remedy prose on the strip");
+  assert.ok(row, visibleText(tree));
+  assert.deepEqual(findAll(row, (el) => el.type === "td").map((cell) => visibleText(cell).trim()), ["Repeat-apply cap", "2", "1"]);
+  assert.doesNotMatch(visibleText(tree), /Raise the cap/, "remedy prose in the table");
 });
 
 test("the rejected column header never wraps its label, count or basis", () => {

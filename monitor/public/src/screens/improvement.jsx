@@ -390,6 +390,9 @@ function ScreenImprovement({ onNav }) {
         .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
         .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:8px var(--card-pad) 0; }
         .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
+        /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
+        .i-ledger-body { padding-block:var(--space-1) var(--space-3); }
+        .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
         /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
         .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
@@ -560,9 +563,8 @@ function getBandStatsI({ asOf, statsState, listState, learningLogState, suppress
 	const appliedHeld = getHeldLabelI(asOf, statsState);
 	// a waiting suggestion is news whatever the read's age; only the empty queue needs a fresh read
 	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
-	// held causes a human can clear today — the ledger's held section counts the same set, so the two never disagree
 	const heldBuckets = getSuppressionListI(suppression, "parked");
-	const heldNeedingHuman = sumCountsI(heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)));
+	const heldNeedingHuman = getHeldNeedingHumanI(suppression);
 	const appliedLead = joinHeldI(appliedHeld, `of ${getCycleCountTextI(Number(s.cycle_total_7d ?? 0))} · last `);
 	return [
 		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", status: bandTileStatusI(listState, listState.data),
@@ -949,7 +951,7 @@ function KanbanCardI({
 					title="Suggestion board"
 					sub={`Lanes: latest ${BOARD_RECENT_LIMIT} suggestions`}
 					info={`Applied and rejected lanes read the latest ${BOARD_RECENT_LIMIT} suggestions. Awaiting shows every open one.`}
-					right={<AwaitingStatusI count={isLoading || isError ? 0 : awaitingRows.length} />}
+					right={<HeadStatusI count={isLoading || isError ? 0 : awaitingRows.length} words="awaiting" />}
 				/>
 			</div>
 			{isError ? (
@@ -999,13 +1001,13 @@ function KanbanCardI({
 }
 
 // Board head Status — the live region stays mounted so a count arriving later is announced (spec 44084 §3.1)
-function AwaitingStatusI({ count }) {
+function HeadStatusI({ count, words }) {
 	return (
 		<span role="status" aria-live="polite" className="inline-flex">
 			{count > 0 ? (
 				<span data-role="head-status" className="inline-flex items-center gap-label-inline fs-meta text-dim">
 					<SymI s="⚠" className="text-warn" size={13} />
-					<span>{`${formatIntI(count)} awaiting`}</span>
+					<span>{`${formatIntI(count)} ${words}`}</span>
 				</span>
 			) : null}
 		</span>
@@ -1755,6 +1757,11 @@ function getSuppressionListI(suppression, key) {
 	return Array.isArray(suppression?.[key]) ? suppression[key] : [];
 }
 
+// held rows a human can clear today — the status band and the ledger head read this one count
+function getHeldNeedingHumanI(suppression) {
+	return sumCountsI(getSuppressionListI(suppression, "parked").filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)));
+}
+
 // 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
 // 발견 윈도우를 걸면 숫자는 0 이 아닌데 구역만 비는 판독 불가 상태가 된다.
 // 반려 행은 서버가 원인별로 이미 나눠 보낸다 — 7일 목록에서 따로 모으면 같은 행이 두 번 선다.
@@ -1763,13 +1770,13 @@ function LedgerHeldSectionI({ suppression }) {
 	if (buckets.length === 0) return null;
 	const rows = getSuppressionListI(suppression, "parked_patterns");
 	return (
-		<div id={ANCHOR_ID_I.heldPatterns} className="px-3 pb-3">
+		<div id={ANCHOR_ID_I.heldPatterns} className="i-ledger-sec">
 			<LedgerSectionHeadI
 				label="Held — terminal rows"
 				basis="all time"
 				count={sumCountsI(buckets)}
 			/>
-			<HeldCauseStripI buckets={buckets} />
+			<HeldCauseTableI buckets={buckets} />
 			{buckets.map((b) => (
 				<HeldCauseGroupI
 					key={b.cause}
@@ -1781,36 +1788,35 @@ function LedgerHeldSectionI({ suppression }) {
 	);
 }
 
-// One line per cause — held count · agent count · re-arm condition, readable without opening the list.
-function HeldCauseStripI({ buckets }) {
+// One row per cause — held count · agents, readable without opening a row list · the remedy lives in the drawer
+function HeldCauseTableI({ buckets }) {
 	return (
-		<ul className="flex flex-col gap-1 mb-1">
-			{buckets.map((b) => {
-				const agents = Number(b.agents ?? 0);
-				const isHumanCause = !HELD_DESIGN_DECISION_CAUSES.has(b.cause);
-				return (
-					<li
-						key={b.cause}
-						className="fs-meta flex flex-wrap items-baseline gap-x-2"
-					>
-						<span title={isHumanCause ? "Needs a human" : "Held by design decision"}>
-							<SymI
-								s={isHumanCause ? "⚠" : "ℹ"}
-								className={isHumanCause ? "text-warn" : "text-faint"}
-								size={13}
-							/>
-						</span>
-						<span className="text-ink">{b.label}</span>
-						<span className="text-ink tnum">
-							{`${formatIntI(Number(b.count ?? 0))} held`}
-						</span>
-						<span className="text-dim tnum">
-							{`${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
-						</span>
-					</li>
-				);
-			})}
-		</ul>
+		<table className="w-full fs-meta mb-1">
+			<thead className="tbl-head">
+				<tr className="text-faint">
+					<th className="text-left font-medium">Cause</th>
+					<th className="text-right font-medium pl-4">Held</th>
+					<th className="text-right font-medium pl-4">Agents</th>
+				</tr>
+			</thead>
+			<tbody className="tbl-compact">
+				{buckets.map((b) => {
+					const isHumanCause = !HELD_DESIGN_DECISION_CAUSES.has(b.cause);
+					return (
+						<tr key={b.cause} className="border-t border-line/50">
+							<td className="text-left text-ink">
+								<span title={isHumanCause ? "Needs a human" : "Held by design decision"}>
+									<SymI s={isHumanCause ? "⚠" : "ℹ"} className={isHumanCause ? "text-warn" : "text-faint"} size={13} />
+								</span>{" "}
+								{b.label}
+							</td>
+							<td className="text-right pl-4 text-ink tnum">{formatIntI(Number(b.count ?? 0))}</td>
+							<td className="text-right pl-4 text-dim tnum">{formatIntI(Number(b.agents ?? 0))}</td>
+						</tr>
+					);
+				})}
+			</tbody>
+		</table>
 	);
 }
 
@@ -1867,18 +1873,47 @@ function LedgerSectionHeadI({ label, basis, count }) {
 }
 
 // 비활성(inert) 구역 — status 는 pending 인데 intake 가 라벨로 매번 건너뛴다. 활성 목록에
-// 섞여 있으면 건강한 backlog 로 읽히는 지점이 정확히 여기다.
+// 섞여 있으면 건강한 backlog 로 읽히는 지점이 정확히 여기다 → 접힌 채, 라벨당 한 줄.
 function LedgerInertSectionI({ rows }) {
 	if (rows.length === 0) return null;
 	return (
-		<div className="px-3 pb-3">
-			<LedgerSectionHeadI
-				label="Inert — the intake skips this label every cycle"
-				basis="discovered in the last 7 days"
-				count={rows.length}
-			/>
-			<LedgerPlainRowsI rows={rows} />
-		</div>
+		<details className="i-ledger-sec">
+			<summary className="group disclosure select-none">
+				<window.UI.DisclosureChevron />
+				<LedgerSectionHeadI
+					label="Inert — the intake skips this label every cycle"
+					basis="discovered in the last 7 days"
+					count={rows.length}
+				/>
+			</summary>
+			<InertLabelRowsI groups={getPatternGroupsI(rows)} />
+		</details>
+	);
+}
+
+// one line per label — row count past one · its agent, or how many · latest first-seen date
+function InertLabelRowsI({ groups }) {
+	return (
+		<ul className="mt-1.5 i-plain-rows">
+			{groups.map(({ title, entries }) => {
+				const agents = [...new Set(entries.map(({ pattern }) => pattern.agent))];
+				const latest = entries.map(({ pattern }) => String(pattern.discovered_date ?? "")).sort().at(-1);
+				return (
+					<li key={title} className="fs-body">
+						<span className="text-ink truncate min-w-0" title={title}>
+							{truncateI(title, 120)}
+							{entries.length > 1 ? <span className="text-dim tnum">{` ${formatIntI(entries.length)} rows`}</span> : null}
+						</span>
+						{agents.length === 1 ? (
+							<window.UI.AgentName name={agents[0]} className="text-dim whitespace-nowrap" />
+						) : (
+							<span className="text-dim whitespace-nowrap tnum" title={agents.join(", ")}>{`${formatIntI(agents.length)} agents`}</span>
+						)}
+						<span className="fs-meta text-faint shrink-0 tnum">{formatDateFullI(latest)}</span>
+					</li>
+				);
+			})}
+		</ul>
 	);
 }
 
@@ -1889,7 +1924,7 @@ function LedgerRecurrenceSectionI({ suppression }) {
 	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
-		<div className="px-3 pb-3">
+		<div className="i-ledger-sec">
 			<div
 				className="fs-meta text-dim mb-1"
 				title="Recurrences, not distinct patterns — these mechanisms write no lifecycle transition, so the same row is re-suppressed on every cycle."
@@ -1907,17 +1942,17 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 	return (
 		<table className="i-recurrence-tbl w-full fs-meta">
 			<thead className="tbl-head">
-				<tr className="text-faint uppercase tracking-wider">
-					<th className="text-left pl-1.5">Cause</th>
-					<th className="text-right pl-4">Agents affected</th>
-					<th className="text-right pl-4">Cycle days</th>
-					<th className="text-right pl-4 pr-1.5">Events</th>
+				<tr className="text-faint">
+					<th className="text-left font-medium">Cause</th>
+					<th className="text-right font-medium pl-4">Agents affected</th>
+					<th className="text-right font-medium pl-4">Cycle days</th>
+					<th className="text-right font-medium pl-4">Events</th>
 				</tr>
 			</thead>
 			<tbody className="tbl-compact">
 				{buckets.map((b) => (
 					<tr key={b.cause} className="border-t border-line/50">
-						<td className="text-left pl-1.5 text-ink" title={b.hint}>
+						<td className="text-left text-ink" title={b.hint}>
 							{b.label}
 						</td>
 						<td className="text-right pl-4 text-ink tnum">
@@ -1926,7 +1961,7 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 						<td className="text-right pl-4 text-ink tnum">
 							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
 						</td>
-						<td className="text-right pl-4 pr-1.5 text-dim tnum">
+						<td className="text-right pl-4 text-dim tnum">
 							{formatIntI(Number(b.count ?? 0))}
 						</td>
 					</tr>
@@ -2487,58 +2522,37 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 	// severity 밴드 = 최대 빈도 대비 — StatusDot 색 + 텍스트 빈도 동반 (dual-encode).
 	const maxFreq = Math.max(1, ...sorted.map((p) => Number(p.frequency ?? 0)));
 
-	const liveSection = (
-		<LedgerLiveSectionI rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />
-	);
-	const sideSections = getLedgerSectionsI(inert, suppression);
-	const columns =
-		inert.length > 0
-			? getLedgerColumnsI(1 + live.length + getLiveRowGroupsI(live).length, sideSections)
-			: null;
+	const candidates = [
+		<LedgerLiveSectionI key="live" rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />,
+		<LedgerInertSectionI key="inert" rows={inert} />,
+	];
+	// held + recurrence = the problems a human acts on → they lead · none → the candidates take the whole card
+	const hasProblems = ["parked", "per_cycle"].some((key) => getSuppressionListI(suppression, key).length > 0);
+	const heldNeedingHuman = getHeldNeedingHumanI(suppression);
 
 	return (
 		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
-			<CardHead title="Pattern ledger" info={<LedgerNotesI suppression={suppression} />} />
-			{columns ? (
-				<SplitRow ratio="1:1" layout="equal" className="i-ledger-cols">
-					<SplitColumn>
-						{liveSection}
-						{columns.live.map((section) => section.node)}
-					</SplitColumn>
-					<SplitColumn>{columns.side.map((section) => section.node)}</SplitColumn>
-				</SplitRow>
-			) : (
-				<>
-					{liveSection}
-					{sideSections.map((section) => section.node)}
-				</>
-			)}
+			<CardHead
+				title="Pattern ledger"
+				info={<LedgerNotesI suppression={suppression} />}
+				right={<HeadStatusI count={heldNeedingHuman} words={heldNeedingHuman === 1 ? "needs a human" : "need a human"} />}
+			/>
+			<div className="i-ledger-body">
+				{hasProblems ? (
+					<SplitRow ratio="1:1" layout="equal" className="i-ledger-cols">
+						<SplitColumn>
+							<LedgerHeldSectionI suppression={suppression} />
+							<LedgerRecurrenceSectionI suppression={suppression} />
+						</SplitColumn>
+						<SplitColumn>{candidates}</SplitColumn>
+					</SplitRow>
+				) : (
+					candidates
+				)}
+			</div>
 			<LedgerFooterI total={total} declined={declinedAllTime} />
 		</section>
 	);
-}
-
-// Ledger sections beside the live list, each weighted by its rendered lines (head + rows · held = strip line + folded summary per cause).
-function getLedgerSectionsI(inert, suppression) {
-	const heldBuckets = getSuppressionListI(suppression, "parked");
-	const recurrenceBuckets = getSuppressionListI(suppression, "per_cycle");
-	return [
-		{ key: "inert", weight: inert.length > 0 ? 1 + inert.length : 0, node: <LedgerInertSectionI key="inert" rows={inert} /> },
-		{ key: "held", weight: heldBuckets.length > 0 ? 1 + 2 * heldBuckets.length : 0, node: <LedgerHeldSectionI key="held" suppression={suppression} /> },
-		{ key: "recurrence", weight: recurrenceBuckets.length > 0 ? 2 + recurrenceBuckets.length : 0, node: <LedgerRecurrenceSectionI key="recurrence" suppression={suppression} /> },
-	];
-}
-
-// Each section, in order, joins the lighter column so far → neither column ends in a tall empty run.
-function getLedgerColumnsI(liveWeight, sections) {
-	const columns = { live: [], side: [] };
-	const total = { live: liveWeight, side: 0 };
-	for (const section of sections) {
-		const target = total.side <= total.live ? "side" : "live";
-		columns[target].push(section);
-		total[target] += section.weight;
-	}
-	return columns;
 }
 
 // Live zone — proposal-eligible rows only, card kept when empty (held still reads) · same-title rows grouped, each led by its agent.
@@ -2552,7 +2566,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	);
 	if (rows.length === 0) {
 		return (
-			<div className="px-3 pb-3">
+			<div className="i-ledger-sec">
 				{head}
 				<div className="placeholder">
 					No candidate patterns in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>
@@ -2561,9 +2575,9 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 		);
 	}
 	return (
-		<div className="px-3 pb-3 flex flex-col gap-1.5">
+		<div className="i-ledger-sec flex flex-col gap-1.5">
 			{head}
-			{getLiveRowGroupsI(rows).map((group) => (
+			{getPatternGroupsI(rows).map((group) => (
 				<div key={group.title} className="flex flex-col gap-1">
 					<div className="fs-body text-ink truncate" title={group.title}>
 						{truncateI(group.title, 120)}
@@ -2584,7 +2598,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 }
 
 // Group by shared title — first-appearance order kept, rank stays the overall frequency rank.
-function getLiveRowGroupsI(rows) {
+function getPatternGroupsI(rows) {
 	const groups = new Map();
 	rows.forEach((pattern, i) => {
 		const title = patternNameI(pattern.pattern_signature, pattern.agent);
