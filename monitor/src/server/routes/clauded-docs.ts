@@ -1765,7 +1765,7 @@ function getChangedUpdateFields(input: {
 }
 
 /**
- * PUT HTML primary path: sanitize → structure validate → SHA256 → atomic write → DB update.
+ * PUT HTML primary path: hash compare → sanitize → structure validate → SHA256 → atomic write → DB update.
  *
  * If the existing row was plain (`.md` etc.), issue a new `.html` path + delete the old file.
  * Same format → in-place write.
@@ -1785,6 +1785,12 @@ async function handleUpdateHtmlBody(
     return reply.code(500).send({ error: "internal" });
   }
 
+  // Optimistic-lock check (HTTP If-Match-style) → a stale writer is refused before any body work.
+  if (existing.content_hash !== parsed.expected_hash) {
+    reply.code(409);
+    return { error: "hash_conflict", expected: parsed.expected_hash, actual: existing.content_hash };
+  }
+
   const sanitized = sanitizeUpdateBody(request, reply, htmlBody);
   if (sanitized === null) return reply as never;
 
@@ -1794,12 +1800,6 @@ async function handleUpdateHtmlBody(
 
   const conversion = convertForStorageOrReply(request, reply, sanitized);
   if (conversion === null) return reply as never;
-
-  // Optimistic-lock check (HTTP If-Match-style).
-  if (existing.content_hash !== parsed.expected_hash) {
-    reply.code(409);
-    return { error: "hash_conflict", expected: parsed.expected_hash, actual: existing.content_hash };
-  }
 
   // No-op short-circuit — same content + same audience. Even with unchanged body, a doc_status
   // diff must take the cascade path, so block the no-op skip (else sibling cascade is missed).
@@ -2752,7 +2752,7 @@ async function replyCascadeOnlyUpdate(
  * PUT hash-uniqueness probe. On duplicate hit OR DB failure, restores the
  * previous content and returns a fully-formed error body. "ok" = continue.
  */
-async function checkUpdateHashUniqueness(
+export async function checkUpdateHashUniqueness(
   request: FastifyRequest,
   reply: FastifyReply,
   prisma: ReturnType<typeof getPrisma>,
@@ -2774,6 +2774,7 @@ async function checkUpdateHashUniqueness(
     }
     return "ok";
   } catch (error) {
+    await restoreHtmlBody(request.log, restoreArgs);
     return failWithDb(request, reply, "/api/clauded-docs/:id (PUT)", error);
   }
 }
@@ -3630,35 +3631,25 @@ async function handleGroupCreate(
   setAuditTarget(request, { memberIds });
 
   const prisma = getPrisma();
-  // Root selection key: created_at DESC, id DESC (newest wins, id tie-break).
-  // The probe doubles as a DB-existence check — fewer RETURNING rows than
-  // member_ids means some ids are missing.
-  interface UpdatedRow {
-    id: bigint;
-  }
-  let updatedRows: UpdatedRow[];
-  let rootId: bigint | null = null;
+  const memberIdBigints = memberIds.map((id) => BigInt(id));
+  let members: GroupMemberRow[];
   try {
-    // ANY($1::bigint[]) — pass the id array as a single param (Prisma.sql safe).
-    const memberIdBigints = memberIds.map((id) => BigInt(id));
-    interface RootProbeRow {
-      id: bigint;
-    }
-    const rootProbe = await prisma.$queryRaw<RootProbeRow[]>`
-      SELECT id FROM monitor.documents
-      WHERE id = ANY(${memberIdBigints}::bigint[])
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1
-    `;
-    if (rootProbe[0] === undefined) {
-      return reply.code(404).send({
-        error: "members_not_found",
-        missing_ids: memberIds,
-      });
-    }
-    rootId = rootProbe[0].id;
+    members = await findGroupMembers(prisma, memberIdBigints);
+  } catch (error) {
+    return failWithDb(request, reply, "/api/clauded-docs/group (POST probe)", error);
+  }
+  // every member checked before the write → a missing id regroups nothing
+  if (members.length !== memberIds.length) {
+    const foundIds = new Set(members.map((r) => bigintToNumber(r.id)));
+    return reply.code(404).send({ error: "members_not_found", missing_ids: memberIds.filter((id) => !foundIds.has(id)) });
+  }
+  // newest member is the root (created_at DESC, id DESC) → its folder_id self-refs
+  const rootId = members[0]!.id;
+  const sourceFolderIds = getSourceFolderIds(members, rootId);
 
-    updatedRows = await prisma.$queryRaw<UpdatedRow[]>`
+  let updatedRows: Array<{ id: bigint }>;
+  try {
+    updatedRows = await prisma.$queryRaw<Array<{ id: bigint }>>`
       UPDATE monitor.documents
       SET folder_id = ${rootId}
       WHERE id = ANY(${memberIdBigints}::bigint[])
@@ -3667,22 +3658,15 @@ async function handleGroupCreate(
   } catch (error) {
     return failWithDb(request, reply, "/api/clauded-docs/group (POST)", error);
   }
-
-  // Fewer matched rows than input → some ids do not exist (members_not_found).
-  if (updatedRows.length !== memberIds.length) {
-    const foundIds = new Set(updatedRows.map((r) => bigintToNumber(r.id)));
-    const missing = memberIds.filter((id) => !foundIds.has(id));
-    return reply.code(404).send({
-      error: "members_not_found",
-      missing_ids: missing,
-    });
-  }
+  // groups the members were pulled from → a lone member left behind is ungrouped
+  const autoUngroupedIds = await applyAutoUngroupForFolders(request, prisma, sourceFolderIds);
 
   request.log.info(
     {
       route: "/api/clauded-docs/group", method: "POST",
       folder_id: bigintToNumber(rootId),
       member_count: updatedRows.length,
+      auto_ungrouped_ids: autoUngroupedIds,
       durationMs: Date.now() - start,
     },
     "group created",
@@ -3693,6 +3677,26 @@ async function handleGroupCreate(
     member_count: updatedRows.length,
     affected_member_ids: memberIds,
   };
+}
+
+interface GroupMemberRow {
+  id: bigint;
+  folder_id: bigint | null;
+}
+
+/** The named documents that exist, newest first (created_at DESC, id DESC). */
+async function findGroupMembers(prisma: ReturnType<typeof getPrisma>, memberIds: bigint[]): Promise<GroupMemberRow[]> {
+  return prisma.$queryRaw<GroupMemberRow[]>`
+    SELECT id, folder_id FROM monitor.documents
+    WHERE id = ANY(${memberIds}::bigint[])
+    ORDER BY created_at DESC, id DESC
+  `;
+}
+
+/** Distinct prior groups of the members, the new root's own group excluded. */
+function getSourceFolderIds(members: GroupMemberRow[], rootId: bigint): number[] {
+  const folderIds = members.map((r) => r.folder_id).filter((fid): fid is bigint => fid !== null && fid !== rootId);
+  return Array.from(new Set(folderIds.map((fid) => bigintToNumber(fid))));
 }
 
 // POST /api/clauded-docs/ungroup

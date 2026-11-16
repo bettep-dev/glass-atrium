@@ -18,6 +18,7 @@ import {
   buildFsFailReason,
   cascadeAfterRowUpdate,
   cascadeUpdateDocStatus,
+  checkUpdateHashUniqueness,
   fsErrnoCode,
   prefixedFsReason,
   replyUpdateCasConflict,
@@ -204,6 +205,28 @@ test("#20 replyUpdateCasConflict: re-SELECT DB failure → 503 database_unavaila
     assert.strictEqual(body.error, "database_unavailable");
     // restoreHtmlBody runs BEFORE the re-SELECT, so the disk is reverted regardless.
     assert.strictEqual(readFileSync(htmlPath, "utf8"), "ORIGINAL");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkUpdateHashUniqueness: a failed uniqueness query answers 503 with the overwritten body restored", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dup-dberr-"));
+  try {
+    const htmlPath = join(dir, "doc.html");
+    writeFileSync(htmlPath, "NEW_CONTENT", "utf8");
+    const restoreArgs: HtmlRestoreArgs = { htmlPath, previousHtmlContent: "ORIGINAL" };
+    const prisma = makePrisma(async () => {
+      throw new Error("connection lost");
+    });
+    const reply = makeReply();
+
+    const body = (await checkUpdateHashUniqueness(makeRequest(), reply.asReply, prisma, 5, "NEW_HASH", restoreArgs)) as { error: string };
+
+    assert.deepStrictEqual(
+      [(reply.asReply as unknown as { statusCode: number }).statusCode, body.error, readFileSync(htmlPath, "utf8")],
+      [503, "database_unavailable", "ORIGINAL"],
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
