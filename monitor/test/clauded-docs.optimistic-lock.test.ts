@@ -27,6 +27,7 @@ import {
   type HtmlRestoreArgs,
   type UpdateClaudedDocArgs,
 } from "../src/server/routes/clauded-docs.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
 
 // A path that must NEVER appear in any client-facing error body (info leak).
 const LEAK_PATH = "/Users/secret/glass-atrium/monitor/data/clauded-docs/doc-42.html";
@@ -228,7 +229,7 @@ test("checkUpdateHashUniqueness: a failed uniqueness query answers 503 with the 
       [503, "database_unavailable", "ORIGINAL"],
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    deleteDirectory(dir);
   }
 });
 

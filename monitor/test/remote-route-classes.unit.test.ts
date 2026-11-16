@@ -27,8 +27,6 @@ import {
 after(() => disconnectPrisma());
 
 // the reviewer's signed lines past the first 94 rows, verbatim and in order
-// (verdict CIDs 2026-11-14T1640_lan-route-classes_a93f, 2026-11-14T2145_lan-cli-channel_5f0c from row 103,
-// 2026-11-15T0140_lan-signin-routes_c18e from row 106)
 const FIRST_SIGNED_ROW_COUNT = 94;
 const SIGNED_CLI_LINES = [
   "GET /api/remote/cli/devices remote-cli",
@@ -57,6 +55,10 @@ const RESIGN_CIDS = [
   "2026-11-15T0240_lan-unread-reads-b_3fa6",
   "2026-11-15T0241_lan-unread-reads-c_7b29",
 ];
+// verdicts whose rows 95-105 sit unchanged under the re-sign's digest
+const CARRIED_CIDS = ["2026-11-14T1640_lan-route-classes_a93f", "2026-11-14T2145_lan-cli-channel_5f0c"];
+// the signed table, held here → any class change in route-classes.ts also needs a test edit naming its verdict
+const SIGNED_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
 
 // class changes the re-sign carries, each a verdict's exact line → a class edited back without a new sign-off fails
 const RESIGNED_CLASS_CHANGES = [
@@ -123,17 +125,18 @@ test("every classified route is still registered, so a removed route leaves no s
 });
 
 describe("reviewer sign-offs", () => {
-  test("the latest sign-off covers the whole live table and its digest matches, so an unsigned class change fails", () => {
-    const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
-    assert.deepEqual(
-      { rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy },
-      { rowCount: REVIEWED_ROUTES.length, sha256: getRouteClassDigest(REVIEWED_ROUTES), supersededBy: undefined },
-    );
+  test("the live table is the signed table, so a class change made in route-classes.ts alone fails", () => {
+    assert.deepEqual({ rowCount: REVIEWED_ROUTES.length, sha256: getRouteClassDigest(REVIEWED_ROUTES) }, SIGNED_TABLE);
   });
 
-  test("the latest sign-off names the reviewer and the five verdict CIDs of the whole-table re-sign", () => {
+  test("the latest sign-off records the signed table and is not superseded", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
-    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: RESIGN_CIDS });
+    assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
+  });
+
+  test("the latest sign-off names the reviewer, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
+    const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
+    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: [...RESIGN_CIDS, ...CARRIED_CIDS] });
   });
 
   test("every earlier sign-off is kept as history, marked superseded by the re-sign, with its row count and old digest", () => {
@@ -158,7 +161,7 @@ describe("reviewer sign-offs", () => {
   });
 });
 
-test("the pre-auth set is exactly the three sign-in files and the code POST (signin verdict condition 6)", () => {
+test("the pre-auth set is exactly the three sign-in files and the code POST", () => {
   assert.deepEqual([...REMOTE_PRE_AUTH_ROUTES].sort(), ["GET /sign-in.css", "GET /sign-in.html", "GET /sign-in.js", "POST /api/remote/register"]);
 });
 

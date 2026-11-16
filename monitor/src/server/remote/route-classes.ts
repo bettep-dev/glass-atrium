@@ -63,13 +63,16 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
   {
     reviewer: "glass-atrium-sec-guard",
     stream: "S6",
-    // sign-in rows 106-108 and the unread rows (signin), the document writes (writes), the read rows (reads, reads-b, reads-c)
+    // sign-in rows 106-108 and the unread rows (signin), the document writes (writes), the read rows (reads, reads-b, reads-c),
+    // rows 95-105 carried unchanged (route-classes, cli-channel)
     cids: [
       RESIGN_CID,
       "2026-11-15T0215_lan-unread-writes_a2f7",
       "2026-11-15T0216_lan-unread-reads_d90b",
       "2026-11-15T0240_lan-unread-reads-b_3fa6",
       "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
     ],
     rowCount: 108,
     sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8",

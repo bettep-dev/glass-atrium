@@ -43,7 +43,7 @@ const timeline: string[] = [];
 let app: FastifyInstance;
 let tlsDir = "";
 
-// the signed sign-in rows (GET; HEAD follows its GET), verdict CID 2026-11-15T0140_lan-signin-routes_c18e
+// the signed sign-in rows (GET; HEAD follows its GET)
 const SIGN_IN_FILES = ["/sign-in.html", "/sign-in.js", "/sign-in.css"];
 const SIGN_IN_HEADERS = {
   "content-security-policy": "frame-ancestors 'none'",
@@ -299,13 +299,13 @@ describe("an unregistered device and the signed sign-in rows", () => {
     return app.inject({ method, url, remoteAddress, headers: { host: HOST } });
   }
 
-  test("condition 1: the shared stylesheets, the shell and a trailing-slash variant answer 401, as do other static paths", async () => {
+  test("the shared stylesheets, the shell and a trailing-slash variant answer 401, as do other static paths", async () => {
     const urls = ["/styles/base.css", "/styles/tokens.css", "/index.html", "/sign-in.html/", "/src/app.jsx", "/SIGN-IN.HTML", "/styles/../index.html"];
     const answers = await Promise.all(urls.map((url) => getUnregistered("GET", url)));
     assert.deepEqual(answers.map((answer, index) => [urls[index], answer.statusCode]), urls.map((url) => [url, 401]));
   });
 
-  test("condition 3: each signed file answers GET and HEAD 200 with the signed headers, and refuses POST, PUT and DELETE", async () => {
+  test("each signed file answers GET and HEAD 200 with the signed headers, and refuses POST, PUT and DELETE", async () => {
     for (const url of SIGN_IN_FILES) {
       for (const method of ["GET", "HEAD"] as const) {
         const response = await getUnregistered(method, url);
@@ -320,7 +320,7 @@ describe("an unregistered device and the signed sign-in rows", () => {
     }
   });
 
-  test("condition 4: GET and HEAD of exactly / answer 303 to the sign-in page; a query or another path answers 401", async () => {
+  test("GET and HEAD of exactly / answer 303 to the sign-in page; a query or another path answers 401", async () => {
     const rows = [
       { method: "GET" as const, url: "/", status: 303, location: "/sign-in.html" },
       { method: "HEAD" as const, url: "/", status: 303, location: "/sign-in.html" },
@@ -334,14 +334,10 @@ describe("an unregistered device and the signed sign-in rows", () => {
     }
   });
 
-  test("condition 5: the 61st pre-auth GET from one address within a minute answers 429", async () => {
+  test("the 61st pre-auth GET from one address within a minute answers 429", async () => {
     const statuses: number[] = [];
     for (let index = 0; index < 61; index += 1) statuses.push((await getUnregistered("GET", SIGN_IN_FILES[index % 3] ?? "", "192.168.5.5")).statusCode);
     assert.deepEqual([statuses.slice(0, 60).every((status) => status === 200), statuses[60]], [true, 429]);
-  });
-
-  test("condition 6: the gate's pre-auth set is exactly the three sign-in files and the code POST", () => {
-    assert.deepEqual([...REMOTE_PRE_AUTH_ROUTES].sort(), ["GET /sign-in.css", "GET /sign-in.html", "GET /sign-in.js", "POST /api/remote/register"]);
   });
 
   test("is sent from / to the sign-in page, registers there, and the cookie then opens /", async () => {
