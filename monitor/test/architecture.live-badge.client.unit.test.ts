@@ -1203,6 +1203,14 @@ test("C4 an unjudged part and a 'No data' part never share a drawer label", () =
 
 // --- P1: caption names, ring key, node accessible names, focus ring, security hue ---------
 
+interface LegendItem {
+  key: string;
+  kind: string;
+  mark?: string;
+  token?: string;
+  label: string;
+}
+
 test("the legend names every mark the canvas can draw", () => {
   const items = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR");
 

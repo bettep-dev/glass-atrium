@@ -32,11 +32,6 @@ interface PageFailure {
   error: string;
 }
 
-interface PartRow {
-  name: string;
-  tone: string | null;
-}
-
 interface Flow {
   id: string;
   from: string;
