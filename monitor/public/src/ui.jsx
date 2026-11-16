@@ -747,12 +747,14 @@ function AbsentValue({ kind, title }) {
 
 /**
  * One card's top-line numbers, a hairline between stats — never a tile per stat.
- * @param stats - each { label, value, unit?, context?, href?, key? }: context = the one period or delta line,
- *   href → the value is a Link to its drill-down; an absent value reads None; a 0 stays 0
+ * @param stats - each { label, value, unit?, context?, href?, isLoading?, key? }: context = the one period or delta line,
+ *   href → the value is a Link to its drill-down; an absent value reads None; a 0 stays 0;
+ *   isLoading → the shared loading value in place of value, unit, link and context
  */
 function StatRow({ stats, className = '' }) {
   return <dl className={`stat-row ${className}`.trim()}>
     {stats.map((stat) => {
+      if (stat.isLoading) return <LoadingStat key={stat.key ?? stat.label} label={stat.label}/>;
       const isAbsent = stat.value == null;
       const value = <>{isAbsent ? EMPTY_VALUE_TEXT : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
       return <div key={stat.key ?? stat.label} className="stat">
@@ -762,6 +764,15 @@ function StatRow({ stats, className = '' }) {
       </div>;
     })}
   </dl>;
+}
+
+// the figure's 600 is not the placeholder's → regular weight; the empty context line keeps the settled height (design.md §3.3)
+function LoadingStat({ label }) {
+  return <div className="stat">
+    <dt className="stat-label">{label}</dt>
+    <dd className="stat-value"><span className="inline-flex"><LoadingPlaceholder label={label.toLowerCase()} className="font-normal"/></span></dd>
+    <dd className="stat-context"><span aria-hidden="true">{'\u00a0'}</span></dd>
+  </div>;
 }
 
 // 공용 오버레이 surface — variant 로 배치만 전환, 상호작용 계약은 단일 (presentation-only).

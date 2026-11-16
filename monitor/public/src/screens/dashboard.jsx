@@ -346,11 +346,11 @@ function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
 
 // stat model → one StatRow stat; the value is the Link to the owning screen once there is something to link
 function buildStatItem(stat, { onRetry, isRetryShared }) {
-  const hasFigure = stat.status !== 'loading' && !stat.absent;
+  if (stat.status === 'loading') return { key: stat.id, label: getStatLabel(stat), isLoading: true };
   return {
-    key: stat.id, label: getStatLabel(stat), value: <StatValue stat={stat}/>, unit: hasFigure ? stat.unit : undefined,
+    key: stat.id, label: getStatLabel(stat), value: <StatValue stat={stat}/>, unit: stat.absent ? undefined : stat.unit,
     context: getStatContext(stat, { onRetry, isRetryShared }),
-    href: stat.status === 'loading' ? undefined : `#${stat.target}`,
+    href: `#${stat.target}`,
   };
 }
 
@@ -360,10 +360,8 @@ function getStatLabel(stat) {
 }
 
 // the one visible line: the builder's context or a banner pointer; the stat's own Retry rides it
-// loading → an empty line at the settled height (design.md §3.3), so the cards below never jump when the read lands
 function getStatContext(stat, { onRetry, isRetryShared }) {
   const { DayTokens, RetryButton } = window.UI;
-  if (stat.status === 'loading') return <span aria-hidden="true">{'\u00a0'}</span>;
   const isCovered = isRetryShared && stat.error != null;
   const text = isCovered && stat.status === 'error' ? SHARED_FAILURE_CONTEXT : stat.context;
   const hasRetry = Boolean(stat.canRetry) && !isRetryShared;
@@ -384,11 +382,7 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
 const FIRING_TONES = new Set(['warn', 'crit']);
 
 function StatValue({ stat }) {
-  const { Icon, TONE_ICON, LoadingPlaceholder, AbsentValue, ALERT_SEVERITY_WORD } = window.UI;
-  if (stat.status === 'loading') {
-    // the value's 600 is the figure's → the placeholder reads regular, as the panel placeholder beside it does
-    return <span className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()} className="font-normal"/></span>;
-  }
+  const { Icon, TONE_ICON, AbsentValue, ALERT_SEVERITY_WORD } = window.UI;
   if (stat.absent) return <AbsentValue kind={stat.absent}/>;
   const figure = <span className={`whitespace-nowrap${stat.isBusy ? ' opacity-70' : ''}`}>{stat.value}</span>;
   if (!FIRING_TONES.has(stat.tone)) return figure;

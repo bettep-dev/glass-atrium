@@ -588,9 +588,7 @@ const BAND_ABSENT_CONTEXT_I = {
 
 function buildBandStatI({ key, label, owner, isCovered, status, value, context }) {
 	if (status === "ready") return { key, label, value, context };
-	// blank context line → the card keeps its rest height when the read lands
-	// inline-flex keeps the shared placeholder on the stat's start edge, as on Dashboard and Cost
-	if (status === "loading") return { key, label, value: <span className="inline-flex"><window.UI.LoadingPlaceholder label={label.toLowerCase()} className="font-normal" /></span>, context: <span aria-hidden="true">{"\u00a0"}</span> };
+	if (status === "loading") return { key, label, isLoading: true };
 	const cause = BAND_ABSENT_CONTEXT_I[status](owner, isCovered);
 	return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={cause} />, context: cause };
 }

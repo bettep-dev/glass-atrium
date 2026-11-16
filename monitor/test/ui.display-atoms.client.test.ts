@@ -144,6 +144,20 @@ describe("stat row", () => {
     assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
   });
 
+  // one loading look on every stat row: the value says what it waits for in regular weight, the context line holds its height
+  test("a loading stat draws the shared placeholder named for its label, regular weight, and links nowhere until it lands", () => {
+    const tree = render("StatRow", { stats: [{ label: "Spend today", isLoading: true, value: "$41.20", href: "#/cost", context: "up 4%" }] });
+    const value = getValues(tree)[0];
+    const [placeholder] = findNodes(value, (n) => n.props.role === "status");
+    assert.equal(collectText(placeholder).trim(), "Loading spend today\u2026");
+    assert.match(String(placeholder.props.className), /\bfont-normal\b/, "the figure's 600 is not the placeholder's");
+    assert.equal(findNodes(tree, (n) => n.type === "a").length, 0);
+    assert.doesNotMatch(collectText(tree), /\$41\.20|up 4%/, "a value it has not read stays unsaid");
+    const [context] = findNodes(tree, (n) => n.type === "dd" && /\bstat-context\b/.test(String(n.props.className)));
+    assert.equal(collectText(context).trim(), "", "the context line is reserved, empty");
+    assert.equal(findNodes(context, (n) => n.props["aria-hidden"] === "true").length, 1, "the reserved line is hidden from assistive tech");
+  });
+
   const valueRows = [
     { name: "zero is a real value", value: 0, text: "0" },
     { name: "null reads None", value: null, text: "None" },

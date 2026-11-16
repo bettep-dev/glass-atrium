@@ -637,6 +637,7 @@ function SpendStatNotesC({ stats }) {
 // stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
 function buildStatC(stat) {
   const { DayTokens } = window.UI;
+  if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true };
   const isReady = stat.status === 'ready';
   // the hint or the state note, one plain string → its title carries it whole, and its day tokens stay whole
   const note = isReady ? (stat.hint || null) : getTileNote(stat.status, stat.unavailableNote);
@@ -647,11 +648,7 @@ function buildStatC(stat) {
 
 // Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
 function SpendStatValueC({ stat }) {
-  const { Icon, TONE_ICON, LoadingPlaceholder, AbsentValue } = window.UI;
-  // loading is stated once, through the shared placeholder — inline-flex keeps it on the stat's start edge
-  if (stat.status === 'loading') {
-    return <div className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()}/></div>;
-  }
+  const { Icon, TONE_ICON, AbsentValue } = window.UI;
   // a failed read is Not loaded, a read that holds nothing is None → the context line names the cause
   if (stat.status !== 'ready') return <AbsentValue kind={stat.status === 'error' ? 'not-loaded' : 'none'}/>;
   if (!stat.tone) return stat.value;

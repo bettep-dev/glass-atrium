@@ -553,7 +553,7 @@ const FAILED_STAT = {
   context: "Couldn't load the fleet summary.", region: "agents", source: "the fleet summary", error: "HTTP 500", canRetry: true,
   target: "agents",
 };
-interface StatItem { key: string; label: string; value: unknown; unit?: string; context: unknown; href?: string }
+interface StatItem { key: string; label: string; value: unknown; unit?: string; context: unknown; href?: string; isLoading?: boolean }
 
 function renderStatusCard(stats: unknown[], extra: Record<string, unknown> = {}): { tree: RenderedNode; items: StatItem[] } {
   const tree = render("StatusCard", { stats, onRetry: () => {}, ...extra });
@@ -573,14 +573,14 @@ test("the status row is one card holding one StatRow of four stats, its labels i
   assert.notEqual(String(cards[0].props.title), String(cards[0].props.title).toUpperCase(), "the card title is sentence case");
 });
 
-test("each stat's value is a Link to its owning screen; a loading stat links nowhere, says so in a placeholder and reserves its context line", () => {
+// the loading look is the stat row's (ui.display-atoms.client) → a loading stat hands it no value, link or context
+test("each stat's value is a Link to its owning screen; a loading stat reaches the stat row as loading, linking nowhere", () => {
   const { items } = renderStatusCard([READY_STAT, { ...READY_STAT, id: "spend", status: "loading", value: null, target: "cost" }]);
   assert.equal(items[0].href, "#outcomes");
+  assert.equal(items[1].isLoading, true);
   assert.equal(items[1].href, undefined);
-  assert.equal(findNodes(nodeOf(items[1].value), (n) => n.props.atom === "LoadingPlaceholder").length, 1);
-  const reserved = nodeOf(items[1].context);
-  assert.equal(collectText(reserved).trim(), "", "a loading stat says nothing on its context line yet");
-  assert.equal(reserved.props["aria-hidden"], "true", "the reserved line is hidden from assistive tech");
+  assert.equal(items[1].value, undefined);
+  assert.equal(items[1].context, undefined);
 });
 
 // the alarm row's own glyph → a firing stat's mark reads at the same size as the row that states its alarm
