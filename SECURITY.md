@@ -60,8 +60,10 @@ appreciated).
   Unix socket with no password material in the repository.
 - **Least-privilege agents** — each agent's tool allowlist is frozen at spawn
   time; high-impact actions require explicit user approval.
-- **Owner queue approvals** — an owner answer or owner message the monitor
-  holds counts as that explicit approval, for the one action it states.
+- **Owner queue approvals** — an owner answer or owner message counts as
+  that explicit approval, for the one action it states, once the session
+  has claimed it, `get` has returned it for that session and `ack` has
+  printed `first`.
   - The queue has no login: any process on the same machine can produce an
     answer, and a session acts on any answer the monitor holds.
   - So a forged or mistaken approval is acted on, and can resume an ended
