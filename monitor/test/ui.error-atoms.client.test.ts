@@ -208,7 +208,7 @@ describe("an alert card renders each optional slot only when given, on the surfa
       const tree = render("AlertCard", { tone: "warn", title: "Harness drift", ...row.props });
       const [chips] = getByClass(tree, "alert-card-subjects");
 
-      // spec 44084 §3.2: the shell is the surface's card classes alone — the retired well geometry left no inset modifier
+      // spec 44084 §3.2: the shell is exactly the picked surface's card classes plus alert-card — no modifier class of its own
       assert.deepEqual(String(getByClass(tree, "alert-card")[0].props.className).trim().split(/\s+/), row.shell, "shell");
       assert.equal(chips ? chips.children.length : 0, row.subjects, "subject chips");
       assert.equal(findNodes(tree, (n) => n.type === "details").length, row.details, "details");
