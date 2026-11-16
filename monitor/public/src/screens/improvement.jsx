@@ -419,11 +419,9 @@ function ScreenImprovement({ onNav }) {
       `}</style>
 
 			<div className="flex-shrink-0">
-				{/* the view switch re-lays the whole screen, so it rides `actions`, set apart from the status group */}
 				<PageHeader
 					sub="Self-improvement loop"
 					title="Learning"
-					actions={<ViewToggleI view={view} onChange={setView} />}
 					freshness={<FreshnessStamp at={asOf} regions={regionStates} />}
 					refresh={
 						<RefreshButton
@@ -434,6 +432,7 @@ function ScreenImprovement({ onNav }) {
 						/>
 					}
 				/>
+				<ViewTabsI view={view} onChange={setView} />
 			</div>
 
 			{/* 다섯 표면의 순서 — 알람 레인 → 상태 밴드 → 제안 보드 → 패턴 원장 → 루프 산출.
@@ -452,6 +451,7 @@ function ScreenImprovement({ onNav }) {
 						onRetry={triggerRefresh}
 					/>
 				) : null}
+				<div className="space-sections" {...window.UI.getTabPanelProps(VIEW_TABS_ID_I, view)}>
 				{view === "instrumentation" ? (
 					<InstrumentationViewI
 						listState={listState}
@@ -512,6 +512,7 @@ function ScreenImprovement({ onNav }) {
 						/>
 					</>
 				)}
+				</div>
 			</div>
 
 			{drawerRow && (
@@ -543,109 +544,14 @@ const sumCountsI = (list) =>
 // 한 payload 가 죽었을 때 나머지가 0 으로 읽히면 밴드 전체가 거짓말이 된다. 숫자는 항상
 // 자기 모집단을 데리고 다닌다 — 이웃 타일끼리 게이트가 다르기 때문이다.
 
-function StatusBandI({
-	asOf,
-	statsState,
-	listState,
-	learningLogState,
-	suppression,
-	awaiting,
-	styleRef,
-	corpusAuditState,
-	onOpenInstrumentation,
-	onRetry,
-}) {
-	const { PageVerdict, NoWrap } = window.UI;
-	const s = statsState.data || {};
-	const cycleTotal = Number(s.cycle_total_7d ?? 0);
-	const applied = Number(s.cycles_generated_applied_7d ?? 0);
-	const pendingTotal = Number(suppression?.pending_total ?? 0);
-	const promptable = Math.max(
-		0,
-		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
-	);
-	const statsStatus = bandTileStatusI(statsState, statsState.data);
-	const appliedHeld = getHeldLabelI(asOf, statsState);
-	// the stamp renders as one unbreakable token; the plain-string pair also feeds the clamped hint's title
-	const appliedLead = `${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last `;
-	const appliedStamp = formatCycleStampI(s.latest_cycle_started_at);
-	// a waiting suggestion warns whatever the read's age; only the all-clear needs a fresh read
-	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
-	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
-	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
-	const heldBuckets = getSuppressionListI(suppression, "parked");
-	const heldNeedingHuman = sumCountsI(
-		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
-	);
-	const verdict = getBandVerdictI({
-		status: getBandStatusI([statsState, listState, learningLogState], statsState.data && suppression),
-		awaiting,
-		applied,
-		heldNeedingHuman,
-	});
-
+// Loop status — only the counts that change the next action, one stat row; the alarm itself lives in the card that owns the rows (spec 44084 §3.1).
+function StatusBandI({ asOf, statsState, listState, learningLogState, suppression, awaiting, styleRef, corpusAuditState, onOpenInstrumentation }) {
+	const { Card, StatRow } = window.UI;
 	return (
-		<section className="mb-3 flex flex-col gap-2" aria-label="Loop status">
-			<PageVerdict
-				id={ANCHOR_ID_I.verdict}
-				tone={verdict.tone}
-				chips={verdict.chips}
-				freshness={{ at: asOf, regions: [statsState, listState, learningLogState] }}
-			>
-				{verdict.sentence}
-			</PageVerdict>
-			{/* two columns below xl, as the Dashboard and Cost bands → a narrow tile keeps its label and hint readable */}
-			<div className="grid grid-cols-2 xl:grid-cols-4 gap-card">
-				<StatusTileI
-					status={bandTileStatusI(listState, listState.data)}
-					tone={awaiting > 0 ? "text-warn" : awaitingHeld ? undefined : "text-ok"}
-					symbol={awaiting > 0 ? "⚠" : awaitingHeld ? null : "✓"}
-					label="Awaiting your decision"
-					value={formatIntI(awaiting)}
-					owner="suggestion board"
-					population={`${awaitingHeld ? `${awaitingHeld} · ` : ""}Suggestions that need your approval`}
-					basis="Pending or snoozed, any age"
-					onRetry={onRetry}
-				/>
-				<StatusTileI
-					status={statsStatus}
-					tone={appliedHeld ? undefined : "text-ok"}
-					symbol={appliedHeld ? null : "✓"}
-					label="Applied (7 days)"
-					value={formatIntI(applied)}
-					owner="loop output"
-					population={
-						<>
-							{appliedLead}
-							<NoWrap>{appliedStamp}</NoWrap>
-						</>
-					}
-					populationTitle={`${appliedLead}${appliedStamp}`}
-					basis="Cycles started in the last 7 days"
-					onRetry={onRetry}
-				/>
-				<StatusTileI
-					status={bandTileStatusI(learningLogState, suppression)}
-					symbol={null}
-					label="Backlog that can propose"
-					value={formatIntI(promptable)}
-					owner="pattern ledger"
-					population={`of ${formatIntI(pendingTotal)} patterns can still propose`}
-					basis="Pending patterns across every agent, counted per pattern label"
-					onRetry={onRetry}
-				/>
-				<StatusTileI
-					status={bandTileStatusI(learningLogState, suppression)}
-					tone={heldNeedingHuman > 0 ? "text-warn" : undefined}
-					symbol={heldNeedingHuman > 0 ? "⚠" : null}
-					label="Held, needs a human"
-					value={formatIntI(heldNeedingHuman)}
-					owner="pattern ledger"
-					population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns`}
-					basis="Held patterns of any age that no cycle will re-arm on its own"
-					onRetry={onRetry}
-				/>
-			</div>
+		<section id={ANCHOR_ID_I.status} className="flex flex-col gap-2" aria-label="Loop status">
+			<Card>
+				<StatRow stats={getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting })} />
+			</Card>
 			<InstrumentationStripI
 				styleRef={styleRef}
 				corpusAuditState={corpusAuditState}
@@ -656,44 +562,62 @@ function StatusBandI({
 	);
 }
 
+function getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting }) {
+	const s = statsState.data || {};
+	const appliedHeld = getHeldLabelI(asOf, statsState);
+	// a waiting suggestion is news whatever the read's age; only the empty queue needs a fresh read
+	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
+	// held causes a human can clear today — the ledger's held section counts the same set, so the two never disagree
+	const heldBuckets = getSuppressionListI(suppression, "parked");
+	const heldNeedingHuman = sumCountsI(heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)));
+	const appliedLead = joinHeldI(appliedHeld, `of ${getCycleCountTextI(Number(s.cycle_total_7d ?? 0))} · last `);
+	return [
+		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", status: bandTileStatusI(listState, listState.data),
+			value: formatIntI(awaiting), context: joinHeldI(awaitingHeld, "Pending or snoozed suggestions") }),
+		buildBandStatI({ key: "applied", label: "Applied, 7d", owner: "loop output", status: bandTileStatusI(statsState, statsState.data),
+			value: formatIntI(Number(s.cycles_generated_applied_7d ?? 0)),
+			context: <>{appliedLead}<window.UI.NoWrap>{formatCycleStampI(s.latest_cycle_started_at)}</window.UI.NoWrap></> }),
+		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", status: bandTileStatusI(learningLogState, suppression),
+			value: heldNeedingHuman > 0 ? <JumpLinkI targetId={ANCHOR_ID_I.heldPatterns}>{formatIntI(heldNeedingHuman)}</JumpLinkI> : formatIntI(0),
+			context: `of ${formatIntI(sumCountsI(heldBuckets))} held patterns` }),
+	];
+}
+
+function joinHeldI(held, text) {
+	return held ? `${held} · ${text}` : text;
+}
+
+// a value slot never shows a number it did not read → busy while in flight, Not loaded once failed or empty (spec 44084 §2.2)
+const BAND_ABSENT_CONTEXT_I = {
+	unavailable: () => "Not measured — this payload carried no value for it",
+	announced: (owner) => `Not read — see the ${owner} below`,
+};
+
+function buildBandStatI({ key, label, owner, status, value, context }) {
+	if (status === "ready") return { key, label, value, context };
+	if (status === "loading") return { key, label, value: <span className="text-faint" aria-busy="true">…</span> };
+	const cause = BAND_ABSENT_CONTEXT_I[status](owner);
+	return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={cause} />, context: cause };
+}
+
+// in-page jump → scroll and focus the target, never a hash change (the app routes on the hash)
+function JumpLinkI({ targetId, children }) {
+	const onClick = (event) => {
+		event.preventDefault();
+		const target = document.getElementById(targetId);
+		if (!target) return;
+		if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+		target.scrollIntoView({ block: "nearest" });
+		target.focus({ preventScroll: true });
+	};
+	return <window.UI.Link href={`#${targetId}`} onClick={onClick}>{children}</window.UI.Link>;
+}
+
 // held count under a failed or aged read → its Last known label, null while fresh (shared verdict rule)
 function getHeldLabelI(at, state) {
 	if (!at) return null;
 	const verdict = window.UI.getFreshnessVerdict({ tone: "ok", at, regions: [state] });
 	return verdict.tone === "ok" ? null : verdict.label;
-}
-
-// Any failed payload → error, never "still loading" · ready only once every payload and value has landed.
-function getBandStatusI(states, value) {
-	if (states.some((st) => st.status === "error")) return "error";
-	return states.every((st) => st.status === "ready") && value ? "ready" : "loading";
-}
-
-// Band one-line verdict — warn when anything awaits a human; no state claimed before payloads land.
-function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
-	if (status === "error") {
-		return { tone: "neutral", sentence: "Loop status could not load", chips: [] };
-	}
-	if (status !== "ready") {
-		// shown over a warm read only (cold → PageVerdict's shared first-read note) → the shared notes all claim a first read, false here
-		return { tone: "neutral", sentence: "Still reading the loop status.", chips: [] };
-	}
-	const parts = [`${formatIntI(applied)} applied in the last 7 days`];
-	const chips = [];
-	if (awaiting > 0) {
-		parts.push(`${formatIntI(awaiting)} awaiting your decision`);
-		chips.push({ label: "Suggestion board", targetId: "improvement-board" });
-	}
-	if (heldNeedingHuman > 0) {
-		parts.push(`${formatIntI(heldNeedingHuman)} held for a human`);
-		chips.push({ label: "Held patterns", targetId: ANCHOR_ID_I.patternLedger });
-	}
-	if (chips.length === 0) parts.push("nothing needs a human");
-	return {
-		tone: chips.length > 0 ? "warn" : "ok",
-		sentence: parts.join(" · "),
-		chips,
-	};
 }
 
 const NOT_READ_CHIP_I = Object.freeze({
@@ -733,17 +657,21 @@ function getHeldChipI(chip, state, at) {
 		: { ...chip, label: verdict.label };
 }
 
-// Operations-view instrumentation health line — the instrumentation tab's alert state, visible without switching tabs.
+const DEVIATION_TONES_I = new Set(["warn", "crit"]);
+
+// Operations-view instrumentation line — a gauge that deviates, visible without switching tabs; silent when every gauge reads fine.
 function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 	const verdicts = window.ImprovementInstrumentationVerdicts;
 	if (!verdicts) return null;
-	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at);
+	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at).filter((chip) =>
+		DEVIATION_TONES_I.has(toneKeyI(chip.tone)),
+	);
+	if (chips.length === 0) return null;
 	return (
 		<div
 			className="flex flex-wrap items-center gap-x-3 gap-y-1 fs-meta"
 			data-testid="instrumentation-strip"
 		>
-			<span className="text-dim">Instrumentation</span>
 			{chips.map((chip) => (
 				<span
 					key={chip.key}
@@ -776,77 +704,6 @@ function bandTileStatusI(state, value) {
 	return status === "error" ? "announced" : status;
 }
 
-// label: the glyph stays whole and centred on the text line; the text ellipsizes in its own span, its full text in that span's title.
-// hint: ≤2 lines, clamped; the title carries the whole population line (populationTitle when the line is a node), then its basis.
-function StatusTileI({ status, tone, symbol, label, value, population, populationTitle, basis, owner, onRetry }) {
-	const { KPI } = window.UI;
-	if (status !== "ready") {
-		return (
-			<TilePlaceholderI
-				status={status}
-				label={label}
-				owner={owner}
-				onRetry={onRetry}
-			/>
-		);
-	}
-	const hintText = populationTitle ?? (typeof population === "string" ? population : undefined);
-	const hintTitle = [hintText, basis].filter(Boolean).join("\n") || undefined;
-	return (
-		<KPI
-			label={
-				<span className="flex items-baseline gap-1.5 min-w-0">
-					{symbol ? <SymI s={symbol} className={`${tone ?? ""} self-center shrink-0`.trim()} size={12} /> : null}
-					<span className="truncate min-w-0" title={label}>
-						{label}
-					</span>
-				</span>
-			}
-			value={value}
-			hint={population}
-			hintTitle={hintTitle}
-			isHintClamped
-			hintClassName="fs-meta"
-		/>
-	);
-}
-
-// 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
-// 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
-// The ready tile's own KPI anatomy carries every state → the label row and tile height hold when the value lands.
-// unavailable = a payload that carried no value for this tile → a value not read, so Not loaded like error and announced
-const TILE_PLACEHOLDER_STATE_I = { loading: "loading", error: "error", unavailable: "error", announced: "error" };
-
-function TilePlaceholderI({ status, label, owner, onRetry }) {
-	const { KPI } = window.UI;
-	const notes = {
-		error: "Couldn't load",
-		unavailable: "Not measured — this payload carried no value for it",
-		announced: `Not read — see the ${owner} below`,
-	};
-	return (
-		<KPI
-			label={label}
-			state={TILE_PLACEHOLDER_STATE_I[status] ?? "empty"}
-			loadingLabel={label}
-			hint={notes[status]}
-			hintFace="card-sub is-wrap"
-			foot={
-				status === "error" ? (
-					<button
-						type="button"
-						className="btn ghost sm"
-						onClick={onRetry}
-						aria-label={`Retry loading ${label}`}
-					>
-						Retry
-					</button>
-				) : null
-			}
-		/>
-	);
-}
-
 // 마지막 사이클 시각 (MM-DD HH:mm, 표시 tz) — 값이 없으면 "unknown". 0 이나 오래된 스탬프로 대체하지 않는다.
 function formatCycleStampI(iso) {
 	if (!iso || Number.isNaN(new Date(iso).getTime())) return "unknown";
@@ -857,27 +714,15 @@ function getCycleCountTextI(count) {
 	return `${formatIntI(count)} ${count === 1 ? "cycle" : "cycles"}`;
 }
 
-// 뷰 전환 — nav 항목이 아니라 화면 안의 전환. 선택 상태 = aria-pressed + selected fill 의 휘도 반전(색상 비의존 cue),
-// 상태 전용 글리프 없음 → 눌림과 무관하게 옵션 박스 하나(DESIGN.md §7.16).
-function ViewToggleI({ view, onChange }) {
-	const options = [
-		["operator", "Operator"],
-		["instrumentation", "Instrumentation"],
+const VIEW_TABS_ID_I = "improvement-view";
+
+// the view switch is a label-only tab row under the header → the segmented control in the head slot stays the range control on every screen
+function ViewTabsI({ view, onChange }) {
+	const tabs = [
+		{ key: "operator", label: "Operator" },
+		{ key: "instrumentation", label: "Instrumentation" },
 	];
-	return (
-		<div className="seg" role="group" aria-label="Screen view">
-			{options.map(([key, label]) => (
-				<button
-					key={key}
-					type="button"
-					aria-pressed={view === key}
-					onClick={() => onChange(key)}
-				>
-					{label}
-				</button>
-			))}
-		</div>
-	);
+	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3" />;
 }
 
 // ----- Rolling trend card (T-IMP-4) ------------------------------------------
@@ -1954,7 +1799,7 @@ function LedgerHeldSectionI({ suppression }) {
 	if (buckets.length === 0) return null;
 	const rows = getSuppressionListI(suppression, "parked_patterns");
 	return (
-		<div className="px-3 pb-3">
+		<div id={ANCHOR_ID_I.heldPatterns} className="px-3 pb-3">
 			<LedgerSectionHeadI
 				label="Held — terminal rows"
 				basis="all time"
@@ -3077,7 +2922,8 @@ function InstrumentationViewI(props) {
 // banner Retry hands focus to the open view's own anchor → the id must exist in whichever view is showing
 // region keys sit on every branch root of their card → the node outlives recovery and takes the Retry's focus
 const ANCHOR_ID_I = Object.freeze({
-	verdict: "improvement-verdict",
+	status: "improvement-status",
+	heldPatterns: "improvement-held-patterns",
 	instrumentation: "improvement-instrumentation",
 	loopOutput: "improvement-loop-output",
 	trend: "improvement-trend",
@@ -3088,7 +2934,7 @@ const ANCHOR_ID_I = Object.freeze({
 });
 
 function getBannerFocusTargetI(view) {
-	return view === "instrumentation" ? ANCHOR_ID_I.instrumentation : ANCHOR_ID_I.verdict;
+	return view === "instrumentation" ? ANCHOR_ID_I.instrumentation : ANCHOR_ID_I.status;
 }
 
 // Screen-shared atoms for the instrumentation view — this file owns the SymI glyph and confidenceBadgeMetaI verdicts.

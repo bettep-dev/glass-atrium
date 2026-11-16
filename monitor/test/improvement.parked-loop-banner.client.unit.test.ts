@@ -174,6 +174,27 @@ function listComponentOrder(node: RenderedNode | string | null, out: string[] = 
   return out;
 }
 
+test("the view switch is a tab row under the page header, never a control in its action slot", async () => {
+  const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
+  const screen = await loadScreenModule(IMPROVEMENT_SRC, { UI: ui.UI });
+  const rendered = renderScreen((screen.ScreenImprovement as (props: unknown) => unknown)({})) as RenderedNode;
+  const nodes: RenderedNode[] = [];
+  const walk = (node: RenderedNode | string) => {
+    if (typeof node === "string") return;
+    nodes.push(node);
+    for (const child of node.children) walk(child);
+  };
+  walk(rendered);
+  const headAt = nodes.findIndex((n) => n.type === "PageHeader");
+  const tabsAt = nodes.findIndex((n) => n.type === "Tabs");
+  const panel = nodes.find((n) => n.props.role === "tabpanel");
+
+  assert.equal(nodes[headAt]?.props.actions, undefined, "the page head's action slot holds no view switch");
+  assert.ok(tabsAt > headAt, "the tab row sits under the header");
+  assert.deepEqual(Array.from(nodes[tabsAt].props.tabs as Array<{ label: string }>, (t) => t.label), ["Operator", "Instrumentation"]);
+  assert.equal(panel?.props["aria-labelledby"], `${nodes[tabsAt].props.id}-tab-operator`, "the open view is the panel of its tab");
+});
+
 test("the operator view keeps the five-surface spine order", async () => {
   const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
   const screen = await loadScreenModule(IMPROVEMENT_SRC, { UI: ui.UI });
@@ -402,12 +423,12 @@ test("the status band never announces a failure the owning group already announc
     onRetry: () => {},
   });
   const buttons = collect(band, (el) => el.type === "button");
-  assert.equal(buttons.length, 0, "a retry per tile repeats the group's banner");
+  assert.equal(buttons.length, 0, "a retry per stat repeats the group's banner");
   const pointers = collect(band, (el) => {
     const kids = ([] as unknown[]).concat(el.props.children);
     return kids.some((k) => typeof k === "string" && k.includes("Not read — see the"));
   });
-  assert.equal(pointers.length, 4, "each tile points at its owning group");
+  assert.equal(pointers.length, 3, "each stat points at its owning group");
 });
 
 // ----- Board headers, proposal actions and tiles: tone on the glyph, tiles on the sub-card ---
@@ -520,19 +541,8 @@ test("approve and reject are shared buttons: approve keeps a neutral label, reje
   assert.equal(style.background, undefined, "the destructive outline carries no fill");
 });
 
-describe("tiles rest on a shared surface, and only an interactive tile answers hover", () => {
+describe("a ledger tile rests on a shared surface and answers hover", () => {
   const rows = [
-    {
-      // the metric tile is the shared KPI in its loading state → rendered one level to its root element
-      name: "a loading metric tile",
-      surface: /\bkpi\b/,
-      isInteractive: false,
-      render: () => {
-        const tile = component("TilePlaceholderI")({ status: "loading", label: "Applied", owner: "x", onRetry: () => {} }) as RecordedElement;
-        assert.equal(tile.type, sandbox.window.UI.KPI, "the metric tile is the shared KPI");
-        return (tile.type as ScreenComponent)(tile.props);
-      },
-    },
     {
       name: "a live candidate row",
       surface: /\bsub-card\b/,

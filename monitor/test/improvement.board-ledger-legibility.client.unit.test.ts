@@ -39,7 +39,7 @@ interface Sandbox {
   KanbanCardI: Component;
   KanbanColumnI: Component;
   CompactProposalCardI: Component;
-  ViewToggleI: Component;
+  ViewTabsI: Component;
   LoopOutputGroupI: Component;
   AppliedHeroHeaderI: Component;
   LedgerSectionHeadI: Component;
@@ -224,16 +224,12 @@ function classOf(el: RecordedElement): string {
   return String(el.props.className ?? "");
 }
 
-test("the view toggle is a segmented control whose pressed option alone carries aria-pressed", () => {
+test("the view switch is the shared tab row with the open view alone selected, never the range control", () => {
   for (const view of ["operator", "instrumentation"]) {
-    const tree = sandbox.ViewToggleI({ view, onChange: () => {} });
-    assert.ok(tree && /\bseg\b/.test(classOf(tree)), "toggle must use the shared .seg selected-state control");
-    const buttons = findAll(tree, (el) => el.type === "button");
-    assert.equal(buttons.length, 2);
-    const pressed = buttons.filter((b) => b.props["aria-pressed"] === true).map((b) => visibleText(b));
-    assert.equal(pressed.length, 1, view);
-    assert.match(pressed[0], view === "operator" ? /Operator/ : /Instrumentation/);
-    for (const b of buttons) assert.doesNotMatch(classOf(b), /\btext-(ink|faint)\b/, "a colour class would mask the selected fill");
+    const tree = sandbox.ViewTabsI({ view, onChange: () => {} });
+    assert.equal(tree?.type, sandbox.window.UI.Tabs, "a view switch drawn as the segmented range control reads as a range");
+    assert.equal(tree?.props.value, view);
+    assert.deepEqual(Array.from(tree?.props.tabs as Array<{ key: string }>, (t) => t.key), ["operator", "instrumentation"]);
   }
 });
 
