@@ -56,7 +56,7 @@ interface PageStateSandbox {
     hasMap: boolean,
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
-  getPartHealthGroupsAR: (partRows: HealthRow[]) => { listed: HealthRow[]; healthy: HealthRow[] };
+  getPartHealthGroupsAR: (partRows: HealthRow[], isPending?: boolean) => { listed: HealthRow[]; healthy: HealthRow[] };
   getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, freshness: HealthFreshness) => string;
   getPartStatusAR: (row: HealthRow & { statusLabel: string }, freshness: HealthFreshness) => { tone: string | null; text: string };
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
@@ -208,7 +208,17 @@ test("the part health block holds every part once — healthy parts folded apart
   }
 });
 
-describe("the empty Needs attention column says why it is empty, and its all-clear reads Last known exactly when the part rows do", () => {
+// spec 44084 §2.2 — a first read in flight is the loading state, never the Not-loaded mark
+test("while the first health read is in flight an unread part is left out of the list and every answered part keeps its place", () => {
+  const settled = sandbox.getPartHealthGroupsAR(MIXED_ROWS, false);
+  const pending = sandbox.getPartHealthGroupsAR(MIXED_ROWS, true);
+
+  assert.ok(settled.listed.some((row) => row.tone === null), "fixture precondition: a settled read lists the unread part");
+  assert.deepStrictEqual(pending.listed.map((row) => row.id), settled.listed.filter((row) => row.tone !== null).map((row) => row.id));
+  assert.deepStrictEqual(pending.healthy.map((row) => row.id), settled.healthy.map((row) => row.id));
+});
+
+describe("the Part health lead line says why nothing is flagged, and its all-clear reads Last known exactly when the part rows do", () => {
   const now = Date.parse("2026-01-10T12:00:00.000Z");
   const readAt = new Date(now - 60_000).toISOString();
   const held: RegionState = { status: "ready", data: { ok: true }, error: null, busy: false };
@@ -217,12 +227,16 @@ describe("the empty Needs attention column says why it is empty, and its all-cle
   const down: RegionState = { status: "error", data: null, error: "HTTP 500", busy: false };
   const judged = [healthRow("a", "ok"), healthRow("b", null)];
   const unjudged = [healthRow("a", null)];
+  // the empty-store case: two daemon parts answered "No data" — listed, so the lead names what the list is
+  const unverified = [healthRow("a", "ok"), healthRow("b", "info"), healthRow("c", "info")];
   const rows = [
     { name: "a read in flight is still checking", partRows: judged, busy: true, at: readAt, regions: [down], expected: /^Checking/ },
     { name: "an all-clear under a warm-error re-read is last known", partRows: judged, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known/ },
     { name: "an all-clear under a cold store failure is last known", partRows: judged, busy: false, at: readAt, regions: [down, held], expected: /^Last known/ },
     { name: "an all-clear older than the stale threshold is last known", partRows: judged, busy: false, at: new Date(now - 10 * 60_000).toISOString(), regions: [held], expected: /^Last known/ },
     { name: "an all-clear with every store freshly read is a plain all-clear", partRows: judged, busy: false, at: readAt, regions: [held, held], expected: /^No part needs attention$/ },
+    { name: "listed unverified parts are counted while none is flagged", partRows: unverified, busy: false, at: readAt, regions: [held], expected: /^2 not verified · none needs attention$/ },
+    { name: "listed unverified parts under a failed re-read are counted as last known", partRows: unverified, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: 2 not verified · none needed attention$/ },
     { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, at: null, regions: [down, down], expected: /^Couldn't read part health$/ },
     { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, at: null, regions: [held], expected: /^Part health not read yet$/ },
   ];

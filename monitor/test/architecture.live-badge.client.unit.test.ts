@@ -1160,7 +1160,7 @@ test("C1 a daemons store that has not answered leaves no verdict ring from the l
   }
 });
 
-test("C2 the per-node attention counts add up to the Part health head's count", () => {
+test("the per-node attention counts add up to the Part health head's count", () => {
   const rows = [
     { tone: "crit", nodeIds: ["cron"] },
     { tone: "crit", nodeIds: ["cron"] },
@@ -1205,7 +1205,7 @@ test("C4 an unjudged part and a 'No data' part never share a drawer label", () =
   assert.notStrictEqual(unjudged, "—");
 });
 
-// --- P1: caption names, ring key, node accessible names, focus ring, security hue ---------
+// --- P1: ring key, node accessible names, focus ring, security hue ---------
 
 interface LegendItem {
   key: string;

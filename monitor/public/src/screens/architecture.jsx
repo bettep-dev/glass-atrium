@@ -575,7 +575,7 @@ function ScreenArchitecture(
 		[liveState.data, daemonHealthState, pgState, hookState, hookFailState],
 	);
 
-	// caption population per node — parts may share one node, so one glyph may stand for several.
+	// attention parts per node — parts may share one node, so one glyph may stand for several.
 	const attentionCountByNodeId = useMemoAR(
 		() => buildAttentionCountByNodeIdAR(healthPartRows),
 		[healthPartRows],
@@ -881,6 +881,7 @@ function ScreenArchitecture(
 
 				<PartHealthBlockAR
 					partRows={healthPartRows}
+					isPending={healthPending}
 					attentionEmpty={getAttentionEmptyAR(healthPartRows, healthPending, partFreshness)}
 					freshness={partFreshness}
 					nodeIndex={nodeIndex}
@@ -2408,11 +2409,6 @@ function buildLiveDaemonsByNodeId(daemons) {
 	return m;
 }
 
-/**
- * 머리글 문장 — 손댈 곳의 수를 모집단과 함께 냄. 모집단은 헬스 모델의 부품 행 수이고,
- * 그려진 노드 수도 데몬 수도 아님 — 둘은 판정을 받지 않는 자리를 모집단에 섞음.
- * 로딩 · 못 읽음 · 미판정 · 정상이 저마다 다른 문장임: 하나로 접으면 안 읽힌 값이 0 으로 읽힘.
- */
 // legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.
 function getMapLegendItemsAR() {
 	const rings = ["warn", "crit"].map((tone) => ({
@@ -2904,8 +2900,14 @@ function getMapCopyNoteAR(diagState) {
 function getAttentionEmptyAR(partRows, isBusy, freshness) {
 	if (isBusy) return "Checking part health…";
 	if (partRows.some((row) => row.tone)) {
-		const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" });
-		return verdict.tone === "ok" ? "No part needs attention" : "Last known: no part needed attention";
+		const isFresh = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" }).tone === "ok";
+		// listed "No data" rows → the lead names what the list holds, not only what it lacks
+		const unverifiedCount = partRows.filter((row) => row.tone === "info").length;
+		if (unverifiedCount > 0) {
+			const counted = `${unverifiedCount} ${UNVERIFIED_WORD_AR}`;
+			return isFresh ? `${counted} · none needs attention` : `Last known: ${counted} · none needed attention`;
+		}
+		return isFresh ? "No part needs attention" : "Last known: no part needed attention";
 	}
 	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read part health" : "Part health not read yet";
 }
@@ -2952,11 +2954,12 @@ function getPartToneRankAR(tone) {
 	return PART_TONE_RANK_AR[tone] ?? PART_UNJUDGED_RANK_AR;
 }
 
-// flagged, answered and not-loaded parts, each worst first — the same rows the caption counts
 // listed = every part not judged healthy, worst first (flagged → not loaded → idle) · healthy = folded under its count
-function getPartHealthGroupsAR(partRows) {
+// first read in flight → an unread part is loading, not Not loaded (spec 44084 §2.2), so it waits out of the list
+function getPartHealthGroupsAR(partRows, isPending) {
 	const sorted = [...partRows].sort((a, b) => getPartToneRankAR(a.tone) - getPartToneRankAR(b.tone));
-	return { listed: sorted.filter((row) => row.tone !== "ok"), healthy: sorted.filter((row) => row.tone === "ok") };
+	const listed = sorted.filter((row) => row.tone !== "ok" && (row.tone || !isPending));
+	return { listed, healthy: sorted.filter((row) => row.tone === "ok") };
 }
 
 // the drawer's drill target — the node's worst daemon part, so a failing part opens with its runs listed
@@ -3021,11 +3024,11 @@ function getPartHealthStatusAR(partRows, freshness) {
 }
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
-function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
+function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
 	const { DisclosureChevron, Icon, TONE_ICON, ALERT_SEVERITY_WORD } = window.UI;
 	if (partRows.length === 0) return null;
 
-	const { listed, healthy } = getPartHealthGroupsAR(partRows);
+	const { listed, healthy } = getPartHealthGroupsAR(partRows, isPending);
 	const status = getPartHealthStatusAR(partRows, freshness);
 	const listProps = { freshness, nodeIndex, onSelectNode };
 	return (
