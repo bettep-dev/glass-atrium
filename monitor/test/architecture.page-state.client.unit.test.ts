@@ -1,6 +1,6 @@
-// The System map's page-level state copy: which failed reads earn the one page alert, how the
-// caption's failure count lines up with the stamp's, when the stamp may name a read time, and
-// what a drawer connection row names.
+// The System map's page-level state copy: which failed reads earn the one page alert, when the
+// stamp may name a read time, how the Part health block groups, leads, counts and explains its
+// parts, and what a drawer row names.
 //
 // Runner: npx tsx --test test/architecture.page-state.client.unit.test.ts
 

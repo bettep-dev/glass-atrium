@@ -356,7 +356,7 @@ test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으�
   );
 });
 
-// --- default-view scale — 90% of the contain fit, under the label ceiling ---
+// default-view scale — 90% of the contain fit, under the label ceiling
 
 // the default view's share of the contain fit — paired with the screen's overview rule
 const DEFAULT_VIEW_SHARE = 0.9;
@@ -1205,7 +1205,7 @@ test("C4 an unjudged part and a 'No data' part never share a drawer label", () =
   assert.notStrictEqual(unjudged, "—");
 });
 
-// --- P1: ring key, node accessible names, focus ring, security hue ---------
+// ring key, node accessible names, focus ring, security hue
 
 interface LegendItem {
   key: string;
@@ -1308,7 +1308,7 @@ test("a group title is dropped only where its single member's label already says
   }
 });
 
-test("P1 a node's accessible name carries its label and a distinct health word per state", () => {
+test("a node's accessible name carries its label and a distinct health word per state", () => {
   const states: [string | undefined, boolean][] = [["crit", false], ["warn", false], ["ok", false], [undefined, true]];
   const names = states.map(([tone, isUnverified]) =>
     callInCtx<string>(archCtx, "getNodeAccessibleNameAR", "Autoagent daemon", tone, isUnverified),
@@ -1319,7 +1319,7 @@ test("P1 a node's accessible name carries its label and a distinct health word p
   assert.ok(names[3].endsWith("not verified"), names[3]);
 });
 
-test("P1 the focus ring sits outside the health ring and never moves it", () => {
+test("the focus ring sits outside the health ring and never moves it", () => {
   const box = { x: 10, y: 20, width: 100, height: 40 };
   const state = callInCtx<Record<string, number>>(archCtx, "getRingGeometryAR", box, "arch-ring-state");
   const focus = callInCtx<Record<string, number>>(archCtx, "getRingGeometryAR", box, "arch-ring-focus");
@@ -1340,7 +1340,7 @@ test("P1 the focus ring sits outside the health ring and never moves it", () => 
   );
 });
 
-test("P1 the security category's node stroke uses no status hue", () => {
+test("the security category's node stroke uses no status hue", () => {
   const src = readFileSync(resolve(__dirname, "../src/server/architecture/diagrams-source.ts"), "utf8");
   const stroke = /classDef security [^\n]*stroke:(#[0-9a-fA-F]{6})/.exec(src)?.[1]?.toLowerCase();
   const tokens = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
