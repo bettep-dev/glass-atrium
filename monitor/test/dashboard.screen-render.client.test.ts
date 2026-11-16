@@ -169,6 +169,22 @@ test("spend and result bars carry the data colour; today's partial day keeps its
   }
 });
 
+test("the alarm lane, the spend strip and the results panel space by role keys, never a Tailwind ladder step", () => {
+  const strip = (mod.buildSpendStrip as (points: unknown) => unknown)(
+    ["2026-09-22", "2026-09-23"].map((date, i) => ({ date, cost_usd: 12.5 + i, session_count: 1 })),
+  );
+  const trees = [
+    render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "unknown", unread: ["today's spend"] }, onNav: () => {} }),
+    render("SpendStrip", { strip }),
+    renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }]),
+    render("BreakageAgents", { agents: [{ agent: "glass-atrium-dev-shell", count: 2 }, { agent: "glass-atrium-dev-db", count: 1 }] }),
+  ];
+  const steps = trees.flatMap((tree) => findNodes(tree, () => true))
+    .flatMap((node) => classOf(node).split(/\s+/))
+    .filter((name) => /^(gap|gap-x|gap-y|space-x|space-y)-\d/.test(name));
+  assert.deepEqual(steps, [], "every gap names its role (gap-list, gap-stack, ...)");
+});
+
 describe("the week results panel", () => {
   const rowTexts = (tree: RenderedNode) =>
     findNodes(tree, (n) => classOf(n).includes("dash-result-row")).map((row) => collectText(row).replace(/\s+/g, " ").trim());

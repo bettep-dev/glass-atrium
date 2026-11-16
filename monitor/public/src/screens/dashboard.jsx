@@ -152,8 +152,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-alarm-list .alarm-row-actions { min-height: var(--ctl-min-h); align-items: center; }
         .dash-alarm-detail { display: block; max-width: 72ch; margin-top: 4px; line-height: 1.4; }
         .dash-strip-track { height: 4rem; position: relative; }
-        /* one 1px --line baseline across the strip → each day's segment reaches half the gap-1 column gap either side */
-        .dash-strip-base { position: absolute; bottom: 0; left: -0.125rem; right: -0.125rem; height: 1px; background: rgb(var(--line)); }
+        /* one 1px --line baseline across the strip → each day's segment reaches half the column gap either side */
+        .dash-strip-base { position: absolute; bottom: 0; left: calc(var(--gap-label-inline) / -2); right: calc(var(--gap-label-inline) / -2); height: 1px; background: rgb(var(--line)); }
         li:first-child > .dash-strip-track > .dash-strip-base { left: 0; }
         li:last-child > .dash-strip-track > .dash-strip-base { right: 0; }
         .dash-strip-bar { background: currentColor; border-radius: 2px; }
@@ -237,7 +237,7 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
   const isIdle = alarms.length === 0 && !isUnread;
   return (
     <section className={isIdle ? 'dash-lane sr-only' : 'dash-lane'} aria-label="Needs you">
-      <div aria-live="polite" className="flex flex-col gap-2">
+      <div aria-live="polite" className="flex flex-col gap-list">
         {alarms.length > 0 && (
           <div className="card dash-alarm-list">
             {alarms.map((alarm) => (
@@ -467,9 +467,9 @@ function SpendStrip({ strip }) {
   return (
     <>
       <p className="fs-meta text-dim"><window.UI.DayTokens>{strip.span}</window.UI.DayTokens>{hasPartial ? ' · today is still accruing' : ''}</p>
-      <ol className="grid grid-cols-7 gap-1" aria-label={`Spend per day, ${strip.span}`}>
+      <ol className="grid grid-cols-7 gap-label-inline" aria-label={`Spend per day, ${strip.span}`}>
         {strip.bars.map((bar) => (
-          <li key={bar.date} className="flex flex-col items-center gap-1 min-w-0">
+          <li key={bar.date} className="flex flex-col items-center gap-stack min-w-0">
             <span className="fs-meta tabular-nums whitespace-nowrap">{formatUsdCompact(bar.cost)}</span>
             <div className="dash-strip-track w-full flex items-end text-data" aria-hidden="true">
               {bar.cost > 0 && <div className={`w-full ${bar.isPartial ? 'dash-strip-partial' : 'dash-strip-bar'}`}
@@ -492,7 +492,7 @@ function ResultPanel({ panel }) {
       <p className="fs-meta text-dim">
         <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} reported outcomes
       </p>
-      <ul className="flex flex-col gap-1.5">
+      <ul className="flex flex-col gap-list">
         {panel.rows.map((row) => {
           return (
             <li key={row.result} className="dash-result-row fs-body">
@@ -515,9 +515,9 @@ function BreakageAgents({ agents }) {
   return (
     <>
       <h3 className="fs-meta text-dim">Most failed or blocked</h3>
-      <ul className="flex flex-col gap-1">
+      <ul className="flex flex-col gap-list">
         {agents.map((row) => (
-          <li key={row.agent} className="flex items-center justify-between gap-2 fs-body">
+          <li key={row.agent} className="flex items-center justify-between gap-label-inline fs-body">
             {/* a real href, not onNav → the query reaches the Task results filter through hashchange */}
             <a href={getAgentOutcomesHref(row.agent)} className="dash-drill inline-target min-w-0"
               aria-label={`${row.agent}: ${formatInt(row.count)} failed or blocked — open its task results`}>
