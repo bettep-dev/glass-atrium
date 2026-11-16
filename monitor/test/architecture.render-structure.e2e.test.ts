@@ -1000,6 +1000,20 @@ describe("fault live fixture", () => {
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
 		);
 	});
+	// the head Status is the row status atom at head size → same glyph gap, glyph centred on the words
+	test("the Part health head Status spaces and centres its glyph as the row status atom does", async () => {
+		await ctx.page.waitForSelector(".arch-part-health-status svg", { timeout: 30_000 });
+		const [head, row] = await ctx.page.evaluate(() =>
+			[".arch-part-health-status", ".arch-part-status"].map((selector) => {
+				const style = getComputedStyle(document.querySelector(selector) as Element);
+				return { display: style.display, alignItems: style.alignItems, gap: style.columnGap };
+			}),
+		);
+		assert.deepStrictEqual(head, row);
+		// both sit in flex lines, so an inline-flex atom computes as flex — the centring is the fact read here
+		assert.equal(row.alignItems, "center", "the row atom centres its glyph on the words");
+	});
+
 	const badgeScenarios = [
 		{
 			// both daemon parts faulted, wiki-curator also lit on daemon-cycle's node → that node's badge carries its widest text, the count

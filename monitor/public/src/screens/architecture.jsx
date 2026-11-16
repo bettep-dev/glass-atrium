@@ -657,6 +657,8 @@ function ScreenArchitecture(
 					".arch-part-health { flex-shrink: 0; } " +
 					// the card title outranks its rows — body-size row text under a control-size title read upside down
 					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; margin: 0; } " +
+					// head Status = the row status atom at head size
+					".arch-part-health-status { display: inline-flex; align-items: center; gap: var(--space-1_5); } " +
 					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
 					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
@@ -3002,10 +3004,11 @@ function getPartRowIdAR(row) {
 	return `arch-part-${row.id}`;
 }
 
-const PART_STATUS_WORD_AR = {
-	crit: (n) => `${n} down`,
-	warn: (n) => `${n} ${n === 1 ? "needs" : "need"} attention`,
-};
+// the legend's tone word, true of every row it counts — a critical part reads Down or Overdue on its own row
+function getFlaggedCountTextAR(tone, count) {
+	if (tone === "warn") return `${count} ${count === 1 ? "needs" : "need"} attention`;
+	return `${count} ${HEALTH_WORD_AR[tone]}`;
+}
 
 // Part health head Status — flagged counts worst tone first; null when nothing is flagged (no all-clear line)
 function getPartHealthStatusAR(partRows, freshness) {
@@ -3016,7 +3019,7 @@ function getPartHealthStatusAR(partRows, freshness) {
 	const words = ["crit", "warn"]
 		.map((rowTone) => [rowTone, attention.filter((row) => row.tone === rowTone).length])
 		.filter(([, count]) => count > 0)
-		.map(([rowTone, count]) => PART_STATUS_WORD_AR[rowTone](count))
+		.map(([rowTone, count]) => getFlaggedCountTextAR(rowTone, count))
 		.join(" · ");
 	// held read → the verdict label gains a "Last known" lead; the head keeps the count first
 	const isHeld = window.UI.getFreshnessVerdict({ ...freshness, tone, label: words }).label !== words;

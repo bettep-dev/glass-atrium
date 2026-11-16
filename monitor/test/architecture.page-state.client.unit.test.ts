@@ -304,8 +304,8 @@ describe("a down part says how often it runs and when it is due next, from the s
 describe("the Part health head counts the flagged parts once, worst tone first, and says nothing when none is flagged", () => {
   const settled = { at: "2026-01-10T11:59:00.000Z", regions: [], now: Date.parse("2026-01-10T12:00:00.000Z") };
   const rows = [
-    { name: "a critical part outranks a warning", parts: [healthRow("a", "warn"), healthRow("b", "crit")], status: { tone: "crit", text: "1 down · 1 needs attention" } },
-    { name: "two critical parts", parts: [healthRow("a", "crit"), healthRow("b", "crit"), healthRow("c", "ok")], status: { tone: "crit", text: "2 down" } },
+    { name: "a critical part outranks a warning", parts: [healthRow("a", "warn"), healthRow("b", "crit")], status: { tone: "crit", text: "1 critical · 1 needs attention" } },
+    { name: "two critical parts", parts: [healthRow("a", "crit"), healthRow("b", "crit"), healthRow("c", "ok")], status: { tone: "crit", text: "2 critical" } },
     { name: "warnings alone", parts: [healthRow("a", "warn"), healthRow("b", "warn")], status: { tone: "warn", text: "2 need attention" } },
     { name: "every part ok", parts: [healthRow("a", "ok"), healthRow("b", "ok")], status: null },
     { name: "nothing judged yet", parts: [healthRow("a", null), healthRow("b", "info")], status: null },
