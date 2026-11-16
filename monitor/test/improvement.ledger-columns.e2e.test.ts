@@ -224,3 +224,38 @@ test(`the recurrence table's body rows sit on the ${RECURRENCE_ROW_PX} compact s
     await app.close();
   }
 });
+
+// one empty-line form across the screen: every "nothing here" line starts on its card's inline edge, inside a ledger section or not
+test(`every empty line on the Learning screen starts on its card's inline edge at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const app = Fastify({ logger: false });
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  app.get("/api/improvement/learning-log", async () => getLearningLog(0, 0, 0));
+  app.get("/api/*", async () => ({ rows: [] }));
+  const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width: SIDE_BY_SIDE_WIDTH, height: 900 } });
+    await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
+    await page.waitForSelector("#improvement-pattern-ledger .placeholder", { timeout: 30_000 });
+    await page.evaluate(() => document.fonts.ready);
+    const lines = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".card .placeholder")]
+        .filter((el) => /^(No |Not enough)/.test((el.textContent ?? "").trim()))
+        .map((el) => {
+          const card = el.closest<HTMLElement>(".card")!;
+          const cardPad = parseFloat(getComputedStyle(card).getPropertyValue("--card-pad"));
+          const textLeft = el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft);
+          return { text: (el.textContent ?? "").trim(), inset: textLeft - card.getBoundingClientRect().left, cardPad };
+        }),
+    );
+
+    assert.ok(lines.length >= 3, `the empty board, ledger and loop cards each print a line (${lines.length})`);
+    for (const line of lines) {
+      assert.ok(Math.abs(line.inset - line.cardPad) <= EDGE_TOLERANCE_PX, `"${line.text}" starts ${line.inset}px in, not ${line.cardPad}px`);
+    }
+  } finally {
+    await browser.close();
+    await app.close();
+  }
+});

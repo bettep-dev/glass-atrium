@@ -390,6 +390,10 @@ function ScreenImprovement({ onNav }) {
         /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
         .i-ledger-body { padding-block:var(--space-1) var(--space-3); }
         .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
+        /* the section already holds the card's inline edge → its empty line takes no second inset */
+        .i-ledger-sec .placeholder { padding-inline:0; }
+        /* held rows are what a human acts on → the house table's body step, never the card's smallest text */
+        .i-held-table { font-size:var(--fs-control); }
         /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
         .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
@@ -397,7 +401,8 @@ function ScreenImprovement({ onNav }) {
         .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
-        .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; }
+        /* 1px inset → the sub-card ring (an outside box-shadow) draws inside the scroll box, never clipped by it */
+        .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; padding:1px; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
            헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
@@ -708,7 +713,7 @@ function ViewTabsI({ view, onChange }) {
 		{ key: "operator", label: "Operator" },
 		{ key: "instrumentation", label: "Instrumentation" },
 	];
-	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3" />;
+	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3 mb-4" />;
 }
 
 // ----- Rolling trend card (T-IMP-4) ------------------------------------------
@@ -755,9 +760,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-4 pb-4">
-					<div className="placeholder">Not enough scored cycles to chart yet</div>
-				</div>
+				<div className="placeholder">Not enough scored cycles to chart yet</div>
 			</div>
 		);
 	}
@@ -1779,9 +1782,9 @@ function LedgerHeldSectionI({ suppression }) {
 // One row per cause — held count · agents, readable without opening a row list · the remedy lives in the drawer
 function HeldCauseTableI({ buckets }) {
 	return (
-		<table className="w-full fs-meta mb-1">
+		<table className="w-full i-held-table mb-1">
 			<thead className="tbl-head">
-				<tr className="text-faint">
+				<tr className="fs-meta text-dim">
 					<th className="text-left font-medium">Cause</th>
 					<th className="text-right font-medium pl-4">Held</th>
 					<th className="text-right font-medium pl-4">Agents</th>
@@ -2332,13 +2335,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-4 pb-4">
-					<div
-						className="placeholder"
-					>
-						No improvement cycles recorded yet
-					</div>
-				</div>
+				<div className="placeholder">No improvement cycles recorded yet</div>
 			</div>
 		);
 	}
