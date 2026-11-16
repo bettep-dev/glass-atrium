@@ -321,9 +321,9 @@ function getAlarmReadiness(sources, alarms = []) {
 // the card outlives every recovery → a banner or stat Retry that leaves on success hands focus here
 const DASH_STATUS_ID = 'dash-status';
 
-// a banner-carried outage is stated once, above → the stat keeps its Not loaded value and points up
-const POINTER = { BANNER: 'see the notice above', RESULTS_STAT: 'see the Task results stat above' };
-const SHARED_FAILURE_CONTEXT = `Not loaded — ${POINTER.BANNER}.`;
+// a banner-carried outage is stated once, above → the stat's value reads Not loaded, its line is the pointer alone
+const POINTER = { BANNER: 'the notice above', RESULTS_STAT: 'the Task results stat above' };
+const SHARED_FAILURE_CONTEXT = `See ${POINTER.BANNER}.`;
 
 // spec 44084 §9 — one card, four stats (label, value, one context line); every counting rule and window behind one ⓘ
 function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
@@ -464,7 +464,7 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   if (view !== 'error' && view !== 'held') return null;
   if (!onRetry || isRetryShared) {
     const lead = view === 'held' ? "Couldn't refresh" : 'Not loaded';
-    return <p className="fs-meta text-dim">{lead} — {isRetryShared ? POINTER.BANNER : POINTER.RESULTS_STAT}.</p>;
+    return <p className="fs-meta text-dim">{lead} — see {isRetryShared ? POINTER.BANNER : POINTER.RESULTS_STAT}.</p>;
   }
   const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   if (view === 'held') {

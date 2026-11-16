@@ -435,7 +435,7 @@ test("the status band never announces a failure the owning group already announc
   assert.equal(buttons.length, 0, "a retry per stat repeats the group's banner");
   const pointers = collect(band, (el) => {
     const kids = ([] as unknown[]).concat(el.props.children);
-    return kids.some((k) => typeof k === "string" && k.includes("Not read — see the"));
+    return kids.some((k) => typeof k === "string" && /^See the .+ below\.$/.test(k));
   });
   assert.equal(pointers.length, 3, "each stat points at its owning group");
 });

@@ -474,6 +474,7 @@ function ScreenImprovement({ onNav }) {
 							learningLogState={learningLogState}
 							suppression={loopSuppression}
 							awaiting={columnRows.safety.length}
+							failures={failures}
 							styleRef={styleRef}
 							corpusAuditState={corpusAuditState}
 							onOpenInstrumentation={() => setView("instrumentation")}
@@ -536,12 +537,12 @@ const sumCountsI = (list) =>
 	list.reduce((sum, b) => sum + Number(b.count ?? 0), 0);
 
 // Loop status — only the counts that change the next action, one stat row; the alarm itself lives in the card that owns the rows (spec 44084 §3.1).
-function StatusBandI({ asOf, statsState, listState, learningLogState, suppression, awaiting, styleRef, corpusAuditState, onOpenInstrumentation }) {
+function StatusBandI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures, styleRef, corpusAuditState, onOpenInstrumentation }) {
 	const { Card, StatRow } = window.UI;
 	return (
 		<section id={ANCHOR_ID_I.status} className="flex flex-col gap-2" aria-label="Loop status">
 			<Card>
-				<StatRow stats={getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting })} />
+				<StatRow stats={getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures })} />
 			</Card>
 			<InstrumentationStripI
 				styleRef={styleRef}
@@ -553,8 +554,9 @@ function StatusBandI({ asOf, statsState, listState, learningLogState, suppressio
 	);
 }
 
-function getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting }) {
+function getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures }) {
 	const s = statsState.data || {};
+	const noticeSources = failures?.banner?.sources ?? [];
 	const appliedHeld = getHeldLabelI(asOf, statsState);
 	// a waiting suggestion is news whatever the read's age; only the empty queue needs a fresh read
 	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
@@ -562,12 +564,12 @@ function getBandStatsI({ asOf, statsState, listState, learningLogState, suppress
 	const heldNeedingHuman = getHeldNeedingHumanI(suppression);
 	const appliedLead = getHeldTextI(appliedHeld, `of ${getCycleCountTextI(Number(s.cycle_total_7d ?? 0))} · last `);
 	return [
-		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", status: bandTileStatusI(listState, listState.data),
+		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", isCovered: noticeSources.includes("suggestions"), status: bandTileStatusI(listState, listState.data),
 			value: formatIntI(awaiting), context: getHeldTextI(awaitingHeld, "Pending or snoozed suggestions") }),
-		buildBandStatI({ key: "applied", label: "Applied, 7d", owner: "loop output", status: bandTileStatusI(statsState, statsState.data),
+		buildBandStatI({ key: "applied", label: "Applied, 7d", owner: "loop output", isCovered: noticeSources.includes("loop stats"), status: bandTileStatusI(statsState, statsState.data),
 			value: formatIntI(Number(s.cycles_generated_applied_7d ?? 0)),
 			context: <>{appliedLead}<window.UI.NoWrap>{formatCycleStampI(s.latest_cycle_started_at)}</window.UI.NoWrap></> }),
-		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", status: bandTileStatusI(learningLogState, suppression),
+		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", isCovered: noticeSources.includes("pattern ledger"), status: bandTileStatusI(learningLogState, suppression),
 			value: heldNeedingHuman > 0 ? <JumpLinkI targetId={ANCHOR_ID_I.heldPatterns}>{formatIntI(heldNeedingHuman)}</JumpLinkI> : formatIntI(0),
 			context: `of ${formatIntI(sumCountsI(heldBuckets))} held patterns` }),
 	];
@@ -580,15 +582,16 @@ function getHeldTextI(held, text) {
 // a value slot never shows a number it did not read → busy while in flight, Not loaded once failed or empty (spec 44084 §2.2)
 const BAND_ABSENT_CONTEXT_I = {
 	unavailable: () => "Not measured — this payload carried no value for it",
-	announced: (owner) => `Not read — see the ${owner} below`,
+	// the value already reads Not loaded → the line is the pointer alone, to whichever surface states the cause
+	announced: (owner, isCovered) => (isCovered ? "See the notice above." : `See the ${owner} below.`),
 };
 
-function buildBandStatI({ key, label, owner, status, value, context }) {
+function buildBandStatI({ key, label, owner, isCovered, status, value, context }) {
 	if (status === "ready") return { key, label, value, context };
 	// blank context line → the card keeps its rest height when the read lands
 	// inline-flex keeps the shared placeholder on the stat's start edge, as on Dashboard and Cost
 	if (status === "loading") return { key, label, value: <span className="inline-flex"><window.UI.LoadingPlaceholder label={label.toLowerCase()} className="font-normal" /></span>, context: <span aria-hidden="true">{"\u00a0"}</span> };
-	const cause = BAND_ABSENT_CONTEXT_I[status](owner);
+	const cause = BAND_ABSENT_CONTEXT_I[status](owner, isCovered);
 	return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={cause} />, context: cause };
 }
 

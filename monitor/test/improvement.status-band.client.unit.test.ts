@@ -151,7 +151,7 @@ test("no stat carries a status glyph — attention lives in the card that owns t
 describe("a stat whose payload has not landed never shows the value it was handed", () => {
   const rows = [
     { name: "a first read in flight draws the shared loading placeholder, named for its stat", state: { status: "loading", data: null }, kind: "loading" },
-    { name: "a failed read reads Not loaded and points at its owning group", state: { status: "error", data: null, error: "HTTP 500" }, kind: "not-loaded", context: /^Not read — see the .+ below$/ },
+    { name: "a failed read reads Not loaded and points at its owning group", state: { status: "error", data: null, error: "HTTP 500" }, kind: "not-loaded", context: /^See the .+ below\.$/ },
     { name: "a landed payload with no value reads Not loaded", state: { status: "ready", data: null }, kind: "not-loaded", context: /no value/ },
   ];
   for (const row of rows) {
@@ -172,6 +172,18 @@ describe("a stat whose payload has not landed never shows the value it was hande
         }
       }
     });
+  }
+});
+
+test("a failed read the page notice covers points at that notice alone", () => {
+  const failed = { status: "error", data: null, error: "HTTP 500" };
+  const failures = sandbox.getPageFailuresI(
+    ["suggestions", "pattern ledger", "loop stats"].map((source) => ({ source, state: failed })),
+    "board",
+  );
+  const stats = getBandStats({ statsState: failed, listState: failed, learningLogState: failed, suppression: null, failures });
+  for (const stat of stats.values()) {
+    assert.equal(textOf(stat.context), "See the notice above.", stat.label);
   }
 });
 

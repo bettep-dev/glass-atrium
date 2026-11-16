@@ -629,8 +629,7 @@ test("a failed stat states its error on the context line with its own Retry; a b
 
   const covered = renderStatusCard([FAILED_STAT], { sharedSources: ["the fleet summary"] });
   const coveredText = collectText(nodeOf(covered.items[0].context));
-  assert.match(coveredText, /see the notice above/);
-  assert.doesNotMatch(coveredText, /Couldn't load/, "the stat does not repeat the banner's sentence");
+  assert.equal(coveredText.trim(), "See the notice above.", "the value already reads Not loaded → the line is the pointer alone");
   assert.equal(findNodes(nodeOf(covered.items[0].context), (n) => n.props.atom === "RetryButton").length, 0, "the banner owns the only Retry");
 });
 
