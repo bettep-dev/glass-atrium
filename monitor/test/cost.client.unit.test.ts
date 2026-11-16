@@ -1295,7 +1295,6 @@ test("the header stamp over a warm error reads stale, and no page verdict restat
   const [header] = findNodes(tree, (n) => n.props.atom === "PageHeader");
   const stamp = header.props.freshness as { props: { at: string | null; regions: readonly PanelState[] } };
   assert.equal(ui.getFreshnessState({ ...stamp.props, now }), "stale", "a held read under a failure is never fresh");
-  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "PageVerdict"), [], "the stamp is the page's one freshness fact");
 });
 
 // every Recharts part renders as a host node named after it, so a chart's wrapper and data are inspectable

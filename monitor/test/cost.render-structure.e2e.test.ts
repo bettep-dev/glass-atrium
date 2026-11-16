@@ -423,14 +423,12 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(strayRoots, 0, "every chart lives in a card");
   });
 
-  test("no page verdict and no window tag — each ranged stat names its window in its label", async () => {
+  test("no window tag — each ranged stat names its window in its label", async () => {
     const shape = await ctx.page.evaluate((row) => ({
-      verdicts: document.querySelectorAll(".cost-screen .page-verdict").length,
       windowTags: document.querySelectorAll(".cost-screen .kpi-window").length,
       labels: Array.from(document.querySelectorAll(`${row} .stat-label`))
         .map((el) => (el.textContent || "").trim()),
     }), SPEND_STAT_ROW);
-    assert.equal(shape.verdicts, 0, "spend state rides the stat and the alarm rows, not a verdict line");
     assert.equal(shape.windowTags, 0, "the window is part of the label, never a separate tag");
     assert.equal(shape.labels.length, SPEND_STAT_COUNT);
     assert.equal(

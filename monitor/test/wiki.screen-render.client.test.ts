@@ -616,12 +616,6 @@ test("the alarm lane keeps actionable rows only; waiting proposals stay in their
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
 });
 
-test("the page mounts no page verdict: each card states its own status", async () => {
-  const mod = await loadWikiScreen();
-  const tree = renderScreen(mod.React.createElement(mod.ScreenWiki as Component, {}));
-  assert.equal(findNodes(tree, (n) => n.props.atom === "PageVerdict").length, 0);
-});
-
 test("a failed backlog read points its Retry at the merge-proposals fold, which opens on focus", async () => {
   const mod = await loadWikiScreen();
   const failed = { status: "error", data: null, error: "HTTP 500", busy: false };

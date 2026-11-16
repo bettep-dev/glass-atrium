@@ -208,7 +208,7 @@
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
 | 수치 | `KPI` · `KpiValue` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.kpi*` |
 | 표 | `Table` · `TableHead` | `.tbl` |
-| 페이지 | `PageHeader` · `PageVerdict` (retiring, §12.7) · `SectionLabel` · `EmptyState` | `.page-verdict*` · `.section-label` · `.placeholder` (deprecated, §12.5) |
+| 페이지 | `PageHeader` · `SectionLabel` · `EmptyState` | `.section-label` · `.placeholder` (deprecated, §12.5) |
 | 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` sans tnum `--faint` (§12.2) · `.btn.ghost.sm` |
 | 로딩 | `LoadingPlaceholder` · `SkeletonRows` | `role="status"` `.fs-meta` `--dim` · inline bar |
 | 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
@@ -330,7 +330,7 @@
   - tone 은 선행 glyph(또는 `Icon`, `TONE_ICON` check/warn/x/info)에만 `text-<tone>`. 라벨은 `--dim`/`--ink`.
   - shell(배지 배경 · 카드 fill · 행 배경) · 좌측 stripe · tone border 에 칠하지 않는다 — 아래 허용 예외만 예외.
   - `StatusDot`: glyph + sr-only 단어(`STATUS_DOT_WORD` OK/Warning/Critical/Info) · 미지 status 는 `–` + "Unknown" (`--faint`).
-  - `KpiValue tone`: glyph 장식(aria-hidden), 수치는 neutral ink. `PageVerdict` (retiring, §12.7): glyph 만 tone, 단어 · 문장은 ink.
+  - `KpiValue tone`: glyph 장식(aria-hidden), 수치는 neutral ink.
 - **허용 예외** — tone border/stroke 가 glyph 또는 단어와 짝을 이룰 때만:
   - **폼 오류** (`.field.is-error` · `.field-affix.is-error`, §7.13): full-opacity `--crit` border (hover · focus 중에도 유지) + 메시지 `fs-meta text-crit` `role="alert"` = 단어.
     - 메시지 crit 은 모든 불투명 면에서 ≥ 4.5: light 최저 4.63 (`--sunken` — hover 된 `.tbl` 행 포함; `--elev` 5.05 · `--surface` 4.83) · dark 최저 5.84 (`--elev-2`).
@@ -636,7 +636,7 @@
 ### 7.9 Alarm row · Alert card — `.alarm-row` · `AlertCard` (`.alert-card`)
 
 - 둘 다 불투명 면 위, blur 금지.
-- Attention placement: §12.7 — `PageVerdict` retires on every screen; cross-page attention = the Dashboard "Needs you" list + nav badges.
+- Attention placement: §12.7 — cross-page attention = the Dashboard "Needs you" list + nav badges.
 - **Alarm row — one geometry** for `.alarm-row` and `.alert-card-grid` (`base.css`):
   - grid `auto minmax(0, 1fr) auto` (glyph · content · actions) · column gap `--space-3` · padding `--space-2` × `--card-pad`.
   - first line box 32 (`--ctl-min-h`): the 16 glyph (its 32 slot), the 20 title line (content offset 6) and a 32 action centre on it → a one-line row is 48, the card-head height; with a detail line ≈ 70 (8 + 6 + 20 + 4 + 18.2 + 6 + 8 — the detail keeps `--fs-meta` × 1.4).
@@ -722,7 +722,6 @@
   - `.field--mono`: mono tnum · `.field-select`: 테마별 `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border (`--control-edge`) · focus 소유, `:has(:focus-visible)` 로 outline.
 - **`.stage-pip`**: 8px 원 · 빈 pip `--pip-empty` · 채움 `--ink`.
 - **`.low-sample`** (`LowSampleMark`): 작은 표본 비율 옆 `--faint` `(n=N)`, no italic.
-- **`.page-verdict`** (`PageVerdict`, retiring — §12.7): glyph 가 tone, 단어 · 문장은 ink.
 - **`.section-label`** (`SectionLabel`): `--fs-meta` 600 sentence case `--dim`, 실제 h2/h3.
 - **`.skip-link`**: 첫 Tab stop, focus 시 화면 안으로.
 - **`.prose-text`** (`ProseText`): agent-written plain text (queue items and orders) — never the document viewer's markdown pipeline.
@@ -1066,7 +1065,7 @@
 | Attribute | a non-interactive tag ("est. rate", "html", "Requires setup") | plain 13 dim text, ⓘ when it needs a reason |
 | Read-only value | a setting that cannot change here ("CLI default") | plain text value — never a disabled bordered field |
 
-- Retire: the `.pill` border, `.pill--ctl-h`, `ChipGroup` filter chips, the Filters popover, `Badge role="count"` in prose, `Badge role="status"` in table cells, the `.seg` outer ring, the bordered `.field` as a bar search, `VerdictChip` button chrome, the `--selected-fill` inversion on toggles.
+- Retire: the `.pill` border, `.pill--ctl-h`, `ChipGroup` filter chips, the Filters popover, `Badge role="count"` in prose, `Badge role="status"` in table cells, the `.seg` outer ring, the bordered `.field` as a bar search, the `--selected-fill` inversion on toggles.
 - **Filter bar**:
   - Every filter axis is a trigger on the bar showing its value; too many axes for one line → the bar wraps, never one "Filters · N" button.
   - Reset filters (quiet) shows only while a filter is applied; at defaults it is hidden with its slot kept.
@@ -1126,9 +1125,8 @@
 ### 12.7 Status and attention policy
 
 - **One fact, one place per view.** A fact may also appear once as a cross-page pointer (nav badge).
-- `PageVerdict` retires on every screen.
-  - Cross-page attention lives in two places only: the Dashboard "Needs you" list (one row per actionable item, each a Link to its page) and the sidebar nav badge (count + glyph).
-  - In-page attention: the card that owns the problem shows its status (glyph + word) in its head, once.
+- Cross-page attention lives in two places only: the Dashboard "Needs you" list (one row per actionable item, each a Link to its page) and the sidebar nav badge (count + glyph).
+- In-page attention: the card that owns the problem shows its status (glyph + word) in its head, once.
 - The sidebar footer status ("1 PART DOWN") and its dot retire — they repeat the nav badge.
 - Freshness stamp: hidden while fresh; shown as warn text "Stale · 12m" or crit "Not updated" only when it is.
 - Agreement is silence: "Matches saved", "In sync", "Healthy" on every row disappear; only deviations render (warn glyph + "Differs from saved: Sonnet 5.5").
@@ -1187,7 +1185,6 @@
 - §7.11 spacing grid → §12.1 role tokens.
 - §7.12 Popover as a filter container → §12.3 Filter bar (Popover stays for ⓘ).
 - Principle 7 and §8 `.live-dot` ambient loop + §7.7 sidebar `.live-dot` → no ambient loop.
-- `PageVerdict` usage (§7.9 neighbourhood) → §12.7.
 - Retiring, marked in place until the owning stream lands:
   - §7.2 `.kpi-delta` / `.kpi-hint` mono → §12.8 stat row context line (S2c)
   - pressed-toggle ✓ glyph (§7.4 · §7.6 · §7.16) → built with the S2a controls

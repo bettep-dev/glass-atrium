@@ -1,5 +1,5 @@
 // Shared freshness-stamp atom: four states, glyph-borne tone, a word for AT.
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,8 @@ type FreshnessInput = { at?: string | null; loading?: boolean; failed?: boolean;
 const ui = await loadScreenModule(UI_SRC);
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
 const getFreshnessState = ui.getFreshnessState as (input: FreshnessInput) => string;
+type Verdict = { state: string; tone: string; label?: string; note: string | null; isBusy: boolean };
+const getFreshnessVerdict = ui.getFreshnessVerdict as (input: FreshnessInput & { tone?: string; label?: string }) => Verdict;
 const formatRelativeTime = ui.formatRelativeTime as (iso: string | null | undefined, now?: number) => string;
 
 const NOW = Date.parse("2026-09-25T05:30:00.000Z");
@@ -267,35 +269,83 @@ test("with no injected clock, a read stamp re-checks its own age: time passing a
   assert.ok(harness.timers.every((t) => t.cleared), "unmount clears the tick");
 });
 
-test("with no injected clock, the page verdict re-checks its age with the stamp: time passing alone drops an all-clear", async () => {
-  const harness = createTickHarness(NOW);
-  const tickUi = await loadScreenModule(UI_SRC, harness.globals);
-  const freshness = { at: isoAgo(1_000), staleAfterMs: STALE_MS };
-  const render = () => renderScreen(React.createElement(tickUi.PageVerdict as Component, { tone: "ok", label: "All clear", freshness })) as RenderedNode;
-  const word = (tree: RenderedNode) => collectText(findNodes(tree, (n) => n.props.className === "page-verdict-tone")[0]).replace(/^\S+\s*/, "").trim();
-
-  assert.equal(word(render()), "All clear");
-  const cleanups = harness.effects.map((effect) => effect());
-  const live = harness.timers.filter((t) => !t.cleared);
-  assert.equal(live.length, 1, "one tick scheduled");
-  assert.ok(live[0].ms <= STALE_MS / 2, `tick ${live[0].ms}ms is fine-grained enough to catch the stale edge`);
-
-  harness.clock.now = NOW + STALE_MS + 1;
-  live[0].fn();
-  assert.ok(harness.getRerenders() >= 1, "the tick requests a re-render");
-  assert.equal(word(render()), "Last known");
-
-  for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
-  assert.ok(harness.timers.every((t) => t.cleared), "unmount clears the tick");
-});
-
 test("no tick is scheduled when nothing time-dependent is shown or the clock is injected", async () => {
   for (const props of [{ at: null }, { at: null, loading: true }, { at: isoAgo(1_000), now: NOW }]) {
     const harness = createTickHarness(NOW);
     const tickUi = await loadScreenModule(UI_SRC, harness.globals);
     renderScreen(React.createElement(tickUi.FreshnessStamp as Component, { staleAfterMs: STALE_MS, ...props }));
-    renderScreen(React.createElement(tickUi.PageVerdict as Component, { tone: "ok", freshness: { staleAfterMs: STALE_MS, ...props } }));
     harness.effects.forEach((effect) => effect());
     assert.equal(harness.timers.length, 0, JSON.stringify(props));
   }
+});
+
+describe("freshness-driven verdict", () => {
+  const freshAt = isoAgo(1_000);
+  const rows: Array<{ name: string; input: FreshnessInput; tone: string; label?: string; expectTone: string; expectLabel: RegExp; busy: boolean }> = [
+    { name: "never read", input: { at: null }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: false },
+    { name: "first wave in flight", input: { at: null, loading: true }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: true },
+    { name: "cold error", input: { at: null, regions: [{ error: "down" }] }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: false },
+    { name: "fresh read", input: { at: freshAt }, tone: "ok", label: "All clear", expectTone: "ok", expectLabel: /^All clear$/, busy: false },
+    { name: "ok read past the stale window", input: { at: isoAgo(STALE_MS + 1) }, tone: "ok", label: "All clear", expectTone: "neutral", expectLabel: /^Last known$/, busy: false },
+    { name: "crit read then a failed read", input: { at: freshAt, failed: true }, tone: "crit", label: "3 daemons down", expectTone: "crit", expectLabel: /^Last known: 3 daemons down$/, busy: false },
+    { name: "warn read then a failed read", input: { at: freshAt, failed: true }, tone: "warn", expectTone: "warn", expectLabel: /^Last known: Needs attention$/, busy: false },
+    { name: "partial failure over an ok read", input: { at: freshAt, regions: [{ error: "down" }, {}] }, tone: "ok", expectTone: "neutral", expectLabel: /^Last known$/, busy: false },
+    { name: "refresh over a fresh read", input: { at: freshAt, loading: true }, tone: "ok", label: "All clear", expectTone: "ok", expectLabel: /^All clear$/, busy: true },
+    { name: "refresh over a warm error", input: { at: freshAt, regions: [{ busy: true, error: "down" }, { busy: true, error: "down" }] }, tone: "ok", expectTone: "neutral", expectLabel: /^Last known$/, busy: true },
+    { name: "refresh over a stale crit", input: { at: freshAt, loading: true, failed: true }, tone: "crit", expectTone: "crit", expectLabel: /^Last known: Action needed$/, busy: true },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name} → ${row.expectTone} verdict${row.busy ? ", busy" : ""}`, () => {
+      const verdict = getFreshnessVerdict({ ...row.input, now: NOW, staleAfterMs: STALE_MS, tone: row.tone, label: row.label });
+
+      assert.equal(verdict.tone, row.expectTone);
+      assert.match(String(verdict.label), row.expectLabel);
+      assert.equal(verdict.isBusy, row.busy);
+    });
+  }
+
+  test("stale or partial data never raises an all-clear and never hides an alarm, and the stamp agrees on state, visibility and busy", () => {
+    for (const row of rows) {
+      for (const tone of ["ok", "warn", "crit"]) {
+        const input = { ...row.input, now: NOW, staleAfterMs: STALE_MS };
+        const verdict = getFreshnessVerdict({ ...input, tone });
+        const stampState = getFreshnessState(input);
+        const stamp = renderScreen(React.createElement(ui.FreshnessStamp as Component, input)) as RenderedNode;
+        const stampRoot = findNodes(stamp, (n: RenderedNode) => n.type === "span")[0];
+        const isRead = stampState !== "loading" && stampState !== "not-read";
+
+        assert.equal(verdict.state, stampState, `${row.name}/${tone}: one state`);
+        // a fresh settled read hides the stamp → the stamp shows exactly the reads the verdict annotates
+        assert.equal(stampRoot !== undefined, verdict.note !== null, `${row.name}/${tone}: stamp shown exactly when the verdict carries a note`);
+        assert.equal(stampRoot?.props["aria-busy"] === "true", stampRoot !== undefined && verdict.isBusy, `${row.name}/${tone}: busy agrees`);
+        if (verdict.tone === "ok") assert.ok(stampState === "fresh" || stampState === "refreshing", `${row.name}: ok only over a fresh read`);
+        if (tone !== "ok" && isRead) assert.equal(verdict.tone, tone, `${row.name}/${tone}: alarm kept`);
+      }
+    }
+  });
+
+  test("a partial verdict names the failed count and a stale one names the read age", () => {
+    const partial = getFreshnessVerdict({ at: freshAt, regions: [{ error: "down" }, {}, {}], now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+    const stale = getFreshnessVerdict({ at: isoAgo(STALE_MS + 1), now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+    assert.match(String(partial.note), /1 of 3 sources failed/);
+    assert.equal(stale.note, "Read 5m ago", "the age is measured against the injected clock, not the wall clock");
+  });
+
+  test("an unread page says whether its first read failed or was never tried", () => {
+    const rows: Array<{ name: string; input: FreshnessInput; note: RegExp }> = [
+      { name: "never tried", input: { at: null }, note: /^Nothing has been read yet\.$/ },
+      { name: "first read failed", input: { at: null, failed: true }, note: /first read failed/ },
+      { name: "every first-read region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: /first read failed/ },
+      { name: "one first-read region failed", input: { at: null, regions: [{ error: "down" }, {}] }, note: /first read failed/ },
+      { name: "first read in flight", input: { at: null, loading: true }, note: /^Checking the first read…$/ },
+    ];
+    for (const row of rows) {
+      const verdict = getFreshnessVerdict({ ...row.input, now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+      assert.equal(verdict.tone, "neutral", `${row.name}: no tone without a read`);
+      assert.match(String(verdict.note), row.note, row.name);
+    }
+  });
 });

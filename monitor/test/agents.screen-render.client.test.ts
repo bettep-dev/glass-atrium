@@ -2008,12 +2008,11 @@ describe("the ledger head names the agents the health rule flags, and stays sile
     assert.deepEqual(await renderMarks(ready({ rows: critical }), ERROR_STATE), []);
   });
 
-  test("the page mounts no verdict and carries the mark in the ledger head", async () => {
+  test("the ledger head carries the crit agent's health mark", async () => {
     const tree = await renderScreenAgents({
       status: "ready", busy: false, key: null, error: null,
       data: { rows: critical, agents: [{ agent: "a-crit", runs: 10 }], meta: { total_agents: 1 }, fetched_at: "2026-01-10T11:59:00.000Z" },
     });
-    assert.equal(findAtoms(tree, "PageVerdict").length, 0);
     const [head] = findAtoms(tree, "Card").filter((n) => n.props.title === "Performance by agent");
     assert.ok(head, "the ledger card draws its head");
     const marks = findNodes(renderScreen(head.props.right), (n) => n.props?.["data-health-mark"] === "crit");

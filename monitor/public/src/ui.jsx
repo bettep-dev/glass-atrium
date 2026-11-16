@@ -2272,7 +2272,7 @@ function getFreshnessState({ at, loading = false, failed = false, regions, stale
 }
 
 /**
- * Page verdict over the getFreshnessState inputs → { state, tone, label, note, isBusy } for PageVerdict, KPI tones and all-clear lines.
+ * Page verdict over the getFreshnessState inputs → { state, tone, label, note, isBusy } for a screen's status word and all-clear lines.
  * Unread → neutral "No signal" · stale/partial → "Last known", ok drops to neutral, warn/crit kept · refreshing → the settled verdict, busy.
  * @param tone - tone the page derives from its data
  * @param label - page word for that tone; defaults to the tone's canonical word
@@ -2994,38 +2994,6 @@ const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral:
 // default verdict word per tone — the glyph never stands alone.
 const VERDICT_TONE_LABEL = { ok: 'Healthy', warn: 'Needs attention', crit: 'Action needed', info: 'Info', neutral: 'No signal' };
 
-/**
- * One-line page headline: tone glyph + word, one sentence (children), optional chips.
- * A chip with `href` drills to another view; one with `targetId` scrolls to that card and focuses it.
- * @param id - focus target for a page banner's Retry once the page recovers
- * @param freshness - optional getFreshnessState inputs; the verdict then follows getFreshnessVerdict, and an unread page swaps its sentence for the checking note
- */
-function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness, id, className = '' }) {
-  const verdict = freshness ? getFreshnessVerdict({ ...freshness, tone, label }) : { tone, label, note: null, isBusy: false };
-  const toneKey = VERDICT_TONE_LABEL[verdict.tone] ? verdict.tone : 'neutral';
-  const isUnread = verdict.state === 'loading' || verdict.state === 'not-read';
-  const sentence = isUnread ? null : children;
-  // re-derived on the stamp's own cadence → a verdict never stays green over a read the stamp calls Stale
-  useFreshnessTick(Boolean(freshness) && !isUnread && freshness.now === undefined);
-
-  return <div id={id} className={`page-verdict page-verdict--${toneKey} ${className}`.trim()} aria-busy={verdict.isBusy ? 'true' : undefined}>
-    <span className="page-verdict-tone">
-      <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
-      {verdict.label || VERDICT_TONE_LABEL[toneKey]}
-    </span>
-    {sentence && <span className="page-verdict-text"><DayTokens>{sentence}</DayTokens></span>}
-    {verdict.note && <span className="page-verdict-text fs-meta text-dim">{verdict.note}</span>}
-    {chips.length > 0 && <span className="page-verdict-chips">
-      {chips.map((chip) => <VerdictChip key={chip.key || chip.label} chip={chip} />)}
-    </span>}
-  </div>;
-}
-
-function VerdictChip({ chip }) {
-  if (chip.href) return <a className="btn ghost sm" href={chip.href}>{chip.label}</a>;
-  return <button type="button" className="btn ghost sm" onClick={() => putCardFocus(chip.targetId)}>{chip.label}</button>;
-}
-
 // instant nearest scroll → no jump when the card is already in view, nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
 function putCardFocus(id) {
   const card = id ? document.getElementById(id) : null;
@@ -3143,7 +3111,7 @@ window.UI = {
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
-  TONE_GLYPH, TONE_ICON, ALERT_SEVERITY_WORD, PageVerdict, putCardFocus, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
+  TONE_GLYPH, TONE_ICON, ALERT_SEVERITY_WORD, putCardFocus, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
   outcomeShareTone, resolveOutcomeRate, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
   OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,

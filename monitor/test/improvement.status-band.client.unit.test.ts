@@ -86,8 +86,7 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
 });
 // Installed once → every test sees the same UI, whatever order they run in.
-const PageVerdictStub = () => null;
-Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value, PageVerdict: PageVerdictStub });
+Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value });
 
 // The relationship, not four hand-picked pairs: the tile's state is the payload's
 // state, except that a landed payload carrying no value is "unavailable", never ready.
@@ -128,13 +127,12 @@ function getBandStats(props: Record<string, unknown> = {}): Map<string, BandStat
   return new Map(Array.from(statRow.props.stats as BandStat[], (stat) => [stat.key, stat]));
 }
 
-test("the band is one stat row of the counts that change the next action, with no verdict line and no tiles", () => {
+test("the band is one stat row of the counts that change the next action, with no tiles", () => {
   const elements = collectElements(renderBand({ awaiting: 2, suppression: { pending_total: 4, parked: NEEDS_HUMAN } }), []);
   const stats = getBandStats({ awaiting: 2 });
 
   assert.deepEqual([...stats.values()].map((stat) => stat.label), ["Awaiting your decision", "Applied, 7d", "Held, needs a human"]);
   assert.equal(elements.filter((el) => el.type === sandbox.window.UI.StatRow).length, 1);
-  assert.ok(!elements.some((el) => el.type === PageVerdictStub), "the verdict line under the h1 is retired");
   assert.ok(!elements.some((el) => el.type === sandbox.window.UI.KPI), "a tile per stat is retired");
 });
 
