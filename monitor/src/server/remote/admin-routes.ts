@@ -10,6 +10,7 @@ import { type RemoteAuditEvent, getRoutePayload, recordEvent } from "./gate.js";
 import { WindowLimiter } from "./limits.js";
 import type { TrustedNetwork } from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
+import { EMPTY_BODY_LIMIT_BYTES, hasBody } from "./request-body.js";
 
 export const REMOTE_ADMIN_PATH = {
   REGISTRATION: "/api/remote/registration",
@@ -52,8 +53,6 @@ export interface DeviceParams {
   readonly id: string;
 }
 
-// none of these routes takes input beyond the path id → any body is refused before the handler
-export const ADMIN_BODY_LIMIT_BYTES = 64;
 export const DEVICE_PARAMS_SCHEMA = {
   params: {
     type: "object",
@@ -71,7 +70,7 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
       return payload;
     });
     const openLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.REGISTRATION_OPEN, deps.now ?? Date.now);
-    const options = { bodyLimit: ADMIN_BODY_LIMIT_BYTES };
+    const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
     scope.post(REMOTE_ADMIN_PATH.REGISTRATION, options, (request, reply) => openRegistration(request, reply, { deps, openLimiter }));
     scope.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ ...(await getDeviceList(deps)), access: getAccessView(deps.getAccess()) }));
     scope.delete<{ Params: DeviceParams }>(REMOTE_ADMIN_PATH.DEVICE, { ...options, schema: DEVICE_PARAMS_SCHEMA }, (request, reply) =>
@@ -86,11 +85,6 @@ async function refuseUnlessMacPage(request: FastifyRequest, reply: FastifyReply)
   if (request.headers["sec-fetch-site"] !== "same-origin") return reply.code(403).send({ error: "not_mac_page" });
   if (hasBody(request)) return reply.code(400).send({ error: "body_not_allowed" });
   return undefined;
-}
-
-export function hasBody(request: FastifyRequest): boolean {
-  const length = request.headers["content-length"];
-  return request.headers["transfer-encoding"] !== undefined || (length !== undefined && length !== "0");
 }
 
 async function openRegistration(

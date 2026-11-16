@@ -9,6 +9,7 @@ import { DEVICE, type DeviceCreation, type DeviceSummary } from "./devices.js";
 import { type RemoteAuditWriter, closeAuditResult, getAdmittedDevice, getRemoteActor, getSourceAddress, recordEvent } from "./gate.js";
 import { REMOTE_LIMITS, WindowLimiter } from "./limits.js";
 import type { RegistrationCodes } from "./registration-code.js";
+import { EMPTY_BODY_LIMIT_BYTES, hasBody } from "./request-body.js";
 import { DEVICE_COOKIE, DEVICE_COOKIE_OPTIONS, getCsrfToken } from "./session.js";
 
 export const REMOTE_DEVICE_PATH = {
@@ -64,8 +65,7 @@ const REGISTER_AUDIT = new WeakMap<FastifyRequest, bigint>();
 // off requests whose handler began → a request refused before it (a body, a failed gate) never closes the listener
 const OFF_REQUESTS = new WeakSet<FastifyRequest>();
 
-// logout and off take nothing but the gate's admitted device → any body is refused before the handler
-const EMPTY_BODY_OPTIONS = { bodyLimit: 64, onRequest: refuseBody } as const;
+const EMPTY_BODY_OPTIONS = { bodyLimit: EMPTY_BODY_LIMIT_BYTES, onRequest: refuseBody } as const;
 
 export async function registerRemoteDeviceRoutes(app: FastifyInstance, deps: RemoteRoutesDeps): Promise<void> {
   const now = deps.now ?? Date.now;
@@ -197,9 +197,7 @@ async function finishOff(request: FastifyRequest, deps: RemoteRoutesDeps): Promi
 }
 
 async function refuseBody(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> {
-  const length = request.headers["content-length"];
-  const hasBody = request.headers["transfer-encoding"] !== undefined || (length !== undefined && length !== "0");
-  return hasBody ? reply.code(400).send({ error: "body_not_allowed" }) : undefined;
+  return hasBody(request) ? reply.code(400).send({ error: "body_not_allowed" }) : undefined;
 }
 
 // the gate admits every request these handlers see → a missing device is a wiring fault, never a client state

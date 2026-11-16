@@ -4,18 +4,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { isLoopbackHost } from "../host-guard.js";
-import {
-  ADMIN_BODY_LIMIT_BYTES,
-  DEVICE_PARAMS_SCHEMA,
-  type DeviceActDeps,
-  type DeviceParams,
-  getDeviceList,
-  hasBody,
-  revokeAll,
-  revokeOne,
-} from "./admin-routes.js";
+import { DEVICE_PARAMS_SCHEMA, type DeviceActDeps, type DeviceParams, getDeviceList, revokeAll, revokeOne } from "./admin-routes.js";
 import { recordEvent } from "./gate.js";
 import { WindowLimiter } from "./limits.js";
+import { EMPTY_BODY_LIMIT_BYTES, hasBody } from "./request-body.js";
 
 export const REMOTE_CLI_PATH = {
   DEVICES: "/api/remote/cli/devices",
@@ -50,7 +42,7 @@ export async function registerRemoteCliRoutes(app: FastifyInstance, deps: Remote
       return payload;
     });
     const act = { deps, actor: REMOTE_CLI_ACTOR };
-    const options = { bodyLimit: ADMIN_BODY_LIMIT_BYTES };
+    const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
     scope.get(REMOTE_CLI_PATH.DEVICES, (request) => listDevices(request, deps));
     scope.delete<{ Params: DeviceParams }>(REMOTE_CLI_PATH.DEVICE, { ...options, schema: DEVICE_PARAMS_SCHEMA }, (request, reply) =>
       revokeOne(request, reply, act),
