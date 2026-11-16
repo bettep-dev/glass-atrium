@@ -1432,7 +1432,7 @@ function MermaidCanvas({
 						aria-label="Reset diagram view"
 						title="Reset view (0)"
 					>
-						<ArchIconAR name="target" />
+						<ArchIconAR name="maximize" />
 						Reset
 					</button>
 				</div>

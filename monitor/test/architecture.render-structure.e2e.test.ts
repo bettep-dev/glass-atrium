@@ -526,6 +526,20 @@ describe("healthy live fixture", () => {
 		for (const line of texts) assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 	});
 
+	// owner decision, spec 44084 §12.2a — Reset is a fit-to-view mark, not the target Task results uses
+	test("the Reset control draws the Lucide maximize glyph from the loaded catalogue", async () => {
+		const drawn = await ctx.page.evaluate(() => {
+			const icons = (window as never as { lucide: { icons: Record<string, [string, object, [string, Record<string, string>][]]> } }).lucide.icons;
+			const svg = document.querySelector('button[aria-label="Reset diagram view"] svg');
+			return {
+				rendered: [...(svg?.children ?? [])].map((el) => `${el.tagName}:${el.getAttribute("d") ?? ""}`),
+				catalogue: (icons.Maximize?.[2] ?? []).map(([tag, attrs]) => `${tag}:${attrs.d ?? ""}`),
+			};
+		});
+		assert.ok(drawn.catalogue.length > 0, "the loaded catalogue holds Maximize");
+		assert.deepEqual(drawn.rendered, drawn.catalogue);
+	});
+
 	test("the Reset control shows its name and only a title repeating its one box is hidden", async () => {
 		const reset = ctx.page.getByRole("button", { name: "Reset diagram view" });
 		assert.match(await reset.innerText(), /\bReset\b/);
