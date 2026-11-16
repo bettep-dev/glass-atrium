@@ -1120,7 +1120,7 @@ test("a spend stat that read nothing says so in faint words — Not loaded for a
 test("a firing spend stat draws the shared stat tone glyph in its tone, read as running hot, before the figure", async () => {
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   const stat = renderIn(mod, "SpendStatValueC", { stat: { key: "today", label: "Today", status: "ready", tone: "warn", value: "$1,790" } });
-  const glyphs = findNodes(stat, (n) => n.props.atom === "StatToneGlyph");
+  const glyphs = findNodes(stat, (n) => n.props.atom === "ToneGlyph");
 
   assert.deepEqual(glyphs.map((n) => [n.props.tone, n.props.label]), [["warn", "Running hot"]]);
   assert.equal(collectText(stat).trim(), "$1,790");

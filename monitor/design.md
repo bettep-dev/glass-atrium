@@ -201,7 +201,7 @@
 | 공개 | `Disclosure` · `DisclosureButton` | `.disclosure` (also on a `summary`) · `.card.is-collapsed` |
 | 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
-| 수치 | `StatRow` · `StatToneGlyph` · `HeadStatus` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` · `.stat-tone-glyph` · `.one-line-box` |
+| 수치 | `StatRow` · `ToneGlyph` · `HeadStatus` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` · `.tone-glyph` · `.one-line-box` |
 | 표 | `Table` · `TableHead` | `.tbl` |
 | 페이지 | `PageHeader` · `SectionLabel` · `EmptyState` | `.section-label` · `.placeholder` (deprecated, §12.5) |
 | 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` sans tnum `--faint` (§12.2) · `.btn.ghost.sm` |
@@ -1124,8 +1124,8 @@
   - The stats share one label row, one value line and one context row: a label that wraps lowers the row's value line, never only its own value; a label wraps, never truncates.
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
   - A stat that opens a drill-down is a Link-styled value, not a button tile.
-  - **`StatToneGlyph({ tone, label, title })`** (`ui.jsx`): a firing stat's mark before its value — the alarm row's glyph in `.one-line-box.stat-tone-glyph`, a box one value line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Dashboard (`StatValue`) and Cost (`SpendStatValueC`) call it; only on the value line (`.stat-value`) does it carry a trailing `--gap-label-inline`.
-- **`HeadStatus({ tone, className, children })`** (`ui.jsx`): a card head's own Status in the head's sub slot — `StatToneGlyph` then the words, `--fs-meta` dim, `data-role="head-status"`; `className` sets the glyph-to-words flex gap (default `gap-label-inline`). Consumers: System map Part health (`architecture.jsx` → `PartHealthBlockAR`, the row status atom's gap) · Learning board heads (`improvement.jsx` → `HeadStatusI`, inside its mounted live region).
+- **`ToneGlyph({ tone, label, title })`** (`ui.jsx`): the alarm-size tone mark with its screen-reader word — the alarm row's glyph in `.one-line-box.tone-glyph`, a box one text line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Callers: a firing stat's value (`dashboard.jsx` → `StatValue` · `cost.jsx` → `SpendStatValueC`) · `HeadStatus` · Learning's reject-rate headline and candidate rows (`improvement.jsx` → `RejectRateHeadlineI` · `CandidateRowI`); only on the value line (`.stat-value`) does it carry a trailing `--gap-label-inline`.
+- **`HeadStatus({ tone, className, children })`** (`ui.jsx`): a card head's own Status in the head's sub slot — `ToneGlyph` then the words, `--fs-meta` dim, `data-role="head-status"`; `className` sets the glyph-to-words flex gap (default `gap-label-inline`). Consumers: System map Part health (`architecture.jsx` → `PartHealthBlockAR`, the row status atom's gap) · Learning board heads (`improvement.jsx` → `HeadStatusI`, inside its mounted live region).
 - Rules:
   - A display name and its id never sit together: model name only (id → `title` tooltip and drawer).
   - No percentage-of-percentage or window-arithmetic prose: one delta ("+0.2 pt") with its comparison window inside ⓘ.

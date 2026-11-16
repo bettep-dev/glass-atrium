@@ -590,7 +590,7 @@ test("a firing stat shows its value and tone glyph only; a calm stat shows the v
   for (const row of rows) {
     const { tree, items } = renderStatusCard([{ ...READY_STAT, tone: row.tone, value: "2 of 7 down" }]);
     const value = nodeOf(items[0].value);
-    const glyphs = findNodes(value, (n) => n.props.atom === "StatToneGlyph");
+    const glyphs = findNodes(value, (n) => n.props.atom === "ToneGlyph");
     assert.deepEqual(glyphs.map((glyph) => glyph.props.tone), row.hasGlyph ? [row.tone] : [], `${row.tone}: the shared stat tone glyph, in the stat's tone`);
     assert.equal(findNodes(tree, (n) => n.props.atom === "Badge").length, 0, `${row.tone}: never a badge`);
     assert.equal(collectText(value).replace(/\s+/g, " ").trim(), "2 of 7 down", `${row.tone}: no word beside the figure but the glyph's own`);

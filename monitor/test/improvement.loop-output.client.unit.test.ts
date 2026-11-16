@@ -233,7 +233,7 @@ describe("the reject-rate headline draws its trend glyph as the shared tone mark
   for (const row of rows) {
     test(row.name, () => {
       const marks = collectElements(sandbox.RejectRateHeadlineI({ before: row.before, after: row.after }), []).filter(
-        (el) => el.type === sandbox.window.UI.StatToneGlyph,
+        (el) => el.type === sandbox.window.UI.ToneGlyph,
       );
       assert.equal(marks.length, 1);
       assert.equal(marks[0].props.tone, row.tone);

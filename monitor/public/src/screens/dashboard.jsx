@@ -364,11 +364,11 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
 const FIRING_TONES = new Set(['warn', 'crit']);
 
 function StatValue({ stat }) {
-  const { AbsentValue, StatToneGlyph } = window.UI;
+  const { AbsentValue, ToneGlyph } = window.UI;
   if (stat.absent) return <AbsentValue kind={stat.absent}/>;
   const figure = <span className={`whitespace-nowrap${stat.isBusy ? ' opacity-70' : ''}`}>{stat.value}</span>;
   if (!FIRING_TONES.has(stat.tone)) return figure;
-  return <><StatToneGlyph tone={stat.tone}/>{figure}</>;
+  return <><ToneGlyph tone={stat.tone}/>{figure}</>;
 }
 
 // the card's one ⓘ — each stat's notes led by its label

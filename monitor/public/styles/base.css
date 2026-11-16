@@ -2074,7 +2074,7 @@ a.prose-link:hover {
 	font-weight: 500;
 	color: rgb(var(--dim));
 }
-/* a box one text line tall → its content centres on that line, not on the Icon's text nudge: a firing stat's glyph, a stat's Retry */
+/* a box one text line tall → its content centres on that line, not on the Icon's text nudge: a tone glyph, a stat's Retry */
 .one-line-box {
 	display: inline-flex;
 	align-items: center;
@@ -2082,7 +2082,7 @@ a.prose-link:hover {
 	vertical-align: top;
 }
 /* a head Status spaces its glyph with its own flex gap → only the stat value line adds this one */
-.stat-value .stat-tone-glyph {
+.stat-value .tone-glyph {
 	margin-inline-end: var(--gap-label-inline);
 }
 .stat-context {

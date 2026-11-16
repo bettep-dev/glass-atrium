@@ -158,14 +158,14 @@ describe("stat row", () => {
     assert.equal(findNodes(context, (n) => n.props["aria-hidden"] === "true").length, 1, "the reserved line is hidden from assistive tech");
   });
 
-  test("a firing stat's tone glyph is the alarm row's glyph, hidden from assistive tech, its word read before the figure", () => {
+  test("the tone glyph is the alarm row's glyph, hidden from assistive tech, its word read before what follows", () => {
     const [alarmGlyph] = findNodes(render("AlarmRow", { tone: "crit", title: "2 of 7 agents down" }), (n) => n.type === "svg");
     const rows = [
       { name: "the tone's severity word by default", props: { tone: "crit" }, word: `${(ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD.crit}:` },
       { name: "a caller's own word", props: { tone: "warn", label: "Running hot" }, word: "Running hot:" },
     ];
     for (const row of rows) {
-      const tree = render("StatToneGlyph", row.props);
+      const tree = render("ToneGlyph", row.props);
       const [glyph] = findNodes(tree, (n) => n.type === "svg");
       const hidden = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
       assert.equal(glyph.props.width, alarmGlyph.props.width, `${row.name}: the alarm row's glyph size`);
@@ -174,13 +174,13 @@ describe("stat row", () => {
     }
   });
 
-  test("a card head's Status leads with the firing stat's tone glyph, its severity word read before the words", () => {
-    const [statGlyph] = findNodes(render("StatToneGlyph", { tone: "warn" }), (n) => n.type === "svg");
+  test("a card head's Status leads with the tone glyph, its severity word read before the words", () => {
+    const [toneGlyph] = findNodes(render("ToneGlyph", { tone: "warn" }), (n) => n.type === "svg");
     const tree = render("HeadStatus", { tone: "warn", children: "2 awaiting" });
     const [status] = findNodes(tree, (n) => n.props["data-role"] === "head-status");
     const [glyph] = findNodes(status, (n) => n.type === "svg");
     const severityWord = (ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD.warn;
-    assert.equal(glyph.props.width, statGlyph.props.width, "the alarm-size glyph a firing stat draws");
+    assert.equal(glyph.props.width, toneGlyph.props.width, "the alarm-size tone glyph");
     assert.equal(collectText(status).replace(/\s+/g, " ").trim(), `${severityWord}: 2 awaiting`);
   });
 

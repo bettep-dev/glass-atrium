@@ -136,7 +136,7 @@ describe("a live candidate row draws its lone status glyph as the shared tone ma
     test(row.name, () => {
       const pattern = { id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 3, status: row.status };
       const tree = sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 3, onClick: () => {} });
-      const marks = findAll(tree, (el) => el.type === sandbox.window.UI.StatToneGlyph);
+      const marks = findAll(tree, (el) => el.type === sandbox.window.UI.ToneGlyph);
 
       assert.equal(marks.length, 1);
       assert.equal(marks[0].props.tone, row.tone);

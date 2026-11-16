@@ -662,12 +662,12 @@ function getStatContextNoteC(stat, bannerSources) {
 
 // Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
 function SpendStatValueC({ stat }) {
-  const { AbsentValue, StatToneGlyph } = window.UI;
+  const { AbsentValue, ToneGlyph } = window.UI;
   // a failed read is Not loaded, a read that holds nothing is None → the context line names the cause
   if (stat.status !== 'ready') return <AbsentValue kind={stat.status === 'error' ? 'not-loaded' : 'none'}/>;
   if (!stat.tone) return stat.value;
   const toneLabel = 'Running hot';
-  return <><StatToneGlyph tone={stat.tone} label={toneLabel} title={toneLabel}/>{stat.value}</>;
+  return <><ToneGlyph tone={stat.tone} label={toneLabel} title={toneLabel}/>{stat.value}</>;
 }
 
 // Window change on its own block line — the token card's foot.

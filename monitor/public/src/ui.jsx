@@ -649,24 +649,24 @@ function StatRow({ stats, className = '' }) {
 }
 
 /**
- * A firing stat's tone mark: the alarm row's glyph on the value line, its word read before the figure.
+ * The alarm-size tone mark: the alarm row's glyph in a one-line box, hidden from assistive tech, its word read before what follows.
  * @param label - the word a screen reader hears first; defaults to the tone's severity word
  * @param title - hover text on the glyph
  */
-function StatToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
+function ToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
   return <>
-    <span className={`one-line-box stat-tone-glyph text-${tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
+    <span className={`one-line-box tone-glyph text-${tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
     <span className="sr-only">{`${label}: `}</span>
   </>;
 }
 
 /**
- * A card head's own Status in the head's sub slot: the firing stat's tone mark, then the words.
+ * A card head's own Status in the head's sub slot: the tone glyph, then the words.
  * @param className - the head's spacing between glyph and words; defaults to the label gap
  */
 function HeadStatus({ tone, className = 'gap-label-inline', children }) {
   return <span data-role="head-status" data-tone={tone} className={`inline-flex items-center fs-meta text-dim ${className}`}>
-    <StatToneGlyph tone={tone}/>{children}
+    <ToneGlyph tone={tone}/>{children}
   </span>;
 }
 
@@ -2970,7 +2970,7 @@ window.UI = {
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
-  getDisplayName, hasFieldValue, DetailField, StatToneGlyph, HeadStatus, AbsentValue, EMPTY_VALUE_TEXT,
+  getDisplayName, hasFieldValue, DetailField, ToneGlyph, HeadStatus, AbsentValue, EMPTY_VALUE_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,

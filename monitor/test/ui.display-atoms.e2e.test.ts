@@ -43,8 +43,8 @@ const statWrap = renderToStaticMarkup(h(UI.StatRow, { stats: [
 ] }));
 // a firing stat beside another, one a drill-down link → the tone glyph sits in either value's line
 const toneStats = renderToStaticMarkup(h(UI.StatRow, { stats: [
-  { label: "Spend today", value: h(React.Fragment, null, h(UI.StatToneGlyph, { tone: "warn", label: "Running hot" }), "$1,790") },
-  { label: "Agents", value: h(React.Fragment, null, h(UI.StatToneGlyph, { tone: "crit" }), "2 of 7 down"), href: "#/agents" },
+  { label: "Spend today", value: h(React.Fragment, null, h(UI.ToneGlyph, { tone: "warn", label: "Running hot" }), "$1,790") },
+  { label: "Agents", value: h(React.Fragment, null, h(UI.ToneGlyph, { tone: "crit" }), "2 of 7 down"), href: "#/agents" },
 ] }));
 const badges = renderToStaticMarkup(h("div", null,
   h(UI.Badge, { role: "metadata" }, "html"),

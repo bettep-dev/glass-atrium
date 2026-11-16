@@ -815,7 +815,7 @@ function RejectRateHeadlineI({ before, after }) {
 	const isMuted = isLowSample(after?.total);
 	return (
 		<span className="inline-flex items-center gap-1.5 fs-meta" title={window.UI.titleOf(trend.hint)}>
-			<window.UI.StatToneGlyph tone={trend.tone} label={trend.hint} />
+			<window.UI.ToneGlyph tone={trend.tone} label={trend.hint} />
 			<span className={isMuted ? "text-faint" : "text-ink"}>{getRejectRatePhraseI(before, after)}</span>
 			<LowSampleMark n={after?.total} />
 		</span>
@@ -2629,7 +2629,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 				/>
 			</span>
 			<span className="fs-meta shrink-0 inline-flex">
-				<window.UI.StatToneGlyph tone={badge.severity} label={`Status: ${badge.label}`} title={`Status: ${badge.label}`} />
+				<window.UI.ToneGlyph tone={badge.severity} label={`Status: ${badge.label}`} title={`Status: ${badge.label}`} />
 			</span>
 			<span
 				className="fs-meta text-dim tnum shrink-0"
