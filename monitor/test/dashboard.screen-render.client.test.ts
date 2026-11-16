@@ -626,6 +626,30 @@ test("every stat note opens from the card's one ⓘ, each led by its stat's labe
   assert.ok(!findNodes(bare.tree, (n) => n.props.atom === "Card")[0].props.info, "no note → no ⓘ");
 });
 
+// the shared error copy is real here → a failed stat's next step and raw answer come from ui.jsx, not from the test
+const failMod = (await loadScreenModule(DASH_SRC, {
+  UI: new Proxy(uiStub() as Record<string, unknown>, {
+    get: (stub, name: string) => (name === "getErrorCopy" ? realUi.getErrorCopy : stub[name]),
+  }),
+  React: createReactStub(),
+})) as ScreenModule;
+
+test("a failed stat hands the next step and the raw error to the card's one ⓘ, never only to its context line", () => {
+  const unread = { status: "loading", data: null, error: null };
+  const stats = (failMod.buildStats as (args: unknown) => Array<{ id: string; notes: string[] }>)({
+    harness: { status: "loading" }, costState: unread, outcomesState: unread,
+    agentsState: { status: "error", data: null, error: "HTTP 500 Internal Server Error" },
+  });
+  const copy = (realUi.getErrorCopy as (error: string, source: string) => { next: string; detail: string })(
+    "HTTP 500 Internal Server Error", "the fleet summary",
+  );
+  const tree = renderScreen(failMod.React.createElement(failMod.StatusCard as Component, { stats, onRetry: () => {} })) as RenderedNode;
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const info = collectText(nodeOf(card.props.info)).replace(/\s+/g, " ");
+  assert.ok(info.includes(copy.next), `the next step rides ⓘ: ${info}`);
+  assert.ok(info.includes(copy.detail), `the raw error rides ⓘ: ${info}`);
+});
+
 test("a week panel heads with the shared Card head, and a held reading says Last known in plain words beside its title", () => {
   for (const [name, state, sub] of [["fresh", { data: {}, error: null }, null], ["held", { data: {}, error: "HTTP 500" }, "Last known"]] as const) {
     const tree = render("WeekPanel", { id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state, onRetry: () => {}, render: () => null });
