@@ -1,5 +1,5 @@
 // E2E chromium DENSITY harness for the Dashboard (screens/dashboard.jsx): where the content ends
-// against the viewport, and how much blank band each status tile holds above its drill link.
+// against the viewport, and where the status card and its four stats sit.
 // Payloads: test/fixtures/dashboard-payloads.json — one served day per Dashboard endpoint, synthetic values of served magnitudes.
 //
 // Runner: npx tsx --test test/dashboard.render-density.e2e.test.ts
@@ -24,9 +24,7 @@ const PAYLOADS: Record<string, unknown> = JSON.parse(
   readFileSync(resolve(HERE, "fixtures", "dashboard-payloads.json"), "utf8"),
 );
 
-const TILE_IDS = ["harness", "outcomes", "fleet", "spend"];
-// A blank band is dead space once it could hold a line of meta text plus its gap.
-const TILE_BAND_MAX_PX = 24;
+const STAT_COUNT = 4;
 
 interface Viewport {
   width: number;
@@ -36,8 +34,6 @@ interface Viewport {
 interface DensityProbe {
   contentBottom: number;
   statusBandHeight: number;
-  // blank px between a tile's last fact and its drill link, keyed by tile id
-  tileBands: Record<string, number>;
 }
 
 let app: FastifyInstance;
@@ -65,7 +61,7 @@ async function openDashboard(viewport: Viewport): Promise<Page> {
   await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
   await page.waitForFunction(
     () => {
-      const harness = document.querySelector("#dash-tile-harness")?.textContent ?? "";
+      const harness = document.querySelector("#dash-status .stat")?.textContent ?? "";
       const hasStrip = document.querySelector("#dash-week-spend ol") !== null;
       const hasResults = (document.querySelector("#dash-week-results")?.textContent ?? "").includes("reported outcomes");
       const hasHours = document.querySelector("#dash-week-hours [role=img]") !== null;
@@ -78,23 +74,13 @@ async function openDashboard(viewport: Viewport): Promise<Page> {
 }
 
 async function getDensity(page: Page): Promise<DensityProbe> {
-  return page.evaluate((tileIds) => {
+  return page.evaluate(() => {
     const sections = document.querySelector("#dash-status")?.parentElement;
     const children = sections ? Array.from(sections.children) : [];
     const contentBottom = Math.max(...children.map((el) => el.getBoundingClientRect().bottom + window.scrollY));
     const statusBandHeight = document.querySelector("#dash-status")?.getBoundingClientRect().height ?? 0;
-    const tileBands: Record<string, number> = {};
-    for (const id of tileIds) {
-      // the shared KPI foot holds the drill → the band is the drill's top against the last fact row above the foot
-      const card = document.querySelector(`#dash-tile-${id}`);
-      const foot = card?.querySelector(":scope > .kpi-foot");
-      const drill = foot?.querySelector("a");
-      const fact = foot?.previousElementSibling;
-      if (!card || !drill || !fact) continue;
-      tileBands[id] = Math.round(drill.getBoundingClientRect().top - fact.getBoundingClientRect().bottom);
-    }
-    return { contentBottom: Math.round(contentBottom), statusBandHeight: Math.round(statusBandHeight), tileBands };
-  }, TILE_IDS);
+    return { contentBottom: Math.round(contentBottom), statusBandHeight: Math.round(statusBandHeight) };
+  });
 }
 
 describe("Dashboard density at 1440×900", () => {
@@ -113,12 +99,6 @@ describe("Dashboard density at 1440×900", () => {
       `content ends at ${probe.contentBottom}, leaving more than one ${probe.statusBandHeight}px row blank`);
   });
 
-  // todo → a known-unmet target: runs and reports, never fails the suite until the tiles close their bands
-  test("no status tile holds a blank band above its drill link", { todo: "Harness and Fleet still keep a band after their facts moved" }, () => {
-    for (const [id, band] of Object.entries(probe.tileBands)) {
-      assert.ok(band <= TILE_BAND_MAX_PX, `${id} tile keeps a ${band}px blank band`);
-    }
-  });
 });
 
 describe("Dashboard density at 1024", () => {
@@ -132,100 +112,52 @@ describe("Dashboard density at 1024", () => {
   });
 });
 
-// R-b: tiles of one band row are one height, so each tile's hint closes its value side on the same line as its siblings',
-// whatever its detail holds — and a tile with no detail text draws no detail line at all
-interface TileHint {
-  id: string;
-  top: number;
-  hintBottom: number | null;
-  detailNodes: number;
-  detailText: string;
+// One card of four stats (spec 44084 §9 R8): the stats share one line, the first screen keeps Spend per day,
+// and every stacked card starts on one left edge.
+interface StatusLayout {
+  statTops: number[];
+  spendTop: number;
+  cardLefts: Record<string, number>;
 }
 
-async function getTileHints(page: Page): Promise<TileHint[]> {
-  return page.evaluate(() =>
-    [...document.querySelectorAll<HTMLElement>("#dash-status .kpi")].map((tile) => {
-      const hint = tile.querySelector(".dash-tile-hint");
-      const details = tile.querySelectorAll(".dash-tile-detail");
-      return {
-        id: tile.id,
-        top: Math.round(tile.getBoundingClientRect().top),
-        hintBottom: hint ? hint.getBoundingClientRect().bottom : null,
-        detailNodes: details.length,
-        detailText: [...details].map((node) => node.textContent ?? "").join("").trim(),
-      };
-    }),
-  );
+async function getStatusLayout(page: Page): Promise<StatusLayout> {
+  return page.evaluate(() => {
+    const statTops = Array.from(document.querySelectorAll("#dash-status .stat")).map((el) => Math.round(el.getBoundingClientRect().top));
+    const spendTop = document.querySelector("#dash-week-spend")?.getBoundingClientRect().top ?? NaN;
+    const cardLefts: Record<string, number> = {};
+    for (const id of ["dash-status", "dash-week-results", "dash-week-spend"]) {
+      const card = document.querySelector(`#${id} .card`);
+      if (card) cardLefts[id] = card.getBoundingClientRect().left;
+    }
+    return { statTops, spendTop, cardLefts };
+  });
 }
 
-describe("Status-band hints share one line per band row", () => {
-  for (const width of [1440, 1024, 820]) {
-    test(`siblings' hints end on one line and an empty detail draws nothing at ${width}`, async () => {
-      const page = await openDashboard({ width, height: 900 });
-      await page.evaluate(() => document.fonts.ready);
-      const tiles = await getTileHints(page);
-      await page.close();
-      assert.equal(tiles.length, TILE_IDS.length, "every status tile renders");
-      for (const tile of tiles) {
-        assert.ok(tile.detailNodes === 0 || tile.detailText !== "", `${tile.id} draws an empty detail line`);
-      }
-      const rows = new Map<number, TileHint[]>();
-      for (const tile of tiles.filter((t) => t.hintBottom !== null)) rows.set(tile.top, [...(rows.get(tile.top) ?? []), tile]);
-      const shared = [...rows.values()].filter((row) => row.length > 1);
-      assert.ok(shared.length > 0, "the fixture puts two hinted tiles on one band row");
-      for (const row of shared) {
-        const bottoms = row.map((tile) => tile.hintBottom as number);
-        assert.ok(Math.max(...bottoms) - Math.min(...bottoms) < 0.5,
-          `hints end apart in one row: ${row.map((tile) => `${tile.id} ${tile.hintBottom}`).join(", ")}`);
-      }
-    });
-  }
-});
+describe("The status card at 1440×900", () => {
+  let layout: StatusLayout;
 
-// A data hint clamps its data, never the authored words around it: each part stays inside the hint box,
-// and the data keeps a visible fragment even when the tile column is narrow.
-interface HintSpan {
-  text: string;
-  isData: boolean;
-  left: number;
-  right: number;
-  width: number;
-}
+  before(async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    await page.evaluate(() => document.fonts.ready);
+    layout = await getStatusLayout(page);
+    console.log(`status layout 1440x900: ${JSON.stringify(layout)}`);
+    await page.close();
+  });
 
-async function getDataHints(page: Page): Promise<Array<{ box: { left: number; right: number }; spans: HintSpan[] }>> {
-  return page.evaluate(() =>
-    [...document.querySelectorAll<HTMLElement>(".dash-tile-hint-line")].map((line) => {
-      const box = line.getBoundingClientRect();
-      const spans = [...line.querySelectorAll<HTMLElement>(".dash-tile-hint-fixed, .dash-tile-hint-data")]
-        .filter((span) => (span.textContent ?? "").trim() !== "")
-        .map((span) => {
-          const rect = span.getBoundingClientRect();
-          const isData = span.classList.contains("dash-tile-hint-data");
-          return { text: span.textContent ?? "", isData, left: rect.left, right: rect.right, width: rect.width };
-        });
-      return { box: { left: box.left, right: box.right }, spans };
-    }),
-  );
-}
+  test("its four stats share one line", () => {
+    assert.equal(layout.statTops.length, STAT_COUNT, "every stat renders");
+    assert.equal(new Set(layout.statTops).size, 1, `stat tops ${layout.statTops.join(" / ")}`);
+  });
 
-describe("Data hints at narrow tile widths", () => {
-  for (const width of [1024, 1200]) {
-    test(`every data hint part stays inside its box and the data stays visible at ${width}`, async () => {
-      const page = await openDashboard({ width, height: 768 });
-      await page.evaluate(() => document.fonts.ready);
-      const hints = await getDataHints(page);
-      await page.close();
-      assert.ok(hints.length > 0, "the fixture renders a data hint");
-      for (const hint of hints) {
-        for (const span of hint.spans) {
-          assert.ok(span.left >= hint.box.left - 0.5 && span.right <= hint.box.right + 0.5,
-            `"${span.text}" spans ${span.left}–${span.right}, outside its box ${hint.box.left}–${hint.box.right}`);
-        }
-        const data = hint.spans.find((span) => span.isData);
-        assert.ok(data && data.width > 0, `the data is not visible: ${JSON.stringify(hint.spans)}`);
-      }
-    });
-  }
+  test("Spend per day starts on the first screen", () => {
+    assert.ok(layout.spendTop < 900, `Spend per day starts at ${layout.spendTop}`);
+  });
+
+  test("the status card and the week cards start on one left edge", () => {
+    const lefts = Object.values(layout.cardLefts);
+    assert.equal(lefts.length, 3, JSON.stringify(layout.cardLefts));
+    assert.ok(Math.max(...lefts) - Math.min(...lefts) < 0.5, JSON.stringify(layout.cardLefts));
+  });
 });
 
 // Runs by hour reads as a grid of squares: no cell outgrows the cap, and the panel sits beside the results from xl

@@ -1,6 +1,5 @@
-// Screen 01 — Dashboard: triage. 경보 레인(비어도 한 행 높이 유지) + 4타일 상태 밴드가 전부.
-// 추세·원장·분포는 각자 소유 화면으로 이관 — 여기는 "지금 나를 필요로 하는 일이 있나 ·
-// 하네스는 건강한가"에만 답하고 나머지 질문은 링크로 넘긴다.
+// Screen 01 — Dashboard: triage. The Needs you alarm list + one status card of four stats + the week panels;
+// answers only "does anything need me, is the harness healthy" and links every other question to its owning screen.
 // harness 사실은 셸 fold(prop) 단일 출처 — 화면이 harness 스토어를 다시 읽지 않는다.
 const { useState: useStateD, useEffect: useEffectD, useRef: useRefD, useCallback: useCallbackD } = React;
 
@@ -94,7 +93,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
     setRefreshTick((t) => t + 1);
     rereadHarness();
   }, [rereadHarness]);
-  const retryTile = useCallbackD((region) => getTileRetry(loadRegion, rereadHarness)(region), [loadRegion, rereadHarness]);
+  const retryStat = useCallbackD((region) => getStatRetry(loadRegion, rereadHarness)(region), [loadRegion, rereadHarness]);
   const refetchUpdateJob = useCallbackD(() => loadRegion('updateJob'), [loadRegion]);
 
   // harness 판독은 셸 fold 가 공급 — 여기서 재요청하지 않는다(nav 숫자와 어긋나는 원인).
@@ -124,9 +123,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarms = buildAlarms({ harness, costState, installKind });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
-  const tiles = buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy });
+  const stats = buildStats({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const weekPanels = [{ source: 'daily spend', error: spendDaysState.error }, { source: 'runs by hour', error: heatmapState.error }];
-  const sharedFailure = getPageSharedFailure(tiles, weekPanels);
+  const sharedFailure = getPageSharedFailure(stats, weekPanels);
   const sharedSources = sharedFailure?.sources ?? NO_SHARED_SOURCES;
   const version = describeVersion(harness);
 
@@ -141,22 +140,14 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
         /* an idle lane is out of flow → no blank band and no section gap of its own; a lane between two sections keeps one gap */
         .space-sections > .dash-lane.sr-only + * { margin-top: 0; }
-        .space-sections > * + .dash-lane.sr-only + * { margin-top: 24px; }
-        /* 타일 힌트 — 2줄분 min-height 예약 → 폭이 줄어도 밴드 높이 불변. 저작 힌트는 2줄 안에서 줄바꿈. */
-        .dash-tile-hint { min-height: calc(var(--fs-meta) * 1.4 * 2); line-height: 1.4; }
-        /* a hint carrying data → one line while it fits whole, else data + figure wrap to the reserved second line; only the data takes the ellipsis */
-        .dash-tile-hint-line { display: flex; flex-wrap: wrap; align-items: flex-start; white-space: nowrap; }
-        .dash-tile-hint-rest { display: flex; flex: 1 1 auto; min-width: 0; }
-        .dash-tile-hint-fixed { flex-shrink: 0; white-space: pre; }
-        .dash-tile-hint-data { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        /* detail and plain hint: at most two lines, the whole text in the title; an empty detail renders no node, so it reserves no line */
-        :is(.dash-tile-detail, .dash-tile-hint).clamp-2 { overflow-wrap: anywhere; }
-        /* a band row is one height → the split fills its tile and parts value | detail + hint, so every hint (a fixed two-line box)
-           sits on the foot and siblings' hints share one line, whatever their value, delta or detail rows hold */
-        .dash-tile > .kpi-split { flex-grow: 1; align-content: space-between; }
-        .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
-        /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
+        .space-sections > * + .dash-lane.sr-only + * { margin-top: var(--gap-section); }
+        /* an agent name in the results panel is a plain anchor → an underline makes its hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+        /* a stat's Retry rides its context line → the line stays one row, the control sits after the words */
+        .dash-stat-retry { margin-left: var(--space-2); vertical-align: middle; }
+        .dash-week-panel { display: flex; flex-direction: column; }
+        .dash-week-panel > .card { flex: 1 1 auto; }
+        .dash-week-panel .card-body { display: flex; flex-direction: column; gap: var(--gap-list); }
         /* the 32 first line of the alarm row (base.css .alarm-row) → a Link action centres on the glyph and title */
         .dash-alarm-list .alarm-row-actions { min-height: var(--ctl-min-h); align-items: center; }
         .dash-alarm-detail { display: block; max-width: 72ch; margin-top: 4px; line-height: 1.4; }
@@ -205,7 +196,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
       <div className="space-sections">
         {sharedFailure && (
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
-            isBusy={isWaveBusy} focusTargetId={DASH_STATUS_BAND_ID}/>
+            isBusy={isWaveBusy} focusTargetId={DASH_STATUS_ID}/>
         )}
         <AlarmLane
           alarms={alarms}
@@ -215,7 +206,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           updateJobState={updateJobState}
           onRefetchJob={refetchUpdateJob}
         />
-        <StatusBand tiles={tiles} onNav={onNav} onRetry={retryTile} sharedSources={sharedSources}/>
+        <StatusCard stats={stats} onRetry={retryStat} sharedSources={sharedSources}/>
         <WeekRow spendState={spendDaysState} outcomesState={outcomesState} heatmapState={heatmapState}
           onRetrySpend={() => loadRegion('spendDays')} onRetryHeatmap={() => loadRegion('heatmap')}
           sharedSources={sharedSources}/>
@@ -224,19 +215,19 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   );
 }
 
-// harness 판독은 셸 소유 → 그 타일의 Retry 는 셸 재폴링, 나머지는 자기 region 재요청
-function getTileRetry(loadRegion, rereadHarness) {
+// the harness reading is the shell's → its Retry re-polls the shell, every other region reloads itself
+function getStatRetry(loadRegion, rereadHarness) {
   return (region) => (region === HARNESS_REGION ? rereadHarness() : loadRegion(region));
 }
 
 const NO_SHARED_SOURCES = Object.freeze([]);
 
-// ≥2 sources failing on one cause (tiles + week panels, unloaded or held) → one page banner carries the only Retry
-// panels on another cause keep their own Retry → the tiles' banner still stands without them
-function getPageSharedFailure(tiles, panels = []) {
+// ≥2 sources failing on one cause (stats + week panels, unloaded or held) → one page banner carries the only Retry
+// panels on another cause keep their own Retry → the stats' banner still stands without them
+function getPageSharedFailure(stats, panels = []) {
   const { getSharedFailure } = window.UI;
-  const tileEntries = tiles.map((tile) => ({ source: tile.source, error: tile.error }));
-  return getSharedFailure([...tileEntries, ...panels]) ?? getSharedFailure(tileEntries);
+  const statEntries = stats.map((stat) => ({ source: stat.source, error: stat.error }));
+  return getSharedFailure([...statEntries, ...panels]) ?? getSharedFailure(statEntries);
 }
 
 // "Needs you" (spec 44084 §3.3) — one list card of alarm rows, worst first; no alarm → no card, no text, no space
@@ -314,133 +305,105 @@ function getAlarmReadiness(sources) {
   return { status: unread.length > 0 ? 'unknown' : 'read', unread };
 }
 
-// 상태 밴드 — 4타일 고정, 좁은 폭에선 2×2. 값 · 힌트 한 줄 · 소유 화면 링크.
-function StatusBand({ tiles, onNav, onRetry, sharedSources = NO_SHARED_SOURCES }) {
+// the card outlives every recovery → a banner or stat Retry that leaves on success hands focus here
+const DASH_STATUS_ID = 'dash-status';
+
+// a banner-carried outage is stated once, above → the stat keeps its Not loaded value and points up
+const POINTER = { BANNER: 'see the notice above', RESULTS_STAT: 'see the Task results stat above' };
+const SHARED_FAILURE_CONTEXT = `Not loaded — ${POINTER.BANNER}.`;
+
+// R8 (spec 44084 §9) — one card, four stats (label, value, one context line); every counting rule and window behind one ⓘ
+function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
+  const { Card, StatRow } = window.UI;
+  const noted = stats.filter((stat) => stat.notes?.length > 0);
+  const items = stats.map((stat) => buildStatItem(stat, { onRetry, isRetryShared: sharedSources.includes(stat.source) }));
   return (
-    <div id={DASH_STATUS_BAND_ID} className="grid grid-cols-2 xl:grid-cols-4 gap-card">
-      {tiles.map((tile) => (
-        <StatusTile key={tile.id} tile={tile} onNav={onNav} onRetry={onRetry}
-          isRetryShared={sharedSources.includes(tile.source)}/>
-      ))}
+    <div id={DASH_STATUS_ID} aria-busy={stats.some((stat) => stat.isBusy) ? 'true' : undefined}>
+      <Card title="Status" info={noted.length > 0 && <StatNotes stats={noted}/>} infoLabel="How these figures are read">
+        <StatRow stats={items}/>
+      </Card>
     </div>
   );
 }
 
-// the band outlives every recovery → a banner Retry that leaves on success hands focus here
-const DASH_STATUS_BAND_ID = 'dash-status';
+// stat model → one StatRow stat; the value is the Link to the owning screen once there is something to link
+function buildStatItem(stat, { onRetry, isRetryShared }) {
+  const hasFigure = stat.status !== 'loading' && !stat.absent;
+  return {
+    key: stat.id, label: getStatLabel(stat), value: <StatValue stat={stat}/>, unit: hasFigure ? stat.unit : undefined,
+    context: getStatContext(stat, { onRetry, isRetryShared }),
+    href: stat.status === 'loading' ? undefined : `#${stat.target}`,
+  };
+}
 
-// a banner-carried outage is stated once, above → the tile stays flat with its Not loaded value
-const POINTER = { BANNER: 'see the notice above', RESULTS_TILE: 'see the Task results tile' };
-const SHARED_FAILURE_HINT = `Not loaded — ${POINTER.BANNER}.`;
+// windows in labels read "7d" (spec 44084 §9 A10); prose spells "7 days"
+function getStatLabel(stat) {
+  return stat.window ? `${stat.label}, ${stat.window}` : stat.label;
+}
 
-// 상태 4종이 서로 다르게 읽히는 지점 — loading(status 자리표시) · error(공용 unavailable 카드) · unavailable/empty(중립 문구) · ready(값).
-// 값 자리는 never 0-for-unknown: 미수신은 Not loaded 로 남는다.
-function StatusTile({ tile, onNav, onRetry, isRetryShared = false }) {
-  const { KPI, RetryButton, CardInfo, Badge, DateRange } = window.UI;
-  const cardId = getTileCardId(tile);
-  const titleId = `${cardId}-title`;
-  const isCovered = tile.status === 'error' && isRetryShared;
-  const isFailed = tile.status === 'error' && !isCovered;
-  const retry = tile.canRetry && !isRetryShared && (
-    <RetryButton onRetry={() => onRetry(tile.region)} isBusy={tile.isBusy} focusTargetId={cardId}/>
-  );
-  const hasBadge = tile.status !== 'loading' && (tile.tone !== 'neutral' || tile.isHeld);
-  // the drill stays a foot child, a failed tile's too → the shared foot keeps the four CTAs on one baseline at xl
-  const foot = (!isFailed && retry) || tile.target ? (
-    <>
-      {!isFailed && retry}
-      {tile.target && <DrillLink target={tile.target} label={tile.targetLabel} onNav={onNav}/>}
-    </>
-  ) : null;
-  // a failure is one inset card in the hint slot carrying its Retry; a banner-carried one points up instead of repeating
+// the one visible line: the builder's context, a banner pointer, or nothing while loading; the stat's own Retry rides it
+function getStatContext(stat, { onRetry, isRetryShared }) {
+  const { DayTokens, RetryButton } = window.UI;
+  if (stat.status === 'loading') return null;
+  const isCovered = isRetryShared && stat.error != null;
+  const text = isCovered && stat.status === 'error' ? SHARED_FAILURE_CONTEXT : stat.context;
+  const hasRetry = Boolean(stat.canRetry) && !isRetryShared;
+  if (!text && !hasRetry) return null;
   return (
-    <KPI id={cardId} labelId={titleId} labelAs="h2" labelClassName="fs-meta text-dim uppercase tracking-wide"
-      label={tile.label} aside={tile.window && `(${tile.window})`}
-      info={tile.note && (
-        <CardInfo label={tile.noteLabel ?? 'How this is counted'} describedBy={titleId}>
-          <p className="fs-body">{tile.note}</p>
-        </CardInfo>
+    <>
+      {text && <span title={text}><DayTokens>{text}</DayTokens></span>}
+      {hasRetry && (
+        <span className="dash-stat-retry inline-flex">
+          <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} focusTargetId={DASH_STATUS_ID}/>
+        </span>
       )}
-      state={getTileKpiState(tile)} loadingLabel={tile.label.toLowerCase()} isBusy={tile.isBusy}
-      value={<StatusTileValue tile={tile}/>} unit={tile.unit}
-      badge={hasBadge && <Badge role="status" tone={tile.tone} icon>{tile.badge ?? TONE_WORD[tile.tone]}</Badge>}
-      delta={tile.trend && <div className="fs-meta text-dim"><DateRange range={tile.trendRange}>{tile.trend}</DateRange></div>}
-      hint={isFailed ? <TileFailure tile={tile} retry={retry}/> : <TileDetail tile={tile} isCovered={isCovered}/>}
-      hintFace="text-dim" isSplit foot={foot} className={`dash-tile${tile.isBusy ? ' opacity-70' : ''}`}/>
+    </>
   );
 }
 
-// tile status → the shared KPI state. unavailable and empty keep their builder's value (a low-n count is still a real
-// figure); a tile whose builder marked its value absent takes the KPI's unknown state → faint ink, never a verdict glyph.
-const TILE_KPI_STATE = { loading: 'loading', error: 'error' };
+// tones a stat may show → a firing stat shows its value and tone glyph only; the alarm list owns the sentence
+const FIRING_TONES = new Set(['warn', 'crit']);
 
-function getTileKpiState(tile) {
-  if (Object.hasOwn(TILE_KPI_STATE, tile.status)) return TILE_KPI_STATE[tile.status];
-  return tile.absent ? 'empty' : 'ready';
+function StatValue({ stat }) {
+  const { Icon, TONE_ICON, LoadingPlaceholder, AbsentValue, ALERT_SEVERITY_WORD } = window.UI;
+  if (stat.status === 'loading') {
+    return <span className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()}/></span>;
+  }
+  if (stat.absent) return <AbsentValue kind={stat.absent}/>;
+  const figure = <span className={`whitespace-nowrap${stat.isBusy ? ' opacity-70' : ''}`}>{stat.value}</span>;
+  if (!FIRING_TONES.has(stat.tone)) return figure;
+  return (
+    <>
+      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true"><Icon name={TONE_ICON[stat.tone]} size={13}/></span>
+      <span className="sr-only">{`${ALERT_SEVERITY_WORD[stat.tone]}: `}</span>
+      {figure}
+    </>
+  );
 }
 
-// a detail with no text renders no node → no blank line and no reserve; the hint still closes the slot, on the foot
-function TileDetail({ tile, isCovered }) {
+// the card's one ⓘ — each stat's notes led by its label
+function StatNotes({ stats }) {
   const { DayTokens } = window.UI;
-  const hintData = isCovered ? null : tile.hintData;
-  const detail = isCovered ? null : tile.detail;
-  const hint = isCovered ? SHARED_FAILURE_HINT : tile.hint;
-  const hasDetail = detail != null && detail !== false && detail !== '';
   return (
     <>
-      {hasDetail && (
-        <div className="fs-body text-dim dash-tile-detail clamp-2" title={getClampTitle(detail)}>
-          <DayTokens>{detail}</DayTokens>
-        </div>
-      )}
-      {hintData ? (
-        <div className="fs-meta text-dim dash-tile-hint dash-tile-hint-line" title={tile.hint}>
-          <span className="dash-tile-hint-fixed">{hintData.lead}</span>
-          <span className="dash-tile-hint-rest">
-            <span className="dash-tile-hint-data">{hintData.data}</span>
-            <span className="dash-tile-hint-fixed">{hintData.tail}</span>
-          </span>
-        </div>
-      ) : (
-        <div className="fs-meta text-dim dash-tile-hint clamp-2" title={getClampTitle(hint)}>
-          <DayTokens>{hint}</DayTokens>
-        </div>
-      )}
+      {stats.map((stat) => (
+        <p key={stat.id} className="m-0">
+          <strong className="font-medium text-ink">{getStatLabel(stat)}</strong>
+          {' — '}<DayTokens>{stat.notes.join(' ')}</DayTokens>
+        </p>
+      ))}
     </>
   );
 }
 
-// a clamped line keeps its whole text on hover; a node (none today) carries its own
-function getClampTitle(text) {
-  return typeof text === 'string' && text !== '' ? text : undefined;
-}
-
-// the raw cause rides in the card's Details disclosure → keyboard and screen readers reach it
-function TileFailure({ tile, retry }) {
-  return (
-    <window.UI.AlertCard tone="crit" surface="inset" title={tile.detail} body={tile.hint}
-      details={tile.failureDetail} actions={retry}/>
-  );
-}
-
-function getTileCardId(tile) {
-  return `dash-tile-${tile.id}`;
-}
-
-// the value slot — the figure never breaks; unit, badge and trend ride the shared KPI rows beside and below it
-// absent: 'none' | 'not-loaded' → the shared word for that kind of nothing, in place of a value
-function StatusTileValue({ tile }) {
-  return <span className="whitespace-nowrap">{tile.absent ? window.UI.getAbsentText(tile.absent) : tile.value}</span>;
-}
-
-// the week behind the triage band → each panel states its own span (the strip 7 days, the results 7 days + today)
+// the week behind the status card → each panel states its own span (the strip 7 days, the results 7 days + today)
 // results | runs by hour pair from xl (both this week's runs; half width keeps the hour cells square and short) → Spend's strip spans the row below
 function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetryHeatmap, sharedSources = NO_SHARED_SOURCES }) {
   return (
     <>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
         <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
-          note={OUTCOME_COUNTING_NOTE} isRetryShared={sharedSources.includes('task results')}
+          note={`${OUTCOME_COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
           note={(data) => <HourGridNote grid={data ? buildHourGrid(data) : null}/>} onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
@@ -453,36 +416,26 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
   );
 }
 
-// a panel without onRetry shares its source with a tile → the tile speaks for the failure, the panel only points to it
+// a panel without onRetry shares its source with a stat → the stat speaks for the failure, the panel only points to it
 // note: a sentence, or (data | null) → the drawer body, so a fact read from the payload joins the method it qualifies
 function WeekPanel({ id, title, state, source, onRetry, render, note = null, isRetryShared = false }) {
-  const { Badge, LoadingPlaceholder, CardInfo } = window.UI;
+  const { Card, LoadingPlaceholder } = window.UI;
   const view = getPanelView(state);
-  const titleId = `${id}-title`;
   const hasData = view === 'ready' || view === 'held';
+  const info = note && (typeof note === 'function' ? note(hasData ? state.data : null) : <p className="fs-body">{note}</p>);
+  // a held reading says Last known in plain words beside the title, never a badge (spec 44084 §3)
   return (
-    <section id={id} className="card p-3 flex flex-col gap-2" aria-labelledby={titleId}
-      aria-busy={state.busy ? 'true' : undefined}>
-      {/* every panel reserves the ⓘ row height → side-by-side panels start their bodies on one line */}
-      <div className="dash-tile-head">
-        <div className="flex items-center gap-2">
-          <h2 id={titleId} className="fs-meta text-dim uppercase tracking-wide">{title}</h2>
-          {view === 'held' && <Badge role="status" tone="neutral">Last known</Badge>}
-        </div>
-        {note && (
-          <CardInfo label="How this is counted" describedBy={titleId}>
-            {typeof note === 'function' ? note(hasData ? state.data : null) : <p className="fs-body">{note}</p>}
-          </CardInfo>
-        )}
-      </div>
-      {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
-      <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
-      {hasData && render(state.data)}
+    <section id={id} className="dash-week-panel" aria-label={title} aria-busy={state.busy ? 'true' : undefined}>
+      <Card title={title} sub={view === 'held' ? 'Last known' : null} info={info}>
+        {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
+        <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
+        {hasData && render(state.data)}
+      </Card>
     </section>
   );
 }
 
-// held data whose latest read failed → 'held', the same last-known rule markHeldTile applies to the tiles
+// held data whose latest read failed → 'held', the same last-known rule markHeldStat applies to the stats
 function getPanelView(state) {
   const view = window.UI.getRegionView(state);
   return view === 'ready' && state.error != null ? 'held' : view;
@@ -494,7 +447,7 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   if (view !== 'error' && view !== 'held') return null;
   if (!onRetry || isRetryShared) {
     const lead = view === 'held' ? 'Showing the last reading' : 'Not loaded';
-    return <p className="fs-meta text-dim">{lead} — {isRetryShared ? POINTER.BANNER : POINTER.RESULTS_TILE}.</p>;
+    return <p className="fs-meta text-dim">{lead} — {isRetryShared ? POINTER.BANNER : POINTER.RESULTS_STAT}.</p>;
   }
   const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   if (view === 'held') {
@@ -534,7 +487,7 @@ function ResultPanel({ panel }) {
   return (
     <>
       <p className="fs-meta text-dim">
-        <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} reported outcomes, the tile's count
+        <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} reported outcomes
       </p>
       <ul className="flex flex-col gap-1.5">
         {panel.rows.map((row) => {
@@ -549,7 +502,6 @@ function ResultPanel({ panel }) {
           );
         })}
       </ul>
-      <p className="fs-meta text-dim">Tile: open caveats only</p>
       <BreakageAgents agents={panel.agents}/>
     </>
   );
@@ -663,16 +615,7 @@ function describeHourGrid(grid) {
   return `Runs by hour, ${grid.span}: busiest ${getRowLabel(peak)} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
 }
 
-// 소유 화면 링크 — 실제 href(#screen) 앵커. 수식 클릭·가운데 클릭은 브라우저에 맡겨 새 탭으로 연다.
-function DrillLink({ target, label, onNav, className = '' }) {
-  return (
-    <a href={`#${target}`} className={`btn sm dash-drill ${className}`.trim()} onClick={getDrillClick(target, onNav)}>
-      {label}
-      <window.UI.Icon name="arrow-right" size={14}/>
-    </a>
-  );
-}
-
+// a plain click routes in-app; a modified or middle click is left to the browser → a new tab
 function getDrillClick(target, onNav) {
   return (event) => {
     const isModified = event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
@@ -861,10 +804,7 @@ function mutationErrorMessage(status, data) {
   return `Request failed (HTTP ${status}).`;
 }
 
-// ── Pure builders (the lane union and the band) ──
-
-// 톤 → 배지 문구. 문구는 상태를 이름 짓고, 위험도는 톤이 운반한다.
-const TONE_WORD = { crit: 'Down', warn: 'Attention', ok: 'Healthy', info: 'No data' };
+// ── Pure builders (the lane union and the stat row) ──
 
 // 레인 union — harness · fleet · spend · install 만 합친다. Learning/Wiki/Task-results/Models
 // 경보는 각 화면의 nav 숫자가 운반하므로 여기서 합성하지 않는다(같은 사실 이중 신고 방지).
@@ -930,114 +870,86 @@ function resolveSpendPace(costState) {
   return { status: today >= cut || pace >= cut ? 'hot' : 'normal', today, basis, pace };
 }
 
-// 4타일 데이터 — 렌더와 분리된 순수 변환이라 상태 4종을 테스트가 그대로 고정할 수 있다.
-// every tile keeps its drill even when an alarm row drills the same screen → the tile is where the eye lands
-function buildTiles({ harness, costState, agentsState, outcomesState, isHarnessBusy = false }) {
+// the four stats — a pure transform apart from the render, so tests pin each payload state as it is
+function buildStats({ harness, costState, agentsState, outcomesState, isHarnessBusy = false }) {
   const busyByRegion = {
     outcomes: outcomesState?.busy, agents: agentsState?.busy, cost: costState?.busy, [HARNESS_REGION]: isHarnessBusy,
   };
-  const tiles = [
-    buildHarnessTile(harness),
-    markHeldTile(buildOutcomeTile(outcomesState), outcomesState),
-    markHeldTile(buildFleetTile(agentsState), agentsState),
-    markHeldTile(buildSpendTile(costState, harness), costState),
+  const stats = [
+    buildHarnessStat(harness),
+    markHeldStat(buildOutcomeStat(outcomesState), outcomesState),
+    markHeldStat(buildFleetStat(agentsState), agentsState),
+    markHeldStat(buildSpendStat(costState, harness), costState),
   ];
   // a first load is 'loading', not a refresh → only held data dims while its region re-reads
-  return tiles.map((tile) => ({
-    ...tile,
-    isBusy: tile.status !== 'loading' && Boolean(busyByRegion[tile.region]),
+  return stats.map((stat) => ({
+    ...stat,
+    isBusy: stat.status !== 'loading' && Boolean(busyByRegion[stat.region]),
   }));
 }
 
-// held data whose latest read failed → last-known badge + own Retry; its error joins the shared-outage check
+// held data whose latest read failed → Last known on the context line + own Retry; its error joins the shared-outage check
 // shared freshness rule → a held warn/crit keeps its alarm, a held all-clear drops to neutral
-function markHeldTile(tile, state) {
-  if (tile.status === 'loading' || tile.status === 'error' || state?.error == null) return tile;
-  const isAlarm = tile.tone === 'warn' || tile.tone === 'crit';
+function markHeldStat(stat, state) {
+  if (stat.status === 'loading' || stat.status === 'error' || state?.error == null) return stat;
+  const isAlarm = FIRING_TONES.has(stat.tone);
   return {
-    ...tile, tone: isAlarm ? tile.tone : 'neutral', isHeld: true, badge: 'Last known', error: state.error, canRetry: true,
-    hint: `Couldn't refresh ${tile.source}`, hintData: null,
+    ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true,
+    context: `Last known — couldn't refresh ${stat.source}`,
   };
 }
 
-// 타일 1 — 하네스 파트. 분모는 셸이 관측한 파트 수, 콜드 실패로 잃은 파트가 있으면 전체 파트 수: 미관측 파트를 정상으로 세지 않는다.
-function buildHarnessTile(harness) {
+// stat 1 — harness parts. the denominator is the parts the shell polled, or every part once a cold failure lost some:
+// an unread part never counts as healthy
+function buildHarnessStat(harness) {
   const base = {
-    id: 'harness', label: 'Harness health', region: HARNESS_REGION, target: 'architecture', targetLabel: 'System map',
-    source: 'harness health',
+    id: 'harness', label: 'Harness health', region: HARNESS_REGION, target: 'architecture', source: 'harness health', notes: [],
   };
   if (harness && harness.status === 'loading') {
-    return { ...base, status: 'loading', tone: 'neutral', value: null, hint: null };
+    return { ...base, status: 'loading', tone: 'neutral', value: null, context: null };
   }
   if (harness && harness.status !== 'ready' && harness.error != null) {
-    return buildFailedTile(base, harness.error);
+    return buildFailedStat(base, harness.error);
   }
   if (!harness || harness.status !== 'ready') {
-    // not a region fetch error → never joins the page banner, so the tile keeps its own Retry
-    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', hint: 'Harness readings unavailable.', canRetry: true };
+    // not a region fetch error → never joins the page banner, so the stat keeps its own Retry
+    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'Harness readings unavailable.', canRetry: true };
   }
   return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
 }
 
-// a failed refresh over held parts → last known · a cold failure drops its parts → counted against every part
+// down parts are the alarm row's to name → the context line carries coverage, or the source a failed read left unread
 function describeHarnessReading(harness) {
   const downCount = harness.downNames.length;
   const isPartlyUnread = (harness.unreadSources ?? []).length > 0;
   const lostCount = isPartlyUnread ? harness.partsTotal - harness.partsChecked : 0;
   const partCount = lostCount > 0 ? harness.partsTotal : harness.partsChecked;
+  const coverage = describeHarnessCoverage(harness, isPartlyUnread);
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
   const unreadTone = isPartlyUnread ? 'info' : 'ok';
   return {
     tone: downCount > 0 ? 'crit' : unreadTone,
-    badge: getHarnessBadge({ isPartlyUnread, lostCount, downCount }),
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
-    detail: lostCount > 0 ? `${lostCount} not read` : undefined,
-    trend: describeHarnessCoverage(harness, isPartlyUnread),
-    ...describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }),
-    ...describeUnreadNote(harness),
+    context: isPartlyUnread ? describeUnreadContext(harness, lostCount) : coverage,
+    notes: isPartlyUnread ? [`${coverage}.`, ...describeUnreadNote(harness)] : [],
     canRetry: isPartlyUnread,
   };
 }
 
-function getHarnessBadge({ isPartlyUnread, lostCount, downCount }) {
-  if (isPartlyUnread && lostCount === 0) return 'Last known';
-  if (downCount > 0) return BADGE.HARNESS_DOWN;
-  return isPartlyUnread ? 'Partly unknown' : undefined;
-}
-
-const BADGE = {
-  // the value already says "down" → the verdict and the names line each use another word
-  HARNESS_DOWN: 'Action needed',
-  // the detail line leads with the judged pace → the badge names that multiple, never the so-far one
-  SPEND_HOT: `Pace above ${SPEND_PACE_CUT}×`,
-  SPEND_NORMAL: 'Within pace',
-};
-
-// the 40-char hint cap fits one source name → further sources count as +N, named in full in the tile's drawer note
-function describeHarnessHint(harness, { isPartlyUnread, lostCount, downCount }) {
-  if (isPartlyUnread) {
-    const [first, ...rest] = harness.unreadSources;
-    const more = rest.length > 0 ? ` +${rest.length}` : '';
-    return { hint: `${lostCount > 0 ? "Couldn't read" : "Couldn't refresh"} ${first}${more}` };
-  }
-  // the headline already carries the count → the hint names the parts instead of restating it
-  if (downCount === 0) return { hint: 'All polled parts healthy' };
-  return getDataHint({ lead: 'Not answering: ', data: joinPartNames(harness.downNames), noteLabel: 'Parts not answering' });
-}
-
-// data in a hint is clamped, never rewritten → set apart from the authored words, and named in full in the tile's ⓘ drawer
-function getDataHint({ lead, data, tail = '', noteLabel }) {
-  const hint = `${lead}${data}${tail}`;
-  return { hint, hintData: { lead, data, tail }, note: `${hint}.`, noteLabel };
+// one line fits one source name → further sources count as +N, named in full in the ⓘ note
+function describeUnreadContext(harness, lostCount) {
+  const [first, ...rest] = harness.unreadSources;
+  const more = rest.length > 0 ? ` +${rest.length}` : '';
+  const lead = lostCount > 0 ? `${formatInt(lostCount)} not read — couldn't read` : "Last known — couldn't refresh";
+  return `${lead} ${first}${more}`;
 }
 
 function describeUnreadNote(harness) {
   const sources = harness.unreadSources ?? [];
-  if (sources.length < 2) return {};
-  return { note: `Not read this time: ${sources.join(' · ')}.`, noteLabel: 'Unread sources' };
+  return sources.length < 2 ? [] : [`Not read this time: ${sources.join(' · ')}.`];
 }
 
-// its own line under the count → an unpolled part never reads as one more down part
+// an unpolled part never reads as one more down part
 // a failed read leaves parts unjudged too, indistinguishable in the fold → then no part is credited to the System map
 function describeHarnessCoverage(harness, isPartlyUnread) {
   if (harness.uncheckedNames.length === 0) return `All ${formatInt(harness.partsChecked)} parts polled on every harness read`;
@@ -1046,60 +958,58 @@ function describeHarnessCoverage(harness, isPartlyUnread) {
   return `${counted} polled here; ${joinPartNames(harness.uncheckedNames)} checked on the System map`;
 }
 
-// U+2011 non-breaking hyphen → a name like glass-atrium-wiki-curator never wraps mid-name in a narrow tile
+// U+2011 non-breaking hyphen → a name like glass-atrium-wiki-curator never wraps mid-name in a narrow line
 function joinPartNames(names) {
   return names.map((name) => name.replace(/-/g, '\u2011')).join(' · ');
 }
 
-// 첫 판독 전(loading) · 데이터 없는 실패(error) → 타일, 그 외 null. 실패 문구는 base.source 로 공용 카드가 만든다.
-// a cold error stays 'error' through its Retry (getRegionView) → the focused Retry card never becomes a loader
-function buildPendingTile(base, state) {
+// before the first read → loading; a failure with no data → failed; anything else → null, the builder reads the data
+// a cold error stays 'error' through its Retry (getRegionView) → the focused Retry never becomes a loader
+function buildPendingStat(base, state) {
   const view = state ? window.UI.getRegionView(state) : 'loading';
-  if (view === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: null, hint: null };
-  if (view === 'error') return buildFailedTile(base, state.error);
+  if (view === 'loading') return { ...base, status: 'loading', tone: 'neutral', value: null, context: null };
+  if (view === 'error') return buildFailedStat(base, state.error);
   return null;
 }
 
-// the shared error copy, laid flat in the tile's own lines → no card nests inside the tile card
-function buildFailedTile(base, error) {
+// the shared error copy on the stat's own line; what to do next and the raw answer ride the card's ⓘ
+function buildFailedStat(base, error) {
   const copy = window.UI.getErrorCopy(error, base.source);
   return {
-    ...base, status: 'error', tone: 'neutral', value: null, absent: 'not-loaded', detail: copy.sentence, hint: copy.next, failureDetail: copy.detail ?? undefined,
-    error, canRetry: true,
+    ...base, status: 'error', tone: 'neutral', value: null, absent: 'not-loaded', context: copy.sentence,
+    notes: [copy.next, copy.detail].filter(Boolean), error, canRetry: true,
   };
 }
 
-// 타일 2 — 7일 작업 결과. 판정과 임계는 ui.jsx 공용 규칙 소비 (Task results 와 동일 분모).
-function buildOutcomeTile(outcomesState) {
+// stat 2 — task results over 7 days. verdict and alert lines come from the shared ui.jsx rule (Task results' own denominator)
+function buildOutcomeStat(outcomesState) {
   const base = {
-    id: 'outcomes', label: 'Task results', window: '7d', target: 'outcomes', targetLabel: 'Task results',
-    region: 'outcomes', source: 'task results',
+    id: 'outcomes', label: 'Task results', window: '7d', target: 'outcomes', region: 'outcomes', source: 'task results', notes: [],
   };
-  const pending = buildPendingTile(base, outcomesState);
+  const pending = buildPendingStat(base, outcomesState);
   if (pending) return pending;
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
-  const prior = outcomesState.data?.prior_window;
-  const trend = describeOutcomeTrend(rate, prior);
-  // trend stays a plain string; the range token rides beside it so the render keeps it whole
+  const trend = describeOutcomeTrend(rate, outcomesState.data?.prior_window);
   return {
-    ...base, status: OUTCOME_TILE_STATUS[rate.status], tone: rate.tone, badge: OUTCOME_VERDICT[rate.status],
-    value: describeOutcomeValue(rate), absent: isOutcomeJudgeable(rate) ? undefined : 'none', detail: describeOutcomeDetail(rate), hint: describeOutcomeHint(rate),
-    trend, trendRange: trend ? window.UI.formatDayRange(prior) : null, note: OUTCOME_COUNTING_NOTE,
+    ...base, status: OUTCOME_STAT_STATUS[rate.status], tone: rate.tone,
+    value: describeOutcomeValue(rate), absent: isOutcomeJudgeable(rate) ? undefined : 'none', context: describeOutcomeContext(rate),
+    notes: [...describeOutcomeLines(rate), ...(trend ? [`${trend}.`] : []), OUTCOME_COUNTING_NOTE],
   };
 }
 
-// 판정 → 타일 상태. low-n 은 ready 가 아니다 — 표본 부족을 '정상'으로 읽히게 두지 않는다.
-const OUTCOME_TILE_STATUS = {
+// verdict → stat status. low-n is not ready — too small a sample never reads as healthy
+const OUTCOME_STAT_STATUS = {
   unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
 };
 
-// numbers headline, the verdict rides in the badge (a neutral low-n tile renders no badge)
-const OUTCOME_VERDICT = { ok: 'Below alert lines', warn: 'Caveats above alert line', crit: 'Failures above alert line' };
+const OUTCOME_JUDGED = new Set(['ok', 'warn', 'crit']);
 const OUTCOME_COUNTING_NOTE = 'Counts only writer-emitted outcomes — records the agent reported itself; synthesized records are left out.';
+// the panel beside the stat counts every result → its ⓘ says how the stat's caveat figure differs
+const RESULTS_PANEL_NOTE = 'The Task results stat above counts the same outcomes; its caveat figure counts open caveats only.';
 
 // empty or no writer-reported outcome → known to hold nothing (absent 'none'), the share has no denominator
 function isOutcomeJudgeable(rate) {
-  return rate.status === 'low-n' || Object.hasOwn(OUTCOME_VERDICT, rate.status);
+  return rate.status === 'low-n' || OUTCOME_JUDGED.has(rate.status);
 }
 
 function describeOutcomeValue(rate) {
@@ -1108,26 +1018,31 @@ function describeOutcomeValue(rate) {
   return getSharePct(rate.breakage, rate.writerTotal);
 }
 
-function describeOutcomeDetail(rate) {
-  if (rate.status === 'low-n') return 'outcomes · too few to judge';
-  if (!Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
-  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed or blocked · alert at ${formatAlertLine(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE)}`;
-}
-
-function describeOutcomeHint(rate) {
+function describeOutcomeContext(rate) {
   if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
-  if (rate.status === 'low-n') return `Needs ${window.UI.LOW_N_MIN} reported outcomes to judge.`;
+  if (rate.status === 'low-n') return 'outcomes, too few to judge';
+  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed or blocked`;
+}
+
+// the alert lines and the caveat share → behind ⓘ, beside the counting rule
+function describeOutcomeLines(rate) {
+  const { LOW_N_MIN, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE } = window.UI;
+  if (rate.status === 'low-n') return [`Needs ${LOW_N_MIN} reported outcomes to judge.`];
+  if (!OUTCOME_JUDGED.has(rate.status)) return [];
   const caveats = `Open caveats ${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)})`;
-  return `${caveats} · alert ${formatAlertLine(window.UI.OUTCOME_OPEN_CAVEAT_WARN_SHARE)}`;
+  return [
+    `Failed or blocked: alarm at ${formatAlertLine(OUTCOME_BREAKAGE_CRIT_SHARE)}.`,
+    `${caveats}, alarm at ${formatAlertLine(OUTCOME_OPEN_CAVEAT_WARN_SHARE)}.`,
+  ];
 }
 
 // shares, never counts → a busier week at the same failure rate reads level
 function describeOutcomeTrend(rate, prior) {
-  if (!prior || !Object.hasOwn(OUTCOME_VERDICT, rate.status)) return null;
+  if (!prior || !OUTCOME_JUDGED.has(rate.status)) return null;
   const priorRange = window.UI.formatDayRange(prior);
   const priorRate = window.UI.resolveOutcomeRate(prior);
-  if (!Object.hasOwn(OUTCOME_VERDICT, priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
+  if (!OUTCOME_JUDGED.has(priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
   const points = (rate.breakage / rate.writerTotal - priorRate.breakage / priorRate.writerTotal) * 100;
   const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${window.UI.formatDecimal(Math.abs(points))} pts`;
   return `${change} since ${formatDay(prior.period_end)} vs ${getSharePct(priorRate.breakage, priorRate.writerTotal)} in ${priorRange}`;
@@ -1142,75 +1057,57 @@ function formatAlertLine(share) {
   return window.UI.formatPct(share * 100);
 }
 
-// headline share without its counts → a 28px value stays on one line; the counts ride the detail line
+// headline share without its counts → the value stays on one line; the counts ride the context line
 // callers pass a writer total past the low-n gate → the denominator is never 0
 function getSharePct(numerator, denominator) {
   return window.UI.formatPct((numerator / denominator) * 100);
 }
 
-// 타일 3 — 함대. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0.
-function buildFleetTile(agentsState) {
-  const base = {
-    id: 'fleet', label: 'Fleet', window: '7d', target: 'agents', targetLabel: 'Agents',
-    region: 'agents', source: 'the fleet summary',
-  };
-  const pending = buildPendingTile(base, agentsState);
+// stat 3 — fleet. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0
+function buildFleetStat(agentsState) {
+  const base = { id: 'fleet', label: 'Fleet', window: '7d', target: 'agents', region: 'agents', source: 'the fleet summary', notes: [] };
+  const pending = buildPendingStat(base, agentsState);
   if (pending) return pending;
   const meta = agentsState.data?.meta;
   const breaker = meta?.circuit_breaker;
   const suspended = Number(breaker?.suspended_count);
   const streak = Number(breaker?.streak_count);
   if (breaker?.source !== 'loaded' || !Number.isFinite(suspended) || !Number.isFinite(streak)) {
-    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', hint: 'Suspension state unavailable.' };
+    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'Suspension state unavailable.' };
   }
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
-  const agentCount = Number(meta.total_agents);
+  const notes = [describeFleetReach(Number(meta.total_agents), Number(breaker.registry_agents)), describeBusiestAgent(agentsState.data?.agents?.[0])];
   return {
-    ...base, status: 'ready', tone, badge: FLEET_VERDICT[tone], value: formatInt(suspended), unit: 'suspended',
-    detail: `${formatInt(streak)} on a failing streak`,
-    trend: describeFleetReach(agentCount, Number(breaker.registry_agents)), trendRange: FLEET_REACH_SPAN,
-    ...describeBusiestAgent(agentsState.data?.agents?.[0]),
+    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: `${formatInt(streak)} on a failing streak`,
+    notes: notes.filter(Boolean),
   };
 }
 
 function describeFleetReach(agentCount, registryCount) {
   if (!Number.isFinite(agentCount)) return null;
   const of = Number.isFinite(registryCount) && registryCount > 0 ? ` of ${formatInt(registryCount)} registered` : '';
-  return `${formatInt(agentCount)}${of} agents had a run in the last ${FLEET_REACH_SPAN}`;
+  return `${formatInt(agentCount)}${of} agents had a run in the last 7 days.`;
 }
-
-// the reach window — the delta row keeps it whole as one token (DateRange)
-const FLEET_REACH_SPAN = '7 days';
 
 // the region reads order=runs&limit=1 → its one row is the busiest agent of the window
 function describeBusiestAgent(row) {
   const runs = Number(row?.runs);
-  if (!row || !Number.isFinite(runs)) return { hint: null };
-  return getDataHint({ lead: 'Most runs: ', data: row.agent_name ?? row.agent_id, tail: `, ${formatInt(runs)}`, noteLabel: 'Busiest agent' });
+  if (!row || !Number.isFinite(runs)) return null;
+  return `Most runs: ${row.agent_name ?? row.agent_id}, ${formatInt(runs)}.`;
 }
 
-// the value's unit already says "suspended" → the verdict never repeats it
-const FLEET_VERDICT = { ok: 'All active', warn: 'Failing streak', crit: 'Needs review' };
-
-// 타일 4 — 오늘 지출. 톤은 pace 판정에서만 온다(금액 자체는 위험도가 아니다).
-function buildSpendTile(costState, harness) {
-  const base = {
-    id: 'spend', label: 'Spend today', target: 'cost', targetLabel: 'Cost & usage', region: 'cost', source: "today's spend",
-  };
-  const pending = buildPendingTile(base, costState);
+// stat 4 — spend today. tone comes from the pace verdict alone (an amount is no severity); the multiple is the alarm row's
+function buildSpendStat(costState, harness) {
+  const base = { id: 'spend', label: 'Spend today', target: 'cost', region: 'cost', source: "today's spend", notes: [] };
+  const pending = buildPendingStat(base, costState);
   if (pending) return pending;
 
   const pace = resolveSpendPace(costState);
   const tone = { hot: 'warn', normal: 'ok' }[pace.status] ?? 'neutral';
-  const reading = { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), trend: describeSpendTrend(harness) };
-  if (pace.status === 'no-basis') {
-    return { ...reading, hint: 'No spend in 7 days — no baseline' };
-  }
-  return {
-    ...reading, badge: tone === 'warn' ? BADGE.SPEND_HOT : BADGE.SPEND_NORMAL, detail: describeSpendPace(pace),
-    hint: `Alarm at ${SPEND_PACE_CUT}× the 7-day avg/day`,
-    note: `Alarms when today's spend so far, or the last 3 hours' rate, reaches ${SPEND_PACE_CUT}× the 7-day average/day`,
-  };
+  const note = pace.status === 'no-basis'
+    ? 'No spend in the last 7 days — no baseline to judge the pace against.'
+    : `Alarms when today's spend so far, or the last 3 hours' rate held for a day, reaches ${SPEND_PACE_CUT}× the 7-day average (${formatUsdCompact(pace.basis)}/day).`;
+  return { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), context: describeSpendTrend(harness), notes: [note] };
 }
 
 // day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources
@@ -1241,11 +1138,6 @@ function describeSpendAlarm(spend) {
   };
 }
 
-function describeSpendPace(pace) {
-  const judged = Math.max(pace.today, pace.pace);
-  return `On pace for ${formatUsdCompact(judged)} today, ${(judged / pace.basis).toFixed(1)}× the 7-day average (${formatUsdCompact(pace.basis)})`;
-}
-
 // 헤더 우측 중립 텍스트 — 설치 버전. 조치 신호는 레인이 운반하므로 여기는 톤이 없다.
 // a pending read names no version → the freshness stamp beside it already says loading
 function describeVersion(harness) {
@@ -1254,7 +1146,7 @@ function describeVersion(harness) {
 }
 
 // wave regions + the shell harness — update-job polls on its own, so it stays out and never moves the stamp
-// the stamp also answers for the harness tile → a pending harness read keeps it busy, a failed one keeps it off Fresh
+// the stamp also answers for the harness stat → a pending harness read keeps it busy, a failed one keeps it off Fresh
 function getFreshnessInputD(settledAt, waveStates, harness) {
   return { at: settledAt, regions: [...waveStates, toHarnessRegion(harness)] };
 }
@@ -1265,7 +1157,7 @@ function toHarnessRegion(harness) {
   return { status: harness.status, busy: harness.status === 'loading', error: harness.error ?? null };
 }
 
-// same payload and same writer rule as the Task results tile → the panel's failed + blocked is the tile's breakage
+// same payload and same writer rule as the Task results stat → the panel's failed + blocked is the stat's breakage
 // known results always get a row, zero included → an absent Failed reads as none, not as missing
 function buildResultPanel(data) {
   const byResult = new Map((data?.by_result ?? []).map((row) => [row.result, row]));
@@ -1281,7 +1173,7 @@ function buildResultPanel(data) {
 
 const BREAKAGE = { RESULTS: ['fail', 'blocked'], AGENT_LIMIT: 3 };
 
-// per (agent, result) row under the tile's writer rule → each agent's failed + blocked, worst first
+// per (agent, result) row under the stat's writer rule → each agent's failed + blocked, worst first
 function getBreakageAgents(rows) {
   const counts = new Map();
   for (const row of rows ?? []) {
