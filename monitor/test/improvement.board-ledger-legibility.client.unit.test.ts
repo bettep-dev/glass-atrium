@@ -201,7 +201,8 @@ test("a rejected group prints its shared pattern label once, not per row", () =>
   assert.ok(text.includes("first reason") && text.includes("second reason"), text);
 });
 
-test("the board header states the window its applied and rejected counts cover", () => {
+// the sub slot carries the head Status → the window rides the header's ⓘ
+test("the board header's info states the window its applied and rejected counts cover", () => {
   const tree = sandbox.KanbanCardI({
     state: { status: "ready", data: {} },
     columnRows: { safety: [], applied: [], rejected: [] },
@@ -210,7 +211,7 @@ test("the board header states the window its applied and rejected counts cover",
   });
   const [head] = findAll(tree, (el) => el.props.title === "Suggestion board");
   assert.ok(head, "board header missing");
-  assert.match(String(head.props.sub), /latest 50 suggestions/);
+  assert.match(String(head.props.info), /latest 50 suggestions/);
 });
 
 describe("the board draws its lanes only when some lane holds a suggestion", () => {
