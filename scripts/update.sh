@@ -4194,6 +4194,8 @@ update_finalize_success() {
       fi
     else
       update_build_monitor_cli
+      update_render_parity
+      update_reissue_remote_leaf
     fi
   fi
   update_job_complete
@@ -4886,7 +4888,7 @@ update_run() {
 
   # Headless success finalize: install-parity post-step (monitor rebuild + launchd
   # refresh) then mark the update_job row completed. Interactive mode rebuilds a
-  # changed monitor only.
+  # changed monitor and re-renders the env and plists, with no restart.
   update_finalize_success 1
   update_log "update complete"
 }
