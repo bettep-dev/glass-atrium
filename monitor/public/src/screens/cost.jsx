@@ -658,7 +658,7 @@ function SpendStatValueC({ stat }) {
   const toneLabel = 'Running hot';
   return (
     <>
-      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={13}/></span>
+      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={16}/></span>
       <span className="sr-only">{`${toneLabel}:`}</span>
       {stat.value}
     </>
