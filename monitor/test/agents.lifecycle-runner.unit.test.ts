@@ -1,11 +1,12 @@
 // Agent lifecycle command runner: a child that exits without reading its stdin never takes the monitor down with it.
 
-import test, { after, before } from "node:test";
+import test, { after, before, mock } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { logger } from "../src/server/logger.js";
 import { runCli } from "../src/server/routes/agents.js";
 
 /** Exits at once, reads no stdin → the child is gone before the parent's stdin write lands. */
@@ -49,4 +50,16 @@ test("an input the child never reads raises no process fault, and the exit code 
     codes.push((await runCli([], { timeoutMs: 5_000, stdin: UNREAD_INPUT })).code);
   });
   assert.deepEqual({ faults, codes }, { faults: [], codes: [0] });
+});
+
+test("an unread stdin write is logged at debug with the command it went to", async () => {
+  const args = ["-m", "agent_lifecycle", "delete", "--mode", "preview"];
+  const debug = mock.method(logger, "debug", () => undefined);
+  try {
+    await runCli(args, { timeoutMs: 5_000, stdin: UNREAD_INPUT });
+  } finally {
+    debug.mock.restore();
+  }
+  const logged = debug.mock.calls.map((call) => call.arguments[0] as { file?: string; args?: string[]; err?: { code?: string } });
+  assert.deepEqual(logged.map((entry) => [entry.file, entry.args, entry.err?.code]), [[NON_READING_BINARY, args, "EPIPE"]]);
 });
