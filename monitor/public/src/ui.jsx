@@ -655,7 +655,7 @@ function StatRow({ stats, className = '' }) {
  */
 function StatToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
   return <>
-    <span className={`stat-tone-glyph text-${tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
+    <span className={`one-line-box stat-tone-glyph text-${tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
     <span className="sr-only">{`${label}: `}</span>
   </>;
 }
@@ -2477,6 +2477,9 @@ function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetI
 
 const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice' };
 
+// at 13 the 1.6 stroke paints under a pixel and the worst state reads faintest → every alarm mark, a firing stat's included
+const ALARM_GLYPH_SIZE = 16;
+
 /**
  * The one conditional-alert card, drawn as the alarm row: tone rides only on the bare glyph, the shell stays neutral.
  * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel
@@ -2494,7 +2497,7 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
     <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
       <div className="alert-card-grid">
         <span className="alert-card-glyph" aria-hidden="true">
-          <Icon name={TONE_ICON[tone]} size={isInset ? 14 : 16}/>
+          <Icon name={TONE_ICON[tone]} size={isInset ? 14 : ALARM_GLYPH_SIZE}/>
         </span>
         <div className="alert-card-content">
           {/* title and body ride DayTokens → a "7-day" / "30 days" token in any alert stays on one line */}
@@ -2519,9 +2522,6 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
  * @param actions - a Link to the owning page or the row's own control
  * @param role - 'alert' when no live container announces the row
  */
-// at 13 the 1.6 stroke paints under a pixel and the worst state reads faintest → every alarm mark, a firing stat's included
-const ALARM_GLYPH_SIZE = 16;
-
 function AlarmRow({ tone, title, detail, isHeld = false, actions, role }) {
   return (
     <div role={role} className="alarm-row" data-tone={tone}>

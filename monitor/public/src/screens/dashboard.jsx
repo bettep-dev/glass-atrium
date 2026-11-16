@@ -144,8 +144,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .space-sections > * + .dash-lane.sr-only + * { margin-top: var(--gap-section); }
         /* an agent name in the results panel is a plain anchor → an underline makes its hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
-        /* a stat's Retry rides its context line at the line's own height → the 32 control overhangs into the card padding, the card never grows */
-        .dash-stat-retry { display: inline-flex; align-items: center; height: 1lh; vertical-align: top; margin-left: var(--space-2); }
+        /* a stat's Retry rides its context line in a one-line box → the 32 control overhangs into the card padding, the card never grows */
+        .dash-stat-retry { margin-left: var(--space-2); }
         .dash-week-panel { display: flex; flex-direction: column; }
         .dash-week-panel > .card { flex: 1 1 auto; }
         .dash-week-panel .card-body { display: flex; flex-direction: column; gap: var(--gap-list); }
@@ -239,11 +239,11 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
         {alarms.length > 0 && (
           <div className="card dash-alarm-list">
             {alarms.map((alarm) => (
-              <AlarmRow key={alarm.id} alarm={alarm} onNav={onNav}>
+              <AlarmLaneRow key={alarm.id} alarm={alarm} onNav={onNav}>
                 {alarm.id === 'install' && (
                   <UpdateBadge availabilityState={updateState} jobState={updateJobState} onRefetchJob={onRefetchJob}/>
                 )}
-              </AlarmRow>
+              </AlarmLaneRow>
             ))}
           </div>
         )}
@@ -254,16 +254,15 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
 }
 
 // one alarm row — the amount-first title, an optional detail, then a Link to the owning page or the row's own control (children)
-function AlarmRow({ alarm, onNav, children }) {
-  const { AlarmRow: SharedAlarmRow, Link } = window.UI;
-  const hasActions = Boolean(children) || Boolean(alarm.target);
-  const actions = hasActions && (
+function AlarmLaneRow({ alarm, onNav, children }) {
+  const { AlarmRow, Link } = window.UI;
+  const actions = children || alarm.target ? (
     <>
       {children}
       {alarm.target && <Link href={`#${alarm.target}`} onClick={getDrillClick(alarm.target, onNav)}>{alarm.targetLabel}</Link>}
     </>
-  );
-  return <SharedAlarmRow tone={alarm.tone} title={alarm.title} detail={alarm.detail} isHeld={alarm.isHeld} actions={actions || null}/>;
+  ) : null;
+  return <AlarmRow tone={alarm.tone} title={alarm.title} detail={alarm.detail} isHeld={alarm.isHeld} actions={actions}/>;
 }
 
 // a source that settled without an answer is information, not an empty lane → the header Refresh is its action
@@ -353,7 +352,7 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
     <>
       {text && <span title={stat.cause ?? text}><DayTokens>{text}</DayTokens></span>}
       {hasRetry && (
-        <span className="dash-stat-retry">
+        <span className="one-line-box dash-stat-retry">
           <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} focusTargetId={DASH_STATUS_ID}/>
         </span>
       )}

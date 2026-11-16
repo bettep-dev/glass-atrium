@@ -204,9 +204,11 @@ test("an alarm row is a flat hairline row whose tone rides on its glyph, never a
   const row = getRuleBodies(BASE_CSS, ".alarm-row").join(";");
   assert.match(row, /border-bottom:\s*1px solid rgb\(var\(--line\)\)/);
   assert.doesNotMatch(row, /border-left|background:\s*rgb\(var\(--(crit|warn|info|ok)\)/);
-  for (const tone of ["crit", "warn", "info", "ok"]) {
+  // the alert card's tone set → a neutral row draws its glyph in --dim, as a neutral alert card does
+  const TONE_TOKEN = { crit: "--crit", warn: "--warn", info: "--info", ok: "--ok", neutral: "--dim" } as const;
+  for (const [tone, token] of Object.entries(TONE_TOKEN)) {
     const glyph = getRuleBodies(BASE_CSS, `.alarm-row[data-tone="${tone}"] .alarm-row-glyph`).join(";");
-    assert.match(glyph, new RegExp(`color:\\s*rgb\\(var\\(--${tone}\\)\\)`), `${tone} glyph tone`);
+    assert.equal(getDecl(glyph, "color"), `rgb(var(${token}))`, `${tone} glyph tone`);
   }
 });
 

@@ -2074,12 +2074,14 @@ a.prose-link:hover {
 	font-weight: 500;
 	color: rgb(var(--dim));
 }
-/* a box one value line tall → the firing stat's glyph centres on that line, not on the Icon's text nudge */
-.stat-tone-glyph {
+/* a box one text line tall → its content centres on that line, not on the Icon's text nudge: a firing stat's glyph, a stat's Retry */
+.one-line-box {
 	display: inline-flex;
 	align-items: center;
 	height: 1lh;
 	vertical-align: top;
+}
+.stat-tone-glyph {
 	margin-inline-end: var(--gap-label-inline);
 }
 .stat-context {
@@ -2228,12 +2230,15 @@ a.prose-link:hover {
 .alarm-row[data-tone="warn"] .alarm-row-glyph { color: rgb(var(--warn)); }
 .alarm-row[data-tone="info"] .alarm-row-glyph { color: rgb(var(--info)); }
 .alarm-row[data-tone="ok"] .alarm-row-glyph { color: rgb(var(--ok)); }
-/* the detail on its own dim line under the title, at the alert card body's measure */
+.alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
+.alarm-row-detail,
+.alert-card-body {
+	max-width: 72ch;
+	line-height: 1.4;
+}
 .alarm-row-detail {
 	display: block;
-	max-width: 72ch;
 	margin-top: 4px;
-	line-height: 1.4;
 }
 
 /* alert card — the alarm row on a card shell: the grid holds the padding, the shell stays neutral (no stripe, tinted fill or
@@ -2258,10 +2263,6 @@ a.prose-link:hover {
 	flex-direction: column;
 	gap: 4px;
 	min-width: 0;
-}
-.alert-card-body {
-	max-width: 72ch;
-	line-height: 1.4;
 }
 .alert-card-subjects {
 	display: flex;

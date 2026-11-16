@@ -201,7 +201,7 @@
 | 공개 | `Disclosure` · `DisclosureButton` | `.disclosure` (also on a `summary`) · `.card.is-collapsed` |
 | 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
-| 수치 | `StatRow` · `StatToneGlyph` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` · `.stat-tone-glyph` |
+| 수치 | `StatRow` · `StatToneGlyph` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` · `.stat-tone-glyph` · `.one-line-box` |
 | 표 | `Table` · `TableHead` | `.tbl` |
 | 페이지 | `PageHeader` · `SectionLabel` · `EmptyState` | `.section-label` · `.placeholder` (deprecated, §12.5) |
 | 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` sans tnum `--faint` (§12.2) · `.btn.ghost.sm` |
@@ -627,19 +627,13 @@
   - actions at the row end: one Link (ink, trailing →) when the fix is on another page, else at most two `.btn.sm` · at a container width ≤ 36rem they drop under the content.
   - between rows of a list: one hairline `--line`, none after the last.
   - states: firing · held (the title is followed by `Last known` in plain `--fs-meta` dim, the glyph keeps its tone, Retry stays) · resolved (the row is removed, no "all clear" row) · empty list (the list card is not rendered).
-- **`AlarmRow({ tone, title, detail, isHeld, actions, role })`** (`ui.jsx`): the one hairline alarm row atom — a screen never assembles `.alarm-row` itself.
-  - classes: `.alarm-row` (tone via `data-tone`) → `.alarm-row-glyph` slot · a `min-w-0` content cell, its detail in `.alarm-row-detail` (own block line) · `.alarm-row-actions` (a 32-tall slot → a one-line Link centres on the first line).
+- **`AlarmRow({ tone, title, detail, isHeld, actions, role })`** (`ui.jsx`): the one hairline alarm row atom — a screen calls it rather than assembling `.alarm-row`; the Wiki alarms list (`wiki.jsx`) is the one hand-built caller left.
+  - classes: `.alarm-row` (tone via `data-tone`: `crit` · `warn` · `info` · `ok` · `neutral`, glyph `--dim`) → `.alarm-row-glyph` slot · a `min-w-0` content cell, its detail in `.alarm-row-detail` (own block line) · `.alarm-row-actions` (a 32-tall slot → a one-line Link centres on the first line).
   - glyph size `ALARM_GLYPH_SIZE` — the one size for every alarm mark, a firing stat's included.
   - the row is its own size container → the ≤ 36rem drop reads the row's content width (the row less 2 × `--card-pad`).
-  - consumers: the Dashboard alarm list (`dashboard.jsx` → `AlarmRow`) · the Cost spend card (`cost.jsx` → `SpendAlarmRowsC`).
+  - consumers: the Dashboard alarm list (`dashboard.jsx` → `AlarmLaneRow`) · the Cost spend card (`cost.jsx` → `SpendAlarmRowsC`).
 - **Dashboard alarm list** ("Needs you", §12.7): one list card (no visible head, region `aria-label="Needs you"`), one alarm row per alarm, worst first, action = Link to the owning page.
-  - sources: every firing Status-card stat (Harness health · Task results · Fleet · Spend today) + the install state; a firing stat shows only its value and tone glyph, so its sentence is the row's.
-  - Task results: the tripped line's share in words (`10% of task results failed or blocked in the last 7 days` · `12% of task results have open caveats in the last 7 days`), its count as the detail; the alarm lines stay behind the stat's ⓘ.
-  - Fleet: `N agent(s) is/are suspended` (crit, a streak as the detail) · else `N agent(s) is/are on a failing streak` (warn).
-- **Stat tone glyph — `StatToneGlyph({ tone, label, title })`** (`ui.jsx`): a firing stat's mark before its value — the alarm row's glyph in `.stat-tone-glyph`, a box one value line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Dashboard (`StatValue`) and Cost (`SpendStatValueC`) call it.
-- **Dashboard Status card**: one context line per stat, at a fixed height — loading, held and failed states never grow the card.
-  - held line: `Last known` alone; the failed refresh rides the line's `title` and the card's ⓘ · a partly unread harness reads `Last known` or `N not read` the same way.
-  - a stat's Retry sits in a box one context line tall → the 32 control overhangs into the card padding.
+  - sources and row copy: §12.7 → Dashboard.
 - **`AlertCard({ tone, surface, title, body, subjects, details, actions, hasLiveHost })`**: 조건부 알림 카드의 유일한 atom — `.alert-card` 를 직접 조립하지 않는다.
   - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(카드 · 패널 안 `.sub-card.bg-sunken`).
   - tone: `crit` · `warn` · `info` · `ok` · `neutral`(glyph `--dim`). title 앞 sr-only 단어 (Critical / Warning / Notice / Resolved).
@@ -1111,6 +1105,13 @@
 - **One fact, one place per view.** A fact may also appear once as a cross-page pointer (nav badge).
 - Cross-page attention lives in two places only: the Dashboard "Needs you" list (one row per actionable item, each a Link to its page) and the sidebar nav badge (count + glyph).
 - In-page attention: the card that owns the problem shows its status (glyph + word) in its head, once.
+- **Dashboard** — the "Needs you" list (§7.9 alarm row) and the Status card:
+  - list sources: every firing Status-card stat (Harness health · Task results · Fleet · Spend today) + the install state; a firing stat shows only its value and tone glyph, so its sentence is the row's.
+  - Task results row: the tripped line's share in words (`10% of task results failed or blocked in the last 7 days` · `12% of task results have open caveats in the last 7 days`), its count as the detail; the alarm lines stay behind the stat's ⓘ.
+  - Fleet row: `N agent(s) is/are suspended` (crit, a streak as the detail) · else `N agent(s) is/are on a failing streak` (warn).
+  - Status card: one context line per stat, at a fixed height — loading, held and failed states never grow the card.
+  - held line: `Last known` alone; the failed refresh rides the line's `title` and the card's ⓘ · a partly unread harness reads `Last known` or `N not read` the same way.
+  - a stat's Retry sits in `.one-line-box`, a box one context line tall → the 32 control overhangs into the card padding.
 - The sidebar footer status ("1 PART DOWN") and its dot retire — they repeat the nav badge.
 - Freshness stamp: hidden while fresh; shown as warn text "Stale · 12m" or crit "Not updated" only when it is.
 - Agreement is silence: "Matches saved", "In sync", "Healthy" on every row disappear; only deviations render (warn glyph + "Differs from saved: Sonnet 5.5").
@@ -1123,6 +1124,7 @@
   - The stats share one label row, one value line and one context row: a label that wraps lowers the row's value line, never only its own value; a label wraps, never truncates.
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
   - A stat that opens a drill-down is a Link-styled value, not a button tile.
+  - **`StatToneGlyph({ tone, label, title })`** (`ui.jsx`): a firing stat's mark before its value — the alarm row's glyph in `.one-line-box.stat-tone-glyph`, a box one value line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Dashboard (`StatValue`) and Cost (`SpendStatValueC`) call it.
 - Rules:
   - A display name and its id never sit together: model name only (id → `title` tooltip and drawer).
   - No percentage-of-percentage or window-arithmetic prose: one delta ("+0.2 pt") with its comparison window inside ⓘ.
