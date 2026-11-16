@@ -267,13 +267,16 @@ describe("a failure behind the gate", () => {
 
   const rows = [
     { name: "a malformed JSON body on the code POST", url: "/api/remote/register", isRegistered: false, payload: "{", status: 400, error: "bad_request" },
+    { name: "a body over the listener cap on the code POST", url: "/api/remote/register", isRegistered: false, payload: `"${"x".repeat(1024 * 1024)}"`, status: 413, error: "payload_too_large" },
+    { name: "a media type no parser takes on the code POST", url: "/api/remote/register", isRegistered: false, payload: "{}", contentType: "application/xml", status: 415, error: "unsupported_media_type" },
     { name: "a throwing handler behind the code POST", url: "/api/remote/register", isRegistered: false, payload: '{"fail":true}', status: 500, error: "internal_error" },
     { name: "a throwing handler a registered device reaches", url: "/api/failing", isRegistered: true, payload: undefined, status: 500, error: "internal_error" },
   ];
   for (const row of rows) {
     test(`${row.name} answers ${row.status} with one opaque body and no internal detail`, async () => {
       const harness = await buildHarness();
-      const headers = row.isRegistered ? asDevice(harness.issueDevice()) : { host: HOST, "sec-fetch-site": "same-origin", "content-type": "application/json" };
+      const contentType = "contentType" in row ? row.contentType : "application/json";
+      const headers = row.isRegistered ? asDevice(harness.issueDevice()) : { host: HOST, "sec-fetch-site": "same-origin", "content-type": contentType };
       const response = await send(harness, { method: row.payload === undefined ? "GET" : "POST", url: row.url, headers, ...(row.payload === undefined ? {} : { payload: row.payload }) });
       assert.deepEqual([response.statusCode, response.json()], [row.status, { error: row.error }]);
     });

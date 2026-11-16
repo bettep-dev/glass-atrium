@@ -96,11 +96,17 @@ export async function registerRemoteGate(app: FastifyInstance, deps: RemoteGateD
   app.setErrorHandler(replyOpaqueError);
 }
 
-// a thrown error's message, code and schema text never reach a remote caller → status class + one fixed code
+// a status the page names to its reader keeps a fixed code of its own; every other 4xx shares one
+const OPAQUE_CLIENT_ERROR_CODES: ReadonlyMap<number, string> = new Map([
+  [413, "payload_too_large"],
+  [415, "unsupported_media_type"],
+]);
+
+// a thrown error's message, code and schema text never reach a remote caller → status + a fixed code
 function replyOpaqueError(error: { statusCode?: number }, request: FastifyRequest, reply: FastifyReply): FastifyReply {
   const statusCode = error.statusCode !== undefined && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
   if (statusCode === 500) request.log.error({ err: error, method: request.method, route: request.routeOptions.url }, "remote request failed");
-  return refuse(reply, statusCode, statusCode === 500 ? "internal_error" : "bad_request");
+  return refuse(reply, statusCode, statusCode === 500 ? "internal_error" : (OPAQUE_CLIENT_ERROR_CODES.get(statusCode) ?? "bad_request"));
 }
 
 async function admitRequest(request: FastifyRequest, reply: FastifyReply, deps: RemoteGateDeps, limiters: Limiters): Promise<FastifyReply | undefined> {
