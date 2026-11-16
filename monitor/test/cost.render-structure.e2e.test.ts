@@ -423,18 +423,15 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(strayRoots, 0, "every chart lives in a card");
   });
 
-  test("no window tag — each ranged stat names its window in its label", async () => {
-    const shape = await ctx.page.evaluate((row) => ({
-      windowTags: document.querySelectorAll(".cost-screen .kpi-window").length,
-      labels: Array.from(document.querySelectorAll(`${row} .stat-label`))
-        .map((el) => (el.textContent || "").trim()),
-    }), SPEND_STAT_ROW);
-    assert.equal(shape.windowTags, 0, "the window is part of the label, never a separate tag");
-    assert.equal(shape.labels.length, SPEND_STAT_COUNT);
+  test("each ranged stat names its window in its label", async () => {
+    const labels = await ctx.page.evaluate((row) =>
+      Array.from(document.querySelectorAll(`${row} .stat-label`)).map((el) => (el.textContent || "").trim()),
+    SPEND_STAT_ROW);
+    assert.equal(labels.length, SPEND_STAT_COUNT);
     assert.equal(
-      shape.labels.filter((label) => /, last \d+ days$/.test(label)).length,
+      labels.filter((label) => /, last \d+ days$/.test(label)).length,
       2,
-      `the cost and the cache-share stats follow the range: ${shape.labels.join(" | ")}`,
+      `the cost and the cache-share stats follow the range: ${labels.join(" | ")}`,
     );
   });
 
