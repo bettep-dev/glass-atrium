@@ -87,6 +87,7 @@ function ScreenCost() {
     hot: hotVerdict,
     latestOutsideBand,
     parseError: getParseErrorDayCounts(errorState),
+    isHeld: { kpi: isRegionHeldC(kpiState), trend: isRegionHeldC(tokenState), parseError: isRegionHeldC(errorState) },
   });
 
   useEffectC(() => {
@@ -261,18 +262,21 @@ function InstrumentationTierC({ children }) {
   );
 }
 
+const FRESH_READS_C = { kpi: false, trend: false, parseError: false };
+
 /**
  * Spend alarm rows — the Spend card's first rows, none when nothing fires.
  * One spend row (today so far, its pace, or the latest day outside its own band)
  * + a conditional parse-error row.
  * A payload FAILURE is never an alarm row — that stays a banner at its owning group.
+ * @param isHeld - per read, whether its loaded data stands beside a failed refresh → the row it feeds reads Last known
  */
-function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
+function computeAlarmRows({ hot, latestOutsideBand, parseError, isHeld = FRESH_READS_C }) {
   const rows = [];
   const hotTone = getHotToneC(hot, latestOutsideBand);
 
   if (hotTone !== null) {
-    rows.push({ key: 'hot', tone: hotTone, ...getSpendAlarmCopyC(hot, latestOutsideBand) });
+    rows.push({ key: 'hot', tone: hotTone, ...getSpendAlarmCopyC(hot, latestOutsideBand), isHeld: isSpendRowHeldC(hot, latestOutsideBand, isHeld) });
   }
   if (parseError.crit > 0) {
     rows.push({
@@ -280,15 +284,30 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
       tone: 'warn',
       title: `${parseError.crit} of ${parseError.total} days over the unreadable-log threshold`,
       detail: 'Some spend may be unrecorded',
+      isHeld: isHeld.parseError,
     });
   }
 
   return rows;
 }
 
+// held when a read the row's sentence states is held — the kpi behind a spend leg, the trend behind the range fact
+function isSpendRowHeldC(hot, latestOutsideBand, isHeld) {
+  return (isSpendLegHotC(hot) && isHeld.kpi) || (latestOutsideBand && isHeld.trend);
+}
+
+// loaded data still on screen while its latest refresh failed (ui.jsx putRegionFailure keeps both)
+function isRegionHeldC(state) {
+  return state.status === 'ready' && state.error != null;
+}
+
 // Spend-trigger tone, or null when none fires — one warning glyph for every leg, as on the Dashboard's spend row
 function getHotToneC(hot, latestOutsideBand) {
-  return hot.isHot || hot.isPaceHot || latestOutsideBand ? 'warn' : null;
+  return isSpendLegHotC(hot) || latestOutsideBand ? 'warn' : null;
+}
+
+function isSpendLegHotC(hot) {
+  return hot.isHot || hot.isPaceHot;
 }
 
 const OUTSIDE_RANGE_FACT_C = 'the latest day is outside its 7-day normal range';
@@ -296,27 +315,24 @@ const OUTSIDE_RANGE_FACT_C = 'the latest day is outside its 7-day normal range';
 /**
  * Spend row copy, amount first: the title holds today's figure (and where the day lands, when paced),
  * the detail its multiple of the 7-day average — the noun and basis the Dashboard's spend row uses.
- * No ratio → only the range trigger can have fired, so that fact is the whole title.
+ * No spend leg at the cut → only the range trigger fired, so that fact is the whole title:
+ * a below-average amount must not head a firing row.
  */
 function getSpendAlarmCopyC(hot, latestOutsideBand) {
-  if (hot.ratio === null) {
+  if (!isSpendLegHotC(hot)) {
     return { title: OUTSIDE_RANGE_FACT_C[0].toUpperCase() + OUTSIDE_RANGE_FACT_C.slice(1), detail: null };
   }
   const isPaced = hot.paceCost !== null;
   const soFar = `${formatUsdC(hot.todayCost)} so far today`;
   const title = isPaced ? `${soFar}, on pace for ${formatUsdC(hot.paceCost)} by end of day` : soFar;
-  const basis = `${formatAverageMultipleC(isPaced ? hot.paceRatio : hot.ratio)} the 7-day average (${formatUsdC(hot.normalDaily)}/day)`;
+  // a leg at the cut → the multiple is ≥ 1.25, so it always takes the × sign
+  const basis = `${(isPaced ? hot.paceRatio : hot.ratio).toFixed(1)}\u00d7 the 7-day average (${formatUsdC(hot.normalDaily)}/day)`;
   return { title, detail: latestOutsideBand ? `${basis} \u00b7 ${OUTSIDE_RANGE_FACT_C}` : basis };
-}
-
-// one multiple sign from the cut up; under it a share of the average, which a "0.6×" would misread
-function formatAverageMultipleC(ratio) {
-  return ratio >= HOT_RATIO_CUT ? `${ratio.toFixed(1)}\u00d7` : `${window.UI.formatPct(ratio * 100)} of`;
 }
 
 /**
  * Is the newest day outside its own rolling band?
- * Below the rolling window the question has no answer, and "no answer" must not fire the lane.
+ * Below the rolling window the question has no answer, and "no answer" must not fire a spend row.
  */
 function isLatestOutsideBand(trendState) {
   const points = getTrendPoints(trendState);
@@ -332,7 +348,7 @@ function getTrendPoints(trendState) {
   return trendState.data?.points ?? trendState.data?.rows ?? [];
 }
 
-// Crit days travel with the population they came from — the lane never states a count alone.
+// Crit days travel with the population they came from — the alarm row never states a count alone.
 function getParseErrorDayCounts(errorState) {
   const rows = errorState.status === 'ready' ? (errorState.data?.rows ?? []) : [];
   const crit = rows.filter(isParseErrorCritDay).length;
@@ -360,6 +376,7 @@ function SpendAlarmRowsC({ rows }) {
             <span className="font-medium">
               <span className="sr-only">{`${ALERT_SEVERITY_WORD[r.tone]}: `}</span><DayTokens>{r.title}</DayTokens>
             </span>
+            {r.isHeld && <> <span className="fs-meta text-dim">Last known</span></>}
             {r.detail && <span className="block mt-1 max-w-[72ch] fs-meta text-dim"><DayTokens>{r.detail}</DayTokens></span>}
           </div>
         </div>
@@ -370,7 +387,7 @@ function SpendAlarmRowsC({ rows }) {
 
 // KPI band — today vs the 7-day average · window total + trend · cost per task · cache share.
 
-// "Running hot" cut — today ≥ 1.25x the 7-day average · defined once, inherited by the Dashboard.
+// "Running hot" cut — today ≥ 1.25x the 7-day average.
 const HOT_RATIO_CUT = 1.25;
 
 // Finite number or null — a missing or NaN payload field stays distinguishable from a real 0.

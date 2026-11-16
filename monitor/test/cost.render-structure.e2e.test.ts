@@ -1,6 +1,6 @@
 // E2E chromium STRUCTURE harness for the cost screen (screens/cost.jsx): DOM-structure facts
 // only — tier order, the alarm rows' presence, one decision-tier chart root — over two render
-// contexts (calm · hot), since one context can only measure one side of the lane. Values behind
+// contexts (calm · hot), since one context can only measure one side of the alarm rows. Values behind
 // those structures are pinned in cost.client.unit.test.ts.
 //
 // Runner: npx tsx --test test/cost.render-structure.e2e.test.ts
@@ -51,7 +51,7 @@ interface CostFixture {
   isLedgerUnpriced?: boolean;
 }
 
-// today = ratio x the 7-day daily normal; the burn rate extrapolates to the same ratio.
+// today = ratio x the 7-day average; the burn rate extrapolates to the same ratio.
 function getFixture(ratio: number, parseErrorRatio: number): CostFixture {
   const week7Cost = 70;
   const normalDaily = week7Cost / 7;
@@ -204,7 +204,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
   }
 
   // Render complete = the wave resolved: the stat row has left its loading state, so the
-  // lane has had its inputs and an absent lane is a verdict rather than a pending state.
+  // alarm rows have had their inputs and absent rows are a verdict rather than a pending state.
   await page.waitForSelector(SPEND_STAT_SELECTOR, { timeout: 30_000 });
   await page.waitForFunction(
     ({ expected, selector }: { expected: number; selector: string }) =>
@@ -297,17 +297,17 @@ describe("calm fixture — nothing is running hot", () => {
     );
   });
 
-  test("the alarm lane occupies no DOM when no trigger fires", async () => {
+  test("no alarm row renders and no band is reserved when no trigger fires", async () => {
     assert.equal(await countAlarmRows(ctx.page), 0);
-    const laneHeight = await ctx.page.evaluate(() => {
+    const gap = await ctx.page.evaluate(() => {
       const header = document.querySelector(".cost-screen .flex-shrink-0");
       const firstCard = document.querySelector(".cost-screen .card");
       if (header === null || firstCard === null) return -1;
       return firstCard.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
     });
     assert.ok(
-      laneHeight >= 0 && laneHeight < 24,
-      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and first card`,
+      gap >= 0 && gap < 24,
+      `a calm screen must reserve no alarm band; measured ${gap}px between header and first card`,
     );
   });
 
@@ -430,7 +430,7 @@ describe("calm fixture — nothing is running hot", () => {
       labels: Array.from(document.querySelectorAll(`${row} .stat-label`))
         .map((el) => (el.textContent || "").trim()),
     }), SPEND_STAT_ROW);
-    assert.equal(shape.verdicts, 0, "spend state rides the stat and the alarm lane, not a verdict line");
+    assert.equal(shape.verdicts, 0, "spend state rides the stat and the alarm rows, not a verdict line");
     assert.equal(shape.windowTags, 0, "the window is part of the label, never a separate tag");
     assert.equal(shape.labels.length, SPEND_STAT_COUNT);
     assert.equal(
@@ -610,11 +610,11 @@ describe("calm fixture — nothing is running hot", () => {
   });
 });
 
-describe("hot fixture — today is running over the normal", () => {
+describe("hot fixture — today is over the 7-day average", () => {
   let ctx: RenderContext;
 
   before(async () => {
-    // 3x the daily normal clears the 1.25x cut; the parse-error ratio clears its own.
+    // 3x the 7-day average clears the 1.25x cut; the parse-error ratio clears its own.
     ctx = await openRenderContext(getFixture(3, 0.5));
   });
 
@@ -672,7 +672,7 @@ describe("hot fixture — today is running over the normal", () => {
     assert.equal(getToneKey(tones.bar), getToneKey(tones.crit), "the day over the threshold is the one mark that takes a tone");
   });
 
-  test("a fired lane changes nothing about the tier order or the chart count", async () => {
+  test("firing alarm rows change nothing about the tier order or the chart count", async () => {
     assert.deepStrictEqual(await getCardTitles(ctx.page), [
       ...DECISION_CARD_TITLES,
       ...DISCLOSURE_TITLES,

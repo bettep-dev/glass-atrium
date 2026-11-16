@@ -1,5 +1,5 @@
 // Unit pins for the PURE derivations behind the cost screen's decision tier (screens/cost.jsx):
-// alarm-lane triggers, the tile-1 hot verdict, the window-total delta rule, the session Other-row
+// the spend alarm rows' triggers and held state, the tile-1 hot verdict, the window-total delta rule, the session Other-row
 // rollup. Each pins a relationship the composition rests on, not a sampled pair.
 //
 // Runner: npx tsx --test test/cost.client.unit.test.ts
@@ -42,6 +42,13 @@ interface AlarmRow {
   tone: string;
   title: string;
   detail: string | null;
+  isHeld: boolean;
+}
+
+interface HeldReads {
+  kpi: boolean;
+  trend: boolean;
+  parseError: boolean;
 }
 
 interface WindowTotal {
@@ -86,7 +93,9 @@ interface CostHelpers {
     hot: HotVerdict;
     latestOutsideBand: boolean;
     parseError: { crit: number; total: number };
+    isHeld?: HeldReads;
   }) => AlarmRow[];
+  isRegionHeldC: (state: PanelState) => boolean;
   computeHotVerdict: (kpi: Record<string, unknown>) => HotVerdict;
   computeWindowTotal: (state: PanelState) => WindowTotal;
   getShownDays: (state: PanelState, requestedDays: number) => number;
@@ -222,12 +231,12 @@ const CALM: HotVerdict = {
   isPaceHot: false,
 };
 
-test("the lane stays empty unless a trigger fires, and every trigger fires it alone", () => {
+test("no alarm row renders without a trigger, each trigger alone fires the one spend row, and the parse-error row follows it", () => {
   assert.strictEqual(
     cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 0, total: 9 } })
       .length,
     0,
-    "no trigger must render zero rows — the lane is structural and zero-height when calm",
+    "no trigger must render zero rows — the list is not rendered when calm",
   );
 
   const hotTriggers: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
@@ -262,24 +271,24 @@ test("the lane stays empty unless a trigger fires, and every trigger fires it al
   );
 });
 
-test("a payload that failed or never arrived contributes no lane trigger", () => {
+test("a payload that failed or never arrived fires no alarm row", () => {
   for (const state of [loading, failed]) {
     const counts = cost.getParseErrorDayCounts(state);
     assert.strictEqual(counts.crit, 0, `${state.status} crit`);
     assert.strictEqual(counts.total, 0, `${state.status} population`);
     assert.strictEqual(cost.isLatestOutsideBand(state), false, state.status);
   }
-  // Below the rolling window the band has no answer, and no answer must not fire the lane.
+  // Below the rolling window the band has no answer, and no answer must not fire a spend row.
   assert.strictEqual(cost.isLatestOutsideBand(getTrendPoints([1, 9, 1])), false);
 });
 
-test("tile-1 tone follows the so-far ratio alone, never the pace figure", () => {
+test("the so-far verdict follows the so-far ratio alone, and a hot pace sets only the pace verdict", () => {
   const hotSoFar = cost.computeHotVerdict(getKpiAtRatio(2, null));
   assert.strictEqual(hotSoFar.isHot, true);
   assert.strictEqual(hotSoFar.isPaceHot, false);
 
   const hotPaceOnly = cost.computeHotVerdict(getKpiAtRatio(0.1, 2));
-  assert.strictEqual(hotPaceOnly.isHot, false, "a hot pace must not make the tone hot");
+  assert.strictEqual(hotPaceOnly.isHot, false, "a hot pace must not make the so-far verdict hot");
   assert.strictEqual(hotPaceOnly.isPaceHot, true);
 
   // The cut is a threshold, so it holds across the class, not at one hand-picked value.
@@ -722,7 +731,7 @@ test("the session drawer sets only the session id in the machine-string face; ev
   assert.ok(facts.every((dd) => !/font-mono/.test(String(dd.props.className))), "no fact falls back to a mono class");
 });
 
-test("the spend amount is stated once, in the alarm rows, exactly when a spend trigger fires", () => {
+test("the spend amount is stated once, in the alarm rows, exactly when a spend leg reaches the cut", () => {
   const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
     ["calm", {}, false],
     ["so-far ratio", { isHot: true }, false],
@@ -735,7 +744,7 @@ test("the spend amount is stated once, in the alarm rows, exactly when a spend t
     const titles = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 3, total: 9 } })]
       .map((r) => r.title);
     const places = titles.filter((t) => t.startsWith("$842 so far today")).length;
-    assert.equal(places, hot.isHot || hot.isPaceHot || outsideBand ? 1 : 0, name);
+    assert.equal(places, hot.isHot || hot.isPaceHot ? 1 : 0, name);
   }
 });
 
@@ -1111,14 +1120,19 @@ describe("the spend alarm reads amount first, then its multiple of the 7-day ave
       title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)",
     },
     {
-      name: "a share under the cut reads as a percentage of the average",
-      kpi: getKpi(842, null), isOutsideBand: false,
-      title: "$842 so far today", detail: "61% of the 7-day average ($1,380/day)",
+      name: "with no spend leg at the cut the range fact is the title alone, whatever today's amount",
+      kpi: getKpi(842, null), isOutsideBand: true,
+      title: "The latest day is outside its 7-day normal range", detail: null,
     },
     {
-      name: "a latest day outside its range joins the detail as its own fact",
-      kpi: getKpi(842, null), isOutsideBand: true,
-      title: "$842 so far today", detail: "61% of the 7-day average ($1,380/day) \u00b7 the latest day is outside its 7-day normal range",
+      name: "a pace figure under the cut does not lead a row the range fact fired",
+      kpi: getKpi(842, 1_000), isOutsideBand: true,
+      title: "The latest day is outside its 7-day normal range", detail: null,
+    },
+    {
+      name: "the range fact joins the detail only beside a spend leg at the cut",
+      kpi: getKpi(1_790, null), isOutsideBand: true,
+      title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day) \u00b7 the latest day is outside its 7-day normal range",
     },
     {
       name: "with no spend figure the range fact is the title alone",
@@ -1851,7 +1865,7 @@ test("each Cost alarm row draws its tone's own glyph, hidden from assistive tech
 test("an alarm row sets its title in medium ink and draws a detail line only when it has one", async () => {
   const mod = await loadCostRender();
   const tree = renderIn(mod, "SpendAlarmRowsC", { rows: [
-    { key: "hot", tone: "warn", title: "$842 so far today", detail: "61% of the 7-day average ($1,380/day)" },
+    { key: "hot", tone: "warn", title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)" },
     { key: "bare", tone: "warn", title: "The latest day is outside its 7-day normal range", detail: null },
   ] });
   const rows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
@@ -1859,11 +1873,90 @@ test("an alarm row sets its title in medium ink and draws a detail line only whe
 
   assert.equal(rows.length, 2);
   const titles = rows.map((row) => collectText(getClassed(row, "font-medium")[0]!).replace(/\s+/g, " ").trim());
-  assert.deepEqual(titles, ["Warning: $842 so far today", "Warning: The latest day is outside its 7-day normal range"],
+  assert.deepEqual(titles, ["Warning: $1,790 so far today", "Warning: The latest day is outside its 7-day normal range"],
     "the severity word leads each title");
   const details = rows.map((row) => getClassed(row, "fs-meta").filter((n) => String(n.props.className).includes("text-dim")));
   assert.deepEqual(details.map((nodes) => nodes.length), [1, 0]);
-  assert.equal(collectText(details[0]![0]!), "61% of the 7-day average ($1,380/day)");
+  assert.equal(collectText(details[0]![0]!), "1.3\u00d7 the 7-day average ($1,380/day)");
+});
+
+// spec 44084 \u00a73.2 States \u2192 held: the last reading stands while its read failed
+describe("an alarm row is held exactly when a read its sentence states failed after loading", () => {
+  type RegionUi = {
+    INITIAL_REGION_STATE: PanelState;
+    putRegionRequest: (state: PanelState, key: string, request: object) => PanelState;
+    putRegionData: (state: PanelState, request: object, data: unknown) => PanelState;
+    putRegionFailure: (state: PanelState, request: object, err: unknown) => PanelState;
+  };
+  const regionUi = realUi as unknown as RegionUi; // ui.jsx's own region reducers, typed for this block only
+  const getRead = (key: string): PanelState => {
+    const request = new AbortController();
+    return regionUi.putRegionData(regionUi.putRegionRequest(regionUi.INITIAL_REGION_STATE, key, request), request, { rows: [] });
+  };
+  const getFailedRead = (state: PanelState, key: string): PanelState => {
+    const request = new AbortController();
+    return regionUi.putRegionFailure(regionUi.putRegionRequest(state, key, request), request, new Error("HTTP 500 Internal Server Error"));
+  };
+
+  test("a region is held only while it keeps loaded data beside a failed refresh", () => {
+    const loaded = getRead("/api/cost/kpi");
+    const held = getFailedRead(loaded, "/api/cost/kpi");
+    const retrying = regionUi.putRegionRequest(held, "/api/cost/kpi", new AbortController());
+    const cold = getFailedRead(regionUi.INITIAL_REGION_STATE, "/api/cost/kpi");
+
+    assert.deepEqual(
+      [loaded, held, retrying, cold].map((state) => cost.isRegionHeldC(state)),
+      [false, true, true, false],
+      "loaded \u00b7 held \u00b7 held and re-reading \u00b7 never loaded",
+    );
+  });
+
+  const FRESH: HeldReads = { kpi: false, trend: false, parseError: false };
+  const rows = [
+    { name: "a spend leg on a held kpi read", delta: { isHot: true }, isOutsideBand: false, isHeld: { ...FRESH, kpi: true }, expected: true },
+    { name: "a spend leg on a fresh kpi read beside a held trend read", delta: { isHot: true }, isOutsideBand: false, isHeld: { ...FRESH, trend: true }, expected: false },
+    { name: "the range fact on a held trend read", delta: {}, isOutsideBand: true, isHeld: { ...FRESH, trend: true }, expected: true },
+    { name: "the range fact alone beside a held kpi read", delta: {}, isOutsideBand: true, isHeld: { ...FRESH, kpi: true }, expected: false },
+    { name: "a spend leg joined by the range fact on a held trend read", delta: { isPaceHot: true }, isOutsideBand: true, isHeld: { ...FRESH, trend: true }, expected: true },
+    { name: "every read fresh", delta: { isHot: true, isPaceHot: true }, isOutsideBand: true, isHeld: FRESH, expected: false },
+  ];
+  for (const row of rows) {
+    test(`spend row \u2014 ${row.name}`, () => {
+      const [spend] = cost.computeAlarmRows({
+        hot: { ...CALM, ...row.delta }, latestOutsideBand: row.isOutsideBand, parseError: { crit: 0, total: 9 }, isHeld: row.isHeld,
+      });
+      assert.equal(spend!.isHeld, row.expected);
+    });
+  }
+
+  test("the parse-error row is held with the log-integrity read alone", () => {
+    const getParseRow = (isHeld: HeldReads) =>
+      [...cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 3, total: 9 }, isHeld })]
+        .find((r) => r.key === "parse-error")!;
+
+    assert.equal(getParseRow({ ...FRESH, parseError: true }).isHeld, true);
+    assert.equal(getParseRow({ kpi: true, trend: true, parseError: false }).isHeld, false);
+  });
+
+  test("a held row follows its title with Last known in plain dim meta text and keeps its tone", async () => {
+    const mod = await loadCostRender();
+    const tree = renderIn(mod, "SpendAlarmRowsC", { rows: [
+      { key: "hot", tone: "warn", title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)", isHeld: true },
+      { key: "parse-error", tone: "warn", title: "3 of 9 days over the unreadable-log threshold", detail: null, isHeld: false },
+    ] });
+    const alarmRows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
+    const getHeldWords = (row: RenderedNode) => findNodes(row, (n) => collectText(n).trim() === "Last known"
+      && /\bfs-meta\b/.test(String(n.props.className ?? "")));
+
+    assert.deepEqual(alarmRows.map((row) => getHeldWords(row).length), [1, 0], "only the held row says Last known");
+    const [words] = getHeldWords(alarmRows[0]!);
+    assert.match(String(words!.props.className), /\btext-dim\b/);
+    assert.doesNotMatch(String(words!.props.className), /\bfont-medium\b/, "plain text, not the title's weight");
+    const [title] = findNodes(alarmRows[0]!, (n) => String(n.props.className ?? "").split(" ").includes("font-medium"));
+    assert.doesNotMatch(collectText(title!), /Last known/, "the words follow the title rather than join it");
+    assert.match(collectText(alarmRows[0]!).replace(/\s+/g, " "), /so far today Last known 1\.3/, "title, then Last known, then the detail");
+    assert.equal(alarmRows[0]!.props["data-tone"], "warn", "a held row keeps its tone");
+  });
 });
 
 describe("the spend alarm rows lead the Spend card, under its head, and leave it untouched when calm", () => {
