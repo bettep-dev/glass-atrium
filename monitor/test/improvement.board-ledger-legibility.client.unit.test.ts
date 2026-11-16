@@ -649,6 +649,11 @@ describe("Learning labels read in sentence case, never letter-spaced capitals", 
       tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ kind: "pattern", id: 7, pattern_signature: SIGNATURE, agent: AGENT, example: "e", last_transition_reason: "r" })),
       label: /Last transition|LAST TRANSITION/,
     },
+    {
+      name: "suggestion drawer with a pre-verify result",
+      tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 9, approval_tier: "auto", pattern_label: "Scope note", rationale: "Repeated overrun", pre_verify_status: "failed", pre_verify_passed: false, pre_verify_rationale: "One axis failed", pre_verify_axes: { scope_ok: true, regression_free: false } })),
+      label: /Pattern label[\s\S]*Rationale[\s\S]*Pre-verify/,
+    },
     { name: "run breakdown", tree: () => screen.CycleDecompositionRowI({ stats: {} }), label: /Run breakdown/ },
     { name: "not-judged rejected row", tree: () => screen.RejectedCompactListI({ rows: [{ id: 3, summary: "s", status: "unadjudicated", cycle_date: "2026-09-10" }], onRowClick: () => {} }), label: /Not judged/ },
   ];
@@ -662,7 +667,7 @@ describe("Learning labels read in sentence case, never letter-spaced capitals", 
       assert.match(visibleText(row.tree()), row.label);
       const capped = tree.filter((el) => /\b(uppercase|tracking-wider)\b/.test(classOf(el)));
       assert.deepEqual(capped.map((el) => visibleText(el)), []);
-      const shouted = tree.map((el) => visibleText(el).trim()).filter((text) => /^[A-Z][A-Z ]{3,}$/.test(text));
+      const shouted = tree.map((el) => visibleText(el).trim()).filter((text) => /^[A-Z][A-Z -]{3,}$/.test(text));
       assert.deepEqual(shouted, [], "a label typed in capitals");
     });
   }

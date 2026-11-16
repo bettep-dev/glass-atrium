@@ -2082,13 +2082,13 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 	);
 }
 
-// PRE-VERIFY drawer 블록 — badge 헤더 + rationale + keyed axis 행 (P10 · 원시 JSON 대체).
-// axis value boolean → PASS/FAIL 배지 · 그 외 → 문자열.
+// Pre-verify drawer 블록 — badge 헤더 + rationale + keyed axis 행 (P10 · 원시 JSON 대체).
+// axis value boolean → Passed/Failed 배지 · 그 외 → 문자열.
 function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 	const { Badge } = window.UI;
 	return (
 		<div>
-			<div className={`${labelCls} mb-1`}>PRE-VERIFY</div>
+			<div className={`${labelCls} mb-1`}>Pre-verify</div>
 			<div className="bg-sunken p-3 rounded-md flex flex-col gap-2">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
@@ -2115,8 +2115,8 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 											role="status"
 											tone={value ? "ok" : "crit"}
 											icon
-											title={`${label}: ${value ? "PASS" : "FAIL"}`}>
-											{value ? "PASS" : "FAIL"}
+											title={`${label}: ${value ? "Passed" : "Failed"}`}>
+											{value ? "Passed" : "Failed"}
 										</Badge>
 									) : (
 										<span className="fs-meta text-ink">
@@ -2210,8 +2210,8 @@ function buildDetailPropsI(row) {
 			],
 		],
 		sections: [
-			["PATTERN LABEL", row?.pattern_label, false],
-			["RATIONALE", row?.rationale, false],
+			["Pattern label", row?.pattern_label, false],
+			["Rationale", row?.rationale, false],
 		],
 		preVerify: preVerifyDetail,
 	};
