@@ -42,6 +42,8 @@ function uiStub(): unknown {
           ? tileSplitStub
           : name === "AlertCard"
           ? alertCardStub
+          : name === "ALERT_SEVERITY_WORD"
+          ? realUi[name]
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
                 __element: true,
@@ -76,6 +78,7 @@ function alertCardStub(props: Record<string, unknown>): unknown {
 // PageHeader named slots, left → right
 const HEADER_SLOTS = ["actions", "freshness", "range", "refresh"];
 const alertCardsOf = (tree: RenderedNode) => findNodes(tree, (n) => n.props.atom === "AlertCard");
+const alarmRowsOf = (tree: RenderedNode) => findNodes(tree, (n) => hasClass(n, "alarm-row"));
 
 type Component = (props: unknown) => unknown;
 interface ScreenModule {
@@ -109,26 +112,24 @@ const READY_TILE = {
   value: "40", hint: "40 outcomes", target: "outcomes", targetLabel: "Task results",
 };
 
-test("the alarm lane is a polite live region that exists before any alarm arrives", () => {
+test("the alarm lane is a polite live region named Needs you that exists before any alarm arrives", () => {
   for (const alarms of [[], [HARNESS_ALARM]]) {
     const lane = render("AlarmLane", { alarms, onNav: () => {} });
-    const sections = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
+    const sections = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
     assert.equal(sections.length, 1, "the lane is one labelled section");
     const regions = findNodes(sections[0], (n) => n.props["aria-live"] === "polite");
     assert.equal(regions.length, 1, `one polite region with ${alarms.length} alarms`);
-    const cards = alertCardsOf(regions[0]);
-    assert.equal(cards.length, alarms.length, "every alarm card sits inside the region");
-    assert.ok(cards.every((card) => card.props.hasLiveHost === true), "the region announces each card, so no card carries its own role");
+    assert.equal(alarmRowsOf(regions[0]).length, alarms.length, "every alarm row sits inside the region");
+    assert.ok(alarmRowsOf(regions[0]).every((row) => row.props.role === undefined), "the region announces each row, so no row carries its own role");
+    assert.equal(alertCardsOf(regions[0]).length, 0, "an alarm is a row, never a card of its own");
   }
 });
-
 test("every drill is an anchor to its screen's hash; a plain click routes in-app, a modified one is left to the browser", () => {
   const trees = [
-    render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: (t: string) => navs.push(t) }),
     render("StatusTile", { tile: READY_TILE, onNav: (t: string) => navs.push(t), onRetry: () => {} }),
   ];
   const navs: string[] = [];
-  for (const [tree, target] of [[trees[0], "architecture"], [trees[1], "outcomes"]] as const) {
+  for (const [tree, target] of [[trees[0], "outcomes"]] as const) {
     const anchors = findNodes(tree, (n) => n.type === "a");
     assert.equal(anchors.length, 1);
     assert.equal(anchors[0].props.href, `#${target}`);
@@ -439,34 +440,47 @@ test("a unit renders on the value's own line so the number and its word read as 
   assert.match(collectText(lead), /^0\s*suspended/);
 });
 
-test("an alarm renders as one raised alert card with its tone, its detail as body, and its drill as the action", () => {
-  const tree = render("AlarmCard", { alarm: HARNESS_ALARM, onNav: () => {} });
-  const cards = alertCardsOf(tree);
-  assert.equal(cards.length, 1);
-  assert.equal(cards[0].props.tone, "crit");
-  assert.notEqual(cards[0].props.surface, "inset", "the lane card is page-level");
-  assert.equal(cards[0].props.body, "autoagent");
-  assert.equal(findNodes(cards[0], (n) => n.type === "a" && n.props.href === "#architecture").length, 1, "the drill is the card's action");
+test("an alarm renders as one alarm row: its tone on the glyph, its title, its detail, and a Link to the owning page", () => {
+  const navs: string[] = [];
+  const tree = render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: (target: string) => navs.push(target) });
+  const [list] = findNodes(tree, (n) => hasClass(n, "dash-alarm-list"));
+  assert.ok(hasClass(list, "card"), "the rows sit in one list card");
+  const [row] = alarmRowsOf(list);
+  assert.equal(row.props["data-tone"], "crit");
+  assert.equal(findNodes(row, (n) => hasClass(n, "alarm-row-glyph")).length, 1, "one bare glyph slot");
+  assert.match(collectText(row), /^\s*Critical:\s+1 harness part is down\s+autoagent\s+System map$/, "sr-only tone word, the title, then the detail");
+  const links = findNodes(row, (n) => n.props.atom === "Link");
+  assert.equal(links.length, 1, "one Link, never a bordered drill button");
+  assert.equal(links[0].props.href, "#architecture");
+  assert.equal(findNodes(row, (n) => hasClass(n, "btn")).length, 0);
+
+  const onClick = links[0].props.onClick as (e: unknown) => void;
+  onClick({ button: 0, preventDefault: () => {} });
+  onClick({ button: 0, metaKey: true, preventDefault: () => {} });
+  assert.deepEqual(navs, ["architecture"], "a plain click routes in-app, a modified one is left to the browser");
 });
 
-test("an alarm card whose source's latest read failed says Last known beside its title; a fresh card says nothing", () => {
+test("the install alarm carries its update control in place of a Link", () => {
+  const install = { id: "install", tone: "warn", title: "An update is ready to apply", detail: null, target: null, targetLabel: null };
+  const [row] = alarmRowsOf(render("AlarmLane", { alarms: [install], onNav: () => {},
+    updateState: { status: "loading" }, updateJobState: { status: "loading" }, onRefetchJob: () => {} }));
+  assert.equal(findNodes(row, (n) => n.type === "UpdateBadge").length, 1);
+  assert.equal(findNodes(row, (n) => n.props.atom === "Link").length, 0);
+});
+test("an alarm row whose source's latest read failed says Last known in plain words after its title; a fresh row says nothing", () => {
   for (const isHeld of [true, false]) {
-    const tree = render("AlarmCard", { alarm: { ...HARNESS_ALARM, isHeld }, onNav: () => {} });
-    const badges = findNodes(tree, (n) => n.props.atom === "Badge").map((n) => collectText(n));
-    assert.deepEqual(badges, isHeld ? ["Last known"] : [], `isHeld=${isHeld}`);
+    const [row] = alarmRowsOf(render("AlarmLane", { alarms: [{ ...HARNESS_ALARM, isHeld }], onNav: () => {} }));
+    assert.equal(findNodes(row, (n) => n.props.atom === "Badge").length, 0, `isHeld=${isHeld}: never a badge`);
+    const held = findNodes(row, (n) => hasClass(n, "dash-alarm-held"));
+    assert.deepEqual(held.map(collectText), isHeld ? ["Last known"] : [], `isHeld=${isHeld}`);
   }
 });
-
-// the held spend alarm composes its title as a Fragment (literal + Last known badge) → the shared DayTokens atom still keeps "7-day" whole
-test("a held spend alarm's composed title keeps its 7-day token whole through the shared DayTokens atom", () => {
-  const SPEND_ALARM = { id: "spend", tone: "warn", title: "Spend is running ahead of the 7-day average", detail: "1.4× today", isHeld: true };
-  const [card] = alertCardsOf(render("AlarmCard", { alarm: SPEND_ALARM, onNav: () => {} }));
-  const title = renderScreen(mod.React.createElement(realUi.DayTokens as Component, { children: card.props.title })) as RenderedNode;
-  const noWraps = findNodes(title, (n) => /\bwhitespace-nowrap\b/.test(classOf(n))).map((n) => collectText(n));
-  assert.deepEqual(noWraps, ["7-day"]);
-  assert.deepEqual(findNodes(title, (n) => n.props.atom === "Badge").map((n) => collectText(n)), ["Last known"]);
+test("a spend alarm's detail keeps its 7-day token whole through the shared DayTokens atom", () => {
+  const SPEND_ALARM = { id: "spend", tone: "warn", title: "$842 so far today", detail: "1.3× the 7-day average ($1,380/day)", isHeld: true, target: "cost" };
+  const [row] = alarmRowsOf(render("AlarmLane", { alarms: [SPEND_ALARM], onNav: () => {} }));
+  const tokens = findNodes(row, (n) => n.props.atom === "DayTokens").map((n) => collectText(n));
+  assert.ok(tokens.includes(SPEND_ALARM.detail), "the detail rides DayTokens");
 });
-
 test("a failed tile keeps its drill to the owning screen, whether it shows its own error card or defers to the banner", () => {
   for (const isRetryShared of [false, true]) {
     const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared });
@@ -705,21 +719,21 @@ test("a lane with no alarm renders no text and leaves the layout, whether its so
     assert.equal(collectText(lane).trim(), "", `${status}: no text`);
     assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${status}: no loading line`);
     assert.equal(findNodes(lane, (n) => n.props["aria-live"] === "polite").length, 1, `${status}: the polite region stays mounted`);
-    const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
+    const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
     assert.ok(classOf(section).split(/\s+/).includes("sr-only"), `${status}: the idle lane is out of flow`);
+    assert.equal(findNodes(lane, (n) => hasClass(n, "dash-alarm-list")).length, 0, `${status}: no list card`);
   }
 });
 
-test("a lane holding an alarm while another source loads shows only that card, in flow", () => {
+test("a lane holding an alarm while another source loads shows only that row, in flow", () => {
   const lane = render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "loading", unread: [] }, onNav: () => {} });
-  const cards = alertCardsOf(lane);
-  assert.equal(cards.length, 1);
-  assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line under the card");
-  const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
+  const rows = alarmRowsOf(lane);
+  assert.equal(rows.length, 1);
+  assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line under the row");
+  const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
   assert.ok(!classOf(section).split(/\s+/).includes("sr-only"));
-  assert.equal(collectText(lane), collectText(cards[0]), "the lane carries no text beyond its card");
+  assert.equal(collectText(lane), collectText(rows[0]), "the lane carries no text beyond its row");
 });
-
 describe("an empty alarm lane stays silent once its sources are read, and says it couldn't check when one went unread", () => {
   const READY = { status: "ready", data: {} };
   const rows = [
@@ -746,15 +760,13 @@ describe("an empty alarm lane stays silent once its sources are read, and says i
   }
 });
 
-test("alarm cards stack in one full-width column with no list roles", () => {
-  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend" }], readiness: { status: "read", unread: [] }, onNav: () => {} });
-  const [region] = findNodes(lane, (n) => n.props["aria-live"] === "polite");
-  assert.equal(alertCardsOf(region).length, 2);
-  assert.ok(classOf(region).split(/\s+/).includes("flex-col"), classOf(region));
-  assert.ok(!/grid-cols-2/.test(classOf(region)), "never a second column");
+test("alarm rows stack worst first in one list card, with no list roles", () => {
+  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend", tone: "warn" }], readiness: { status: "read", unread: [] }, onNav: () => {} });
+  const lists = findNodes(lane, (n) => hasClass(n, "dash-alarm-list"));
+  assert.equal(lists.length, 1, "one card holds every row");
+  assert.deepEqual(alarmRowsOf(lists[0]).map((row) => row.props["data-tone"]), ["crit", "warn"]);
   assert.equal(findNodes(lane, (n) => n.props.role === "list" || n.props.role === "listitem").length, 0);
 });
-
 test("a tile's headline value never wraps, so its badge moves to the next line instead", () => {
   const tile = { ...READY_TILE, id: "harness", tone: "crit", value: "2 of 7 down", badge: "Action needed" };
   const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });

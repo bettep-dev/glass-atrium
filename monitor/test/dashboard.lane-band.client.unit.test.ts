@@ -8,7 +8,7 @@
 //
 // Runner: npx tsx --test test/dashboard.lane-band.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -422,15 +422,27 @@ test("the spend tile leads with the judged pace — the larger of so-far and the
   }
 });
 
-test("the spend alarm names its pace window in plain words", () => {
-  const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(3, 1), installKind: "hidden" });
-  assert.equal(alarm.id, "spend");
-  assert.match(String(alarm.detail), /at the last 3 hours' rate/);
-  assert.doesNotMatch(String(alarm.detail), /3 h burn/);
+// amount first (spec 44084 §3.4) → the title states the figure that crossed the cut, the detail its multiple of the basis
+describe("the spend alarm leads with the amount and states its multiple of the 7-day average", () => {
+  const rows = [
+    { name: "the 3-hour pace leads", today: 842, pace: 3_310,
+      title: "$842 so far today, running at $3,310/day over the last 3 hours", detail: "2.4× the 7-day average ($1,380/day)" },
+    { name: "so-far leads", today: 1_790, pace: 900, title: "$1,790 so far today", detail: "1.3× the 7-day average ($1,380/day)" },
+    { name: "under $100, two decimals", today: 3, pace: 1, title: "$3.00 so far today", detail: "1.5× the 7-day average ($2.00/day)" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const avg = row.name.startsWith("under") ? 2 : 1_380;
+      const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(row.today, avg, row.pace), installKind: "hidden" });
+      assert.equal(alarm.id, "spend");
+      assert.equal(alarm.title, row.title);
+      assert.equal(alarm.detail, row.detail);
+    });
+  }
 });
 
-// design copy caps: a KPI hint is one line of 40 chars or fewer; the spend alarm detail is one figure plus a short label
-const CAP = { KPI_HINT: 40, ALARM_LABEL: 32 };
+// design copy cap: a KPI hint is one line of 40 chars or fewer
+const CAP = { KPI_HINT: 40 };
 
 // every harness store the shell reads, by its label → the longest unread list a fold can carry
 const HARNESS_SOURCE_LABELS = ["the failure count", "daemon status", "the health probe", "the hook chain", "hook failures"];
@@ -510,22 +522,6 @@ test("a harness hint too short to name every unread source names the first and c
     assert.equal(tile.hint, row.hint, row.name);
     assert.equal(tile.note != null, row.hasNote, `${row.name}: a drawer note only when the hint cannot name every source`);
     for (const source of row.hasNote ? row.unreadSources : []) assert.ok(String(tile.note).includes(source), `${row.name}: note names ${source}`);
-  }
-});
-
-test("the spend alarm detail is the leg that crossed the cut, as one figure plus a label within the 32-char cap", () => {
-  const rows = [
-    { name: "the 3-hour pace leads", today: 1_300, pace: 1_450, figure: "$1,450", label: /at the last 3 hours' rate/ },
-    { name: "so-far leads", today: 1_500, pace: 900, figure: "$1,500", label: /so far/ },
-  ];
-  for (const row of rows) {
-    const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(row.today, 1_000, row.pace), installKind: "hidden" });
-    const detail = String(alarm.detail);
-    const figure = detail.match(/^\$[\d,.]+/)?.[0] ?? "";
-    assert.equal(figure, row.figure, `${row.name}: "${detail}" leads with the figure that crossed the cut`);
-    const label = detail.slice(figure.length);
-    assert.match(label, row.label, `${row.name}: the label names its leg`);
-    assert.ok(label.length <= CAP.ALARM_LABEL, `${row.name}: label "${label}" is ${label.length} chars`);
   }
 });
 

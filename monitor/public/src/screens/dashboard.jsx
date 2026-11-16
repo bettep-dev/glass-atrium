@@ -157,6 +157,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: var(--ctl-min-h); }
         /* the shared .btn hover shifts ~4 RGB levels → an underline makes the drill's hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+        /* the 32 first line of the alarm row (base.css .alarm-row) → a Link action centres on the glyph and title */
+        .dash-alarm-list .alarm-row-actions { min-height: var(--ctl-min-h); align-items: center; }
+        .dash-alarm-detail { display: block; max-width: 72ch; margin-top: 4px; line-height: 1.4; }
         .dash-strip-track { height: 4rem; position: relative; }
         /* one 1px --line baseline across the strip → each day's segment reaches half the gap-1 column gap either side */
         .dash-strip-base { position: absolute; bottom: 0; left: -0.125rem; right: -0.125rem; height: 1px; background: rgb(var(--line)); }
@@ -236,24 +239,53 @@ function getPageSharedFailure(tiles, panels = []) {
   return getSharedFailure([...tileEntries, ...panels]) ?? getSharedFailure(tileEntries);
 }
 
-// alarm lane — no card → no text and no space; the polite region stays mounted so a later card is announced
-// worst-first order → the most dangerous fact leads
+// "Needs you" (spec 44084 §3.3) — one list card of alarm rows, worst first; no alarm → no card, no text, no space
+// the polite region stays mounted so a later row is announced, and it announces each row → no row carries a role
 function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateState, updateJobState, onRefetchJob }) {
   const isUnread = readiness.status === 'unknown';
   const isIdle = alarms.length === 0 && !isUnread;
   return (
-    <section className={isIdle ? 'dash-lane sr-only' : 'dash-lane'} aria-label="Alarms">
+    <section className={isIdle ? 'dash-lane sr-only' : 'dash-lane'} aria-label="Needs you">
       <div aria-live="polite" className="flex flex-col gap-2">
-        {alarms.map((alarm) => (
-          <AlarmCard key={alarm.id} alarm={alarm} onNav={onNav}>
-            {alarm.id === 'install' && (
-              <UpdateBadge availabilityState={updateState} jobState={updateJobState} onRefetchJob={onRefetchJob}/>
-            )}
-          </AlarmCard>
-        ))}
+        {alarms.length > 0 && (
+          <div className="card dash-alarm-list">
+            {alarms.map((alarm) => (
+              <AlarmRow key={alarm.id} alarm={alarm} onNav={onNav}>
+                {alarm.id === 'install' && (
+                  <UpdateBadge availabilityState={updateState} jobState={updateJobState} onRefetchJob={onRefetchJob}/>
+                )}
+              </AlarmRow>
+            ))}
+          </div>
+        )}
         {isUnread && <UnreadAlarmsCard unread={readiness.unread}/>}
       </div>
     </section>
+  );
+}
+
+// one alarm row — tone on the bare glyph, the amount-first title, an optional detail, then a Link to the owning page
+// or the row's own control (children); a held reading says Last known in plain words, never a badge
+function AlarmRow({ alarm, onNav, children }) {
+  const { Icon, Link, DayTokens, TONE_ICON, ALERT_SEVERITY_WORD } = window.UI;
+  const hasActions = Boolean(children) || Boolean(alarm.target);
+  return (
+    <div className="alarm-row" data-tone={alarm.tone}>
+      <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[alarm.tone]} size={16}/></span>
+      <div className="min-w-0">
+        <span className="fs-body font-medium text-ink">
+          <span className="sr-only">{`${ALERT_SEVERITY_WORD[alarm.tone]}: `}</span><DayTokens>{alarm.title}</DayTokens>
+        </span>
+        {alarm.isHeld && <> <span className="dash-alarm-held fs-meta text-dim">Last known</span></>}
+        {alarm.detail && <span className="dash-alarm-detail fs-meta text-dim"><DayTokens>{alarm.detail}</DayTokens></span>}
+      </div>
+      {hasActions && (
+        <div className="alarm-row-actions">
+          {children}
+          {alarm.target && <Link href={`#${alarm.target}`} onClick={getDrillClick(alarm.target, onNav)}>{alarm.targetLabel}</Link>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -280,20 +312,6 @@ function getAlarmReadiness(sources) {
   // a held reading whose latest read failed is unread too — its all-clear is stale
   const unread = entries.filter(({ source }) => source.status !== 'ready' || source.error != null).map(({ label }) => label);
   return { status: unread.length > 0 ? 'unknown' : 'read', unread };
-}
-
-// 한 카드 = 한 사실. 소유 화면 링크를 갖거나(target) 자기 조치를 품거나(children) 둘 중 하나.
-// the lane's polite region announces the card → no role of its own
-function AlarmCard({ alarm, onNav, children }) {
-  const { AlertCard, Badge } = window.UI;
-  const title = <>{alarm.title}{alarm.isHeld && <> <Badge tone="neutral">Last known</Badge></>}</>;
-  const actions = children || alarm.target ? (
-    <>
-      {children}
-      {alarm.target && <DrillLink target={alarm.target} label={alarm.targetLabel} onNav={onNav}/>}
-    </>
-  ) : null;
-  return <AlertCard tone={alarm.tone} hasLiveHost title={title} body={alarm.detail} actions={actions}/>;
 }
 
 // 상태 밴드 — 4타일 고정, 좁은 폭에선 2×2. 값 · 힌트 한 줄 · 소유 화면 링크.
@@ -647,18 +665,21 @@ function describeHourGrid(grid) {
 
 // 소유 화면 링크 — 실제 href(#screen) 앵커. 수식 클릭·가운데 클릭은 브라우저에 맡겨 새 탭으로 연다.
 function DrillLink({ target, label, onNav, className = '' }) {
-  const onClick = (event) => {
+  return (
+    <a href={`#${target}`} className={`btn sm dash-drill ${className}`.trim()} onClick={getDrillClick(target, onNav)}>
+      {label}
+      <window.UI.Icon name="arrow-right" size={14}/>
+    </a>
+  );
+}
+
+function getDrillClick(target, onNav) {
+  return (event) => {
     const isModified = event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
     if (isModified) return;
     event.preventDefault();
     onNav(target);
   };
-  return (
-    <a href={`#${target}`} className={`btn sm dash-drill ${className}`.trim()} onClick={onClick}>
-      {label}
-      <window.UI.Icon name="arrow-right" size={14}/>
-    </a>
-  );
 }
 
 // 0. Update control — self-update 통지를 toolbar 컴팩트 3-state 배지로 렌더(구 full-width 카드 대체).
@@ -867,8 +888,7 @@ function buildAlarms({ harness, costState, installKind }) {
     rows.push({
       id: 'spend',
       tone: 'warn',
-      title: 'Spend is running ahead of the 7-day average',
-      detail: describeSpendAlarm(spend),
+      ...describeSpendAlarm(spend),
       isHeld: costState?.error != null,
       target: 'cost',
       targetLabel: 'Cost & usage',
@@ -1209,11 +1229,16 @@ function describeSpendTrend(harness) {
   return `${change > 0 ? 'Up' : 'Down'} ${window.UI.formatPct(Math.abs(change))} on ${comparand}`;
 }
 
-// the verdict trips on the larger of so-far and pace → the lead line states that same figure
-// the leg that crossed the cut → one figure and its window; the tile beside it carries the 7-day basis
+// amount first (spec 44084 §3.4) — the verdict trips on the larger of so-far and pace → the title names that leg,
+// the detail its multiple of the 7-day average, the noun and sign the Cost alarm uses
 function describeSpendAlarm(spend) {
-  if (spend.pace >= spend.today) return `${formatUsdCompact(spend.pace)}/day at the last 3 hours' rate`;
-  return `${formatUsdCompact(spend.today)} spent so far today`;
+  const soFar = `${formatUsdCompact(spend.today)} so far today`;
+  const isPaceLed = spend.pace >= spend.today;
+  const judged = isPaceLed ? spend.pace : spend.today;
+  return {
+    title: isPaceLed ? `${soFar}, running at ${formatUsdCompact(spend.pace)}/day over the last 3 hours` : soFar,
+    detail: `${(judged / spend.basis).toFixed(1)}× the 7-day average (${formatUsdCompact(spend.basis)}/day)`,
+  };
 }
 
 function describeSpendPace(pace) {
