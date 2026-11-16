@@ -2073,7 +2073,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
         <>
           {critDays > 0 && (
             <div>
-              {/* The lane owns this alarm; inside the disclosure the count is a neutral fact. */}
+              {/* The Spend card's alarm rows own this alarm; inside the disclosure the count is a neutral fact. */}
               <Badge role="metadata">{critDays} of <window.UI.NoWrap>{dayCount} days</window.UI.NoWrap> over threshold</Badge>
             </div>
           )}
