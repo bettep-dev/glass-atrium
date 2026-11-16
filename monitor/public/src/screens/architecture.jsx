@@ -711,9 +711,10 @@ function ScreenArchitecture(
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
 					// 캔버스 우하단 작은 안내 — 박스 클릭 = 상세.
+					// canvas notes are prose — body sans · opaque chip so no map stroke runs through the words
 					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-meta); " +
-					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
-					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
+					"color: rgb(var(--faint)); pointer-events: none; " +
+					"background: rgb(var(--surface)); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; } " +
 					// hover and keyboard focus brighten the shape, border included (hue kept) — the planted ring rects and the label keep their paint, the box keeps its size
 					`#${ARCH_CANVAS_ID} .node > ${NODE_SHAPE_SELECTOR} { transition: filter .12s; } ` +
@@ -751,8 +752,8 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .node.security > ${NODE_SHAPE_SELECTOR} { stroke-dasharray: none !important; } ` +
 					getMapBorderRulesAR() +
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
-					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
-					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
+					"color: rgb(var(--faint)); pointer-events: none; " +
+					"background: rgb(var(--surface)); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					// corner badge at the label size, so it holds the same 13px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
 					"text-anchor: start; } " +
