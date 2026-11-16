@@ -135,6 +135,12 @@ const ROWS = {
       expected: "2 of 7 rejected in the latest 2 cycle days",
     },
     {
+      name: "a single recent cycle day reads in the singular",
+      before: { count: 0, total: 0, days: 1 },
+      after: { count: 1, total: 4, days: 1 },
+      expected: "1 of 4 rejected in the latest 1 cycle day",
+    },
+    {
       name: "no recent scored cycle → no count to state",
       before: { count: 1, total: 4, days: 2 },
       after: { count: 0, total: 0, days: 2 },
@@ -253,9 +259,9 @@ test("a trend with no scored recent cycle says so in one line instead of plottin
 
   assert.equal(tree.some((el) => el.type === sandbox.window.UI.TrendChart), false, "a chart of unscored days plots nothing a reader can use");
   assert.equal(tree.some((el) => el.type === sandbox.RejectRateHeadlineI), false, "no rate to state");
-  const lines = tree.filter((el) => /\bplaceholder\b/.test(String(el.props.className ?? "")));
-  assert.equal(lines.length, 1);
-  assert.match(getPrintedText(lines[0]), /^Not enough scored cycles to chart yet$/);
+  const lines = tree.filter((el) => el.type === sandbox.window.UI.EmptyState);
+  assert.equal(lines.length, 1, "the one line is the shared empty-state atom");
+  assert.equal(lines[0]?.props.message, "Not enough scored cycles to chart yet");
 });
 
 test("the trend plots from a zero baseline with room to read, and short y labels", () => {

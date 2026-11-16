@@ -695,9 +695,9 @@ function bandTileStatusI(state, value) {
 	return status === "error" ? "announced" : status;
 }
 
-// 마지막 사이클 시각 (MM-DD HH:mm, 표시 tz) — 값이 없으면 "unknown". 0 이나 오래된 스탬프로 대체하지 않는다.
+// 마지막 사이클 시각 (MM-DD HH:mm, 표시 tz) — 값이 없으면 공용 None. 0 이나 오래된 스탬프로 대체하지 않는다.
 function formatCycleStampI(iso) {
-	if (!iso || Number.isNaN(new Date(iso).getTime())) return "unknown";
+	if (!iso || Number.isNaN(new Date(iso).getTime())) return <window.UI.AbsentValue kind="none" title="No cycle recorded" />;
 	return window.UI.formatKstDateTime(iso);
 }
 
@@ -760,7 +760,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="placeholder">Not enough scored cycles to chart yet</div>
+				<window.UI.EmptyState message="Not enough scored cycles to chart yet" />
 			</div>
 		);
 	}
@@ -797,7 +797,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 // counts, never a percentage · each half names its cycle days so neither reads as the all-days total
 function getRejectRatePhraseI(before, after) {
 	if (!after || !after.total) return "No scored cycles yet";
-	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected in the latest ${formatIntI(after.days)} cycle days`;
+	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected in the latest ${formatIntI(after.days)} ${after.days === 1 ? "cycle day" : "cycle days"}`;
 	if (!before || !before.total) return recent;
 	return `${recent} (${formatIntI(before.count)} of ${formatIntI(before.total)} in the ${formatIntI(before.days)} before)`;
 }
@@ -2335,7 +2335,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="placeholder">No improvement cycles recorded yet</div>
+				<window.UI.EmptyState message="No improvement cycles recorded yet" />
 			</div>
 		);
 	}

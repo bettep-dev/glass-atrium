@@ -194,6 +194,14 @@ test("the applied stat names a one-cycle week in the singular", () => {
   assert.match(textOf(applied?.context), /of 1 cycle · /);
 });
 
+test("a week with no recorded cycle names its last cycle through the shared None atom", () => {
+  const applied = getBandStats({ statsState: { ...LANDED, data: { cycles_generated_applied_7d: 0, cycle_total_7d: 0 } } }).get("applied");
+  const absent = collectElements(applied?.context, []).find((el) => el.type === sandbox.window.UI.AbsentValue);
+
+  assert.match(textOf(applied?.context), /of 0 cycles · last /);
+  assert.equal(absent?.props.kind, "none", "a known absence reads None, never unknown");
+});
+
 test("the held count links to the ledger's held section only while a held pattern needs a human", () => {
   const byDesign = getBandStats({ suppression: { pending_total: 0, parked: [{ cause: "non-promptable", count: 4, agents: 2 }] } }).get("held");
   const suppression = { pending_total: 0, parked: NEEDS_HUMAN, parked_patterns: [] };
