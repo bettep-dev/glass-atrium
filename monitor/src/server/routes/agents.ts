@@ -1901,7 +1901,7 @@ interface CliInvocation {
 // PYTHONUNBUFFERED) is inherited. stdin carries the preview JSON (commit passes
 // no stdin). Resolves with {code:0,...} on success; a non-zero exit rejects and
 // is normalized by parseCliError into the same shape.
-async function runCli(
+export async function runCli(
   args: string[],
   opts: { timeoutMs: number; stdin?: string },
 ): Promise<CliInvocation> {
@@ -1911,6 +1911,9 @@ async function runCli(
       timeout: opts.timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
     });
+    // child gone before the write lands → EPIPE on stdin; unheard, it is an uncaughtException that exits the monitor.
+    // Exit code and stdout still decide the result.
+    child.child.stdin?.on("error", () => {});
     if (opts.stdin !== undefined && child.child.stdin !== null) {
       child.child.stdin.end(opts.stdin);
     }
