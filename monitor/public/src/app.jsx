@@ -265,7 +265,6 @@ function agentsToNavBadges(agentsState) {
 window.UI?.installRemoteFetch(window);
 const IS_REMOTE_PAGE = window.UI?.isRemotePage(window.location) === true;
 const NAV_ITEMS = IS_REMOTE_PAGE ? NAV.filter((item) => !item.isLoopbackOnly) : NAV;
-const REMOTE_ACT_URL = { logout: "/api/remote/logout", off: "/api/remote/off" };
 // red-outline destructive (design.md §7.4) → turning off cuts every device, this one included
 const TURN_OFF_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
 const REMOTE_ACT_COPY = {
@@ -279,7 +278,8 @@ const REMOTE_ACT_COPY = {
  * @returns "closed" after off; rejects on a refused act, which never leaves the page
  */
 async function deleteRemoteAccess(act) {
-	const res = await fetch(REMOTE_ACT_URL[act], { method: "POST" });
+	const { LOGOUT_URL, OFF_URL } = window.UI.REMOTE_PAGE;
+	const res = await fetch({ logout: LOGOUT_URL, off: OFF_URL }[act], { method: "POST" });
 	if (!res.ok) throw new Error(`remote ${act} refused: HTTP ${res.status}`);
 	if (act === "logout") window.location.replace(window.UI.REMOTE_PAGE.SIGN_IN_URL);
 	return act === "logout" ? "signed-out" : "closed";
