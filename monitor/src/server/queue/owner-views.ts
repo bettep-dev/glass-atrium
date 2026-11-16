@@ -37,7 +37,6 @@ export interface MarkedOccupant {
 /** First matching sweep skip row by card precedence; `in_flight` carries no card text. */
 export type SkipReason =
   | { kind: "marker" }
-  | { kind: "approval" }
   | { kind: "resume_used" }
   | { kind: "shared_worktree"; markedOccupants: MarkedOccupant[]; hasUnmarkedOccupant: boolean }
   | { kind: "in_flight" };
@@ -349,7 +348,6 @@ function getDeviation(status: QueueItemStatus): Deviation | null {
 
 function getSkipReason(item: ItemWithRelations, factsById: Map<string, SessionFacts>): SkipReason | null {
   if (item.session.resumeAwaitingRegisterAt !== null) return { kind: "marker" };
-  if (item.isApprovalClass) return { kind: "approval" };
   if (item.deliveries.some((delivery) => delivery.attempt === item.nextAttempt)) return { kind: "resume_used" };
   const occupants = getOccupants(item.session, factsById);
   if (occupants.length > 0) {

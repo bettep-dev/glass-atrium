@@ -49,13 +49,13 @@ export const buildResumeInFlightSql = (sessionIdColumn: Prisma.Sql): Prisma.Sql 
   WHERE i."session_id" = ${sessionIdColumn} AND i."status" = 'delivering'
     AND (SELECT d."route"::text FROM "monitor"."queue_deliveries" d WHERE d."item_id" = i."id" ORDER BY d."id" DESC LIMIT 1) = 'resume')`;
 
-// A resume-pending item (alias i) the claim can take: not approval class, no resume row for its current attempt
-const CLAIMABLE_ITEM_SQL = Prisma.sql`i."status" = 'resume_pending' AND NOT i."approval_class" AND NOT EXISTS (
+// A resume-pending item (alias i) the claim can take: no resume row for its current attempt
+const CLAIMABLE_ITEM_SQL = Prisma.sql`i."status" = 'resume_pending' AND NOT EXISTS (
   SELECT 1 FROM "monitor"."queue_deliveries" d WHERE d."item_id" = i."id" AND d."route" = 'resume' AND d."attempt" = i."next_attempt")`;
 
 /**
- * Exited sessions holding a claimable item, earliest queue position first → items that wait on the owner for good (approval
- * class, used attempt) never crowd eligible sessions out of the batch.
+ * Exited sessions holding a claimable item, earliest queue position first → items that wait on the owner for good (a used
+ * attempt) never crowd eligible sessions out of the batch.
  */
 export async function findClaimableSessionIds(scope: { sessionIds: string[] } | undefined): Promise<string[]> {
   const scopeSql = scope === undefined ? Prisma.empty : Prisma.sql`AND i."session_id" = ANY(${scope.sessionIds}::uuid[])`;

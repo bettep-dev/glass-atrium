@@ -250,12 +250,14 @@ ga_init_env() {
     "SessionStart	inject-session-context.sh	"
     "SessionStart	prune-security-warnings-state.sh	"
     "SessionStart	prune-session-spawns.sh	"
+    "SessionStart	queue-listener.sh	"
     "SessionStart	queue-session-register.sh	"
     "SessionStart	validate-compliance-matrix.sh	"
     "UserPromptSubmit	inject-reply-language.sh	"
     "Stop	advisory-preedit-facts.sh	"
     "Stop	cost-tracker.sh	"
     "Stop	post-edit-typecheck.sh	"
+    "Stop	queue-listener.sh	"
     "Stop	queue-turn-end-check.sh	"
     "SubagentStart	agent-tracker.sh	"
     "SubagentStart	inject-scope-rules.sh	"
@@ -279,6 +281,20 @@ ga_init_env() {
     "SessionEnd	queue-session-deregister.sh	"
   )
   readonly EXPECTED_HOOK_BINDINGS
+
+  # per-binding command options: "<event>\t<hook-basename>\t<options JSON object>", applied to every command
+  # of that (event, basename) under any matcher. A separate table, never a 4th EXPECTED_HOOK_BINDINGS column:
+  # tab is IFS whitespace, so an empty matcher collapses and every `read -r event hook matcher` reader would
+  # take the options as the matcher. Managed keys = the keys a row declares (asyncRewake, timeout —
+  # test/hook-bindings-complete.bats holds the allowlist); every other command key stays the user's own.
+  # Read through get_expected_binding_option_rows (lib/ga-config-hooks.sh), never directly.
+  # queue-listener.sh: the host SIGTERMs an asyncRewake hook at its timeout → one hour above the listener's own lifetime
+  # (scripts/atrium-queue.sh → LISTEN_LIFETIME_S); measured runs: scoped/shared-hook-capability-contract.md → 1c
+  EXPECTED_HOOK_BINDING_OPTIONS=(
+    "SessionStart	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":86400}"
+    "Stop	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":86400}"
+  )
+  readonly EXPECTED_HOOK_BINDING_OPTIONS
 
   # prune named exit codes (loud-fail, distinct from die's generic 1): 2 = no
   # target dir, 3 = manifest absent/unparseable, 4 = an orphan survived its unlink.

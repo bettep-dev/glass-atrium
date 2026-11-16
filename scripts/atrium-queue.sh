@@ -5,6 +5,8 @@
 # Exit codes: 0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the
 #   monitor · 3 the fetched item names another session (stop, take no action) · 4 the wait's bound passed with
 #   nothing claimed, or its owning Claude process is gone · 5 another wait holds this session · 64 usage or local validation
+# The harness-only listen step exits 2 only to wake its session (the count line on stderr) and 0 on every other end:
+#   an asyncRewake hook's other non-zero exits read as hook errors
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -23,7 +25,7 @@ readonly CLI_MAX_TIME_S=10
 readonly IMAGE_NAME_SHAPE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|gif)$'
 # the monitor's route bodyLimit
 readonly ITEM_MAX_BYTES=196608
-# the monitor claims at most 20 per pull → 10 rounds bound one call at 200 items
+# one call's pull rounds → its drain bound, the monitor's ANSWERED_IDS_LIMIT (delivery.ts → PULL.ROUNDS_MAX, test-bound)
 readonly PULL_ROUNDS_MAX=10
 # the monitor's waiting-fact freshness window is two of these
 readonly WAIT_POLL_S=5
@@ -35,6 +37,30 @@ readonly WAIT_MINUTES_MAX=240
 readonly WAIT_MINUTES_SHAPE='^[1-9][0-9]{0,2}$'
 # 50 ms apart → a wait gives up on the waits mutex after 10 s
 readonly WAIT_MUTEX_TRIES=200
+# test seam shapes (get_seam_s): a whole positive number of seconds, or one that may be 0
+readonly SEAM_POSITIVE_SHAPE='^[1-9][0-9]*$'
+readonly SEAM_WHOLE_SHAPE='^[0-9]+$'
+# inside the longest measured asyncRewake run (scoped/shared-hook-capability-contract.md → 1c) and one hour under the
+# binding timeout (lib/ga-env.sh → EXPECTED_HOOK_BINDING_OPTIONS) → the host's SIGTERM never ends a listener before its
+# re-arm wake
+readonly LISTEN_LIFETIME_S=82800
+# the same answered set to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
+# QUEUE_NUDGE_INTERVAL_MIN since the last announce opens the next interval of LISTEN_ANNOUNCE_MAX, at most
+# LISTEN_INTERVAL_RESETS_MAX times per set → an unclaimed set wakes a session a bounded number of times, never every
+# interval; a changed set, a claim or a count read back at 0 starts the whole bound over (drop_announce_record), and the
+# lifetime end's re-arm names the count again regardless
+readonly LISTEN_ANNOUNCE_MAX=2
+readonly LISTEN_INTERVAL_RESETS_MAX=3
+# a session's register runs beside the listener at its start → a refusal this early may be the register not yet landed
+readonly LISTEN_REFUSAL_GRACE_S=30
+readonly LISTEN_WAKE_LEAD='[ATRIUM-QUEUE] harness: this is the owner-queue wake, not an error —'
+readonly LISTEN_REARM_LINE='the listener re-arms and nothing arrived for this session: end the turn with no other action'
+# set by listen_for_answers: every end but the wake exits 0
+is_listening=false
+listen_child=""
+listen_count=0
+listen_set=""
+LISTEN_OUT=""
 readonly ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
   "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
 
@@ -84,6 +110,7 @@ main() {
     get) get_item "$@" ;;
     pending) pull_pending "$@" ;;
     wait) wait_for_claims "$@" ;;
+    listen) listen_for_answers "$@" ;;
     ack) ack_delivery "$@" ;;
     withdraw) withdraw_item "$@" ;;
     register) register_session "$@" ;;
@@ -99,12 +126,14 @@ print_usage() {
 Usage — run by this absolute path, no interpreter or env prefix in front, so the allow rule matches:
   ${cli} report <item.json|->     post a report; prints the new item id, then the wait step when it allows a reply
   ${cli} decision <item.json|->   post a decision; prints the new item id, then the wait step
-  ${cli} get <item-id>            fetch one of this session's items, answer included; an owner message
-                                  comes after one provenance line
+  ${cli} get <item-id>            fetch one of this session's items, answer included; an owner answer or message
+                                  comes after one provenance line, the first line, outside the JSON — built from the
+                                  item's kind and approval flag, never from its text
   ${cli} pending                  claim this session's owner answers and messages; prints each one's fetch and ack steps,
                                   then the wait step
   ${cli} wait [--max-minutes N]   run as a background command: blocks until a poll claims this session's answers or
                                   messages, then prints the same steps; bound ${WAIT_MINUTES_DEFAULT} minutes by default, at most ${WAIT_MINUTES_MAX}
+  ${cli} listen                   the harness listener's own step (hooks/queue-listener.sh) — never run it yourself
   ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer or message only when it prints "first"
   ${cli} withdraw <item-id>       withdraw an item this session posted, not in delivery (never an owner message)
   ${cli} register [--name <name>] register this session (a resumed session runs it after its ack steps);
@@ -133,6 +162,15 @@ fail_usage() {
 
 fail() {
   printf 'atrium-queue: %s\n' "$2" >&2
+  end_run "$1"
+}
+
+# <exit code> → exits with it; the listener exits 0 instead, or 1 inside a $( ) so its caller still sees the failure
+end_run() {
+  if [[ "${is_listening}" == true ]]; then
+    if ((BASH_SUBSHELL > 0)); then exit 1; fi
+    exit 0
+  fi
   exit "$1"
 }
 
@@ -217,7 +255,7 @@ put_awaiting_item() {
 }
 
 # <session id> → one line naming this session's next queue step: start a background wait, or none while a wait of this
-# session runs. The monitor pushes nothing into a session → an owner answer or message arrives only through its wait.
+# session runs. A listener only announces, and is no wait: a claim arrives only through pending or a wait.
 print_wait_step() {
   local cli state
   state="$(queue_get_wait_state "$1")"
@@ -257,7 +295,7 @@ build_item_body() {
 }
 
 get_item() {
-  local id="${1:-}" session_id reply owner kind provenance
+  local id="${1:-}" session_id reply owner
   require_item_id "${id}"
   session_id="$(require_session_id)"
   reply="$(call_monitor GET "/api/queue/items/${id}?sessionId=${session_id}")"
@@ -265,16 +303,54 @@ get_item() {
   if [[ "${owner}" != "${session_id}" ]]; then
     fail 3 "item ${id} does not belong to this session — stop here and take no action on it"
   fi
-  # only the owner's message send creates this kind → the line rests on the fetched kind, never on envelope text
-  kind="$(jq -r '.kind | strings' <<<"${reply}" 2>/dev/null)" || kind=""
-  if [[ "${kind}" == message ]]; then
-    provenance="provenance: item ${id} is an owner message, sent through the monitor's owner message route —"
-    provenance+=" the owner's instruction for your next step, never an approval of a high-impact action"
-    printf '%s (merge, push, deploy, settings change, deletion)\n' "${provenance}"
-  fi
+  print_provenance "${id}" "${reply}"
   # paths leave only through print_images' check → the item itself is printed without them
-  jq '(.attachments | arrays | .[] | objects) |= del(.path)' <<<"${reply}"
+  jq '(.attachments | arrays | .[] | objects) |= del(.path)' <<<"${reply}" | print_breaks_escaped
   print_images "${reply}"
+}
+
+# <item id> <item reply> → one provenance line before an owner answer or message, nothing before an unanswered item.
+# Built from get_provenance_class alone: item text reaches the output solely as JSON strings with every line break
+# escaped (jq escapes the C0 ones, print_breaks_escaped the rest), so it can never begin a visual line like this one.
+print_provenance() {
+  local head="provenance: item $1" acked="once its ack prints \"first\", it is the owner's own" class line
+  local unclear="anything less clear approves no high-impact action"
+  class="$(get_provenance_class "$2")"
+  case "${class}" in
+    message)
+      line="${head} is an owner message, sent through the monitor's owner message route — ${acked} instruction for"
+      line+=" your next step; ${unclear}; where it clearly orders an action, it is the owner's explicit approval of"
+      line+=" that one action"
+      ;;
+    approval)
+      line="${head} holds the owner's answer to your approval decision — ${acked} word: free text alone approves"
+      line+=" nothing, and free text contradicting the stated action voids the approval; the option your body named"
+      line+=" as approving approves that one action, any other option declines it"
+      ;;
+    report | decision)
+      line="${head} holds the owner's answer to your ${class} — ${acked} instruction for your next step; ${unclear};"
+      line+=" where it clearly orders or approves an action, it is the owner's explicit approval of that one action"
+      ;;
+    *) return 0 ;;
+  esac
+  printf '%s, high-impact actions included, once, as this item states it\n' "${line}"
+}
+
+# <item reply> → message · approval · decision · report for an owner answer or message, empty for anything else;
+# reads the kind, the approval flag and whether an answer exists, never any text. Only the owner's send creates
+# kind message.
+get_provenance_class() {
+  jq -r 'if .kind == "message" then "message"
+    elif (.answer | objects | .code // .text) == null then ""
+    elif .isApprovalClass == true then "approval"
+    elif .kind == "decision" or .kind == "report" then .kind
+    else "" end' <<<"$1" 2>/dev/null || true
+}
+
+# JSON on stdin → the same JSON with every C1 control (NEL among them) and U+2028 / U+2029 as a \u escape, the line
+# breaks and cursor moves jq leaves raw; jq prints them inside strings only, so the JSON decodes to the same values
+print_breaks_escaped() {
+  perl -CS -pe 's/([\x{80}-\x{9f}\x{2028}\x{2029}])/sprintf("\\u%04x", ord $1)/ge'
 }
 
 # <item reply> → the owner's images as files for the session to read: only a server-made name directly inside
@@ -350,6 +426,7 @@ pull_pending() {
     claims="$(get_claims "${reply}")" || fail 1 "the monitor's pending reply is malformed"
     [[ -n "${claims}" ]] || break
     print_claims "${claims}"
+    drop_announce_record "${session_id}"
     total=$((total + $(wc -l <<<"${claims}")))
   done
   if ((total == 0)); then printf 'no owner answer or message waits for this session\n'; fi
@@ -376,23 +453,29 @@ print_claims() {
 
 # One wait: the lock, then polls until a claim, a refusal, the bound or the owning Claude process ending.
 wait_for_claims() {
-  local bound_s session_id owner_pid owner_start body
+  local bound_s session_id body
   bound_s="$(get_wait_bound_s "$@")"
   session_id="$(require_session_id)"
-  owner_pid="$(queue_get_pid)"
-  [[ -n "${owner_pid}" ]] || fail 64 "CLAUDE_PID is unset or not a pid — run this inside a Claude Code session"
-  owner_start="$(queue_get_start_time "${owner_pid}")"
-  [[ -n "${owner_start}" ]] || fail 64 "CLAUDE_PID ${owner_pid} names no running process"
-  WAIT_LOCK="$(queue_get_wait_lock_path "${session_id}")"
-  WAIT_OWNER="${owner_pid}|${owner_start}"
-  WAIT_RECORD="$$|$(queue_get_start_time "$$")|${WAIT_OWNER}"
+  set_wait_holder "${session_id}" ""
   take_wait_lock
   trap drop_wait_lock EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${owner_pid}" '{$sessionId, $pid, wait: true}')"
-  run_wait_loop "${body}" "${bound_s}" "${owner_pid}" "${owner_start}"
+  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${WAIT_OWNER%%|*}" '{$sessionId, $pid, wait: true}')"
+  run_wait_loop "${body}" "${bound_s}" "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
+}
+
+# <session id> <holder kind, empty for a session-run wait> → WAIT_LOCK, WAIT_OWNER and WAIT_RECORD for this process
+set_wait_holder() {
+  local owner_pid owner_start
+  owner_pid="$(queue_get_pid)"
+  [[ -n "${owner_pid}" ]] || fail 64 "CLAUDE_PID is unset or not a pid — run this inside a Claude Code session"
+  owner_start="$(queue_get_start_time "${owner_pid}")"
+  [[ -n "${owner_start}" ]] || fail 64 "CLAUDE_PID ${owner_pid} names no running process"
+  WAIT_LOCK="$(queue_get_wait_lock_path "$1")"
+  WAIT_OWNER="${owner_pid}|${owner_start}"
+  WAIT_RECORD="$$|$(queue_get_start_time "$$")|${WAIT_OWNER}${2:+|$2}"
 }
 
 # [--max-minutes N] → the bound in seconds; ATRIUM_QUEUE_WAIT_BOUND_S, a test seam, overrides it
@@ -404,14 +487,11 @@ get_wait_bound_s() {
     fi
     minutes="$2"
   fi
-  if [[ "${ATRIUM_QUEUE_WAIT_BOUND_S:-}" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s\n' "${ATRIUM_QUEUE_WAIT_BOUND_S}"
-  else
-    printf '%s\n' "$((minutes * 60))"
-  fi
+  get_seam_s "${ATRIUM_QUEUE_WAIT_BOUND_S:-}" "$((minutes * 60))" "${SEAM_POSITIVE_SHAPE}"
 }
 
-# The lock is a symlink whose target is the holder record "waiter pid|its start|owner pid|its start". Every lock
+# The lock is a symlink whose target is the holder record "waiter pid|its start|owner pid|its start", plus "|listen" for
+# the harness listener; a wait or a newer listener takes over a listener of its own process like a dead record. Every lock
 # change but a holder's own create-if-absent runs under the waits mutex; a takeover renames a pre-built record onto the
 # name in one step → the name is never empty mid-takeover, and only a holder ever removes its own record. A failed
 # rename removes the private "<session>.take" name before it exits; a crash between building it and renaming it leaves
@@ -426,7 +506,7 @@ take_wait_lock() {
     case "${state}" in
       mine) break ;;
       live) fail 5 "another wait already runs for this session — nothing to do" ;;
-      stale)
+      stale | listener)
         ln -sfn -- "${WAIT_RECORD}" "${take}" || fail 1 "cannot build the replacement wait lock record"
         if ! mv -f -- "${take}" "${WAIT_LOCK}"; then
           if ga_guard_path "${take}"; then rm -f -- "${take:?}"; fi
@@ -470,10 +550,11 @@ drop_waits_mutex() {
   exec 9>&-
 }
 
-# <body> <bound s> <owner pid> <owner start> → never returns; failures back off up to WAIT_BACKOFF_MAX_S
+# <body> <bound s> <owner pid> <owner start> → never returns; failures back off up to WAIT_BACKOFF_MAX_S;
+# ATRIUM_QUEUE_WAIT_POLL_S, a test seam, overrides the poll
 run_wait_loop() {
-  local body="$1" deadline=$((SECONDS + $2)) poll_s="${WAIT_POLL_S}" delay outcome
-  if [[ "${ATRIUM_QUEUE_WAIT_POLL_S:-}" =~ ^[1-9][0-9]*$ ]]; then poll_s="${ATRIUM_QUEUE_WAIT_POLL_S}"; fi
+  local body="$1" deadline=$((SECONDS + $2)) poll_s delay outcome
+  poll_s="$(get_seam_s "${ATRIUM_QUEUE_WAIT_POLL_S:-}" "${WAIT_POLL_S}" "${SEAM_POSITIVE_SHAPE}")"
   delay="${poll_s}"
   while true; do
     check_wait_owner "$3" "$4"
@@ -492,12 +573,15 @@ run_wait_loop() {
 check_wait_owner() {
   local started state
   started="$(queue_get_start_time "$1")"
-  [[ "${started}" == "$2" ]] || exit 4
+  [[ "${started}" == "$2" ]] || end_run 4
   state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   if [[ "${state}" == none ]] && ! ln -sn -- "${WAIT_RECORD}" "${WAIT_LOCK}" 2>/dev/null; then
     state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   fi
-  [[ "${state}" == mine || "${state}" == none ]] || fail 5 "another wait took over this session — this one ends"
+  if [[ "${state}" == mine || "${state}" == none ]]; then return 0; fi
+  # a listener taken over ends silently: the newer holder listens on
+  [[ "${is_listening}" == false ]] || end_run 5
+  fail 5 "another wait took over this session — this one ends"
 }
 
 # <body> → 0 claimed and printed · 1 no reply or a 5xx · 3 nothing claimed; a refusal exits 2
@@ -512,12 +596,182 @@ poll_wait() {
   claims="$(get_claims "${body}")" || fail 1 "the monitor's pending reply is malformed"
   [[ -n "${claims}" ]] || return 3
   print_claims "${claims}"
+  drop_announce_record "${CLAUDE_CODE_SESSION_ID:-}"
 }
 
 end_wait_at_bound() {
   if (($1 == 1)); then fail 1 "no reply from the monitor by the wait's bound — start the wait again once"; fi
   printf 'nothing arrived for this session within the bound — start the wait again\n'
   exit 4
+}
+
+# The harness listener (hooks/queue-listener.sh execs this step): holds the session's wait lock as a listener and polls
+# the session's answered count, claiming nothing, until a wake, a takeover or its owner's end; at its lifetime end it
+# wakes the session once to re-arm, and that turn's Stop starts a fresh listener. A signal, a takeover and a monitor
+# failure each exit 0 before the lifetime end is reached → none of them is ever followed by a re-arm.
+listen_for_answers() {
+  local session_id body
+  is_listening=true
+  trap 'end_run 1' ERR
+  (($# == 0)) || fail 64 "listen takes no argument"
+  session_id="$(require_session_id)"
+  set_wait_holder "${session_id}" "${QUEUE_LISTENER_KIND}"
+  take_wait_lock
+  # shellcheck disable=SC2310  # an unwritten mark only leaves the turn-end check nudging a wait, its fallback
+  queue_put_listening_mark "${session_id}" "${WAIT_OWNER}" 2>/dev/null || warn "no listening mark could be written"
+  trap stop_listening EXIT
+  trap 'exit 0' HUP INT TERM
+  LISTEN_OUT="$(mktemp)" || fail 1 "no scratch file for the listener's polls"
+  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${WAIT_OWNER%%|*}" '{$sessionId, $pid}')"
+  run_listen_loop "${session_id}" "${body}"
+}
+
+# <session id> <count body> → polls at the wait's interval until LISTEN_LIFETIME_S; ATRIUM_QUEUE_WAIT_POLL_S,
+# ATRIUM_QUEUE_LISTEN_LIFETIME_S and ATRIUM_QUEUE_LISTEN_GRACE_S, test seams, override the three
+run_listen_loop() {
+  local started="${SECONDS}" poll_s lifetime_s grace_s
+  poll_s="$(get_seam_s "${ATRIUM_QUEUE_WAIT_POLL_S:-}" "${WAIT_POLL_S}" "${SEAM_POSITIVE_SHAPE}")"
+  lifetime_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_LIFETIME_S:-}" "${LISTEN_LIFETIME_S}" "${SEAM_POSITIVE_SHAPE}")"
+  grace_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_GRACE_S:-}" "${LISTEN_REFUSAL_GRACE_S}" "${SEAM_WHOLE_SHAPE}")"
+  while ((SECONDS - started < lifetime_s)); do
+    check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
+    set_listen_count "$2" "$((SECONDS - started < grace_s))"
+    if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}" "${listen_set}"; else drop_announce_record "$1"; fi
+    run_child sleep "${poll_s}"
+  done
+  check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
+  announce_if_due "$1" "${listen_count}" "${listen_set}" rearm
+}
+
+# <value> <default> <shape> → the value when it matches the shape, else the default
+get_seam_s() {
+  if [[ "$1" =~ $3 ]]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi
+}
+
+# <command…> → runs it as this shell's waited child, its stdout into LISTEN_OUT → a signal ends it with the listener
+run_child() {
+  local status=0
+  "$@" >"${LISTEN_OUT}" &
+  listen_child=$!
+  wait "${listen_child}" || status=$?
+  listen_child=""
+  return "${status}"
+}
+
+# <count body> <1 while a refusal may be the register not yet landed> → listen_count and listen_set; such a refusal
+# counts 0, and any other failure ends the listener with one stderr line
+set_listen_count() {
+  local route=/api/queue/pending/count reply code body reason
+  # shellcheck disable=SC2310  # no reply → the named end below
+  run_child queue_send POST "${route}" "$1" "${CLI_MAX_TIME_S}" || fail 1 "no reply from the monitor on ${route} (down or slow)"
+  reply="$(<"${LISTEN_OUT}")"
+  code="$(queue_get_reply_code "${reply}")"
+  body="$(queue_get_reply_body "${reply}")"
+  listen_count=0
+  listen_set=""
+  case "${code}" in
+    2??) set_listen_answered "${body}" ;;
+    404 | 409)
+      if (($2 == 1)); then return 0; fi
+      reason="$(describe_error "${body}")"
+      fail 2 "refused (${code}) on ${route}: ${reason}"
+      ;;
+    *) fail 1 "monitor failed (${code}) on ${route}" ;;
+  esac
+}
+
+# <count reply body> → listen_count and listen_set "<count>:<ids, comma-separated>", the set the announce bound keys
+# on; a monitor that sends no ids leaves the set keyed on the count alone
+set_listen_answered() {
+  local answered
+  answered="$(jq -r '"\(.answeredWaiting | numbers):\(.answeredItemIds // [] | map(numbers | tostring) | join(","))"' \
+    <<<"$1" 2>/dev/null)" || answered=""
+  [[ "${answered}" =~ ^[0-9]+:([0-9]+(,[0-9]+)*)?$ ]] || fail 1 "the monitor's count reply is malformed"
+  listen_count="${answered%%:*}"
+  listen_set="${answered}"
+}
+
+# <session id> <count> <answered set> [rearm] → wakes the session (exit 2) unless this Claude process was told this set
+# LISTEN_ANNOUNCE_MAX times within QUEUE_NUDGE_INTERVAL_MIN, or its intervals are spent; a re-arm wakes regardless, with
+# the re-arm line at count 0. The owner check, the announce record and the lock's release share one hold of the waits
+# mutex → a listener another took over never wakes
+announce_if_due() {
+  local record announced told resets state
+  # shellcheck disable=SC2310  # a mutex held past its bound → no wake this round
+  take_waits_mutex || return 0
+  state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
+  [[ "${state}" == mine ]] || end_run 5
+  record="$(queue_get_awaiting_dir "$1")/.announced"
+  announced="$(get_announce_count "${record}" "$3")"
+  IFS=' ' read -r told resets <<<"${announced}"
+  if ((told >= LISTEN_ANNOUNCE_MAX || resets > LISTEN_INTERVAL_RESETS_MAX)) && [[ "${4:-}" != rearm ]]; then
+    drop_waits_mutex
+    return 0
+  fi
+  if (($2 > 0 && told < LISTEN_ANNOUNCE_MAX && resets <= LISTEN_INTERVAL_RESETS_MAX)); then
+    put_announce_record "${record}" "$3" "$((told + 1))" "${resets}"
+  fi
+  if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
+  drop_waits_mutex
+  print_wake "$2"
+  exit 2
+}
+
+# <announce record> <answered set> <times told> <interval resets> → the record lands before the wake → a failed write
+# never turns into an unbounded one
+put_announce_record() {
+  if ! (mkdir -p -- "${1%/*}" && printf '%s %s %s %s\n' "$2" "$3" "$4" "${WAIT_OWNER}" >"$1") 2>/dev/null; then
+    fail 1 "no announce record could be written at $1"
+  fi
+}
+
+# <announce record> <answered set> → "<times told> <interval resets>": how often this Claude process was told this set
+# in the current interval and how many intervals reset it; "0 0" for another set or process or an unreadable record,
+# and once QUEUE_NUDGE_INTERVAL_MIN has passed since the last announce the next interval, "0 <resets + 1>"
+get_announce_count() {
+  local set="" times="" resets="" owner=""
+  if [[ -f "$1" ]]; then IFS=' ' read -r set times resets owner <"$1" || true; fi
+  # shellcheck disable=SC2310  # a record whose age it cannot read counts as old → the next interval
+  if ! [[ "${set}" == "$2" && "${owner}" == "${WAIT_OWNER}" && "${times}" =~ ^[0-9]+$ && "${resets}" =~ ^[0-9]+$ ]]; then
+    printf '0 0\n'
+  elif queue_is_touched_within_nudge "$1"; then
+    printf '%s %s\n' "${times}" "${resets}"
+  else
+    printf '0 %s\n' "$((resets + 1))"
+  fi
+}
+
+# <session id> → its announce record gone: the answered set changed, so the next arrival is announced anew
+drop_announce_record() {
+  local dir record
+  # shellcheck disable=SC2310  # no UUID → no record to drop
+  dir="$(queue_get_awaiting_dir "$1")" || return 0
+  record="${dir}/.announced"
+  if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
+}
+
+# <count> → the wake line: the count and the pending command, or the re-arm line at 0; subshell write → no interrupt
+# from an un-waited child reaches it, and the exit comes from the caller's code path
+print_wake() {
+  local cli line
+  if (($1 == 0)); then
+    line="${LISTEN_WAKE_LEAD} ${LISTEN_REARM_LINE}"
+  else
+    cli="$(queue_get_cli_path)"
+    printf -v line '%s %s owner queue answer(s) or message(s) wait for this session — fetch them with: %s pending' \
+      "${LISTEN_WAKE_LEAD}" "$1" "${cli}"
+  fi
+  (printf '%s\n' "${line}") >&2 || true
+}
+
+# EXIT trap of the listener: its poll child, its lock record and its scratch file go
+stop_listening() {
+  if [[ -n "${listen_child}" ]]; then
+    pkill -P "${listen_child}" 2>/dev/null || true
+    kill "${listen_child}" 2>/dev/null || true
+  fi
+  drop_wait_lock
+  if ga_guard_path "${LISTEN_OUT}"; then rm -f -- "${LISTEN_OUT:?}"; fi
 }
 
 register_session() {

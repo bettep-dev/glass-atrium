@@ -471,8 +471,9 @@ describe("list and item detail", () => {
     const exited = { state: "exited" as const, exitReason: "dead" as const };
     const marked = { ...exited, resumeAwaitingRegisterAt: new Date() };
     const cases = [
-      { name: "marker set beats approval", session: marked, item: { isApprovalClass: true }, used: false, hasOccupant: false, hasResumeInFlight: false, kind: "marker" },
-      { name: "approval beats a used attempt", session: exited, item: { isApprovalClass: true }, used: true, hasOccupant: false, hasResumeInFlight: false, kind: "approval" },
+      { name: "marker set beats a used attempt", session: marked, item: {}, used: true, hasOccupant: false, hasResumeInFlight: false, kind: "marker" },
+      { name: "an approval-class item with a used attempt asks for Resend like any other", session: exited, item: { isApprovalClass: true }, used: true, hasOccupant: false, hasResumeInFlight: false, kind: "resume_used" },
+      { name: "an approval-class item with nothing blocking has no skip reason", session: exited, item: { isApprovalClass: true }, used: false, hasOccupant: false, hasResumeInFlight: false, kind: null },
       { name: "a used attempt beats a shared worktree", session: exited, item: {}, used: true, hasOccupant: true, hasResumeInFlight: false, kind: "resume_used" },
       { name: "a shared worktree beats a resume in flight", session: exited, item: {}, used: false, hasOccupant: true, hasResumeInFlight: true, kind: "shared_worktree" },
       { name: "a resume in flight for another item of the session", session: exited, item: {}, used: false, hasOccupant: false, hasResumeInFlight: true, kind: "in_flight" },

@@ -2,8 +2,9 @@
 # shellcheck disable=SC2016,SC2030,SC2031,SC2154,SC2249,SC2312  # backticked verdict forms are literal text; a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison; each case arm is a row
 # The owner queue's turn-end check (Stop hook) against a stand-in monitor: it keeps a turn from ending at most once
 # per turn, asking an interactive or background session's tool-using turn for its [QUEUE-VERDICT] line, naming the
-# wait command while an item of this session awaits the owner and no wait of this Claude process runs, or both in
-# one block — never twice for the same items, never with item text, and never when it cannot decide.
+# wait command while an item of this session awaits the owner, no wait or listener of this Claude process runs and
+# none of its listeners ever started, or both in one block — never twice for the same items, never with item text,
+# and never when it cannot decide.
 #
 # Run via: bats hooks/test/queue-turn-end-check.bats
 # Requires: bats, bash 3.2+, jq, curl, python3
@@ -128,8 +129,8 @@ get_recorded_start() {
   printf '%s\n' "${started%"${started##*[![:space:]]}"}"
 }
 
-# <live|stale> [owner pid] [owner start] → this session's wait lock held by a running waiter, or by a gone one, of
-# that owner (default this Claude process, with its own start)
+# <live|stale|listener> [owner pid] [owner start] → this session's wait lock held by a running waiter, a gone one or
+# a running listener, of that owner (default this Claude process, with its own start)
 hold_wait_lock() {
   local waiter_pid waiter_start owner_pid="${2:-${CLAUDE_PID:-}}" owner_start="${3:-}"
   [[ -n "${owner_start}" ]] || owner_start="$(get_recorded_start "${owner_pid}")"
@@ -139,8 +140,18 @@ hold_wait_lock() {
   waiter_pid="${WAITER_PID}"
   waiter_start="$(get_recorded_start "${waiter_pid}")"
   if [[ "$1" == stale ]]; then stop_waiter; fi
+  # a listener's record ends with its holder kind
+  if [[ "$1" == listener ]]; then owner_start+="|listen"; fi
   ln -sn -- "${waiter_pid}|${waiter_start}|${owner_pid}|${owner_start}" \
     "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
+}
+
+# <owner pid> → the listening mark a listener of that Claude process leaves when it takes the session's lock
+put_listening_mark() {
+  local owner
+  owner="$1|$(get_recorded_start "$1")"
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
+  (source "${GA}/scripts/lib/queue-session.sh" && queue_put_listening_mark "${SESSION_ID}" "${owner}")
 }
 
 # the reason of the block decision in the hook's stdout; non-zero when that stdout is not JSON
@@ -186,18 +197,23 @@ assert_silent_turn_end() {
   }
 }
 
-@test "an awaiting item a wait resolves, with no wait running, keeps the turn going with the wait command and no item text" {
+@test "an awaiting item a wait resolves, with no wait or listener of this Claude process running, keeps the turn going with the wait command and no item text" {
   start_stub
   local row rows=() lock expected_status
   # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
   for expected_status in $(source "${GA}/scripts/lib/queue-session.sh" && printf '%s' "${QUEUE_WAIT_RESOLVED_STATUSES}"); do
     rows+=("${expected_status}|none")
   done
-  for row in "${rows[@]}" "open|stale"; do
+  # another-listened: a listening mark names another Claude process → no listener of this one is starting
+  for row in "${rows[@]}" "open|stale" "open|another-listened"; do
     IFS='|' read -r expected_status lock <<<"${row}"
     new_root
     mark_items 41
-    if [[ "${lock}" == stale ]]; then hold_wait_lock stale; fi
+    case "${lock}" in
+      none) ;;
+      another-listened) put_listening_mark 1 ;;
+      *) hold_wait_lock "${lock}" ;;
+    esac
     set_reply 200 "$(item_reply "${expected_status}")"
     : >"${BATS_TEST_TMPDIR}/requests.log"
     run_hook
@@ -235,17 +251,22 @@ assert_silent_turn_end() {
   }
 }
 
-@test "the turn ends silently with no monitor call for a running wait, and for a continued stop, a subagent or no session even on a tool-using turn with no verdict" {
+@test "the turn ends silently with no monitor call for a running wait and for a listener of this Claude process holding or taking the lock, and for a continued stop, a subagent or no session even on a tool-using turn with no verdict" {
   start_stub
   local row name payload
-  for row in "running wait" "continued stop" "subagent" "no session"; do
+  for row in "running wait" "listener holding the lock" "listener taking the lock" "continued stop" "subagent" \
+    "no session"; do
     new_root
     mark_items 41
     export CLAUDE_PID="$$"
-    if [[ "${row}" != "running wait" ]]; then write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text; fi
+    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
+    if [[ "${row}" == "running wait" || "${row}" == listener* ]]; then write_turn_transcript "${TRANSCRIPT}" start:t-1 text; fi
     payload="$(stop_payload)"
     case "${row}" in
       "running wait") hold_wait_lock live ;;
+      "listener holding the lock") hold_wait_lock listener ;;
+      # the turn's own Stop starts the listener beside this check, in no set order: its mark stands for it
+      "listener taking the lock") put_listening_mark "${CLAUDE_PID}" ;;
       "continued stop") payload="$(jq -c '.stop_hook_active = true' <<<"${payload}")" ;;
       subagent) payload="$(jq -c '.agent_id = "a1b2c3" | .agent_type = "glass-atrium-dev-shell"' <<<"${payload}")" ;;
       "no session") payload="$(jq -c 'del(.session_id)' <<<"${payload}")" ;;

@@ -1,5 +1,5 @@
 // Session-side delivery transitions: pull claim (`pending` and the CLI's `wait` polls), ack (first valid ack wins),
-// withdraw (never an owner message), and the in-memory waiting fact a wait poll refreshes.
+// withdraw (never an owner message), the listener's non-claiming count read, and the in-memory waiting fact both polls refresh.
 // Each transaction locks the caller's registry row before touching item rows (registry.ts lock order).
 
 import { randomUUID } from "node:crypto";
@@ -9,12 +9,17 @@ import { getPrisma } from "../db.js";
 import { QueueRequestError } from "./errors.js";
 import { type LockedSession, lockSession } from "./registry.js";
 
-const PULL = {
+export const PULL = {
   // The session fetches then acks right after a pull → a missed window means the process died mid-turn
   ACK_WINDOW_MS: 10 * 60_000,
   // Bounded claim per call; the CLI pulls again while items remain
   BATCH_LIMIT: 20,
+  // The queue CLI's pull rounds per call (scripts/atrium-queue.sh → PULL_ROUNDS_MAX); a test binds the two
+  ROUNDS_MAX: 10,
 } as const;
+// ponytail: what the CLI's pull drains at most per call; a set beyond it that changes with its count and first ids
+// unchanged stays unannounced until the nudge interval passes
+export const ANSWERED_IDS_LIMIT = PULL.ROUNDS_MAX * PULL.BATCH_LIMIT;
 // Two of the queue CLI's wait poll intervals (scripts/atrium-queue.sh → WAIT_POLL_S); a test binds the two
 export const WAIT_FRESH_MS = 10_000;
 
@@ -61,6 +66,29 @@ export async function claimPendingItems(sessionId: string, wait?: WaitPoll): Pro
   });
   if (wait !== undefined) putWaitPoll(sessionId, Date.now());
   return claims;
+}
+
+/** The caller's answered items as the listener sees them. */
+export interface PendingCount {
+  answeredWaiting: number;
+  /** ascending, the first ANSWERED_IDS_LIMIT → the listener keys its announce bound on the set, not the count */
+  answeredItemIds: number[];
+}
+
+/**
+ * Counts the caller's own answered items (answers and owner messages) without claiming any — the harness listener's poll.
+ * Refused with 409 unless the row is live for the poll's pid; accepted → the session is waiting, as after a wait poll.
+ */
+export async function getPendingCount(sessionId: string, poll: WaitPoll): Promise<PendingCount> {
+  const where = { sessionId, status: "answered" } as const;
+  const pending = await getPrisma().$transaction(async (tx) => {
+    assertLiveFor(await lockOwnSession(tx, sessionId), poll.pid);
+    const answeredWaiting = await tx.queueItem.count({ where });
+    const rows = await tx.queueItem.findMany({ where, orderBy: { id: "asc" }, take: ANSWERED_IDS_LIMIT, select: { id: true } });
+    return { answeredWaiting, answeredItemIds: rows.map((row) => Number(row.id)) };
+  });
+  putWaitPoll(sessionId, Date.now());
+  return pending;
 }
 
 /** True while the session's last accepted wait poll is younger than WAIT_FRESH_MS. */

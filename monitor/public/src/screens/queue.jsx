@@ -33,10 +33,35 @@ const LIST_GROUPS_Q = {
 };
 
 // one vocabulary on every surface (spec §9.4): whether a recipient has the order, never why it waits
-const RECEIPT_Q = { received: "Received", notYet: "Not yet", notReceived: "Not received" };
+const RECEIPT_Q = { received: "Received", notYet: "Not yet", notListening: "Not listening", notReceived: "Not received" };
+// the receipts a single copy shows and a roll-up keeps listed under its line
+const SHOWN_RECEIPTS_Q = ["notListening", "notReceived"];
+// WHEN → every not-listening sentence and badge title on the page
+const NOT_LISTENING_Q = { WHEN: "next turn end or restart", GLYPH: "pause" };
 
 function getNotReceivedFactQ(count) {
 	return { text: `${count} not received`, badge: "warn" };
+}
+
+/**
+ * A not-listening tag badge: the pause glyph before `text`, the sentence in its title; `isSpoken` → screen readers also hear the sentence.
+ * Under a recipient the sentence is spoken only (spec §9.3: no sentence under a recipient).
+ */
+function getNotListeningFactQ(text, isSpoken = false) {
+	const delivers = `delivers at its ${NOT_LISTENING_Q.WHEN}`;
+	const fact = { text, badge: "tag", glyph: NOT_LISTENING_Q.GLYPH, title: `${RECEIPT_Q.notListening} — ${delivers}` };
+	return isSpoken ? { ...fact, spoken: `, ${delivers}` } : fact;
+}
+
+/** `<names> is not listening: it gets <what> at its NOT_LISTENING_Q.WHEN.`, plural for several names. */
+function getNotListeningSentenceQ(names, what) {
+	const isOne = names.length === 1;
+	return `${getNameListQ(names)} ${isOne ? "is" : "are"} not listening: ${isOne ? "it gets" : "they get"} ${what} at ${isOne ? "its" : "their"} ${NOT_LISTENING_Q.WHEN}.`;
+}
+
+/** A session that hears nothing until its NOT_LISTENING_Q.WHEN: live or not reachable, with no wait or listener polling. */
+function isNotListeningQ(session) {
+	return session.state !== "exited" && !session.isWaiting;
 }
 
 function getReceiptCountQ(receipts, receipt) {
@@ -57,7 +82,6 @@ const ABORT_REASON_LABEL_Q = {
 };
 
 const SKIP_TEXT_Q = {
-	approval: "approval needs your terminal: resume the session yourself",
 	resume_used: "automatic resume used — Resend to try again",
 	shared_worktree: "another session is live or resuming in this worktree: this one resumes automatically once that one has ended",
 };
@@ -627,7 +651,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const ticks = usePageTickQ({ readList, readResumes, sessions, orders, setStatus, onReadQueueCount });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const setImages = useCallbackQ((id, update) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], images: update(prev[id]?.images ?? []) } })), []);
-	// opening a row or focusing it is the owner seeing it → its New mark goes (spec §4.4)
+	// opening a row, focusing it or its row showing in the list is the owner seeing it → the arrival ends (spec §4.4)
 	const setSeen = useCallbackQ((id) => setList((prev) => (prev.newIds.includes(id) ? { ...prev, newIds: prev.newIds.filter((other) => other !== id) } : prev)), []);
 	const selectRow = useCallbackQ((id) => { openItem(id); setSeen(id); }, [openItem, setSeen]);
 	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders });
@@ -731,7 +755,7 @@ async function getPageReadQ({ readList, readResumes, sessions, orders, setStatus
 	return read.isGood;
 }
 
-// a turn to Not received outranks an arrival: it asks for an act, and an arrival keeps its New mark on its row
+// a turn to Not received outranks an arrival: it asks for an act, and the arrival stays tracked for the off-view note and the way back
 function setReadStatusQ(read, setStatus) {
 	if (read.turned.length > 0) setStatus({ text: getNotReceivedNoteQ(read.turned), orderId: read.turned[0].id });
 	else if (read.arrived.length > 0) setStatus(getArrivalNoteQ(read.arrived));
@@ -967,11 +991,20 @@ function getSendTargetsQ(rows, selectedIds) {
 	return { ids: targets.map((row) => row.id), names: targets.map((row) => row.name), endedCount: targets.filter((row) => row.state === "exited").length };
 }
 
-// one target by name, several by count · an ended target is resumed to take the order → the label says how many before the owner sends
-function getSendLabelQ({ ids, names, endedCount }) {
-	if (ids.length === 0) return "Send order";
-	const label = ids.length === 1 ? `Send to ${names[0]}` : `Send to ${ids.length} sessions`;
-	return endedCount > 0 ? `${label} · resumes ${endedCount} ended` : label;
+// the send label whole, from its parts (getSendPartsQ) → the button's accessible name and title
+function getSendLabelQ(parts) {
+	return parts ?`${parts.head}${parts.name}${parts.tail}` : "Send order";
+}
+
+/**
+ * The send label as the pieces the button cuts `{ head, name, tail }`; nothing ticked → null.
+ * One target by name, several by count · an ended target is resumed to take the order → `tail` says how many before the owner sends.
+ * Too narrow a row → only `name` gives way (base.css → .queue-send-label); `tail` shows whole or drops whole (getSendTailFitQ), `head` (the verb and a count) stays whole.
+ */
+function getSendPartsQ({ ids, names, endedCount }) {
+	if (ids.length === 0) return null;
+	const tail = endedCount > 0 ? ` · resumes ${endedCount} ended` : "";
+	return ids.length === 1 ? { head: "Send to ", name: names[0], tail } : { head: `Send to ${ids.length} sessions`, name: "", tail };
 }
 
 /** What a send press lacks `{ message, focus }` — `focus` names the control that fixes it (`rail` / `box`); nothing missing → null. */
@@ -985,9 +1018,11 @@ function getOrderInvalidQ(targets, text) {
 
 /** The composer's note at rest · `rows` null → the rail not read yet, so no claim that nobody takes an order (spec §10). */
 function getOrderNoteQ({ ids, names }, rows = null) {
-	if (ids.length === 1) return `Goes to ${names[0]}.`;
-	if (ids.length > 1) return "Each ticked session gets its own copy.";
-	return rows?.some((row) => row.isSelectable) === false ? "No session can take an order right now." : "Tick a session in the rail to address this order.";
+	if (ids.length === 0) return rows?.some((row) => row.isSelectable) === false ? "No session can take an order right now." : "Tick a session in the rail to address this order.";
+	const notListening = (rows ?? []).filter((row) => ids.includes(row.id) && isNotListeningQ(row)).map((row) => row.name);
+	if (ids.length === 1) return notListening.length > 0 ? getNotListeningSentenceQ(notListening, "this") : `Goes to ${names[0]}.`;
+	const each = "Each ticked session gets its own copy.";
+	return notListening.length === 0 ? each : `${each} ${getNotListeningSentenceQ(notListening, "it")}`;
 }
 
 function getOrderSentStatusQ(names) {
@@ -1165,7 +1200,7 @@ function useFilterQ() {
  * One read of the list, merged by item id into the list as it stands when the answer lands (getMergedDataQ).
  * A failure with rows loaded keeps them and their read time; with none loaded it is the list's error state.
  * @param getList - the list now; absent → nothing loaded
- * @returns `{ isGood, arrived, turned }` — `arrived` the items this read marked New, in server order; `turned` as getMergedDataQ
+ * @returns `{ isGood, arrived, turned }` — `arrived` the items this read tracks as arrivals, in server order; `turned` as getMergedDataQ
  */
 async function getListQ({ setList, getList = () => EMPTY_LIST_Q }) {
 	if (getList().data === null) setList((prev) => ({ ...prev, status: "loading" }));
@@ -1295,10 +1330,11 @@ function QueueListQ({ queue }) {
 	const items = queue.list.data?.items ?? [];
 	const ids = queue.sessions.selectedIds;
 	const visible = getVisibleItemsQ(items, queue.filter, ids);
-	const offView = useOffViewNewQ(queue.list.newIds, queue.sheet.kind !== "none");
+	const offView = useOffViewNewQ(queue.list.newIds, queue.sheet.kind !== "none", queue.setSeen);
+	const scope = getScopeTitleQ(queue.sessions.region.data?.sessions ?? [], ids);
 	return (
-		<Card className="queue-pane queue-list" title={getScopeTitleQ(queue.sessions.region.data?.sessions ?? [], ids)} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
-			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts"
+		<Card className="queue-pane queue-list" title={<span title={scope}>{scope}</span>} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
+			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
 			bar={isListBarShownQ(items, queue.filter) ? <QueueFilterBarQ items={items} filter={queue.filter} onFilter={queue.setFilter} /> : null}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} visible={visible} />
@@ -1307,22 +1343,25 @@ function QueueListQ({ queue }) {
 }
 
 /**
- * The New rows outside the list body's visible part (spec §4.4), measured when the marks change, on scroll and when the list returns from a sheet.
- * @returns `{ count, direction, id }` as getOffViewQ, null while every New row shows
+ * The arrivals outside the list body's visible part (spec §4.4), measured when they change, on scroll and when the list returns from a sheet.
+ * An arrival whose row shows has been seen → `onSeen` ends it.
+ * @returns `{ count, direction, id }` as getOffViewQ, null while every arrival shows
  */
-function useOffViewNewQ(newIds, isHidden) {
+function useOffViewNewQ(newIds, isHidden, onSeen) {
 	const [offView, setOffView] = useStateQ(null);
 	useEffectQ(() => {
 		const body = document.querySelector(PANE_Q.LIST_BODY);
 		if (!body || isHidden || newIds.length === 0) return void setOffView(null);
 		const measure = () => {
-			const next = getOffViewQ(body.getBoundingClientRect(), getRowBoxesQ(newIds));
+			const [view, rows] = [body.getBoundingClientRect(), getRowBoxesQ(newIds)];
+			for (const id of getInViewIdsQ(view, rows)) onSeen(id);
+			const next = getOffViewQ(view, rows);
 			setOffView((prev) => (prev?.count === next?.count && prev?.direction === next?.direction && prev?.id === next?.id ? prev : next));
 		};
 		measure();
 		body.addEventListener("scroll", measure, { passive: true });
 		return () => body.removeEventListener("scroll", measure);
-	}, [newIds, isHidden]);
+	}, [newIds, isHidden, onSeen]);
 	return offView;
 }
 
@@ -1334,16 +1373,33 @@ function getRowBoxesQ(ids) {
 }
 
 /**
- * A row cut by an edge still shows; only one wholly past an edge is off view. Both sides → the side below, where arrivals land.
+ * The arrivals whose row does not show (isRowShownQ), by side. Both sides → the side below, where arrivals land.
  * @param view - the list body's box; zero high while an open sheet puts the list away
- * @returns `{ count, direction, id }` — `id` the off-view New row nearest the visible part · null when none
+ * @returns `{ count, direction, id }` — `id` the off-view arrival nearest the visible part · null when none
  */
 function getOffViewQ(view, rows) {
-	if (view.bottom <= view.top) return null;
-	const below = rows.filter((row) => row.top >= view.bottom).sort((a, b) => a.top - b.top);
-	const above = rows.filter((row) => row.bottom <= view.top).sort((a, b) => b.bottom - a.bottom);
+	if (isListAwayQ(view)) return null;
+	const hidden = rows.filter((row) => !isRowShownQ(view, row));
+	const below = hidden.filter((row) => row.top >= view.bottom).sort((a, b) => a.top - b.top);
+	const above = hidden.filter((row) => row.top < view.bottom).sort((a, b) => b.bottom - a.bottom);
 	const [side, direction] = below.length > 0 ? [below, "below"] : [above, "above"];
 	return side.length === 0 ? null : { count: side.length, direction, id: side[0].id };
+}
+
+// the arrivals whose row shows → seen · none while an open sheet puts the list away
+function getInViewIdsQ(view, rows) {
+	if (isListAwayQ(view)) return [];
+	return rows.filter((row) => isRowShownQ(view, row)).map((row) => row.id);
+}
+
+// an open sheet puts the list away: its body is zero high
+function isListAwayQ(view) {
+	return view.bottom <= view.top;
+}
+
+// a row cut by an edge still shows; only one wholly past an edge does not
+function isRowShownQ(view, row) {
+	return row.top < view.bottom && row.bottom > view.top;
 }
 
 // Show on the off-view note → the row in view and focused; the selection stays where it is
@@ -1439,26 +1495,19 @@ function QueueGroupQ({ group, queue, view }) {
 }
 
 // an order's row shows its entry in Orders, the list staying (spec §9.2); every other row opens its sheet in the list's place
-// an arrival not yet opened or focused leads its meta line and its name with New (spec §4.4)
+// who, then what (spec §4.2): the name column first, left out with one session ticked; an arrival paints no mark (§4.4), focusing it ends it
 function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, onSeen }) {
-	const { Icon, Badge, formatRelativeTime, formatKstDateTime } = window.UI;
+	const { Icon, formatRelativeTime, formatKstDateTime } = window.UI;
 	const { item } = row;
 	const facts = getRowFactsQ(row, view.isAccountShown);
 	return (
 		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={row.id === view.tabStopId ? 0 : -1}
-			aria-label={`${isNew ? "New, " : ""}${getRowLabelQ(row, facts, view.isNameShown)}`} className="queue-row"
+			aria-label={getRowLabelQ(row, facts, view.isNameShown)} className="queue-row"
 			onFocus={isNew ? () => onSeen?.(row.id) : undefined} onClick={() => (getKindWordQ(item) === "Order" ? onOrder(row) : onSelect(row.id))}>
+			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} /></span>}
 			<span className="queue-row-title" title={item.title}>{item.title}</span>
 			<span className="queue-row-meta">
-				<span className="queue-row-who">
-					{isNew && <Badge fill="solid">New</Badge>}
-					{isNew && view.isNameShown && " "}
-					{view.isNameShown && <RowWhoQ row={row} />}
-				</span>
-				<span className="queue-row-facts">
-					{view.isNameShown && facts.length > 0 && <span aria-hidden="true" className="queue-row-sep">·</span>}
-					<RowFactsLineQ facts={facts} />
-				</span>
+				<span className="queue-row-facts"><RowFactsLineQ facts={facts} /></span>
 				<span className="queue-row-age" title={formatKstDateTime(item.askedAt)}>{formatRelativeTime(item.askedAt)}</span>
 			</span>
 			<Icon name="chevR" size={16} className="queue-row-chevron" />
@@ -1466,17 +1515,24 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, on
 	);
 }
 
+// one cut line, the whole name in its tooltip; an order to several sessions names their count, never a directory
 function RowWhoQ({ row }) {
-	if (row.copies.length > 1) return `${row.copies.length} sessions`;
-	return <ItemSessionNameQ session={row.item.session} />;
+	const count = row.copies.length;
+	if (count > 1) return <span className="queue-row-name" title={`${count} sessions`}>{`${count} sessions`}</span>;
+	return <ItemSessionNameQ session={row.item.session} isStacked />;
 }
 
-// no registered name → the start-directory name, marked so it never reads as one the session chose
-function ItemSessionNameQ({ session }) {
+/**
+ * No registered name → the start-directory name, marked so it never reads as one the session chose.
+ * `isStacked` → the list's name column: the name one cut line with its tooltip, the marker its own line under it.
+ */
+function ItemSessionNameQ({ session, isStacked = false }) {
+	const hasMark = session.isNameRegistered === false;
+	if (!isStacked) return <>{session.name}{hasMark && <span className="font-normal text-dim">{" start directory"}</span>}</>;
 	return (
 		<>
-			{session.name}
-			{session.isNameRegistered === false && <span className="font-normal text-dim">{" start directory"}</span>}
+			<span className="queue-row-name" title={session.name}>{session.name}</span>
+			{hasMark && <span className="queue-row-dir">start directory</span>}
 		</>
 	);
 }
@@ -1493,18 +1549,34 @@ function RowFactsLineQ({ facts }) {
 }
 
 // a settled receipt is a mark and a word, no shell (spec §9.4) → the mark rides the text, hidden from screen readers
+// `isYielding` → in a row's facts the words give way, glyph and count kept, once the dim text has none left (base.css → .pill--yield)
 function RowFactsQ({ facts }) {
 	const { Badge, TONE_GLYPH } = window.UI;
 	return <>{facts.map((fact, index) => (fact.badge
-		? <Badge key={fact.text} fill={fact.badge}>{fact.text}</Badge>
+		? (
+			<Badge key={fact.text} fill={fact.badge} title={fact.title} className={fact.isYielding ? "pill--yield" : ""}>
+				{fact.glyph && getPauseGlyphQ()}
+				{fact.isYielding ? <span className="pill-words">{fact.text}</span> : fact.text}
+				{fact.spoken && <span className="sr-only">{fact.spoken}</span>}
+			</Badge>
+		)
 		: (
 			<span key={fact.text}>
 				{index > 0 && !facts[index - 1].badge && " · "}
 				{fact.mark && <span aria-hidden="true" className={`text-${fact.mark}`}>{`${TONE_GLYPH[fact.mark]} `}</span>}
-				{fact.dot && <span aria-hidden="true" className={`text-${fact.dot}`}>{"● "}</span>}
 				{fact.text}
 			</span>
 		)))}</>;
+}
+
+// two solid bars in the badge's ink at the 12 box → reads as a pause at device scale 1, where an outline glyph's hairlines blur grey
+function getPauseGlyphQ() {
+	return (
+		<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+			<rect x="2" y="1.5" width="3" height="9" rx="0.5" fill="currentColor" />
+			<rect x="7" y="1.5" width="3" height="9" rx="0.5" fill="currentColor" />
+		</svg>
+	);
 }
 
 /**
@@ -1528,28 +1600,32 @@ function getDeliveryFactsQ(item, copies) {
 	return [{ text: route }, ...getReceiptFactsQ(copies)];
 }
 
-// one copy → only a Not received shows · several → `2 of 3 received` (all waiting → the word Not yet), any not received → its own warning after the count
+// one copy → only a Not listening or a Not received shows · several → `2 of 3 received` (all waiting → the word Not yet), then `n not listening`, then any not received
 function getReceiptFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
-	if (receipts.length === 1) return receipts[0] === "notReceived" ? [getReceiptFactQ(receipts[0])] : [];
+	if (receipts.length === 1) return SHOWN_RECEIPTS_Q.includes(receipts[0]) ? [getReceiptFactQ(receipts[0])] : [];
 	const received = getReceiptCountQ(receipts, "received");
+	const notListening = getReceiptCountQ(receipts, "notListening");
 	const failed = getReceiptCountQ(receipts, "notReceived");
-	const count = { text: received === 0 && failed === 0 ? RECEIPT_Q.notYet : `${received} of ${receipts.length} received` };
-	return [count, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
+	const count = { text: received + notListening + failed === 0 ? RECEIPT_Q.notYet : `${received} of ${receipts.length} received` };
+	return [count, ...(notListening > 0 ? [{ ...getNotListeningFactQ(`${notListening} not listening`), isYielding: true }] : []), ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
 }
 
 function getReceiptFactQ(receipt) {
 	if (receipt === "received") return { text: RECEIPT_Q.received, mark: "ok" };
+	if (receipt === "notListening") return getNotListeningFactQ(RECEIPT_Q.notListening, true);
 	return { text: RECEIPT_Q[receipt], badge: receipt === "notYet" ? "tag" : "warn" };
 }
 
 /**
  * The receipt of one copy: `received` once its session acknowledged it; `notReceived` once the queue recorded it did not get there
- * (unacked, expired, or the set canResend names); every other state → `notYet`.
+ * (unacked, expired, or the set canResend names); `notListening` while an answered or held copy's session does not listen;
+ * every other state → `notYet` (delivering → being taken now; an ended session's copy → a resume starts it).
  */
 function getReceiptQ(item) {
 	if (item.status === "delivered") return "received";
 	if (item.canResend || item.status === "unacked" || item.status === "expired") return "notReceived";
+	if ((item.status === "answered" || item.status === "held") && isNotListeningQ(item.session)) return "notListening";
 	return "notYet";
 }
 
@@ -1646,21 +1722,24 @@ function ItemSheetQ({ item, queue, cliPath, hasLeft = false }) {
 	);
 }
 
-// `← List` (with the count of rows that arrived meanwhile) · the h2 · the position and previous / next (spec §4.3)
+// the way back (its arrival count in its name, painted beside the glyph-only square) · the h2 · the position and previous / next (spec §4.3, §12.5)
 function SheetHeadQ({ item, queue }) {
 	const { Badge, Icon } = window.UI;
 	const { steps } = queue;
 	const arrived = queue.list.newIds.length;
 	return (
 		<div className="card-head queue-sheet-head">
-			<button type="button" className="btn sm" aria-label={arrived > 0 ? `Back to the list, ${arrived} new in the list` : "Back to the list"} title="Esc" onClick={queue.back}>
-				<span aria-hidden="true">←</span> List{arrived > 0 && <Badge fill="solid">{arrived}</Badge>}
-			</button>
+			<span className="queue-back">
+				<button type="button" className="btn ghost sm icon" aria-label={arrived > 0 ? `Back to the list, ${arrived} new in the list` : "Back to the list"} title="Back to the list (Esc)" onClick={queue.back}>
+					<Icon name="arrow-left" size={16} />
+				</button>
+				{arrived > 0 && <span aria-hidden="true"><Badge fill="solid">{arrived}</Badge></span>}
+			</span>
 			<h2 className="card-title"><LetterheadQ item={item} nameNote={getNameNoteQ(item.session, queue)} /></h2>
 			<span className="queue-steps">
 				{steps.index >= 0 && <span className="fs-meta text-dim tabular-nums">{`${steps.index + 1} of ${steps.count}`}</span>}
-				<button type="button" className="btn ghost sm icon" aria-label="Previous item" title="K" disabled={steps.prevId === null} onClick={() => queue.selectRow(steps.prevId)}><Icon name="chevron-up" size={16} /></button>
-				<button type="button" className="btn ghost sm icon" aria-label="Next item" title="J" disabled={steps.nextId === null} onClick={() => queue.selectRow(steps.nextId)}><Icon name="chevron-down" size={16} /></button>
+				<button type="button" className="btn ghost sm icon" aria-label="Previous item" title="Previous item (K)" disabled={steps.prevId === null} onClick={() => queue.selectRow(steps.prevId)}><Icon name="chevron-up" size={16} /></button>
+				<button type="button" className="btn ghost sm icon" aria-label="Next item" title="Next item (J)" disabled={steps.nextId === null} onClick={() => queue.selectRow(steps.nextId)}><Icon name="chevron-down" size={16} /></button>
 			</span>
 		</div>
 	);
@@ -1822,6 +1901,7 @@ function CardStateQ({ item, cliPath }) {
 	return (
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
+			{getReceiptQ(item) === "notListening" && <p className="fs-meta text-dim">{getNotListeningSentenceQ([item.session.name], "this answer")}</p>}
 			<PullLineQ item={item} cliPath={cliPath} />
 			{notes.length === 0 && <NotReceivedLineQ item={item} cliPath={cliPath} />}
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
@@ -1829,11 +1909,11 @@ function CardStateQ({ item, cliPath }) {
 	);
 }
 
-// an answered item waits for its live session's pull: a waiting session claims it at its next poll, any other one needs the owner to run the pull
+// an answered item waits for its live session's pull: a listening session (a wait or a listener) picks it up itself, any other one needs the owner to run the pull
 function PullLineQ({ item, cliPath }) {
 	const { MachineString } = window.UI;
 	if (item.status !== "answered" || item.session.state !== "live") return null;
-	if (item.session.isWaiting) return <p className="fs-meta text-dim">The session is waiting: its next poll takes this answer.</p>;
+	if (item.session.isWaiting) return <p className="fs-meta text-dim">The session is listening: it picks up this answer on its own.</p>;
 	if (!cliPath) return null;
 	return <p className="fs-meta text-dim">Run in that session: <MachineString>{`${getShellWordQ(cliPath)} pending`}</MachineString></p>;
 }
@@ -1900,11 +1980,13 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	};
 	const resend = item.canResend ? [{ label: "Resend", onPress: () => queue.send(item.id, "resend") }] : [];
 	const rest = `${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to ${name}.`;
+	// the pick is itself the approval, nobody asks again in a terminal → this one info line in ink (spec §6 → Note slot)
+	const approval = item.isApprovalClass ? <span className="text-ink">{`Approval: an approving answer here approves the stated action, once; ${name} does not ask again in its terminal.`}</span> : null;
 	return (
 		<ComposerQ field={item.isFreeTextAllowed ? { id: `queue-text-${item.id}`, label: "Your own answer or a note on this decision (optional)" } : null}
 			text={draft.text ?? ""} onText={(text) => queue.setDraft(item.id, { text, error: null })} isBusy={isBusy}
 			buttons={[...resend, { label: "Send answer", isInk: true, onPress: onSend }]}
-			note={<ComposerNoteQ error={error ?? draft.error} info={item.isApprovalClass ? `Approval: after you answer here, confirm once more in ${name}'s terminal.` : null} rest={rest} />}
+			note={<ComposerNoteQ error={error ?? draft.error} info={approval} rest={rest} />}
 			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} />
 	);
 }
@@ -1953,7 +2035,8 @@ function putInvalidQ(queue, id, message, targetId) {
  * One composer for every field the owner writes in: label, the box and its buttons on one row, the reserved note line.
  * Buttons are always enabled; while sending they read `Sending…` and carry aria-disabled. Cmd / Ctrl + Enter presses the ink button.
  * @param field - `{ id, label }` of the box; null → buttons alone
- * @param buttons - `{ label, isInk, keyName, onPress }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter
+ * @param buttons - `{ label, isInk, keyName, onPress, parts }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter;
+ *   `parts` (getSendPartsQ) → the label may be cut to its row, the whole label in the button's title
  * @param later - the quiet button at the end of the note line, `{ label, keyName, onPress }`
  */
 function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null }) {
@@ -1973,8 +2056,8 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 				<div className="queue-compose-buttons">
 					{buttons.map((button) => (
 						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined}
-							aria-busy={(isBusy && button.isInk) || undefined} onClick={isBusy ? undefined : button.onPress}>
-							{isBusy && button.isInk ? "Sending…" : button.label}
+							aria-busy={(isBusy && button.isInk) || undefined} title={button.parts ? button.label : undefined} onClick={isBusy ? undefined : button.onPress}>
+							{isBusy && button.isInk ? "Sending…" : getButtonTextQ(button)}
 						</button>
 					))}
 				</div>
@@ -1989,6 +2072,56 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 
 function getFieldLabelQ(field) {
 	return <label htmlFor={field.id} className="field-label">{field.label}</label>;
+}
+
+function getButtonTextQ({ label, parts }) {
+	return parts ? <SendLabelQ parts={parts} /> : label;
+}
+
+// a label in parts (getSendPartsQ) → one cut line inside the button; a dropped tail leaves the flow, never the text → the accessible name stays whole
+function SendLabelQ({ parts }) {
+	const [ref, isTailShown] = useSendTailQ(parts);
+	return (
+		<span ref={ref} className="queue-send-label">
+			<span>{parts.head}</span>
+			{parts.name && <span className="queue-send-name">{parts.name}</span>}
+			{parts.tail && <span className={`queue-send-tail${isTailShown ? "" : " is-dropped"}`}>{parts.tail}</span>}
+		</span>
+	);
+}
+
+// judged before paint, again whenever the row's width or the head's own width moves (a pane resize, a font arriving)
+function useSendTailQ(parts) {
+	const ref = useRefQ(null);
+	const [isTailShown, setTailShown] = useStateQ(true);
+	useLayoutEffectQ(() => {
+		const label = ref.current;
+		if (!label || !parts.tail) return undefined;
+		const judge = () => setTailShown(getSendTailFitQ(label));
+		judge();
+		if (typeof ResizeObserver === "undefined") return undefined;
+		const observer = new ResizeObserver(judge);
+		observer.observe(label.closest(".queue-compose-row"));
+		observer.observe(label.firstElementChild);
+		return () => observer.disconnect();
+	}, [parts.head, parts.name, parts.tail]);
+	return [ref, isTailShown];
+}
+
+/**
+ * Whether the button's room holds the resume tail beside the head and the name at its 3ch floor (spec §4.5): the row less the box
+ * floor and the gap while the button stands beside the box, the whole row under it → decided where the button's width is, so a
+ * dropped tail takes none of it. Reads the same in either state: a dropped tail still lays out its own width, out of flow.
+ */
+function getSendTailFitQ(label) {
+	const [button, row] = [label.closest(".btn"), label.closest(".queue-compose-row")];
+	const [box, name, tail] = [row.querySelector(".queue-compose-box"), label.querySelector(".queue-send-name"), label.querySelector(".queue-send-tail")];
+	const [rowStyle, buttonStyle] = [getComputedStyle(row), getComputedStyle(button)];
+	const isBeside = box !== null && button.getBoundingClientRect().top < box.getBoundingClientRect().bottom;
+	const room = row.getBoundingClientRect().width - (isBeside ? parseFloat(rowStyle.getPropertyValue("--queue-box-min")) + parseFloat(rowStyle.columnGap) : 0);
+	const chrome = ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"].reduce((sum, key) => sum + parseFloat(buttonStyle[key]), 0);
+	const floor = name === null ? 0 : Math.min(name.scrollWidth, parseFloat(getComputedStyle(name).minWidth));
+	return chrome + label.firstElementChild.getBoundingClientRect().width + floor + tail.getBoundingClientRect().width <= room;
 }
 
 /** The bordered box: the thumbnails row while images are attached, the text, and `Add images` where the use takes images. */
@@ -2054,7 +2187,7 @@ function getRemoveIdQ(fieldId, key) {
 	return `${fieldId}-remove-${key}`;
 }
 
-// one line: a refusal or a missing control (crit alert), else what the images need, else the approval reminder (info), else the line at rest
+// one line: a refusal or a missing control (crit alert), else what the images need, else the approval note (info), else the line at rest
 function ComposerNoteQ({ error, info = null, rest, tray = null, fieldId = "" }) {
 	if (error) return <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ>;
 	const image = tray ? getImageNoteQ(tray.shots, tray.isOver) : null;
@@ -2064,6 +2197,7 @@ function ComposerNoteQ({ error, info = null, rest, tray = null, fieldId = "" }) 
 	return <p className="fs-meta">{rest}</p>;
 }
 
+// re-sending a file is a re-send → it keeps its word (spec §12.5), the quiet tier
 function ImageFailureLineQ({ text, retryId, onRetry }) {
 	return (
 		<span className="queue-note-failure">
@@ -2145,7 +2279,7 @@ function SessionsBodyQ({ queue, rows }) {
 	);
 }
 
-/** The head of the roster, the whole band its master box's label (spec §9.1); no live session that takes a message → no box. */
+/** The head of the roster, the whole band its master box's label (spec §9.1): the box in the rows' box column, the label on their names' column; no live session that takes a message → no box. */
 function AllSessionsBandQ({ rows, sessions, notReceived }) {
 	const { Badge } = window.UI;
 	const master = getMasterTickQ(sessions.selectedIds, rows);
@@ -2155,13 +2289,12 @@ function AllSessionsBandQ({ rows, sessions, notReceived }) {
 	const warn = notReceived > 0 && <Badge fill="warn" title={getNotReceivedFactQ(notReceived).text}>{notReceived}<span className="sr-only">{" not received"}</span></Badge>;
 	return (
 		<Band className="queue-band queue-rail-band">
-			<span className="queue-rail-all">All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}</span>
-			{warn}
 			{isMasterShown && (
 				<span className="queue-rail-box">
 					<span className="inline-target"><CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Select all live sessions" describedBy={RAIL_HINT_Q.ID} /></span>
 				</span>
 			)}
+			<span className="queue-rail-all">All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}{warn}</span>
 		</Band>
 	);
 }
@@ -2206,26 +2339,31 @@ function getNotReceivedBySessionQ(items) {
 	return counts;
 }
 
-/** One session, one control (spec §9.1): the whole row is its box's label, so a press anywhere ticks it; a row that takes no message is no control. */
+/**
+ * One session, one control (spec §9.1): the whole row is its box's label, so a press anywhere ticks it; a row that takes no message is no control.
+ * From the start: box · state mark · name · count; a row with no box keeps its mark and name in place.
+ */
 function SessionRailRowQ({ row, view, sessions }) {
 	const where = [row.profileLabel, row.cwd, row.id].filter(Boolean).join(" · ");
 	const Row = row.isSelectable ? "label" : "div";
 	return (
 		<Row className="queue-rail-row" data-session={row.id} title={where}>
-			<RailRowFaceQ row={row} view={view} where={where} />
 			{row.isSelectable && (
 				<span className="queue-rail-box">
-					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={RAIL_HINT_Q.ID} /></span>
+					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}${isNotListeningQ(row) ? ", not listening" : ""}`} describedBy={RAIL_HINT_Q.ID} /></span>
 				</span>
 			)}
+			<RailRowFaceQ row={row} view={view} where={where} />
 		</Row>
 	);
 }
 
+// the mark is live or not by shape and colour together; line 2 says the state in words → the mark is hidden from screen readers
 function RailRowFaceQ({ row, view, where }) {
 	const { Badge } = window.UI;
 	return (
 		<>
+			<span aria-hidden="true" className={`queue-rail-mark${row.state === "live" ? " is-live" : ""}`} />
 			<span className="queue-rail-name">
 				<SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} />
 			</span>
@@ -2249,15 +2387,17 @@ function SessionNameQ({ row, isIdShown }) {
 }
 
 /**
- * Line 2 of a rail row, the first matching condition (spec §9.1): not received · not reachable · live with orders on the way ·
- * live · a resume not yet registered · ended. Facts in the row-facts shape.
+ * Line 2 of a rail row, the first matching condition (spec §9.1): not received · not reachable · live and not listening (with nothing
+ * in delivery too) · live with orders on the way · live · a resume not yet registered · ended. Facts in the row-facts shape.
  */
 function getSessionLineQ(row, notReceived) {
 	const { formatRelativeTime } = window.UI;
 	const age = { text: formatRelativeTime(row.lastActivityAt) };
 	if (notReceived > 0) return [getNotReceivedFactQ(notReceived)];
 	if (row.state === "stale") return [{ text: "Not reachable", badge: "warn" }, age];
-	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live, dot: "ok" }, row.count.inDelivery > 0 ? { text: `${row.count.inDelivery} in delivery` } : age];
+	const delivery = row.count.inDelivery > 0 ? [{ text: `${row.count.inDelivery} in delivery` }] : [];
+	if (row.state === "live" && !row.isWaiting) return [{ text: SESSION_STATE_LABEL_Q.live }, getNotListeningFactQ(RECEIPT_Q.notListening), ...delivery];
+	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live }, ...(delivery.length > 0 ? delivery : [age])];
 	if (row.markerSetAt) return [{ text: "Resume not yet registered" }];
 	return [{ text: getSessionStateLabelQ(row), badge: "tag" }, age];
 }
@@ -2485,9 +2625,9 @@ function ViewerBarQ({ image, index, count, onStep, onClose }) {
 	return (
 		<div className="queue-viewer-bar">
 			<span className="queue-viewer-name">{`${image.name} · ${getSizeTextQ(image.bytes)} · ${index + 1} of ${count}`}</span>
-			<button type="button" className="btn ghost sm icon" aria-label="Previous image" disabled={index === 0} onClick={() => onStep(index - 1)}><Icon name="chevron-left" size={16} /></button>
-			<button type="button" className="btn ghost sm icon" aria-label="Next image" disabled={index === count - 1} onClick={() => onStep(index + 1)}><Icon name="chevron-right" size={16} /></button>
-			<button type="button" className="btn sm" onClick={onClose}>✕ Close</button>
+			<button type="button" className="btn ghost sm icon" aria-label="Previous image" title="Previous image (←)" disabled={index === 0} onClick={() => onStep(index - 1)}><Icon name="chevron-left" size={16} /></button>
+			<button type="button" className="btn ghost sm icon" aria-label="Next image" title="Next image (→)" disabled={index === count - 1} onClick={() => onStep(index + 1)}><Icon name="chevron-right" size={16} /></button>
+			<button type="button" className="btn ghost sm icon" aria-label="Close" title="Close (Esc)" onClick={onClose}><Icon name="x" size={16} /></button>
 		</div>
 	);
 }
@@ -2497,19 +2637,18 @@ function getSteppedIndexQ(index, count, key) {
 	return next === index || next < 0 || next >= count ? null : next;
 }
 
-/** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received stay listed under it. */
+/** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received and not listening stay listed under it. */
 function RecipientsQ({ copies, busy, onResend }) {
-	const { DisclosureChevron } = window.UI;
 	const resendable = copies.filter((copy) => copy.canResend).map((copy) => copy.id);
 	const isRolledUp = copies.length >= ORDERS_Q.ROLL_UP_FROM;
-	const isOutside = (copy) => !isRolledUp || getReceiptQ(copy) === "notReceived";
+	const isOutside = (copy) => !isRolledUp || SHOWN_RECEIPTS_Q.includes(getReceiptQ(copy));
 	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} busy={busy} onResend={onResend} />)}</ul>;
 	const [counts, ...badges] = getRollUpFactsQ(copies);
 	return (
 		<>
 			{isRolledUp && (
 				<details className="queue-roll-up">
-					<summary className="group disclosure fs-meta"><span className="queue-roll-up-counts"><DisclosureChevron /><span>{counts.text}</span></span><RowFactsQ facts={badges} /></summary>
+					<summary className="group disclosure fs-meta"><RollUpCountsQ parts={counts.parts} /><RowFactsQ facts={badges} /></summary>
 					{list(copies.filter((copy) => !isOutside(copy)))}
 				</details>
 			)}
@@ -2519,13 +2658,25 @@ function RecipientsQ({ copies, busy, onResend }) {
 	);
 }
 
-// `7 sessions · 5 received · 1 not yet` + the amber `1 not received`; a zero count is left out
+// a space between segments is the only break → each `n word ·` whole, the chevron kept with the first (base.css → .queue-roll-up-counts)
+function RollUpCountsQ({ parts }) {
+	const { DisclosureChevron } = window.UI;
+	const [first, ...rest] = parts.map((part, index) => (index < parts.length - 1 ? `${part} ·` : part));
+	return (
+		<span className="queue-roll-up-counts">
+			<span className="queue-roll-up-lead"><DisclosureChevron /><span>{first}</span></span>
+			{rest.map((unit) => <React.Fragment key={unit}>{" "}<span className="queue-roll-up-unit">{unit}</span></React.Fragment>)}
+		</span>
+	);
+}
+
+// `7 sessions · 5 received · 1 not yet · 1 not listening` + the amber `1 not received`; a zero count is left out
 function getRollUpFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
 	const counted = (receipt) => getReceiptCountQ(receipts, receipt);
-	const parts = [`${copies.length} sessions`, `${counted("received")} received`, `${counted("notYet")} not yet`].filter((part, index) => index === 0 || !part.startsWith("0 "));
+	const parts = [`${copies.length} sessions`, `${counted("received")} received`, `${counted("notYet")} not yet`, `${counted("notListening")} not listening`].filter((part, index) => index === 0 || !part.startsWith("0 "));
 	const failed = counted("notReceived");
-	return [{ text: parts.join(" · ") }, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
+	return [{ parts }, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
 }
 
 // an order on a report's sheet is the report's answer text; a standalone order is the message's body
@@ -2556,6 +2707,7 @@ function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }
 	const { orders } = queue;
 	const [changed, setChanged] = useRecipientsNoteQ(targets, box, isReady);
 	const onText = (text) => { setChanged(null); box.setText(text); };
+	const parts = getSendPartsQ(targets);
 	const onSend = () => {
 		const invalid = getOrderInvalidQ(targets, box.text);
 		if (invalid === null) {
@@ -2569,7 +2721,7 @@ function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }
 	return (
 		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: <OrderLabelQ rows={rows.filter((row) => targets.ids.includes(row.id))} /> }} tray={tray}
 			text={box.text} onText={onText} isBusy={box.isBusy}
-			buttons={[{ label: getSendLabelQ(targets), isInk: box.text.trim() !== "" && targets.ids.length > 0, keyName: "send", onPress: onSend }]}
+			buttons={[{ label: getSendLabelQ(parts), parts, isInk: box.text.trim() !== "" && targets.ids.length > 0, keyName: "send", onPress: onSend }]}
 			note={<ComposerNoteQ error={box.error} info={changed} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets, isReady ? rows : null)} />} />
 	);
 }
@@ -2591,7 +2743,7 @@ function useRecipientsNoteQ(targets, box, isReady) {
 	return [note, setNote];
 }
 
-// `New order to gersona, yoaida` — every name, an ended one tagged; none → said in dim (spec §9.2 → Label line)
+// `New order to gersona, yoaida` — every name, an ended or not-listening one tagged after it, the comma after the tag; none → said in dim (spec §9.2 → Label line)
 function OrderLabelQ({ rows }) {
 	const { Badge } = window.UI;
 	if (rows.length === 0) return <>New order · no session ticked</>;
@@ -2599,10 +2751,15 @@ function OrderLabelQ({ rows }) {
 		<>
 			{"New order to "}
 			{rows.map((row, index) => (
-				<span key={row.id} className="queue-order-to">
-					{`${row.name}${index < rows.length - 1 ? ", " : ""}`}
-					{row.state === "exited" && <> <Badge fill="tag">Ended</Badge></>}
-				</span>
+				<React.Fragment key={row.id}>
+					{index > 0 && " "}
+					<span className="queue-order-to">
+						{row.name}
+						{row.state === "exited" && <> <Badge fill="tag">Ended</Badge></>}
+						{isNotListeningQ(row) && <><span className="sr-only">,</span> <RowFactsQ facts={[getNotListeningFactQ(RECEIPT_Q.notListening)]} /></>}
+						{index < rows.length - 1 && ","}
+					</span>
+				</React.Fragment>
 			))}
 		</>
 	);

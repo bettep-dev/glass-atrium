@@ -2,8 +2,11 @@
 # queue-turn-end-check.sh — Stop hook, at most one block per turn end, carrying either line or both, never an item's
 # text: (1) an interactive or background main-session turn that called a tool and whose final message's last
 # non-blank line is no [QUEUE-VERDICT] form, or names an id that is not an item of this session, is asked for its
-# verdict once per turn; (2) while an item this session posted awaits the owner and no wait of this Claude process
-# runs, the wait command.
+# verdict once per turn; (2) while an item this session posted awaits the owner, no wait or listener of this Claude
+# process runs, and no listener of it ever started, the wait command — a fallback for processes no listener serves.
+# The listening mark, kept for the process's life, proves only that a listener of it once started: each later turn end
+# starts a fresh one beside this check, whose lock may land after this check reads → the mark covers that start, and
+# so also leaves the check silent after a listener that ended on a refusal or a monitor failure.
 # The verdict check confirms only that a verdict is stated and its ids are this session's items, never the judgment.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_wait_state).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
@@ -18,8 +21,6 @@ trap 'if ((BASH_SUBSHELL > 0)); then exit 1; fi; exit 0' ERR
 # no new item fetch starts after this long → the pass stays bounded however many ids and marks it asks about
 readonly CHECK_BUDGET_S=3
 readonly CHECK_FETCH_MAX_S=1
-# the same items to the same Claude process → named again only after this long, so a wait that fails fast starts no loop
-readonly NUDGE_INTERVAL_MIN=10
 # the nudge stamp's process key when the hook env holds no pid
 readonly NUDGE_NO_PID_KEY=no-pid
 # the verdict line's keyword and forms; the rule text that teaches them: glass-atrium-ops-orchestrator-role.md →
@@ -178,8 +179,9 @@ set_foreign_ids() {
   done
 }
 
-# <session id> → wait_reason: the wait command while an item of this session awaits the owner, no wait of this Claude
-# process runs, and this process was not told about these items within NUDGE_INTERVAL_MIN
+# <session id> → wait_reason: the wait command while an item of this session awaits the owner, no wait or listener of
+# this Claude process runs, no listener of it ever started, and this process was not told about these items within
+# QUEUE_NUDGE_INTERVAL_MIN
 set_wait_reason() {
   local items nudge_key wait_state stamp newest item
   items="$(queue_get_awaiting_items "$1")"
@@ -187,7 +189,11 @@ set_wait_reason() {
   nudge_key="$(queue_get_pid)"
   nudge_key="${nudge_key:-${NUDGE_NO_PID_KEY}}"
   wait_state="$(queue_get_wait_state "$1")"
-  [[ "${wait_state}" != live ]] || return 0
+  # a listener announces the same answered items a wait would claim → a nudged wait beside it only costs turns
+  [[ "${wait_state}" != live && "${wait_state}" != listener ]] || return 0
+  # this turn's Stop starts the next listener in no set order, so its lock may not be taken yet
+  # shellcheck disable=SC2310  # a mark it cannot read counts as none → the nudge, the fallback
+  if queue_is_listener_started "$1"; then return 0; fi
   stamp="$(queue_get_awaiting_dir "$1")/.nudged"
   newest="${items%%$'\n'*}"
   # shellcheck disable=SC2310  # not due and a failed check both end the turn normally
@@ -204,16 +210,16 @@ set_wait_reason() {
 }
 
 # <stamp> <nudge key> <newest item id> → 0 unless this Claude process was told about these items within
-# NUDGE_INTERVAL_MIN
+# QUEUE_NUDGE_INTERVAL_MIN
 is_nudge_due() {
-  local told_key="" told_newest="" recent
+  local told_key="" told_newest=""
   [[ -f "$1" ]] || return 0
   IFS=' ' read -r told_key told_newest <"$1" || return 0
   if [[ "${told_key}" != "$2" || ! "${told_newest}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || (($3 > told_newest)); then
     return 0
   fi
-  recent="$(find "$1" -mmin "-${NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
-  [[ -z "${recent}" ]]
+  # shellcheck disable=SC2310  # a stamp it cannot read counts as old → the nudge, the fallback
+  if queue_is_touched_within_nudge "$1"; then return 1; fi
 }
 
 # <session id> <item ids, newest first> → the first a running wait would carry, nothing when none; drops the marks of
