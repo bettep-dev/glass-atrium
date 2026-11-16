@@ -35,6 +35,7 @@ import { extractIndexableText } from "../clauded-docs/indexable-text.js";
 import {
   type ExportFormatToken,
   HtmlExportError,
+  RenderLineError,
   renderSelfContainedHtml,
 } from "../clauded-docs/html-export.js";
 import { sanitizeHtmlBody } from "../clauded-docs/sanitize.js";
@@ -1380,8 +1381,9 @@ async function handleHtmlExportSingle(
   const format = exportFormatFromPath(row.html_path);
   let rendered: string;
   try {
-    rendered = await renderSelfContainedHtml(storedBody, format);
+    rendered = await renderSelfContainedHtml(storedBody, format, getCallerSignal(reply));
   } catch (error) {
+    if (error instanceof RenderLineError) return failWithRenderLine(request, reply, error);
     return failWithHtmlExport(request, reply, id, error);
   }
 
@@ -1464,6 +1466,7 @@ async function handleHtmlExportMulti(
   // SEQUENTIAL render FIRST — no archive/headers yet, so the status code stays
   // free until we know whether ANY doc is includable. One BrowserContext at a
   // time, in input id order (no Promise.all).
+  const callerSignal = getCallerSignal(reply);
   const manifest: HtmlExportManifestEntry[] = [];
   const entries: Array<{ name: string; html: string }> = [];
   const usedNames = new Set<string>();
@@ -1486,8 +1489,10 @@ async function handleHtmlExportMulti(
     let rendered: string;
     try {
       // One BrowserContext per id (renderSelfContainedHtml creates/closes it internally).
-      rendered = await renderSelfContainedHtml(storedBody, format);
+      rendered = await renderSelfContainedHtml(storedBody, format, callerSignal);
     } catch (error) {
+      // the line refused or dropped this caller → the whole export ends, never a zip missing documents for that reason
+      if (error instanceof RenderLineError) return failWithRenderLine(request, reply, error);
       const stage = error instanceof HtmlExportError ? error.stage : "render";
       // Any render failure (incl. mermaid zero-<svg>) → skip + record in manifest (never abort the zip).
       // Keep the <stage> discriminator; drop the raw render/Playwright message — it can embed
@@ -1598,6 +1603,28 @@ function failWithHtmlExport(
   );
   reply.code(503);
   return { error: "filesystem_unavailable", reason: prefixedFsReason(`html_export_${stage}`, error, "export failed") };
+}
+
+/** Aborted when the caller's connection closes before its reply is written → a render still waiting is dropped. */
+function getCallerSignal(reply: FastifyReply): AbortSignal {
+  const caller = new AbortController();
+  reply.raw.once("close", () => {
+    if (!reply.raw.writableFinished) caller.abort();
+  });
+  return caller.signal;
+}
+
+/** full → 503 export_busy with a retry hint · caller_gone → nobody reads the reply, so a debug line only. */
+function failWithRenderLine(request: FastifyRequest, reply: FastifyReply, error: RenderLineError): ClaudedDocsErrorBody {
+  const route = request.routeOptions.url ?? "";
+  if (error.reason === "caller_gone") {
+    request.log.debug({ route }, "html export dropped: caller gone while its render waited");
+    reply.code(503);
+    return { error: "caller_gone" };
+  }
+  request.log.warn({ route }, "html export refused: render line full");
+  reply.code(503).header("Retry-After", "5");
+  return { error: "export_busy" };
 }
 
 /** formatFromPath (DocFormatToken) → ExportFormatToken — safe since both unions share members. */
