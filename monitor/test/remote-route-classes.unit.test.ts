@@ -57,6 +57,8 @@ const RESIGN_CIDS = [
 ];
 // verdicts whose rows 95-105 sit unchanged under the re-sign's digest
 const CARRIED_CIDS = ["2026-11-14T1640_lan-route-classes_a93f", "2026-11-14T2145_lan-cli-channel_5f0c"];
+// the devices row re-signed in place: its reason only, so the whole-table digest stays the re-sign's
+const DEVICES_RESIGN_CID = "2026-11-16T2200_lan-close_2f8b";
 // the signed table, held here → any class change in route-classes.ts also needs a test edit naming its verdict
 const SIGNED_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
 
@@ -134,18 +136,22 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
+  test("the latest sign-off names the reviewer, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
-    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: [...RESIGN_CIDS, ...CARRIED_CIDS] });
+    assert.deepEqual(
+      { reviewer: latest?.reviewer, cids: latest?.cids },
+      { reviewer: "glass-atrium-sec-guard", cids: [DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS] },
+    );
   });
 
-  test("every earlier sign-off is kept as history, marked superseded by the re-sign, with its row count and old digest", () => {
+  test("every earlier sign-off is kept as history, marked superseded by the sign-off after it re-signed its rows, with its row count and digest", () => {
     assert.deepEqual(
       ROUTE_CLASS_SIGNOFFS.slice(0, -1).map((signoff) => [signoff.cids, signoff.rowCount, signoff.sha256, signoff.supersededBy]),
       [
         [["2026-11-14T1420_lan-build_c5b9"], 94, "b76036b059ce1c7e0e5f860d94c8afcc678e1b98b8212d21854a7a72d24179fc", RESIGN_CIDS[0]],
         [["2026-11-14T1640_lan-route-classes_a93f"], 102, "3d234a90e3476fabcf110784cedbfbc535753e1bde142da98578bc95dbcfc61a", RESIGN_CIDS[0]],
         [["2026-11-14T2145_lan-cli-channel_5f0c"], 105, "7801ce43f3335b0f6fe0aad59b39425b951fe49ad60116cb601f5dc66ccc9e32", RESIGN_CIDS[0]],
+        [[...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, DEVICES_RESIGN_CID],
       ],
     );
   });

@@ -49,6 +49,11 @@ function getAccessLineRA(access) {
 	return `On · ${count} trusted ${count === 1 ? "network" : "networks"}`;
 }
 
+/** One text line per trusted network → the owner sees which networks open the listener. */
+function getTrustedLinesRA(access) {
+	return access.trusted.map((network) => `${network.gateway} · ${network.hardwareAddress}`);
+}
+
 function ScreenRemoteAccess() {
 	const { PageHeader, FreshnessStamp, RefreshButton } = window.UI;
 	const [read, setRead] = useSRA({ status: "loading", data: null, error: null, at: null });
@@ -154,6 +159,13 @@ function AccessCardRA({ access }) {
 	];
 	return (
 		<Card title="Access and certificate" sub={access === null ? "State not read" : getAccessLineRA(access)}>
+			{access !== null && access.trusted.length > 0 && (
+				<ul className="flex flex-col gap-label" aria-label="Trusted networks (gateway · hardware address)">
+					{getTrustedLinesRA(access).map((line) => (
+						<li key={line}><MachineString>{line}</MachineString></li>
+					))}
+				</ul>
+			)}
 			<dl className="flex flex-col gap-stack">
 				{steps.map(([term, command]) => (
 					<div key={term} className="flex flex-col gap-label">

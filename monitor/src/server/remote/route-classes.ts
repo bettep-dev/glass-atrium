@@ -25,12 +25,14 @@ export interface RouteClassSignoff {
   readonly rowCount: number;
   /** SHA-256 over the `route cls` lines of those rows, in order (getRouteClassDigest). */
   readonly sha256: string;
-  /** first CID of the later sign-off that re-signed these rows → history only: its digest no longer matches the live table */
+  /** first CID of the later sign-off that re-signed these rows → history only, even where its digest still matches the live table */
   readonly supersededBy?: string;
 }
 
 // the whole-table re-sign: class changes inside the first 94 rows broke every earlier digest
 const RESIGN_CID = "2026-11-15T0140_lan-signin-routes_c18e";
+// the devices row's reason re-signed in place (devices-row-resign-verdict.md): path, class and order kept → same digest
+const DEVICES_RESIGN_CID = "2026-11-16T2200_lan-close_2f8b";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -66,6 +68,24 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     // sign-in rows 106-108 and the unread rows (signin), the document writes (writes), the read rows (reads, reads-b, reads-c),
     // rows 95-105 carried unchanged (route-classes, cli-channel), rows 1-94 no later verdict names carried from the first entry
     cids: [
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 108,
+    sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8",
+    supersededBy: DEVICES_RESIGN_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S6",
+    // every row of the entry before it carried unchanged; the GET /api/remote/devices reason re-signed
+    cids: [
+      DEVICES_RESIGN_CID,
       RESIGN_CID,
       "2026-11-15T0215_lan-unread-writes_a2f7",
       "2026-11-15T0216_lan-unread-reads_d90b",
@@ -175,7 +195,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/queue/owner/items/:id/seen", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
   { route: "POST /api/queue/owner/items/:id/resend", cls: "page", reason: "page function, re-queues a delivery to a local session (same resume path as answer); route read: empty body schema" },
   { route: "POST /api/remote/registration", cls: "remote-admin", reason: "loopback only; Sec-Fetch-Site exactly same-origin, empty body, open-rate limit; audit row before the code, no row → no code; code in this response body only, no-store" },
-  { route: "GET /api/remote/devices", cls: "remote-admin", reason: "loopback only; same Sec-Fetch-Site rule although a GET; returns id, label, created, last seen only" },
+  { route: "GET /api/remote/devices", cls: "remote-admin", reason: "loopback only; same Sec-Fetch-Site rule although a GET; devices: id, label, created, last seen only; access: whether the feature is on in this process, and each trusted network's gateway address and gateway hardware address, nothing else (cli-channel C17); no-store" },
   { route: "DELETE /api/remote/devices/:id", cls: "remote-admin", reason: "loopback only; same rule, decimal id, no body; remote.revoke after the revoke, audit failure never blocks it; one device_not_found" },
   { route: "POST /api/remote/devices/revoke-all", cls: "remote-admin", reason: "loopback only; same rule, empty body; remote.revoke with the count only" },
   { route: "POST /api/remote/register", cls: "remote-pre-auth", reason: "remote only; remote Host, pre-auth limit, page-origin signal, 3/min/address and 10/min total before body parse, 1 KiB strict schema; one opaque refusal" },

@@ -26,6 +26,14 @@ import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 const PORT = 16199;
 const MAC_PAGE = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin" };
 const ACCESS = { enabled: true, trusted: [{ gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33" }] };
+// what a careless caller could hand the route: the whole settings value, port, interface and paths included
+const WIDE_ACCESS = {
+  ...ACCESS,
+  port: 16443,
+  host: "192.168.0.24",
+  certificatePath: "/Users/owner/.glass-atrium/monitor/data/remote-access/leaf.pem",
+  trusted: ACCESS.trusted.map((entry) => ({ ...entry, interfaceName: "en0" })),
+};
 
 class Rollback extends Error {}
 
@@ -56,7 +64,7 @@ function buildAdminDeps(): RemoteAdminDeps {
         events.push(event);
       },
     },
-    getAccess: () => ACCESS,
+    getAccess: () => WIDE_ACCESS,
     now,
   };
 }
@@ -251,9 +259,14 @@ describe("listing devices", () => {
     });
   });
 
-  test("carries the feature state and the trusted networks for the Mac's page", async () => {
+  test("carries only the feature state and each trusted network's gateway and hardware address, whatever wider value the caller holds", async () => {
     const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.DEVICES });
-    assert.deepEqual(JSON.parse(response.body).access, ACCESS);
+    const body = JSON.parse(response.body) as { access: { trusted: Record<string, unknown>[] } };
+    assert.deepEqual(
+      [Object.keys(body).sort(), Object.keys(body.access).sort(), body.access.trusted.map((entry) => Object.keys(entry).sort())],
+      [["access", "devices"], ["enabled", "trusted"], [["gateway", "hardwareAddress"]]],
+    );
+    assert.deepEqual(body.access, ACCESS);
   });
 });
 

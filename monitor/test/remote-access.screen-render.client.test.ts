@@ -110,6 +110,21 @@ describe("the access line states on/off and what keeps the listener closed", () 
   }
 });
 
+test("the access card lists each trusted network's gateway and hardware address as text", async () => {
+  const { mod } = await loadScreen({ status: 200, body: {} });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const trusted = [
+    { gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33" },
+    { gateway: "10.0.1.1", hardwareAddress: "<i>f0:9f:c2:0a:0b:0c</i>" },
+  ];
+
+  const tree = renderScreen(React.createElement(mod.AccessCardRA, { access: { enabled: true, trusted } })) as RenderedNode;
+
+  const text = collectText(tree);
+  assert.deepEqual(trusted.filter((entry) => !text.includes(`${entry.gateway} · ${entry.hardwareAddress}`)), [], "every entry shown");
+  assert.equal(findNodes(tree, (node) => node.type === "i").length, 0, "an entry never parsed as markup");
+});
+
 test("each device row shows its label as text and a revoke button named for it", async () => {
   const { mod } = await loadScreen({ status: 200, body: {} });
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };

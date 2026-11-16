@@ -73,7 +73,7 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
     const openLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.REGISTRATION_OPEN, deps.now ?? Date.now);
     const options = { bodyLimit: ADMIN_BODY_LIMIT_BYTES };
     scope.post(REMOTE_ADMIN_PATH.REGISTRATION, options, (request, reply) => openRegistration(request, reply, { deps, openLimiter }));
-    scope.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ ...(await getDeviceList(deps)), access: deps.getAccess() }));
+    scope.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ ...(await getDeviceList(deps)), access: getAccessView(deps.getAccess()) }));
     scope.delete<{ Params: DeviceParams }>(REMOTE_ADMIN_PATH.DEVICE, { ...options, schema: DEVICE_PARAMS_SCHEMA }, (request, reply) =>
       revokeOne(request, reply, { deps, actor: AUDIT_ACTOR }),
     );
@@ -118,6 +118,14 @@ export async function getDeviceList(deps: Pick<RemoteAdminDeps, "devices">): Pro
       createdAt: device.createdAt.toISOString(),
       lastSeenAt: device.lastSeenAt.toISOString(),
     })),
+  };
+}
+
+/** Field by field, as the signed row names them → a wider value from the caller (port, paths, interface) never reaches the page. */
+function getAccessView(access: RemoteAccessState): RemoteAccessState {
+  return {
+    enabled: access.enabled,
+    trusted: access.trusted.map((network) => ({ gateway: network.gateway, hardwareAddress: network.hardwareAddress })),
   };
 }
 
