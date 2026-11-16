@@ -93,7 +93,7 @@ test("every font size in the shared stylesheets is a whole-pixel step at or abov
 });
 
 test("the named type steps descend strictly and bottom out at the meta floor", () => {
-  const steps = ["--fs-kpi", "--fs-display", "--fs-stat", "--fs-title", "--fs-body", "--fs-control", "--fs-meta"].map((name) =>
+  const steps = ["--fs-display", "--fs-stat", "--fs-title", "--fs-body", "--fs-control", "--fs-meta"].map((name) =>
     getPx(`var(${name})`),
   );
   for (let i = 1; i < steps.length; i += 1) assert.ok(steps[i - 1] > steps[i], `step ${i} ${steps.join(" > ")}`);
@@ -114,7 +114,7 @@ test("each atom sets the sans face its role names: words, counts, the stat figur
   const rows = [
     { selector: ".pill", isMono: false },
     { selector: ".pill--count", isMono: false },
-    { selector: ".kpi-value", isMono: false },
+    { selector: ".stat-value", isMono: false },
     { selector: ".tbl td.num", isMono: false },
   ];
   for (const row of rows) {

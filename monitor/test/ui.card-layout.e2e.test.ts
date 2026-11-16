@@ -1,4 +1,4 @@
-// Side-by-side layout atoms measured in a real browser: split rows pair up only from xl, tile splits pair up only below it.
+// Side-by-side layout atoms measured in a real browser: split rows pair up only from xl.
 // Runner: npx tsx --test test/ui.card-layout.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -30,22 +30,15 @@ const variantRows = `
   <div class="split-row split-row--1-1 split-row--${layouts.equal}" data-variant="equal"><div style="height: 400px;">tall</div><div>short</div></div>
   <div class="split-row split-row--2-1 split-row--${layouts.content}" data-variant="rail"><div style="height: 2000px;">main</div>
     <div class="split-col split-col--rail" id="rail"><div style="height: 100px;">one</div><div style="height: 100px;">two</div></div></div>`;
-// a tile narrower than the lead plus the detail's 16rem basis — the 820 dashboard tile the detail used to squeeze in
-const NARROW_TILE_PX = 280;
-const NARROW_TILE_DETAIL = "3 on a failing streak since the last cycle";
 const LAYOUT_PAGE = `<!doctype html><html data-theme="light"><body style="margin: 0;">
   <div style="padding: 24px;">${splitRows}
-    <div class="tile-split" id="tile"><div class="tile-split-lead">42</div><div class="tile-split-detail">detail text</div></div>
-    <div style="width: ${NARROW_TILE_PX}px;"><div class="tile-split" id="narrow-tile"><div class="tile-split-lead">1,284 runs</div>
-      <div class="tile-split-detail">${NARROW_TILE_DETAIL}</div></div></div>
     ${variantRows}
   </div>
 </body></html>`;
 
 const viewportRows = [
-  { name: "below 641px both atoms stack", width: 600, isRowSplit: false, isTileSplit: false },
-  { name: "between 641px and xl only the tile splits", width: 1024, isRowSplit: false, isTileSplit: true },
-  { name: "from xl only the split rows pair up", width: 1440, isRowSplit: true, isTileSplit: false },
+  { name: "below xl each split row stacks", width: 1024, isSplit: false },
+  { name: "from xl each split row pairs up", width: 1440, isSplit: true },
 ] as const;
 
 interface PairReading { key: string; isSideBySide: boolean; widthRatio: number }
@@ -68,11 +61,11 @@ after(async () => {
 // side by side = second child starts level with the first and to its right
 async function readPairs(): Promise<PairReading[]> {
   return page.evaluate(() => {
-    const pairs = [...document.querySelectorAll<HTMLElement>(".split-row[data-ratio], #tile")];
+    const pairs = [...document.querySelectorAll<HTMLElement>(".split-row[data-ratio]")];
     return pairs.map((pair) => {
       const [first, second] = [...pair.children].map((child) => child.getBoundingClientRect());
       return {
-        key: pair.dataset.ratio ?? pair.id,
+        key: pair.dataset.ratio ?? "",
         isSideBySide: Math.abs(first.top - second.top) < 1 && second.left >= first.right,
         widthRatio: first.width / second.width,
       };
@@ -80,22 +73,22 @@ async function readPairs(): Promise<PairReading[]> {
   });
 }
 
-describe("split row and tile split at real viewports", () => {
+describe("split row at real viewports", () => {
   for (const row of viewportRows) {
     test(row.name, async () => {
       await page.setViewportSize({ width: row.width, height: 900 });
       const readings = await readPairs();
 
+      assert.equal(readings.length, Object.keys(ratios).length);
       for (const reading of readings) {
-        const isExpectedSplit = reading.key === "tile" ? row.isTileSplit : row.isRowSplit;
-        assert.equal(reading.isSideBySide, isExpectedSplit, `${reading.key} at ${row.width}px`);
+        assert.equal(reading.isSideBySide, row.isSplit, `${reading.key} at ${row.width}px`);
       }
     });
   }
 
   test("from xl each split row divides its width at its preset ratio", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    const rows = (await readPairs()).filter((reading) => reading.key !== "tile");
+    const rows = await readPairs();
 
     assert.equal(rows.length, Object.keys(ratios).length);
     for (const reading of rows) {
@@ -103,18 +96,6 @@ describe("split row and tile split at real viewports", () => {
       assert.ok(Math.abs(reading.widthRatio - left / right) < RATIO_TOLERANCE, `${reading.key} width ratio ${reading.widthRatio}`);
     }
   });
-});
-
-describe("a tile split too narrow for both", () => {
-  for (const width of [820, 1024]) {
-    test(`at ${width}px the detail wraps under the lead at the tile's full width`, async () => {
-      await page.setViewportSize({ width, height: 900 });
-      const [tile, lead, detail] = await page.$$eval("#narrow-tile, #narrow-tile > *", (els) =>
-        els.map((el) => el.getBoundingClientRect().toJSON() as DOMRect));
-      assert.ok(detail.top >= lead.bottom, `detail top ${detail.top} under lead bottom ${lead.bottom}`);
-      assert.ok(Math.abs(detail.width - tile.width) < 1, `detail ${detail.width}px of the tile's ${tile.width}px`);
-    });
-  }
 });
 
 interface VariantReading { variant: string; first: DOMRect; second: DOMRect }

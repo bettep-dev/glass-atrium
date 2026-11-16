@@ -1440,28 +1440,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-width: 0;
 }
 
-/* Tile split (TileSplit) — value + badge over detail by default */
-/* 641px to below xl: the detail sits beside the lead while it keeps its basis, else it wraps under the lead */
-.tile-split {
-	--tile-split-detail-basis: 16rem; /* a two-line hint's width (a size, outside the ladder) */
-	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	gap: var(--space-1) var(--space-4);
-	align-items: start;
-}
-.tile-split-lead,
-.tile-split-detail { min-width: 0; }
-
-@media (min-width: 641px) and (max-width: 1279px) {
-	.tile-split {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-start;
-	}
-	.tile-split-lead { flex: 0 1 auto; max-width: 100%; }
-	.tile-split-detail { flex: 1 1 var(--tile-split-detail-basis); }
-}
-
 @media (min-width: 1280px) {
 	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
@@ -2130,164 +2108,6 @@ a.prose-link:hover {
 	}
 }
 
-.kpi {
-	background: rgb(var(--elev));
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-card);
-	padding: var(--card-pad);
-	position: relative;
-	transition: border-color 0.12s;
-	min-height: 110px;
-	width: 100%;
-	text-align: left;
-}
-/* only a clickable tile reads as one — a labelled group keeps the default cursor and a still border */
-button.kpi {
-	cursor: pointer;
-}
-button.kpi:hover {
-	border-color: rgb(var(--faint));
-}
-
-/* UI.KPI anatomy — label row · value row · delta · hint · foot */
-.kpi-tile {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-}
-/* 1 label row — one --lh-row line box; the label ellipsizes, the aside window tag never does */
-.kpi-head {
-	display: flex;
-	align-items: baseline;
-	gap: var(--space-1);
-	min-width: 0;
-	height: var(--lh-row);
-	line-height: var(--lh-row); /* an h2 label row takes preflight's inherited size and zero margin */
-}
-.kpi--info .kpi-head {
-	/* room for the ⓘ (its 32px box ends at the edge offset below) + the 4px meta gap before it */
-	padding-right: calc(var(--ctl-min-h) - var(--space-2) + var(--space-1));
-}
-.kpi-label-text {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	line-height: var(--lh-row);
-}
-.kpi-aside {
-	flex-shrink: 0;
-	white-space: nowrap;
-	line-height: var(--lh-row);
-}
-/* the ⓘ is placed on the label row's centre line, so a tile with one keeps its value on the band's baseline */
-/* offset, never a transform: a transform would trap the fixed drawer this slot renders into a 32px box */
-.kpi-info {
-	position: absolute;
-	top: calc(var(--card-pad) + (var(--lh-row) - var(--ctl-min-h)) / 2);
-	right: calc(var(--card-pad) - var(--space-2));
-	display: flex;
-}
-/* 2 value row — figure, unit and badge on one baseline; a badge that does not fit wraps below, whole */
-.kpi-main {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	column-gap: var(--space-2);
-	row-gap: var(--space-1);
-	margin-top: var(--space-2);
-	min-width: 0;
-}
-.kpi-main--loading {
-	align-items: center;
-}
-.kpi-main .kpi-value {
-	margin-top: 0;
-}
-/* word value: the block keeps the figure's mono strut → one baseline (half-leading differs by font size) */
-/* the word span's own line box (line-height 1) stays inside that strut */
-.kpi-value--word > .kpi-value-word {
-	font-size: var(--fs-stat);
-	font-family: "Pretendard Variable", sans-serif;
-	font-weight: 600;
-	letter-spacing: normal;
-	line-height: 1;
-}
-/* 3 delta · 4 hint — each 4 below the row above it */
-.kpi-delta-row {
-	margin-top: var(--space-1);
-}
-.kpi-delta-row .kpi-delta {
-	margin-top: 0;
-}
-/* two-line clamp — a KPI tile's plain hint and the Dashboard tile detail and hint */
-.clamp-2 {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	overflow: hidden;
-}
-/* a fact-list tile has no value row → its facts take the value row's place, 8 below the label row */
-.kpi--facts > .kpi-hint {
-	margin-top: var(--space-2);
-}
-.kpi--spark .kpi-hint {
-	padding-right: calc(var(--kpi-spark-w) + var(--space-2)); /* the spark's width, set on the tile by KPI (ui.jsx KPI_SPARK.w), + 8 */
-}
-/* split tile — the value column carries the row's top margin; the detail column starts level with it */
-.kpi-split {
-	margin-top: var(--space-2);
-}
-.kpi-split .kpi-main,
-.kpi-split .tile-split-detail > .kpi-hint:first-child {
-	margin-top: 0;
-}
-/* 5 foot — drill link / Retry pinned to the bottom, at least 8 below the last fact */
-.kpi-foot {
-	margin-top: auto;
-	padding-top: var(--space-2);
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-2);
-}
-.kpi-hint {
-	line-height: 1.45;
-	margin-top: var(--space-1);
-}
-.kpi-value {
-	font-size: var(--fs-kpi);
-	line-height: 1.15;
-	font-weight: 600;
-	letter-spacing: -0.025em;
-	margin-top: var(--space-2);
-	font-variant-numeric: tabular-nums;
-}
-.kpi-value .unit {
-	font-size: var(--fs-title); /* half of --fs-kpi → 2:1 figure-to-unit */
-	color: rgb(var(--dim));
-	font-weight: 500;
-	margin-left: var(--space-1);
-	font-family: "Pretendard Variable", sans-serif;
-}
-.kpi-delta {
-	font-size: var(--fs-meta);
-	font-family: "JetBrains Mono", monospace;
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	margin-top: 4px;
-	color: rgb(var(--dim)); /* tone rides on the arrow (Delta), never the numeral */
-}
-.kpi-spark {
-	position: absolute;
-	right: var(--card-pad);
-	bottom: var(--card-pad);
-	opacity: 0.85;
-	pointer-events: none;
-}
-
 /* skip link — off-canvas until keyboard focus lands on it (first Tab stop) */
 .skip-link {
 	position: absolute;
@@ -2540,38 +2360,6 @@ button.kpi:hover {
 /* confirm 은 열린 drawer/fullscreen 위로 재차 스택 — 더 높은 z 로 위 레이어 확보. */
 .detail-overlay.detail-confirm { z-index: var(--z-confirm); }
 
-/* Page verdict (PageVerdict) — glyph carries the tone colour, the word and sentence stay ink for contrast */
-.page-verdict {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 4px 12px;
-}
-.page-verdict-tone {
-	display: inline-flex;
-	align-items: baseline;
-	gap: 6px;
-	font-weight: 600;
-	white-space: nowrap;
-}
-.page-verdict--ok .page-verdict-glyph { color: rgb(var(--ok)); }
-.page-verdict--warn .page-verdict-glyph { color: rgb(var(--warn)); }
-.page-verdict--crit .page-verdict-glyph { color: rgb(var(--crit)); }
-.page-verdict--info .page-verdict-glyph { color: rgb(var(--info)); }
-.page-verdict--neutral .page-verdict-glyph { color: rgb(var(--faint)); }
-.page-verdict-chips {
-	display: inline-flex;
-	flex-wrap: wrap;
-	gap: 8px;
-}
-/* A chip is an action beside the sentence → resting button chrome, never bare text */
-.page-verdict-chips .btn.ghost {
-	border-color: rgb(var(--line));
-	background: rgb(var(--elev));
-	color: rgb(var(--ink));
-}
-.page-verdict-chips .btn.ghost:hover { background: rgb(var(--sunken)); }
-
 /* Low-sample marker (LowSampleMark) — muted n beside a small-sample rate */
 .low-sample {
 	color: rgb(var(--faint));
@@ -2723,14 +2511,13 @@ button.kpi:hover {
 	.alert-card {
 		animation: none;
 	}
-	.btn,
-	.kpi {
+	.btn {
 		transition: none;
 	}
 }
 
 /* ── Shared form controls (R1 subtle polish) ─────────────────────────────────
-   Chrome 정합: .btn(radius 6px·elev fill·0.12s transition·disabled opacity 0.5) + .seg/.kpi(elev resting fill) 미러 ·
+   Chrome 정합: .btn(radius 6px·elev fill·0.12s transition·disabled opacity 0.5) + .seg(elev resting fill) 미러 ·
    테두리 = 1px --control-edge(토글 resting edge — plain .btn 의 --line 아님) · focus = accent border + 전역 :focus-visible ring.
    신규 토큰 없음 — 전부 tokens.css 재참조.
    높이 = padding 6px+6px + --lh-ctl line box + 1px×2 border = --ctl-min-h(32px) 정확히. */
@@ -2755,7 +2542,7 @@ button.kpi:hover {
 	font-size: var(--ctl-font);        /* .btn 본문과 동일 — fs-body 계열 */
 	line-height: var(--ctl-line);
 	color: rgb(var(--ink));
-	background: rgb(var(--elev));       /* .btn/.seg/.kpi resting fill 정합 */
+	background: rgb(var(--elev));       /* .btn/.seg resting fill 정합 */
 	border: 1px solid rgb(var(--control-edge)); /* the control edge → the box reads at rest on every surface, one step under the --faint hover */
 	border-radius: var(--ctl-radius);  /* .btn radius 정합 */
 	transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
