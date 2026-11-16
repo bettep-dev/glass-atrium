@@ -3,7 +3,7 @@
 //
 // Runner: npx tsx --test test/agents.circuit-breaker.unit.test.ts
 
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -15,10 +15,20 @@ import {
   toCircuitBreakerKey,
 } from "../src/server/agents/circuit-breaker.js";
 
+import { deleteTempDirectory } from "./lib/remove-dir.js";
+
+const STATE_PREFIX = "ga-cb-";
+const tempDirs: string[] = [];
+
+after(() => {
+  for (const dir of tempDirs) deleteTempDirectory(dir, STATE_PREFIX);
+});
+
 async function withStateDir(
   build: (dir: string) => Promise<void>,
 ): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "ga-cb-"));
+  const dir = await mkdtemp(path.join(tmpdir(), STATE_PREFIX));
+  tempDirs.push(dir);
   const stateDir = path.join(dir, "agent-circuit-breaker");
   await mkdir(stateDir);
   await build(stateDir);
