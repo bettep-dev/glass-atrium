@@ -21,7 +21,7 @@ import { loadAgentCircuitBreakerSnapshot } from "../agents/circuit-breaker.js";
 import { getPrisma } from "../db.js";
 import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import { respondDbFailure } from "../db-failure.js";
-import { logger } from "../logger.js";
+import { putChildStdin } from "../child-stdin.js";
 import { TASK_TYPES } from "../task-types.js";
 import type {
   AgentMutationErrorBody,
@@ -1912,14 +1912,11 @@ export async function runCli(
       timeout: opts.timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
     });
-    // child gone before the write lands → EPIPE on stdin; unheard, it is an uncaughtException that exits the monitor.
-    // Exit code and stdout still decide the result.
-    child.child.stdin?.on("error", (error) => {
-      logger.debug({ err: error, file: child.child.spawnfile, args }, "lifecycle CLI stdin not written: child closed its input");
+    // exit code and stdout still decide the result
+    putChildStdin(child.child, opts.stdin, {
+      fields: { file: child.child.spawnfile, args },
+      message: "lifecycle CLI stdin not written: child closed its input",
     });
-    if (opts.stdin !== undefined && child.child.stdin !== null) {
-      child.child.stdin.end(opts.stdin);
-    }
     const { stdout, stderr } = await child;
     return { code: CLI_EXIT_OK, stdout, stderr };
   } catch (error) {

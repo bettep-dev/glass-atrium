@@ -4,7 +4,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { logger } from "../logger.js";
+import { putChildStdin } from "../child-stdin.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,12 +42,8 @@ const IPV4_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
 export const runCommand: CommandRunner = async (file, args, input) => {
   const pending = execFileAsync(file, [...args], { env: COMMAND.ENV, timeout: COMMAND.TIMEOUT_MS });
-  // child gone before the write lands → EPIPE on stdin; unheard, it is an uncaughtException that exits the monitor.
-  // Exit code and stdout still decide the result → an unread input parses to nothing → closed.
-  pending.child.stdin?.on("error", (error) => {
-    logger.debug({ err: error, file }, "command stdin not written: child closed its input");
-  });
-  pending.child.stdin?.end(input ?? "");
+  // exit code and stdout still decide the result → an unread input parses to nothing → closed
+  putChildStdin(pending.child, input ?? "", { fields: { file }, message: "command stdin not written: child closed its input" });
   const { stdout } = await pending;
   return stdout;
 };
