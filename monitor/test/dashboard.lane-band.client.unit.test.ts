@@ -1,6 +1,6 @@
 // Unit tests for the Dashboard triage surface in public/src/screens/dashboard.jsx —
-// buildAlarms (the cross-screen union feeding the lane) and buildTiles (the four-tile
-// status band). Both are pure, so the four payload states each tile must render
+// buildAlarms (the cross-screen union feeding the lane) and buildStats (the four-stat
+// status row). Both are pure, so the four payload states each stat must render
 // distinctly are pinned here rather than through a render.
 //
 // Sandbox harness (esbuild + node:vm over the real shipped ui.jsx + dashboard.jsx):
@@ -8,7 +8,7 @@
 //
 // Runner: npx tsx --test test/dashboard.lane-band.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -24,22 +24,24 @@ interface Alarm {
   title: string;
   detail: string | null;
   target: string | null;
+  targetLabel?: string | null;
   isHeld?: boolean;
 }
-interface Tile {
+interface Stat {
   id: string;
   label: string;
+  window?: string;
   status: string;
   tone: string;
   value: string | null;
   absent?: "none" | "not-loaded";
-  hint: string;
-  detail?: string | null;
-  trend?: string | null;
-  note?: string;
-  hintData?: { lead: string; data: string; tail: string } | null;
+  // the one visible line under the value; everything else rides ⓘ
+  context: string | null;
+  // the full sentence behind a short context — the line's title and one ⓘ note
+  cause?: string;
+  notes: string[];
   target: string | null;
-  badge?: string;
+  isHeld?: boolean;
   canRetry?: boolean;
 }
 interface Fold {
@@ -54,14 +56,20 @@ interface Fold {
   error?: string | null;
 }
 interface DashHelpers {
-  buildAlarms: (args: { harness: Fold | null; costState: unknown; installKind: string }) => Alarm[];
-  buildTiles: (args: {
+  buildAlarms: (args: {
+    harness: Fold | null;
+    costState: unknown;
+    installKind: string;
+    outcomesState?: unknown;
+    agentsState?: unknown;
+  }) => Alarm[];
+  buildStats: (args: {
     harness: Fold | null;
     costState: unknown;
     agentsState: unknown;
     outcomesState: unknown;
     isHarnessBusy?: boolean;
-  }) => Tile[];
+  }) => Stat[];
 }
 
 const dash = await buildScreenSandbox<DashHelpers>(DASH_SRC);
@@ -85,9 +93,9 @@ function kpi(today: number, avgDaily: number, paceDaily: number = today): unknow
     burn_rate_3h_usd_per_hour: paceDaily / 24,
   });
 }
-function tileOf(tiles: Tile[], id: string): Tile {
-  const found = tiles.find((t) => t.id === id);
-  assert.ok(found, `tile ${id} must exist`);
+function statOf(stats: Stat[], id: string): Stat {
+  const found = stats.find((t) => t.id === id);
+  assert.ok(found, `stat ${id} must exist`);
   return found;
 }
 
@@ -185,6 +193,71 @@ test("the install row appears only for the actionable update views", () => {
   }
 });
 
+// /api/outcomes/cross-analysis — 400 writer-reported outcomes, the share under test set by one result's count
+function outcomes(byResult: Array<{ result: string; count: number }>): unknown {
+  const counted = byResult.reduce((sum, row) => sum + row.count, 0);
+  return ready({ total: 400, by_result: [...byResult, { result: "done", count: 400 - counted }] });
+}
+// /api/agents/summary — the circuit-breaker counts the Fleet stat headlines
+function fleet(suspended: number, streak: number): unknown {
+  return ready({ meta: { total_agents: 12, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: suspended, streak_count: streak } } });
+}
+
+describe("every firing Task results or Fleet stat has its alarm row, in the stat's tone", () => {
+  const rows = [
+    { name: "task results under both alarm lines", outcomesState: outcomes([{ result: "fail", count: 4 }]), agentsState: fleet(0, 0) },
+    { name: "failed or blocked over its line", outcomesState: outcomes([{ result: "fail", count: 30 }, { result: "blocked", count: 10 }]), agentsState: fleet(0, 0) },
+    { name: "open caveats over their line", outcomesState: outcomes([{ result: "done_with_concerns", count: 48 }]), agentsState: fleet(0, 0) },
+    { name: "too few outcomes to judge", outcomesState: ready({ total: 4, by_result: [{ result: "fail", count: 4 }] }), agentsState: fleet(0, 0) },
+    { name: "a failing streak", outcomesState: LOADING, agentsState: fleet(0, 2) },
+    { name: "a suspended agent", outcomesState: LOADING, agentsState: fleet(1, 2) },
+    { name: "a suspension held over a failed refresh", outcomesState: LOADING, agentsState: held(fleet(1, 0), "HTTP 500") },
+    { name: "an unloaded breaker", outcomesState: LOADING, agentsState: ready({ meta: { circuit_breaker: { source: "unavailable" } } }) },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sources = { harness: HEALTHY, costState: kpi(10, 10), outcomesState: row.outcomesState, agentsState: row.agentsState };
+      const stats = dash.buildStats(sources);
+      const alarms = dash.buildAlarms({ ...sources, installKind: "hidden" });
+      for (const id of ["outcomes", "fleet"]) {
+        const stat = statOf(stats, id);
+        const isFiring = stat.tone === "warn" || stat.tone === "crit";
+        const alarm = alarms.find((candidate) => candidate.id === id);
+        assert.equal(alarm?.tone ?? null, isFiring ? stat.tone : null, `${id}: stat tone ${stat.tone}`);
+        if (alarm) assert.equal(alarm.isHeld === true, stat.isHeld === true, `${id}: held with its stat`);
+      }
+    });
+  }
+});
+
+describe("a Task results or Fleet alarm states its count in words and links to the owning page", () => {
+  const rows = [
+    { name: "failed or blocked over its line", id: "outcomes", sources: { outcomesState: outcomes([{ result: "fail", count: 30 }, { result: "blocked", count: 10 }]) },
+      title: "10% of task results failed or blocked in the last 7 days", detail: "40 of 400 reported outcomes", target: "outcomes", targetLabel: "Task results" },
+    { name: "open caveats over their line", id: "outcomes", sources: { outcomesState: outcomes([{ result: "done_with_concerns", count: 48 }]) },
+      title: "12% of task results have open caveats in the last 7 days", detail: "48 of 400 reported outcomes", target: "outcomes", targetLabel: "Task results" },
+    { name: "one suspended agent beside a streak", id: "fleet", sources: { agentsState: fleet(1, 2) },
+      title: "1 agent is suspended", detail: "2 on a failing streak", target: "agents", targetLabel: "Agents" },
+    { name: "suspended agents and no streak", id: "fleet", sources: { agentsState: fleet(3, 0) },
+      title: "3 agents are suspended", detail: null, target: "agents", targetLabel: "Agents" },
+    { name: "agents on a failing streak", id: "fleet", sources: { agentsState: fleet(0, 2) },
+      title: "2 agents are on a failing streak", detail: null, target: "agents", targetLabel: "Agents" },
+    { name: "one agent on a failing streak", id: "fleet", sources: { agentsState: fleet(0, 1) },
+      title: "1 agent is on a failing streak", detail: null, target: "agents", targetLabel: "Agents" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const alarms = dash.buildAlarms({ harness: HEALTHY, costState: kpi(10, 10), installKind: "hidden", ...row.sources });
+      const alarm = alarms.find((candidate) => candidate.id === row.id);
+      assert.ok(alarm, "the row exists");
+      assert.deepEqual(
+        { title: alarm.title, detail: alarm.detail, target: alarm.target, targetLabel: alarm.targetLabel },
+        { title: row.title, detail: row.detail, target: row.target, targetLabel: row.targetLabel },
+      );
+    });
+  }
+});
+
 test("rows are ordered worst-first whatever order the sources contribute in", () => {
   const rows = dash.buildAlarms({
     harness: { ...HEALTHY, downNames: ["PostgreSQL"] },
@@ -200,19 +273,19 @@ test("rows are ordered worst-first whatever order the sources contribute in", ()
   );
 });
 
-// --- The band: four tiles, and four distinguishable payload states ---
+// --- The stat row: four stats, and four distinguishable payload states ---
 
-test("the band is always the four tiles, in the priority spine's order", () => {
-  const tiles = dash.buildTiles({
+test("the stat row is always the four stats, in the priority spine's order", () => {
+  const stats = dash.buildStats({
     harness: HEALTHY, costState: kpi(10, 10), agentsState: LOADING, outcomesState: LOADING,
   });
-  assert.equal(tiles.length, 4);
-  assert.equal(tiles.map((t) => t.id).join(","), "harness,outcomes,fleet,spend");
+  assert.equal(stats.length, 4);
+  assert.equal(stats.map((t) => t.id).join(","), "harness,outcomes,fleet,spend");
 });
 
-test("every tile drills to its own screen in a fixed order", () => {
-  const tiles = dash.buildTiles({ harness: HEALTHY, costState: kpi(10, 10), agentsState: LOADING, outcomesState: LOADING });
-  assert.deepEqual([...tiles.map((t) => t.target)], ["architecture", "outcomes", "agents", "cost"]);
+test("every stat drills to its own screen in a fixed order", () => {
+  const stats = dash.buildStats({ harness: HEALTHY, costState: kpi(10, 10), agentsState: LOADING, outcomesState: LOADING });
+  assert.deepEqual([...stats.map((t) => t.target)], ["architecture", "outcomes", "agents", "cost"]);
 });
 
 test("loading, error and unavailable each read differently and none reads as a value", () => {
@@ -223,42 +296,43 @@ test("loading, error and unavailable each read differently and none reads as a v
     ["unavailable", ready({ meta: {} }), "unavailable", "not-loaded"],
   ];
   for (const [name, agentsState, expected, absent] of states) {
-    const tile = tileOf(
-      dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }),
+    const stat = statOf(
+      dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }),
       "fleet",
     );
-    assert.equal(tile.status, expected, name);
-    assert.equal(tile.value, null, `${name} must not render a number nobody loaded`);
-    assert.equal(tile.absent ?? null, absent, `${name}: only a finished, unread read is marked not loaded`);
-    assert.equal(tile.tone, "neutral", `${name} carries no verdict tone`);
+    assert.equal(stat.status, expected, name);
+    assert.equal(stat.value, null, `${name} must not render a number nobody loaded`);
+    assert.equal(stat.absent ?? null, absent, `${name}: only a finished, unread read is marked not loaded`);
+    assert.equal(stat.tone, "neutral", `${name} carries no verdict tone`);
   }
 });
 
-test("a failed tile names its own region and source, so its Retry reloads that region alone", () => {
-  const tiles = dash.buildTiles({ harness: HEALTHY, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
+test("a failed stat names its own region and source, so its Retry reloads that region alone", () => {
+  const stats = dash.buildStats({ harness: HEALTHY, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
   const regions = [["outcomes", "outcomes"], ["fleet", "agents"], ["spend", "cost"]];
-  for (const [tileId, region] of regions) {
-    const tile = tileOf(tiles, tileId) as Tile & { region: string; source: string; error: string };
-    assert.equal(tile.status, "error", tileId);
-    assert.equal(tile.region, region, tileId);
-    assert.ok(tile.source, `${tileId} names what failed to load`);
-    assert.equal(tile.error, "HTTP 500", `${tileId} carries the raw answer for Details`);
+  for (const [statId, region] of regions) {
+    const stat = statOf(stats, statId) as Stat & { region: string; source: string; error: string };
+    assert.equal(stat.status, "error", statId);
+    assert.equal(stat.region, region, statId);
+    assert.ok(stat.source, `${statId} names what failed to load`);
+    assert.equal(stat.error, "HTTP 500", `${statId} carries the raw answer for Details`);
+    assert.match(String(stat.context), /fleet summary|task results|today's spend/, `${statId}: the context line states what failed`);
   }
 });
 
-test("a tile refreshing over held data is busy; a first load is not a refresh", () => {
+test("a stat refreshing over held data is busy; a first load is not a refresh", () => {
   const refreshing = { ...(kpi(10, 10) as object), busy: true };
-  const tiles = dash.buildTiles({ harness: HEALTHY, costState: refreshing, agentsState: { ...LOADING, busy: true }, outcomesState: LOADING });
-  const spend = tileOf(tiles, "spend") as Tile & { isBusy: boolean };
-  const fleet = tileOf(tiles, "fleet") as Tile & { isBusy: boolean };
+  const stats = dash.buildStats({ harness: HEALTHY, costState: refreshing, agentsState: { ...LOADING, busy: true }, outcomesState: LOADING });
+  const spend = statOf(stats, "spend") as Stat & { isBusy: boolean };
+  const fleet = statOf(stats, "fleet") as Stat & { isBusy: boolean };
   assert.equal(spend.status, "ready");
   assert.equal(spend.isBusy, true);
   assert.equal(fleet.isBusy, false);
 });
 
-function fleetTile(circuitBreaker: unknown): Tile {
-  return tileOf(
-    dash.buildTiles({
+function fleetStat(circuitBreaker: unknown): Stat {
+  return statOf(
+    dash.buildStats({
       harness: HEALTHY, costState: LOADING, outcomesState: LOADING,
       agentsState: ready({ meta: { total_agents: 12, circuit_breaker: circuitBreaker } }),
     }),
@@ -266,53 +340,53 @@ function fleetTile(circuitBreaker: unknown): Tile {
   );
 }
 
-test("the fleet tile headlines the suspended count and tones by the worst breaker state", () => {
+test("the fleet stat headlines the suspended count and tones by the worst breaker state", () => {
   const rows: Array<[string, number, number, string]> = [
     ["nothing tripped", 0, 0, "ok"],
     ["a streak short of suspension", 0, 2, "warn"],
     ["a suspended agent", 1, 2, "crit"],
   ];
   for (const [name, suspended, streak, tone] of rows) {
-    const tile = fleetTile({ source: "loaded", registry_agents: 20, suspended_count: suspended, streak_count: streak, alarms: [] });
-    assert.equal(tile.status, "ready", name);
-    assert.equal(tile.value, String(suspended), `${name}: the suspended count is the headline`);
-    assert.equal(tile.tone, tone, name);
+    const stat = fleetStat({ source: "loaded", registry_agents: 20, suspended_count: suspended, streak_count: streak, alarms: [] });
+    assert.equal(stat.status, "ready", name);
+    assert.equal(stat.value, String(suspended), `${name}: the suspended count is the headline`);
+    assert.equal(stat.tone, tone, name);
   }
 });
 
-test("the fleet tile reads unavailable when the breaker state is, never a zero suspended", () => {
+test("the fleet stat reads unavailable when the breaker state is, never a zero suspended", () => {
   for (const breaker of [undefined, { source: "unavailable", registry_agents: 0, suspended_count: 0, streak_count: 0, alarms: [] }]) {
-    const tile = fleetTile(breaker);
-    assert.equal(tile.status, "unavailable");
-    assert.equal(tile.absent, "not-loaded");
-    assert.equal(tile.value, null);
-    assert.equal(tile.tone, "neutral");
+    const stat = fleetStat(breaker);
+    assert.equal(stat.status, "unavailable");
+    assert.equal(stat.absent, "not-loaded");
+    assert.equal(stat.value, null);
+    assert.equal(stat.tone, "neutral");
   }
 });
 
-// The tile skeleton belongs to the first-poll wait; the tile must not call that wait 'unavailable'.
-test("the harness tile is loading exactly while the fold is, and unavailable only after", () => {
+// The loading placeholder belongs to the first-poll wait; the stat must not call that wait 'unavailable'.
+test("the harness stat is loading exactly while the fold is, and unavailable only after", () => {
   const empty = { ...HEALTHY, partsOk: 0, partsChecked: 0, uncheckedNames: ["PostgreSQL"] };
   const folds: [string, string, string | null][] = [["loading", "loading", null], ["unavailable", "unavailable", "not-loaded"]];
   for (const [foldStatus, expected, absent] of folds) {
-    const tile = tileOf(
-      dash.buildTiles({
+    const stat = statOf(
+      dash.buildStats({
         harness: { ...empty, status: foldStatus },
         costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
       }),
       "harness",
     );
-    assert.equal(tile.status, expected, foldStatus);
-    assert.equal(tile.value, null, `${foldStatus} must not render a count nobody polled`);
-    assert.equal(tile.absent ?? null, absent, `${foldStatus}: only a lost reading is marked not loaded`);
-    assert.equal(tile.tone, "neutral");
-    assert.equal(tile.canRetry === true, foldStatus === "unavailable", `${foldStatus}: only a lost reading offers Retry`);
+    assert.equal(stat.status, expected, foldStatus);
+    assert.equal(stat.value, null, `${foldStatus} must not render a count nobody polled`);
+    assert.equal(stat.absent ?? null, absent, `${foldStatus}: only a lost reading is marked not loaded`);
+    assert.equal(stat.tone, "neutral");
+    assert.equal(stat.canRetry === true, foldStatus === "unavailable", `${foldStatus}: only a lost reading offers Retry`);
   }
 });
 
-test("the harness tile counts only the parts the shell actually polled", () => {
-  const tile = tileOf(
-    dash.buildTiles({
+test("the harness stat counts only the parts the shell actually polled", () => {
+  const stat = statOf(
+    dash.buildStats({
       harness: {
         ...HEALTHY,
         partsOk: 3, partsChecked: 4,
@@ -322,49 +396,48 @@ test("the harness tile counts only the parts the shell actually polled", () => {
     }),
     "harness",
   );
-  assert.equal(tile.value, "1 of 4 down", "the verdict leads, over what answered, not what exists");
-  assert.equal(tile.tone, "crit");
-  assert.ok(tile.trend?.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
-  assert.ok(!tile.hint.includes("Hook Chain"), "the verdict line never lists an unpolled part beside the down ones");
+  assert.equal(stat.value, "1 of 4 down", "the verdict leads, over what answered, not what exists");
+  assert.equal(stat.tone, "crit");
+  assert.ok(stat.context?.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
 });
 
-test("the harness and fleet tiles fill the line under their count with a secondary fact", () => {
-  const harness = tileOf(
-    dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }), "harness");
-  assert.equal(harness.trend, "All 5 parts polled on every harness read", "a fully polled harness says its coverage");
+// the alarm list owns every alarm sentence (spec 44084 §9) → a firing stat keeps its value and tone, never the names or the words
+test("a firing stat never restates its alarm: the harness stat leaves the down parts to the alarm row", () => {
+  const rows = [
+    { name: "one down", downNames: ["autoagent"], uncheckedNames: [] as string[] },
+    { name: "two down beside an unpolled part", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hook Chain"] },
+  ];
+  for (const row of rows) {
+    const harness = { ...HEALTHY, partsOk: 4 - row.downNames.length, partsChecked: 5 - row.uncheckedNames.length, downNames: row.downNames, uncheckedNames: row.uncheckedNames };
+    const stat = statOf(dash.buildStats({ harness, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }), "harness");
+    const [alarm] = dash.buildAlarms({ harness, costState: LOADING, installKind: "hidden" });
+    const statText = [stat.context, ...stat.notes].join(" ");
+    for (const name of row.downNames) {
+      assert.ok(String(alarm.detail).includes(name), `${row.name}: the alarm row names ${name}`);
+      assert.ok(!statText.includes(name), `${row.name}: the stat never names ${name} — "${statText}"`);
+    }
+  }
+});
+
+test("the harness and fleet stats fill the context line under their count with a secondary fact", () => {
+  const harness = statOf(
+    dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }), "harness");
+  assert.equal(harness.context, "All 5 parts polled on every harness read", "a fully polled harness says its coverage");
   const agentsState = ready({
     agents: [{ agent_id: "glass-atrium-agent-a", agent_name: "glass-atrium-agent-a", runs: 2731 }],
     meta: { total_agents: 12, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] } },
   });
-  const fleet = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }), "fleet");
-  assert.equal(fleet.trend, "12 of 20 registered agents had a run in the last 7 days");
-  assert.equal(fleet.hint, "Most runs: glass-atrium-agent-a, 2,731", "the busiest agent is the region's one ordered row");
-  const noRows = fleetTile({ source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] });
-  assert.equal(noRows.hint, null, "no row → no busiest agent, never a made-up one");
+  const fleet = statOf(dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }), "fleet");
+  assert.equal(fleet.context, "0 on a failing streak");
+  assert.ok(fleet.notes.includes("12 of 20 registered agents had a run in the last 7 days."), JSON.stringify(fleet.notes));
+  assert.ok(fleet.notes.includes("Most runs: glass-atrium-agent-a, 2,731."), "the busiest agent is the region's one ordered row");
+  const noRows = fleetStat({ source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] });
+  assert.ok(!noRows.notes.some((note) => /Most runs/.test(note)), "no row → no busiest agent, never a made-up one");
 });
 
-// A shared ' · ' separator let the unpolled list run on into the down list → an unpolled part read as down.
-test("the harness hint's down list names exactly the down parts, never an unpolled one", () => {
-  const rows = [
-    { name: "one down, one unpolled", downNames: ["autoagent"], uncheckedNames: ["Hook Chain"] },
-    { name: "two down, two unpolled", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hook Chain", "PostgreSQL"] },
-  ];
-  for (const row of rows) {
-    const tile = tileOf(
-      dash.buildTiles({
-        harness: { ...HEALTHY, partsOk: 5 - row.uncheckedNames.length - row.downNames.length, partsChecked: 5 - row.uncheckedNames.length, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
-        costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
-      }),
-      "harness",
-    );
-    const downClause = /Not answering: ([^.]*)/.exec(tile.hint)?.[1] ?? "";
-    assert.deepEqual(downClause.split(" · "), row.downNames, `${row.name}: hint was "${tile.hint}"`);
-  }
-});
-
-test("the outcome tile takes its verdict from the shared rule", () => {
-  const crit = tileOf(
-    dash.buildTiles({
+test("the outcome stat takes its verdict from the shared rule", () => {
+  const crit = statOf(
+    dash.buildStats({
       harness: HEALTHY, costState: LOADING, agentsState: LOADING,
       outcomesState: ready({
         total: 200,
@@ -376,8 +449,8 @@ test("the outcome tile takes its verdict from the shared rule", () => {
   assert.equal(crit.tone, "crit");
   assert.equal(crit.status, "ready");
 
-  const lowN = tileOf(
-    dash.buildTiles({
+  const lowN = statOf(
+    dash.buildStats({
       harness: HEALTHY, costState: LOADING, agentsState: LOADING,
       outcomesState: ready({ total: 4, by_result: [{ result: "fail", count: 4 }] }),
     }),
@@ -387,9 +460,9 @@ test("the outcome tile takes its verdict from the shared rule", () => {
   assert.equal(lowN.tone, "neutral");
 });
 
-test("the outcome tile leads with the failed share and moves the verdict into its badge", () => {
-  const tile = tileOf(
-    dash.buildTiles({
+test("the outcome stat leads with the failed share, its counts on the context line, its alert lines and caveats behind ⓘ", () => {
+  const stat = statOf(
+    dash.buildStats({
       harness: HEALTHY, costState: LOADING, agentsState: LOADING,
       outcomesState: ready({
         total: 200,
@@ -398,188 +471,71 @@ test("the outcome tile leads with the failed share and moves the verdict into it
     }),
     "outcomes",
   );
-  assert.equal(tile.value, "20%", "the failed share is the headline, its .0 dropped");
-  assert.equal(tile.badge, "Failures above alert line");
-  assert.match(String(tile.detail), /40 of 200 failed or blocked · alert at 5%/, "the detail names both results the share counts");
-  assert.match(tile.hint, /^Open caveats 5% \(10\) · alert 10%$/, "the caveat alert line sits beside the caveat share");
-  assert.doesNotMatch(tile.hint, /writer-emitted/, "the counting rule moves out of the visible hint");
-  assert.match(String(tile.note), /writer-emitted/, "and into the tile's ⓘ drawer note");
+  assert.equal(stat.value, "20%", "the failed share is the headline, its .0 dropped");
+  assert.equal(stat.context, "40 of 200 failed or blocked", "the context names both results the share counts");
+  const notes = stat.notes.join(" ");
+  assert.match(notes, /alarm at 5%/, "the failure alert line moves behind ⓘ");
+  assert.match(notes, /Open caveats 5% \(10\), alarm at 10%/, "the caveat share sits beside its own alert line");
+  assert.match(notes, /writer-emitted/, "and the counting rule");
+  assert.doesNotMatch(String(stat.context), /alarm|writer-emitted/, "the visible line carries neither");
 });
 
-test("the spend tile leads with the judged pace — the larger of so-far and the 3-hour pace — against the 7-day average", () => {
-  const rows = [
-    { name: "pace ahead of so-far", today: 3, avg: 10, pace: 20, lead: /^On pace for \$20\.00 today, 2\.0× the 7-day average \(\$10\.00\)/ },
-    { name: "so-far ahead of pace", today: 30, avg: 10, pace: 5, lead: /^On pace for \$30\.00 today, 3\.0× the 7-day average/ },
-    { name: "under the average", today: 2, avg: 10, pace: 8, lead: /^On pace for \$8\.00 today, 0\.8× the 7-day average/ },
-  ];
-  for (const row of rows) {
-    const tile = tileOf(
-      dash.buildTiles({ harness: HEALTHY, costState: kpi(row.today, row.avg, row.pace), agentsState: LOADING, outcomesState: LOADING }),
-      "spend",
-    );
-    assert.match(String(tile.detail), row.lead, `${row.name}: the judged pace leads`);
-    assert.doesNotMatch(String(tile.detail), /so far/, `${row.name}: so-far never leads`);
-  }
-});
-
-test("the spend alarm names its pace window in plain words", () => {
-  const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(3, 1), installKind: "hidden" });
-  assert.equal(alarm.id, "spend");
-  assert.match(String(alarm.detail), /at the last 3 hours' rate/);
-  assert.doesNotMatch(String(alarm.detail), /3 h burn/);
-});
-
-// design copy caps: a KPI hint is one line of 40 chars or fewer; the spend alarm detail is one figure plus a short label
-const CAP = { KPI_HINT: 40, ALARM_LABEL: 32 };
-
-// every harness store the shell reads, by its label → the longest unread list a fold can carry
-const HARNESS_SOURCE_LABELS = ["the failure count", "daemon status", "the health probe", "the hook chain", "hook failures"];
-
-// seven down parts with long names → a down list far past the hint cap
-const LONG_PART_NAMES = ["Chromium Export", "autoagent", "glass-atrium-wiki-curator", "daily-restart-wiki", "Hook Chain", "PostgreSQL", "monitor"];
-const LONG_AGENT = "glass-atrium-intel-researcher";
-function busiestFleet(): unknown {
-  return ready({
-    agents: [{ agent_id: LONG_AGENT, agent_name: LONG_AGENT, runs: 12_345 }],
-    meta: { total_agents: 3, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0 } },
-  });
-}
-
-// data a hint carries (part or agent names) is never rewritten → it is set apart to clamp, and only the authored words count toward the cap
-// excluded: a cold failure's hint is the shared error copy
-test("every hint the dashboard authors for a status tile fits the 40-char KPI hint cap, held readings included, with any data it carries set apart to clamp", () => {
-  const outcomes = (byResult: Array<{ result: string; count: number }>) =>
-    ready({ total: byResult.reduce((sum, row) => sum + row.count, 0), by_result: byResult });
-  const fleet = ready({ meta: { total_agents: 3, circuit_breaker: { source: "loaded", suspended_count: 0, streak_count: 0 } } });
-  const rows: Array<{ name: string; tile: string; args: Record<string, unknown>; hasData?: boolean }> = [
-    { name: "harness with every part down", tile: "harness", args: { harness: { ...HEALTHY, partsOk: 0, downNames: LONG_PART_NAMES } }, hasData: true },
-    { name: "fleet busiest agent with a long name", tile: "fleet", args: { agentsState: busiestFleet() }, hasData: true },
-    { name: "fleet held over a busiest agent", tile: "fleet", args: { agentsState: held(busiestFleet(), "HTTP 500") } },
-    { name: "harness healthy", tile: "harness", args: { harness: HEALTHY } },
-    { name: "harness readings unavailable", tile: "harness", args: { harness: { ...HEALTHY, status: "unavailable" } } },
-    { name: "harness held over one failed source", tile: "harness", args: { harness: unreadFold({ unreadSources: ["the failure count"] }) } },
-    { name: "harness held over every failed source", tile: "harness", args: { harness: unreadFold({ unreadSources: HARNESS_SOURCE_LABELS }) } },
-    { name: "harness parts lost to one cold source", tile: "harness", args: { harness: unreadFold({ partsOk: 2, partsChecked: 2, unreadSources: ["the failure count"] }) } },
-    { name: "harness parts lost to every cold source", tile: "harness", args: { harness: unreadFold({ partsOk: 2, partsChecked: 2, unreadSources: HARNESS_SOURCE_LABELS }) } },
-    { name: "outcomes judged, five-figure counts", tile: "outcomes", args: { outcomesState: outcomes([{ result: "fail", count: 12_000 }, { result: "done_with_concerns", count: 25_000 }, { result: "done", count: 63_000 }]) } },
-    { name: "outcomes too few to judge", tile: "outcomes", args: { outcomesState: outcomes([{ result: "done", count: 3 }]) } },
-    { name: "outcomes none recorded", tile: "outcomes", args: { outcomesState: outcomes([]) } },
-    { name: "outcomes held after a failed refresh", tile: "outcomes", args: { outcomesState: held(outcomes([{ result: "done", count: 3 }]), "HTTP 500") } },
-    { name: "fleet suspension state unavailable", tile: "fleet", args: { agentsState: ready({ meta: { total_agents: 3 } }) } },
-    { name: "fleet held after a failed refresh", tile: "fleet", args: { agentsState: held(fleet, "HTTP 500") } },
-    { name: "spend under the cut", tile: "spend", args: { costState: kpi(50, 100) } },
-    { name: "spend over the cut", tile: "spend", args: { costState: kpi(1_300, 1_000) } },
-    { name: "spend with no 7-day basis", tile: "spend", args: { costState: kpi(0, 0) } },
-    { name: "spend held after a failed refresh", tile: "spend", args: { costState: held(kpi(50, 100), "HTTP 500") } },
-  ];
-  for (const row of rows) {
-    const tiles = dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING, ...row.args });
-    const tile = tileOf(tiles, row.tile);
-    assert.ok(tile.hint, `${row.name}: the state carries a hint`);
-    const { lead, data, tail } = tile.hintData ?? { lead: tile.hint, data: "", tail: "" };
-    assert.equal(`${lead}${data}${tail}`, tile.hint, `${row.name}: the clamped parts read back as the whole hint`);
-    assert.equal(data !== "", row.hasData === true, `${row.name}: only a hint carrying data sets a part apart to clamp`);
-    const authored = `${lead}${tail}`;
-    assert.ok(authored.length <= CAP.KPI_HINT, `${row.name}: "${authored}" is ${authored.length} chars`);
-  }
-});
-
-test("a hint carrying data names it in full in the tile's drawer note, so a clamped name is never hover-only", () => {
-  const rows = [
-    { name: "every part down", tile: "harness", args: { harness: { ...HEALTHY, partsOk: 0, downNames: LONG_PART_NAMES } }, data: LONG_PART_NAMES },
-    { name: "busiest agent", tile: "fleet", args: { agentsState: busiestFleet() }, data: [LONG_AGENT] },
-  ];
-  for (const row of rows) {
-    const tile = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING, ...row.args }), row.tile);
-    const note = String(tile.note).replace(/\u2011/g, "-");
-    for (const name of row.data) assert.ok(note.includes(name), `${row.name}: the note names ${name} — note was "${note}"`);
-  }
-});
-
-test("a harness hint too short to name every unread source names the first and counts the rest, and its drawer note names them all", () => {
-  const rows = [
-    { name: "one held source", unreadSources: ["daemon status"], hint: "Couldn't refresh daemon status", hasNote: false },
-    { name: "two held sources", unreadSources: ["daemon status", "the hook chain"], hint: "Couldn't refresh daemon status +1", hasNote: true },
-    { name: "every source held", unreadSources: HARNESS_SOURCE_LABELS, hint: "Couldn't refresh the failure count +4", hasNote: true },
-  ];
-  for (const row of rows) {
-    const tile = tileOf(
-      dash.buildTiles({ harness: unreadFold({ unreadSources: row.unreadSources }), costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
-      "harness",
-    );
-    assert.equal(tile.hint, row.hint, row.name);
-    assert.equal(tile.note != null, row.hasNote, `${row.name}: a drawer note only when the hint cannot name every source`);
-    for (const source of row.hasNote ? row.unreadSources : []) assert.ok(String(tile.note).includes(source), `${row.name}: note names ${source}`);
-  }
-});
-
-test("the spend alarm detail is the leg that crossed the cut, as one figure plus a label within the 32-char cap", () => {
-  const rows = [
-    { name: "the 3-hour pace leads", today: 1_300, pace: 1_450, figure: "$1,450", label: /at the last 3 hours' rate/ },
-    { name: "so-far leads", today: 1_500, pace: 900, figure: "$1,500", label: /so far/ },
-  ];
-  for (const row of rows) {
-    const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(row.today, 1_000, row.pace), installKind: "hidden" });
-    const detail = String(alarm.detail);
-    const figure = detail.match(/^\$[\d,.]+/)?.[0] ?? "";
-    assert.equal(figure, row.figure, `${row.name}: "${detail}" leads with the figure that crossed the cut`);
-    const label = detail.slice(figure.length);
-    assert.match(label, row.label, `${row.name}: the label names its leg`);
-    assert.ok(label.length <= CAP.ALARM_LABEL, `${row.name}: label "${label}" is ${label.length} chars`);
-  }
-});
-
-test("the spend tile tones only on the pace verdict, never on the amount", () => {
-  const big = tileOf(
-    dash.buildTiles({ harness: HEALTHY, costState: kpi(9999, 20000), agentsState: LOADING, outcomesState: LOADING }),
+test("the spend stat tones only on the pace verdict, never on the amount", () => {
+  const big = statOf(
+    dash.buildStats({ harness: HEALTHY, costState: kpi(9999, 20000), agentsState: LOADING, outcomesState: LOADING }),
     "spend",
   );
   assert.equal(big.tone, "ok", "a large but on-pace spend reads normal, never an alarm");
-  assert.ok(big.badge, "the spend tile carries a status chip like the other tiles");
-  const hot = tileOf(
-    dash.buildTiles({ harness: HEALTHY, costState: kpi(3, 1), agentsState: LOADING, outcomesState: LOADING }),
+  const hot = statOf(
+    dash.buildStats({ harness: HEALTHY, costState: kpi(3, 1), agentsState: LOADING, outcomesState: LOADING }),
     "spend",
   );
   assert.equal(hot.tone, "warn", "a small but off-pace spend is");
 });
 
-test("the harness tile headlines its verdict — the down count when any part is down, else the healthy count", () => {
-  const cases: Array<[Fold, string]> = [
-    [{ ...HEALTHY }, "5 of 5 up"],
-    [{ ...HEALTHY, partsOk: 2, downNames: ["a", "b", "c"] }, "3 of 5 down"],
+// amount first (spec 44084 §3.4) → the title states the figure that crossed the cut, the detail its multiple of the basis
+describe("the spend alarm leads with the amount and states its multiple of the 7-day average", () => {
+  const rows = [
+    { name: "the 3-hour pace leads", today: 842, pace: 3_310,
+      title: "$842 so far today, running at $3,310/day over the last 3 hours", detail: "2.4× the 7-day average ($1,380/day)" },
+    { name: "so-far leads", today: 1_790, pace: 900, title: "$1,790 so far today", detail: "1.3× the 7-day average ($1,380/day)" },
+    { name: "under $100, two decimals", today: 3, pace: 1, title: "$3.00 so far today", detail: "1.5× the 7-day average ($2.00/day)" },
   ];
-  for (const [fold, value] of cases) {
-    const tile = tileOf(
-      dash.buildTiles({ harness: fold, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
-      "harness",
-    );
-    assert.equal(tile.value, value);
+  for (const row of rows) {
+    test(row.name, () => {
+      const avg = row.name.startsWith("under") ? 2 : 1_380;
+      const [alarm] = dash.buildAlarms({ harness: HEALTHY, costState: kpi(row.today, avg, row.pace), installKind: "hidden" });
+      assert.equal(alarm.id, "spend");
+      assert.equal(alarm.title, row.title);
+      assert.equal(alarm.detail, row.detail);
+    });
   }
 });
 
-test("the harness tile names its down parts instead of restating the count", () => {
-  const harness = { ...HEALTHY, partsOk: 3, downNames: ["autoagent", "monitor"] };
-  const tile = tileOf(
-    dash.buildTiles({ harness, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
-    "harness",
-  );
-  assert.equal(tile.value, "2 of 5 down");
-  assert.match(tile.hint, /autoagent · monitor/, "the down parts are named on the tile");
-  assert.doesNotMatch(tile.hint, /\bof 5\b/, "the count stays in the headline alone");
+test("the spend stat states no multiple of its own — its alarm rule and basis sit behind ⓘ, the alarm row states the multiple", () => {
+  const rows = [
+    { name: "on pace", today: 3, avg: 10, pace: 8 },
+    { name: "hot", today: 30, avg: 10, pace: 5 },
+  ];
+  for (const row of rows) {
+    const stat = statOf(dash.buildStats({ harness: HEALTHY, costState: kpi(row.today, row.avg, row.pace), agentsState: LOADING, outcomesState: LOADING }), "spend");
+    assert.doesNotMatch(String(stat.context), /×/, `${row.name}: "${stat.context}"`);
+    assert.ok(stat.notes.some((note) => /1\.25× the 7-day average \(\$10\.00\/day\)/.test(note)), `${row.name}: ${JSON.stringify(stat.notes)}`);
+  }
 });
 
-test("tile labels carry no window text — the window is its own field so the heading case cannot swallow it", () => {
-  const tiles = dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING });
-  for (const tile of tiles) assert.ok(!/\(/.test(tile.label), `${tile.id} label: ${tile.label}`);
-  const windowed = tiles.filter((t) => (t as Tile & { window?: string }).window === "7d").map((t) => t.id);
+test("stat labels carry no window text — the window is its own field the row joins on render", () => {
+  const stats = dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING });
+  for (const stat of stats) assert.ok(!/\(|7/.test(stat.label), `${stat.id} label: ${stat.label}`);
+  const windowed = stats.filter((t) => t.window === "7d").map((t) => t.id);
   assert.deepEqual([...windowed], ["outcomes", "fleet"]);
 });
 
 // --- A failed read never reads as a current verdict, and one outage offers one Retry ---
 
 interface FailureHelpers {
-  getPageSharedFailure: (tiles: Tile[], panels?: Array<{ source: string; error: string | null }>) => { sources: string[]; error: string } | null;
-  getAlarmReadiness: (sources: Record<string, unknown>) => { status: string; unread: string[] };
+  getPageSharedFailure: (stats: Stat[], panels?: Array<{ source: string; error: string | null }>) => { sources: string[]; error: string } | null;
+  getAlarmReadiness: (sources: Record<string, unknown>, alarms?: Alarm[]) => { status: string; unread: string[] };
 }
 const failure = dash as unknown as FailureHelpers;
 
@@ -592,6 +548,8 @@ function unreadFold(over: Record<string, unknown>): Fold {
 }
 // the three parts a two-part read leaves out — foldHarness lists every part it could not judge
 const LOST_PARTS = ["autoagent", "glass-atrium-wiki-curator", "Hook Chain"];
+// every harness store the shell reads, by its label → the longest unread list a fold can carry
+const HARNESS_SOURCE_LABELS = ["the failure count", "daemon status", "the health probe", "the hook chain", "hook failures"];
 
 test("a region whose refresh failed over held data reads last-known and carries the failure", () => {
   const fleet = ready({ meta: { total_agents: 3, circuit_breaker: { source: "loaded", suspended_count: 0, streak_count: 0 } } });
@@ -600,86 +558,89 @@ test("a region whose refresh failed over held data reads last-known and carries 
     { name: "held reads after a failed refresh", error: "HTTP 500", lastKnown: true },
   ];
   const ids = ["outcomes", "fleet", "spend"];
-  const tilesFor = (row: (typeof rows)[number]) => {
+  const statsFor = (row: (typeof rows)[number]) => {
     const wrap = (state: unknown) => (row.error ? held(state, row.error) : state);
-    return dash.buildTiles({
+    return dash.buildStats({
       harness: HEALTHY, costState: wrap(kpi(1, 10)), agentsState: wrap(fleet), outcomesState: wrap(ready({})),
     });
   };
   for (const row of rows) {
-    const tiles = tilesFor(row);
+    const stats = statsFor(row);
     for (const id of ids) {
-      const tile = tileOf(tiles, id) as Tile & { error?: string | null };
-      assert.equal(tile.badge === "Last known", row.lastKnown, `${row.name}: ${id} badge`);
-      assert.equal(tile.error ?? null, row.error, `${row.name}: ${id} carries the failure`);
-      assert.equal(tile.canRetry === true, row.lastKnown, `${row.name}: ${id} Retry`);
+      const stat = statOf(stats, id) as Stat & { error?: string | null; source: string };
+      assert.equal(stat.isHeld === true, row.lastKnown, `${row.name}: ${id} held`);
+      assert.equal(stat.context === "Last known", row.lastKnown, `${row.name}: ${id} context "${stat.context}"`);
+      const cause = `Last known — couldn't refresh ${stat.source}`;
+      assert.equal(stat.cause === cause && stat.notes.includes(`${cause}.`), row.lastKnown, `${row.name}: ${id} names the failed refresh behind the line`);
+      assert.equal(stat.error ?? null, row.error, `${row.name}: ${id} carries the failure`);
+      assert.equal(stat.canRetry === true, row.lastKnown, `${row.name}: ${id} Retry`);
     }
   }
   // a held all-clear never reads healthy: the ok tone drops to neutral, the same rule the page verdicts follow
-  const heldTiles = tilesFor(rows[1]);
-  for (const id of ids) assert.notEqual(tileOf(heldTiles, id).tone, "ok", `${id} held after a failed refresh`);
+  const heldStats = statsFor(rows[1]);
+  for (const id of ids) assert.notEqual(statOf(heldStats, id).tone, "ok", `${id} held after a failed refresh`);
 });
 
-test("a held tile keeps a warn or crit alarm through a failed refresh, and only an all-clear drops to neutral", () => {
+test("a held stat keeps a warn or crit alarm through a failed refresh, and only an all-clear drops to neutral", () => {
   const breaker = (suspended: number) => ({ source: "loaded", suspended_count: suspended, streak_count: 0 });
   const fleetOf = (suspended: number) => ready({ meta: { total_agents: 3, circuit_breaker: breaker(suspended) } });
   for (const suspended of [0, 1]) {
-    const fresh = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, outcomesState: LOADING, agentsState: fleetOf(suspended) }), "fleet");
-    const stale = tileOf(
-      dash.buildTiles({ harness: HEALTHY, costState: LOADING, outcomesState: LOADING, agentsState: held(fleetOf(suspended), "HTTP 500") }),
+    const fresh = statOf(dash.buildStats({ harness: HEALTHY, costState: LOADING, outcomesState: LOADING, agentsState: fleetOf(suspended) }), "fleet");
+    const stale = statOf(
+      dash.buildStats({ harness: HEALTHY, costState: LOADING, outcomesState: LOADING, agentsState: held(fleetOf(suspended), "HTTP 500") }),
       "fleet",
     );
     const isAlarm = fresh.tone === "warn" || fresh.tone === "crit";
     assert.equal(isAlarm, suspended > 0, `${suspended} suspended: a suspension is the alarm under test`);
     assert.equal(stale.tone, isAlarm ? fresh.tone : "neutral", `${suspended} suspended: fresh ${fresh.tone}`);
-    assert.equal(stale.badge, "Last known", `${suspended} suspended: the held reading is still flagged`);
+    assert.equal(stale.isHeld, true, `${suspended} suspended: the held reading is still flagged`);
   }
 });
 
-test("a cold-failed tile stays the error card while its Retry is in flight, never a loader", () => {
+test("a cold-failed stat stays failed while its Retry is in flight, never a loader", () => {
   const retrying = { status: "loading", data: null, error: "HTTP 500", busy: true };
-  const tiles = dash.buildTiles({ harness: HEALTHY, costState: retrying, agentsState: retrying, outcomesState: retrying });
+  const stats = dash.buildStats({ harness: HEALTHY, costState: retrying, agentsState: retrying, outcomesState: retrying });
   for (const id of ["outcomes", "fleet", "spend"]) {
-    const tile = tileOf(tiles, id) as Tile & { error: string; isBusy: boolean };
-    assert.equal(tile.status, "error", `${id} keeps its error card`);
-    assert.equal(tile.error, "HTTP 500", id);
-    assert.equal(tile.isBusy, true, `${id} marks the Retry in flight`);
+    const stat = statOf(stats, id) as Stat & { error: string; isBusy: boolean };
+    assert.equal(stat.status, "error", `${id} keeps its failure`);
+    assert.equal(stat.error, "HTTP 500", id);
+    assert.equal(stat.isBusy, true, `${id} marks the Retry in flight`);
   }
 });
 
 test("held failures sharing one cause collapse into the page banner's single Retry", () => {
-  const tiles = dash.buildTiles({
+  const stats = dash.buildStats({
     harness: HEALTHY,
     costState: held(kpi(1, 10), "HTTP 500"),
     agentsState: held(ready({}), "HTTP 500"),
     outcomesState: held(ready({}), "HTTP 500"),
   });
-  const shared = failure.getPageSharedFailure(tiles);
+  const shared = failure.getPageSharedFailure(stats);
   assert.ok(shared, "held failures join the banner");
   assert.deepEqual([...shared.sources].sort(), ["task results", "the fleet summary", "today's spend"]);
 });
 
-test("the week panels join the tiles' outage when the cause is the same, so one cause keeps one Retry", () => {
-  const tiles = dash.buildTiles({ harness: HEALTHY, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
+test("the week panels join the stats' outage when the cause is the same, so one cause keeps one Retry", () => {
+  const stats = dash.buildStats({ harness: HEALTHY, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
   const rows = [
-    { name: "panels fail on the tiles' cause", error: "HTTP 500", isJoined: true },
+    { name: "panels fail on the stats' cause", error: "HTTP 500", isJoined: true },
     { name: "panels fail on another cause", error: "HTTP 404", isJoined: false },
   ];
 
   for (const row of rows) {
     const panels = [{ source: "daily spend", error: row.error }, { source: "runs by hour", error: row.error }];
-    const shared = failure.getPageSharedFailure(tiles, panels);
-    assert.ok(shared, `${row.name}: the tiles still share one banner`);
+    const shared = failure.getPageSharedFailure(stats, panels);
+    assert.ok(shared, `${row.name}: the stats still share one banner`);
     assert.equal(shared.sources.includes("daily spend") && shared.sources.includes("runs by hour"), row.isJoined, row.name);
   }
 });
 
-test("a cold harness outage is an error tile listed in the same banner as the regions", () => {
+test("a cold harness outage is a failed stat listed in the same banner as the regions", () => {
   const harness = unreadFold({ status: "unavailable", partsOk: 0, partsChecked: 0 });
-  const tiles = dash.buildTiles({ harness, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
-  const tile = tileOf(tiles, "harness");
-  assert.equal(tile.status, "error");
-  assert.ok(failure.getPageSharedFailure(tiles)?.sources.includes("harness health"), "the banner names the harness");
+  const stats = dash.buildStats({ harness, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
+  const stat = statOf(stats, "harness");
+  assert.equal(stat.status, "error");
+  assert.ok(failure.getPageSharedFailure(stats)?.sources.includes("harness health"), "the banner names the harness");
 });
 
 test("a harness refresh that failed over held readings reads last-known, keeping a held fault", () => {
@@ -690,13 +651,34 @@ test("a harness refresh that failed over held readings reads last-known, keeping
 
   for (const row of rows) {
     const harness = unreadFold({ partsOk: 5 - row.downNames.length, downNames: row.downNames });
-    const tile = tileOf(
-      dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+    const stat = statOf(
+      dash.buildStats({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
       "harness",
     );
-    assert.equal(tile.badge, "Last known", `${row.name}: badge`);
-    assert.equal(tile.tone, row.tone, `${row.name}: tone`);
-    assert.match(tile.hint, /daemon status/, `${row.name}: names the source that failed`);
+    assert.equal(stat.context, "Last known", `${row.name}: the line says only Last known`);
+    assert.equal(stat.cause, "Last known — couldn't refresh daemon status", `${row.name}: names the source that failed`);
+    assert.equal(stat.tone, row.tone, `${row.name}: tone`);
+  }
+});
+
+describe("a partly unread harness stat says only its state on its line; the line's title and ⓘ name every unread source", () => {
+  const rows = [
+    { name: "one held source", over: { unreadSources: ["daemon status"] }, context: "Last known", lead: "Last known — couldn't refresh" },
+    { name: "every source held", over: { unreadSources: HARNESS_SOURCE_LABELS }, context: "Last known", lead: "Last known — couldn't refresh" },
+    { name: "parts lost to a cold read", over: { unreadSources: ["daemon status", "the hook chain"], partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS },
+      context: "3 not read", lead: "3 not read — couldn't read" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const stat = statOf(
+        dash.buildStats({ harness: unreadFold(row.over), costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
+        "harness",
+      );
+      const cause = `${row.lead} ${row.over.unreadSources.join(" · ")}`;
+      assert.equal(stat.context, row.context, "the line");
+      assert.equal(stat.cause, cause, "the title names every unread source");
+      assert.ok(stat.notes.includes(`${cause}.`), `ⓘ names every unread source: ${stat.notes.join(" | ")}`);
+    });
   }
 });
 
@@ -708,12 +690,12 @@ test("parts lost to a cold read failure count against every part, never only the
 
   for (const row of rows) {
     const harness = unreadFold({ partsOk: row.partsOk, partsChecked: 2, downNames: row.downNames, uncheckedNames: LOST_PARTS });
-    const tile = tileOf(
-      dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+    const stat = statOf(
+      dash.buildStats({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
       "harness",
     );
-    assert.equal(tile.value, row.value, `${row.name}: value`);
-    assert.equal(tile.detail, "3 not read", `${row.name}: the lost parts are counted`);
+    assert.equal(stat.value, row.value, `${row.name}: value`);
+    assert.equal(stat.context, "3 not read", `${row.name}: the lost parts are counted`);
   }
 });
 
@@ -724,125 +706,123 @@ test("the coverage line credits the System map only when every read answered, so
   ];
 
   for (const row of rows) {
-    const tile = tileOf(
-      dash.buildTiles({ harness: row.fold, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+    const stat = statOf(
+      dash.buildStats({ harness: row.fold, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
       "harness",
     );
-    const trend = tile.trend ?? "";
-    assert.equal(/System map/.test(trend), row.isOnMap, `${row.name}: System map credit in "${trend}"`);
-    assert.match(trend, new RegExp(`^${row.fold.partsChecked} of 5 parts`), `${row.name}: states how many parts it covers`);
+    // the coverage line is the context of a full read, and moves behind ⓘ when the context names an unread source
+    const coverage = [stat.context, ...stat.notes].find((line) => / parts /.test(String(line))) ?? "";
+    assert.equal(/System map/.test(coverage), row.isOnMap, `${row.name}: System map credit in "${coverage}"`);
+    assert.match(coverage, new RegExp(`^${row.fold.partsChecked} of 5 parts`), `${row.name}: states how many parts it covers`);
   }
 });
 
 test("part names keep their hyphens unbreakable wherever the page lists them", () => {
-  const harness = { ...HEALTHY, partsOk: 3, partsChecked: 4, downNames: ["glass-atrium-wiki-curator"], uncheckedNames: ["Chromium Export"] };
-  const tile = tileOf(
-    dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+  const harness = { ...HEALTHY, partsOk: 3, partsChecked: 4, downNames: ["glass-atrium-wiki-curator"], uncheckedNames: ["Chromium-Export"] };
+  const stat = statOf(
+    dash.buildStats({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
     "harness",
   );
   const [row] = dash.buildAlarms({ harness, costState: kpi(10, 10), installKind: "hidden" });
   const lists = [
-    { where: "tile hint", text: tile.hint },
-    { where: "lane row detail", text: row?.detail ?? "" },
+    { where: "stat coverage line", text: String(stat.context), name: /Chromium‑Export/ },
+    { where: "lane row detail", text: row?.detail ?? "", name: /glass‑atrium‑wiki‑curator/ },
   ];
 
-  for (const { where, text } of lists) {
+  for (const { where, text, name } of lists) {
     assert.doesNotMatch(text, /-/, `${where}: no breakable hyphen`);
-    assert.match(text, /glass\u2011atrium\u2011wiki\u2011curator/, `${where}: still names the part`);
+    assert.match(text, name, `${where}: still names the part`);
   }
 });
 
 test("a partly unread harness never reads healthy, and the lane cannot claim an all-clear", () => {
   const harness = unreadFold({ partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS, unreadSources: ["daemon status", "the hook chain"] });
-  const tile = tileOf(
-    dash.buildTiles({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
+  const stat = statOf(
+    dash.buildStats({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
     "harness",
   );
-  assert.notEqual(tile.tone, "ok");
-  assert.notEqual(tile.badge ?? "", "Healthy");
-  assert.match(tile.hint, /daemon status/);
-  assert.equal(tile.canRetry, true, "the harness tile keeps its own Retry when no banner covers it");
+  assert.notEqual(stat.tone, "ok");
+  assert.match(String(stat.cause), /daemon status/);
+  assert.equal(stat.canRetry, true, "the harness stat keeps its own Retry when no banner covers it");
 
   const readiness = failure.getAlarmReadiness({ harness, costState: kpi(1, 10), updateState: ready({}) });
   assert.equal(readiness.status, "unknown");
   assert.ok(readiness.unread.includes("harness health"));
 });
 
-test("the harness tile dims and reads busy while the shell re-reads it, like a region tile refreshing over held data", () => {
+describe("a source whose held alarm the list already shows is not announced as unread again", () => {
+  const rows = [
+    { name: "hot spend held over a failed cost read", costState: held(kpi(500, 10), "HTTP 502"), isUnread: false },
+    { name: "calm spend held over a failed cost read", costState: held(kpi(1, 10), "HTTP 502"), isUnread: true },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sources = { harness: HEALTHY, costState: row.costState, updateState: ready({}) };
+      const alarms = dash.buildAlarms({ ...sources, installKind: "hidden" });
+      const readiness = failure.getAlarmReadiness(sources, alarms);
+      assert.equal(readiness.unread.includes("today's spend"), row.isUnread, readiness.unread.join(" · "));
+    });
+  }
+});
+
+test("the harness stat dims and reads busy while the shell re-reads it, like a region stat refreshing over held data", () => {
   const rows = [
     { name: "held reading, re-read in flight", harness: HEALTHY, isHarnessBusy: true, busy: true },
     { name: "held reading, no re-read", harness: HEALTHY, isHarnessBusy: false, busy: false },
     { name: "first load is not a refresh", harness: { ...HEALTHY, status: "loading" }, isHarnessBusy: true, busy: false },
   ];
   for (const row of rows) {
-    const tiles = dash.buildTiles({ harness: row.harness, isHarnessBusy: row.isHarnessBusy, costState: LOADING, agentsState: LOADING, outcomesState: LOADING });
-    assert.equal((tileOf(tiles, "harness") as Tile & { isBusy: boolean }).isBusy, row.busy, row.name);
+    const stats = dash.buildStats({ harness: row.harness, isHarnessBusy: row.isHarnessBusy, costState: LOADING, agentsState: LOADING, outcomesState: LOADING });
+    assert.equal((statOf(stats, "harness") as Stat & { isBusy: boolean }).isBusy, row.busy, row.name);
   }
 });
 
-test("a harness tile with down parts says 'down' once across its value, verdict, detail and hint", () => {
+test("a harness stat with down parts says 'down' once across its value and context", () => {
   const rows = [
     { name: "one down", downNames: ["autoagent"], uncheckedNames: [] },
     { name: "two down beside unpolled parts", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hook Chain"] },
   ];
   for (const row of rows) {
-    const tile = tileOf(
-      dash.buildTiles({
+    const stat = statOf(
+      dash.buildStats({
         harness: { ...HEALTHY, partsOk: 2, downNames: row.downNames, uncheckedNames: row.uncheckedNames },
         costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
       }),
       "harness",
     );
-    const visible = [tile.value, tile.badge, tile.detail, tile.hint].join(" ");
+    const visible = [stat.value, stat.context].join(" ");
     assert.equal(visible.match(/down/gi)?.length, 1, `${row.name}: "${visible}"`);
-    assert.equal(tile.tone, "crit");
+    assert.equal(stat.tone, "crit");
   }
 });
 
-test("a hot spend tile's badge names the pace multiple its detail line leads with, not the so-far multiple", () => {
+test("the spend stat states its move against yesterday by this time from the shell's kpi reading, and none without one", () => {
   const rows = [
-    { name: "pace ahead of so-far", today: 2, avg: 10, pace: 23 },
-    { name: "so-far ahead of pace", today: 30, avg: 10, pace: 5 },
-  ];
-  for (const row of rows) {
-    const tile = tileOf(
-      dash.buildTiles({ harness: HEALTHY, costState: kpi(row.today, row.avg, row.pace), agentsState: LOADING, outcomesState: LOADING }),
-      "spend",
-    );
-    assert.equal(tile.tone, "warn", row.name);
-    assert.match(String(tile.badge), /pace/i, `${row.name}: badge "${tile.badge}" names its basis`);
-    assert.match(String(tile.detail), /^On pace/, `${row.name}: the detail line carries that same basis`);
-    assert.doesNotMatch(String(tile.badge), /so far/i, `${row.name}: the badge never judges the so-far line`);
-  }
-});
-
-test("the spend tile states its move against yesterday by this time from the shell's kpi reading, and none without one", () => {
-  const rows = [
-    { name: "up on yesterday", today: 12, yesterday: 10, trend: /^Up 20% on \$10\.00 yesterday by this time$/ },
-    { name: "down on yesterday", today: 5, yesterday: 20, trend: /^Down 75% on \$20\.00 yesterday by this time$/ },
-    { name: "level with yesterday", today: 10, yesterday: 10, trend: /^Level with \$10\.00 yesterday by this time$/ },
-    { name: "a fractional move keeps one decimal", today: 10.5, yesterday: 9, trend: /^Up 16\.7% on \$9\.00 yesterday by this time$/ },
-    { name: "a move under a tenth of a point is still a move", today: 10.001, yesterday: 10, trend: /^Up <0\.1% on \$10\.00 yesterday by this time$/ },
+    { name: "up on yesterday", today: 12, yesterday: 10, context: /^Up 20% on \$10\.00 yesterday by this time$/ },
+    { name: "down on yesterday", today: 5, yesterday: 20, context: /^Down 75% on \$20\.00 yesterday by this time$/ },
+    { name: "level with yesterday", today: 10, yesterday: 10, context: /^Level with \$10\.00 yesterday by this time$/ },
+    { name: "a fractional move keeps one decimal", today: 10.5, yesterday: 9, context: /^Up 16\.7% on \$9\.00 yesterday by this time$/ },
+    { name: "a move under a tenth of a point is still a move", today: 10.001, yesterday: 10, context: /^Up <0\.1% on \$10\.00 yesterday by this time$/ },
   ];
   for (const row of rows) {
     const harness = { ...HEALTHY, kpi: { today_cost_usd: row.today, yesterday_same_time_cost_usd: row.yesterday } };
-    const tile = tileOf(
-      dash.buildTiles({ harness, costState: kpi(row.today, 10), agentsState: LOADING, outcomesState: LOADING }),
+    const stat = statOf(
+      dash.buildStats({ harness, costState: kpi(row.today, 10), agentsState: LOADING, outcomesState: LOADING }),
       "spend",
     );
-    assert.match(String(tile.trend), row.trend, row.name);
+    assert.match(String(stat.context), row.context, row.name);
   }
 });
 
-test("the fleet tile fills its detail line with the failing streak, so a narrow tile is not left mostly empty", () => {
+test("the fleet stat fills its context line with the failing streak and keeps the fleet size behind ⓘ", () => {
   for (const streak of [0, 3]) {
-    const tile = fleetTile({ source: "loaded", suspended_count: 0, streak_count: streak });
-    assert.match(String(tile.detail), new RegExp(`^${streak} on a failing streak`), `streak ${streak}`);
-    assert.match(String(tile.trend), /12 agents/, `streak ${streak}: the line under the count keeps the fleet size`);
+    const stat = fleetStat({ source: "loaded", suspended_count: 0, streak_count: streak });
+    assert.equal(stat.context, `${streak} on a failing streak`, `streak ${streak}`);
+    assert.ok(stat.notes.some((note) => /12 agents/.test(note)), `streak ${streak}: ${JSON.stringify(stat.notes)}`);
   }
 });
 
-// --- Task results tile: the prior-window delta ---
+// --- Task results stat: the prior-window delta, behind ⓘ ---
 
 // current window starts where the prior one ends (server anchor) → 09-23..today against 09-16..09-22
 function outcomesWithPrior(current: unknown, prior: unknown): unknown {
@@ -853,8 +833,11 @@ const CURRENT_20PCT = {
   total: 200, reconstructed_total: 0,
   by_result: [{ result: "fail", count: 30 }, { result: "blocked", count: 10 }, { result: "done", count: 160 }],
 };
+function trendNoteOf(stat: Stat): string | null {
+  return stat.notes.find((note) => /since|No comparison/.test(note)) ?? null;
+}
 
-test("the outcome tile's delta compares failed-or-blocked shares and names both windows", () => {
+test("the outcome stat's delta compares failed-or-blocked shares and names both windows", () => {
   const rows = [
     { name: "share up", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "fail", count: 5 }, { result: "done", count: 95 }] }, trend: /^Up 15 pts/ },
     { name: "share down", prior: { total: 100, reconstructed_total: 0, by_result: [{ result: "blocked", count: 30 }, { result: "done", count: 70 }] }, trend: /^Down 10 pts/ },
@@ -862,43 +845,35 @@ test("the outcome tile's delta compares failed-or-blocked shares and names both 
     { name: "prior reconstructed rows left out", prior: { total: 150, reconstructed_total: 50, by_result: [{ result: "fail", count: 30, reconstructed_count: 10 }, { result: "done", count: 120, reconstructed_count: 40 }] }, trend: /^Level/ },
   ];
   for (const row of rows) {
-    const tile = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: outcomesWithPrior(CURRENT_20PCT, row.prior) }), "outcomes");
-    assert.match(String(tile.trend), row.trend, row.name);
-    assert.match(String(tile.trend), /since 09-23/, `${row.name}: names the current window`);
-    assert.match(String(tile.trend), /09-16 – 09-22/, `${row.name}: names the prior window, end inclusive`);
+    const stat = statOf(dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: outcomesWithPrior(CURRENT_20PCT, row.prior) }), "outcomes");
+    const trend = String(trendNoteOf(stat));
+    assert.match(trend, row.trend, row.name);
+    assert.match(trend, /since 09-23/, `${row.name}: names the current window`);
+    assert.match(trend, /09-16 – 09-22/, `${row.name}: names the prior window, end inclusive`);
   }
 });
 
-test("the outcome tile states why a prior-window comparison is missing", () => {
-  const none = tileOf(dash.buildTiles({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: outcomesWithPrior(CURRENT_20PCT, null) }), "outcomes");
-  assert.equal(none.trend ?? null, null, "no prior window served → no trend line");
-  const thin = tileOf(dash.buildTiles({
+test("the outcome stat states why a prior-window comparison is missing", () => {
+  const none = statOf(dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: outcomesWithPrior(CURRENT_20PCT, null) }), "outcomes");
+  assert.equal(trendNoteOf(none), null, "no prior window served → no trend note");
+  const thin = statOf(dash.buildStats({
     harness: HEALTHY, costState: LOADING, agentsState: LOADING,
     outcomesState: outcomesWithPrior(CURRENT_20PCT, { total: 1, reconstructed_total: 0, by_result: [{ result: "done", count: 1 }] }),
   }), "outcomes");
-  assert.match(String(thin.trend), /too few.*09-16 – 09-22/, "a thin prior window names itself instead of a delta");
+  assert.match(String(trendNoteOf(thin)), /too few.*09-16 – 09-22/, "a thin prior window names itself instead of a delta");
 });
 
-// --- Spend tile: one ratio, a named alarm basis, a stated day-over-day gap ---
-
-test("the spend tile states one ratio and names the basis of its alarm", () => {
-  const tile = tileOf(dash.buildTiles({ harness: HEALTHY, costState: kpi(3, 10, 8), agentsState: LOADING, outcomesState: LOADING }), "spend");
-  const text = `${tile.detail} ${tile.hint}`;
-  assert.equal((text.match(/\b\d+\.\d×/g) ?? []).length, 1, text);
-  assert.match(tile.hint, /alarm at 1\.25× the 7-day avg/i);
-});
-
-test("the spend tile says why its day-over-day change is missing, telling a pending, a failed and an empty read apart", () => {
+test("the spend stat says why its day-over-day change is missing, telling a pending, a failed and an empty read apart", () => {
   const rows = [
-    { name: "harness KPI not read yet", kpi: null, trend: /^Change on yesterday not read yet$/ },
-    { name: "harness KPI read failed", kpi: null, error: "HTTP 500", trend: /unavailable — couldn't read/ },
-    { name: "yesterday's figure absent from the read", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: null }, trend: /unavailable — the reading carries no spend/ },
-    { name: "nothing spent yesterday by now", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: 0 }, trend: /no spend yesterday/i },
-    { name: "a comparand exists", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: 4 }, trend: /^Up 25%/ },
+    { name: "harness KPI not read yet", kpi: null, context: /^Change on yesterday not read yet$/ },
+    { name: "harness KPI read failed", kpi: null, error: "HTTP 500", context: /unavailable — couldn't read/ },
+    { name: "yesterday's figure absent from the read", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: null }, context: /unavailable — the reading carries no spend/ },
+    { name: "nothing spent yesterday by now", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: 0 }, context: /no spend yesterday/i },
+    { name: "a comparand exists", kpi: { today_cost_usd: 5, yesterday_same_time_cost_usd: 4 }, context: /^Up 25%/ },
   ];
   for (const row of rows) {
     const harness = { ...HEALTHY, kpi: row.kpi, error: row.error ?? null };
-    const tile = tileOf(dash.buildTiles({ harness, costState: kpi(5, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
-    assert.match(String(tile.trend), row.trend, row.name);
+    const stat = statOf(dash.buildStats({ harness, costState: kpi(5, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
+    assert.match(String(stat.context), row.context, row.name);
   }
 });

@@ -1,5 +1,5 @@
-// Element-tree behaviour tests for the Dashboard lane and tiles: the alarm lane as a live
-// region, drill links as real anchors, tile headings and the value scale. Exercises the
+// Element-tree behaviour tests for the Dashboard lane, stat row and week panels: the alarm lane
+// as a live region, stat values as Links, the one ⓘ of the status card. Exercises the
 // shipped JSX through test/lib/render-screen.ts.
 //
 // Runner: npx tsx --test test/dashboard.screen-render.client.test.ts
@@ -8,7 +8,6 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { readFileSync } from "node:fs";
 import {
   collectText,
   createReactStub,
@@ -21,27 +20,22 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DASH_SRC = resolve(__dirname, "../public/src/screens/dashboard.jsx");
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
-// the tile is a thin wrapper over the shared KPI anatomy → the real KPI renders here, its slots stay stub atoms
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
 
-// window.UI stub — every atom resolves to a transparent host element, except the real KPI anatomy.
+// window.UI stub — every atom resolves to a transparent host element; shared words and maps come from the real ui.jsx.
 function uiStub(): unknown {
   return new Proxy(
     {},
     {
       get: (_target, name: string) =>
-        name === "KPI"
-          ? realUi.KPI
-          : name === "getAbsentText"
-          ? realUi[name]
-          : name === "TONE_ICON"
+        name === "TONE_ICON"
           ? new Proxy({}, { get: () => "dot" })
           : name === "getRegionView"
           ? getRegionViewStub
-          : name === "TileSplit"
-          ? tileSplitStub
           : name === "AlertCard"
           ? alertCardStub
+          : name === "ALERT_SEVERITY_WORD"
+          ? realUi[name]
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
                 __element: true,
@@ -56,17 +50,12 @@ function uiStub(): unknown {
   );
 }
 
-// mirrors ui.jsx getRegionView → the tile builders branch as they do in the browser
+// mirrors ui.jsx getRegionView → the stat builders branch as they do in the browser
 function getRegionViewStub(region: { data?: unknown; error?: unknown } | null): string {
   if (region?.data != null) return "ready";
   return region?.error != null ? "error" : "loading";
 }
 
-// the tile-internal split keeps its two slots walkable → lead and detail stay findable by the tests below
-function tileSplitStub({ lead, detail }: { lead: unknown; detail?: unknown }): unknown {
-  const slot = (className: string, child: unknown) => ({ __element: true, type: "div", props: { className, children: child } });
-  return { __element: true, type: "ui-atom", props: { atom: "TileSplit", children: [slot("tile-split-lead", lead), slot("tile-split-detail", detail)] } };
-}
 
 // the shared alert card keeps its slot props for assertions and renders title, body and actions as walkable children
 function alertCardStub(props: Record<string, unknown>): unknown {
@@ -76,6 +65,9 @@ function alertCardStub(props: Record<string, unknown>): unknown {
 // PageHeader named slots, left → right
 const HEADER_SLOTS = ["actions", "freshness", "range", "refresh"];
 const alertCardsOf = (tree: RenderedNode) => findNodes(tree, (n) => n.props.atom === "AlertCard");
+const alarmRowsOf = (tree: RenderedNode) => findNodes(tree, (n) => hasClass(n, "alarm-row"));
+// a slot prop (a Card's info, a stat's value or context) is outside children → render it on its own
+const nodeOf = (slot: unknown) => renderScreen(slot) as RenderedNode;
 
 type Component = (props: unknown) => unknown;
 interface ScreenModule {
@@ -94,9 +86,6 @@ function classOf(node: RenderedNode): string {
 function hasClass(node: RenderedNode, name: string): boolean {
   return classOf(node).split(/\s+/).includes(name);
 }
-// the KPI's own figure atom (ui.jsx KpiValue) renders as a named component node
-const isKpiValue = (n: RenderedNode) => n.type === "KpiValue";
-const isKpiTile = (n: RenderedNode) => hasClass(n, "kpi");
 // a rendered element, not the component node that passed it its props (render-screen keeps both)
 const isHost = (n: RenderedNode) => /^[a-z]/.test(n.type);
 
@@ -104,85 +93,19 @@ const HARNESS_ALARM = {
   id: "harness", tone: "crit", title: "1 harness part is down", detail: "autoagent",
   target: "architecture", targetLabel: "System map",
 };
-const READY_TILE = {
-  id: "outcomes", label: "Task results", window: "7 d", status: "ready", tone: "neutral",
-  value: "40", hint: "40 outcomes", target: "outcomes", targetLabel: "Task results",
-};
-
-test("the alarm lane is a polite live region that exists before any alarm arrives", () => {
+test("the alarm lane is a polite live region named Needs you that exists before any alarm arrives", () => {
   for (const alarms of [[], [HARNESS_ALARM]]) {
     const lane = render("AlarmLane", { alarms, onNav: () => {} });
-    const sections = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
+    const sections = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
     assert.equal(sections.length, 1, "the lane is one labelled section");
     const regions = findNodes(sections[0], (n) => n.props["aria-live"] === "polite");
     assert.equal(regions.length, 1, `one polite region with ${alarms.length} alarms`);
-    const cards = alertCardsOf(regions[0]);
-    assert.equal(cards.length, alarms.length, "every alarm card sits inside the region");
-    assert.ok(cards.every((card) => card.props.hasLiveHost === true), "the region announces each card, so no card carries its own role");
+    assert.equal(alarmRowsOf(regions[0]).length, alarms.length, "every alarm row sits inside the region");
+    assert.ok(alarmRowsOf(regions[0]).every((row) => row.props.role === undefined), "the region announces each row, so no row carries its own role");
+    assert.equal(alertCardsOf(regions[0]).length, 0, "an alarm is a row, never a card of its own");
   }
 });
-
-test("every drill is an anchor to its screen's hash; a plain click routes in-app, a modified one is left to the browser", () => {
-  const trees = [
-    render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: (t: string) => navs.push(t) }),
-    render("StatusTile", { tile: READY_TILE, onNav: (t: string) => navs.push(t), onRetry: () => {} }),
-  ];
-  const navs: string[] = [];
-  for (const [tree, target] of [[trees[0], "architecture"], [trees[1], "outcomes"]] as const) {
-    const anchors = findNodes(tree, (n) => n.type === "a");
-    assert.equal(anchors.length, 1);
-    assert.equal(anchors[0].props.href, `#${target}`);
-    assert.match(classOf(anchors[0]), /\bbtn\b/, "the drill takes the shared .btn 32px control floor");
-    assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "no drill stays a button");
-
-    const onClick = anchors[0].props.onClick as (e: unknown) => void;
-    let prevented = 0;
-    const event = (extra: Record<string, unknown>) => ({ button: 0, preventDefault: () => { prevented += 1; }, ...extra });
-    navs.length = 0;
-    onClick(event({}));
-    assert.deepEqual(navs, [target]);
-    assert.equal(prevented, 1);
-    for (const extra of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { button: 1 }]) {
-      onClick(event(extra));
-    }
-    assert.deepEqual(navs, [target], "modified clicks open the href natively");
-    assert.equal(prevented, 1);
-  }
-});
-
-test("a tile whose value is marked absent paints that kind's word in faint ink, and a real figure stays in ink", () => {
-  const rows = [
-    { name: "an unread tile", value: null, absent: "not-loaded", status: "unavailable", isFaint: true, text: "Not loaded" },
-    { name: "an empty tile", value: null, absent: "none", status: "unavailable", isFaint: true, text: "None" },
-    { name: "a figure", value: "40", absent: undefined, status: "ready", isFaint: false, text: "40" },
-  ];
-  for (const row of rows) {
-    const tile = { ...READY_TILE, status: row.status, value: row.value, absent: row.absent };
-    const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-    const [value] = findNodes(tree, isKpiValue);
-    assert.equal(Boolean(value.props.isFaint), row.isFaint, row.name);
-    assert.equal(collectText(value), row.text, `${row.name} reads its own words`);
-  }
-});
-
-test("a tile heads with an h2 whose window rides the aside beside the uppercase label, and leads with the KPI-scale value", () => {
-  const tree = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
-  const headings = findNodes(tree, (n) => n.type === "h2");
-  assert.equal(headings.length, 1);
-  const [label] = findNodes(headings[0], (n) => hasClass(n, "kpi-label-text"));
-  assert.ok(hasClass(label, "uppercase"), "the label keeps its uppercase");
-  assert.equal(collectText(label), "Task results");
-  const asides = findNodes(headings[0], (n) => hasClass(n, "kpi-aside"));
-  assert.equal(asides.length, 1, "the window is the heading's aside");
-  assert.equal(collectText(asides[0]).replace(/\s+/g, ""), "(7d)");
-  assert.equal(findNodes(label, (n) => hasClass(n, "kpi-aside")).length, 0, "the aside sits outside the uppercase label, so it keeps its own case");
-  assert.ok(!hasClass(asides[0], "uppercase"), "the aside is never uppercased itself");
-  const value = findNodes(tree, isKpiValue);
-  assert.equal(value.length, 1, "the value uses the Cost page's KPI scale");
-  assert.equal(collectText(value[0]), "40");
-});
-
-// Real-enough UI for the outcome tile and results panel: the rate passes through untouched, writer counts follow ui.jsx (count minus reconstructed).
+// Real-enough UI for the outcome stat and results panel: the rate passes through untouched, writer counts follow ui.jsx (count minus reconstructed).
 const rateMod = (await loadScreenModule(DASH_SRC, {
   UI: {
     resolveOutcomeRate: (data: unknown) => data,
@@ -199,30 +122,26 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
   },
   React: createReactStub(),
 })) as ScreenModule;
-const buildOutcomeTile = rateMod.buildOutcomeTile as (state: unknown) => Record<string, string>;
+const buildOutcomeStat = rateMod.buildOutcomeStat as (state: unknown) => { value: string | null; absent?: string; context: string | null; notes: string[] };
 
-test("the Task results tile headlines a bare failed share on one line, with its counts and caveat share on the lines below", () => {
-  const judged = [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const;
-  const verdicts = judged.map(([status, tone]) => {
-    const tile = buildOutcomeTile({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
-    assert.equal(tile.value, "17.5%", `${status}: the headline is the share alone, no denominator to wrap`);
-    assert.match(String(tile.detail), /\b7 of 40\b/, `${status}: the failed count and its denominator stay visible`);
-    assert.match(String(tile.hint), /22\.5%.*\b9\b/, `${status}: the caveat share and count stay visible`);
-    assert.doesNotMatch(String(tile.badge), /\d/, `${status}: the badge is a verdict`);
-    return tile.badge;
-  });
-  assert.equal(new Set(verdicts).size, judged.length, "each judged status reads as its own verdict");
+test("the Task results stat headlines a bare failed share, its counts on the context line and its caveat share behind ⓘ", () => {
+  for (const [status, tone] of [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const) {
+    const stat = buildOutcomeStat({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
+    assert.equal(stat.value, "17.5%", `${status}: the headline is the share alone, no denominator to wrap`);
+    assert.equal(stat.context, "7 of 40 failed or blocked", `${status}: the failed count and its denominator stay visible`);
+    assert.ok(stat.notes.some((note) => /22\.5% \(9\)/.test(note)), `${status}: the caveat share and count sit behind ⓘ`);
+  }
 
-  const lowN = buildOutcomeTile({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
+  const lowN = buildOutcomeStat({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
   assert.equal(lowN.value, "12", "too small a sample still shows how many there are");
-  assert.match(String(lowN.detail), /too few to judge/i);
+  assert.match(String(lowN.context), /too few to judge/i);
 });
 
-test("a Task results tile with nothing to judge reads None, never a dash", () => {
+test("a Task results stat with nothing to judge reads None, never a dash", () => {
   for (const status of ["empty", "unavailable"]) {
-    const tile = buildOutcomeTile({ status: "ready", data: { status, tone: "neutral", writerTotal: 0, breakage: 0, openCaveats: 0 } });
-    assert.equal(tile.absent, "none", `${status}: the share has no writer-reported outcomes behind it`);
-    assert.equal(tile.value, null, `${status}: no figure stands in for the missing share`);
+    const stat = buildOutcomeStat({ status: "ready", data: { status, tone: "neutral", writerTotal: 0, breakage: 0, openCaveats: 0 } });
+    assert.equal(stat.absent, "none", `${status}: the share has no writer-reported outcomes behind it`);
+    assert.equal(stat.value, null, `${status}: no figure stands in for the missing share`);
   }
 });
 
@@ -250,6 +169,22 @@ test("spend and result bars carry the data colour; today's partial day keeps its
   }
 });
 
+test("the alarm lane, the spend strip and the results panel space by role keys, never a Tailwind ladder step", () => {
+  const strip = (mod.buildSpendStrip as (points: unknown) => unknown)(
+    ["2026-09-22", "2026-09-23"].map((date, i) => ({ date, cost_usd: 12.5 + i, session_count: 1 })),
+  );
+  const trees = [
+    render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "unknown", unread: ["today's spend"] }, onNav: () => {} }),
+    render("SpendStrip", { strip }),
+    renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }]),
+    render("BreakageAgents", { agents: [{ agent: "glass-atrium-dev-shell", count: 2 }, { agent: "glass-atrium-dev-db", count: 1 }] }),
+  ];
+  const steps = trees.flatMap((tree) => findNodes(tree, () => true))
+    .flatMap((node) => classOf(node).split(/\s+/))
+    .filter((name) => /^(gap|gap-x|gap-y|space-x|space-y)-\d/.test(name));
+  assert.deepEqual(steps, [], "every gap names its role (gap-list, gap-stack, ...)");
+});
+
 describe("the week results panel", () => {
   const rowTexts = (tree: RenderedNode) =>
     findNodes(tree, (n) => classOf(n).includes("dash-result-row")).map((row) => collectText(row).replace(/\s+/g, " ").trim());
@@ -274,11 +209,11 @@ describe("the week results panel", () => {
     }
   });
 
-  test("states that the tile, unlike its caveat row, counts only open caveats", () => {
+  test("points at no other card in its body — how its counts relate to the Task results stat rides its ⓘ", () => {
     const panelText = collectText(renderResultPanel([{ result: "done", count: 10 }, { result: "done_with_concerns", count: 5 }]));
-    const tile = buildOutcomeTile({ status: "ready", data: { status: "ok", tone: "ok", writerTotal: 40, breakage: 1, openCaveats: 2 } });
-    assert.match(String(tile.hint), /open caveats/i, "the tile's caveat figure says it counts open caveats");
-    assert.match(panelText, /tile: open caveats only/i, "the panel names how the tile's figure differs");
+    assert.doesNotMatch(panelText, /\btile\b|\bstat\b/i, `"${panelText}"`);
+    const stat = buildOutcomeStat({ status: "ready", data: { status: "ok", tone: "ok", writerTotal: 40, breakage: 1, openCaveats: 2 } });
+    assert.ok(stat.notes.some((note) => /open caveats/i.test(note)), "the stat's caveat figure says it counts open caveats");
   });
 
   test("every prose line on the panel fits the 90-char footnote cap", () => {
@@ -290,198 +225,75 @@ describe("the week results panel", () => {
   });
 });
 
-const buildFleetTile = rateMod.buildFleetTile as (state: unknown) => Record<string, string>;
+const buildFleetStat = rateMod.buildFleetStat as (state: unknown) => Record<string, string>;
 
-test("the fleet tile names suspension once across its value, verdict and detail, whatever the breaker state", () => {
+test("the fleet stat names suspension once across its value, unit and context, whatever the breaker state", () => {
   const rows: Array<[string, number, number]> = [["nothing tripped", 0, 0], ["a streak", 0, 2], ["a suspended agent", 1, 2]];
   for (const [name, suspended, streak] of rows) {
     const breaker = { source: "loaded", suspended_count: suspended, streak_count: streak };
-    const tile = buildFleetTile({ status: "ready", data: { meta: { total_agents: 12, circuit_breaker: breaker } } });
-    const visible = [tile.value, tile.unit, tile.badge, tile.detail].join(" ");
+    const stat = buildFleetStat({ status: "ready", data: { meta: { total_agents: 12, circuit_breaker: breaker } } });
+    const visible = [stat.value, stat.unit, stat.context].join(" ");
     assert.equal(visible.match(/suspend/gi)?.length, 1, `${name}: "${visible}" says suspended exactly once`);
   }
 });
 
-test("a tile renders its number as the KPI value, its verdict as the badge, and the detail after both", () => {
-  const tile = { ...READY_TILE, tone: "crit", value: "17.5% (7/40)", badge: "Failures above line", detail: "failed · 9/40 with caveats" };
-  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-  const value = findNodes(tree, isKpiValue);
-  assert.equal(value.length, 1);
-  assert.equal(collectText(value[0]), "17.5% (7/40)");
-  const badges = findNodes(tree, (n) => n.props.atom === "Badge");
-  assert.equal(badges.length, 1);
-  assert.equal(collectText(badges[0]), "Failures above line");
-  const text = collectText(tree);
-  assert.ok(text.indexOf("17.5%") < text.indexOf("with caveats"), "the number precedes the detail");
-});
-
-test("a tile's drill sits at the tile foot, and a tile with no destination has none", () => {
-  const drills = findNodes(render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} }), (n) => n.type === "a");
-  assert.equal(drills.length, 1);
-  const [foot] = findNodes(render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "kpi-foot"));
-  assert.ok(foot, "the tile has the shared KPI foot, pinned to the bottom so the band's CTAs line up");
-  assert.equal(findNodes(foot, (n) => n.type === "a").length, 1, "the CTA sits in the foot");
-  const undrilled = render("StatusTile", { tile: { ...READY_TILE, target: null }, onNav: () => {}, onRetry: () => {} });
-  assert.equal(findNodes(undrilled, (n) => n.type === "a").length, 0);
-});
-
-test("a ready tile puts its value on the lead side and its detail and hint on the detail side", () => {
-  const tile = { ...READY_TILE, detail: "7 of 40 failed" };
-  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-  const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
-  const [detail] = findNodes(tree, (n) => classOf(n) === "tile-split-detail");
-  assert.equal(findNodes(lead, isKpiValue).length, 1, "the value leads");
-  assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-detail")).length, 1);
-  assert.equal(findNodes(detail, (n) => classOf(n).includes("dash-tile-hint")).length, 1);
-});
-
-test("a hint carrying data clamps only the data, keeping its authored words and figure whole", () => {
-  const hintData = { lead: "Most runs: ", data: "glass-atrium-intel-researcher", tail: ", 12,345" };
-  const tile = { ...READY_TILE, hint: "Most runs: glass-atrium-intel-researcher, 12,345", hintData };
-  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-  const [hint] = findNodes(tree, (n) => classOf(n).includes("dash-tile-hint"));
-  assert.match(classOf(hint), /\bdash-tile-hint-line\b/, "the hint sets its data apart");
-  const partsOf = (node: RenderedNode) => node.children.map((child) => [classOf(child as RenderedNode), collectText(child as RenderedNode)]);
-  const [lead, rest] = hint.children as RenderedNode[];
-  assert.deepEqual(partsOf(hint)[0], ["dash-tile-hint-fixed", hintData.lead], "the label leads, whole");
-  // data + figure travel together → a narrow tile wraps them below the label as one unit
-  assert.equal(classOf(rest), "dash-tile-hint-rest");
-  assert.deepEqual(partsOf(rest), [
-    ["dash-tile-hint-data", hintData.data],
-    ["dash-tile-hint-fixed", hintData.tail],
-  ], "only the data part takes the ellipsis; the figure stays whole");
-  assert.equal(hint.children.length, 2, `unexpected parts: ${classOf(lead)}`);
-  const plain = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
-  const [plainHint] = findNodes(plain, (n) => classOf(n).includes("dash-tile-hint"));
-  assert.doesNotMatch(classOf(plainHint), /dash-tile-hint-line/, "an authored hint keeps its two-line wrap");
-});
-
-test("a tile's detail and plain hint clamp at two lines, each keeping its whole text in its title", () => {
-  const tile = { ...READY_TILE, detail: "7 of 40 failed since the last cycle", hint: "40 outcomes in the window" };
-  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-  const [detail] = findNodes(tree, (n) => hasClass(n, "dash-tile-detail"));
-  const [hint] = findNodes(tree, (n) => hasClass(n, "dash-tile-hint"));
-  for (const [node, text] of [[detail, tile.detail], [hint, tile.hint]] as const) {
-    assert.ok(hasClass(node, "clamp-2"), classOf(node));
-    assert.equal(node.props.title, text);
-  }
-  const hintData = { lead: "Most runs: ", data: "dev-react", tail: ", 12" };
-  const [dataHint] = findNodes(render("StatusTile", { tile: { ...tile, hintData }, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "dash-tile-hint"));
-  assert.ok(!hasClass(dataHint, "clamp-2"), "a data hint clamps its data part alone");
-});
-
-test("a clamped slot sets a title only for a non-empty string — an element slot carries none, and an empty slot renders no node", () => {
-  const detailsOf = (detail: unknown) =>
-    findNodes(render("StatusTile", { tile: { ...READY_TILE, detail }, onNav: () => {}, onRetry: () => {} }), (n) => hasClass(n, "dash-tile-detail"));
-  for (const empty of ["", undefined, null, false]) {
-    assert.equal(detailsOf(empty).length, 0, `${JSON.stringify(empty)}: no detail node, so no blank line and no title`);
-  }
-  assert.equal(detailsOf(mod.React.createElement("span", { children: "7 failed" }))[0].props.title, undefined);
-  const covered = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
-  const [hint] = findNodes(covered, (n) => hasClass(n, "dash-tile-hint"));
-  assert.equal(findNodes(covered, (n) => hasClass(n, "dash-tile-detail")).length, 0, "a banner-covered tile drops its detail line");
-  assert.equal(hint.props.title, collectText(hint).trim(), "the shared pointer hint keeps its whole text in the title");
-});
-
-test("the fleet tile's reach window rides its delta row as one DateRange token", () => {
-  const breaker = { source: "loaded", suspended_count: 0, streak_count: 0 };
-  const tile = buildFleetTile({ status: "ready", data: { meta: { total_agents: 12, circuit_breaker: breaker, registry_agents: 20 } } });
-  assert.equal(tile.trendRange, "7 days");
-  assert.ok(tile.trend.endsWith(`last ${tile.trendRange}`), tile.trend);
-  const tree = render("StatusTile", { tile: { ...tile, label: "Fleet", window: "7 d", target: "agents", targetLabel: "Agents" }, onNav: () => {}, onRetry: () => {} });
-  const ranges = findNodes(tree, (n) => n.props.atom === "DateRange");
-  assert.equal(ranges.length, 1);
-  assert.equal(ranges[0].props.range, "7 days");
-  assert.equal(collectText(ranges[0]), tile.trend, "the sentence stays a plain string around the token");
-});
-
-test("a tile's note opens from a focusable ⓘ described by the tile heading, never from a hover-only title", () => {
-  const rows = [
-    { name: "a tile with a note", tile: { ...READY_TILE, note: "Counts writer-emitted outcomes only." }, infoCount: 1 },
-    { name: "a tile without one", tile: READY_TILE, infoCount: 0 },
-  ];
-  for (const row of rows) {
-    const tree = render("StatusTile", { tile: row.tile, onNav: () => {}, onRetry: () => {} });
-    const infos = findNodes(tree, (n) => n.props.atom === "CardInfo");
-    assert.equal(infos.length, row.infoCount, row.name);
-    // a title that repeats its own visible text (the label's ellipsis fallback) carries nothing hover-only
-    const hoverOnly = (n: RenderedNode) => n.props.title != null && n.props.atom == null && n.props.title !== collectText(n).trim();
-    assert.equal(findNodes(tree, hoverOnly).length, 0, `${row.name}: no hover-only title`);
-  }
-  const tree = render("StatusTile", { tile: rows[0].tile, onNav: () => {}, onRetry: () => {} });
-  const [heading] = findNodes(tree, (n) => n.type === "h2");
-  const [info] = findNodes(tree, (n) => n.props.atom === "CardInfo");
-  assert.ok(heading.props.id, "the heading carries an id");
-  assert.equal(info.props.describedBy, heading.props.id, "the ⓘ is described by the tile heading");
-  assert.match(collectText(info), /writer-emitted/, "the drawer carries the note");
-});
-
-test("the results panel's counting note opens from a focusable ⓘ described by the panel heading, never from a hover-only title", () => {
+test("the results panel's counting note opens from its Card's ⓘ, never from a hover-only title", () => {
   const loading = { data: null, error: null, busy: true };
   const row = render("WeekRow", { spendState: loading, outcomesState: loading, heatmapState: loading, onRetrySpend: () => {}, onRetryHeatmap: () => {} });
   const panels = findNodes(row, (n) => n.type === "section");
-  const infoCounts = Object.fromEntries(panels.map((panel) => [panel.props.id, findNodes(panel, (n) => n.props.atom === "CardInfo").length]));
-  assert.deepEqual(infoCounts, { "dash-week-results": 1, "dash-week-hours": 0, "dash-week-spend": 0 }, "only the results panel carries a counting note");
+  const infoOf = (panel: RenderedNode) => findNodes(panel, (n) => n.props.atom === "Card")[0].props.info;
+  const hasInfo = Object.fromEntries(panels.map((panel) => [panel.props.id, Boolean(infoOf(panel))]));
+  assert.deepEqual(hasInfo, { "dash-week-results": true, "dash-week-hours": true, "dash-week-spend": false }, "the results and hour panels carry a counting note");
 
   const results = panels.find((panel) => panel.props.id === "dash-week-results")!;
-  const [heading] = findNodes(results, (n) => n.type === "h2");
-  const [info] = findNodes(results, (n) => n.props.atom === "CardInfo");
-  assert.equal(info.props.describedBy, heading.props.id, "the ⓘ is described by the panel heading");
-  assert.match(collectText(info), /writer-emitted/, "the drawer carries the note");
+  assert.match(collectText(nodeOf(infoOf(results))), /writer-emitted/, "the drawer carries the note");
+  assert.match(collectText(nodeOf(infoOf(results))), /open caveats only/i, "and names how the Task results stat's caveat figure differs");
 
   const panel = renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }]);
   assert.equal(findNodes(panel, (n) => n.props.title != null).length, 0, "no hover-only title on the panel body");
 });
 
-test("a unit renders on the value's own line so the number and its word read as one phrase", () => {
-  const tree = render("StatusTile", { tile: { ...READY_TILE, value: "0", unit: "suspended" }, onNav: () => {}, onRetry: () => {} });
-  const [lead] = findNodes(tree, (n) => classOf(n) === "tile-split-lead");
-  assert.match(collectText(lead), /^0\s*suspended/);
+test("an alarm renders as one alarm row: its tone on the glyph, its title, its detail, and a Link to the owning page", () => {
+  const navs: string[] = [];
+  const tree = render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: (target: string) => navs.push(target) });
+  const [list] = findNodes(tree, (n) => hasClass(n, "dash-alarm-list"));
+  assert.ok(hasClass(list, "card"), "the rows sit in one list card");
+  const [row] = alarmRowsOf(list);
+  assert.equal(row.props["data-tone"], "crit");
+  assert.equal(findNodes(row, (n) => hasClass(n, "alarm-row-glyph")).length, 1, "one bare glyph slot");
+  assert.match(collectText(row), /^\s*Critical:\s+1 harness part is down\s+autoagent\s+System map$/, "sr-only tone word, the title, then the detail");
+  const links = findNodes(row, (n) => n.props.atom === "Link");
+  assert.equal(links.length, 1, "one Link, never a bordered drill button");
+  assert.equal(links[0].props.href, "#architecture");
+  assert.equal(findNodes(row, (n) => hasClass(n, "btn")).length, 0);
+
+  const onClick = links[0].props.onClick as (e: unknown) => void;
+  onClick({ button: 0, preventDefault: () => {} });
+  onClick({ button: 0, metaKey: true, preventDefault: () => {} });
+  assert.deepEqual(navs, ["architecture"], "a plain click routes in-app, a modified one is left to the browser");
 });
 
-test("an alarm renders as one raised alert card with its tone, its detail as body, and its drill as the action", () => {
-  const tree = render("AlarmCard", { alarm: HARNESS_ALARM, onNav: () => {} });
-  const cards = alertCardsOf(tree);
-  assert.equal(cards.length, 1);
-  assert.equal(cards[0].props.tone, "crit");
-  assert.notEqual(cards[0].props.surface, "inset", "the lane card is page-level");
-  assert.equal(cards[0].props.body, "autoagent");
-  assert.equal(findNodes(cards[0], (n) => n.type === "a" && n.props.href === "#architecture").length, 1, "the drill is the card's action");
+test("the install alarm carries its update control in place of a Link", () => {
+  const install = { id: "install", tone: "warn", title: "An update is ready to apply", detail: null, target: null, targetLabel: null };
+  const [row] = alarmRowsOf(render("AlarmLane", { alarms: [install], onNav: () => {},
+    updateState: { status: "loading" }, updateJobState: { status: "loading" }, onRefetchJob: () => {} }));
+  assert.equal(findNodes(row, (n) => n.type === "UpdateBadge").length, 1);
+  assert.equal(findNodes(row, (n) => n.props.atom === "Link").length, 0);
 });
-
-test("an alarm card whose source's latest read failed says Last known beside its title; a fresh card says nothing", () => {
+test("an alarm row whose source's latest read failed says Last known in plain words after its title; a fresh row says nothing", () => {
   for (const isHeld of [true, false]) {
-    const tree = render("AlarmCard", { alarm: { ...HARNESS_ALARM, isHeld }, onNav: () => {} });
-    const badges = findNodes(tree, (n) => n.props.atom === "Badge").map((n) => collectText(n));
-    assert.deepEqual(badges, isHeld ? ["Last known"] : [], `isHeld=${isHeld}`);
+    const [row] = alarmRowsOf(render("AlarmLane", { alarms: [{ ...HARNESS_ALARM, isHeld }], onNav: () => {} }));
+    assert.equal(findNodes(row, (n) => n.props.atom === "Badge").length, 0, `isHeld=${isHeld}: never a badge`);
+    const held = findNodes(row, (n) => hasClass(n, "dash-alarm-held"));
+    assert.deepEqual(held.map(collectText), isHeld ? ["Last known"] : [], `isHeld=${isHeld}`);
   }
 });
-
-// the held spend alarm composes its title as a Fragment (literal + Last known badge) → the shared DayTokens atom still keeps "7-day" whole
-test("a held spend alarm's composed title keeps its 7-day token whole through the shared DayTokens atom", () => {
-  const SPEND_ALARM = { id: "spend", tone: "warn", title: "Spend is running ahead of the 7-day average", detail: "1.4× today", isHeld: true };
-  const [card] = alertCardsOf(render("AlarmCard", { alarm: SPEND_ALARM, onNav: () => {} }));
-  const title = renderScreen(mod.React.createElement(realUi.DayTokens as Component, { children: card.props.title })) as RenderedNode;
-  const noWraps = findNodes(title, (n) => /\bwhitespace-nowrap\b/.test(classOf(n))).map((n) => collectText(n));
-  assert.deepEqual(noWraps, ["7-day"]);
-  assert.deepEqual(findNodes(title, (n) => n.props.atom === "Badge").map((n) => collectText(n)), ["Last known"]);
+test("a spend alarm's detail keeps its 7-day token whole through the shared DayTokens atom", () => {
+  const SPEND_ALARM = { id: "spend", tone: "warn", title: "$842 so far today", detail: "1.3× the 7-day average ($1,380/day)", isHeld: true, target: "cost" };
+  const [row] = alarmRowsOf(render("AlarmLane", { alarms: [SPEND_ALARM], onNav: () => {} }));
+  const tokens = findNodes(row, (n) => n.props.atom === "DayTokens").map((n) => collectText(n));
+  assert.ok(tokens.includes(SPEND_ALARM.detail), "the detail rides DayTokens");
 });
-
-test("a failed tile keeps its drill to the owning screen, whether it shows its own error card or defers to the banner", () => {
-  for (const isRetryShared of [false, true]) {
-    const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared });
-    const drills = findNodes(tree, (n) => n.type === "a" && String(n.props.href).endsWith("agents"));
-    assert.equal(drills.length, 1, `isRetryShared=${isRetryShared}`);
-  }
-});
-
-const FAILED_TILE = {
-  id: "fleet", label: "Fleet", window: "7 d", status: "error", tone: "neutral", value: "—",
-  region: "agents", source: "the fleet summary", error: "HTTP 500 Internal Server Error",
-  detail: "Couldn't load the fleet summary.", hint: "The server answered with an error.", canRetry: true,
-  target: "agents", targetLabel: "Agents",
-};
-
 test("a failed week panel whose cause the page banner carries points up to it instead of offering a second Retry", () => {
   const rows = [
     { name: "its own failure", isRetryShared: false, retries: 1, isPointingUp: false },
@@ -517,97 +329,10 @@ describe("a week panel's own failure is one inset alert card carrying its Retry:
   }
 });
 
-test("a failed tile states its error in one inset alert card inside the tile, whose Retry reloads only that tile's region", () => {
-  const retried: string[] = [];
-  const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
-  const cards = alertCardsOf(tree);
-  assert.equal(cards.length, 1, "one alert card per failed tile");
-  assert.equal(cards[0].props.surface, "inset", "the card sits inside the tile, not on the page");
-  assert.equal(cards[0].props.tone, "crit");
-  assert.match(collectText(cards[0]), /Couldn't load the fleet summary/);
-  const retries = findNodes(tree, (n) => n.props.atom === "RetryButton");
-  assert.equal(retries.length, 1, "one Retry per failed tile");
-  assert.equal(findNodes(cards[0], (n) => n.props.atom === "RetryButton").length, 1, "the Retry is the card's action");
-  (retries[0].props.onRetry as () => void)();
-  assert.deepEqual(retried, ["agents"]);
-});
-
-test("a failed tile hands its raw error to the card's Details disclosure, never only to a hover title", () => {
-  const failureDetail = "PrismaClientKnownRequestError: P1001";
-  const tree = render("StatusTile", { tile: { ...FAILED_TILE, failureDetail }, onNav: () => {}, onRetry: () => {} });
-  assert.equal(alertCardsOf(tree)[0].props.details, failureDetail);
-  assert.equal(findNodes(tree, (n) => n.props.title === failureDetail).length, 0, "no hover-only copy");
-});
-
-test("a failed tile's Retry shows itself in flight and hands focus to its own tile card on recovery", () => {
-  for (const isBusy of [true, false]) {
-    const tree = render("StatusTile", { tile: { ...FAILED_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
-    const [retry] = findNodes(tree, (n) => n.props.atom === "RetryButton");
-    assert.equal(retry.props.isBusy, isBusy);
-    const targets = findNodes(tree, (n) => isHost(n) && n.props.id === retry.props.focusTargetId);
-    assert.equal(targets.length, 1, "the focus target is the tile card that stays mounted");
-    assert.ok(isKpiTile(targets[0]), classOf(targets[0]));
-  }
-});
-
-test("a tile whose outage the page banner already carries stays one level: no nested card, no repeated error, no Retry", () => {
-  const tree = render("StatusTile", { tile: FAILED_TILE, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
-  assert.equal(findNodes(tree, (n) => n.props.atom === "RegionUnavailable").length, 0, "the banner already states the error");
-  assert.doesNotMatch(collectText(tree), /Couldn't load/, "the tile does not repeat the banner's sentence");
-  assert.equal(findNodes(tree, (n) => n.props.atom === "RetryButton").length, 0, "the banner owns the only Retry");
-  assert.equal(findNodes(tree, isKpiTile).length, 1, "the tile is one KPI surface");
-  assert.equal(findNodes(tree, (n) => /\b(sub-)?card\b/.test(classOf(n))).length, 0, "no card nests inside the tile");
-  assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, "the banner owns the only Retry");
-  assert.equal(collectText(findNodes(tree, isKpiValue)[0]), "—", "the value slot keeps its unknown dash");
-});
-
-test("an unavailable harness tile offers a Retry that re-polls the harness, unless the page banner lists it", () => {
-  const harnessTile = {
-    id: "harness", label: "Harness health", status: "unavailable", tone: "neutral", value: "—",
-    hint: "Harness readings unavailable.", region: "harness", canRetry: true, target: "architecture", targetLabel: "System map",
-  };
-  const retried: string[] = [];
-  const tree = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
-  const retries = getRetryControls(tree);
-  assert.equal(retries.length, 1);
-  (retries[0].props.onRetry as () => void)();
-  assert.deepEqual(retried, ["harness"]);
-
-  // one Retry per outage → a tile whose source the banner already lists defers to the banner's Retry
-  const shared = render("StatusTile", { tile: harnessTile, onNav: () => {}, onRetry: () => {}, isRetryShared: true });
-  assert.equal(getRetryControls(shared).length, 0);
-  const readyTree = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
-  assert.equal(getRetryControls(readyTree).length, 0, "a read tile carries no Retry");
-});
-
-// the shared RetryButton atom → busy wording, aria-busy and the focus handoff come with it
-function getRetryControls(tree: RenderedNode): RenderedNode[] {
-  return findNodes(tree, (n) => n.props.atom === "RetryButton");
-}
-
-test("a held tile's Retry is the shared control: in flight while busy, handing focus to its own tile card on recovery", () => {
-  const heldTile = {
-    ...READY_TILE, region: "outcomes", isHeld: true, badge: "Last known", error: "HTTP 500 Internal Server Error", canRetry: true,
-  };
-  for (const isBusy of [true, false]) {
-    const retried: string[] = [];
-    const tree = render("StatusTile", { tile: { ...heldTile, isBusy }, onNav: () => {}, onRetry: (region: string) => retried.push(region) });
-    const retries = getRetryControls(tree);
-    assert.equal(retries.length, 1, `busy=${isBusy}: one Retry`);
-    assert.equal(findNodes(tree, (n) => n.type === "button").length, 0, `busy=${isBusy}: no bare button beside it`);
-    assert.equal(retries[0].props.isBusy, isBusy);
-    (retries[0].props.onRetry as () => void)();
-    assert.deepEqual(retried, ["outcomes"], "the Retry reloads only the tile's own region");
-    const targets = findNodes(tree, (n) => isHost(n) && n.props.id === retries[0].props.focusTargetId);
-    assert.equal(targets.length, 1, "the focus target is the tile card that outlives the Retry");
-    assert.ok(isKpiTile(targets[0]), classOf(targets[0]));
-  }
-});
-
-test("a tile Retry routes the harness region to the shell re-poll and every other region to its own reload", () => {
+test("a stat Retry routes the harness region to the shell re-poll and every other region to its own reload", () => {
   const polled: string[] = [];
   const loaded: string[] = [];
-  const retry = (mod.getTileRetry as (load: (r: string) => void, poll: () => void) => (r: string) => void)(
+  const retry = (mod.getStatRetry as (load: (r: string) => void, poll: () => void) => (r: string) => void)(
     (region) => loaded.push(region),
     () => polled.push("harness"),
   );
@@ -634,7 +359,7 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
     { name: "the header Refresh", atom: "RefreshButton", handler: "onRefresh" },
     { name: "the page banner Retry", atom: "PageErrorBanner", handler: "onRetry" },
   ];
-  test("the page banner shows its Retry in flight and hands focus to the status band, which outlives recovery", () => {
+  test("the page banner shows its Retry in flight and hands focus to the status card, which outlives recovery", () => {
     const tree = renderScreen(screen.React.createElement(screen.ScreenDashboard as Component, {
       onNav: () => {}, harness: FAILED, onRetryHarness: () => {},
     })) as RenderedNode;
@@ -642,7 +367,7 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
     assert.equal(banner.props.isBusy, true, "a wave in flight marks the banner Retry busy");
     const targets = findNodes(tree, (n) => n.props.id === banner.props.focusTargetId);
     assert.equal(targets.length, 1, `focus target ${String(banner.props.focusTargetId)} is one rendered element`);
-    assert.ok(classOf(targets[0]).includes("grid"), "the target is the status band, not the banner itself");
+    assert.equal(findNodes(targets[0], (n) => n.props.atom === "StatRow").length, 1, "the target holds the stat row, not the banner itself");
   });
   for (const row of rows) {
     test(row.name, () => {
@@ -661,43 +386,6 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
   }
 });
 
-// R-b: a detail with no text renders no line and no reserve; a detail with text is the one line the tile shows
-test("a loading tile says so in a status placeholder, and a tile renders its detail line only when the detail has text", () => {
-  const loadingTile = { ...READY_TILE, status: "loading", value: "—", hint: null };
-  for (const tile of [loadingTile, READY_TILE]) {
-    const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-    const detailSlots = findNodes(tree, (n) => classOf(n).includes("dash-tile-detail"));
-    assert.equal(detailSlots.length, 0, `${tile.status}: a tile without detail text has no detail line`);
-  }
-  const withDetail = render("StatusTile", { tile: { ...READY_TILE, detail: "7 of 40 failed" }, onNav: () => {}, onRetry: () => {} });
-  assert.equal(findNodes(withDetail, (n) => classOf(n).includes("dash-tile-detail")).length, 1, "a detail with text is one line");
-  assert.doesNotMatch(readFileSync(DASH_SRC, "utf8"), /\.dash-tile-detail\s*\{[^}]*min-height/, "no detail line reserves a height");
-  const loading = render("StatusTile", { tile: loadingTile, onNav: () => {}, onRetry: () => {} });
-  assert.equal(findNodes(loading, (n) => n.type === "LoadingPlaceholder").length, 1);
-  assert.equal(findNodes(loading, isKpiValue).length, 0, "no value renders before one loads");
-  const struts = findNodes(loading, (n) => n.type === "span" && classOf(n) === "kpi-value");
-  assert.equal(struts.length, 1, "an empty KPI-scale strut holds the value row's height");
-  assert.equal(struts[0].props["aria-hidden"], "true");
-});
-
-test("a tile refreshing over held data keeps its value and marks itself busy", () => {
-  for (const isBusy of [true, false]) {
-    const tree = render("StatusTile", { tile: { ...READY_TILE, isBusy }, onNav: () => {}, onRetry: () => {} });
-    const card = findNodes(tree, isKpiTile)[0];
-    assert.equal(card.props["aria-busy"], isBusy ? "true" : undefined);
-    assert.equal(collectText(findNodes(tree, isKpiValue)[0]), "40");
-  }
-});
-
-test("the status band reflows to two columns until it has room for four", () => {
-  const tree = render("StatusBand", { tiles: [READY_TILE], onNav: () => {}, onRetry: () => {} });
-  const band = findNodes(tree, (n) => classOf(n).includes("grid"))[0];
-  const classes = classOf(band).split(/\s+/);
-  assert.ok(classes.includes("grid-cols-2"), classOf(band));
-  assert.ok(classes.includes("xl:grid-cols-4"), classOf(band));
-  assert.ok(!classes.includes("grid-cols-4"), "four columns never apply at the narrowest widths");
-});
-
 // an idle lane is no text and no space → it leaves the flow but keeps its polite region for a later card
 test("a lane with no alarm renders no text and leaves the layout, whether its sources are loading or read", () => {
   for (const status of ["loading", "read"]) {
@@ -705,21 +393,21 @@ test("a lane with no alarm renders no text and leaves the layout, whether its so
     assert.equal(collectText(lane).trim(), "", `${status}: no text`);
     assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${status}: no loading line`);
     assert.equal(findNodes(lane, (n) => n.props["aria-live"] === "polite").length, 1, `${status}: the polite region stays mounted`);
-    const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
+    const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
     assert.ok(classOf(section).split(/\s+/).includes("sr-only"), `${status}: the idle lane is out of flow`);
+    assert.equal(findNodes(lane, (n) => hasClass(n, "dash-alarm-list")).length, 0, `${status}: no list card`);
   }
 });
 
-test("a lane holding an alarm while another source loads shows only that card, in flow", () => {
+test("a lane holding an alarm while another source loads shows only that row, in flow", () => {
   const lane = render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "loading", unread: [] }, onNav: () => {} });
-  const cards = alertCardsOf(lane);
-  assert.equal(cards.length, 1);
-  assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line under the card");
-  const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Alarms");
+  const rows = alarmRowsOf(lane);
+  assert.equal(rows.length, 1);
+  assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line under the row");
+  const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
   assert.ok(!classOf(section).split(/\s+/).includes("sr-only"));
-  assert.equal(collectText(lane), collectText(cards[0]), "the lane carries no text beyond its card");
+  assert.equal(collectText(lane), collectText(rows[0]), "the lane carries no text beyond its row");
 });
-
 describe("an empty alarm lane stays silent once its sources are read, and says it couldn't check when one went unread", () => {
   const READY = { status: "ready", data: {} };
   const rows = [
@@ -746,39 +434,13 @@ describe("an empty alarm lane stays silent once its sources are read, and says i
   }
 });
 
-test("alarm cards stack in one full-width column with no list roles", () => {
-  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend" }], readiness: { status: "read", unread: [] }, onNav: () => {} });
-  const [region] = findNodes(lane, (n) => n.props["aria-live"] === "polite");
-  assert.equal(alertCardsOf(region).length, 2);
-  assert.ok(classOf(region).split(/\s+/).includes("flex-col"), classOf(region));
-  assert.ok(!/grid-cols-2/.test(classOf(region)), "never a second column");
+test("alarm rows stack worst first in one list card, with no list roles", () => {
+  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend", tone: "warn" }], readiness: { status: "read", unread: [] }, onNav: () => {} });
+  const lists = findNodes(lane, (n) => hasClass(n, "dash-alarm-list"));
+  assert.equal(lists.length, 1, "one card holds every row");
+  assert.deepEqual(alarmRowsOf(lists[0]).map((row) => row.props["data-tone"]), ["crit", "warn"]);
   assert.equal(findNodes(lane, (n) => n.props.role === "list" || n.props.role === "listitem").length, 0);
 });
-
-test("a tile's headline value never wraps, so its badge moves to the next line instead", () => {
-  const tile = { ...READY_TILE, id: "harness", tone: "crit", value: "2 of 7 down", badge: "Action needed" };
-  const tree = render("StatusTile", { tile, onNav: () => {}, onRetry: () => {} });
-  const [value] = findNodes(tree, isKpiValue);
-  const unbroken = findNodes(value, (n) => classOf(n).includes("whitespace-nowrap"));
-  assert.equal(unbroken.length, 1);
-  assert.equal(collectText(unbroken[0]), "2 of 7 down");
-  const [row] = findNodes(tree, (n) => hasClass(n, "kpi-main"));
-  assert.equal(findNodes(row, (m) => m.props.atom === "Badge").length, 1, "the badge rides the value row");
-  assert.equal(findNodes(row, isKpiValue).length, 1, "beside the value");
-  // .kpi-main wraps (base.css) → a badge that does not fit drops below the value, whole
-});
-
-test("a tile's trend renders on the lead side under its value, and a tile without one renders none", () => {
-  const trend = "Up 20% on $10.00 yesterday by this time";
-  const withTrend = render("StatusTile", { tile: { ...READY_TILE, trend }, onNav: () => {}, onRetry: () => {} });
-  const [lead] = findNodes(withTrend, (n) => classOf(n) === "tile-split-lead");
-  assert.match(collectText(lead), /yesterday by this time/);
-  const text = collectText(lead);
-  assert.ok(text.indexOf("40") < text.indexOf("Up 20%"), "the value precedes its trend");
-  const without = render("StatusTile", { tile: READY_TILE, onNav: () => {}, onRetry: () => {} });
-  assert.doesNotMatch(collectText(without), /yesterday/);
-});
-
 describe("the week block", () => {
   const LOADING = { data: null, error: null, busy: true };
   const sectionIds = (node: RenderedNode) =>
@@ -811,20 +473,52 @@ test("hour ticks read as bare two-digit hours while each cell's tooltip keeps th
   assert.match(String(cells[5].props.title), /^Mon 05:00 — /);
 });
 
-// "Wed ×2" is one unbreakable token → it never splits, in the fold sentence or in the row-label column
+// "Wed ×2" is one unbreakable token → it never splits, in the ⓘ fold sentence or in the row-label column
 test("a folded weekday keeps its ×2 token on one line in the fold sentence and the row label", () => {
   const counts = Array.from({ length: 24 }, (_, hour) => (hour === 14 ? 9 : 0));
   const grid = {
     rows: [{ day: "Wed", counts, fold: "09-23 + today" }], total: 9, max: 9, span: "Sep 24 – Sep 30",
     folds: [{ day: "Wed", fold: "09-23 + today" }], peak: { day: "Wed", hour: 14, count: 9, fold: "09-23 + today" },
   };
-  const tree = render("HourGrid", { grid });
-  const tokens = findNodes(tree, (n) => n.props.atom === "NoWrap").map(collectText);
+  const tokens = findNodes(render("HourGridNote", { grid }), (n) => n.props.atom === "NoWrap").map(collectText);
   assert.deepEqual(tokens, ["Wed ×2"], "the fold sentence holds the token in one nowrap span");
-  const [chart] = findNodes(tree, (n) => n.props.role === "img");
+  const [chart] = findNodes(render("HourGrid", { grid }), (n) => n.props.role === "img");
   const [label] = findNodes(chart, (n) => n.props.title === "09-23 + today");
   assert.equal(label && collectText(label), "Wed ×2", "the row label names the folded weekday");
   assert.match(classOf(label), /\bwhitespace-nowrap\b/, "the row label never wraps inside its track");
+});
+
+describe("Runs by hour heat ramp", () => {
+  const counts = [0, 1, 25, 50, 75, 100, ...Array.from({ length: 18 }, () => 0)];
+  const grid = {
+    rows: [{ day: "Mon", counts, fold: null }], total: 251, max: 100, span: "Sep 24 – Sep 30", folds: [],
+    peak: { day: "Mon", hour: 5, count: 100, fold: null },
+  };
+  const tree = render("HourGrid", { grid });
+  const [chart] = findNodes(tree, (n) => n.props.role === "img");
+  const cells = findNodes(chart, (n) => hasClass(n, "dash-hour-cell"));
+
+  test("each cell paints the heat step its count falls in, never the info hue or an opacity", () => {
+    assert.deepEqual(cells.slice(0, 6).map((cell) => cell.props["data-heat"]), [0, 1, 1, 2, 3, 4]);
+    for (const cell of cells) {
+      assert.ok(!hasClass(cell, "text-info"), "no cell takes the info hue");
+      assert.equal((cell.props.style as Record<string, unknown> | undefined)?.opacity, undefined, "no cell is quieted by opacity");
+    }
+  });
+
+  test("the key states the zero swatch, the four steps and the peak, outside the accessible label", () => {
+    const [key] = findNodes(tree, (n) => hasClass(n, "dash-hour-key"));
+    assert.equal(key.props["aria-hidden"], "true");
+    assert.deepEqual(findNodes(key, (n) => hasClass(n, "dash-hour-swatch")).map((n) => n.props["data-heat"]), [0, 1, 2, 3, 4]);
+    // formatInt is a stubbed atom here → the peak figure itself is asserted in the e2e
+    assert.match(collectText(key), /^0\s*1\s*runs per hour$/);
+  });
+
+  test("the method sentences leave the card body for its ⓘ", () => {
+    assert.doesNotMatch(collectText(tree), /reconstructed|counted by weekday/, "the body carries no method sentence");
+    assert.match(collectText(render("HourGridNote", { grid: { ...grid, folds: [{ day: "Wed", fold: "09-23 + today" }] } })),
+      /reconstructed included, poisoned excluded[\s\S]*counted by weekday/);
+  });
 });
 
 test("a zero spend day draws no bar, and every day's track stands on the baseline", () => {
@@ -836,5 +530,181 @@ test("a zero spend day draws no bar, and every day's track stands on the baselin
   assert.deepEqual(days.map(barsOf), [1, 0, 1], "only the zero day is bare");
   for (const day of days) {
     assert.equal(findNodes(day, (n) => n.props["data-chart-baseline"] === "").length, 1, "one baseline segment per day track");
+  }
+});
+
+// --- The status card: one card, one StatRow of four stats (spec 44084 §9) ---
+
+const READY_STAT = {
+  id: "outcomes", label: "Task results", window: "7d", status: "ready", tone: "ok", value: "40",
+  context: "7 of 40 failed or blocked", notes: [] as string[], target: "outcomes", region: "outcomes", source: "task results",
+};
+const FAILED_STAT = {
+  ...READY_STAT, id: "fleet", label: "Fleet", status: "error", tone: "neutral", value: null, absent: "not-loaded",
+  context: "Couldn't load the fleet summary.", region: "agents", source: "the fleet summary", error: "HTTP 500", canRetry: true,
+  target: "agents",
+};
+interface StatItem { key: string; label: string; value: unknown; unit?: string; context: unknown; href?: string }
+
+function renderStatusCard(stats: unknown[], extra: Record<string, unknown> = {}): { tree: RenderedNode; items: StatItem[] } {
+  const tree = render("StatusCard", { stats, onRetry: () => {}, ...extra });
+  const rows = findNodes(tree, (n) => n.props.atom === "StatRow");
+  assert.equal(rows.length, 1, "one StatRow");
+  return { tree, items: rows[0].props.stats as StatItem[] };
+}
+
+test("the status row is one card holding one StatRow of four stats, its labels in sentence case with the window joined", () => {
+  const stats = ["harness", "outcomes", "fleet", "spend"].map((id) => ({ ...READY_STAT, id, label: id === "outcomes" ? "Task results" : "Harness health" }));
+  const { tree, items } = renderStatusCard(stats);
+  const cards = findNodes(tree, (n) => n.props.atom === "Card");
+  assert.equal(cards.length, 1, "one card, never a tile per stat");
+  assert.equal(items.length, 4);
+  assert.equal(items[1].label, "Task results, 7d", "the window rides the label as 7d");
+  assert.equal(findNodes(tree, (n) => /\b(uppercase|tracking-wide)\b/.test(classOf(n))).length, 0, "no uppercase or tracked label");
+  assert.notEqual(String(cards[0].props.title), String(cards[0].props.title).toUpperCase(), "the card title is sentence case");
+});
+
+test("each stat's value is a Link to its owning screen; a loading stat links nowhere, says so in a placeholder and reserves its context line", () => {
+  const { items } = renderStatusCard([READY_STAT, { ...READY_STAT, id: "spend", status: "loading", value: null, target: "cost" }]);
+  assert.equal(items[0].href, "#outcomes");
+  assert.equal(items[1].href, undefined);
+  assert.equal(findNodes(nodeOf(items[1].value), (n) => n.props.atom === "LoadingPlaceholder").length, 1);
+  const reserved = nodeOf(items[1].context);
+  assert.equal(collectText(reserved).trim(), "", "a loading stat says nothing on its context line yet");
+  assert.equal(reserved.props["aria-hidden"], "true", "the reserved line is hidden from assistive tech");
+});
+
+// the alarm row's own glyph → a firing stat's mark reads at the same size as the row that states its alarm
+const ALARM_GLYPH_SIZE = findNodes(alarmRowsOf(render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} }))[0], (n) => n.props.atom === "Icon")[0].props.size;
+
+test("a firing stat shows its value and tone glyph only; a calm stat shows the value alone, and no stat carries a badge", () => {
+  const rows = [
+    { tone: "crit", hasGlyph: true }, { tone: "warn", hasGlyph: true },
+    { tone: "ok", hasGlyph: false }, { tone: "info", hasGlyph: false }, { tone: "neutral", hasGlyph: false },
+  ];
+  for (const row of rows) {
+    const { tree, items } = renderStatusCard([{ ...READY_STAT, tone: row.tone, value: "2 of 7 down" }]);
+    const value = nodeOf(items[0].value);
+    const glyphs = findNodes(value, (n) => n.props.atom === "Icon");
+    assert.equal(glyphs.length, row.hasGlyph ? 1 : 0, `${row.tone}: glyph`);
+    for (const glyph of glyphs) assert.equal(glyph.props.size, ALARM_GLYPH_SIZE, `${row.tone}: the glyph is drawn at the alarm-row size`);
+    assert.equal(findNodes(tree, (n) => n.props.atom === "Badge").length, 0, `${row.tone}: never a badge`);
+    const text = collectText(value).replace(/\s+/g, " ").trim();
+    assert.equal(text, row.hasGlyph ? `${realUi.ALERT_SEVERITY_WORD && (realUi.ALERT_SEVERITY_WORD as Record<string, string>)[row.tone]}: 2 of 7 down` : "2 of 7 down",
+      `${row.tone}: the sr-only tone word is the only word beside the figure`);
+    assert.equal(findNodes(value, (n) => hasClass(n, "whitespace-nowrap")).length, 1, `${row.tone}: the figure never wraps`);
+  }
+});
+
+test("an absent value paints its kind's word through the shared AbsentValue, and a unit rides only a real figure", () => {
+  const rows = [
+    { name: "unread", stat: { ...READY_STAT, value: null, absent: "not-loaded", unit: "suspended" }, kind: "not-loaded", unit: undefined },
+    { name: "empty", stat: { ...READY_STAT, value: null, absent: "none", unit: "suspended" }, kind: "none", unit: undefined },
+    { name: "a figure", stat: { ...READY_STAT, value: "0", unit: "suspended" }, kind: null, unit: "suspended" },
+  ];
+  for (const row of rows) {
+    const { items } = renderStatusCard([row.stat]);
+    const absent = findNodes(nodeOf(items[0].value), (n) => n.props.atom === "AbsentValue");
+    assert.equal(absent[0]?.props.kind ?? null, row.kind, row.name);
+    assert.equal(items[0].unit, row.unit, `${row.name}: unit`);
+  }
+});
+
+test("a failed stat states its error on the context line with its own Retry; a banner-covered one points up with none", () => {
+  const retried: string[] = [];
+  const own = renderStatusCard([FAILED_STAT], { onRetry: (region: string) => retried.push(region) });
+  const context = nodeOf(own.items[0].context);
+  assert.match(collectText(context), /Couldn't load the fleet summary/);
+  const retries = findNodes(context, (n) => n.props.atom === "RetryButton");
+  assert.equal(retries.length, 1, "one Retry, on the stat's own line");
+  (retries[0].props.onRetry as () => void)();
+  assert.deepEqual(retried, ["agents"], "the Retry reloads only the stat's own region");
+  assert.equal(alertCardsOf(own.tree).length, 0, "no card nests inside the status card");
+
+  const covered = renderStatusCard([FAILED_STAT], { sharedSources: ["the fleet summary"] });
+  const coveredText = collectText(nodeOf(covered.items[0].context));
+  assert.match(coveredText, /see the notice above/);
+  assert.doesNotMatch(coveredText, /Couldn't load/, "the stat does not repeat the banner's sentence");
+  assert.equal(findNodes(nodeOf(covered.items[0].context), (n) => n.props.atom === "RetryButton").length, 0, "the banner owns the only Retry");
+});
+
+const HELD_LINE = { context: "Last known", cause: "Last known — couldn't refresh task results" };
+
+test("a held stat's line says Last known alone, and the line's title names the failed refresh", () => {
+  const { items } = renderStatusCard([{ ...READY_STAT, ...HELD_LINE, isHeld: true, error: "HTTP 500", canRetry: true }]);
+  const context = nodeOf(items[0].context);
+  const [line] = findNodes(context, (n) => isHost(n) && n.props.title != null);
+  assert.equal(collectText(line).trim(), "Last known", "the words on the line");
+  assert.equal(line.props.title, HELD_LINE.cause, "the title carries the cause");
+});
+
+test("a held stat's Retry is the shared control: in flight while busy, handing focus to the status card on recovery", () => {
+  const heldStat = { ...READY_STAT, ...HELD_LINE, isHeld: true, error: "HTTP 500", canRetry: true };
+  for (const isBusy of [true, false]) {
+    const { tree, items } = renderStatusCard([{ ...heldStat, isBusy }]);
+    const [retry] = findNodes(nodeOf(items[0].context), (n) => n.props.atom === "RetryButton");
+    assert.equal(retry.props.isBusy, isBusy);
+    const targets = findNodes(tree, (n) => isHost(n) && n.props.id === retry.props.focusTargetId);
+    assert.equal(targets.length, 1, "the focus target is the status card that outlives the Retry");
+    assert.equal(targets[0].props["aria-busy"], isBusy ? "true" : undefined, "a refresh over held data marks the card busy");
+  }
+});
+
+test("every stat note opens from the card's one ⓘ, each led by its stat's label; no note, no ⓘ", () => {
+  const noted = { ...READY_STAT, notes: ["Counts only writer-emitted outcomes."] };
+  const { tree } = renderStatusCard([noted, { ...READY_STAT, id: "spend", label: "Spend today", window: undefined }]);
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  assert.match(collectText(nodeOf(card.props.info)).replace(/\s+/g, " "), /^Task results, 7d — Counts only writer-emitted outcomes\.$/);
+  const bare = renderStatusCard([READY_STAT]);
+  assert.ok(!findNodes(bare.tree, (n) => n.props.atom === "Card")[0].props.info, "no note → no ⓘ");
+});
+
+// the shared error copy is real here → a failed stat's next step and raw answer come from ui.jsx, not from the test
+const failMod = (await loadScreenModule(DASH_SRC, {
+  UI: new Proxy(uiStub() as Record<string, unknown>, {
+    get: (stub, name: string) => (name === "getErrorCopy" ? realUi.getErrorCopy : stub[name]),
+  }),
+  React: createReactStub(),
+})) as ScreenModule;
+
+test("a failed stat hands the next step and the raw error to the card's one ⓘ, never only to its context line", () => {
+  const unread = { status: "loading", data: null, error: null };
+  const stats = (failMod.buildStats as (args: unknown) => Array<{ id: string; notes: string[] }>)({
+    harness: { status: "loading" }, costState: unread, outcomesState: unread,
+    agentsState: { status: "error", data: null, error: "HTTP 500 Internal Server Error" },
+  });
+  const copy = (realUi.getErrorCopy as (error: string, source: string) => { next: string; detail: string })(
+    "HTTP 500 Internal Server Error", "the fleet summary",
+  );
+  const tree = renderScreen(failMod.React.createElement(failMod.StatusCard as Component, { stats, onRetry: () => {} })) as RenderedNode;
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const info = collectText(nodeOf(card.props.info)).replace(/\s+/g, " ");
+  assert.ok(info.includes(copy.next), `the next step rides ⓘ: ${info}`);
+  assert.ok(info.includes(copy.detail), `the raw error rides ⓘ: ${info}`);
+});
+
+describe("a held week panel says Last known once, in its head; its body names the failed refresh only", () => {
+  const held = { data: {}, error: "HTTP 500" };
+  for (const [name, extra] of [["own Retry", { onRetry: () => {} }], ["banner Retry", { isRetryShared: true }], ["the stat's Retry", {}]] as const) {
+    test(name, () => {
+      const tree = render("WeekPanel", { id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: held, render: () => null, ...extra });
+      const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+      assert.equal(card.props.sub, "Last known", `${name}: the head says it`);
+      const body = [collectText(tree), ...alertCardsOf(tree).map((alert) => String(alert.props.title))].join(" ");
+      assert.doesNotMatch(body, /last (known|reading)/i, `${name}: the body does not say it again — ${body}`);
+      assert.match(body, /couldn't refresh/i, `${name}: the body names the failed refresh`);
+    });
+  }
+});
+
+test("a week panel heads with the shared Card head, and a held reading says Last known in plain words beside its title", () => {
+  for (const [name, state, sub] of [["fresh", { data: {}, error: null }, null], ["held", { data: {}, error: "HTTP 500" }, "Last known"]] as const) {
+    const tree = render("WeekPanel", { id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state, onRetry: () => {}, render: () => null });
+    const cards = findNodes(tree, (n) => n.props.atom === "Card");
+    assert.equal(cards.length, 1, name);
+    assert.equal(cards[0].props.title, "Runs by hour", `${name}: the title rides the shared head`);
+    assert.equal(cards[0].props.sub ?? null, sub, `${name}: sub`);
+    assert.equal(findNodes(tree, (n) => n.props.atom === "Badge").length, 0, `${name}: never a badge`);
+    assert.equal(findNodes(tree, (n) => n.type === "h2").length, 0, `${name}: no hand-built heading`);
   }
 });
