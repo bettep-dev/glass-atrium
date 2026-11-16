@@ -1,5 +1,5 @@
 // E2E chromium STRUCTURE harness for the cost screen (screens/cost.jsx): DOM-structure facts
-// only — tier order, the alarm lane's presence, one decision-tier chart root — over two render
+// only — tier order, the alarm rows' presence, one decision-tier chart root — over two render
 // contexts (calm · hot), since one context can only measure one side of the lane. Values behind
 // those structures are pinned in cost.client.unit.test.ts.
 //
@@ -622,25 +622,36 @@ describe("hot fixture — today is running over the normal", () => {
     await closeRenderContext(ctx);
   });
 
-  test("the lane leads the screen with one row per fired trigger", async () => {
+  test("the alarm rows lead the Spend card under its head, one row per fired trigger", async () => {
     await ctx.page.waitForSelector('.cost-screen [role="alert"]', { timeout: 30_000 });
     assert.equal(
       await countAlarmRows(ctx.page),
       2,
-      "the hot row and the conditional parse-error row, and nothing else",
+      "the spend row and the conditional parse-error row, and nothing else",
     );
 
-    const lanePrecedesStats = await ctx.page.evaluate((row) => {
-      const lastAlert = Array.from(
-        document.querySelectorAll('.cost-screen [role="alert"]'),
-      ).pop();
+    const placement = await ctx.page.evaluate((row) => {
+      const alerts = Array.from(document.querySelectorAll('.cost-screen [role="alert"]'));
       const statRow = document.querySelector(row);
-      if (lastAlert === undefined || statRow === null) return false;
-      return Boolean(
-        lastAlert.compareDocumentPosition(statRow) & Node.DOCUMENT_POSITION_FOLLOWING,
-      );
+      const card = statRow?.closest(".card");
+      const head = card?.querySelector(".card-head");
+      if (!card || !head || !statRow) return null;
+      return {
+        isInSpendCard: alerts.every((el) => el.closest(".card") === card),
+        isUnderHead: alerts.every((el) => Boolean(head.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)),
+        isAboveStats: alerts.every((el) => Boolean(el.compareDocumentPosition(statRow) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      };
     }, SPEND_STAT_ROW);
-    assert.equal(lanePrecedesStats, true, "the lane leads — the spend stats follow it");
+    assert.deepStrictEqual(placement, { isInSpendCard: true, isUnderHead: true, isAboveStats: true });
+  });
+
+  // spec 44084 §3.2: a row with a detail line is 70 (8 + 6 + 20 + 4 + 18.2 + 6 + 8), the Dashboard row's geometry
+  test("each alarm row with a detail line stands at the shared alarm-row height", async () => {
+    const heights = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll('.cost-screen [role="alert"]')).map((el) => el.getBoundingClientRect().height),
+    );
+    assert.equal(heights.length, 2);
+    for (const height of heights) assert.ok(Math.abs(height - 70.2) <= 1, `row height ${height}`);
   });
 
   test("the log-integrity threshold is a faint reference line and only the day over it takes the crit tone", async () => {

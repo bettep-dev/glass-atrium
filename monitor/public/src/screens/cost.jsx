@@ -1,5 +1,5 @@
 // Screen 02 — Cost / Token (live data via /api/dashboard/* + /api/cost/*).
-// Decision tier: alarm lane → Spend stat card → cost trend → model ledger → session list.
+// Decision tier: Spend stat card (its alarm rows first) → cost trend → model ledger → session list.
 // Instrumentation tier: three closed disclosures — token volume, turn statistics, log integrity.
 // Single global period 토글이 모든 fetch 의 days 매개변수를 구동 (AbortController 1개/wave).
 // Hooks C-suffix aliased — window-scope 충돌 방지.
@@ -80,7 +80,7 @@ function ScreenCost() {
 
   const triggerRefresh = useCallbackC(() => setRefreshTick((t) => t + 1), []);
 
-  // One derivation, two readers — the lane states the same verdict tile 1 renders.
+  // One derivation, two readers — tile 1's tone glyph and the Spend card's alarm rows.
   const hotVerdict = computeHotVerdict(kpiState.status === 'ready' ? (kpiState.data || {}) : {});
   const latestOutsideBand = isLatestOutsideBand(tokenState);
   const alarmRows = computeAlarmRows({
@@ -147,19 +147,18 @@ function ScreenCost() {
         />
       </div>
 
-      {/* Decision tier — the facts a spend decision is made on, in priority order; the spend state reads on tile 1 or the lane */}
+      {/* Decision tier — the facts a spend decision is made on, in priority order; the spend state reads on tile 1 and the Spend card's alarm rows */}
       <div className="flex flex-col gap-section">
         {sourceFailures.banner && (
           <PageErrorBanner sources={sourceFailures.banner.sources} error={sourceFailures.banner.error} onRetry={triggerRefresh}
             isBusy={isRetrying} focusTargetId={COST_REGION_IDS.kpis}/>
         )}
 
-        <AlarmLaneC rows={alarmRows}/>
-
         <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
           <KpiRowC
             kpiState={kpiState}
             hot={hotVerdict}
+            alarmRows={alarmRows}
             trendState={tokenState}
             modelState={modelState}
             days={days}
@@ -263,40 +262,56 @@ function InstrumentationTierC({ children }) {
 }
 
 /**
- * Alarm lane — structural, leading the screen, zero height when nothing fires.
- * One "running hot" row (today so far, its pace, or the latest day outside its own band)
+ * Spend alarm rows — the Spend card's first rows, none when nothing fires.
+ * One spend row (today so far, its pace, or the latest day outside its own band)
  * + a conditional parse-error row.
- * A payload FAILURE is never a lane row — that stays a banner at its owning group.
+ * A payload FAILURE is never an alarm row — that stays a banner at its owning group.
  */
 function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
   const rows = [];
   const hotTone = getHotToneC(hot, latestOutsideBand);
 
   if (hotTone !== null) {
-    rows.push({ key: 'hot', tone: hotTone, text: getHotAlarmText(hot, latestOutsideBand) });
+    rows.push({ key: 'hot', tone: hotTone, ...getSpendAlarmCopyC(hot, latestOutsideBand) });
   }
   if (parseError.crit > 0) {
     rows.push({
       key: 'parse-error',
       tone: 'warn',
-      text: `${parseError.crit} of ${parseError.total} days over the unreadable-log threshold — some spend may be unrecorded.`,
+      title: `${parseError.crit} of ${parseError.total} days over the unreadable-log threshold`,
+      detail: 'Some spend may be unrecorded',
     });
   }
 
   return rows;
 }
 
-// Hot-trigger tone, or null when none fires — red only past the so-far cut; a projection or one outlier day is a warning
+// Spend-trigger tone, or null when none fires — one warning glyph for every leg, as on the Dashboard's spend row
 function getHotToneC(hot, latestOutsideBand) {
-  if (hot.isHot) return 'crit';
-  return hot.isPaceHot || latestOutsideBand ? 'warn' : null;
+  return hot.isHot || hot.isPaceHot || latestOutsideBand ? 'warn' : null;
 }
 
-function getHotAlarmText(hot, latestOutsideBand) {
-  const clauses = [];
-  if (hot.isHot || hot.isPaceHot) clauses.push(hot.verdict);
-  if (latestOutsideBand) clauses.push('The latest day sits outside its own 7-day normal band.');
-  return clauses.join(' ');
+const OUTSIDE_RANGE_FACT_C = 'the latest day is outside its 7-day normal range';
+
+/**
+ * Spend row copy, amount first: the title holds today's figure (and where the day lands, when paced),
+ * the detail its multiple of the 7-day average — the noun and basis the Dashboard's spend row uses.
+ * No ratio → only the range trigger can have fired, so that fact is the whole title.
+ */
+function getSpendAlarmCopyC(hot, latestOutsideBand) {
+  if (hot.ratio === null) {
+    return { title: OUTSIDE_RANGE_FACT_C[0].toUpperCase() + OUTSIDE_RANGE_FACT_C.slice(1), detail: null };
+  }
+  const isPaced = hot.paceCost !== null;
+  const soFar = `${formatUsdC(hot.todayCost)} so far today`;
+  const title = isPaced ? `${soFar}, on pace for ${formatUsdC(hot.paceCost)} by end of day` : soFar;
+  const basis = `${formatAverageMultipleC(isPaced ? hot.paceRatio : hot.ratio)} the 7-day average (${formatUsdC(hot.normalDaily)}/day)`;
+  return { title, detail: latestOutsideBand ? `${basis} \u00b7 ${OUTSIDE_RANGE_FACT_C}` : basis };
+}
+
+// one multiple sign from the cut up; under it a share of the average, which a "0.6×" would misread
+function formatAverageMultipleC(ratio) {
+  return ratio >= HOT_RATIO_CUT ? `${ratio.toFixed(1)}\u00d7` : `${window.UI.formatPct(ratio * 100)} of`;
 }
 
 /**
@@ -328,20 +343,24 @@ function isParseErrorCritDay(row) {
   return (Number(row.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD;
 }
 
-function AlarmLaneC({ rows }) {
-  const { Icon, TONE_ICON, ALERT_SEVERITY_WORD } = window.UI;
+// the alarm-row anatomy (design.md §7.9) under the Spend card head; a hairline closes the list above the stats
+function SpendAlarmRowsC({ rows }) {
+  const { Icon, TONE_ICON, ALERT_SEVERITY_WORD, DayTokens } = window.UI;
 
   if (rows.length === 0) {
     return null;
   }
 
   return (
-    <div className="border-y border-line">
+    <div className="border-b border-line">
       {rows.map((r) => (
         <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
           <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[r.tone]} size={16}/></span>
           <div className="fs-body text-ink">
-            <span className="sr-only">{`${ALERT_SEVERITY_WORD[r.tone]}: `}</span><window.UI.DayTokens>{r.text}</window.UI.DayTokens>
+            <span className="font-medium">
+              <span className="sr-only">{`${ALERT_SEVERITY_WORD[r.tone]}: `}</span><DayTokens>{r.title}</DayTokens>
+            </span>
+            {r.detail && <span className="block mt-1 max-w-[72ch] fs-meta text-dim"><DayTokens>{r.detail}</DayTokens></span>}
           </div>
         </div>
       ))}
@@ -349,9 +368,9 @@ function AlarmLaneC({ rows }) {
   );
 }
 
-// KPI band — today vs the 7-day normal · window total + trend · cost per task · cache share.
+// KPI band — today vs the 7-day average · window total + trend · cost per task · cache share.
 
-// "Running hot" cut — today ≥ 1.25x the 7-day daily normal · defined once, inherited by the Dashboard.
+// "Running hot" cut — today ≥ 1.25x the 7-day average · defined once, inherited by the Dashboard.
 const HOT_RATIO_CUT = 1.25;
 
 // Finite number or null — a missing or NaN payload field stays distinguishable from a real 0.
@@ -383,8 +402,8 @@ function getTileNote(status, unavailableNote) {
 }
 
 /**
- * Today so far against the operator's own 7-day daily normal.
- * Tone follows the so-far ratio ALONE — pace is a verdict clause, never a tone input.
+ * Today so far against the operator's own 7-day average.
+ * isHot follows the so-far ratio ALONE — pace is its own trigger, never folded into it.
  */
 function computeHotVerdict(kpi) {
   const todayCost = toFiniteOrNull(kpi.today_cost_usd);
@@ -396,18 +415,17 @@ function computeHotVerdict(kpi) {
 
   const ratio = normalDaily !== null && todayCost !== null ? todayCost / normalDaily : null;
   // Where today lands: spend so far + the 3h burn held for the rest of the bucket day.
-  const paceRatio = ratio !== null && burnRate !== null && hoursLeft !== null
-    ? (todayCost + burnRate * hoursLeft) / normalDaily
-    : null;
+  const paceCost = ratio !== null && burnRate !== null && hoursLeft !== null ? todayCost + burnRate * hoursLeft : null;
+  const paceRatio = paceCost === null ? null : paceCost / normalDaily;
 
   return {
     todayCost,
     normalDaily,
     ratio,
+    paceCost,
     paceRatio,
     isHot: ratio !== null && ratio >= HOT_RATIO_CUT,
     isPaceHot: paceRatio !== null && paceRatio >= HOT_RATIO_CUT,
-    verdict: getHotVerdictText(ratio, paceRatio),
   };
 }
 
@@ -428,18 +446,6 @@ function getDayHoursLeft(fetchedAt, timeZone) {
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
 
   return 24 - hour - minute / 60;
-}
-
-// So-far clause always; the pace clause joins it only when a pace figure exists.
-function getHotVerdictText(ratio, paceRatio) {
-  if (ratio === null) return '';
-  const { formatPct } = window.UI;
-  const soFar = `${formatPct(ratio * 100)} of the 7-day daily normal so far`;
-  if (paceRatio === null) return `Today is ${soFar}.`;
-  const pace = paceRatio >= HOT_RATIO_CUT
-    ? `on pace for ${paceRatio.toFixed(1)}\u00d7 it`
-    : `on pace for ${formatPct(paceRatio * 100)} of it`;
-  return `Today is ${soFar}, ${pace}.`;
 }
 
 // Window total + its change against the server's prior window over the period the toggle selects.
@@ -500,7 +506,7 @@ function computeCacheShare(modelState) {
   };
 }
 
-function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetry }) {
+function KpiRowC({ kpiState, hot, alarmRows = [], trendState, modelState, days, failures, onRetry }) {
   const { getRegionView, RegionFailure, Card, StatRow } = window.UI;
   const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
   const notes = stats.filter((stat) => stat.info);
@@ -512,8 +518,10 @@ function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetr
         <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
           focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
       )}
-      <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read">
-        <div aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
+      {/* flush body → the alarm rows span the card under its head; the stat row keeps the card padding */}
+      <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read" isFlush>
+        <SpendAlarmRowsC rows={alarmRows}/>
+        <div className="p-card-pad" aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
           <StatRow stats={stats.map(buildStatC)}/>
         </div>
       </Card>
@@ -532,11 +540,11 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   const modelDays = getShownDays(modelState, days);
   return [
     {
-      key: 'today', label: 'Today vs. normal', tone: getHotToneC(hot, false),
+      key: 'today', label: 'Today vs. average', tone: getHotToneC(hot, false),
       status: getTileStatus(kpiState, hot.ratio, false),
       value: formatUsdC(hot.todayCost),
-      hint: hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`,
-      unavailableNote: 'No cost in the last 7 days — no normal to compare against.',
+      hint: hot.normalDaily === null ? '' : `7-day average ${formatUsdC(hot.normalDaily)}/day`,
+      unavailableNote: 'No cost in the last 7 days — no average to compare against.',
     },
     {
       key: 'window', label: `Cost, last ${trendDays} days`,
@@ -622,7 +630,7 @@ function buildStatC(stat) {
   return { key: stat.key, label: stat.label, value: <SpendStatValueC stat={stat}/>, context: context || null };
 }
 
-// Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm lane holds the words.
+// Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
 function SpendStatValueC({ stat }) {
   const { Icon, TONE_ICON, LoadingPlaceholder, AbsentValue } = window.UI;
   // loading is stated once, through the shared placeholder — inline-flex keeps it on the stat's start edge
@@ -632,7 +640,7 @@ function SpendStatValueC({ stat }) {
   // a failed read is Not loaded, a read that holds nothing is None → the context line names the cause
   if (stat.status !== 'ready') return <AbsentValue kind={stat.status === 'error' ? 'not-loaded' : 'none'}/>;
   if (!stat.tone) return stat.value;
-  const toneLabel = stat.tone === 'crit' ? 'Running hot' : 'Heading above normal';
+  const toneLabel = 'Running hot';
   return (
     <>
       <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={13}/></span>

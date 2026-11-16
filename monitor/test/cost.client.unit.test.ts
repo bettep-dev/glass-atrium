@@ -31,16 +31,17 @@ interface HotVerdict {
   todayCost: number | null;
   normalDaily: number | null;
   ratio: number | null;
+  paceCost: number | null;
   paceRatio: number | null;
   isHot: boolean;
   isPaceHot: boolean;
-  verdict: string;
 }
 
 interface AlarmRow {
   key: string;
   tone: string;
-  text: string;
+  title: string;
+  detail: string | null;
 }
 
 interface WindowTotal {
@@ -153,7 +154,7 @@ interface CostHelpers {
   getTokenStackOrder: (
     shares: ReadonlyArray<{ key: string; total: number }>,
   ) => ReadonlyArray<{ key: string; total: number }>;
-  getHotVerdictText: (ratio: number | null, paceRatio: number | null) => string;
+  getSpendAlarmCopyC: (hot: HotVerdict, latestOutsideBand: boolean) => { title: string; detail: string | null };
   getTurnHeadline: (
     turns: { avg_turns_per_session?: number; turn_session_count?: number },
     sessionPopulation: number,
@@ -215,10 +216,10 @@ const CALM: HotVerdict = {
   todayCost: 1,
   normalDaily: 1,
   ratio: 1,
+  paceCost: 1,
   paceRatio: 1,
   isHot: false,
   isPaceHot: false,
-  verdict: "Today is 100% of the 7-day daily normal so far.",
 };
 
 test("the lane stays empty unless a trigger fires, and every trigger fires it alone", () => {
@@ -241,7 +242,7 @@ test("the lane stays empty unless a trigger fires, and every trigger fires it al
       parseError: { crit: 0, total: 9 },
     });
     assert.deepStrictEqual(getKeys(rows), ["hot"], name);
-    assert.ok(rows[0]!.text.length > 0, `${name} must state itself in words`);
+    assert.ok(rows[0]!.title.length > 0, `${name} must state itself in words`);
   }
 
   const withParse = cost.computeAlarmRows({
@@ -255,7 +256,7 @@ test("the lane stays empty unless a trigger fires, and every trigger fires it al
     "the parse-error row is conditional and follows the hot row",
   );
   assert.match(
-    withParse[1]!.text,
+    withParse[1]!.title,
     /\b3 of 9\b/,
     "the parse-error row states its count beside the population it came from — never a count alone",
   );
@@ -290,14 +291,14 @@ test("tile-1 tone follows the so-far ratio alone, never the pace figure", () => 
   }
 });
 
-test("the verdict always carries the so-far clause and adds the pace clause only when measured", () => {
-  const withPace = cost.computeHotVerdict(getKpiAtRatio(1.5, 2));
-  assert.match(withPace.verdict, /so far/);
-  assert.match(withPace.verdict, /pace/);
+test("the spend title always carries the so-far amount and adds the pace clause only when measured", () => {
+  const withPace = cost.getSpendAlarmCopyC(cost.computeHotVerdict(getKpiAtRatio(1.5, 2)), false);
+  assert.match(withPace.title, /so far today/);
+  assert.match(withPace.title, /on pace for/);
 
-  const withoutPace = cost.computeHotVerdict(getKpiAtRatio(1.5, null));
-  assert.match(withoutPace.verdict, /so far/);
-  assert.doesNotMatch(withoutPace.verdict, /pace/, "a missing burn rate must drop the clause, not guess it");
+  const withoutPace = cost.getSpendAlarmCopyC(cost.computeHotVerdict(getKpiAtRatio(1.5, null)), false);
+  assert.match(withoutPace.title, /so far today/);
+  assert.doesNotMatch(withoutPace.title, /pace/, "a missing burn rate must drop the clause, not guess it");
 });
 
 test("the pace lands today's spend so far plus the burn over the hours left, never below what is spent", () => {
@@ -331,7 +332,8 @@ test("the hours left are read in the day bucket's zone, and an unreadable instan
   for (const broken of [{ day_bucket_timezone: "Not/AZone" }, { day_bucket_timezone: "UTC", fetched_at: "x" }, {}]) {
     const hot = cost.computeHotVerdict({ window_7d_cost_usd: 70, today_cost_usd: 5, burn_rate_3h_usd_per_hour: 1, ...broken });
     assert.strictEqual(hot.paceRatio, null, JSON.stringify(broken));
-    assert.doesNotMatch(hot.verdict, /pace/);
+    assert.strictEqual(hot.paceCost, null, JSON.stringify(broken));
+    assert.doesNotMatch(cost.getSpendAlarmCopyC(hot, false).title, /pace/);
   }
 });
 
@@ -340,7 +342,10 @@ test("a missing or unusable kpi figure stays null rather than collapsing to zero
     const hot = cost.computeHotVerdict(kpi);
     assert.strictEqual(hot.ratio, null, JSON.stringify(kpi));
     assert.strictEqual(hot.isHot, false);
-    assert.strictEqual(hot.verdict, "", "no ratio means no verdict sentence to state");
+    assert.equal(
+      cost.computeAlarmRows({ hot, latestOutsideBand: false, parseError: { crit: 0, total: 9 } }).length, 0,
+      "no ratio means no spend row to state",
+    );
   }
 });
 
@@ -717,7 +722,7 @@ test("the session drawer sets only the session id in the machine-string face; ev
   assert.ok(facts.every((dd) => !/font-mono/.test(String(dd.props.className))), "no fact falls back to a mono class");
 });
 
-test("the running-hot sentence is stated once, in the lane, exactly when a hot trigger fires", () => {
+test("the spend amount is stated once, in the alarm rows, exactly when a spend trigger fires", () => {
   const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
     ["calm", {}, false],
     ["so-far ratio", { isHot: true }, false],
@@ -725,26 +730,26 @@ test("the running-hot sentence is stated once, in the lane, exactly when a hot t
     ["outlier day only", {}, true],
     ["both ratios", { isHot: true, isPaceHot: true }, true],
   ];
-  const verdict = "Today is 81% of the 7-day daily normal so far, on pace for 3.1x it.";
   for (const [name, delta, outsideBand] of cases) {
-    const hot = { ...CALM, verdict, ...delta };
-    const laneTexts = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
-      .map((r) => r.text);
-    const places = laneTexts.filter((t) => t.includes(verdict)).length;
-    assert.equal(places, hot.isHot || hot.isPaceHot ? 1 : 0, name);
+    const hot = { ...CALM, todayCost: 842, ...delta };
+    const titles = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 3, total: 9 } })]
+      .map((r) => r.title);
+    const places = titles.filter((t) => t.startsWith("$842 so far today")).length;
+    assert.equal(places, hot.isHot || hot.isPaceHot || outsideBand ? 1 : 0, name);
   }
 });
 
-test("the hot row is red only past the so-far cut; a projection or an outlier day is amber", () => {
-  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean, string]> = [
-    ["so-far ratio", { isHot: true }, false, "crit"],
-    ["so-far and pace", { isHot: true, isPaceHot: true }, true, "crit"],
-    ["pace only", { isPaceHot: true }, false, "warn"],
-    ["outlier day only", {}, true, "warn"],
+// spec 44084 §3.4: the spend alarm takes one glyph on Cost and Dashboard alike, whichever leg fires it
+test("every spend row is a warning, whichever trigger fires it, as on the Dashboard", () => {
+  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
+    ["so-far ratio", { isHot: true }, false],
+    ["so-far and pace", { isHot: true, isPaceHot: true }, true],
+    ["pace only", { isPaceHot: true }, false],
+    ["outlier day only", {}, true],
   ];
-  for (const [name, delta, outsideBand, tone] of cases) {
+  for (const [name, delta, outsideBand] of cases) {
     const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } });
-    assert.equal(rows[0]!.tone, tone, name);
+    assert.equal(rows[0]!.tone, "warn", name);
   }
 });
 
@@ -1084,12 +1089,51 @@ function hasFaintClass(node: RenderedNode): boolean {
   return String(node.props.className ?? "").split(/\s+/).includes("text-faint");
 }
 
-test("the running-hot sentence writes its share and its multiple in the shared forms", () => {
+// spec 44084 §3.4: amount first in the title; the multiple, the basis noun and the basis amount in the detail
+describe("the spend alarm reads amount first, then its multiple of the 7-day average", () => {
+  // a $1,380/day average, read at UTC noon → 12 hours of the day remain
+  const getKpi = (today: number, endOfDay: number | null): Record<string, unknown> => ({
+    window_7d_cost_usd: 1_380 * 7,
+    today_cost_usd: today,
+    burn_rate_3h_usd_per_hour: endOfDay === null ? null : (endOfDay - today) / NOON_HOURS_LEFT,
+    day_bucket_timezone: "UTC",
+    fetched_at: NOON_UTC,
+  });
   const rows = [
-    { name: "a multiple", ratio: 0.81, pace: 3.1, text: "Today is 81% of the 7-day daily normal so far, on pace for 3.1\u00d7 it." },
-    { name: "a share under the cut", ratio: 0.5, pace: 0.875, text: "Today is 50% of the 7-day daily normal so far, on pace for 87.5% of it." },
+    {
+      name: "a pace figure names where the day lands, and the multiple is the pace's",
+      kpi: getKpi(842, 2_480), isOutsideBand: false,
+      title: "$842 so far today, on pace for $2,480 by end of day", detail: "1.8\u00d7 the 7-day average ($1,380/day)",
+    },
+    {
+      name: "without a pace figure the multiple is the so-far share",
+      kpi: getKpi(1_790, null), isOutsideBand: false,
+      title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)",
+    },
+    {
+      name: "a share under the cut reads as a percentage of the average",
+      kpi: getKpi(842, null), isOutsideBand: false,
+      title: "$842 so far today", detail: "61% of the 7-day average ($1,380/day)",
+    },
+    {
+      name: "a latest day outside its range joins the detail as its own fact",
+      kpi: getKpi(842, null), isOutsideBand: true,
+      title: "$842 so far today", detail: "61% of the 7-day average ($1,380/day) \u00b7 the latest day is outside its 7-day normal range",
+    },
+    {
+      name: "with no spend figure the range fact is the title alone",
+      kpi: {}, isOutsideBand: true,
+      title: "The latest day is outside its 7-day normal range", detail: null,
+    },
   ];
-  for (const row of rows) assert.equal(cost.getHotVerdictText(row.ratio, row.pace), row.text, row.name);
+  for (const row of rows) {
+    test(row.name, () => {
+      const copy = cost.getSpendAlarmCopyC(cost.computeHotVerdict(row.kpi), row.isOutsideBand);
+      assert.equal(copy.title, row.title);
+      assert.equal(copy.detail, row.detail);
+    });
+  }
+
 });
 
 test("an average turn count drops a trailing .0", () => {
@@ -1388,7 +1432,7 @@ test("the spend card's 7-day sentences (today hint, per-task hint and its window
     .flatMap((root) => findNodes(root, (n) => n.props.atom === "DayTokens"))
     .map((n) => String(n.props.children));
   for (const sentence of [
-    "$10.00 7-day normal/day",
+    "7-day average $10.00/day",
     "7-day cost / 2,396 finished",
     "Fixed 7-day window — the range above does not change it.",
   ]) {
@@ -1788,7 +1832,7 @@ test("each Cost alarm row draws its tone's own glyph, hidden from assistive tech
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   const ui = { TONE_ICON: realUi.TONE_ICON as Record<string, string>, ALERT_SEVERITY_WORD: realUi.ALERT_SEVERITY_WORD as Record<string, string> };
   const tones = ["crit", "warn"];
-  const tree = renderIn(mod, "AlarmLaneC", { rows: tones.map((tone) => ({ key: tone, tone, text: `${tone} alarm text` })) });
+  const tree = renderIn(mod, "SpendAlarmRowsC", { rows: tones.map((tone) => ({ key: tone, tone, title: `${tone} alarm title`, detail: null })) });
   const rows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
 
   assert.equal(rows.length, tones.length);
@@ -1800,6 +1844,46 @@ test("each Cost alarm row draws its tone's own glyph, hidden from assistive tech
     assert.equal(glyph.props["aria-hidden"], "true", `${tone} glyph is hidden from assistive tech`);
     assert.equal(icon.props.name, ui.TONE_ICON[tone], `${tone} row draws its tone's glyph`);
     assert.equal(collectText(word).trim(), `${ui.ALERT_SEVERITY_WORD[tone]}:`, `${tone} row speaks its severity word`);
+  }
+});
+
+// spec 44084 §3.2: title in medium ink, an optional detail on its own dim meta line
+test("an alarm row sets its title in medium ink and draws a detail line only when it has one", async () => {
+  const mod = await loadCostRender();
+  const tree = renderIn(mod, "SpendAlarmRowsC", { rows: [
+    { key: "hot", tone: "warn", title: "$842 so far today", detail: "61% of the 7-day average ($1,380/day)" },
+    { key: "bare", tone: "warn", title: "The latest day is outside its 7-day normal range", detail: null },
+  ] });
+  const rows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
+  const getClassed = (root: RenderedNode, cls: string) => findNodes(root, (n) => String(n.props.className ?? "").split(" ").includes(cls));
+
+  assert.equal(rows.length, 2);
+  const titles = rows.map((row) => collectText(getClassed(row, "font-medium")[0]!).replace(/\s+/g, " ").trim());
+  assert.deepEqual(titles, ["Warning: $842 so far today", "Warning: The latest day is outside its 7-day normal range"],
+    "the severity word leads each title");
+  const details = rows.map((row) => getClassed(row, "fs-meta").filter((n) => String(n.props.className).includes("text-dim")));
+  assert.deepEqual(details.map((nodes) => nodes.length), [1, 0]);
+  assert.equal(collectText(details[0]![0]!), "61% of the 7-day average ($1,380/day)");
+});
+
+describe("the spend alarm rows lead the Spend card, under its head, and leave it untouched when calm", () => {
+  const kpi = getKpiAtRatio(3, null);
+  const rows = [
+    { name: "firing", alarmRows: [{ key: "hot", tone: "warn", title: "$30.00 so far today", detail: "3.0\u00d7 the 7-day average ($10.00/day)" }], count: 1 },
+    { name: "calm", alarmRows: [], count: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadCostRender();
+      const tree = renderIn(mod, "KpiRowC", {
+        kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
+        modelState: ready({ rows: [] }), days: 30, onRetry: () => {}, alarmRows: row.alarmRows,
+      });
+      const [card] = findNodes(tree, (n) => n.props.atom === "Card" && n.props.title === "Spend");
+      const order = findNodes(card!, (n) => n.props.role === "alert" || String(n.props.className ?? "").split(" ").includes("stat-row"))
+        .map((n) => (n.props.role === "alert" ? "alarm" : "stats"));
+      assert.deepEqual(order, [...Array(row.count).fill("alarm"), "stats"], "alarm rows first, then the stat row, all inside the Spend card");
+    });
   }
 });
 
