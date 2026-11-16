@@ -146,6 +146,8 @@ function createArchContext(): Record<string, unknown> {
       (DAEMON_STATUS_TONE[s] || { tone: "info" }).tone,
     daemonStatusLabel: (s: string) =>
       (DAEMON_STATUS_TONE[s] || { label: s || "—" }).label,
+    // a settled read — the freshness wording has its own tests
+    getFreshnessVerdict: (input: { tone: string; label: string }) => ({ tone: input.tone, label: input.label }),
   };
   const ctx: Record<string, unknown> = {
     window: { UI: uiStub },
@@ -954,62 +956,6 @@ const archCtx = arch as unknown as Record<string, unknown>;
 // 값 읽기 — callInCtx 는 부르기만 함. 표(ALARM_TONE_RANK 등)는 함수가 아님.
 const readInCtx = <T,>(name: string): T => vm.runInContext(name, archCtx) as T;
 
-type PartRow = { tone: string | null };
-const partRows = (...tones: (string | null)[]): PartRow[] =>
-  tones.map((tone) => ({ tone }));
-
-// 상태 종류(비었음 · 오는 중 · 못 읽음 · 미판정 · 일부 판정 · 전부 정상)마다 문장이 갈려야 함.
-// 문장 하나를 통째로 박지 않고 '어느 낱말이 반드시 서는가' 로 잼 — 표현이 바뀌어도 사실은 남음.
-const CAPTION_CASES: {
-  name: string;
-  rows: PartRow[];
-  busy: boolean;
-  errored: number;
-  must: string[];
-}[] = [
-  { name: "model absent + still loading", rows: [], busy: true, errored: 0, must: ["Reading part health"] },
-  { name: "model absent", rows: [], busy: false, errored: 0, must: ["unavailable"] },
-  { name: "all four in flight", rows: partRows(null, null), busy: true, errored: 0, must: ["Reading", "2"] },
-  { name: "nothing judged, nothing failed", rows: partRows(null, null), busy: false, errored: 0, must: ["No verdict yet", "2"] },
-  { name: "nothing judged because stores failed", rows: partRows(null, null), busy: false, errored: 2, must: ["Couldn't read", "2"] },
-  { name: "some ok, rest not yet judged", rows: partRows("ok", null), busy: false, errored: 0, must: ["1 of 2", "not verified"] },
-  { name: "some ok while the rest is still being read", rows: partRows("ok", null), busy: true, errored: 0, must: ["Reading 1 of 2"] },
-  { name: "some ok, rest unreadable", rows: partRows("ok", null), busy: false, errored: 1, must: ["1 of 2", "unreadable"] },
-  { name: "attention outranks everything", rows: partRows("crit", null), busy: true, errored: 1, must: ["1 of 2", "need attention"] },
-  { name: "all judged ok", rows: partRows("ok", "ok"), busy: false, errored: 0, must: ["All 2 parts ok"] },
-  { name: "a 'No data' part is unverified, not attention", rows: partRows("ok", "ok", "info"), busy: false, errored: 0, must: ["2 of 3", "not verified"] },
-];
-
-test("M1 every health state renders its own caption sentence", () => {
-  const read = new Map<string, string>();
-
-  for (const c of CAPTION_CASES) {
-    const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", c.rows, c.busy, c.errored);
-    for (const needle of c.must)
-      assert.ok(
-        caption.includes(needle),
-        `${c.name}: caption must carry "${needle}" — read: "${caption}"`,
-      );
-    read.set(c.name, caption);
-  }
-
-  // 낱말 단언만으로는 두 상태가 같은 문장으로 접히는 것을 못 잡음 — 접히면 안 읽힌 값이 0 으로 읽힘.
-  const distinct = new Set(read.values());
-  assert.strictEqual(
-    distinct.size,
-    CAPTION_CASES.length,
-    `each state must read differently — read: ${JSON.stringify([...read])}`,
-  );
-});
-
-test("M1 a zero never stands in for a reading that never arrived", () => {
-  const unread = callInCtx<string>(archCtx, "getHealthCaptionAR", partRows(null, null, null), false, 3);
-  const clean = callInCtx<string>(archCtx, "getHealthCaptionAR", partRows("ok", "ok", "ok"), false, 0);
-
-  assert.ok(!unread.includes("0 of"), `an unread map must not report a count — read: "${unread}"`);
-  assert.notStrictEqual(unread, clean, "an all-failed read must not render as an all-clear");
-});
-
 // --- 레인: 심각도 정렬과 live-overlay 행 (제거된 strip 의 유일한 대체 표면) ---------
 const alarmRows = (over: Record<string, unknown> = {}) =>
   callInCtx<{ key: string; tone: string; note: string }[]>(archCtx, "getAlarmRows", {
@@ -1210,7 +1156,7 @@ test("C1 a daemons store that has not answered leaves no verdict ring from the l
   }
 });
 
-test("C2 the per-node attention counts add up to the caption's attention count", () => {
+test("C2 the per-node attention counts add up to the Part health head's count", () => {
   const rows = [
     { tone: "crit", nodeIds: ["cron"] },
     { tone: "crit", nodeIds: ["cron"] },
@@ -1220,10 +1166,10 @@ test("C2 the per-node attention counts add up to the caption's attention count",
     { tone: null, nodeIds: ["hook_pipeline"] },
   ];
   const counts = callInCtx<Map<string, number>>(archCtx, "buildAttentionCountByNodeIdAR", rows);
-  const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", rows, false, 0);
-  const captionCount = Number(/^(\d+) of/.exec(caption)?.[1]);
+  const status = callInCtx<{ text: string }>(archCtx, "getPartHealthStatusAR", rows, { at: null, regions: [] });
+  const headCount = [...status.text.matchAll(/\d+/g)].reduce((sum, m) => sum + Number(m[0]), 0);
 
-  assert.strictEqual([...counts.values()].reduce((a, b) => a + b, 0), captionCount, caption);
+  assert.strictEqual([...counts.values()].reduce((a, b) => a + b, 0), headCount, status.text);
   assert.strictEqual(counts.get("cron"), 2);
 });
 
@@ -1256,30 +1202,6 @@ test("C4 an unjudged part and a 'No data' part never share a drawer label", () =
 });
 
 // --- P1: caption names, ring key, node accessible names, focus ring, security hue ---------
-test("P1 the attention caption names every flagged part and no settled one", () => {
-  const rows = [
-    { tone: "crit", name: "Autoagent daemon", nodeIds: [] },
-    { tone: "warn", name: "Hook pipeline", nodeIds: [] },
-    { tone: "ok", name: "Wiki daemon", nodeIds: [] },
-    { tone: null, name: "Postgres", nodeIds: [] },
-  ];
-  const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", rows, false, 0);
-
-  for (const row of rows)
-    assert.strictEqual(
-      caption.includes(row.name),
-      row.tone === "crit" || row.tone === "warn",
-      `only flagged parts are named — read: "${caption}"`,
-    );
-});
-
-interface LegendItem {
-  key: string;
-  kind: string;
-  mark?: string;
-  token?: string;
-  label: string;
-}
 
 test("the legend names every mark the canvas can draw", () => {
   const items = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR");

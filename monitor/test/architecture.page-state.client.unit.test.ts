@@ -55,7 +55,6 @@ interface PageStateSandbox {
     healthStates: Record<string, RegionState>,
   ) => Array<{ source: string; state: RegionState }>;
   getPageFailureAR: (entries: Array<{ source: string; state: RegionState }>) => PageFailure | null;
-  getHealthCaptionAR: (partRows: PartRow[], busy: boolean, errored: number) => string;
   getFreshnessInputAR: (
     healthAsOf: string | null,
     regions: RegionState[],
@@ -71,11 +70,7 @@ interface PageStateSandbox {
   getDrillDaemonAR: (partRows: DaemonPartRow[], unscopedId: string) => string | null;
   getRunSummaryAR: (runs: RunRow[]) => { text: string; failures: RunRow[] };
   getMapLegendItemsAR: () => Array<{ key: string; mark?: string; text?: string }>;
-  getPageVerdictAR: (
-    partRows: HealthRow[],
-    caption: string,
-    nodeIndex: Map<string, { label: string }>,
-  ) => { tone: string; sentence: string; chips: Array<{ key: string; label: string; targetId: string }> };
+  getPartHealthStatusAR: (partRows: HealthRow[], freshness: HealthFreshness) => { tone: string; text: string } | null;
 }
 
 interface DaemonPartRow {
@@ -151,22 +146,6 @@ test("the alert names each source mid-sentence, so only a proper noun keeps its 
   }
 });
 
-test("the caption states one population — the part rows — once, leaving read failures to the stamp", () => {
-  const tones = (...list: Array<string | null>): PartRow[] => list.map((tone, i) => ({ name: `part ${i}`, tone }));
-  const rows: Array<{ name: string; parts: PartRow[]; errored: number }> = [
-    { name: "some ok, the rest unreadable", parts: tones("ok", "ok", "ok", null, null, null, null), errored: 1 },
-    { name: "some ok, the rest not verified", parts: tones("ok", "ok", null), errored: 0 },
-    { name: "a part needs attention", parts: tones("ok", "crit", null), errored: 1 },
-    { name: "every part ok", parts: tones("ok", "ok"), errored: 0 },
-  ];
-
-  for (const row of rows) {
-    const caption = sandbox.getHealthCaptionAR(row.parts, false, row.errored);
-    const denominators = [...caption.matchAll(/\bof (\d+)\b/g)].map((match) => Number(match[1]));
-    assert.ok(denominators.length <= 1, `${row.name}: "${caption}" states ${denominators.length} populations`);
-    for (const denominator of denominators) assert.strictEqual(denominator, row.parts.length, `${row.name}: "${caption}"`);
-  }
-});
 
 test("every health store the stamp counts is also named by the page alert", () => {
   const stores = ["daemonState", "hookState", "pgState", "hookFailState"];
@@ -312,24 +291,18 @@ describe("a down part says how often it runs and when it is due next, from the s
     test(name, () => assert.strictEqual(sandbox.getPartScheduleAR(row, formatRelative), schedule));
 });
 
-test("the page verdict takes the worst part tone, with one chip per flagged part focusing its row", () => {
-  const nodeIndex = new Map([["canonical.cron", { label: "Scheduled jobs" }]]);
+describe("the Part health head counts the flagged parts once, worst tone first, and says nothing when none is flagged", () => {
+  const settled = { at: "2026-01-10T11:59:00.000Z", regions: [], now: Date.parse("2026-01-10T12:00:00.000Z") };
   const rows = [
-    { name: "a critical part outranks a warning", parts: [healthRow("a", "warn"), healthRow("b", "crit", ["cron"])], tone: "crit" },
-    { name: "a warning alone", parts: [healthRow("a", "warn"), healthRow("b", "ok")], tone: "warn" },
-    { name: "every part ok", parts: [healthRow("a", "ok"), healthRow("b", "ok")], tone: "ok" },
-    { name: "nothing judged yet", parts: [healthRow("a", null), healthRow("b", "info")], tone: "neutral" },
+    { name: "a critical part outranks a warning", parts: [healthRow("a", "warn"), healthRow("b", "crit")], status: { tone: "crit", text: "1 down · 1 needs attention" } },
+    { name: "two critical parts", parts: [healthRow("a", "crit"), healthRow("b", "crit"), healthRow("c", "ok")], status: { tone: "crit", text: "2 down" } },
+    { name: "warnings alone", parts: [healthRow("a", "warn"), healthRow("b", "warn")], status: { tone: "warn", text: "2 need attention" } },
+    { name: "every part ok", parts: [healthRow("a", "ok"), healthRow("b", "ok")], status: null },
+    { name: "nothing judged yet", parts: [healthRow("a", null), healthRow("b", "info")], status: null },
   ];
-
-  for (const row of rows) {
-    const verdict = sandbox.getPageVerdictAR(row.parts, "caption", nodeIndex);
-    const flagged = row.parts.filter((part) => part.tone === "crit" || part.tone === "warn");
-
-    assert.strictEqual(verdict.tone, row.tone, row.name);
-    assert.deepStrictEqual([...verdict.chips.map((chip) => chip.targetId)].sort(), flagged.map((part) => `arch-part-${part.id}`).sort(), row.name);
-  }
-  const [chip] = sandbox.getPageVerdictAR([healthRow("b", "crit", ["cron"])], "caption", nodeIndex).chips;
-  assert.ok(chip.label.includes("Part b") && chip.label.includes("Scheduled jobs"), `chip "${chip.label}" pairs the part with its box`);
+  for (const row of rows)
+    // JSON round trip → a plain object; the sandbox's own Object prototype never equals this realm's
+    test(row.name, () => assert.deepStrictEqual(JSON.parse(JSON.stringify(sandbox.getPartHealthStatusAR(row.parts, settled))), row.status));
 });
 
 test("a drawer drills into its node's worst daemon part, and into the first one when none is flagged", () => {

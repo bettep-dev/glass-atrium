@@ -103,6 +103,7 @@ const CANVAS = {
 };
 // map slot wrapper — outlives the error-to-map swap, so a map Retry hands focus here on recovery
 const MAP_REGION_ID_AR = "arch-map-region";
+const PAGE_HEAD_ID_AR = "arch-page-head";
 // undrawn-map slot — the drawn map measures ~340–349px at 1440, so loader and failure card hold that height
 const MAP_SLOT_MIN_PX = 340;
 const ARCH_SELECTORS = {
@@ -599,16 +600,7 @@ function ScreenArchitecture(
 	const pageRegions = pageReadEntries.map((entry) => entry.state);
 	const readTally = getRegionSummary(pageRegions);
 
-	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
-	const healthCaption = getHealthCaptionAR(
-		healthPartRows,
-		healthPending,
-		healthStoreErrors.length,
-	);
-
-	// one freshness input for the stamp and the verdict — the two never disagree on how current the page is
 	const freshnessInput = getFreshnessInputAR(healthAsOf, pageRegions, diagState.data != null);
-	const pageVerdict = getPageVerdictAR(healthPartRows, healthCaption, nodeIndex, freshnessInput);
 	// part rows answer to the health reads alone — a failed map read does not age a part's verdict
 	const partFreshness = getFreshnessInputAR(healthAsOf, Object.values(headlineHealthStates), true);
 	const mapCopyNote = getMapCopyNoteAR(diagState);
@@ -814,7 +806,8 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas .node, .arch-mermaid-canvas .node > * { animation: none !important; transition: none !important; } }"}
 			</style>
 
-			<div className="flex-shrink-0">
+			{/* page-alert focus target — the header outlives the alert's recovery */}
+			<div id={PAGE_HEAD_ID_AR} tabIndex={-1} className="flex-shrink-0">
 				<PageHeader
 					title="System map"
 					freshness={<FreshnessStamp {...freshnessInput} />}
@@ -827,7 +820,7 @@ function ScreenArchitecture(
 						/>
 					}
 				/>
-				<MapCaptionAR verdict={pageVerdict} hasMap={diagState.data != null} />
+				{diagState.data != null && <MapCaptionAR />}
 			</div>
 
 			<div className="arch-page">
@@ -837,7 +830,7 @@ function ScreenArchitecture(
 						error={pageFailure.error}
 						onRetry={triggerRefresh}
 						isBusy={isRefreshBusy}
-						focusTargetId="arch-verdict"
+						focusTargetId={PAGE_HEAD_ID_AR}
 					/>
 				)}
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
@@ -2421,35 +2414,6 @@ function buildLiveDaemonsByNodeId(daemons) {
  * 그려진 노드 수도 데몬 수도 아님 — 둘은 판정을 받지 않는 자리를 모집단에 섞음.
  * 로딩 · 못 읽음 · 미판정 · 정상이 저마다 다른 문장임: 하나로 접으면 안 읽힌 값이 0 으로 읽힘.
  */
-function getHealthCaptionAR(partRows, busy, errored = 0) {
-	const total = partRows.length;
-	if (total === 0)
-		return busy ? "Reading part health…" : "Part health unavailable";
-
-	// 'No data' (info) is not a verdict — it rings dashed, so it counts as unverified, not attention.
-	const judged = partRows.filter((row) => row.tone && row.tone !== "info");
-	const attention = judged.filter((row) => row.tone !== "ok");
-	const unverified = total - judged.length;
-	// 끊긴 저장소가 있으면 남은 빈칸은 '아직' 이 아니라 '못 읽음' 임 — 두 낱말이 그 둘을 가름.
-	const unjudgedWord = errored > 0 ? "unreadable" : "not verified";
-
-	if (attention.length > 0)
-		return `${attention.length} of ${total} parts need attention${getFlaggedNamesSuffixAR(attention)}`;
-	if (judged.length === 0) return getNoVerdictCaptionAR(total, busy, errored);
-	// first wave still out → no ok count yet; the early verdicts would read as the whole map
-	if (busy && unverified > 0) return `Reading ${unverified} of ${total} parts…`;
-	if (unverified > 0)
-		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}`;
-
-	return `All ${total} parts ok`;
-}
-
-// flagged parts by name — the caption answers 'what is wrong' before any click.
-function getFlaggedNamesSuffixAR(rows) {
-	const names = rows.map((row) => row.name).filter(Boolean);
-	return names.length > 0 ? `: ${names.join(", ")}` : "";
-}
-
 // legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.
 function getMapLegendItemsAR() {
 	const rings = ["warn", "crit"].map((tone) => ({
@@ -2475,15 +2439,10 @@ function getMapBorderRulesAR() {
 	).join("");
 }
 
-// sentence-case status line over a swatch legend — the page header's sub line is uppercase 11px mono.
-function MapCaptionAR({ verdict, hasMap }) {
-	const { PageVerdict } = window.UI;
+// the key to the canvas, the one line under the h1 (spec 44084 §3.1, §12.5)
+function MapCaptionAR() {
 	return (
 		<div className="arch-caption">
-			<PageVerdict id="arch-verdict" tone={verdict.tone} chips={verdict.chips} freshness={verdict.freshness}>
-				{verdict.sentence}
-			</PageVerdict>
-			{hasMap && (
 			<ul className="arch-legend fs-meta text-dim" aria-label="Map legend">
 				{getMapLegendItemsAR().map((item) => (
 					<li key={item.key} className="arch-legend-item">
@@ -2497,7 +2456,6 @@ function MapCaptionAR({ verdict, hasMap }) {
 					</li>
 				))}
 			</ul>
-			)}
 		</div>
 	);
 }
@@ -2510,14 +2468,7 @@ function getNodeAccessibleNameAR(label, tone, isUnverified) {
 	return word ? `${label}, ${word}` : label;
 }
 
-// 판정이 하나도 안 선 상태 — 오는 중 · 못 읽음 · 미판정이 저마다 다른 문장임.
-function getNoVerdictCaptionAR(total, busy, errored) {
-	if (busy) return `Reading ${total} parts…`;
-	if (errored > 0) return `Couldn't read health for ${total} parts`;
-	return `No verdict yet for ${total} parts`;
-}
-
-// unscoped node id → attention parts bound there — the same population the caption counts.
+// unscoped node id → attention parts bound there — the same population the Part health head counts.
 function buildAttentionCountByNodeIdAR(partRows) {
 	const counts = new Map();
 	for (const row of partRows || []) {
@@ -3047,40 +2998,53 @@ function getPartCauseAR(facts) {
 	return null;
 }
 
-// the row's DOM id — the verdict chips focus it, so both sides read it here
+// the row's DOM id
 function getPartRowIdAR(row) {
 	return `arch-part-${row.id}`;
 }
 
-// page verdict — worst part tone, flagged parts named with their box as chips that focus their row
-function getPageVerdictAR(partRows, caption, nodeIndex, freshness) {
-	const { attention } = getPartHealthGroupsAR(partRows);
-	const judgedCount = partRows.filter((row) => row.tone && row.tone !== "info").length;
-	const isAllOk = judgedCount > 0 && judgedCount === partRows.length;
-	const chips = attention.map((row) => {
-		const box = getPartBoxAR(row, nodeIndex);
-		return { key: row.id, label: box ? `${row.name} · ${box.label}` : row.name, targetId: getPartRowIdAR(row) };
-	});
+const PART_STATUS_WORD_AR = {
+	crit: (n) => `${n} down`,
+	warn: (n) => `${n} ${n === 1 ? "needs" : "need"} attention`,
+};
 
-	return {
-		tone: attention[0]?.tone ?? (isAllOk ? "ok" : "neutral"),
-		sentence: attention.length > 0 ? `${attention.length} of ${partRows.length} parts need attention` : caption,
-		chips,
-		freshness,
-	};
+// Part health head Status — flagged counts worst tone first; null when nothing is flagged (no all-clear line)
+function getPartHealthStatusAR(partRows, freshness) {
+	const { attention } = getPartHealthGroupsAR(partRows);
+	if (attention.length === 0) return null;
+
+	const tone = attention[0].tone;
+	const words = ["crit", "warn"]
+		.map((rowTone) => [rowTone, attention.filter((row) => row.tone === rowTone).length])
+		.filter(([, count]) => count > 0)
+		.map(([rowTone, count]) => PART_STATUS_WORD_AR[rowTone](count))
+		.join(" · ");
+	// held read → the verdict label gains a "Last known" lead; the head keeps the count first
+	const isHeld = window.UI.getFreshnessVerdict({ ...freshness, tone, label: words }).label !== words;
+	return { tone, text: isHeld ? `${words} · Last known` : words };
 }
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
 function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
-	const { SplitRow, SplitColumn } = window.UI;
+	const { SplitRow, SplitColumn, Icon, TONE_ICON, ALERT_SEVERITY_WORD } = window.UI;
 	if (partRows.length === 0) return null;
 
 	const { attention, rest, unloaded } = getPartHealthGroupsAR(partRows);
+	const status = getPartHealthStatusAR(partRows, freshness);
 	const listProps = { freshness, nodeIndex, onSelectNode };
 	return (
 		<section className="card arch-part-health" id={PART_HEALTH_ID_AR} aria-labelledby={`${PART_HEALTH_ID_AR}-title`}>
 			<div className="card-head">
-				<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
+				<div className="card-head-text">
+					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
+					{status && (
+						<span className="card-sub arch-part-health-status" data-tone={status.tone}>
+							<Icon name={TONE_ICON[status.tone]} size={14} className={TONE_GLYPH_CLASS[status.tone]} />
+							<span className="sr-only">{`${ALERT_SEVERITY_WORD[status.tone]}: `}</span>
+							{status.text}
+						</span>
+					)}
+				</div>
 			</div>
 			<div className="card-body">
 				{/* two lists in one card, not peer cards → each column keeps its content height */}

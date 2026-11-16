@@ -468,20 +468,21 @@ describe("healthy live fixture", () => {
 		assert.equal(svgCount, 1, `rendered diagram svg count inside ${ctx.selectors.canvas}`);
 	});
 
-	test("the caption is a sentence-case status line over a legend, all at 13px or larger", async () => {
+	test("the caption under the page title is the legend alone, sentence case at 13px or larger", async () => {
 		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
 		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
-		const [status, ...legend] = await ctx.page.evaluate(() =>
-			[...document.querySelectorAll(".arch-caption .page-verdict-text, .arch-legend li, .arch-legend-swatch")].map((el) => ({
+		const legend = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-legend li, .arch-legend-swatch")].map((el) => ({
 				text: (el as HTMLElement).innerText,
 				transform: getComputedStyle(el).textTransform,
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
 			})),
 		);
-		const probe = { status, legend };
+		const captionChildren = await ctx.page.evaluate(() => [...document.querySelectorAll(".arch-caption > *")].map((el) => el.className));
+		const probe = { legend };
 
-		assert.ok(probe.status, "a status line renders under the page title");
-		for (const line of [probe.status, ...probe.legend]) {
+		assert.deepStrictEqual(captionChildren, ["arch-legend fs-meta text-dim"], "nothing but the legend stands between the h1 and the first card");
+		for (const line of probe.legend) {
 			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
 			assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 		}
