@@ -2158,7 +2158,7 @@ function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, fai
   const isAlarm = tone === 'warn' || tone === 'crit';
   const ageNote = `Read ${formatRelativeTime(at, now)}`;
   const note = settled === 'partial' ? `${ageNote} · ${failedCount} of ${regionCount} sources failed` : ageNote;
-  return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `Last known: ${pageLabel}` : 'Last known', note, isBusy };
+  return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `${LAST_KNOWN_TEXT}: ${pageLabel}` : LAST_KNOWN_TEXT, note, isBusy };
 }
 
 // a tried-and-failed first read must never read as one that was never tried
@@ -2221,7 +2221,7 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
 // visible stamp line for a settled state that is not fresh — the unread note, or "Last known" with the read's age
 function getStampText({ settled, at, now, failedNote, hasFailed }) {
   if (settled === 'not-read') return getUnreadNote({ isBusy: false, hasFailed });
-  const readText = `Last known · read ${formatRelativeTime(at, now)}`;
+  const readText = `${LAST_KNOWN_TEXT} · read ${formatRelativeTime(at, now)}`;
   return failedNote ? `${readText} · ${failedNote}` : readText;
 }
 
@@ -2425,6 +2425,14 @@ function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTarget
 
 const NOTICE_POINTER = 'the notice above';
 
+// the word for loaded data standing beside a failed refresh — stamp, alarm row and stat alike
+const LAST_KNOWN_TEXT = 'Last known';
+
+// a held reading's cause, on hover and in ⓘ — the stat label already names the source, the word stays alone on the line
+function getHeldCause(source) {
+  return `${LAST_KNOWN_TEXT} — couldn't refresh ${source}`;
+}
+
 /**
  * The one pointer sentence to the surface that states a cause — alone when the value already reads Not loaded, else after its lead.
  * @param target - that surface, read after "see"; the page notice by default
@@ -2544,7 +2552,7 @@ function AlarmRow({ tone, title, detail, isHeld = false, actions, role }) {
         <span className="font-medium">
           <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span><DayTokens>{title}</DayTokens>
         </span>
-        {isHeld && <> <span className="fs-meta text-dim">Last known</span></>}
+        {isHeld && <> <span className="fs-meta text-dim">{LAST_KNOWN_TEXT}</span></>}
         {detail && <span className="alarm-row-detail fs-meta text-dim"><DayTokens>{detail}</DayTokens></span>}
       </div>
       {actions && <div className="alarm-row-actions">{actions}</div>}
@@ -2969,7 +2977,7 @@ window.UI = {
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
-  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,

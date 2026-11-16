@@ -27,6 +27,14 @@ interface PanelState {
   pendingKey?: string | null;
 }
 
+// the newest trend day outside its rolling band — its figure, its day and the band it left
+interface OutsideDay {
+  actual: number;
+  fullDate: string;
+  lowerBand: number;
+  upperBand: number;
+}
+
 interface HotVerdict {
   todayCost: number | null;
   normalDaily: number | null;
@@ -91,7 +99,7 @@ interface CostHelpers {
   };
   computeAlarmRows: (input: {
     hot: HotVerdict;
-    latestOutsideBand: boolean;
+    outsideDay: OutsideDay | null;
     parseError: { crit: number; total: number };
     heldReads: HeldReads;
   }) => AlarmRow[];
@@ -105,7 +113,7 @@ interface CostHelpers {
     isEmpty: boolean;
   };
   getParseErrorDayCounts: (state: PanelState) => { crit: number; total: number };
-  isLatestOutsideBand: (state: PanelState) => boolean;
+  getLatestOutsideBandC: (state: PanelState) => OutsideDay | null;
   rollupSessionRows: (
     sessions: ReadonlyArray<{ session_id: string; total_cost_usd: number }>,
     topN: number,
@@ -163,7 +171,7 @@ interface CostHelpers {
   getTokenStackOrder: (
     shares: ReadonlyArray<{ key: string; total: number }>,
   ) => ReadonlyArray<{ key: string; total: number }>;
-  getSpendAlarmCopyC: (hot: HotVerdict, latestOutsideBand: boolean) => { title: string; detail: string | null };
+  getSpendAlarmCopyC: (hot: HotVerdict, outsideDay: OutsideDay | null) => { title: string; detail: string | null };
   getTurnHeadline: (
     turns: { avg_turns_per_session?: number; turn_session_count?: number },
     sessionPopulation: number,
@@ -221,6 +229,14 @@ function getTrendPoints(costs: readonly number[]): PanelState {
   return ready({ points: costs.map((c, i) => ({ day: `d${i}`, cost_usd: c })) });
 }
 
+// a week at $4–$6, then $10.50 on 11-16 → above mean + 2σ of its 7-day window ($5.79 + 2 × $2.14 = $10.06; lower $1.51)
+const OUTSIDE_TREND = ready({
+  points: [4, 6, 4, 6, 4, 6, 10.5].map((c, i) => ({ date: `2026-11-${10 + i}`, cost_usd: c, session_count: 1 })),
+});
+const RANGE_ONLY_TITLE = "$10.50 on 11-16, outside its 7-day normal range";
+const OUTSIDE_DAY = cost.getLatestOutsideBandC(OUTSIDE_TREND);
+const RANGE_ONLY_DETAIL = "Normal range $1.51 \u2013 $10.06";
+
 // every read current → no row reads Last known
 const FRESH_READS: HeldReads = { kpi: false, trend: false, parseError: false };
 
@@ -236,7 +252,7 @@ const CALM: HotVerdict = {
 
 test("no alarm row renders without a trigger, each trigger alone fires the one spend row, and the parse-error row follows it", () => {
   assert.strictEqual(
-    cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS })
+    cost.computeAlarmRows({ hot: CALM, outsideDay: null, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS })
       .length,
     0,
     "no trigger must render zero rows — the list is not rendered when calm",
@@ -250,7 +266,7 @@ test("no alarm row renders without a trigger, each trigger alone fires the one s
   for (const [name, hotDelta, outsideBand] of hotTriggers) {
     const rows = cost.computeAlarmRows({
       hot: { ...CALM, ...hotDelta },
-      latestOutsideBand: outsideBand,
+      outsideDay: outsideBand ? OUTSIDE_DAY : null,
       parseError: { crit: 0, total: 9 },
       heldReads: FRESH_READS,
     });
@@ -260,7 +276,7 @@ test("no alarm row renders without a trigger, each trigger alone fires the one s
 
   const withParse = cost.computeAlarmRows({
     hot: { ...CALM, isHot: true },
-    latestOutsideBand: false,
+    outsideDay: null,
     parseError: { crit: 3, total: 9 },
     heldReads: FRESH_READS,
   });
@@ -281,10 +297,10 @@ test("a payload that failed or never arrived fires no alarm row", () => {
     const counts = cost.getParseErrorDayCounts(state);
     assert.strictEqual(counts.crit, 0, `${state.status} crit`);
     assert.strictEqual(counts.total, 0, `${state.status} population`);
-    assert.strictEqual(cost.isLatestOutsideBand(state), false, state.status);
+    assert.strictEqual(cost.getLatestOutsideBandC(state), null, state.status);
   }
   // Below the rolling window the band has no answer, and no answer must not fire a spend row.
-  assert.strictEqual(cost.isLatestOutsideBand(getTrendPoints([1, 9, 1])), false);
+  assert.strictEqual(cost.getLatestOutsideBandC(getTrendPoints([1, 9, 1])), null);
 });
 
 test("the so-far verdict follows the so-far ratio alone, and a hot pace sets only the pace verdict", () => {
@@ -306,11 +322,11 @@ test("the so-far verdict follows the so-far ratio alone, and a hot pace sets onl
 });
 
 test("the spend title always carries the so-far amount and adds the pace clause only when measured", () => {
-  const withPace = cost.getSpendAlarmCopyC(cost.computeHotVerdict(getKpiAtRatio(1.5, 2)), false);
+  const withPace = cost.getSpendAlarmCopyC(cost.computeHotVerdict(getKpiAtRatio(1.5, 2)), null);
   assert.match(withPace.title, /so far today/);
   assert.match(withPace.title, /on pace for/);
 
-  const withoutPace = cost.getSpendAlarmCopyC(cost.computeHotVerdict(getKpiAtRatio(1.5, null)), false);
+  const withoutPace = cost.getSpendAlarmCopyC(cost.computeHotVerdict(getKpiAtRatio(1.5, null)), null);
   assert.match(withoutPace.title, /so far today/);
   assert.doesNotMatch(withoutPace.title, /pace/, "a missing burn rate must drop the clause, not guess it");
 });
@@ -344,10 +360,11 @@ test("the hours left are read in the day bucket's zone, and an unreadable instan
   assert.ok(Math.abs(kst.paceRatio! - (5 + 3) / 10) < 1e-9);
 
   for (const broken of [{ day_bucket_timezone: "Not/AZone" }, { day_bucket_timezone: "UTC", fetched_at: "x" }, {}]) {
-    const hot = cost.computeHotVerdict({ window_7d_cost_usd: 70, today_cost_usd: 5, burn_rate_3h_usd_per_hour: 1, ...broken });
+    // so far at 2× the average → the row fires on the so-far leg alone, so its title can only lose the pace
+    const hot = cost.computeHotVerdict({ window_7d_cost_usd: 70, today_cost_usd: 20, burn_rate_3h_usd_per_hour: 1, ...broken });
     assert.strictEqual(hot.paceRatio, null, JSON.stringify(broken));
     assert.strictEqual(hot.paceCost, null, JSON.stringify(broken));
-    assert.doesNotMatch(cost.getSpendAlarmCopyC(hot, false).title, /pace/);
+    assert.doesNotMatch(cost.getSpendAlarmCopyC(hot, null).title, /pace/);
   }
 });
 
@@ -357,7 +374,7 @@ test("a missing or unusable kpi figure stays null rather than collapsing to zero
     assert.strictEqual(hot.ratio, null, JSON.stringify(kpi));
     assert.strictEqual(hot.isHot, false);
     assert.equal(
-      cost.computeAlarmRows({ hot, latestOutsideBand: false, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS }).length, 0,
+      cost.computeAlarmRows({ hot, outsideDay: null, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS }).length, 0,
       "no ratio means no spend row to state",
     );
   }
@@ -607,7 +624,8 @@ test("every stat state is distinct, and only ready renders a measured value", ()
     assert.strictEqual(status, expected, `${state.status}/${String(value)}/${isEmpty}`);
   }
 
-  for (const status of ["error", "empty", "unavailable"] as const) {
+  // a failed read's line is the pointer to its notice (the not-current spend stat cases)
+  for (const status of ["empty", "unavailable"] as const) {
     assert.ok(cost.getStatNote(status, "no normal to compare against").length > 0, status);
   }
   assert.strictEqual(cost.getStatNote("ready", "x"), "", "a ready stat states its value, not a note");
@@ -746,7 +764,7 @@ test("the spend amount is stated once, in the alarm rows, exactly when a spend l
   ];
   for (const [name, delta, outsideBand] of cases) {
     const hot = { ...CALM, todayCost: 842, ...delta };
-    const titles = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 3, total: 9 }, heldReads: FRESH_READS })]
+    const titles = [...cost.computeAlarmRows({ hot, outsideDay: outsideBand ? OUTSIDE_DAY : null, parseError: { crit: 3, total: 9 }, heldReads: FRESH_READS })]
       .map((r) => r.title);
     const places = titles.filter((t) => t.startsWith("$842 so far today")).length;
     assert.equal(places, hot.isHot || hot.isPaceHot ? 1 : 0, name);
@@ -762,7 +780,7 @@ test("every spend row is a warning, whichever trigger fires it, as on the Dashbo
     ["outlier day only", {}, true],
   ];
   for (const [name, delta, outsideBand] of cases) {
-    const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS });
+    const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, outsideDay: outsideBand ? OUTSIDE_DAY : null, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS });
     assert.equal(rows[0]!.tone, "warn", name);
   }
 });
@@ -1134,14 +1152,14 @@ describe("the spend alarm reads amount first, then its multiple of the 7-day ave
       title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)",
     },
     {
-      name: "with no spend leg at the cut the range fact is the title alone, whatever today's amount",
+      name: "with no spend leg at the cut the latest day leads with its amount and date, its range as the detail",
       kpi: getKpi(842, null), isOutsideBand: true,
-      title: "The latest day is outside its 7-day normal range", detail: null,
+      title: RANGE_ONLY_TITLE, detail: RANGE_ONLY_DETAIL,
     },
     {
       name: "a pace figure under the cut does not lead a row the range fact fired",
       kpi: getKpi(842, 1_000), isOutsideBand: true,
-      title: "The latest day is outside its 7-day normal range", detail: null,
+      title: RANGE_ONLY_TITLE, detail: RANGE_ONLY_DETAIL,
     },
     {
       name: "the range fact joins the detail only beside a spend leg at the cut",
@@ -1149,14 +1167,14 @@ describe("the spend alarm reads amount first, then its multiple of the 7-day ave
       title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day) \u00b7 the latest day is outside its 7-day normal range",
     },
     {
-      name: "with no spend figure the range fact is the title alone",
+      name: "with no spend figure the latest day still leads with its amount",
       kpi: {}, isOutsideBand: true,
-      title: "The latest day is outside its 7-day normal range", detail: null,
+      title: RANGE_ONLY_TITLE, detail: RANGE_ONLY_DETAIL,
     },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const copy = cost.getSpendAlarmCopyC(cost.computeHotVerdict(row.kpi), row.isOutsideBand);
+      const copy = cost.getSpendAlarmCopyC(cost.computeHotVerdict(row.kpi), row.isOutsideBand ? OUTSIDE_DAY : null);
       assert.equal(copy.title, row.title);
       assert.equal(copy.detail, row.detail);
     });
@@ -1371,6 +1389,66 @@ describe("the token volume total compares with the server's prior window, cut at
   }
 });
 
+// spec 44084 §2.2 + §3.2: a stat whose read is not current says so in the Dashboard's words — the pointer to its notice, or Last known
+describe("a spend stat whose read is not current says so on its context line, as the Dashboard stats do", () => {
+  const kpi = getKpiAtRatio(1, null);
+  const heldKpi: PanelState = { ...ready(kpi), error: "HTTP 500 Internal Server Error" };
+  const trend = getTrendPoints([1, 2, 3]);
+  const rows = [
+    {
+      name: "a failed kpi read points at the notice above its card",
+      props: { kpiState: failed, hot: cost.computeHotVerdict({}), trendState: trend },
+      label: "Today vs. average", context: "See the notice above.", title: "See the notice above.",
+    },
+    {
+      name: "a failed trend read points at its own card's notice below",
+      props: { kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: failed },
+      label: "Cost, last 30 days", context: "See the cost trend notice below.", title: "See the cost trend notice below.",
+    },
+    {
+      name: "a failed trend read the page banner speaks for points at the notice above",
+      props: {
+        kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: failed,
+        failures: { banner: { sources: ["cost trend"] } },
+      },
+      label: "Cost, last 30 days", context: "See the notice above.", title: "See the notice above.",
+    },
+    {
+      name: "a held kpi read says Last known and names the failed refresh on hover",
+      props: { kpiState: heldKpi, hot: cost.computeHotVerdict(kpi), trendState: trend },
+      label: "Today vs. average", context: "Last known", title: "Last known \u2014 couldn't refresh cost KPIs",
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadCostRender();
+      const tree = renderIn(mod, "SpendCardC", { modelState: ready({ rows: [] }), days: 30, onRetry: () => {}, ...row.props });
+      const stat = findNodes(tree, isStat).find((n) => collectText(findNodes(n, (c) => c.props.className === "stat-label")[0]!) === row.label);
+      assert.ok(stat, `a stat labelled ${row.label}`);
+      const [context] = findNodes(stat, (n) => n.props.className === "stat-context");
+      assert.equal(collectText(context!).trim(), row.context);
+      assert.equal(findNodes(context!, (n) => n.type === "span" && n.props.title === row.title).length, 1, "the hover title carries the cause");
+    });
+  }
+});
+
+// spec 44084 §9 (R8): a firing stat is value + tone glyph; the alarm row above it owns the sentence
+test("while the spend row is up, the Today stat's line leaves the 7-day average to the row", async () => {
+  const mod = await loadCostRender();
+  const rows = [
+    { name: "calm", kpi: getKpiAtRatio(0.5, null), hasAverage: true },
+    { name: "so-far leg at the cut", kpi: getKpiAtRatio(2, null), hasAverage: false },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "SpendCardC", {
+      kpiState: ready(row.kpi), hot: cost.computeHotVerdict(row.kpi), trendState: getTrendPoints([1, 2, 3]),
+      modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
+    });
+    const today = findNodes(tree, isStat).find((n) => /Today vs\. average/.test(collectText(n)))!;
+    assert.equal(/7-day average/.test(collectText(today)), row.hasAverage, row.name);
+  }
+});
+
 describe("the window stat names its prior window in words", () => {
   const rows = [
     { name: "a measured change names the window it compares with", prior: 5, spoken: /\bup\s+100\s*%\s*vs the 4 days before 01-03, cut at this time of day/ },
@@ -1395,7 +1473,8 @@ test("every stat hint fits the 40-character one-line cap at the widest realistic
     getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
   })) as RenderModule;
   const kpi = {
-    window_7d_cost_usd: 699_999.93, today_cost_usd: 123_456.78, burn_rate_3h_usd_per_hour: 9_999.99,
+    // a calm day (under the cut, no pace) → the Today stat keeps its hint; a firing stat leaves it to the row
+    window_7d_cost_usd: 699_999.93, today_cost_usd: 123_456.78, burn_rate_3h_usd_per_hour: 0,
     cost_per_done_usd: 1_234.56, done_count_7d: 123_456, day_bucket_timezone: "UTC", fetched_at: NOON_UTC,
   };
   const modelRows = [{
@@ -1896,7 +1975,7 @@ describe("an alarm row is held exactly when a read its sentence states failed af
   for (const row of rows) {
     test(`spend row \u2014 ${row.name}`, () => {
       const [spend] = cost.computeAlarmRows({
-        hot: { ...CALM, ...row.delta }, latestOutsideBand: row.isOutsideBand, parseError: { crit: 0, total: 9 }, heldReads: row.heldReads,
+        hot: { ...CALM, ...row.delta }, outsideDay: row.isOutsideBand ? OUTSIDE_DAY : null, parseError: { crit: 0, total: 9 }, heldReads: row.heldReads,
       });
       assert.equal(spend!.isHeld, row.expected);
     });
@@ -1904,7 +1983,7 @@ describe("an alarm row is held exactly when a read its sentence states failed af
 
   test("the parse-error row is held with the log-integrity read alone", () => {
     const getParseRow = (heldReads: HeldReads) =>
-      [...cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 3, total: 9 }, heldReads })]
+      [...cost.computeAlarmRows({ hot: CALM, outsideDay: null, parseError: { crit: 3, total: 9 }, heldReads })]
         .find((r) => r.key === "parse-error")!;
 
     assert.equal(getParseRow({ ...FRESH_READS, parseError: true }).isHeld, true);

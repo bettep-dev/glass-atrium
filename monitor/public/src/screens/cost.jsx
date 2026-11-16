@@ -80,12 +80,11 @@ function ScreenCost() {
 
   const triggerRefresh = useCallbackC(() => setRefreshTick((t) => t + 1), []);
 
-  // One derivation, two readers — tile 1's tone glyph and the Spend card's alarm rows.
+  // One derivation, two readers — the Today stat's tone glyph and the Spend card's alarm rows.
   const hotVerdict = computeHotVerdict(kpiState.status === 'ready' ? (kpiState.data || {}) : {});
-  const latestOutsideBand = isLatestOutsideBand(tokenState);
   const alarmRows = computeAlarmRows({
     hot: hotVerdict,
-    latestOutsideBand,
+    outsideDay: getLatestOutsideBandC(tokenState),
     parseError: getParseErrorDayCounts(errorState),
     heldReads: { kpi: isRegionHeldC(kpiState), trend: isRegionHeldC(tokenState), parseError: isRegionHeldC(errorState) },
   });
@@ -267,14 +266,15 @@ function InstrumentationTierC({ children }) {
  * One spend row (today so far, its pace, or the latest day outside its own band)
  * + a conditional parse-error row.
  * A payload FAILURE is never an alarm row — that stays a banner at its owning group.
+ * @param outsideDay - the newest trend day when it left its rolling band, else null
  * @param heldReads - per read, whether its loaded data stands beside a failed refresh → the row it feeds reads Last known (required: no default reads a row as current)
  */
-function computeAlarmRows({ hot, latestOutsideBand, parseError, heldReads }) {
+function computeAlarmRows({ hot, outsideDay, parseError, heldReads }) {
   const rows = [];
-  const hotTone = getHotToneC(hot, latestOutsideBand);
+  const hotTone = getHotToneC(hot, outsideDay);
 
   if (hotTone !== null) {
-    rows.push({ key: 'hot', tone: hotTone, ...getSpendAlarmCopyC(hot, latestOutsideBand), isHeld: isSpendRowHeldC(hot, latestOutsideBand, heldReads) });
+    rows.push({ key: 'hot', tone: hotTone, ...getSpendAlarmCopyC(hot, outsideDay), isHeld: isSpendRowHeldC(hot, outsideDay, heldReads) });
   }
   if (parseError.crit > 0) {
     rows.push({
@@ -290,8 +290,8 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError, heldReads }) {
 }
 
 // held when a read the row's sentence states is held — the kpi behind a spend leg, the trend behind the range fact
-function isSpendRowHeldC(hot, latestOutsideBand, heldReads) {
-  return (isSpendLegHotC(hot) && heldReads.kpi) || (latestOutsideBand && heldReads.trend);
+function isSpendRowHeldC(hot, outsideDay, heldReads) {
+  return (isSpendLegHotC(hot) && heldReads.kpi) || (outsideDay !== null && heldReads.trend);
 }
 
 // loaded data still on screen while its latest refresh failed (ui.jsx putRegionFailure keeps both)
@@ -300,44 +300,50 @@ function isRegionHeldC(state) {
 }
 
 // Spend-trigger tone, or null when none fires — one warning glyph for every leg
-function getHotToneC(hot, latestOutsideBand) {
-  return isSpendLegHotC(hot) || latestOutsideBand ? 'warn' : null;
+function getHotToneC(hot, outsideDay) {
+  return isSpendLegHotC(hot) || outsideDay !== null ? 'warn' : null;
 }
 
 function isSpendLegHotC(hot) {
   return hot.isHot || hot.isPaceHot;
 }
 
-const OUTSIDE_RANGE_FACT_C = 'the latest day is outside its 7-day normal range';
+const OUTSIDE_RANGE_C = 'outside its 7-day normal range';
 
 /**
  * Spend row copy, amount first: the title holds today's figure (and where the day lands, when paced),
  * the detail its multiple of the 7-day average.
- * No spend leg at the cut → only the range trigger fired, so that fact is the whole title:
- * a below-average amount must not head a firing row.
+ * No spend leg at the cut → only the range trigger fired, so the day that tripped it leads, its band as the detail:
+ * a below-average today must not head a firing row.
  */
-function getSpendAlarmCopyC(hot, latestOutsideBand) {
+function getSpendAlarmCopyC(hot, outsideDay) {
   if (!isSpendLegHotC(hot)) {
-    return { title: OUTSIDE_RANGE_FACT_C[0].toUpperCase() + OUTSIDE_RANGE_FACT_C.slice(1), detail: null };
+    const day = window.UI.formatKstDay(outsideDay.fullDate);
+    return { title: `${formatUsdC(outsideDay.actual)} on ${day}, ${OUTSIDE_RANGE_C}`, detail: formatNormalRangeC(outsideDay) };
   }
   const { formatSpendSoFar, formatSpendMultiple } = window.UI;
   const isPaced = hot.paceCost !== null;
   const soFar = formatSpendSoFar(hot.todayCost);
   const title = isPaced ? `${soFar}, on pace for ${formatUsdC(hot.paceCost)} by end of day` : soFar;
   const basis = formatSpendMultiple(isPaced ? hot.paceRatio : hot.ratio, hot.normalDaily);
-  return { title, detail: latestOutsideBand ? `${basis} \u00b7 ${OUTSIDE_RANGE_FACT_C}` : basis };
+  return { title, detail: outsideDay !== null ? `${basis} \u00b7 the latest day is ${OUTSIDE_RANGE_C}` : basis };
+}
+
+// a trend day's band in words, "Normal range $a – $b" — the alarm detail and the chart readout read one form
+function formatNormalRangeC(row) {
+  return `Normal range ${formatUsdC(row.lowerBand)} \u2013 ${formatUsdC(row.upperBand)}`;
 }
 
 /**
- * Is the newest day outside its own rolling band?
+ * The newest trend day when it lies outside its own rolling band, else null.
  * Below the rolling window the question has no answer, and "no answer" must not fire a spend row.
  */
-function isLatestOutsideBand(trendState) {
+function getLatestOutsideBandC(trendState) {
   const points = getTrendPoints(trendState);
-  if (points.length < ROLLING_WINDOW) return false;
+  if (points.length < ROLLING_WINDOW) return null;
   const rows = computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA);
   const latest = rows[rows.length - 1];
-  return !!(latest && latest.isAnomaly);
+  return latest?.isAnomaly ? latest : null;
 }
 
 // cost-timeseries 응답은 `points` (구버전 `rows` 폴백 보존) · 미로드 state → 빈 배열.
@@ -399,7 +405,6 @@ function getStatStatus(state, value, isEmpty) {
 
 // Non-ready stats say why in words; the value slot holds None or Not loaded so it never reads as measured.
 function getStatNote(status, unavailableNote) {
-  if (status === 'error') return 'Unavailable — this payload failed to load.';
   if (status === 'empty') return 'No cost recorded in this window.';
   if (status === 'unavailable') return unavailableNote || 'Not available for this window.';
   return '';
@@ -510,23 +515,27 @@ function computeCacheShare(modelState) {
   };
 }
 
+// the payload behind the Today and per-task stats — its failure notice sits right above the Spend card
+const KPI_SOURCE_C = 'cost KPIs';
+
 function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, days, failures, onRetry }) {
   const { getRegionView, RegionFailure, Card, StatRow } = window.UI;
   const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
   const notes = stats.filter((stat) => stat.info);
+  const bannerSources = failures?.banner?.sources ?? [];
 
   return (
     <>
       {/* Payload failure is reported at the owning group — the /api/cost/kpi payload feeds stats 1 and 3. */}
       {getRegionView(kpiState) === 'error' && (
-        <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
+        <RegionFailure source={KPI_SOURCE_C} error={kpiState.error} isBusy={kpiState.busy}
           focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
       )}
       {/* flush body → the alarm rows span the card under its head; the stat row keeps the card padding */}
       <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read" isFlush>
         <SpendAlarmRowsC rows={alarmRows}/>
         <div className="p-card-pad" aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
-          <StatRow stats={stats.map(buildStatC)}/>
+          <StatRow stats={stats.map((stat) => buildStatC(stat, bannerSources))}/>
         </div>
       </Card>
     </>
@@ -544,14 +553,17 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   const modelDays = getShownDays(modelState, days);
   return [
     {
-      key: 'today', label: 'Today vs. average', tone: getHotToneC(hot, false),
+      key: 'today', label: 'Today vs. average', tone: getHotToneC(hot, null),
+      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
       status: getStatStatus(kpiState, hot.ratio, false),
       value: formatUsdC(hot.todayCost),
-      hint: hot.normalDaily === null ? '' : `7-day average ${formatUsdC(hot.normalDaily)}/day`,
+      // a firing stat is value + glyph → its alarm row above already states the average
+      hint: hot.normalDaily === null || getHotToneC(hot, null) !== null ? '' : `7-day average ${formatUsdC(hot.normalDaily)}/day`,
       unavailableNote: 'No cost in the last 7 days — no average to compare against.',
     },
     {
       key: 'window', label: `Cost, last ${trendDays} days`,
+      source: 'cost trend', isHeld: isRegionHeldC(trendState),
       status: getStatStatus(trendState, windowTotal.total, windowTotal.isEmpty),
       value: formatUsdC(windowTotal.total),
       context: <TrendDeltaTextC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>,
@@ -561,6 +573,7 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     },
     {
       key: 'per-task', label: 'Cost per finished task',
+      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
       status: getStatStatus(kpiState, costPerDone, false),
       value: formatUsdC(costPerDone),
       hint: `7-day cost / ${formatIntC(doneCount)} finished`,
@@ -569,6 +582,7 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     },
     {
       key: 'cache', label: `Cache share, last ${modelDays} days`,
+      source: 'cost by model', isHeld: isRegionHeldC(modelState),
       status: getStatStatus(modelState, cacheShare.share, cacheShare.isEmpty),
       value: cacheShare.share === null ? null : window.UI.formatPct(cacheShare.share * 100),
       hint: cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`,
@@ -624,15 +638,26 @@ function SpendStatNotesC({ stats }) {
 }
 
 // stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
-function buildStatC(stat) {
-  const { DayTokens } = window.UI;
+function buildStatC(stat, bannerSources) {
+  const { DayTokens, LAST_KNOWN_TEXT, getHeldCause } = window.UI;
   if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true };
-  const isReady = stat.status === 'ready';
+  const value = <SpendStatValueC stat={stat}/>;
+  // held figures stand, the line says so in the Dashboard's word; the failed refresh rides the hover
+  if (stat.status === 'ready' && stat.isHeld) {
+    return { key: stat.key, label: stat.label, value, context: <span title={getHeldCause(stat.source)}>{LAST_KNOWN_TEXT}</span> };
+  }
+  if (stat.status === 'ready' && stat.context) return { key: stat.key, label: stat.label, value, context: stat.context };
   // the hint or the state note, one plain string → its title carries it whole, and its day tokens stay whole
-  const note = isReady ? (stat.hint || null) : getStatNote(stat.status, stat.unavailableNote);
-  const context = isReady && stat.context ? stat.context
-    : note && <span title={note}><DayTokens>{note}</DayTokens></span>;
-  return { key: stat.key, label: stat.label, value: <SpendStatValueC stat={stat}/>, context: context || null };
+  const note = getStatContextNoteC(stat, bannerSources);
+  return { key: stat.key, label: stat.label, value, context: note ? <span title={note}><DayTokens>{note}</DayTokens></span> : null };
+}
+
+// a failed read points at the notice that states it — above for the KPI payload or a banner source, else its own card below
+function getStatContextNoteC(stat, bannerSources) {
+  if (stat.status === 'ready') return stat.hint || null;
+  if (stat.status !== 'error') return getStatNote(stat.status, stat.unavailableNote);
+  const isAbove = stat.source === KPI_SOURCE_C || bannerSources.includes(stat.source);
+  return window.UI.getNoticePointer(null, isAbove ? undefined : `the ${stat.source} notice below`);
 }
 
 // Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
@@ -763,7 +788,7 @@ function toTrendReadoutPoint(row) {
 function getTrendReadout(row, bandOn) {
   const base = window.UI.getChartReadout(toTrendReadoutPoint(row), formatUsdC);
   const hasBand = bandOn && Number.isFinite(row.lowerBand) && Number.isFinite(row.upperBand);
-  return hasBand ? `${base}, normal range ${formatUsdC(row.lowerBand)} – ${formatUsdC(row.upperBand)}` : base;
+  return hasBand ? `${base}, ${formatNormalRangeC(row).toLowerCase()}` : base;
 }
 
 /**

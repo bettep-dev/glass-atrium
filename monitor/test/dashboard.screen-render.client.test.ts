@@ -22,6 +22,9 @@ const DASH_SRC = resolve(__dirname, "../public/src/screens/dashboard.jsx");
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
 
+// shared words and the atoms that build them pass through from ui.jsx
+const REAL_UI_NAMES = new Set(["ALERT_SEVERITY_WORD", "AlarmRow", "getNoticePointer", "LAST_KNOWN_TEXT", "getHeldCause"]);
+
 // window.UI stub — every atom resolves to a transparent host element; shared words and maps come from the real ui.jsx.
 function uiStub(): unknown {
   return new Proxy(
@@ -34,7 +37,7 @@ function uiStub(): unknown {
           ? getRegionViewStub
           : name === "AlertCard"
           ? alertCardStub
-          : name === "ALERT_SEVERITY_WORD" || name === "AlarmRow" || name === "getNoticePointer"
+          : REAL_UI_NAMES.has(name)
           ? realUi[name]
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({

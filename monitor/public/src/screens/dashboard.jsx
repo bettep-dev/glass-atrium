@@ -416,7 +416,7 @@ function WeekPanel({ id, title, state, source, onRetry, render, note = null, isR
   // a held reading says Last known in plain words beside the title, never a badge (spec 44084 §3)
   return (
     <section id={id} className="dash-week-panel" aria-label={title} aria-busy={state.busy ? 'true' : undefined}>
-      <Card title={title} sub={view === 'held' ? 'Last known' : null} info={info}>
+      <Card title={title} sub={view === 'held' ? window.UI.LAST_KNOWN_TEXT : null} info={info}>
         {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
         <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
         {hasData && render(state.data)}
@@ -913,18 +913,16 @@ function buildStats({ harness, costState, agentsState, outcomesState, isHarnessB
   }));
 }
 
-// a held line says Last known and nothing else → one row beside its Retry; the stat's label already names the source
-const HELD_CONTEXT = 'Last known';
-
 // held data whose latest read failed → Last known on the context line + own Retry; its error joins the shared-outage check
 // the failed refresh → the line's title and the card's ⓘ · shared freshness rule → a held warn/crit keeps its alarm, a held all-clear drops to neutral
 function markHeldStat(stat, state) {
   if (stat.status === 'loading' || stat.status === 'error' || state?.error == null) return stat;
+  const { LAST_KNOWN_TEXT, getHeldCause } = window.UI;
   const isAlarm = FIRING_TONES.has(stat.tone);
-  const cause = `${HELD_CONTEXT} — couldn't refresh ${stat.source}`;
+  const cause = getHeldCause(stat.source);
   return {
     ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true,
-    context: HELD_CONTEXT, cause, notes: [`${cause}.`, ...stat.notes],
+    context: LAST_KNOWN_TEXT, cause, notes: [`${cause}.`, ...stat.notes],
   };
 }
 
@@ -968,10 +966,10 @@ function describeHarnessReading(harness) {
 
 // the held line's shape → the state alone on the line, every unread source in the title and the ⓘ note
 function describeUnread(harness, lostCount) {
-  const isLost = lostCount > 0;
-  const context = isLost ? `${formatInt(lostCount)} not read` : HELD_CONTEXT;
-  const failed = isLost ? "couldn't read" : "couldn't refresh";
-  return { context, cause: `${context} — ${failed} ${harness.unreadSources.join(' · ')}` };
+  const sources = harness.unreadSources.join(' · ');
+  if (lostCount === 0) return { context: window.UI.LAST_KNOWN_TEXT, cause: window.UI.getHeldCause(sources) };
+  const context = `${formatInt(lostCount)} not read`;
+  return { context, cause: `${context} — couldn't read ${sources}` };
 }
 
 // an unpolled part never reads as one more down part
