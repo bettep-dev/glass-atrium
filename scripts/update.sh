@@ -4182,8 +4182,9 @@ update_restore_agents() {
 # ---------------------------------------------------------------------------
 
 # Single success-path finalizer. On the applied path (did_apply=1) in headless mode
-# run the install-parity post-step; in CLI mode run the monitor rebuild only. A build
-# failure is exit 9 in both. Then mark the job completed (a CLI no-op).
+# run the install-parity post-step; in CLI mode run the monitor rebuild, the parity
+# renders and the leaf reissue, never a restart. A build failure is exit 9 in both.
+# Then mark the job completed (a CLI no-op).
 # did_apply=0 (a no-op "already up to date" path) skips both (nothing was applied).
 update_finalize_success() {
   local did_apply="${1:-0}"
