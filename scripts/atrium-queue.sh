@@ -675,19 +675,23 @@ run_child() {
 }
 
 # <count body> <1 while a refusal may be the register not yet landed> → listen_count and listen_set (0 for such a
-# refusal); 1 on no reply or a 5xx; any other refusal or an unreadable reply ends the listener with one stderr line
+# refusal); 1 on no reply or a 5xx, both left as the last count read → the lifetime end's re-arm still names it; any
+# other refusal or an unreadable reply ends the listener with one stderr line
 set_listen_count() {
-  local route=/api/queue/pending/count reply code
-  listen_count=0
-  listen_set=""
+  local route=/api/queue/pending/count reply code body
   # shellcheck disable=SC2310  # no reply → the backoff outcome
   run_child queue_send POST "${route}" "$1" "${CLI_MAX_TIME_S}" || return 1
   reply="$(<"${LISTEN_OUT}")"
   code="$(queue_get_reply_code "${reply}")"
-  if [[ "${code}" == 404 || "${code}" == 409 ]] && (($2 == 1)); then return 0; fi
+  if [[ "${code}" == 404 || "${code}" == 409 ]] && (($2 == 1)); then
+    listen_count=0
+    listen_set=""
+    return 0
+  fi
   # shellcheck disable=SC2310  # a 5xx → the backoff outcome; a refusal exits 2
   check_reply_status "${route}" "${reply}" || return 1
-  set_listen_answered "$(queue_get_reply_body "${reply}")"
+  body="$(queue_get_reply_body "${reply}")"
+  set_listen_answered "${body}"
 }
 
 # <count reply body> → listen_count and listen_set "<count>:<ids, comma-separated>", the set the announce bound keys

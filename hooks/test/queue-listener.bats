@@ -341,6 +341,7 @@ expected_rearm() {
 
 @test "an unreachable or failing monitor never ends the listener: it polls on and its lifetime end still re-arms" {
   local row
+  # a monitor never read once → no count to carry, so the re-arm says nothing arrived
   # 3 s spans a failed poll, a backed-off retry and the lifetime end
   export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
   for row in unreachable:- failing:500 failing:503; do
@@ -356,6 +357,30 @@ expected_rearm() {
       return 1
     }
   done
+}
+
+@test "a count read before the monitor fails carries into the lifetime-end re-arm, which names it with its announce bound spent" {
+  start_stub
+  export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
+  local item='{"answeredWaiting":1,"answeredItemIds":[4101]}' wake before
+  set_reply 200 "${item}"
+  # announced twice → the set's announce bound is spent, so reading it again wakes nobody
+  for wake in first re-announce; do
+    run_hook
+    [[ "${status}" -eq 2 && "${stderr}" == "$(expected_wake 1)" ]] || {
+      echo "${wake}: status=${status} err=${stderr}"
+      return 1
+    }
+  done
+  # the set read once more, then only 5xx replies until the lifetime end
+  before="$(request_count)"
+  set_nth_reply "$((before + 1))" 200 "${item}"
+  set_reply 503 '{"error":"unavailable"}'
+  run_hook
+  [[ "${status}" -eq 2 && "${stderr}" == "$(expected_wake 1)" && $(($(request_count) - before)) -ge 2 ]] || {
+    echo "status=${status} err=${stderr} polls=$(($(request_count) - before))"
+    return 1
+  }
 }
 
 @test "an answered count read once a failing monitor recovers still wakes the session" {
