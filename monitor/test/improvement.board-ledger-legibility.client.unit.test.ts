@@ -55,6 +55,7 @@ interface Sandbox {
   HeldCauseTableI: Component;
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
   confidenceBadgeMetaI: (value: unknown) => { label: string };
+  ConfidenceBadgeI: Component;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -315,6 +316,22 @@ describe("a suggestion's confidence reads in the shared percentage form", () => 
   for (const row of rows) {
     test(row.name, () => {
       assert.equal(sandbox.confidenceBadgeMetaI(row.value).label, row.label);
+    });
+  }
+});
+
+describe("a suggestion card draws a confidence chip only for a measured confidence", () => {
+  const rows = [
+    { name: "never measured (null) → no chip", value: null, hasChip: false },
+    { name: "field absent → no chip", value: undefined, hasChip: false },
+    { name: "not a number → no chip", value: "pending", hasChip: false },
+    { name: "a measured zero → its chip", value: 0, hasChip: true },
+    { name: "a measured share → its chip", value: 0.734, hasChip: true },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const chip = sandbox.ConfidenceBadgeI({ value: row.value });
+      assert.equal(chip != null, row.hasChip);
     });
   }
 });

@@ -1440,8 +1440,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 					>
 						Pre-check
 					</Badge>
-					{/* confidence_observed(NN%) — NULL → "n/a" 폴백(confidenceBadgeMetaI guard, FIX-B).
-              밴드 색은 status Badge 내부 Icon tone 에만. */}
+					{/* confidence_observed(NN%) — not measured → no chip · 밴드 색은 status Badge 내부 Icon tone 에만. */}
 					<ConfidenceBadgeI value={row.confidence_observed} />
 					{isSnoozed && (
 						<Badge
@@ -1557,9 +1556,10 @@ const REJECT_OUTLINE_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(
 
 // confidence_observed(NN%) 배지 — empirical posterior (0.0-1.0).
 // canonical status Badge(.pill)로 렌더 — 밴드 tone 은 선행 Icon(TONE_ICON[tone])이 운반, shell 은 neutral.
-// guard 는 confidenceBadgeMetaI 재사용(NULL/NaN → "n/a" 폴백 보존) · label "Confidence " 접두 제거(percent/"n/a" 만).
+// not measured → no chip (spec 44084 §2.2 has no n/a word) · label "Confidence " 접두 제거(percent 만).
 function ConfidenceBadgeI({ value }) {
 	const { Badge } = window.UI;
+	if (!isConfidenceMeasuredI(value)) return null;
 	const badge = confidenceBadgeMetaI(value);
 	const short = badge.label.replace("Confidence ", "");
 	return (
@@ -1576,8 +1576,7 @@ function ConfidenceBadgeI({ value }) {
 }
 
 // confidence_observed → canonical 4-badge dual-encoded mapping.
-// NULL/undefined → ℹ "n/a" — 개별 proposal 의 실측 신뢰도 미산정분에 대한 방어 분기
-// (daemon 이 대부분 채우지만 산정 전 row 존재 가능). `classes` = pill 배경 (proposal 카드 배지) · `tone` = text class (KPI tile · 표).
+// NULL/undefined → ℹ "n/a" — instrumentation view 의 평균 미산정분 (proposal 카드는 chip 자체를 생략). `classes` = pill 배경 (proposal 카드 배지) · `tone` = text class (KPI tile · 표).
 function confidenceBadgeMetaI(value) {
 	const { TONE_GLYPH, TONE_ICON } = window.UI;
 	// tone → symbol/icon 은 registry(TONE_GLYPH/TONE_ICON) 단일 출처 — 로컬 tone/symbol 맵 제거.
@@ -1588,14 +1587,16 @@ function confidenceBadgeMetaI(value) {
 		label,
 		titleHint,
 	});
-	if (value === null || value === undefined || Number.isNaN(Number(value))) {
-		return build("info", "n/a", "Not measured for this suggestion");
-	}
+	if (!isConfidenceMeasuredI(value)) return build("info", "n/a", "Not measured for this suggestion");
 	const v = Number(value);
 	const pct = window.UI.formatPct(v * 100);
 	if (v >= 0.7) return build("ok", `Confidence ${pct}`, `${v.toFixed(4)} (high)`);
 	if (v >= 0.4) return build("warn", `Confidence ${pct}`, `${v.toFixed(4)} (medium)`);
 	return build("crit", `Confidence ${pct}`, `${v.toFixed(4)} (low)`);
+}
+
+function isConfidenceMeasuredI(value) {
+	return value !== null && value !== undefined && !Number.isNaN(Number(value));
 }
 
 // pre_verify_status → canonical 4-badge dual-encoded mapping.
