@@ -815,7 +815,7 @@ function RejectRateHeadlineI({ before, after }) {
 	const isMuted = isLowSample(after?.total);
 	return (
 		<span className="inline-flex items-center gap-1.5 fs-meta" title={window.UI.titleOf(trend.hint)}>
-			<SymI s={trend.symbol} className={trend.tone} size={12} />
+			<window.UI.StatToneGlyph tone={trend.tone} label={trend.hint} />
 			<span className={isMuted ? "text-faint" : "text-ink"}>{getRejectRatePhraseI(before, after)}</span>
 			<LowSampleMark n={after?.total} />
 		</span>
@@ -2023,7 +2023,7 @@ function learningStatusBadgeI(status) {
 		identified: { tone: "info", label: "Spotted" },
 	};
 	const meta = map[status] || { tone: "info", label: status || window.UI.EMPTY_VALUE_TEXT };
-	return { tone: `text-${meta.tone}`, symbol: TONE_GLYPH[meta.tone], label: meta.label };
+	return { tone: `text-${meta.tone}`, severity: meta.tone, symbol: TONE_GLYPH[meta.tone], label: meta.label };
 }
 
 // ----- Detail drawer (Read) — 공용 DetailSurface(variant=drawer) 위임. -------
@@ -2416,13 +2416,12 @@ function LineCountI({ symbol, tone, count, word, title }) {
 	);
 }
 
-// before→after reject 비율 추이 → dual-encoded 배지 (낮을수록 좋음 = inverse).
+// before→after reject 비율 추이 → 톤 마크 + hint 문구 (낮을수록 좋음 = inverse).
 // 분모 부족(둘 중 하나라도 0) → ℹ 중립 ('—' 비교 불가). 하락=✓ ok · 상승=⚠ warn · 동률=ℹ.
 function failTrendMetaI(before, after) {
 	if (!before.total || !after.total) {
 		return {
-			tone: "text-info",
-			symbol: "ℹ",
+			tone: "info",
 			hint: "Rejected ÷ scored cycles (newer half) — not enough to compare",
 		};
 	}
@@ -2430,19 +2429,16 @@ function failTrendMetaI(before, after) {
 	const aRate = after.count / after.total;
 	if (aRate < bRate)
 		return {
-			tone: "text-ok",
-			symbol: "✓",
+			tone: "ok",
 			hint: "Rejected ÷ scored cycles (newer half) — reject rate fell",
 		};
 	if (aRate > bRate)
 		return {
-			tone: "text-warn",
-			symbol: "⚠",
+			tone: "warn",
 			hint: "Rejected ÷ scored cycles (newer half) — reject rate rose",
 		};
 	return {
-		tone: "text-info",
-		symbol: "ℹ",
+		tone: "info",
 		hint: "Rejected ÷ scored cycles (newer half) — unchanged",
 	};
 }
@@ -2632,11 +2628,8 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 					ariaLabel={`Seen ${freq} times; the most-seen live pattern ${maxFreq}`}
 				/>
 			</span>
-			<span
-				className={`fs-meta shrink-0 ${badge.tone}`}
-				title={`Status: ${badge.label}`}
-			>
-				<SymI s={badge.symbol} size={11} />
+			<span className="fs-meta shrink-0 inline-flex">
+				<window.UI.StatToneGlyph tone={badge.severity} label={`Status: ${badge.label}`} title={`Status: ${badge.label}`} />
 			</span>
 			<span
 				className="fs-meta text-dim tnum shrink-0"

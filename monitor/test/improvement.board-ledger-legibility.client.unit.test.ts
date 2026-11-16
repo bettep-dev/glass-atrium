@@ -126,6 +126,24 @@ test("a live candidate row names its agent once, never as a label suffix", () =>
   assert.ok(!text.includes("|"), text);
 });
 
+// the status glyph stands with no word beside it → it takes the alarm glyph size, the size that clears 3:1
+describe("a live candidate row draws its lone status glyph as the shared tone mark", () => {
+  const rows = [
+    { name: "a spotted pattern", status: "identified", tone: "info" },
+    { name: "a proposed pattern", status: "proposed", tone: "warn" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const pattern = { id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 3, status: row.status };
+      const tree = sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 3, onClick: () => {} });
+      const marks = findAll(tree, (el) => el.type === sandbox.window.UI.StatToneGlyph);
+
+      assert.equal(marks.length, 1);
+      assert.equal(marks[0].props.tone, row.tone);
+    });
+  }
+});
+
 test("live rows sharing a title print it once, each row led by its agent", () => {
   const other = "glass-atrium-dev-react";
   const rows = [

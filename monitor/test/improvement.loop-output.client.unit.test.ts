@@ -223,6 +223,24 @@ describe("the reject rate reads as counts, never a percentage", () => {
   }
 });
 
+// the headline's glyph stands with no tone word beside it → the shared alarm-size tone mark
+describe("the reject-rate headline draws its trend glyph as the shared tone mark", () => {
+  const rows = [
+    { name: "a rate that fell", before: { count: 4, total: 8, days: 2 }, after: { count: 1, total: 8, days: 2 }, tone: "ok" },
+    { name: "a rate that rose", before: { count: 1, total: 8, days: 2 }, after: { count: 4, total: 8, days: 2 }, tone: "warn" },
+    { name: "no half to compare", before: { count: 0, total: 0, days: 2 }, after: { count: 1, total: 8, days: 2 }, tone: "info" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const marks = collectElements(sandbox.RejectRateHeadlineI({ before: row.before, after: row.after }), []).filter(
+        (el) => el.type === sandbox.window.UI.StatToneGlyph,
+      );
+      assert.equal(marks.length, 1);
+      assert.equal(marks[0].props.tone, row.tone);
+    });
+  }
+});
+
 // the phrase itself is pinned by the table above; this guards that the card is fed both halves
 test("the trend card carries the reject-rate headline over the aggregate's halves, clear of its title", () => {
   const events = getEvents(["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25"], 3);
