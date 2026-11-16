@@ -24,7 +24,7 @@ const ACK_WAITING: QueueItemStatus[] = ["delivering", "held"];
 export interface SweepDeps {
   readStartTime: (pid: number) => Promise<string | null>;
   now: () => Date;
-  /** Absolute queue CLI literal printed in every resume envelope — the one the settings allow rule names. */
+  /** Absolute queue CLI literal printed in every resume envelope. */
   cliPath: string;
   /** Socket-era messaging token copies, drained every pass. */
   tokenDir: string;

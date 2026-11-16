@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report or a decision, fetch an
 # item, pull or wait for this session's owner answers and messages, ack a delivery, withdraw an item, and register
-# this session. Run it by its absolute installed path with nothing in front — the one literal the allow rule names.
+# this session. Run it by its absolute installed path with nothing in front — the one literal every printed step names.
 # Exit codes: 0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the
 #   monitor · 3 the fetched item names another session (stop, take no action) · 4 the wait's bound passed with
 #   nothing claimed, or its owning Claude process is gone · 5 another wait holds this session · 64 usage or local validation
@@ -123,7 +123,7 @@ print_usage() {
   local cli
   cli="$(queue_get_cli_path)"
   cat <<USAGE
-Usage — run by this absolute path, no interpreter or env prefix in front, so the allow rule matches:
+Usage — run by this absolute path, no interpreter or env prefix in front:
   ${cli} report <item.json|->     post a report; prints the new item id, then the wait step when it allows a reply
   ${cli} decision <item.json|->   post a decision; prints the new item id, then the wait step
   ${cli} get <item-id>            fetch one of this session's items, answer included; an owner answer or message
@@ -140,7 +140,7 @@ Usage — run by this absolute path, no interpreter or env prefix in front, so t
                                   run it from the session's start directory: the monitor resumes from it;
                                   --name labels this session on the Queue page (only a later --name replaces it);
                                   prints the wait step last
-The wait step: start a background wait, or that one of this session already runs.
+The wait step: start a background wait, or start none — a wait of this session already runs, or its listener announces for it.
   ${cli} help
 Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
@@ -149,8 +149,6 @@ Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monit
 On a wait's exit: 0 follow the printed steps, then wait again · 1 wait again once · 2 after an unknown-session
   refusal run register and wait again, otherwise stop waiting · 4 wait again · 5 nothing, another wait runs ·
   any other code wait again once
-Prompt-free in default permission mode, through this allow rule in the shared user settings:
-  Bash(${cli}:*)
 USAGE
 }
 
@@ -254,14 +252,20 @@ put_awaiting_item() {
   queue_delete_stale_awaiting || warn "could not drop the stale awaiting sets of ended sessions"
 }
 
-# <session id> → one line naming this session's next queue step: start a background wait, or none while a wait of this
-# session runs. A listener only announces, and is no wait: a claim arrives only through pending or a wait.
+# <session id> → one line naming this session's next queue step, by what polls for it (queue_get_poller): start no
+# other wait beside a running one · start none beside its listener, which announces what a wait would claim · else
+# start a background wait
 print_wait_step() {
-  local cli state
-  state="$(queue_get_wait_state "$1")"
-  if [[ "${state}" == live ]]; then
+  local cli poller
+  poller="$(queue_get_poller "$1")"
+  if [[ "${poller}" == wait ]]; then
     printf 'next: a wait of this session already runs — owner answers and messages reach this session through it;'
     printf ' start no other wait\n'
+    return 0
+  fi
+  if [[ "${poller}" == listener ]]; then
+    printf "next: this session's listener announces owner answers and messages to it — start no wait; to wait for"
+    printf ' the owner, end the turn\n'
     return 0
   fi
   cli="$(queue_get_cli_path)"
@@ -562,7 +566,7 @@ run_wait_loop() {
     # shellcheck disable=SC2310  # each outcome is branched on below
     poll_wait "${body}" || outcome=$?
     ((outcome != 0)) || exit 0
-    delay=$((outcome != 1 ? poll_s : delay * 2 > WAIT_BACKOFF_MAX_S ? WAIT_BACKOFF_MAX_S : delay * 2))
+    if ((outcome == 1)); then delay="$(get_backoff_s "${delay}")"; else delay="${poll_s}"; fi
     if ((SECONDS >= deadline)); then end_wait_at_bound "${outcome}"; fi
     sleep "$((delay < deadline - SECONDS ? delay : deadline - SECONDS))"
   done
@@ -599,16 +603,28 @@ poll_wait() {
   drop_announce_record "${CLAUDE_CODE_SESSION_ID:-}"
 }
 
+# <last poll outcome> → exits 1 on no reply, else 4 with the step by what polls once this wait ends (queue_get_poller):
+# its own lock goes first, since the reader counts this wait's record as a running wait
 end_wait_at_bound() {
+  local session_id poller
   if (($1 == 1)); then fail 1 "no reply from the monitor by the wait's bound — start the wait again once"; fi
-  printf 'nothing arrived for this session within the bound — start the wait again\n'
+  drop_wait_lock
+  session_id="$(queue_get_session_id)"
+  poller="$(queue_get_poller "${session_id}")"
+  if [[ "${poller}" == listener ]]; then
+    printf "nothing arrived for this session within the bound — start no wait: this session's listener takes over at"
+    printf " the turn's end\n"
+  else
+    printf 'nothing arrived for this session within the bound — start the wait again\n'
+  fi
   exit 4
 }
 
 # The harness listener (hooks/queue-listener.sh execs this step): holds the session's wait lock as a listener and polls
 # the session's answered count, claiming nothing, until a wake, a takeover or its owner's end; at its lifetime end it
-# wakes the session once to re-arm, and that turn's Stop starts a fresh listener. A signal, a takeover and a monitor
-# failure each exit 0 before the lifetime end is reached → none of them is ever followed by a re-arm.
+# wakes the session once to re-arm, and that turn's Stop starts a fresh listener. No reply or a 5xx backs off as the
+# wait does and polls on → a monitor restart never ends it. A signal, a takeover, a refusal and an unreadable reply each
+# exit 0 before the lifetime end is reached → none of them is ever followed by a re-arm.
 listen_for_answers() {
   local session_id body
   is_listening=true
@@ -629,18 +645,29 @@ listen_for_answers() {
 # <session id> <count body> → polls at the wait's interval until LISTEN_LIFETIME_S; ATRIUM_QUEUE_WAIT_POLL_S,
 # ATRIUM_QUEUE_LISTEN_LIFETIME_S and ATRIUM_QUEUE_LISTEN_GRACE_S, test seams, override the three
 run_listen_loop() {
-  local started="${SECONDS}" poll_s lifetime_s grace_s
+  local started="${SECONDS}" poll_s lifetime_s grace_s delay
   poll_s="$(get_seam_s "${ATRIUM_QUEUE_WAIT_POLL_S:-}" "${WAIT_POLL_S}" "${SEAM_POSITIVE_SHAPE}")"
   lifetime_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_LIFETIME_S:-}" "${LISTEN_LIFETIME_S}" "${SEAM_POSITIVE_SHAPE}")"
   grace_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_GRACE_S:-}" "${LISTEN_REFUSAL_GRACE_S}" "${SEAM_WHOLE_SHAPE}")"
+  delay="${poll_s}"
   while ((SECONDS - started < lifetime_s)); do
     check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
-    set_listen_count "$2" "$((SECONDS - started < grace_s))"
-    if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}" "${listen_set}"; else drop_announce_record "$1"; fi
-    run_child sleep "${poll_s}"
+    # shellcheck disable=SC2310  # no reply or a 5xx → the backoff, the announce state left as it was
+    if set_listen_count "$2" "$((SECONDS - started < grace_s))"; then
+      delay="${poll_s}"
+      if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}" "${listen_set}"; else drop_announce_record "$1"; fi
+    else
+      delay="$(get_backoff_s "${delay}")"
+    fi
+    run_child sleep "${delay}"
   done
   check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
   announce_if_due "$1" "${listen_count}" "${listen_set}" rearm
+}
+
+# <delay s> → the next delay after a failed poll: doubled, capped at WAIT_BACKOFF_MAX_S
+get_backoff_s() {
+  printf '%s\n' "$(($1 * 2 > WAIT_BACKOFF_MAX_S ? WAIT_BACKOFF_MAX_S : $1 * 2))"
 }
 
 # <value> <default> <shape> → the value when it matches the shape, else the default
@@ -658,26 +685,24 @@ run_child() {
   return "${status}"
 }
 
-# <count body> <1 while a refusal may be the register not yet landed> → listen_count and listen_set; such a refusal
-# counts 0, and any other failure ends the listener with one stderr line
+# <count body> <1 while a refusal may be the register not yet landed> → listen_count and listen_set (0 for such a
+# refusal); 1 on no reply or a 5xx, both left as the last count read → the lifetime end's re-arm still names it; any
+# other refusal or an unreadable reply ends the listener with one stderr line
 set_listen_count() {
-  local route=/api/queue/pending/count reply code body reason
-  # shellcheck disable=SC2310  # no reply → the named end below
-  run_child queue_send POST "${route}" "$1" "${CLI_MAX_TIME_S}" || fail 1 "no reply from the monitor on ${route} (down or slow)"
+  local route=/api/queue/pending/count reply code body
+  # shellcheck disable=SC2310  # no reply → the backoff outcome
+  run_child queue_send POST "${route}" "$1" "${CLI_MAX_TIME_S}" || return 1
   reply="$(<"${LISTEN_OUT}")"
   code="$(queue_get_reply_code "${reply}")"
+  if [[ "${code}" == 404 || "${code}" == 409 ]] && (($2 == 1)); then
+    listen_count=0
+    listen_set=""
+    return 0
+  fi
+  # shellcheck disable=SC2310  # a 5xx → the backoff outcome; a refusal exits 2
+  check_reply_status "${route}" "${reply}" || return 1
   body="$(queue_get_reply_body "${reply}")"
-  listen_count=0
-  listen_set=""
-  case "${code}" in
-    2??) set_listen_answered "${body}" ;;
-    404 | 409)
-      if (($2 == 1)); then return 0; fi
-      reason="$(describe_error "${body}")"
-      fail 2 "refused (${code}) on ${route}: ${reason}"
-      ;;
-    *) fail 1 "monitor failed (${code}) on ${route}" ;;
-  esac
+  set_listen_answered "${body}"
 }
 
 # <count reply body> → listen_count and listen_set "<count>:<ids, comma-separated>", the set the announce bound keys

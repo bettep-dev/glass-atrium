@@ -2065,6 +2065,49 @@ read_calls() {
   done
 }
 
+@test "CLI apply re-renders the monitor env and the launchd plists without restarting anything" {
+  local render
+  for render in env launchd; do
+    printf '#!/usr/bin/env bash\nprintf "render-%s\\n" >>"%s"\n' "${render}" "${WORK}/renders.log" >"${WORK}/render-${render}.sh"
+    chmod +x "${WORK}/render-${render}.sh"
+  done
+  export ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/render-env.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/render-launchd.sh"
+  export ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist"
+  run_cli_apply "scripts/tool.sh"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${WORK}/renders.log")" == $'render-launchd\nrender-env' ]] || { echo "${output}"; return 1; }
+  [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
+}
+
+@test "CLI apply reissues a due remote leaf only while remote access is on" {
+  local row label enabled want key_dir="${INSTALL}/monitor/data/remote-access"
+  local -a rows=(
+    "access on|true|${key_dir}"
+    "access off|false|"
+  )
+  printf '#!/usr/bin/env bash\n' >"${WORK}/render-noop.sh"
+  chmod +x "${WORK}/render-noop.sh"
+  export ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/render-noop.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/render-noop.sh"
+  export ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist"
+  # the real key-dir and due rules; a CA key with no leaf is due → only the signing is stubbed
+  # shellcheck source-path=SCRIPTDIR source=../../lib/ga-remote.sh
+  source "${GA}/lib/ga-remote.sh"
+  ga_remote_issue_leaf() { printf '%s\n' "$1" >>"${LEAF_LOG}"; }
+  export -f ga_remote_get_key_dir ga_remote_is_leaf_due ga_remote_issue_leaf
+  export LEAF_LOG="${WORK}/leaf.log"
+  mkdir -p "${key_dir}"
+  : >"${key_dir}/ca.key"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label enabled want <<<"${row}"
+    printf '[remote_access]\nenabled = %s\n' "${enabled}" >"${INSTALL}/config.toml"
+    : >"${LEAF_LOG}"
+    run_cli_apply "scripts/tool.sh"
+    [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
+    [[ "$(<"${LEAF_LOG}")" == "${want}" ]] || { echo "${label}: reissued '$(<"${LEAF_LOG}")'"; return 1; }
+  done
+}
+
 @test "CLI apply that touches no monitor/ path never reaches the monitor build" {
   run_cli_apply "scripts/tool.sh"
 

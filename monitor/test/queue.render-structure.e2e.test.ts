@@ -3,10 +3,10 @@
 //
 // Runner: npx tsx --test test/queue.render-structure.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network (React and the fonts).
-// Captures: QUEUE_SHOTS_DIR (absolute) names the folder; unset → a fresh mktemp folder, its path printed as a diagnostic.
+// Captures: QUEUE_SHOTS_DIR (absolute) names a folder that keeps them; unset → a fresh mktemp folder, removed when its test ends.
 // App: stripped Fastify serving test/lib/queue-render-fixtures.ts; a queue read with no fixture route answers 404 and is recorded.
 
-import test, { after, before, describe } from "node:test";
+import test, { after, before, describe, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
@@ -27,8 +27,10 @@ import {
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
+import { deleteTempDirectory } from "./lib/remove-dir.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const SHOTS_PREFIX = "queue-shots-";
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const QUEUE_API_PREFIX = "/api/queue/";
 const READY_TIMEOUT_MS = 30_000;
@@ -1054,9 +1056,13 @@ function getShotName(viewport: Viewport, state: QueueState): string {
   return `${viewport.width}x${viewport.height}-${state.nn}-${state.name}.png`;
 }
 
-async function getShotsDir(): Promise<string> {
+async function getShotsDir(t: TestContext): Promise<string> {
   const named = process.env.QUEUE_SHOTS_DIR;
-  if (named === undefined || named === "") return mkdtemp(join(tmpdir(), "queue-shots-"));
+  if (named === undefined || named === "") {
+    const dir = await mkdtemp(join(tmpdir(), SHOTS_PREFIX));
+    t.after(() => deleteTempDirectory(dir, SHOTS_PREFIX));
+    return dir;
+  }
   if (!isAbsolute(named)) throw new Error(`QUEUE_SHOTS_DIR must be an absolute path, got "${named}"`);
   await mkdir(named, { recursive: true });
   return named;
@@ -2788,7 +2794,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   test("each named state is captured at every size §18.4 marks for it as a viewport-sized PNG named for the mockup", async (t) => {
-    const dir = await getShotsDir();
+    const dir = await getShotsDir(t);
     t.diagnostic(`captures: ${dir}`);
 
     const failures = await captureQueueStates(harness, dir);
@@ -2803,7 +2809,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   test("each close-up is captured at device scale 2: its PNG is twice its element's box", async (t) => {
-    const dir = await getShotsDir();
+    const dir = await getShotsDir(t);
     t.diagnostic(`close-ups: ${dir}`);
     const shots = [];
     for (const state of CLOSE_UP_STATES) {

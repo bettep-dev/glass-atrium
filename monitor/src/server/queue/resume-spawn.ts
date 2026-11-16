@@ -74,7 +74,10 @@ export const spawnClaudeLauncher: ClaudeLauncher = (request) => {
   return { started, exited };
 };
 
-/** Argv for one resume; a non-UUID session id is refused, so it can never read as an option. */
+/**
+ * Argv for one resume; a non-UUID session id is refused, so it can never read as an option.
+ * Item or answer text here → owner-rows sign-off condition C1 (remote/route-classes.ts → OWNER_ROWS_CID entry).
+ */
 export function buildResumeArgs(sessionId: string, payload: string): string[] {
   if (!SESSION_ID_SHAPE.test(sessionId)) throw new TypeError(`resume refused: session id ${JSON.stringify(sessionId)} is not a lowercase UUID`);
   return ["--resume", sessionId, "--bg", payload];

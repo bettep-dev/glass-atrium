@@ -601,6 +601,33 @@ assert_silent_turn_end() {
   assert_verdict_ask "both due" "ends without a queue verdict line"
 }
 
+@test "the verdict ask's wait sentence follows what serves this Claude process: start a wait only when no wait or listener does" {
+  start_stub
+  local row name lock sentence
+  for row in \
+    "nothing serves|none|A decision posted now needs \`<cli> wait\` started as a background command." \
+    "running wait|live|A decision posted now needs no new wait: the wait this session runs claims the owner's answer." \
+    "listener holding the lock|listener|A decision posted now needs no wait: this session's listener announces the owner's answer." \
+    "listener taking the lock|mark|A decision posted now needs no wait: this session's listener announces the owner's answer."; do
+    IFS='|' read -r name lock sentence <<<"${row}"
+    new_root
+    sentence="${sentence//<cli>/${GA_ROOT}/scripts/atrium-queue.sh}"
+    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
+    case "${lock}" in
+      none) ;;
+      mark) put_listening_mark "${CLAUDE_PID}" ;;
+      *) hold_wait_lock "${lock}" ;;
+    esac
+    run_hook
+    assert_verdict_ask "row ${name}" "${sentence}" || return 1
+    [[ "$(get_block_reason)" == *"${sentence}" ]] || {
+      echo "row ${name}: the ask does not end with its wait sentence: ${output}"
+      return 1
+    }
+    stop_waiter
+  done
+}
+
 @test "a turn is asked for its verdict once: a later fire of the same turn is silent and the next tool-using turn is asked again" {
   start_stub
   write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text

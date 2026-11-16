@@ -35,6 +35,8 @@ const RESIGN_CID = "2026-11-15T0140_lan-signin-routes_c18e";
 const DEVICES_RESIGN_CID = "2026-11-16T2200_lan-close_2f8b";
 // row 109 appended (deploy65-route-rows-verdict.md) → the 108-row digest still verifies as its prefix
 const PENDING_COUNT_CID = "2026-11-16T2025_deploy65-prep_a9e3";
+// seven queue-owner rows' reasons re-signed in place (owner-rows-verdict.md): route, class and order kept → same digest
+const OWNER_ROWS_CID = "2026-11-16T2215_owner-rows-verdict_e6b0";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -105,6 +107,30 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     stream: "S6",
     // every row of the entry before it carried unchanged; POST /api/queue/pending/count appended, the POST /api/queue/pending reason re-signed
     cids: [
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 109,
+    sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a",
+    supersededBy: OWNER_ROWS_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S6",
+    // every row of the entry before it carried unchanged; seven queue-owner reasons re-signed
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // C1 resume spawn argv-only, the registry row the sole source of session id, cwd and config dir → no item or answer text in the resume payload, argv or child env
+    // C2 a mutation refused (503 audit_unavailable) when its audit intent cannot be written; no pruning of remote audit rows for these routes before the queue provenance columns land
+    // C3 these reads disclose absolute local paths and answer text to a registered device → accepted (queue items 145, 186), stated in the reasons
+    cids: [
+      OWNER_ROWS_CID,
       PENDING_COUNT_CID,
       DEVICES_RESIGN_CID,
       RESIGN_CID,
@@ -202,19 +228,19 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/queue/pending", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; work function read: claims up to 20 of the named session's answered items per call, a wait poll refused unless the session is live for its pid; a remote caller could claim another session's answered items" },
   { route: "POST /api/queue/items/:id/ack", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
   { route: "POST /api/queue/items/:id/withdraw", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
-  { route: "GET /api/queue/owner/items", cls: "page", reason: "page calls it; route read: owner item list plus the installed CLI path" },
+  { route: "GET /api/queue/owner/items", cls: "page", reason: "page calls it; handler read: profile, session id, cursor and limit 1-200 validated and bound; returns each open item's title, body, options, the owner's answer text, image views and resume records, its session's absolute working and config directories and permission hint, plus the installed CLI path" },
   { route: "GET /api/queue/owner/items/:id", cls: "agent", reason: "no call site anywhere, so not a page function; route read: read-only owner view — flip to page if the page starts calling it" },
-  { route: "GET /api/queue/owner/resumes", cls: "page", reason: "page calls it; route read: read-only recent resume deliveries, query schema-validated" },
+  { route: "GET /api/queue/owner/resumes", cls: "page", reason: "page calls it; handler read: limit 1-50 is the only input; returns the newest resume deliveries with attempt, result, abort reason and background id, each item's id and title, the session's profile label and directory tail" },
   { route: "GET /api/queue/owner/orders", cls: "page", reason: "page calls it; route read: read-only order history, query schema-validated" },
-  { route: "POST /api/queue/owner/items/:id/answer", cls: "page", reason: "page function, high-impact (owner answer reaches a local session) kept page by owner decision; route read: schema-validated, page-origin stamp required" },
-  { route: "POST /api/queue/owner/items/:id/reply", cls: "page", reason: "page function, high-impact (owner reply or order reaches a local session) kept page by owner decision; route read: schema-validated, page-origin stamp required" },
-  { route: "GET /api/queue/owner/sessions", cls: "page", reason: "page calls it; route read: read-only session list (names, working-directory tails, waiting state)" },
-  { route: "POST /api/queue/owner/messages/send", cls: "page", reason: "page function, high-impact (owner message to up to 20 local sessions) kept page by owner decision; route read: schema-validated, page-origin stamp required" },
+  { route: "POST /api/queue/owner/items/:id/answer", cls: "page", reason: "page function, high-impact kept page by owner decision: the answer counts as the owner's word, approvals included, and for an ended session the sweep starts a local claude process to deliver it; handlers read: option code R1-R9 and one of the item's own, free text only where the item allows it, at most 20000 chars, bound writes only; the resumed process takes its session id, directory and config directory from the registry row and a fixed text naming item and message ids, never the answer; page-origin stamp required and recorded" },
+  { route: "POST /api/queue/owner/items/:id/reply", cls: "page", reason: "page function, high-impact kept page by owner decision: the reply counts as the owner's word and for an ended session the sweep starts a local claude process to deliver it; handlers read: open report that allows a reply, text at most 20000 chars, up to 8 image ids of unused uploads from the last day, bound writes only; no value reaches the resume command, directory, environment or text; page-origin stamp required and recorded" },
+  { route: "GET /api/queue/owner/sessions", cls: "page", reason: "page calls it; handler read: optional profile filter bound, at most 200 rows; returns full session ids, names, profile labels, absolute working directories, state and exit reason, waiting flag, item counts and the resume marker time" },
+  { route: "POST /api/queue/owner/messages/send", cls: "page", reason: "page function, high-impact kept page by owner decision: one owner message per target, up to 20 registered sessions, and for each ended target the sweep starts a local claude process to deliver it; handlers read: session ids must be UUIDs of registered rows not replaced, text at most 20000 chars, up to 8 image ids of unused uploads from the last day, bound writes only; no value reaches the resume command, directory, environment or text; page-origin stamp required and recorded" },
   { route: "POST /api/queue/owner/images", cls: "page", reason: "page function, high-impact (file write) kept page by owner decision; route and store read: type and size from the bytes alone (PNG, JPEG, WebP, GIF), 10 MiB route cap, server-made UUID file name in the queue image folder, caller name stored as a label only" },
   { route: "GET /api/queue/owner/images/:id", cls: "page", reason: "page calls it; route read: serves image bytes with nosniff, same-origin resource policy and a sandbox CSP" },
   { route: "POST /api/queue/owner/items/:id/later", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
   { route: "POST /api/queue/owner/items/:id/seen", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
-  { route: "POST /api/queue/owner/items/:id/resend", cls: "page", reason: "page function, re-queues a delivery to a local session (same resume path as answer); route read: empty body schema" },
+  { route: "POST /api/queue/owner/items/:id/resend", cls: "page", reason: "page function, high-impact kept page by owner decision: re-queues one delivery and, for an ended session, lets the sweep start a local claude process again; handler read: empty body, only an unacked or expired item or a resume-pending one whose attempt is used, refused while the session's earlier resume has not registered; no caller text" },
   { route: "POST /api/remote/registration", cls: "remote-admin", reason: "loopback only; Sec-Fetch-Site exactly same-origin, empty body, open-rate limit; audit row before the code, no row → no code; code in this response body only, no-store" },
   { route: "GET /api/remote/devices", cls: "remote-admin", reason: "loopback only; same Sec-Fetch-Site rule although a GET; devices: id, label, created, last seen only; access: whether the feature is on in this process, and each trusted network's gateway address and gateway hardware address, nothing else (cli-channel C17); no-store" },
   { route: "DELETE /api/remote/devices/:id", cls: "remote-admin", reason: "loopback only; same rule, decimal id, no body; remote.revoke after the revoke, audit failure never blocks it; one device_not_found" },

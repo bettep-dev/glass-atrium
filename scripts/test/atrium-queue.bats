@@ -548,13 +548,28 @@ ${foreign/\%s/6}" \
   }
 }
 
-@test "wait ends with exit 4 and a start-again line when the bound passes with nothing claimed" {
+@test "wait ends with exit 4 and a start-again line when the bound passes with nothing claimed and no listener started" {
   start_stub
   start_owner
   use_fast_wait 2
   set_reply 200 '{"items":[]}'
   run_cli wait
   [[ "${status}" -eq 4 && "${output}" == *"start the wait again"* && -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+}
+
+@test "a wait that displaced this Claude process's listener ends at the bound with exit 4, starting no wait and naming the listener" {
+  start_stub
+  start_owner
+  use_fast_wait 2
+  set_reply 200 '{"items":[]}'
+  # shellcheck source-path=SCRIPTDIR source=../lib/queue-session.sh
+  (source "${GA}/scripts/lib/queue-session.sh" &&
+    queue_put_listening_mark "${SESSION_ID}" "${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")")
+  run_cli wait
+  [[ "${status}" -eq 4 && "${output}" == "nothing arrived for this session within the bound — start no wait: this session's listener takes over at the turn's end" ]] || {
     echo "status=${status} ${output}${stderr}"
     return 1
   }
@@ -1175,6 +1190,35 @@ mark_awaiting() {
   }
 }
 
+@test "while a listener of this Claude process holds the lock or has started, a post, pending and register name it and start no wait" {
+  start_stub
+  start_owner
+  set_reply 200 '{"id":17,"items":[],"answeredWaiting":0}'
+  local row state cmd listener owner listener_line
+  listener_line="next: this session's listener announces owner answers and messages to it — start no wait; to wait for the owner, end the turn"
+  owner="${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")"
+  sleep 300 3>&- &
+  listener="$!|$(get_recorded_start "$!")"
+  WAITER_PIDS="${WAITER_PIDS:-} $!"
+  # between runs: a woken listener has dropped its lock, and only its listening mark of this process remains
+  for row in holding-decision holding-pending holding-register between-decision between-pending between-register; do
+    state="${row%%-*}" cmd="${row#*-}"
+    export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root.${row}"
+    mkdir -p "${GA_ROOT}/data/queue/waits"
+    if [[ "${state}" == holding ]]; then
+      ln -sn -- "${listener}|${owner}|listen" "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
+    else
+      # shellcheck source-path=SCRIPTDIR source=../lib/queue-session.sh
+      (source "${GA}/scripts/lib/queue-session.sh" && queue_put_listening_mark "${SESSION_ID}" "${owner}")
+    fi
+    if [[ "${cmd}" == decision ]]; then run_cli decision - <<<"${DECISION}"; else run_cli "${cmd}"; fi
+    [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == "${listener_line}" && "${output}" != *" wait —"* ]] || {
+      echo "row ${row}: status=${status} ${output}${stderr}"
+      return 1
+    }
+  done
+}
+
 @test "requests carry no queue key header and the messaging token never reaches curl's argv" {
   start_stub
   set_reply 200 '{"answeredWaiting":0}'
@@ -1224,7 +1268,7 @@ mark_awaiting() {
   done
 }
 
-@test "help names every command and the allow rule with the absolute installed CLI path and no interpreter or env prefix" {
+@test "help names every command with the absolute installed CLI path and no interpreter or env prefix" {
   run_cli help
   local cli_path="${GA_ROOT}/scripts/atrium-queue.sh" cmd
   [[ "${status}" -eq 0 ]] || {
@@ -1237,13 +1281,12 @@ mark_awaiting() {
       return 1
     }
   done
-  # the settings proposal copies this rule → its prefix is the literal the pointer line and pending print
-  grep -qxF "  Bash(${cli_path}:*)" <<<"${output}" || {
-    echo "allow rule: ${output}"
-    return 1
-  }
   [[ "${output}" != *"queue key"* && "${output}" != *provision* ]] || {
     echo "help still names a provisioning step: ${output}"
+    return 1
+  }
+  [[ "${output}" == *$'\nThe wait step: start a background wait, or start none — a wait of this session already runs, or its listener announces for it.\n'* ]] || {
+    echo "help names fewer than the wait step's three outcomes: ${output}"
     return 1
   }
 }

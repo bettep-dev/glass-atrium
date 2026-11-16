@@ -1,5 +1,5 @@
 // Resume text: an envelope per item carrying only ids and the fetch → ack → act order — never the answer or message itself,
-// which the session fetches by id. Every command names the absolute CLI literal the settings allow rule names.
+// which the session fetches by id. Every command names the absolute queue CLI path.
 
 import path from "node:path";
 
@@ -35,7 +35,10 @@ export function getQueueCliPath(gaRoot: string): string {
   return path.join(gaRoot, "scripts", "atrium-queue.sh");
 }
 
-/** Resume prompt: the preamble, one envelope per item, then the register step that clears the session marker and the standing wait. */
+/**
+ * Resume prompt: the preamble, one envelope per item, then the register step that clears the session marker and the standing wait.
+ * Item or answer text here → owner-rows sign-off condition C1 (remote/route-classes.ts → OWNER_ROWS_CID entry).
+ */
 export function buildResumePayload(items: EnvelopeItem[], cliPath: string): string {
   const register = [
     `After the ack steps, whatever each ack replied, run: ${cliPath} register — it registers this resumed session with the Atrium queue.`,
