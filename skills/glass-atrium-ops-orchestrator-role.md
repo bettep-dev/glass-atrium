@@ -778,8 +778,9 @@ A claim by `wait` or `pending` → `get <item-id>` → `ack <item-id> <msg-id>` 
     - past the third, only the lifetime-end wake names that set again;
     - a changed set, a claim, or a count read back at zero starts the whole bound over;
   - its lifetime-end wake comes once, whatever that bound has counted;
-  - it ends without a wake on a monitor it cannot reach or read, when the host ends it, or when a `wait` or a newer listener takes its place: no re-arm follows any of these;
-  - after a monitor failure or a host end, none starts before the session's next start or turn end: a session idle past that draws no wake.
+  - it polls on through a monitor it cannot reach or that answers with a server error, backing off as a `wait` does, until its lifetime end: a monitor restart never ends it;
+  - it ends without a wake on a monitor that refuses it or sends a reply it cannot read, when the host ends it, or when a `wait` or a newer listener takes its place: no re-arm follows any of these;
+  - after a refusal, an unreadable reply or a host end, none starts before the session's next start or turn end: a session idle past that draws no wake.
 - Honest backing — honor-system: nothing checks that a woken session runs `pending`, that a re-arm turn takes no other action, or that a session a listener serves starts no `wait`.
 - Honest backing — measured, one run per binding: a hook that lived the listener's lifetime, and whose exit then woke the idle session once.
 - Honest backing — unmeasured:

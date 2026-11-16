@@ -566,7 +566,7 @@ run_wait_loop() {
     # shellcheck disable=SC2310  # each outcome is branched on below
     poll_wait "${body}" || outcome=$?
     ((outcome != 0)) || exit 0
-    delay=$((outcome != 1 ? poll_s : delay * 2 > WAIT_BACKOFF_MAX_S ? WAIT_BACKOFF_MAX_S : delay * 2))
+    if ((outcome == 1)); then delay="$(get_backoff_s "${delay}")"; else delay="${poll_s}"; fi
     if ((SECONDS >= deadline)); then end_wait_at_bound "${outcome}"; fi
     sleep "$((delay < deadline - SECONDS ? delay : deadline - SECONDS))"
   done
@@ -611,8 +611,9 @@ end_wait_at_bound() {
 
 # The harness listener (hooks/queue-listener.sh execs this step): holds the session's wait lock as a listener and polls
 # the session's answered count, claiming nothing, until a wake, a takeover or its owner's end; at its lifetime end it
-# wakes the session once to re-arm, and that turn's Stop starts a fresh listener. A signal, a takeover and a monitor
-# failure each exit 0 before the lifetime end is reached → none of them is ever followed by a re-arm.
+# wakes the session once to re-arm, and that turn's Stop starts a fresh listener. No reply or a 5xx backs off as the
+# wait does and polls on → a monitor restart never ends it. A signal, a takeover, a refusal and an unreadable reply each
+# exit 0 before the lifetime end is reached → none of them is ever followed by a re-arm.
 listen_for_answers() {
   local session_id body
   is_listening=true
@@ -633,18 +634,29 @@ listen_for_answers() {
 # <session id> <count body> → polls at the wait's interval until LISTEN_LIFETIME_S; ATRIUM_QUEUE_WAIT_POLL_S,
 # ATRIUM_QUEUE_LISTEN_LIFETIME_S and ATRIUM_QUEUE_LISTEN_GRACE_S, test seams, override the three
 run_listen_loop() {
-  local started="${SECONDS}" poll_s lifetime_s grace_s
+  local started="${SECONDS}" poll_s lifetime_s grace_s delay
   poll_s="$(get_seam_s "${ATRIUM_QUEUE_WAIT_POLL_S:-}" "${WAIT_POLL_S}" "${SEAM_POSITIVE_SHAPE}")"
   lifetime_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_LIFETIME_S:-}" "${LISTEN_LIFETIME_S}" "${SEAM_POSITIVE_SHAPE}")"
   grace_s="$(get_seam_s "${ATRIUM_QUEUE_LISTEN_GRACE_S:-}" "${LISTEN_REFUSAL_GRACE_S}" "${SEAM_WHOLE_SHAPE}")"
+  delay="${poll_s}"
   while ((SECONDS - started < lifetime_s)); do
     check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
-    set_listen_count "$2" "$((SECONDS - started < grace_s))"
-    if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}" "${listen_set}"; else drop_announce_record "$1"; fi
-    run_child sleep "${poll_s}"
+    # shellcheck disable=SC2310  # no reply or a 5xx → the backoff, the announce state left as it was
+    if set_listen_count "$2" "$((SECONDS - started < grace_s))"; then
+      delay="${poll_s}"
+      if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}" "${listen_set}"; else drop_announce_record "$1"; fi
+    else
+      delay="$(get_backoff_s "${delay}")"
+    fi
+    run_child sleep "${delay}"
   done
   check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
   announce_if_due "$1" "${listen_count}" "${listen_set}" rearm
+}
+
+# <delay s> → the next delay after a failed poll: doubled, capped at WAIT_BACKOFF_MAX_S
+get_backoff_s() {
+  printf '%s\n' "$(($1 * 2 > WAIT_BACKOFF_MAX_S ? WAIT_BACKOFF_MAX_S : $1 * 2))"
 }
 
 # <value> <default> <shape> → the value when it matches the shape, else the default
@@ -662,26 +674,20 @@ run_child() {
   return "${status}"
 }
 
-# <count body> <1 while a refusal may be the register not yet landed> → listen_count and listen_set; such a refusal
-# counts 0, and any other failure ends the listener with one stderr line
+# <count body> <1 while a refusal may be the register not yet landed> → listen_count and listen_set (0 for such a
+# refusal); 1 on no reply or a 5xx; any other refusal or an unreadable reply ends the listener with one stderr line
 set_listen_count() {
-  local route=/api/queue/pending/count reply code body reason
-  # shellcheck disable=SC2310  # no reply → the named end below
-  run_child queue_send POST "${route}" "$1" "${CLI_MAX_TIME_S}" || fail 1 "no reply from the monitor on ${route} (down or slow)"
-  reply="$(<"${LISTEN_OUT}")"
-  code="$(queue_get_reply_code "${reply}")"
-  body="$(queue_get_reply_body "${reply}")"
+  local route=/api/queue/pending/count reply code
   listen_count=0
   listen_set=""
-  case "${code}" in
-    2??) set_listen_answered "${body}" ;;
-    404 | 409)
-      if (($2 == 1)); then return 0; fi
-      reason="$(describe_error "${body}")"
-      fail 2 "refused (${code}) on ${route}: ${reason}"
-      ;;
-    *) fail 1 "monitor failed (${code}) on ${route}" ;;
-  esac
+  # shellcheck disable=SC2310  # no reply → the backoff outcome
+  run_child queue_send POST "${route}" "$1" "${CLI_MAX_TIME_S}" || return 1
+  reply="$(<"${LISTEN_OUT}")"
+  code="$(queue_get_reply_code "${reply}")"
+  if [[ "${code}" == 404 || "${code}" == 409 ]] && (($2 == 1)); then return 0; fi
+  # shellcheck disable=SC2310  # a 5xx → the backoff outcome; a refusal exits 2
+  check_reply_status "${route}" "${reply}" || return 1
+  set_listen_answered "$(queue_get_reply_body "${reply}")"
 }
 
 # <count reply body> → listen_count and listen_set "<count>:<ids, comma-separated>", the set the announce bound keys

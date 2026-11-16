@@ -4,8 +4,8 @@
 # in an interactive main session, announces this session's answered items by count without claiming them, wakes the
 # session with one fixed line (exit 2) at most twice per answered set per Claude process, twice more after each of at
 # most three nudge-interval passes, until the set changes or a claim or a zero count starts that bound over, yields to
-# a newer listener and to a session-run wait, ends quietly on a signal, a takeover or a monitor failure, and at its
-# lifetime end wakes the session once more to re-arm.
+# a newer listener and to a session-run wait, rides out a monitor it cannot reach or that fails, ends quietly on a
+# signal, a takeover, a refusal or an unreadable reply, and at its lifetime end wakes the session once more to re-arm.
 #
 # Run via: bats hooks/test/queue-listener.bats
 # Requires: bats, bash 3.2+, jq, curl, python3, perl
@@ -324,16 +324,12 @@ expected_rearm() {
   done
 }
 
-@test "an unreachable, failing, refusing or garbled monitor ends the listener with exit 0, one stderr line and no re-arm" {
+@test "a refusing or garbled monitor ends the listener with exit 0, one stderr line and no re-arm" {
   local row
   export ATRIUM_QUEUE_LISTEN_GRACE_S=0
-  for row in unreachable:- failing:500 refusing:409 unknown:404 garbled:200; do
-    if [[ "${row%%:*}" == unreachable ]]; then
-      export ATRIUM_MONITOR_PORT=9
-    else
-      [[ -n "${STUB_PID:-}" ]] || start_stub
-      set_reply "${row##*:}" '{"error":"session_not_live"}'
-    fi
+  start_stub
+  for row in refusing:409 unknown:404 garbled:200; do
+    set_reply "${row##*:}" '{"error":"session_not_live"}'
     run_hook
     [[ "${status}" -eq 0 && -z "${output}" && "$(wc -l <<<"${stderr}")" -eq 1 && "${stderr}" == "atrium-queue: "* &&
     "${stderr}" != *"${WAKE_LEAD}"* && -z "$(lock_record)" ]] || {
@@ -341,6 +337,37 @@ expected_rearm() {
       return 1
     }
   done
+}
+
+@test "an unreachable or failing monitor never ends the listener: it polls on and its lifetime end still re-arms" {
+  local row
+  # 3 s spans a failed poll, a backed-off retry and the lifetime end
+  export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
+  for row in unreachable:- failing:500 failing:503; do
+    if [[ "${row%%:*}" == unreachable ]]; then
+      export ATRIUM_MONITOR_PORT=9
+    else
+      [[ -n "${STUB_PID:-}" ]] || start_stub
+      set_reply "${row##*:}" '{"error":"internal"}'
+    fi
+    run_hook
+    [[ "${status}" -eq 2 && -z "${output}" && "${stderr}" == "$(expected_rearm)" && -z "$(lock_record)" ]] || {
+      echo "row ${row}: status=${status} out=${output} err=${stderr} lock=$(lock_record)"
+      return 1
+    }
+  done
+}
+
+@test "an answered count read once a failing monitor recovers still wakes the session" {
+  start_stub
+  set_nth_reply 1 500 '{"error":"internal"}'
+  set_nth_reply 2 503 '{"error":"unavailable"}'
+  set_reply 200 '{"answeredWaiting":1}'
+  run_hook
+  [[ "${status}" -eq 2 && "${stderr}" == "$(expected_wake 1)" && "$(request_count)" -eq 3 ]] || {
+    echo "status=${status} err=${stderr} requests=$(request_count)"
+    return 1
+  }
 }
 
 @test "a refusal right after the start, before the session is registered, is retried and a later count still wakes" {
