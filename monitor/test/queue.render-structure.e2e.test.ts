@@ -2685,10 +2685,10 @@ describe("queue page on the mockup fixtures", () => {
 
     // the narrowest list, at the minimum window: the dim text yields first, then a not-listening count badge down to its glyph and count;
     // the amber `⚠ n not received` and every other badge stay whole
-    test("a list row keeps its amber and every fixed badge whole; its fact text yields first, then the not-listening count badge, each cut ending in an ellipsis, at 1280", async () => {
+    test("a list row keeps its amber and every fixed badge whole; its fact text yields first, then the not-listening count badge's words, its pause glyph kept at 12, each cut ending in an ellipsis, at 1280", async () => {
       type FactsRow = {
         text: string | null;
-        badges: Array<{ text: string | null; isWarn: boolean; isYielding: boolean; isWhole: boolean; isCutInPlace: boolean }>;
+        badges: Array<{ text: string | null; isWarn: boolean; isYielding: boolean; isWhole: boolean; isCutInPlace: boolean; glyphWidth: number | null }>;
         textRoom: number;
         isEarlyCut: boolean;
         cutWithoutEllipsis: number;
@@ -2714,6 +2714,7 @@ describe("queue page on the mockup fixtures", () => {
               isYielding: words !== null,
               isWhole: badge.getBoundingClientRect().right <= box.right + 0.5 && badge.scrollWidth <= badge.clientWidth && !isWordsCut,
               isCutInPlace: words !== null && badge.getBoundingClientRect().right <= box.right + 0.5 && words.clientWidth > 0 && getComputedStyle(words).textOverflow === "ellipsis",
+              glyphWidth: badge.querySelector("svg")?.getBoundingClientRect().width ?? null,
             };
           });
           // a fact's laid-out text against the nearest box that clips it, whichever span holds the fact
@@ -2740,6 +2741,7 @@ describe("queue page on the mockup fixtures", () => {
       assert.ok(rows.some(isBoth), "a row carries a not-listening count badge beside its warning");
       assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => !badge.isWhole && !badge.isCutInPlace).map((badge) => `${row.text}: ${badge.text}`)), [], "every badge whole, a not-listening count badge at most cut in place");
       assert.deepEqual(rows.filter((row) => row.badges.some((badge) => badge.isYielding && !badge.isWhole) && row.textRoom > 0.5).map((row) => row.text), [], "the badge yields only once the fact text has yielded all its room");
+      assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => badge.glyphWidth !== null && Math.abs(badge.glyphWidth - 12) > 0.01).map((badge) => `${row.text}: ${badge.text} ${badge.glyphWidth}`)), [], "a pause glyph stays 12 wide while its words give way");
       assert.deepEqual(rows.filter((row) => row.cutWithoutEllipsis > 0).map((row) => row.text), [], "a cut fact text ends in an ellipsis");
       assert.deepEqual(rows.filter((row) => row.isEarlyCut).map((row) => row.text), [], "an earlier fact text is cut only once the last one has yielded all its room");
     });

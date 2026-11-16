@@ -1061,6 +1061,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: 0 1 auto;
 	min-width: calc(12px + var(--space-1) + 2 * var(--space-2) + 2ch);
 }
+/* only the words give way → the glyph keeps its 12 box (spec §4.2) */
+.pill--yield > svg {
+	flex: none;
+}
 .pill--yield > .pill-words {
 	min-width: 0;
 	overflow: hidden;
