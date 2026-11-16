@@ -268,6 +268,27 @@ test("the CTM/EPM row leaves its tone on the glyph", () => {
   );
 });
 
+// an empty page shows no alarm: a count's tone glyph appears only once there is something to count
+describe("a zero count carries no tone glyph, a non-zero count keeps its one glyph", () => {
+  const rows = [
+    { name: "run breakdown at zero", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 0, cycles_generated_not_applied_7d: 0, cycles_nothing_generated_7d: 0 } }), glyphs: 0 },
+    { name: "run breakdown with counts", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 3, cycles_generated_not_applied_7d: 4, cycles_nothing_generated_7d: 5 } }), glyphs: 1 },
+    { name: "learning memory at zero", tree: () => sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm: 0, epm: 0 } }), glyphs: 0 },
+    { name: "learning memory with counts", tree: () => sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm: 4, epm: 2 } }), glyphs: 1 },
+  ];
+  const labels = ["Created & applied", "Created, not applied", "Nothing created", "Confirmed wins", "Mistake patterns (EPM)"];
+  for (const row of rows) {
+    test(row.name, () => {
+      const counts = collect(row.tree(), (el) => Array.isArray(el.props.children) && el.props.children.some((c: unknown) => isElement(c) && labels.includes(c.props.children as string)), [sandbox.SymI]);
+      assert.ok(counts.length >= 2, "every count renders");
+      for (const count of counts) {
+        const glyphs = (count.props.children as unknown[]).filter((c) => isElement(c) && c.type === sandbox.SymI);
+        assert.equal(glyphs.length, row.glyphs, String(count.key ?? count.props.children));
+      }
+    });
+  }
+});
+
 test("the cycle decomposition chips leave their tone on the glyph", () => {
   const row = sandbox.CycleDecompositionRowI({
     stats: {

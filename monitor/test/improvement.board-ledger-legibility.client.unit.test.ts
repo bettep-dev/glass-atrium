@@ -636,6 +636,11 @@ describe("the drawer prints each field in words, never the stored machine key", 
   }
 });
 
+test("the run breakdown names its window in the short form the band's Applied, 7d uses", () => {
+  const screen = sandbox as unknown as Record<string, Component>;
+  assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /Run breakdown \(7d\)/);
+});
+
 describe("Learning labels read in sentence case, never letter-spaced capitals", () => {
   const screen = sandbox as unknown as Record<string, Component>;
   const rows = [

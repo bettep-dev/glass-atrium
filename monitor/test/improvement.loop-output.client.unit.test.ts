@@ -396,6 +396,18 @@ describe("every loop card stacks one metric, one visual and one pinned foot, in 
   }
 });
 
+// a card with no plot ends at its content → a row where nothing plots holds no plot-height block
+describe("a loop card's visual slot takes the plot height only when the card draws a plot", () => {
+  for (const { name, card } of getLoopCards()) {
+    test(name, () => {
+      const [visual] = getSlotOf(card, "i-loop-visual");
+      const isPlotted = collectElements(card, []).some((el) => el.type === sandbox.window.UI.TrendChart);
+      const height = (visual?.props.style as { height?: unknown } | undefined)?.height;
+      assert.equal(height !== undefined, isPlotted, `${name}: height ${String(height)}`);
+    });
+  }
+});
+
 // R-c: a loop-card foot hands its sentence to the shared DayTokens atom, so "28 cycle days" and "7-day" never break
 test("every loop-card foot rides DayTokens, so its cycle-day and 7-day tokens stay whole", () => {
   const expected: Record<string, RegExp> = {

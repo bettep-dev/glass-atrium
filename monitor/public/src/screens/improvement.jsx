@@ -386,6 +386,7 @@ function ScreenImprovement({ onNav }) {
         .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
         .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:8px var(--card-pad) 0; }
         .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
+        .i-loop-visual:empty { padding:0; }
         /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
         .i-ledger-body { padding-block:var(--space-1) var(--space-3); }
         .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
@@ -579,7 +580,8 @@ const BAND_ABSENT_CONTEXT_I = {
 
 function buildBandStatI({ key, label, owner, status, value, context }) {
 	if (status === "ready") return { key, label, value, context };
-	if (status === "loading") return { key, label, value: <span className="text-faint" aria-busy="true">…</span> };
+	// blank context line → the card keeps its rest height when the read lands
+	if (status === "loading") return { key, label, value: <span className="text-faint" aria-busy="true">…</span>, context: <span aria-hidden="true">{"\u00a0"}</span> };
 	const cause = BAND_ABSENT_CONTEXT_I[status](owner);
 	return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={cause} />, context: cause };
 }
@@ -782,6 +784,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 						points={points}
 					/>
 				),
+				isPlotted: true,
 				foot: `${formatIntI(aggregate.verifiedTotal)} verified and ${formatIntI(aggregate.rejectTotal)} rejected across all ${formatIntI(series.length)} cycle days`,
 			})}
 		</div>
@@ -895,11 +898,11 @@ function CycleDecompositionRowI({ stats }) {
 	return (
 		<div className="flex items-center gap-2 mt-2 px-4 flex-wrap">
 			<span className="fs-meta text-dim font-medium">
-				Run breakdown (<window.UI.NoWrap>7 days</window.UI.NoWrap>)
+				Run breakdown (7d)
 			</span>
 			{chips.map(([sym, tone, label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
-					<SymI s={sym} className={tone} size={12} />
+					{count > 0 ? <SymI s={sym} className={tone} size={12} /> : null}
 					<span>{label}</span>
 					<Badge role="count">{formatIntI(count)}</Badge>
 				</span>
@@ -1680,7 +1683,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 			{getLoopSlotsI({
 				metric: cards.map(([sym, tone, label, value]) => (
 					<span key={label} className="inline-flex items-baseline gap-1">
-						<SymI s={sym} className={tone} size={13} />
+						{Number(value) > 0 ? <SymI s={sym} className={tone} size={13} /> : null}
 						<span className="fs-stat font-semibold text-ink tnum">{formatIntI(value)}</span>
 						<span className="fs-meta text-dim">{label}</span>
 					</span>
@@ -2386,12 +2389,13 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 }
 
 // One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards; the foot keeps its day tokens whole.
-function getLoopSlotsI({ metric, visual, foot }) {
+// plot height only under a drawn plot → a row where nothing plots ends at its content
+function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
 		<>
 			<div className="i-loop-metric">{metric}</div>
-			<div className="i-loop-visual" style={{ height: CARD_SLOTS.S.plotPx }}>
+			<div className="i-loop-visual" style={isPlotted ? { height: CARD_SLOTS.S.plotPx } : undefined}>
 				{visual}
 			</div>
 			<div className="card-foot">

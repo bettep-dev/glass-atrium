@@ -170,6 +170,15 @@ describe("a stat whose payload has not landed never shows the value it was hande
   }
 });
 
+test("a stat in flight holds its context line blank, so the card keeps its height when the read lands", () => {
+  const loading = { status: "loading", data: null };
+  const stats = getBandStats({ statsState: loading, listState: loading, learningLogState: loading, suppression: null });
+  for (const stat of stats.values()) {
+    assert.ok(stat.context, `${stat.label} drops its context line while loading`);
+    assert.equal(textOf((stat.context as RecordedElement).props.children).trim(), "", `${stat.label} prints a context it has not read`);
+  }
+});
+
 test("the applied stat is counted over the same population its context names, last cycle stamp whole", () => {
   const applied = getBandStats().get("applied");
   const stamp = collectElements(applied?.context, []).find((el) => el.type === sandbox.window.UI.NoWrap);
