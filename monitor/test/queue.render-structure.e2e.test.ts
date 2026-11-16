@@ -3,7 +3,7 @@
 //
 // Runner: npx tsx --test test/queue.render-structure.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network (React and the fonts).
-// Captures: QUEUE_SHOTS_DIR (absolute) names the folder; unset → a fresh mktemp folder, its path printed as a diagnostic.
+// Captures: QUEUE_SHOTS_DIR (absolute) names a folder that keeps them; unset → a fresh mktemp folder, removed when its test ends.
 // App: stripped Fastify serving test/lib/queue-render-fixtures.ts; a queue read with no fixture route answers 404 and is recorded.
 
 import test, { after, before, describe, type TestContext } from "node:test";
@@ -1056,7 +1056,6 @@ function getShotName(viewport: Viewport, state: QueueState): string {
   return `${viewport.width}x${viewport.height}-${state.nn}-${state.name}.png`;
 }
 
-// a folder the test made is removed when the test ends, pass or fail; a folder the caller named is kept
 async function getShotsDir(t: TestContext): Promise<string> {
   const named = process.env.QUEUE_SHOTS_DIR;
   if (named === undefined || named === "") {
