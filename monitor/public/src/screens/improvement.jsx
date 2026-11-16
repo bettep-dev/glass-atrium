@@ -1068,9 +1068,8 @@ function KanbanColumnI({
 							summary={rejectBuckets}
 							label={column.label}
 							symbol={column.symbol}
-							trend={loopAggregate?.trend}
 						/>
-						<RejectBucketSplitI summary={rejectBuckets} />
+						<RejectBucketSplitI summary={rejectBuckets} trend={loopAggregate?.trend} />
 					</React.Fragment>
 				)}
 			</div>
@@ -1183,30 +1182,24 @@ function AppliedHeroHeaderI({ count, label, symbol }) {
 }
 
 // rejected lane header — crit on the ✕ glyph and the reject spark only · label dim, count ink
-// count + cause split share the server day window; the fetched rows count only when no window came back
-function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
+// count = the rows it heads (latest-50 list) · the server day window's total sits behind ⓘ
+function RejectedHeaderI({ rowCount, summary, label, symbol }) {
 	const windowDays = Number(summary?.window_days);
 	const windowTotal = Number(summary?.total);
 	const hasWindow = Number.isFinite(windowDays) && Number.isFinite(windowTotal);
-	const count = hasWindow ? windowTotal : rowCount;
-	// nothing rejected in the window → a flat line plots nothing the zero count does not already state
-	const hasSpark = count > 0 && Array.isArray(trend) && trend.some((d) => Number(d.reject) > 0) && trend.length >= 2;
-	const basis = hasWindow
-		? `last ${formatIntI(windowDays)} days`
-		: `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
+	const basis = `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
 	return (
 		<div className="i-col-header gap-1.5 fs-meta whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
-			<span className="text-ink tnum">{formatIntI(count)}</span>
+			<span className="text-ink tnum">{formatIntI(rowCount)}</span>
 			<span className="text-faint truncate min-w-0" title={basis}>
 				{basis}
 			</span>
-			{hasSpark ? (
-				<span className="ml-auto flex items-center gap-1">
-					<RejectSparkI trend={trend} />
-					<span className="text-faint">rejections per day</span>
-				</span>
+			{hasWindow ? (
+				<window.UI.CardInfo label="How the rejected count is counted">
+					{`${formatIntI(windowTotal)} rejected in the last ${formatIntI(windowDays)} days — the window the cause split counts. The lane lists the rejected rows among the latest ${formatIntI(BOARD_RECENT_LIMIT)} suggestions.`}
+				</window.UI.CardInfo>
 			) : null}
 		</div>
 	);
@@ -1215,7 +1208,7 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 // T7 — REJECTED 3분할(quality/infra/lifecycle) · 서버 집계(provenance 필터 포함)를 그대로 표시.
 // 클라 재집계/재필터 금지 — 행 모집단이 서버 윈도우와 달라 수치가 어긋난다.
 // summary 부재(구 payload) → null = 오늘과 동일 렌더 · chrome 중립(--crit 은 헤더 전용, T7 색상 예약).
-function RejectBucketSplitI({ summary }) {
+function RejectBucketSplitI({ summary, trend }) {
 	// no summary (older payload) or nothing rejected in the window → no split to show
 	if (!summary || !(Number(summary.total) > 0)) return null;
 
@@ -1237,11 +1230,13 @@ function RejectBucketSplitI({ summary }) {
 			"Superseded by a fresher same-agent proposal — terminated by the cycle, never judged",
 		],
 	];
-	// the header above names the day window → the split only names its axis
+	// a flat line plots nothing
+	const hasSpark = Array.isArray(trend) && trend.length >= 2 && trend.some((d) => Number(d.reject) > 0);
+	// the header above counts the lane's rows → the split names its own day window, with its daily trend
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-meta">
 			{[
-				<span key="basis" className="text-faint">By cause</span>,
+				<span key="basis" className="text-faint">{`By cause, last ${formatIntI(Number(summary.window_days))} days`}</span>,
 				...cells.map(([label, count, hint]) => (
 				<span
 					key={label}
@@ -1251,6 +1246,12 @@ function RejectBucketSplitI({ summary }) {
 					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
 				</span>
 			)),
+				hasSpark ? (
+					<span key="spark" className="ml-auto flex items-center gap-1">
+						<RejectSparkI trend={trend} />
+						<span className="text-faint">rejections per day</span>
+					</span>
+				) : null,
 			]}
 		</div>
 	);

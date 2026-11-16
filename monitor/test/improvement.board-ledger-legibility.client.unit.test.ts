@@ -239,7 +239,7 @@ describe("the board draws its lanes only when some lane holds a suggestion", () 
 test("the applied and rejected lane heads share one line shape: glyph, label and count at the meta size", () => {
   const heads = [
     sandbox.AppliedHeroHeaderI({ count: 9, label: "Applied", symbol: "✓" }),
-    sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] }),
+    sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕" }),
   ];
   for (const head of heads) {
     assert.ok(head, "lane head missing");
@@ -584,19 +584,19 @@ test("a held cause reads as one table row of cause, held count and agents, its r
 });
 
 test("the rejected column header never wraps its label, count or basis", () => {
-  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] });
+  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕" });
 
   assert.ok(tree, "the rejected header renders nothing");
   assert.match(classOf(tree), /\bwhitespace-nowrap\b/);
 });
 
 test("the rejected column header's basis ellipsizes with its full text in the title", () => {
-  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: { window_days: 30, total: 12 }, label: "Rejected", symbol: "✕", trend: [] });
+  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: { window_days: 30, total: 12 }, label: "Rejected", symbol: "✕" });
   const [basis] = findAll(tree, (el) => /\btruncate\b/.test(classOf(el)));
 
   assert.ok(basis, "the basis is the header's truncating slot");
-  assert.equal(visibleText(basis), "last 30 days");
-  assert.equal(basis.props.title, "last 30 days", "a clipped basis keeps its whole text in the title");
+  assert.equal(visibleText(basis), "of the latest 50");
+  assert.equal(basis.props.title, "of the latest 50", "a clipped basis keeps its whole text in the title");
 });
 
 test("the drawer keeps the full review stamp in the title only", () => {
