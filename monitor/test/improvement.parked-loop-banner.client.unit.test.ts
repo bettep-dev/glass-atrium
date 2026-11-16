@@ -386,17 +386,6 @@ test("the change summary's line counts keep their hue on the sign glyph, ok for 
   }
 });
 
-test("the learning-memory tiles name no tone token in any inline style", () => {
-  const row = sandbox.BucketRowI({
-    state: { status: "ready" },
-    buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
-  });
-  const tree = collect(row, () => true);
-  assert.ok(tree.some((el) => /\bsub-card\b/.test(String(el.props.className))), "the walk reaches the tiles");
-  const toneStyles = tree.flatMap((el) => Object.values(Object(el.props.style)).map(String).filter((value) => HUE.STYLE_TOKEN.test(value)));
-  assert.deepEqual(toneStyles, [], "an inline style on a tile names a tone token");
-});
-
 test("a failed stats payload raises one banner at the loop output group", () => {
   const ErrorBannerI = screenFns.ErrorBannerI;
   const group = screenFns.LoopOutputGroupI({

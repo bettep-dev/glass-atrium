@@ -361,9 +361,6 @@ function ScreenImprovement({ onNav }) {
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
         @media (prefers-reduced-motion: reduce) { .i-act-spin { animation-duration:0.01ms !important; } }
         .i-row-card { cursor:pointer; }
-        /* icon + label head: the icon centres on the label's first line (1lh), unshrunk, whether or not the label wraps */
-        .i-icon-head { display:flex; align-items:flex-start; gap:var(--space-1); }
-        .i-icon-head > svg { flex-shrink:0; margin-top:calc((1lh - var(--fs-meta)) / 2); }
         /* interactive tile — hover = raised-2 shadow step + faint ring, never a transform lift */
         .i-tile-hover { transition:box-shadow 120ms; }
         .i-tile-hover:hover { box-shadow:0 0 0 1px rgb(var(--faint)), var(--shadow-raised-2); }
@@ -409,7 +406,7 @@ function ScreenImprovement({ onNav }) {
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
         .i-more-btn { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); cursor:pointer;
+          color:rgb(var(--faint)); font-size:var(--fs-meta); cursor:pointer;
           white-space:normal; text-align:center; min-height:32px; overflow:visible; }
         .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
       `}</style>
@@ -759,13 +756,13 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 	}
 
 	const series = aggregate.trend || [];
-	// 2-포인트 미만 → 추세선 무의미 → 안내 (Sparkline 도 <2 면 null 반환).
-	if (series.length < 2) {
+	// under 2 days, or no scored cycle in the recent half → nothing to plot or rate → one line, no chart
+	if (series.length < 2 || !aggregate.failAfter?.total) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
 				<div className="px-4 pb-4">
-					<div className="placeholder">Not enough days to plot a trend</div>
+					<div className="placeholder">Not enough scored cycles to chart yet</div>
 				</div>
 			</div>
 		);
@@ -793,7 +790,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 						points={points}
 					/>
 				),
-				foot: `Share rejected per day · all ${formatIntI(series.length)} cycle days: ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`,
+				foot: `${formatIntI(aggregate.verifiedTotal)} verified and ${formatIntI(aggregate.rejectTotal)} rejected across all ${formatIntI(series.length)} cycle days`,
 			})}
 		</div>
 	);
@@ -905,7 +902,7 @@ function CycleDecompositionRowI({ stats }) {
 	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
 	return (
 		<div className="flex items-center gap-2 mt-2 px-4 flex-wrap">
-			<span className="fs-meta text-faint uppercase tracking-wider">
+			<span className="fs-meta text-dim font-medium">
 				Run breakdown (<window.UI.NoWrap>7 days</window.UI.NoWrap>)
 			</span>
 			{chips.map(([sym, tone, label, count]) => (
@@ -1152,7 +1149,7 @@ function AppliedHistoryRowI({ row, onClick }) {
 				<>
 					<window.UI.AgentName
 						name={row.target_agent}
-						className="font-mono text-dim truncate shrink-0 max-w-[10rem]"
+						className="text-dim truncate shrink-0 max-w-[10rem]"
 					/>
 					<span className="text-faint tnum shrink-0">
 						{row.cycle_date ? formatDateI(row.cycle_date) : <window.UI.AbsentValue kind="none" title="No cycle date recorded" />}
@@ -1258,7 +1255,7 @@ function RejectBucketSplitI({ summary }) {
 					key={label}
 					className="inline-flex items-baseline gap-1"
 					title={hint}>
-					<span className="text-faint uppercase tracking-wider">{label}</span>
+					<span className="text-dim font-medium">{label}</span>
 					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
 				</span>
 			)),
@@ -1377,7 +1374,7 @@ function CompactProposalCardI({ row, onClick }) {
 			lead={
 				isJudged ? null : (
 					<span
-						className="text-faint uppercase tracking-wider shrink-0"
+						className="text-dim font-medium shrink-0"
 						title="Closed by the loop without a verdict — not a rejection">
 						Not judged
 					</span>
@@ -1657,7 +1654,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead
 					title="Learning memory"
-					sub="CTM/EPM · all time"
+					sub="All time"
 				/>
 				<div className="p-3">
 					<LoadingPlaceholder label="learning memory" minHeight={68} />
@@ -1677,7 +1674,16 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		<div className="card" id={ANCHOR_ID_I.learningMemory}>
 			<CardHead
 				title="Learning memory"
-				sub="CTM/EPM · all time"
+				sub="All time"
+				info={
+					<div className="flex flex-col gap-3 fs-body">
+						{cards.map(([, , label, , hint]) => (
+							<p key={label}>
+								<span className="text-ink font-semibold">{label}</span> — {hint}
+							</p>
+						))}
+					</div>
+				}
 			/>
 			{getLoopSlotsI({
 				metric: cards.map(([sym, tone, label, value]) => (
@@ -1687,21 +1693,8 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 						<span className="fs-meta text-dim">{label}</span>
 					</span>
 				)),
-				visual: (
-					<div className="grid grid-cols-2 gap-2">
-						{cards.map(([sym, tone, label, , hint]) => (
-							<div key={label} className="sub-card bg-elev p-3 min-w-0">
-								{/* icon + label: one atom, the meta-size icon centred on the label's first line, 4 apart */}
-								<div className="i-icon-head fs-meta">
-									<SymI s={sym} className={tone} size={13} />
-									<span>{label}</span>
-								</div>
-								<div className="card-sub is-wrap fs-meta mt-1">{hint}</div>
-							</div>
-						))}
-					</div>
-				),
-				foot: "All agents · not the group's 7-day window",
+				visual: null,
+				foot: "All agents over all time, not the group's 7-day window",
 			})}
 		</div>
 	);
@@ -2054,7 +2047,7 @@ function DetailDrawerI({ row, onClose }) {
 
 // Detail body — fields grid + 0..N text sections + pre-verify keyed block (pattern / proposal 공용).
 function DetailBodyI({ fields, sections, footnote, preVerify }) {
-	const labelCls = "fs-meta text-faint uppercase tracking-wider";
+	const labelCls = "fs-meta text-dim font-medium";
 	return (
 		<div className="flex flex-col gap-3">
 			<dl className="grid gap-1.5" style={{ gridTemplateColumns: "120px 1fr" }}>
@@ -2178,9 +2171,9 @@ function buildDetailPropsI(row) {
 				],
 			],
 			sections: [
-				["PATTERN", row?.pattern_signature || row?.summary, false],
-				["LAST TRANSITION", row?.last_transition_reason, false],
-				["EXAMPLE", row?.example, true],
+				["Pattern", row?.pattern_signature || row?.summary, false],
+				["Last transition", row?.last_transition_reason, false],
+				["Example", row?.example, true],
 			],
 		};
 	}
@@ -2365,7 +2358,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 			{getLoopSlotsI({
 				metric: (
 					<div>
-						<div className="fs-meta text-faint uppercase tracking-wider">
+						<div className="fs-meta text-dim font-medium">
 							Reject rate, recent half
 						</div>
 						<RejectRateHeadlineI before={failBefore} after={failAfter} />
@@ -2373,7 +2366,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 				),
 				visual: (
 					<>
-						<div className="fs-meta text-faint uppercase tracking-wider">
+						<div className="fs-meta text-dim font-medium">
 							Lines changed
 						</div>
 						<div className="mt-1 flex items-baseline gap-x-4 gap-y-1 flex-wrap">

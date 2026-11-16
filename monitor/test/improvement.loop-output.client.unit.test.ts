@@ -241,7 +241,21 @@ test("the all-days totals name their window, so they never read as the recent ha
     (el) => typeof el.props.children === "string" && (el.props.children as string).includes("verified"),
   );
 
-  assert.match(String(totals?.props.children), /all 4 cycle days: \d+ verified · \d+ rejected/);
+  assert.match(String(totals?.props.children), /^\d+ verified and \d+ rejected across all 4 cycle days$/);
+});
+
+test("a trend with no scored recent cycle says so in one line instead of plotting", () => {
+  const scored = sandbox.deriveLoopAggregateI({ events: getEvents(["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25"], 3) }) as LoopAggregate & {
+    failAfter: { days: number };
+  };
+  const aggregate = { ...scored, failAfter: { count: 0, total: 0, days: scored.failAfter.days } };
+  const tree = collectElements(sandbox.TrendCardI({ state: READY, aggregate }), []);
+
+  assert.equal(tree.some((el) => el.type === sandbox.window.UI.TrendChart), false, "a chart of unscored days plots nothing a reader can use");
+  assert.equal(tree.some((el) => el.type === sandbox.RejectRateHeadlineI), false, "no rate to state");
+  const lines = tree.filter((el) => /\bplaceholder\b/.test(String(el.props.className ?? "")));
+  assert.equal(lines.length, 1);
+  assert.match(getPrintedText(lines[0]), /^Not enough scored cycles to chart yet$/);
 });
 
 test("the trend plots from a zero baseline with room to read, and short y labels", () => {
@@ -385,8 +399,8 @@ describe("every loop card stacks one metric, one visual and one pinned foot, in 
 // R-c: a loop-card foot hands its sentence to the shared DayTokens atom, so "28 cycle days" and "7-day" never break
 test("every loop-card foot rides DayTokens, so its cycle-day and 7-day tokens stay whole", () => {
   const expected: Record<string, RegExp> = {
-    trend: /^Share rejected per day · all 2 cycle days: /,
-    "learning memory": /^All agents · not the group's 7-day window$/,
+    trend: /^\d+ verified and \d+ rejected across all 2 cycle days$/,
+    "learning memory": /^All agents over all time, not the group's 7-day window$/,
   };
   for (const { name, card } of getLoopCards()) {
     const [foot] = getSlotOf(card, "card-foot");
@@ -402,15 +416,18 @@ test("the applied card leads with its reject rate, in the metric slot", () => {
   assert.ok(metric && collectElements(metric, []).some((el) => el.type === sandbox.RejectRateHeadlineI), "the reject rate heads the card");
 });
 
-test("the learning-memory card heads its card with both counts, its tiles keeping only what each count means", () => {
+test("the learning-memory card heads its card with both counts and keeps what each means behind its info button", () => {
   const [, , { card }] = getLoopCards();
-  const [metric] = getSlotOf(card, "i-loop-metric");
-  const [visual] = getSlotOf(card, "i-loop-visual");
-  const metricText = getPrintedText(metric);
+  const tree = collectElements(card, []);
+  const metricText = getPrintedText(getSlotOf(card, "i-loop-metric")[0]);
+  const info = tree.find((el) => el.type === CardHead)?.props.info as RecordedElement | undefined;
 
   assert.match(metricText, /\b12\b/, metricText);
   assert.match(metricText, /\b4\b/, metricText);
-  assert.doesNotMatch(getPrintedText(visual), /\b12\b|\b4\b/, "a count printed twice reads as two figures");
+  assert.ok(info, "the definitions sit in the head's info drawer");
+  assert.match(getPrintedText(info), /Confidence high · check passed · done/);
+  assert.match(getPrintedText(info), /failed or needed repeated rework/);
+  assert.equal(tree.some((el) => /\bsub-card\b/.test(String(el.props.className ?? ""))), false, "no bordered definition tile on the card face");
 });
 
 // numeral and word share a baseline; the sign glyph centres on the numeral's line box instead of sitting on the baseline by its bottom edge
