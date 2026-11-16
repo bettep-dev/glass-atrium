@@ -90,25 +90,31 @@ const ERROR_DETAILS_ROWS = [
 // the alarm row as AlertCard draws it (raised and inset) and as a screen writes it by class; the detail line is
 // the one fact the title does not hold
 const RETRY = React.createElement("button", { type: "button", className: "btn sm" }, "Retry");
-const ALARM_ROWS = [
-  { name: "a raised alert card with one line and an action", id: "alarm-card-line", height: 48, glyph: 16,
-    markup: render(ui.AlertCard, { tone: "warn", title: "$842 so far today", actions: RETRY }) },
-  { name: "a raised alert card with a detail line", id: "alarm-card-detail", height: 70, glyph: 16,
-    markup: render(ui.AlertCard, { tone: "crit", title: "1 harness part is down", body: "Hook Chain" }) },
-  { name: "an inset alert card with one line and an action", id: "alarm-card-inset", height: 48, glyph: 14,
-    markup: render(ui.AlertCard, { tone: "info", surface: "inset", title: "This document was superseded", actions: RETRY }) },
-  { name: "a hairline alarm row", id: "alarm-row-line", height: 48, glyph: 16,
-    markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
-      `<div class="fs-body text-ink">$842 so far today</div></div>` },
-  { name: "a hairline alarm row with one line and an action", id: "alarm-row-action", height: 48, glyph: 16,
-    markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
-      `<div class="fs-body text-ink">$842 so far today</div><div class="alarm-row-actions">${render("button", { type: "button", className: "btn sm" }, "Retry")}</div></div>` },
-] as const;
-
-// each alarm row that carries an action, laid out in a container either side of the 36rem drop
-const ALARM_DROP_ROWS = ALARM_ROWS.filter((row) => row.markup.includes("Retry"));
-// 480 host → a container under 576 (36rem) whether the card shell or the padded row is the container; 640 → over it either way
-const ALARM_DROP_PX = { narrow: 480, wide: 640 } as const;
+const ALARM = (() => {
+  const rows = [
+    { name: "a raised alert card with one line and an action", id: "alarm-card-line", height: 48, glyph: 16,
+      markup: render(ui.AlertCard, { tone: "warn", title: "$842 so far today", actions: RETRY }) },
+    { name: "a raised alert card with a detail line", id: "alarm-card-detail", height: 70, glyph: 16,
+      markup: render(ui.AlertCard, { tone: "crit", title: "1 harness part is down", body: "Hook Chain" }) },
+    { name: "an inset alert card with one line and an action", id: "alarm-card-inset", height: 48, glyph: 14,
+      markup: render(ui.AlertCard, { tone: "info", surface: "inset", title: "This document was superseded", actions: RETRY }) },
+    { name: "a hairline alarm row", id: "alarm-row-line", height: 48, glyph: 16,
+      markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
+        `<div class="fs-body text-ink">$842 so far today</div></div>` },
+    { name: "a hairline alarm row with one line and an action", id: "alarm-row-action", height: 48, glyph: 16,
+      markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
+        `<div class="fs-body text-ink">$842 so far today</div><div class="alarm-row-actions">${render("button", { type: "button", className: "btn sm" }, "Retry")}</div></div>` },
+  ] as const;
+  return {
+    ROWS: rows,
+    DROP: {
+      // each alarm row that carries an action, laid out in a container either side of the 36rem drop
+      ROWS: rows.filter((row) => row.markup.includes("Retry")),
+      // 480 host → a container under 576 (36rem) whether the card shell or the padded row is the container; 640 → over it either way
+      PX: { narrow: 480, wide: 640 },
+    },
+  } as const;
+})();
 const alarmDropId = (rowId: string, px: number): string => `${rowId}-at-${px}`;
 
 // column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
@@ -175,8 +181,8 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   ${COMPACT_ROWS.map((row) => row.markup).join("\n  ")}
   ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
     `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
-  ${ALARM_ROWS.map((row) => `<div id="${row.id}" style="width: 640px;">${row.markup}</div>`).join("\n  ")}
-  ${ALARM_DROP_ROWS.flatMap((row) => Object.values(ALARM_DROP_PX).map((px) =>
+  ${ALARM.ROWS.map((row) => `<div id="${row.id}" style="width: 640px;">${row.markup}</div>`).join("\n  ")}
+  ${ALARM.DROP.ROWS.flatMap((row) => Object.values(ALARM.DROP.PX).map((px) =>
     `<div id="${alarmDropId(row.id, px)}" style="width: ${px}px;">${row.markup}</div>`)).join("\n  ")}
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
@@ -353,7 +359,7 @@ describe("an alarm row is one 32 line between 8 paddings, its tone on a bare gly
       };
     });
 
-  for (const row of ALARM_ROWS) {
+  for (const row of ALARM.ROWS) {
     test(`${row.name} is ${row.height} tall`, async () => {
       const { height } = await readAlarm(row.id);
       assert.ok(Math.abs(height - row.height) < 0.5, `row height ${height}`);
@@ -388,15 +394,15 @@ describe("an alarm row's actions drop under its content at a container width of 
       return { contentLeft: contentBox.left, contentRight: contentBox.right, contentBottom: contentBox.bottom, actionsLeft: actionsBox.left, actionsTop: actionsBox.top };
     });
 
-  for (const row of ALARM_DROP_ROWS) {
+  for (const row of ALARM.DROP.ROWS) {
     test(`${row.name}, in a container of 36rem or less: the actions sit under the content, on its left edge`, async () => {
-      const box = await readActions(alarmDropId(row.id, ALARM_DROP_PX.narrow));
+      const box = await readActions(alarmDropId(row.id, ALARM.DROP.PX.narrow));
       assert.ok(box.actionsTop >= box.contentBottom - 0.5, `actions top ${box.actionsTop} under the content bottom ${box.contentBottom}`);
       assert.ok(Math.abs(box.actionsLeft - box.contentLeft) < 0.5, `actions left ${box.actionsLeft} on the content left ${box.contentLeft}`);
     });
 
     test(`${row.name}, in a container over 36rem: the actions sit at the row end`, async () => {
-      const box = await readActions(alarmDropId(row.id, ALARM_DROP_PX.wide));
+      const box = await readActions(alarmDropId(row.id, ALARM.DROP.PX.wide));
       assert.ok(box.actionsLeft >= box.contentRight - 0.5, `actions left ${box.actionsLeft} past the content right ${box.contentRight}`);
     });
   }
