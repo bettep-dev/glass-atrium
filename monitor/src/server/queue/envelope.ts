@@ -1,5 +1,5 @@
 // Resume text: an envelope per item carrying only ids and the fetch → ack → act order — never the answer or message itself,
-// which the session fetches by id. Every command names the absolute CLI literal the settings allow rule names.
+// which the session fetches by id. Every command names the absolute queue CLI path.
 
 import path from "node:path";
 
