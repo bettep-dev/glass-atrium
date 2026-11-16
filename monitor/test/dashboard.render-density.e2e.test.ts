@@ -163,36 +163,87 @@ describe("The status card at 1440×900", () => {
   });
 });
 
-// A first load holds the settled layout (design.md §3.3): the cards below never jump when a stat's read lands
-describe("The status card while its stats load at 1440×900", () => {
-  let probe: { loading: number; settled: number; placeholderWeights: string[] };
+// The status card holds its settled height (design.md §3.3) through a first load, a held refresh and a lone failure:
+// the cards below never move when a stat's read lands or fails
+const STATUS_CARD_STATES: Array<{ name: string; open: () => Promise<Page> }> = [
+  {
+    name: "while its stats load",
+    open: async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      // never answered → every stat stays on its placeholder (the shell's harness fold reads these too)
+      await page.route(/\/api\/(cost\/kpi|agents\/summary|outcomes\/cross-analysis)/, () => {});
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(() => document.querySelectorAll("#dash-status .stat-value [role=status]").length === 4, undefined, { timeout: 30_000 });
+      return page;
+    },
+  },
+  {
+    name: "when two stats are held over failed refreshes on two causes, each with its own Retry",
+    open: async () => {
+      const page = await openDashboard({ width: 1440, height: 900 });
+      await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ status: 500, json: {} }));
+      await page.route(/\/api\/cost\/kpi/, (route) => route.fulfill({ status: 502, json: {} }));
+      await page.getByRole("button", { name: "Refresh dashboard" }).click();
+      await page.waitForFunction(
+        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).filter((el) => /^Last known/.test(el.textContent ?? "")).length >= 2,
+        undefined,
+        { timeout: 30_000 },
+      );
+      return page;
+    },
+  },
+  {
+    name: "when one stat failed alone and keeps its own Retry",
+    open: async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ status: 500, json: {} }));
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(() => (document.querySelector("#dash-status")?.textContent ?? "").includes("Couldn't load the fleet summary"), undefined, { timeout: 30_000 });
+      return page;
+    },
+  },
+];
+
+async function getStatusCardHeight(page: Page): Promise<number> {
+  await page.evaluate(() => document.fonts.ready);
+  return page.evaluate(() => document.querySelector("#dash-status")?.getBoundingClientRect().height ?? NaN);
+}
+
+describe("The status card at 1440×900 keeps its settled height", () => {
+  let settled: number;
 
   before(async () => {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    // never answered → every stat stays on its placeholder (the shell's harness fold reads these too)
-    await page.route(/\/api\/(cost\/kpi|agents\/summary|outcomes\/cross-analysis)/, () => {});
-    await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelectorAll("#dash-status .stat-value [role=status]").length === 4, undefined, { timeout: 30_000 });
-    await page.evaluate(() => document.fonts.ready);
-    const pending = await page.evaluate(() => ({
-      loading: document.querySelector("#dash-status")?.getBoundingClientRect().height ?? NaN,
-      placeholderWeights: Array.from(document.querySelectorAll("#dash-status .stat-value [role=status]")).map((el) => getComputedStyle(el).fontWeight),
-    }));
-    await page.close();
-    const settledPage = await openDashboard({ width: 1440, height: 900 });
-    await settledPage.evaluate(() => document.fonts.ready);
-    const settled = await settledPage.evaluate(() => document.querySelector("#dash-status")?.getBoundingClientRect().height ?? NaN);
-    await settledPage.close();
-    probe = { ...pending, settled };
-    console.log(`status card loading vs settled 1440x900: ${JSON.stringify(probe)}`);
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      settled = await getStatusCardHeight(page);
+    } finally {
+      await page.close();
+    }
   });
 
-  test("the card keeps its settled height while its stats load", () => {
-    assert.ok(Math.abs(probe.loading - probe.settled) < 0.5, `loading ${probe.loading}px, settled ${probe.settled}px`);
-  });
+  for (const state of STATUS_CARD_STATES) {
+    test(state.name, async () => {
+      const page = await state.open();
+      try {
+        const height = await getStatusCardHeight(page);
+        console.log(`status card ${state.name} 1440x900: ${height} (settled ${settled})`);
+        assert.ok(Math.abs(height - settled) < 0.5, `${height}px, settled ${settled}px`);
+      } finally {
+        await page.close();
+      }
+    });
+  }
+});
 
-  test("a stat's loading placeholder reads at the regular weight, as the panel placeholder does", () => {
-    assert.deepEqual(probe.placeholderWeights, ["400", "400", "400", "400"]);
+describe("The status card while its stats load at 1440×900", () => {
+  test("a stat's loading placeholder reads at the regular weight, as the panel placeholder does", async () => {
+    const page = await STATUS_CARD_STATES[0].open();
+    try {
+      const weights = await page.$$eval("#dash-status .stat-value [role=status]", (els) => els.map((el) => getComputedStyle(el).fontWeight));
+      assert.deepEqual(weights, ["400", "400", "400", "400"]);
+    } finally {
+      await page.close();
+    }
   });
 });
 
@@ -212,17 +263,20 @@ describe("Alarm rows at 1440×900", () => {
   before(async () => {
     Object.assign(overrides, ALARM_PAYLOADS);
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
-    await page.waitForFunction(() => document.querySelectorAll(".dash-alarm-list .alarm-row").length === 2, undefined, { timeout: 30_000 });
-    await page.evaluate(() => document.fonts.ready);
-    // the hairline between rows is the list's, not the row's → border-box height less the bottom border
-    rows = await page.$$eval(".dash-alarm-list .alarm-row", (els) => els.map((el) => ({
-      height: el.getBoundingClientRect().height - parseFloat(getComputedStyle(el).borderBottomWidth),
-      hasDetail: el.querySelector(".dash-alarm-detail") !== null,
-    })));
-    console.log(`alarm rows 1440x900: ${JSON.stringify(rows)}`);
-    await page.close();
-    for (const path of Object.keys(ALARM_PAYLOADS)) delete overrides[path];
+    try {
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(() => document.querySelectorAll(".dash-alarm-list .alarm-row").length === 2, undefined, { timeout: 30_000 });
+      await page.evaluate(() => document.fonts.ready);
+      // the hairline between rows is the list's, not the row's → border-box height less the bottom border
+      rows = await page.$$eval(".dash-alarm-list .alarm-row", (els) => els.map((el) => ({
+        height: el.getBoundingClientRect().height - parseFloat(getComputedStyle(el).borderBottomWidth),
+        hasDetail: el.querySelector(".dash-alarm-detail") !== null,
+      })));
+      console.log(`alarm rows 1440x900: ${JSON.stringify(rows)}`);
+    } finally {
+      await page.close();
+      for (const path of Object.keys(ALARM_PAYLOADS)) delete overrides[path];
+    }
   });
 
   test("a row with a detail line is about 70 tall and a one-line row 48, the card-head height", () => {

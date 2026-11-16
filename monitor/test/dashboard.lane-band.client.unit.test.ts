@@ -36,6 +36,8 @@ interface Stat {
   absent?: "none" | "not-loaded";
   // the one visible line under the value; everything else rides ⓘ
   context: string | null;
+  // the full sentence behind a short context — the line's title and one ⓘ note
+  cause?: string;
   notes: string[];
   target: string | null;
   isHeld?: boolean;
@@ -495,7 +497,9 @@ test("a region whose refresh failed over held data reads last-known and carries 
     for (const id of ids) {
       const stat = statOf(stats, id) as Stat & { error?: string | null; source: string };
       assert.equal(stat.isHeld === true, row.lastKnown, `${row.name}: ${id} held`);
-      assert.equal(stat.context === `Last known — couldn't refresh ${stat.source}`, row.lastKnown, `${row.name}: ${id} context "${stat.context}"`);
+      assert.equal(stat.context === "Last known", row.lastKnown, `${row.name}: ${id} context "${stat.context}"`);
+      const cause = `Last known — couldn't refresh ${stat.source}`;
+      assert.equal(stat.cause === cause && stat.notes.includes(`${cause}.`), row.lastKnown, `${row.name}: ${id} names the failed refresh behind the line`);
       assert.equal(stat.error ?? null, row.error, `${row.name}: ${id} carries the failure`);
       assert.equal(stat.canRetry === true, row.lastKnown, `${row.name}: ${id} Retry`);
     }
@@ -579,26 +583,30 @@ test("a harness refresh that failed over held readings reads last-known, keeping
       dash.buildStats({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
       "harness",
     );
-    assert.equal(stat.context, "Last known — couldn't refresh daemon status", `${row.name}: names the source that failed`);
+    assert.equal(stat.context, "Last known", `${row.name}: the line says only Last known`);
+    assert.equal(stat.cause, "Last known — couldn't refresh daemon status", `${row.name}: names the source that failed`);
     assert.equal(stat.tone, row.tone, `${row.name}: tone`);
   }
 });
 
-test("a harness context too short to name every unread source names the first and counts the rest, and ⓘ names them all", () => {
+describe("a partly unread harness stat says only its state on its line; the line's title and ⓘ name every unread source", () => {
   const rows = [
-    { name: "one held source", unreadSources: ["daemon status"], context: "Last known — couldn't refresh daemon status", hasNote: false },
-    { name: "two held sources", unreadSources: ["daemon status", "the hook chain"], context: "Last known — couldn't refresh daemon status +1", hasNote: true },
-    { name: "every source held", unreadSources: HARNESS_SOURCE_LABELS, context: "Last known — couldn't refresh the failure count +4", hasNote: true },
+    { name: "one held source", over: { unreadSources: ["daemon status"] }, context: "Last known", lead: "Last known — couldn't refresh" },
+    { name: "every source held", over: { unreadSources: HARNESS_SOURCE_LABELS }, context: "Last known", lead: "Last known — couldn't refresh" },
+    { name: "parts lost to a cold read", over: { unreadSources: ["daemon status", "the hook chain"], partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS },
+      context: "3 not read", lead: "3 not read — couldn't read" },
   ];
   for (const row of rows) {
-    const stat = statOf(
-      dash.buildStats({ harness: unreadFold({ unreadSources: row.unreadSources }), costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
-      "harness",
-    );
-    assert.equal(stat.context, row.context, row.name);
-    const note = stat.notes.find((line) => line.startsWith("Not read this time"));
-    assert.equal(note != null, row.hasNote, `${row.name}: a note only when the context cannot name every source`);
-    for (const source of row.hasNote ? row.unreadSources : []) assert.ok(String(note).includes(source), `${row.name}: note names ${source}`);
+    test(row.name, () => {
+      const stat = statOf(
+        dash.buildStats({ harness: unreadFold(row.over), costState: LOADING, agentsState: LOADING, outcomesState: LOADING }),
+        "harness",
+      );
+      const cause = `${row.lead} ${row.over.unreadSources.join(" · ")}`;
+      assert.equal(stat.context, row.context, "the line");
+      assert.equal(stat.cause, cause, "the title names every unread source");
+      assert.ok(stat.notes.includes(`${cause}.`), `ⓘ names every unread source: ${stat.notes.join(" | ")}`);
+    });
   }
 });
 
@@ -615,7 +623,7 @@ test("parts lost to a cold read failure count against every part, never only the
       "harness",
     );
     assert.equal(stat.value, row.value, `${row.name}: value`);
-    assert.equal(stat.context, "3 not read — couldn't read daemon status", `${row.name}: the lost parts are counted`);
+    assert.equal(stat.context, "3 not read", `${row.name}: the lost parts are counted`);
   }
 });
 
@@ -662,7 +670,7 @@ test("a partly unread harness never reads healthy, and the lane cannot claim an 
     "harness",
   );
   assert.notEqual(stat.tone, "ok");
-  assert.match(String(stat.context), /daemon status/);
+  assert.match(String(stat.cause), /daemon status/);
   assert.equal(stat.canRetry, true, "the harness stat keeps its own Retry when no banner covers it");
 
   const readiness = failure.getAlarmReadiness({ harness, costState: kpi(1, 10), updateState: ready({}) });

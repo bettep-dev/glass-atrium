@@ -574,6 +574,9 @@ test("each stat's value is a Link to its owning screen; a loading stat links now
   assert.equal(reserved.props["aria-hidden"], "true", "the reserved line is hidden from assistive tech");
 });
 
+// the alarm row's own glyph → a firing stat's mark reads at the same size as the row that states its alarm
+const ALARM_GLYPH_SIZE = findNodes(alarmRowsOf(render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} }))[0], (n) => n.props.atom === "Icon")[0].props.size;
+
 test("a firing stat shows its value and tone glyph only; a calm stat shows the value alone, and no stat carries a badge", () => {
   const rows = [
     { tone: "crit", hasGlyph: true }, { tone: "warn", hasGlyph: true },
@@ -582,7 +585,9 @@ test("a firing stat shows its value and tone glyph only; a calm stat shows the v
   for (const row of rows) {
     const { tree, items } = renderStatusCard([{ ...READY_STAT, tone: row.tone, value: "2 of 7 down" }]);
     const value = nodeOf(items[0].value);
-    assert.equal(findNodes(value, (n) => n.props.atom === "Icon").length, row.hasGlyph ? 1 : 0, `${row.tone}: glyph`);
+    const glyphs = findNodes(value, (n) => n.props.atom === "Icon");
+    assert.equal(glyphs.length, row.hasGlyph ? 1 : 0, `${row.tone}: glyph`);
+    for (const glyph of glyphs) assert.equal(glyph.props.size, ALARM_GLYPH_SIZE, `${row.tone}: the glyph is drawn at the alarm-row size`);
     assert.equal(findNodes(tree, (n) => n.props.atom === "Badge").length, 0, `${row.tone}: never a badge`);
     const text = collectText(value).replace(/\s+/g, " ").trim();
     assert.equal(text, row.hasGlyph ? `${realUi.ALERT_SEVERITY_WORD && (realUi.ALERT_SEVERITY_WORD as Record<string, string>)[row.tone]}: 2 of 7 down` : "2 of 7 down",
@@ -623,8 +628,18 @@ test("a failed stat states its error on the context line with its own Retry; a b
   assert.equal(findNodes(nodeOf(covered.items[0].context), (n) => n.props.atom === "RetryButton").length, 0, "the banner owns the only Retry");
 });
 
+const HELD_LINE = { context: "Last known", cause: "Last known — couldn't refresh task results" };
+
+test("a held stat's line says Last known alone, and the line's title names the failed refresh", () => {
+  const { items } = renderStatusCard([{ ...READY_STAT, ...HELD_LINE, isHeld: true, error: "HTTP 500", canRetry: true }]);
+  const context = nodeOf(items[0].context);
+  const [line] = findNodes(context, (n) => isHost(n) && n.props.title != null);
+  assert.equal(collectText(line).trim(), "Last known", "the words on the line");
+  assert.equal(line.props.title, HELD_LINE.cause, "the title carries the cause");
+});
+
 test("a held stat's Retry is the shared control: in flight while busy, handing focus to the status card on recovery", () => {
-  const heldStat = { ...READY_STAT, isHeld: true, context: "Last known — couldn't refresh task results", error: "HTTP 500", canRetry: true };
+  const heldStat = { ...READY_STAT, ...HELD_LINE, isHeld: true, error: "HTTP 500", canRetry: true };
   for (const isBusy of [true, false]) {
     const { tree, items } = renderStatusCard([{ ...heldStat, isBusy }]);
     const [retry] = findNodes(nodeOf(items[0].context), (n) => n.props.atom === "RetryButton");
@@ -668,15 +683,17 @@ test("a failed stat hands the next step and the raw error to the card's one ⓘ,
   assert.ok(info.includes(copy.detail), `the raw error rides ⓘ: ${info}`);
 });
 
-test("a held week panel says Last known once, in its head; its body names the failed refresh only", () => {
+describe("a held week panel says Last known once, in its head; its body names the failed refresh only", () => {
   const held = { data: {}, error: "HTTP 500" };
   for (const [name, extra] of [["own Retry", { onRetry: () => {} }], ["banner Retry", { isRetryShared: true }], ["the stat's Retry", {}]] as const) {
-    const tree = render("WeekPanel", { id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: held, render: () => null, ...extra });
-    const [card] = findNodes(tree, (n) => n.props.atom === "Card");
-    assert.equal(card.props.sub, "Last known", `${name}: the head says it`);
-    const body = [collectText(tree), ...alertCardsOf(tree).map((alert) => String(alert.props.title))].join(" ");
-    assert.doesNotMatch(body, /last (known|reading)/i, `${name}: the body does not say it again — ${body}`);
-    assert.match(body, /couldn't refresh/i, `${name}: the body names the failed refresh`);
+    test(name, () => {
+      const tree = render("WeekPanel", { id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: held, render: () => null, ...extra });
+      const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+      assert.equal(card.props.sub, "Last known", `${name}: the head says it`);
+      const body = [collectText(tree), ...alertCardsOf(tree).map((alert) => String(alert.props.title))].join(" ");
+      assert.doesNotMatch(body, /last (known|reading)/i, `${name}: the body does not say it again — ${body}`);
+      assert.match(body, /couldn't refresh/i, `${name}: the body names the failed refresh`);
+    });
   }
 });
 

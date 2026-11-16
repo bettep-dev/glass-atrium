@@ -143,8 +143,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .space-sections > * + .dash-lane.sr-only + * { margin-top: var(--gap-section); }
         /* an agent name in the results panel is a plain anchor → an underline makes its hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
-        /* a stat's Retry rides its context line → the line stays one row, the control sits after the words */
-        .dash-stat-retry { margin-left: var(--space-2); vertical-align: middle; }
+        /* a stat's Retry rides its context line at the line's own height → the 32 control overhangs into the card padding, the card never grows */
+        .dash-stat-retry { display: inline-flex; align-items: center; height: 1lh; vertical-align: top; margin-left: var(--space-2); }
         .dash-week-panel { display: flex; flex-direction: column; }
         .dash-week-panel > .card { flex: 1 1 auto; }
         .dash-week-panel .card-body { display: flex; flex-direction: column; gap: var(--gap-list); }
@@ -353,9 +353,9 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
   if (!text && !hasRetry) return null;
   return (
     <>
-      {text && <span title={text}><DayTokens>{text}</DayTokens></span>}
+      {text && <span title={stat.cause ?? text}><DayTokens>{text}</DayTokens></span>}
       {hasRetry && (
-        <span className="dash-stat-retry inline-flex">
+        <span className="dash-stat-retry">
           <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} focusTargetId={DASH_STATUS_ID}/>
         </span>
       )}
@@ -377,7 +377,8 @@ function StatValue({ stat }) {
   if (!FIRING_TONES.has(stat.tone)) return figure;
   return (
     <>
-      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true"><Icon name={TONE_ICON[stat.tone]} size={13}/></span>
+      {/* the alarm row's 16 → at 13 the 1.6 stroke paints under a pixel and the worst state reads faintest */}
+      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true"><Icon name={TONE_ICON[stat.tone]} size={16}/></span>
       <span className="sr-only">{`${ALERT_SEVERITY_WORD[stat.tone]}: `}</span>
       {figure}
     </>
@@ -891,14 +892,18 @@ function buildStats({ harness, costState, agentsState, outcomesState, isHarnessB
   }));
 }
 
+// a held line says Last known and nothing else → one row beside its Retry; the stat's label already names the source
+const HELD_CONTEXT = 'Last known';
+
 // held data whose latest read failed → Last known on the context line + own Retry; its error joins the shared-outage check
-// shared freshness rule → a held warn/crit keeps its alarm, a held all-clear drops to neutral
+// the failed refresh → the line's title and the card's ⓘ · shared freshness rule → a held warn/crit keeps its alarm, a held all-clear drops to neutral
 function markHeldStat(stat, state) {
   if (stat.status === 'loading' || stat.status === 'error' || state?.error == null) return stat;
   const isAlarm = FIRING_TONES.has(stat.tone);
+  const cause = `${HELD_CONTEXT} — couldn't refresh ${stat.source}`;
   return {
     ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true,
-    context: `Last known — couldn't refresh ${stat.source}`,
+    context: HELD_CONTEXT, cause, notes: [`${cause}.`, ...stat.notes],
   };
 }
 
@@ -930,26 +935,22 @@ function describeHarnessReading(harness) {
   const coverage = describeHarnessCoverage(harness, isPartlyUnread);
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
   const unreadTone = isPartlyUnread ? 'info' : 'ok';
-  return {
+  const reading = {
     tone: downCount > 0 ? 'crit' : unreadTone,
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
-    context: isPartlyUnread ? describeUnreadContext(harness, lostCount) : coverage,
-    notes: isPartlyUnread ? [`${coverage}.`, ...describeUnreadNote(harness)] : [],
-    canRetry: isPartlyUnread,
+    context: coverage, notes: [], canRetry: isPartlyUnread,
   };
+  if (!isPartlyUnread) return reading;
+  const unread = describeUnread(harness, lostCount);
+  return { ...reading, ...unread, notes: [`${coverage}.`, `${unread.cause}.`] };
 }
 
-// one line fits one source name → further sources count as +N, named in full in the ⓘ note
-function describeUnreadContext(harness, lostCount) {
-  const [first, ...rest] = harness.unreadSources;
-  const more = rest.length > 0 ? ` +${rest.length}` : '';
-  const lead = lostCount > 0 ? `${formatInt(lostCount)} not read — couldn't read` : "Last known — couldn't refresh";
-  return `${lead} ${first}${more}`;
-}
-
-function describeUnreadNote(harness) {
-  const sources = harness.unreadSources ?? [];
-  return sources.length < 2 ? [] : [`Not read this time: ${sources.join(' · ')}.`];
+// the held line's shape → the state alone on the line, every unread source in the title and the ⓘ note
+function describeUnread(harness, lostCount) {
+  const isLost = lostCount > 0;
+  const context = isLost ? `${formatInt(lostCount)} not read` : HELD_CONTEXT;
+  const failed = isLost ? "couldn't read" : "couldn't refresh";
+  return { context, cause: `${context} — ${failed} ${harness.unreadSources.join(' · ')}` };
 }
 
 // an unpolled part never reads as one more down part
