@@ -745,7 +745,7 @@ test("a partly unread harness never reads healthy, and the lane cannot claim an 
   assert.match(String(stat.cause), /daemon status/);
   assert.equal(stat.canRetry, true, "the harness stat keeps its own Retry when no banner covers it");
 
-  const readiness = failure.getAlarmReadiness({ harness, costState: kpi(1, 10), updateState: ready({}) });
+  const readiness = failure.getAlarmReadiness({ harness, outcomesState: ready({}), agentsState: ready({}), costState: kpi(1, 10), updateState: ready({}) });
   assert.equal(readiness.status, "unknown");
   assert.ok(readiness.unread.includes("harness health"));
 });
@@ -757,7 +757,7 @@ describe("a source whose held alarm the list already shows is not announced as u
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const sources = { harness: HEALTHY, costState: row.costState, updateState: ready({}) };
+      const sources = { harness: HEALTHY, outcomesState: ready({}), agentsState: ready({}), costState: row.costState, updateState: ready({}) };
       const alarms = dash.buildAlarms({ ...sources, installKind: "hidden" });
       const readiness = failure.getAlarmReadiness(sources, alarms);
       assert.equal(readiness.unread.includes("today's spend"), row.isUnread, readiness.unread.join(" · "));

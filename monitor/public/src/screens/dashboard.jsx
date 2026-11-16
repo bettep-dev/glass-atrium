@@ -121,8 +121,9 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
 
   const waveStates = [costState, agentsState, outcomesState, updateState, spendDaysState, heatmapState];
   const isWaveBusy = getRegionSummary(waveStates).isBusy;
-  const alarms = buildAlarms({ harness, costState, installKind, outcomesState, agentsState });
-  const alarmReadiness = getAlarmReadiness({ harness, costState, updateState }, alarms);
+  const alarmSources = { harness, outcomesState, agentsState, costState, updateState, installKind };
+  const alarms = buildAlarms(alarmSources);
+  const alarmReadiness = getAlarmReadiness(alarmSources, alarms);
   const stats = buildStats({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const weekPanels = [{ source: 'daily spend', error: spendDaysState.error }, { source: 'runs by hour', error: heatmapState.error }];
   const sharedFailure = getPageSharedFailure(stats, weekPanels);
@@ -290,12 +291,14 @@ function UnreadAlarmsCard({ unread }) {
 }
 
 const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] });
-// each source of the lane → its label and the one alarm row it can raise
-const ALARM_SOURCES = {
-  harness: { label: 'harness health', alarmId: 'harness' },
-  costState: { label: "today's spend", alarmId: 'spend' },
-  updateState: { label: 'install state', alarmId: 'install' },
-};
+// each source of the lane, in tie order → its readiness label, the one alarm row it can raise and that row's builder
+const ALARM_SOURCES = [
+  { key: 'harness', label: 'harness health', alarmId: 'harness', build: buildHarnessAlarm },
+  { key: 'outcomesState', label: 'task results', alarmId: 'outcomes', build: buildOutcomeAlarm },
+  { key: 'agentsState', label: 'fleet', alarmId: 'fleet', build: buildFleetAlarm },
+  { key: 'costState', label: "today's spend", alarmId: 'spend', build: buildSpendAlarm },
+  { key: 'updateState', label: 'install state', alarmId: 'install', build: buildInstallAlarm },
+];
 
 /**
  * Whether the lane may claim an all-clear: 'loading' while any source is unsettled,
@@ -304,7 +307,7 @@ const ALARM_SOURCES = {
  * @returns unread - labels of the sources that settled without an answer
  */
 function getAlarmReadiness(sources, alarms = []) {
-  const entries = Object.entries(ALARM_SOURCES).map(([key, meta]) => ({ ...meta, source: sources[key] }));
+  const entries = ALARM_SOURCES.map((meta) => ({ ...meta, source: sources[meta.key] }));
   if (entries.some(({ source }) => !source || source.status === 'loading')) return ALARM_READINESS_LOADING;
 
   // a held reading whose latest read failed is unread too — its all-clear is stale
@@ -821,51 +824,29 @@ function mutationErrorMessage(status, data) {
 
 // the lane union — one row per firing Status-card source + the install state; a firing stat shows only its glyph,
 // so its sentence lives here (spec 44084 §9). Learning · Wiki · Models alarms ride their own nav counts
-function buildAlarms({ harness, costState, installKind, outcomesState, agentsState }) {
-  const rows = [];
-
-  if (harness && harness.status === 'ready' && harness.downNames.length > 0) {
-    rows.push({
-      id: 'harness',
-      tone: 'crit',
-      title: `${harness.downNames.length} harness ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
-      detail: joinPartNames(harness.downNames),
-      isHeld: hasHeldPartRead(harness),
-      target: 'architecture',
-      targetLabel: 'System map',
-    });
-  }
-
-  rows.push(...[buildOutcomeAlarm(outcomesState), buildFleetAlarm(agentsState)].filter(Boolean));
-
-  const spend = resolveSpendPace(costState);
-  if (spend.status === 'hot') {
-    rows.push({
-      id: 'spend',
-      tone: 'warn',
-      ...describeSpendAlarm(spend),
-      isHeld: costState?.error != null,
-      target: 'cost',
-      targetLabel: 'Cost & usage',
-    });
-  }
-
-  if (installKind === 'available' || installKind === 'failed') {
-    rows.push({
-      id: 'install',
-      tone: installKind === 'failed' ? 'crit' : 'warn',
-      title: installKind === 'failed' ? 'The last update did not finish' : 'An update is ready to apply',
-      detail: null,
-      target: null,
-      targetLabel: null,
-    });
-  }
-
+/** @param sources - the ALARM_SOURCES region states by key, plus the install view's `installKind` */
+function buildAlarms(sources) {
+  const rows = ALARM_SOURCES.flatMap(({ alarmId, build }) => {
+    const row = build(sources);
+    return row ? [{ id: alarmId, ...row }] : [];
+  });
   return rows.sort((a, b) => (SEVERITY_RANK[b.tone] || 0) - (SEVERITY_RANK[a.tone] || 0));
 }
 
+function buildHarnessAlarm({ harness }) {
+  if (!harness || harness.status !== 'ready' || harness.downNames.length === 0) return null;
+  return {
+    tone: 'crit',
+    title: `${harness.downNames.length} harness ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
+    detail: joinPartNames(harness.downNames),
+    isHeld: hasHeldPartRead(harness),
+    target: 'architecture',
+    targetLabel: 'System map',
+  };
+}
+
 // the Task results stat's rule, worded: the tripped line's share and its count — the thresholds stay behind the stat's ⓘ
-function buildOutcomeAlarm(outcomesState) {
+function buildOutcomeAlarm({ outcomesState }) {
   if (outcomesState?.data == null) return null;
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
   if (!FIRING_TONES.has(rate.tone)) return null;
@@ -873,7 +854,7 @@ function buildOutcomeAlarm(outcomesState) {
   const count = isCrit ? rate.breakage : rate.openCaveats;
   const share = getSharePct(count, rate.writerTotal);
   return {
-    id: 'outcomes', tone: rate.tone,
+    tone: rate.tone,
     title: `${share} of task results ${isCrit ? 'failed or blocked' : 'have open caveats'} in the last 7 days`,
     detail: `${formatInt(count)} of ${formatInt(rate.writerTotal)} reported outcomes`,
     isHeld: outcomesState.error != null, target: 'outcomes', targetLabel: 'Task results',
@@ -881,12 +862,12 @@ function buildOutcomeAlarm(outcomesState) {
 }
 
 // the Fleet stat's breaker reading, worded: suspension first, a streak beside it as the detail
-function buildFleetAlarm(agentsState) {
+function buildFleetAlarm({ agentsState }) {
   const breaker = agentsState?.data == null ? null : getBreakerCounts(agentsState.data);
   if (!breaker || (breaker.suspended === 0 && breaker.streak === 0)) return null;
   const isCrit = breaker.suspended > 0;
   return {
-    id: 'fleet', tone: isCrit ? 'crit' : 'warn',
+    tone: isCrit ? 'crit' : 'warn',
     title: isCrit ? describeAgentCount(breaker.suspended, 'suspended') : describeAgentCount(breaker.streak, 'on a failing streak'),
     detail: isCrit && breaker.streak > 0 ? describeStreak(breaker.streak) : null,
     isHeld: agentsState.error != null, target: 'agents', targetLabel: 'Agents',
@@ -899,6 +880,24 @@ function describeAgentCount(count, state) {
 
 function describeStreak(streak) {
   return `${formatInt(streak)} on a failing streak`;
+}
+
+function buildSpendAlarm({ costState }) {
+  const spend = resolveSpendPace(costState);
+  if (spend.status !== 'hot') return null;
+  return { tone: 'warn', ...describeSpendAlarm(spend), isHeld: costState?.error != null, target: 'cost', targetLabel: 'Cost & usage' };
+}
+
+function buildInstallAlarm({ installKind }) {
+  if (installKind !== 'available' && installKind !== 'failed') return null;
+  const isFailed = installKind === 'failed';
+  return {
+    tone: isFailed ? 'crit' : 'warn',
+    title: isFailed ? 'The last update did not finish' : 'An update is ready to apply',
+    detail: null,
+    target: null,
+    targetLabel: null,
+  };
 }
 
 // the failure count feeds failCount1h only, never downNames → its failed read leaves the down-part reading fresh
