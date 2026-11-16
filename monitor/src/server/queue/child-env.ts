@@ -5,6 +5,7 @@ const ALLOWED_KEYS = ["HOME", "PATH", "USER", "LANG", "TMPDIR"] as const;
 
 /**
  * Explicit allowlist env for a `claude` child.
+ * Item or answer text here → owner-rows sign-off condition C1 (remote/route-classes.ts → OWNER_ROWS_CID entry).
  * @param configDir - the row's recorded CLAUDE_CONFIG_DIR; null → the default profile, so the variable is omitted
  */
 export function buildClaudeChildEnv(configDir: string | null, source: NodeJS.ProcessEnv = process.env): Record<string, string> {

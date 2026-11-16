@@ -125,6 +125,10 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     reviewer: "glass-atrium-sec-guard",
     stream: "S6",
     // every row of the entry before it carried unchanged; seven queue-owner reasons re-signed
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // C1 resume spawn argv-only, the registry row the sole source of session id, cwd and config dir → no item or answer text in the resume payload, argv or child env
+    // C2 a mutation refused (503 audit_unavailable) when its audit intent cannot be written; no pruning of remote audit rows for these routes before the queue provenance columns land
+    // C3 these reads disclose absolute local paths and answer text to a registered device → accepted (queue items 145, 186), stated in the reasons
     cids: [
       OWNER_ROWS_CID,
       PENDING_COUNT_CID,

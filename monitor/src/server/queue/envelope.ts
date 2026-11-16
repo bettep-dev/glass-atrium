@@ -35,7 +35,10 @@ export function getQueueCliPath(gaRoot: string): string {
   return path.join(gaRoot, "scripts", "atrium-queue.sh");
 }
 
-/** Resume prompt: the preamble, one envelope per item, then the register step that clears the session marker and the standing wait. */
+/**
+ * Resume prompt: the preamble, one envelope per item, then the register step that clears the session marker and the standing wait.
+ * Item or answer text here → owner-rows sign-off condition C1 (remote/route-classes.ts → OWNER_ROWS_CID entry).
+ */
 export function buildResumePayload(items: EnvelopeItem[], cliPath: string): string {
   const register = [
     `After the ack steps, whatever each ack replied, run: ${cliPath} register — it registers this resumed session with the Atrium queue.`,

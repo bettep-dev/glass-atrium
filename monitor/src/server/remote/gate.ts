@@ -189,6 +189,7 @@ async function admitDevice(
   return undefined;
 }
 
+// refusal on an unwritten intent → owner-rows sign-off condition C2 (route-classes.ts → OWNER_ROWS_CID entry)
 async function writeAuditIntent(request: FastifyRequest, reply: FastifyReply, audit: RemoteAuditWriter): Promise<FastifyReply | undefined> {
   const state = ADMITTED.get(request);
   if (state === undefined || !MUTATION_METHODS.has(request.method)) return undefined;
