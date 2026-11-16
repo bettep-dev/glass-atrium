@@ -342,10 +342,11 @@ function getStatLabel(stat) {
   return stat.window ? `${stat.label}, ${stat.window}` : stat.label;
 }
 
-// the one visible line: the builder's context, a banner pointer, or nothing while loading; the stat's own Retry rides it
+// the one visible line: the builder's context or a banner pointer; the stat's own Retry rides it
+// loading → an empty line at the settled height (design.md §3.3), so the cards below never jump when the read lands
 function getStatContext(stat, { onRetry, isRetryShared }) {
   const { DayTokens, RetryButton } = window.UI;
-  if (stat.status === 'loading') return null;
+  if (stat.status === 'loading') return <span aria-hidden="true">{'\u00a0'}</span>;
   const isCovered = isRetryShared && stat.error != null;
   const text = isCovered && stat.status === 'error' ? SHARED_FAILURE_CONTEXT : stat.context;
   const hasRetry = Boolean(stat.canRetry) && !isRetryShared;
@@ -368,7 +369,8 @@ const FIRING_TONES = new Set(['warn', 'crit']);
 function StatValue({ stat }) {
   const { Icon, TONE_ICON, LoadingPlaceholder, AbsentValue, ALERT_SEVERITY_WORD } = window.UI;
   if (stat.status === 'loading') {
-    return <span className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()}/></span>;
+    // the value's 600 is the figure's → the placeholder reads regular, as the panel placeholder beside it does
+    return <span className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()} className="font-normal"/></span>;
   }
   if (stat.absent) return <AbsentValue kind={stat.absent}/>;
   const figure = <span className={`whitespace-nowrap${stat.isBusy ? ' opacity-70' : ''}`}>{stat.value}</span>;

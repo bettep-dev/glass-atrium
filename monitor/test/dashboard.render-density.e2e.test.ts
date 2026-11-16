@@ -163,6 +163,39 @@ describe("The status card at 1440×900", () => {
   });
 });
 
+// A first load holds the settled layout (design.md §3.3): the cards below never jump when a stat's read lands
+describe("The status card while its stats load at 1440×900", () => {
+  let probe: { loading: number; settled: number; placeholderWeights: string[] };
+
+  before(async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    // never answered → every stat stays on its placeholder (the shell's harness fold reads these too)
+    await page.route(/\/api\/(cost\/kpi|agents\/summary|outcomes\/cross-analysis)/, () => {});
+    await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll("#dash-status .stat-value [role=status]").length === 4, undefined, { timeout: 30_000 });
+    await page.evaluate(() => document.fonts.ready);
+    const pending = await page.evaluate(() => ({
+      loading: document.querySelector("#dash-status")?.getBoundingClientRect().height ?? NaN,
+      placeholderWeights: Array.from(document.querySelectorAll("#dash-status .stat-value [role=status]")).map((el) => getComputedStyle(el).fontWeight),
+    }));
+    await page.close();
+    const settledPage = await openDashboard({ width: 1440, height: 900 });
+    await settledPage.evaluate(() => document.fonts.ready);
+    const settled = await settledPage.evaluate(() => document.querySelector("#dash-status")?.getBoundingClientRect().height ?? NaN);
+    await settledPage.close();
+    probe = { ...pending, settled };
+    console.log(`status card loading vs settled 1440x900: ${JSON.stringify(probe)}`);
+  });
+
+  test("the card keeps its settled height while its stats load", () => {
+    assert.ok(Math.abs(probe.loading - probe.settled) < 0.5, `loading ${probe.loading}px, settled ${probe.settled}px`);
+  });
+
+  test("a stat's loading placeholder reads at the regular weight, as the panel placeholder does", () => {
+    assert.deepEqual(probe.placeholderWeights, ["400", "400", "400", "400"]);
+  });
+});
+
 // The alarm row (spec 44084 §3.2): a 32 first line between 8 paddings → one line 48, the card-head height;
 // a detail line under the title adds 4 + 18.2 → about 70
 const ALARM_ROW_PX = { ONE_LINE: 48, WITH_DETAIL: 70 };

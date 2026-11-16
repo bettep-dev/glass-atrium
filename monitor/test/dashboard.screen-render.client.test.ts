@@ -548,12 +548,14 @@ test("the status row is one card holding one StatRow of four stats, its labels i
   assert.notEqual(String(cards[0].props.title), String(cards[0].props.title).toUpperCase(), "the card title is sentence case");
 });
 
-test("each stat's value is a Link to its owning screen; a loading stat links nowhere and says so in a placeholder", () => {
+test("each stat's value is a Link to its owning screen; a loading stat links nowhere, says so in a placeholder and reserves its context line", () => {
   const { items } = renderStatusCard([READY_STAT, { ...READY_STAT, id: "spend", status: "loading", value: null, target: "cost" }]);
   assert.equal(items[0].href, "#outcomes");
   assert.equal(items[1].href, undefined);
   assert.equal(findNodes(nodeOf(items[1].value), (n) => n.props.atom === "LoadingPlaceholder").length, 1);
-  assert.equal(items[1].context, null, "a loading stat has no context line yet");
+  const reserved = nodeOf(items[1].context);
+  assert.equal(collectText(reserved).trim(), "", "a loading stat says nothing on its context line yet");
+  assert.equal(reserved.props["aria-hidden"], "true", "the reserved line is hidden from assistive tech");
 });
 
 test("a firing stat shows its value and tone glyph only; a calm stat shows the value alone, and no stat carries a badge", () => {
