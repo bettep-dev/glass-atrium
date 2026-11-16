@@ -438,7 +438,7 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   if (view !== 'error' && view !== 'held') return null;
   if (!onRetry || isRetryShared) {
     const lead = view === 'held' ? "Couldn't refresh" : 'Not loaded';
-    return <p className="fs-meta text-dim">{isRetryShared ? window.UI.getNoticePointer(lead) : `${lead} — see ${RESULTS_STAT_POINTER}.`}</p>;
+    return <p className="fs-meta text-dim">{window.UI.getNoticePointer(lead, isRetryShared ? undefined : RESULTS_STAT_POINTER)}</p>;
   }
   const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   if (view === 'held') {

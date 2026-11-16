@@ -2415,9 +2415,12 @@ function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTarget
 
 const NOTICE_POINTER = 'the notice above';
 
-// the one pointer to a covering page notice → alone when the value already reads Not loaded, else after its lead
-function getNoticePointer(lead) {
-  return lead ? `${lead} — see ${NOTICE_POINTER}.` : `See ${NOTICE_POINTER}.`;
+/**
+ * The one pointer sentence to the surface that states a cause — alone when the value already reads Not loaded, else after its lead.
+ * @param target - that surface, read after "see"; the page notice by default
+ */
+function getNoticePointer(lead, target = NOTICE_POINTER) {
+  return lead ? `${lead} — see ${target}.` : `See ${target}.`;
 }
 
 /**
@@ -2430,7 +2433,7 @@ function RegionCovered({ speaker, focusTargetId, minHeight, className = '' }) {
   return (
     <p className={`fs-meta text-dim ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
       data-covered-card-id={speaker ? undefined : focusTargetId}>
-      {speaker ? `${NOT_LOADED_TEXT} — see the ${speaker} notice.` : getNoticePointer(NOT_LOADED_TEXT)}
+      {getNoticePointer(NOT_LOADED_TEXT, speaker ? `the ${speaker} notice` : undefined)}
     </p>
   );
 }
