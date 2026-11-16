@@ -517,7 +517,7 @@ test("a zero spend day draws no bar, and every day's track stands on the baselin
   }
 });
 
-// --- The status card: one card, one StatRow of four stats (spec 44084 §9 R8) ---
+// --- The status card: one card, one StatRow of four stats (spec 44084 §9) ---
 
 const READY_STAT = {
   id: "outcomes", label: "Task results", window: "7d", status: "ready", tone: "ok", value: "40",

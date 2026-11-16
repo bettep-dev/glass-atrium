@@ -312,7 +312,7 @@ const DASH_STATUS_ID = 'dash-status';
 const POINTER = { BANNER: 'see the notice above', RESULTS_STAT: 'see the Task results stat above' };
 const SHARED_FAILURE_CONTEXT = `Not loaded — ${POINTER.BANNER}.`;
 
-// R8 (spec 44084 §9) — one card, four stats (label, value, one context line); every counting rule and window behind one ⓘ
+// spec 44084 §9 — one card, four stats (label, value, one context line); every counting rule and window behind one ⓘ
 function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
   const { Card, StatRow } = window.UI;
   const noted = stats.filter((stat) => stat.notes?.length > 0);
@@ -336,7 +336,7 @@ function buildStatItem(stat, { onRetry, isRetryShared }) {
   };
 }
 
-// windows in labels read "7d" (spec 44084 §9 A10); prose spells "7 days"
+// windows in labels read "7d" (spec 44084 §9); prose spells "7 days"
 function getStatLabel(stat) {
   return stat.window ? `${stat.label}, ${stat.window}` : stat.label;
 }
@@ -403,7 +403,7 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
     <>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
         <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
-          note={`${OUTCOME_COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
+          note={`${OUTCOME.COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
           note={(data) => <HourGridNote grid={data ? buildHourGrid(data) : null}/>} onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
@@ -535,7 +535,6 @@ function getAgentOutcomesHref(agent) {
 const HOUR = {
   OF_DAY: Array.from({ length: 24 }, (_, hour) => hour),
   TICKS: new Set([0, 6, 12, 18]),
-  STEP_COUNT: 4,
   STEPS: [1, 2, 3, 4],
   // the heatmap counts differently from the results panel beside it → it states its own basis
   GRID_BASIS: 'All recorded runs — reconstructed included, poisoned excluded.',
@@ -594,7 +593,7 @@ function HourGridNote({ grid }) {
 // linear in the count, as the ramp always was → 0 = no run, 1–4 = the --heat-N step
 function getHeatStep(count, max) {
   if (count <= 0) return 0;
-  return Math.max(1, Math.ceil((HOUR.STEP_COUNT * count) / max));
+  return Math.max(1, Math.ceil((HOUR.STEPS.length * count) / max));
 }
 
 function getRowLabel(row) {
@@ -991,25 +990,26 @@ function buildOutcomeStat(outcomesState) {
   const rate = window.UI.resolveOutcomeRate(outcomesState.data);
   const trend = describeOutcomeTrend(rate, outcomesState.data?.prior_window);
   return {
-    ...base, status: OUTCOME_STAT_STATUS[rate.status], tone: rate.tone,
+    ...base, status: OUTCOME.STAT_STATUS[rate.status], tone: rate.tone,
     value: describeOutcomeValue(rate), absent: isOutcomeJudgeable(rate) ? undefined : 'none', context: describeOutcomeContext(rate),
-    notes: [...describeOutcomeLines(rate), ...(trend ? [`${trend}.`] : []), OUTCOME_COUNTING_NOTE],
+    notes: [...describeOutcomeLines(rate), ...(trend ? [`${trend}.`] : []), OUTCOME.COUNTING_NOTE],
   };
 }
 
-// verdict → stat status. low-n is not ready — too small a sample never reads as healthy
-const OUTCOME_STAT_STATUS = {
-  unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
+const OUTCOME = {
+  // verdict → stat status. low-n is not ready — too small a sample never reads as healthy
+  STAT_STATUS: {
+    unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
+  },
+  JUDGED: new Set(['ok', 'warn', 'crit']),
+  COUNTING_NOTE: 'Counts only writer-emitted outcomes — records the agent reported itself; synthesized records are left out.',
 };
-
-const OUTCOME_JUDGED = new Set(['ok', 'warn', 'crit']);
-const OUTCOME_COUNTING_NOTE = 'Counts only writer-emitted outcomes — records the agent reported itself; synthesized records are left out.';
 // the panel beside the stat counts every result → its ⓘ says how the stat's caveat figure differs
 const RESULTS_PANEL_NOTE = 'The Task results stat above counts the same outcomes; its caveat figure counts open caveats only.';
 
 // empty or no writer-reported outcome → known to hold nothing (absent 'none'), the share has no denominator
 function isOutcomeJudgeable(rate) {
-  return rate.status === 'low-n' || OUTCOME_JUDGED.has(rate.status);
+  return rate.status === 'low-n' || OUTCOME.JUDGED.has(rate.status);
 }
 
 function describeOutcomeValue(rate) {
@@ -1029,7 +1029,7 @@ function describeOutcomeContext(rate) {
 function describeOutcomeLines(rate) {
   const { LOW_N_MIN, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE } = window.UI;
   if (rate.status === 'low-n') return [`Needs ${LOW_N_MIN} reported outcomes to judge.`];
-  if (!OUTCOME_JUDGED.has(rate.status)) return [];
+  if (!OUTCOME.JUDGED.has(rate.status)) return [];
   const caveats = `Open caveats ${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)})`;
   return [
     `Failed or blocked: alarm at ${formatAlertLine(OUTCOME_BREAKAGE_CRIT_SHARE)}.`,
@@ -1039,10 +1039,10 @@ function describeOutcomeLines(rate) {
 
 // shares, never counts → a busier week at the same failure rate reads level
 function describeOutcomeTrend(rate, prior) {
-  if (!prior || !OUTCOME_JUDGED.has(rate.status)) return null;
+  if (!prior || !OUTCOME.JUDGED.has(rate.status)) return null;
   const priorRange = window.UI.formatDayRange(prior);
   const priorRate = window.UI.resolveOutcomeRate(prior);
-  if (!OUTCOME_JUDGED.has(priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
+  if (!OUTCOME.JUDGED.has(priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
   const points = (rate.breakage / rate.writerTotal - priorRate.breakage / priorRate.writerTotal) * 100;
   const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${window.UI.formatDecimal(Math.abs(points))} pts`;
   return `${change} since ${formatDay(prior.period_end)} vs ${getSharePct(priorRate.breakage, priorRate.writerTotal)} in ${priorRange}`;

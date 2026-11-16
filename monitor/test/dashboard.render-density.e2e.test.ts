@@ -112,7 +112,7 @@ describe("Dashboard density at 1024", () => {
   });
 });
 
-// One card of four stats (spec 44084 §9 R8): the stats share one line, the first screen keeps Spend per day,
+// One card of four stats (spec 44084 §9): the stats share one line, the first screen keeps Spend per day,
 // and every stacked card starts on one left edge.
 interface StatusLayout {
   statTops: number[];

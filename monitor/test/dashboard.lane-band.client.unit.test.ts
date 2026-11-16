@@ -327,7 +327,7 @@ test("the harness stat counts only the parts the shell actually polled", () => {
   assert.ok(stat.context?.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
 });
 
-// the alarm list owns every alarm sentence (spec 44084 §9 R8) → a firing stat keeps its value and tone, never the names or the words
+// the alarm list owns every alarm sentence (spec 44084 §9) → a firing stat keeps its value and tone, never the names or the words
 test("a firing stat never restates its alarm: the harness stat leaves the down parts to the alarm row", () => {
   const rows = [
     { name: "one down", downNames: ["autoagent"], uncheckedNames: [] as string[] },
