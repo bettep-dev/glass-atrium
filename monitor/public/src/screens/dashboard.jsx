@@ -291,11 +291,12 @@ function UnreadAlarmsCard({ unread }) {
 }
 
 const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] });
-// each source of the lane, in tie order → its readiness label, the one alarm row it can raise and that row's builder
+// each source of the lane, in tie order → its readiness label, the one alarm row it can raise and that row's builder;
+// isAnswered → a read payload that still lacks the reading its row is built on is no answer
 const ALARM_SOURCES = [
   { key: 'harness', label: 'harness health', alarmId: 'harness', build: buildHarnessAlarm },
   { key: 'outcomesState', label: 'task results', alarmId: 'outcomes', build: buildOutcomeAlarm },
-  { key: 'agentsState', label: 'fleet', alarmId: 'fleet', build: buildFleetAlarm },
+  { key: 'agentsState', label: 'fleet', alarmId: 'fleet', build: buildFleetAlarm, isAnswered: (source) => getBreakerCounts(source.data) != null },
   { key: 'costState', label: "today's spend", alarmId: 'spend', build: buildSpendAlarm },
   { key: 'updateState', label: 'install state', alarmId: 'install', build: buildInstallAlarm },
 ];
@@ -313,9 +314,13 @@ function getAlarmReadiness(sources, alarms = []) {
   // a held reading whose latest read failed is unread too — its all-clear is stale
   const heldAlarmIds = new Set(alarms.filter((alarm) => alarm.isHeld).map((alarm) => alarm.id));
   const unread = entries
-    .filter(({ source, alarmId }) => (source.status !== 'ready' || source.error != null) && !heldAlarmIds.has(alarmId))
+    .filter(({ source, alarmId, isAnswered }) => !isSourceAnswered(source, isAnswered) && !heldAlarmIds.has(alarmId))
     .map(({ label }) => label);
   return { status: unread.length > 0 ? 'unknown' : 'read', unread };
+}
+
+function isSourceAnswered(source, isAnswered) {
+  return source.status === 'ready' && source.error == null && (!isAnswered || isAnswered(source));
 }
 
 // the card outlives every recovery → a banner or stat Retry that leaves on success hands focus here

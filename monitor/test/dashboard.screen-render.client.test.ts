@@ -411,8 +411,10 @@ test("a lane holding an alarm while another source loads shows only that row, in
 });
 describe("an empty alarm lane stays silent once its sources are read, and says it couldn't check when one went unread", () => {
   const READY = { status: "ready", data: {} };
+  // a fleet read answers only with its breaker summary loaded (the agents route marks it "unavailable" otherwise)
+  const breakerOf = (source: string) => ({ status: "ready", data: { meta: { circuit_breaker: { source, suspended_count: 0, streak_count: 0 } } } });
   // every source that can raise a row, read → a row overrides one source at a time
-  const ALL_READ = { harness: READY, outcomesState: READY, agentsState: READY, costState: READY, updateState: READY };
+  const ALL_READ = { harness: READY, outcomesState: READY, agentsState: breakerOf("loaded"), costState: READY, updateState: READY };
   const rows = [
     { name: "every source read → silent", sources: ALL_READ, status: "read", unread: [] },
     { name: "a source still loading → loading, even beside a failed one", sources: { ...ALL_READ, harness: { status: "loading" }, costState: { status: "error" } }, status: "loading", unread: [] },
@@ -420,6 +422,7 @@ describe("an empty alarm lane stays silent once its sources are read, and says i
     { name: "harness fold unavailable → unknown", sources: { ...ALL_READ, harness: { status: "unavailable" } }, status: "unknown", unread: ["harness health"] },
     { name: "task results read failed → unknown", sources: { ...ALL_READ, outcomesState: { status: "error" } }, status: "unknown", unread: ["task results"] },
     { name: "fleet read failed → unknown", sources: { ...ALL_READ, agentsState: { status: "error" } }, status: "unknown", unread: ["fleet"] },
+    { name: "fleet breaker unavailable → unknown", sources: { ...ALL_READ, agentsState: breakerOf("unavailable") }, status: "unknown", unread: ["fleet"] },
     { name: "spend read failed → unknown", sources: { ...ALL_READ, costState: { status: "error" } }, status: "unknown", unread: ["today's spend"] },
     { name: "install read failed → unknown", sources: { ...ALL_READ, updateState: { status: "error" } }, status: "unknown", unread: ["install state"] },
   ];
