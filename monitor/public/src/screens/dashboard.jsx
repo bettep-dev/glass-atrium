@@ -1196,12 +1196,13 @@ function describeSpendTrend(harness) {
 // amount first (spec 44084 §3.4) — the verdict trips on the larger of so-far and pace → the title names that leg,
 // the detail its multiple of the 7-day average
 function describeSpendAlarm(spend) {
-  const soFar = `${formatUsdCompact(spend.today)} so far today`;
+  const { formatSpendSoFar, formatSpendMultiple } = window.UI;
+  const soFar = formatSpendSoFar(spend.today);
   const isPaceLed = spend.pace >= spend.today;
   const judged = isPaceLed ? spend.pace : spend.today;
   return {
     title: isPaceLed ? `${soFar}, running at ${formatUsdCompact(spend.pace)}/day over the last 3 hours` : soFar,
-    detail: `${(judged / spend.basis).toFixed(1)}× the 7-day average (${formatUsdCompact(spend.basis)}/day)`,
+    detail: formatSpendMultiple(judged / spend.basis, spend.basis),
   };
 }
 

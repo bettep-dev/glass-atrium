@@ -320,11 +320,11 @@ function getSpendAlarmCopyC(hot, latestOutsideBand) {
   if (!isSpendLegHotC(hot)) {
     return { title: OUTSIDE_RANGE_FACT_C[0].toUpperCase() + OUTSIDE_RANGE_FACT_C.slice(1), detail: null };
   }
+  const { formatSpendSoFar, formatSpendMultiple } = window.UI;
   const isPaced = hot.paceCost !== null;
-  const soFar = `${formatUsdC(hot.todayCost)} so far today`;
+  const soFar = formatSpendSoFar(hot.todayCost);
   const title = isPaced ? `${soFar}, on pace for ${formatUsdC(hot.paceCost)} by end of day` : soFar;
-  // a leg at the cut → the multiple is ≥ 1.25, so it always takes the × sign
-  const basis = `${(isPaced ? hot.paceRatio : hot.ratio).toFixed(1)}\u00d7 the 7-day average (${formatUsdC(hot.normalDaily)}/day)`;
+  const basis = formatSpendMultiple(isPaced ? hot.paceRatio : hot.ratio, hot.normalDaily);
   return { title, detail: latestOutsideBand ? `${basis} \u00b7 ${OUTSIDE_RANGE_FACT_C}` : basis };
 }
 

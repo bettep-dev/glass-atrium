@@ -2751,6 +2751,15 @@ function formatUsdCompact(value) {
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
+// the spend alarm's two shared clauses (spec 44084 §3.4) — the pace clause that may follow the amount stays per screen
+function formatSpendSoFar(amount) {
+  return `${formatUsdCompact(amount)} so far today`;
+}
+
+function formatSpendMultiple(ratio, basis) {
+  return `${ratio.toFixed(1)}\u00d7 the 7-day average (${formatUsdCompact(basis)}/day)`;
+}
+
 /**
  * A percentage (value already in percent) — at most one decimal, `.0` dropped; never rounds a non-zero to 0% or a part to 100%.
  * @param fixedDigits - a table column's fixed decimals, so every cell of the column has one precision
@@ -3080,7 +3089,7 @@ window.UI = {
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
-  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration, formatPct, formatDecimal,
+  formatUsd, formatUsdCompact, formatSpendSoFar, formatSpendMultiple, formatInt, formatTokenCompact, formatDuration, formatPct, formatDecimal,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,

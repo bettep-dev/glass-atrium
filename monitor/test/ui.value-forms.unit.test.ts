@@ -10,6 +10,8 @@ interface UiSurface {
   formatKstDay: (iso: string | null) => string;
   formatKstDateTime: (iso: string | null) => string;
   formatUsdCompact: (value: number) => string;
+  formatSpendSoFar: (amount: number) => string;
+  formatSpendMultiple: (ratio: number, basis: number) => string;
   setDisplayTimezone: (tz: string) => void;
 }
 
@@ -84,4 +86,19 @@ describe("day and day + time forms in the display zone", () => {
     assert.equal(UI.formatKstDateTime(iso), "11-15 00:20");
     assert.equal(UI.formatKstDateTime(iso).slice(0, 5), UI.formatKstDay(iso));
   });
+});
+
+// the spend alarm's two shared clauses (spec 44084 §3.4) — the amount in the compact dollar form, the multiple at one decimal
+describe("spend alarm clauses", () => {
+  const rows = [
+    { name: "a figure of $100 or more drops its cents", amount: 1_790, ratio: 1.297, basis: 1_380, soFar: "$1,790 so far today", multiple: "1.3× the 7-day average ($1,380/day)" },
+    { name: "a figure under $100 keeps two decimals", amount: 3, ratio: 1.5, basis: 2, soFar: "$3.00 so far today", multiple: "1.5× the 7-day average ($2.00/day)" },
+    { name: "a whole multiple keeps its one decimal", amount: 30, ratio: 3, basis: 10, soFar: "$30.00 so far today", multiple: "3.0× the 7-day average ($10.00/day)" },
+  ];
+  for (const row of rows) {
+    test(`the alarm states the amount so far and its multiple of the 7-day average: ${row.name}`, () => {
+      assert.equal(UI.formatSpendSoFar(row.amount), row.soFar);
+      assert.equal(UI.formatSpendMultiple(row.ratio, row.basis), row.multiple);
+    });
+  }
 });
