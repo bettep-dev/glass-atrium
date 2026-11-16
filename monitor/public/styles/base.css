@@ -2081,7 +2081,8 @@ a.prose-link:hover {
 	height: 1lh;
 	vertical-align: top;
 }
-.stat-tone-glyph {
+/* a head Status spaces its glyph with its own flex gap → only the stat value line adds this one */
+.stat-value .stat-tone-glyph {
 	margin-inline-end: var(--gap-label-inline);
 }
 .stat-context {

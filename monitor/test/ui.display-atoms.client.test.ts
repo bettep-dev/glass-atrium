@@ -1,4 +1,4 @@
-// Display atoms: the two empty states, the page header's one-line slots, the pagination bar, the stat row, the low-sample mark and whole day tokens.
+// Display atoms: the two empty states, the page header's one-line slots, the pagination bar, the stat row, the card head Status, the low-sample mark and whole day tokens.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -172,6 +172,16 @@ describe("stat row", () => {
       assert.ok(hidden.length === 1 && findNodes(hidden[0], (n) => n === glyph).length === 1, `${row.name}: the glyph is hidden`);
       assert.equal(collectText(tree).trim(), row.word, row.name);
     }
+  });
+
+  test("a card head's Status leads with the firing stat's tone glyph, its severity word read before the words", () => {
+    const [statGlyph] = findNodes(render("StatToneGlyph", { tone: "warn" }), (n) => n.type === "svg");
+    const tree = render("HeadStatus", { tone: "warn", children: "2 awaiting" });
+    const [status] = findNodes(tree, (n) => n.props["data-role"] === "head-status");
+    const [glyph] = findNodes(status, (n) => n.type === "svg");
+    const severityWord = (ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD.warn;
+    assert.equal(glyph.props.width, statGlyph.props.width, "the alarm-size glyph a firing stat draws");
+    assert.equal(collectText(status).replace(/\s+/g, " ").trim(), `${severityWord}: 2 awaiting`);
   });
 
   const valueRows = [

@@ -108,18 +108,17 @@ describe("Part health is one list, healthy parts folded under a count", () => {
     });
 });
 
-// the head Status is the page's in-page alarm → the alarm-row glyph size, the size Learning's head Status draws
-test("the Part health head Status draws its tone glyph at the alarm-row size", async () => {
+// the head Status is the page's in-page alarm → the shared head Status atom, the one Learning's head draws
+test("the Part health head Status is the shared head Status atom in the worst part's tone", async () => {
   const mod = await loadArch();
   const flagged = { id: "crit", name: "crit-part", kind: "unknown-kind", daemonName: null, tone: "crit", statusLabel: "Overdue", nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
   const props = { partRows: [flagged], attentionEmpty: "No part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
   const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
-  const [status] = findNodes(tree, (n) => n.type === "span" && /\barch-part-health-status\b/.test(String(n.props.className)));
-  const glyphs = findNodes(status, (n) => n.props.atom === "Icon");
+  const statuses = findNodes(tree, (n) => n.props.atom === "HeadStatus");
 
-  assert.equal(glyphs.length, 1, "the head Status leads with one glyph");
-  assert.equal(typeof realUi.ALARM_GLYPH_SIZE, "number", "precondition: ui.jsx exports the alarm-row glyph size");
-  assert.equal(glyphs[0].props.size, realUi.ALARM_GLYPH_SIZE);
+  assert.equal(statuses.length, 1, "the head draws one shared Status");
+  assert.equal(statuses[0].props.tone, "crit");
+  assert.equal(findNodes(tree, (n) => n.props.atom === "Icon").length, 0, "no hand-drawn glyph beside it");
 });
 
 // the fold's summary already says healthy — a folded row adds a status word only when its verdict says more than that

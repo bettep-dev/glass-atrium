@@ -394,11 +394,11 @@ test("a ledger with nothing held or recurring stacks its candidates in one colum
 
 describe("the ledger head states once how many held patterns need a human", () => {
   const rows = [
-    { name: "a human cause counts its held rows", suppression: SUPPRESSION, sub: /^1 needs a human$/ },
+    { name: "a human cause counts its held rows", suppression: SUPPRESSION, sub: /^Warning: 1 needs a human$/ },
     {
       name: "several human-cause rows read in the plural",
       suppression: { ...SUPPRESSION, parked: [{ ...SUPPRESSION.parked[0], count: 3 }, SUPPRESSION.parked[1]] },
-      sub: /^3 need a human$/,
+      sub: /^Warning: 3 need a human$/,
     },
     { name: "rows held by design decision alone raise no status", suppression: { ...SUPPRESSION, parked: [SUPPRESSION.parked[1]] }, sub: null },
     { name: "an unread payload raises no status", suppression: null, sub: null },

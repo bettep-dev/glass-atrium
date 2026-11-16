@@ -550,11 +550,6 @@ describe("the awaiting count is the board head's warn status, announced live, ne
     assert.equal(head.props.right, undefined, "the status sits beside the title, never at the head's right end");
     return { tree, headTree: screenTree(head.props.sub) };
   };
-  const printed = (tree: RecordedElement[]) =>
-    tree
-      .flatMap((el) => [el.props.children].flat())
-      .filter((child) => typeof child === "string" || typeof child === "number")
-      .join("");
   const rows = [
     { name: "two awaiting → a warn status naming the count", safety: [PROPOSAL, { ...PROPOSAL, id: 8 }], status: "2 awaiting" },
     { name: "none awaiting → no status at all", safety: [], status: null },
@@ -562,16 +557,13 @@ describe("the awaiting count is the board head's warn status, announced live, ne
   for (const row of rows) {
     test(row.name, () => {
       const { tree, headTree } = renderBoardHead(row.safety);
-      const statuses = headTree.filter((el) => el.props["data-role"] === "head-status");
+      const statuses = headTree.filter((el) => el.type === sandbox.window.UI.HeadStatus);
       assert.equal(tree.filter((el) => el.type === sandbox.window.UI.AlertCard).length, 0, "no alert card on the board");
       assert.ok(headTree.some((el) => el.props["aria-live"] === "polite"), "the head keeps one live region mounted");
       if (row.status === null) return assert.equal(statuses.length, 0);
-      assert.equal(statuses.length, 1);
-      assert.equal(printed(screenTree(statuses[0])), row.status);
-      // the alarm-row glyph size → at 13 the warn glyph measures under 3:1 in the light theme
-      const alarmGlyphSize = sandbox.window.UI.ALARM_GLYPH_SIZE;
-      assert.equal(typeof alarmGlyphSize, "number", "precondition: ui.jsx exports the alarm-row glyph size");
-      assert.ok(screenTree(statuses[0]).some((el) => el.props.s === "⚠" && /\btext-warn\b/.test(String(el.props.className)) && el.props.size === alarmGlyphSize));
+      assert.equal(statuses.length, 1, "the head draws the shared head Status");
+      assert.equal(statuses[0].props.tone, "warn");
+      assert.equal(statuses[0].props.children, row.status);
     });
   }
 });

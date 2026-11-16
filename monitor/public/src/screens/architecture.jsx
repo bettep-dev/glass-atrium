@@ -3028,7 +3028,7 @@ function getPartHealthStatusAR(partRows, freshness) {
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
 function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
-	const { DisclosureChevron, Icon, TONE_ICON, ALARM_GLYPH_SIZE, ALERT_SEVERITY_WORD } = window.UI;
+	const { DisclosureChevron, HeadStatus } = window.UI;
 	if (partRows.length === 0) return null;
 
 	const { listed, healthy } = getPartHealthGroupsAR(partRows, isPending);
@@ -3040,11 +3040,9 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 				<div className="card-head-text">
 					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
 					{status && (
-						<span className="card-sub arch-part-health-status" data-tone={status.tone}>
-							<Icon name={TONE_ICON[status.tone]} size={ALARM_GLYPH_SIZE} className={TONE_GLYPH_CLASS[status.tone]} />
-							<span className="sr-only">{`${ALERT_SEVERITY_WORD[status.tone]}: `}</span>
+						<HeadStatus tone={status.tone} className="card-sub arch-part-health-status">
 							{status.text}
-						</span>
+						</HeadStatus>
 					)}
 				</div>
 			</div>

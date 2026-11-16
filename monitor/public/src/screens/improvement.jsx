@@ -997,11 +997,7 @@ function HeadStatusI({ count, words }) {
 	return (
 		<span role="status" aria-live="polite" className="inline-flex">
 			{count > 0 ? (
-				<span data-role="head-status" className="inline-flex items-center gap-label-inline fs-meta text-dim">
-					{/* the page's in-page alarm → the alarm-row glyph size; at 13 the warn glyph reads under 3:1 in light */}
-					<SymI s="⚠" className="text-warn" size={window.UI.ALARM_GLYPH_SIZE} />
-					<span>{`${formatIntI(count)} ${words}`}</span>
-				</span>
+				<window.UI.HeadStatus tone="warn">{`${formatIntI(count)} ${words}`}</window.UI.HeadStatus>
 			) : null}
 		</span>
 	);

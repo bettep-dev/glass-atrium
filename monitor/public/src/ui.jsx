@@ -660,6 +660,16 @@ function StatToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
   </>;
 }
 
+/**
+ * A card head's own Status in the head's sub slot: the firing stat's tone mark, then the words.
+ * @param className - the head's spacing between glyph and words; defaults to the label gap
+ */
+function HeadStatus({ tone, className = 'gap-label-inline', children }) {
+  return <span data-role="head-status" data-tone={tone} className={`inline-flex items-center fs-meta text-dim ${className}`}>
+    <StatToneGlyph tone={tone}/>{children}
+  </span>;
+}
+
 // the figure's 600 is not the placeholder's → regular weight; the empty context line keeps the settled height (design.md §3.3)
 function LoadingStat({ label }) {
   return <div className="stat">
@@ -2952,7 +2962,7 @@ window.UI = {
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
-  getDisplayName, hasFieldValue, DetailField, StatToneGlyph, AbsentValue, EMPTY_VALUE_TEXT,
+  getDisplayName, hasFieldValue, DetailField, StatToneGlyph, HeadStatus, AbsentValue, EMPTY_VALUE_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
@@ -2967,7 +2977,7 @@ window.UI = {
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
-  TONE_GLYPH, TONE_ICON, ALARM_GLYPH_SIZE, ALERT_SEVERITY_WORD, putCardFocus, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
+  TONE_GLYPH, TONE_ICON, ALERT_SEVERITY_WORD, putCardFocus, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
   outcomeShareTone, resolveOutcomeRate, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
   OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,
