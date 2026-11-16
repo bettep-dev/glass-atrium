@@ -1,6 +1,6 @@
 // E2E chromium STRUCTURE harness for the cost screen (screens/cost.jsx): DOM-structure facts
-// only — tier order, the alarm lane's presence, one decision-tier chart root — over two render
-// contexts (calm · hot), since one context can only measure one side of the lane. Values behind
+// only — tier order, the alarm rows' presence, one decision-tier chart root — over two render
+// contexts (calm · hot), since one context can only measure one side of the alarm rows. Values behind
 // those structures are pinned in cost.client.unit.test.ts.
 //
 // Runner: npx tsx --test test/cost.render-structure.e2e.test.ts
@@ -51,7 +51,7 @@ interface CostFixture {
   isLedgerUnpriced?: boolean;
 }
 
-// today = ratio x the 7-day daily normal; the burn rate extrapolates to the same ratio.
+// today = ratio x the 7-day average; the burn rate extrapolates to the same ratio.
 function getFixture(ratio: number, parseErrorRatio: number): CostFixture {
   const week7Cost = 70;
   const normalDaily = week7Cost / 7;
@@ -204,7 +204,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
   }
 
   // Render complete = the wave resolved: the stat row has left its loading state, so the
-  // lane has had its inputs and an absent lane is a verdict rather than a pending state.
+  // alarm rows have had their inputs and absent rows are a verdict rather than a pending state.
   await page.waitForSelector(SPEND_STAT_SELECTOR, { timeout: 30_000 });
   await page.waitForFunction(
     ({ expected, selector }: { expected: number; selector: string }) =>
@@ -297,17 +297,17 @@ describe("calm fixture — nothing is running hot", () => {
     );
   });
 
-  test("the alarm lane occupies no DOM when no trigger fires", async () => {
+  test("no alarm row renders and no band is reserved when no trigger fires", async () => {
     assert.equal(await countAlarmRows(ctx.page), 0);
-    const laneHeight = await ctx.page.evaluate(() => {
+    const gap = await ctx.page.evaluate(() => {
       const header = document.querySelector(".cost-screen .flex-shrink-0");
       const firstCard = document.querySelector(".cost-screen .card");
       if (header === null || firstCard === null) return -1;
       return firstCard.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
     });
     assert.ok(
-      laneHeight >= 0 && laneHeight < 24,
-      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and first card`,
+      gap >= 0 && gap < 24,
+      `a calm screen must reserve no alarm band; measured ${gap}px between header and first card`,
     );
   });
 
@@ -430,7 +430,7 @@ describe("calm fixture — nothing is running hot", () => {
       labels: Array.from(document.querySelectorAll(`${row} .stat-label`))
         .map((el) => (el.textContent || "").trim()),
     }), SPEND_STAT_ROW);
-    assert.equal(shape.verdicts, 0, "spend state rides the stat and the alarm lane, not a verdict line");
+    assert.equal(shape.verdicts, 0, "spend state rides the stat and the alarm rows, not a verdict line");
     assert.equal(shape.windowTags, 0, "the window is part of the label, never a separate tag");
     assert.equal(shape.labels.length, SPEND_STAT_COUNT);
     assert.equal(
@@ -610,11 +610,11 @@ describe("calm fixture — nothing is running hot", () => {
   });
 });
 
-describe("hot fixture — today is running over the normal", () => {
+describe("hot fixture — today is over the 7-day average", () => {
   let ctx: RenderContext;
 
   before(async () => {
-    // 3x the daily normal clears the 1.25x cut; the parse-error ratio clears its own.
+    // 3x the 7-day average clears the 1.25x cut; the parse-error ratio clears its own.
     ctx = await openRenderContext(getFixture(3, 0.5));
   });
 
@@ -622,25 +622,36 @@ describe("hot fixture — today is running over the normal", () => {
     await closeRenderContext(ctx);
   });
 
-  test("the lane leads the screen with one row per fired trigger", async () => {
+  test("the alarm rows lead the Spend card under its head, one row per fired trigger", async () => {
     await ctx.page.waitForSelector('.cost-screen [role="alert"]', { timeout: 30_000 });
     assert.equal(
       await countAlarmRows(ctx.page),
       2,
-      "the hot row and the conditional parse-error row, and nothing else",
+      "the spend row and the conditional parse-error row, and nothing else",
     );
 
-    const lanePrecedesStats = await ctx.page.evaluate((row) => {
-      const lastAlert = Array.from(
-        document.querySelectorAll('.cost-screen [role="alert"]'),
-      ).pop();
+    const placement = await ctx.page.evaluate((row) => {
+      const alerts = Array.from(document.querySelectorAll('.cost-screen [role="alert"]'));
       const statRow = document.querySelector(row);
-      if (lastAlert === undefined || statRow === null) return false;
-      return Boolean(
-        lastAlert.compareDocumentPosition(statRow) & Node.DOCUMENT_POSITION_FOLLOWING,
-      );
+      const card = statRow?.closest(".card");
+      const head = card?.querySelector(".card-head");
+      if (!card || !head || !statRow) return null;
+      return {
+        isInSpendCard: alerts.every((el) => el.closest(".card") === card),
+        isUnderHead: alerts.every((el) => Boolean(head.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)),
+        isAboveStats: alerts.every((el) => Boolean(el.compareDocumentPosition(statRow) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      };
     }, SPEND_STAT_ROW);
-    assert.equal(lanePrecedesStats, true, "the lane leads — the spend stats follow it");
+    assert.deepStrictEqual(placement, { isInSpendCard: true, isUnderHead: true, isAboveStats: true });
+  });
+
+  // spec 44084 §3.2: a row with a detail line is 70 (8 + 6 + 20 + 4 + 18.2 + 6 + 8), the Dashboard row's geometry
+  test("each alarm row with a detail line stands at the shared alarm-row height", async () => {
+    const heights = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll('.cost-screen [role="alert"]')).map((el) => el.getBoundingClientRect().height),
+    );
+    assert.equal(heights.length, 2);
+    for (const height of heights) assert.ok(Math.abs(height - 70.2) <= 1, `row height ${height}`);
   });
 
   test("the log-integrity threshold is a faint reference line and only the day over it takes the crit tone", async () => {
@@ -661,7 +672,7 @@ describe("hot fixture — today is running over the normal", () => {
     assert.equal(getToneKey(tones.bar), getToneKey(tones.crit), "the day over the threshold is the one mark that takes a tone");
   });
 
-  test("a fired lane changes nothing about the tier order or the chart count", async () => {
+  test("firing alarm rows change nothing about the tier order or the chart count", async () => {
     assert.deepStrictEqual(await getCardTitles(ctx.page), [
       ...DECISION_CARD_TITLES,
       ...DISCLOSURE_TITLES,
