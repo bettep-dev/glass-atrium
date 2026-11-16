@@ -81,7 +81,6 @@ const KANBAN_COLUMNS = [
 
 // AWAITING(safety) 은 그리드 밖 ROW-1 배너/스트립으로 이관 (T2) → 종결 그리드는
 // applied·rejected 2트랙만 순회 (T3). safety 엔트리 label/symbol 은 ROW-1 이 소비.
-const SAFETY_COLUMN = KANBAN_COLUMNS.find((col) => col.key === "safety");
 const TERMINAL_COLUMNS = KANBAN_COLUMNS.filter((col) => col.key !== "safety");
 
 // 카드 액션 가능 status (mutation 엔드포인트 actionable set 미러 — routes/improvement.ts
@@ -398,16 +397,10 @@ function ScreenImprovement({ onNav }) {
         .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
-        /* awaiting zone — 0 rows = slim neutral idle strip · 1+ rows = the warn AlertCard over the scrolling list */
-        .i-await-strip { display:flex; align-items:center; gap:6px; min-height:30px; padding:0 12px;
-          background:rgb(var(--sunken)); border:1px solid rgb(var(--line)); border-radius:8px;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); }
         .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
-           헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). 26px = fs-stat 18px count 를 담는 높이. */
+           헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
-        /* applied hero — ink count below the status band's figure size · ✓ + label grouped so the glyph centres on the label */
-        .i-applied-hero { gap:6px; }
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
         .i-compact-row { display:flex; align-items:center; gap:6px; padding:var(--space-1_5) var(--space-2); }
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
@@ -928,7 +921,7 @@ function CycleDecompositionRowI({ stats }) {
 
 function KanbanCardI({
 	state,
-	columnRows,
+	columnRows = {},
 	loopAggregate,
 	onRowClick,
 	onAction,
@@ -940,9 +933,10 @@ function KanbanCardI({
 	const isLoading = state.status === "loading";
 	const isError = getRegionView(state) === "error";
 	const rejectBuckets = state.data?.reject_bucket_summary || null;
+	const awaitingRows = columnRows.safety || [];
+	const isBoardEmpty = KANBAN_COLUMNS.every((col) => !(columnRows[col.key] || []).length);
 
-	// 카드 max-h:70vh — 본문 페이지 무한 늘어남 차단 · 컬럼 내부만 자체 스크롤.
-	// 레이아웃: ROW-1 = AWAITING 존(그리드 밖 배너/스트립, T2) · ROW-2 = 종결 그리드(2fr/1fr, T3).
+	// card max-h 70vh → only the lanes scroll · awaiting list above the applied 2fr / rejected 1fr grid
 	return (
 		<section
 			className="card flex flex-col"
@@ -955,6 +949,7 @@ function KanbanCardI({
 					title="Suggestion board"
 					sub={`Lanes: latest ${BOARD_RECENT_LIMIT} suggestions`}
 					info={`Applied and rejected lanes read the latest ${BOARD_RECENT_LIMIT} suggestions. Awaiting shows every open one.`}
+					right={<AwaitingStatusI count={isLoading || isError ? 0 : awaitingRows.length} />}
 				/>
 			</div>
 			{isError ? (
@@ -973,16 +968,18 @@ function KanbanCardI({
 				<div className="flex flex-col p-3 flex-1 min-h-0">
 					<LoadingPlaceholder label="suggestions" className="flex-1" />
 				</div>
+			) : isBoardEmpty ? (
+				<window.UI.EmptyState message="No suggestions yet" />
 			) : (
 				<div className="flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-hidden">
-					{/* ROW-1 — AWAITING 존 (승인 대기, 유일한 행동 유발 레인 → 최상단 배치). */}
-					<AwaitingZoneI
-						rows={columnRows.safety || []}
-						onRowClick={onRowClick}
-						onAction={onAction}
-						pendingActionId={pendingActionId}
-					/>
-					{/* ROW-2 — 종결 그리드 (applied 2fr : rejected 1fr, safety 제외). */}
+					{awaitingRows.length > 0 ? (
+						<AwaitingListI
+							rows={awaitingRows}
+							onRowClick={onRowClick}
+							onAction={onAction}
+							pendingActionId={pendingActionId}
+						/>
+					) : null}
 					<div className="board-terminal-grid flex-1 min-h-0 overflow-hidden">
 						{TERMINAL_COLUMNS.map((col) => (
 							<KanbanColumnI
@@ -1001,59 +998,33 @@ function KanbanCardI({
 	);
 }
 
-// ROW-1 AWAITING 존 (T2/T8) — aria-live 래퍼는 count 무관 항상 DOM 상주(영속),
-// 스트립 ↔ 배너 콘텐츠만 그 안에서 교체 → 마운트/언마운트 aria-live 레이스 회피.
-function AwaitingZoneI({ rows, onRowClick, onAction, pendingActionId }) {
-	const hasItems = rows.length > 0;
+// Board head Status — the live region stays mounted so a count arriving later is announced (spec 44084 §3.1)
+function AwaitingStatusI({ count }) {
 	return (
-		<div role="status" aria-live="polite" className="flex-shrink-0">
-			{hasItems ? (
-				<AwaitingBannerI
-					rows={rows}
-					onRowClick={onRowClick}
+		<span role="status" aria-live="polite" className="inline-flex">
+			{count > 0 ? (
+				<span data-role="head-status" className="inline-flex items-center gap-label-inline fs-meta text-dim">
+					<SymI s="⚠" className="text-warn" size={13} />
+					<span>{`${formatIntI(count)} awaiting`}</span>
+				</span>
+			) : null}
+		</span>
+	);
+}
+
+// Awaiting suggestions — the only lane asking for an action, so it leads the board · list scrolls past 40vh
+function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
+	return (
+		<div className="i-await-body flex-shrink-0">
+			{rows.map((row) => (
+				<ProposalCardI
+					key={row.id}
+					row={row}
+					onClick={() => onRowClick(row)}
 					onAction={onAction}
 					pendingActionId={pendingActionId}
 				/>
-			) : (
-				<AwaitingStripI />
-			)}
-		</div>
-	);
-}
-
-// 1+ rows — the warn AlertCard heads the list (the zone around it is the live region) · list scrolls past 40vh
-function AwaitingBannerI({ rows, onRowClick, onAction, pendingActionId }) {
-	const { AlertCard } = window.UI;
-	return (
-		<div className="flex flex-col gap-2">
-			<AlertCard
-				tone="warn"
-				hasLiveHost
-				title={`${SAFETY_COLUMN.label} · ${formatIntI(rows.length)}`}
-				body="Your call"
-			/>
-			<div className="i-await-body">
-				{rows.map((row) => (
-					<ProposalCardI
-						key={row.id}
-						row={row}
-						onClick={() => onRowClick(row)}
-						onAction={onAction}
-						pendingActionId={pendingActionId}
-					/>
-				))}
-			</div>
-		</div>
-	);
-}
-
-// 0건 — 슬림 idle 스트립 (~30px, amber 없음 · --sunken/--line 중립 · ℹ dual-encode).
-// 레이아웃에서 제거하지 않아 발견가능성 유지(collapse-not-hide, G3).
-function AwaitingStripI() {
-	return (
-		<div className="i-await-strip">
-			<SymI s="ℹ" size={12} />
-			<span>No suggestions awaiting approval</span>
+			))}
 		</div>
 	);
 }
@@ -1209,22 +1180,13 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 	);
 }
 
-// applied lane header — ink count + ok ✓ glyph + dim label; the tone rides on the glyph alone
+// applied lane header — the rejected head's one-line shape: ok ✓ glyph, dim label, ink count
 function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
-		<div className="i-applied-hero i-col-header">
-			<span
-				className="fs-stat tnum text-ink"
-				style={{ lineHeight: 1 }}
-			>
-				{formatIntI(count)}
-			</span>
-			<span className="inline-flex items-center gap-1.5">
-				<SymI s={symbol} className="text-ok" size={14} />
-				<span className="fs-meta uppercase tracking-wider text-dim">
-					{label}
-				</span>
-			</span>
+		<div className="i-col-header gap-1.5 fs-meta whitespace-nowrap min-w-0">
+			<SymI s={symbol} className="text-ok" size={13} />
+			<span className="text-dim">{label}</span>
+			<span className="text-ink tnum">{formatIntI(count)}</span>
 		</div>
 	);
 }
@@ -1232,26 +1194,27 @@ function AppliedHeroHeaderI({ count, label, symbol }) {
 // rejected lane header — crit on the ✕ glyph and the reject spark only · label dim, count ink
 // count + cause split share the server day window; the fetched rows count only when no window came back
 function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
-	const hasSpark = Array.isArray(trend) && trend.length >= 2;
 	const windowDays = Number(summary?.window_days);
 	const windowTotal = Number(summary?.total);
 	const hasWindow = Number.isFinite(windowDays) && Number.isFinite(windowTotal);
 	const count = hasWindow ? windowTotal : rowCount;
+	// nothing rejected in the window → a flat line plots nothing the zero count does not already state
+	const hasSpark = count > 0 && Array.isArray(trend) && trend.some((d) => Number(d.reject) > 0) && trend.length >= 2;
 	const basis = hasWindow
 		? `last ${formatIntI(windowDays)} days`
 		: `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
 	return (
-		<div className="i-col-header gap-1.5 fs-meta uppercase tracking-wider whitespace-nowrap min-w-0">
+		<div className="i-col-header gap-1.5 fs-meta whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
 			<span className="text-ink tnum">{formatIntI(count)}</span>
-			<span className="text-faint normal-case tracking-normal truncate min-w-0" title={basis}>
+			<span className="text-faint truncate min-w-0" title={basis}>
 				{basis}
 			</span>
 			{hasSpark ? (
 				<span className="ml-auto flex items-center gap-1">
 					<RejectSparkI trend={trend} />
-					<span className="text-faint normal-case tracking-normal">rejections per day</span>
+					<span className="text-faint">rejections per day</span>
 				</span>
 			) : null}
 		</div>
@@ -1262,7 +1225,8 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 // 클라 재집계/재필터 금지 — 행 모집단이 서버 윈도우와 달라 수치가 어긋난다.
 // summary 부재(구 payload) → null = 오늘과 동일 렌더 · chrome 중립(--crit 은 헤더 전용, T7 색상 예약).
 function RejectBucketSplitI({ summary }) {
-	if (!summary) return null;
+	// no summary (older payload) or nothing rejected in the window → no split to show
+	if (!summary || !(Number(summary.total) > 0)) return null;
 
 	// quality 만 실질 반려 — infra/lifecycle 은 품질 판정에 도달조차 못한 건.
 	const cells = [

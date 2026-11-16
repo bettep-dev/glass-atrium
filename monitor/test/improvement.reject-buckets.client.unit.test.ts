@@ -13,7 +13,7 @@
 //
 // Runner: npx tsx --test test/improvement.reject-buckets.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -251,3 +251,27 @@ for (const row of rejectedColumnRows) {
     assert.equal(/declined/i.test(name), row.isVerdict, name);
   });
 }
+
+// A lane with no rejection in its window has nothing to break down or plot: a split of
+// zeros and a flat line spend the head's width on a fact the count already states.
+describe("a rejected lane with nothing in its window draws no cause split and no sparkline", () => {
+  const EMPTY_WINDOW: RejectBucketSummary = {
+    window_days: 30,
+    infra_count: 0,
+    quality_count: 0,
+    lifecycle_count: 0,
+    total: 0,
+  };
+  const FLAT_TREND = [
+    { date: "2026-11-14", verified: 0, reject: 0 },
+    { date: "2026-11-15", verified: 1, reject: 0 },
+  ];
+  test("the cause split renders nothing", () => {
+    assert.equal(sandbox.RejectBucketSplitI({ summary: EMPTY_WINDOW }), null);
+  });
+  test("the header keeps its zero count and drops the sparkline and its caption", () => {
+    const texts = collectStrings(renderHeader({ summary: EMPTY_WINDOW, trend: FLAT_TREND }), []);
+    assert.ok(texts.includes("0"), texts.join(" | "));
+    assert.doesNotMatch(texts.join(" "), /rejections per day/);
+  });
+});

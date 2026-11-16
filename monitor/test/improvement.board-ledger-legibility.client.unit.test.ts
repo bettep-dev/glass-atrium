@@ -212,6 +212,41 @@ test("the board header states the window its applied and rejected counts cover",
   assert.match(String(head.props.sub), /latest 50 suggestions/);
 });
 
+describe("the board draws its lanes only when some lane holds a suggestion", () => {
+  const APPLIED_ROW = { id: 9, status: "applied", target_agent: AGENT, pattern_label: SIGNATURE };
+  const rows = [
+    { name: "every lane empty → the head and one line", columnRows: { safety: [], applied: [], rejected: [] }, lanes: 0, lines: 1 },
+    { name: "an applied suggestion → both terminal lanes, no empty line", columnRows: { applied: [APPLIED_ROW] }, lanes: 2, lines: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = sandbox.KanbanCardI({
+        state: { status: "ready", data: {} },
+        columnRows: row.columnRows,
+        onRowClick: () => {},
+        onRetry: () => {},
+      });
+      const lines = findAll(tree, (el) => el.type === sandbox.window.UI.EmptyState);
+      assert.equal(findAll(tree, (el) => el.type === sandbox.KanbanColumnI).length, row.lanes);
+      assert.equal(lines.length, row.lines);
+      for (const line of lines) assert.equal(line.props.hint, undefined, "the empty board states one line, no hint");
+    });
+  }
+});
+
+test("the applied and rejected lane heads share one line shape: glyph, label and count at the meta size", () => {
+  const heads = [
+    sandbox.AppliedHeroHeaderI({ count: 9, label: "Applied", symbol: "✓" }),
+    sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] }),
+  ];
+  for (const head of heads) {
+    assert.ok(head, "lane head missing");
+    assert.match(classOf(head), /\bi-col-header\b/);
+    assert.match(classOf(head), /\bfs-meta\b/, classOf(head));
+    assert.deepEqual(findAll(head, (el) => /\bfs-stat\b/.test(classOf(el))), [], "no figure outgrows the shared line");
+  }
+});
+
 test("recurrence figure columns keep a gap so adjacent headers never run together", () => {
   const tree = sandbox.RecurrenceRowsI({ buckets: [], windowCycles: 7 });
   const headers = findAll(tree, (el) => el.type === "th");

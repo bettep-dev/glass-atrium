@@ -478,8 +478,12 @@ describe("board and action surfaces leave their tone on the glyph", () => {
       render: () => component("ProposalActionsI")({ row: PROPOSAL, isSafety: true, onAction: () => {}, isPending: false }),
     },
     {
-      name: "the awaiting-approval banner",
-      render: () => component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
+      name: "the awaiting-approval list",
+      render: () => component("AwaitingListI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
+    },
+    {
+      name: "the board head's awaiting status",
+      render: () => component("AwaitingStatusI")({ count: 2 }),
     },
     {
       name: "the operations-view instrumentation strip",
@@ -515,15 +519,47 @@ describe("board and action surfaces leave their tone on the glyph", () => {
   }
 });
 
-test("the awaiting banner announces through its live zone as the shared warn alert card", () => {
-  const tree = screenTree(
-    component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
-    [sandbox.ProposalCardI],
-  );
-  const cards = tree.filter((el) => el.type === sandbox.window.UI.AlertCard);
-  assert.equal(cards.length, 1, "one alert card heads the awaiting list");
-  assert.equal(cards[0].props.tone, "warn");
-  assert.equal(cards[0].props.hasLiveHost, true, "the zone around it is already the live region");
+// spec 44084 §3.1 — the board's rows carry the detail → the head carries the count, once, as Status
+describe("the awaiting count is the board head's warn status, announced live, never an alert card", () => {
+  const renderBoardHead = (safety: unknown[]) => {
+    const tree = screenTree(
+      component("KanbanCardI")({
+        state: { status: "ready", data: {} },
+        columnRows: { safety, applied: [{ ...PROPOSAL, id: 9, status: "applied" }] },
+        loopAggregate: null,
+        onRowClick: () => {},
+        onAction: () => {},
+        pendingActionId: null,
+        onRetry: () => {},
+        failures: [],
+      }),
+      [sandbox.ProposalCardI, sandbox.KanbanColumnI],
+    );
+    const head = tree.find((el) => el.type === sandbox.window.UI.CardHead);
+    assert.ok(head, "the board keeps its card head");
+    return { tree, headTree: screenTree(head.props.right) };
+  };
+  const printed = (tree: RecordedElement[]) =>
+    tree
+      .flatMap((el) => [el.props.children].flat())
+      .filter((child) => typeof child === "string" || typeof child === "number")
+      .join("");
+  const rows = [
+    { name: "two awaiting → a warn status naming the count", safety: [PROPOSAL, { ...PROPOSAL, id: 8 }], status: "2 awaiting" },
+    { name: "none awaiting → no status at all", safety: [], status: null },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const { tree, headTree } = renderBoardHead(row.safety);
+      const statuses = headTree.filter((el) => el.props["data-role"] === "head-status");
+      assert.equal(tree.filter((el) => el.type === sandbox.window.UI.AlertCard).length, 0, "no alert card on the board");
+      assert.ok(headTree.some((el) => el.props["aria-live"] === "polite"), "the head keeps one live region mounted");
+      if (row.status === null) return assert.equal(statuses.length, 0);
+      assert.equal(statuses.length, 1);
+      assert.equal(printed(screenTree(statuses[0])), row.status);
+      assert.ok(screenTree(statuses[0]).some((el) => el.props.s === "⚠" && /\btext-warn\b/.test(String(el.props.className))));
+    });
+  }
 });
 
 test("approve and reject are shared buttons: approve keeps a neutral label, reject is the destructive outline", () => {
