@@ -33,6 +33,8 @@ export interface RouteClassSignoff {
 const RESIGN_CID = "2026-11-15T0140_lan-signin-routes_c18e";
 // the devices row's reason re-signed in place (devices-row-resign-verdict.md): path, class and order kept → same digest
 const DEVICES_RESIGN_CID = "2026-11-16T2200_lan-close_2f8b";
+// row 109 appended (deploy65-route-rows-verdict.md) → the 108-row digest still verifies as its prefix
+const PENDING_COUNT_CID = "2026-11-16T2025_deploy65-prep_a9e3";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -96,6 +98,25 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 108,
     sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8",
+    supersededBy: PENDING_COUNT_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S6",
+    // every row of the entry before it carried unchanged; POST /api/queue/pending/count appended, the POST /api/queue/pending reason re-signed
+    cids: [
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 109,
+    sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a",
   },
 ];
 
@@ -178,7 +199,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/queue/sessions/deregister", cls: "agent", reason: "no page call site; called by scripts/lib/queue-session.sh only; no credential, acts on whatever session id the body names; work function not opened" },
   { route: "POST /api/queue/items", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; a remote caller could post items to the owner as any session; work function not opened" },
   { route: "GET /api/queue/items/:id", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh and hooks/queue-turn-end-check.sh; returns the owner's answer to whoever names the session id; work function not opened" },
-  { route: "POST /api/queue/pending", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; a remote caller could claim another session's answered items; work function not opened" },
+  { route: "POST /api/queue/pending", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; work function read: claims up to 20 of the named session's answered items per call, a wait poll refused unless the session is live for its pid; a remote caller could claim another session's answered items" },
   { route: "POST /api/queue/items/:id/ack", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
   { route: "POST /api/queue/items/:id/withdraw", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
   { route: "GET /api/queue/owner/items", cls: "page", reason: "page calls it; route read: owner item list plus the installed CLI path" },
@@ -208,6 +229,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /sign-in.html", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; meta CSP as written, links only /sign-in.css and /sign-in.js" },
   { route: "GET /sign-in.js", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; the sign-in form's script, names no feature" },
   { route: "GET /sign-in.css", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; self-contained, the shared stylesheets stay behind registration" },
+  { route: "POST /api/queue/pending/count", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh (listen step, run by hooks/queue-listener.sh) only; handler read: strict session id and pid body, refused unless the named session is live for that pid, returns the count and first 200 ids of that session's answered items, claims nothing, marks the session waiting in memory for 10 s; no credential beyond a named session id and pid" },
 ];
 
 /** `METHOD /path` keys the remote gate answers without a registered device → only rows the reviewer classed remote-pre-auth. */

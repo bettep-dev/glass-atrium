@@ -59,8 +59,13 @@ const RESIGN_CIDS = [
 const CARRIED_CIDS = ["2026-11-14T1640_lan-route-classes_a93f", "2026-11-14T2145_lan-cli-channel_5f0c"];
 // the devices row re-signed in place: its reason only, so the whole-table digest stays the re-sign's
 const DEVICES_RESIGN_CID = "2026-11-16T2200_lan-close_2f8b";
+// the pending-count row appended as row 109, every earlier row carried
+const PENDING_COUNT_CID = "2026-11-16T2025_deploy65-prep_a9e3";
+const SIGNED_PENDING_COUNT_LINE = "POST /api/queue/pending/count agent";
+// the 108-row table the append extends → its digest still verifies over the live table's leading rows
+const SUPERSEDED_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
 // the signed table, held here → any class change in route-classes.ts also needs a test edit naming its verdict
-const SIGNED_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
+const SIGNED_TABLE = { rowCount: 109, sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a" };
 
 // class changes the re-sign carries, each a verdict's exact line → a class edited back without a new sign-off fails
 const RESIGNED_CLASS_CHANGES = [
@@ -136,12 +141,16 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
+  test("the latest sign-off names the reviewer, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
     assert.deepEqual(
       { reviewer: latest?.reviewer, cids: latest?.cids },
-      { reviewer: "glass-atrium-sec-guard", cids: [DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS] },
+      { reviewer: "glass-atrium-sec-guard", cids: [PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS] },
     );
+  });
+
+  test("the superseded table still verifies over the live table's leading rows, so the new row was appended, not inserted", () => {
+    assert.equal(getRouteClassDigest(REVIEWED_ROUTES.slice(0, SUPERSEDED_TABLE.rowCount)), SUPERSEDED_TABLE.sha256);
   });
 
   test("every earlier sign-off is kept as history, marked superseded by the sign-off after it re-signed its rows, with its row count and digest", () => {
@@ -151,14 +160,15 @@ describe("reviewer sign-offs", () => {
         [["2026-11-14T1420_lan-build_c5b9"], 94, "b76036b059ce1c7e0e5f860d94c8afcc678e1b98b8212d21854a7a72d24179fc", RESIGN_CIDS[0]],
         [["2026-11-14T1640_lan-route-classes_a93f"], 102, "3d234a90e3476fabcf110784cedbfbc535753e1bde142da98578bc95dbcfc61a", RESIGN_CIDS[0]],
         [["2026-11-14T2145_lan-cli-channel_5f0c"], 105, "7801ce43f3335b0f6fe0aad59b39425b951fe49ad60116cb601f5dc66ccc9e32", RESIGN_CIDS[0]],
-        [[...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, DEVICES_RESIGN_CID],
+        [[...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, DEVICES_RESIGN_CID],
+        [[DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, PENDING_COUNT_CID],
       ],
     );
   });
 
   test("every row past the first 94 is the reviewer's signed line at its place", () => {
     const added = REVIEWED_ROUTES.slice(FIRST_SIGNED_ROW_COUNT).map((entry) => `${entry.route} ${entry.cls}`);
-    assert.deepEqual(added, SIGNED_REMOTE_LINES);
+    assert.deepEqual(added, [...SIGNED_REMOTE_LINES, SIGNED_PENDING_COUNT_LINE]);
   });
 
   test("the re-sign's class changes are in the table as signed", () => {
