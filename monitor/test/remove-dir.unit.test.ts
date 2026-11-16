@@ -72,6 +72,12 @@ describe("deleteTempDirectory", () => {
     });
   }
 
+  test("refuses an empty prefix, which every folder under the temp directory would match", () => {
+    const remover = createRecordingRemover();
+    assert.throws(() => deleteTempDirectory(path.join(tmpdir(), "queue-fixture-abc"), "", remover.remove), /refused/);
+    assert.deepEqual(remover.calls, [], "a refused path never reaches the remover");
+  });
+
   test("removes a prefixed folder made directly under the temp directory, with its contents", () => {
     const fixture = mkdtempSync(path.join(tmpdir(), prefix));
     writeFileSync(path.join(fixture, "shot.png"), "fixture");
