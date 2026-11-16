@@ -23,6 +23,7 @@ import { readFileSync } from "node:fs";
 import esbuild from "esbuild";
 
 import { CANONICAL_MAP } from "../src/server/architecture/diagrams-source.js";
+import { contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ARCH_SRC = resolve(__dirname, "../public/src/screens/architecture.jsx");
@@ -1276,7 +1277,7 @@ interface LegendItem {
   key: string;
   kind: string;
   mark?: string;
-  color?: string;
+  token?: string;
   label: string;
 }
 
@@ -1297,23 +1298,66 @@ test("the legend names every mark the canvas can draw", () => {
   );
 });
 
-test("every coloured node border the drawn map assigns has a legend swatch in that colour", () => {
+// one theme block of tokens.css → name → "r g b" triplet
+function readTokenBlock(selector: string): Map<string, string> {
+  const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
+  const start = css.indexOf(`${selector} {`);
+  assert.ok(start !== -1, `tokens.css must contain a ${selector} block`);
+  const body = css.slice(start, css.indexOf("}", start));
+  return new Map([...body.matchAll(/(--[\w-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)].map((m) => [m[1], `${m[2]} ${m[3]} ${m[4]}`]));
+}
+
+function getTripletRgba(triplet: string | undefined): Rgba {
+  assert.ok(triplet, "token triplet must be declared");
+  return parseColor(`rgb(${triplet.split(" ").join(", ")})`);
+}
+
+const THEME_TOKENS = [
+  { name: "light", tokens: readTokenBlock(":root") },
+  { name: "dark", tokens: readTokenBlock('[data-theme="dark"]') },
+];
+
+test("every coloured node border the drawn map assigns has a legend swatch whose token is that border's colour", () => {
   const source = CANONICAL_MAP.mermaid_drawn;
   const assigned = new Set([...source.matchAll(/^\s*class\s+\S+\s+(\w+)\s*$/gm)].map((m) => m[1]));
   const strokeByClass = new Map(
-    [...source.matchAll(/^\s*classDef\s+(\w+)\s+.*?stroke:(#[0-9a-fA-F]+)/gm)].map((m) => [m[1], m[2].toLowerCase()]),
+    [...source.matchAll(/^\s*classDef\s+(\w+)\s+.*?stroke:#([0-9a-fA-F]{6})/gm)].map((m) => [m[1], m[2].toLowerCase()]),
   );
   // the 'external' class draws the neutral line colour — it marks no role, so it takes no swatch
   const coloured = [...assigned].filter((name) => name !== "external");
   const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
+  const dark = THEME_TOKENS[1].tokens;
 
   assert.ok(coloured.length > 0, "fixture precondition: the drawn map assigns a coloured border");
-  for (const name of coloured)
-    assert.ok(
-      swatches.some((item) => item.color?.toLowerCase() === strokeByClass.get(name)),
-      `class '${name}' strokes ${strokeByClass.get(name)} with no matching swatch — read: ${JSON.stringify(swatches)}`,
-    );
+  for (const name of coloured) {
+    const swatch = swatches.find((item) => item.key === name);
+    assert.ok(swatch?.token, `class '${name}' has no legend swatch token — read: ${JSON.stringify(swatches)}`);
+    const tokenHex = getTripletRgba(dark.get(swatch.token));
+    const drawnHex = [tokenHex.r, tokenHex.g, tokenHex.b].map((n) => n.toString(16).padStart(2, "0")).join("");
+    assert.strictEqual(drawnHex, strokeByClass.get(name), `class '${name}' draws a hue other than its swatch token ${swatch.token}`);
+  }
   assert.strictEqual(swatches.length, coloured.length, "one swatch per coloured border, none for a colour the map never draws");
+});
+
+test("the drawn node border rule paints each role class with its own legend swatch token", () => {
+  const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
+  const rules = callInCtx<string>(archCtx, "getMapBorderRulesAR");
+
+  for (const swatch of swatches) {
+    const rule = rules.split("} ").find((line) => line.includes(`.node.${swatch.key} >`));
+    assert.ok(rule, `no node border rule for class '${swatch.key}' — read: ${rules}`);
+    assert.match(rule, new RegExp(`stroke: rgb\\(var\\(${swatch.token}\\)\\)`), `class '${swatch.key}' rule paints another colour`);
+  }
+});
+
+describe("every role border swatch clears 3:1 on the page ground", () => {
+  const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
+  const rows = THEME_TOKENS.flatMap((theme) => swatches.map((swatch) => ({ name: `${swatch.label} in ${theme.name}`, theme, swatch })));
+  for (const row of rows)
+    test(row.name, () => {
+      const ratio = contrastRatio(getTripletRgba(row.theme.tokens.get(row.swatch.token!)), getTripletRgba(row.theme.tokens.get("--surface")));
+      assert.ok(ratio >= 3, `${row.name}: ${ratio.toFixed(2)} on --surface`);
+    });
 });
 
 test("a group title is dropped only where its single member's label already says it", () => {

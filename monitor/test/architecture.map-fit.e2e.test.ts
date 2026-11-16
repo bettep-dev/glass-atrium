@@ -32,7 +32,7 @@
 // React + mermaid come from CDN, so the run REQUIRES outbound network and an installed
 // chromium. An unmet prerequisite fails RED — no skip guard absorbs it.
 
-import test, { after, before } from "node:test";
+import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +50,7 @@ import {
 	PART_NODE_BINDINGS,
 } from "../src/server/architecture/diagrams-source.js";
 import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
+import { compositeOver, contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
@@ -1052,4 +1053,59 @@ test(`at any width the map keeps its ${PANE_FLOOR.PX}px pane floor on either bin
 			`${r.width}x${r.height}: the map pane is ${r.fit.paneHeight.toFixed(0)}px — under the ${PANE_FLOOR.PX}px floor`,
 		);
 	}
+});
+
+// spec 44084 §4.2 — each role border paints its legend token; the light theme keeps the drawn stroke (dark node fills in both themes)
+const ROLE_BORDER_TOKENS = [
+	{ className: "security", token: "--cat-1" },
+	{ className: "focal", token: "--cat-2" },
+];
+
+function getClassDefStroke(className: string): Rgba {
+	const hex = new RegExp(`^\\s*classDef\\s+${className}\\s+.*?stroke:#([0-9a-fA-F]{6})([0-9a-fA-F]{2})?`, "m").exec(CANONICAL_MAP.mermaid_drawn);
+	assert.ok(hex, `the drawn map must define class '${className}' with a stroke`);
+	const [r, g, b] = [0, 2, 4].map((at) => Number.parseInt(hex[1].slice(at, at + 2), 16));
+	return { r, g, b, a: hex[2] ? Number.parseInt(hex[2], 16) / 255 : 1 };
+}
+
+async function readRoleBorders(theme: string) {
+	const { page, canvasSelector } = await openFittedPage(1440, 900);
+	try {
+		await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+		return await page.evaluate(
+			({ sel, roles }) =>
+				roles.map(({ className, token }) => {
+					const shape = document.querySelector(`${sel} g.node.${className} > :is(rect, path, polygon, circle, ellipse):not(.arch-ring):not(.arch-ring-glyph-pill)`);
+					const probe = document.createElement("span");
+					probe.style.color = `rgb(var(${token}))`;
+					document.body.append(probe);
+					const tokenColor = getComputedStyle(probe).color;
+					probe.remove();
+					const style = shape ? getComputedStyle(shape) : null;
+					return { className, token, tokenColor, stroke: style?.stroke ?? "", fill: style?.fill ?? "" };
+				}),
+			{ sel: canvasSelector, roles: ROLE_BORDER_TOKENS },
+		);
+	} finally {
+		await page.close();
+	}
+}
+
+test("in the dark theme each role node border paints its legend token at full strength", async () => {
+	for (const role of await readRoleBorders("dark")) {
+		assert.ok(role.stroke, `no drawn shape for class '${role.className}'`);
+		assert.strictEqual(role.stroke, role.tokenColor, `class '${role.className}' strokes ${role.stroke}, its token ${role.token} is ${role.tokenColor}`);
+	}
+});
+
+describe("no role node border measures lower on its node fill than the drawn stroke", () => {
+	for (const theme of ["light", "dark"])
+		test(`in the ${theme} theme`, async () => {
+			for (const role of await readRoleBorders(theme)) {
+				const fill = parseColor(role.fill);
+				const now = contrastRatio(compositeOver(parseColor(role.stroke), fill), fill);
+				const drawn = contrastRatio(compositeOver(getClassDefStroke(role.className), fill), fill);
+				assert.ok(now >= drawn - 0.01, `${theme} '${role.className}': ${now.toFixed(2)} on its fill, the drawn stroke gave ${drawn.toFixed(2)}`);
+			}
+		});
 });

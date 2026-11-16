@@ -153,11 +153,11 @@ const RING_FOCUS_CLASS = "arch-ring-focus";
 // one health vocabulary for node accessible names and the caption's ring key.
 const HEALTH_WORD_AR = { ok: "ok", info: "not verified", warn: "needs attention", crit: "critical" };
 const UNVERIFIED_WORD_AR = "not verified";
-// border colours copy the drawn map's classDef strokes (diagrams-source.ts) — a unit test holds the pair together
+// role border = legend swatch token; its dark triplet is the drawn map's classDef stroke (diagrams-source.ts) — a unit test holds the pair together
 const MAP_BORDER_KEY_AR = [
-	// dark --cat-2 teal, not --cat-3 blue: blue is the dark --focus-ring, so a focused node would read as the orchestrator
-	{ key: "focal", color: "#2dd4bf", label: "Orchestrator" },
-	{ key: "security", color: "#a78bfa80", label: "Safety checks" },
+	// --cat-2 teal, not --cat-3 blue: blue is the dark --focus-ring, so a focused node would read as the orchestrator
+	{ key: "focal", token: "--cat-2", label: "Orchestrator" },
+	{ key: "security", token: "--cat-1", label: "Safety checks" },
 ];
 // a group whose title only repeats its single box's label — the title is hidden, the box stays
 const ZONE_TITLE_REDUNDANT_CLASS = "arch-zone-title-redundant";
@@ -754,6 +754,7 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-unverified > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-unverified > rect.arch-ring-state { display: inline; stroke: rgb(var(--faint)) !important; stroke-dasharray: 4 3 !important; } ` +
 					// dashed is reserved for the unverified ring — the security classDef's dashed amber stroke would read as a second meaning.
 					`#${ARCH_CANVAS_ID} .node.security > ${NODE_SHAPE_SELECTOR} { stroke-dasharray: none !important; } ` +
+					getMapBorderRulesAR() +
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
 					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
 					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
@@ -1077,11 +1078,12 @@ function MermaidCanvas({
 
 		const svgNodes = root.querySelectorAll("g.node");
 		svgNodes.forEach((el) => {
-			// classDef writes its dash inline with !important — only removing it lets the rule above win.
-			if (el.classList.contains("security"))
-				el.querySelectorAll(":scope > :is(rect, path, polygon, circle, ellipse)").forEach((shape) =>
-					shape.style.removeProperty("stroke-dasharray"),
-				);
+			// classDef writes its stroke and dash inline with !important — only removing them lets the rules above win.
+			if (MAP_BORDER_KEY_AR.some((item) => el.classList.contains(item.key)))
+				el.querySelectorAll(":scope > :is(rect, path, polygon, circle, ellipse)").forEach((shape) => {
+					shape.style.removeProperty("stroke");
+					shape.style.removeProperty("stroke-dasharray");
+				});
 
 			const labelText = extractMermaidNodeLabelAR(el);
 			if (!labelText) return;
@@ -2462,6 +2464,17 @@ function getMapLegendItemsAR() {
 	return [...rings, count, dashed, ...borders];
 }
 
+/**
+ * Role node borders painted with their legend swatch token.
+ * Dark theme only: the drawn map keeps dark node fills in both themes, so a light --cat-* border would measure lower than the classDef stroke (spec 44084 §13).
+ * Light falls back to mermaid's own classDef rule, the same stroke as before.
+ */
+function getMapBorderRulesAR() {
+	return MAP_BORDER_KEY_AR.map(
+		(item) => `[data-theme="dark"] #${ARCH_CANVAS_ID} .node.${item.key} > ${NODE_SHAPE_SELECTOR} { stroke: rgb(var(${item.token})) !important; } `,
+	).join("");
+}
+
 // sentence-case status line over a swatch legend — the page header's sub line is uppercase 11px mono.
 function MapCaptionAR({ verdict, hasMap }) {
 	const { PageVerdict } = window.UI;
@@ -2477,7 +2490,7 @@ function MapCaptionAR({ verdict, hasMap }) {
 						<span
 							aria-hidden="true"
 							className={`arch-legend-swatch arch-legend-swatch-${item.kind === "ring" ? item.key : item.kind}`}
-							style={item.color ? { borderColor: item.color } : undefined}>
+							style={item.token ? { borderColor: `rgb(var(${item.token}))` } : undefined}>
 							{item.mark || ""}
 						</span>
 						{item.text || (item.kind === "border" ? `${item.label} border` : `Ring ${item.label}`)}
