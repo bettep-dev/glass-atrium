@@ -672,7 +672,8 @@ function ScreenArchitecture(
 					".arch-part-cause { flex: 1 1 0; min-width: 0; font-size: var(--fs-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
 					".arch-part-status { display: inline-flex; align-items: center; gap: var(--space-1_5); white-space: nowrap; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
-					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
+					// the canvas is the card body, flush to the hairline → the card clips its corners, no second rounded frame inside
+					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; } " +
 					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
 					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
 					// 죽은 여백으로만 남았음(실측 800px 뷰포트에서 카드 663.5 중 body 560 — 아래 103 이 빔).
@@ -687,7 +688,7 @@ function ScreenArchitecture(
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
 					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
-					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
+					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 0; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas .arch-mermaid-host > svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
 					// 노드 라벨 — 색만 보정한다.
 					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
@@ -857,8 +858,8 @@ function ScreenArchitecture(
 								</p>
 							)}
 							<div
-								className="card-body"
-								style={{ padding: 8, opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
+								className="card-body flush"
+								style={{ opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
 							>
 								<DiagramBody
 									diagState={diagState}

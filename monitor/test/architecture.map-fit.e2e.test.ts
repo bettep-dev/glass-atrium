@@ -1124,3 +1124,28 @@ describe("no role node border measures lower on its node fill than the drawn str
 			}
 		});
 });
+
+// the canvas is the card's body: no inner band, no second rounded frame inside the card's hairline
+test("the map canvas sits flush against its card's hairline on the left, right and bottom", async () => {
+	const { page, canvasSelector } = await openFittedPage(1440, 900);
+	try {
+		const r = await page.evaluate((sel) => {
+			const canvas = document.querySelector(sel) as HTMLElement;
+			const card = canvas.closest(".arch-col-card") as HTMLElement;
+			// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+			const [c, k, style] = [canvas.getBoundingClientRect(), card.getBoundingClientRect(), getComputedStyle(card)];
+			const [bl, br, bb] = [style.borderLeftWidth, style.borderRightWidth, style.borderBottomWidth].map(Number.parseFloat);
+			return {
+				left: c.left - (k.left + bl),
+				right: k.right - br - c.right,
+				bottom: k.bottom - bb - c.bottom,
+				canvasRadius: getComputedStyle(canvas).borderTopLeftRadius,
+			};
+		}, canvasSelector);
+		for (const side of ["left", "right", "bottom"] as const)
+			assert.ok(Math.abs(r[side]) <= 0.5, `the canvas sits ${r[side].toFixed(1)}px inside the card's ${side} hairline`);
+		assert.equal(r.canvasRadius, "0px", "the canvas draws no rounded frame of its own inside the card");
+	} finally {
+		await page.close();
+	}
+});

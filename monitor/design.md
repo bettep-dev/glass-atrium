@@ -748,6 +748,7 @@
   - ceiling 이 걸리면 pane 은 그림 높이로 줄고 (contain frame) Part health 가 첫 화면에 올라옴.
   - map pane 높이 floor 500px (`PANE.FLOOR_PX`) — 좁거나 낮은 창에서만 걸림: 첫 화면 높이가 모자라면 floor 가 이기고 Part health 는 첫 화면 아래로.
   - zoom 컨트롤용 우측 inset ≥ 48px (`CONTROLS_MIN_INSET_PX`) — 컨트롤 아래 box 0개.
+  - canvas = map card 의 body, hairline 에 flush (`card-body flush`) — 안쪽 band 없음 · canvas 자체 radius 0, 모서리는 card 가 clip (`architecture.map-fit.e2e`).
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
 - **h1 아래**: 범례 한 줄뿐 — verdict 줄 · chip 없음. 상태는 Part health card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 낱말 (`1 down · 1 needs attention`), 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
