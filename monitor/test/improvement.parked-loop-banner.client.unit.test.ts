@@ -569,7 +569,9 @@ describe("the awaiting count is the board head's warn status, announced live, ne
       assert.equal(statuses.length, 1);
       assert.equal(printed(screenTree(statuses[0])), row.status);
       // the alarm-row glyph size → at 13 the warn glyph measures under 3:1 in the light theme
-      assert.ok(screenTree(statuses[0]).some((el) => el.props.s === "⚠" && /\btext-warn\b/.test(String(el.props.className)) && el.props.size === 16));
+      const alarmGlyphSize = sandbox.window.UI.ALARM_GLYPH_SIZE;
+      assert.equal(typeof alarmGlyphSize, "number", "precondition: ui.jsx exports the alarm-row glyph size");
+      assert.ok(screenTree(statuses[0]).some((el) => el.props.s === "⚠" && /\btext-warn\b/.test(String(el.props.className)) && el.props.size === alarmGlyphSize));
     });
   }
 });

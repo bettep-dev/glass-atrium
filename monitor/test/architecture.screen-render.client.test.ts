@@ -118,7 +118,8 @@ test("the Part health head Status draws its tone glyph at the alarm-row size", a
   const glyphs = findNodes(status, (n) => n.props.atom === "Icon");
 
   assert.equal(glyphs.length, 1, "the head Status leads with one glyph");
-  assert.equal(glyphs[0].props.size, 16);
+  assert.equal(typeof realUi.ALARM_GLYPH_SIZE, "number", "precondition: ui.jsx exports the alarm-row glyph size");
+  assert.equal(glyphs[0].props.size, realUi.ALARM_GLYPH_SIZE);
 });
 
 // the fold's summary already says healthy — a folded row adds a status word only when its verdict says more than that
