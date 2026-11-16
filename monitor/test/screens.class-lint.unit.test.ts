@@ -91,7 +91,7 @@ const BASELINE: Record<string, BaselineRow[]> = {
     { rule: "style-spacing-type", count: 10, owner: "C1" },
   ],
   improvement: [
-    { rule: "numeric-spacing", count: 89, owner: "C2" },
+    { rule: "numeric-spacing", count: 84, owner: "C2" },
     { rule: "zero-reset", count: 2, owner: "C2" },
     { rule: "inline-spacing", count: 1, owner: "C2" },
     { rule: "retired-class", count: 4, owner: "C2" },
