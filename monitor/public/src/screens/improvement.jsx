@@ -2324,7 +2324,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		);
 	}
 
-	const { added, removed, changedCount, eventCount, failBefore, failAfter } = aggregate;
+	const { added, removed, changedCount, eventCount } = aggregate;
 
 	// 데이터 부재 — 윈도우 내 사이클 이벤트 0건 → 안내 indicator (가짜 0 채움 금지).
 	if (eventCount === 0) {
@@ -2344,16 +2344,9 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 				sub={<span title={basis.title}>{basis.text}</span>}
 			/>
 			{getLoopSlotsI({
+				// the reject rate is the trend card's sentence → this card leads with its own counts
 				metric: (
 					<div>
-						<div className="fs-meta text-dim font-medium">
-							Reject rate, recent half
-						</div>
-						<RejectRateHeadlineI before={failBefore} after={failAfter} />
-					</div>
-				),
-				visual: (
-					<>
 						<div className="fs-meta text-dim font-medium">
 							Lines changed
 						</div>
@@ -2373,7 +2366,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 								title={`${formatIntI(removed)} rule/instruction ${removed === 1 ? "line" : "lines"} removed across ${getCycleCountTextI(eventCount)}`}
 							/>
 						</div>
-					</>
+					</div>
 				),
 				foot: `${formatIntI(changedCount)} of ${getCycleCountTextI(eventCount)} changed rule lines`,
 			})}

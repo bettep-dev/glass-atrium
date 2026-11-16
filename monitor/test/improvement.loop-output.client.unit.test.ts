@@ -428,10 +428,18 @@ test("every loop-card foot rides DayTokens, so its cycle-day and 7-day tokens st
   }
 });
 
-test("the applied card leads with its reject rate, in the metric slot", () => {
+// neighbouring cards at one height → the reject-rate sentence is stated once, by the chart it describes
+test("the reject-rate sentence appears once across the loop cards, in the trend card", () => {
+  const holders = getLoopCards().filter(({ card }) =>
+    collectElements(card, []).some((el) => el.type === sandbox.RejectRateHeadlineI),
+  );
+  assert.deepEqual(holders.map(({ name }) => name), ["trend"]);
+});
+
+test("the applied card leads with its line counts, in the metric slot", () => {
   const [applied] = getLoopCards();
   const [metric] = getSlotOf(applied.card, "i-loop-metric");
-  assert.ok(metric && collectElements(metric, []).some((el) => el.type === sandbox.RejectRateHeadlineI), "the reject rate heads the card");
+  assert.ok(metric && collectElements(metric, []).some((el) => el.type === sandbox.LineCountI), "the line counts head the card");
 });
 
 test("the learning-memory card heads its card with both counts and keeps what each means behind its info button", () => {
