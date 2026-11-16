@@ -15,6 +15,8 @@ import { getImageFacts } from "./image-format.js";
 export const IMAGE_BYTES_MAX = 10 * 1024 * 1024;
 /** An upload no send or reply claimed within this window: refused by a send, deleted by the sweep. */
 export const UNUSED_IMAGE_TTL_MS = 24 * 60 * 60 * 1000;
+/** Uploads inside the window that no send or reply claimed yet: 50 files, 200 MiB → a device cannot fill the disk before the sweep. */
+export const UNCLAIMED_IMAGES_MAX = { count: 50, bytes: 200 * 1024 * 1024 } as const;
 
 const IMAGE_FORMATS = {
   png: { mime: "image/png", extension: "png" },
@@ -63,7 +65,9 @@ export function getQueueImageDir(gaRoot: string): string {
 
 /**
  * Stores one upload: type and pixel size from its bytes, file `<random id>.<extension>` (owner-only), then its row.
+ * Room check + write + row under one transaction lock → concurrent uploads cannot both pass the unclaimed cap.
  * @throws QueueRequestError 415 when the bytes hold none of the four image types
+ * @throws QueueRequestError 429 when the upload would pass UNCLAIMED_IMAGES_MAX
  */
 export async function createImage(imageDir: string, bytes: Buffer, name: string): Promise<ImageView> {
   const facts = getImageFacts(bytes);
@@ -71,12 +75,27 @@ export async function createImage(imageDir: string, bytes: Buffer, name: string)
   const id = randomUUID();
   const filePath = getImagePath(imageDir, id, facts.type);
   await mkdir(imageDir, { recursive: true, mode: 0o700 });
-  await writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
   try {
-    return toImageView(await getPrisma().queueImage.create({ data: { id, name, bytes: bytes.length, ...facts } }));
+    return await getPrisma().$transaction(async (tx) => {
+      await assertUnclaimedRoom(tx, bytes.length);
+      await writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
+      return toImageView(await tx.queueImage.create({ data: { id, name, bytes: bytes.length, ...facts } }));
+    });
   } catch (error) {
     await deleteImageFile(filePath);
     throw error;
+  }
+}
+
+async function assertUnclaimedRoom(tx: Prisma.TransactionClient, uploadBytes: number): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('monitor.queue_images.upload', 0))`;
+  const usage = await tx.queueImage.aggregate({
+    where: { usedAt: null, createdAt: { gt: getUnusedCutoff(new Date()) } },
+    _count: true,
+    _sum: { bytes: true },
+  });
+  if (usage._count + 1 > UNCLAIMED_IMAGES_MAX.count || (usage._sum.bytes ?? 0) + uploadBytes > UNCLAIMED_IMAGES_MAX.bytes) {
+    throw new QueueRequestError(429, "unclaimed_images_full", "too many uploads wait for a send; send or wait for the daily clean-up");
   }
 }
 

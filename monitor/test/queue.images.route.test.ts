@@ -15,7 +15,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
+import { IMAGE_BYTES_MAX, UNCLAIMED_IMAGES_MAX, getUnusedCutoff } from "../src/server/queue/images.js";
 import { registerRequestGuards } from "../src/server/request-guards.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -183,6 +183,50 @@ describe("image upload", () => {
       const response = await app.inject({ method: "POST", url, headers: { host: HOST, "content-type": "image/png", ...SAME_ORIGIN }, payload: IMAGE.png });
       assert.equal(response.statusCode, 400, `${url}: ${response.body}`);
     }
+  });
+});
+
+describe("unclaimed upload cap", () => {
+  // Rows as an upload leaves them; `bytes` carries the stored size without writing the file.
+  async function seedUnclaimed(count: number, bytes: number, createdAt = new Date()): Promise<void> {
+    const ids = Array.from({ length: count }, () => randomUUID());
+    trackedImageIds.push(...ids);
+    await getPrisma().queueImage.createMany({ data: ids.map((id) => ({ id, name: "seed.png", type: "png", bytes, width: 3, height: 2, createdAt })) });
+  }
+
+  async function getUnclaimedUsage(): Promise<{ count: number; bytes: number }> {
+    const usage = await getPrisma().queueImage.aggregate({ where: { usedAt: null, createdAt: { gt: getUnusedCutoff(new Date()) } }, _count: true, _sum: { bytes: true } });
+    return { count: usage._count, bytes: usage._sum.bytes ?? 0 };
+  }
+
+  async function deleteUnclaimed(): Promise<void> {
+    await getPrisma().queueImage.deleteMany({ where: { id: { in: trackedImageIds }, usedAt: null } });
+  }
+
+  test("an upload past the unclaimed count cap is refused and stores nothing; past-window uploads do not count", async () => {
+    await deleteUnclaimed();
+    await seedUnclaimed(5, 1, new Date(Date.now() - DAY_MS - 60_000));
+    await seedUnclaimed(UNCLAIMED_IMAGES_MAX.count - 1 - (await getUnclaimedUsage()).count, 1);
+    await uploadPngId("last-free.png");
+    const before = getStoredNames().length;
+    const response = await upload(IMAGE.png, "one-over.png", "image/png");
+    assert.equal(response.statusCode, 429, response.body);
+    assert.equal(response.json().error, "unclaimed_images_full");
+    assert.equal(getStoredNames().length, before);
+    await deleteUnclaimed();
+  });
+
+  test("an upload is taken up to the unclaimed byte cap and refused one byte past it", async () => {
+    await deleteUnclaimed();
+    const free = UNCLAIMED_IMAGES_MAX.bytes - (await getUnclaimedUsage()).bytes;
+    await seedUnclaimed(1, free - IMAGE.png.length);
+    await uploadPngId("exact-fit.png");
+    await getPrisma().queueImage.deleteMany({ where: { id: trackedImageIds.at(-1) } });
+    await getPrisma().queueImage.updateMany({ where: { id: trackedImageIds.at(-2) }, data: { bytes: free - IMAGE.png.length + 1 } });
+    const response = await upload(IMAGE.png, "one-byte-over.png", "image/png");
+    assert.equal(response.statusCode, 429, response.body);
+    assert.equal(response.json().error, "unclaimed_images_full");
+    await deleteUnclaimed();
   });
 });
 
