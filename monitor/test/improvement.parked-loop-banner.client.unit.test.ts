@@ -283,7 +283,7 @@ describe("a zero count carries no tone glyph, a non-zero count keeps its one gly
       assert.ok(counts.length >= 2, "every count renders");
       for (const count of counts) {
         const glyphs = (count.props.children as unknown[]).filter((c) => isElement(c) && c.type === sandbox.SymI);
-        assert.equal(glyphs.length, row.glyphs, String(count.key ?? count.props.children));
+        assert.equal(glyphs.length, row.glyphs, String(count.props.key ?? count.props.children));
       }
     });
   }
