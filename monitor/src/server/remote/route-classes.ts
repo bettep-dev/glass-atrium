@@ -37,8 +37,8 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
   {
     reviewer: "glass-atrium-sec-guard",
     stream: "S2",
-    // the reviewer verdict's own CID: sec-guard classed these rows as a spawn of the build workflow
-    // (run wf_d4bb334b-c07, route-classification step), which ran under the build CID
+    // verdict recorded in the lan-access follow-up folder → first-route-classification-verdict.md (sec-guard, build run wf_d4bb334b-c07)
+    // its rows that no later verdict names → carried unchanged, same class, by every later entry, the live one included
     cids: ["2026-11-14T1420_lan-build_c5b9"],
     rowCount: 94,
     sha256: "b76036b059ce1c7e0e5f860d94c8afcc678e1b98b8212d21854a7a72d24179fc",
@@ -64,7 +64,7 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     reviewer: "glass-atrium-sec-guard",
     stream: "S6",
     // sign-in rows 106-108 and the unread rows (signin), the document writes (writes), the read rows (reads, reads-b, reads-c),
-    // rows 95-105 carried unchanged (route-classes, cli-channel)
+    // rows 95-105 carried unchanged (route-classes, cli-channel), rows 1-94 no later verdict names carried from the first entry
     cids: [
       RESIGN_CID,
       "2026-11-15T0215_lan-unread-writes_a2f7",
