@@ -43,9 +43,9 @@ readonly SEAM_WHOLE_SHAPE='^[0-9]+$'
 # inside the longest measured asyncRewake lifetime (82860 s under binding timeout 86400, lib/ga-env.sh), a margin of one
 # hour under that timeout → the host's SIGTERM never ends a listener before its re-arm wake
 readonly LISTEN_LIFETIME_S=82800
-# the same answer count to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
-# a claim or a count read back at 0 starts the bound over (drop_announce_record), and the lifetime end's re-arm names
-# the count again regardless → answers whose wakes went unheeded are named once more per lifetime
+# the same answered set to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
+# a changed set, QUEUE_NUDGE_INTERVAL_MIN since the last announce, a claim or a count read back at 0 starts the bound
+# over (drop_announce_record), and the lifetime end's re-arm names the count again regardless
 readonly LISTEN_ANNOUNCE_MAX=2
 # a session's register runs beside the listener at its start → a refusal this early may be the register not yet landed
 readonly LISTEN_REFUSAL_GRACE_S=30
@@ -55,6 +55,7 @@ readonly LISTEN_REARM_LINE='the listener re-arms and nothing arrived for this se
 is_listening=false
 listen_child=""
 listen_count=0
+listen_set=""
 LISTEN_OUT=""
 readonly ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
   "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
@@ -631,11 +632,11 @@ run_listen_loop() {
   while ((SECONDS - started < lifetime_s)); do
     check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
     set_listen_count "$2" "$((SECONDS - started < grace_s))"
-    if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}"; else drop_announce_record "$1"; fi
+    if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}" "${listen_set}"; else drop_announce_record "$1"; fi
     run_child sleep "${poll_s}"
   done
   check_wait_owner "${WAIT_OWNER%%|*}" "${WAIT_OWNER#*|}"
-  announce_if_due "$1" "${listen_count}" rearm
+  announce_if_due "$1" "${listen_count}" "${listen_set}" rearm
 }
 
 # <value> <default> <shape> → the value when it matches the shape, else the default
@@ -653,8 +654,8 @@ run_child() {
   return "${status}"
 }
 
-# <count body> <1 while a refusal may be the register not yet landed> → listen_count; such a refusal counts 0, and any
-# other failure ends the listener with one stderr line
+# <count body> <1 while a refusal may be the register not yet landed> → listen_count and listen_set; such a refusal
+# counts 0, and any other failure ends the listener with one stderr line
 set_listen_count() {
   local route=/api/queue/pending/count reply code body reason
   # shellcheck disable=SC2310  # no reply → the named end below
@@ -663,11 +664,9 @@ set_listen_count() {
   code="$(queue_get_reply_code "${reply}")"
   body="$(queue_get_reply_body "${reply}")"
   listen_count=0
+  listen_set=""
   case "${code}" in
-    2??)
-      listen_count="$(jq -r '.answeredWaiting | numbers' <<<"${body}" 2>/dev/null)" || listen_count=""
-      [[ "${listen_count}" =~ ^[0-9]+$ ]] || fail 1 "the monitor's count reply is malformed"
-      ;;
+    2??) set_listen_answered "${body}" ;;
     404 | 409)
       if (($2 == 1)); then return 0; fi
       reason="$(describe_error "${body}")"
@@ -677,9 +676,21 @@ set_listen_count() {
   esac
 }
 
-# <session id> <count> [rearm] → wakes the session (exit 2) unless this Claude process was told this count
-# LISTEN_ANNOUNCE_MAX times; a re-arm wakes regardless, with the re-arm line at count 0. The owner check, the announce
-# record and the lock's release share one hold of the waits mutex → a listener another took over never wakes
+# <count reply body> → listen_count and listen_set "<count>:<ids, comma-separated>", the set the announce bound keys
+# on; a monitor that sends no ids leaves the set keyed on the count alone
+set_listen_answered() {
+  local answered
+  answered="$(jq -r '"\(.answeredWaiting | numbers):\(.answeredItemIds // [] | map(numbers | tostring) | join(","))"' \
+    <<<"$1" 2>/dev/null)" || answered=""
+  [[ "${answered}" =~ ^[0-9]+:([0-9]+(,[0-9]+)*)?$ ]] || fail 1 "the monitor's count reply is malformed"
+  listen_count="${answered%%:*}"
+  listen_set="${answered}"
+}
+
+# <session id> <count> <answered set> [rearm] → wakes the session (exit 2) unless this Claude process was told this set
+# LISTEN_ANNOUNCE_MAX times within QUEUE_NUDGE_INTERVAL_MIN; a re-arm wakes regardless, with the re-arm line at count
+# 0. The owner check, the announce record and the lock's release share one hold of the waits mutex → a listener another
+# took over never wakes
 announce_if_due() {
   local record told state
   # shellcheck disable=SC2310  # a mutex held past its bound → no wake this round
@@ -687,19 +698,19 @@ announce_if_due() {
   state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   [[ "${state}" == mine ]] || end_run 5
   record="$(queue_get_awaiting_dir "$1")/.announced"
-  told="$(get_announce_count "${record}" "$2")"
-  if ((told >= LISTEN_ANNOUNCE_MAX)) && [[ "${3:-}" != rearm ]]; then
+  told="$(get_announce_count "${record}" "$3")"
+  if ((told >= LISTEN_ANNOUNCE_MAX)) && [[ "${4:-}" != rearm ]]; then
     drop_waits_mutex
     return 0
   fi
-  if (($2 > 0 && told < LISTEN_ANNOUNCE_MAX)); then put_announce_record "${record}" "$2" "$((told + 1))"; fi
+  if (($2 > 0 && told < LISTEN_ANNOUNCE_MAX)); then put_announce_record "${record}" "$3" "$((told + 1))"; fi
   if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
   drop_waits_mutex
   print_wake "$2"
   exit 2
 }
 
-# <announce record> <count> <times told> → the record lands before the wake → a failed write never turns into an
+# <announce record> <answered set> <times told> → the record lands before the wake → a failed write never turns into an
 # unbounded one
 put_announce_record() {
   if ! (mkdir -p -- "${1%/*}" && printf '%s %s %s\n' "$2" "$3" "${WAIT_OWNER}" >"$1") 2>/dev/null; then
@@ -707,11 +718,15 @@ put_announce_record() {
   fi
 }
 
-# <announce record> <count> → how often this Claude process was told this count; 0 for another count or process
+# <announce record> <answered set> → how often this Claude process was told this set; 0 for another set or process,
+# and once QUEUE_NUDGE_INTERVAL_MIN has passed since the last announce
 get_announce_count() {
-  local count="" times="" owner=""
-  if [[ -f "$1" ]]; then IFS=' ' read -r count times owner <"$1" || true; fi
-  if [[ "${count}" == "$2" && "${owner}" == "${WAIT_OWNER}" && "${times}" =~ ^[0-9]+$ ]]; then
+  local set="" times="" owner="" recent=""
+  if [[ -f "$1" ]]; then
+    IFS=' ' read -r set times owner <"$1" || true
+    recent="$(find "$1" -mmin "-${QUEUE_NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
+  fi
+  if [[ -n "${recent}" && "${set}" == "$2" && "${owner}" == "${WAIT_OWNER}" && "${times}" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "${times}"
   else
     printf '0\n'

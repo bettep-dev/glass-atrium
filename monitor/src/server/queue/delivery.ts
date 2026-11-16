@@ -15,6 +15,9 @@ const PULL = {
   // Bounded claim per call; the CLI pulls again while items remain
   BATCH_LIMIT: 20,
 } as const;
+// ponytail: the CLI's pull drains at most this many per call (PULL_ROUNDS_MAX × BATCH_LIMIT); a set beyond it that
+// changes with its count and first ids unchanged stays unannounced until the nudge interval passes
+const ANSWERED_IDS_LIMIT = 200;
 // Two of the queue CLI's wait poll intervals (scripts/atrium-queue.sh → WAIT_POLL_S); a test binds the two
 export const WAIT_FRESH_MS = 10_000;
 
@@ -63,17 +66,27 @@ export async function claimPendingItems(sessionId: string, wait?: WaitPoll): Pro
   return claims;
 }
 
+/** The caller's answered items as the listener sees them. */
+export interface PendingCount {
+  answeredWaiting: number;
+  /** ascending, the first ANSWERED_IDS_LIMIT → the listener keys its announce bound on the set, not the count */
+  answeredItemIds: number[];
+}
+
 /**
  * Counts the caller's own answered items (answers and owner messages) without claiming any — the harness listener's poll.
  * Refused with 409 unless the row is live for the poll's pid; accepted → the session is waiting, as after a wait poll.
  */
-export async function getPendingCount(sessionId: string, poll: WaitPoll): Promise<number> {
-  const count = await getPrisma().$transaction(async (tx) => {
+export async function getPendingCount(sessionId: string, poll: WaitPoll): Promise<PendingCount> {
+  const where = { sessionId, status: "answered" } as const;
+  const pending = await getPrisma().$transaction(async (tx) => {
     assertLiveFor(await lockOwnSession(tx, sessionId), poll.pid);
-    return tx.queueItem.count({ where: { sessionId, status: "answered" } });
+    const answeredWaiting = await tx.queueItem.count({ where });
+    const rows = await tx.queueItem.findMany({ where, orderBy: { id: "asc" }, take: ANSWERED_IDS_LIMIT, select: { id: true } });
+    return { answeredWaiting, answeredItemIds: rows.map((row) => Number(row.id)) };
   });
   putWaitPoll(sessionId, Date.now());
-  return count;
+  return pending;
 }
 
 /** True while the session's last accepted wait poll is younger than WAIT_FRESH_MS. */

@@ -21,8 +21,6 @@ trap 'if ((BASH_SUBSHELL > 0)); then exit 1; fi; exit 0' ERR
 # no new item fetch starts after this long → the pass stays bounded however many ids and marks it asks about
 readonly CHECK_BUDGET_S=3
 readonly CHECK_FETCH_MAX_S=1
-# the same items to the same Claude process → named again only after this long, so a wait that fails fast starts no loop
-readonly NUDGE_INTERVAL_MIN=10
 # the nudge stamp's process key when the hook env holds no pid
 readonly NUDGE_NO_PID_KEY=no-pid
 # the verdict line's keyword and forms; the rule text that teaches them: glass-atrium-ops-orchestrator-role.md →
@@ -183,7 +181,7 @@ set_foreign_ids() {
 
 # <session id> → wait_reason: the wait command while an item of this session awaits the owner, no wait or listener of
 # this Claude process runs, no listener of it ever started, and this process was not told about these items within
-# NUDGE_INTERVAL_MIN
+# QUEUE_NUDGE_INTERVAL_MIN
 set_wait_reason() {
   local items nudge_key wait_state stamp newest item
   items="$(queue_get_awaiting_items "$1")"
@@ -212,7 +210,7 @@ set_wait_reason() {
 }
 
 # <stamp> <nudge key> <newest item id> → 0 unless this Claude process was told about these items within
-# NUDGE_INTERVAL_MIN
+# QUEUE_NUDGE_INTERVAL_MIN
 is_nudge_due() {
   local told_key="" told_newest="" recent
   [[ -f "$1" ]] || return 0
@@ -220,7 +218,7 @@ is_nudge_due() {
   if [[ "${told_key}" != "$2" || ! "${told_newest}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || (($3 > told_newest)); then
     return 0
   fi
-  recent="$(find "$1" -mmin "-${NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
+  recent="$(find "$1" -mmin "-${QUEUE_NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
   [[ -z "${recent}" ]]
 }
 

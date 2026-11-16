@@ -547,7 +547,7 @@ describe("pending (pull claim)", () => {
 });
 
 describe("pending count (listener read)", () => {
-  test("counts only the caller's unclaimed answers and owner messages, claims nothing, and returns the count alone", async () => {
+  test("counts only the caller's unclaimed answers and owner messages, claims nothing, and returns their count and ids", async () => {
     const pid = 700_000 + Math.floor(Math.random() * 100_000);
     const caller = await seedSession({ pid });
     const other = await seedSession();
@@ -563,7 +563,7 @@ describe("pending count (listener read)", () => {
     const response = await send("POST", "/api/queue/pending/count", { sessionId: caller, pid });
 
     assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(response.json(), { answeredWaiting: 2 });
+    assert.deepEqual(response.json(), { answeredWaiting: 2, answeredItemIds: [Number(items[0]), Number(items[1])] });
     assert.deepEqual(await Promise.all(items.map(getStatus)), statusesBefore);
     assert.equal(await getPrisma().queueDelivery.count({ where: { itemId: { in: items } } }), 0);
   });

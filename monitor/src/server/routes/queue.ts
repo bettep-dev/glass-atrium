@@ -132,7 +132,7 @@ function registerPendingCountRoute(app: FastifyInstance): void {
       route: "/api/queue/pending/count",
       schema: pendingCountBodySchema,
       input: request.body,
-      work: async (body) => ({ answeredWaiting: await getPendingCount(body.sessionId, { pid: body.pid }) }),
+      work: (body) => getPendingCount(body.sessionId, { pid: body.pid }),
     }),
   );
 }

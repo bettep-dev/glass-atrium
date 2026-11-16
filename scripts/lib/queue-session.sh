@@ -33,6 +33,10 @@ readonly QUEUE_WAIT_RESOLVED_STATUSES=' open answered '
 readonly QUEUE_LISTENER_KIND=listen
 # a listener's mark in its session's awaiting set: "<owner pid>|<its start>" of the Claude process it listens for
 readonly QUEUE_LISTENING_MARK=.listening
+# the same items to the same Claude process → named again only after this long, by the turn-end check's wait nudge and
+# the listener's re-announce alike → a wait that fails fast starts no loop, and an ignored wake is not repeated at once
+# shellcheck disable=SC2034  # read by the sourcing turn-end hook and queue CLI
+readonly QUEUE_NUDGE_INTERVAL_MIN=10
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
 # space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent

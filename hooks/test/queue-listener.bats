@@ -2,9 +2,10 @@
 # shellcheck disable=SC2030,SC2031,SC2154,SC2312  # a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison
 # The owner queue's listener (SessionStart and Stop hook, bound asyncRewake) against a stand-in monitor: it runs only
 # in an interactive main session, announces this session's answered items by count without claiming them, wakes the
-# session with one fixed line (exit 2) at most twice per answer count per Claude process until a claim or a zero count
-# starts that bound over, yields to a newer listener and to a session-run wait, ends quietly on a signal, a takeover or
-# a monitor failure, and at its lifetime end wakes the session once more to re-arm.
+# session with one fixed line (exit 2) at most twice per answered set per Claude process until the set changes, the
+# nudge interval passes, or a claim or a zero count starts that bound over, yields to a newer listener and to a
+# session-run wait, ends quietly on a signal, a takeover or a monitor failure, and at its lifetime end wakes the session
+# once more to re-arm.
 #
 # Run via: bats hooks/test/queue-listener.bats
 # Requires: bats, bash 3.2+, jq, curl, python3, perl
@@ -242,15 +243,21 @@ expected_rearm() {
   [[ "$(jq -r 'select(.path == "/api/queue/pending/count") | .path' "${BATS_TEST_TMPDIR}/requests.log" | wc -l)" == "${before}" ]]
 }
 
-@test "the same answers are announced at most twice per Claude process until the re-arm names them again at the lifetime end, while a changed count or another process is announced anew" {
+@test "the same answered set is announced at most twice per Claude process until it changes, the nudge interval passes or the re-arm names it at the lifetime end" {
   start_stub
   export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
-  set_reply 200 '{"answeredWaiting":2}'
+  set_reply 200 '{"answeredWaiting":2,"answeredItemIds":[4101,4107]}'
   local row before polls expected
   # <row>:<1 when the wake waits for the lifetime end> — at the first poll, else only at the re-arm after 2+ polls
-  for row in first:0 second:0 capped:1 still-capped:1 changed-count:0 another-process:0; do
+  for row in first:0 second:0 capped:1 still-capped:1 interval-passed:0 changed-set-same-count:0 changed-set-second:0 \
+    changed-set-capped:1 changed-count:0 another-process:0; do
     case "${row%%:*}" in
-      changed-count) set_reply 200 '{"answeredWaiting":4}' ;;
+      # the last announce older than the turn-end check's nudge interval (hooks/queue-turn-end-check.sh)
+      interval-passed) perl -e 'my $t = time - 11 * 60; utime $t, $t, @ARGV or exit 1' \
+        "${GA_ROOT}/data/queue/awaiting/${SESSION_ID}/.announced" ;;
+      # one answer claimed through another path while another arrives → the count alone stays 2
+      changed-set-same-count) set_reply 200 '{"answeredWaiting":2,"answeredItemIds":[4107,4112]}' ;;
+      changed-count) set_reply 200 '{"answeredWaiting":4,"answeredItemIds":[4107,4112,4113,4120]}' ;;
       another-process) start_owner ;;
       *) ;;
     esac
