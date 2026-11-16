@@ -51,20 +51,31 @@ teardown() {
 }
 
 # Loopback stub of the monitor: answers each request from ${ROUTES} ("METHOD PATH STATUS BODY") and logs it.
+# Refuses as the monitor's remote-cli gate does (cli-routes.ts → refuseUnlessCli) before any route answers.
 start_monitor_stub() {
   cat >"${SANDBOX}/stub.py" <<'PY'
-import http.server, json, sys
+import http.server, json, re, sys
 log, routes, portfile = sys.argv[1:4]
+BROWSER = ("sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "origin", "referer", "cookie")
+def route_answer(method, path):
+    for line in open(routes):
+        m, p, code, text = line.rstrip("\n").split(" ", 3)
+        if m == method and p == path:
+            return int(code), text
+    if method == "DELETE" and re.fullmatch(r"/api/remote/cli/devices/[1-9][0-9]{0,17}", path):
+        return 404, '{"error":"device_not_found"}'
+    return 404, json.dumps({"message": f"Route {method}:{path} not found", "error": "Not Found", "statusCode": 404})
 class Handler(http.server.BaseHTTPRequestHandler):
     def answer(self):
+        headers = {k.lower(): v for k, v in self.headers.items()}
         with open(log, "a") as f:
-            f.write(json.dumps({"method": self.command, "path": self.path,
-                                "headers": {k.lower(): v for k, v in self.headers.items()}}) + "\n")
-        status, body = 404, '{"error":"device_not_found"}'
-        for line in open(routes):
-            method, path, code, text = line.rstrip("\n").split(" ", 3)
-            if method == self.command and path == self.path:
-                status, body = int(code), text
+            f.write(json.dumps({"method": self.command, "path": self.path, "headers": headers}) + "\n")
+        if any(name in headers for name in BROWSER) or headers.get("x-glass-atrium-cli") != "remote-access":
+            status, body = 403, '{"error":"not_cli"}'
+        elif "transfer-encoding" in headers or headers.get("content-length", "0") != "0":
+            status, body = 400, '{"error":"body_not_allowed"}'
+        else:
+            status, body = route_answer(self.command, self.path)
         self.send_response(status)
         if status == 302:
             self.send_header("Location", body)
@@ -275,11 +286,13 @@ file_sum() { cksum <"$1"; }
   [[ "${status}" -eq 0 && "${output}" == *"revoked device 123456789012345678"* ]] || { echo "${output}"; return 1; }
 }
 
-@test "revoke reports revoked only when the monitor answers revoked:1, and not-found on its 404" {
+@test "revoke reports revoked only when the monitor answers revoked:1, and not-found only on its device_not_found" {
   start_monitor_stub
   stub_route 'DELETE /api/remote/cli/devices/7 204 '
   stub_route 'DELETE /api/remote/cli/devices/9 200 {"revoked":0}'
-  local rows=('no confirmation body|7|5|NOT revoked' 'zero revoked|9|5|NOT revoked' 'unknown device|8|1|not found')
+  stub_route 'DELETE /api/remote/cli/devices/6 404 {"message":"Route DELETE:/api/remote/cli/devices/6 not found","error":"Not Found","statusCode":404}'
+  local rows=('no confirmation body|7|5|NOT revoked' 'zero revoked|9|5|NOT revoked' 'unknown device|8|1|not found'
+    'a 404 that is not device_not_found|6|5|NOT revoked')
   local row name id expected_status expected_text
   for row in "${rows[@]}"; do
     IFS='|' read -r name id expected_status expected_text <<<"${row}"

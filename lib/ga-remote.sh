@@ -80,7 +80,8 @@ ga_remote_run() {
   esac
 }
 
-# --- network facts (the monitor's own procedure: monitor/src/server/remote/network.ts) -------------
+# --- network facts (arp only; the monitor's network.ts → getNetworkIdentity adds a configd fallback) ------
+# callers (trust, install opt-in, doctor) run from Terminal or a /bin/bash job — arp "no entry" measured from node only
 
 # `route -n get default` → "<gateway> <interface>"; returns 1 when either is unreadable.
 ga_remote_get_default_route() {
@@ -339,7 +340,7 @@ ga_remote_cmd_revoke() {
   status="${status:-${reply##*$'\n'}}"
   if [[ "${status}" == "200" ]] && printf '%s' "${reply%$'\n'*}" | jq -e '.revoked == 1' >/dev/null 2>&1; then
     printf 'remote: revoked device %s\n' "${id}"
-  elif [[ "${status}" == "404" ]]; then
+  elif [[ "${status}" == "404" ]] && printf '%s' "${reply%$'\n'*}" | jq -e '.error == "device_not_found"' >/dev/null 2>&1; then
     printf 'remote: device %s not found (unknown or already revoked)\n' "${id}" >&2
     return 1
   else
