@@ -30,7 +30,7 @@
 - Atrium Monitor = self-improving 멀티에이전트 하니스를 실시간으로 읽는 **운영 계기판**. "지금 무엇이 위험한가" 를 1초 안에 판독 → 최우선 가치 = **판독 속도**, 미감은 종속.
 
 1) **중심 명료 영역** — 본문 데이터 면(카드 그리드 · 차트 · 테이블)이 뷰포트에서 가장 밝고 선명한 plane. 사이드바 · 페이지 헤더 chrome 은 `--dim`/`--faint` 로 물러난다 (`aside` = `bg-elev` · `border-r`).
-2) **가리지 않는 깊이** — 깊이 = **휘도 차 + border**, blur 아님. 사이드바 · 카드 · KPI = raised · drawer/dialog/popover = overlay (§6.1).
+2) **가리지 않는 깊이** — 깊이 = **휘도 차 + border**, blur 아님. 사이드바 · 카드 = raised · drawer/dialog/popover = overlay (§6.1).
    - Every product surface is opaque, the drawer and dialog scrim included (§12.9); blur stays only in the dev-only tweaks panel (§3.5).
 3) **Flat surfaces** — a card is one hairline on the page ground in both themes: no shadow, no inset highlight; dark raises it by the fill step alone (§6.2 · §7.1 · §12.9).
 4) **숨 쉴 공간** — 하나의 간격 세트: the `--gap-*` role tokens (§12.1). 글자가 커지면 padding 은 **더 좁게**.
@@ -391,7 +391,7 @@
 | UI 본문 · 제목 | `'Pretendard Variable'` → Pretendard → system-ui | `body` 전역 |
 | machine strings — id · hash · path · config key · CLI flag · model id | `'JetBrains Mono'` → ui-monospace | `.font-mono` · `code` · `.mono` |
 
-- `body`: `font-feature-settings: 'tnum' 1, 'cv11' 1`. 금융/데이터 수치(KPI · 비용 · token 수 · latency)는 tnum 필수 — sans (`body` tnum) 로 충족; a number is never mono (§12.2).
+- `body`: `font-feature-settings: 'tnum' 1, 'cv11' 1`. 금융/데이터 수치(stat value · 비용 · token 수 · latency)는 tnum 필수 — sans (`body` tnum) 로 충족; a number is never mono (§12.2).
 - Inter / Roboto / Arial / Fraunces 를 1차로 두지 않는다.
 
 ### 5.2 Type scale (13px floor)
@@ -410,7 +410,7 @@
 - **floor**: 렌더되는 모든 text node ≥ 13px — default view 의 System map label · tweaks 패널 포함. `--fs-micro` 는 `--fs-meta` alias. px 리터럴 font-size 금지.
 - **named exception (deprecated)**: `.hero-stat` 30px (`TypeScaleStyle`, 소비처 `agents.jsx` 1곳) — no big-number tiles (§12.2); it leaves with its caller.
 - **line-height** (텍스트 class 는 리터럴, control · table 행은 `--lh-ctl` · `--lh-row` 토큰 — §3.2): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · control `--lh-ctl` 18 · table cell and `.inline-target` `--lh-row` 20.
-- **weight (≤ 3 · signature 1)**: 400 regular · 500 medium (label · nav active · button · badge) · 600 semibold (card title · KPI value · page title). signature = 600 + sans tnum 수치. glass 표면 위 라벨은 한 step 무겁게 (600).
+- **weight (≤ 3 · signature 1)**: 400 regular · 500 medium (label · nav active · button · badge) · 600 semibold (card title · stat value §12.8 · page title). signature = 600 + sans tnum 수치. glass 표면 위 라벨은 한 step 무겁게 (600).
 - **수치**: value:unit — the unit sits beside its value one step down in faint ink (20 ↔ 13 · 15 ↔ 13, §12.2).
 - **page header** (`PageHeader`): h1 = `--fs-display` 600 · line-height `--ctl-min-h` 32, one line box with the back link, the status pill and the header controls · no sub-line or intro sentence after the h1; a meta line carries only new facts (count, id, time) — layout §12.3.
 - **chart tick**: `CHART_AXIS_TICK_STYLE` = `--fs-meta` · sans by inheritance + `tabular-nums` (§12.2) · `--faint`. 겹침 판정 문자 폭 `CHART_TICK_CHAR_PX` 8 (Pretendard tnum digit 0.614em × 13 ≈ 7.98) · tick 간 최소 간격 `CHART_TICK_MIN_GAP_PX` 8.
@@ -424,8 +424,8 @@
 |--------|-----|--------|
 | card title | ≤ 24자 | `outcomes.screen-render` → `COPY_CAP.title` |
 | header meta | ≤ 32자 | `COPY_CAP.meta` · `ui.card-layout.e2e` → `CAPPED_META` |
-| KPI label | ≤ 24자 | — |
-| KPI hint | ≤ 40자, 1줄 | — |
+| stat label | 글자 cap 없음 — 줄바꿈, 자르지 않음 (§12.8) | `ui.display-atoms.e2e` → "a label that wraps keeps every value of its row on one line, the label shown whole" |
+| stat context | 1줄 — 기간 또는 delta (§12.8) | — |
 | footnote | ≤ 90자, 카드당 최대 1개 | `FOOTNOTE_CAP` (dashboard · improvement · wiki) |
 
 - **cap 초과 설명** → card header 의 focusable ⓘ (`CardInfo`)가 여는 drawer 로. **hover-only `title` 로 정의를 숨기지 않는다.**
@@ -444,7 +444,7 @@
 |-------|------|------|-------|------|
 | **sunken** | `--sunken` | 홈 · `th` · 배지 shell · 미니바 트랙 | 245 fill | 24 fill |
 | **base** | `--surface` | 페이지 바탕 | 250 | 12 (가장 어두움) |
-| **raised** | `--elev` | 카드 · KPI · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line`, **shadow · inset 없음** |
+| **raised** | `--elev` | 카드 · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line`, **shadow · inset 없음** |
 | raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 hover (`.i-tile-hover`) | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` |
 | **overlay** | `--surface-overlay` | drawer · dialog · popover | 255 fill + `--shadow-overlay` | 28 fill + `--shadow-overlay` |
 
@@ -877,7 +877,7 @@
 
 **타이포 · 카피**
 - [ ] 렌더 텍스트 ≥ 13px (map default view · tweaks 패널 포함) · six steps (§12.2) · 수치는 sans tnum, mono 는 machine string 만 · sentence case · italic 없음 · unit 은 value 한 step 아래.
-- [ ] copy cap: card title ≤ 24 · header meta ≤ 32 · KPI label ≤ 24 · KPI hint ≤ 40 (1줄) · footnote ≤ 90 (카드당 1). 초과 설명은 ⓘ drawer — hover-only `title` 아님.
+- [ ] copy cap: card title ≤ 24 · header meta ≤ 32 · stat label 줄바꿈 (자르지 않음) · stat context 1줄 · footnote ≤ 90 (카드당 1). 초과 설명은 ⓘ drawer — hover-only `title` 아님.
 - [ ] 데이터 텍스트는 clamp, 고쳐 쓰지 않음. 전체가 읽혀야 하는 header meta 는 텍스트 1.1배에서도 들어가고, 긴 형태는 caller span 의 `title`.
 
 **레이아웃 · 카드**
@@ -925,7 +925,7 @@
 **Non-negotiable**
 
 - warm-stone 팔레트 + `tokens.css` 토큰, 새 hue 금지, 새 색 토큰은 kind A triplet.
-- type 은 `--fs-*` 만 · 13px floor · px 리터럴 금지. copy cap (title 24 · meta 32 · KPI label 24 · hint 40 · footnote 90), 초과분은 ⓘ drawer.
+- type 은 `--fs-*` 만 · 13px floor · px 리터럴 금지. copy cap (title 24 · meta 32 · stat label 줄바꿈 · stat context 1줄 · footnote 90), 초과분은 ⓘ drawer.
 - `SplitRow` ratio 는 `1:1` / `2:1` 만.
 - spacing = `--gap-*` role tokens / role keys only (§12.1) · numbers sans tnum, mono only for machine strings, sentence case, no italics (§12.2) · one look per taxonomy row under the O1 law (§12.3).
 - severity = glyph + 색 + 단어, tone 은 glyph 에만 — shell · stripe · fill · border 금지 (§4.2 허용 예외만).
@@ -1119,7 +1119,7 @@
 ### 12.8 Information density
 
 - Show what the owner acts on; demote everything else to an ⓘ popover, a drawer, or delete it.
-- **Stat row** replaces the four-tile KPI grid:
+- **Stat row** (`StatRow`, `ui.jsx`) — a card's top-line numbers, never a tile per stat:
   - One card, its stats divided by vertical hairlines, each = label 13/500 dim · value `--fs-stat` + unit · one context line (period or delta).
   - The stats share one label row, one value line and one context row: a label that wraps lowers the row's value line, never only its own value; a label wraps, never truncates.
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
@@ -1163,7 +1163,6 @@
 ### 12.11 Superseded clauses (rewritten in place)
 
 - §5.2 page header sub-line "`--fs-meta` mono `--faint` uppercase" → no sub-line (§12.3).
-- §5.2 KPI value "mono 600" and the mono signature → stat row, sans tnum 600 (§12.8).
 - §6.3 backdrop-filter allow-list (smoke glass scrim) → solid scrim (§12.9); §3.5 tweaks-panel glass stays a dev-only carve-out.
 - §7.1 dark `.card` raised shadow + inset highlight → one hairline.
 - §7.3 `.pill--ctl-h` height-match variant and the `.pill` border → retired.
