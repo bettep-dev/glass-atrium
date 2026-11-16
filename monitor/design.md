@@ -90,9 +90,8 @@
   --cat-1: 124 58 237;  --cat-2: 13 148 136;  --cat-3: 37 99 235;  --cat-4: 219 39 119;
   /* chart data — a series mark that carries a quantity (§4.3); the --faint value as its own token */
   --data: 112 106 101;
-  /* elevation · glass primitives */
+  /* elevation primitives */
   --elev-2: 252 252 251;  --overlay-surface: 255 255 255;
-  --glass-border: 255 255 255;   /* deprecated — no caller; S3 close deletes it */
 }
 [data-theme="dark"] {
   --surface: 12 10 9;  --elev: 28 25 23;  --sunken: 24 20 17;  --line: 41 37 36;
@@ -104,7 +103,6 @@
   --cat-1: 167 139 250;  --cat-2: 45 212 191;  --cat-3: 96 165 250;  --cat-4: 244 114 182;
   --data: 160 154 150;
   --elev-2: 36 32 30;  --overlay-surface: 28 25 23;
-  --glass-border: 255 255 255;   /* deprecated — no caller; S3 close deletes it */
 }
 :root[data-theme="dark"] {
   --accent: 96 165 250;       /* root 에만 → 중첩 dark scope 는 사용자 accent tweak 을 상속 */
@@ -129,14 +127,12 @@
 }
 :root {
   /* shadow (kind B box-shadow list) */
-  --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);   /* deprecated — no caller; S3 close deletes it */
   --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
 }
 [data-theme="dark"] {
   --surface-raised-2: var(--elev-2);          /* dark: 휘도 step (36 > 28) */
   --heat-1: rgb(var(--ink) / 0.36);  --heat-2: rgb(var(--ink) / 0.50);  --heat-3: rgb(var(--ink) / 0.65);  --heat-4: rgb(var(--ink) / 0.80);   /* hour-grid ramp, dark alphas — declared after the alias rule, so it wins on every dark scope */
-  --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);   /* deprecated — no caller; S3 close deletes it */
   --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25);
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
 }
@@ -161,7 +157,6 @@
 ```css
 :root {
   /* type steps — 유일한 스케일 소스, 정수 px, 13px floor (§5.2) */
-  --fs-kpi: 32px;  /* deprecated — the stat row takes --fs-stat (§12.2) */
   --fs-display: 24px;  --fs-stat: 20px;  --fs-title: 16px;
   --fs-body: 15px;  --fs-control: 14px;  --fs-meta: 13px;
   --fs-micro: var(--fs-meta);   /* 은퇴한 step — floor 아래로 떨어지지 않게 alias 만 유지 */
@@ -206,12 +201,12 @@
 | 공개 | `Disclosure` · `DisclosureButton` | `.disclosure` (also on a `summary`) · `.card.is-collapsed` |
 | 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
-| 수치 | `StatRow` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` |
+| 수치 | `StatRow` · `StatToneGlyph` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` · `.stat-tone-glyph` |
 | 표 | `Table` · `TableHead` | `.tbl` |
 | 페이지 | `PageHeader` · `SectionLabel` · `EmptyState` | `.section-label` · `.placeholder` (deprecated, §12.5) |
 | 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` sans tnum `--faint` (§12.2) · `.btn.ghost.sm` |
 | 로딩 | `LoadingPlaceholder` · `SkeletonRows` | `role="status"` `.fs-meta` `--dim` · inline bar |
-| 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `RetryButton` | `.sub-card.bg-sunken` · `.alert-card*` · `.btn.sm` |
+| 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `AlarmRow` · `RetryButton` | `.stack` · `.fs-meta` · `.alert-card*` · `.alarm-row*` · `.btn.sm` |
 | 기타 | `Icon` · `DetailField` | `.seg` |
 | control row · inline target | — (class only) | `.control-row` · `.inline-target` (§7.15 · §7.16) |
 | 본문 텍스트 | `ProseText` · parser `getProseBlocks` | `.prose-text` · `.prose-text--compact` · `.prose-pre` · `a.prose-link` (§7.13) |
@@ -227,9 +222,9 @@
   - `LoadingPlaceholder` = `role="status"` · `--fs-meta` `--dim` · refresh icon `motion-safe:animate-spin` + "Loading <label>…" · `minHeight` 로 settled 높이 예약 → layout shift 0.
   - `SkeletonRows` = 실제 `tbody` 안 · 실제 header 아래 · 실제 row 높이의 aria-hidden 행. 셀마다 정적 bar (높이 10 · 폭 70% · `--radius-inline` · `--faint` 0.3), pulse 없음.
 - **오류 · region 상태**:
-  - 실패한 region 은 `RegionFailure` 로만 — banner 나 sibling region 이 같은 source 를 말하면 `RegionCovered`, 아니면 `RegionUnavailable`. 둘 다 `.sub-card.bg-sunken` + `minHeight` 로 grid slot 유지.
+  - 실패한 region 은 `RegionFailure` 로만 — banner 나 sibling region 이 같은 source 를 말하면 `RegionCovered`, 아니면 `RegionUnavailable`. 둘 다 tile 없이 region 카드 body 에 놓이고 `minHeight` 로 grid slot 유지.
     - `RegionUnavailable`: crit icon + 원인 문장 `--fs-body` · 다음 단계 `--fs-meta` `--dim` · 접힌 Details(raw 응답) · `RetryButton`.
-    - `RegionCovered`: region 이름 `--fs-body` `--dim` + "Not loaded — see the … notice" `--fs-meta` `--faint`. 문장 · Retry 없음.
+    - `RegionCovered`: pointer 1줄 `--fs-meta` `--dim` — `Not loaded — see the notice above.` (page banner) · `Not loaded — see the <source> notice.` (sibling region). region 이름 · 문장 · Retry 없음 (카드 제목이 이미 이름을 말함). pointer 문구는 `getNoticePointer` 가 소유.
   - 2개 이상 region 이 같은 장애를 공유 → `PageErrorBanner` = `AlertCard tone="crit"` + `RetryButton` 1개 (§7.9). 복구 시 focus 는 첫 covered region 카드로.
   - `RetryButton` · `RefreshButton`: busy 중에도 native `disabled` 금지 — `aria-disabled` + `aria-busy` + click guard 로 키보드 focus 유지. 라벨 "Retrying…".
 
@@ -405,10 +400,9 @@
 
 | Token | px | 역할 |
 |-------|----|------|
-| `--fs-kpi` | 32 | deprecated — the stat-row value takes `--fs-stat` (§12.8) |
 | `--fs-display` | 24 | page title (h1) |
 | `--fs-stat` | 20 | stat-row value · a card's lead number |
-| `--fs-title` | 16 | card title · drawer title · KPI unit |
+| `--fs-title` | 16 | card title · drawer title |
 | `--fs-body` | 15 | 행 primary · prose · toast |
 | `--fs-control` | 14 | button · input · table cell · nav label |
 | `--fs-meta` | 13 | **floor** — label · `th` · caption · badge · chart tick · card meta |
@@ -472,7 +466,7 @@
   - 사이드바는 본문과 겹치지 않는 별도 grid 컬럼 → blur 불필요, 불투명.
 - **금지**:
   - 테이블/리스트 row 개별 blur (`.tbl tbody tr` · `.alarm-row`): row 마다 컴포지팅 레이어 → 스크롤 frame drop.
-  - KPI 그리드 일괄 blur (`.kpi` ×N): GPU 예산 초과 + 카드끼리 뭉개짐.
+  - 카드 그리드 일괄 blur (`.card` ×N): GPU 예산 초과 + 카드끼리 뭉개짐.
   - severity 요소(`.alert-card` · `Badge`/`.pill` · `.alarm-row`) 위 blur: desaturation.
   - 폼 필드, 실시간 차트 · 로그 스트림 위 정적 glass.
 
@@ -481,7 +475,7 @@
 ### 6.4 Glass 를 쓸 때의 필수 4종 세트
 
 1. **Scrim**: 텍스트가 얹히면 그 뒤에 `rgb(var(--elev) / 0.85)` 이상 면 — 4.5:1 확보.
-2. **Border**: `1px solid` `--glass-border` 0.15 (deprecated token, no caller — S3 close; a new glass surface takes `--line`) — 경계가 blur 에만 의존하지 않게.
+2. **Border**: `1px solid` `--line` — 경계가 blur 에만 의존하지 않게.
 3. **dark 보상**: fill 불투명도 ↑, 휘도 step 확보.
 4. **Fallback**: `@media (prefers-reduced-transparency)` 로 불투명 대체 (§9.3).
 
@@ -633,12 +627,16 @@
   - actions at the row end: one Link (ink, trailing →) when the fix is on another page, else at most two `.btn.sm` · at a container width ≤ 36rem they drop under the content.
   - between rows of a list: one hairline `--line`, none after the last.
   - states: firing · held (the title is followed by `Last known` in plain `--fs-meta` dim, the glyph keeps its tone, Retry stays) · resolved (the row is removed, no "all clear" row) · empty list (the list card is not rendered).
-- **`.alarm-row`**: the alarm row written by class on a screen — `.alarm-row-glyph` slot first, the content next, `.alarm-row-actions` last; tone via `data-tone` on the row.
+- **`AlarmRow({ tone, title, detail, isHeld, actions, role })`** (`ui.jsx`): the one hairline alarm row atom — a screen never assembles `.alarm-row` itself.
+  - classes: `.alarm-row` (tone via `data-tone`) → `.alarm-row-glyph` slot · a `min-w-0` content cell, its detail in `.alarm-row-detail` (own block line) · `.alarm-row-actions` (a 32-tall slot → a one-line Link centres on the first line).
+  - glyph size `ALARM_GLYPH_SIZE` — the one size for every alarm mark, a firing stat's included.
   - the row is its own size container → the ≤ 36rem drop reads the row's content width (the row less 2 × `--card-pad`).
+  - consumers: the Dashboard alarm list (`dashboard.jsx` → `AlarmRow`) · the Cost spend card (`cost.jsx` → `SpendAlarmRowsC`).
 - **Dashboard alarm list** ("Needs you", §12.7): one list card (no visible head, region `aria-label="Needs you"`), one alarm row per alarm, worst first, action = Link to the owning page.
-  - sources: every firing Status-card stat (Harness health · Task results · Fleet · Spend today) + the install state; a firing stat shows only its value and tone glyph (16, the row's size), so its sentence is the row's.
+  - sources: every firing Status-card stat (Harness health · Task results · Fleet · Spend today) + the install state; a firing stat shows only its value and tone glyph, so its sentence is the row's.
   - Task results: the tripped line's share in words (`10% of task results failed or blocked in the last 7 days` · `12% of task results have open caveats in the last 7 days`), its count as the detail; the alarm lines stay behind the stat's ⓘ.
   - Fleet: `N agent(s) is/are suspended` (crit, a streak as the detail) · else `N agent(s) is/are on a failing streak` (warn).
+- **Stat tone glyph — `StatToneGlyph({ tone, label, title })`** (`ui.jsx`): a firing stat's mark before its value — the alarm row's glyph in `.stat-tone-glyph`, a box one value line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Dashboard (`StatValue`) and Cost (`SpendStatValueC`) call it.
 - **Dashboard Status card**: one context line per stat, at a fixed height — loading, held and failed states never grow the card.
   - held line: `Last known` alone; the failed refresh rides the line's `title` and the card's ⓘ · a partly unread harness reads `Last known` or `N not read` the same way.
   - a stat's Retry sits in a box one context line tall → the 32 control overhangs into the card padding.
@@ -648,8 +646,8 @@
   - role: `hasLiveHost` 면 없음, 아니면 crit = `alert` · 그 외 = `status`.
   - `subjects` = neutral `Badge` chip · `details` = 접힌 Details 의 raw 오류 · `actions` = `.btn.sm` 최대 2개.
   - 화면 배너 함수는 AlertCard 의 얇은 wrapper (screen-local tint 배너 금지):
-    - `raised`: `PageErrorBanner` (§3.3) · `AwaitingBannerI` · `ParkedLoopBannerI` · `DriftBannerMC` · `ErrorBannerMC` · `SilentChannelRowO` · `BlockedBannerO` · System map alarm lane `AlarmRowAR`.
-    - `inset`: `AgentDeleteConfirmPanel` 안내 · 실패 · `ErrorBannerCD` · 문서 viewer superseded 알림.
+    - `raised`: `PageErrorBanner` (§3.3) · `ParkedLoopBannerI` · `DriftBannerMC` · `ErrorBannerMC` · `SilentChannelRowO` · `BlockedBannerO` · System map alarm lane `AlarmRowAR` · Queue `QueueFailureQ`.
+    - `inset`: `AgentDeleteConfirmPanel` 안내 · 실패 · `ErrorBannerCD` · 문서 viewer superseded 알림 · Dashboard panel `PanelFailure`.
   - 고유 role 이 필요한 행은 AlertCard 를 감싼다: `AlarmRowAR` = `.arch-alarm-row` wrapper (`role="alert"` + `data-alarm` / `data-alarm-tone`, tint · border · padding 없음) 안에 `hasLiveHost` AlertCard.
 - **`.alert-card`**: the alarm row (above) on a card shell — the `.alert-card-grid` holds the padding, the shell none · `surface="inset"` keeps its `.sub-card.bg-sunken` shell.
   - content: gap 4 · body max 72ch · container query (≤ 36rem) 에서 액션이 content 아래로.
@@ -812,7 +810,7 @@
   - drawer: `detailDrawerSlide` translateX 100%→0, 240ms `cubic-bezier(0.16, 1, 0.3, 1)`.
   - fullscreen: `detailFade` opacity, 180ms ease-out · confirm: `detailPop` opacity + scale 0.97→1, 180ms ease-out.
   - alert-card: `detailFade` 150ms `cubic-bezier(0.2, 0, 0, 1)` (effects-fast).
-- **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.kpi` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음). Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
+- **secondary — hover 깊이 · 상태**: `border-color` + `box-shadow` (+ `background`) 120ms — `.btn` · `.field` · 화면 행 `.doc-row` · `.outcome-row` (background) · improvement 타일 `.i-tile-hover` (box-shadow, transform lift 없음). Tailwind 유틸은 `motion-safe:` + `duration-[120ms]`.
 - **ambient**: none.
 - **즉시** (transition 없음): disclosure chevron 회전 · checkbox toggle (`.ctl-checkbox`) · Recharts `Tooltip` 추종 (`isAnimationActive={false}`, series 와 동일).
 
@@ -830,7 +828,7 @@
 ### 8.4 prefers-reduced-motion 계약 (필수)
 
 - 모든 모션은 `@media (prefers-reduced-motion: reduce)` 게이트를 갖는다. reduce 범위:
-  - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.alert-card` 애니메이션 정지 · `.btn` · `.kpi` transition 제거 · `.field` · `.field-affix` transition 제거.
+  - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.alert-card` 애니메이션 정지 · `.btn` transition 제거 · `.field` · `.field-affix` transition 제거.
   - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.skel-pulse-o` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
   - Tailwind 유틸: `motion-safe:` prefix 가 게이트 (`animate-spin` · `transition-colors` · `transition-opacity`).
 - **finder** (merged tree 에서 허용 hit 만):
@@ -950,7 +948,7 @@
 
 **Bad examples (생성 금지 앵커)**
 
-- ✕ `.kpi { backdrop-filter: blur(16px); }` — 상시 KPI 그리드 일괄 blur (AP-1 · 성능 · 뭉개짐).
+- ✕ `.card { backdrop-filter: blur(16px); }` — 상시 카드 그리드 일괄 blur (AP-1 · 성능 · 뭉개짐).
 - ✕ `.alarm-row[data-tone="crit"] { background: rgb(var(--crit) / 0.12); backdrop-filter: blur(10px); }` — tone 을 행 fill 에 칠하고 severity 위 blur (AP-6).
 - ✕ `<span className="pill" style={{ background: 'rgb(var(--warn) / 0.15)' }}>` — tone 을 배지 shell 에 칠함. `Badge role="status" tone="warn"` 로.
 - ✕ `.card-sub { font-size: 12px; }` — floor 아래 px 리터럴.
@@ -1010,7 +1008,7 @@
 | `--fs-control` | 14 / 500 / 18px | buttons, triggers, segments, tabs, inputs, table cells |
 | `--fs-meta` | 13 / 400 (labels 500) / 1.4 | labels, `th`, captions, card sub, badges, axis ticks |
 
-- `--fs-kpi` 32 and `.hero-stat` 30 are deprecated: no big-number tiles (§12.8).
+- `.hero-stat` 30 is deprecated: no big-number tiles (§12.8).
 - Value:unit — the unit sits beside the value one step down in faint ink (20 ↔ 13; 15 ↔ 13).
 - **Family rule**:
   - Sans (Pretendard, `tnum` on) for all prose, labels and all numbers — counts, money, percentages, durations, dates in prose, pagination ranges.
@@ -1173,7 +1171,6 @@
 - Principle 7 and §8 `.live-dot` ambient loop + §7.7 sidebar `.live-dot` → no ambient loop.
 - Retiring, marked in place until the owning stream lands:
   - pressed-toggle ✓ glyph (§7.4 · §7.6 · §7.16) → built with the S2a controls
-  - tokens `--shadow-raised`, `--glass-border` (§3.1 · §3.2 · §6.4) → no caller; S3 close deletes them
 
 ### 12.12 Contrast (measured, WCAG 2.2, both themes)
 
