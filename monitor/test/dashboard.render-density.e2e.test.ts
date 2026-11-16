@@ -291,6 +291,42 @@ describe("Runs by hour layout", () => {
   });
 });
 
+describe("Runs by hour ramp", () => {
+  test("a zero hour is an outlined empty cell and every run hour paints one of the four heat tokens at full opacity", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    const paint = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      document.body.append(probe);
+      const heats = ["--heat-1", "--heat-2", "--heat-3", "--heat-4"].map((token) => {
+        probe.style.background = `var(${token})`;
+        return getComputedStyle(probe).backgroundColor;
+      });
+      probe.remove();
+      const cells = Array.from(document.querySelectorAll("#dash-week-hours [role=img] .dash-hour-cell")).map((el) => {
+        const style = getComputedStyle(el);
+        return { title: el.getAttribute("title") ?? "", background: style.backgroundColor, shadow: style.boxShadow, opacity: style.opacity };
+      });
+      const key = document.querySelector("#dash-week-hours .dash-hour-key")?.textContent ?? "";
+      return { heats, cells, key };
+    });
+    await page.close();
+    const peak = Math.max(...(PAYLOADS["/api/outcomes/heatmap"] as { data: number[][] }).data.flat());
+    assert.match(paint.key, new RegExp(`^01${peak} runs per hour$`), "the key ends on the grid's peak");
+    const isZero = (title: string) => / — 0 runs$/.test(title);
+    const zeros = paint.cells.filter((cell) => isZero(cell.title));
+    const filled = paint.cells.filter((cell) => !isZero(cell.title));
+    assert.ok(zeros.length > 0 && filled.length > 0, "the fixture holds zero and run hours");
+    for (const cell of zeros) {
+      assert.equal(cell.background, "rgba(0, 0, 0, 0)", `${cell.title}: no fill`);
+      assert.match(cell.shadow, /0px 0px 0px 1px inset$/, `${cell.title}: a 1px inset outline`);
+    }
+    for (const cell of filled) {
+      assert.ok(paint.heats.includes(cell.background), `${cell.title}: ${cell.background} is not a heat token`);
+      assert.equal(cell.opacity, "1", `${cell.title}: never quieted by opacity`);
+    }
+  });
+});
+
 async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
   const page = await openDashboard(viewport);
   await page.evaluate(() => window.postMessage({ type: "__activate_edit_mode" }, window.location.origin));

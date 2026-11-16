@@ -206,11 +206,23 @@ interface WeekRowHelpers {
     peak: { day: string; hour: number; count: number; fold: string | null };
   };
   describeHourGrid: (grid: unknown) => string;
+  getHeatStep: (count: number, max: number) => number;
   getPanelView: (state: unknown) => string;
   buildSpendStrip: (points: unknown) => { bars: Array<{ date: string; cost: number; isPartial: boolean }>; span: string | null };
   window: { UI: { resolveOutcomeRate: (data: unknown) => { breakage: number }; getWriterTotal: (data: unknown) => number } };
 }
 const week = dash as unknown as WeekRowHelpers;
+
+// linear in the count → a busier hour never paints a lighter step; a zero hour alone is unpainted
+test("the heat step rises with the count, from 0 for an empty hour to 4 at the peak, every run hour at least 1", () => {
+  for (const max of [1, 3, 4, 117, 1000]) {
+    const steps = Array.from({ length: max + 1 }, (_, count) => week.getHeatStep(count, max));
+    assert.equal(steps[0], 0, `max ${max}: a zero hour has no step`);
+    assert.equal(steps[max], 4, `max ${max}: the peak takes the top step`);
+    assert.ok(steps.slice(1).every((step) => step >= 1 && step <= 4), `max ${max}: a run hour takes a step 1–4`);
+    assert.ok(steps.every((step, at) => at === 0 || step >= steps[at - 1]), `max ${max}: never lighter for more runs`);
+  }
+});
 
 test("the results panel counts follow the tile's writer-emitted rule and name their window", () => {
   const data = {

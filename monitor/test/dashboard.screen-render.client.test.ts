@@ -421,7 +421,7 @@ test("the results panel's counting note opens from a focusable ⓘ described by 
   const row = render("WeekRow", { spendState: loading, outcomesState: loading, heatmapState: loading, onRetrySpend: () => {}, onRetryHeatmap: () => {} });
   const panels = findNodes(row, (n) => n.type === "section");
   const infoCounts = Object.fromEntries(panels.map((panel) => [panel.props.id, findNodes(panel, (n) => n.props.atom === "CardInfo").length]));
-  assert.deepEqual(infoCounts, { "dash-week-results": 1, "dash-week-hours": 0, "dash-week-spend": 0 }, "only the results panel carries a counting note");
+  assert.deepEqual(infoCounts, { "dash-week-results": 1, "dash-week-hours": 1, "dash-week-spend": 0 }, "the results and hour panels carry a counting note");
 
   const results = panels.find((panel) => panel.props.id === "dash-week-results")!;
   const [heading] = findNodes(results, (n) => n.type === "h2");
@@ -811,20 +811,52 @@ test("hour ticks read as bare two-digit hours while each cell's tooltip keeps th
   assert.match(String(cells[5].props.title), /^Mon 05:00 — /);
 });
 
-// "Wed ×2" is one unbreakable token → it never splits, in the fold sentence or in the row-label column
+// "Wed ×2" is one unbreakable token → it never splits, in the ⓘ fold sentence or in the row-label column
 test("a folded weekday keeps its ×2 token on one line in the fold sentence and the row label", () => {
   const counts = Array.from({ length: 24 }, (_, hour) => (hour === 14 ? 9 : 0));
   const grid = {
     rows: [{ day: "Wed", counts, fold: "09-23 + today" }], total: 9, max: 9, span: "Sep 24 – Sep 30",
     folds: [{ day: "Wed", fold: "09-23 + today" }], peak: { day: "Wed", hour: 14, count: 9, fold: "09-23 + today" },
   };
-  const tree = render("HourGrid", { grid });
-  const tokens = findNodes(tree, (n) => n.props.atom === "NoWrap").map(collectText);
+  const tokens = findNodes(render("HourGridNote", { grid }), (n) => n.props.atom === "NoWrap").map(collectText);
   assert.deepEqual(tokens, ["Wed ×2"], "the fold sentence holds the token in one nowrap span");
-  const [chart] = findNodes(tree, (n) => n.props.role === "img");
+  const [chart] = findNodes(render("HourGrid", { grid }), (n) => n.props.role === "img");
   const [label] = findNodes(chart, (n) => n.props.title === "09-23 + today");
   assert.equal(label && collectText(label), "Wed ×2", "the row label names the folded weekday");
   assert.match(classOf(label), /\bwhitespace-nowrap\b/, "the row label never wraps inside its track");
+});
+
+describe("Runs by hour heat ramp", () => {
+  const counts = [0, 1, 25, 50, 75, 100, ...Array.from({ length: 18 }, () => 0)];
+  const grid = {
+    rows: [{ day: "Mon", counts, fold: null }], total: 251, max: 100, span: "Sep 24 – Sep 30", folds: [],
+    peak: { day: "Mon", hour: 5, count: 100, fold: null },
+  };
+  const tree = render("HourGrid", { grid });
+  const [chart] = findNodes(tree, (n) => n.props.role === "img");
+  const cells = findNodes(chart, (n) => hasClass(n, "dash-hour-cell"));
+
+  test("each cell paints the heat step its count falls in, never the info hue or an opacity", () => {
+    assert.deepEqual(cells.slice(0, 6).map((cell) => cell.props["data-heat"]), [0, 1, 1, 2, 3, 4]);
+    for (const cell of cells) {
+      assert.ok(!hasClass(cell, "text-info"), "no cell takes the info hue");
+      assert.equal((cell.props.style as Record<string, unknown> | undefined)?.opacity, undefined, "no cell is quieted by opacity");
+    }
+  });
+
+  test("the key states the zero swatch, the four steps and the peak, outside the accessible label", () => {
+    const [key] = findNodes(tree, (n) => hasClass(n, "dash-hour-key"));
+    assert.equal(key.props["aria-hidden"], "true");
+    assert.deepEqual(findNodes(key, (n) => hasClass(n, "dash-hour-swatch")).map((n) => n.props["data-heat"]), [0, 1, 2, 3, 4]);
+    // formatInt is a stubbed atom here → the peak figure itself is asserted in the e2e
+    assert.match(collectText(key), /^0\s*1\s*runs per hour$/);
+  });
+
+  test("the method sentences leave the card body for its ⓘ", () => {
+    assert.doesNotMatch(collectText(tree), /reconstructed|counted by weekday/, "the body carries no method sentence");
+    assert.match(collectText(render("HourGridNote", { grid: { ...grid, folds: [{ day: "Wed", fold: "09-23 + today" }] } })),
+      /reconstructed included, poisoned excluded[\s\S]*counted by weekday/);
+  });
 });
 
 test("a zero spend day draws no bar, and every day's track stands on the baseline", () => {

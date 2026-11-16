@@ -170,7 +170,17 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
         /* the label track grows to its widest label → a folded "Wed ×2" stays on one line instead of spilling into the first cell */
         .dash-hour-grid { display: grid; grid-template-columns: minmax(2.5rem, max-content) repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
-        .dash-hour-cell { aspect-ratio: 1; background: currentColor; border-radius: 2px; }
+        /* neutral ink ramp (spec 44084 §4.1) → the lowest run hour clears 3:1 on the card; a zero hour is an outline, never a fill */
+        .dash-hour-cell, .dash-hour-swatch { border-radius: 2px; }
+        .dash-hour-cell { aspect-ratio: 1; }
+        .dash-hour-swatch { width: 12px; height: 12px; }
+        :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="0"] { box-shadow: inset 0 0 0 1px rgb(var(--line)); }
+        :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="1"] { background: var(--heat-1); }
+        :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="2"] { background: var(--heat-2); }
+        :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="3"] { background: var(--heat-3); }
+        :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="4"] { background: var(--heat-4); }
+        .dash-hour-key { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--gap-label); }
+        .dash-hour-steps { display: flex; gap: 2px; }
         .dash-hour-tick { white-space: nowrap; }
       `}</style>
 
@@ -415,7 +425,7 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
           note={OUTCOME_COUNTING_NOTE} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
-          onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
+          note={(data) => <HourGridNote grid={data ? buildHourGrid(data) : null}/>} onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
           render={(data) => <HourGrid grid={buildHourGrid(data)}/>}/>
       </div>
       <WeekPanel id="dash-week-spend" title="Spend per day" state={spendState} source="daily spend" onRetry={onRetrySpend}
@@ -426,10 +436,12 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
 }
 
 // a panel without onRetry shares its source with a tile → the tile speaks for the failure, the panel only points to it
+// note: a sentence, or (data | null) → the drawer body, so a fact read from the payload joins the method it qualifies
 function WeekPanel({ id, title, state, source, onRetry, render, note = null, isRetryShared = false }) {
   const { Badge, LoadingPlaceholder, CardInfo } = window.UI;
   const view = getPanelView(state);
   const titleId = `${id}-title`;
+  const hasData = view === 'ready' || view === 'held';
   return (
     <section id={id} className="card p-3 flex flex-col gap-2" aria-labelledby={titleId}
       aria-busy={state.busy ? 'true' : undefined}>
@@ -441,13 +453,13 @@ function WeekPanel({ id, title, state, source, onRetry, render, note = null, isR
         </div>
         {note && (
           <CardInfo label="How this is counted" describedBy={titleId}>
-            <p className="fs-body">{note}</p>
+            {typeof note === 'function' ? note(hasData ? state.data : null) : <p className="fs-body">{note}</p>}
           </CardInfo>
         )}
       </div>
       {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
       <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
-      {(view === 'ready' || view === 'held') && render(state.data)}
+      {hasData && render(state.data)}
     </section>
   );
 }
@@ -553,6 +565,8 @@ function getAgentOutcomesHref(agent) {
 const HOUR = {
   OF_DAY: Array.from({ length: 24 }, (_, hour) => hour),
   TICKS: new Set([0, 6, 12, 18]),
+  STEP_COUNT: 4,
+  STEPS: [1, 2, 3, 4],
   // the heatmap counts differently from the results panel beside it → it states its own basis
   GRID_BASIS: 'All recorded runs — reconstructed included, poisoned excluded.',
 };
@@ -562,29 +576,55 @@ function HourGrid({ grid }) {
   if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last <NoWrap>7 days</NoWrap>.</p>;
   return (
     <>
-      <p className="fs-meta text-dim"><window.UI.DayTokens>{grid.span}</window.UI.DayTokens> · {formatInt(grid.total)} runs · {HOUR.GRID_BASIS}</p>
-      {grid.folds.length > 0 && (
-        <p className="fs-meta text-dim">
-          {grid.folds.map((row, at) => (
-            <React.Fragment key={row.day}>{at > 0 && ' · '}<NoWrap>{`${row.day} ×2`}</NoWrap>{` sums ${row.fold}`}</React.Fragment>
-          ))} — runs are counted by weekday, not by date.
-        </p>
-      )}
+      <p className="fs-meta text-dim"><window.UI.DayTokens>{grid.span}</window.UI.DayTokens> · {formatInt(grid.total)} runs</p>
       <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
             <span className="whitespace-nowrap" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
             {row.counts.map((count, hour) => (
-              <span key={hour} className="dash-hour-cell text-info" title={`${getRowLabel(row)} ${formatHour(hour)} — ${formatInt(count)} runs`}
-                style={{ opacity: count === 0 ? 0.06 : 0.2 + (0.8 * count) / grid.max }}/>
+              <span key={hour} className="dash-hour-cell" data-heat={getHeatStep(count, grid.max)}
+                title={`${getRowLabel(row)} ${formatHour(hour)} — ${formatInt(count)} runs`}/>
             ))}
           </React.Fragment>
         ))}
         <span/>
         {HOUR.OF_DAY.map((hour) => <span key={hour} className="dash-hour-tick">{HOUR.TICKS.has(hour) ? formatHourTick(hour) : ''}</span>)}
       </div>
+      {/* the img label already states range and peak → the key is for the eye only */}
+      <div className="dash-hour-key fs-meta text-dim" aria-hidden="true">
+        <span>0</span>
+        <span className="dash-hour-swatch" data-heat={0}/>
+        <span>1</span>
+        <span className="dash-hour-steps">
+          {HOUR.STEPS.map((step) => <span key={step} className="dash-hour-swatch" data-heat={step}/>)}
+        </span>
+        <span>{formatInt(grid.max)} runs per hour</span>
+      </div>
     </>
   );
+}
+
+// the ⓘ drawer — the basis always; the weekday fold once the payload names a doubled weekday
+function HourGridNote({ grid }) {
+  const { NoWrap } = window.UI;
+  return (
+    <>
+      <p className="fs-body">{HOUR.GRID_BASIS}</p>
+      {grid?.folds.length > 0 && (
+        <p className="fs-body">
+          {grid.folds.map((row, at) => (
+            <React.Fragment key={row.day}>{at > 0 && ' · '}<NoWrap>{`${row.day} ×2`}</NoWrap>{` sums ${row.fold}`}</React.Fragment>
+          ))} — runs are counted by weekday, not by date.
+        </p>
+      )}
+    </>
+  );
+}
+
+// linear in the count, as the ramp always was → 0 = no run, 1–4 = the --heat-N step
+function getHeatStep(count, max) {
+  if (count <= 0) return 0;
+  return Math.max(1, Math.ceil((HOUR.STEP_COUNT * count) / max));
 }
 
 function getRowLabel(row) {
