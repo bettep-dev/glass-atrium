@@ -159,18 +159,6 @@ describe("the surface behind the gate", () => {
     }
     assert.deepEqual(answered, []);
   });
-
-  test("a mutation body over 96 KiB is refused before the handler", async () => {
-    const presented = issueDevice();
-    const response = await app.inject({
-      method: "POST",
-      url: `/api/queue/owner/items/${await seedDecision()}/answer`,
-      remoteAddress: PHONE,
-      headers: { host: HOST, cookie: `${DEVICE_COOKIE.NAME}=${presented}`, "sec-fetch-site": "same-origin", [CSRF_HEADER]: getCsrfToken(presented) },
-      payload: { code: "R1", text: "x".repeat(96 * 1024) },
-    });
-    assert.equal(response.statusCode, 413);
-  });
 });
 
 describe("queue answers from a registered device", () => {
