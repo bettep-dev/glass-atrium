@@ -4,10 +4,9 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import { deriveResultCode } from "../middleware/audit-log.js";
 import type { DeviceConnections } from "./connections.js";
 import { DEVICE, type DeviceCreation, type DeviceSummary } from "./devices.js";
-import { type RemoteAuditEvent, type RemoteAuditWriter, getAdmittedDevice, getRemoteActor, getSourceAddress } from "./gate.js";
+import { type RemoteAuditWriter, closeAuditResult, getAdmittedDevice, getRemoteActor, getSourceAddress, recordEvent } from "./gate.js";
 import { REMOTE_LIMITS, WindowLimiter } from "./limits.js";
 import type { RegistrationCodes } from "./registration-code.js";
 import { DEVICE_COOKIE, DEVICE_COOKIE_OPTIONS, getCsrfToken } from "./session.js";
@@ -80,7 +79,8 @@ export async function registerRemoteDeviceRoutes(app: FastifyInstance, deps: Rem
       const isWithinBudget = perAddress.hit(getSourceAddress(request)) && total.hit("all");
       return isWithinBudget ? undefined : reply.code(429).send({ error: "too_many_requests" });
     },
-    onResponse: (request, reply) => closeRegisterAudit(request, reply, deps),
+    // a thrown createDevice reaches here as a 500 → the row reads error, never success
+    onResponse: (request, reply) => closeAuditResult(request, reply, { audit: deps.audit, auditId: REGISTER_AUDIT.get(request) }),
     handler: (request, reply) => register(request, reply, deps),
   });
   app.get(REMOTE_DEVICE_PATH.SESSION, (request, reply) => readSession(request, reply));
@@ -112,17 +112,17 @@ async function register(request: FastifyRequest<{ Body: RegisterBody }>, reply: 
   if (!DEVICE.LABEL_PATTERN.test(label)) return reply.code(400).send({ error: "label_invalid" });
   const anonymous = getRemoteActor(null, getSourceAddress(request));
   if (deps.registration.codes.consume(code) === "refused") {
-    recordEvent(request, deps, { actor: anonymous, actionKind: "remote.registration_failure", result: "blocked" });
+    recordEvent(request, deps.audit, { actor: anonymous, actionKind: "remote.registration_failure", result: "blocked" });
     return reply.code(400).send({ error: "registration_refused" });
   }
   // the code is spent from here on → every outcome below leaves a row, the first before any device exists
   if (!(await writeRegisterAudit(request, deps, anonymous))) return reply.code(503).send({ error: "audit_unavailable" });
   const created = await deps.registration.createDevice(label).catch((error: unknown) => {
-    recordEvent(request, deps, { actor: anonymous, actionKind: "remote.registration_failure", result: "error" });
+    recordEvent(request, deps.audit, { actor: anonymous, actionKind: "remote.registration_failure", result: "error" });
     throw error;
   });
   if (created.outcome !== "created") {
-    recordEvent(request, deps, { actor: anonymous, actionKind: "remote.registration_failure", result: "blocked" });
+    recordEvent(request, deps.audit, { actor: anonymous, actionKind: "remote.registration_failure", result: "blocked" });
     return created.outcome === "cap_reached" ? reply.code(409).send({ error: "device_limit_reached" }) : reply.code(400).send({ error: "label_invalid" });
   }
   return issueDevice(request, reply, { deps, created });
@@ -130,7 +130,7 @@ async function register(request: FastifyRequest<{ Body: RegisterBody }>, reply: 
 
 function issueDevice(request: FastifyRequest, reply: FastifyReply, input: { deps: RemoteRoutesDeps; created: Extract<DeviceCreation, { outcome: "created" }> }): FastifyReply {
   const { device } = input.created;
-  recordEvent(request, input.deps, {
+  recordEvent(request, input.deps.audit, {
     actor: getRemoteActor(device, getSourceAddress(request)),
     actionKind: "remote.registration_success",
     result: "success",
@@ -150,17 +150,6 @@ async function writeRegisterAudit(request: FastifyRequest, deps: RemoteRoutesDep
   }
 }
 
-// a thrown createDevice reaches here as a 500 → the row reads error, never success
-async function closeRegisterAudit(request: FastifyRequest, reply: FastifyReply, deps: RemoteRoutesDeps): Promise<void> {
-  const auditId = REGISTER_AUDIT.get(request);
-  if (auditId === undefined) return;
-  try {
-    await deps.audit.setResult(auditId, deriveResultCode(reply.statusCode));
-  } catch (error) {
-    request.log.warn({ err: error, auditId: String(auditId) }, "remote registration audit result not recorded");
-  }
-}
-
 async function readSession(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   const site = request.headers["sec-fetch-site"];
   if (site !== undefined && site !== "same-origin") return reply.code(403).send({ error: "not_page_origin" });
@@ -172,7 +161,7 @@ async function readSession(request: FastifyRequest, reply: FastifyReply): Promis
 async function logout(request: FastifyRequest, reply: FastifyReply, deps: RemoteRoutesDeps): Promise<FastifyReply> {
   const device = getAdmittedDeviceOrThrow(request);
   const isRevoked = await deps.device.revoke(device.id);
-  recordEvent(request, deps, { actor: getActor(request, device), actionKind: "remote.revoke", result: isRevoked ? "success" : "blocked", targetId: device.id });
+  recordEvent(request, deps.audit, { actor: getActor(request, device), actionKind: "remote.revoke", result: isRevoked ? "success" : "blocked", targetId: device.id });
   // replaces the gate's re-send in the reply's cookie map → the one Set-Cookie expires the device cookie
   reply.clearCookie(DEVICE_COOKIE.NAME, DEVICE_COOKIE_OPTIONS);
   return reply.send({ loggedOut: true });
@@ -187,10 +176,10 @@ async function turnOff(request: FastifyRequest, reply: FastifyReply, deps: Remot
     for (const id of revoked) if (id !== device.id) deps.connections.close(id);
   } catch (error) {
     request.log.error({ err: error }, "remote off: device revoke failed — listener closes anyway");
-    recordEvent(request, deps, { actor: getActor(request, device), actionKind: "remote.off", result: "error", targetId: device.id });
+    recordEvent(request, deps.audit, { actor: getActor(request, device), actionKind: "remote.off", result: "error", targetId: device.id });
     return reply.code(500).send({ error: "revoke_failed" });
   }
-  recordEvent(request, deps, { actor: getActor(request, device), actionKind: "remote.off", result: "success", targetId: device.id });
+  recordEvent(request, deps.audit, { actor: getActor(request, device), actionKind: "remote.off", result: "success", targetId: device.id });
   return reply.send({ remoteAccess: "closed" });
 }
 
@@ -222,11 +211,4 @@ function getAdmittedDeviceOrThrow(request: FastifyRequest): DeviceSummary {
 
 function getActor(request: FastifyRequest, device: DeviceSummary): string {
   return getRemoteActor(device, getSourceAddress(request));
-}
-
-// fire-and-forget → the owner's action never fails on the audit write; never carries the code or the cookie
-function recordEvent(request: FastifyRequest, deps: Pick<RemoteRoutesDeps, "audit">, event: Omit<RemoteAuditEvent, "payload">): void {
-  deps.audit.insertEvent({ ...event, payload: { method: request.method, route: request.routeOptions.url ?? "" } }).catch((error: unknown) => {
-    request.log.warn({ err: error, actionKind: event.actionKind }, "remote audit event not recorded");
-  });
 }

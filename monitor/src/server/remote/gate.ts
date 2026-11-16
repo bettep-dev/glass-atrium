@@ -92,7 +92,13 @@ export async function registerRemoteGate(app: FastifyInstance, deps: RemoteGateD
     setRemoteHeaders(request, reply);
     return payload;
   });
-  app.addHook("onResponse", (request, reply) => recordAuditResult(request, reply, deps.audit));
+  app.addHook("onResponse", (request, reply) =>
+    closeAuditResult(request, reply, {
+      audit: deps.audit,
+      auditId: ADMITTED.get(request)?.auditId,
+      target: (request as FastifyRequest & AuditChangeCarrier).auditChange,
+    }),
+  );
   app.setErrorHandler(replyOpaqueError);
 }
 
@@ -139,7 +145,7 @@ async function admitPresentedDevice(request: FastifyRequest, reply: FastifyReply
   if (device === null) {
     // an absent cookie is a first visit, not a failed credential → only a presented, unknown one counts and is audited
     limiters.failedSession.hit(address);
-    recordEvent(request, deps.audit, { actor: getRemoteActor(null, address), actionKind: "remote.auth_failure" });
+    recordEvent(request, deps.audit, { actor: getRemoteActor(null, address), actionKind: "remote.auth_failure", result: "blocked" }, getRequestedRoute);
     return refuseUnregistered(request, reply, deps);
   }
   return admitDevice(request, reply, { deps, limiters, device, presented });
@@ -163,7 +169,8 @@ async function admitDevice(
   const isUnclaimedApi = routePath === STATIC_WILDCARD && request.url.startsWith("/api/");
   const routeClass = routePath === undefined || isUnclaimedApi ? null : deps.getRouteClass(request.method, routePath);
   if (routeClass !== "page" && routeClass !== "remote-device") {
-    recordEvent(request, deps.audit, { actor: getRemoteActor(device, getSourceAddress(request)), actionKind: "remote.route_denied" });
+    const event = { actor: getRemoteActor(device, getSourceAddress(request)), actionKind: "remote.route_denied", result: "blocked" } as const;
+    recordEvent(request, deps.audit, event, getRequestedRoute);
     return refuse(reply, 403, "route_not_available");
   }
   const deviceKey = String(device.id);
@@ -199,26 +206,50 @@ async function writeAuditIntent(request: FastifyRequest, reply: FastifyReply, au
   return undefined;
 }
 
-async function recordAuditResult(request: FastifyRequest, reply: FastifyReply, audit: RemoteAuditWriter): Promise<void> {
-  const auditId = ADMITTED.get(request)?.auditId;
-  if (auditId === undefined) return;
+/** Closes an intent row with the reply's status; a failed write leaves it `error` → the trail never over-reports a success. */
+export async function closeAuditResult(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  input: { audit: Pick<RemoteAuditWriter, "setResult">; auditId: bigint | undefined; target?: AuditTarget },
+): Promise<void> {
+  if (input.auditId === undefined) return;
   try {
-    await audit.setResult(auditId, deriveResultCode(reply.statusCode), (request as FastifyRequest & AuditChangeCarrier).auditChange);
+    await input.audit.setResult(input.auditId, deriveResultCode(reply.statusCode), input.target);
   } catch (error) {
-    // intent row stays `error` → the trail never over-reports a success
-    request.log.warn({ err: error, auditId: String(auditId) }, "remote audit result not recorded");
+    request.log.warn({ err: error, auditId: String(input.auditId) }, "remote audit result not recorded");
   }
 }
 
-// fire-and-forget → a refusal is never delayed or turned into a 500 by the audit write
-function recordEvent(request: FastifyRequest, audit: RemoteAuditWriter, event: { actor: string; actionKind: string }): void {
-  const matched = request.routeOptions.url;
-  // the static wildcard names no path → the asked path, so a refused /api read shows what it tried
-  const route = matched === undefined || matched === STATIC_WILDCARD ? (request.url.split("?")[0] ?? "") : matched;
-  const payload = { method: request.method, route: route.slice(0, ROUTE_MAX_LENGTH) };
-  audit.insertEvent({ ...event, result: "blocked", payload }).catch((error: unknown) => {
+/** The route an event's payload names → the matched route unless the caller resolves its own. */
+export type RouteResolver = (request: FastifyRequest) => string;
+
+const getMatchedRoute: RouteResolver = (request) => request.routeOptions.url ?? "";
+
+/** Method + route → every route event's payload; never a credential or source address. */
+export function getRoutePayload(request: FastifyRequest, getRoute: RouteResolver = getMatchedRoute): { method: string; route: string } {
+  return { method: request.method, route: getRoute(request) };
+}
+
+/**
+ * Fire-and-forget remote audit event → a reply is never delayed or turned into a 500 by the audit write.
+ * @param event - its payload, when given, adds the event's own numbers beside the method and route
+ */
+export function recordEvent(
+  request: FastifyRequest,
+  audit: Pick<RemoteAuditWriter, "insertEvent">,
+  event: RemoteAuditEvent,
+  getRoute: RouteResolver = getMatchedRoute,
+): void {
+  audit.insertEvent({ ...event, payload: { ...getRoutePayload(request, getRoute), ...event.payload } }).catch((error: unknown) => {
     request.log.warn({ err: error, actionKind: event.actionKind }, "remote audit event not recorded");
   });
+}
+
+// the static wildcard names no path → the asked path, so a refused /api read shows what it tried
+function getRequestedRoute(request: FastifyRequest): string {
+  const matched = request.routeOptions.url;
+  const route = matched === undefined || matched === STATIC_WILDCARD ? (request.url.split("?")[0] ?? "") : matched;
+  return route.slice(0, ROUTE_MAX_LENGTH);
 }
 
 /** The device the gate admitted this request for; null on loopback, pre-auth and refused requests. */

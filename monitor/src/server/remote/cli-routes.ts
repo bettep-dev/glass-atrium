@@ -9,13 +9,12 @@ import {
   DEVICE_PARAMS_SCHEMA,
   type DeviceActDeps,
   type DeviceParams,
-  buildAdminEvent,
   getDeviceList,
   hasBody,
-  recordEvent,
   revokeAll,
   revokeOne,
 } from "./admin-routes.js";
+import { recordEvent } from "./gate.js";
 import { WindowLimiter } from "./limits.js";
 
 export const REMOTE_CLI_PATH = {
@@ -71,6 +70,6 @@ async function refuseUnlessCli(request: FastifyRequest, reply: FastifyReply, lim
 
 async function listDevices(request: FastifyRequest, deps: RemoteCliDeps): Promise<{ devices: Record<string, string>[] }> {
   const list = await getDeviceList(deps);
-  recordEvent(request, deps, buildAdminEvent(request, { actor: REMOTE_CLI_ACTOR, actionKind: "remote.devices_listed", result: "success" }));
+  recordEvent(request, deps.audit, { actor: REMOTE_CLI_ACTOR, actionKind: "remote.devices_listed", result: "success" });
   return list;
 }
