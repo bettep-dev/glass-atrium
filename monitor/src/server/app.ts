@@ -71,7 +71,7 @@ export async function warmHotRoutes(app: FastifyInstance, port: number): Promise
   });
 }
 
-// every remote mutation but the image upload, whose route keeps its own limit
+// every remote mutation but two with their own route limit: the image upload, and the document PUT (BODY_LIMIT_BYTES)
 const REMOTE_BODY_LIMIT_BYTES = 96 * 1024;
 
 export interface RemoteAppOptions {

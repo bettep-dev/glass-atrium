@@ -29,6 +29,7 @@ import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { errnoCode } from "../errno.js";
 import { setAuditTarget } from "../middleware/audit-log.js";
+import { BODY_LIMIT_BYTES } from "../request-guards.js";
 import { parseIdParam, parseOffsetParam } from "../route-params.js";
 import { extractIndexableText } from "../clauded-docs/indexable-text.js";
 import {
@@ -414,7 +415,8 @@ export async function registerClaudedDocsRoutes(app: FastifyInstance): Promise<v
   app.post("/api/clauded-docs", handleCreate);
   app.get("/api/clauded-docs/:id/html-export", handleHtmlExportSingle);
   app.get("/api/clauded-docs/:id", handleGet);
-  app.put("/api/clauded-docs/:id", handleUpdate);
+  // every PUT carries the full body → the loopback limit on both listeners, never the remote mutation cap
+  app.put("/api/clauded-docs/:id", { bodyLimit: BODY_LIMIT_BYTES }, handleUpdate);
   app.delete("/api/clauded-docs/:id", handleDelete);
 }
 

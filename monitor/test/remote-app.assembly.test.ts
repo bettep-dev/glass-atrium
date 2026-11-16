@@ -13,6 +13,7 @@ import "dotenv/config";
 import type { FastifyInstance } from "fastify";
 
 import { buildApp, buildRemoteApp } from "../src/server/app.js";
+import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
@@ -191,5 +192,88 @@ describe("queue answers from a registered device", () => {
       assert.equal(response.statusCode, 200, `${row.name}: ${response.body}`);
       assert.equal((await getPrisma().queueItem.findUniqueOrThrow({ where: { id: itemId } })).status, "answered", row.name);
     }
+  });
+});
+
+describe("the document edit body limit", () => {
+  // the loopback listener's effective byte limit for PUT /api/clauded-docs/:id — Fastify's 1 MiB default, restated in request-guards
+  const EDIT_LIMIT_BYTES = 1024 * 1024;
+  const LISTENER_CAP_BYTES = 96 * 1024;
+  const LOOPBACK_PORT = 47_145;
+  const marker = `remote-edit-limit-${randomUUID()}`;
+  let loopback: FastifyInstance;
+
+  before(async () => {
+    process.env.CLAUDED_DOCS_HTML_ROOT = path.join(fixtureRoot, "docs");
+    resetDocsRootCache();
+    loopback = await buildApp(LOOPBACK_PORT);
+    await loopback.ready();
+  });
+
+  after(async () => {
+    await loopback.close();
+    await getPrisma().$executeRaw`DELETE FROM monitor.documents WHERE title LIKE ${`%${marker}%`}`;
+    delete process.env.CLAUDED_DOCS_HTML_ROOT;
+    resetDocsRootCache();
+  });
+
+  function getHtml(text: string): string {
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Edit limit</title></head><body><main><h1>Edit limit</h1><p>${text}</p></main></body></html>`;
+  }
+
+  /** A JSON PUT body of exactly `bytes` bytes, padded inside the paragraph. */
+  function getEditBody(expectedHash: string, bytes: number): string {
+    const salt = randomUUID();
+    const unpadded = JSON.stringify({ expected_hash: expectedHash, html_body: getHtml(salt) });
+    return JSON.stringify({ expected_hash: expectedHash, html_body: getHtml(`${salt}${"a".repeat(bytes - Buffer.byteLength(unpadded))}`) });
+  }
+
+  async function createDoc(): Promise<{ id: number; contentHash: string }> {
+    const response = await loopback.inject({
+      method: "POST",
+      url: "/api/clauded-docs",
+      headers: { host: `127.0.0.1:${LOOPBACK_PORT}` },
+      payload: { title: `${marker}-${randomUUID()}`, author: "test", html_body: getHtml(randomUUID()) },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    const body = response.json() as { id: number; content_hash: string };
+    return { id: body.id, contentHash: body.content_hash };
+  }
+
+  async function sendOn(listener: "loopback" | "remote", input: { method: "PUT" | "POST"; url: string; body: string }): Promise<number> {
+    const presented = issueDevice();
+    const headers =
+      listener === "loopback"
+        ? { host: `127.0.0.1:${LOOPBACK_PORT}`, "content-type": "application/json" }
+        : {
+            host: HOST,
+            cookie: `${DEVICE_COOKIE.NAME}=${presented}`,
+            "sec-fetch-site": "same-origin",
+            [CSRF_HEADER]: getCsrfToken(presented),
+            "content-type": "application/json",
+          };
+    const response = await (listener === "loopback" ? loopback : app).inject({ method: input.method, url: input.url, remoteAddress: PHONE, headers, payload: input.body });
+    return response.statusCode;
+  }
+
+  test("an edit at the limit with a valid hash is accepted and one byte over answers 413, on both listeners", async () => {
+    const answered = [];
+    for (const listener of ["loopback", "remote"] as const) {
+      const doc = await createDoc();
+      const atLimit = getEditBody(doc.contentHash, EDIT_LIMIT_BYTES);
+      const overLimit = getEditBody(doc.contentHash, EDIT_LIMIT_BYTES + 1);
+      assert.deepEqual([Buffer.byteLength(atLimit), Buffer.byteLength(overLimit)], [EDIT_LIMIT_BYTES, EDIT_LIMIT_BYTES + 1]);
+      const url = `/api/clauded-docs/${doc.id}`;
+      answered.push(`${listener} at ${await sendOn(listener, { method: "PUT", url, body: atLimit })}`);
+      answered.push(`${listener} over ${await sendOn(listener, { method: "PUT", url, body: overLimit })}`);
+    }
+    assert.deepEqual(answered, ["loopback at 200", "loopback over 413", "remote at 200", "remote over 413"]);
+  });
+
+  test("a remote mutation without its own limit still answers 413 one byte above the listener cap", async () => {
+    const unpadded = JSON.stringify({ member_ids: [1, 2], pad: "" });
+    const body = JSON.stringify({ member_ids: [1, 2], pad: "a".repeat(LISTENER_CAP_BYTES + 1 - Buffer.byteLength(unpadded)) });
+    assert.equal(Buffer.byteLength(body), LISTENER_CAP_BYTES + 1);
+    assert.equal(await sendOn("remote", { method: "POST", url: "/api/clauded-docs/group", body }), 413);
   });
 });
