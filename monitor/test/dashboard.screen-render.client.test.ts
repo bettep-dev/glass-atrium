@@ -668,6 +668,18 @@ test("a failed stat hands the next step and the raw error to the card's one ⓘ,
   assert.ok(info.includes(copy.detail), `the raw error rides ⓘ: ${info}`);
 });
 
+test("a held week panel says Last known once, in its head; its body names the failed refresh only", () => {
+  const held = { data: {}, error: "HTTP 500" };
+  for (const [name, extra] of [["own Retry", { onRetry: () => {} }], ["banner Retry", { isRetryShared: true }], ["the stat's Retry", {}]] as const) {
+    const tree = render("WeekPanel", { id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: held, render: () => null, ...extra });
+    const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+    assert.equal(card.props.sub, "Last known", `${name}: the head says it`);
+    const body = [collectText(tree), ...alertCardsOf(tree).map((alert) => String(alert.props.title))].join(" ");
+    assert.doesNotMatch(body, /last (known|reading)/i, `${name}: the body does not say it again — ${body}`);
+    assert.match(body, /couldn't refresh/i, `${name}: the body names the failed refresh`);
+  }
+});
+
 test("a week panel heads with the shared Card head, and a held reading says Last known in plain words beside its title", () => {
   for (const [name, state, sub] of [["fresh", { data: {}, error: null }, null], ["held", { data: {}, error: "HTTP 500" }, "Last known"]] as const) {
     const tree = render("WeekPanel", { id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state, onRetry: () => {}, render: () => null });
