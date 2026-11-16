@@ -36,6 +36,9 @@ interface DensityProbe {
   statusBandHeight: number;
 }
 
+// a describe that needs another payload sets it here for its own page and clears it after
+const overrides: Record<string, unknown> = {};
+
 let app: FastifyInstance;
 let browser: Browser;
 let serverUrl: string;
@@ -43,7 +46,7 @@ let serverUrl: string;
 before(async () => {
   app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
-  for (const [path, payload] of Object.entries(PAYLOADS)) app.get(path, async () => payload);
+  for (const [path, payload] of Object.entries(PAYLOADS)) app.get(path, async () => overrides[path] ?? payload);
   // endpoints no Dashboard region owns → quiet empty payloads, never a 404 banner
   app.get("/api/*", async () => ({ rows: [] }));
   await app.ready();
@@ -157,6 +160,44 @@ describe("The status card at 1440×900", () => {
     const lefts = Object.values(layout.cardLefts);
     assert.equal(lefts.length, 3, JSON.stringify(layout.cardLefts));
     assert.ok(Math.max(...lefts) - Math.min(...lefts) < 0.5, JSON.stringify(layout.cardLefts));
+  });
+});
+
+// The alarm row (spec 44084 §3.2): a 32 first line between 8 paddings → one line 48, the card-head height;
+// a detail line under the title adds 4 + 18.2 → about 70
+const ALARM_ROW_PX = { ONE_LINE: 48, WITH_DETAIL: 70 };
+// spend at 3× its 7-day average (a detail line) + an update ready to apply (no detail) → two warn rows
+const ALARM_PAYLOADS: Record<string, unknown> = {
+  "/api/cost/kpi": { ...(PAYLOADS["/api/cost/kpi"] as object), today_cost_usd: 30, window_7d_cost_usd: 70, burn_rate_3h_usd_per_hour: 0.1 },
+  "/api/dashboard/update-status": { ...(PAYLOADS["/api/dashboard/update-status"] as object), status: "update-available", latest_version: "1.0.2" },
+  "/api/dashboard/update-job": { status: "none" },
+};
+
+describe("Alarm rows at 1440×900", () => {
+  let rows: Array<{ height: number; hasDetail: boolean }>;
+
+  before(async () => {
+    Object.assign(overrides, ALARM_PAYLOADS);
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+    await page.waitForFunction(() => document.querySelectorAll(".dash-alarm-list .alarm-row").length === 2, undefined, { timeout: 30_000 });
+    await page.evaluate(() => document.fonts.ready);
+    // the hairline between rows is the list's, not the row's → border-box height less the bottom border
+    rows = await page.$$eval(".dash-alarm-list .alarm-row", (els) => els.map((el) => ({
+      height: el.getBoundingClientRect().height - parseFloat(getComputedStyle(el).borderBottomWidth),
+      hasDetail: el.querySelector(".dash-alarm-detail") !== null,
+    })));
+    console.log(`alarm rows 1440x900: ${JSON.stringify(rows)}`);
+    await page.close();
+    for (const path of Object.keys(ALARM_PAYLOADS)) delete overrides[path];
+  });
+
+  test("a row with a detail line is about 70 tall and a one-line row 48, the card-head height", () => {
+    assert.deepEqual(rows.map((row) => row.hasDetail), [true, false], "the spend row carries a detail, the install row none");
+    for (const row of rows) {
+      const expected = row.hasDetail ? ALARM_ROW_PX.WITH_DETAIL : ALARM_ROW_PX.ONE_LINE;
+      assert.ok(Math.abs(row.height - expected) < 1, `row ${row.height}px, expected ${expected}`);
+    }
   });
 });
 

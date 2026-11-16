@@ -263,8 +263,9 @@ function AlarmRow({ alarm, onNav, children }) {
   return (
     <div className="alarm-row" data-tone={alarm.tone}>
       <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[alarm.tone]} size={16}/></span>
-      <div className="min-w-0">
-        <span className="fs-body font-medium text-ink">
+      {/* fs-body on the content cell itself → base.css holds its line at the 20 row line; a child .fs-body would set 21.75 */}
+      <div className="min-w-0 fs-body">
+        <span className="font-medium text-ink">
           <span className="sr-only">{`${ALERT_SEVERITY_WORD[alarm.tone]}: `}</span><DayTokens>{alarm.title}</DayTokens>
         </span>
         {alarm.isHeld && <> <span className="dash-alarm-held fs-meta text-dim">Last known</span></>}
