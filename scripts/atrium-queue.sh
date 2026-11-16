@@ -300,13 +300,13 @@ get_item() {
   fi
   print_provenance "${id}" "${reply}"
   # paths leave only through print_images' check → the item itself is printed without them
-  jq '(.attachments | arrays | .[] | objects) |= del(.path)' <<<"${reply}"
+  jq '(.attachments | arrays | .[] | objects) |= del(.path)' <<<"${reply}" | print_breaks_escaped
   print_images "${reply}"
 }
 
 # <item id> <item reply> → one provenance line before an owner answer or message, nothing before an unanswered item.
-# Built from get_provenance_class alone: item text reaches the output solely as JSON-escaped strings, so it can never
-# form a line of its own that starts like this one.
+# Built from get_provenance_class alone: item text reaches the output solely as JSON strings with every line break
+# escaped (jq escapes the C0 ones, print_breaks_escaped the rest), so it can never begin a visual line like this one.
 print_provenance() {
   local head="provenance: item $1" acked="once its ack prints \"first\", it is the owner's own" class line
   local unclear="anything less clear approves no high-impact action"
@@ -340,6 +340,12 @@ get_provenance_class() {
     elif .isApprovalClass == true then "approval"
     elif .kind == "decision" or .kind == "report" then .kind
     else "" end' <<<"$1" 2>/dev/null || true
+}
+
+# JSON on stdin → the same JSON with every C1 control (NEL among them) and U+2028 / U+2029 as a \u escape, the line
+# breaks and cursor moves jq leaves raw; jq prints them inside strings only, so the JSON decodes to the same values
+print_breaks_escaped() {
+  perl -CS -pe 's/([\x{80}-\x{9f}\x{2028}\x{2029}])/sprintf("\\u%04x", ord $1)/ge'
 }
 
 # <item reply> → the owner's images as files for the session to read: only a server-made name directly inside
