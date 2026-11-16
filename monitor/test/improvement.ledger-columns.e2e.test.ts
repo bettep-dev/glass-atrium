@@ -1,9 +1,10 @@
 // E2E chromium check for the Learning screen's pattern ledger (screens/improvement.jsx): where each
-// section sits inside its stretched column, which a node render cannot measure.
+// section sits inside its stretched column, which a node render cannot measure — plus the page's
+// other measured geometry: the tab row's gap to the first card and the awaiting list's ring room.
 //
 // Runner: npx tsx --test test/improvement.ledger-columns.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
-// App: stripped Fastify serving the learning log below; every other /api read answers empty.
+// App: stripped Fastify serving the payloads below; every other /api read answers empty.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -257,5 +258,78 @@ test(`every empty line on the Learning screen starts on its card's inline edge a
   } finally {
     await browser.close();
     await app.close();
+  }
+});
+
+type Routes = Record<string, unknown>;
+
+// the Learning screen on the payloads given, measured once the ready selector paints
+async function getPageReading<T>(routes: Routes, readySelector: string, measure: () => T): Promise<T> {
+  const app = Fastify({ logger: false });
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  for (const [url, payload] of Object.entries(routes)) app.get(url, async () => payload);
+  app.get("/api/*", async () => ({ rows: [] }));
+  const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width: SIDE_BY_SIDE_WIDTH, height: 900 } });
+    await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
+    await page.waitForSelector(readySelector, { timeout: 30_000 });
+    await page.evaluate(() => document.fonts.ready);
+    return await page.evaluate(measure);
+  } finally {
+    await browser.close();
+    await app.close();
+  }
+}
+
+test(`the view tab row ends one --space-4 step above the first card at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const reading = await getPageReading({}, '[role="tablist"][aria-label="Learning view"]', () => {
+    const row = document.querySelector<HTMLElement>('[role="tablist"][aria-label="Learning view"]')!.getBoundingClientRect();
+    const card = [...document.querySelectorAll<HTMLElement>(".card")].find((el) => el.getBoundingClientRect().top >= row.bottom)!;
+    const probe = document.body.appendChild(Object.assign(document.createElement("div"), { style: "height: var(--space-4)" }));
+    return { gap: card.getBoundingClientRect().top - row.bottom, step: probe.getBoundingClientRect().height };
+  });
+
+  assert.ok(reading.step > 0, "the --space-4 token resolves");
+  assert.ok(Math.abs(reading.gap - reading.step) <= EDGE_TOLERANCE_PX, `the first card starts ${reading.gap}px under the tab row, not ${reading.step}px`);
+});
+
+test(`held table body cells set their text at the --fs-control step at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const routes = { "/api/improvement/learning-log": getLearningLog(1, 0, 2) };
+  const reading = await getPageReading(routes, "#improvement-pattern-ledger table", () => {
+    // the ledger table headed by a Held column — found by its head, not by the class the fix added
+    const table = [...document.querySelectorAll("#improvement-pattern-ledger table")]
+      .find((el) => [...el.querySelectorAll("thead th")].some((th) => th.textContent?.trim() === "Held"));
+    const probe = document.body.appendChild(Object.assign(document.createElement("div"), { style: "font-size: var(--fs-control)" }));
+    return {
+      sizes: table ? [...table.querySelectorAll("tbody td")].map((td) => getComputedStyle(td).fontSize) : [],
+      step: getComputedStyle(probe).fontSize,
+    };
+  });
+
+  assert.ok(reading.sizes.length > 0, "the held table renders its rows");
+  for (const size of reading.sizes) assert.equal(size, reading.step, "a held cell sits at the house table's body step");
+});
+
+test(`each awaiting suggestion's ring sits inside the list's scroll box at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const awaiting = [1, 2].map((id) => ({ id, status: "pending", approval_tier: "safety", pattern_label: `Awaiting suggestion ${id}`, rationale: "r", cycle_date: "2026-09-28" }));
+  const routes = { "/api/improvement": { proposals: [], actionable_proposals: awaiting } };
+  const insets = await getPageReading(routes, ".i-await-body > *", () => {
+    const box = document.querySelector<HTMLElement>(".i-await-body")!;
+    const edge = box.getBoundingClientRect();
+    return [...box.children].map((card) => {
+      const rect = card.getBoundingClientRect();
+      // the ring is an outside box-shadow → its spread is the room the card needs on every side
+      const ring = parseFloat(getComputedStyle(card).boxShadow.match(/(-?[\d.]+)px\s*$/)?.[1] ?? "0");
+      return { ring, room: Math.min(rect.left - edge.left, edge.right - rect.right, rect.top - edge.top) };
+    });
+  });
+
+  assert.equal(insets.length, 2, "every awaiting suggestion renders");
+  for (const inset of insets) {
+    assert.ok(inset.ring > 0, "an awaiting card draws its ring");
+    assert.ok(inset.room >= inset.ring - 0.01, `the ring needs ${inset.ring}px but the card sits ${inset.room}px from the scroll edge`);
   }
 });
