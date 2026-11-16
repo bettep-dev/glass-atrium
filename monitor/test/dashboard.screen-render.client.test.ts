@@ -127,12 +127,12 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
 })) as ScreenModule;
 const buildOutcomeStat = rateMod.buildOutcomeStat as (state: unknown) => { value: string | null; absent?: string; context: string | null; notes: string[] };
 
-test("the Task results stat headlines a bare failed share, its counts on the context line and its caveat share behind ⓘ", () => {
+test("the Task results stat headlines a bare failed share, its counts on the context line until its alarm row states them, its caveat share behind ⓘ", () => {
   for (const [status, tone] of [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const) {
     const stat = buildOutcomeStat({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
     assert.equal(stat.value, "17.5%", `${status}: the headline is the share alone, no denominator to wrap`);
-    const tripped = tone === "warn" ? "9 of 40 with open caveats" : "7 of 40 failed or blocked";
-    assert.equal(stat.context, tripped, `${status}: the count of the leg that set the tone and its denominator stay visible`);
+    const context = tone === "ok" ? "7 of 40 failed or blocked" : null;
+    assert.equal(stat.context, context, `${status}: a firing stat leaves the tripped count to its alarm row`);
     assert.ok(stat.notes.some((note) => /22\.5% \(9\)/.test(note)), `${status}: the caveat share and count sit behind ⓘ`);
   }
 

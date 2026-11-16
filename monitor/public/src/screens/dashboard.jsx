@@ -1046,8 +1046,8 @@ function describeOutcomeContext(rate) {
   if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
   if (rate.status === 'low-n') return 'outcomes, too few to judge';
-  // the caveat leg set the tone → its count, so a warn mark never sits over an untripped failure count
-  if (rate.tone === 'warn') return `${formatInt(rate.openCaveats)} of ${formatInt(rate.writerTotal)} with open caveats`;
+  // a tripped leg's count is its alarm row's detail → the firing stat shows value + glyph only
+  if (FIRING_TONES.has(rate.tone)) return null;
   return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed or blocked`;
 }
 
@@ -1103,7 +1103,8 @@ function buildFleetStat(agentsState) {
   const meta = agentsState.data.meta;
   const notes = [describeFleetReach(Number(meta.total_agents), Number(meta.circuit_breaker.registry_agents)), describeBusiestAgent(agentsState.data.agents?.[0])];
   return {
-    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: describeStreak(streak),
+    // a firing fleet's streak is its alarm row's words → the line stays empty
+    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: tone === 'ok' ? describeStreak(streak) : null,
     notes: notes.filter(Boolean),
   };
 }

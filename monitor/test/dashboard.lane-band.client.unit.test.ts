@@ -466,13 +466,13 @@ test("the outcome stat leads with the failed share, its counts on the context li
       harness: HEALTHY, costState: LOADING, agentsState: LOADING,
       outcomesState: ready({
         total: 200,
-        by_result: [{ result: "fail", count: 40 }, { result: "done_with_concerns", count: 10 }, { result: "done", count: 150 }],
+        by_result: [{ result: "fail", count: 4 }, { result: "done_with_concerns", count: 10 }, { result: "done", count: 186 }],
       }),
     }),
     "outcomes",
   );
-  assert.equal(stat.value, "20%", "the failed share is the headline, its .0 dropped");
-  assert.equal(stat.context, "40 of 200 failed or blocked", "the context names both results the share counts");
+  assert.equal(stat.value, "2%", "the failed share is the headline, its .0 dropped");
+  assert.equal(stat.context, "4 of 200 failed or blocked", "the context names both results the share counts");
   const notes = stat.notes.join(" ");
   assert.match(notes, /alarm at 5%/, "the failure alert line moves behind ⓘ");
   assert.match(notes, /Open caveats 5% \(10\), alarm at 10%/, "the caveat share sits beside its own alert line");
@@ -480,10 +480,11 @@ test("the outcome stat leads with the failed share, its counts on the context li
   assert.doesNotMatch(String(stat.context), /alarm|writer-emitted/, "the visible line carries neither");
 });
 
-describe("the outcome stat's context line counts the leg that set its tone", () => {
+// spec 44084 §9 (R8): a firing stat is value + tone glyph; its alarm row already states the count
+describe("the outcome stat's context line counts the failures only while no alarm row states a count", () => {
   const rows = [
-    { name: "caveats over their line, failures under theirs → the caveat count", byResult: [{ result: "done_with_concerns", count: 48 }], context: "48 of 400 with open caveats" },
-    { name: "failures over their line → the failed count", byResult: [{ result: "fail", count: 40 }, { result: "done_with_concerns", count: 48 }], context: "40 of 400 failed or blocked" },
+    { name: "caveats over their line → the alarm row holds the count, the line stays empty", byResult: [{ result: "done_with_concerns", count: 48 }], context: null },
+    { name: "failures over their line → the alarm row holds the count, the line stays empty", byResult: [{ result: "fail", count: 40 }, { result: "done_with_concerns", count: 48 }], context: null },
     { name: "neither line tripped → the failed count", byResult: [{ result: "fail", count: 4 }, { result: "done_with_concerns", count: 8 }], context: "4 of 400 failed or blocked" },
   ];
   for (const row of rows) {
@@ -828,10 +829,15 @@ test("the spend stat states its move against yesterday by this time from the she
   }
 });
 
-test("the fleet stat fills its context line with the failing streak and keeps the fleet size behind ⓘ", () => {
-  for (const streak of [0, 3]) {
-    const stat = fleetStat({ source: "loaded", suspended_count: 0, streak_count: streak });
-    assert.equal(stat.context, `${streak} on a failing streak`, `streak ${streak}`);
+test("the fleet stat states the failing streak until its alarm row does, and keeps the fleet size behind ⓘ", () => {
+  const rows = [
+    { name: "no streak, no row", suspended: 0, streak: 0, context: "0 on a failing streak" },
+    { name: "a streak fires the row", suspended: 0, streak: 3, context: null },
+    { name: "a suspension fires the row, the streak its detail", suspended: 1, streak: 2, context: null },
+  ];
+  for (const { name, suspended, streak, context } of rows) {
+    const stat = fleetStat({ source: "loaded", suspended_count: suspended, streak_count: streak });
+    assert.equal(stat.context, context, name);
     assert.ok(stat.notes.some((note) => /12 agents/.test(note)), `streak ${streak}: ${JSON.stringify(stat.notes)}`);
   }
 });
