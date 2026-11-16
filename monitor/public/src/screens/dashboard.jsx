@@ -121,7 +121,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
 
   const waveStates = [costState, agentsState, outcomesState, updateState, spendDaysState, heatmapState];
   const isWaveBusy = getRegionSummary(waveStates).isBusy;
-  const alarms = buildAlarms({ harness, costState, installKind });
+  const alarms = buildAlarms({ harness, costState, installKind, outcomesState, agentsState });
   const alarmReadiness = getAlarmReadiness({ harness, costState, updateState });
   const stats = buildStats({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const weekPanels = [{ source: 'daily spend', error: spendDaysState.error }, { source: 'runs by hour', error: heatmapState.error }];
@@ -810,9 +810,9 @@ function mutationErrorMessage(status, data) {
 
 // ── Pure builders (the lane union and the stat row) ──
 
-// 레인 union — harness · fleet · spend · install 만 합친다. Learning/Wiki/Task-results/Models
-// 경보는 각 화면의 nav 숫자가 운반하므로 여기서 합성하지 않는다(같은 사실 이중 신고 방지).
-function buildAlarms({ harness, costState, installKind }) {
+// the lane union — one row per firing Status-card source + the install state; a firing stat shows only its glyph,
+// so its sentence lives here (spec 44084 §9). Learning · Wiki · Models alarms ride their own nav counts
+function buildAlarms({ harness, costState, installKind, outcomesState, agentsState }) {
   const rows = [];
 
   if (harness && harness.status === 'ready' && harness.downNames.length > 0) {
@@ -826,6 +826,8 @@ function buildAlarms({ harness, costState, installKind }) {
       targetLabel: 'System map',
     });
   }
+
+  rows.push(...[buildOutcomeAlarm(outcomesState), buildFleetAlarm(agentsState)].filter(Boolean));
 
   const spend = resolveSpendPace(costState);
   if (spend.status === 'hot') {
@@ -851,6 +853,43 @@ function buildAlarms({ harness, costState, installKind }) {
   }
 
   return rows.sort((a, b) => (SEVERITY_RANK[b.tone] || 0) - (SEVERITY_RANK[a.tone] || 0));
+}
+
+// the Task results stat's rule, worded: the tripped line's share and its count — the thresholds stay behind the stat's ⓘ
+function buildOutcomeAlarm(outcomesState) {
+  if (outcomesState?.data == null) return null;
+  const rate = window.UI.resolveOutcomeRate(outcomesState.data);
+  if (!FIRING_TONES.has(rate.tone)) return null;
+  const isCrit = rate.tone === 'crit';
+  const count = isCrit ? rate.breakage : rate.openCaveats;
+  const share = getSharePct(count, rate.writerTotal);
+  return {
+    id: 'outcomes', tone: rate.tone,
+    title: `${share} of task results ${isCrit ? 'failed or blocked' : 'have open caveats'} in the last 7 days`,
+    detail: `${formatInt(count)} of ${formatInt(rate.writerTotal)} reported outcomes`,
+    isHeld: outcomesState.error != null, target: 'outcomes', targetLabel: 'Task results',
+  };
+}
+
+// the Fleet stat's breaker reading, worded: suspension first, a streak beside it as the detail
+function buildFleetAlarm(agentsState) {
+  const breaker = agentsState?.data == null ? null : getBreakerCounts(agentsState.data);
+  if (!breaker || (breaker.suspended === 0 && breaker.streak === 0)) return null;
+  const isCrit = breaker.suspended > 0;
+  return {
+    id: 'fleet', tone: isCrit ? 'crit' : 'warn',
+    title: isCrit ? describeAgentCount(breaker.suspended, 'suspended') : describeAgentCount(breaker.streak, 'on a failing streak'),
+    detail: isCrit && breaker.streak > 0 ? describeStreak(breaker.streak) : null,
+    isHeld: agentsState.error != null, target: 'agents', targetLabel: 'Agents',
+  };
+}
+
+function describeAgentCount(count, state) {
+  return `${formatInt(count)} ${count === 1 ? 'agent is' : 'agents are'} ${state}`;
+}
+
+function describeStreak(streak) {
+  return `${formatInt(streak)} on a failing streak`;
 }
 
 // the failure count feeds failCount1h only, never downNames → its failed read leaves the down-part reading fresh
@@ -1073,19 +1112,27 @@ function buildFleetStat(agentsState) {
   const base = { id: 'fleet', label: 'Fleet', window: '7d', target: 'agents', region: 'agents', source: 'the fleet summary', notes: [] };
   const pending = buildPendingStat(base, agentsState);
   if (pending) return pending;
-  const meta = agentsState.data?.meta;
-  const breaker = meta?.circuit_breaker;
-  const suspended = Number(breaker?.suspended_count);
-  const streak = Number(breaker?.streak_count);
-  if (breaker?.source !== 'loaded' || !Number.isFinite(suspended) || !Number.isFinite(streak)) {
+  const breaker = getBreakerCounts(agentsState.data);
+  if (!breaker) {
     return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'Suspension state unavailable.' };
   }
+  const { suspended, streak } = breaker;
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
-  const notes = [describeFleetReach(Number(meta.total_agents), Number(breaker.registry_agents)), describeBusiestAgent(agentsState.data?.agents?.[0])];
+  const meta = agentsState.data.meta;
+  const notes = [describeFleetReach(Number(meta.total_agents), Number(meta.circuit_breaker.registry_agents)), describeBusiestAgent(agentsState.data.agents?.[0])];
   return {
-    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: `${formatInt(streak)} on a failing streak`,
+    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: describeStreak(streak),
     notes: notes.filter(Boolean),
   };
+}
+
+// an unloaded breaker → null, never a zero suspended
+function getBreakerCounts(data) {
+  const breaker = data?.meta?.circuit_breaker;
+  const suspended = Number(breaker?.suspended_count);
+  const streak = Number(breaker?.streak_count);
+  if (breaker?.source !== 'loaded' || !Number.isFinite(suspended) || !Number.isFinite(streak)) return null;
+  return { suspended, streak };
 }
 
 function describeFleetReach(agentCount, registryCount) {

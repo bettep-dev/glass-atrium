@@ -24,6 +24,7 @@ interface Alarm {
   title: string;
   detail: string | null;
   target: string | null;
+  targetLabel?: string | null;
   isHeld?: boolean;
 }
 interface Stat {
@@ -55,7 +56,13 @@ interface Fold {
   error?: string | null;
 }
 interface DashHelpers {
-  buildAlarms: (args: { harness: Fold | null; costState: unknown; installKind: string }) => Alarm[];
+  buildAlarms: (args: {
+    harness: Fold | null;
+    costState: unknown;
+    installKind: string;
+    outcomesState?: unknown;
+    agentsState?: unknown;
+  }) => Alarm[];
   buildStats: (args: {
     harness: Fold | null;
     costState: unknown;
@@ -183,6 +190,71 @@ test("the install row appears only for the actionable update views", () => {
   ] as [string, boolean][]) {
     const rows = dash.buildAlarms({ harness: HEALTHY, costState: kpi(10, 10), installKind: kind });
     assert.equal(rows.some((r) => r.id === "install"), present, kind);
+  }
+});
+
+// /api/outcomes/cross-analysis — 400 writer-reported outcomes, the share under test set by one result's count
+function outcomes(byResult: Array<{ result: string; count: number }>): unknown {
+  const counted = byResult.reduce((sum, row) => sum + row.count, 0);
+  return ready({ total: 400, by_result: [...byResult, { result: "done", count: 400 - counted }] });
+}
+// /api/agents/summary — the circuit-breaker counts the Fleet stat headlines
+function fleet(suspended: number, streak: number): unknown {
+  return ready({ meta: { total_agents: 12, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: suspended, streak_count: streak } } });
+}
+
+describe("every firing Task results or Fleet stat has its alarm row, in the stat's tone", () => {
+  const rows = [
+    { name: "task results under both alarm lines", outcomesState: outcomes([{ result: "fail", count: 4 }]), agentsState: fleet(0, 0) },
+    { name: "failed or blocked over its line", outcomesState: outcomes([{ result: "fail", count: 30 }, { result: "blocked", count: 10 }]), agentsState: fleet(0, 0) },
+    { name: "open caveats over their line", outcomesState: outcomes([{ result: "done_with_concerns", count: 48 }]), agentsState: fleet(0, 0) },
+    { name: "too few outcomes to judge", outcomesState: ready({ total: 4, by_result: [{ result: "fail", count: 4 }] }), agentsState: fleet(0, 0) },
+    { name: "a failing streak", outcomesState: LOADING, agentsState: fleet(0, 2) },
+    { name: "a suspended agent", outcomesState: LOADING, agentsState: fleet(1, 2) },
+    { name: "a suspension held over a failed refresh", outcomesState: LOADING, agentsState: held(fleet(1, 0), "HTTP 500") },
+    { name: "an unloaded breaker", outcomesState: LOADING, agentsState: ready({ meta: { circuit_breaker: { source: "unavailable" } } }) },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const sources = { harness: HEALTHY, costState: kpi(10, 10), outcomesState: row.outcomesState, agentsState: row.agentsState };
+      const stats = dash.buildStats(sources);
+      const alarms = dash.buildAlarms({ ...sources, installKind: "hidden" });
+      for (const id of ["outcomes", "fleet"]) {
+        const stat = statOf(stats, id);
+        const isFiring = stat.tone === "warn" || stat.tone === "crit";
+        const alarm = alarms.find((candidate) => candidate.id === id);
+        assert.equal(alarm?.tone ?? null, isFiring ? stat.tone : null, `${id}: stat tone ${stat.tone}`);
+        if (alarm) assert.equal(alarm.isHeld === true, stat.isHeld === true, `${id}: held with its stat`);
+      }
+    });
+  }
+});
+
+describe("a Task results or Fleet alarm states its count in words and links to the owning page", () => {
+  const rows = [
+    { name: "failed or blocked over its line", id: "outcomes", sources: { outcomesState: outcomes([{ result: "fail", count: 30 }, { result: "blocked", count: 10 }]) },
+      title: "10% of task results failed or blocked in the last 7 days", detail: "40 of 400 reported outcomes", target: "outcomes", targetLabel: "Task results" },
+    { name: "open caveats over their line", id: "outcomes", sources: { outcomesState: outcomes([{ result: "done_with_concerns", count: 48 }]) },
+      title: "12% of task results have open caveats in the last 7 days", detail: "48 of 400 reported outcomes", target: "outcomes", targetLabel: "Task results" },
+    { name: "one suspended agent beside a streak", id: "fleet", sources: { agentsState: fleet(1, 2) },
+      title: "1 agent is suspended", detail: "2 on a failing streak", target: "agents", targetLabel: "Agents" },
+    { name: "suspended agents and no streak", id: "fleet", sources: { agentsState: fleet(3, 0) },
+      title: "3 agents are suspended", detail: null, target: "agents", targetLabel: "Agents" },
+    { name: "agents on a failing streak", id: "fleet", sources: { agentsState: fleet(0, 2) },
+      title: "2 agents are on a failing streak", detail: null, target: "agents", targetLabel: "Agents" },
+    { name: "one agent on a failing streak", id: "fleet", sources: { agentsState: fleet(0, 1) },
+      title: "1 agent is on a failing streak", detail: null, target: "agents", targetLabel: "Agents" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const alarms = dash.buildAlarms({ harness: HEALTHY, costState: kpi(10, 10), installKind: "hidden", ...row.sources });
+      const alarm = alarms.find((candidate) => candidate.id === row.id);
+      assert.ok(alarm, "the row exists");
+      assert.deepEqual(
+        { title: alarm.title, detail: alarm.detail, target: alarm.target, targetLabel: alarm.targetLabel },
+        { title: row.title, detail: row.detail, target: row.target, targetLabel: row.targetLabel },
+      );
+    });
   }
 });
 

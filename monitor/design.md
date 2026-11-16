@@ -648,6 +648,12 @@
 - **`.alarm-row`**: the alarm row written by class on a screen — `.alarm-row-glyph` slot first, the content next, `.alarm-row-actions` last; tone via `data-tone` on the row.
   - the row is its own size container → the ≤ 36rem drop reads the row's content width (the row less 2 × `--card-pad`).
 - **Dashboard alarm list** ("Needs you", §12.7): one list card (no visible head, region `aria-label="Needs you"`), one alarm row per alarm, worst first, action = Link to the owning page.
+  - sources: every firing Status-card stat (Harness health · Task results · Fleet · Spend today) + the install state; a firing stat shows only its value and tone glyph (16, the row's size), so its sentence is the row's.
+  - Task results: the tripped line's share in words (`10% of task results failed or blocked in the last 7 days` · `12% of task results have open caveats in the last 7 days`), its count as the detail; the alarm lines stay behind the stat's ⓘ.
+  - Fleet: `N agent(s) is/are suspended` (crit, a streak as the detail) · else `N agent(s) is/are on a failing streak` (warn).
+- **Dashboard Status card**: one context line per stat, at a fixed height — loading, held and failed states never grow the card.
+  - held line: `Last known` alone; the failed refresh rides the line's `title` and the card's ⓘ · a partly unread harness reads `Last known` or `N not read` the same way.
+  - a stat's Retry sits in a box one context line tall → the 32 control overhangs into the card padding.
 - **`AlertCard({ tone, surface, title, body, subjects, details, actions, hasLiveHost })`**: 조건부 알림 카드의 유일한 atom — `.alert-card` 를 직접 조립하지 않는다.
   - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(카드 · 패널 안 `.sub-card.bg-sunken`).
   - tone: `crit` · `warn` · `info` · `ok` · `neutral`(glyph `--dim`). title 앞 sr-only 단어 (Critical / Warning / Notice / Resolved).
