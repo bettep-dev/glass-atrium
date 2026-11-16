@@ -310,9 +310,7 @@ function isSourceAnswered(source, isAnswered) {
 // the card outlives every recovery → a banner or stat Retry that leaves on success hands focus here
 const DASH_STATUS_ID = 'dash-status';
 
-// a banner-carried outage is stated once, above → the stat's value reads Not loaded, its line is the pointer alone
-const POINTER = { BANNER: 'the notice above', RESULTS_STAT: 'the Task results stat above' };
-const SHARED_FAILURE_CONTEXT = `See ${POINTER.BANNER}.`;
+const RESULTS_STAT_POINTER = 'the Task results stat above';
 
 // spec 44084 §9 — one card, four stats (label, value, one context line); every counting rule and window behind one ⓘ
 function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
@@ -347,7 +345,8 @@ function getStatLabel(stat) {
 function getStatContext(stat, { onRetry, isRetryShared }) {
   const { DayTokens, RetryButton } = window.UI;
   const isCovered = isRetryShared && stat.error != null;
-  const text = isCovered && stat.status === 'error' ? SHARED_FAILURE_CONTEXT : stat.context;
+  // a banner-carried outage is stated once, above → the value reads Not loaded, the line is the pointer alone
+  const text = isCovered && stat.status === 'error' ? window.UI.getNoticePointer() : stat.context;
   const hasRetry = Boolean(stat.canRetry) && !isRetryShared;
   if (!text && !hasRetry) return null;
   return (
@@ -447,7 +446,7 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   if (view !== 'error' && view !== 'held') return null;
   if (!onRetry || isRetryShared) {
     const lead = view === 'held' ? "Couldn't refresh" : 'Not loaded';
-    return <p className="fs-meta text-dim">{lead} — see {isRetryShared ? POINTER.BANNER : POINTER.RESULTS_STAT}.</p>;
+    return <p className="fs-meta text-dim">{isRetryShared ? window.UI.getNoticePointer(lead) : `${lead} — see ${RESULTS_STAT_POINTER}.`}</p>;
   }
   const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   if (view === 'held') {

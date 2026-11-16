@@ -2548,24 +2548,25 @@ function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTarget
   );
 }
 
-const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
+const NOTICE_POINTER = 'the notice above';
+
+// the one pointer to a covering page notice → alone when the value already reads Not loaded, else after its lead
+function getNoticePointer(lead) {
+  return lead ? `${lead} — see ${NOTICE_POINTER}.` : `See ${NOTICE_POINTER}.`;
+}
 
 /**
- * Quiet slot for a region another surface speaks for: its name + a pointer to that surface, no sentence, no Retry.
- * @param region - slot name shown; defaults to source
+ * Quiet slot for a region another surface speaks for: one pointer line to that surface, no name (its card already titles it), no sentence, no Retry.
  * @param speaker - failed source whose card (not the page banner) speaks for this slot
  * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first banner-covered card on recovery
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionCovered({ source, region, speaker, focusTargetId, minHeight, className = '' }) {
-  const label = region ?? source;
-  const name = label ? label.charAt(0).toUpperCase() + label.slice(1) : '';
+function RegionCovered({ speaker, focusTargetId, minHeight, className = '' }) {
   return (
-    <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
+    <p className={`fs-meta text-dim ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
       data-covered-card-id={speaker ? undefined : focusTargetId}>
-      <span className="fs-body text-dim">{name}</span>
-      <span className="fs-meta text-faint">{speaker ? `Not loaded — see the ${speaker} notice` : REGION_COVERED_NOTE}</span>
-    </div>
+      {speaker ? `${NOT_LOADED_TEXT} — see the ${speaker} notice.` : getNoticePointer(NOT_LOADED_TEXT)}
+    </p>
   );
 }
 
@@ -3119,7 +3120,7 @@ window.UI = {
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
-  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,

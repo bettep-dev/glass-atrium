@@ -583,7 +583,7 @@ function getHeldTextI(held, text) {
 const BAND_ABSENT_CONTEXT_I = {
 	unavailable: () => "Not measured — this payload carried no value for it",
 	// the value already reads Not loaded → the line is the pointer alone, to whichever surface states the cause
-	announced: (owner, isCovered) => (isCovered ? "See the notice above." : `See the ${owner} below.`),
+	announced: (owner, isCovered) => (isCovered ? window.UI.getNoticePointer() : `See the ${owner} below.`),
 };
 
 function buildBandStatI({ key, label, owner, isCovered, status, value, context }) {

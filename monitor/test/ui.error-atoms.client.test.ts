@@ -250,7 +250,7 @@ describe("a hairline alarm row", () => {
 });
 
 const FAILURE_SENTENCE = /Couldn't load/g;
-const COVERED_NOTE = "Not loaded — see the notice above";
+const COVERED_NOTE = "Not loaded — see the notice above.";
 
 function renderPage(entries: FailureEntry[]): RenderedNode {
   const shared = getSharedFailure(entries);
@@ -307,7 +307,7 @@ test("each failed source speaks once however many regions it feeds; one surface 
   }
 });
 
-test("the first region a failed source feeds carries its card; the others name themselves and point at that source", () => {
+test("the first region a failed source feeds carries its card; the others point at that source's notice", () => {
   const tree = renderSourcePage([
     { source: "agent summary", region: "fleet KPIs", error: SERVER_ERROR },
     { source: "agent summary", region: "suspended agents", error: SERVER_ERROR },
@@ -315,14 +315,15 @@ test("the first region a failed source feeds carries its card; the others name t
   const [speaker, covered] = tree.children as RenderedNode[];
 
   assert.match(getVisibleText(speaker), /Couldn't load agent summary\./);
-  assert.equal(getVisibleText(covered).replace(/\s+/g, " ").trim(), "Suspended agents Not loaded — see the agent summary notice");
+  assert.equal(getVisibleText(covered).replace(/\s+/g, " ").trim(), "Not loaded — see the agent summary notice.");
   assert.equal(findNodes(covered, (n) => n.props["data-covered-card-id"] != null).length, 0);
 });
 
-test("a covered region names itself, reserves its slot height and carries no alert, Retry or Details", () => {
+test("a covered region is the one pointer line, no tile repeating its card's name; it reserves its slot height and carries no alert, Retry or Details", () => {
   const tree = render("RegionCovered", { source: "spend by model", minHeight: 218 });
 
-  assert.equal(getVisibleText(tree).replace(/\s+/g, " ").trim(), `Spend by model ${COVERED_NOTE}`);
+  assert.equal(getVisibleText(tree).replace(/\s+/g, " ").trim(), COVERED_NOTE);
+  assert.equal(getByClass(tree, "sub-card").length, 0, "no inset tile inside the region's own card");
   assert.equal(((tree.children[0] as RenderedNode).props.style as { minHeight: number }).minHeight, 218);
   assert.equal(findNodes(tree, (n) => n.type === "button" || n.type === "details" || n.props.role === "alert").length, 0);
 });

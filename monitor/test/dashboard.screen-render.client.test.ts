@@ -34,7 +34,7 @@ function uiStub(): unknown {
           ? getRegionViewStub
           : name === "AlertCard"
           ? alertCardStub
-          : name === "ALERT_SEVERITY_WORD" || name === "AlarmRow"
+          : name === "ALERT_SEVERITY_WORD" || name === "AlarmRow" || name === "getNoticePointer"
           ? realUi[name]
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
