@@ -43,8 +43,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
-import { registerBrowserShutdownHook, resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
-import { runExclusiveRender } from "../src/server/clauded-docs/html-export.js";
+import { acquireBrowser, registerBrowserShutdownHook, resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
+import { renderSelfContainedHtml, runExclusiveRender } from "../src/server/clauded-docs/html-export.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
 import { getMermaidThemeValue } from "./lib/mermaid-config-source.js";
 
@@ -341,6 +341,35 @@ test("export renders run one at a time across callers, in call order, and a fail
   assert.strictEqual(maxInFlight, 1, "never two renders at once");
   assert.deepStrictEqual(finished, ["first", "second", "third"]);
   assert.deepStrictEqual(results.map((result) => result.status), ["fulfilled", "rejected", "fulfilled"]);
+});
+
+test("concurrent exports through the html and the diagram-md render paths hold at most one Chromium render at a time", async () => {
+  // the pooled browser every render uses → an open context marks a render in flight
+  const browser = await acquireBrowser();
+  const newContext = browser.newContext.bind(browser);
+  let inFlight = 0;
+  let maxInFlight = 0;
+  browser.newContext = async (options) => {
+    const context = await newContext(options);
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    const close = context.close.bind(context);
+    context.close = async (closeOptions) => {
+      inFlight -= 1;
+      return close(closeOptions);
+    };
+    return context;
+  };
+  try {
+    await Promise.all([
+      renderSelfContainedHtml(makePreOnlyMermaidBody("line-html-a", MERMAID_V11_SRC), "html"),
+      renderSelfContainedHtml(`# Flow\n\n\`\`\`mermaid\n${MERMAID_V11_SRC}\n\`\`\`\n`, "md"),
+      renderSelfContainedHtml(makePreOnlyMermaidBody("line-html-b", MERMAID_V11_SRC), "html"),
+    ]);
+  } finally {
+    browser.newContext = newContext;
+  }
+  assert.strictEqual(maxInFlight, 1);
 });
 
 test("GET /:id/html-export: Korean title — attachment Content-Disposition dual-param", async () => {

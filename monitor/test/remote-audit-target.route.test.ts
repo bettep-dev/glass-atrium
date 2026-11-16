@@ -148,6 +148,12 @@ async function sendRemote(input: { method: "POST" | "PUT" | "PATCH" | "DELETE"; 
 }
 
 describe("a remote mutation's audit row", () => {
+  test("the multi-document export records the requested ids, even when none of them exists", async () => {
+    const ids = [987654301, 987654302];
+    const { row } = await sendRemote({ method: "POST", url: "/api/clauded-docs/html-export", payload: { ids } });
+    assert.deepEqual(row.target, { ids });
+  });
+
   test("names the numeric id from the route at intent, before the handler runs", async () => {
     const { row } = await sendRemote({ method: "PATCH", url: "/api/outcomes/987654321/close" });
     assert.equal(row.entry.targetId, 987654321n);
