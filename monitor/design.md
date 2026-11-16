@@ -756,7 +756,7 @@
 - **Part health 목록** (`PartHealthBlockAR`): 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
   - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 action "Open box" = `btn ghost sm` (quiet tier).
   - healthy 부품은 `N healthy` fold (`details` + `summary.disclosure`) 안으로 접힘 — 접힌 기본 상태.
-- **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0 (양 테마). 노드 테두리 override 는 dark 에서만: 그려진 map 은 양 테마 모두 어두운 노드 fill 이라 light `--cat-*` 가 오늘보다 낮게 잼 (spec 44084 §13) → light 는 classDef stroke 그대로. 라벨도 같음: box 라벨 `p` 의 `--ink` · zone 제목과 edge 라벨의 `--dim` 은 dark 에서만, light 는 오늘의 라벨 색 그대로 (map light theme 는 follow-up FU1).
+- **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0 (양 테마). 노드 테두리 override 는 dark 에서만: 그려진 map 은 양 테마 모두 어두운 노드 fill 이라 light `--cat-*` 가 오늘보다 낮게 잼 (spec 44084 §13) → light 는 classDef stroke 그대로. dark 한정은 레인의 선택 (디자이너 판정 없음, 판정 대기): light 에서는 범례 swatch (light `--cat-*`) 와 노드 테두리 (classDef hex) 가 다른 색, 계획의 "양 테마 모두 토큰과 같음" 검사는 dark 만 충족. 라벨도 같음: box 라벨 `p` 의 `--ink` · zone 제목과 edge 라벨의 `--dim` 은 dark 에서만, light 는 오늘의 라벨 색 그대로 (map light theme 는 follow-up FU1).
 
 ### 7.15 Control size tiers
 
