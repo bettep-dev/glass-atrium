@@ -526,6 +526,28 @@ describe("healthy live fixture", () => {
 		for (const line of texts) assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 	});
 
+	// one ink step separates the boxes from the frames and lines around them — no box label, User input included, reads disabled
+	test("box labels draw in ink while zone titles and edge labels draw in the dim text colour", async () => {
+		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+		const read = await ctx.page.evaluate((canvas) => {
+			const root = getComputedStyle(document.documentElement);
+			const [ink, dim] = ["--ink", "--dim"].map((name) => `rgb(${root.getPropertyValue(name).trim().split(/\s+/).join(", ")})`);
+			// leaf text paint per kind — an svg text reads its fill, an html label its colour
+			const [node, zone, edge] = ["g.node", "g.cluster > .cluster-label", "g.edgeLabel"].map((scope) => [
+				...new Set(
+					[...document.querySelectorAll(`${canvas} svg ${scope} :is(text, tspan, span, p, div)`)]
+						.filter((el) => (el.textContent ?? "").trim() !== "" && el.children.length === 0)
+						.map((el) => (el instanceof SVGElement ? getComputedStyle(el).fill : getComputedStyle(el).color)),
+				),
+			]);
+			return { ink, dim, node, zone, edge };
+		}, ctx.selectors.canvas);
+		assert.deepEqual(
+			{ node: read.node, zone: read.zone, edge: read.edge },
+			{ node: [read.ink], zone: [read.dim], edge: [read.dim] },
+		);
+	});
+
 	// owner decision, spec 44084 §12.2a — Reset is a fit-to-view mark, not the target Task results uses
 	test("the Reset control draws the Lucide maximize glyph from the loaded catalogue", async () => {
 		const drawn = await ctx.page.evaluate(() => {
