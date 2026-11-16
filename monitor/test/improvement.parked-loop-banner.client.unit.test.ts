@@ -174,6 +174,27 @@ function listComponentOrder(node: RenderedNode | string | null, out: string[] = 
   return out;
 }
 
+test("the view switch is a tab row under the page header, never a control in its action slot", async () => {
+  const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
+  const screen = await loadScreenModule(IMPROVEMENT_SRC, { UI: ui.UI });
+  const rendered = renderScreen((screen.ScreenImprovement as (props: unknown) => unknown)({})) as RenderedNode;
+  const nodes: RenderedNode[] = [];
+  const walk = (node: RenderedNode | string) => {
+    if (typeof node === "string") return;
+    nodes.push(node);
+    for (const child of node.children) walk(child);
+  };
+  walk(rendered);
+  const headAt = nodes.findIndex((n) => n.type === "PageHeader");
+  const tabsAt = nodes.findIndex((n) => n.type === "Tabs");
+  const panel = nodes.find((n) => n.props.role === "tabpanel");
+
+  assert.equal(nodes[headAt]?.props.actions, undefined, "the page head's action slot holds no view switch");
+  assert.ok(tabsAt > headAt, "the tab row sits under the header");
+  assert.deepEqual(Array.from(nodes[tabsAt].props.tabs as Array<{ label: string }>, (t) => t.label), ["Operator", "Instrumentation"]);
+  assert.equal(panel?.props["aria-labelledby"], `${nodes[tabsAt].props.id}-tab-operator`, "the open view is the panel of its tab");
+});
+
 test("the operator view keeps the five-surface spine order", async () => {
   const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
   const screen = await loadScreenModule(IMPROVEMENT_SRC, { UI: ui.UI });
@@ -245,6 +266,27 @@ test("the CTM/EPM row leaves its tone on the glyph", () => {
     [],
     "the label repeats a tone the SymI beside it already declares",
   );
+});
+
+// an empty page shows no alarm: a count's tone glyph appears only once there is something to count
+describe("a zero count carries no tone glyph, a non-zero count keeps its one glyph", () => {
+  const rows = [
+    { name: "run breakdown at zero", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 0, cycles_generated_not_applied_7d: 0, cycles_nothing_generated_7d: 0 } }), glyphs: 0 },
+    { name: "run breakdown with counts", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 3, cycles_generated_not_applied_7d: 4, cycles_nothing_generated_7d: 5 } }), glyphs: 1 },
+    { name: "learning memory at zero", tree: () => sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm: 0, epm: 0 } }), glyphs: 0 },
+    { name: "learning memory with counts", tree: () => sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm: 4, epm: 2 } }), glyphs: 1 },
+  ];
+  const labels = ["Created & applied", "Created, not applied", "Nothing created", "Confirmed wins", "Mistake patterns (EPM)"];
+  for (const row of rows) {
+    test(row.name, () => {
+      const counts = collect(row.tree(), (el) => Array.isArray(el.props.children) && el.props.children.some((c: unknown) => isElement(c) && labels.includes(c.props.children as string)), [sandbox.SymI]);
+      assert.ok(counts.length >= 2, "every count renders");
+      for (const count of counts) {
+        const glyphs = (count.props.children as unknown[]).filter((c) => isElement(c) && c.type === sandbox.SymI);
+        assert.equal(glyphs.length, row.glyphs, String(count.props.key ?? count.props.children));
+      }
+    });
+  }
 });
 
 test("the cycle decomposition chips leave their tone on the glyph", () => {
@@ -365,17 +407,6 @@ test("the change summary's line counts keep their hue on the sign glyph, ok for 
   }
 });
 
-test("the learning-memory tiles name no tone token in any inline style", () => {
-  const row = sandbox.BucketRowI({
-    state: { status: "ready" },
-    buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
-  });
-  const tree = collect(row, () => true);
-  assert.ok(tree.some((el) => /\bsub-card\b/.test(String(el.props.className))), "the walk reaches the tiles");
-  const toneStyles = tree.flatMap((el) => Object.values(Object(el.props.style)).map(String).filter((value) => HUE.STYLE_TOKEN.test(value)));
-  assert.deepEqual(toneStyles, [], "an inline style on a tile names a tone token");
-});
-
 test("a failed stats payload raises one banner at the loop output group", () => {
   const ErrorBannerI = screenFns.ErrorBannerI;
   const group = screenFns.LoopOutputGroupI({
@@ -399,15 +430,14 @@ test("the status band never announces a failure the owning group already announc
     learningLogState: failed,
     suppression: null,
     awaiting: 0,
-    onRetry: () => {},
   });
   const buttons = collect(band, (el) => el.type === "button");
-  assert.equal(buttons.length, 0, "a retry per tile repeats the group's banner");
+  assert.equal(buttons.length, 0, "a retry per stat repeats the group's banner");
   const pointers = collect(band, (el) => {
     const kids = ([] as unknown[]).concat(el.props.children);
     return kids.some((k) => typeof k === "string" && k.includes("Not read — see the"));
   });
-  assert.equal(pointers.length, 4, "each tile points at its owning group");
+  assert.equal(pointers.length, 3, "each stat points at its owning group");
 });
 
 // ----- Board headers, proposal actions and tiles: tone on the glyph, tiles on the sub-card ---
@@ -457,8 +487,12 @@ describe("board and action surfaces leave their tone on the glyph", () => {
       render: () => component("ProposalActionsI")({ row: PROPOSAL, isSafety: true, onAction: () => {}, isPending: false }),
     },
     {
-      name: "the awaiting-approval banner",
-      render: () => component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
+      name: "the awaiting-approval list",
+      render: () => component("AwaitingListI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
+    },
+    {
+      name: "the board head's awaiting status",
+      render: () => component("HeadStatusI")({ count: 2, words: "awaiting" }),
     },
     {
       name: "the operations-view instrumentation strip",
@@ -494,15 +528,47 @@ describe("board and action surfaces leave their tone on the glyph", () => {
   }
 });
 
-test("the awaiting banner announces through its live zone as the shared warn alert card", () => {
-  const tree = screenTree(
-    component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
-    [sandbox.ProposalCardI],
-  );
-  const cards = tree.filter((el) => el.type === sandbox.window.UI.AlertCard);
-  assert.equal(cards.length, 1, "one alert card heads the awaiting list");
-  assert.equal(cards[0].props.tone, "warn");
-  assert.equal(cards[0].props.hasLiveHost, true, "the zone around it is already the live region");
+// spec 44084 §3.1 — the board's rows carry the detail → the head carries the count, once, as Status
+describe("the awaiting count is the board head's warn status, announced live, never an alert card", () => {
+  const renderBoardHead = (safety: unknown[]) => {
+    const tree = screenTree(
+      component("KanbanCardI")({
+        state: { status: "ready", data: {} },
+        columnRows: { safety, applied: [{ ...PROPOSAL, id: 9, status: "applied" }] },
+        loopAggregate: null,
+        onRowClick: () => {},
+        onAction: () => {},
+        pendingActionId: null,
+        onRetry: () => {},
+        failures: [],
+      }),
+      [sandbox.ProposalCardI, sandbox.KanbanColumnI],
+    );
+    const head = tree.find((el) => el.type === sandbox.window.UI.CardHead);
+    assert.ok(head, "the board keeps its card head");
+    return { tree, headTree: screenTree(head.props.right) };
+  };
+  const printed = (tree: RecordedElement[]) =>
+    tree
+      .flatMap((el) => [el.props.children].flat())
+      .filter((child) => typeof child === "string" || typeof child === "number")
+      .join("");
+  const rows = [
+    { name: "two awaiting → a warn status naming the count", safety: [PROPOSAL, { ...PROPOSAL, id: 8 }], status: "2 awaiting" },
+    { name: "none awaiting → no status at all", safety: [], status: null },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const { tree, headTree } = renderBoardHead(row.safety);
+      const statuses = headTree.filter((el) => el.props["data-role"] === "head-status");
+      assert.equal(tree.filter((el) => el.type === sandbox.window.UI.AlertCard).length, 0, "no alert card on the board");
+      assert.ok(headTree.some((el) => el.props["aria-live"] === "polite"), "the head keeps one live region mounted");
+      if (row.status === null) return assert.equal(statuses.length, 0);
+      assert.equal(statuses.length, 1);
+      assert.equal(printed(screenTree(statuses[0])), row.status);
+      assert.ok(screenTree(statuses[0]).some((el) => el.props.s === "⚠" && /\btext-warn\b/.test(String(el.props.className))));
+    });
+  }
 });
 
 test("approve and reject are shared buttons: approve keeps a neutral label, reject is the destructive outline", () => {
@@ -520,19 +586,8 @@ test("approve and reject are shared buttons: approve keeps a neutral label, reje
   assert.equal(style.background, undefined, "the destructive outline carries no fill");
 });
 
-describe("tiles rest on a shared surface, and only an interactive tile answers hover", () => {
+describe("a ledger tile rests on a shared surface and answers hover", () => {
   const rows = [
-    {
-      // the metric tile is the shared KPI in its loading state → rendered one level to its root element
-      name: "a loading metric tile",
-      surface: /\bkpi\b/,
-      isInteractive: false,
-      render: () => {
-        const tile = component("TilePlaceholderI")({ status: "loading", label: "Applied", owner: "x", onRetry: () => {} }) as RecordedElement;
-        assert.equal(tile.type, sandbox.window.UI.KPI, "the metric tile is the shared KPI");
-        return (tile.type as ScreenComponent)(tile.props);
-      },
-    },
     {
       name: "a live candidate row",
       surface: /\bsub-card\b/,

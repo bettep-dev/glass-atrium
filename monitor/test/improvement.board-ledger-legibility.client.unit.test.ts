@@ -39,7 +39,7 @@ interface Sandbox {
   KanbanCardI: Component;
   KanbanColumnI: Component;
   CompactProposalCardI: Component;
-  ViewToggleI: Component;
+  ViewTabsI: Component;
   LoopOutputGroupI: Component;
   AppliedHeroHeaderI: Component;
   LedgerSectionHeadI: Component;
@@ -52,7 +52,7 @@ interface Sandbox {
   StatusBandI: Component;
   RejectedHeaderI: Component;
   BoardRowI: Component;
-  HeldCauseStripI: Component;
+  HeldCauseTableI: Component;
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
   confidenceBadgeMetaI: (value: unknown) => { label: string };
 }
@@ -212,6 +212,41 @@ test("the board header states the window its applied and rejected counts cover",
   assert.match(String(head.props.sub), /latest 50 suggestions/);
 });
 
+describe("the board draws its lanes only when some lane holds a suggestion", () => {
+  const APPLIED_ROW = { id: 9, status: "applied", target_agent: AGENT, pattern_label: SIGNATURE };
+  const rows = [
+    { name: "every lane empty → the head and one line", columnRows: { safety: [], applied: [], rejected: [] }, lanes: 0, lines: 1 },
+    { name: "an applied suggestion → both terminal lanes, no empty line", columnRows: { applied: [APPLIED_ROW] }, lanes: 2, lines: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = sandbox.KanbanCardI({
+        state: { status: "ready", data: {} },
+        columnRows: row.columnRows,
+        onRowClick: () => {},
+        onRetry: () => {},
+      });
+      const lines = findAll(tree, (el) => el.type === sandbox.window.UI.EmptyState);
+      assert.equal(findAll(tree, (el) => el.type === sandbox.KanbanColumnI).length, row.lanes);
+      assert.equal(lines.length, row.lines);
+      for (const line of lines) assert.equal(line.props.hint, undefined, "the empty board states one line, no hint");
+    });
+  }
+});
+
+test("the applied and rejected lane heads share one line shape: glyph, label and count at the meta size", () => {
+  const heads = [
+    sandbox.AppliedHeroHeaderI({ count: 9, label: "Applied", symbol: "✓" }),
+    sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] }),
+  ];
+  for (const head of heads) {
+    assert.ok(head, "lane head missing");
+    assert.match(classOf(head), /\bi-col-header\b/);
+    assert.match(classOf(head), /\bfs-meta\b/, classOf(head));
+    assert.deepEqual(findAll(head, (el) => /\bfs-stat\b/.test(classOf(el))), [], "no figure outgrows the shared line");
+  }
+});
+
 test("recurrence figure columns keep a gap so adjacent headers never run together", () => {
   const tree = sandbox.RecurrenceRowsI({ buckets: [], windowCycles: 7 });
   const headers = findAll(tree, (el) => el.type === "th");
@@ -224,16 +259,12 @@ function classOf(el: RecordedElement): string {
   return String(el.props.className ?? "");
 }
 
-test("the view toggle is a segmented control whose pressed option alone carries aria-pressed", () => {
+test("the view switch is the shared tab row with the open view alone selected, never the range control", () => {
   for (const view of ["operator", "instrumentation"]) {
-    const tree = sandbox.ViewToggleI({ view, onChange: () => {} });
-    assert.ok(tree && /\bseg\b/.test(classOf(tree)), "toggle must use the shared .seg selected-state control");
-    const buttons = findAll(tree, (el) => el.type === "button");
-    assert.equal(buttons.length, 2);
-    const pressed = buttons.filter((b) => b.props["aria-pressed"] === true).map((b) => visibleText(b));
-    assert.equal(pressed.length, 1, view);
-    assert.match(pressed[0], view === "operator" ? /Operator/ : /Instrumentation/);
-    for (const b of buttons) assert.doesNotMatch(classOf(b), /\btext-(ink|faint)\b/, "a colour class would mask the selected fill");
+    const tree = sandbox.ViewTabsI({ view, onChange: () => {} });
+    assert.equal(tree?.type, sandbox.window.UI.Tabs, "a view switch drawn as the segmented range control reads as a range");
+    assert.equal(tree?.props.value, view);
+    assert.deepEqual(Array.from(tree?.props.tabs as Array<{ key: string }>, (t) => t.key), ["operator", "instrumentation"]);
   }
 });
 
@@ -524,14 +555,14 @@ test("a suggestion board row sets its title at the body size, leaving ids and da
   assert.doesNotMatch(classOf(title), /\bfs-meta\b/);
 });
 
-test("a held cause reads as one label line, its remedy kept off the strip for the ledger's drawer", () => {
+test("a held cause reads as one table row of cause, held count and agents, its remedy kept for the ledger's drawer", () => {
   const hint = "Raise the cap after a human reads the rows";
-  const tree = sandbox.HeldCauseStripI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
-  const text = visibleText(tree);
+  const tree = sandbox.HeldCauseTableI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
+  const [row] = findAll(tree, (el) => el.type === "tr" && visibleText(el).includes("Repeat-apply cap"));
 
-  assert.match(text, /Repeat-apply cap/);
-  assert.match(text, /2 held/);
-  assert.doesNotMatch(text, /Raise the cap/, "remedy prose on the strip");
+  assert.ok(row, visibleText(tree));
+  assert.deepEqual(findAll(row, (el) => el.type === "td").map((cell) => visibleText(cell).trim()), ["Repeat-apply cap", "2", "1"]);
+  assert.doesNotMatch(visibleText(tree), /Raise the cap/, "remedy prose in the table");
 });
 
 test("the rejected column header never wraps its label, count or basis", () => {
@@ -601,6 +632,43 @@ describe("the drawer prints each field in words, never the stored machine key", 
       assert.ok(value, `${item.label} is printed`);
       assert.equal(visibleText(value), item.printed);
       assert.equal(/\bfont-mono\b/.test(classOf(value)), item.mono, `${item.label} mono`);
+    });
+  }
+});
+
+test("the run breakdown names its window in the short form the band's Applied, 7d uses", () => {
+  const screen = sandbox as unknown as Record<string, Component>;
+  assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /Run breakdown \(7d\)/);
+});
+
+describe("Learning labels read in sentence case, never letter-spaced capitals", () => {
+  const screen = sandbox as unknown as Record<string, Component>;
+  const rows = [
+    {
+      name: "pattern drawer",
+      tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ kind: "pattern", id: 7, pattern_signature: SIGNATURE, agent: AGENT, example: "e", last_transition_reason: "r" })),
+      label: /Last transition|LAST TRANSITION/,
+    },
+    {
+      name: "suggestion drawer with a pre-verify result",
+      tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 9, approval_tier: "auto", pattern_label: "Scope note", rationale: "Repeated overrun", pre_verify_status: "failed", pre_verify_passed: false, pre_verify_rationale: "One axis failed", pre_verify_axes: { C1: true, C4: false } })),
+      label: /Pattern label[\s\S]*Rationale[\s\S]*Pre-verify/,
+    },
+    { name: "run breakdown", tree: () => screen.CycleDecompositionRowI({ stats: {} }), label: /Run breakdown/ },
+    { name: "not-judged rejected row", tree: () => screen.RejectedCompactListI({ rows: [{ id: 3, summary: "s", status: "unadjudicated", cycle_date: "2026-09-10" }], onRowClick: () => {} }), label: /Not judged/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree: RecordedElement[] = [];
+      findRendered(row.tree(), (el) => {
+        tree.push(el);
+        return false;
+      });
+      assert.match(visibleText(row.tree()), row.label);
+      const capped = tree.filter((el) => /\b(uppercase|tracking-wider)\b/.test(classOf(el)));
+      assert.deepEqual(capped.map((el) => visibleText(el)), []);
+      const shouted = tree.map((el) => visibleText(el).trim()).filter((text) => /^[A-Z][A-Z -]{3,}$/.test(text));
+      assert.deepEqual(shouted, [], "a label typed in capitals");
     });
   }
 });

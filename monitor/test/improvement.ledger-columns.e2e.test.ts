@@ -1,9 +1,10 @@
 // E2E chromium check for the Learning screen's pattern ledger (screens/improvement.jsx): where each
-// section sits inside its stretched column, which a node render cannot measure.
+// section sits inside its stretched column, which a node render cannot measure — plus the page's
+// other measured geometry: the tab row's gap to the first card and the awaiting list's ring room.
 //
 // Runner: npx tsx --test test/improvement.ledger-columns.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
-// App: stripped Fastify serving the learning log below; every other /api read answers empty.
+// App: stripped Fastify serving the payloads below; every other /api read answers empty.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -62,12 +63,12 @@ function getLearningLog(live: number, inert: number, held: number) {
 }
 
 interface ColumnReading {
-  sections: number;
+  sections: string[];
   topGap: number;
   bottomGap: number;
 }
 
-// every ledger column: its section count, the gap above the first section and below the last
+// every ledger column: its sections by the first word of their head, the gap above the first section and below the last
 async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]> {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
@@ -86,7 +87,7 @@ async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]>
         const box = column.getBoundingClientRect();
         const sections = [...column.children].map((section) => section.getBoundingClientRect());
         return {
-          sections: sections.length,
+          sections: [...column.children].map((section) => (section.textContent ?? "").trim().split(/\s/)[0]!),
           topGap: sections[0]!.top - box.top,
           bottomGap: box.bottom - sections[sections.length - 1]!.bottom,
         };
@@ -97,27 +98,21 @@ async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]>
   }
 }
 
-// the named column is the shorter one: a lone section keeps its free space below, a later section pins to the bottom
+// held leads the first column, live then inert the second · the named column is the shorter one:
+// a lone section keeps its free space below, a later section pins to the bottom
 const rows = [
   {
-    name: "a short live list alone in its column stays at the column top",
-    learningLog: getLearningLog(1, 1, 2),
-    column: 0,
-    sections: 1,
-    isBottomPinned: false,
-  },
-  {
-    name: "an inert section alone beside a long live list stays at the column top",
-    learningLog: getLearningLog(10, 1, 0),
-    column: 1,
-    sections: 1,
-    isBottomPinned: false,
-  },
-  {
-    name: "a two-section column beside a long live list starts at its top and ends on the shared bottom edge",
+    name: "the held section alone in the first column stays at its top beside a long live list",
     learningLog: getLearningLog(10, 1, 1),
+    column: 0,
+    sections: ["Held"],
+    isBottomPinned: false,
+  },
+  {
+    name: "live then inert in the second column start at its top and end on the shared bottom edge beside a taller held table",
+    learningLog: getLearningLog(1, 1, 3),
     column: 1,
-    sections: 2,
+    sections: ["Live", "Inert"],
     isBottomPinned: true,
   },
 ];
@@ -125,9 +120,9 @@ const rows = [
 for (const row of rows) {
   test(`${row.name} at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
     const columns = await getColumnReadings(row.learningLog);
-    assert.equal(columns.length, 2, "the ledger pairs its live list with a side column");
+    assert.equal(columns.length, 2, "the ledger pairs its held rows with its candidates");
     const reading = columns[row.column]!;
-    assert.equal(reading.sections, row.sections, "the case renders the intended section count");
+    assert.deepEqual(reading.sections, row.sections, "the column holds the intended sections, in order");
 
     assert.ok(reading.topGap <= EDGE_TOLERANCE_PX, `the first section starts ${Math.round(reading.topGap)}px below the column top`);
     assert.equal(
@@ -138,7 +133,7 @@ for (const row of rows) {
   });
 }
 
-// On the inert list, pattern names and agents of different lengths still put every agent and every date on one column edge
+// On the opened inert list, labels and agents of different lengths still put every agent and every date on one column edge
 test(`inert rows line their agent and date up in columns whatever the pattern and agent lengths, at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
   const shapes = [
     ["short", "glass-atrium-dev-db"],
@@ -168,14 +163,14 @@ test(`inert rows line their agent and date up in columns whatever the pattern an
   try {
     const page = await browser.newPage({ viewport: { width: SIDE_BY_SIDE_WIDTH, height: 900 } });
     await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
-    await page.waitForSelector(COLUMNS, { timeout: 30_000 });
+    await page.waitForSelector("#improvement-pattern-ledger details", { timeout: 30_000 });
     await page.evaluate(() => document.fonts.ready);
-    // the list right after the section head that names the inert rows — the innermost div opening with its label
+    // the disclosure whose summary names the inert rows, opened, then its row list
     const rows = await page.evaluate(() => {
-      const head = [...document.querySelectorAll<HTMLElement>("#improvement-pattern-ledger div")]
-        .filter((el) => (el.textContent ?? "").startsWith("Inert —"))
-        .at(-1)!;
-      return [...head.nextElementSibling!.children].map((item) => {
+      const fold = [...document.querySelectorAll<HTMLDetailsElement>("#improvement-pattern-ledger details")]
+        .find((el) => (el.querySelector("summary")?.textContent ?? "").includes("Inert —"))!;
+      fold.open = true;
+      return [...fold.querySelector("ul")!.children].map((item) => {
         const [name, agent, date] = [...item.children].map((cell) => cell.getBoundingClientRect());
         return { nameRight: name!.right, agentLeft: agent!.left, dateLeft: date!.left, height: item.getBoundingClientRect().height };
       });
@@ -228,5 +223,113 @@ test(`the recurrence table's body rows sit on the ${RECURRENCE_ROW_PX} compact s
   } finally {
     await browser.close();
     await app.close();
+  }
+});
+
+// one empty-line form across the screen: every "nothing here" line starts on its card's inline edge, inside a ledger section or not
+test(`every empty line on the Learning screen starts on its card's inline edge at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const app = Fastify({ logger: false });
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  app.get("/api/improvement/learning-log", async () => getLearningLog(0, 0, 0));
+  app.get("/api/*", async () => ({ rows: [] }));
+  const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width: SIDE_BY_SIDE_WIDTH, height: 900 } });
+    await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
+    await page.waitForSelector("#improvement-pattern-ledger .placeholder", { timeout: 30_000 });
+    await page.evaluate(() => document.fonts.ready);
+    const lines = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".card .placeholder")]
+        .filter((el) => /^(No |Not enough)/.test((el.textContent ?? "").trim()))
+        .map((el) => {
+          const card = el.closest<HTMLElement>(".card")!;
+          const cardPad = parseFloat(getComputedStyle(card).getPropertyValue("--card-pad"));
+          const textLeft = el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft);
+          return { text: (el.textContent ?? "").trim(), inset: textLeft - card.getBoundingClientRect().left, cardPad };
+        }),
+    );
+
+    assert.ok(lines.length >= 3, `the empty board, ledger and loop cards each print a line (${lines.length})`);
+    for (const line of lines) {
+      assert.ok(Math.abs(line.inset - line.cardPad) <= EDGE_TOLERANCE_PX, `"${line.text}" starts ${line.inset}px in, not ${line.cardPad}px`);
+    }
+  } finally {
+    await browser.close();
+    await app.close();
+  }
+});
+
+type Routes = Record<string, unknown>;
+
+// the Learning screen on the payloads given, measured once the ready selector paints
+async function getPageReading<T>(routes: Routes, readySelector: string, measure: () => T): Promise<T> {
+  const app = Fastify({ logger: false });
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  for (const [url, payload] of Object.entries(routes)) app.get(url, async () => payload);
+  app.get("/api/*", async () => ({ rows: [] }));
+  const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width: SIDE_BY_SIDE_WIDTH, height: 900 } });
+    await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
+    await page.waitForSelector(readySelector, { timeout: 30_000 });
+    await page.evaluate(() => document.fonts.ready);
+    return await page.evaluate(measure);
+  } finally {
+    await browser.close();
+    await app.close();
+  }
+}
+
+test(`the view tab row ends one --space-4 step above the first card at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const reading = await getPageReading({}, '[role="tablist"][aria-label="Learning view"]', () => {
+    const row = document.querySelector<HTMLElement>('[role="tablist"][aria-label="Learning view"]')!.getBoundingClientRect();
+    const card = [...document.querySelectorAll<HTMLElement>(".card")].find((el) => el.getBoundingClientRect().top >= row.bottom)!;
+    const probe = document.body.appendChild(Object.assign(document.createElement("div"), { style: "height: var(--space-4)" }));
+    return { gap: card.getBoundingClientRect().top - row.bottom, step: probe.getBoundingClientRect().height };
+  });
+
+  assert.ok(reading.step > 0, "the --space-4 token resolves");
+  assert.ok(Math.abs(reading.gap - reading.step) <= EDGE_TOLERANCE_PX, `the first card starts ${reading.gap}px under the tab row, not ${reading.step}px`);
+});
+
+test(`held table body cells set their text at the --fs-control step at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const routes = { "/api/improvement/learning-log": getLearningLog(1, 0, 2) };
+  const reading = await getPageReading(routes, "#improvement-pattern-ledger table", () => {
+    // the ledger table headed by a Held column — found by its head, not by the class the fix added
+    const table = [...document.querySelectorAll("#improvement-pattern-ledger table")]
+      .find((el) => [...el.querySelectorAll("thead th")].some((th) => th.textContent?.trim() === "Held"));
+    const probe = document.body.appendChild(Object.assign(document.createElement("div"), { style: "font-size: var(--fs-control)" }));
+    return {
+      sizes: table ? [...table.querySelectorAll("tbody td")].map((td) => getComputedStyle(td).fontSize) : [],
+      step: getComputedStyle(probe).fontSize,
+    };
+  });
+
+  assert.ok(reading.sizes.length > 0, "the held table renders its rows");
+  for (const size of reading.sizes) assert.equal(size, reading.step, "a held cell sits at the house table's body step");
+});
+
+test(`each awaiting suggestion's ring sits inside the list's scroll box at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const awaiting = [1, 2].map((id) => ({ id, status: "pending", approval_tier: "safety", pattern_label: `Awaiting suggestion ${id}`, rationale: "r", cycle_date: "2026-09-28" }));
+  const routes = { "/api/improvement": { proposals: [], actionable_proposals: awaiting } };
+  const insets = await getPageReading(routes, ".i-await-body > *", () => {
+    const box = document.querySelector<HTMLElement>(".i-await-body")!;
+    const edge = box.getBoundingClientRect();
+    return [...box.children].map((card) => {
+      const rect = card.getBoundingClientRect();
+      // the ring is an outside box-shadow → its spread is the room the card needs on every side
+      const ring = parseFloat(getComputedStyle(card).boxShadow.match(/(-?[\d.]+)px\s*$/)?.[1] ?? "0");
+      return { ring, room: Math.min(rect.left - edge.left, edge.right - rect.right, rect.top - edge.top) };
+    });
+  });
+
+  assert.equal(insets.length, 2, "every awaiting suggestion renders");
+  for (const inset of insets) {
+    assert.ok(inset.ring > 0, "an awaiting card draws its ring");
+    assert.ok(inset.room >= inset.ring - 0.01, `the ring needs ${inset.ring}px but the card sits ${inset.room}px from the scroll edge`);
   }
 });
