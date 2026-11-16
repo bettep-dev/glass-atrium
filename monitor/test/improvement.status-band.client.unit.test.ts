@@ -150,7 +150,7 @@ test("no stat carries a status glyph — attention lives in the card that owns t
 
 describe("a stat whose payload has not landed never shows the value it was handed", () => {
   const rows = [
-    { name: "a first read in flight is busy", state: { status: "loading", data: null }, kind: "loading" },
+    { name: "a first read in flight draws the shared loading placeholder, named for its stat", state: { status: "loading", data: null }, kind: "loading" },
     { name: "a failed read reads Not loaded and points at its owning group", state: { status: "error", data: null, error: "HTTP 500" }, kind: "not-loaded", context: /^Not read — see the .+ below$/ },
     { name: "a landed payload with no value reads Not loaded", state: { status: "ready", data: null }, kind: "not-loaded", context: /no value/ },
   ];
@@ -159,9 +159,13 @@ describe("a stat whose payload has not landed never shows the value it was hande
       const stats = getBandStats({ statsState: row.state, listState: row.state, learningLogState: row.state, suppression: row.state.data, awaiting: 7 });
       for (const stat of stats.values()) {
         const value = stat.value as RecordedElement;
-        assert.ok(!/\d/.test(textOf(value)), `${stat.label} shows a number it never read`);
-        if (row.kind === "loading") assert.equal(value.props["aria-busy"], "true", stat.label);
-        else {
+        // the loading line names its stat ("Applied, 7d") → only the label's own digits may appear
+        const shown = textOf(value).replaceAll(String(stat.label).toLowerCase(), "");
+        assert.ok(!/\d/.test(shown), `${stat.label} shows a number it never read`);
+        if (row.kind === "loading") {
+          const placeholder = collectElements(value, []).find((el) => el.type === sandbox.window.UI.LoadingPlaceholder);
+          assert.equal(placeholder?.props.label, String(stat.label).toLowerCase(), `${stat.label} draws the shared loading look`);
+        } else {
           assert.equal(value.type, sandbox.window.UI.AbsentValue, stat.label);
           assert.equal(value.props.kind, "not-loaded", stat.label);
           assert.match(textOf(stat.context), row.context as RegExp, stat.label);
