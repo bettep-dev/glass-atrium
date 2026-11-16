@@ -316,6 +316,22 @@ queue_is_listener_started() {
   [[ -n "${started}" && "${mark}" == "${owner_pid}|${started}" ]]
 }
 
+# <session id> → what polls the monitor for this Claude process's session: wait (a running wait of it) · listener (a
+# running listener of it, or none between two runs while its listening mark stands: a wake drops the lock, and each
+# turn end starts a fresh listener in no set order beside the reader) · none
+queue_get_poller() {
+  local state
+  state="$(queue_get_wait_state "$1")"
+  # shellcheck disable=SC2310  # a mark it cannot read counts as none
+  if [[ "${state}" == live ]]; then
+    printf 'wait\n'
+  elif [[ "${state}" == listener ]] || queue_is_listener_started "$1"; then
+    printf 'listener\n'
+  else
+    printf 'none\n'
+  fi
+}
+
 # <path> → 0 when modified within QUEUE_NUDGE_INTERVAL_MIN; non-zero when older, missing or unreadable
 queue_is_touched_within_nudge() {
   local recent

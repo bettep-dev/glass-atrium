@@ -1175,6 +1175,35 @@ mark_awaiting() {
   }
 }
 
+@test "while a listener of this Claude process holds the lock or has started, a post, pending and register name it and start no wait" {
+  start_stub
+  start_owner
+  set_reply 200 '{"id":17,"items":[],"answeredWaiting":0}'
+  local row state cmd listener owner listener_line
+  listener_line="next: this session's listener announces owner answers and messages to it — start no wait; to wait for the owner, end the turn"
+  owner="${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")"
+  sleep 300 3>&- &
+  listener="$!|$(get_recorded_start "$!")"
+  WAITER_PIDS="${WAITER_PIDS:-} $!"
+  # between runs: a woken listener has dropped its lock, and only its listening mark of this process remains
+  for row in holding-decision holding-pending holding-register between-decision between-pending between-register; do
+    state="${row%%-*}" cmd="${row#*-}"
+    export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root.${row}"
+    mkdir -p "${GA_ROOT}/data/queue/waits"
+    if [[ "${state}" == holding ]]; then
+      ln -sn -- "${listener}|${owner}|listen" "${GA_ROOT}/data/queue/waits/${SESSION_ID}"
+    else
+      # shellcheck source-path=SCRIPTDIR source=../lib/queue-session.sh
+      (source "${GA}/scripts/lib/queue-session.sh" && queue_put_listening_mark "${SESSION_ID}" "${owner}")
+    fi
+    if [[ "${cmd}" == decision ]]; then run_cli decision - <<<"${DECISION}"; else run_cli "${cmd}"; fi
+    [[ "${status}" -eq 0 && "${lines[${#lines[@]} - 1]}" == "${listener_line}" && "${output}" != *" wait —"* ]] || {
+      echo "row ${row}: status=${status} ${output}${stderr}"
+      return 1
+    }
+  done
+}
+
 @test "requests carry no queue key header and the messaging token never reaches curl's argv" {
   start_stub
   set_reply 200 '{"answeredWaiting":0}'

@@ -254,14 +254,20 @@ put_awaiting_item() {
   queue_delete_stale_awaiting || warn "could not drop the stale awaiting sets of ended sessions"
 }
 
-# <session id> → one line naming this session's next queue step: start a background wait, or none while a wait of this
-# session runs. A listener only announces, and is no wait: a claim arrives only through pending or a wait.
+# <session id> → one line naming this session's next queue step, by what polls for it (queue_get_poller): start no
+# other wait beside a running one · start none beside its listener, which announces what a wait would claim · else
+# start a background wait
 print_wait_step() {
-  local cli state
-  state="$(queue_get_wait_state "$1")"
-  if [[ "${state}" == live ]]; then
+  local cli poller
+  poller="$(queue_get_poller "$1")"
+  if [[ "${poller}" == wait ]]; then
     printf 'next: a wait of this session already runs — owner answers and messages reach this session through it;'
     printf ' start no other wait\n'
+    return 0
+  fi
+  if [[ "${poller}" == listener ]]; then
+    printf "next: this session's listener announces owner answers and messages to it — start no wait; to wait for"
+    printf ' the owner, end the turn\n'
     return 0
   fi
   cli="$(queue_get_cli_path)"
