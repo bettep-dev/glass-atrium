@@ -56,7 +56,7 @@ interface PageStateSandbox {
     hasMap: boolean,
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
-  getPartHealthGroupsAR: (partRows: HealthRow[]) => { attention: HealthRow[]; rest: HealthRow[]; unloaded: HealthRow[] };
+  getPartHealthGroupsAR: (partRows: HealthRow[]) => { listed: HealthRow[]; healthy: HealthRow[] };
   getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, freshness: HealthFreshness) => string;
   getPartStatusAR: (row: HealthRow & { statusLabel: string }, freshness: HealthFreshness) => { tone: string | null; text: string };
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
@@ -194,17 +194,18 @@ const MIXED_ROWS: HealthRow[] = [
   healthRow("f", "crit"),
 ];
 
-test("the part health block holds every part once — flagged, answered and not-loaded parts each in their own group, worst first", () => {
-  const { attention, rest, unloaded } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
-  const rank = (tone: string | null) => ["crit", "warn", "info", "ok"].indexOf(tone ?? "");
+test("the part health block holds every part once — healthy parts folded apart, every other part listed worst first, flagged before the rest", () => {
+  const { listed, healthy } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
+  const rank = (tone: string | null) => ["crit", "warn", null, "info"].indexOf(tone);
+  const isFlagged = (row: HealthRow) => row.tone === "crit" || row.tone === "warn";
 
-  assert.deepStrictEqual([...attention, ...rest, ...unloaded].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
-  assert.ok(attention.every((row) => row.tone === "crit" || row.tone === "warn"), "a non-flagged part sits in attention");
-  assert.ok(rest.every((row) => row.tone === "info" || row.tone === "ok"), "a flagged or not-loaded part sits with the answered ones");
-  assert.ok(unloaded.every((row) => row.tone === null), "an answered part sits in the not-loaded group");
-  for (const group of [attention, rest])
-    for (let i = 1; i < group.length; i++)
-      assert.ok(rank(group[i - 1].tone) <= rank(group[i].tone), `${group[i - 1].id} before ${group[i].id} breaks worst-first`);
+  assert.deepStrictEqual([...listed, ...healthy].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
+  assert.ok(healthy.length > 0 && healthy.every((row) => row.tone === "ok"), "the fold holds exactly the healthy parts");
+  assert.ok(listed.every((row) => row.tone !== "ok"), "a healthy part sits in the list");
+  for (let i = 1; i < listed.length; i++) {
+    assert.ok(rank(listed[i - 1].tone) <= rank(listed[i].tone), `${listed[i - 1].id} before ${listed[i].id} breaks worst-first`);
+    assert.ok(isFlagged(listed[i - 1]) || !isFlagged(listed[i]), `flagged ${listed[i].id} sits after unflagged ${listed[i - 1].id}`);
+  }
 });
 
 describe("the empty Needs attention column says why it is empty, and its all-clear reads Last known exactly when the part rows do", () => {

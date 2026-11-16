@@ -751,6 +751,9 @@
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
 - **h1 아래**: 범례 한 줄뿐 — verdict 줄 · chip 없음. 상태는 Part health card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 낱말 (`1 down · 1 needs attention`), 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
+- **Part health 목록** (`PartHealthBlockAR`): 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
+  - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 action "Open box" = `btn ghost sm` (quiet tier).
+  - healthy 부품은 `N healthy` fold (`details` + `summary.disclosure`) 안으로 접힘 — 접힌 기본 상태.
 - **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0 (양 테마). 노드 테두리 override 는 dark 에서만: 그려진 map 은 양 테마 모두 어두운 노드 fill 이라 light `--cat-*` 가 오늘보다 낮게 잼 (spec 44084 §13) → light 는 classDef stroke 그대로.
 
 ### 7.15 Control size tiers

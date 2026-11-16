@@ -657,15 +657,19 @@ function ScreenArchitecture(
 					".arch-part-health { flex-shrink: 0; } " +
 					// the card title outranks its rows — body-size row text under a control-size title read upside down
 					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; margin: 0; } " +
-					".arch-part-col-title { font-size: var(--fs-meta); font-weight: 600; margin: 0 0 var(--space-2); } " +
 					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
 					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
-					// Part health list · one line per part: name | status atom | button, meta below — body text centred on the 32px button
+					// Part health list · one line per part: name, status atom and cause | quiet button, meta below — body text centred on the 32px button
+					".arch-part-body { display: flex; flex-direction: column; gap: var(--space-3); } " +
+					".arch-part-fold > summary { list-style: none; } " +
+					".arch-part-fold > ul { margin-top: var(--space-2); } " +
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); } " +
-					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
+					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
 					"font-size: var(--fs-body); line-height: var(--lh-row); } " +
-					".arch-part-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
+					".arch-part-line { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; } " +
+					".arch-part-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
+					".arch-part-cause { flex: 1 1 0; min-width: 0; font-size: var(--fs-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
 					".arch-part-status { display: inline-flex; align-items: center; gap: var(--space-1_5); white-space: nowrap; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
 					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
@@ -2946,13 +2950,10 @@ function getPartToneRankAR(tone) {
 }
 
 // flagged, answered and not-loaded parts, each worst first — the same rows the caption counts
+// listed = every part not judged healthy, worst first (flagged → not loaded → idle) · healthy = folded under its count
 function getPartHealthGroupsAR(partRows) {
 	const sorted = [...partRows].sort((a, b) => getPartToneRankAR(a.tone) - getPartToneRankAR(b.tone));
-	return {
-		attention: sorted.filter(isPartFlaggedAR),
-		rest: sorted.filter((row) => row.tone && !isPartFlaggedAR(row)),
-		unloaded: sorted.filter((row) => !row.tone),
-	};
+	return { listed: sorted.filter((row) => row.tone !== "ok"), healthy: sorted.filter((row) => row.tone === "ok") };
 }
 
 // the drawer's drill target — the node's worst daemon part, so a failing part opens with its runs listed
@@ -3002,7 +3003,7 @@ const PART_STATUS_WORD_AR = {
 
 // Part health head Status — flagged counts worst tone first; null when nothing is flagged (no all-clear line)
 function getPartHealthStatusAR(partRows, freshness) {
-	const { attention } = getPartHealthGroupsAR(partRows);
+	const attention = getPartHealthGroupsAR(partRows).listed.filter(isPartFlaggedAR);
 	if (attention.length === 0) return null;
 
 	const tone = attention[0].tone;
@@ -3018,10 +3019,10 @@ function getPartHealthStatusAR(partRows, freshness) {
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
 function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
-	const { SplitRow, SplitColumn, Icon, TONE_ICON, ALERT_SEVERITY_WORD } = window.UI;
+	const { DisclosureChevron, Icon, TONE_ICON, ALERT_SEVERITY_WORD } = window.UI;
 	if (partRows.length === 0) return null;
 
-	const { attention, rest, unloaded } = getPartHealthGroupsAR(partRows);
+	const { listed, healthy } = getPartHealthGroupsAR(partRows);
 	const status = getPartHealthStatusAR(partRows, freshness);
 	const listProps = { freshness, nodeIndex, onSelectNode };
 	return (
@@ -3038,37 +3039,30 @@ function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onS
 					)}
 				</div>
 			</div>
-			<div className="card-body">
-				{/* two lists in one card, not peer cards → each column keeps its content height */}
-				<SplitRow ratio="1:1" layout="content">
-					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} {...listProps} />
-					<SplitColumn>
-						{/* a cold read leaves only unloaded parts → the Not loaded list speaks, not a false 'No other parts' */}
-						{(rest.length > 0 || unloaded.length === 0) && (
-							<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" {...listProps} />
-						)}
-						{unloaded.length > 0 && <PartHealthListAR title="Not loaded" rows={unloaded} {...listProps} />}
-					</SplitColumn>
-				</SplitRow>
+			<div className="card-body arch-part-body">
+				{!listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim m-0">{attentionEmpty}</p>}
+				{listed.length > 0 && <PartHealthListAR rows={listed} {...listProps} />}
+				{healthy.length > 0 && (
+					<details className="arch-part-fold">
+						<summary className="group disclosure">
+							<DisclosureChevron />
+							<span>{`${healthy.length} healthy`}</span>
+						</summary>
+						<PartHealthListAR rows={healthy} {...listProps} />
+					</details>
+				)}
 			</div>
 		</section>
 	);
 }
 
-function PartHealthListAR({ title, rows, empty, freshness, nodeIndex, onSelectNode }) {
+function PartHealthListAR({ rows, freshness, nodeIndex, onSelectNode }) {
 	return (
-		<div>
-			<h3 className="arch-part-col-title">{title}</h3>
-			{rows.length === 0 ? (
-				<p className="fs-meta text-dim m-0">{empty}</p>
-			) : (
-				<ul className="arch-part-list">
-					{rows.map((row) => (
-						<PartHealthRowAR key={row.id} row={row} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
-					))}
-				</ul>
-			)}
-		</div>
+		<ul className="arch-part-list">
+			{rows.map((row) => (
+				<PartHealthRowAR key={row.id} row={row} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+			))}
+		</ul>
 	);
 }
 
@@ -3077,24 +3071,30 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 	const box = getPartBoxAR(row, nodeIndex);
 	const status = getPartStatusAR(row, freshness);
 	const schedule = getPartScheduleAR(row, formatRelativeTime);
-	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule, row.cause]
-		.filter(Boolean)
-		.join(" · ");
+	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule].filter(Boolean).join(" · ");
 
 	return (
 		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
-			<span className="arch-part-name" title={row.name}>
-				{row.name}
-			</span>
-			{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
-			<span className={`arch-part-status ${status.tone ? "text-dim" : "text-faint"}`}>
-				{status.tone && status.tone !== "neutral" && (
-					<Icon name={TONE_ICON[status.tone]} size={12} className={TONE_GLYPH_CLASS[status.tone]} />
+			{/* name → status → cause on one line, so the verdict reads beside the part it judges */}
+			<span className="arch-part-line">
+				<span className="arch-part-name" title={row.name}>
+					{row.name}
+				</span>
+				{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
+				<span className={`arch-part-status ${status.tone ? "text-dim" : "text-faint"}`}>
+					{status.tone && status.tone !== "neutral" && (
+						<Icon name={TONE_ICON[status.tone]} size={12} className={TONE_GLYPH_CLASS[status.tone]} />
+					)}
+					{status.text}
+				</span>
+				{row.cause && (
+					<span className="arch-part-cause text-dim" title={row.cause}>
+						{row.cause}
+					</span>
 				)}
-				{status.text}
 			</span>
 			{box ? (
-				<button type="button" className="btn sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
+				<button type="button" className="btn ghost sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
 					Open box
 				</button>
 			) : (
