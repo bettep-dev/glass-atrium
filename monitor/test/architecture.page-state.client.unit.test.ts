@@ -61,7 +61,7 @@ interface PageStateSandbox {
   getPartStatusAR: (row: HealthRow & { statusLabel: string }, freshness: HealthFreshness) => { tone: string | null; text: string };
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
   getPartCauseAR: (facts: Record<string, unknown>) => string | null;
-  getPartScheduleAR: (row: ScheduleRow, formatRelative: (iso: string) => string) => string | null;
+  getPartScheduleAR: (row: ScheduleRow, formatRelative: (iso: string) => string, now: number) => string | null;
   getDrillDaemonAR: (partRows: DaemonPartRow[], unscopedId: string) => string | null;
   getRunSummaryAR: (runs: RunRow[]) => { text: string; failures: RunRow[] };
   getMapLegendItemsAR: () => Array<{ key: string; mark?: string; text?: string }>;
@@ -287,18 +287,22 @@ interface ScheduleRow {
 
 describe("a down part says how often it runs and when it is due next, from the served cadence and next-run fields", () => {
   const formatRelative = (iso: string) => `at ${iso}`;
+  const NOW = Date.parse("2026-01-10T12:00:00.000Z");
   const NEXT = "2026-01-10T12:15:00.000Z";
+  const MISSED = "2026-01-10T10:00:00.000Z";
   const rows: Array<{ name: string; row: ScheduleRow; schedule: string | null }> = [
     { name: "a minute cadence with a next run", row: { tone: "crit", cadenceMinutes: 15, nextRunAt: NEXT }, schedule: `runs every 15 min · next run at ${NEXT}` },
     { name: "an hour cadence with no next run served", row: { tone: "warn", cadenceMinutes: 60, nextRunAt: null }, schedule: "runs hourly" },
     { name: "a multi-hour cadence", row: { tone: "crit", cadenceMinutes: 120, nextRunAt: null }, schedule: "runs every 2 h" },
+    { name: "a multi-day cadence in the sentence form of a window", row: { tone: "crit", cadenceMinutes: 2880, nextRunAt: null }, schedule: "runs every 2 days" },
+    { name: "a next run already past reads as overdue, never as a next run", row: { tone: "crit", cadenceMinutes: 60, nextRunAt: MISSED }, schedule: `runs hourly · was due at ${MISSED}` },
     { name: "a daily cadence", row: { tone: "crit", cadenceMinutes: 1440, nextRunAt: NEXT }, schedule: `runs daily · next run at ${NEXT}` },
     { name: "a next run with no cadence served", row: { tone: "crit", cadenceMinutes: null, nextRunAt: NEXT }, schedule: `next run at ${NEXT}` },
     { name: "a healthy part", row: { tone: "ok", cadenceMinutes: 15, nextRunAt: NEXT }, schedule: null },
     { name: "a down part with neither field", row: { tone: "crit", cadenceMinutes: null, nextRunAt: null }, schedule: null },
   ];
   for (const { name, row, schedule } of rows)
-    test(name, () => assert.strictEqual(sandbox.getPartScheduleAR(row, formatRelative), schedule));
+    test(name, () => assert.strictEqual(sandbox.getPartScheduleAR(row, formatRelative, NOW), schedule));
 });
 
 describe("the Part health head counts the flagged parts once, worst tone first, and says nothing when none is flagged", () => {

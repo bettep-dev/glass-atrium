@@ -2936,18 +2936,19 @@ function isPartFlaggedAR(row) {
 }
 
 // a down part says how often it runs and when it is due next, so the reader knows whether waiting fixes it
-function getPartScheduleAR(row, formatRelative) {
+function getPartScheduleAR(row, formatRelative, now = Date.now()) {
 	if (!isPartFlaggedAR(row)) return null;
 
 	const cadence = row.cadenceMinutes > 0 && `runs ${formatCadenceAR(row.cadenceMinutes)}`;
-	const nextRun = row.nextRunAt && `next run ${formatRelative(row.nextRunAt)}`;
+	// a due time already passed is overdue → "was due 2h ago", never "next run 2h ago"
+	const nextRun = row.nextRunAt && `${Date.parse(row.nextRunAt) <= now ? "was due" : "next run"} ${formatRelative(row.nextRunAt)}`;
 	return [cadence, nextRun].filter(Boolean).join(" · ") || null;
 }
 
 function formatCadenceAR(minutes) {
 	if (minutes === 60) return "hourly";
 	if (minutes === 1440) return "daily";
-	if (minutes % 1440 === 0) return `every ${minutes / 1440} d`;
+	if (minutes % 1440 === 0) return `every ${minutes / 1440} days`;
 	if (minutes % 60 === 0) return `every ${minutes / 60} h`;
 	return `every ${minutes} min`;
 }
