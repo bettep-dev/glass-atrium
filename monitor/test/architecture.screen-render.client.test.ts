@@ -133,6 +133,35 @@ test("the node drawer names each of its sections with a heading element", async 
 
 type ArchModule = { React: { createElement: (t: unknown, p: unknown) => unknown } } & Record<string, Component>;
 
+// drawer sections read as titles, not as mono captions; the drawer's prose is sans and no mark keys a colour nothing explains
+test("the node drawer titles its sections at the title step in sans and writes its prose without a colour key", async () => {
+  const mod = await loadArch();
+  const nodeId = "canonical.hook_pipeline";
+  const props = {
+    info: { id: nodeId, label: "Hook pipeline", path: "hooks/", description: "Hooks" },
+    flows: [{ id: "f1", from: "canonical.agent_layer", to: nodeId, edge_type: "data" }],
+    nodeIndex: new Map([["canonical.agent_layer", { label: "Agents" }]]),
+    liveDaemonsByNodeId: new Map(),
+    healthPartRows: [{ id: "hooks", name: "Hook failures", kind: "unknown-kind", daemonName: null, tone: "ok", statusLabel: "Healthy", nodeIds: ["hook_pipeline", "agent_layer"] }],
+    zoneIdByMemberId: new Map(),
+  };
+
+  const tree = renderScreen(mod.React.createElement(mod.NodeDetailBody, props));
+  const css = findNodes(renderScreen(mod.React.createElement(mod.ScreenArchitecture, {})), (n) => n.type === "style").map(collectText).join(" ");
+  const headings = findNodes(tree, (n) => n.type === "h3");
+  const [alsoLights] = findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith("Also lights"));
+  const [flowList] = findNodes(tree, (n) => n.type === "ul" && collectText(n).includes("Agents"));
+  const [heading] = getRuleBodies(css, "arch-drawer-heading");
+
+  assert.equal(headings.length, 3, "Health, Connections and Records each have a section heading");
+  for (const h of headings)
+    assert.deepEqual(String(h.props.className).split(/\s+/).filter((c) => /^(font-mono|uppercase|tracking-\w+|fs-meta|text-faint)$/.test(c)), [], `${collectText(h)} drops the caption look`);
+  assert.equal(getRuleFontPx(css, "arch-drawer-heading"), 16, "a drawer section title sits at the title step");
+  assert.match(heading ?? "", /font-weight:\s*600/, "a drawer section title is semibold");
+  assert.doesNotMatch(String(alsoLights?.props.className), /\bfont-mono\b/, "the Also lights line is prose");
+  assert.deepEqual(findNodes(flowList, (n) => n.props.style?.color !== undefined).map(collectText), [], "no connection carries a colour dot");
+});
+
 async function loadArch(overrides: Record<string, unknown> = {}): Promise<ArchModule> {
   return (await loadScreenModule(ARCH_SRC, { UI: uiStub(overrides), React: createReactStub() })) as ArchModule;
 }

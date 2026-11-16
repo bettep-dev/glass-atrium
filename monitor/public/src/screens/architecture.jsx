@@ -76,17 +76,6 @@ const TRANSLATE_RE = /translate\(\s*([-\d.e]+)[\s,]+([-\d.e]+)\s*\)/;
 // 존 제목 띠 높이(SVG 사용자 단위) — 렌더 후 조정이라 지시자의 diagramPadding 여유 안이어야 viewBox 를 넘지 않음.
 const ZONE_TITLE_BAND = 8;
 
-const EDGE_COLORS = {
-	control_flow: "#94a3b8",
-	data_flow: "#38bdf8",
-	fires_event: "#a78bfa",
-	writes_to: "#fbbf24",
-	reads_from: "#facc15",
-	monitors: "#f87171",
-	escalates_to: "#f472b6",
-	triggers: "#4ade80",
-};
-
 // 화면이 선호하는 canonical 맵 id — 서버 CANONICAL_MAP.slug 와 같은 값이지만, 불일치는 payload 로 흡수함.
 const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 
@@ -668,7 +657,7 @@ function ScreenArchitecture(
 					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; margin: 0; } " +
 					".arch-part-col-title { font-size: var(--fs-meta); font-weight: 600; margin: 0 0 var(--space-2); } " +
 					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
-					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-meta); font-weight: 400; } " +
+					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
 					// Part health list · one line per part: name | status atom | button, meta below — body text centred on the 32px button
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); } " +
@@ -1800,7 +1789,7 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
+			<h3 className="arch-drawer-heading">
 				Health ({rows.length + looseDaemons.length})
 			</h3>
 			<div className="arch-drawer-part-list">
@@ -1844,7 +1833,7 @@ function NodePartHealth({
 							{row.daemonName && row.cause && <div className="fs-meta text-dim">{row.cause}</div>}
 
 							{alsoLights.length > 0 && (
-								<div className="fs-meta font-mono text-faint">
+								<div className="fs-meta text-faint">
 									Also lights: {alsoLights.join(", ")}
 								</div>
 							)}
@@ -2098,7 +2087,7 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
+			<h3 className="arch-drawer-heading">
 				Records
 			</h3>
 			<a className="fs-body" href={`#${owner.id}`}>
@@ -2114,7 +2103,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
+			<h3 className="arch-drawer-heading">
 				Connections ({total})
 			</h3>
 			<div className="space-y-2">
@@ -2151,9 +2140,6 @@ function FlowList({ title, items, nodeIndex, direction }) {
 			>
 				{items.map((f) => (
 					<li key={f.id} className="break-words">
-						<span aria-hidden="true" style={{ color: EDGE_COLORS[f.edge_type] || "#94a3b8" }}>
-							●
-						</span>{" "}
 						<span className="text-faint">{getDisplayName("edge", f.edge_type)}</span>{" "}
 						{peerWord} {getFlowPeerLabelAR(f, direction, nodeIndex)}
 						{f.label && <span className="text-faint"> · {f.label}</span>}
