@@ -299,7 +299,8 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
   - the `[QUEUE-VERDICT]` literal: the section's verdict bullet, and the core's trigger line.
 - Texts that tell a session whether to start a `wait`, each keyed on the session's wait state; a change to one lands in each of the others:
-  - `scripts/atrium-queue.sh` → `print_wait_step` (its `next:` lines) · `hooks/queue-turn-end-check.sh` → `VERDICT_ASK_TEMPLATE` (its closing sentence) · `WAIT_REASON_LEAD`;
+  - `scripts/atrium-queue.sh` → `print_wait_step` (its `next:` lines) · `hooks/queue-turn-end-check.sh` → `get_verdict_wait_sentence` (the verdict ask's closing sentence) · `WAIT_REASON_LEAD`;
+  - all three read the session's state through one reader: `scripts/lib/queue-session.sh` → `queue_get_poller`;
   - `### Wait or listener` · the wait table's two `next:` rows — the second keys on the phrase "this session's listener", which the `next:` line and the verdict ask both carry.
 - Texts that name `wait` where the rule withholds it from an interactive session — a divergence to keep in view, not a mirror:
   - `scripts/atrium-queue.sh` → `print_usage` (`On a wait's exit`) · `end_wait_at_bound`: "wait again", for every session kind;
@@ -381,8 +382,8 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - What the cannot-continue row's tail and the measured line rest on: `scoped/shared-hook-capability-contract.md` → "`asyncRewake` command hooks — measured record" → **Background command exit**.
 - What the waiting-mark line rests on: `monitor/src/server/queue/delivery.ts` → `isSessionWaiting`, refreshed by `claimPendingItems` on a wait poll and by `getPendingCount` on a listener's count read · `monitor/public/src/screens/queue.jsx` → `getSessionLineQ` · `PullLineQ`.
 - What the turn-end hold line, and the check's two lines in `## Owner Queue Listener`, rest on:
-  - the hold and its silence beside a wait or a listener: `hooks/queue-turn-end-check.sh` → `set_wait_reason`, silent on the lock states `live` and `listener` and on the listening mark (`scripts/lib/queue-session.sh` → `queue_is_listener_started`);
-  - the verdict ask's `wait` sentence, keyed on the same states as the hold: `hooks/queue-turn-end-check.sh` → `VERDICT_ASK_TEMPLATE`;
+  - the hold and its silence beside a wait or a listener: `hooks/queue-turn-end-check.sh` → `set_wait_reason`, silent on the lock states `live` and `listener` and on the listening mark (`scripts/lib/queue-session.sh` → `queue_get_poller`);
+  - the verdict ask's `wait` sentence, keyed on the same states as the hold: `hooks/queue-turn-end-check.sh` → `get_verdict_wait_sentence`;
   - their tests: `hooks/test/queue-turn-end-check.bats`.
 - What the turn-start rows rest on:
   - `monitor/src/server/queue/delivery.ts` → `claimOne` claims only an `answered` item and moves it to `delivering`, for `pending` and a wait poll alike;

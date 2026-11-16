@@ -8,7 +8,7 @@
 # starts a fresh one beside this check, whose lock may land after this check reads → the mark covers that start, and
 # so also leaves the check silent after a listener that ended on a refusal or a monitor failure.
 # The verdict check confirms only that a verdict is stated and its ids are this session's items, never the judgment.
-# With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_wait_state).
+# With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_poller).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
 # shared-hook-capability-contract.md → Stop row). Fail-open: whatever it cannot decide ends the turn normally, exit 0;
 # a transcript, monitor or payload failure leaves one stderr line.
@@ -28,9 +28,9 @@ readonly NUDGE_NO_PID_KEY=no-pid
 readonly VERDICT_KEYWORD='[QUEUE-VERDICT]'
 # shellcheck disable=SC2016  # the backticks are the reason's literal markdown
 readonly VERDICT_FORMS='`[QUEUE-VERDICT] posted #<item-id>` (every item the turn posted, on the one line) or `[QUEUE-VERDICT] nothing to post`'
-# %s → the queue CLI path
+# %s → the wait sentence (get_verdict_wait_sentence)
 readonly VERDICT_ASK_TEMPLATE="Judge the turn against the must-not-miss kinds, post what is owed, then end the message with \
-one last line: ${VERDICT_FORMS}. A decision posted now needs \`%s wait\` started as a background command."
+one last line: ${VERDICT_FORMS}. %s"
 readonly WAIT_REASON_LEAD="[ATRIUM-QUEUE] harness: an item of this session awaits the owner and no wait runs — start it \
 now as a background command:"
 
@@ -47,6 +47,7 @@ source "${self%/*}/lib/session-entrypoint.sh" 2>/dev/null || exit 0
 readonly TURN_READER="${self%/*}/lib/reply_language.py"
 
 # set by the checks main runs, read by print_block
+poller=""
 verdict_reason=""
 wait_reason=""
 tool_turn=""
@@ -68,6 +69,7 @@ main() {
   session_id="$(queue_get_session_id "${payload_session}")"
   [[ -n "${session_id}" ]] || exit 0
   check_deadline=$((SECONDS + CHECK_BUDGET_S))
+  poller="$(queue_get_poller "${session_id}")"
   # a `claude -p` run is never asked for a verdict
   # shellcheck disable=SC2310  # a single [[ ]] test, so the errexit suspension changes nothing
   if is_owner_facing_session; then
@@ -135,7 +137,7 @@ set_tool_turn() {
 # <session id> <last line> → verdict_reason: empty for an accepted verdict, else the ask naming the forms and, for ids
 # the monitor does not know for this session, those ids alone
 set_verdict_problem() {
-  local lead cli steps ids=()
+  local lead sentence steps ids=()
   [[ "$2" != "${VERDICT_KEYWORD} nothing to post" ]] || return 0
   if [[ "$2" == "${VERDICT_KEYWORD} posted "* ]]; then
     IFS=' ' read -r -a ids <<<"${2#"${VERDICT_KEYWORD} posted "}" || true
@@ -150,10 +152,24 @@ set_verdict_problem() {
   else
     lead="this turn called a tool, and its final message ends without a queue verdict line"
   fi
-  cli="$(queue_get_cli_path)"
-  # shellcheck disable=SC2059  # the format is this file's own constant; the CLI path goes in as an argument
-  printf -v steps "${VERDICT_ASK_TEMPLATE}" "${cli}"
+  sentence="$(get_verdict_wait_sentence)"
+  # shellcheck disable=SC2059  # the format is this file's own constant; the sentence goes in as an argument
+  printf -v steps "${VERDICT_ASK_TEMPLATE}" "${sentence}"
   verdict_reason="Queue verdict (harness): ${lead}. ${steps}"
+}
+
+# → the ask's closing sentence on a decision posted now, by what polls for this session: a wait only where none does
+get_verdict_wait_sentence() {
+  local cli
+  case "${poller}" in
+    wait) printf '%s\n' "A decision posted now needs no new wait: the wait this session runs claims the owner's answer." ;;
+    listener) printf '%s\n' "A decision posted now needs no wait: this session's listener announces the owner's answer." ;;
+    *)
+      cli="$(queue_get_cli_path)"
+      # shellcheck disable=SC2016  # the backticks are the reason's literal markdown
+      printf 'A decision posted now needs `%s wait` started as a background command.\n' "${cli}"
+      ;;
+  esac
 }
 
 # <word>... → 0 when every word is #<item id>
@@ -183,17 +199,13 @@ set_foreign_ids() {
 # this Claude process runs, no listener of it ever started, and this process was not told about these items within
 # QUEUE_NUDGE_INTERVAL_MIN
 set_wait_reason() {
-  local items nudge_key wait_state stamp newest item
+  local items nudge_key stamp newest item
   items="$(queue_get_awaiting_items "$1")"
   [[ -n "${items}" ]] || return 0
   nudge_key="$(queue_get_pid)"
   nudge_key="${nudge_key:-${NUDGE_NO_PID_KEY}}"
-  wait_state="$(queue_get_wait_state "$1")"
   # a listener announces the same answered items a wait would claim → a nudged wait beside it only costs turns
-  [[ "${wait_state}" != live && "${wait_state}" != listener ]] || return 0
-  # this turn's Stop starts the next listener in no set order, so its lock may not be taken yet
-  # shellcheck disable=SC2310  # a mark it cannot read counts as none → the nudge, the fallback
-  if queue_is_listener_started "$1"; then return 0; fi
+  [[ "${poller}" == none ]] || return 0
   stamp="$(queue_get_awaiting_dir "$1")/.nudged"
   newest="${items%%$'\n'*}"
   # shellcheck disable=SC2310  # not due and a failed check both end the turn normally
