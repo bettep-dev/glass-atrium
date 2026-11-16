@@ -3586,15 +3586,16 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 }
 
 /**
- * Opaque pill centred on the node's bottom border, right-aligned inside the rounded corner → half on the node, within its sides.
- * Cap-high, so its upper half stays inside the padding under the label's last line; the lower half stays in the gap to a stacked neighbour.
+ * Opaque pill centred on the node's top border, right-aligned inside the rounded corner → half on the node, within its sides.
+ * Top, not bottom: outgoing edge labels start under the node, so a bottom badge lands on the first one.
+ * Cap-high, so its lower half stays inside the padding above the label's first line; the upper half stays in the gap to a stacked neighbour.
  */
 function getCornerBadgeGeometryAR(box, textWidth) {
 	const width = textWidth + GLYPH_PILL_PAD_X * 2;
 	const height = MAP_LABEL.fontPx * GLYPH_CAP_EM + RING_GAP * 2;
 	const inset = NODE_CORNER_RADIUS + RING_GAP;
 	const x = Math.max(box.x + inset, box.x + box.width - inset - width);
-	return { x, y: box.y + box.height - height / 2, width, height, rx: height / 2, ry: height / 2 };
+	return { x, y: box.y - height / 2, width, height, rx: height / 2, ry: height / 2 };
 }
 
 function getShapeBoxAR(groupEl) {

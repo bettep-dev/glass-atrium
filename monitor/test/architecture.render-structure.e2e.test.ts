@@ -952,7 +952,7 @@ describe("fault live fixture", () => {
 		);
 	});
 	for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
-		test(`a counted fault badge sits at most half off its own node's bottom border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
+		test(`a counted fault badge sits at most half off its own node's top border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
 			const pattern = "**/api/health/daemons";
 			const livePattern = "**/api/architecture/live";
 			// both daemon parts faulted, wiki-curator also lit on daemon-cycle's node → that node's badge carries its widest text, the count
@@ -1045,8 +1045,8 @@ describe("fault live fixture", () => {
 								id: owner.getAttribute("data-arch-node-id") || owner.id,
 								isNode: owner.matches("g.node"),
 								text: glyph.textContent || "",
-								// across its own node's bottom border, wholly within the node's sides → at most half the pill off the node
-								attached: p.left >= n.left && p.right <= n.right && p.top < n.bottom && p.bottom > n.bottom,
+								// across its own node's top border, wholly within the node's sides → at most half the pill off the node, clear of the outgoing edge labels below it
+								attached: p.left >= n.left && p.right <= n.right && p.top < n.top && p.bottom > n.top,
 								offShare: 1 - onNode / (p.width * p.height),
 								covered,
 								occluders,
@@ -1063,9 +1063,9 @@ describe("fault live fixture", () => {
 					glyphs.some((glyph) => glyph.isNode && glyph.text.includes("×2")),
 					`no counted node badge drawn: ${glyphs.map((g) => `${g.id} '${g.text}'`).join(" ")}`,
 				);
-				// half the pill below the border is the straddle itself; 0.55 leaves room for sub-pixel rounding only
+				// half the pill above the border is the straddle itself; 0.55 leaves room for sub-pixel rounding only
 				const loose = glyphs.filter((glyph) => !glyph.attached || glyph.offShare > 0.55);
-				assert.deepEqual(loose, [], `badges off their node's bottom border: ${loose.map((g) => `${g.id} ${(g.offShare * 100).toFixed(0)}% off (${g.box})`).join("; ")}`);
+				assert.deepEqual(loose, [], `badges off their node's top border: ${loose.map((g) => `${g.id} ${(g.offShare * 100).toFixed(0)}% off (${g.box})`).join("; ")}`);
 				const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
 				assert.deepEqual(covering, [], `badges over a label, another node or another zone: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`);
 				const hidden = glyphs.filter((glyph) => glyph.occluders.length > 0);
