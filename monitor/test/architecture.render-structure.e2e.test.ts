@@ -1000,27 +1000,58 @@ describe("fault live fixture", () => {
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
 		);
 	});
-	for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
-		test(`a counted fault badge sits at most half off its own node's top border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
-			const pattern = "**/api/health/daemons";
-			const livePattern = "**/api/architecture/live";
+	const badgeScenarios = [
+		{
 			// both daemon parts faulted, wiki-curator also lit on daemon-cycle's node → that node's badge carries its widest text, the count
 			// wiki-curator keeps its own node → the zone holds two health nodes as on the served table, so badges stay on nodes
-			const health = getDaemonHealthFixture(FAULT_VERDICT);
-			health.daemons.push({ ...health.daemons[0], daemon_name: "wiki" });
-			const live = getLiveFixture(FAULT_VERDICT, 999);
-			live.part_bindings = {
-				...PART_NODE_BINDINGS,
-				"glass-atrium-wiki-curator": [...PART_NODE_BINDINGS["glass-atrium-wiki-curator"], ...PART_NODE_BINDINGS["daemon-cycle"]],
-			};
+			name: "a counted fault badge",
+			sizes: [{ width: 1440, height: 900 }, { width: 1024, height: 768 }],
+			build: () => {
+				const health = getDaemonHealthFixture(FAULT_VERDICT);
+				health.daemons.push({ ...health.daemons[0], daemon_name: "wiki" });
+				const live = getLiveFixture(FAULT_VERDICT, 999);
+				live.part_bindings = {
+					...PART_NODE_BINDINGS,
+					"glass-atrium-wiki-curator": [...PART_NODE_BINDINGS["glass-atrium-wiki-curator"], ...PART_NODE_BINDINGS["daemon-cycle"]],
+				};
+				return { health, live };
+			},
+			drawnOwner: "g.node",
+			drawnText: "×2",
+			drawnCount: 1,
+		},
+		{
+			// PostgreSQL, Hook chain and Chromium export faulted → each is its zone's one health node, so the badge rides the zone border where incoming edge labels end
+			name: "a zone fault badge on Store, Safety and Documents",
+			sizes: [{ width: 1440, height: 900 }, { width: 1920, height: 1080 }],
+			build: () => {
+				const live = getLiveFixture(FAULT_VERDICT, 999);
+				const zoneParts = ["pg", "hook-chain", "browser"].flatMap((part) => [...PART_NODE_BINDINGS[part]]);
+				live.daemons.push({ ...live.daemons[0], daemon_name: "zone-probe", node_ids: zoneParts });
+				return { health: getDaemonHealthFixture(FAULT_VERDICT), live };
+			},
+			drawnOwner: "g.cluster",
+			drawnText: "",
+			drawnCount: 3,
+		},
+	];
+	for (const scenario of badgeScenarios)
+	for (const { width, height } of scenario.sizes) {
+		test(`${scenario.name} sits at most half off its own box's top border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
+			const pattern = "**/api/health/daemons";
+			const livePattern = "**/api/architecture/live";
+			const { health, live } = scenario.build();
 			await ctx.page.route(pattern, (route) => route.fulfill({ json: health }));
 			await ctx.page.route(livePattern, (route) => route.fulfill({ json: live }));
 			try {
 				await ctx.page.setViewportSize({ width, height });
 				await ctx.page.reload({ waitUntil: "load" });
 				await ctx.page.waitForFunction(
-					(sel) => Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`)).some((glyph) => (glyph.textContent || "").includes("×")),
-					ctx.selectors.canvas,
+					([sel, owner, text]) =>
+						Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`)).some(
+							(glyph) => glyph.parentElement?.matches(owner) && (glyph.textContent || "").includes(text),
+						),
+					[ctx.selectors.canvas, scenario.drawnOwner, scenario.drawnText],
 					{ timeout: 30_000 },
 				);
 				// badges are read at the default view — before the fit reaches the CTM, a member low in the left column can sit outside the canvas
@@ -1109,8 +1140,8 @@ describe("fault live fixture", () => {
 					return readings;
 				}, ctx.selectors.canvas);
 				assert.ok(
-					glyphs.some((glyph) => glyph.isNode && glyph.text.includes("×2")),
-					`no counted node badge drawn: ${glyphs.map((g) => `${g.id} '${g.text}'`).join(" ")}`,
+					glyphs.filter((glyph) => glyph.isNode === (scenario.drawnOwner === "g.node") && glyph.text.includes(scenario.drawnText)).length >= scenario.drawnCount,
+					`no ${scenario.drawnOwner} badge drawn: ${glyphs.map((g) => `${g.id} '${g.text}'`).join(" ")}`,
 				);
 				// half the pill above the border is the straddle itself; 0.55 leaves room for sub-pixel rounding only
 				const loose = glyphs.filter((glyph) => !glyph.attached || glyph.offShare > 0.55);

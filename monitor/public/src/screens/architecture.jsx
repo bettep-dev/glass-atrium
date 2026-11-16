@@ -3573,7 +3573,7 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 	groupEl.append(pill, glyph);
 	glyph.textContent = mark;
 
-	const geometry = getCornerBadgeGeometryAR(box, glyph.getBBox().width);
+	const geometry = getCornerBadgeGeometryAR(box, glyph.getBBox().width, groupEl.classList.contains("cluster"));
 	glyph.setAttribute("x", String(geometry.x + GLYPH_PILL_PAD_X));
 	// alphabetic baseline → cap ink centred in the pill
 	glyph.setAttribute("y", String(geometry.y + (geometry.height + MAP_LABEL.fontPx * GLYPH_CAP_EM) / 2));
@@ -3581,15 +3581,16 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 }
 
 /**
- * Opaque pill centred on the node's top border, right-aligned inside the rounded corner → half on the node, within its sides.
- * Top, not bottom: outgoing edge labels start under the node, so a bottom badge lands on the first one.
+ * Opaque pill centred on the box's top border, inside the rounded corner → half on the box, within its sides.
+ * Top, not bottom: outgoing edge labels start under the box, so a bottom badge lands on the first one.
+ * A node takes the right corner; a zone the left — incoming edge labels sit right of the spine and end on the zone's top border.
  * Cap-high, so its lower half stays inside the padding above the label's first line; the upper half stays in the gap to a stacked neighbour.
  */
-function getCornerBadgeGeometryAR(box, textWidth) {
+function getCornerBadgeGeometryAR(box, textWidth, isZone) {
 	const width = textWidth + GLYPH_PILL_PAD_X * 2;
 	const height = MAP_LABEL.fontPx * GLYPH_CAP_EM + RING_GAP * 2;
 	const inset = NODE_CORNER_RADIUS + RING_GAP;
-	const x = Math.max(box.x + inset, box.x + box.width - inset - width);
+	const x = isZone ? box.x + inset : Math.max(box.x + inset, box.x + box.width - inset - width);
 	return { x, y: box.y - height / 2, width, height, rx: height / 2, ry: height / 2 };
 }
 

@@ -751,6 +751,7 @@
   - canvas = map card 의 body, hairline 에 flush (`card-body flush`) — 안쪽 band 없음 · canvas 자체 radius 0, 모서리는 card 가 clip (`architecture.map-fit.e2e`).
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
+  - badge 는 위 테두리에 반쯤 걸침: 노드는 오른쪽 모서리, zone 은 왼쪽 모서리 — 들어오는 edge 라벨이 spine 오른쪽에서 zone 위 테두리에 끝남 (`getCornerBadgeGeometryAR`, `architecture.render-structure.e2e`).
 - **h1 아래**: 범례 한 줄뿐 — verdict 줄 · chip 없음. 상태는 Part health card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 낱말 (`1 down · 1 needs attention`), 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
 - **Part health 목록** (`PartHealthBlockAR`): 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
   - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 action "Open box" = `btn ghost sm` (quiet tier).
