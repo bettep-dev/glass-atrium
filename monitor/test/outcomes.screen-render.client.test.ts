@@ -15,7 +15,7 @@ import {
   renderScreen,
   type RenderedNode,
 } from "./lib/render-screen.js";
-import { getReducedMotionCss } from "./lib/css-source.js";
+import { getCssRules, getReducedMotionCss } from "./lib/css-source.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
@@ -486,13 +486,6 @@ test("each recording channel's busiest recent day is drawn against the watch flo
     assert.equal(bar.props.tone, "data", `${row.name}: the busiest day is a quantity → the data colour; liveness rides the row's glyph and word`);
   }
 });
-
-// [selector, body] for every flat rule of a stylesheet; nested @-blocks contribute their inner rules
-function getCssRules(css: string): Array<[string, string]> {
-  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap((m) =>
-    m[1].split(",").map((selector) => [selector.trim(), m[2]] as [string, string]),
-  );
-}
 
 function getDecl(body: string, prop: string): string | undefined {
   return body.match(new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+)`))?.[1].trim();

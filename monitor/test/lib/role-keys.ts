@@ -15,7 +15,7 @@ export type RoleKeys = Record<RoleSection, Record<string, string>>;
 const SECTIONS: RoleSection[] = ["padding", "gap", "margin", "space"];
 
 // utility prefix → the properties it sets, per config section
-const PREFIXES: Record<RoleSection, Record<string, string[]>> = {
+export const ROLE_PREFIXES: Record<RoleSection, Record<string, string[]>> = {
   padding: {
     p: ["padding"],
     px: ["padding-left", "padding-right"],
@@ -49,7 +49,7 @@ export function getRoleKeys(html: string = readFileSync(INDEX_HTML, "utf8")): Ro
 export function getRoleKeyCss(keys: RoleKeys = getRoleKeys()): string {
   return SECTIONS.flatMap((section) =>
     Object.entries(keys[section]).flatMap(([key, value]) =>
-      Object.entries(PREFIXES[section]).map(([prefix, props]) => buildRule(section, `${prefix}-${key}`, props, value)),
+      Object.entries(ROLE_PREFIXES[section]).map(([prefix, props]) => buildRule(section, `${prefix}-${key}`, props, value)),
     ),
   ).join("\n");
 }
