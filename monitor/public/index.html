@@ -2,7 +2,8 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- No mobile layout → a phone shows the desktop layout zoomed out; desktop browsers ignore the declaration -->
+<meta name="viewport" content="width=1280" />
 <!-- Shell CSP — any script in this origin can call owner routes with the session cookie → only these exact files and the two inline scripts by hash; editing an inline script means updating its hash (test/app-shell.supply-chain.static.test.ts) -->
 <meta http-equiv="Content-Security-Policy" content="script-src 'self'
   'sha256-kdLNSx1Cdcg3FOsC9gQxQkJOS9SHg+g/FetcdLSsmAQ='
@@ -150,6 +151,7 @@
 <script src="dist/screens/clauded-docs.js"></script>
 <script src="dist/screens/model-config.js"></script>
 <script src="dist/screens/queue.js"></script>
+<script src="dist/screens/remote-access.js"></script>
 <script src="dist/app.js"></script>
 </body>
 </html>

@@ -50,6 +50,11 @@ source "${__ga_core_libdir}/ga-doctor.sh" || {
   printf "%s\n" "FATAL: cannot source ga-doctor.sh" >&2
   return 1
 }
+# shellcheck source=lib/ga-remote.sh
+source "${__ga_core_libdir}/ga-remote.sh" || {
+  printf "%s\n" "FATAL: cannot source ga-remote.sh" >&2
+  return 1
+}
 unset __ga_core_libdir
 
 # remove_node_modules — uninstall teardown: rm -rf monitor/node_modules to reclaim disk. node_modules
@@ -168,6 +173,15 @@ run_install() {
   # an existing absolute dir, which an unexpanded ${HOME} literal would fail).
   # Runs before the symlink farm so a clean install has a rendered config ready.
   render_config
+
+  # remote access opt-in — after render_config (config.toml exists), before any env render reads it.
+  # Default No; a non-terminal install stays loopback-only; a failure never fails the install.
+  if "${DRY_RUN}"; then
+    log "dry-run: skipping the remote access opt-in"
+  else
+    # shellcheck disable=SC2310  # verdict branched on — a refusal leaves access off, never an abort
+    ga_remote_install_opt_in || log "remote access: not turned on (see above) — the monitor stays loopback-only"
+  fi
 
   # rendered launchd plists track the just-rendered config (file-write only —
   # loading stays manual, see render_plists)
@@ -634,6 +648,9 @@ run_uninstall() {
   # procs. MUST run BEFORE the DB drop so the daemons release their DB connections
   # first. The postgres server + its socket are left untouched (never GA's to stop).
   stop_detached_daemons
+  # STEP1c — remote access: delete the device rows BEFORE the pre-drop backup copies them, remove the
+  # key dir, turn access off, tell the owner to drop each device's CA trust. Never fails the uninstall.
+  ga_remote_uninstall
   # STEP2 — back up, then drop, the GA databases (connections now drained).
   # BACKUP-BEFORE-DROP, fail-closed per DB: a failed/empty pre-drop pg_dump skips
   # that DB's drop (data preserved) — reinstall recreates a fresh, consistent DB.

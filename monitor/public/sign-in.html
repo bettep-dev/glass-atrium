@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<!-- One narrow form → device width -->
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Pre-auth page: served to any device on the trusted Wi-Fi → its own files only, no inline script or style, no CDN -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'" />
+<meta name="referrer" content="no-referrer" />
+<title>Register this device · Atrium Monitor</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/sign-in.css" />
+<script src="/sign-in.js" defer></script>
+</head>
+<body class="sign-in">
+<main class="sign-in-main">
+  <header class="sign-in-head">
+    <h1 class="sign-in-title">Register this device</h1>
+    <p class="sign-in-lead">Enter the code shown on the Mac under Remote access → Open registration. This device then stays registered until it is revoked on the Mac.</p>
+  </header>
+
+  <form id="sign-in-form" class="sign-in-form" novalidate>
+    <div class="sign-in-field">
+      <label class="field-label" for="sign-in-code">Code</label>
+      <input class="field field--mono" id="sign-in-code" name="code" required maxlength="32" autocomplete="one-time-code" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-describedby="sign-in-code-hint" />
+      <span class="sign-in-hint" id="sign-in-code-hint">Single use · a new code on the Mac replaces it</span>
+    </div>
+    <div class="sign-in-field">
+      <label class="field-label" for="sign-in-label">Device name</label>
+      <input class="field" id="sign-in-label" name="label" required maxlength="32" autocomplete="off" spellcheck="false" aria-describedby="sign-in-label-hint" />
+      <span class="sign-in-hint" id="sign-in-label-hint">Shown in the Mac's device list · letters, numbers, spaces, . _ -</span>
+    </div>
+    <button class="btn primary sign-in-submit" type="submit">Register device</button>
+    <p class="sign-in-status" id="sign-in-status" role="status" aria-live="polite"></p>
+  </form>
+
+  <section class="sign-in-trust" aria-labelledby="sign-in-trust-title">
+    <h2 class="section-label" id="sign-in-trust-title">Certificate</h2>
+    <p>If this browser warned that the connection is not private, stop: do not enter the code. Trust the Mac's certificate first, once per device.</p>
+    <ol class="sign-in-steps">
+      <li>On the Mac, send the certificate by AirDrop — its path is on the Mac's Remote access screen.</li>
+      <li>iPhone or iPad: Settings → General → VPN &amp; Device Management → install it, then Settings → General → About → Certificate Trust Settings → turn it on.</li>
+      <li>Android: Settings → search “CA certificate” → install the received file.</li>
+      <li>Before trusting it, compare its SHA-256 fingerprint with the one the Mac prints.</li>
+      <li>Reopen this page.</li>
+    </ol>
+  </section>
+</main>
+</body>
+</html>

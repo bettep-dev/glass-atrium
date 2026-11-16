@@ -2242,6 +2242,65 @@ function getHarnessRead() {
   return Promise.resolve(shellBridge.readHarness?.());
 }
 
+// remote device page (remote listener only) — the device routes and the header its gate checks on every mutation
+const REMOTE_PAGE = {
+  SESSION_URL: "/api/remote/session",
+  LOGOUT_URL: "/api/remote/logout",
+  OFF_URL: "/api/remote/off",
+  SIGN_IN_URL: "/sign-in.html",
+  CSRF_HEADER: "x-csrf-token",
+};
+const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+// the remote page's session read, joined by every mutation and the shell banner; null on the loopback page
+let remoteSession = null;
+
+/** TLS is remote-only → an https page is the remote listener; the Mac's loopback page is plain http. */
+function isRemotePage(location = window.location) {
+  return location.protocol === "https:";
+}
+
+/**
+ * Remote page only: wraps the window's fetch so every same-origin mutation carries the device's CSRF value → no screen sends it itself.
+ * The value is read once from the session route; a failed read sends no mutation and is retried by the next one.
+ */
+function installRemoteFetch(win = window) {
+  if (!isRemotePage(win.location)) return;
+  const browserFetch = win.fetch.bind(win);
+  remoteSession = createRemoteSession(browserFetch);
+  win.fetch = async (input, init = {}) => {
+    const method = String(init.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+    const url = new URL(input instanceof Request ? input.url : String(input), win.location.origin);
+    if (!MUTATION_METHODS.has(method) || url.origin !== win.location.origin) return browserFetch(input, init);
+    const { csrf } = await remoteSession.read();
+    const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
+    headers.set(REMOTE_PAGE.CSRF_HEADER, csrf);
+    return browserFetch(input, { ...init, headers });
+  };
+}
+
+function createRemoteSession(browserFetch) {
+  let sessionRead = null;
+  return {
+    read() {
+      sessionRead ??= browserFetch(REMOTE_PAGE.SESSION_URL, { headers: { Accept: "application/json" } })
+        .then((res) => (res.ok ? res.json() : Promise.reject(Object.assign(new Error(`remote session read failed: HTTP ${res.status}`), { status: res.status }))))
+        .catch((error) => {
+          sessionRead = null;
+          throw error;
+        });
+      return sessionRead;
+    },
+  };
+}
+
+/**
+ * The remote device's own session `{ csrf, device: { id, label } }`, joined to the read the fetch wrapper shares.
+ * @returns null on the loopback page; rejects with `status` on a failed read (401 → the device is no longer registered)
+ */
+function readRemoteSession() {
+  return remoteSession === null ? Promise.resolve(null) : remoteSession.read();
+}
+
 /**
  * Shared freshness stamp — hidden while the settled read is fresh; otherwise the unread note or "Last known" with the read's age.
  * A refresh in flight keeps the settled text and sets aria-busy; a read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
@@ -2993,6 +3052,7 @@ window.UI = {
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
+  REMOTE_PAGE, isRemotePage, installRemoteFetch, readRemoteSession,
   getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,

@@ -1565,3 +1565,20 @@ model QueueDriftCheck {
   @@map("queue_drift_checks")
   @@schema("monitor")
 }
+
+/// One device registered for the remote (Wi-Fi) listener; revoked_at NULL → active.
+/// CHECK (migration raw SQL only): token_hash is exactly 32 bytes, a SHA-256 digest.
+model RemoteDevice {
+  // BigInt → fits audit_log.target_id and the actor composite
+  id         BigInt    @id @default(autoincrement())
+  // Character set → the registration route's validator; rendered as text only
+  label      String    @db.VarChar(32)
+  // SHA-256 of the cookie token → the token itself is never stored
+  tokenHash  Bytes     @unique(map: "remote_devices_token_hash_key") @map("token_hash")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  @@map("remote_devices")
+  @@schema("monitor")
+}

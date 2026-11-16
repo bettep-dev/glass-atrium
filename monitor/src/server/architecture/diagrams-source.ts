@@ -2,8 +2,6 @@
 // TS 모듈 채택 이유(rejected: 옵시디언 md 의존) — md 의존 제거로 fs.stat ENOENT 회귀 차단 · Node loader 의 import 영구 캐시로 mtime 폴링 불요 · as const 로 7 카운트를 컴파일 타임 검증.
 // 편집 후 반영: npm run build → launchctl kickstart 재기동.
 
-import { fileURLToPath } from "node:url";
-
 import type { DetailGrade } from "./content-budget.js";
 
 // 7 v2 mermaid 다이어그램. slug 는 frontend TAB_ORDER 와 1:1 매칭.
@@ -436,9 +434,9 @@ export const NODE_DESCRIPTIONS: Readonly<Record<string, string>> = {
 	doc_export: "Renders the stored documents for export through a headless Chromium.",
 };
 
-// 본 모듈의 자기 식별자 — parser.ts 가 doc_path 응답 필드에 사용.
-// import.meta.url 런타임 파생 → 설치 사용자 환경 절대경로 (개발자 식별자 비포함).
-export const DIAGRAMS_SOURCE_PATH: string = fileURLToPath(import.meta.url);
+// This module's own name → parser.ts serves it as the doc_path response field.
+// Repo-relative literal, never import.meta.url → the remote listener sends no absolute local path off the Mac.
+export const DIAGRAMS_SOURCE_PATH = "monitor/src/server/architecture/diagrams-source.ts";
 
 export type DiagramSlug = (typeof DIAGRAMS)[number]["slug"];
 

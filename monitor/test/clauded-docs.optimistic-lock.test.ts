@@ -10,7 +10,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,7 @@ import {
   buildFsFailReason,
   cascadeAfterRowUpdate,
   cascadeUpdateDocStatus,
+  checkUpdateHashUniqueness,
   fsErrnoCode,
   prefixedFsReason,
   replyUpdateCasConflict,
@@ -26,6 +27,7 @@ import {
   type HtmlRestoreArgs,
   type UpdateClaudedDocArgs,
 } from "../src/server/routes/clauded-docs.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
 
 // A path that must NEVER appear in any client-facing error body (info leak).
 const LEAK_PATH = "/Users/secret/glass-atrium/monitor/data/clauded-docs/doc-42.html";
@@ -150,7 +152,7 @@ test("#20 replyUpdateCasConflict: concurrent hash race → 409 + loser's body re
     // Loser's content is gone — file restored to the pre-write snapshot.
     assert.strictEqual(readFileSync(htmlPath, "utf8"), "PREVIOUS_ORIGINAL_CONTENT");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    deleteDirectory(dir);
   }
 });
 
@@ -176,7 +178,7 @@ test("#20 replyUpdateCasConflict: concurrent delete (row gone) → 404 not_found
     assert.deepStrictEqual(body, { error: "not_found", id: 77 });
     assert.strictEqual(readFileSync(htmlPath, "utf8"), "ORIGINAL");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    deleteDirectory(dir);
   }
 });
 
@@ -205,7 +207,29 @@ test("#20 replyUpdateCasConflict: re-SELECT DB failure → 503 database_unavaila
     // restoreHtmlBody runs BEFORE the re-SELECT, so the disk is reverted regardless.
     assert.strictEqual(readFileSync(htmlPath, "utf8"), "ORIGINAL");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    deleteDirectory(dir);
+  }
+});
+
+test("checkUpdateHashUniqueness: a failed uniqueness query answers 503 with the overwritten body restored", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dup-dberr-"));
+  try {
+    const htmlPath = join(dir, "doc.html");
+    writeFileSync(htmlPath, "NEW_CONTENT", "utf8");
+    const restoreArgs: HtmlRestoreArgs = { htmlPath, previousHtmlContent: "ORIGINAL" };
+    const prisma = makePrisma(async () => {
+      throw new Error("connection lost");
+    });
+    const reply = makeReply();
+
+    const body = (await checkUpdateHashUniqueness(makeRequest(), reply.asReply, prisma, 5, "NEW_HASH", restoreArgs)) as { error: string };
+
+    assert.deepStrictEqual(
+      [(reply.asReply as unknown as { statusCode: number }).statusCode, body.error, readFileSync(htmlPath, "utf8")],
+      [503, "database_unavailable", "ORIGINAL"],
+    );
+  } finally {
+    deleteDirectory(dir);
   }
 });
 
@@ -370,7 +394,7 @@ test("DF-26 restoreHtmlBody: isNewSwapFile → unlinks the swap orphan (leaves n
       "swap orphan removed on rollback",
     );
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    deleteDirectory(dir);
   }
 });
 
@@ -389,7 +413,7 @@ test("DF-26 restoreHtmlBody: in-place (not swap) still restores previous bytes",
 
     assert.strictEqual(readFileSync(htmlPath, "utf8"), "ORIGINAL_BYTES");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    deleteDirectory(dir);
   }
 });
 

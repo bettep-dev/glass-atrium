@@ -1,0 +1,187 @@
+// Remote access wiring: one fresh remote app per open (a closed Fastify instance cannot listen again), driven by the
+// listener controller on a timer. main.ts calls startRemoteAccess once, after the loopback listener is up.
+
+import { execFile } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+import { networkInterfaces } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+import type { FastifyBaseLogger } from "fastify";
+
+import type { Prisma } from "../../generated/prisma/client.js";
+import { buildRemoteApp } from "../app.js";
+import { getPrisma } from "../db.js";
+import { buildRemoteAuditWriter } from "../middleware/audit-log.js";
+import type { QueueRouteOptions } from "../routes/queue.js";
+import type { DeviceConnections } from "./connections.js";
+import { type RemoteListenerOpener, RemoteListenerController, getInterfaceAddress } from "./controller.js";
+import { createDevice, findActiveDevice, revokeAllDevices, revokeDevice } from "./devices.js";
+import type { RemoteAuditEvent, RemoteGateDeps } from "./gate.js";
+import { isLeafDue, readRemoteTls, setRemoteCertificate } from "./listener.js";
+import { getLocalHostName, getNetworkIdentity } from "./network.js";
+import type { RegistrationCodes } from "./registration-code.js";
+import { REMOTE_PRE_AUTH_ROUTES, getRouteClass } from "./route-classes.js";
+import type { RemoteDeviceDeps, RemoteRegistrationDeps } from "./routes.js";
+import type { RemoteSettings } from "./settings.js";
+
+export interface RemoteOpenerInput {
+  readonly port: number;
+  readonly gate: Pick<RemoteGateDeps, "findDevice" | "audit" | "connections">;
+  readonly registration: RemoteRegistrationDeps;
+  readonly device: RemoteDeviceDeps;
+  readonly queue?: QueueRouteOptions;
+}
+
+// leaf files written by the installer (owner-only directory, git-ignored); fixed → no env or config can point elsewhere
+const REMOTE_DATA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "remote-access");
+// install root holding the `glass-atrium` CLI → the CLI writes the leaf into this same data dir
+const ATRIUM_ROOT = path.resolve(REMOTE_DATA_DIR, "..", "..", "..");
+const REISSUE = { BASH: "/bin/bash", PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TIMEOUT_MS: 30_000 } as const;
+const NETWORK_CHECK_MS = 10_000;
+// differs from the page and CLI actors → a boot-time act is told apart in the audit trail
+const BOOT_ACTOR = "monitor-boot";
+// "off" once a device turned access off → outlives a restart; the CLI's on writes "on"
+const ACCESS_STATE_FILE = "access-state";
+const DEVICE_OFF = "off";
+
+export interface BootAccessDeps {
+  readonly revokeAll: () => Promise<bigint[]>;
+  readonly connections: Pick<DeviceConnections, "close">;
+  readonly audit: { insertEvent(event: RemoteAuditEvent): Promise<void> };
+  readonly log: FastifyBaseLogger;
+}
+
+/** @returns an opener taking the bound address and the `<name>.local` name (null → only the numeric address is admitted) */
+export function buildRemoteOpener(input: RemoteOpenerInput): RemoteListenerOpener {
+  return async (address, hostName, tls) => {
+    const hosts: ReadonlySet<string> = new Set([address, ...(hostName === null ? [] : [hostName])].map((name) => `${name}:${input.port}`));
+    const origins: ReadonlySet<string> = new Set([...hosts].map((host) => `https://${host}`));
+    const getHosts = () => hosts;
+    const getPageOrigins = () => origins;
+    const app = await buildRemoteApp({
+      tls,
+      listener: { kind: "remote", getHosts, getPageOrigins },
+      gate: { ...input.gate, getHosts, getPageOrigins, getRouteClass, preAuthRoutes: REMOTE_PRE_AUTH_ROUTES },
+      registration: input.registration,
+      device: input.device,
+      ...(input.queue === undefined ? {} : { queue: input.queue }),
+    });
+    try {
+      await app.listen({ host: address, port: input.port });
+    } catch (error) {
+      await app.close();
+      throw error;
+    }
+    return { close: () => app.close(), setTls: (next) => setRemoteCertificate(app, next) };
+  };
+}
+
+/**
+ * Records the boot state, then starts the network watch when remote access is on; off → every device is cut off,
+ * nothing opens and null is returned.
+ * @param input.db - the device and audit store; tests pass a rolled-back transaction, production the shared client
+ * @returns the controller → main.ts stops it on shutdown
+ */
+export async function startRemoteAccess(input: {
+  readonly settings: RemoteSettings;
+  readonly connections: DeviceConnections;
+  readonly codes: RegistrationCodes;
+  readonly log: FastifyBaseLogger;
+  readonly db?: Prisma.TransactionClient;
+  /** leaf and access-state directory; tests pass a temporary one, production the fixed data dir */
+  readonly dataDir?: string;
+}): Promise<RemoteListenerController | null> {
+  const dataDir = input.dataDir ?? REMOTE_DATA_DIR;
+  // a device's off holds over config on until the CLI turns access on again
+  const settings = input.settings.enabled && (await isDeviceOff(dataDir)) ? { ...input.settings, enabled: false } : input.settings;
+  const getDb = () => input.db ?? getPrisma();
+  await putBootAccessState(settings, {
+    revokeAll: () => revokeAllDevices(getDb()),
+    connections: input.connections,
+    audit: buildRemoteAuditWriter(getDb()),
+    log: input.log,
+  });
+  if (!settings.enabled) return null;
+  const open = buildRemoteOpener({
+    port: settings.port,
+    gate: { findDevice: (presented) => findActiveDevice(getDb(), presented), audit: buildRemoteAuditWriter(getDb()), connections: input.connections },
+    registration: { codes: input.codes, createDevice: (label) => createDevice(getDb(), label) },
+    device: {
+      revoke: (id) => revokeDevice(getDb(), id),
+      revokeAll: () => revokeAllDevices(getDb()),
+      // the opener is built before the controller it serves → bound late, set before any listener opens
+      turnOff: () => {
+        void controller.turnOff();
+        setDeviceOff(dataDir).catch((error: unknown) => input.log.error({ err: error }, "remote off not persisted: the listener reopens at the next restart"));
+      },
+    },
+  });
+  const controller: RemoteListenerController = new RemoteListenerController({
+    settings,
+    readIdentity: () => getNetworkIdentity(),
+    readHostName: () => getLocalHostName(),
+    getAddress: (networkInterface) => getInterfaceAddress(networkInterfaces(), networkInterface),
+    readTls: () => readRemoteTls(dataDir),
+    isLeafDue: (cert, names) => isLeafDue(cert, names, Date.now()),
+    reissueLeaf,
+    open,
+    log: input.log,
+  });
+  await controller.sync();
+  setInterval(() => void controller.sync(), NETWORK_CHECK_MS).unref();
+  return controller;
+}
+
+/**
+ * `glass-atrium remote reissue`: the CLI holds the CA key and signs the leaf for the names it reads itself.
+ * Fixed binary and argv, no shell string, nothing from a request; key content never reaches this process's output.
+ */
+async function reissueLeaf(): Promise<void> {
+  const home = process.env.HOME === undefined ? {} : { HOME: process.env.HOME };
+  await promisify(execFile)(REISSUE.BASH, [path.join(ATRIUM_ROOT, "glass-atrium"), "remote", "reissue"], {
+    env: { PATH: REISSUE.PATH, LC_ALL: "C", GA_ROOT: ATRIUM_ROOT, ...home },
+    timeout: REISSUE.TIMEOUT_MS,
+  });
+}
+
+/** true only for the exact off a device wrote; a missing or unreadable file leaves config in charge */
+export async function isDeviceOff(dataDir: string): Promise<boolean> {
+  const state = await readFile(path.join(dataDir, ACCESS_STATE_FILE), "utf8").catch(() => "");
+  return state.trim() === DEVICE_OFF;
+}
+
+export async function setDeviceOff(dataDir: string): Promise<void> {
+  await writeFile(path.join(dataDir, ACCESS_STATE_FILE), `${DEVICE_OFF}\n`, { mode: 0o600 });
+}
+
+/**
+ * Boot record of the feature state; never rejects → a store failure is logged and the boot goes on.
+ * Off → every active device is revoked: a CLI off whose revoke never reached the monitor still cuts devices off here.
+ * On → one row with the trusted-network count.
+ */
+export async function putBootAccessState(settings: RemoteSettings, deps: BootAccessDeps): Promise<void> {
+  if (settings.enabled) {
+    await recordBootEvent(deps, { actionKind: "remote.access_enabled", payload: { trustedNetworkCount: settings.trusted.length } });
+    return;
+  }
+  let revoked: bigint[];
+  try {
+    revoked = await deps.revokeAll();
+  } catch (error) {
+    deps.log.error({ err: error }, "remote access off at boot: revoking the registered devices failed");
+    return;
+  }
+  for (const id of revoked) deps.connections.close(id);
+  // nothing revoked → no row, so a monitor that never turned the feature on adds none per boot
+  if (revoked.length > 0) await recordBootEvent(deps, { actionKind: "remote.revoke", payload: { count: revoked.length } });
+}
+
+async function recordBootEvent(deps: BootAccessDeps, event: Pick<RemoteAuditEvent, "actionKind" | "payload">): Promise<void> {
+  try {
+    await deps.audit.insertEvent({ ...event, actor: BOOT_ACTOR, result: "success" });
+  } catch (error) {
+    deps.log.warn({ err: error, actionKind: event.actionKind }, "remote access boot event not recorded");
+  }
+}

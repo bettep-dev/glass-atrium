@@ -240,10 +240,12 @@ export type ExportFormatToken = "html" | PlainFormatToken;
  *
  * @param storedBody - the already-sanitized stored doc body
  * @param format - the doc's stored format (derived from its file extension)
+ * @param signal - the caller's disconnect → a render still waiting in the line is dropped (RenderLineError)
  */
 export async function renderSelfContainedHtml(
   storedBody: string,
   format: ExportFormatToken,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (format !== "html") {
     const shell = wrapPlainInHtmlShell(storedBody, format);
@@ -254,8 +256,10 @@ export async function renderSelfContainedHtml(
     // chromium, no browser pool, byte-identical output.
     if (format === "md" && countMdMermaidFences(storedBody) > 0) {
       try {
-        return await renderHtmlThroughBrowser(shell);
+        return await runExclusiveRender(() => renderHtmlThroughBrowser(shell), signal);
       } catch (error) {
+        // a refusal by the line is no render failure → the caller answers it, never a degraded document
+        if (error instanceof RenderLineError) throw error;
         // An md body ALWAYS had a 200 before this path existed, so a renderer that
         // cannot draw its fences must return the document, not a 503 — a source
         // this grammar reads as a diagram and mermaid does not is a disagreement
@@ -269,7 +273,7 @@ export async function renderSelfContainedHtml(
     }
     return shell;
   }
-  return renderHtmlThroughBrowser(storedBody);
+  return runExclusiveRender(() => renderHtmlThroughBrowser(storedBody), signal);
 }
 
 /**
@@ -291,6 +295,76 @@ export function shouldAllowRenderRequest(requestUrl: string): boolean {
     return false;
   }
   return host === TAILWIND_CDN_HOST;
+}
+
+/**
+ * MAX_LENGTH counts the running render with the waiting ones: one render of a few seconds plus three behind it
+ * → a full line is a 503 within seconds, never a wait the Mac page's own export sits behind indefinitely.
+ */
+export const RENDER_LINE = { MAX_LENGTH: 4 } as const;
+
+/** full = the line held MAX_LENGTH places · caller_gone = its caller disconnected while it waited, so it never ran */
+export class RenderLineError extends Error {
+  readonly reason: "full" | "caller_gone";
+  constructor(reason: "full" | "caller_gone") {
+    super(reason === "full" ? `render line full at ${RENDER_LINE.MAX_LENGTH} places` : "render dropped: caller gone");
+    this.name = "RenderLineError";
+    this.reason = reason;
+  }
+}
+
+interface RenderTurn {
+  /** runs the render and settles the caller's promise; never rejects */
+  readonly run: () => Promise<void>;
+  /** rejects the caller's promise without running the render */
+  readonly drop: () => void;
+}
+
+const waitingTurns: Array<{ readonly start: () => void }> = [];
+let isRendering = false;
+
+/** Places taken in the render line, the running render included. */
+export function getRenderLineLength(): number {
+  return waitingTurns.length + (isRendering ? 1 : 0);
+}
+
+/**
+ * Runs one Chromium export render at a time across the process, in call order → a multi export's sequential renders
+ * and a concurrent single export never fail each other.
+ * @param signal - aborted while the render still waits → dropped from the line, rejected with caller_gone
+ * @throws RenderLineError full when the line already holds RENDER_LINE.MAX_LENGTH places
+ */
+export function runExclusiveRender<T>(render: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (getRenderLineLength() >= RENDER_LINE.MAX_LENGTH) return Promise.reject(new RenderLineError("full"));
+  if (signal?.aborted === true) return Promise.reject(new RenderLineError("caller_gone"));
+  return new Promise<T>((resolve, reject) => {
+    const run = (): Promise<void> => Promise.resolve().then(render).then(resolve, reject);
+    putRenderTurn({ run, drop: () => reject(new RenderLineError("caller_gone")) }, signal);
+  });
+}
+
+function putRenderTurn(turn: RenderTurn, signal: AbortSignal | undefined): void {
+  const onAbort = (): void => {
+    const index = waitingTurns.indexOf(entry);
+    if (index === -1) return;
+    waitingTurns.splice(index, 1);
+    turn.drop();
+  };
+  const entry = {
+    start: (): void => {
+      signal?.removeEventListener("abort", onAbort);
+      void turn.run().finally(startNextRender);
+    },
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  waitingTurns.push(entry);
+  if (!isRendering) startNextRender();
+}
+
+function startNextRender(): void {
+  const next = waitingTurns.shift();
+  isRendering = next !== undefined;
+  next?.start();
 }
 
 async function renderHtmlThroughBrowser(storedBody: string): Promise<string> {

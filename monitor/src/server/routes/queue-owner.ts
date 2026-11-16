@@ -3,7 +3,7 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
-import type { AuditChangeCarrier } from "../middleware/audit-log.js";
+import { type AuditChangeCarrier, setAuditTarget } from "../middleware/audit-log.js";
 import { QueueRequestError } from "../queue/errors.js";
 import { IMAGE_BYTES_MAX, UPLOAD_CONTENT_TYPES, createImage, getImageFileOrThrow } from "../queue/images.js";
 import { putAnswer, putLater, putReply, putResend, putSeen } from "../queue/owner-items.js";
@@ -152,6 +152,7 @@ async function imageUploadPlugin(app: FastifyInstance, options: QueueRouteOption
       input: request.query,
       work: async (query) => {
         const created = await createImage(options.imageDir, Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0), query.name);
+        setAuditTarget(request, { imageId: created.id });
         reply.code(201);
         return created;
       },

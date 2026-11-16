@@ -13,6 +13,8 @@ const NAV = [
 	{ id: "architecture", label: "System map", icon: "git" },
 	{ id: "clauded-docs", label: "Documents", icon: "file-text" },
 	{ id: "queue", label: "Queue", icon: "inbox", badgeFill: "solid" },
+	// isLoopbackOnly → its routes answer the Mac page alone, so the remote page never lists it
+	{ id: "remote-access", label: "Remote access", icon: "smartphone", isLoopbackOnly: true },
 ];
 
 // EDITMODE 마커 — host 프로토콜이 디스크 위 JSON 블록 재기록
@@ -34,6 +36,7 @@ const Screens = {
 	architecture: window.ScreenArchitecture,
 	"clauded-docs": window.ScreenClaudedDocs,
 	queue: window.ScreenQueue,
+	"remote-access": window.ScreenRemoteAccess,
 };
 
 const NAV_BADGE_POLL_MS = 60_000;
@@ -83,7 +86,7 @@ function onSkipToContent(event) {
 // hash 형식 `#screen?per-screen-query` — '?' 앞부분만 screen id
 function parseHashScreen() {
 	const raw = window.location.hash.replace(/^#/, "").split("?")[0];
-	return NAV.some((n) => n.id === raw) ? raw : "dashboard";
+	return NAV_ITEMS.some((n) => n.id === raw) ? raw : "dashboard";
 }
 
 function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
@@ -105,7 +108,7 @@ function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 			</div>
 			<nav aria-label="Primary" className="flex-1 p-2 overflow-y-auto">
 				<div className="space-y-0.5">
-					{NAV.map((n) => {
+					{NAV_ITEMS.map((n) => {
 						// dynamicBadges 키 존재 = polled (null 이어도 정적 fallback 차단)
 						const hasDyn =
 							dynamicBadges &&
@@ -258,6 +261,79 @@ function agentsToNavBadges(agentsState) {
 	return { agents: { badge: String(unsafeCount), badgeTone, glyph, source: "breaker", title, description: title } };
 }
 
+// remote device page — the shared CSRF wrapper goes in before any screen sends a mutation; no UI (a sandbox reading NAV) → loopback
+window.UI?.installRemoteFetch(window);
+const IS_REMOTE_PAGE = window.UI?.isRemotePage(window.location) === true;
+const NAV_ITEMS = IS_REMOTE_PAGE ? NAV.filter((item) => !item.isLoopbackOnly) : NAV;
+// red-outline destructive (design.md §7.4) → turning off cuts every device, this one included
+const TURN_OFF_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
+const REMOTE_ACT_COPY = {
+	logout: { label: "Sign out", busy: "Signing out…", failed: "Sign out failed — try again" },
+	off: { label: "Turn off remote access", busy: "Turning off…", failed: "Turn off failed — try again" },
+};
+
+/**
+ * One reduce-only act of this remote device: logout revokes this device and opens the sign-in page;
+ * off revokes every device and closes the remote listener, so the page stays and says so.
+ * @returns "closed" after off; rejects on a refused act, which never leaves the page
+ */
+async function deleteRemoteAccess(act) {
+	const { LOGOUT_URL, OFF_URL } = window.UI.REMOTE_PAGE;
+	const res = await fetch({ logout: LOGOUT_URL, off: OFF_URL }[act], { method: "POST" });
+	if (!res.ok) throw new Error(`remote ${act} refused: HTTP ${res.status}`);
+	if (act === "logout") window.location.replace(window.UI.REMOTE_PAGE.SIGN_IN_URL);
+	return act === "logout" ? "signed-out" : "closed";
+}
+
+/** Remote page only: this device's label plus the two acts that reduce access from here; a revoked device goes to sign-in. */
+function RemoteBanner() {
+	const { Icon, TONE_GLYPH } = window.UI;
+	const [label, setLabel] = useS("");
+	const [act, setAct] = useS({ pending: null, failed: null, state: "open" });
+	useE(() => {
+		let isLive = true;
+		window.UI.readRemoteSession()
+			.then((session) => isLive && session && setLabel(session.device.label))
+			.catch((error) => error?.status === 401 && window.location.replace(window.UI.REMOTE_PAGE.SIGN_IN_URL));
+		return () => {
+			isLive = false;
+		};
+	}, []);
+	const onAct = (name) => {
+		if (act.pending !== null) return;
+		setAct({ pending: name, failed: null, state: "open" });
+		deleteRemoteAccess(name)
+			.then((state) => setAct({ pending: null, failed: null, state }))
+			.catch(() => setAct({ pending: null, failed: name, state: "open" }));
+	};
+	const barClass = "flex items-center gap-control px-6 py-2 border-b border-line bg-sunken";
+	if (act.state === "closed") {
+		return (
+			<aside aria-label="Remote access" role="status" className={barClass} style={META_TEXT_STYLE}>
+				<span className="text-dim">Remote access is off for every device — turn it on again from the Mac</span>
+			</aside>
+		);
+	}
+	return (
+		<aside aria-label="Remote access" className={barClass} style={META_TEXT_STYLE}>
+			<Icon name="smartphone" size={14} className="text-dim" />
+			<span className="text-dim">Remote device{label ? ` · ${label}` : ""}</span>
+			{act.failed !== null && (
+				<span role="alert" className="text-dim">
+					<span className="text-crit" aria-hidden="true">{TONE_GLYPH.crit}</span> {REMOTE_ACT_COPY[act.failed].failed}
+				</span>
+			)}
+			<span className="flex-1" />
+			{["logout", "off"].map((name) => (
+				<button key={name} type="button" className="btn ghost sm" style={name === "off" ? TURN_OFF_STYLE : undefined}
+					aria-busy={act.pending === name || undefined} onClick={() => onAct(name)}>
+					{act.pending === name ? REMOTE_ACT_COPY[name].busy : REMOTE_ACT_COPY[name].label}
+				</button>
+			))}
+		</aside>
+	);
+}
+
 function App() {
 	// tweaks → data-theme / --accent / data-density 동기화
 	const [tweaks, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
@@ -388,7 +464,7 @@ function App() {
 	});
 
 	const Screen = Screens[active];
-	const activeNav = NAV.find((n) => n.id === active);
+	const activeNav = NAV_ITEMS.find((n) => n.id === active);
 
 	// min-h-[100dvh] — architecture (h-full) 가 부모 높이를 배로 끌어올리는 것 차단
 	// dvh — iOS Safari 주소창 가변 영역 안전 (vh 흔들림 회피)
@@ -404,6 +480,7 @@ function App() {
 			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState}
 				queueBadges={window.QueueNav?.getQueueNavBadge(queueCountState) ?? {}} />
 			<div className="flex-1 min-w-0 flex flex-col">
+				{IS_REMOTE_PAGE && <RemoteBanner />}
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
 						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount} />

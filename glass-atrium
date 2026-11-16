@@ -937,6 +937,8 @@ glass-atrium — the sole entry point for the Glass Atrium harness.
   glass-atrium                 launch the interactive menu (the only invocation)
   glass-atrium --ascii         launch the menu with ASCII glyphs + mono palette
   glass-atrium -h | --help     show this help
+  glass-atrium remote <sub>    monitor access from registered devices on a trusted Wi-Fi:
+                               on · off · list · revoke <id> · revoke-all · trust · reissue
 
 The menu is the whole interface (arrow keys / j,k to move · Enter to select · q to quit):
   Install      deps preflight + install + monitor build + health gate
@@ -966,6 +968,15 @@ main() {
         ;;
       *) : ;; # first token => internal passthrough subcommand — handled below
     esac
+  fi
+
+  # `remote <sub> [id]` takes its own argv (two tokens) → routed before the one-subcommand passthrough;
+  # `exit` the rc so a refusal never trips the echo-only ERR trap
+  if [[ $# -gt 0 && "$1" == "remote" ]]; then
+    shift
+    local remote_rc=0
+    ga_remote_main "$@" || remote_rc=$?
+    exit "${remote_rc}"
   fi
 
   # Any remaining argument => the internal/undocumented passthrough (engine call).

@@ -26,7 +26,7 @@ REAL_LIB="${GA}/lib/ga-core.sh"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
 
-# The engine lib tree (ga-core.sh + its 7 domain siblings + the whole scripts/lib) is READ-ONLY
+# The engine lib tree (ga-core.sh + its 8 domain siblings + the whole scripts/lib) is READ-ONLY
 # across every test — the tests only SOURCE it — so build it ONCE here. Per-test setup() symlinks
 # it into a fresh sandbox GA_ROOT; each test still writes its OWN monitor/.env (config-port
 # isolation the env-port tests depend on is preserved). BATS_FILE_TMPDIR is auto-reaped by bats.
@@ -35,7 +35,7 @@ setup_file() {
   ENGINE_SRC="${BATS_FILE_TMPDIR}/engine"
   export ENGINE_SRC
   mkdir -p "${ENGINE_SRC}/lib" "${ENGINE_SRC}/scripts/lib"
-  # ga-core.sh is a THIN LOADER that sources its 7 domain siblings; copy them alongside so a
+  # ga-core.sh is a THIN LOADER that sources its 8 domain siblings; copy them alongside so a
   # sandbox source resolves the full engine (absent -> loud-fail).
   cp "${REAL_LIB}" \
     "${GA}/lib/ga-env.sh" \
@@ -45,6 +45,7 @@ setup_file() {
     "${GA}/lib/ga-db.sh" \
     "${GA}/lib/ga-daemons.sh" \
     "${GA}/lib/ga-doctor.sh" \
+    "${GA}/lib/ga-remote.sh" \
     "${ENGINE_SRC}/lib/"
   # ga_init_env HARD-requires several scripts/lib libs under <GA_ROOT>/scripts/lib and die()s when
   # any is absent (the E5 update-system set PLUS fakechat-cleanup.sh). Copy the WHOLE scripts/lib

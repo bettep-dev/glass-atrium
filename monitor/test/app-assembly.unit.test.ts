@@ -48,3 +48,44 @@ test("the shell and its assets are served with framing denied, so no other page 
     await app.close();
   }
 });
+
+test("every loopback route refuses a Host outside the loopback names at the monitor port", async () => {
+  const { buildApp } = await import("../src/server/app.js");
+  const app = await buildApp();
+  const rows = [
+    { name: "static shell, rebound name", url: "/", host: "attacker.example:16145", refused: true },
+    { name: "api route, injected default Host", url: "/api/health/architecture-budget", host: "localhost:80", refused: true },
+    { name: "api route, tunnel name at the right port", url: "/api/health/architecture-budget", host: "tunnel.example:16145", refused: true },
+    { name: "static shell, loopback name", url: "/", host: "127.0.0.1:16145", refused: false },
+    { name: "api route, localhost name", url: "/api/health/architecture-budget", host: "localhost:16145", refused: false },
+  ];
+  try {
+    for (const row of rows) {
+      const response = await app.inject({ method: "GET", url: row.url, headers: { host: row.host } });
+      assert.equal(response.statusCode === 403 && response.json().error === "host_not_allowed", row.refused, row.name);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test("the boot pre-warm reaches its hot routes through the Host allowlist", async () => {
+  const { buildApp, warmHotRoutes } = await import("../src/server/app.js");
+  const app = await buildApp();
+  try {
+    assert.deepEqual(await warmHotRoutes(app, 16145), []);
+  } finally {
+    await app.close();
+  }
+});
+
+test("the boot pre-warm names every hot route that did not answer 2xx", async () => {
+  const { warmHotRoutes } = await import("../src/server/app.js");
+  const { default: Fastify } = await import("fastify");
+  const app = Fastify();
+  try {
+    assert.deepEqual(await warmHotRoutes(app, 16145), ["/api/improvement", "/api/clauded-docs"]);
+  } finally {
+    await app.close();
+  }
+});

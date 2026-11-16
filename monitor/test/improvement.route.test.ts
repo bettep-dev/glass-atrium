@@ -659,6 +659,24 @@ test("GET /api/improvement/stats: 30s in-process cache returns identical payload
 // stub does NOT touch PG — the daemon's own status flip is out of this route's
 // scope (these tests verify the exit-code → HTTP mapping, not the apply).
 
+test("POST approve: an apply script still running past the timeout is ended with its children → 504 apply_error", async () => {
+  const scriptPath = path.join(stubDir, "apply-hangs.sh");
+  // the script's own child holds the output pipes, as a real apply's python and git children do
+  writeFileSync(scriptPath, "#!/usr/bin/env bash\nsleep 6\nexit 0\n", "utf8");
+  chmodSync(scriptPath, 0o755);
+  process.env.AUTOAGENT_APPLY_SCRIPT = scriptPath;
+  process.env.AUTOAGENT_APPLY_TIMEOUT_MS = "300";
+  const started = Date.now();
+  try {
+    const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+    assert.strictEqual(res.statusCode, 504, res.body);
+    assert.strictEqual((res.json() as { status: string }).status, "apply_error");
+    assert.ok(Date.now() - started < 4000, "the route answers at the timeout, not when the child's children exit");
+  } finally {
+    delete process.env.AUTOAGENT_APPLY_TIMEOUT_MS;
+  }
+});
+
 test("POST approve: exit 0 → 200 { status: 'applied' }", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-ok.sh", 0);
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
