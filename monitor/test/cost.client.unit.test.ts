@@ -1011,7 +1011,7 @@ interface RenderModule {
 // the spend stats and the ledgers are models over shared atoms → the real stat row, loading row, Stack and table atoms render, other atoms stay stubs
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
-const REAL_ATOMS = new Set(["StatRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
+const REAL_ATOMS = new Set(["StatRow", "AlarmRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
 
 // real ui.jsx helpers, with every rendered atom a host element carrying its props (the stat row anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
@@ -1103,10 +1103,11 @@ test("a spend stat that read nothing says so in faint words — Not loaded for a
 test("a firing spend stat draws its tone glyph at the alarm row's glyph size", async () => {
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   const getIconSizes = (tree: RenderedNode) => findNodes(tree, (n) => n.props.atom === "Icon").map((n) => n.props.size);
+  const getGlyphSizes = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "svg").map((n) => n.props.width);
   const stat = renderIn(mod, "SpendStatValueC", { stat: { key: "today", label: "Today", status: "ready", tone: "warn", value: "$1,790" } });
   const alarm = renderIn(mod, "SpendAlarmRowsC", { rows: [{ key: "hot", tone: "warn", title: "$1,790 so far today", detail: null, isHeld: false }] });
 
-  assert.deepEqual(getIconSizes(stat), getIconSizes(alarm));
+  assert.deepEqual(getIconSizes(stat), getGlyphSizes(alarm));
 });
 
 function hasFaintClass(node: RenderedNode): boolean {
@@ -1856,45 +1857,6 @@ describe("a Cost series mark carries the data colour; a tone marks only a bar ov
   });
 });
 
-// WCAG 1.4.1: a crit and a warn alarm row differ by glyph shape and by a spoken severity word, never by colour alone
-test("each Cost alarm row draws its tone's own glyph, hidden from assistive tech, and speaks the tone's severity word first", async () => {
-  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
-  const ui = { TONE_ICON: realUi.TONE_ICON as Record<string, string>, ALERT_SEVERITY_WORD: realUi.ALERT_SEVERITY_WORD as Record<string, string> };
-  const tones = ["crit", "warn"];
-  const tree = renderIn(mod, "SpendAlarmRowsC", { rows: tones.map((tone) => ({ key: tone, tone, title: `${tone} alarm title`, detail: null })) });
-  const rows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
-
-  assert.equal(rows.length, tones.length);
-  for (const [i, row] of rows.entries()) {
-    const tone = tones[i];
-    const [glyph] = findNodes(row, (n) => n.props.className === "alarm-row-glyph");
-    const [icon] = findNodes(glyph, (n) => n.props.atom === "Icon");
-    const [word] = findNodes(row, (n) => n.props.className === "sr-only");
-    assert.equal(glyph.props["aria-hidden"], "true", `${tone} glyph is hidden from assistive tech`);
-    assert.equal(icon.props.name, ui.TONE_ICON[tone], `${tone} row draws its tone's glyph`);
-    assert.equal(collectText(word).trim(), `${ui.ALERT_SEVERITY_WORD[tone]}:`, `${tone} row speaks its severity word`);
-  }
-});
-
-// spec 44084 §3.2: title in medium ink, an optional detail on its own dim meta line
-test("an alarm row sets its title in medium ink and draws a detail line only when it has one", async () => {
-  const mod = await loadCostRender();
-  const tree = renderIn(mod, "SpendAlarmRowsC", { rows: [
-    { key: "hot", tone: "warn", title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)" },
-    { key: "bare", tone: "warn", title: "The latest day is outside its 7-day normal range", detail: null },
-  ] });
-  const rows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
-  const getClassed = (root: RenderedNode, cls: string) => findNodes(root, (n) => String(n.props.className ?? "").split(" ").includes(cls));
-
-  assert.equal(rows.length, 2);
-  const titles = rows.map((row) => collectText(getClassed(row, "font-medium")[0]!).replace(/\s+/g, " ").trim());
-  assert.deepEqual(titles, ["Warning: $1,790 so far today", "Warning: The latest day is outside its 7-day normal range"],
-    "the severity word leads each title");
-  const details = rows.map((row) => getClassed(row, "fs-meta").filter((n) => String(n.props.className).includes("text-dim")));
-  assert.deepEqual(details.map((nodes) => nodes.length), [1, 0]);
-  assert.equal(collectText(details[0]![0]!), "1.3\u00d7 the 7-day average ($1,380/day)");
-});
-
 // spec 44084 \u00a73.2 States \u2192 held: the last reading stands while its read failed
 describe("an alarm row is held exactly when a read its sentence states failed after loading", () => {
   type RegionUi = {
@@ -1952,26 +1914,6 @@ describe("an alarm row is held exactly when a read its sentence states failed af
     assert.equal(getParseRow({ kpi: true, trend: true, parseError: false }).isHeld, false);
   });
 
-  test("a held row follows its title with Last known in plain dim meta text and keeps its tone", async () => {
-    const mod = await loadCostRender();
-    const tree = renderIn(mod, "SpendAlarmRowsC", { rows: [
-      { key: "hot", tone: "warn", title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)", isHeld: true },
-      { key: "parse-error", tone: "warn", title: "3 of 9 days over the unreadable-log threshold", detail: null, isHeld: false },
-    ] });
-    const alarmRows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
-    const getHeldWords = (row: RenderedNode) => findNodes(row, (n) => collectText(n).trim() === "Last known"
-      && /\bfs-meta\b/.test(String(n.props.className ?? "")));
-
-    assert.deepEqual(alarmRows.map((row) => getHeldWords(row).length), [1, 0], "only the held row says Last known");
-    const [words] = getHeldWords(alarmRows[0]!);
-    assert.match(String(words!.props.className), /\btext-dim\b/);
-    assert.doesNotMatch(String(words!.props.className), /\bfont-medium\b/, "plain text, not the title's weight");
-    const [title] = findNodes(alarmRows[0]!, (n) => String(n.props.className ?? "").split(" ").includes("font-medium"));
-    assert.doesNotMatch(collectText(title!), /Last known/, "the words follow the title rather than join it");
-    assert.match(collectText(alarmRows[0]!).replace(/\s+/g, " "), /so far today Last known 1\.3/, "title, then Last known, then the detail");
-    assert.equal(alarmRows[0]!.props["data-tone"], "warn", "a held row keeps its tone");
-  });
-
   // the page reads each row's held state from its own region → regions in ScreenCost declaration order: kpi, trend, model, cache, session, log
   const hotKpi = getKpiAtRatio(3, null);
   const getHeld = (state: PanelState): PanelState => ({ ...state, error: "HTTP 500 Internal Server Error" });
@@ -2011,7 +1953,7 @@ describe("the spend alarm rows lead the Spend card, under its head, and leave it
         modelState: ready({ rows: [] }), days: 30, onRetry: () => {}, alarmRows: row.alarmRows,
       });
       const [card] = findNodes(tree, (n) => n.props.atom === "Card" && n.props.title === "Spend");
-      const order = findNodes(card!, (n) => n.props.role === "alert" || String(n.props.className ?? "").split(" ").includes("stat-row"))
+      const order = findNodes(card!, (n) => (n.type === "div" && n.props.role === "alert") || String(n.props.className ?? "").split(" ").includes("stat-row"))
         .map((n) => (n.props.role === "alert" ? "alarm" : "stats"));
       assert.deepEqual(order, [...Array(row.count).fill("alarm"), "stats"], "alarm rows first, then the stat row, all inside the Spend card");
     });

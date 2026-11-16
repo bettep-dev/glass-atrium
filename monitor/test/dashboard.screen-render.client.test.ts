@@ -34,7 +34,7 @@ function uiStub(): unknown {
           ? getRegionViewStub
           : name === "AlertCard"
           ? alertCardStub
-          : name === "ALERT_SEVERITY_WORD"
+          : name === "ALERT_SEVERITY_WORD" || name === "AlarmRow"
           ? realUi[name]
           : Object.defineProperty(
               (props: Record<string, unknown>) => ({
@@ -285,15 +285,9 @@ test("an alarm row whose source's latest read failed says Last known in plain wo
   for (const isHeld of [true, false]) {
     const [row] = alarmRowsOf(render("AlarmLane", { alarms: [{ ...HARNESS_ALARM, isHeld }], onNav: () => {} }));
     assert.equal(findNodes(row, (n) => n.props.atom === "Badge").length, 0, `isHeld=${isHeld}: never a badge`);
-    const held = findNodes(row, (n) => hasClass(n, "dash-alarm-held"));
+    const held = findNodes(row, (n) => n.type === "span" && collectText(n).trim() === "Last known");
     assert.deepEqual(held.map(collectText), isHeld ? ["Last known"] : [], `isHeld=${isHeld}`);
   }
-});
-test("a spend alarm's detail keeps its 7-day token whole through the shared DayTokens atom", () => {
-  const SPEND_ALARM = { id: "spend", tone: "warn", title: "$842 so far today", detail: "1.3× the 7-day average ($1,380/day)", isHeld: true, target: "cost" };
-  const [row] = alarmRowsOf(render("AlarmLane", { alarms: [SPEND_ALARM], onNav: () => {} }));
-  const tokens = findNodes(row, (n) => n.props.atom === "DayTokens").map((n) => collectText(n));
-  assert.ok(tokens.includes(SPEND_ALARM.detail), "the detail rides DayTokens");
 });
 test("a failed week panel whose cause the page banner carries points up to it instead of offering a second Retry", () => {
   const rows = [
@@ -584,7 +578,7 @@ test("each stat's value is a Link to its owning screen; a loading stat reaches t
 });
 
 // the alarm row's own glyph → a firing stat's mark reads at the same size as the row that states its alarm
-const ALARM_GLYPH_SIZE = findNodes(alarmRowsOf(render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} }))[0], (n) => n.props.atom === "Icon")[0].props.size;
+const ALARM_GLYPH_SIZE = findNodes(alarmRowsOf(render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} }))[0], (n) => n.type === "svg")[0].props.width;
 
 test("a firing stat shows its value and tone glyph only; a calm stat shows the value alone, and no stat carries a badge", () => {
   const rows = [

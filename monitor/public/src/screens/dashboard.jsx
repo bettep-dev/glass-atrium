@@ -149,9 +149,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-week-panel { display: flex; flex-direction: column; }
         .dash-week-panel > .card { flex: 1 1 auto; }
         .dash-week-panel .card-body { display: flex; flex-direction: column; gap: var(--gap-list); }
-        /* the 32 first line of the alarm row (base.css .alarm-row) → a Link action centres on the glyph and title */
-        .dash-alarm-list .alarm-row-actions { min-height: var(--ctl-min-h); align-items: center; }
-        .dash-alarm-detail { display: block; max-width: 72ch; margin-top: 4px; line-height: 1.4; }
         .dash-strip-track { height: 4rem; position: relative; }
         /* one 1px --line baseline across the strip → each day's segment reaches half the column gap either side */
         .dash-strip-base { position: absolute; bottom: 0; left: calc(var(--gap-label-inline) / -2); right: calc(var(--gap-label-inline) / -2); height: 1px; background: rgb(var(--line)); }
@@ -256,30 +253,17 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
   );
 }
 
-// one alarm row — tone on the bare glyph, the amount-first title, an optional detail, then a Link to the owning page
-// or the row's own control (children); a held reading says Last known in plain words, never a badge
+// one alarm row — the amount-first title, an optional detail, then a Link to the owning page or the row's own control (children)
 function AlarmRow({ alarm, onNav, children }) {
-  const { Icon, Link, DayTokens, TONE_ICON, ALERT_SEVERITY_WORD } = window.UI;
+  const { AlarmRow: SharedAlarmRow, Link } = window.UI;
   const hasActions = Boolean(children) || Boolean(alarm.target);
-  return (
-    <div className="alarm-row" data-tone={alarm.tone}>
-      <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[alarm.tone]} size={16}/></span>
-      {/* fs-body on the content cell itself → base.css holds its line at the 20 row line; a child .fs-body would set 21.75 */}
-      <div className="min-w-0 fs-body">
-        <span className="font-medium text-ink">
-          <span className="sr-only">{`${ALERT_SEVERITY_WORD[alarm.tone]}: `}</span><DayTokens>{alarm.title}</DayTokens>
-        </span>
-        {alarm.isHeld && <> <span className="dash-alarm-held fs-meta text-dim">Last known</span></>}
-        {alarm.detail && <span className="dash-alarm-detail fs-meta text-dim"><DayTokens>{alarm.detail}</DayTokens></span>}
-      </div>
-      {hasActions && (
-        <div className="alarm-row-actions">
-          {children}
-          {alarm.target && <Link href={`#${alarm.target}`} onClick={getDrillClick(alarm.target, onNav)}>{alarm.targetLabel}</Link>}
-        </div>
-      )}
-    </div>
+  const actions = hasActions && (
+    <>
+      {children}
+      {alarm.target && <Link href={`#${alarm.target}`} onClick={getDrillClick(alarm.target, onNav)}>{alarm.targetLabel}</Link>}
+    </>
   );
+  return <SharedAlarmRow tone={alarm.tone} title={alarm.title} detail={alarm.detail} isHeld={alarm.isHeld} actions={actions || null}/>;
 }
 
 // a source that settled without an answer is information, not an empty lane → the header Refresh is its action

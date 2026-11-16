@@ -2647,6 +2647,29 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
   );
 }
 
+/**
+ * The hairline alarm row — AlertCard's anatomy without a card shell, for a list of alarms inside one card.
+ * @param isHeld - the row's source failed its latest read → plain "Last known" after the title, never a badge
+ * @param actions - a Link to the owning page or the row's own control
+ * @param role - 'alert' when no live container announces the row
+ */
+function AlarmRow({ tone, title, detail, isHeld = false, actions, role }) {
+  return (
+    <div role={role} className="alarm-row" data-tone={tone}>
+      <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[tone]} size={16}/></span>
+      {/* fs-body on the content cell itself → base.css holds its line at the 20 row line; a child .fs-body would set 21.75 */}
+      <div className="min-w-0 fs-body text-ink">
+        <span className="font-medium">
+          <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span><DayTokens>{title}</DayTokens>
+        </span>
+        {isHeld && <> <span className="fs-meta text-dim">Last known</span></>}
+        {detail && <span className="alarm-row-detail fs-meta text-dim"><DayTokens>{detail}</DayTokens></span>}
+      </div>
+      {actions && <div className="alarm-row-actions">{actions}</div>}
+    </div>
+  );
+}
+
 /** Visible loading slot under a status role; minHeight reserves the settled height so nothing shifts on arrival. */
 function LoadingPlaceholder({ label, minHeight, className = '' }) {
   return (
@@ -3096,7 +3119,7 @@ window.UI = {
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
-  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,

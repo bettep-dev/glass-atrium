@@ -2405,6 +2405,13 @@ button.kpi:hover {
 .alarm-row[data-tone="warn"] .alarm-row-glyph { color: rgb(var(--warn)); }
 .alarm-row[data-tone="info"] .alarm-row-glyph { color: rgb(var(--info)); }
 .alarm-row[data-tone="ok"] .alarm-row-glyph { color: rgb(var(--ok)); }
+/* the detail on its own dim line under the title, at the alert card body's measure */
+.alarm-row-detail {
+	display: block;
+	max-width: 72ch;
+	margin-top: 4px;
+	line-height: 1.4;
+}
 
 /* alert card — the alarm row on a card shell: the grid holds the padding, the shell stays neutral (no stripe, tinted fill or
    tone border) and the bare glyph takes the tone — ≥ 3.15:1 on --elev and --sunken in both themes */
@@ -2443,6 +2450,11 @@ button.kpi:hover {
 .alert-card-actions {
 	display: flex;
 	gap: 8px;
+}
+/* a Link action is one 20 text line → the slot holds the 32 first line, so it centres on the glyph and title */
+.alarm-row-actions {
+	min-height: var(--ctl-min-h);
+	align-items: center;
 }
 @container (max-width: 36rem) {
 	.alarm-row-actions,

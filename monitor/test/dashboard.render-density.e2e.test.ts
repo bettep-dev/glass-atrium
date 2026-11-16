@@ -270,7 +270,7 @@ describe("Alarm rows at 1440×900", () => {
       // the hairline between rows is the list's, not the row's → border-box height less the bottom border
       rows = await page.$$eval(".dash-alarm-list .alarm-row", (els) => els.map((el) => ({
         height: el.getBoundingClientRect().height - parseFloat(getComputedStyle(el).borderBottomWidth),
-        hasDetail: el.querySelector(".dash-alarm-detail") !== null,
+        hasDetail: el.querySelector(".alarm-row-detail") !== null,
       })));
       console.log(`alarm rows 1440x900: ${JSON.stringify(rows)}`);
     } finally {

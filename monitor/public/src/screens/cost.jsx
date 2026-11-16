@@ -299,7 +299,7 @@ function isRegionHeldC(state) {
   return state.status === 'ready' && state.error != null;
 }
 
-// Spend-trigger tone, or null when none fires — one warning glyph for every leg, as on the Dashboard's spend row
+// Spend-trigger tone, or null when none fires — one warning glyph for every leg
 function getHotToneC(hot, latestOutsideBand) {
   return isSpendLegHotC(hot) || latestOutsideBand ? 'warn' : null;
 }
@@ -357,9 +357,9 @@ function isParseErrorCritDay(row) {
   return (Number(row.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD;
 }
 
-// the alarm-row anatomy (design.md §7.9) under the Spend card head; a hairline closes the list above the stats
+// the Spend card's alarm rows under its head; a hairline closes the list above the stats
 function SpendAlarmRowsC({ rows }) {
-  const { Icon, TONE_ICON, ALERT_SEVERITY_WORD, DayTokens } = window.UI;
+  const { AlarmRow } = window.UI;
 
   if (rows.length === 0) {
     return null;
@@ -367,18 +367,7 @@ function SpendAlarmRowsC({ rows }) {
 
   return (
     <div className="border-b border-line">
-      {rows.map((r) => (
-        <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
-          <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[r.tone]} size={16}/></span>
-          <div className="fs-body text-ink">
-            <span className="font-medium">
-              <span className="sr-only">{`${ALERT_SEVERITY_WORD[r.tone]}: `}</span><DayTokens>{r.title}</DayTokens>
-            </span>
-            {r.isHeld && <> <span className="fs-meta text-dim">Last known</span></>}
-            {r.detail && <span className="block mt-1 max-w-[72ch] fs-meta text-dim"><DayTokens>{r.detail}</DayTokens></span>}
-          </div>
-        </div>
-      ))}
+      {rows.map((r) => <AlarmRow key={r.key} role="alert" tone={r.tone} title={r.title} detail={r.detail} isHeld={r.isHeld}/>)}
     </div>
   );
 }
