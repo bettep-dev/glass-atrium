@@ -599,11 +599,7 @@ function buildBandStatI({ key, label, owner, isCovered, status, value, context }
 function JumpLinkI({ targetId, children }) {
 	const onClick = (event) => {
 		event.preventDefault();
-		const target = document.getElementById(targetId);
-		if (!target) return;
-		if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
-		target.scrollIntoView({ block: "nearest" });
-		target.focus({ preventScroll: true });
+		window.UI.putCardFocus(targetId);
 	};
 	return <window.UI.Link href={`#${targetId}`} onClick={onClick}>{children}</window.UI.Link>;
 }
