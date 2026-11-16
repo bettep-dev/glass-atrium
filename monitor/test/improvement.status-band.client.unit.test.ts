@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { createFakeDocument } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
@@ -236,10 +237,17 @@ test("clicking the held count keeps the hash and moves focus to the held section
     focus: (options: unknown) => calls.push(["focus", options]),
   };
   const heldId = String(link.props.href).replace(/^#/, "");
-  sandbox.document.getElementById = (id: string) => (id === heldId ? section : null);
+  const doc = createFakeDocument();
+  doc.elements.set(heldId, section);
+  const fileDocument = sandbox.document;
   let isDefaultPrevented = false;
 
-  (link.props.onClick as (event: unknown) => void)({ preventDefault: () => { isDefaultPrevented = true; } });
+  sandbox.document = doc as unknown as Record<string, unknown>;
+  try {
+    (link.props.onClick as (event: unknown) => void)({ preventDefault: () => { isDefaultPrevented = true; } });
+  } finally {
+    sandbox.document = fileDocument;
+  }
 
   assert.equal(isDefaultPrevented, true, "the default navigation would hand the hash router an unknown screen");
   assert.equal(attributes.get("tabindex"), "-1", "a plain section takes focus only through tabindex -1");
