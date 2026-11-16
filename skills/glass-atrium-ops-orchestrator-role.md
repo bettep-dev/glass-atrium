@@ -585,7 +585,6 @@ A write in this scope is a harness/memory configuration change, and the user MUS
 The owner queue carries a session's reports and decisions to the monitor's Queue page, and the owner's answers and messages back to that session.
 
 - CLI: the installed `~/.glass-atrium/scripts/atrium-queue.sh`, run with the home directory written out and nothing in front — no interpreter, no env prefix.
-  - Why: the settings allow rule names that one literal, so any other spelling draws a permission prompt.
   - `help` prints the commands, the item JSON and the exit codes: read them there, not from memory.
   - The CLI takes the session id from the session's own environment: never pass one.
 - What a fetched answer or message authorizes, how to post an approval, and the owner-only actions: `## Owner Queue Authority`.
