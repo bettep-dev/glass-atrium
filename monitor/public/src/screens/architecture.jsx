@@ -3057,7 +3057,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 							<DisclosureChevron />
 							<span>{`${healthy.length} healthy`}</span>
 						</summary>
-						<PartHealthListAR rows={healthy} {...listProps} />
+						<PartHealthListAR rows={healthy} isFolded {...listProps} />
 					</details>
 				)}
 			</div>
@@ -3065,20 +3065,22 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 	);
 }
 
-function PartHealthListAR({ rows, freshness, nodeIndex, onSelectNode }) {
+function PartHealthListAR({ rows, isFolded = false, freshness, nodeIndex, onSelectNode }) {
 	return (
 		<ul className="arch-part-list">
 			{rows.map((row) => (
-				<PartHealthRowAR key={row.id} row={row} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+				<PartHealthRowAR key={row.id} row={row} isFolded={isFolded} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
 			))}
 		</ul>
 	);
 }
 
-function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
+function PartHealthRowAR({ row, isFolded = false, freshness, nodeIndex, onSelectNode }) {
 	const { formatRelativeTime, Icon, TONE_ICON } = window.UI;
 	const box = getPartBoxAR(row, nodeIndex);
 	const status = getPartStatusAR(row, freshness);
+	// a folded row's Healthy is its fold summary's own word · a held Last known still says more, so it stays
+	const isStatusShown = !(isFolded && status.tone === "ok");
 	const schedule = getPartScheduleAR(row, formatRelativeTime);
 	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule].filter(Boolean).join(" · ");
 
@@ -3090,12 +3092,14 @@ function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
 					{row.name}
 				</span>
 				{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
-				<span className={`arch-part-status ${status.tone ? "text-dim" : "text-faint"}`}>
-					{status.tone && status.tone !== "neutral" && (
-						<Icon name={TONE_ICON[status.tone]} size={12} className={TONE_GLYPH_CLASS[status.tone]} />
-					)}
-					{status.text}
-				</span>
+				{isStatusShown && (
+					<span className={`arch-part-status ${status.tone ? "text-dim" : "text-faint"}`}>
+						{status.tone && status.tone !== "neutral" && (
+							<Icon name={TONE_ICON[status.tone]} size={12} className={TONE_GLYPH_CLASS[status.tone]} />
+						)}
+						{status.text}
+					</span>
+				)}
 				{row.cause && (
 					<span className="arch-part-cause text-dim" title={row.cause}>
 						{row.cause}

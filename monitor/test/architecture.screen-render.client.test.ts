@@ -108,6 +108,31 @@ describe("Part health is one list, healthy parts folded under a count", () => {
     });
 });
 
+// the fold's summary already says healthy — a folded row adds a status word only when its verdict says more than that
+describe("a folded Part health row shows its status only when it says more than the fold's count", () => {
+  const now = Date.now();
+  const readAt = new Date(now - 5 * 60_000).toISOString();
+  const part = (id: string, tone: string, statusLabel: string) =>
+    ({ id, name: `${id}-part`, kind: "unknown-kind", daemonName: null, tone, statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null });
+  const statusTexts = (root: unknown) =>
+    findNodes(root as ReturnType<typeof renderScreen>, (n) => n.type === "span" && /\barch-part-status\b/.test(String(n.props.className))).map((n) => collectText(n).trim());
+  const rows = [
+    { name: "a fresh read drops the Healthy the fold's count already says", freshness: { at: readAt, regions: [], now }, folded: [] },
+    { name: "a held read keeps Last known on every folded row", freshness: { at: readAt, failed: true, regions: [], now }, folded: ["Last known", "Last known"] },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const mod = await loadArch();
+      const partRows = [part("ok1", "ok", "Healthy"), part("crit", "crit", "Overdue"), part("ok2", "ok", "Healthy")];
+      const props = { partRows, attentionEmpty: "No part needs attention", freshness: row.freshness, nodeIndex: new Map(), onSelectNode: () => {} };
+      const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
+      const [fold] = findNodes(tree, (n) => n.type === "details");
+
+      assert.deepEqual(statusTexts(fold), row.folded, "a folded row's status atom");
+      assert.equal(statusTexts(tree).length - statusTexts(fold).length, 1, "the listed flagged row keeps its status");
+    });
+});
+
 test("a cold map read the page alert speaks for keeps a quiet placeholder in the map's own space", async () => {
   const initial = realUi.INITIAL_REGION_STATE as Record<string, unknown>;
   const down = { ...initial, status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
