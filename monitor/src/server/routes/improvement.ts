@@ -2003,8 +2003,8 @@ async function handleApprove(
     return { status: "invalid_param", param: "id" };
   }
 
-  // execFile (not exec) — id passed as a discrete argv element, no shell interpolation
-  // (defense-in-depth atop the int guard). --auto-regen: on a stale stored diff the script
+  // spawn with an argv array, no shell → the id is a discrete argv element (defense-in-depth atop the int guard);
+  // own process group → the timeout ends the script's children too. --auto-regen: on a stale stored diff the script
   // regenerates + pre-verifies + re-applies inline instead of dead-ending at exit 9.
   const run = await runApplyScript(["--proposal-id", String(id), "--auto-regen", "--actor", REVIEW_ACTOR_OPERATOR]);
   const { exitCode, stderr } = run;
