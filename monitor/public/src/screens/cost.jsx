@@ -87,7 +87,7 @@ function ScreenCost() {
     hot: hotVerdict,
     latestOutsideBand,
     parseError: getParseErrorDayCounts(errorState),
-    isHeld: { kpi: isRegionHeldC(kpiState), trend: isRegionHeldC(tokenState), parseError: isRegionHeldC(errorState) },
+    heldReads: { kpi: isRegionHeldC(kpiState), trend: isRegionHeldC(tokenState), parseError: isRegionHeldC(errorState) },
   });
 
   useEffectC(() => {
@@ -262,21 +262,19 @@ function InstrumentationTierC({ children }) {
   );
 }
 
-const FRESH_READS_C = { kpi: false, trend: false, parseError: false };
-
 /**
  * Spend alarm rows — the Spend card's first rows, none when nothing fires.
  * One spend row (today so far, its pace, or the latest day outside its own band)
  * + a conditional parse-error row.
  * A payload FAILURE is never an alarm row — that stays a banner at its owning group.
- * @param isHeld - per read, whether its loaded data stands beside a failed refresh → the row it feeds reads Last known
+ * @param heldReads - per read, whether its loaded data stands beside a failed refresh → the row it feeds reads Last known (required: no default reads a row as current)
  */
-function computeAlarmRows({ hot, latestOutsideBand, parseError, isHeld = FRESH_READS_C }) {
+function computeAlarmRows({ hot, latestOutsideBand, parseError, heldReads }) {
   const rows = [];
   const hotTone = getHotToneC(hot, latestOutsideBand);
 
   if (hotTone !== null) {
-    rows.push({ key: 'hot', tone: hotTone, ...getSpendAlarmCopyC(hot, latestOutsideBand), isHeld: isSpendRowHeldC(hot, latestOutsideBand, isHeld) });
+    rows.push({ key: 'hot', tone: hotTone, ...getSpendAlarmCopyC(hot, latestOutsideBand), isHeld: isSpendRowHeldC(hot, latestOutsideBand, heldReads) });
   }
   if (parseError.crit > 0) {
     rows.push({
@@ -284,7 +282,7 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError, isHeld = FRESH_R
       tone: 'warn',
       title: `${parseError.crit} of ${parseError.total} days over the unreadable-log threshold`,
       detail: 'Some spend may be unrecorded',
-      isHeld: isHeld.parseError,
+      isHeld: heldReads.parseError,
     });
   }
 
@@ -292,8 +290,8 @@ function computeAlarmRows({ hot, latestOutsideBand, parseError, isHeld = FRESH_R
 }
 
 // held when a read the row's sentence states is held — the kpi behind a spend leg, the trend behind the range fact
-function isSpendRowHeldC(hot, latestOutsideBand, isHeld) {
-  return (isSpendLegHotC(hot) && isHeld.kpi) || (latestOutsideBand && isHeld.trend);
+function isSpendRowHeldC(hot, latestOutsideBand, heldReads) {
+  return (isSpendLegHotC(hot) && heldReads.kpi) || (latestOutsideBand && heldReads.trend);
 }
 
 // loaded data still on screen while its latest refresh failed (ui.jsx putRegionFailure keeps both)

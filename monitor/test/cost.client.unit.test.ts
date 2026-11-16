@@ -93,7 +93,7 @@ interface CostHelpers {
     hot: HotVerdict;
     latestOutsideBand: boolean;
     parseError: { crit: number; total: number };
-    isHeld?: HeldReads;
+    heldReads: HeldReads;
   }) => AlarmRow[];
   isRegionHeldC: (state: PanelState) => boolean;
   computeHotVerdict: (kpi: Record<string, unknown>) => HotVerdict;
@@ -221,6 +221,9 @@ function getTrendPoints(costs: readonly number[]): PanelState {
   return ready({ points: costs.map((c, i) => ({ day: `d${i}`, cost_usd: c })) });
 }
 
+// every read current → no row reads Last known
+const FRESH_READS: HeldReads = { kpi: false, trend: false, parseError: false };
+
 const CALM: HotVerdict = {
   todayCost: 1,
   normalDaily: 1,
@@ -233,7 +236,7 @@ const CALM: HotVerdict = {
 
 test("no alarm row renders without a trigger, each trigger alone fires the one spend row, and the parse-error row follows it", () => {
   assert.strictEqual(
-    cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 0, total: 9 } })
+    cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS })
       .length,
     0,
     "no trigger must render zero rows — the list is not rendered when calm",
@@ -249,6 +252,7 @@ test("no alarm row renders without a trigger, each trigger alone fires the one s
       hot: { ...CALM, ...hotDelta },
       latestOutsideBand: outsideBand,
       parseError: { crit: 0, total: 9 },
+      heldReads: FRESH_READS,
     });
     assert.deepStrictEqual(getKeys(rows), ["hot"], name);
     assert.ok(rows[0]!.title.length > 0, `${name} must state itself in words`);
@@ -258,6 +262,7 @@ test("no alarm row renders without a trigger, each trigger alone fires the one s
     hot: { ...CALM, isHot: true },
     latestOutsideBand: false,
     parseError: { crit: 3, total: 9 },
+    heldReads: FRESH_READS,
   });
   assert.deepStrictEqual(
     getKeys(withParse),
@@ -352,7 +357,7 @@ test("a missing or unusable kpi figure stays null rather than collapsing to zero
     assert.strictEqual(hot.ratio, null, JSON.stringify(kpi));
     assert.strictEqual(hot.isHot, false);
     assert.equal(
-      cost.computeAlarmRows({ hot, latestOutsideBand: false, parseError: { crit: 0, total: 9 } }).length, 0,
+      cost.computeAlarmRows({ hot, latestOutsideBand: false, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS }).length, 0,
       "no ratio means no spend row to state",
     );
   }
@@ -741,7 +746,7 @@ test("the spend amount is stated once, in the alarm rows, exactly when a spend l
   ];
   for (const [name, delta, outsideBand] of cases) {
     const hot = { ...CALM, todayCost: 842, ...delta };
-    const titles = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 3, total: 9 } })]
+    const titles = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 3, total: 9 }, heldReads: FRESH_READS })]
       .map((r) => r.title);
     const places = titles.filter((t) => t.startsWith("$842 so far today")).length;
     assert.equal(places, hot.isHot || hot.isPaceHot ? 1 : 0, name);
@@ -757,7 +762,7 @@ test("every spend row is a warning, whichever trigger fires it, as on the Dashbo
     ["outlier day only", {}, true],
   ];
   for (const [name, delta, outsideBand] of cases) {
-    const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } });
+    const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS });
     assert.equal(rows[0]!.tone, "warn", name);
   }
 });
@@ -1911,30 +1916,29 @@ describe("an alarm row is held exactly when a read its sentence states failed af
     );
   });
 
-  const FRESH: HeldReads = { kpi: false, trend: false, parseError: false };
   const rows = [
-    { name: "a spend leg on a held kpi read", delta: { isHot: true }, isOutsideBand: false, isHeld: { ...FRESH, kpi: true }, expected: true },
-    { name: "a spend leg on a fresh kpi read beside a held trend read", delta: { isHot: true }, isOutsideBand: false, isHeld: { ...FRESH, trend: true }, expected: false },
-    { name: "the range fact on a held trend read", delta: {}, isOutsideBand: true, isHeld: { ...FRESH, trend: true }, expected: true },
-    { name: "the range fact alone beside a held kpi read", delta: {}, isOutsideBand: true, isHeld: { ...FRESH, kpi: true }, expected: false },
-    { name: "a spend leg joined by the range fact on a held trend read", delta: { isPaceHot: true }, isOutsideBand: true, isHeld: { ...FRESH, trend: true }, expected: true },
-    { name: "every read fresh", delta: { isHot: true, isPaceHot: true }, isOutsideBand: true, isHeld: FRESH, expected: false },
+    { name: "a spend leg on a held kpi read", delta: { isHot: true }, isOutsideBand: false, heldReads: { ...FRESH_READS, kpi: true }, expected: true },
+    { name: "a spend leg on a fresh kpi read beside a held trend read", delta: { isHot: true }, isOutsideBand: false, heldReads: { ...FRESH_READS, trend: true }, expected: false },
+    { name: "the range fact on a held trend read", delta: {}, isOutsideBand: true, heldReads: { ...FRESH_READS, trend: true }, expected: true },
+    { name: "the range fact alone beside a held kpi read", delta: {}, isOutsideBand: true, heldReads: { ...FRESH_READS, kpi: true }, expected: false },
+    { name: "a spend leg joined by the range fact on a held trend read", delta: { isPaceHot: true }, isOutsideBand: true, heldReads: { ...FRESH_READS, trend: true }, expected: true },
+    { name: "every read fresh", delta: { isHot: true, isPaceHot: true }, isOutsideBand: true, heldReads: FRESH_READS, expected: false },
   ];
   for (const row of rows) {
     test(`spend row \u2014 ${row.name}`, () => {
       const [spend] = cost.computeAlarmRows({
-        hot: { ...CALM, ...row.delta }, latestOutsideBand: row.isOutsideBand, parseError: { crit: 0, total: 9 }, isHeld: row.isHeld,
+        hot: { ...CALM, ...row.delta }, latestOutsideBand: row.isOutsideBand, parseError: { crit: 0, total: 9 }, heldReads: row.heldReads,
       });
       assert.equal(spend!.isHeld, row.expected);
     });
   }
 
   test("the parse-error row is held with the log-integrity read alone", () => {
-    const getParseRow = (isHeld: HeldReads) =>
-      [...cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 3, total: 9 }, isHeld })]
+    const getParseRow = (heldReads: HeldReads) =>
+      [...cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 3, total: 9 }, heldReads })]
         .find((r) => r.key === "parse-error")!;
 
-    assert.equal(getParseRow({ ...FRESH, parseError: true }).isHeld, true);
+    assert.equal(getParseRow({ ...FRESH_READS, parseError: true }).isHeld, true);
     assert.equal(getParseRow({ kpi: true, trend: true, parseError: false }).isHeld, false);
   });
 
@@ -1957,6 +1961,30 @@ describe("an alarm row is held exactly when a read its sentence states failed af
     assert.match(collectText(alarmRows[0]!).replace(/\s+/g, " "), /so far today Last known 1\.3/, "title, then Last known, then the detail");
     assert.equal(alarmRows[0]!.props["data-tone"], "warn", "a held row keeps its tone");
   });
+
+  // the page reads each row's held state from its own region → regions in ScreenCost declaration order: kpi, trend, model, cache, session, log
+  const hotKpi = getKpiAtRatio(3, null);
+  const getHeld = (state: PanelState): PanelState => ({ ...state, error: "HTTP 500 Internal Server Error" });
+  const critLog = ready({ rows: [{ error_ratio: 0.2 }, { error_ratio: 0.01 }] });
+  const screenRows = [
+    { name: "a held kpi read behind a spend leg holds the spend row", regions: [getHeld(ready(hotKpi)), ready({ points: [] })], words: /so far today/, isHeld: true },
+    { name: "a fresh kpi read beside a held trend read leaves the spend row current", regions: [ready(hotKpi), getHeld(ready({ points: [] }))], words: /so far today/, isHeld: false },
+    {
+      name: "a held log-integrity read holds the parse-error row",
+      regions: [ready(getKpiAtRatio(1, null)), ready({ points: [] }), loading, loading, loading, getHeld(critLog)],
+      words: /unreadable-log/, isHeld: true,
+    },
+  ];
+  for (const row of screenRows) {
+    test(`on the page, ${row.name}`, async () => {
+      const tree = await renderCostWithRegions(row.regions);
+      const alarmRows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
+      const [target] = alarmRows.filter((n) => row.words.test(collectText(n)));
+
+      assert.ok(target, `the row renders: ${alarmRows.map((n) => collectText(n)).join(" | ")}`);
+      assert.equal(/Last known/.test(collectText(target)), row.isHeld);
+    });
+  }
 });
 
 describe("the spend alarm rows lead the Spend card, under its head, and leave it untouched when calm", () => {
