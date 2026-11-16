@@ -541,7 +541,7 @@
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · no border · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
   - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
-- 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes · pressed = ink edge + ink text, no fill inversion).
+- 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes).
 - **fill** (`Badge fill`): `quiet` (default — the neutral shell above) · `solid` = `.pill--solid`, `--ink` shell + `--surface` text — waits for the owner · `tag` = `.pill--tag`, `--tint-fill` + ink — a fact worth a glance · `warn` = `.pill--warn`, `--tint-warn` + ink, led by an ink `⚠` the atom draws — did not arrive. Every fill is 13 / 600, line 1, 20 high, no border.
   - **Count shape** (`role="count"` with a fill, and the quiet nav count): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
   - Never two solid badges on one row; a badge always holds a word or a number. The accent never fills a badge — it is the owner's run-time choice, so text on it has no guaranteed contrast.
@@ -581,7 +581,7 @@
 ### 7.6 Segmented — `.seg`
 
 - `.seg` (a page-wide window such as range 7d/30d/90d — never a list filter): sunken track, no outer ring · `--radius-control` · clip. Items 14/500 `--dim` in every state · min-height 32. Selected = `--surface-raised-2` thumb + inset 1px `--control-edge` + ink text.
-- **No filled selected state on toggles**: `.seg` takes the thumb; pressed `.btn` and `.pill--interactive` take ink edge + ink text + ✓ (glyph pending S2a); `--selected-fill` stays the checkbox checked fill (§7.15). The selected rule sets no weight — each atom keeps its one resting weight (500), so selecting never widens the box (`test/ui.control-state.e2e.test.ts`).
+- **No filled selected state on toggles**: `.seg` takes the thumb; pressed `.btn` takes ink edge + ink text + ✓ (glyph pending S2a); `--selected-fill` stays the checkbox checked fill (§7.15). The selected rule sets no weight — each atom keeps its one resting weight (500), so selecting never widens the box (`test/ui.control-state.e2e.test.ts`).
   - stage menu 의 checked 항목 (screen-local) = ✓ on the chosen value, as in every menu (§12.3). A block-width menu row keeps its box with or without the mark, so it is the one exemption from the no-state-glyph rule (§7.16).
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.
 
@@ -757,7 +757,7 @@
 | C32 segment · `.seg` option (page-wide range) | 32 | 6 / 8 | 14 / 18 / 500 in every state | no group ring; selected = raised thumb + inset 1px control edge; focus outline inset −2 |
 | C32 field · `.field`, `.field-select`, `.field-affix` (form inputs) | 32 | 6 / 8; select inline-end = chevron gutter | 14 / 18 / 400 | 1px border resting on the control edge; focus = border color plus global outline |
 | C32 bar search (filter bar or card head) | 32 | 6 / 8; inline-start = icon gutter | 14 / 18 / 400 | no border: sunken fill + leading faint search icon; focus = global outline |
-| C32 interactive pill · `.pill--interactive` (stage picker, lineage, file-count disclosure) | 32 | 0 / 8 | 13 / 1 / 500 | transparent 1px edge, constant; pressed = ink edge + ink text |
+| C32 interactive pill · `.pill--interactive` (stage picker, lineage, file-count disclosure) | 32 | 0 / 8 | 13 / 1 / 500 | transparent 1px edge, constant |
 | C32 disclosure · `.disclosure` (`DisclosureButton`, every `summary`) | 32 | 0 (inline 8 when bordered) | inherits body or meta | no border; global focus outline |
 | C32 tab | 32 | 6 / 8 | 14 / 18 / 500 | label only; selected = ink + 2px ink underline, constant thickness |
 | C40 button · `.btn.lg` (a composer's buttons only) | 40 (`--ctl-h-lg`) | 8 / 16 | 14 / 22 (`--lh-ctl-lg`) / 500 | as C32 button |

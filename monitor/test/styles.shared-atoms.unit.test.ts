@@ -137,11 +137,9 @@ test("every interactive control atom is at least 32px tall", () => {
 });
 
 test("a pressed toggle keeps its fill and draws an ink edge, never the selected-fill inversion", () => {
-  for (const selector of ['.btn[aria-pressed="true"]', '.pill--interactive[aria-pressed="true"]']) {
-    const body = getRuleBodies(BASE_CSS, selector).join(";");
-    assert.match(body, /border-color:\s*rgb\(var\(--ink\)\)/, `${selector} edge`);
-    assert.doesNotMatch(body, /--selected-fill/, `${selector} fill`);
-  }
+  const body = getRuleBodies(BASE_CSS, '.btn[aria-pressed="true"]').join(";");
+  assert.match(body, /border-color:\s*rgb\(var\(--ink\)\)/, "edge");
+  assert.doesNotMatch(body, /--selected-fill/, "fill");
 });
 
 test("a selected segment is a raised thumb on the control edge, on a track with no outer edge", () => {

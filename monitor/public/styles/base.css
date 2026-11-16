@@ -380,12 +380,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-width: 24px;
 	appearance: none;
 	margin: 0;
-	border: 1px solid transparent; /* the toggle edge's room → no state resizes the chip, and a non-toggle chip stays borderless */
+	border: 1px solid transparent; /* the bordered .btn family's box, drawn borderless */
 	cursor: pointer;
-}
-/* a toggle chip rests on the control edge → its box reads at rest, not only once selected */
-.pill--interactive[aria-pressed] {
-	border-color: rgb(var(--control-edge));
 }
 
 /* a level above the rows of a list inside a card (§12.9) — the one row of a card body on the page ground, dim 13/600, its count a tag count badge.
@@ -1719,8 +1715,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 }
 /* a pressed toggle keeps its resting fill → an ink edge marks it, never the --selected-fill inversion */
 .btn[aria-pressed="true"],
-.btn[aria-pressed="true"]:hover,
-.pill--interactive[aria-pressed="true"] {
+.btn[aria-pressed="true"]:hover {
 	border-color: rgb(var(--ink));
 	color: rgb(var(--ink));
 }
