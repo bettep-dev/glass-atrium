@@ -1046,10 +1046,14 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-weight: 400;
 	color: rgb(var(--dim));
 }
-.queue-row-facts {
-	display: flex;
+/* a count and its tag sit one gap apart on a row and on the letterhead's date line */
+.queue-row-facts,
+.queue-date-facts {
 	align-items: center;
 	gap: var(--space-1_5);
+}
+.queue-row-facts {
+	display: flex;
 	min-width: 0;
 	color: rgb(var(--dim));
 	white-space: nowrap;
@@ -1136,13 +1140,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-steps > .tabular-nums {
 	margin-inline-end: var(--space-2);
 }
-/* the letterhead's second line: what the item holds at its start, when at its end */
-/* the count and its tag keep the row's spacing (.queue-row-facts) */
 .queue-date-facts {
 	display: inline-flex;
-	align-items: center;
-	gap: var(--space-1_5);
 }
+/* the letterhead's second line: what the item holds at its start, when at its end */
 .queue-date-line {
 	display: flex;
 	align-items: center;

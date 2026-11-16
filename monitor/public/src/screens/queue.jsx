@@ -34,20 +34,32 @@ const LIST_GROUPS_Q = {
 
 // one vocabulary on every surface (spec §9.4): whether a recipient has the order, never why it waits
 const RECEIPT_Q = { received: "Received", notYet: "Not yet", notListening: "Not listening", notReceived: "Not received" };
-// the sentence is the badge's title and, under a recipient, spoken only (spec §9.3: no sentence under a recipient)
-const NOT_LISTENING_Q = { DELIVERS: "delivers at its next turn end or restart", GLYPH: "pause" };
+// the receipts a single copy shows and a roll-up keeps listed under its line
+const SHOWN_RECEIPTS_Q = ["notListening", "notReceived"];
+// WHEN → every not-listening sentence and badge title on the page
+const NOT_LISTENING_Q = { WHEN: "next turn end or restart", GLYPH: "pause" };
 
 function getNotReceivedFactQ(count) {
 	return { text: `${count} not received`, badge: "warn" };
 }
 
-/** A not-listening tag badge: the pause glyph before `text`, the sentence in its title; `isSpoken` → screen readers also hear the sentence. */
+/**
+ * A not-listening tag badge: the pause glyph before `text`, the sentence in its title; `isSpoken` → screen readers also hear the sentence.
+ * Under a recipient the sentence is spoken only (spec §9.3: no sentence under a recipient).
+ */
 function getNotListeningFactQ(text, isSpoken = false) {
-	const fact = { text, badge: "tag", glyph: NOT_LISTENING_Q.GLYPH, title: `${RECEIPT_Q.notListening} — ${NOT_LISTENING_Q.DELIVERS}` };
-	return isSpoken ? { ...fact, spoken: `, ${NOT_LISTENING_Q.DELIVERS}` } : fact;
+	const delivers = `delivers at its ${NOT_LISTENING_Q.WHEN}`;
+	const fact = { text, badge: "tag", glyph: NOT_LISTENING_Q.GLYPH, title: `${RECEIPT_Q.notListening} — ${delivers}` };
+	return isSpoken ? { ...fact, spoken: `, ${delivers}` } : fact;
 }
 
-/** A session that hears nothing until its next turn end or restart: live or not reachable, with no wait or listener polling. */
+/** `<names> is not listening: it gets <what> at its NOT_LISTENING_Q.WHEN.`, plural for several names. */
+function getNotListeningSentenceQ(names, what) {
+	const isOne = names.length === 1;
+	return `${getNameListQ(names)} ${isOne ? "is" : "are"} not listening: ${isOne ? "it gets" : "they get"} ${what} at ${isOne ? "its" : "their"} ${NOT_LISTENING_Q.WHEN}.`;
+}
+
+/** A session that hears nothing until its NOT_LISTENING_Q.WHEN: live or not reachable, with no wait or listener polling. */
 function isNotListeningQ(session) {
 	return session.state !== "exited" && !session.isWaiting;
 }
@@ -1008,11 +1020,9 @@ function getOrderInvalidQ(targets, text) {
 function getOrderNoteQ({ ids, names }, rows = null) {
 	if (ids.length === 0) return rows?.some((row) => row.isSelectable) === false ? "No session can take an order right now." : "Tick a session in the rail to address this order.";
 	const notListening = (rows ?? []).filter((row) => ids.includes(row.id) && isNotListeningQ(row)).map((row) => row.name);
-	if (ids.length === 1) return notListening.length > 0 ? `${notListening[0]} is not listening: it gets this at its next turn end or restart.` : `Goes to ${names[0]}.`;
+	if (ids.length === 1) return notListening.length > 0 ? getNotListeningSentenceQ(notListening, "this") : `Goes to ${names[0]}.`;
 	const each = "Each ticked session gets its own copy.";
-	if (notListening.length === 0) return each;
-	const who = notListening.length === 1 ? `${notListening[0]} is not listening: it gets it at its` : `${getNameListQ(notListening)} are not listening: they get it at their`;
-	return `${each} ${who} next turn end or restart.`;
+	return notListening.length === 0 ? each : `${each} ${getNotListeningSentenceQ(notListening, "it")}`;
 }
 
 function getOrderSentStatusQ(names) {
@@ -1593,7 +1603,7 @@ function getDeliveryFactsQ(item, copies) {
 // one copy → only a Not listening or a Not received shows · several → `2 of 3 received` (all waiting → the word Not yet), then `n not listening`, then any not received
 function getReceiptFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
-	if (receipts.length === 1) return receipts[0] === "notReceived" || receipts[0] === "notListening" ? [getReceiptFactQ(receipts[0])] : [];
+	if (receipts.length === 1) return SHOWN_RECEIPTS_Q.includes(receipts[0]) ? [getReceiptFactQ(receipts[0])] : [];
 	const received = getReceiptCountQ(receipts, "received");
 	const notListening = getReceiptCountQ(receipts, "notListening");
 	const failed = getReceiptCountQ(receipts, "notReceived");
@@ -1891,7 +1901,7 @@ function CardStateQ({ item, cliPath }) {
 	return (
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
-			{getReceiptQ(item) === "notListening" && <p className="fs-meta text-dim">{`${item.session.name} is not listening: it gets this answer at its next turn end or restart.`}</p>}
+			{getReceiptQ(item) === "notListening" && <p className="fs-meta text-dim">{getNotListeningSentenceQ([item.session.name], "this answer")}</p>}
 			<PullLineQ item={item} cliPath={cliPath} />
 			{notes.length === 0 && <NotReceivedLineQ item={item} cliPath={cliPath} />}
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
@@ -2631,7 +2641,7 @@ function getSteppedIndexQ(index, count, key) {
 function RecipientsQ({ copies, busy, onResend }) {
 	const resendable = copies.filter((copy) => copy.canResend).map((copy) => copy.id);
 	const isRolledUp = copies.length >= ORDERS_Q.ROLL_UP_FROM;
-	const isOutside = (copy) => !isRolledUp || ["notReceived", "notListening"].includes(getReceiptQ(copy));
+	const isOutside = (copy) => !isRolledUp || SHOWN_RECEIPTS_Q.includes(getReceiptQ(copy));
 	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} busy={busy} onResend={onResend} />)}</ul>;
 	const [counts, ...badges] = getRollUpFactsQ(copies);
 	return (
