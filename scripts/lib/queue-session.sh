@@ -54,7 +54,7 @@ queue_get_root() {
   printf '%s\n' "${GA_ROOT:-${HOME}/.glass-atrium}"
 }
 
-# The installed CLI's absolute path — the one literal the settings allow rule, the pointer line and the help name.
+# The installed CLI's absolute path — the one literal the pointer line and the help name.
 queue_get_cli_path() {
   local root
   root="$(queue_get_root)"

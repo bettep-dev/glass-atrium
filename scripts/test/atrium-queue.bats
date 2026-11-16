@@ -1253,7 +1253,7 @@ mark_awaiting() {
   done
 }
 
-@test "help names every command and the allow rule with the absolute installed CLI path and no interpreter or env prefix" {
+@test "help names every command with the absolute installed CLI path and no interpreter or env prefix, and no permission rule" {
   run_cli help
   local cli_path="${GA_ROOT}/scripts/atrium-queue.sh" cmd
   [[ "${status}" -eq 0 ]] || {
@@ -1266,9 +1266,9 @@ mark_awaiting() {
       return 1
     }
   done
-  # the settings proposal copies this rule → its prefix is the literal the pointer line and pending print
-  grep -qxF "  Bash(${cli_path}:*)" <<<"${output}" || {
-    echo "allow rule: ${output}"
+  # no installer step writes a queue permission rule → help claims none
+  [[ "${output}" != *"Bash("* && "${output}" != *"allow rule"* ]] || {
+    echo "help names a permission rule nothing installs: ${output}"
     return 1
   }
   [[ "${output}" != *"queue key"* && "${output}" != *provision* ]] || {

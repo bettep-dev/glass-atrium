@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report or a decision, fetch an
 # item, pull or wait for this session's owner answers and messages, ack a delivery, withdraw an item, and register
-# this session. Run it by its absolute installed path with nothing in front — the one literal the allow rule names.
+# this session. Run it by its absolute installed path with nothing in front — the one literal every printed step names.
 # Exit codes: 0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the
 #   monitor · 3 the fetched item names another session (stop, take no action) · 4 the wait's bound passed with
 #   nothing claimed, or its owning Claude process is gone · 5 another wait holds this session · 64 usage or local validation
@@ -123,7 +123,7 @@ print_usage() {
   local cli
   cli="$(queue_get_cli_path)"
   cat <<USAGE
-Usage — run by this absolute path, no interpreter or env prefix in front, so the allow rule matches:
+Usage — run by this absolute path, no interpreter or env prefix in front:
   ${cli} report <item.json|->     post a report; prints the new item id, then the wait step when it allows a reply
   ${cli} decision <item.json|->   post a decision; prints the new item id, then the wait step
   ${cli} get <item-id>            fetch one of this session's items, answer included; an owner answer or message
@@ -149,8 +149,6 @@ Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monit
 On a wait's exit: 0 follow the printed steps, then wait again · 1 wait again once · 2 after an unknown-session
   refusal run register and wait again, otherwise stop waiting · 4 wait again · 5 nothing, another wait runs ·
   any other code wait again once
-Prompt-free in default permission mode, through this allow rule in the shared user settings:
-  Bash(${cli}:*)
 USAGE
 }
 
