@@ -44,6 +44,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
 import { registerBrowserShutdownHook, resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
+import { runExclusiveRender } from "../src/server/clauded-docs/html-export.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
 import { getMermaidThemeValue } from "./lib/mermaid-config-source.js";
 
@@ -319,6 +320,29 @@ test("GET /:id/html-export: ETag round-trip — second request with If-None-Matc
   assert.strictEqual(second.headers["etag"], etag, "304 echoes the ETag");
 });
 
+test("export renders run one at a time across callers, in call order, and a failed render frees the slot", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const finished: string[] = [];
+  const render = (name: string, fails = false) => async () => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    inFlight -= 1;
+    finished.push(name);
+    if (fails) throw new Error(`${name} failed`);
+    return name;
+  };
+  const results = await Promise.allSettled([
+    runExclusiveRender(render("first")),
+    runExclusiveRender(render("second", true)),
+    runExclusiveRender(render("third")),
+  ]);
+  assert.strictEqual(maxInFlight, 1, "never two renders at once");
+  assert.deepStrictEqual(finished, ["first", "second", "third"]);
+  assert.deepStrictEqual(results.map((result) => result.status), ["fulfilled", "rejected", "fulfilled"]);
+});
+
 test("GET /:id/html-export: Korean title — attachment Content-Disposition dual-param", async () => {
   const koreanLabel = "한글제목-계획";
   const title = `${SUITE_MARKER}-${koreanLabel}-${randomUUID()}`;
@@ -329,6 +353,7 @@ test("GET /:id/html-export: Korean title — attachment Content-Disposition dual
   const disposition = res.headers["content-disposition"] as string;
   assert.ok(typeof disposition === "string", "Content-Disposition present");
   assert.ok(disposition.startsWith("attachment; filename="), `attachment disposition, got: ${disposition}`);
+  assert.strictEqual(res.headers["x-content-type-options"], "nosniff", "the download is never sniffed into a page");
   for (let i = 0; i < disposition.length; i += 1) {
     assert.ok(disposition.charCodeAt(i) <= 0x7f, `non-ASCII at ${i}: ${disposition}`);
   }

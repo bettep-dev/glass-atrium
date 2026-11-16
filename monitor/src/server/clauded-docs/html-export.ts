@@ -254,7 +254,7 @@ export async function renderSelfContainedHtml(
     // chromium, no browser pool, byte-identical output.
     if (format === "md" && countMdMermaidFences(storedBody) > 0) {
       try {
-        return await renderHtmlThroughBrowser(shell);
+        return await runExclusiveRender(() => renderHtmlThroughBrowser(shell));
       } catch (error) {
         // An md body ALWAYS had a 200 before this path existed, so a renderer that
         // cannot draw its fences must return the document, not a 503 — a source
@@ -269,7 +269,7 @@ export async function renderSelfContainedHtml(
     }
     return shell;
   }
-  return renderHtmlThroughBrowser(storedBody);
+  return runExclusiveRender(() => renderHtmlThroughBrowser(storedBody));
 }
 
 /**
@@ -291,6 +291,20 @@ export function shouldAllowRenderRequest(requestUrl: string): boolean {
     return false;
   }
   return host === TAILWIND_CDN_HOST;
+}
+
+// Tail of the render line: each Chromium export render starts once the one before it settles.
+let renderTail: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs one Chromium export render at a time across the process, in call order; a later caller waits, never 429
+ * → a multi export's sequential renders and a concurrent single export never fail each other.
+ * ponytail: the wait line has no length cap — the remote per-device rate limit bounds it; add a cap + 429 if it grows.
+ */
+export function runExclusiveRender<T>(render: () => Promise<T>): Promise<T> {
+  const result = renderTail.then(render);
+  renderTail = result.catch(() => undefined);
+  return result;
 }
 
 async function renderHtmlThroughBrowser(storedBody: string): Promise<string> {

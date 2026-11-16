@@ -1387,6 +1387,7 @@ async function handleHtmlExportSingle(
 
   reply.header("Content-Type", "text/html; charset=utf-8");
   reply.header("Content-Disposition", buildHtmlExportContentDisposition(row));
+  reply.header("X-Content-Type-Options", "nosniff");
   reply.header("ETag", etag);
   reply.header("Cache-Control", "private, max-age=0, must-revalidate");
 
@@ -1553,6 +1554,7 @@ async function handleHtmlExportMulti(
   const zipName = `clauded-docs-${todayDateStamp()}.zip`;
   reply.header("Content-Type", "application/zip");
   reply.header("Content-Disposition", `attachment; filename="${zipName}"`);
+  reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Cache-Control", "private, max-age=0, must-revalidate");
   // Partial-export signal — client toasts warn when included < requested.
   reply.header("X-Included-Count", String(entries.length));
