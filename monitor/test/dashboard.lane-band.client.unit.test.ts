@@ -480,6 +480,20 @@ test("the outcome stat leads with the failed share, its counts on the context li
   assert.doesNotMatch(String(stat.context), /alarm|writer-emitted/, "the visible line carries neither");
 });
 
+describe("the outcome stat's context line counts the leg that set its tone", () => {
+  const rows = [
+    { name: "caveats over their line, failures under theirs → the caveat count", byResult: [{ result: "done_with_concerns", count: 48 }], context: "48 of 400 with open caveats" },
+    { name: "failures over their line → the failed count", byResult: [{ result: "fail", count: 40 }, { result: "done_with_concerns", count: 48 }], context: "40 of 400 failed or blocked" },
+    { name: "neither line tripped → the failed count", byResult: [{ result: "fail", count: 4 }, { result: "done_with_concerns", count: 8 }], context: "4 of 400 failed or blocked" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const stats = dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: outcomes(row.byResult) });
+      assert.equal(statOf(stats, "outcomes").context, row.context);
+    });
+  }
+});
+
 test("the spend stat tones only on the pace verdict, never on the amount", () => {
   const big = statOf(
     dash.buildStats({ harness: HEALTHY, costState: kpi(9999, 20000), agentsState: LOADING, outcomesState: LOADING }),

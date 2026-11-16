@@ -128,7 +128,8 @@ test("the Task results stat headlines a bare failed share, its counts on the con
   for (const [status, tone] of [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const) {
     const stat = buildOutcomeStat({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
     assert.equal(stat.value, "17.5%", `${status}: the headline is the share alone, no denominator to wrap`);
-    assert.equal(stat.context, "7 of 40 failed or blocked", `${status}: the failed count and its denominator stay visible`);
+    const tripped = tone === "warn" ? "9 of 40 with open caveats" : "7 of 40 failed or blocked";
+    assert.equal(stat.context, tripped, `${status}: the count of the leg that set the tone and its denominator stay visible`);
     assert.ok(stat.notes.some((note) => /22\.5% \(9\)/.test(note)), `${status}: the caveat share and count sit behind ⓘ`);
   }
 

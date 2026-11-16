@@ -1074,6 +1074,8 @@ function describeOutcomeContext(rate) {
   if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
   if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
   if (rate.status === 'low-n') return 'outcomes, too few to judge';
+  // the caveat leg set the tone → its count, so a warn mark never sits over an untripped failure count
+  if (rate.tone === 'warn') return `${formatInt(rate.openCaveats)} of ${formatInt(rate.writerTotal)} with open caveats`;
   return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed or blocked`;
 }
 
