@@ -13,7 +13,7 @@ import type { Socket } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { type PeerCertificate, type TLSSocket, checkServerIdentity as checkTlsIdentity } from "node:tls";
+import { type PeerCertificate, type TLSSocket, checkServerIdentity as checkTlsIdentity, connect as connectTls } from "node:tls";
 
 import type { FastifyInstance } from "fastify";
 
@@ -107,6 +107,40 @@ test("a reissued leaf is served to the next connection without reopening the lis
     setRemoteCertificate(app, next);
     const served = await getOverTls(port, next.cert);
     assert.equal(served.fingerprint, new X509Certificate(next.cert).fingerprint256);
+  } finally {
+    await app.close();
+  }
+});
+
+/** Raw bytes over TLS → the whole answer, read until the server closes the connection. */
+function sendRawOverTls(port: number, ca: Buffer, bytes: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connectTls({ host: STAND_IN, port, ca }, () => socket.end(bytes));
+    let answer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => (answer += chunk));
+    socket.on("close", () => resolve(answer));
+    socket.on("error", reject);
+  });
+}
+
+test("a request the framework rejects before any route is answered with the one opaque reply", async () => {
+  const tls = await getTls();
+  const { app, port } = await openStandIn(tls);
+  const host = `Host: ${STAND_IN}:${port}\r\nConnection: close\r\n\r\n`;
+  const rows = [
+    { name: "malformed request line", bytes: "\u0001NOT-HTTP\r\n\r\n", echo: "NOT-HTTP" },
+    { name: "undecodable url", bytes: `GET /%E0%A4%A HTTP/1.1\r\n${host}`, echo: "%E0%A4%A" },
+    { name: "undecodable url under a route prefix", bytes: `GET /api/remote/%zz HTTP/1.1\r\n${host}`, echo: "%zz" },
+  ];
+  try {
+    for (const row of rows) {
+      const answer = await sendRawOverTls(port, tls.cert, row.bytes);
+      const [head = "", body] = answer.split("\r\n\r\n");
+      assert.match(head, /^HTTP\/1\.1 400 /, row.name);
+      assert.equal(body, '{"error":"bad_request"}', row.name);
+      assert.ok(!answer.includes(row.echo) && !answer.includes("FST_"), `${row.name}: no echo, no framework code`);
+    }
   } finally {
     await app.close();
   }

@@ -3,10 +3,12 @@
 import { X509Certificate } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Server as HttpsServer } from "node:https";
+import type { Socket } from "node:net";
 import path from "node:path";
 
-import type { FastifyInstance } from "fastify";
+import type { ConnectionError, FastifyError, FastifyInstance, FastifyReply } from "fastify";
 
+import { logger } from "../logger.js";
 import { REMOTE_LIMITS, attachConnectionCaps } from "./limits.js";
 
 export interface RemoteTls {
@@ -26,12 +28,39 @@ export interface LeafNames {
 const REMOTE_TIMEOUTS = { HEADERS_MS: 10_000, KEEP_ALIVE_MS: 60_000 } as const;
 export const LEAF_REISSUE_AHEAD_MS = 30 * 86_400_000;
 
-/** Fastify server options for the remote instance: TLS 1.3 only → a plain-HTTP request fails at the handshake. */
+/** The one answer to a request refused before any gate hook — no framework code, no echoed path. */
+const FRAMEWORK_REFUSAL_BODY = JSON.stringify({ error: "bad_request" });
+
+/**
+ * Fastify server options for the remote instance: TLS 1.3 only → a plain-HTTP request fails at the handshake.
+ * A request the parser or the router rejects never reaches the gate → it gets the fixed refusal body.
+ */
 export function getRemoteServerOptions(tls: RemoteTls) {
   return {
     https: { key: tls.key, cert: tls.cert, minVersion: "TLSv1.3" as const },
     keepAliveTimeout: REMOTE_TIMEOUTS.KEEP_ALIVE_MS,
+    frameworkErrors: refuseUnroutable,
+    clientErrorHandler: refuseUnparsed,
   };
+}
+
+// undecodable URL (router) → no route matched, so no gate hook runs
+function refuseUnroutable(error: FastifyError, _request: unknown, reply: FastifyReply): void {
+  logger.debug({ code: error.code }, "remote request refused before routing");
+  void reply.code(400).type("application/json").send(FRAMEWORK_REFUSAL_BODY);
+}
+
+// HTTP parser rejection → there is no request object; the raw socket is answered, then closed
+function refuseUnparsed(error: ConnectionError, socket: Socket): void {
+  if (error.code === "ECONNRESET" || socket.destroyed) return;
+  // code only → the error object carries the client's raw bytes
+  logger.debug({ code: error.code }, "remote request refused by the HTTP parser");
+  if (socket.writable) {
+    socket.write(
+      `HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(FRAMEWORK_REFUSAL_BODY)}\r\nConnection: close\r\n\r\n${FRAMEWORK_REFUSAL_BODY}`,
+    );
+  }
+  socket.destroy();
 }
 
 /** Header timeout and connection caps on the instance's own server; call once, before listen. */
