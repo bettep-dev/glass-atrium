@@ -2,8 +2,11 @@
 # queue-turn-end-check.sh — Stop hook, at most one block per turn end, carrying either line or both, never an item's
 # text: (1) an interactive or background main-session turn that called a tool and whose final message's last
 # non-blank line is no [QUEUE-VERDICT] form, or names an id that is not an item of this session, is asked for its
-# verdict once per turn; (2) while an item this session posted awaits the owner and neither a wait nor a listener of
-# this Claude process runs or is starting, the wait command — a fallback for sessions no listener serves.
+# verdict once per turn; (2) while an item this session posted awaits the owner, no wait or listener of this Claude
+# process runs, and no listener of it ever started, the wait command — a fallback for processes no listener serves.
+# The listening mark, kept for the process's life, proves only that a listener of it once started: each later turn end
+# starts a fresh one beside this check, whose lock may land after this check reads → the mark covers that start, and
+# so also leaves the check silent after a listener that ended on a refusal or a monitor failure.
 # The verdict check confirms only that a verdict is stated and its ids are this session's items, never the judgment.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_wait_state).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
@@ -178,8 +181,8 @@ set_foreign_ids() {
   done
 }
 
-# <session id> → wait_reason: the wait command while an item of this session awaits the owner, neither a wait nor a
-# listener of this Claude process runs or is starting, and this process was not told about these items within
+# <session id> → wait_reason: the wait command while an item of this session awaits the owner, no wait or listener of
+# this Claude process runs, no listener of it ever started, and this process was not told about these items within
 # NUDGE_INTERVAL_MIN
 set_wait_reason() {
   local items nudge_key wait_state stamp newest item

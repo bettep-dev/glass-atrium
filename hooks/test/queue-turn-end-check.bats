@@ -2,9 +2,9 @@
 # shellcheck disable=SC2016,SC2030,SC2031,SC2154,SC2249,SC2312  # backticked verdict forms are literal text; a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison; each case arm is a row
 # The owner queue's turn-end check (Stop hook) against a stand-in monitor: it keeps a turn from ending at most once
 # per turn, asking an interactive or background session's tool-using turn for its [QUEUE-VERDICT] line, naming the
-# wait command while an item of this session awaits the owner and neither a wait nor a listener of this Claude process
-# runs or is starting, or both in one block — never twice for the same items, never with item text, and never when it
-# cannot decide.
+# wait command while an item of this session awaits the owner, no wait or listener of this Claude process runs and
+# none of its listeners ever started, or both in one block — never twice for the same items, never with item text,
+# and never when it cannot decide.
 #
 # Run via: bats hooks/test/queue-turn-end-check.bats
 # Requires: bats, bash 3.2+, jq, curl, python3
