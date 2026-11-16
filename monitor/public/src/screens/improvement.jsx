@@ -948,9 +948,8 @@ function KanbanCardI({
 			<div className="flex-shrink-0">
 				<CardHead
 					title="Suggestion board"
-					sub={`Lanes: latest ${BOARD_RECENT_LIMIT} suggestions`}
+					sub={<HeadStatusI count={isLoading || isError ? 0 : awaitingRows.length} words="awaiting" />}
 					info={`Applied and rejected lanes read the latest ${BOARD_RECENT_LIMIT} suggestions. Awaiting shows every open one.`}
-					right={<HeadStatusI count={isLoading || isError ? 0 : awaitingRows.length} words="awaiting" />}
 				/>
 			</div>
 			{isError ? (
@@ -999,13 +998,14 @@ function KanbanCardI({
 	);
 }
 
-// Board head Status — the live region stays mounted so a count arriving later is announced (spec 44084 §3.1)
+// head Status in the card sub slot — the live region stays mounted so a count arriving later is announced (spec 44084 §3.1)
 function HeadStatusI({ count, words }) {
 	return (
 		<span role="status" aria-live="polite" className="inline-flex">
 			{count > 0 ? (
 				<span data-role="head-status" className="inline-flex items-center gap-label-inline fs-meta text-dim">
-					<SymI s="⚠" className="text-warn" size={13} />
+					{/* the page's in-page alarm → the alarm-row glyph size; at 13 the warn glyph reads under 3:1 in light */}
+					<SymI s="⚠" className="text-warn" size={16} />
 					<span>{`${formatIntI(count)} ${words}`}</span>
 				</span>
 			) : null}
@@ -2525,8 +2525,8 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
 			<CardHead
 				title="Pattern ledger"
+				sub={<HeadStatusI count={heldNeedingHuman} words={heldNeedingHuman === 1 ? "needs a human" : "need a human"} />}
 				info={<LedgerNotesI suppression={suppression} />}
-				right={<HeadStatusI count={heldNeedingHuman} words={heldNeedingHuman === 1 ? "needs a human" : "need a human"} />}
 			/>
 			<div className="i-ledger-body">
 				{hasProblems ? (

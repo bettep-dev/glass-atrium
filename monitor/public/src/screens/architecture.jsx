@@ -3041,7 +3041,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
 					{status && (
 						<span className="card-sub arch-part-health-status" data-tone={status.tone}>
-							<Icon name={TONE_ICON[status.tone]} size={14} className={TONE_GLYPH_CLASS[status.tone]} />
+							<Icon name={TONE_ICON[status.tone]} size={16} className={TONE_GLYPH_CLASS[status.tone]} />
 							<span className="sr-only">{`${ALERT_SEVERITY_WORD[status.tone]}: `}</span>
 							{status.text}
 						</span>

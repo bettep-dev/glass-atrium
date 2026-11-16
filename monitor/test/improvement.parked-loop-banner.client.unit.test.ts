@@ -546,7 +546,9 @@ describe("the awaiting count is the board head's warn status, announced live, ne
     );
     const head = tree.find((el) => el.type === sandbox.window.UI.CardHead);
     assert.ok(head, "the board keeps its card head");
-    return { tree, headTree: screenTree(head.props.right) };
+    // the card sub slot, as on the System map's Part health head (spec 44084 §3.1) → the lane window rides the ⓘ
+    assert.equal(head.props.right, undefined, "the status sits beside the title, never at the head's right end");
+    return { tree, headTree: screenTree(head.props.sub) };
   };
   const printed = (tree: RecordedElement[]) =>
     tree
@@ -566,7 +568,8 @@ describe("the awaiting count is the board head's warn status, announced live, ne
       if (row.status === null) return assert.equal(statuses.length, 0);
       assert.equal(statuses.length, 1);
       assert.equal(printed(screenTree(statuses[0])), row.status);
-      assert.ok(screenTree(statuses[0]).some((el) => el.props.s === "⚠" && /\btext-warn\b/.test(String(el.props.className))));
+      // the alarm-row glyph size → at 13 the warn glyph measures under 3:1 in the light theme
+      assert.ok(screenTree(statuses[0]).some((el) => el.props.s === "⚠" && /\btext-warn\b/.test(String(el.props.className)) && el.props.size === 16));
     });
   }
 });

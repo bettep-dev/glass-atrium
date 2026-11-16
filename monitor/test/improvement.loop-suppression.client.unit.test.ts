@@ -406,8 +406,9 @@ describe("the ledger head states once how many held patterns need a human", () =
   for (const row of rows) {
     test(row.name, () => {
       const head = findByType(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: row.suppression }), sandbox.window.UI.CardHead);
-      // the board's head status slot, so both cards place their status alike
-      const status = faceTextOf(head?.props.right).replace(/\s+/g, " ").trim();
+      // the card sub slot, where the board and the System map's Part health head place theirs (spec 44084 §3.1)
+      assert.equal(head?.props.right, undefined, "the status sits beside the title, never at the head's right end");
+      const status = faceTextOf(head?.props.sub).replace(/\s+/g, " ").trim();
       if (row.sub) assert.match(status, row.sub);
       else assert.equal(status, "", `status shown: ${status}`);
     });
