@@ -548,13 +548,28 @@ ${foreign/\%s/6}" \
   }
 }
 
-@test "wait ends with exit 4 and a start-again line when the bound passes with nothing claimed" {
+@test "wait ends with exit 4 and a start-again line when the bound passes with nothing claimed and no listener started" {
   start_stub
   start_owner
   use_fast_wait 2
   set_reply 200 '{"items":[]}'
   run_cli wait
   [[ "${status}" -eq 4 && "${output}" == *"start the wait again"* && -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+}
+
+@test "a wait that displaced this Claude process's listener ends at the bound with exit 4, starting no wait and naming the listener" {
+  start_stub
+  start_owner
+  use_fast_wait 2
+  set_reply 200 '{"items":[]}'
+  # shellcheck source-path=SCRIPTDIR source=../lib/queue-session.sh
+  (source "${GA}/scripts/lib/queue-session.sh" &&
+    queue_put_listening_mark "${SESSION_ID}" "${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")")
+  run_cli wait
+  [[ "${status}" -eq 4 && "${output}" == "nothing arrived for this session within the bound — start no wait: this session's listener takes over at the turn's end" ]] || {
     echo "status=${status} ${output}${stderr}"
     return 1
   }
@@ -1268,6 +1283,10 @@ mark_awaiting() {
   done
   [[ "${output}" != *"queue key"* && "${output}" != *provision* ]] || {
     echo "help still names a provisioning step: ${output}"
+    return 1
+  }
+  [[ "${output}" == *$'\nThe wait step: start a background wait, or start none — a wait of this session already runs, or its listener announces for it.\n'* ]] || {
+    echo "help names fewer than the wait step's three outcomes: ${output}"
     return 1
   }
 }

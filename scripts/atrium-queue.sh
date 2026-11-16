@@ -140,7 +140,7 @@ Usage — run by this absolute path, no interpreter or env prefix in front:
                                   run it from the session's start directory: the monitor resumes from it;
                                   --name labels this session on the Queue page (only a later --name replaces it);
                                   prints the wait step last
-The wait step: start a background wait, or that one of this session already runs.
+The wait step: start a background wait, or start none — a wait of this session already runs, or its listener announces for it.
   ${cli} help
 Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
@@ -603,9 +603,20 @@ poll_wait() {
   drop_announce_record "${CLAUDE_CODE_SESSION_ID:-}"
 }
 
+# <last poll outcome> → exits 1 on no reply, else 4 with the step by what polls once this wait ends (queue_get_poller):
+# its own lock goes first, since the reader counts this wait's record as a running wait
 end_wait_at_bound() {
+  local session_id poller
   if (($1 == 1)); then fail 1 "no reply from the monitor by the wait's bound — start the wait again once"; fi
-  printf 'nothing arrived for this session within the bound — start the wait again\n'
+  drop_wait_lock
+  session_id="$(queue_get_session_id)"
+  poller="$(queue_get_poller "${session_id}")"
+  if [[ "${poller}" == listener ]]; then
+    printf "nothing arrived for this session within the bound — start no wait: this session's listener takes over at"
+    printf " the turn's end\n"
+  else
+    printf 'nothing arrived for this session within the bound — start the wait again\n'
+  fi
   exit 4
 }
 
