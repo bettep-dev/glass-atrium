@@ -750,11 +750,19 @@
   - 화면이 그리는 bus 2 · bypass 1 (`createScreenPathAR`) = 그려진 `path.flowchart-link` 의 clone — 같은 class · marker, id `L_<from>_<to>_screen`, `data-arch-edge="bus"` / `"bypass"`. 직교성 검사가 이 셋도 canvas link 로 센다 (`architecture.merged-surface.e2e`).
 - **spine label**: **자기 edge 의 오른쪽**, edge 와 `LABEL_PAD` 16 · 다른 edge 와 ≥ 16.
 - **크기**:
-  - arrowhead 2× (`ARROW_SCALE`) · default view = contain fit 의 `DEFAULT_VIEW_SHARE` 0.9 · default view 의 모든 라벨 ≥ 13px (1024 에서 13.49px 측정).
-  - map pane 높이 floor 500px (`PANE.FLOOR_PX`) — 첫 화면 높이가 모자라면 floor 가 이기고 Part health 는 첫 화면 아래로.
+  - arrowhead 2× (`ARROW_SCALE`) · default view = contain fit 의 `DEFAULT_VIEW_SHARE` 0.9, 단 라벨 ceiling 16px (`MAP_LABEL.ceilingPx`) 를 넘지 않음 → default view 라벨 13–16px (1024 에서 13.49px · 1440 · 1920 에서 16px 측정).
+  - ceiling 이 걸리면 pane 은 그림 높이로 줄고 (contain frame) Part health 가 첫 화면에 올라옴.
+  - map pane 높이 floor 500px (`PANE.FLOOR_PX`) — 좁거나 낮은 창에서만 걸림: 첫 화면 높이가 모자라면 floor 가 이기고 Part health 는 첫 화면 아래로.
   - zoom 컨트롤용 우측 inset ≥ 48px (`CONTROLS_MIN_INSET_PX`) — 컨트롤 아래 box 0개.
+  - canvas = map card 의 body, hairline 에 flush (`card-body flush`) — 안쪽 band 없음 · canvas 자체 radius 0, 모서리는 card 가 clip (`architecture.map-fit.e2e`).
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
+  - badge 는 위 테두리에 반쯤 걸침: 노드는 오른쪽 모서리, zone 은 왼쪽 모서리 — 들어오는 edge 라벨이 spine 오른쪽에서 zone 위 테두리에 끝남 (`getCornerBadgeGeometryAR`, `architecture.render-structure.e2e`).
+- **h1 아래**: 범례 한 줄뿐 — verdict 줄 · chip 없음. 상태는 Part health card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 범례의 tone 낱말 (`1 critical · 1 needs attention` — 셈한 모든 행에 참인 낱말, Down · Overdue 둘 다 critical), glyph 간격과 가운데 정렬은 행 status atom 과 같음, 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
+- **Part health 목록** (`PartHealthBlockAR`): 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
+  - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 action "Open box" = `btn ghost sm` (quiet tier).
+  - healthy 부품은 `N healthy` fold (`details` + `summary.disclosure`) 안으로 접힘 — 접힌 기본 상태. fold 안 행은 status atom 없음 (summary 가 이미 healthy) — 잡아 둔 읽기의 `Last known` 만 행에 남음.
+- **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0 (양 테마). 노드 테두리 override 는 dark 에서만: 그려진 map 은 양 테마 모두 어두운 노드 fill 이라 light `--cat-*` 가 오늘보다 낮게 잼 (spec 44084 §13) → light 는 classDef stroke 그대로. light 의 범례 swatch (light `--cat-*`) ↔ 노드 테두리 (classDef hex) 일치는 map light theme follow-up FU1 몫. 라벨도 같음: box 라벨 `p` 의 `--ink` · zone 제목과 edge 라벨의 `--dim` 은 dark 에서만, light 는 오늘의 라벨 색 그대로 (FU1).
 
 ### 7.15 Control size tiers
 

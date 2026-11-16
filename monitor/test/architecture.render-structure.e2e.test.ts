@@ -468,20 +468,21 @@ describe("healthy live fixture", () => {
 		assert.equal(svgCount, 1, `rendered diagram svg count inside ${ctx.selectors.canvas}`);
 	});
 
-	test("the caption is a sentence-case status line over a legend, all at 13px or larger", async () => {
+	test("the caption under the page title is the legend alone, sentence case at 13px or larger", async () => {
 		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
 		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
-		const [status, ...legend] = await ctx.page.evaluate(() =>
-			[...document.querySelectorAll(".arch-caption .page-verdict-text, .arch-legend li, .arch-legend-swatch")].map((el) => ({
+		const legend = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-legend li, .arch-legend-swatch")].map((el) => ({
 				text: (el as HTMLElement).innerText,
 				transform: getComputedStyle(el).textTransform,
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
 			})),
 		);
-		const probe = { status, legend };
+		const captionChildren = await ctx.page.evaluate(() => [...document.querySelectorAll(".arch-caption > *")].map((el) => el.className));
+		const probe = { legend };
 
-		assert.ok(probe.status, "a status line renders under the page title");
-		for (const line of [probe.status, ...probe.legend]) {
+		assert.deepStrictEqual(captionChildren, ["arch-legend fs-meta text-dim"], "nothing but the legend stands between the h1 and the first card");
+		for (const line of probe.legend) {
 			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
 			assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 		}
@@ -523,6 +524,91 @@ describe("healthy live fixture", () => {
 
 		assert.ok(texts.some((line) => line.isMeta), `no row meta line was measured — read: ${JSON.stringify(texts)}`);
 		for (const line of texts) assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
+	});
+
+	// one ink step separates the boxes from the frames and lines around them — no box label, User input included, reads disabled
+	test("box labels draw in ink while zone titles and edge labels draw in the dim text colour", async () => {
+		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+		const read = await ctx.page.evaluate((canvas) => {
+			const root = getComputedStyle(document.documentElement);
+			const [ink, dim] = ["--ink", "--dim"].map((name) => `rgb(${root.getPropertyValue(name).trim().split(/\s+/).join(", ")})`);
+			// leaf text paint per kind — an svg text reads its fill, an html label its colour
+			const [node, zone, edge] = ["g.node", "g.cluster > .cluster-label", "g.edgeLabel"].map((scope) => [
+				...new Set(
+					[...document.querySelectorAll(`${canvas} svg ${scope} :is(text, tspan, span, p, div)`)]
+						.filter((el) => (el.textContent ?? "").trim() !== "" && el.children.length === 0)
+						.map((el) => (el instanceof SVGElement ? getComputedStyle(el).fill : getComputedStyle(el).color)),
+				),
+			]);
+			return { ink, dim, node, zone, edge };
+		}, ctx.selectors.canvas);
+		assert.deepEqual(
+			{ node: read.node, zone: read.zone, edge: read.edge },
+			{ node: [read.ink], zone: [read.dim], edge: [read.dim] },
+		);
+	});
+
+	// the drawn map keeps dark fills in light (spec 44084 §13) → the ink and dim steps above would put dark text on them
+	test("in the light theme no label takes the dim step and the box labels keep their drawn paints", async () => {
+		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+		const read = await ctx.page.evaluate((canvas) => {
+			const html = document.documentElement;
+			const theme = html.getAttribute("data-theme");
+			html.setAttribute("data-theme", "light");
+			const root = getComputedStyle(html);
+			const [ink, dim] = ["--ink", "--dim"].map((name) => `rgb(${root.getPropertyValue(name).trim().split(/\s+/).join(", ")})`);
+			const [node, zone, edge] = ["g.node", "g.cluster > .cluster-label", "g.edgeLabel"].map((scope) => [
+				...new Set(
+					[...document.querySelectorAll(`${canvas} svg ${scope} :is(text, tspan, span, p, div)`)]
+						.filter((el) => (el.textContent ?? "").trim() !== "" && el.children.length === 0)
+						.map((el) => (el instanceof SVGElement ? getComputedStyle(el).fill : getComputedStyle(el).color)),
+				),
+			]);
+			html.setAttribute("data-theme", theme ?? "dark");
+			return { ink, dim, node, zone, edge };
+		}, ctx.selectors.canvas);
+		assert.ok(read.node.length > 0 && read.zone.length > 0 && read.edge.length > 0, `every label kind was read: ${JSON.stringify(read)}`);
+		assert.ok(![...read.zone, ...read.edge].includes(read.dim), `a zone title or edge label reads the light dim step: ${JSON.stringify(read)}`);
+		assert.notDeepStrictEqual(read.node, [read.ink], "every box label collapsed to the light ink step");
+	});
+
+	// the canvas notes are prose, not data: body sans, faint, on an opaque chip so the map under them never shows through
+	test("the canvas hint and the loading note set body sans in faint on an opaque chip", async () => {
+		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+		const read = await ctx.page.evaluate((canvas) => {
+			const host = document.querySelector(canvas) as Element;
+			// the loading note shows only while health is pending — a probe carrying its class reads the same rule
+			const probe = document.createElement("div");
+			probe.className = "arch-canvas-busy";
+			probe.textContent = "Loading health…";
+			host.append(probe);
+			const faint = getComputedStyle(document.documentElement).getPropertyValue("--faint").trim().split(/\s+/).join(", ");
+			const notes = [".arch-canvas-hint", ".arch-canvas-busy"].map((selector) => {
+				const style = getComputedStyle(host.querySelector(selector) as Element);
+				return { selector, family: style.fontFamily, color: style.color, background: style.backgroundColor };
+			});
+			probe.remove();
+			return { body: getComputedStyle(document.body).fontFamily, faint: `rgb(${faint})`, notes };
+		}, ctx.selectors.canvas);
+		for (const note of read.notes) {
+			assert.equal(note.family, read.body, `${note.selector} sets the body family`);
+			assert.equal(note.color, read.faint, `${note.selector} reads faint`);
+			assert.match(note.background, /^rgb\(/, `${note.selector} sits on an opaque chip, read ${note.background}`);
+		}
+	});
+
+	// owner decision, spec 44084 §12.2a — Reset is a fit-to-view mark, not the target Task results uses
+	test("the Reset control draws the Lucide maximize glyph from the loaded catalogue", async () => {
+		const drawn = await ctx.page.evaluate(() => {
+			const icons = (window as never as { lucide: { icons: Record<string, [string, object, [string, Record<string, string>][]]> } }).lucide.icons;
+			const svg = document.querySelector('button[aria-label="Reset diagram view"] svg');
+			return {
+				rendered: [...(svg?.children ?? [])].map((el) => `${el.tagName}:${el.getAttribute("d") ?? ""}`),
+				catalogue: (icons.Maximize?.[2] ?? []).map(([tag, attrs]) => `${tag}:${attrs.d ?? ""}`),
+			};
+		});
+		assert.ok(drawn.catalogue.length > 0, "the loaded catalogue holds Maximize");
+		assert.deepEqual(drawn.rendered, drawn.catalogue);
 	});
 
 	test("the Reset control shows its name and only a title repeating its one box is hidden", async () => {
@@ -914,27 +1000,72 @@ describe("fault live fixture", () => {
 			"the lit nodes must be the daemon's bound nodes, not merely as many as them",
 		);
 	});
-	for (const { width, height } of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
-		test(`a counted fault badge sits at most half off its own node's bottom border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
-			const pattern = "**/api/health/daemons";
-			const livePattern = "**/api/architecture/live";
+	// the head Status is the row status atom at head size → same glyph gap, glyph centred on the words
+	test("the Part health head Status spaces and centres its glyph as the row status atom does", async () => {
+		await ctx.page.waitForSelector(".arch-part-health-status svg", { timeout: 30_000 });
+		const [head, row] = await ctx.page.evaluate(() =>
+			[".arch-part-health-status", ".arch-part-status"].map((selector) => {
+				const style = getComputedStyle(document.querySelector(selector) as Element);
+				return { display: style.display, alignItems: style.alignItems, gap: style.columnGap };
+			}),
+		);
+		assert.deepStrictEqual(head, row);
+		// both sit in flex lines, so an inline-flex atom computes as flex — the centring is the fact read here
+		assert.equal(row.alignItems, "center", "the row atom centres its glyph on the words");
+	});
+
+	const badgeScenarios = [
+		{
 			// both daemon parts faulted, wiki-curator also lit on daemon-cycle's node → that node's badge carries its widest text, the count
 			// wiki-curator keeps its own node → the zone holds two health nodes as on the served table, so badges stay on nodes
-			const health = getDaemonHealthFixture(FAULT_VERDICT);
-			health.daemons.push({ ...health.daemons[0], daemon_name: "wiki" });
-			const live = getLiveFixture(FAULT_VERDICT, 999);
-			live.part_bindings = {
-				...PART_NODE_BINDINGS,
-				"glass-atrium-wiki-curator": [...PART_NODE_BINDINGS["glass-atrium-wiki-curator"], ...PART_NODE_BINDINGS["daemon-cycle"]],
-			};
+			name: "a counted fault badge",
+			sizes: [{ width: 1440, height: 900 }, { width: 1024, height: 768 }],
+			build: () => {
+				const health = getDaemonHealthFixture(FAULT_VERDICT);
+				health.daemons.push({ ...health.daemons[0], daemon_name: "wiki" });
+				const live = getLiveFixture(FAULT_VERDICT, 999);
+				live.part_bindings = {
+					...PART_NODE_BINDINGS,
+					"glass-atrium-wiki-curator": [...PART_NODE_BINDINGS["glass-atrium-wiki-curator"], ...PART_NODE_BINDINGS["daemon-cycle"]],
+				};
+				return { health, live };
+			},
+			drawnOwner: "g.node",
+			drawnText: "×2",
+			drawnCount: 1,
+		},
+		{
+			// PostgreSQL, Hook chain and Chromium export faulted → each is its zone's one health node, so the badge rides the zone border where incoming edge labels end
+			name: "a zone fault badge on Store, Safety and Documents",
+			sizes: [{ width: 1440, height: 900 }, { width: 1920, height: 1080 }],
+			build: () => {
+				const live = getLiveFixture(FAULT_VERDICT, 999);
+				const zoneParts = ["pg", "hook-chain", "browser"].flatMap((part) => [...PART_NODE_BINDINGS[part]]);
+				live.daemons.push({ ...live.daemons[0], daemon_name: "zone-probe", node_ids: zoneParts });
+				return { health: getDaemonHealthFixture(FAULT_VERDICT), live };
+			},
+			drawnOwner: "g.cluster",
+			drawnText: "",
+			drawnCount: 3,
+		},
+	];
+	for (const scenario of badgeScenarios)
+	for (const { width, height } of scenario.sizes) {
+		test(`${scenario.name} sits at most half off its own box's top border, clear of every label, neighbour node and other zone, at ${width}x${height}`, async () => {
+			const pattern = "**/api/health/daemons";
+			const livePattern = "**/api/architecture/live";
+			const { health, live } = scenario.build();
 			await ctx.page.route(pattern, (route) => route.fulfill({ json: health }));
 			await ctx.page.route(livePattern, (route) => route.fulfill({ json: live }));
 			try {
 				await ctx.page.setViewportSize({ width, height });
 				await ctx.page.reload({ waitUntil: "load" });
 				await ctx.page.waitForFunction(
-					(sel) => Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`)).some((glyph) => (glyph.textContent || "").includes("×")),
-					ctx.selectors.canvas,
+					([sel, owner, text]) =>
+						Array.from(document.querySelectorAll(`${sel} svg text.arch-ring-glyph`)).some(
+							(glyph) => glyph.parentElement?.matches(owner) && (glyph.textContent || "").includes(text),
+						),
+					[ctx.selectors.canvas, scenario.drawnOwner, scenario.drawnText],
 					{ timeout: 30_000 },
 				);
 				// badges are read at the default view — before the fit reaches the CTM, a member low in the left column can sit outside the canvas
@@ -1008,8 +1139,8 @@ describe("fault live fixture", () => {
 								id: owner.getAttribute("data-arch-node-id") || owner.id,
 								isNode: owner.matches("g.node"),
 								text: glyph.textContent || "",
-								// across its own node's bottom border, wholly within the node's sides → at most half the pill off the node
-								attached: p.left >= n.left && p.right <= n.right && p.top < n.bottom && p.bottom > n.bottom,
+								// across its own node's top border, wholly within the node's sides → at most half the pill off the node, clear of the outgoing edge labels below it
+								attached: p.left >= n.left && p.right <= n.right && p.top < n.top && p.bottom > n.top,
 								offShare: 1 - onNode / (p.width * p.height),
 								covered,
 								occluders,
@@ -1023,12 +1154,12 @@ describe("fault live fixture", () => {
 					return readings;
 				}, ctx.selectors.canvas);
 				assert.ok(
-					glyphs.some((glyph) => glyph.isNode && glyph.text.includes("×2")),
-					`no counted node badge drawn: ${glyphs.map((g) => `${g.id} '${g.text}'`).join(" ")}`,
+					glyphs.filter((glyph) => glyph.isNode === (scenario.drawnOwner === "g.node") && glyph.text.includes(scenario.drawnText)).length >= scenario.drawnCount,
+					`no ${scenario.drawnOwner} badge drawn: ${glyphs.map((g) => `${g.id} '${g.text}'`).join(" ")}`,
 				);
-				// half the pill below the border is the straddle itself; 0.55 leaves room for sub-pixel rounding only
+				// half the pill above the border is the straddle itself; 0.55 leaves room for sub-pixel rounding only
 				const loose = glyphs.filter((glyph) => !glyph.attached || glyph.offShare > 0.55);
-				assert.deepEqual(loose, [], `badges off their node's bottom border: ${loose.map((g) => `${g.id} ${(g.offShare * 100).toFixed(0)}% off (${g.box})`).join("; ")}`);
+				assert.deepEqual(loose, [], `badges off their node's top border: ${loose.map((g) => `${g.id} ${(g.offShare * 100).toFixed(0)}% off (${g.box})`).join("; ")}`);
 				const covering = glyphs.filter((glyph) => glyph.covered.length > 0);
 				assert.deepEqual(covering, [], `badges over a label, another node or another zone: ${covering.map((g) => `${g.id} (${g.box} · covers ${g.covered.join(" ")})`).join("; ")}`);
 				const hidden = glyphs.filter((glyph) => glyph.occluders.length > 0);

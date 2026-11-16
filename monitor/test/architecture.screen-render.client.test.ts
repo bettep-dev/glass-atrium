@@ -2,7 +2,7 @@
 //
 // Runner: npx tsx --test test/architecture.screen-render.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -78,18 +78,59 @@ test("a cold map Retry keeps the map's failure card in place, busy, with a focus
   assert.equal(findNodes(targets[0], (n) => n === cards[0]).length, 1, "the target wraps the card, so it outlives the error-to-map swap");
 });
 
-test("the part-health column never says 'No other parts' above a non-empty Not loaded list", async () => {
-  const mod = (await loadScreenModule(ARCH_SRC, { UI: uiStub({}), React: createReactStub() })) as {
-    React: { createElement: (t: unknown, p: unknown) => unknown };
-    PartHealthBlockAR: Component;
+// one Part health list: flagged parts first, then every part not judged healthy; healthy parts fold under their count
+describe("Part health is one list, healthy parts folded under a count", () => {
+  const part = (id: string, tone: string | null, statusLabel: string) =>
+    ({ id, name: `${id}-part`, kind: "unknown-kind", daemonName: null, tone, statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null });
+  const render = async (partRows: ReturnType<typeof part>[]) => {
+    const mod = await loadArch();
+    const props = { partRows, attentionEmpty: "No part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
+    const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
+    const [fold] = findNodes(tree, (n) => n.type === "details");
+    const rowIds = (root: unknown) => findNodes(root as ReturnType<typeof renderScreen>, (n) => n.type === "li").map((n) => String(n.props.id));
+    const foldIds = fold ? rowIds(fold) : [];
+    return { tree, fold, shownIds: rowIds(tree).filter((id) => !foldIds.includes(id)), foldIds };
   };
-  const coldRow = { id: "hooks", name: "Hook failures", kind: "unknown-kind", daemonName: null, tone: null, statusLabel: "Not loaded", nodeIds: [] };
-  const props = { partRows: [coldRow], attentionEmpty: "Nothing needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
+  const rows = [
+    { name: "a mixed read", parts: [part("ok1", "ok", "Healthy"), part("info", "info", "Idle"), part("crit", "crit", "Overdue"), part("cold", null, "Not loaded"), part("ok2", "ok", "Healthy"), part("warn", "warn", "Late")], shown: ["crit", "warn", "cold", "info"], folded: ["ok1", "ok2"], isAllClear: false },
+    { name: "a read with nothing flagged", parts: [part("ok1", "ok", "Healthy"), part("cold", null, "Not loaded")], shown: ["cold"], folded: ["ok1"], isAllClear: true },
+    { name: "a read with no healthy part", parts: [part("crit", "crit", "Overdue"), part("cold", null, "Not loaded")], shown: ["crit", "cold"], folded: [], isAllClear: false },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const r = await render(row.parts);
+      assert.deepEqual(r.shownIds.map((id) => id.replace(/^arch-part-/, "")), row.shown, "shown parts, flagged worst first");
+      assert.deepEqual(r.foldIds.map((id) => id.replace(/^arch-part-/, "")).sort(), row.folded.sort(), "healthy parts sit inside the fold");
+      if (row.folded.length) assert.match(collectText(findNodes(r.fold, (n) => n.type === "summary")[0]).trim(), new RegExp(`^${row.folded.length} healthy$`), "the fold names its count");
+      else assert.equal(r.fold, undefined, "no fold without a healthy part");
+      assert.equal(findNodes(r.tree, (n) => n.type === "h3").length, 0, "no column title splits the list");
+      assert.equal(collectText(r.tree).includes("No part needs attention"), row.isAllClear, "the all-clear line shows exactly when nothing is flagged");
+    });
+});
 
-  const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
-  const text = JSON.stringify(findNodes(tree, (n) => n.type === "p" || n.type === "h3").map((n) => n.children ?? ""));
-  assert.match(text, /Not loaded/, "precondition: the cold part is listed as not loaded");
-  assert.doesNotMatch(text, /No other parts/);
+// the fold's summary already says healthy — a folded row adds a status word only when its verdict says more than that
+describe("a folded Part health row shows its status only when it says more than the fold's count", () => {
+  const now = Date.now();
+  const readAt = new Date(now - 5 * 60_000).toISOString();
+  const part = (id: string, tone: string, statusLabel: string) =>
+    ({ id, name: `${id}-part`, kind: "unknown-kind", daemonName: null, tone, statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null });
+  const statusTexts = (root: unknown) =>
+    findNodes(root as ReturnType<typeof renderScreen>, (n) => n.type === "span" && /\barch-part-status\b/.test(String(n.props.className))).map((n) => collectText(n).trim());
+  const rows = [
+    { name: "a fresh read drops the Healthy the fold's count already says", freshness: { at: readAt, regions: [], now }, folded: [] },
+    { name: "a held read keeps Last known on every folded row", freshness: { at: readAt, failed: true, regions: [], now }, folded: ["Last known", "Last known"] },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const mod = await loadArch();
+      const partRows = [part("ok1", "ok", "Healthy"), part("crit", "crit", "Overdue"), part("ok2", "ok", "Healthy")];
+      const props = { partRows, attentionEmpty: "No part needs attention", freshness: row.freshness, nodeIndex: new Map(), onSelectNode: () => {} };
+      const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
+      const [fold] = findNodes(tree, (n) => n.type === "details");
+
+      assert.deepEqual(statusTexts(fold), row.folded, "a folded row's status atom");
+      assert.equal(statusTexts(tree).length - statusTexts(fold).length, 1, "the listed flagged row keeps its status");
+    });
 });
 
 test("a cold map read the page alert speaks for keeps a quiet placeholder in the map's own space", async () => {
@@ -133,6 +174,35 @@ test("the node drawer names each of its sections with a heading element", async 
 
 type ArchModule = { React: { createElement: (t: unknown, p: unknown) => unknown } } & Record<string, Component>;
 
+// drawer sections read as titles, not as mono captions; the drawer's prose is sans and no mark keys a colour nothing explains
+test("the node drawer titles its sections at the title step in sans and writes its prose without a colour key", async () => {
+  const mod = await loadArch();
+  const nodeId = "canonical.hook_pipeline";
+  const props = {
+    info: { id: nodeId, label: "Hook pipeline", path: "hooks/", description: "Hooks" },
+    flows: [{ id: "f1", from: "canonical.agent_layer", to: nodeId, edge_type: "data" }],
+    nodeIndex: new Map([["canonical.agent_layer", { label: "Agents" }]]),
+    liveDaemonsByNodeId: new Map(),
+    healthPartRows: [{ id: "hooks", name: "Hook failures", kind: "unknown-kind", daemonName: null, tone: "ok", statusLabel: "Healthy", nodeIds: ["hook_pipeline", "agent_layer"] }],
+    zoneIdByMemberId: new Map(),
+  };
+
+  const tree = renderScreen(mod.React.createElement(mod.NodeDetailBody, props));
+  const css = findNodes(renderScreen(mod.React.createElement(mod.ScreenArchitecture, {})), (n) => n.type === "style").map(collectText).join(" ");
+  const headings = findNodes(tree, (n) => n.type === "h3");
+  const [alsoLights] = findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith("Also lights"));
+  const [flowList] = findNodes(tree, (n) => n.type === "ul" && collectText(n).includes("Agents"));
+  const [heading] = getRuleBodies(css, "arch-drawer-heading");
+
+  assert.equal(headings.length, 3, "Health, Connections and Records each have a section heading");
+  for (const h of headings)
+    assert.deepEqual(String(h.props.className).split(/\s+/).filter((c) => /^(font-mono|uppercase|tracking-\w+|fs-meta|text-faint)$/.test(c)), [], `${collectText(h)} drops the caption look`);
+  assert.equal(getRuleFontPx(css, "arch-drawer-heading"), 16, "a drawer section title sits at the title step");
+  assert.match(heading ?? "", /font-weight:\s*600/, "a drawer section title is semibold");
+  assert.doesNotMatch(String(alsoLights?.props.className), /\bfont-mono\b/, "the Also lights line is prose");
+  assert.deepEqual(findNodes(flowList, (n) => Object.hasOwn(Object(n.props.style), "color")).map(collectText), [], "no connection carries a colour dot");
+});
+
 async function loadArch(overrides: Record<string, unknown> = {}): Promise<ArchModule> {
   return (await loadScreenModule(ARCH_SRC, { UI: uiStub(overrides), React: createReactStub() })) as ArchModule;
 }
@@ -174,7 +244,6 @@ test("every heading on the page and in the drawer is no larger than the heading 
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
   const ladders = [
-    { name: "Part health", upper: "arch-part-health-title", lower: "arch-part-col-title" },
     { name: "drawer section", upper: "arch-drawer-heading", lower: "arch-drawer-subheading" },
   ];
   for (const ladder of ladders)
@@ -218,6 +287,20 @@ test("a Part health row keeps the name and the status on one line each", async (
   const rowTree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row, freshness, nodeIndex, onSelectNode: () => {} }));
   const [nameEl] = findNodes(rowTree, (n) => /\barch-part-name\b/.test(String(n.props.className)));
   assert.equal(nameEl?.props.title, "cron-scheduler", "a truncated name keeps its full text in title");
+});
+
+test("a flagged Part health row reads its status right after the name and its cause on the same line, never in the meta line", async () => {
+  const mod = await loadArch();
+  const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);
+  const row = { id: "cron", name: "cron-scheduler", tone: "crit", statusLabel: "Overdue", nodeIds: ["cron"], lastRunAt: null, nextRunAt: null, cadenceMinutes: 60, cause: "exit 1 at the last run" };
+  const tree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row, freshness: { at: null, regions: [], now: Date.now() }, nodeIndex, onSelectNode: () => {} }));
+  const [line] = findNodes(tree, (n) => /\barch-part-line\b/.test(String(n.props.className)));
+  const [meta] = findNodes(tree, (n) => /\barch-part-meta\b/.test(String(n.props.className)));
+  const parts = ((line?.children ?? []) as { props?: { className?: unknown } }[]).filter((c) => c && typeof c === "object").map((c) => String(c.props?.className).split(/\s+/)[0]);
+
+  assert.deepEqual(parts, ["arch-part-name", "arch-part-status", "arch-part-cause"], "one line: name, then its status, then its cause");
+  assert.ok(meta, "precondition: the row keeps a meta line");
+  assert.doesNotMatch(collectText(meta), /exit 1/, "the cause is not repeated in the meta line");
 });
 
 test("the node drawer's title is a heading that ranks above its section headings", async () => {
@@ -274,7 +357,7 @@ test("the hook chain gives every matcher group of one event its own key, even wh
   assert.equal(new Set(keys).size, keys.length, `sibling group keys collide, so React drops or merges rows: ${JSON.stringify(keys)}`);
 });
 
-test("a part's Open box action carries the bordered button style, not the borderless ghost", async () => {
+test("a part's Open box action is the quiet ghost button, so a list of parts carries no column of bordered buttons", async () => {
   const mod = await loadArch();
   const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);
   const row = { id: "cron", name: "cron", tone: "crit", statusLabel: "Overdue", nodeIds: ["cron"], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
@@ -283,7 +366,7 @@ test("a part's Open box action carries the bordered button style, not the border
   const tree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row, freshness, nodeIndex, onSelectNode: () => {} }));
   const [action] = findNodes(tree, (n) => n.type === "button");
   assert.match(String(action.props.className), /\bbtn\b/);
-  assert.doesNotMatch(String(action.props.className), /\bghost\b/, "a ghost button draws no border");
+  assert.match(String(action.props.className), /\bghost\b/, "the row action takes the quiet tier");
 });
 
 // A part's verdict word sits at the meta step, where warn/ok/info text falls below 4.5:1 — the tone rides a glyph beside it.
@@ -303,7 +386,7 @@ test("a part's health verdict carries its tone on a tone-shaped glyph, its word 
     await t.test(row.name, () => {
       const part = { id: "cron", name: "cron", tone: row.tone, statusLabel: row.statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
       const tree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row: part, freshness, nodeIndex: new Map(), onSelectNode: () => {} }));
-      const [status] = findNodes(tree, (n) => n.type === "span" && collectText(n).includes(row.statusLabel));
+      const [status] = findNodes(tree, (n) => n.type === "span" && /\barch-part-status\b/.test(String(n.props.className)) && collectText(n).includes(row.statusLabel));
       const glyphs = findNodes(status, (n) => n.props.atom === "Icon");
       const classes = String(status.props.className).split(/\s+/);
 
