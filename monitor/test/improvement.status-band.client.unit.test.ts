@@ -127,13 +127,12 @@ function getBandStats(props: Record<string, unknown> = {}): Map<string, BandStat
   return new Map(Array.from(statRow.props.stats as BandStat[], (stat) => [stat.key, stat]));
 }
 
-test("the band is one stat row of the counts that change the next action, with no tiles", () => {
+test("the band is one stat row of the counts that change the next action", () => {
   const elements = collectElements(renderBand({ awaiting: 2, suppression: { pending_total: 4, parked: NEEDS_HUMAN } }), []);
   const stats = getBandStats({ awaiting: 2 });
 
   assert.deepEqual([...stats.values()].map((stat) => stat.label), ["Awaiting your decision", "Applied, 7d", "Held, needs a human"]);
   assert.equal(elements.filter((el) => el.type === sandbox.window.UI.StatRow).length, 1);
-  assert.ok(!elements.some((el) => el.type === sandbox.window.UI.KPI), "a tile per stat is retired");
 });
 
 test("no stat carries a status glyph — attention lives in the card that owns the rows", () => {

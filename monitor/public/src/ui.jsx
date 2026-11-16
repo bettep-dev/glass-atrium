@@ -189,18 +189,6 @@ function TypeScaleStyle() {
   `}</style>;
 }
 
-// Change indicator — default up=bad (crit)/down=good (ok), inverse=true flips it (metrics where a rise is good); tone on the arrow only, value neutral
-function Delta({ value, inverse=false }) {
-  const sign = value > 0 ? 'up' : value < 0 ? 'down' : 'flat';
-  const isBad = inverse ? sign === 'down' : sign === 'up';
-  const tone = sign === 'flat' ? 'faint' : isBad ? 'crit' : 'ok';
-  const iconName = sign === 'up' ? 'arrowU' : sign === 'down' ? 'arrowD' : 'minus';
-  return <span className="kpi-delta">
-    <Icon name={iconName} size={11} stroke={2.2} className={`text-${tone}`} />
-    {Math.abs(value).toFixed(1)}%
-  </span>;
-}
-
 // label → named image · no label → decorative, hidden from assistive tech
 function getTrendSvgA11y(label) {
   return label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': 'true' };
@@ -619,112 +607,6 @@ function AgentName({ name, className = '' }) {
       <span aria-hidden="true">{short}</span>
       <span className="sr-only">{full}</span>
     </span>
-  );
-}
-
-// Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
-// isWord → a word value at --fs-stat sans on the same baseline · isFaint → the faint ink of a non-ready state.
-// A word rides its own span inside the figure's line box → the box (and its baseline) is the figure's, whatever the word's size.
-function KpiValue({ children, unit, tone, isWord = false, isFaint = false }) {
-  const className = `kpi-value${isWord ? ' kpi-value--word' : ''}${isFaint ? ' text-faint' : ''}`;
-  const glyph = tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>;
-  return <div className={className}>
-    {isWord ? <span className="kpi-value-word">{glyph}{children}</span> : <>{glyph}{children}</>}
-    {unit && <span className="unit">{unit}</span>}
-  </div>;
-}
-
-const KPI_UNKNOWN_STATES = new Set(['error', 'empty']);
-const KPI_SPARK = { w: 68, h: 26 };
-
-/**
- * One KPI anatomy — every tile row sits in one place, whatever its state:
- *   1 label row  label (one line, ellipsis) · optional aside window tag · ⓘ placed on the row, never pushing the value
- *   2 value row  value + unit · optional badge, baseline-aligned; loading holds the row with a strut + placeholder
- *   3 delta      number → the shared Delta; a node renders as the caller wrote it
- *   4 hint       after the value, always; the caller's own face (hintFace) is kept; ≤2 lines + title for a plain hint,
- *                or a node hint passing isHintClamped with its whole text in hintTitle
- *   5 foot       drill link / Retry, pinned to the tile bottom
- * state: 'ready' | 'loading' | 'error' | 'empty' — with no value, empty reads None and error reads Not loaded, faint, never a 0 or a dash.
- * onClick → the tile is a button (no info or foot inside it then); otherwise a group labelled by its label row.
- * aria-label → the tile's own accessible name (a sentence the label row cannot carry), on the button or the group.
- * hasValue=false → a fact-list tile: no value row, the hint carries the facts; the label row and states stay.
- * isSplit → value + delta | hint as the shared TileSplit columns between 641px and xl.
- */
-function KPI({
-  id, label, labelId, labelAs = 'div', labelClassName = 'fs-meta text-dim font-medium', labelTitle,
-  aside, asideClassName = 'fs-meta text-dim', info,
-  value, unit, tone, isWord = false, badge, hasValue = true,
-  delta, deltaInverse = false,
-  hint, hintClassName = 'fs-meta', hintFace = 'text-faint font-mono', hintTitle, isHintClamped,
-  foot, sparkData, sparkColor = 'currentColor', onClick,
-  state = 'ready', loadingLabel, isBusy = false, isSplit = false, className = '', 'aria-label': ariaLabel,
-}) {
-  const isLoading = state === 'loading';
-  const isUnknown = KPI_UNKNOWN_STATES.has(state);
-  const headId = labelId ?? (id ? `${id}-label` : undefined);
-  const LabelTag = labelAs;
-  const isTextLabel = typeof label === 'string';
-
-  const head = (
-    <LabelTag id={headId} className="kpi-head">
-      <span className={`kpi-label-text ${labelClassName}`.trim()} title={labelTitle ?? (isTextLabel ? label : undefined)}>{label}</span>
-      {aside != null && aside !== false && <span className={`kpi-aside ${asideClassName}`.trim()}>{aside}</span>}
-    </LabelTag>
-  );
-  // a zero-width .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
-  const main = isLoading ? (
-    <div className="kpi-main kpi-main--loading">
-      <span className="kpi-value" aria-hidden="true">{'\u200b'}</span>
-      <LoadingPlaceholder label={loadingLabel}/>
-    </div>
-  ) : !hasValue ? null : (
-    <div className="kpi-main">
-      <KpiValue unit={unit} tone={isUnknown ? undefined : tone} isWord={isWord} isFaint={isUnknown}>
-        {isUnknown ? (value ?? getAbsentText(state === 'empty' ? 'none' : 'not-loaded')) : value}
-      </KpiValue>
-      {badge}
-    </div>
-  );
-  const isPlainHint = typeof hint === 'string' || typeof hint === 'number';
-  // a node hint clamps only when its caller asks and hands its whole text in hintTitle → a block-built hint keeps its own layout
-  const isClamped = isHintClamped ?? isPlainHint;
-  const row = {
-    delta: typeof delta === 'number'
-      ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
-      : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>,
-    hint: hint != null && hint !== false && (
-      <div className={`kpi-hint ${hintClassName} ${hintFace}${isClamped ? ' clamp-2' : ''}`.trim()}
-        title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
-    ),
-  };
-  const body = isSplit ? (
-    <TileSplit className="kpi-split" lead={<>{main}{row.delta}</>} detail={row.hint || null}/>
-  ) : <>{main}{row.delta}{row.hint}</>;
-
-  const rootClass = ['kpi kpi-tile', info && 'kpi--info', sparkData && 'kpi--spark', !hasValue && 'kpi--facts', className]
-    .filter(Boolean).join(' ');
-  const children = <>
-    {head}
-    {info && <div className="kpi-info">{info}</div>}
-    {body}
-    {foot && <div className="kpi-foot">{foot}</div>}
-    {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={KPI_SPARK.w} h={KPI_SPARK.h} color={sparkColor}/></div>}
-  </>;
-  const busy = isLoading || isBusy ? 'true' : undefined;
-  // the spark's width has one home (KPI_SPARK) → the tile hands it to CSS, which reserves the hint's room from it
-  const sparkStyle = sparkData ? { '--kpi-spark-w': `${KPI_SPARK.w}px` } : undefined;
-  if (onClick) {
-    return <button type="button" id={id} onClick={onClick} className={`${rootClass} text-left`} aria-label={ariaLabel}
-      aria-busy={busy} style={sparkStyle}>{children}</button>;
-  }
-  // an own name outranks the label row (aria-labelledby would win over aria-label otherwise)
-  return (
-    <div id={id} role="group" aria-labelledby={ariaLabel ? undefined : headId}
-      aria-label={ariaLabel ?? (headId ? undefined : (isTextLabel ? label : undefined))}
-      className={rootClass} aria-busy={busy} style={sparkStyle}>
-      {children}
-    </div>
   );
 }
 
@@ -1295,14 +1177,6 @@ function SplitRow({ ratio = '1:1', layout = 'equal', children, className = '' })
 // One SplitRow column holding a card stack (16px apart) · isRail → sticky 24px from the top at xl.
 function SplitColumn({ isRail = false, children, className = '' }) {
   return <div className={`split-col ${isRail ? 'split-col--rail' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>{children}</div>;
-}
-
-// Tile-internal columns below xl: value + badge (lead) left, detail + hint + drill link right.
-function TileSplit({ lead, detail, className = '' }) {
-  return <div className={`tile-split ${className}`.trim()}>
-    <div className="tile-split-lead">{lead}</div>
-    {detail && <div className="tile-split-detail">{detail}</div>}
-  </div>;
 }
 
 const ROVING_KEY_STEP = {
@@ -3070,9 +2944,9 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
+  Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone, SEVERITY_RANK,
-  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
+  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
   getDisplayName, hasFieldValue, DetailField, StatToneGlyph, AbsentValue, getAbsentText, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,

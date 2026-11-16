@@ -1,6 +1,6 @@
 // Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control, a 24px
 // inline target or a value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
-// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a word KPI value sits on the figure's baseline, a 24
+// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a 24
 // inline target keeps a whole-pixel line box under a type-scale class, the shared error-details summary is the 32 disclosure atom,
 // and the page-header Refresh ends its label on its box's content edge.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -37,14 +37,6 @@ const render = (type: unknown, props: Record<string, unknown>, ...children: unkn
 
 // one rendered Icon as markup — its inline style is what this suite is about
 const iconMarkup = (props: Record<string, unknown>): string => render(ui.Icon, props);
-
-const kpiValueMarkup = (props: Record<string, unknown>, value: string): string => render(ui.KpiValue, props, value);
-
-const KPI_VALUES = [
-  { id: "kpi-figure", markup: kpiValueMarkup({}, "1,284") },
-  { id: "kpi-word", markup: kpiValueMarkup({ isWord: true }, "Healthy") },
-  { id: "kpi-word-toned", markup: kpiValueMarkup({ isWord: true, tone: "warn" }, "Stale") },
-] as const;
 
 const ICON_ROWS = [
   { name: "an icon before its label", id: "plain", markup: iconMarkup({ name: "check", size: 14 }) },
@@ -187,7 +179,6 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
-    ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
 </body></html>`;
 
@@ -483,34 +474,6 @@ describe("a value + bar cell keeps the row at 40", () => {
     });
     assert.ok(Math.abs(value - text) < 1, `value centre ${value} vs text centre ${text}`);
   });
-});
-
-describe("a word KPI value shares the figure's baseline", () => {
-  // a zero-size inline-block's bottom edge is its line's baseline
-  const baselineOf = (id: string): Promise<number> => page.$eval(`#${id} .kpi-value`, (value) => {
-    const probe = document.createElement("span");
-    probe.style.cssText = "display: inline-block; width: 0; height: 0;";
-    value.append(probe);
-    const y = probe.getBoundingClientRect().bottom;
-    probe.remove();
-    return y;
-  });
-
-  test("precondition: the word renders smaller than the figure", async () => {
-    const [figure, word] = await Promise.all(["kpi-figure", "kpi-word"].map((id) =>
-      page.$eval(`#${id} .kpi-value`, (value) => parseFloat(getComputedStyle(value.lastElementChild ?? value).fontSize))));
-    assert.ok(word < figure, `word ${word}px vs figure ${figure}px`);
-  });
-
-  for (const id of ["kpi-word", "kpi-word-toned"]) {
-    test(`${id} sits on the figure's baseline and keeps its line box height`, async () => {
-      const figure = await baselineOf("kpi-figure");
-      assert.ok(Math.abs((await baselineOf(id)) - figure) < 0.5, `${id} baseline vs figure ${figure}`);
-      const [figureH, wordH] = await Promise.all(["kpi-figure", id].map((key) =>
-        page.$eval(`#${key} .kpi-value`, (value) => value.getBoundingClientRect().height)));
-      assert.ok(Math.abs(wordH - figureH) < 0.5, `${id} height ${wordH} vs figure ${figureH}`);
-    });
-  }
 });
 
 describe("the page-header Refresh ends its label on the content column's edge", () => {

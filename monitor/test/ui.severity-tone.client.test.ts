@@ -3,7 +3,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { readFileSync } from "node:fs";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -67,29 +66,5 @@ test("a toned status badge or pill never paints its label in the tone, and a pil
       assert.ok(toned.every((n) => !collectText(n).includes("Label")), `${tone} ${form} label is neutral`);
       assert.equal(toned.some((n) => collectText(n).includes(TONE_GLYPH[tone])), hasGlyph, `${tone} ${form} glyph`);
     }
-  }
-});
-
-test("a KPI delta carries its tone on the arrow only, the numeral staying neutral", () => {
-  const rows = [
-    { name: "a rise is bad", value: 5, tone: "crit" },
-    { name: "a fall is good", value: -5, tone: "ok" },
-    { name: "an inverse rise is good", value: 5, inverse: true, tone: "ok" },
-    { name: "an inverse fall is bad", value: -5, inverse: true, tone: "crit" },
-    { name: "no change is faint", value: 0, tone: "faint" },
-  ];
-  for (const row of rows) {
-    const tree = renderScreen((ui.Delta as Component)({ value: row.value, inverse: row.inverse }));
-    const [arrow] = findNodes(tree, (n) => n.type === "Icon");
-    assert.equal(arrow?.props.className, `text-${row.tone}`, `${row.name}: arrow tone`);
-    const toned = findNodes(tree, (n) => /(^|\s)text-/.test(String(n.props?.className ?? "")));
-    assert.ok(toned.every((n) => !collectText(n).includes("%")), `${row.name}: numeral neutral`);
-  }
-  const css = readFileSync(resolve(__dirname, "../public/styles/base.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const deltaRules = [...css.matchAll(/([^{}]*\.kpi-delta[^{}]*)\{([^{}]*)\}/g)];
-  assert.ok(deltaRules.length > 0, "base.css styles .kpi-delta");
-  for (const [, selector, body] of deltaRules) {
-    const color = body.match(/(?:^|[;\s])color\s*:\s*([^;]+)/)?.[1].trim();
-    if (color !== undefined) assert.equal(color, "rgb(var(--dim))", `${selector.trim()} numeral colour`);
   }
 });

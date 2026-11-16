@@ -201,12 +201,12 @@
 | 역할 | atom | styling class |
 |------|------|---------------|
 | 카드 | `Card` · `CardHead` · `CardInfo` · `SubCard` | `.card*` · `.sub-card` |
-| 레이아웃 | `SplitRow` · `SplitColumn` · `TileSplit` | `.split-row*` · `.split-col*` · `.tile-split` |
+| 레이아웃 | `SplitRow` · `SplitColumn` | `.split-row*` · `.split-col*` |
 | overlay | `DetailSurface` · `Modal`(= confirm 위임) · `Popover` | `.detail-*` · `.popover-*` |
 | 공개 | `Disclosure` · `DisclosureButton` | `.disclosure` (also on a `summary`) · `.card.is-collapsed` |
 | 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
-| 수치 | `KPI` · `KpiValue` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.kpi*` |
+| 수치 | `StatRow` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` |
 | 표 | `Table` · `TableHead` | `.tbl` |
 | 페이지 | `PageHeader` · `SectionLabel` · `EmptyState` | `.section-label` · `.placeholder` (deprecated, §12.5) |
 | 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` sans tnum `--faint` (§12.2) · `.btn.ghost.sm` |
@@ -218,7 +218,6 @@
 
 - **Taxonomy** (§12.3): every interactive or informational thing takes one row's look there. The atoms it names that `ui.jsx` lacks — `Segmented`, `Tab`, filter trigger, bar search, `Select`, quiet button, `Link`, `Stack`, `Cluster`, the machine-string atom — join this table in the change that ships each.
 
-- **KPI 내부 전용**: `Delta` (`.kpi-delta`) 는 `KPI` 의 `delta` prop 으로만 렌더 — `window.UI` export 아님.
 - **`AgentName`**: `glass-atrium-` prefix 를 뗀 짧은 이름 + 전체 이름은 sr-only 텍스트 · `title`. agent 식별은 이 텍스트로만 (아바타 없음 — §4.3).
 - **`MiniBars`**: `Sparkline` 과 같은 60×22 SVG 막대 · `label` 있으면 `role="img"`, 없으면 aria-hidden.
 - **신선도**:
@@ -330,7 +329,6 @@
   - tone 은 선행 glyph(또는 `Icon`, `TONE_ICON` check/warn/x/info)에만 `text-<tone>`. 라벨은 `--dim`/`--ink`.
   - shell(배지 배경 · 카드 fill · 행 배경) · 좌측 stripe · tone border 에 칠하지 않는다 — 아래 허용 예외만 예외.
   - `StatusDot`: glyph + sr-only 단어(`STATUS_DOT_WORD` OK/Warning/Critical/Info) · 미지 status 는 `–` + "Unknown" (`--faint`).
-  - `KpiValue tone`: glyph 장식(aria-hidden), 수치는 neutral ink.
 - **허용 예외** — tone border/stroke 가 glyph 또는 단어와 짝을 이룰 때만:
   - **폼 오류** (`.field.is-error` · `.field-affix.is-error`, §7.13): full-opacity `--crit` border (hover · focus 중에도 유지) + 메시지 `fs-meta text-crit` `role="alert"` = 단어.
     - 메시지 crit 은 모든 불투명 면에서 ≥ 4.5: light 최저 4.63 (`--sunken` — hover 된 `.tbl` 행 포함; `--elev` 5.05 · `--surface` 4.83) · dark 최저 5.84 (`--elev-2`).
@@ -417,9 +415,9 @@
 
 - **floor**: 렌더되는 모든 text node ≥ 13px — default view 의 System map label · tweaks 패널 포함. `--fs-micro` 는 `--fs-meta` alias. px 리터럴 font-size 금지.
 - **named exception (deprecated)**: `.hero-stat` 30px (`TypeScaleStyle`, 소비처 `agents.jsx` 1곳) — no big-number tiles (§12.2); it leaves with its caller.
-- **line-height** (텍스트 class 는 리터럴, control · table 행은 `--lh-ctl` · `--lh-row` 토큰 — §3.2): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · `.kpi-value` 1.15 · control `--lh-ctl` 18 · table cell, KPI label row and `.inline-target` `--lh-row` 20.
+- **line-height** (텍스트 class 는 리터럴, control · table 행은 `--lh-ctl` · `--lh-row` 토큰 — §3.2): `.fs-title` 1.4 · `.fs-body` 1.45 · `.fs-meta` 1.4 · `.card-sub` 1.5 · control `--lh-ctl` 18 · table cell and `.inline-target` `--lh-row` 20.
 - **weight (≤ 3 · signature 1)**: 400 regular · 500 medium (label · nav active · button · badge) · 600 semibold (card title · KPI value · page title). signature = 600 + sans tnum 수치. glass 표면 위 라벨은 한 step 무겁게 (600).
-- **수치**: value:unit — the unit sits beside its value one step down in faint ink (20 ↔ 13 · 15 ↔ 13, §12.2); `.kpi-value` 32 ↔ `.unit` 16 holds only until the stat row replaces the KPI grid.
+- **수치**: value:unit — the unit sits beside its value one step down in faint ink (20 ↔ 13 · 15 ↔ 13, §12.2).
 - **page header** (`PageHeader`): h1 = `--fs-display` 600 · line-height `--ctl-min-h` 32, one line box with the back link, the status pill and the header controls · no sub-line or intro sentence after the h1; a meta line carries only new facts (count, id, time) — layout §12.3.
 - **chart tick**: `CHART_AXIS_TICK_STYLE` = `--fs-meta` · sans by inheritance + `tabular-nums` (§12.2) · `--faint`. 겹침 판정 문자 폭 `CHART_TICK_CHAR_PX` 8 (Pretendard tnum digit 0.614em × 13 ≈ 7.98) · tick 간 최소 간격 `CHART_TICK_MIN_GAP_PX` 8.
 
@@ -544,16 +542,6 @@
   - 한 행의 peer 는 같은 slot → 끝선 일치 (두 M 목록 = 8 × 40 + 40 foot).
   - `getSlotRows` 가 row budget 으로 자르고 숨긴 개수를 돌려준다 → foot 의 `Show all N` / `Show top N` 이 제자리에서 토글.
 
-### 7.2 KPI — `KPI` · `KpiValue` (`.kpi*`)
-
-- `.kpi`: `<button>` with `onClick`, otherwise `role="group"` · `--elev` · 1px `--line` · `--radius-card` · padding `--card-pad` 16 · min-height 110 · pointer + hover border `--faint` 120ms on `button.kpi` only · 양 테마 shadow · inset 없음 (§6.1).
-- anatomy (`KPI`), one row order in every state: label row `.kpi-head` (`--lh-row` · `.kpi-label-text` `--fs-meta` `--dim` 500, one line + ellipsis + title · `.kpi-aside` · ⓘ `.kpi-info` placed on the row) → value row `.kpi-main` (baseline, margin-top 8) → delta → `.kpi-hint` (margin-top 4 · default `--fs-meta` mono `--faint` (mono retiring → §12.8 stat row, S2c), `hintFace` keeps the caller's face) → `.kpi-foot` pinned to the bottom.
-- ⓘ `.kpi-info`: the 32 `CardInfo` button, absolutely placed by offset only — top `--card-pad` + (`--lh-row` − `--ctl-min-h`) / 2 = 10 (its centre on the label row's), right `--card-pad` − 8. No transform: the drawer it opens renders inside this slot, and a transform would make the slot the fixed overlay's containing block. `.kpi--info .kpi-head` reserves `--ctl-min-h` − 8 + 4, so the aside keeps the 4 meta gap before the ⓘ.
-- `.kpi-value`: `--fs-kpi` 32 sans tnum 600 · -0.025em · line-height 1.15 · `.unit`: `--fs-title` 16 `--dim` 500 Pretendard (2:1). The four-tile KPI grid retires for the stat row (§12.8).
-- `.kpi-delta`: `--fs-meta` mono (retiring → §12.8 stat row, S2c) · 수치 `--dim`. tone 은 화살표 `Icon` 에만 — up `--crit` · down `--ok` · flat `--faint` (`Delta inverse` 로 반전). `delta` 를 넘기는 화면은 없다.
-- `.kpi-spark`: 68×26 sparkline · 우하단 · opacity 0.85.
-- 그리드 일괄 blur 금지 (AP-1). 값 변동 애니메이션 없음 (§8.2).
-
 ### 7.3 Badge — `Badge` · `Pill` (`.pill*`)
 
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · no border · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
@@ -673,7 +661,7 @@
 - `EmptyState`: message 1줄 (원인) + 선택 hint (다음 단계) + 선택 action (재시도 버튼).
 - 가짜 SVG 일러스트 · 더미 데이터 금지. 실 자산은 사용자에게 요청.
 
-### 7.11 레이아웃 — `SplitRow` · `SplitColumn` · `TileSplit` · 간격 그리드
+### 7.11 레이아웃 — `SplitRow` · `SplitColumn` · 간격 그리드
 
 - **`SplitRow({ ratio = '1:1', layout = 'equal' })`**:
   - ratio: `1:1` · `2:1` 만 (`SPLIT_ROW_RATIOS`), 미지 값은 1:1. 예외: `cost` 의 lg 2fr/1fr override.
@@ -682,7 +670,6 @@
   - wrapper 로 감싼 카드도 stretch 높이를 물려받는다. 접힌 fold(`.is-collapsed`)는 header 높이를 유지하고 늘어나지 않는다.
   - stretch 유효 조건과 해법 (a)→(b)→(c): §1 의 6) — `STRETCH_FLOOR` 0.75.
 - **`SplitColumn({ isRail })`**: 한 컬럼의 카드 스택, gap `--gap-section` 16 · `isRail` → ≥ 1280px 에서 top 24 sticky.
-- **`TileSplit`**: 타일 내부 lead | detail — 641–1279px 에서 2열, 그 외 세로.
 - **간격 · radius · breakpoint** (spacing roles: §12.1):
 
 | 항목 | 값 |
@@ -693,7 +680,6 @@
 | radius role | inline 4 < control 6 < tile 8 < card 12 · badge 6 |
 | SplitRow 나란히 | ≥ 1280px |
 | sidebar rail | < 1200px |
-| TileSplit 2열 | 641–1279px |
 | drawer 전면 시트 | ≤ 640px |
 
 - 한 view 에서 radius family 를 섞지 않는다 — 역할로만 스케일.
@@ -941,7 +927,7 @@
   - Tailwind CDN-JIT + 런타임 `tailwind.config` 객체. Tailwind v4 `@theme` / Oxide / OKLCH 가 **아니다** → `@theme` 자동 토큰 · `text-[var(…)]` 색 파싱 가정 불가.
   - JSX 는 esbuild 로 precompile — `public/src` 의 `.jsx` 를 고치면 `npm run build:jsx` (`public/src/data/*.js` 는 빌드 없이 로드).
     - 새 `.jsx` 파일은 `package.json` → `build:jsx` 진입점 목록과 `index.html` 의 `dist/` script 태그에 함께 추가 — 목록 밖 파일은 빌드 · 로드되지 않는다.
-  - UI 는 `window.UI` atom 으로 생성 (`Card` · `CardHead` · `SplitRow` · `DetailSurface` · `Badge` · `Table` · `KPI` · `EmptyState` · `AgentName`).
+  - UI 는 `window.UI` atom 으로 생성 (`Card` · `CardHead` · `SplitRow` · `DetailSurface` · `Badge` · `Table` · `StatRow` · `EmptyState` · `AgentName`).
   - 로딩 · 오류 · 신선도 상태도 atom 으로: `LoadingPlaceholder` · `SkeletonRows` · `RegionFailure` · `PageErrorBanner` · `AlertCard` · `RetryButton` · `FreshnessStamp` · `RefreshButton` (§3.3).
 
 **Non-negotiable**
@@ -1186,7 +1172,6 @@
 - §7.12 Popover as a filter container → §12.3 Filter bar (Popover stays for ⓘ).
 - Principle 7 and §8 `.live-dot` ambient loop + §7.7 sidebar `.live-dot` → no ambient loop.
 - Retiring, marked in place until the owning stream lands:
-  - §7.2 `.kpi-delta` / `.kpi-hint` mono → §12.8 stat row context line (S2c)
   - pressed-toggle ✓ glyph (§7.4 · §7.6 · §7.16) → built with the S2a controls
   - tokens `--shadow-raised`, `--glass-border` (§3.1 · §3.2 · §6.4) → no caller; S3 close deletes them
 
