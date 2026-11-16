@@ -722,7 +722,7 @@ function ViewTabsI({ view, onChange }) {
 // 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
 // reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
 function TrendCardI({ state, aggregate, failures, onRetry }) {
-	const { CardHead, TrendChart, LoadingPlaceholder, getRegionView } = window.UI;
+	const { CardHead, TrendChart, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
@@ -745,9 +745,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-4 pb-4">
-					<LoadingPlaceholder label="the trend" minHeight={60} />
-				</div>
+				{getLoopLoadingSlotI("the trend")}
 			</div>
 		);
 	}
@@ -1624,7 +1622,7 @@ function preVerifyBadgeI(status, passed) {
 // ----- Bucket row (Read-bridge) — CTM/EPM + outcome_summary + join_meta 시각화. ---
 
 function BucketRowI({ state, buckets, failures, onRetry }) {
-	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
+	const { CardHead, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
@@ -1650,9 +1648,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 					title="Learning memory"
 					sub="All time"
 				/>
-				<div className="p-3">
-					<LoadingPlaceholder label="learning memory" minHeight={68} />
-				</div>
+				{getLoopLoadingSlotI("learning memory")}
 			</div>
 		);
 	}
@@ -2294,7 +2290,7 @@ function composePreVerifyI(badge, rationale, axes) {
 // 전/후반 reject 비율을 formatPctWithDenominator 로 — 분모 0 → '—' (가짜 0% 차단).
 
 function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
-	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
+	const { CardHead, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
@@ -2317,9 +2313,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-4 pb-4">
-					<LoadingPlaceholder label="applied changes" minHeight={68} />
-				</div>
+				{getLoopLoadingSlotI("applied changes")}
 			</div>
 		);
 	}
@@ -2388,6 +2382,15 @@ function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 				<window.UI.DayTokens>{foot}</window.UI.DayTokens>
 			</div>
 		</>
+	);
+}
+
+// a loading loop card → its line in the metric slot, so sibling cards draw it at one height
+function getLoopLoadingSlotI(label) {
+	return (
+		<div className="i-loop-metric">
+			<window.UI.LoadingPlaceholder label={label} />
+		</div>
 	);
 }
 

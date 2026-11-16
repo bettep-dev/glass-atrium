@@ -391,6 +391,23 @@ function getSlotOf(card: RecordedElement, slot: string): RecordedElement[] {
   return collectElements(card, []).filter((el) => new RegExp(`\\b${slot}\\b`).test(String(el.props.className ?? "")));
 }
 
+// three sibling cards loading at once → one slot, so their loading lines sit at one height
+test("every loading loop card draws its loading line in the metric slot, unsized", () => {
+  const LOADING = { status: "loading" };
+  const cards = [
+    sandbox.ChangeSummaryCardI({ state: LOADING, aggregate: null }),
+    sandbox.TrendCardI({ state: LOADING, aggregate: null }),
+    sandbox.BucketRowI({ state: LOADING, buckets: null }),
+  ];
+  for (const card of cards) {
+    const [metric] = getSlotOf(card, "i-loop-metric");
+    const placeholders = collectElements(card, []).filter((el) => el.type === sandbox.window.UI.LoadingPlaceholder);
+    assert.equal(placeholders.length, 1);
+    assert.ok(metric && collectElements(metric, []).includes(placeholders[0]), "the loading line sits in the metric slot");
+    assert.equal(placeholders[0].props.minHeight, undefined, "the slot, not the line, sets the height");
+  }
+});
+
 describe("every loop card stacks one metric, one visual and one pinned foot, in that order", () => {
   for (const { name, card } of getLoopCards()) {
     test(name, () => {
