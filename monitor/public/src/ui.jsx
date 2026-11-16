@@ -737,7 +737,7 @@ function getAbsentText(kind) {
 }
 
 /**
- * The look of "nothing" in a value slot — never a dash, a dot or a blank (design.md §12.2).
+ * The look of "nothing" in a value slot — never a dash, a dot or a blank (spec 44084 §2.2).
  * @param kind - 'none' = known and empty · 'not-loaded' = never read; required → a missing kind reads Not loaded, never claims empty
  * @param title - the cause, on hover
  */
