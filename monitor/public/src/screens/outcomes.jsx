@@ -1058,7 +1058,7 @@ function BandStatValueO({ tile, isLoading, unloadedText }) {
     return <span className="inline-flex"><LoadingPlaceholder label={tile.label.toLowerCase()}/></span>;
   }
   if (tile.count === null || tile.count === undefined) {
-    return unloadedText ? <span className="fs-body text-faint">{unloadedText}</span> : <AbsentValue kind="not-loaded"/>;
+    return unloadedText ? <span className="fs-body text-dim">{unloadedText}</span> : <AbsentValue kind="not-loaded"/>;
   }
   const count = formatIntO(tile.count);
   if (!tile.jumpTo || tile.count === 0) return count;

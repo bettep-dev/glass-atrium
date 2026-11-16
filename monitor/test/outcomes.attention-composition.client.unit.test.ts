@@ -97,7 +97,7 @@ interface OutcomesHelpers {
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   isFilterAppliedO: (filter: Record<string, unknown>, includeAll: boolean) => boolean;
   buildAgentOptionsO: (agents: string[], chosen: string) => { value: string; label: string }[];
-  BandStatValueO: (props: { tile: BandTile; isLoading: boolean; unloadedText: string }) => RenderNode | string;
+  BandStatValueO: (props: { tile: BandTile; isLoading: boolean; unloadedText: string | null }) => RenderNode | string;
   BandRulesO: (props: { tiles: BandTile[]; reasons: { key: string; label: string; count: number | null; tone: string }[]; priorRange: string | null }) => RenderNode;
   getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
   AttributionSummaryRow: (props: { summary: Record<string, unknown> | null; totalAttributed: number }) => RenderNode;
@@ -755,6 +755,30 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   }
   const broken = tileOf(tiles, "broken");
   assert.strictEqual(asRendered(broken), String(broken.count), "a stat without a target is its plain count");
+});
+
+// spec 44084 §2.2: an unread count says it was not read in a look of its own, never a dash that reads as data
+describe("BandStatValueO: an unread count names its state", () => {
+  const tiles = helpers.buildStatusBandTilesO(aboveFloor({ done: 150, fail: 50 }), null);
+
+  test("a count with no wait word of its own reads Not loaded in faint ink at the stat's own size", () => {
+    const value = helpers.BandStatValueO({ tile: { ...tileOf(tiles, "broken"), count: null }, isLoading: false, unloadedText: null });
+    const [mark] = expandNodes(value);
+    assert.deepStrictEqual({ className: mark.props?.className, text: renderText(mark) }, { className: "text-faint", text: "Not loaded" });
+  });
+
+  const rows = [
+    { name: "a needs-you read in flight reads Loading… in dim ink at body size", attentionState: { status: "loading" as const }, word: "Loading…" },
+    { name: "a failed needs-you read reads Unavailable in dim ink at body size", attentionState: { status: "error" as const, error: "boom" }, word: "Unavailable" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const band = helpers.StatusBandO({ analyticsState: { status: "ready", data: aboveFloor({ done: 190 }) }, attentionState: row.attentionState, windowDays: 30 });
+      const stats = flattenNodes(band).find((n) => n.type === helpers.window.UI.StatRow)!.props!.stats as { key: string; value: unknown }[];
+      const [word] = expandNodes(stats.find((stat) => stat.key === "attention")!.value);
+      assert.deepStrictEqual({ className: word.props?.className, text: renderText(word) }, { className: "fs-body text-dim", text: row.word });
+    });
+  }
 });
 
 // design.md copy rule: a definition over a cap opens from a focusable ⓘ, never a hover-only title
