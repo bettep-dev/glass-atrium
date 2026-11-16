@@ -72,7 +72,7 @@ const SIGN_IN_PAGE = "/sign-in.html";
 const ACTOR_MAX_LENGTH = 64;
 // an unmatched path is caller-chosen → bounded before it reaches the audit payload
 const ROUTE_MAX_LENGTH = 256;
-// reduce-only closes → they run even when their intent row cannot be written (route-classes condition 13)
+// reduce-only closes → they run even when their intent row cannot be written
 const REDUCE_ONLY_ROUTES = new Set(["POST /api/remote/off", "POST /api/remote/logout"]);
 // request → admitted device; a WeakMap, not a decoration → nothing outside this module can mark a request registered
 const ADMITTED = new WeakMap<FastifyRequest, DeviceState>();
