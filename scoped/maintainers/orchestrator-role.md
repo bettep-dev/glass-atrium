@@ -282,7 +282,10 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
     - The action on a wake stays single-sited in the wait table's `[ATRIUM-QUEUE]` rows.
   - `### On a wait's exit` is a split point holding `### Answers and messages` under the 3 KB H3 cap: the wait table's last row points to it.
   - The section names the listener's lifetime, never quotes it: its value lives in `scripts/atrium-queue.sh` → `LISTEN_LIFETIME_S`.
-  - The section's `twice` mirrors `scripts/atrium-queue.sh` → `LISTEN_ANNOUNCE_MAX`, canonical there: change the two together.
+  - The section's announce bound mirrors constants of `scripts/atrium-queue.sh`, canonical there: change each literal with its constant.
+    - `twice` and `a further two`: `LISTEN_ANNOUNCE_MAX`.
+    - `three times` and `the third`: `LISTEN_INTERVAL_RESETS_MAX`.
+    - The nudge interval is cited by its constant, never quoted: `scripts/lib/queue-session.sh` → `QUEUE_NUDGE_INTERVAL_MIN`.
 
 ### Owner Queue — texts in sync
 

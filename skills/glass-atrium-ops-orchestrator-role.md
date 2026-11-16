@@ -767,7 +767,10 @@ A claim by `wait` or `pending` → `get <item-id>` → `ack <item-id> <msg-id>` 
   - the listener runs only for a main session on the `cli` entrypoint, with no job-directory variable, no print flag in its process's arguments and no background-job host as its parent process; a session whose kind it cannot decide gets none;
   - a listener is no wait: a `wait` the session runs takes its place, and a listener meeting a running `wait` ends at once;
   - the turn-end check's `[ATRIUM-QUEUE] harness:` line names no `wait` while a wait or a listener of this Claude process runs or is starting; its verdict ask names `wait` whatever listens;
-  - it wakes one Claude process at most twice in a row for the same count; a claim, or a count read back at zero, starts that bound over;
+  - it wakes one Claude process at most twice in a row for the same answered set — its item ids, or the count alone where the monitor sends no ids;
+    - the nudge interval (`scripts/lib/queue-session.sh` → `QUEUE_NUDGE_INTERVAL_MIN`) passing since the last such wake opens a further two, at most three times per set;
+    - past the third, only the lifetime-end wake names that set again;
+    - a changed set, a claim, or a count read back at zero starts the whole bound over;
   - its lifetime-end wake comes once, whatever that bound has counted;
   - it ends without a wake on a monitor it cannot reach or read, when the host ends it, or when a `wait` or a newer listener takes its place: no re-arm follows any of these;
   - after a monitor failure or a host end, none starts before the session's next start or turn end: a session idle past that draws no wake.
