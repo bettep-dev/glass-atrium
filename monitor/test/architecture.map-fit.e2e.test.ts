@@ -9,10 +9,10 @@
 // the trade that a wider graph does not move.
 //
 // The default view is an overview: the drawing at 90% of the contain fit, centred, with every label
-// at the 13px meta floor or more. Readings asserted together:
+// between the 13px meta floor and the 16px ceiling. Readings asserted together:
 //   1. containment — every `.node` / `.cluster` client rect within the canvas rect.
 //   2. overview share — the drawing spans ~90% of its frame on the binding axis, centred on both axes.
-//   3. legibility — every label at >= MIN_RENDERED_LABEL_PX in the default view, and still within the zoom-in press budget.
+//   3. legibility — every label within [MIN_RENDERED_LABEL_PX, MAX_RENDERED_LABEL_PX] in the default view, and >= the floor within the zoom-in press budget.
 //   4. reset — the Reset control returns a zoomed-in map to the same default view.
 //   5. shape — a sources column (Inputs above Daemons) beside the pipeline spine (Orchestrator → Agents → Safety → Store → Documents),
 //      the bus into Orchestrator and the bypass right of the spine; every screen-drawn label clear of frames, other labels and the zoom controls.
@@ -57,6 +57,9 @@ const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
 // the 13px meta floor every drawn label must reach — owned here, never read from the screen
 const MIN_RENDERED_LABEL_PX = 13;
+
+// the default view's label ceiling — a fitted overview never draws a label larger than body text, so the list under the map stays on the first screen
+const MAX_RENDERED_LABEL_PX = 16;
 
 // the default view's share of the contain fit
 const DEFAULT_VIEW_SHARE = 0.9;
@@ -119,6 +122,8 @@ interface FitReading {
 	drawableWidth: number;
 	scale: number;
 	labelPx: number;
+	// largest drawn label — the default view's ceiling reads it
+	maxLabelPx: number;
 	boxCount: number;
 	drawnWidthPx: number;
 	drawnHeightPx: number;
@@ -255,9 +260,9 @@ async function measureFit(page: Page, canvasSelector: string): Promise<FitReadin
 			const labels = Array.from(canvas.querySelectorAll("svg .nodeLabel, svg .edgeLabel")).filter(
 				(el) => (el.textContent || "").trim() !== "",
 			);
-			const declared = labels.length
-				? Math.min(...labels.map((el) => Number.parseFloat(getComputedStyle(el).fontSize)))
-				: 0;
+			const sizes = labels.map((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+			const declared = sizes.length ? Math.min(...sizes) : 0;
+			const largest = sizes.length ? Math.max(...sizes) : 0;
 
 			// 노드와 존 상자 전부 — 존이 잘리면 그 안의 제목이 잘림.
 			const boxes = Array.from(canvas.querySelectorAll("svg g.node, svg g.cluster"));
@@ -312,6 +317,7 @@ async function measureFit(page: Page, canvasSelector: string): Promise<FitReadin
 				drawableWidth: drawableRight - pane.left,
 				scale,
 				labelPx: declared * scale,
+				maxLabelPx: largest * scale,
 				boxCount: boxes.length,
 				drawnWidthPx: drawn.right - drawn.left,
 				drawnHeightPx: drawn.bottom - drawn.top,
@@ -928,6 +934,15 @@ for (const { width, height } of VIEWPORTS) {
 		assert.ok(
 			reached >= 0,
 			`labels stay under ${MIN_RENDERED_LABEL_PX}px after ${ZOOM_IN_PRESS_BUDGET} zoom-in presses: ${sizes.map((px) => px.toFixed(2)).join(" → ")}`,
+		);
+	});
+
+	test(`no label in the default view is drawn above ${MAX_RENDERED_LABEL_PX}px at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		assert.ok(r.maxLabelPx > 0, "no drawn label was measured");
+		assert.ok(
+			r.maxLabelPx <= MAX_RENDERED_LABEL_PX + CTM_FLOAT_TOLERANCE,
+			`the largest label is ${r.maxLabelPx.toFixed(2)}px at scale ${r.scale.toFixed(4)} (pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)})`,
 		);
 	});
 

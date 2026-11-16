@@ -356,25 +356,29 @@ test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으�
   );
 });
 
-// --- default-view scale — 90% of the contain fit ---
+// --- default-view scale — 90% of the contain fit, under the label ceiling ---
 
 // the default view's share of the contain fit — paired with the screen's overview rule
 const DEFAULT_VIEW_SHARE = 0.9;
 
-// pane/graph grid spanning fits far under the retired 12px floor, around 1, and above the natural-size cap
+// largest default-view scale: the 16px label ceiling over the map's 30-unit declared label — owned here, never read from the screen
+const LABEL_CEILING_SCALE = 16 / 30;
+
+// pane/graph grid spanning fits far under the ceiling, either side of it, and above the natural-size cap
 const FIT_GRID: Array<{ name: string; dims: [number, number, number, number]; containFit: number }> = [
   { name: "a very wide graph (width fit 0.1)", dims: [400, 400, 4000, 200], containFit: 0.1 },
   { name: "a square graph larger than the pane (fit 1/3)", dims: [400, 400, 1200, 1200], containFit: 1 / 3 },
+  { name: "a graph whose 90% share lands just under the ceiling (fit 0.55)", dims: [550, 550, 1000, 1000], containFit: 0.55 },
   { name: "a graph slightly larger than the pane (fit 0.8)", dims: [1200, 800, 1500, 1000], containFit: 0.8 },
   { name: "a graph exactly the pane size (fit 1)", dims: [400, 400, 400, 400], containFit: 1 },
   { name: "a small graph capped at natural size (fit 4)", dims: [800, 800, 200, 200], containFit: 4 },
 ];
 
-describe("the default view scale is 90% of the contain fit capped at natural size", () => {
+describe("the default view scale is 90% of the contain fit, capped at natural size and at the label ceiling", () => {
   for (const row of FIT_GRID) {
     test(row.name, () => {
       const s = arch.getDefaultViewScaleAR(...row.dims);
-      const expected = DEFAULT_VIEW_SHARE * Math.min(row.containFit, 1);
+      const expected = Math.min(DEFAULT_VIEW_SHARE * Math.min(row.containFit, 1), LABEL_CEILING_SCALE);
       assert.ok(Math.abs(s - expected) < 1e-9, `${row.dims.join("x")} -> ${s}, expected ${expected}`);
     });
   }

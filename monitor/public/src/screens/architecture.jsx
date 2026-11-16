@@ -14,6 +14,8 @@ const {
 const MAP_LABEL = {
 	// map-only label size — the shared 14px renders under the 13px floor once the map is fitted to a 1024 pane
 	fontPx: 30,
+	// default-view label ceiling (CSS px) — a wide window shrinks the overview to it, so the pane clamps to the drawing and Part health rises onto the first screen
+	ceilingPx: 16,
 	// mermaid wrap ceiling (SVG units) — above the widest one-line map label, so mermaid never breaks one
 	wrapPx: 2000,
 	// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
@@ -2253,11 +2255,11 @@ async function fetchJsonAR(url, signal) {
 	return res.json();
 }
 
-// default-view absolute scale from arguments alone (no DOM/instance) · unmeasured dims → DEFAULT_VIEW_SHARE at natural size
+// default-view absolute scale from arguments alone (no DOM/instance) · unmeasured dims → DEFAULT_VIEW_SHARE at natural size · never past the label ceiling
 function getDefaultViewScaleAR(paneW, paneH, graphW, graphH) {
 	if (!(paneW > 0 && paneH > 0 && graphW > 0 && graphH > 0)) return DEFAULT_VIEW_SHARE;
 	const containFit = Math.min(paneW / graphW, paneH / graphH);
-	return DEFAULT_VIEW_SHARE * Math.min(containFit, 1);
+	return Math.min(DEFAULT_VIEW_SHARE * Math.min(containFit, 1), MAP_LABEL.ceilingPx / MAP_LABEL.fontPx);
 }
 
 /**

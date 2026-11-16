@@ -744,8 +744,9 @@
   - 화면이 그리는 bus 2 · bypass 1 (`createScreenPathAR`) = 그려진 `path.flowchart-link` 의 clone — 같은 class · marker, id `L_<from>_<to>_screen`, `data-arch-edge="bus"` / `"bypass"`. 직교성 검사가 이 셋도 canvas link 로 센다 (`architecture.merged-surface.e2e`).
 - **spine label**: **자기 edge 의 오른쪽**, edge 와 `LABEL_PAD` 16 · 다른 edge 와 ≥ 16.
 - **크기**:
-  - arrowhead 2× (`ARROW_SCALE`) · default view = contain fit 의 `DEFAULT_VIEW_SHARE` 0.9 · default view 의 모든 라벨 ≥ 13px (1024 에서 13.49px 측정).
-  - map pane 높이 floor 500px (`PANE.FLOOR_PX`) — 첫 화면 높이가 모자라면 floor 가 이기고 Part health 는 첫 화면 아래로.
+  - arrowhead 2× (`ARROW_SCALE`) · default view = contain fit 의 `DEFAULT_VIEW_SHARE` 0.9, 단 라벨 ceiling 16px (`MAP_LABEL.ceilingPx`) 를 넘지 않음 → default view 라벨 13–16px (1024 에서 13.49px · 1440 · 1920 에서 16px 측정).
+  - ceiling 이 걸리면 pane 은 그림 높이로 줄고 (contain frame) Part health 가 첫 화면에 올라옴.
+  - map pane 높이 floor 500px (`PANE.FLOOR_PX`) — 좁거나 낮은 창에서만 걸림: 첫 화면 높이가 모자라면 floor 가 이기고 Part health 는 첫 화면 아래로.
   - zoom 컨트롤용 우측 inset ≥ 48px (`CONTROLS_MIN_INSET_PX`) — 컨트롤 아래 box 0개.
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
