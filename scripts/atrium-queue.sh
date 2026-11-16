@@ -45,9 +45,12 @@ readonly SEAM_WHOLE_SHAPE='^[0-9]+$'
 # re-arm wake
 readonly LISTEN_LIFETIME_S=82800
 # the same answered set to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
-# a changed set, QUEUE_NUDGE_INTERVAL_MIN since the last announce, a claim or a count read back at 0 starts the bound
-# over (drop_announce_record), and the lifetime end's re-arm names the count again regardless
+# QUEUE_NUDGE_INTERVAL_MIN since the last announce opens the next interval of LISTEN_ANNOUNCE_MAX, at most
+# LISTEN_INTERVAL_RESETS_MAX times per set → an unclaimed set wakes a session a bounded number of times, never every
+# interval; a changed set, a claim or a count read back at 0 starts the whole bound over (drop_announce_record), and the
+# lifetime end's re-arm names the count again regardless
 readonly LISTEN_ANNOUNCE_MAX=2
+readonly LISTEN_INTERVAL_RESETS_MAX=3
 # a session's register runs beside the listener at its start → a refusal this early may be the register not yet landed
 readonly LISTEN_REFUSAL_GRACE_S=30
 readonly LISTEN_WAKE_LEAD='[ATRIUM-QUEUE] harness: this is the owner-queue wake, not an error —'
@@ -689,46 +692,52 @@ set_listen_answered() {
 }
 
 # <session id> <count> <answered set> [rearm] → wakes the session (exit 2) unless this Claude process was told this set
-# LISTEN_ANNOUNCE_MAX times within QUEUE_NUDGE_INTERVAL_MIN; a re-arm wakes regardless, with the re-arm line at count
-# 0. The owner check, the announce record and the lock's release share one hold of the waits mutex → a listener another
-# took over never wakes
+# LISTEN_ANNOUNCE_MAX times within QUEUE_NUDGE_INTERVAL_MIN, or its intervals are spent; a re-arm wakes regardless, with
+# the re-arm line at count 0. The owner check, the announce record and the lock's release share one hold of the waits
+# mutex → a listener another took over never wakes
 announce_if_due() {
-  local record told state
+  local record announced told resets state
   # shellcheck disable=SC2310  # a mutex held past its bound → no wake this round
   take_waits_mutex || return 0
   state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   [[ "${state}" == mine ]] || end_run 5
   record="$(queue_get_awaiting_dir "$1")/.announced"
-  told="$(get_announce_count "${record}" "$3")"
-  if ((told >= LISTEN_ANNOUNCE_MAX)) && [[ "${4:-}" != rearm ]]; then
+  announced="$(get_announce_count "${record}" "$3")"
+  IFS=' ' read -r told resets <<<"${announced}"
+  if ((told >= LISTEN_ANNOUNCE_MAX || resets > LISTEN_INTERVAL_RESETS_MAX)) && [[ "${4:-}" != rearm ]]; then
     drop_waits_mutex
     return 0
   fi
-  if (($2 > 0 && told < LISTEN_ANNOUNCE_MAX)); then put_announce_record "${record}" "$3" "$((told + 1))"; fi
+  if (($2 > 0 && told < LISTEN_ANNOUNCE_MAX && resets <= LISTEN_INTERVAL_RESETS_MAX)); then
+    put_announce_record "${record}" "$3" "$((told + 1))" "${resets}"
+  fi
   if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
   drop_waits_mutex
   print_wake "$2"
   exit 2
 }
 
-# <announce record> <answered set> <times told> → the record lands before the wake → a failed write never turns into an
-# unbounded one
+# <announce record> <answered set> <times told> <interval resets> → the record lands before the wake → a failed write
+# never turns into an unbounded one
 put_announce_record() {
-  if ! (mkdir -p -- "${1%/*}" && printf '%s %s %s\n' "$2" "$3" "${WAIT_OWNER}" >"$1") 2>/dev/null; then
+  if ! (mkdir -p -- "${1%/*}" && printf '%s %s %s %s\n' "$2" "$3" "$4" "${WAIT_OWNER}" >"$1") 2>/dev/null; then
     fail 1 "no announce record could be written at $1"
   fi
 }
 
-# <announce record> <answered set> → how often this Claude process was told this set; 0 for another set or process,
-# and once QUEUE_NUDGE_INTERVAL_MIN has passed since the last announce
+# <announce record> <answered set> → "<times told> <interval resets>": how often this Claude process was told this set
+# in the current interval and how many intervals reset it; "0 0" for another set or process or an unreadable record,
+# and once QUEUE_NUDGE_INTERVAL_MIN has passed since the last announce the next interval, "0 <resets + 1>"
 get_announce_count() {
-  local set="" times="" owner=""
-  if [[ -f "$1" ]]; then IFS=' ' read -r set times owner <"$1" || true; fi
-  # shellcheck disable=SC2310  # a record it cannot read counts as old → 0, a fresh announce
-  if queue_is_touched_within_nudge "$1" && [[ "${set}" == "$2" && "${owner}" == "${WAIT_OWNER}" && "${times}" =~ ^[0-9]+$ ]]; then
-    printf '%s\n' "${times}"
+  local set="" times="" resets="" owner=""
+  if [[ -f "$1" ]]; then IFS=' ' read -r set times resets owner <"$1" || true; fi
+  # shellcheck disable=SC2310  # a record whose age it cannot read counts as old → the next interval
+  if ! [[ "${set}" == "$2" && "${owner}" == "${WAIT_OWNER}" && "${times}" =~ ^[0-9]+$ && "${resets}" =~ ^[0-9]+$ ]]; then
+    printf '0 0\n'
+  elif queue_is_touched_within_nudge "$1"; then
+    printf '%s %s\n' "${times}" "${resets}"
   else
-    printf '0\n'
+    printf '0 %s\n' "$((resets + 1))"
   fi
 }
 

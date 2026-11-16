@@ -2,10 +2,10 @@
 # shellcheck disable=SC2030,SC2031,SC2154,SC2312  # a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison
 # The owner queue's listener (SessionStart and Stop hook, bound asyncRewake) against a stand-in monitor: it runs only
 # in an interactive main session, announces this session's answered items by count without claiming them, wakes the
-# session with one fixed line (exit 2) at most twice per answered set per Claude process until the set changes, the
-# nudge interval passes, or a claim or a zero count starts that bound over, yields to a newer listener and to a
-# session-run wait, ends quietly on a signal, a takeover or a monitor failure, and at its lifetime end wakes the session
-# once more to re-arm.
+# session with one fixed line (exit 2) at most twice per answered set per Claude process, twice more after each of at
+# most three nudge-interval passes, until the set changes or a claim or a zero count starts that bound over, yields to
+# a newer listener and to a session-run wait, ends quietly on a signal, a takeover or a monitor failure, and at its
+# lifetime end wakes the session once more to re-arm.
 #
 # Run via: bats hooks/test/queue-listener.bats
 # Requires: bats, bash 3.2+, jq, curl, python3, perl
@@ -243,7 +243,7 @@ expected_rearm() {
   [[ "$(jq -r 'select(.path == "/api/queue/pending/count") | .path' "${BATS_TEST_TMPDIR}/requests.log" | wc -l)" == "${before}" ]]
 }
 
-@test "the same answered set is announced at most twice per Claude process until it changes, the nudge interval passes or the re-arm names it at the lifetime end" {
+@test "the same answered set is announced twice per Claude process, twice more after each of three nudge-interval passes, then only by the lifetime-end re-arm until it changes or a claim starts it over" {
   start_stub
   export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
   set_reply 200 '{"answeredWaiting":2,"answeredItemIds":[4101,4107]}'
@@ -251,12 +251,28 @@ expected_rearm() {
   # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
   nudge_min="$(source "${GA}/scripts/lib/queue-session.sh" && printf '%s\n' "${QUEUE_NUDGE_INTERVAL_MIN}")"
   # <row>:<1 when the wake waits for the lifetime end> — at the first poll, else only at the re-arm after 2+ polls
-  for row in first:0 second:0 capped:1 still-capped:1 interval-passed:0 changed-set-same-count:0 changed-set-second:0 \
-    changed-set-capped:1 changed-count:0 another-process:0; do
+  for row in first:0 second:0 capped:1 still-capped:1 \
+    interval-1:0 interval-1-second:0 interval-1-capped:1 interval-2:0 interval-2-second:0 interval-3:0 \
+    interval-3-second:0 interval-4-resets-spent:1 \
+    claimed:0 claimed-second:0 claimed-interval-1:0 claimed-interval-1-second:0 claimed-interval-2:0 \
+    claimed-interval-2-second:0 claimed-interval-3:0 claimed-interval-3-second:0 claimed-interval-4-resets-spent:1 \
+    changed-set-same-count:0 changed-set-second:0 changed-set-capped:1 changed-set-interval-1:0 \
+    changed-count:0 another-process:0; do
     case "${row%%:*}" in
       # the last announce a minute past the nudge interval (scripts/lib/queue-session.sh → QUEUE_NUDGE_INTERVAL_MIN)
-      interval-passed) perl -e 'my $t = time - (shift() + 1) * 60; utime $t, $t, @ARGV or exit 1' \
+      *interval-[0-9] | *interval-[0-9]-resets-spent) perl -e 'my $t = time - (shift() + 1) * 60; utime $t, $t, @ARGV or exit 1' \
         "${nudge_min}" "${GA_ROOT}/data/queue/awaiting/${SESSION_ID}/.announced" ;;
+      # the pending pull claims one item, then a pull that claims nothing ends it
+      claimed)
+        set_nth_reply "$(($(request_count) + 1))" 200 \
+          '{"items":[{"id":{"item":"4107","msg":"5b0e7c2d-9a41-4c3e-8f6d-2e7a1b9c0d34"}}]}'
+        set_nth_reply "$(($(request_count) + 2))" 200 '{"items":[]}'
+        CLAUDE_CODE_SESSION_ID="${SESSION_ID}" run "${CLI}" pending
+        [[ "${status}" -eq 0 && "${output}" == *"item 4107"* ]] || {
+          echo "row ${row} claim: status=${status} out=${output}"
+          return 1
+        }
+        ;;
       # one answer claimed through another path while another arrives → the count alone stays 2
       changed-set-same-count) set_reply 200 '{"answeredWaiting":2,"answeredItemIds":[4107,4112]}' ;;
       changed-count) set_reply 200 '{"answeredWaiting":4,"answeredItemIds":[4107,4112,4113,4120]}' ;;
