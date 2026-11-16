@@ -27,7 +27,7 @@ interface BandSandbox {
   React: { createElement: unknown };
   window: { UI: Record<string, unknown> };
   document: Record<string, unknown>;
-  tileStatusI: (state: { status: string }, value: unknown) => string;
+  getStatStatusI: (state: { status: string }, value: unknown) => string;
   StatusBandI: (props: Record<string, unknown>) => RecordedElement;
   InstrumentationViewI: (props: Record<string, unknown>) => RecordedElement | null;
   getBannerFocusTargetI: (view: string) => string;
@@ -91,11 +91,11 @@ Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value });
 // The relationship, not four hand-picked pairs: the tile's state is the payload's
 // state, except that a landed payload carrying no value is "unavailable", never ready.
 test("a tile's state follows its own payload, and a missing value is never ready", () => {
-  assert.equal(sandbox.tileStatusI({ status: "loading" }, { n: 1 }), "loading");
-  assert.equal(sandbox.tileStatusI({ status: "error" }, { n: 1 }), "error");
-  assert.equal(sandbox.tileStatusI({ status: "ready" }, null), "unavailable");
-  assert.equal(sandbox.tileStatusI({ status: "ready" }, undefined), "unavailable");
-  assert.equal(sandbox.tileStatusI({ status: "ready" }, { n: 1 }), "ready");
+  assert.equal(sandbox.getStatStatusI({ status: "loading" }, { n: 1 }), "loading");
+  assert.equal(sandbox.getStatStatusI({ status: "error" }, { n: 1 }), "error");
+  assert.equal(sandbox.getStatStatusI({ status: "ready" }, null), "unavailable");
+  assert.equal(sandbox.getStatStatusI({ status: "ready" }, undefined), "unavailable");
+  assert.equal(sandbox.getStatStatusI({ status: "ready" }, { n: 1 }), "ready");
 });
 
 const LANDED = { status: "ready", busy: false, error: null, data: {} };

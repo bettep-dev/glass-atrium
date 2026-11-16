@@ -1,5 +1,5 @@
 // Unit pins for the PURE derivations behind the cost screen's decision tier (screens/cost.jsx):
-// the spend alarm rows' triggers and held state, the tile-1 hot verdict, the window-total delta rule, the session Other-row
+// the spend alarm rows' triggers and held state, the stat-1 hot verdict, the window-total delta rule, the session Other-row
 // rollup. Each pins a relationship the composition rests on, not a sampled pair.
 //
 // Runner: npx tsx --test test/cost.client.unit.test.ts
@@ -116,8 +116,8 @@ interface CostHelpers {
     topN: number,
   ) => { count: number; share: number } | null;
   turnStopReasonMeta: (reason: string | null) => { label: string; raw: string; desc: string };
-  getTileStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
-  getTileNote: (status: PanelStatus, unavailableNote: string) => string;
+  getStatStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
+  getStatNote: (status: PanelStatus, unavailableNote: string) => string;
   getFreshnessInputC: (
     asOfAt: string | null,
     panelStates: ReadonlyArray<PanelState>,
@@ -412,7 +412,7 @@ function getTrendWithPrior(costs: readonly number[], prior: Record<string, unkno
   });
 }
 
-describe("the cost tile's delta compares the window total with the server's prior window", () => {
+describe("the cost stat's delta compares the window total with the server's prior window", () => {
   const rows = [
     { name: "a total above the prior window reads up", costs: [1, 2, 3, 4], prior: 5, delta: 100 },
     { name: "a total below the prior window reads down", costs: [1, 2, 3, 4], prior: 20, delta: -50 },
@@ -591,7 +591,7 @@ test("nothing is rolled into Other when the population fits", () => {
   assert.strictEqual(none.total, 0);
 });
 
-test("every tile state is distinct, and only ready renders a measured value", () => {
+test("every stat state is distinct, and only ready renders a measured value", () => {
   const cases: ReadonlyArray<readonly [PanelState, unknown, boolean, PanelStatus]> = [
     [loading, 1, false, "loading"],
     [failed, 1, false, "error"],
@@ -603,14 +603,14 @@ test("every tile state is distinct, and only ready renders a measured value", ()
     [ready({}), 0, false, "ready"],
   ];
   for (const [state, value, isEmpty, expected] of cases) {
-    const status = cost.getTileStatus(state, value, isEmpty);
+    const status = cost.getStatStatus(state, value, isEmpty);
     assert.strictEqual(status, expected, `${state.status}/${String(value)}/${isEmpty}`);
   }
 
   for (const status of ["error", "empty", "unavailable"] as const) {
-    assert.ok(cost.getTileNote(status, "no normal to compare against").length > 0, status);
+    assert.ok(cost.getStatNote(status, "no normal to compare against").length > 0, status);
   }
-  assert.strictEqual(cost.getTileNote("ready", "x"), "", "a ready tile states its value, not a note");
+  assert.strictEqual(cost.getStatNote("ready", "x"), "", "a ready stat states its value, not a note");
 });
 
 test("a model reads by one display name in every table, and an unattributed model never reads as a model name", () => {
@@ -1072,7 +1072,7 @@ test("a cold-failed KPI payload retrying reads as failed on its stats, never a s
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   const kpiState: PanelState = { status: "loading", data: null, error: "HTTP 500 Internal Server Error", busy: true };
   const settled = ready({ points: [{ day: "2026-01-09", cost_usd: 2 }], rows: [] });
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState, hot: cost.computeHotVerdict({}), trendState: settled, modelState: settled, days: 30, onRetry: () => {},
   });
 
@@ -1380,7 +1380,7 @@ describe("the window stat names its prior window in words", () => {
     test(row.name, async () => {
       const mod = await loadCostRender();
       const kpi = getKpiAtRatio(1, 1);
-      const tree = renderIn(mod, "KpiRowC", {
+      const tree = renderIn(mod, "SpendCardC", {
         kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendWithPrior([1, 2, 3, 4], getPriorBlock(row.prior)),
         modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
       });
@@ -1402,7 +1402,7 @@ test("every stat hint fits the 40-character one-line cap at the widest realistic
     model: "claude-opus-4", cost_usd: 999_999.99, session_count: 12_345,
     input_tokens: 9e9, output_tokens: 9e9, cache_read_tokens: 9e11, cache_creation_tokens: 9e10,
   }];
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), modelState: ready({ rows: modelRows }), days: 90, onRetry: () => {},
     trendState: ready({ days: 90, points: Array.from({ length: 90 }, (_, i) => ({ date: `d${i}`, cost_usd: 123_456.78 - i })) }),
   });
@@ -1422,7 +1422,7 @@ test("the cache stat's list-price note keeps its window (\"30 days\") whole as o
     model: "claude-opus-4", cost_usd: 120, session_count: 3,
     input_tokens: 1e6, output_tokens: 1e6, cache_read_tokens: 1e7, cache_creation_tokens: 1e6,
   }];
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: modelRows }), days: 30, onRetry: () => {},
   });
@@ -1451,7 +1451,7 @@ test("the window delta foot hands its sentence to DayTokens, so \"30 days\" befo
 test("the spend card's 7-day sentences (today hint, per-task hint and its window note) each ride one DayTokens", async () => {
   const mod = await loadCostRender();
   const kpi = { ...getKpiAtRatio(0.15, null), cost_per_done_usd: 0.39, done_count_7d: 2_396 };
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
@@ -1470,7 +1470,7 @@ test("the spend card's 7-day sentences (today hint, per-task hint and its window
 test("each stat with a counting rule keeps it behind the spend card's one info trigger, led by the stat label", async () => {
   const mod = await loadCostRender();
   const kpi = getKpiAtRatio(1, 1);
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
@@ -1610,7 +1610,7 @@ test("the spend concentration sentence prints its share through formatPct, so a 
   assert.match(getText({ share: 0.4125, count: 3 }, 40), /hold 41\.3% of the spend/);
 });
 
-test("the cache tile says the list-price total matches the recorded total when both read the same, and names the gap when not", () => {
+test("the cache stat says the list-price total matches the recorded total when both read the same, and names the gap when not", () => {
   const match = cost.getCacheTotalNoteC({ listTotal: 14_520.3, recordedTotal: 14_520.1, days: 30 });
   assert.doesNotMatch(match, /not the recorded total/);
   assert.match(match, /matches the recorded total/);
@@ -1772,7 +1772,7 @@ test("every chart tooltip floats on the opaque overlay surface and follows the p
 test("a loading stat's indicator animates only through a motion-safe class, so reduced motion holds it still", async () => {
   const mod = await loadCostRender();
   const loading: PanelState = { status: "loading", data: null, error: null, busy: false };
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: loading, hot: cost.computeHotVerdict({}), trendState: loading, modelState: loading, days: 30, onRetry: () => {},
   });
   const stats = findNodes(tree, isStat);
@@ -1945,7 +1945,7 @@ describe("the spend alarm rows lead the Spend card, under its head, and leave it
   for (const row of rows) {
     test(row.name, async () => {
       const mod = await loadCostRender();
-      const tree = renderIn(mod, "KpiRowC", {
+      const tree = renderIn(mod, "SpendCardC", {
         kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
         modelState: ready({ rows: [] }), days: 30, onRetry: () => {}, alarmRows: row.alarmRows,
       });

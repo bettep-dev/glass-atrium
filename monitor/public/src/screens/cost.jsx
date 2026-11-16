@@ -156,7 +156,7 @@ function ScreenCost() {
         )}
 
         <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
-          <KpiRowC
+          <SpendCardC
             kpiState={kpiState}
             hot={hotVerdict}
             alarmRows={alarmRows}
@@ -372,7 +372,7 @@ function SpendAlarmRowsC({ rows }) {
   );
 }
 
-// KPI band — today vs the 7-day average · window total + trend · cost per task · cache share.
+// Spend stats — today vs the 7-day average · window total + trend · cost per task · cache share.
 
 // "Running hot" cut — today ≥ 1.25x the 7-day average.
 const HOT_RATIO_CUT = 1.25;
@@ -385,10 +385,10 @@ function toFiniteOrNull(value) {
 }
 
 /**
- * Tile state contract — loading · error · empty (payload arrived, window holds nothing) ·
+ * Stat state contract — loading · error · empty (payload arrived, window holds nothing) ·
  * unavailable (payload arrived, this measure is not derivable) · ready.
  */
-function getTileStatus(state, value, isEmpty) {
+function getStatStatus(state, value, isEmpty) {
   // same branch as the payload's error card → a cold error stays 'error' while its Retry is in flight
   if (window.UI.getRegionView(state) === 'error') return 'error';
   if (state.status === 'loading') return 'loading';
@@ -397,8 +397,8 @@ function getTileStatus(state, value, isEmpty) {
   return value === null || value === undefined ? 'unavailable' : 'ready';
 }
 
-// Non-ready tiles say why in words; the value slot holds None or Not loaded so it never reads as measured.
-function getTileNote(status, unavailableNote) {
+// Non-ready stats say why in words; the value slot holds None or Not loaded so it never reads as measured.
+function getStatNote(status, unavailableNote) {
   if (status === 'error') return 'Unavailable — this payload failed to load.';
   if (status === 'empty') return 'No cost recorded in this window.';
   if (status === 'unavailable') return unavailableNote || 'Not available for this window.';
@@ -510,14 +510,14 @@ function computeCacheShare(modelState) {
   };
 }
 
-function KpiRowC({ kpiState, hot, alarmRows = [], trendState, modelState, days, failures, onRetry }) {
+function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, days, failures, onRetry }) {
   const { getRegionView, RegionFailure, Card, StatRow } = window.UI;
   const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
   const notes = stats.filter((stat) => stat.info);
 
   return (
     <>
-      {/* Payload failure is reported at the owning group — the KPI payload feeds stats 1 and 3. */}
+      {/* Payload failure is reported at the owning group — the /api/cost/kpi payload feeds stats 1 and 3. */}
       {getRegionView(kpiState) === 'error' && (
         <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
           focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
@@ -545,14 +545,14 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   return [
     {
       key: 'today', label: 'Today vs. average', tone: getHotToneC(hot, false),
-      status: getTileStatus(kpiState, hot.ratio, false),
+      status: getStatStatus(kpiState, hot.ratio, false),
       value: formatUsdC(hot.todayCost),
       hint: hot.normalDaily === null ? '' : `7-day average ${formatUsdC(hot.normalDaily)}/day`,
       unavailableNote: 'No cost in the last 7 days — no average to compare against.',
     },
     {
       key: 'window', label: `Cost, last ${trendDays} days`,
-      status: getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty),
+      status: getStatStatus(trendState, windowTotal.total, windowTotal.isEmpty),
       value: formatUsdC(windowTotal.total),
       context: <TrendDeltaTextC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>,
       info: windowTotal.total === null ? WINDOW_COST_RULE_C
@@ -561,7 +561,7 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     },
     {
       key: 'per-task', label: 'Cost per finished task',
-      status: getTileStatus(kpiState, costPerDone, false),
+      status: getStatStatus(kpiState, costPerDone, false),
       value: formatUsdC(costPerDone),
       hint: `7-day cost / ${formatIntC(doneCount)} finished`,
       info: <window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens>,
@@ -569,7 +569,7 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     },
     {
       key: 'cache', label: `Cache share, last ${modelDays} days`,
-      status: getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty),
+      status: getStatStatus(modelState, cacheShare.share, cacheShare.isEmpty),
       value: cacheShare.share === null ? null : window.UI.formatPct(cacheShare.share * 100),
       hint: cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`,
       // the window ("30 days") stays one token; the sentence wraps around it
@@ -629,7 +629,7 @@ function buildStatC(stat) {
   if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true };
   const isReady = stat.status === 'ready';
   // the hint or the state note, one plain string → its title carries it whole, and its day tokens stay whole
-  const note = isReady ? (stat.hint || null) : getTileNote(stat.status, stat.unavailableNote);
+  const note = isReady ? (stat.hint || null) : getStatNote(stat.status, stat.unavailableNote);
   const context = isReady && stat.context ? stat.context
     : note && <span title={note}><DayTokens>{note}</DayTokens></span>;
   return { key: stat.key, label: stat.label, value: <SpendStatValueC stat={stat}/>, context: context || null };
@@ -2473,8 +2473,8 @@ function computeSessionBins(sessions) {
   }));
 }
 
-// series 첫→끝 변화율 (%) — KPI delta 화살표.
-// 길이 < 2 또는 baseline=0 이면 null (KPI Delta 가 typeof==='number' 체크).
+// series 첫→끝 변화율 (%) — computePriorDelta 의 이전 창 대비 delta.
+// 길이 < 2 또는 baseline=0 이면 null.
 function computeSparkDeltaC(series) {
   if (!Array.isArray(series) || series.length < 2) return null;
   const first = Number(series[0]) || 0;

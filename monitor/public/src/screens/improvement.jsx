@@ -564,12 +564,12 @@ function getBandStatsI({ asOf, statsState, listState, learningLogState, suppress
 	const heldNeedingHuman = getHeldNeedingHumanI(suppression);
 	const appliedLead = getHeldTextI(appliedHeld, `of ${getCycleCountTextI(Number(s.cycle_total_7d ?? 0))} · last `);
 	return [
-		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", isCovered: noticeSources.includes("suggestions"), status: bandTileStatusI(listState, listState.data),
+		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", isCovered: noticeSources.includes("suggestions"), status: getBandStatStatusI(listState, listState.data),
 			value: formatIntI(awaiting), context: getHeldTextI(awaitingHeld, "Pending or snoozed suggestions") }),
-		buildBandStatI({ key: "applied", label: "Applied, 7d", owner: "loop output", isCovered: noticeSources.includes("loop stats"), status: bandTileStatusI(statsState, statsState.data),
+		buildBandStatI({ key: "applied", label: "Applied, 7d", owner: "loop output", isCovered: noticeSources.includes("loop stats"), status: getBandStatStatusI(statsState, statsState.data),
 			value: formatIntI(Number(s.cycles_generated_applied_7d ?? 0)),
 			context: <>{appliedLead}<window.UI.NoWrap>{formatCycleStampI(s.latest_cycle_started_at)}</window.UI.NoWrap></> }),
-		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", isCovered: noticeSources.includes("pattern ledger"), status: bandTileStatusI(learningLogState, suppression),
+		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", isCovered: noticeSources.includes("pattern ledger"), status: getBandStatStatusI(learningLogState, suppression),
 			value: heldNeedingHuman > 0 ? <JumpLinkI targetId={ANCHOR_ID_I.heldPatterns}>{formatIntI(heldNeedingHuman)}</JumpLinkI> : formatIntI(0),
 			context: `of ${formatIntI(sumCountsI(heldBuckets))} held patterns` }),
 	];
@@ -679,17 +679,17 @@ function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 	);
 }
 
-// payload 상태 → 타일 상태. ready 인데 값 자체가 없으면 0 이 아니라 "측정되지 않음"이다.
-function tileStatusI(state, value) {
+// payload 상태 → stat 상태. ready 인데 값 자체가 없으면 0 이 아니라 "측정되지 않음"이다.
+function getStatStatusI(state, value) {
 	if (state.status === "loading") return "loading";
 	if (state.status === "error") return "error";
 	if (!value) return "unavailable";
 	return "ready";
 }
 
-// 밴드 타일은 실패를 알리지 않는다 — 배너는 payload 를 소유한 그룹에 하나만.
-function bandTileStatusI(state, value) {
-	const status = tileStatusI(state, value);
+// 밴드 stat 은 실패를 알리지 않는다 — 배너는 payload 를 소유한 그룹에 하나만.
+function getBandStatStatusI(state, value) {
+	const status = getStatStatusI(state, value);
 	return status === "error" ? "announced" : status;
 }
 
@@ -1573,7 +1573,7 @@ function ConfidenceBadgeI({ value }) {
 }
 
 // confidence_observed → canonical 4-badge dual-encoded mapping.
-// NULL/undefined → ℹ "n/a" — instrumentation view 의 평균 미산정분 (proposal 카드는 chip 자체를 생략). `classes` = pill 배경 (proposal 카드 배지) · `tone` = text class (KPI tile · 표).
+// NULL/undefined → ℹ "n/a" — instrumentation view 의 평균 미산정분 (proposal 카드는 chip 자체를 생략). `tone` = text class.
 function confidenceBadgeMetaI(value) {
 	const { TONE_GLYPH, TONE_ICON } = window.UI;
 	// tone → symbol/icon 은 registry(TONE_GLYPH/TONE_ICON) 단일 출처 — 로컬 tone/symbol 맵 제거.
