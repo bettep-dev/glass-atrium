@@ -159,7 +159,7 @@ test("the node drawer titles its sections at the title step in sans and writes i
   assert.equal(getRuleFontPx(css, "arch-drawer-heading"), 16, "a drawer section title sits at the title step");
   assert.match(heading ?? "", /font-weight:\s*600/, "a drawer section title is semibold");
   assert.doesNotMatch(String(alsoLights?.props.className), /\bfont-mono\b/, "the Also lights line is prose");
-  assert.deepEqual(findNodes(flowList, (n) => n.props.style?.color !== undefined).map(collectText), [], "no connection carries a colour dot");
+  assert.deepEqual(findNodes(flowList, (n) => Object.hasOwn(Object(n.props.style), "color")).map(collectText), [], "no connection carries a colour dot");
 });
 
 async function loadArch(overrides: Record<string, unknown> = {}): Promise<ArchModule> {
