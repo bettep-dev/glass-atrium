@@ -47,10 +47,18 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/queue/owner/messages/send", "queue-message"],
 ]);
 
-// Single-writer enrichment seam: a covered handler may attach a curated old→new diff — never the raw request body (PII/secret guard).
-// The middleware merges it and stays the ONLY audit-row writer for the route (model-config AC-9: exactly 1 row per PUT).
+/** Curated identifiers of what a mutation acted on (ids, names, changed field names) → never a body or credential value. */
+export type AuditTarget = Readonly<Record<string, unknown>>;
+
+// Single-writer enrichment seam: a handler may attach a curated old→new diff or target — never the raw request body (PII/secret guard).
+// Loopback: the middleware merges it as `change` for covered routes and stays the ONLY audit-row writer for the route
+// (model-config AC-9: exactly 1 row per PUT). Remote: the gate records it as the row's `target` with the outcome, every route.
 export interface AuditChangeCarrier {
-  auditChange?: Record<string, unknown>;
+  auditChange?: AuditTarget;
+}
+
+export function setAuditTarget(request: FastifyRequest, target: AuditTarget): void {
+  (request as FastifyRequest & AuditChangeCarrier).auditChange = target;
 }
 
 // HTTP method → coarse verb. The route's literal suffix (e.g. 'approve', 'move-group') is a
@@ -117,7 +125,7 @@ function deriveActionKind(routeKey: string, method: string, resource: string): s
  * Extract the numeric target id from route params (:id or :rootId), when present.
  * Returns null on absence or non-numeric value — target_id is a nullable column.
  */
-function extractTargetId(request: FastifyRequest): bigint | null {
+export function extractTargetId(request: FastifyRequest): bigint | null {
   const params = request.params as Record<string, unknown> | undefined;
   if (!params) {
     return null;
@@ -237,13 +245,14 @@ async function insertAudit(app: FastifyInstance, snapshot: AuditSnapshot): Promi
  */
 export function buildRemoteAuditWriter(db: Prisma.TransactionClient = getPrisma()): RemoteAuditWriter {
   return {
-    insertIntent: async ({ actor, method, route }) => {
+    insertIntent: async ({ actor, method, route, targetId }) => {
       const row = await db.auditLog.create({
         data: {
           eventTs: new Date(),
           actor,
           actionKind: "remote.mutation",
           targetTable: ROUTE_RESOURCE.get(route) ?? null,
+          targetId: targetId ?? null,
           payload: { method, route },
           resultCode: "error",
         },
@@ -251,8 +260,18 @@ export function buildRemoteAuditWriter(db: Prisma.TransactionClient = getPrisma(
       });
       return row.id;
     },
-    setResult: async (id, result) => {
-      await db.auditLog.update({ where: { id }, data: { resultCode: result } });
+    setResult: async (id, result, target) => {
+      if (target === undefined) {
+        await db.auditLog.update({ where: { id }, data: { resultCode: result } });
+        return;
+      }
+      // one statement → the target lands with the outcome, beside the intent's method and route
+      await db.$executeRaw`
+        UPDATE monitor.audit_log
+        SET result_code = ${result}::monitor."AuditResultCode",
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('target', ${JSON.stringify(target)}::jsonb)
+        WHERE id = ${id}
+      `;
     },
     insertEvent: async ({ actor, actionKind, result, payload, targetId }) => {
       await db.auditLog.create({

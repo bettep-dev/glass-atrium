@@ -255,7 +255,7 @@ describe("mutations from a registered device", () => {
     assert.equal(harness.audits.length, 1);
     const [audit] = harness.audits;
     assert.equal(audit!.isHandledFirst, false);
-    assert.deepEqual(audit!.entry, { actor: "remote:1@192.168.0.31", method: "POST", route: "/api/queue/owner/items/:id/answer" });
+    assert.deepEqual(audit!.entry, { actor: "remote:1@192.168.0.31", method: "POST", route: "/api/queue/owner/items/:id/answer", targetId: 7n });
     assert.equal(audit!.result, "success");
   });
 

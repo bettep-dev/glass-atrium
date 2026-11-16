@@ -28,6 +28,7 @@ import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { errnoCode } from "../errno.js";
+import { setAuditTarget } from "../middleware/audit-log.js";
 import { parseIdParam, parseOffsetParam } from "../route-params.js";
 import { extractIndexableText } from "../clauded-docs/indexable-text.js";
 import {
@@ -1436,6 +1437,7 @@ async function handleHtmlExportMulti(
     });
   }
   const ids = parsed.ids;
+  setAuditTarget(request, { ids });
 
   // Batch-fetch rows for the requested ids (same SELECT columns as handleGet/handleList).
   // DB unavailable → 503 (before zip stream starts, so a normal error envelope is possible).
@@ -1701,6 +1703,7 @@ async function handleUpdate(
   const existingAudience: AudienceLiteral | null = normalizeAudience(existing.audience);
   // exposure bit — PUT body audience field wins; unset keeps existing row value (no re-classification).
   const targetAudience: AudienceLiteral | null = parsed.audience ?? existingAudience;
+  setAuditTarget(request, { id, changed: getChangedUpdateFields({ parsed, existing, targetAudience, requestFormat }) });
 
   // body-kind(format) routes directly — html → HTML primary · else → plain primary.
   const needPlain = requestFormat !== "html";
@@ -1740,6 +1743,23 @@ async function handleUpdate(
     );
   }
   return handleUpdateHtmlBody(request, reply, id, parsed, existing, targetAudience);
+}
+
+/** Which of the four page-settable row facts this PUT changes → the remote audit target. */
+function getChangedUpdateFields(input: {
+  parsed: UpdateClaudedDocBody;
+  existing: ClaudedDocDbRow;
+  targetAudience: AudienceLiteral | null;
+  requestFormat: DocFormatToken;
+}): string[] {
+  const { parsed, existing } = input;
+  const changes: [string, boolean][] = [
+    ["title", parsed.title !== undefined && parsed.title !== existing.title],
+    ["audience", input.targetAudience !== normalizeAudience(existing.audience)],
+    ["doc_status", parsed.doc_status !== undefined && parsed.doc_status !== existing.doc_status],
+    ["format", input.requestFormat !== formatFromPath(existing.html_path)],
+  ];
+  return changes.filter(([, isChanged]) => isChanged).map(([field]) => field);
 }
 
 /**
@@ -2061,6 +2081,8 @@ async function handleDelete(
     reply.code(404);
     return { error: "not_found", id };
   }
+  // from the deleted row itself → the trail names what is gone, never its body
+  setAuditTarget(request, { id, title: row.title, contentHash: row.content_hash });
 
   // Defensive — verify before unlinking so a corrupted row cannot trigger an
   // out-of-root unlink.
@@ -3603,6 +3625,7 @@ async function handleGroupCreate(
     return reply.code(400).send({ error: "invalid_body", reason: parsed });
   }
   const memberIds = parsed.member_ids;
+  setAuditTarget(request, { memberIds });
 
   const prisma = getPrisma();
   // Root selection key: created_at DESC, id DESC (newest wins, id tie-break).
@@ -3685,6 +3708,7 @@ async function handleUngroup(
     return reply.code(400).send({ error: "invalid_body", reason: parsed });
   }
   const memberIds = parsed.member_ids;
+  setAuditTarget(request, { memberIds });
 
   const prisma = getPrisma();
   // Collect source folder_ids (the auto-ungroup trigger's check targets) and

@@ -5,7 +5,7 @@ import fastifyCookie from "@fastify/cookie";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { MUTATION_METHODS, getPageOriginSignal } from "../request-guards.js";
-import { deriveResultCode } from "../middleware/audit-log.js";
+import { type AuditChangeCarrier, type AuditTarget, deriveResultCode, extractTargetId } from "../middleware/audit-log.js";
 import type { DeviceConnections } from "./connections.js";
 import type { DeviceSummary } from "./devices.js";
 import { REMOTE_LIMITS, WindowLimiter } from "./limits.js";
@@ -16,6 +16,8 @@ export interface RemoteAuditEntry {
   readonly actor: string;
   readonly method: string;
   readonly route: string;
+  /** numeric :id / :rootId of the route → known before the handler; null when the route has none */
+  readonly targetId?: bigint | null;
 }
 
 export type RemoteAuditResult = "success" | "blocked" | "error";
@@ -34,7 +36,8 @@ export interface RemoteAuditEvent {
 export interface RemoteAuditWriter {
   /** @returns the row id; the row starts as `error` so a crash mid-handler stays recorded as not succeeded */
   insertIntent(entry: RemoteAuditEntry): Promise<bigint>;
-  setResult(id: bigint, result: RemoteAuditResult): Promise<void>;
+  /** target → the handler's curated AuditChangeCarrier value, recorded with the outcome */
+  setResult(id: bigint, result: RemoteAuditResult, target?: AuditTarget): Promise<void>;
   insertEvent(event: RemoteAuditEvent): Promise<void>;
 }
 
@@ -157,7 +160,7 @@ async function writeAuditIntent(request: FastifyRequest, reply: FastifyReply, au
   const route = request.routeOptions.url ?? "";
   try {
     const actor = getRemoteActor(state.device, getSourceAddress(request));
-    state.auditId = await audit.insertIntent({ actor, method: request.method, route });
+    state.auditId = await audit.insertIntent({ actor, method: request.method, route, targetId: extractTargetId(request) });
   } catch (error) {
     request.log.error({ err: error, method: request.method, route }, "remote mutation refused: audit intent row not written");
     return refuse(reply, 503, "audit_unavailable");
@@ -169,7 +172,7 @@ async function recordAuditResult(request: FastifyRequest, reply: FastifyReply, a
   const auditId = ADMITTED.get(request)?.auditId;
   if (auditId === undefined) return;
   try {
-    await audit.setResult(auditId, deriveResultCode(reply.statusCode));
+    await audit.setResult(auditId, deriveResultCode(reply.statusCode), (request as FastifyRequest & AuditChangeCarrier).auditChange);
   } catch (error) {
     // intent row stays `error` → the trail never over-reports a success
     request.log.warn({ err: error, auditId: String(auditId) }, "remote audit result not recorded");

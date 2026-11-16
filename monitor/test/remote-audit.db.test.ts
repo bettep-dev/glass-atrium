@@ -58,3 +58,20 @@ test("an event row records the outcome at once and names the device row it conce
     );
   });
 });
+
+test("the intent row names the route's numeric id, and the result writes the handler's target beside method and route", async () => {
+  await runRolledBack(async (tx) => {
+    const writer = buildRemoteAuditWriter(tx);
+    const id = await writer.insertIntent({ actor: "remote:3@192.168.0.31", method: "DELETE", route: "/api/clauded-docs/:id", targetId: 812n });
+    await writer.setResult(id, "success", { id: 812, title: "Release notes", contentHash: "ab".repeat(32) });
+    const row = await tx.auditLog.findUniqueOrThrow({ where: { id } });
+    assert.deepEqual(
+      { targetId: row.targetId, resultCode: row.resultCode, payload: row.payload },
+      {
+        targetId: 812n,
+        resultCode: "success",
+        payload: { method: "DELETE", route: "/api/clauded-docs/:id", target: { id: 812, title: "Release notes", contentHash: "ab".repeat(32) } },
+      },
+    );
+  });
+});
