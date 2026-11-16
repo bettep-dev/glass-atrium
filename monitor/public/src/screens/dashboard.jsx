@@ -1187,7 +1187,7 @@ function describeSpendTrend(harness) {
 }
 
 // amount first (spec 44084 §3.4) — the verdict trips on the larger of so-far and pace → the title names that leg,
-// the detail its multiple of the 7-day average, the noun and sign the Cost alarm uses
+// the detail its multiple of the 7-day average
 function describeSpendAlarm(spend) {
   const soFar = `${formatUsdCompact(spend.today)} so far today`;
   const isPaceLed = spend.pace >= spend.today;

@@ -312,7 +312,7 @@ const OUTSIDE_RANGE_FACT_C = 'the latest day is outside its 7-day normal range';
 
 /**
  * Spend row copy, amount first: the title holds today's figure (and where the day lands, when paced),
- * the detail its multiple of the 7-day average — the noun and basis the Dashboard's spend row uses.
+ * the detail its multiple of the 7-day average.
  * No spend leg at the cut → only the range trigger fired, so that fact is the whole title:
  * a below-average amount must not head a firing row.
  */
