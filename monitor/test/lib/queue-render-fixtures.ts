@@ -486,6 +486,7 @@ export const NOT_LISTENING_IDS = {
   mixedSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b20", deafSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b21",
   resumeSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b22", unreachableSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b23",
   twoBadgeSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b24", rollUpSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b25",
+  wideRollUpOrder: 470, wideRollUpSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b26",
 } as const;
 
 function buildNotListeningSession(id: string, name: string, state: "live" | "stale", inDelivery: number): { view: OwnerSessionView; row: OwnerSessionRow } {
@@ -533,6 +534,13 @@ const NOT_LISTENING_ORDERS = [
   }),
 ];
 
+// listening sessions that only the twelve-recipient order reaches
+const WIDE_ROLL_UP_NAMES = ["wiki", "docs", "billing", "search", "mobile"];
+
+function buildWideRollUpSession(name: string, index: number): OwnerSessionView {
+  return { ...buildSessionView("atrium"), id: `c5d6e7f8-7a8b-4c9d-8e0f-1a2b3c4d5e${index.toString(16).padStart(2, "0")}`, name };
+}
+
 const NOT_LISTENING_EDGE_ORDERS = [
   // one copy not listening beside one not received → the list row's two badges
   ...buildOrderCopies(NOT_LISTENING_IDS.twoBadgeOrder, {
@@ -552,9 +560,20 @@ const NOT_LISTENING_EDGE_ORDERS = [
       ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
     ],
   }),
+  // twelve recipients → two-digit counts in all four segments, wider than the order's column at 1280
+  ...buildOrderCopies(NOT_LISTENING_IDS.wideRollUpOrder, {
+    sendId: NOT_LISTENING_IDS.wideRollUpSend, minutesAgo: 0.5, text: "이번 주 회고에 넣을 항목을 세션마다 세 줄로 보고해 주세요.",
+    to: [
+      ["gersona", { deliveredAt: getAt(0.5) }], ["atrium", { deliveredAt: getAt(0.5) }], ["aidl", { deliveredAt: getAt(0.5) }], ["yoaida", { deliveredAt: getAt(0.5) }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, deliveredAt: getAt(0.5) }],
+      ...WIDE_ROLL_UP_NAMES.map((name, index): [SessionKey, Partial<OwnerItemView>] => ["atrium", { session: buildWideRollUpSession(name, index), deliveredAt: getAt(0.5) }]),
+      ["portfolio", { status: "resume_pending", deviation: "resume_pending", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+    ],
+  }),
 ];
 
-/** The not-listening state plus a list row with both badges and an order to seven sessions. */
+/** The not-listening state plus a list row with both badges, an order to seven sessions and one to twelve. */
 export function getNotListeningEdgeFixture(): QueueFixture {
   const base = getNotListeningFixture();
   return { ...base, items: [...base.items, ...NOT_LISTENING_EDGE_ORDERS], orders: [...base.orders, ...NOT_LISTENING_EDGE_ORDERS] };

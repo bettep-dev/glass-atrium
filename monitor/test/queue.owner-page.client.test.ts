@@ -2146,18 +2146,20 @@ describe("Orders", () => {
     const [rollUp] = findNodes(tree, (node) => node.type === "summary");
     const [details] = findNodes(tree, (node) => node.type === "details");
     const outside = findNodes(tree, (node) => node.props?.className === "queue-recipient").filter((node) => !findNodes(details as RenderedNode, (inner) => inner === node).length);
+    const line = collectText(rollUp as RenderedNode).replace(/\s+/g, " ");
     assert.deepEqual(
-      [collectText(rollUp as RenderedNode).includes("6 sessions · 4 received · 1 not yet · 1 not listening"), outside.map((node) => collectText(node).split("Not")[0]?.trim())],
+      [line.includes("6 sessions · 4 received · 1 not yet · 1 not listening"), outside.map((node) => collectText(node).split("Not")[0]?.trim())],
       [true, ["session-5"]],
-      collectText(rollUp as RenderedNode),
+      line,
     );
   });
   test("five recipients or more fold into one roll-up line; a recipient that did not receive it stays listed under it", () => {
     const entry = call<unknown[]>("getThreadEntriesQ", fan(["received", "received", "received", "received", "received", "notYet", "notReceived"]))[0];
     const tree = render("OrderEntryQ", { entry, onResend: () => undefined });
     const [rollUp] = findNodes(tree, (node) => node.type === "summary");
-    assert.ok(collectText(rollUp as RenderedNode).includes("7 sessions · 5 received · 1 not yet"), collectText(rollUp as RenderedNode));
-    assert.ok(collectText(rollUp as RenderedNode).includes("1 not received"), collectText(rollUp as RenderedNode));
+    const line = collectText(rollUp as RenderedNode).replace(/\s+/g, " ");
+    assert.ok(line.includes("7 sessions · 5 received · 1 not yet"), line);
+    assert.ok(line.includes("1 not received"), line);
     const [details] = findNodes(tree, (node) => node.type === "details");
     const outside = findNodes(tree, (node) => node.props?.className === "queue-recipient").filter((node) => !findNodes(details as RenderedNode, (inner) => inner === node).length);
     assert.deepEqual(outside.map((node) => collectText(node).split("Not")[0]?.trim()), ["session-6"]);

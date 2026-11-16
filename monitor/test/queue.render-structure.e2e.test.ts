@@ -2617,27 +2617,54 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { shown: 12, isAnyCut: false });
     });
 
-    // spec §9.3 `Five recipients or more`: one roll-up line, the chevron right before its counts; the amber badge may take its own line
-    for (const viewport of [VIEWPORTS[0], MIN_WINDOW]) {
-      test(`at ${viewport.width} the roll-up's counts stay on one line with the chevron right before them`, async () => {
-        const page = await openEdgePage(harness, viewport);
-        await showThreadText(page, "7 sessions · 5 received · 1 not yet");
-        const shown = await page.evaluate(() => {
-          const summary = document.querySelector(".queue-roll-up > summary") as HTMLElement;
-          const chevron = summary.querySelector(".disclosure-chevron") as Element;
-          const counts = [...summary.querySelectorAll("span")].find((span) => span.textContent === "7 sessions · 5 received · 1 not yet") as HTMLElement;
-          const gap = parseFloat(getComputedStyle(summary).columnGap) || 0;
-          const chevronBox = chevron.getBoundingClientRect();
-          const countsBox = counts.getBoundingClientRect();
-          return {
-            isOneLine: counts.getClientRects().length === 1 && countsBox.height < 2 * parseFloat(getComputedStyle(counts).lineHeight),
-            isChevronBeside: countsBox.left - chevronBox.right <= gap + 1 && chevronBox.top < countsBox.bottom && chevronBox.bottom > countsBox.top,
-          };
-        });
-        await page.close();
+    // spec §9.3 `Five recipients or more`: one roll-up, the chevron right before its counts; the amber badge may take its own line.
+    // Counts wider than the order's column wrap between their segments, each `n word` whole, every line flush with the column's end
+    const rollUps = [
+      { name: "seven sessions in three segments", getFixture: getEdgeFixture, counts: "7 sessions · 5 received · 1 not yet" },
+      { name: "seven sessions in four segments", getFixture: getNotListeningEdgeFixture, counts: "7 sessions · 5 received · 1 not yet · 1 not listening" },
+      { name: "twelve sessions in four segments", getFixture: getNotListeningEdgeFixture, counts: "12 sessions · 10 received · 1 not yet · 1 not listening" },
+    ];
+    for (const viewport of [MIN_WINDOW, VIEWPORTS[0]]) {
+      for (const rollUp of rollUps) {
+        test(`at ${viewport.width}, ${rollUp.name}: the roll-up's counts stay inside the order's column, breaking only between whole segments, end-aligned, the chevron right before the first`, async () => {
+          harness.fixture = rollUp.getFixture();
+          const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+          await showThreadText(page, rollUp.counts);
+          const shown = await page.evaluate((text) => {
+            const counts = [...document.querySelectorAll(".queue-roll-up > summary *")].find((node) => node.textContent?.replace(/\s+/g, " ").trim() === text) as HTMLElement;
+            const column = (counts.closest(".queue-order") as HTMLElement).getBoundingClientRect();
+            const box = counts.getBoundingClientRect();
+            const chevron = (counts.closest("summary") as HTMLElement).querySelector(".disclosure-chevron")?.getBoundingClientRect();
+            const segments: DOMRect[][] = [];
+            const walker = document.createTreeWalker(counts, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+              if (!node.textContent?.trim()) continue;
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              segments.push([...range.getClientRects()].filter((rect) => rect.width > 0));
+            }
+            const rects = segments.flat().sort((a, b) => a.top - b.top || a.left - b.left);
+            const lines: DOMRect[][] = [];
+            for (const rect of rects) {
+              const line = lines.at(-1);
+              if (line !== undefined && rect.top < line[0].bottom - 1) line.push(rect);
+              else lines.push([rect]);
+            }
+            const first = [...(lines[0] ?? [])].sort((a, b) => a.left - b.left)[0];
+            const gap = parseFloat(getComputedStyle(counts.closest("summary") as HTMLElement).columnGap) || 0;
+            return {
+              isInColumn: box.left >= column.left - 0.5 && box.right <= column.right + 0.5 && (chevron?.left ?? -1) >= column.left - 0.5,
+              isEachSegmentWhole: segments.every((parts) => parts.length === 1),
+              isEachLineEndAligned: lines.every((line) => Math.abs(Math.max(...line.map((rect) => rect.right)) - box.right) <= 1),
+              isEachLineOneBaseline: lines.every((line) => line.every((rect) => Math.abs(rect.bottom - line[0].bottom) <= 0.5)),
+              isChevronBeside: chevron !== undefined && first !== undefined && first.left - chevron.right >= 0 && first.left - chevron.right <= gap + 1 && chevron.top < first.bottom && chevron.bottom > first.top,
+            };
+          }, rollUp.counts);
+          await page.close();
 
-        assert.deepEqual(shown, { isOneLine: true, isChevronBeside: true });
-      });
+          assert.deepEqual(shown, { isInColumn: true, isEachSegmentWhole: true, isEachLineEndAligned: true, isEachLineOneBaseline: true, isChevronBeside: true });
+        });
+      }
     }
 
     test("a session with 128 items waiting shows 99+ in its 20 high count badge", async () => {

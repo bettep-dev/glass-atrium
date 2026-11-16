@@ -2629,7 +2629,6 @@ function getSteppedIndexQ(index, count, key) {
 
 /** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received and not listening stay listed under it. */
 function RecipientsQ({ copies, busy, onResend }) {
-	const { DisclosureChevron } = window.UI;
 	const resendable = copies.filter((copy) => copy.canResend).map((copy) => copy.id);
 	const isRolledUp = copies.length >= ORDERS_Q.ROLL_UP_FROM;
 	const isOutside = (copy) => !isRolledUp || ["notReceived", "notListening"].includes(getReceiptQ(copy));
@@ -2639,7 +2638,7 @@ function RecipientsQ({ copies, busy, onResend }) {
 		<>
 			{isRolledUp && (
 				<details className="queue-roll-up">
-					<summary className="group disclosure fs-meta"><span className="queue-roll-up-counts"><DisclosureChevron /><span>{counts.text}</span></span><RowFactsQ facts={badges} /></summary>
+					<summary className="group disclosure fs-meta"><RollUpCountsQ parts={counts.parts} /><RowFactsQ facts={badges} /></summary>
 					{list(copies.filter((copy) => !isOutside(copy)))}
 				</details>
 			)}
@@ -2649,13 +2648,25 @@ function RecipientsQ({ copies, busy, onResend }) {
 	);
 }
 
+// a space between segments is the only break → each `n word ·` whole, the chevron kept with the first (base.css → .queue-roll-up-counts)
+function RollUpCountsQ({ parts }) {
+	const { DisclosureChevron } = window.UI;
+	const [first, ...rest] = parts.map((part, index) => (index < parts.length - 1 ? `${part} ·` : part));
+	return (
+		<span className="queue-roll-up-counts">
+			<span className="queue-roll-up-lead"><DisclosureChevron /><span>{first}</span></span>
+			{rest.map((unit) => <React.Fragment key={unit}>{" "}<span className="queue-roll-up-unit">{unit}</span></React.Fragment>)}
+		</span>
+	);
+}
+
 // `7 sessions · 5 received · 1 not yet · 1 not listening` + the amber `1 not received`; a zero count is left out
 function getRollUpFactsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
 	const counted = (receipt) => getReceiptCountQ(receipts, receipt);
 	const parts = [`${copies.length} sessions`, `${counted("received")} received`, `${counted("notYet")} not yet`, `${counted("notListening")} not listening`].filter((part, index) => index === 0 || !part.startsWith("0 "));
 	const failed = counted("notReceived");
-	return [{ text: parts.join(" · ") }, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
+	return [{ parts }, ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
 }
 
 // an order on a report's sheet is the report's answer text; a standalone order is the message's body
