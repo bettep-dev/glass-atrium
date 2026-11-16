@@ -247,14 +247,16 @@ expected_rearm() {
   start_stub
   export ATRIUM_QUEUE_LISTEN_LIFETIME_S=3
   set_reply 200 '{"answeredWaiting":2,"answeredItemIds":[4101,4107]}'
-  local row before polls expected
+  local row before polls expected nudge_min
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
+  nudge_min="$(source "${GA}/scripts/lib/queue-session.sh" && printf '%s\n' "${QUEUE_NUDGE_INTERVAL_MIN}")"
   # <row>:<1 when the wake waits for the lifetime end> — at the first poll, else only at the re-arm after 2+ polls
   for row in first:0 second:0 capped:1 still-capped:1 interval-passed:0 changed-set-same-count:0 changed-set-second:0 \
     changed-set-capped:1 changed-count:0 another-process:0; do
     case "${row%%:*}" in
-      # the last announce older than the turn-end check's nudge interval (hooks/queue-turn-end-check.sh)
-      interval-passed) perl -e 'my $t = time - 11 * 60; utime $t, $t, @ARGV or exit 1' \
-        "${GA_ROOT}/data/queue/awaiting/${SESSION_ID}/.announced" ;;
+      # the last announce a minute past the nudge interval (scripts/lib/queue-session.sh → QUEUE_NUDGE_INTERVAL_MIN)
+      interval-passed) perl -e 'my $t = time - (shift() + 1) * 60; utime $t, $t, @ARGV or exit 1' \
+        "${nudge_min}" "${GA_ROOT}/data/queue/awaiting/${SESSION_ID}/.announced" ;;
       # one answer claimed through another path while another arrives → the count alone stays 2
       changed-set-same-count) set_reply 200 '{"answeredWaiting":2,"answeredItemIds":[4107,4112]}' ;;
       changed-count) set_reply 200 '{"answeredWaiting":4,"answeredItemIds":[4107,4112,4113,4120]}' ;;

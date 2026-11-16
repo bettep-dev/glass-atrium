@@ -212,14 +212,14 @@ set_wait_reason() {
 # <stamp> <nudge key> <newest item id> → 0 unless this Claude process was told about these items within
 # QUEUE_NUDGE_INTERVAL_MIN
 is_nudge_due() {
-  local told_key="" told_newest="" recent
+  local told_key="" told_newest=""
   [[ -f "$1" ]] || return 0
   IFS=' ' read -r told_key told_newest <"$1" || return 0
   if [[ "${told_key}" != "$2" || ! "${told_newest}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || (($3 > told_newest)); then
     return 0
   fi
-  recent="$(find "$1" -mmin "-${QUEUE_NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
-  [[ -z "${recent}" ]]
+  # shellcheck disable=SC2310  # a stamp it cannot read counts as old → the nudge, the fallback
+  if queue_is_touched_within_nudge "$1"; then return 1; fi
 }
 
 # <session id> <item ids, newest first> → the first a running wait would carry, nothing when none; drops the marks of

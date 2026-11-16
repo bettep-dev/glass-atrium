@@ -25,7 +25,7 @@ readonly CLI_MAX_TIME_S=10
 readonly IMAGE_NAME_SHAPE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|gif)$'
 # the monitor's route bodyLimit
 readonly ITEM_MAX_BYTES=196608
-# the monitor claims at most 20 per pull → 10 rounds bound one call at 200 items
+# one call's pull rounds → its drain bound, the monitor's ANSWERED_IDS_LIMIT (delivery.ts → PULL.ROUNDS_MAX, test-bound)
 readonly PULL_ROUNDS_MAX=10
 # the monitor's waiting-fact freshness window is two of these
 readonly WAIT_POLL_S=5
@@ -40,8 +40,9 @@ readonly WAIT_MUTEX_TRIES=200
 # test seam shapes (get_seam_s): a whole positive number of seconds, or one that may be 0
 readonly SEAM_POSITIVE_SHAPE='^[1-9][0-9]*$'
 readonly SEAM_WHOLE_SHAPE='^[0-9]+$'
-# inside the longest measured asyncRewake lifetime (82860 s under binding timeout 86400, lib/ga-env.sh), a margin of one
-# hour under that timeout → the host's SIGTERM never ends a listener before its re-arm wake
+# inside the longest measured asyncRewake run (scoped/shared-hook-capability-contract.md → 1c) and one hour under the
+# binding timeout (lib/ga-env.sh → EXPECTED_HOOK_BINDING_OPTIONS) → the host's SIGTERM never ends a listener before its
+# re-arm wake
 readonly LISTEN_LIFETIME_S=82800
 # the same answered set to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
 # a changed set, QUEUE_NUDGE_INTERVAL_MIN since the last announce, a claim or a count read back at 0 starts the bound
@@ -721,12 +722,10 @@ put_announce_record() {
 # <announce record> <answered set> → how often this Claude process was told this set; 0 for another set or process,
 # and once QUEUE_NUDGE_INTERVAL_MIN has passed since the last announce
 get_announce_count() {
-  local set="" times="" owner="" recent=""
-  if [[ -f "$1" ]]; then
-    IFS=' ' read -r set times owner <"$1" || true
-    recent="$(find "$1" -mmin "-${QUEUE_NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
-  fi
-  if [[ -n "${recent}" && "${set}" == "$2" && "${owner}" == "${WAIT_OWNER}" && "${times}" =~ ^[0-9]+$ ]]; then
+  local set="" times="" owner=""
+  if [[ -f "$1" ]]; then IFS=' ' read -r set times owner <"$1" || true; fi
+  # shellcheck disable=SC2310  # a record it cannot read counts as old → 0, a fresh announce
+  if queue_is_touched_within_nudge "$1" && [[ "${set}" == "$2" && "${owner}" == "${WAIT_OWNER}" && "${times}" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "${times}"
   else
     printf '0\n'

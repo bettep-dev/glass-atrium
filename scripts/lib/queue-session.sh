@@ -35,7 +35,6 @@ readonly QUEUE_LISTENER_KIND=listen
 readonly QUEUE_LISTENING_MARK=.listening
 # the same items to the same Claude process → named again only after this long, by the turn-end check's wait nudge and
 # the listener's re-announce alike → a wait that fails fast starts no loop, and an ignored wake is not repeated at once
-# shellcheck disable=SC2034  # read by the sourcing turn-end hook and queue CLI
 readonly QUEUE_NUDGE_INTERVAL_MIN=10
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
@@ -315,6 +314,13 @@ queue_is_listener_started() {
   mark="$(<"${dir}/${QUEUE_LISTENING_MARK}")"
   started="$(queue_get_start_time "${owner_pid}")"
   [[ -n "${started}" && "${mark}" == "${owner_pid}|${started}" ]]
+}
+
+# <path> → 0 when modified within QUEUE_NUDGE_INTERVAL_MIN; non-zero when older, missing or unreadable
+queue_is_touched_within_nudge() {
+  local recent
+  recent="$(find "$1" -mmin "-${QUEUE_NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
+  [[ -n "${recent}" ]]
 }
 
 # <session id> <item id> → marks the posted item awaiting

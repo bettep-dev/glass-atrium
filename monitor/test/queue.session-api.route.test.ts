@@ -18,7 +18,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { WAIT_FRESH_MS, isSessionWaiting } from "../src/server/queue/delivery.js";
+import { ANSWERED_IDS_LIMIT, PULL, WAIT_FRESH_MS, isSessionWaiting } from "../src/server/queue/delivery.js";
 import { AWAITING_IDS_LIMIT } from "../src/server/queue/registry.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -596,6 +596,12 @@ describe("pending count (listener read)", () => {
     const response = await send("POST", "/api/queue/pending/count", { sessionId });
 
     assert.equal(response.statusCode, 400, response.body);
+  });
+
+  test("the answered-ids bound is what one queue CLI pull drains: its pull rounds times the claim batch", () => {
+    const rounds = Number(/^readonly PULL_ROUNDS_MAX=(\d+)$/m.exec(readFileSync(QUEUE_CLI_SOURCE, "utf8"))?.[1]);
+
+    assert.equal(ANSWERED_IDS_LIMIT, rounds * PULL.BATCH_LIMIT);
   });
 });
 
