@@ -2376,7 +2376,9 @@ button.kpi:hover {
 	align-items: start;
 	padding: var(--space-2) var(--card-pad);
 }
+/* the row is its own container → its actions drop at the row's content width, wherever a screen puts the row */
 .alarm-row {
+	container-type: inline-size;
 	border-bottom: 1px solid rgb(var(--line));
 }
 .alarm-row:last-child {
@@ -2437,11 +2439,13 @@ button.kpi:hover {
 	gap: 4px;
 	margin-top: 4px;
 }
+.alarm-row-actions,
 .alert-card-actions {
 	display: flex;
 	gap: 8px;
 }
 @container (max-width: 36rem) {
+	.alarm-row-actions,
 	.alert-card-actions {
 		grid-column: 2;
 		margin-top: 8px;

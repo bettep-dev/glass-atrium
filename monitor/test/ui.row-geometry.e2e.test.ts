@@ -100,7 +100,16 @@ const ALARM_ROWS = [
   { name: "a hairline alarm row", id: "alarm-row-line", height: 48, glyph: 16,
     markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
       `<div class="fs-body text-ink">$842 so far today</div></div>` },
+  { name: "a hairline alarm row with one line and an action", id: "alarm-row-action", height: 48, glyph: 16,
+    markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
+      `<div class="fs-body text-ink">$842 so far today</div><div class="alarm-row-actions">${render("button", { type: "button", className: "btn sm" }, "Retry")}</div></div>` },
 ] as const;
+
+// each alarm row that carries an action, laid out in a container either side of the 36rem drop
+const ALARM_DROP_ROWS = ALARM_ROWS.filter((row) => row.markup.includes("Retry"));
+// 480 host → a container under 576 (36rem) whether the card shell or the padded row is the container; 640 → over it either way
+const ALARM_DROP_PX = { narrow: 480, wide: 640 } as const;
+const alarmDropId = (rowId: string, px: number): string => `${rowId}-at-${px}`;
 
 // column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
 // thead.tbl-head (its own rule and inline padding, as the matrix and crosstab tables carry), and the sortable and control cases
@@ -167,6 +176,8 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
     `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
   ${ALARM_ROWS.map((row) => `<div id="${row.id}" style="width: 640px;">${row.markup}</div>`).join("\n  ")}
+  ${ALARM_DROP_ROWS.flatMap((row) => Object.values(ALARM_DROP_PX).map((px) =>
+    `<div id="${alarmDropId(row.id, px)}" style="width: ${px}px;">${row.markup}</div>`)).join("\n  ")}
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
@@ -362,6 +373,31 @@ describe("an alarm row is one 32 line between 8 paddings, its tone on a bare gly
       assert.equal(alarm.glyphColor, alarm.toneColor, "the tone rides on the glyph");
       assert.ok(alarm.isGlyphHidden, "the glyph is decoration; the title carries the severity word");
       assert.deepEqual(alarm.paintedInGlyphColumn, [], "no well, fill or tile in the glyph column");
+    });
+  }
+});
+
+// spec 44084 §3.2: the actions sit at the row end, and under the content once the container is 36rem or narrower
+describe("an alarm row's actions drop under its content at a container width of 36rem or less", () => {
+  const readActions = (id: string): Promise<{ contentLeft: number; contentRight: number; contentBottom: number; actionsLeft: number; actionsTop: number }> =>
+    page.$eval(`#${id}`, (host) => {
+      const row = host.querySelector(".alert-card-grid, .alarm-row");
+      const [content, actions] = row ? [row.children[1], row.children[2]] : [];
+      if (!content || !actions) throw new Error(`fixture #${host.id} lacks its content or actions`);
+      const [contentBox, actionsBox] = [content.getBoundingClientRect(), actions.getBoundingClientRect()];
+      return { contentLeft: contentBox.left, contentRight: contentBox.right, contentBottom: contentBox.bottom, actionsLeft: actionsBox.left, actionsTop: actionsBox.top };
+    });
+
+  for (const row of ALARM_DROP_ROWS) {
+    test(`${row.name}, in a container of 36rem or less: the actions sit under the content, on its left edge`, async () => {
+      const box = await readActions(alarmDropId(row.id, ALARM_DROP_PX.narrow));
+      assert.ok(box.actionsTop >= box.contentBottom - 0.5, `actions top ${box.actionsTop} under the content bottom ${box.contentBottom}`);
+      assert.ok(Math.abs(box.actionsLeft - box.contentLeft) < 0.5, `actions left ${box.actionsLeft} on the content left ${box.contentLeft}`);
+    });
+
+    test(`${row.name}, in a container over 36rem: the actions sit at the row end`, async () => {
+      const box = await readActions(alarmDropId(row.id, ALARM_DROP_PX.wide));
+      assert.ok(box.actionsLeft >= box.contentRight - 0.5, `actions left ${box.actionsLeft} past the content right ${box.contentRight}`);
     });
   }
 });

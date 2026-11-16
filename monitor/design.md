@@ -645,7 +645,8 @@
   - actions at the row end: one Link (ink, trailing →) when the fix is on another page, else at most two `.btn.sm` · at a container width ≤ 36rem they drop under the content.
   - between rows of a list: one hairline `--line`, none after the last.
   - states: firing · held (the title is followed by `Last known` in plain `--fs-meta` dim, the glyph keeps its tone, Retry stays) · resolved (the row is removed, no "all clear" row) · empty list (the list card is not rendered).
-- **`.alarm-row`**: the alarm row written by class on a screen — `.alarm-row-glyph` slot first, the content next; tone via `data-tone` on the row.
+- **`.alarm-row`**: the alarm row written by class on a screen — `.alarm-row-glyph` slot first, the content next, `.alarm-row-actions` last; tone via `data-tone` on the row.
+  - the row is its own size container → the ≤ 36rem drop reads the row's content width (the row less 2 × `--card-pad`).
 - **Dashboard alarm list** ("Needs you", §12.7): one list card (no visible head, region `aria-label="Needs you"`), one alarm row per alarm, worst first, action = Link to the owning page.
 - **`AlertCard({ tone, surface, title, body, subjects, details, actions, hasLiveHost })`**: 조건부 알림 카드의 유일한 atom — `.alert-card` 를 직접 조립하지 않는다.
   - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(카드 · 패널 안 `.sub-card.bg-sunken`).
