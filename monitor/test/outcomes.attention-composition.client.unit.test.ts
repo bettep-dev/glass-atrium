@@ -97,7 +97,7 @@ interface OutcomesHelpers {
   buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   isFilterAppliedO: (filter: Record<string, unknown>, includeAll: boolean) => boolean;
   buildAgentOptionsO: (agents: string[], chosen: string) => { value: string; label: string }[];
-  BandStatValueO: (props: { tile: BandTile; isLoading: boolean; unloadedText: string }) => RenderNode | string;
+  BandStatValueO: (props: { tile: BandTile; isLoading: boolean; unloadedText: string | null }) => RenderNode | string;
   BandRulesO: (props: { tiles: BandTile[]; reasons: { key: string; label: string; count: number | null; tone: string }[]; priorRange: string | null }) => RenderNode;
   getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
   AttributionSummaryRow: (props: { summary: Record<string, unknown> | null; totalAttributed: number }) => RenderNode;
@@ -757,6 +757,30 @@ test("Needs-you tile: jumps to the ledger's whole-window Needs-you heading, and 
   assert.strictEqual(asRendered(broken), String(broken.count), "a stat without a target is its plain count");
 });
 
+// spec 44084 §2.2: an unread count says it was not read in a look of its own, never a dash that reads as data
+describe("BandStatValueO: an unread count names its state", () => {
+  const tiles = helpers.buildStatusBandTilesO(aboveFloor({ done: 150, fail: 50 }), null);
+
+  test("a count with no wait word of its own reads Not loaded in faint ink at the stat's own size", () => {
+    const value = helpers.BandStatValueO({ tile: { ...tileOf(tiles, "broken"), count: null }, isLoading: false, unloadedText: null });
+    const [mark] = expandNodes(value);
+    assert.deepStrictEqual({ className: mark.props?.className, text: renderText(mark) }, { className: "text-faint", text: "Not loaded" });
+  });
+
+  const rows = [
+    { name: "a needs-you read in flight reads Loading… in dim ink at body size", attentionState: { status: "loading" as const }, word: "Loading…" },
+    { name: "a failed needs-you read reads Unavailable in dim ink at body size", attentionState: { status: "error" as const, error: "boom" }, word: "Unavailable" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const band = helpers.StatusBandO({ analyticsState: { status: "ready", data: aboveFloor({ done: 190 }) }, attentionState: row.attentionState, windowDays: 30 });
+      const stats = flattenNodes(band).find((n) => n.type === helpers.window.UI.StatRow)!.props!.stats as { key: string; value: unknown }[];
+      const [word] = expandNodes(stats.find((stat) => stat.key === "attention")!.value);
+      assert.deepStrictEqual({ className: word.props?.className, text: renderText(word) }, { className: "fs-body text-dim", text: row.word });
+    });
+  }
+});
+
 // design.md copy rule: a definition over a cap opens from a focusable ⓘ, never a hover-only title
 describe("StatusBandO: the stat rules and the needs-you reasons open from the card's one ⓘ", () => {
   const data = aboveFloor({ done: 150, fail: 8, blocked: 4 });
@@ -1224,9 +1248,9 @@ describe("StatusBandO: every tile states one share delta, its comparison window 
   const tileText = (key: string): string => getTileText(band, key);
   const rows = [
     // 30/200 = 15% now vs 10/100 = 10%
-    { name: "a share that rose states its signed points", key: "attention", delta: /\+5\.0 pt\b/ },
+    { name: "a share that rose states its signed points", key: "attention", delta: /\+5 pts\b/ },
     // Done: 150/200 = 75% vs 80/100 = 80%
-    { name: "a share that fell states its signed points", key: "done", delta: /\u22125\.0 pt\b/ },
+    { name: "a share that fell states its signed points", key: "done", delta: /\u22125 pts\b/ },
     // Failed or blocked: 12/200 = 6% vs 6/100 = 6%
     { name: "an unchanged share reads as level", key: "broken", delta: /\bLevel\b/ },
   ];
@@ -1250,10 +1274,10 @@ describe("StatusBandO: every tile states one share delta, its comparison window 
     const heroText = getTileText(unread, "attention");
     assert.match(heroText, /Needs you/);
     assert.doesNotMatch(heroText, / pt\b|\bLevel\b|No comparison/, "an unread prior count is never read as zero");
-    assert.match(getTileText(unread, "done"), /\u22125\.0 pt/);
+    assert.match(getTileText(unread, "done"), /\u22125 pts/);
   });
   test("a share beside its own count drops the fraction", () => {
-    assert.match(tileText("attention"), /15\.0%/);
+    assert.match(tileText("attention"), /\b15%/);
     assert.doesNotMatch(getBandText(band), /\(\d[\d,]*\/\d[\d,]*\)/);
   });
   test("the band's ⓘ names the comparison window whole in one nowrap span and the reasons' counting method", () => {
@@ -1411,4 +1435,62 @@ describe("sub-tables: every numeric value and its header are right-aligned, tabu
     const footCells = expandNodes(groups[1]).filter((n) => n.type === "th" || n.type === "td").map((c) => renderText(c).trim());
     assert.deepStrictEqual(footCells, ["Total", "30", "7", "0", "37"], "column totals, then the grand total");
   });
+});
+
+// --- "nothing" and number forms (spec 44084 §2): None / 0 / Not loaded, never a dash or a dot ---
+
+type FormHelpers = Record<string, (...args: unknown[]) => unknown>;
+const forms = helpers as unknown as FormHelpers;
+const TABLE_VIEW = { isStacked: false, columnCount: 6 };
+const faintTexts = (node: unknown): string[] =>
+  expandNodes(node).filter((n) => /\btext-faint\b/.test(String(n.props?.className ?? ""))).map((n) => renderText(n).trim());
+
+test("an open-caveat count outside the loaded top 10 reads Not loaded with its cause, a loaded zero reads 0", () => {
+  const unread = forms.OpenCaveatCellO({ count: null, view: TABLE_VIEW });
+  assert.deepEqual(faintTexts(unread), ["Not loaded"]);
+  assert.match(String(expandNodes(unread).find((n) => n.props?.title)?.props?.title), /top 10 agents/, "the cause rides the hover title");
+  assert.strictEqual(renderText(forms.OpenCaveatCellO({ count: 0, view: TABLE_VIEW })).trim(), "0");
+});
+
+test("an empty cross-tab cell reads 0 in faint ink, a filled one in ink", () => {
+  const rows = [
+    { name: "empty", count: 0, faint: ["0"] },
+    { name: "filled", count: 12, faint: [] as string[] },
+  ];
+  for (const row of rows) {
+    const cell = forms.CrosstabCell({ view: TABLE_VIEW, cell: { count: row.count, isPolar: false }, max: 40, rowLabel: "high", colLabel: "fail" });
+    assert.ok(!renderText(cell).includes("·"), `${row.name}: no dot`);
+    assert.deepEqual(faintTexts(cell), row.faint, row.name);
+    assert.match(renderText(cell), new RegExp(`\\b${row.count}\\b`), `${row.name}: the count shows`);
+  }
+});
+
+test("a rate over no records reads None, a measured one at most one decimal unless its column fixes the precision", () => {
+  const rows = [
+    { name: "no denominator", args: [null], text: null },
+    { name: "a stat drops the .0", args: [0.5], text: "50%" },
+    { name: "a near-zero rate never reads 0%", args: [0.0002], text: "<0.1%" },
+    { name: "a column keeps its one decimal", args: [1, 1], text: "100.0%" },
+  ];
+  for (const row of rows) assert.strictEqual(forms.formatRateO(...row.args), row.text, row.name);
+});
+
+test("the missing-report head status reads None over no attributed records and a one-decimal share otherwise", () => {
+  assert.strictEqual((forms.attributionOmissionBadgeO(null) as { text: string }).text, "None");
+  assert.match((forms.attributionOmissionBadgeO(0.0123) as { text: string }).text, /^1\.2% /);
+});
+
+test("attribution day labels and ledger times use the dash day form", () => {
+  // a top-level const alias stays off the context object → read it back through the module's own scope
+  const attributionDayLabelO = vm.runInContext("attributionDayLabelO", helpers as unknown as vm.Context) as (day: string) => string;
+  assert.strictEqual(attributionDayLabelO("2026-11-14"), "11-14");
+  assert.match(String(forms.formatTimestampO("2026-11-14T04:20:00.000Z")), /^\d{2}-\d{2} \d{2}:\d{2}$/);
+  assert.strictEqual(forms.formatTimestampO(null), null, "no record time → the caller shows None");
+});
+
+test("a task type with no graded records reads 0, never a dash", () => {
+  const bar = forms.TaskTypeGraderBarO({ row: { task_type: "plan", total: 0 }, maxTotal: 10, isMuted: false });
+  const text = renderText(bar);
+  assert.ok(!text.includes("—"), text);
+  assert.match(text, /\b0\s*$/, text);
 });

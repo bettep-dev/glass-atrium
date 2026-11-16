@@ -1,6 +1,6 @@
 // Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control, a 24px
 // inline target or a value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
-// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a word KPI value sits on the figure's baseline, a 24
+// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a 24
 // inline target keeps a whole-pixel line box under a type-scale class, the shared error-details summary is the 32 disclosure atom,
 // and the page-header Refresh ends its label on its box's content edge.
 // Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -37,14 +37,6 @@ const render = (type: unknown, props: Record<string, unknown>, ...children: unkn
 
 // one rendered Icon as markup — its inline style is what this suite is about
 const iconMarkup = (props: Record<string, unknown>): string => render(ui.Icon, props);
-
-const kpiValueMarkup = (props: Record<string, unknown>, value: string): string => render(ui.KpiValue, props, value);
-
-const KPI_VALUES = [
-  { id: "kpi-figure", markup: kpiValueMarkup({}, "1,284") },
-  { id: "kpi-word", markup: kpiValueMarkup({ isWord: true }, "Healthy") },
-  { id: "kpi-word-toned", markup: kpiValueMarkup({ isWord: true, tone: "warn" }, "Stale") },
-] as const;
 
 const ICON_ROWS = [
   { name: "an icon before its label", id: "plain", markup: iconMarkup({ name: "check", size: 14 }) },
@@ -86,6 +78,36 @@ const ERROR_DETAILS_ROWS = [
   { name: "a failed region", id: "details-region", markup: render(ui.RegionUnavailable, { source: "outcomes", error: new Error(ERROR_DETAIL) }) },
   { name: "an alert card", id: "details-alert", markup: render(ui.AlertCard, { tone: "crit", title: "Couldn't load outcomes.", details: ERROR_DETAIL }) },
 ] as const;
+
+// the alarm row as AlertCard draws it (raised and inset) and as a screen writes it by class; the detail line is
+// the one fact the title does not hold
+const RETRY = React.createElement("button", { type: "button", className: "btn sm" }, "Retry");
+const ALARM = (() => {
+  const rows = [
+    { name: "a raised alert card with one line and an action", id: "alarm-card-line", height: 48, glyph: 16,
+      markup: render(ui.AlertCard, { tone: "warn", title: "$842 so far today", actions: RETRY }) },
+    { name: "a raised alert card with a detail line", id: "alarm-card-detail", height: 70, glyph: 16,
+      markup: render(ui.AlertCard, { tone: "crit", title: "1 harness part is down", body: "Hook Chain" }) },
+    { name: "an inset alert card with one line and an action", id: "alarm-card-inset", height: 48, glyph: 14,
+      markup: render(ui.AlertCard, { tone: "info", surface: "inset", title: "This document was superseded", actions: RETRY }) },
+    { name: "a hairline alarm row", id: "alarm-row-line", height: 48, glyph: 16,
+      markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
+        `<div class="fs-body text-ink">$842 so far today</div></div>` },
+    { name: "a hairline alarm row with one line and an action", id: "alarm-row-action", height: 48, glyph: 16,
+      markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
+        `<div class="fs-body text-ink">$842 so far today</div><div class="alarm-row-actions">${render("button", { type: "button", className: "btn sm" }, "Retry")}</div></div>` },
+  ] as const;
+  return {
+    ROWS: rows,
+    DROP: {
+      // each alarm row that carries an action, laid out in a container either side of the 36rem drop
+      ROWS: rows.filter((row) => row.markup.includes("Retry")),
+      // 480 host → a container under 576 (36rem) whether the card shell or the padded row is the container; 640 → over it either way
+      PX: { narrow: 480, wide: 640 },
+    },
+  } as const;
+})();
+const alarmDropId = (rowId: string, px: number): string => `${rowId}-at-${px}`;
 
 // column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
 // thead.tbl-head (its own rule and inline padding, as the matrix and crosstab tables carry), and the sortable and control cases
@@ -151,10 +173,12 @@ const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}<
   ${COMPACT_ROWS.map((row) => row.markup).join("\n  ")}
   ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
     `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
+  ${ALARM.ROWS.map((row) => `<div id="${row.id}" style="width: 640px;">${row.markup}</div>`).join("\n  ")}
+  ${ALARM.DROP.ROWS.flatMap((row) => Object.values(ALARM.DROP.PX).map((px) =>
+    `<div id="${alarmDropId(row.id, px)}" style="width: ${px}px;">${row.markup}</div>`)).join("\n  ")}
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
-    ${KPI_VALUES.map((value) => `<div id="${value.id}">${value.markup}</div>`).join("\n    ")}
   </div>
 </body></html>`;
 
@@ -291,6 +315,90 @@ describe("the shared error-details summary is the disclosure atom", () => {
   }
 });
 
+// one alarm-row geometry for the alert card and the hairline row: 8 above and below a 32 first line that the glyph, the title line and
+// the action share, the tone on a bare glyph and nothing painted behind it
+describe("an alarm row is one 32 line between 8 paddings, its tone on a bare glyph", () => {
+  interface AlarmReading {
+    height: number; lineCentre: number; glyphCentre: number; glyphWidth: number; titleCentre: number; actionCentre: number | null;
+    paintedInGlyphColumn: string[]; isGlyphHidden: boolean; glyphColor: string; toneColor: string;
+  }
+
+  const readAlarm = (id: string): Promise<AlarmReading> =>
+    page.$eval(`#${id}`, (host) => {
+      const row = host.querySelector(".alert-card-grid, .alarm-row");
+      const [slot, content] = row ? [row.children[0], row.children[1]] : [];
+      const svg = slot?.querySelector("svg");
+      if (!row || !slot || !content || !svg) throw new Error(`fixture #${host.id} lacks its row, glyph or content`);
+      const title = content.querySelector(".alert-card-title") ?? content;
+      const action = row.querySelector("button")?.getBoundingClientRect();
+      const rowBox = row.getBoundingClientRect();
+      const glyphBox = svg.getBoundingClientRect();
+      const root = getComputedStyle(document.documentElement);
+      const tone = row.closest("[data-tone]")?.getAttribute("data-tone") ?? "";
+      return {
+        height: rowBox.height,
+        lineCentre: rowBox.top + parseFloat(getComputedStyle(row).paddingTop) + parseFloat(root.getPropertyValue("--ctl-min-h")) / 2,
+        glyphCentre: (glyphBox.top + glyphBox.bottom) / 2,
+        glyphWidth: glyphBox.width,
+        titleCentre: title.getBoundingClientRect().top + parseFloat(getComputedStyle(title).paddingTop) + parseFloat(getComputedStyle(title).lineHeight) / 2,
+        actionCentre: action ? (action.top + action.bottom) / 2 : null,
+        paintedInGlyphColumn: [slot, ...slot.querySelectorAll("*")].map((el) => getComputedStyle(el).backgroundColor)
+          .filter((color) => color !== "rgba(0, 0, 0, 0)"),
+        isGlyphHidden: slot.getAttribute("aria-hidden") === "true" || svg.getAttribute("aria-hidden") === "true",
+        glyphColor: getComputedStyle(svg).color,
+        toneColor: `rgb(${root.getPropertyValue(`--${tone}`).trim().split(/\s+/).join(", ")})`,
+      };
+    });
+
+  for (const row of ALARM.ROWS) {
+    test(`${row.name} is ${row.height} tall`, async () => {
+      const { height } = await readAlarm(row.id);
+      assert.ok(Math.abs(height - row.height) < 0.5, `row height ${height}`);
+    });
+
+    test(`${row.name}: the glyph, the title line and any action centre on the first 32 line`, async () => {
+      const alarm = await readAlarm(row.id);
+      const centres = { glyph: alarm.glyphCentre, title: alarm.titleCentre, ...(alarm.actionCentre === null ? {} : { action: alarm.actionCentre }) };
+      for (const [part, centre] of Object.entries(centres)) {
+        assert.ok(Math.abs(centre - alarm.lineCentre) < 1, `${part} centre ${centre} vs line centre ${alarm.lineCentre}`);
+      }
+    });
+
+    test(`${row.name}: a bare ${row.glyph} glyph in the tone colour, hidden from the reader, nothing painted behind it`, async () => {
+      const alarm = await readAlarm(row.id);
+      assert.equal(alarm.glyphWidth, row.glyph);
+      assert.equal(alarm.glyphColor, alarm.toneColor, "the tone rides on the glyph");
+      assert.ok(alarm.isGlyphHidden, "the glyph is decoration; the title carries the severity word");
+      assert.deepEqual(alarm.paintedInGlyphColumn, [], "no well, fill or tile in the glyph column");
+    });
+  }
+});
+
+// spec 44084 §3.2: the actions sit at the row end, and under the content once the container is 36rem or narrower
+describe("an alarm row's actions drop under its content at a container width of 36rem or less", () => {
+  const readActions = (id: string): Promise<{ contentLeft: number; contentRight: number; contentBottom: number; actionsLeft: number; actionsTop: number }> =>
+    page.$eval(`#${id}`, (host) => {
+      const row = host.querySelector(".alert-card-grid, .alarm-row");
+      const [content, actions] = row ? [row.children[1], row.children[2]] : [];
+      if (!content || !actions) throw new Error(`fixture #${host.id} lacks its content or actions`);
+      const [contentBox, actionsBox] = [content.getBoundingClientRect(), actions.getBoundingClientRect()];
+      return { contentLeft: contentBox.left, contentRight: contentBox.right, contentBottom: contentBox.bottom, actionsLeft: actionsBox.left, actionsTop: actionsBox.top };
+    });
+
+  for (const row of ALARM.DROP.ROWS) {
+    test(`${row.name}, in a container of 36rem or less: the actions sit under the content, on its left edge`, async () => {
+      const box = await readActions(alarmDropId(row.id, ALARM.DROP.PX.narrow));
+      assert.ok(box.actionsTop >= box.contentBottom - 0.5, `actions top ${box.actionsTop} under the content bottom ${box.contentBottom}`);
+      assert.ok(Math.abs(box.actionsLeft - box.contentLeft) < 0.5, `actions left ${box.actionsLeft} on the content left ${box.contentLeft}`);
+    });
+
+    test(`${row.name}, in a container over 36rem: the actions sit at the row end`, async () => {
+      const box = await readActions(alarmDropId(row.id, ALARM.DROP.PX.wide));
+      assert.ok(box.actionsLeft >= box.contentRight - 0.5, `actions left ${box.actionsLeft} past the content right ${box.contentRight}`);
+    });
+  }
+});
+
 // R-a: one header-row system — a plain header row sits on the 32 compact step, a sortable one on the 40 row step, at the
 // shared rule, so a table routed off .tbl reads the same; a header cell holding a control keeps the control step (40)
 describe("a column-header row sits on the compact step, a sortable one on the row step", () => {
@@ -366,34 +474,6 @@ describe("a value + bar cell keeps the row at 40", () => {
     });
     assert.ok(Math.abs(value - text) < 1, `value centre ${value} vs text centre ${text}`);
   });
-});
-
-describe("a word KPI value shares the figure's baseline", () => {
-  // a zero-size inline-block's bottom edge is its line's baseline
-  const baselineOf = (id: string): Promise<number> => page.$eval(`#${id} .kpi-value`, (value) => {
-    const probe = document.createElement("span");
-    probe.style.cssText = "display: inline-block; width: 0; height: 0;";
-    value.append(probe);
-    const y = probe.getBoundingClientRect().bottom;
-    probe.remove();
-    return y;
-  });
-
-  test("precondition: the word renders smaller than the figure", async () => {
-    const [figure, word] = await Promise.all(["kpi-figure", "kpi-word"].map((id) =>
-      page.$eval(`#${id} .kpi-value`, (value) => parseFloat(getComputedStyle(value.lastElementChild ?? value).fontSize))));
-    assert.ok(word < figure, `word ${word}px vs figure ${figure}px`);
-  });
-
-  for (const id of ["kpi-word", "kpi-word-toned"]) {
-    test(`${id} sits on the figure's baseline and keeps its line box height`, async () => {
-      const figure = await baselineOf("kpi-figure");
-      assert.ok(Math.abs((await baselineOf(id)) - figure) < 0.5, `${id} baseline vs figure ${figure}`);
-      const [figureH, wordH] = await Promise.all(["kpi-figure", id].map((key) =>
-        page.$eval(`#${key} .kpi-value`, (value) => value.getBoundingClientRect().height)));
-      assert.ok(Math.abs(wordH - figureH) < 0.5, `${id} height ${wordH} vs figure ${figureH}`);
-    });
-  }
 });
 
 describe("the page-header Refresh ends its label on the content column's edge", () => {

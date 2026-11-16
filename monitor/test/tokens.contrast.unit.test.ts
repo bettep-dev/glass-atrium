@@ -153,10 +153,13 @@ test("every tone reads as a glyph on every opaque surface at 3:1, in both themes
   }
 });
 
-// `--tint-*: rgb(var(--base) / alpha)` in the alias rule → the base token at that alpha, read from each theme's own triplet
+const aliasRule = css.match(/:root,\s*\[data-theme\]\s*\{([^}]*)\}/)?.[1] ?? "";
+
+// `--tint-*: rgb(var(--base) / alpha)` → the base token at that alpha, read from each theme's own triplet.
+// The dark block follows the alias rule in tokens.css → on a dark scope its declaration wins (the heat ramp's dark alphas).
 function getTintColour(block: string, name: string): Rgba {
-  const rule = css.match(/:root,\s*\[data-theme\]\s*\{([^}]*)\}/)?.[1] ?? "";
-  const m = rule.match(new RegExp(`${name}\\s*:\\s*rgb\\(var\\((--[\\w-]+)\\)\\s*/\\s*([\\d.]+)\\)`));
+  const pattern = new RegExp(`${name}\\s*:\\s*rgb\\(var\\((--[\\w-]+)\\)\\s*/\\s*([\\d.]+)\\)`);
+  const m = (block === dark ? dark.match(pattern) : null) ?? aliasRule.match(pattern);
   assert.ok(m, `the alias rule must declare ${name} as rgb(var(--token) / alpha)`);
   return { ...parseTriplet(block, m[1]), a: Number(m[2]) };
 }
@@ -184,17 +187,65 @@ const DESK_PAIRS = [
   { name: "the checkbox mark on its checked fill", fgs: ["--selected-ink"], grounds: [["--selected-fill"]], floor: UI_GLYPH },
 ] as const;
 
+interface ContrastPair {
+  readonly name: string;
+  readonly fgs: readonly string[];
+  readonly grounds: readonly (readonly string[])[];
+  readonly floor: number;
+}
+
+function assertPairFloors(pair: ContrastPair): void {
+  for (const [theme, block] of THEMES) {
+    for (const fg of pair.fgs) {
+      for (const ground of pair.grounds) {
+        const ratio = contrastRatio(parseTriplet(block, fg), getGroundColour(block, ground));
+        assert.ok(ratio >= pair.floor, `${theme} ${fg} on ${ground.join(" + ")} = ${ratio.toFixed(2)}:1 < ${pair.floor}:1`);
+      }
+    }
+  }
+}
+
 describe("the desk's tints and badge fills clear their floors, in both themes", () => {
   for (const pair of DESK_PAIRS) {
-    test(pair.name, () => {
-      for (const [theme, block] of THEMES) {
-        for (const fg of pair.fgs) {
-          for (const ground of pair.grounds) {
-            const ratio = contrastRatio(parseTriplet(block, fg), getGroundColour(block, ground));
-            assert.ok(ratio >= pair.floor, `${theme} ${fg} on ${ground.join(" + ")} = ${ratio.toFixed(2)}:1 < ${pair.floor}:1`);
-          }
-        }
-      }
-    });
+    test(pair.name, () => assertPairFloors(pair));
   }
+});
+
+const ROW_LADDER = ["--tint-row-1", "--tint-row-2", "--tint-row-3"] as const;
+// the Documents ledger row states on the card: what a row holds — text, the tone glyphs and the empty stage pip
+const ROW_LADDER_PAIRS: readonly ContrastPair[] = [
+  { name: "ink, dim and faint text on every row-state fill", fgs: ["--ink", "--dim", "--faint"], grounds: ROW_LADDER.map((tint) => ["--elev", tint]), floor: AA_NORMAL },
+  { name: "the crit and warn glyphs and the empty stage pip on every row-state fill", fgs: ["--crit", "--warn", "--pip-empty"], grounds: ROW_LADDER.map((tint) => ["--elev", tint]), floor: UI_GLYPH },
+];
+
+describe("the Documents row-state ladder keeps every row mark above its floor, in both themes", () => {
+  for (const pair of ROW_LADDER_PAIRS) {
+    test(pair.name, () => assertPairFloors(pair));
+  }
+});
+
+test("the chart data colour reads as a mark on the card, the page and the sunken fill at 3:1, in both themes", () => {
+  assertPairFloors({ name: "--data", fgs: ["--data"], grounds: [["--elev"], ["--surface"], ["--sunken"]], floor: UI_GLYPH });
+});
+
+const HEAT_RAMP = ["--heat-1", "--heat-2", "--heat-3", "--heat-4"] as const;
+const HEAT_STEP_MIN = 1.4;
+
+describe("the hour-grid heat ramp on the card, in both themes", () => {
+  test("its lowest step reads as a mark against the card at 3:1", () => {
+    for (const [theme, block] of THEMES) {
+      const ratio = contrastRatio(getGroundColour(block, ["--elev", HEAT_RAMP[0]]), parseTriplet(block, "--elev"));
+      assert.ok(ratio >= UI_GLYPH, `${theme} ${HEAT_RAMP[0]} on --elev = ${ratio.toFixed(2)}:1 < ${UI_GLYPH}:1`);
+    }
+  });
+
+  test("each step stands apart from the step below it by 1.4:1", () => {
+    for (const [theme, block] of THEMES) {
+      const steps = HEAT_RAMP.map((heat) => getGroundColour(block, ["--elev", heat]));
+      for (let i = 1; i < steps.length; i++) {
+        const ratio = contrastRatio(steps[i], steps[i - 1]);
+        assert.ok(ratio >= HEAT_STEP_MIN, `${theme} ${HEAT_RAMP[i]} over ${HEAT_RAMP[i - 1]} = ${ratio.toFixed(2)}:1 < ${HEAT_STEP_MIN}:1`);
+      }
+    }
+  });
 });

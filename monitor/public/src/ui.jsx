@@ -15,7 +15,7 @@ const LUCIDE_ALIAS = {
   chevD: 'ChevronDown', arrowU: 'ArrowUp', arrowD: 'ArrowDown', minus: 'Minus',
   check: 'Check', x: 'X', play: 'Play', refresh: 'RefreshCw', download: 'Download', filter: 'Filter',
   search: 'Search', moon: 'Moon', sun: 'Sun', cog: 'Settings', info: 'Info', warn: 'TriangleAlert',
-  crit: 'CircleAlert', user: 'User', db: 'Database', chip: 'Cpu', git: 'GitFork', flame: 'Flame',
+  crit: 'CircleAlert', user: 'User', db: 'Database', chip: 'Cpu', flame: 'Flame',
   ban: 'Ban', pause: 'Pause', plus: 'Plus', circle: 'Circle',
 };
 
@@ -189,18 +189,6 @@ function TypeScaleStyle() {
   `}</style>;
 }
 
-// Change indicator — default up=bad (crit)/down=good (ok), inverse=true flips it (metrics where a rise is good); tone on the arrow only, value neutral
-function Delta({ value, inverse=false }) {
-  const sign = value > 0 ? 'up' : value < 0 ? 'down' : 'flat';
-  const isBad = inverse ? sign === 'down' : sign === 'up';
-  const tone = sign === 'flat' ? 'faint' : isBad ? 'crit' : 'ok';
-  const iconName = sign === 'up' ? 'arrowU' : sign === 'down' ? 'arrowD' : 'minus';
-  return <span className="kpi-delta">
-    <Icon name={iconName} size={11} stroke={2.2} className={`text-${tone}`} />
-    {Math.abs(value).toFixed(1)}%
-  </span>;
-}
-
 // label → named image · no label → decorative, hidden from assistive tech
 function getTrendSvgA11y(label) {
   return label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': 'true' };
@@ -234,9 +222,12 @@ function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
 const CHART_VIEW_W = 100;
 const CHART_MAX_TICKS = 7;
 const CHART_PLOT_FILL = 0.85;
+// bar inset per side, in slot widths → a bar fills the rest of its slot
+const CHART_BAR_INSET = 0.1;
+const CHART_BAR_FILL = 1 - 2 * CHART_BAR_INSET;
 /** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
 const CHART_TICK_MIN_GAP_PX = 8;
-// ponytail: fixed per-char estimate of a --fs-meta mono day label (13px × 0.6em ≈ 7.8px, rounded up for fallback faces) → measure with canvas if labels grow wide
+// ponytail: fixed per-char estimate of a --fs-meta sans tnum day label (Pretendard digit 0.614em × 13px ≈ 7.98px) → measure with canvas if labels grow wide or --fs-meta grows
 const CHART_TICK_CHAR_PX = 8;
 const CHART_TICK_SHIFT = { start: '0', middle: '-50%', end: '-100%' };
 
@@ -274,7 +265,17 @@ function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
   const ticks = widthPx > 0 ? getFittingTicks(labels, kind, widthPx, maxTicks) : getChartTicks(count, maxTicks);
   // a lone survivor of a crowded row is the latest day, which sits on the right edge
   const getAnchor = (order) => (ticks.length === 1 && count > 1 ? 'end' : getChartTickAnchor(order, ticks.length));
-  return ticks.map((index, order) => ({ index, left: getChartX(index, count, kind), anchor: getAnchor(order) }));
+  return ticks.map((index, order) => {
+    const anchor = getAnchor(order);
+    return { index, left: getChartTickLeft(index, count, kind, anchor), anchor };
+  });
+}
+
+// an edge-anchored bar label sits on its bar's outer edge, not mid-bar → each end date stays under its own bar, as ChartAxisTick does
+function getChartTickLeft(index, count, kind, anchor) {
+  if (kind !== 'bars' || anchor === 'middle') return getChartX(index, count, kind);
+  const barLeft = getChartBarLeft(index, count);
+  return anchor === 'start' ? barLeft : barLeft + getChartBarWidth(count);
 }
 
 function getFittingTicks(labels, kind, widthPx, maxTicks) {
@@ -294,8 +295,8 @@ function getFittingTicks(labels, kind, widthPx, maxTicks) {
 function isTickRowClear(ticks, labels, kind, widthPx) {
   const boxes = ticks.map((index, order) => {
     const width = labels[index].length * CHART_TICK_CHAR_PX;
-    const x = (getChartX(index, labels.length, kind) / CHART_VIEW_W) * widthPx;
     const anchor = getChartTickAnchor(order, ticks.length);
+    const x = (getChartTickLeft(index, labels.length, kind, anchor) / CHART_VIEW_W) * widthPx;
     const start = anchor === 'start' ? x : anchor === 'end' ? x - width : x - width / 2;
     return { start, end: start + width };
   });
@@ -315,7 +316,8 @@ function getChartImageProps(name, points, formatValue = String) {
   return { role: 'img', tabIndex: 0, 'aria-label': getChartSummary(name, points, formatValue) };
 }
 
-const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontFamily: "'JetBrains Mono', monospace" };
+// sans by inheritance; tabular figures keep every digit at the width CHART_TICK_CHAR_PX assumes
+const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontVariantNumeric: 'tabular-nums' };
 
 /**
  * Recharts XAxis props for a day axis: shared tick, both ends kept, and a gap that holds with edge anchoring.
@@ -330,8 +332,10 @@ function getChartXAxisProps(labels) {
 /** Recharts XAxis `tick` renderer — ends anchored by visible order, like the HTML tick row. */
 function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
   const anchor = getChartTickAnchor(index, visibleTicksCount);
-  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead
-  const labelX = anchor === 'middle' ? x : payload.coordinate;
+  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead;
+  // a band axis carries offset = half the band → the edge label sits on the bar's outer edge (Recharts' default 10% gap = CHART_BAR_INSET)
+  const barHalf = (payload.offset ?? 0) * CHART_BAR_FILL;
+  const labelX = anchor === 'middle' ? x : payload.coordinate + (anchor === 'start' ? -barHalf : barHalf);
   return <text x={labelX} y={y} dy="0.71em" textAnchor={anchor} style={CHART_AXIS_TICK_STYLE}>
     {payload.value}
   </text>;
@@ -356,6 +360,15 @@ function getChartX(index, count, kind) {
   return count > 1 ? (index / (count - 1)) * CHART_VIEW_W : CHART_VIEW_W / 2;
 }
 
+function getChartBarLeft(index, count) {
+  const slot = CHART_VIEW_W / count;
+  return index * slot + slot * CHART_BAR_INSET;
+}
+
+function getChartBarWidth(count) {
+  return (CHART_VIEW_W / count) * CHART_BAR_FILL;
+}
+
 // null values lift the pen → a gap, never a line drawn through a missing day
 function getChartLinePath(values, getY) {
   let isPenDown = false;
@@ -367,7 +380,13 @@ function getChartLinePath(values, getY) {
   }).join(' ');
 }
 
-function ChartPlot({ points, kind, h, color, activeIndex }) {
+/** Chart paint roles (design.md §4.3) the shared plot reads — a quantity series takes `data`, the hovered mark `hover`. */
+const CHART_COLOR = Object.freeze({
+  data: 'rgb(var(--data))',
+  hover: 'rgb(var(--ink))',
+});
+
+function ChartPlot({ points, kind, h, activeIndex }) {
   const values = points.map((point) => (Number.isFinite(point.value) ? point.value : null));
   const finite = values.filter((value) => value !== null);
   const min = kind === 'bars' || finite.length === 0 ? 0 : Math.min(...finite);
@@ -375,21 +394,23 @@ function ChartPlot({ points, kind, h, color, activeIndex }) {
   const getY = (value) => h - ((value - min) / range) * h * CHART_PLOT_FILL - 1;
   const crossX = activeIndex === null ? null : getChartX(activeIndex, points.length, kind);
   return <svg width="100%" height={h} viewBox={`0 0 ${CHART_VIEW_W} ${h}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block' }}>
+    {kind === 'bars' && <line data-chart-baseline="" x1={0} x2={CHART_VIEW_W} y1={h - 0.5} y2={h - 0.5} stroke="rgb(var(--line))" strokeWidth="1" vectorEffect="non-scaling-stroke"/>}
     {kind === 'bars'
-      ? <ChartBars values={values} h={h} getY={getY} color={color} activeIndex={activeIndex}/>
-      : <path d={getChartLinePath(values, getY)} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>}
+      ? <ChartBars values={values} h={h} getY={getY} activeIndex={activeIndex}/>
+      : <path d={getChartLinePath(values, getY)} fill="none" stroke={CHART_COLOR.data} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>}
     {crossX !== null && <line x1={crossX} x2={crossX} y1={0} y2={h} stroke={toneVarColor('neutral')} strokeDasharray="3 3" vectorEffect="non-scaling-stroke"/>}
   </svg>;
 }
 
-function ChartBars({ values, h, getY, color, activeIndex }) {
-  const slot = CHART_VIEW_W / values.length;
-  return values.map((value, i) => {
-    if (value === null) return null;
+// a zero day draws nothing — a 1px stub would read as a measured sliver; the baseline already marks zero
+function ChartBars({ values, h, getY, activeIndex }) {
+  const width = getChartBarWidth(values.length);
+  return <>{values.map((value, i) => {
+    if (value === null || value === 0) return null;
     const y = getY(value);
-    const opacity = activeIndex === null || activeIndex === i ? 0.85 : 0.45;
-    return <rect key={i} x={i * slot + slot * 0.1} y={y} width={slot * 0.8} height={h - y} fill={color} opacity={opacity}/>;
-  });
+    const fill = activeIndex === i ? CHART_COLOR.hover : CHART_COLOR.data;
+    return <rect key={i} x={getChartBarLeft(i, values.length)} y={y} width={width} height={h - y} fill={fill}/>;
+  })}</>;
 }
 
 function ChartTicks({ points, kind, maxTicks }) {
@@ -449,14 +470,14 @@ function useChartReadout(count, kind) {
  * @param formatValue - formats values in the readout, the accessible summary and the y-scale
  * @param yScale - true adds a max/min label column beside the plot
  */
-function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
+function TrendChart({ label, points, kind = 'line', h = 64, formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
   const count = points ? points.length : 0;
   const { activeIndex, handlers } = useChartReadout(count, kind);
   if (count === 0) return <p className="text-faint" style={{ fontSize: 'var(--fs-meta)', margin: 0 }}>No data in range</p>;
   const readout = activeIndex === null ? '' : getChartReadout(points[activeIndex], formatValue);
   const scale = yScale ? getChartYScale(points, kind, formatValue) : null;
   const plot = <div {...getChartImageProps(label, points, formatValue)} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
-    <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
+    <ChartPlot points={points} kind={kind} h={h} activeIndex={activeIndex}/>
   </div>;
   const ticks = <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>;
   return <figure className="trend-chart" style={{ margin: 0, minWidth: 0 }}>
@@ -471,7 +492,8 @@ function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', forma
 
 // tone KEY → 색상 토큰 var 명. neutral 은 비측정/중립 막대용 muted line(--faint).
 // rgb(var(--token) / opacity) 소비 — 하우스 비례막대 관용구(cost.jsx TurnStopReasonTable) 그대로.
-const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint' };
+// data = the chart data colour (design.md §4.3), not a tone — a quantity bar that carries no severity
+const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint', data:'--data' };
 
 // tone KEY → 인라인 CSS 색 문자열 `rgb(var(--tone))` — SVG fill/stroke 등 하드코딩 rgb 리터럴 대체.
 //   테마/토큰 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).
@@ -588,122 +610,35 @@ function AgentName({ name, className = '' }) {
   );
 }
 
-// Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
-// isWord → a word value at --fs-stat sans on the same baseline · isFaint → the unknown dash of a non-ready state.
-// A word rides its own span inside the figure's line box → the box (and its baseline) is the figure's, whatever the word's size.
-function KpiValue({ children, unit, tone, isWord = false, isFaint = false }) {
-  const className = `kpi-value${isWord ? ' kpi-value--word' : ''}${isFaint ? ' text-faint' : ''}`;
-  const glyph = tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>;
-  return <div className={className}>
-    {isWord ? <span className="kpi-value-word">{glyph}{children}</span> : <>{glyph}{children}</>}
-    {unit && <span className="unit">{unit}</span>}
-  </div>;
+const EMPTY_VALUE_TEXT = 'None';
+const NOT_LOADED_TEXT = 'Not loaded';
+
+/** The word for a kind of nothing — 'none' = known and empty · anything else (never read) = Not loaded, never claimed empty. */
+function getAbsentText(kind) {
+  return kind === 'none' ? EMPTY_VALUE_TEXT : NOT_LOADED_TEXT;
 }
 
-const KPI_UNKNOWN_STATES = new Set(['error', 'empty']);
-const KPI_SPARK = { w: 68, h: 26 };
-
 /**
- * One KPI anatomy — every tile row sits in one place, whatever its state:
- *   1 label row  label (one line, ellipsis) · optional aside window tag · ⓘ placed on the row, never pushing the value
- *   2 value row  value + unit · optional badge, baseline-aligned; loading holds the row with a strut + placeholder
- *   3 delta      number → the shared Delta; a node renders as the caller wrote it
- *   4 hint       after the value, always; the caller's own face (hintFace) is kept; ≤2 lines + title for a plain hint,
- *                or a node hint passing isHintClamped with its whole text in hintTitle
- *   5 foot       drill link / Retry, pinned to the tile bottom
- * state: 'ready' | 'loading' | 'error' | 'empty' — error and empty show the faint unknown dash, never a 0.
- * onClick → the tile is a button (no info or foot inside it then); otherwise a group labelled by its label row.
- * aria-label → the tile's own accessible name (a sentence the label row cannot carry), on the button or the group.
- * hasValue=false → a fact-list tile: no value row, the hint carries the facts; the label row and states stay.
- * isSplit → value + delta | hint as the shared TileSplit columns between 641px and xl.
+ * The look of "nothing" in a value slot — never a dash, a dot or a blank (spec 44084 §2.2).
+ * @param kind - 'none' = known and empty · 'not-loaded' = never read; required → a missing kind reads Not loaded, never claims empty
+ * @param title - the cause, on hover
  */
-function KPI({
-  id, label, labelId, labelAs = 'div', labelClassName = 'fs-meta text-dim font-medium', labelTitle,
-  aside, asideClassName = 'fs-meta text-dim', info,
-  value, unit, tone, isWord = false, badge, hasValue = true,
-  delta, deltaInverse = false,
-  hint, hintClassName = 'fs-meta', hintFace = 'text-faint font-mono', hintTitle, isHintClamped,
-  foot, sparkData, sparkColor = 'currentColor', onClick,
-  state = 'ready', loadingLabel, isBusy = false, isSplit = false, className = '', 'aria-label': ariaLabel,
-}) {
-  const isLoading = state === 'loading';
-  const isUnknown = KPI_UNKNOWN_STATES.has(state);
-  const headId = labelId ?? (id ? `${id}-label` : undefined);
-  const LabelTag = labelAs;
-  const isTextLabel = typeof label === 'string';
-
-  const head = (
-    <LabelTag id={headId} className="kpi-head">
-      <span className={`kpi-label-text ${labelClassName}`.trim()} title={labelTitle ?? (isTextLabel ? label : undefined)}>{label}</span>
-      {aside != null && aside !== false && <span className={`kpi-aside ${asideClassName}`.trim()}>{aside}</span>}
-    </LabelTag>
-  );
-  // a zero-width .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
-  const main = isLoading ? (
-    <div className="kpi-main kpi-main--loading">
-      <span className="kpi-value" aria-hidden="true">{'\u200b'}</span>
-      <LoadingPlaceholder label={loadingLabel}/>
-    </div>
-  ) : !hasValue ? null : (
-    <div className="kpi-main">
-      <KpiValue unit={unit} tone={isUnknown ? undefined : tone} isWord={isWord} isFaint={isUnknown}>
-        {isUnknown ? (value ?? '—') : value}
-      </KpiValue>
-      {badge}
-    </div>
-  );
-  const isPlainHint = typeof hint === 'string' || typeof hint === 'number';
-  // a node hint clamps only when its caller asks and hands its whole text in hintTitle → a block-built hint keeps its own layout
-  const isClamped = isHintClamped ?? isPlainHint;
-  const row = {
-    delta: typeof delta === 'number'
-      ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
-      : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>,
-    hint: hint != null && hint !== false && (
-      <div className={`kpi-hint ${hintClassName} ${hintFace}${isClamped ? ' clamp-2' : ''}`.trim()}
-        title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
-    ),
-  };
-  const body = isSplit ? (
-    <TileSplit className="kpi-split" lead={<>{main}{row.delta}</>} detail={row.hint || null}/>
-  ) : <>{main}{row.delta}{row.hint}</>;
-
-  const rootClass = ['kpi kpi-tile', info && 'kpi--info', sparkData && 'kpi--spark', !hasValue && 'kpi--facts', className]
-    .filter(Boolean).join(' ');
-  const children = <>
-    {head}
-    {info && <div className="kpi-info">{info}</div>}
-    {body}
-    {foot && <div className="kpi-foot">{foot}</div>}
-    {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={KPI_SPARK.w} h={KPI_SPARK.h} color={sparkColor}/></div>}
-  </>;
-  const busy = isLoading || isBusy ? 'true' : undefined;
-  // the spark's width has one home (KPI_SPARK) → the tile hands it to CSS, which reserves the hint's room from it
-  const sparkStyle = sparkData ? { '--kpi-spark-w': `${KPI_SPARK.w}px` } : undefined;
-  if (onClick) {
-    return <button type="button" id={id} onClick={onClick} className={`${rootClass} text-left`} aria-label={ariaLabel}
-      aria-busy={busy} style={sparkStyle}>{children}</button>;
-  }
-  // an own name outranks the label row (aria-labelledby would win over aria-label otherwise)
-  return (
-    <div id={id} role="group" aria-labelledby={ariaLabel ? undefined : headId}
-      aria-label={ariaLabel ?? (headId ? undefined : (isTextLabel ? label : undefined))}
-      className={rootClass} aria-busy={busy} style={sparkStyle}>
-      {children}
-    </div>
-  );
+function AbsentValue({ kind, title }) {
+  return <span className="text-faint" title={title}>{getAbsentText(kind)}</span>;
 }
 
 /**
  * One card's top-line numbers, a hairline between stats — never a tile per stat.
- * @param stats - each { label, value, unit?, context?, href?, key? }: context = the one period or delta line,
- *   href → the value is a Link to its drill-down; an absent value reads None, a 0 stays 0
+ * @param stats - each { label, value, unit?, context?, href?, isLoading?, key? }: context = the one period or delta line,
+ *   href → the value is a Link to its drill-down; an absent value reads None; a 0 stays 0;
+ *   isLoading → the shared loading value in place of value, unit, link and context
  */
 function StatRow({ stats, className = '' }) {
   return <dl className={`stat-row ${className}`.trim()}>
     {stats.map((stat) => {
+      if (stat.isLoading) return <LoadingStat key={stat.key ?? stat.label} label={stat.label}/>;
       const isAbsent = stat.value == null;
-      const value = <>{isAbsent ? 'None' : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
+      const value = <>{isAbsent ? EMPTY_VALUE_TEXT : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
       return <div key={stat.key ?? stat.label} className="stat">
         <dt className="stat-label">{stat.label}</dt>
         <dd className={`stat-value${isAbsent ? ' text-faint' : ''}`}>{stat.href ? <Link href={stat.href}>{value}</Link> : value}</dd>
@@ -711,6 +646,37 @@ function StatRow({ stats, className = '' }) {
       </div>;
     })}
   </dl>;
+}
+
+/**
+ * The alarm-size tone mark: the alarm row's glyph in a one-line box, hidden from assistive tech, its word read before what follows.
+ * @param label - the word a screen reader hears first; defaults to the tone's severity word
+ * @param title - hover text on the glyph
+ */
+function ToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
+  return <>
+    <span className={`one-line-box tone-glyph text-${tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
+    <span className="sr-only">{`${label}: `}</span>
+  </>;
+}
+
+/**
+ * A card head's own Status in the head's sub slot: the tone glyph, then the words.
+ * @param className - the head's spacing between glyph and words; defaults to the label gap
+ */
+function HeadStatus({ tone, className = 'gap-label-inline', children }) {
+  return <span data-role="head-status" data-tone={tone} className={`inline-flex items-center fs-meta text-dim ${className}`}>
+    <ToneGlyph tone={tone}/>{children}
+  </span>;
+}
+
+// the figure's 600 is not the placeholder's → regular weight; the empty context line keeps the settled height (design.md §3.3)
+function LoadingStat({ label }) {
+  return <div className="stat">
+    <dt className="stat-label">{label}</dt>
+    <dd className="stat-value"><span className="inline-flex"><LoadingPlaceholder label={label.toLowerCase()} className="font-normal"/></span></dd>
+    <dd className="stat-context"><span aria-hidden="true">{'\u00a0'}</span></dd>
+  </div>;
 }
 
 // 공용 오버레이 surface — variant 로 배치만 전환, 상호작용 계약은 단일 (presentation-only).
@@ -1224,14 +1190,6 @@ function SplitColumn({ isRail = false, children, className = '' }) {
   return <div className={`split-col ${isRail ? 'split-col--rail' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>{children}</div>;
 }
 
-// Tile-internal columns below xl: value + badge (lead) left, detail + hint + drill link right.
-function TileSplit({ lead, detail, className = '' }) {
-  return <div className={`tile-split ${className}`.trim()}>
-    <div className="tile-split-lead">{lead}</div>
-    {detail && <div className="tile-split-detail">{detail}</div>}
-  </div>;
-}
-
 const ROVING_KEY_STEP = {
   horizontal: { ArrowLeft: -1, ArrowRight: 1 },
   vertical: { ArrowUp: -1, ArrowDown: 1 },
@@ -1310,27 +1268,6 @@ function putRowKeyFocus(event, { index, count, onActivate, onActiveChange }) {
   const target = action.focus === 'row' ? row.parentElement.querySelectorAll('[data-roving-row]')[action.index] : controls[action.index];
   target?.focus();
   onActiveChange?.(action.focus === 'row' ? action.index : index);
-}
-
-// Filter chips: one Tab stop for the group, arrows move between chips, state rides aria-pressed.
-function ChipGroup({ label, chips, onToggle, className = '' }) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const onKeyDown = (event) => {
-    const buttons = [...event.currentTarget.querySelectorAll('button')];
-    const index = buttons.indexOf(event.target);
-    const next = getRovingIndex(event.key, index < 0 ? null : index, buttons.length);
-
-    if (next === undefined) return;
-    event.preventDefault();
-    buttons[next].focus();
-    setActiveIndex(next);
-  };
-  return <div role="toolbar" aria-label={label} onKeyDown={onKeyDown} className={`flex flex-wrap items-center gap-1 ${className}`.trim()}>
-    {chips.map((chip, i) => <button key={chip.key} type="button" className="pill pill--interactive" aria-pressed={chip.isPressed}
-      tabIndex={getRovingTabIndex(i, activeIndex, chips.length)} onFocus={() => setActiveIndex(i)} onClick={() => onToggle(chip.key)}>
-      {chip.label}
-    </button>)}
-  </div>;
 }
 
 /**
@@ -1483,7 +1420,8 @@ function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPic
     <button type="button" className="filter-trigger" {...menu.triggerProps}>
       <span className="filter-trigger-axis">{axis}</span>
       <span className="filter-trigger-value">{value}</span>
-      <DisclosureChevron isOpen={menu.isOpen} />
+      {/* points at the menu it opens and never turns — aria-expanded and the sunken fill carry the open state */}
+      <Icon name="chevD" size={DISCLOSURE_CHEVRON_PX} className="filter-trigger-chevron text-dim" />
     </button>
     {menu.isOpen && <MenuPanel id={menu.menuId} label={axis} kind={kind} items={items}
       rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
@@ -1983,7 +1921,7 @@ function tzShortLabel(tz) {
   }
 }
 
-// formatToParts 채택 — locale 문자열 quirk 무관하게 MM/DD HH:mm 레이아웃 직접 조립
+// formatToParts 채택 — locale 문자열 quirk 무관하게 MM-DD HH:mm 레이아웃 직접 조립
 function kstParts(iso) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
@@ -1998,11 +1936,21 @@ function kstParts(iso) {
   return { year: pick('year'), month: pick('month'), day: pick('day'), hour, minute: pick('minute'), second: pick('second') };
 }
 
-// UTC ISO → "MM/DD HH:mm" (표시 tz)
+// UTC ISO → "MM-DD HH:mm" (표시 tz)
 function formatKstDateTime(iso) {
   const p = kstParts(iso);
   if (!p) return iso || '—';
-  return `${p.month}/${p.day} ${p.hour}:${p.minute}`;
+  return `${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
+const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// UTC ISO → "MM-DD" (표시 tz) · a bare YYYY-MM-DD day key is already a display-zone day → no zone shift
+function formatKstDay(iso) {
+  if (DAY_KEY_PATTERN.test(String(iso))) return String(iso).slice(5);
+  const p = kstParts(iso);
+  if (!p) return iso || '—';
+  return `${p.month}-${p.day}`;
 }
 
 // UTC ISO → "HH:mm" (표시 tz)
@@ -2074,15 +2022,16 @@ function getDayTokenNodes(children, place) {
 }
 
 /**
- * A plain sentence with every day-count token kept whole in its own NoWrap; text content stays the sentence.
+ * A plain sentence with every day-count token kept whole in its own NoWrap, all in one inline span; text content stays the sentence.
  * @param children - the sentence; a list of children (nested lists too) and a Fragment (nested too) are read part by part,
  *   and any other non-string part (an element, null) renders as is
  */
 function DayTokens({ children }) {
   const parts = getDayTokenNodes(children, '');
   if (parts.length <= 1) return parts[0] ?? null;
+  // one inline span, not a Fragment → in a flex parent with a gap the sentence stays one item instead of one per part;
   // spread, not a list → a caller's own unkeyed element part needs no key
-  return React.createElement(React.Fragment, null, ...parts);
+  return React.createElement('span', null, ...parts);
 }
 
 /**
@@ -2187,7 +2136,7 @@ function getFreshnessState({ at, loading = false, failed = false, regions, stale
 }
 
 /**
- * Page verdict over the getFreshnessState inputs → { state, tone, label, note, isBusy } for PageVerdict, KPI tones and all-clear lines.
+ * Page verdict over the getFreshnessState inputs → { state, tone, label, note, isBusy } for a screen's status word and all-clear lines.
  * Unread → neutral "No signal" · stale/partial → "Last known", ok drops to neutral, warn/crit kept · refreshing → the settled verdict, busy.
  * @param tone - tone the page derives from its data
  * @param label - page word for that tone; defaults to the tone's canonical word
@@ -2210,7 +2159,7 @@ function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, fai
   const isAlarm = tone === 'warn' || tone === 'crit';
   const ageNote = `Read ${formatRelativeTime(at, now)}`;
   const note = settled === 'partial' ? `${ageNote} · ${failedCount} of ${regionCount} sources failed` : ageNote;
-  return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `Last known: ${pageLabel}` : 'Last known', note, isBusy };
+  return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `${LAST_KNOWN_TEXT}: ${pageLabel}` : LAST_KNOWN_TEXT, note, isBusy };
 }
 
 // a tried-and-failed first read must never read as one that was never tried
@@ -2332,7 +2281,7 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
 // visible stamp line for a settled state that is not fresh — the unread note, or "Last known" with the read's age
 function getStampText({ settled, at, now, failedNote, hasFailed }) {
   if (settled === 'not-read') return getUnreadNote({ isBusy: false, hasFailed });
-  const readText = `Last known · read ${formatRelativeTime(at, now)}`;
+  const readText = `${LAST_KNOWN_TEXT} · read ${formatRelativeTime(at, now)}`;
   return failedNote ? `${readText} · ${failedNote}` : readText;
 }
 
@@ -2534,24 +2483,36 @@ function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTarget
   );
 }
 
-const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
+const NOTICE_POINTER = 'the notice above';
+
+// the word for loaded data standing beside a failed refresh — stamp, alarm row and stat alike
+const LAST_KNOWN_TEXT = 'Last known';
+
+// a held reading's cause, on hover and in ⓘ — the stat label already names the source, the word stays alone on the line
+function getHeldCause(source) {
+  return `${LAST_KNOWN_TEXT} — couldn't refresh ${source}`;
+}
 
 /**
- * Quiet slot for a region another surface speaks for: its name + a pointer to that surface, no sentence, no Retry.
- * @param region - slot name shown; defaults to source
+ * The one pointer sentence to the surface that states a cause — alone when the value already reads Not loaded, else after its lead.
+ * @param target - that surface, read after "see"; the page notice by default
+ */
+function getNoticePointer(lead, target = NOTICE_POINTER) {
+  return lead ? `${lead} — see ${target}.` : `See ${target}.`;
+}
+
+/**
+ * Quiet slot for a region another surface speaks for: one pointer line to that surface, no name (its card already titles it), no sentence, no Retry.
  * @param speaker - failed source whose card (not the page banner) speaks for this slot
  * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first banner-covered card on recovery
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionCovered({ source, region, speaker, focusTargetId, minHeight, className = '' }) {
-  const label = region ?? source;
-  const name = label ? label.charAt(0).toUpperCase() + label.slice(1) : '';
+function RegionCovered({ speaker, focusTargetId, minHeight, className = '' }) {
   return (
-    <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
+    <p className={`fs-meta text-dim ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
       data-covered-card-id={speaker ? undefined : focusTargetId}>
-      <span className="fs-body text-dim">{name}</span>
-      <span className="fs-meta text-faint">{speaker ? `Not loaded — see the ${speaker} notice` : REGION_COVERED_NOTE}</span>
-    </div>
+      {getNoticePointer(NOT_LOADED_TEXT, speaker ? `the ${speaker} notice` : undefined)}
+    </p>
   );
 }
 
@@ -2597,8 +2558,11 @@ function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetI
 
 const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice' };
 
+// at 13 the 1.6 stroke paints under a pixel and the worst state reads faintest → every alarm mark, a firing stat's included
+const ALARM_GLYPH_SIZE = 16;
+
 /**
- * The one conditional-alert card: tone rides only on the glyph well, the shell stays neutral.
+ * The one conditional-alert card, drawn as the alarm row: tone rides only on the bare glyph, the shell stays neutral.
  * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel
  * @param subjects - names of affected parts, shown as neutral chips
  * @param details - raw error kept behind a collapsed Details
@@ -2608,13 +2572,13 @@ const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice',
 function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, details, actions, hasLiveHost = false, onFocus, className = '' }) {
   const role = hasLiveHost ? undefined : tone === 'crit' ? 'alert' : 'status';
   const isInset = surface === 'inset';
-  const shell = isInset ? 'sub-card bg-sunken alert-card is-inset' : 'card alert-card';
+  const shell = isInset ? 'sub-card bg-sunken alert-card' : 'card alert-card';
 
   return (
     <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
       <div className="alert-card-grid">
-        <span className="alert-card-well" aria-hidden="true">
-          <Icon name={TONE_ICON[tone]} size={isInset ? 14 : 16}/>
+        <span className="alert-card-glyph" aria-hidden="true">
+          <Icon name={TONE_ICON[tone]} size={isInset ? 14 : ALARM_GLYPH_SIZE}/>
         </span>
         <div className="alert-card-content">
           {/* title and body ride DayTokens → a "7-day" / "30 days" token in any alert stays on one line */}
@@ -2629,6 +2593,29 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
         </div>
         {actions && <div className="alert-card-actions">{actions}</div>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The hairline alarm row — AlertCard's anatomy without a card shell, for a list of alarms inside one card.
+ * @param isHeld - the row's source failed its latest read → plain "Last known" after the title, never a badge
+ * @param actions - a Link to the owning page or the row's own control
+ * @param role - 'alert' when no live container announces the row
+ */
+function AlarmRow({ tone, title, detail, isHeld = false, actions, role }) {
+  return (
+    <div role={role} className="alarm-row" data-tone={tone}>
+      <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
+      {/* fs-body on the content cell itself → base.css holds its line at the 20 row line; a child .fs-body would set 21.75 */}
+      <div className="min-w-0 fs-body text-ink">
+        <span className="font-medium">
+          <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span><DayTokens>{title}</DayTokens>
+        </span>
+        {isHeld && <> <span className="fs-meta text-dim">{LAST_KNOWN_TEXT}</span></>}
+        {detail && <span className="alarm-row-detail fs-meta text-dim"><DayTokens>{detail}</DayTokens></span>}
+      </div>
+      {actions && <div className="alarm-row-actions">{actions}</div>}
     </div>
   );
 }
@@ -2746,6 +2733,35 @@ function formatUsdCompact(value) {
   const v = Number(value) || 0;
   const decimals = Math.abs(v) >= 100 ? 0 : 2;
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+// the spend alarm's two shared clauses (spec 44084 §3.4) — the pace clause that may follow the amount stays per screen
+function formatSpendSoFar(amount) {
+  return `${formatUsdCompact(amount)} so far today`;
+}
+
+function formatSpendMultiple(ratio, basis) {
+  return `${ratio.toFixed(1)}\u00d7 the 7-day average (${formatUsdCompact(basis)}/day)`;
+}
+
+/**
+ * A percentage (value already in percent) — at most one decimal, `.0` dropped; never rounds a non-zero to 0% or a part to 100%.
+ * @param fixedDigits - a table column's fixed decimals, so every cell of the column has one precision
+ */
+function formatPct(value, fixedDigits) {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n)) return '—';
+  const unit = 10 ** -(fixedDigits ?? 1);
+  if (n !== 0 && Math.abs(n) < unit / 2) return `<${formatDecimal(unit, fixedDigits)}%`;
+  if (n < 100 && n >= 100 - unit / 2) return `>${formatDecimal(100 - unit, fixedDigits)}%`;
+  return `${formatDecimal(n, fixedDigits)}%`;
+}
+
+/** An average or ratio — at most one decimal, `.0` dropped, thousands separators; fixedDigits as formatPct. */
+function formatDecimal(value, fixedDigits) {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n)) return '—';
+  return n.toLocaleString('en-US', { minimumFractionDigits: fixedDigits ?? 0, maximumFractionDigits: fixedDigits ?? 1 });
 }
 
 // 콤마 정수 (1,234,567) — 비숫자/NaN/음수 → '—' (가짜 0 금지, wiki 가드 승격)
@@ -2912,38 +2928,6 @@ const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral:
 // default verdict word per tone — the glyph never stands alone.
 const VERDICT_TONE_LABEL = { ok: 'Healthy', warn: 'Needs attention', crit: 'Action needed', info: 'Info', neutral: 'No signal' };
 
-/**
- * One-line page headline: tone glyph + word, one sentence (children), optional chips.
- * A chip with `href` drills to another view; one with `targetId` scrolls to that card and focuses it.
- * @param id - focus target for a page banner's Retry once the page recovers
- * @param freshness - optional getFreshnessState inputs; the verdict then follows getFreshnessVerdict, and an unread page swaps its sentence for the checking note
- */
-function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness, id, className = '' }) {
-  const verdict = freshness ? getFreshnessVerdict({ ...freshness, tone, label }) : { tone, label, note: null, isBusy: false };
-  const toneKey = VERDICT_TONE_LABEL[verdict.tone] ? verdict.tone : 'neutral';
-  const isUnread = verdict.state === 'loading' || verdict.state === 'not-read';
-  const sentence = isUnread ? null : children;
-  // re-derived on the stamp's own cadence → a verdict never stays green over a read the stamp calls Stale
-  useFreshnessTick(Boolean(freshness) && !isUnread && freshness.now === undefined);
-
-  return <div id={id} className={`page-verdict page-verdict--${toneKey} ${className}`.trim()} aria-busy={verdict.isBusy ? 'true' : undefined}>
-    <span className="page-verdict-tone">
-      <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
-      {verdict.label || VERDICT_TONE_LABEL[toneKey]}
-    </span>
-    {sentence && <span className="page-verdict-text"><DayTokens>{sentence}</DayTokens></span>}
-    {verdict.note && <span className="page-verdict-text fs-meta text-dim">{verdict.note}</span>}
-    {chips.length > 0 && <span className="page-verdict-chips">
-      {chips.map((chip) => <VerdictChip key={chip.key || chip.label} chip={chip} />)}
-    </span>}
-  </div>;
-}
-
-function VerdictChip({ chip }) {
-  if (chip.href) return <a className="btn ghost sm" href={chip.href}>{chip.label}</a>;
-  return <button type="button" className="btn ghost sm" onClick={() => putCardFocus(chip.targetId)}>{chip.label}</button>;
-}
-
 // instant nearest scroll → no jump when the card is already in view, nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
 function putCardFocus(id) {
   const card = id ? document.getElementById(id) : null;
@@ -3041,12 +3025,12 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
-  SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
-  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
-  getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
+  Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
+  SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone, SEVERITY_RANK,
+  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
+  getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
-  getDisplayName, hasFieldValue, DetailField,
+  getDisplayName, hasFieldValue, DetailField, ToneGlyph, HeadStatus, AbsentValue, EMPTY_VALUE_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
@@ -3054,15 +3038,15 @@ window.UI = {
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
   REMOTE_PAGE, isRemotePage, installRemoteFetch, readRemoteSession,
-  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
-  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
-  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
+  formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
+  formatUsd, formatUsdCompact, formatSpendSoFar, formatSpendMultiple, formatInt, formatTokenCompact, formatDuration, formatPct, formatDecimal,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
-  TONE_GLYPH, TONE_ICON, PageVerdict, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
+  TONE_GLYPH, TONE_ICON, ALERT_SEVERITY_WORD, putCardFocus, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
   outcomeShareTone, resolveOutcomeRate, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
   OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,

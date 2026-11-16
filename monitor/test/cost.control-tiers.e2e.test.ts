@@ -6,6 +6,7 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
@@ -56,8 +57,11 @@ const MODEL_CARD = getMarkup(closedScreen, "ModelCostCard", {
   onRetry: noop,
 });
 const LEDGER_ROW = { ...ROWS[0], fullModel: ROWS[0].model };
-const getLedger = (screen: Record<string, unknown>) =>
-  `<table class="tbl" style="width: 560px;"><tbody>${getMarkup(screen, "ModelCostRow", { r: LEDGER_ROW })}</tbody></table>`;
+// the row's money formatters are required → both columns take the screen's own compact form (a top-level const, read from its scope)
+const getLedger = (screen: Record<string, unknown>) => {
+  const formatUsdC = vm.runInContext("formatUsdC", screen as vm.Context);
+  return `<table class="tbl" style="width: 560px;"><tbody>${getMarkup(screen, "ModelCostRow", { r: LEDGER_ROW, formatCost: formatUsdC, formatAvg: formatUsdC })}</tbody></table>`;
+};
 
 // the server capped the session read → the head says how many of the window's sessions loaded
 const SESSION_ROW = { session_id: "s-1", cost_usd: 4.2, started_at: "2026-10-29T10:00:00Z", agent_count: 2 };

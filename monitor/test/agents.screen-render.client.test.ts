@@ -42,6 +42,10 @@ const REGION_MEMBERS = ["INITIAL_REGION_STATE", "getRegionView", "hasRegionRows"
 for (const name of REGION_MEMBERS) UI_SCALARS[name] = REAL_UI[name];
 // Count text rides the shipped formatter, so a KPI sub reads as it does on the page.
 UI_SCALARS.formatInt = REAL_UI.formatInt;
+UI_SCALARS.formatPct = REAL_UI.formatPct;
+UI_SCALARS.formatDecimal = REAL_UI.formatDecimal;
+// A failed read's cause rides the shipped error copy, so a Not-loaded title reads as it does on the page.
+UI_SCALARS.getErrorCopy = REAL_UI.getErrorCopy;
 // Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
 for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
 // The status band rides the shipped stat row → labels, values and context lines render as on the page.
@@ -52,6 +56,17 @@ UI_SCALARS.getAgentDisplayName = REAL_UI.getAgentDisplayName;
 UI_SCALARS.getChartImageProps = REAL_UI.getChartImageProps;
 UI_SCALARS.ChartAxisTick = REAL_UI.ChartAxisTick;
 UI_SCALARS.getChartXAxisProps = REAL_UI.getChartXAxisProps;
+// A word for nothing rides the shipped atom and its words → still found as the AbsentValue atom, painted as on the page.
+UI_SCALARS.EMPTY_VALUE_TEXT = REAL_UI.EMPTY_VALUE_TEXT;
+UI_SCALARS.AbsentValue = Object.defineProperty(
+  (props: Record<string, unknown>) => ({
+    __element: true,
+    type: "ui-atom",
+    props: { ...props, atom: "AbsentValue", children: (REAL_UI.AbsentValue as (p: unknown) => unknown)(props) },
+  }),
+  "name",
+  { value: "AbsentValue" },
+);
 // Paired cards cap their lists with the shipped slot budget.
 UI_SCALARS.CARD_SLOTS = REAL_UI.CARD_SLOTS;
 UI_SCALARS.getSlotRows = REAL_UI.getSlotRows;
@@ -488,7 +503,7 @@ test("the summary row marks the shared crit step from its own failed share, and 
     const toned = findNodes(tree, (n) => /\btext-(ok|warn)\b/.test(String(n.props?.className ?? "")));
     assert.equal(toned.length, 0, `${c.why}: the success numeral carries no second scale`);
     const [trendBars] = findAtoms(tree, "MiniBars");
-    assert.equal(trendBars?.props.color, toneVarColor(c.crit ? "crit" : "neutral"), `${c.why}: the trend bars carry no band of their own`);
+    assert.equal(trendBars?.props.color, "rgb(var(--data))", `${c.why}: the runs-per-day bars are a quantity → the data colour, never the row's severity`);
   }
 });
 
@@ -629,8 +644,6 @@ test("the ledger opens sorted by breakages, riskiest agents first", async () => 
   assert.deepEqual(sorted, [["Failed", "descending", "arrow-down"]], "the Failed or blocked head shows the breakage sort it opens on");
 });
 
-const NOT_LOADED_WORD = "not loaded";
-
 function renderLoadRow(mod: Record<string, unknown>, failureStatus: string, trendStatus: string): RenderedNode | string | null {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   return renderScreen(
@@ -642,7 +655,7 @@ function renderLoadRow(mod: Record<string, unknown>, failureStatus: string, tren
   );
 }
 
-test("an unread breakage or trend payload shows 'not loaded', and only a loaded zero reads None", async () => {
+test("an unread breakage or trend payload shows the shared Not loaded mark, and only a loaded zero reads None", async () => {
   const mod = await loadAgentsScreen();
   const rows = [
     { name: "both loading", failureStatus: "loading", trendStatus: "loading", notLoaded: 2 },
@@ -652,7 +665,7 @@ test("an unread breakage or trend payload shows 'not loaded', and only a loaded 
   ];
   for (const row of rows) {
     const tree = renderLoadRow(mod, row.failureStatus, row.trendStatus);
-    const marks = findNodes(tree, (n) => n.type === "span" && collectText(n) === NOT_LOADED_WORD);
+    const marks = findAtoms(tree, "AbsentValue").filter((n) => n.props.kind === "not-loaded" && collectText(n) === "Not loaded");
     assert.equal(marks.length, row.notLoaded, `${row.name}: not-loaded marks`);
     const failCell = findNodes(tree, (n) => n.type === "td" && String(n.props?.title ?? "").length > 0)
       .find((n) => /breakage/.test(String(n.props.title)));
@@ -1086,6 +1099,28 @@ test("the drawer's rework count sums revisions across runs rather than repeating
   assert.match(text, /reworks\s*7 in 46 runs/, text);
 });
 
+test("the drawer's average rework and flag share read at most one decimal", async () => {
+  const revisionRows = [
+    { agent: "glass-atrium-dev-react", revision_bucket: "0", occurrence_count: 40 },
+    { agent: "glass-atrium-dev-react", revision_bucket: "1", occurrence_count: 5 },
+    { agent: "glass-atrium-dev-react", revision_bucket: "2", occurrence_count: 1 },
+  ];
+  const mod = await loadAgentsScreen({ formatInt: (n: number) => String(n) });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(
+    React.createElement(mod.AgentQualitySignalsSection as Component, {
+      drawerAgent: "glass-atrium-dev-react",
+      revisionState: { status: "ready", data: { rows: revisionRows }, error: null },
+      reviewByAgentState: { status: "ready", data: { rows: [{ agent: "glass-atrium-dev-react", review_flagged_count: 10, total_count: 40 }] }, error: null },
+      onRetry: () => undefined,
+    }),
+  );
+  const text = collectText(tree);
+  assert.match(text, /\(avg 0\.2\)/, `7 reworks over 46 runs is 0.152 → one decimal: ${text}`);
+  assert.match(text, /25%/, `a 10-of-40 flag share drops the .0: ${text}`);
+  assert.doesNotMatch(text, /25\.0%/, text);
+});
+
 test("the health verdict pill labels its index instead of trailing a bare number", async () => {
   const tree = await renderComponent("QualityHealthVerdictPill", {
     entry: { healthIndex: 0.9, dominantDriver: { kind: "flag", value: 0.22 } },
@@ -1107,10 +1142,25 @@ test("the matrix legend states which outcomes its n leaves out", async () => {
   assert.match(collectText(tree), /reconstructed/);
 });
 
-test("the matrix legend carries only the crit step and its below-the-step swatch", async () => {
-  const tree = await renderComponent("SuccessRateLegend", {});
-  const swatches = findNodes(tree, (n) => n.type === "LegendSwatch").map((n) => n.props.colorVar);
-  assert.deepEqual(swatches, ["--crit", "--faint"]);
+test("a matrix sparkline draws the data colour unless its pair is over the fail-share step, and the legend keys exactly those two colours", async () => {
+  const cases = [
+    { name: "over the step", successCount: 19, failureCount: 1, stroke: "--crit" },
+    { name: "under the step", successCount: 39, failureCount: 1, stroke: "--data" },
+    { name: "n below LOW_N_MIN", successCount: 2, failureCount: 1, stroke: "--data" },
+  ];
+  const drawn = new Set<string>();
+  for (const c of cases) {
+    const rateDenominator = c.successCount + c.failureCount;
+    const cell = { ...c, rateDenominator, totalCount: rateDenominator, pooledRate: c.successCount / rateDenominator, reconstructed: 0, points: [{ rate: 0.9 }, { rate: 0.95 }] };
+    const tree = await renderComponent("SuccessRateCell", { view: { isStacked: false, columnCount: 10 }, agent: "dev-react", taskType: "feature", cell });
+    const [spark] = findNodes(tree, (n) => /daily success rate/.test(String(n.props?.["aria-label"] ?? "")));
+    const strokes = findNodes(spark, (n) => /^rgb\(var\(--/.test(String(n.props?.stroke ?? ""))).map((n) => String(n.props.stroke).match(/--[a-z-]+/)?.[0]);
+    assert.deepEqual([...new Set(strokes)], [c.stroke], `${c.name}: sparkline stroke`);
+    drawn.add(c.stroke);
+  }
+  const legend = await renderComponent("SuccessRateLegend", {});
+  const swatches = findNodes(legend, (n) => n.type === "LegendSwatch").map((n) => n.props.colorVar);
+  assert.deepEqual(swatches, [...drawn]);
 });
 
 test("a compatibility requirement rides a short row tag with the full text on hover, never a truncated sentence", async () => {
@@ -1405,14 +1455,14 @@ test("the instrumentation head names the first loaded source's lead figure withi
   const rows = [
     { name: "unfinished runs warn", l: lifecycle(20, 8), r: review, tone: "warn", sub: "12 runs with no record" },
     { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no record" },
-    { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14.0% flagged" },
+    { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14% flagged" },
     { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus sound" },
     { name: "activations never lengthen a head that already has a lead", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no record" },
     { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "2.5% activation false-positive" },
     { name: "a window with no activations states that, never a rate over an empty denominator", l: loading, r: loading, a: ACTIVATIONS_EMPTY, tone: "neutral", sub: "no activations" },
-    { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14.0% flagged" },
+    { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14% flagged" },
     { name: "widest: a 5-digit orphan total", l: lifecycle(99_999, 0), r: review, a: ACTIVATIONS_READY, tone: "warn", sub: "99,999 runs with no record" },
-    { name: "widest: a full false-positive share leads alone", l: loading, r: loading, a: ACTIVATIONS_ALL_FALSE, tone: "neutral", sub: "100.0% activation false-positive" },
+    { name: "widest: a full false-positive share leads alone", l: loading, r: loading, a: ACTIVATIONS_ALL_FALSE, tone: "neutral", sub: "100% activation false-positive" },
   ];
   for (const row of rows) {
     const got = verdict(row.l, row.r, row.a);
@@ -1432,7 +1482,7 @@ test("the Instrumentation fold body carries every clause the head leaves out, an
   const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] }, error: null };
   const rows = [
     { name: "read", l: idle, r: idle, a: ACTIVATIONS_READY, line: /activation false-positive 2\.5% of 1,200 activations · last 30d/ },
-    { name: "every source read", l: lifecycle, r: review, a: ACTIVATIONS_READY, line: /^1,873 runs with no completion record · 14\.0% flagged · activation false-positive 2\.5% of 1,200 activations · last 30d$/ },
+    { name: "every source read", l: lifecycle, r: review, a: ACTIVATIONS_READY, line: /^1,873 runs with no completion record · 14% flagged · activation false-positive 2\.5% of 1,200 activations · last 30d$/ },
     { name: "read with no activations", l: idle, r: idle, a: ACTIVATIONS_EMPTY, line: /no activations · last 30d/ },
     { name: "failed", l: idle, r: idle, a: ACTIVATIONS_FAILED, line: /Activation rate unavailable/ },
     { name: "not yet read", l: idle, r: idle, a: idle, line: /Activation rate unavailable/ },
@@ -1449,23 +1499,43 @@ test("the Instrumentation fold body carries every clause the head leaves out, an
   }
 });
 
-test("the drawer's Performance section states the agent's budget crossings and peak, and an unread overage source says unavailable rather than 0", async () => {
+test("the drawer's Performance section states the agent's budget crossings, peak and P95; a read in flight shows the loading look, a failed read marks Not loaded with its cause, never 0", async () => {
   const agent = { agent_id: "glass-atrium-dev-react", agent_name: "glass-atrium-dev-react", runs: 40, needs_context_count: 0, invocations: 40 };
   const summaryState = { status: "ready", data: { agents: [agent] }, error: null };
-  const latencyState = { status: "ready", data: { agents: [] }, error: null };
+  const latencyRead = { status: "ready", data: { agents: [{ agent_id: agent.agent_id, p95_ms: 42000 }] }, error: null };
+  const overageRead = { status: "ready", data: { rows: [] }, error: null };
+  const inFlight = { status: "loading", busy: true, data: null, error: null };
+  const failed = { status: "error", busy: false, data: null, error: { message: "HTTP 503 Service Unavailable" } };
   const crossed = new Map([["glass-atrium-dev-react", { overage_count: 3, max_crossed_pct: 140 }]]);
   const rows = [
-    { name: "crossed", state: { status: "ready", data: { rows: [] }, error: null }, map: crossed, count: "3", peak: "140% of budget" },
-    { name: "loaded with no crossing", state: { status: "ready", data: { rows: [] }, error: null }, map: new Map(), count: "0", peak: "—" },
-    { name: "overage read failed", state: { status: "error", data: null, error: { message: "HTTP 503" } }, map: new Map(), count: "unavailable", peak: "unavailable" },
+    { name: "crossed", overage: overageRead, latency: latencyRead, map: crossed, count: "3", peak: "140% of budget", p95: "formatted" },
+    { name: "loaded with no crossing", overage: overageRead, latency: { ...latencyRead, data: { agents: [] } }, map: new Map(), count: "0", peak: "absent:none", p95: "absent:none" },
+    { name: "reads in flight", overage: inFlight, latency: inFlight, map: new Map(), count: "loading", peak: "loading", p95: "loading" },
+    { name: "reads failed", overage: failed, latency: failed, map: new Map(), count: "absent:not-loaded", peak: "absent:not-loaded", p95: "absent:not-loaded" },
   ];
   for (const row of rows) {
     const tree = await renderComponent("AgentPerformanceSection", {
-      agent, drawerAgent: agent.agent_id, summaryState, latencyState, overageState: row.state, overageByAgent: row.map, onRetry: () => undefined,
+      agent, drawerAgent: agent.agent_id, summaryState, latencyState: row.latency, overageState: row.overage, overageByAgent: row.map, onRetry: () => undefined,
     });
-    const metric = (label: string) => findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === label)[0]?.props.value;
+    const values = (label: string) => findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === label)[0]?.props.value as
+      { type?: { name?: string }; props?: { kind?: string; title?: string } } | string;
+    // an absent value is the shared AbsentValue element → read back as its kind; the loading look as "loading"
+    const metric = (label: string) => {
+      const value = values(label);
+      if (typeof value !== "object") return value;
+      if (value?.type?.name === "LoadingPlaceholder") return "loading";
+      // the P95 rides the stubbed formatDuration atom → a read value reads back as "formatted"
+      return value?.props?.kind ? `absent:${value.props.kind}` : "formatted";
+    };
     assert.equal(metric("Budget crossings"), row.count, `${row.name}: count`);
     assert.equal(metric("Peak crossing"), row.peak, `${row.name}: peak`);
+    assert.equal(metric("P95"), row.p95, `${row.name}: P95`);
+    if (row.overage === failed) {
+      for (const label of ["Budget crossings", "Peak crossing", "P95"]) {
+        const value = values(label) as { props?: { title?: string } };
+        assert.match(String(value?.props?.title), /HTTP 503/, `${label}: the failed read's own cause is in the title`);
+      }
+    }
   }
 });
 
@@ -1556,22 +1626,22 @@ function getPerformanceProps(trend: number[] | null, trendDates: string[]): Reco
   };
 }
 
-describe("the drawer trend chart takes its tone from the status and the failed share, with no rate band of its own", () => {
+describe("the drawer trend chart paints runs in the data colour, whatever the status or failed share", () => {
   const rows = [
-    { name: "50% at n=4 stays neutral: a low sample carries no tone, whatever its rate", agent: { runs: 4, success_pct: 50 }, tone: "neutral" },
-    { name: "98% at n=50 stays neutral: under the crit step", agent: { runs: 50, success_pct: 98 }, tone: "neutral" },
-    { name: "92% at n=50 is crit: over the crit step", agent: { runs: 50, success_pct: 92 }, tone: "crit" },
-    { name: "an errored agent is crit whatever its rate", agent: { status: "error", runs: 50, success_pct: 98 }, tone: "crit" },
+    { name: "a low sample", agent: { runs: 4, success_pct: 50 } },
+    { name: "a rate under the crit step", agent: { runs: 50, success_pct: 98 } },
+    { name: "a rate over the crit step", agent: { runs: 50, success_pct: 92 } },
+    { name: "an errored agent", agent: { status: "error", runs: 50, success_pct: 98 } },
   ];
   for (const row of rows) {
-    test(row.name, async () => {
+    test(`${row.name}: the chart carries no tone, so a severity never becomes the series colour`, async () => {
       const tree = await renderComponent("AgentPerformanceSection", {
         ...getPerformanceProps([3, 5, 2], ["2026-09-22", "2026-09-23", "2026-09-24"]),
         agent: { ...PERFORMANCE_AGENT, ...row.agent },
       });
       const charts = findAtoms(tree, "TrendChart");
       assert.equal(charts.length, 1, "one trend chart");
-      assert.equal(charts[0].props.tone, row.tone);
+      assert.equal(charts[0].props.tone, undefined);
     });
   }
 });
@@ -1632,7 +1702,57 @@ test("review-flag chart dates take the shared day-axis tick, end-keeping interva
       assert.equal(part.fontSize, undefined, "no numeric size beside the token");
       assert.equal(part.style?.fontSize, "var(--fs-meta)");
     }
+    const tick = axis.props.tick as { fontFamily?: unknown; style?: { fontFamily?: unknown; fontVariantNumeric?: unknown } };
+    assert.equal(tick.fontFamily ?? tick.style?.fontFamily, undefined, "the tick numerals inherit the sans face");
+    assert.equal(tick.style?.fontVariantNumeric, "tabular-nums", "the tick numerals keep tabular figures");
   }
+});
+
+test("a read drawer latency row with nothing behind a percentile reads None, never a dash", async () => {
+  const absentKinds = (tree: RenderedNode | string | null) => findAtoms(tree, "AbsentValue").map((n) => n.props.kind);
+  const latencyRow = await renderComponent("AgentLatencyRow", {
+    latency: { agent_id: "solo", agent_name: "solo", p50_ms: 1000, p95_ms: null, p99_ms: null },
+    state: { status: "ready", data: { rows: [] } }, onRetry: () => undefined,
+  });
+  assert.deepEqual(absentKinds(latencyRow), ["none", "none"], "a read latency row with no P95 or P99 holds None");
+  assert.ok(!collectText(latencyRow).includes("\u2014"), "no dash stands in a value slot");
+});
+
+// a chart mark that resolves to a tone or the accent paints severity or emphasis as a series colour
+const getToneOrAccentPaints = (tree: RenderedNode | string | null): string[] =>
+  findNodes(tree, () => true).flatMap((n) => {
+    const paints = [n.props.fill, n.props.stroke, (n.props.style as Record<string, unknown> | undefined)?.background]
+      .map(String).filter((paint) => /--(?:accent|info|crit|warn|ok)\b/.test(paint));
+    const classes = String(n.props.className ?? "").split(/\s+/).filter((name) => /^bg-(?:accent|info|crit|warn|ok)\b/.test(name));
+    return [...paints, ...classes];
+  });
+
+test("review-flag chart: the reason bars carry the data colour and the rate is a straight ink line over a card-ground under-stroke", async () => {
+  const tree = await renderComponent("QualityHealthTimelineChart", { rows: REVIEW_FLAG_ROWS });
+  const bars = findAtoms(tree, "Bar");
+  assert.equal(bars.length, 2, "both flag reasons stack");
+  for (const bar of bars) assert.equal(bar.props.fill, "rgb(var(--data))", `${bar.props.dataKey} bar`);
+  const rateLines = findAtoms(tree, "Line").filter((line) => line.props.dataKey === "review_flag_ratio_pct");
+  assert.deepEqual(rateLines.map((line) => [line.props.stroke, line.props.strokeWidth]),
+    [["rgb(var(--elev))", 3.5], ["rgb(var(--ink))", 1.5]], "the under-stroke is drawn first, the ink line over it");
+  for (const line of rateLines) {
+    assert.equal(line.props.type, "linear", "no smoothing");
+    assert.equal(line.props.dot, false, "no dots");
+    assert.equal(line.props.strokeDasharray, undefined, "a solid series line");
+  }
+  assert.deepEqual(getToneOrAccentPaints(tree), [], "no mark of a quantity takes a tone or the accent");
+});
+
+test("latency layers and failure-category bars carry the data colour, never a tone", async () => {
+  const latency = await renderComponent("LatencyBars", { agents: [{ agent_name: "glass-atrium-dev-react", p50_ms: 1000, p95_ms: 3000, p99_ms: 5000 }] });
+  const breakage = await renderComponent("MergedBreakageBody", {
+    merged: { total: 5, failTotal: 4, blockedTotal: 1, reasons: [{ category: "timeout", count: 3, failCount: 3, blockedCount: 0 }, { category: "tool_error", count: 2, failCount: 1, blockedCount: 1 }] },
+    days: 30,
+  });
+  const dataMarks = (tree: RenderedNode | string | null) => findNodes(tree, (n) => /\bbg-data\b/.test(String(n.props.className ?? ""))).length;
+  assert.equal(dataMarks(latency), 6, "three latency layers and their three keys");
+  assert.equal(dataMarks(breakage), 2, "one bar per failure category");
+  assert.deepEqual([...getToneOrAccentPaints(latency), ...getToneOrAccentPaints(breakage)], []);
 });
 
 test("review-flag chart is a focusable image named by the flagged-rate range, latest, low and high", async () => {
@@ -1640,7 +1760,7 @@ test("review-flag chart is a focusable image named by the flagged-rate range, la
   const [image] = findNodes(tree, (n) => n.props.role === "img");
   assert.equal(image?.props.tabIndex, 0);
   assert.equal(image?.props["aria-label"],
-    "Daily flagged rate, 2 days from 2026-09-23 to 2026-09-24: latest 12.5%, low 5.0%, high 12.5%");
+    "Daily flagged rate, 2 days from 2026-09-23 to 2026-09-24: latest 12.5%, low 5%, high 12.5%");
 });
 
 test("a drawer metric sits flat on its section rather than as a card inside a card", async () => {
@@ -1660,9 +1780,9 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
   const ready = { status: "ready", data: [], error: null };
   const agents = [{ agent_id: "a", runs: 600, needs_context_count: 2 }, { agent_id: "b", runs: 400, needs_context_count: 1 }];
   const rows = [
-    { name: "none crossed", overCap: 0, tone: null, ratePct: "0.0" },
+    { name: "none crossed", overCap: 0, tone: null, ratePct: "0" },
     { name: "3 of 1,000 stays under the 5% step", overCap: 3, tone: null, ratePct: "0.3" },
-    { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", ratePct: "6.0" },
+    { name: "60 of 1,000 crosses the 5% step", overCap: 60, tone: "warn", ratePct: "6" },
   ];
   for (const row of rows) {
     const overageByAgent = new Map(Array.from({ length: row.overCap }, (_, i) => [`run-${i}`, { overage_count: 1 }]));
@@ -1717,6 +1837,8 @@ test("the success cell shows the rate alone, its fraction kept in the tooltip", 
   const mod = await loadAgentsScreen();
   const rows = [
     { name: "a measured rate", agent: { success_pct: 97.5, runs: 40, needs_context_count: 0 }, text: "97.5%", title: /^passed 39 ÷ denominator 40 / },
+    { name: "a near-total rate never rounds up to the whole", agent: { success_pct: 99.975, runs: 4000, needs_context_count: 0 }, text: ">99.9%", title: /^passed 3999 ÷ denominator 4000 / },
+    { name: "a whole rate keeps the column's one decimal", agent: { success_pct: 100, runs: 40, needs_context_count: 0 }, text: "100.0%", title: /^passed 40 ÷ denominator 40 / },
     { name: "no outcome to rate", agent: { success_pct: 0, runs: 0, needs_context_count: 0 }, text: "None", title: /success rate undefined/ },
   ];
   for (const row of rows) {
@@ -1886,12 +2008,11 @@ describe("the ledger head names the agents the health rule flags, and stays sile
     assert.deepEqual(await renderMarks(ready({ rows: critical }), ERROR_STATE), []);
   });
 
-  test("the page mounts no verdict and carries the mark in the ledger head", async () => {
+  test("the ledger head carries the crit agent's health mark", async () => {
     const tree = await renderScreenAgents({
       status: "ready", busy: false, key: null, error: null,
       data: { rows: critical, agents: [{ agent: "a-crit", runs: 10 }], meta: { total_agents: 1 }, fetched_at: "2026-01-10T11:59:00.000Z" },
     });
-    assert.equal(findAtoms(tree, "PageVerdict").length, 0);
     const [head] = findAtoms(tree, "Card").filter((n) => n.props.title === "Performance by agent");
     assert.ok(head, "the ledger card draws its head");
     const marks = findNodes(renderScreen(head.props.right), (n) => n.props?.["data-health-mark"] === "crit");
@@ -2018,7 +2139,7 @@ test("the drawer's breakage headline names what it counts and sets the blocked p
     drawerAgent: agent, failureByAgent: new Map([[agent, row]]), failureState: { status: "ready", data: { rows: [] }, error: null },
     detailState: idle, blockedState: idle, days: 30, onRetry: () => undefined,
   });
-  assert.match(collectText(findAtoms(tree, "Badge")[0]), /^8\s+failed or blocked\s+·\s+20\.0\s*%/);
+  assert.match(collectText(findAtoms(tree, "Badge")[0]), /^8\s+failed or blocked\s+·\s+20\s*%/);
   assert.match(collectText(tree), /of which\s+5\s+blocked — a compliant halt, not a defect/);
 });
 
@@ -2034,7 +2155,7 @@ test("with reconstructed rows present, the drawer's writer headline and its all-
 
   assert.doesNotMatch(collectText(findAtoms(tree, "Badge")[0]), /%/, "the writer-basis badge carries no all-records rate");
   assert.match(text, /3\s+reconstructed, left out of this count/, "the headline names what it leaves out");
-  assert.match(text, /All records,\s+3\s+reconstructed included ·\s+20\.0\s*%\s+of outcomes\s*Failed\s*3\s*Blocked\s*5/, "the rate and the Failed/Blocked figures sit under their basis caption");
+  assert.match(text, /All records,\s+3\s+reconstructed included ·\s+20\s*%\s+of outcomes\s*Failed\s*3\s*Blocked\s*5/, "the rate and the Failed/Blocked figures sit under their basis caption");
 });
 
 test("a top concern reads as plain text, without the stray punctuation a cut fragment starts with", async () => {
@@ -2362,7 +2483,7 @@ test("an empty failure-cause window reads as the shared empty state with no tone
   assert.deepEqual(getTintedNodes(empty), [], "an empty state carries no tone border");
 });
 
-test("the day tooltip floats on the overlay surface and keys the flagged rate by its dashed swatch beside neutral text", async () => {
+test("the day tooltip floats on the overlay surface and keys the flagged rate by its line swatch beside neutral text", async () => {
   const row = {
     fullDate: "2026-09-24", total_count: 20, review_flagged_count: 3, empty_metric_count: 5, polar_mismatch_count: 4,
     review_flag_ratio_pct: 15, empty_metric_ratio_pct: 25,
@@ -2375,9 +2496,10 @@ test("the day tooltip floats on the overlay surface and keys the flagged rate by
   assert.equal(rootStyle.borderRadius, "var(--radius-tile)", "the tile radius token");
   const [flagged] = findNodes(tree, (n) => n.type === "div" && /^Flagged rate/.test(collectText(n).trim()));
   assert.doesNotMatch(String((flagged?.props.style as Record<string, unknown> | undefined)?.color ?? ""), /--crit/, "the rate words stay neutral");
-  const swatches = findNodes(flagged, (n) => n.type === "span" && /--crit/.test(JSON.stringify(n.props.style ?? {})));
-  assert.equal(swatches.length, 1, "the crit tone rides the series swatch");
-  assert.match(JSON.stringify(swatches[0]?.props.style), /dashed/, "the swatch draws the dashed series line");
+  const swatches = findNodes(flagged, (n) => n.type === "span" && /--ink/.test(JSON.stringify(n.props.style ?? {})));
+  assert.equal(swatches.length, 1, "the ink of the rate line rides the series swatch");
+  assert.match(JSON.stringify(swatches[0]?.props.style), /solid/, "the swatch draws the solid series line");
+  assert.deepEqual(getToneOrAccentPaints(tree), [], "the reason keys show the bar's data colour, never a tone or the accent");
 });
 
 test("the review-flag chart's tooltip follows the pointer without motion, like its series", async () => {
@@ -2406,4 +2528,96 @@ test("an openable lifecycle row eases its hover fill at the 120ms state timing, 
   const [row] = findNodes(tree, (n) => n.type === "tr" && String(n.props?.title ?? "").startsWith("glass-atrium-dev-react"));
   assert.match(String(row?.props.className), /\bhover:bg-sunken\b/, "the row keeps its hover fill");
   assert.deepEqual(getMotionGateGaps(tree), []);
+});
+
+describe("Agents values take the shared number, date and nothing forms", () => {
+  const formOverrides = () => ({ formatPct: REAL_UI.formatPct, formatKstDay: REAL_UI.formatKstDay });
+
+  test("an alarm whose reading carries no fail count marks the count Not loaded, never the word undefined", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+    const tree = renderScreen(React.createElement(mod.AgentAlarmRow as Component, { alarm: { agent: "glass-atrium-dev-shell" } }));
+    assert.doesNotMatch(collectText(tree), /undefined/);
+    assert.deepEqual(findAtoms(tree, "AbsentValue").map((n) => n.props.kind), ["not-loaded"]);
+  });
+
+  describe("a breaker's suspension stamp prints in the Day + time form, the full stamp in its title", () => {
+    const stamp = "2026-11-13T22:05:41.318Z";
+    const rows = [
+      { name: "alarm row", atom: "AgentAlarmRow", props: { alarm: { agent: "glass-atrium-dev-shell", suspended: true, consecutive_fails: 3, suspended_at: stamp } } },
+      { name: "drawer breaker line", atom: "AgentCircuitBreakerLine", props: { agent: { agent_id: "glass-atrium-dev-shell", circuit_breaker: { suspended: true, consecutive_fails: 3, suspended_at: stamp } }, summaryState: { status: "ready", data: {}, error: null } } },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const overrides = { ...formOverrides(), formatKstDateTime: REAL_UI.formatKstDateTime, formatKstFull: REAL_UI.formatKstFull };
+        const mod = await loadAgentsScreen(overrides);
+        const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+        const tree = renderScreen(React.createElement(mod[row.atom] as Component, row.props));
+        const text = collectText(tree);
+        const day = (REAL_UI.formatKstDateTime as (iso: string) => string)(stamp);
+        assert.match(day, /^\d{2}-\d{2} \d{2}:\d{2}$/);
+        assert.ok(text.includes(day), `${text} carries ${day}`);
+        assert.ok(!text.includes(stamp), "the raw server stamp never reaches the screen");
+        const full = (REAL_UI.formatKstFull as (iso: string) => string)(stamp);
+        assert.equal(findNodes(tree, (n) => n.props.title === full).length, 1, "the full stamp rides the title");
+      });
+    }
+  });
+
+  // the screen never reads the suspension threshold, so a streak row names no fail count to suspension
+  describe("a breaker alarm row claims a state or the next failure's effect only from a fail count it read, never a count to suspension", () => {
+    const rows = [
+      { name: "suspended", alarm: { suspended: true, consecutive_fails: 3 }, tone: "crit", label: "suspended", isNextFailClaimed: false },
+      { name: "a fail streak", alarm: { consecutive_fails: 2 }, tone: "warn", label: "fail streak", isNextFailClaimed: true },
+      { name: "a one-fail streak", alarm: { consecutive_fails: 1 }, tone: "warn", label: "fail streak", isNextFailClaimed: true },
+      { name: "no count in the reading", alarm: {}, tone: "neutral", label: "count not loaded", isNextFailClaimed: false },
+      { name: "a null count", alarm: { consecutive_fails: null }, tone: "neutral", label: "count not loaded", isNextFailClaimed: false },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const mod = await loadAgentsScreen(formOverrides());
+        const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+        const tree = renderScreen(React.createElement(mod.AgentAlarmRow as Component, { alarm: { agent: "glass-atrium-dev-shell", ...row.alarm } }));
+        const [badge] = findAtoms(tree, "Badge");
+        const text = collectText(tree);
+        assert.deepEqual({ tone: badge.props.tone, label: collectText(badge) }, { tone: row.tone, label: row.label });
+        assert.equal(text.includes("more fails suspend it"), row.isNextFailClaimed, "the next-fail line follows the read count");
+        assert.doesNotMatch(text, /\b(one|two|\d+) more fails?\b/i, "no fail count to suspension is claimed");
+      });
+    }
+  });
+
+  test("the revision mix draws every bucket in the one data colour, split by separators, with each count in visible text", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+    const buckets = { bucket_0: 40, bucket_1: 5, bucket_2: 1, bucket_3: 0, "bucket_4+": 2 };
+    const tree = renderScreen(React.createElement(mod.RevisionInlineMiniBar as Component, { buckets, total: 48 }));
+    const segments = findNodes(tree, (n) => typeof (n.props.style as { width?: unknown } | undefined)?.width === "string");
+    const styles = segments.map((n) => n.props.style as { background: string; borderLeft?: string });
+
+    assert.equal(segments.length, 4, "one segment per bucket with runs");
+    assert.deepEqual([...new Set(styles.map((s) => s.background))], ["rgb(var(--data))"], "no alpha ramp below the --data floor");
+    assert.deepEqual(styles.map((s) => s.borderLeft ?? null), [null, ...Array(3).fill("1px solid rgb(var(--elev))")], "a separator before every later segment");
+    const visible = collectText(findNodes(tree, (n) => n.type === "p")[0] ?? null);
+    for (const [label, count] of [["0", 40], ["1", 5], ["2", 1], ["4+", 2]] as const) {
+      assert.match(visible, new RegExp(`(^|· )${label.replace("+", "\\+")} revisions? ${count}( ·|$)`), `${label} shows its count on screen`);
+    }
+  });
+
+  test("a fractional budget crossing peak prints through formatPct in the drawer and on the P95 bar", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const getCrossing = mod.getCrossingMetricsAg as (s: unknown, m: unknown, id: string) => { count: unknown; peak: unknown };
+    const ready = getCrossing({ status: "ready" }, new Map([["a", { overage_count: 3, max_crossed_pct: 112.46 }]]), "a");
+    assert.equal(ready.peak, "112.5% of budget");
+    const row = renderSummaryRow(mod, { overage_count: 3, max_crossed_pct: 112.46 });
+    const label = String(findNodes(row, (n) => n.props?.atom === "Bar" && String(n.props.ariaLabel).startsWith("p95"))[0]?.props.ariaLabel);
+    assert.match(label, /peak 112\.5% of budget/);
+  });
+
+  test("a client-derived last failure date prints in the Day form", async () => {
+    const mod = await loadAgentsScreen(formOverrides());
+    const last = (mod.resolveLastBreakage as (p: unknown, m: unknown) => { text: string; title: string })({ agent: "a", lastFailureDate: "2026-11-13" }, null);
+    assert.equal(last.text, "11-13");
+    assert.match(last.title, /2026-11-13/, "the full date stays in the title");
+  });
 });

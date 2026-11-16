@@ -22,16 +22,14 @@
   --cat-2:    13 148 136;
   --cat-3:    37  99 235;
   --cat-4:   219  39 119;
+  /* chart data colour — a series mark that carries a quantity, never a severity; the --faint value held as its own token (≥3:1 on elev/surface/sunken) */
+  --data:    112 106 101;
 
   /* ── Tier 2 — Elevation (신규 · additive, §3.2) ─────────────────── */
   --elev-2: 252 252 251;          /* kind A primitive: 다크 전용 raised-2 fill (라이트는 elev 255 천장이라 미사용) */
   --overlay-surface: 255 255 255; /* kind A primitive: 모달/팝오버 불투명 면 (= elev, 의미 분리) */
 
-  /* ── Tier 2 — Glass / material (신규, §3.2) ─────────────────────── */
-  --glass-border:  255 255 255;   /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
-
   /* ── Tier 2 — Shadow / depth (신규 합성 그림자, kind B box-shadow) ─ */
-  --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04); /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
   --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); /* 라이트 raised-2: elev fill + 강한 그림자 (인버전 회피) */
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
 
@@ -39,7 +37,6 @@
   --radius-badge: 6px; /* TODO(mon-ui/43942): deprecated — badges take --radius-inline; delete once the clauded-docs editor and menu rules move to role tokens (U10) */
 
   /* type steps — the only scale source, whole px, 13px meta floor */
-  --fs-kpi:     32px;
   --fs-display: 24px;
   --fs-stat:    20px;
   --fs-title:   16px;
@@ -131,6 +128,15 @@
   --tint-select: rgb(var(--ink) / 0.08);  /* here, or mine: a selected or scoped row, a picked option, a ticked rail row */
   --tint-fill:   rgb(var(--ink) / 0.10);  /* a filled shell: the tag badge, the owner's order bubble */
   --tint-warn:   rgb(var(--warn) / 0.16); /* did not arrive or cannot be reached — the amber badge, always with ⚠ and a word */
+  /* row-state ladder — opened · checked · both; ceiling 0.066 → light warn glyph and dark empty pip stay ≥3:1 on the fill */
+  --tint-row-1: rgb(var(--ink) / 0.02);
+  --tint-row-2: rgb(var(--ink) / 0.055);
+  --tint-row-3: rgb(var(--ink) / 0.066);
+  /* hour-grid heat ramp — ink at four steps: step 1 ≥3:1 on elev, each step ≥1.4:1 over the one below; dark alphas in [data-theme="dark"] */
+  --heat-1: rgb(var(--ink) / 0.48);
+  --heat-2: rgb(var(--ink) / 0.60);
+  --heat-3: rgb(var(--ink) / 0.74);
+  --heat-4: rgb(var(--ink) / 0.88);
 }
 [data-theme="dark"] {
   --surface:  12  10   9;
@@ -154,6 +160,12 @@
   --cat-2:    45 212 191;
   --cat-3:    96 165 250;
   --cat-4:   244 114 182;
+  --data:    160 154 150;
+  /* heat ramp, dark alphas — follows the alias rule, so it wins on every dark scope */
+  --heat-1: rgb(var(--ink) / 0.36);
+  --heat-2: rgb(var(--ink) / 0.50);
+  --heat-3: rgb(var(--ink) / 0.65);
+  --heat-4: rgb(var(--ink) / 0.80);
 
   /* ── Tier 2 dark overrides (신규 · additive, §3.2) ─────────────── */
   --elev-2: 36 32 30;             /* 다크: elev(28 25 23) 위 한 휘도 step ↑ */
@@ -161,9 +173,6 @@
 
   --surface-raised-2: var(--elev-2); /* 다크 raised-2: 휘도 step 으로 떠오름 (36 > 28) */
 
-  --glass-border:  255 255 255;   /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
-
-  --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2); /* TODO(mon-ui/43942): deprecated, no caller — delete at S3 close */
   --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25); /* 다크 raised-2 보조 (주채널은 휘도 step) */
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
 }

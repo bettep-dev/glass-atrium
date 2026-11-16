@@ -130,7 +130,7 @@ test("the shell's sidebar and primary navigation are named landmarks", () => {
   assert.match(APP_SRC, /<main\b/, "a single main landmark holds the screen");
 });
 
-test("type scale keeps h1 > section h2 > column header, with the KPI value largest", () => {
+test("type scale keeps h1 > section h2 > column header", () => {
   const styles = resolve(__dirname, "../public/styles");
   const css = readFileSync(resolve(styles, "base.css"), "utf8");
   const tokens = readFileSync(resolve(styles, "tokens.css"), "utf8");
@@ -144,8 +144,7 @@ test("type scale keeps h1 > section h2 > column header, with the KPI value large
   const h1 = px("var(--fs-display)");
   const h2 = fontSize("\\.card-title");
   const th = fontSize("\\.tbl th");
-  const kpi = fontSize("\\.kpi-value");
-  assert.ok(kpi > h1 && h1 > h2 && h2 > th, `kpi ${kpi} > h1 ${h1} > h2 ${h2} > th ${th}`);
+  assert.ok(h1 > h2 && h2 > th, `h1 ${h1} > h2 ${h2} > th ${th}`);
 });
 
 describe("structure atoms carry headings, captions and column scope", async () => {

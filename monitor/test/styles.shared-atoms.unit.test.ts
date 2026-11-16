@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { getReducedMotionCss } from "./lib/css-source.js";
-import { compositeOver, contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
+import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const STYLES = resolve(dirname(fileURLToPath(import.meta.url)), "../public/styles");
 const UI_JSX = readFileSync(resolve(STYLES, "../src/ui.jsx"), "utf8");
@@ -93,7 +93,7 @@ test("every font size in the shared stylesheets is a whole-pixel step at or abov
 });
 
 test("the named type steps descend strictly and bottom out at the meta floor", () => {
-  const steps = ["--fs-kpi", "--fs-display", "--fs-stat", "--fs-title", "--fs-body", "--fs-control", "--fs-meta"].map((name) =>
+  const steps = ["--fs-display", "--fs-stat", "--fs-title", "--fs-body", "--fs-control", "--fs-meta"].map((name) =>
     getPx(`var(${name})`),
   );
   for (let i = 1; i < steps.length; i += 1) assert.ok(steps[i - 1] > steps[i], `step ${i} ${steps.join(" > ")}`);
@@ -114,7 +114,7 @@ test("each atom sets the sans face its role names: words, counts, the stat figur
   const rows = [
     { selector: ".pill", isMono: false },
     { selector: ".pill--count", isMono: false },
-    { selector: ".kpi-value", isMono: false },
+    { selector: ".stat-value", isMono: false },
     { selector: ".tbl td.num", isMono: false },
   ];
   for (const row of rows) {
@@ -137,11 +137,9 @@ test("every interactive control atom is at least 32px tall", () => {
 });
 
 test("a pressed toggle keeps its fill and draws an ink edge, never the selected-fill inversion", () => {
-  for (const selector of ['.btn[aria-pressed="true"]', '.pill--interactive[aria-pressed="true"]']) {
-    const body = getRuleBodies(BASE_CSS, selector).join(";");
-    assert.match(body, /border-color:\s*rgb\(var\(--ink\)\)/, `${selector} edge`);
-    assert.doesNotMatch(body, /--selected-fill/, `${selector} fill`);
-  }
+  const body = getRuleBodies(BASE_CSS, '.btn[aria-pressed="true"]').join(";");
+  assert.match(body, /border-color:\s*rgb\(var\(--ink\)\)/, "edge");
+  assert.doesNotMatch(body, /--selected-fill/, "fill");
 });
 
 test("a selected segment is a raised thumb on the control edge, on a track with no outer edge", () => {
@@ -206,36 +204,57 @@ test("an alarm row is a flat hairline row whose tone rides on its glyph, never a
   const row = getRuleBodies(BASE_CSS, ".alarm-row").join(";");
   assert.match(row, /border-bottom:\s*1px solid rgb\(var\(--line\)\)/);
   assert.doesNotMatch(row, /border-left|background:\s*rgb\(var\(--(crit|warn|info|ok)\)/);
-  for (const tone of ["crit", "warn", "info", "ok"]) {
+  // the alert card's tone set → a neutral row draws its glyph in --dim, as a neutral alert card does
+  const TONE_TOKEN = { crit: "--crit", warn: "--warn", info: "--info", ok: "--ok", neutral: "--dim" } as const;
+  for (const [tone, token] of Object.entries(TONE_TOKEN)) {
     const glyph = getRuleBodies(BASE_CSS, `.alarm-row[data-tone="${tone}"] .alarm-row-glyph`).join(";");
-    assert.match(glyph, new RegExp(`color:\\s*rgb\\(var\\(--${tone}\\)\\)`), `${tone} glyph tone`);
+    assert.equal(getDecl(glyph, "color"), `rgb(var(${token}))`, `${tone} glyph tone`);
   }
 });
 
-test("an alert card carries its tone only in the glyph well, and every well glyph clears 3:1 in both themes", () => {
-  const TONE_TOKEN = { crit: "--crit", warn: "--warn", info: "--info", ok: "--ok", neutral: "--dim" } as const;
-  const shells = [".alert-card", ".alert-card.is-inset"].map((s) => getRuleBodies(BASE_CSS, s).join(";"));
-  const wells = [
-    ["light", THEMES[0][1], getRuleBodies(BASE_CSS, ".alert-card").join(";")],
-    ["dark", THEMES[1][1], getRuleBodies(BASE_CSS, '[data-theme="dark"] .alert-card').join(";")],
-  ] as const;
-  // rgb(var(--name)) or rgb(var(--name) / alpha) → that colour, --alert-tone standing for the row's tone
-  const getColor = (decl: string | undefined, block: string, tone: string): Rgba => {
-    const m = decl?.match(/^rgb\(var\((--[\w-]+)\)(?:\s*\/\s*([\d.]+))?\)$/);
-    assert.ok(m, `well colour ${decl} is rgb(var(--token)[ / alpha])`);
-    const rgb = getTriplet(block, m[1] === "--alert-tone" ? tone : m[1]);
-    return compositeOver({ ...rgb, a: m[2] ? Number(m[2]) : 1 }, getTriplet(block, "--elev"));
-  };
+// spec 44084 §5: --surface-raised-2 equals the light sidebar fill, so the current item takes the select tint instead
+test("the current nav item sits on the select tint while hover keeps the sunken fill, both in ink", () => {
+  const current = getRuleBodies(BASE_CSS, ".nav-item.active").join(";");
+  const hover = getRuleBodies(BASE_CSS, ".nav-item:hover").join(";");
+  assert.deepEqual(
+    [getDecl(current, "background"), getDecl(current, "color"), getDecl(current, "font-weight")],
+    ["var(--tint-select)", "rgb(var(--ink))", "500"],
+  );
+  assert.deepEqual([getDecl(hover, "background"), getDecl(hover, "color")], ["rgb(var(--sunken))", "rgb(var(--ink))"]);
+});
 
-  for (const shell of shells) assert.doesNotMatch(shell, /border|background/, "card shell stays neutral: no stripe, tone fill or tone border");
+// where the kept count sits (under its icon, never over it) is measured in dashboard.render-density.e2e
+test("on the icon rail every nav count after the first is clipped", () => {
+  const later = getRuleBodies(BASE_CSS, ".shell-sidebar .nav-count ~ .nav-count").join(";");
+  assert.equal(getDecl(later, "clip"), "rect(0 0 0 0)");
+});
+
+// spec 44084 §3.2: the row adds up from the control, line and spacing tokens, so a token move keeps the 48 row whole
+test("the shared alarm-row geometry takes every length from a token", () => {
+  const selectors = [".alert-card-grid", ".alarm-row-glyph", ".alarm-row > .alarm-row-glyph + *"];
+  for (const selector of selectors) {
+    const bodies = getRuleBodies(BASE_CSS, selector);
+    assert.ok(bodies.length > 0, `${selector} has a rule`);
+    assert.doesNotMatch(bodies.join(";"), /(?<![\w-])\d+(\.\d+)?(px|rem|em)\b/, `${selector} writes no length literal`);
+  }
+});
+
+test("an alert card carries its tone only on its bare glyph, and the glyph clears 3:1 on --elev and --sunken in both themes", () => {
+  const TONE_TOKEN = { crit: "--crit", warn: "--warn", info: "--info", ok: "--ok", neutral: "--dim" } as const;
+  const shell = getRuleBodies(BASE_CSS, ".alert-card").join(";");
+  const glyph = getRuleBodies(BASE_CSS, ".alert-card-glyph").join(";");
+
+  assert.doesNotMatch(shell, /border|background/, "card shell stays neutral: no stripe, tone fill or tone border");
+  assert.equal(getDecl(glyph, "color"), "rgb(var(--alert-tone))", "the glyph is drawn in the card's tone");
+  assert.doesNotMatch(glyph, /background|border|box-shadow/, "no well, fill or radius behind the glyph");
   for (const [tone, token] of Object.entries(TONE_TOKEN)) {
     const toneRule = getRuleBodies(BASE_CSS, `.alert-card[data-tone="${tone}"]`).join(";");
     assert.equal(getDecl(toneRule, "--alert-tone"), `var(${token})`, `${tone} → ${token}`);
-    for (const [theme, block, body] of wells) {
-      const well = getColor(getDecl(body, "--alert-well-fill"), block, token);
-      const glyph = getColor(getDecl(body, "--alert-glyph"), block, token);
-      const ratio = contrastRatio(glyph, well);
-      assert.ok(ratio >= 3, `${theme} ${tone} glyph on well = ${ratio.toFixed(2)}:1`);
+    for (const [theme, block] of THEMES) {
+      for (const ground of ["--elev", "--sunken"]) {
+        const ratio = contrastRatio(getTriplet(block, token), getTriplet(block, ground));
+        assert.ok(ratio >= 3, `${theme} ${tone} glyph on ${ground} = ${ratio.toFixed(2)}:1`);
+      }
     }
   }
 });
@@ -293,12 +312,9 @@ test("a transient shell stays neutral in every tone, and a toast's tone rides on
 
   const glyph = getRuleBodies(BASE_CSS, ".doc-toast-glyph").join(";");
   for (const tone of ["crit", "warn", "info", "ok"]) {
-    for (const shell of [".doc-toast", ".nav-badge"]) {
-      const toned = getRuleBodies(BASE_CSS, `${shell}.${tone}`).join(";");
-      assert.doesNotMatch(toned, /(^|[;\s])(background|border|border-color|color)\s*:/, `${shell}.${tone} paints its shell or text`);
-    }
-    const toneRule = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
-    assert.equal(getDecl(toneRule, "--toast-tone"), `var(--${tone})`, `.doc-toast.${tone} names its glyph tone`);
+    const toned = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
+    assert.doesNotMatch(toned, /(^|[;\s])(background|border|border-color|color)\s*:/, `.doc-toast.${tone} paints its shell or text`);
+    assert.equal(getDecl(toned, "--toast-tone"), `var(--${tone})`, `.doc-toast.${tone} names its glyph tone`);
     for (const [theme, block] of THEMES) {
       const fg = getTriplet(block, `--${tone}`);
       const ratio = contrastRatio(fg, getTriplet(block, "--overlay-surface"));

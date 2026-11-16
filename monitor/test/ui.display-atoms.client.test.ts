@@ -1,4 +1,4 @@
-// Display atoms: the two empty states, the page header's one-line slots, the pagination bar and the stat row.
+// Display atoms: the two empty states, the page header's one-line slots, the pagination bar, the stat row, the card head Status, the low-sample mark and whole day tokens.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -144,6 +144,46 @@ describe("stat row", () => {
     assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
   });
 
+  // one loading look on every stat row: the value says what it waits for in regular weight, the context line holds its height
+  test("a loading stat draws the shared placeholder named for its label, regular weight, and links nowhere until it lands", () => {
+    const tree = render("StatRow", { stats: [{ label: "Spend today", isLoading: true, value: "$41.20", href: "#/cost", context: "up 4%" }] });
+    const value = getValues(tree)[0];
+    const [placeholder] = findNodes(value, (n) => n.props.role === "status");
+    assert.equal(collectText(placeholder).trim(), "Loading spend today\u2026");
+    assert.match(String(placeholder.props.className), /\bfont-normal\b/, "the figure's 600 is not the placeholder's");
+    assert.equal(findNodes(tree, (n) => n.type === "a").length, 0);
+    assert.doesNotMatch(collectText(tree), /\$41\.20|up 4%/, "a value it has not read stays unsaid");
+    const [context] = findNodes(tree, (n) => n.type === "dd" && /\bstat-context\b/.test(String(n.props.className)));
+    assert.equal(collectText(context).trim(), "", "the context line is reserved, empty");
+    assert.equal(findNodes(context, (n) => n.props["aria-hidden"] === "true").length, 1, "the reserved line is hidden from assistive tech");
+  });
+
+  test("the tone glyph is the alarm row's glyph, hidden from assistive tech, its word read before what follows", () => {
+    const [alarmGlyph] = findNodes(render("AlarmRow", { tone: "crit", title: "2 of 7 agents down" }), (n) => n.type === "svg");
+    const rows = [
+      { name: "the tone's severity word by default", props: { tone: "crit" }, word: `${(ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD.crit}:` },
+      { name: "a caller's own word", props: { tone: "warn", label: "Running hot" }, word: "Running hot:" },
+    ];
+    for (const row of rows) {
+      const tree = render("ToneGlyph", row.props);
+      const [glyph] = findNodes(tree, (n) => n.type === "svg");
+      const hidden = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
+      assert.equal(glyph.props.width, alarmGlyph.props.width, `${row.name}: the alarm row's glyph size`);
+      assert.ok(hidden.length === 1 && findNodes(hidden[0], (n) => n === glyph).length === 1, `${row.name}: the glyph is hidden`);
+      assert.equal(collectText(tree).trim(), row.word, row.name);
+    }
+  });
+
+  test("a card head's Status leads with the tone glyph, its severity word read before the words", () => {
+    const [toneGlyph] = findNodes(render("ToneGlyph", { tone: "warn" }), (n) => n.type === "svg");
+    const tree = render("HeadStatus", { tone: "warn", children: "2 awaiting" });
+    const [status] = findNodes(tree, (n) => n.props["data-role"] === "head-status");
+    const [glyph] = findNodes(status, (n) => n.type === "svg");
+    const severityWord = (ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD.warn;
+    assert.equal(glyph.props.width, toneGlyph.props.width, "the alarm-size tone glyph");
+    assert.equal(collectText(status).replace(/\s+/g, " ").trim(), `${severityWord}: 2 awaiting`);
+  });
+
   const valueRows = [
     { name: "zero is a real value", value: 0, text: "0" },
     { name: "null reads None", value: null, text: "None" },
@@ -155,4 +195,128 @@ describe("stat row", () => {
       assert.equal(collectText(getValues(tree)[0]).trim(), row.text);
     });
   }
+});
+
+describe("absent value", () => {
+  const rows = [
+    { name: "an empty value", kind: "none", text: "None" },
+    { name: "an unread value", kind: "not-loaded", text: "Not loaded" },
+    { name: "a value whose caller names no kind is not claimed empty", kind: undefined, text: "Not loaded" },
+  ];
+  for (const row of rows) {
+    test(`each kind of nothing has its own words, in faint ink with the cause on hover: ${row.name}`, () => {
+      const tree = render("AbsentValue", { kind: row.kind, title: "Outcomes read failed" });
+      const span = findNodes(tree, (n) => n.type === "span")[0];
+      assert.equal(collectText(span).trim(), row.text);
+      assert.match(String(span.props.className), /\btext-faint\b/);
+      assert.equal(span.props.title, "Outcomes read failed");
+    });
+  }
+});
+
+describe("LowSampleMark", () => {
+  const LOW_N_MIN = (ui.UI as Record<string, unknown>).LOW_N_MIN as number;
+  const isLowSample = ui.isLowSample as (n: unknown) => boolean;
+  const rows = [
+    { name: "one below the threshold", n: LOW_N_MIN - 1, expected: true },
+    { name: "an empty sample", n: 0, expected: true },
+    { name: "exactly the threshold", n: LOW_N_MIN, expected: false },
+    { name: "a missing count", n: undefined, expected: false },
+    { name: "a non-numeric count", n: Number.NaN, expected: false },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name} ${row.expected ? "is" : "is not"} a low sample`, () => {
+      assert.equal(isLowSample(row.n), row.expected);
+    });
+  }
+
+  test("a low sample names its n and a trustworthy one renders nothing", () => {
+    const low = renderScreen(React.createElement(ui.LowSampleMark as Component, { n: 12 }));
+    const enough = renderScreen(React.createElement(ui.LowSampleMark as Component, { n: LOW_N_MIN }));
+
+    assert.equal(collectText(low).replace(/\s+/g, ""), "(n=12)");
+    assert.equal(collectText(enough), "");
+  });
+});
+
+// R-c: a number + day token never breaks across lines inside its sentence, in each of its three forms — spaced ("30 days",
+// "1 day", "3–7 days"), dashed compound ("7-day", "30-day", "3–7-day") and qualified noun ("28 cycle days")
+describe("DayTokens", () => {
+  const h = React.createElement;
+  const Fragment = (ui.React as { Fragment: unknown }).Fragment;
+  const isNoWrap = (n: RenderedNode) => /\bwhitespace-nowrap\b/.test(String(n.props.className ?? ""));
+  const renderTokens = (sentence: unknown) => renderScreen(h(ui.DayTokens as Component, {}, sentence)) as RenderedNode;
+  // the strings as rendered, joined with nothing between them (collectText pads node boundaries)
+  const rawText = (n: RenderedNode | string): string => (typeof n === "string" ? n : n.children.map(rawText).join(""));
+  const ROWS = [
+    { sentence: "12% vs the 30 days before 09-30, cut at this time of day", tokens: ["30 days"] },
+    { sentence: "No runs in the last 1 day", tokens: ["1 day"] },
+    { sentence: "Window 3–7 days · 1,200 days kept", tokens: ["3–7 days", "1,200 days"] },
+    // dashed compound: Chrome breaks after the hyphen, so "7-day" outside a nowrap span splits across lines
+    { sentence: "Alarm at 1.25× the 7-day avg/day · a fixed 30-day window · a 3–7-day span", tokens: ["7-day", "30-day", "3–7-day"] },
+    // qualified noun: the count, its qualifier and the unit are one token
+    { sentence: "Share rejected per day · all 28 cycle days: 3 verified · last 1 cycle day", tokens: ["28 cycle days", "1 cycle day"] },
+  ];
+  for (const row of ROWS) {
+    test(`"${row.sentence}" keeps ${row.tokens.join(" and ")} whole, its text unchanged`, () => {
+      const tree = renderTokens(row.sentence);
+      assert.deepEqual(findNodes(tree, isNoWrap).map((n) => collectText(n)), row.tokens);
+      assert.equal(rawText(tree), row.sentence, "no character enters or leaves the sentence");
+    });
+  }
+
+  // in a flex row with a gap each top-level part is its own flex item → the sentence must arrive as one inline box
+  test("a sentence split around its day tokens renders as one inline span, so a flex parent lays it out as one item", () => {
+    for (const row of ROWS) {
+      const [box] = renderTokens(row.sentence).children as RenderedNode[]; // the atom's own output, under its component node
+      assert.equal(box.type, "span", `"${row.sentence}" is one inline box`);
+      assert.equal(box.props.className, undefined, `"${row.sentence}" wrapper adds no style of its own`);
+    }
+  });
+
+  test("a sentence with no day token, or a non-string child, renders as it came", () => {
+    assert.equal(findNodes(renderTokens("Spend is on track."), isNoWrap).length, 0);
+    assert.equal(rawText(renderTokens("Spend is on track.")), "Spend is on track.");
+    assert.equal(findNodes(renderTokens("A day-over-day change, a day ago"), isNoWrap).length, 0, "a day word with no count is no token");
+    const node = h("span", { className: "x" }, "7 days");
+    assert.equal(findNodes(renderTokens(node), isNoWrap).length, 0, "an element child is left to its own author");
+  });
+
+  test("the shared EmptyState lines keep their day tokens whole", () => {
+    const empty = renderScreen(h(ui.EmptyState as Component, { message: "No runs in the last 7 days", hint: "Retried 2 days ago" })) as RenderedNode;
+    assert.deepEqual(findNodes(empty, isNoWrap).map((n) => collectText(n)), ["7 days", "2 days"]);
+  });
+
+  // the Dashboard spend alert's title literal sat outside the atom, so its "7-day" split across lines
+  test("the shared AlertCard title and body keep their day tokens whole", () => {
+    const card = renderScreen(h(ui.AlertCard as Component, {
+      tone: "warn",
+      title: "Spend is running ahead of the 7-day average",
+      body: "Today is 1.4× the 30-day mean, held for 2 days",
+    })) as RenderedNode;
+    const tokensIn = (className: string) => findNodes(card, (n) => String(n.props.className ?? "").split(" ").includes(className))
+      .flatMap((part) => findNodes(part, isNoWrap).map((n) => collectText(n)));
+    assert.deepEqual(tokensIn("alert-card-title"), ["7-day"]);
+    assert.deepEqual(tokensIn("alert-card-body"), ["30-day", "2 days"]);
+  });
+
+  // a caller-composed title (the Dashboard alarm's `<>{title} <Badge/></>`) is a Fragment, not a string: the atom steps into it
+  test("a Fragment child, nested too, keeps its strings' day tokens whole and its element parts as they came", () => {
+    const badge = h("span", { className: "badge" }, "Last known 7 days");
+    const tree = renderTokens(h(Fragment, null, "Spend is running ahead of the 7-day average",
+      h(Fragment, null, " ", badge), [" over 30 days"]));
+    assert.deepEqual(findNodes(tree, isNoWrap).map((n) => collectText(n)), ["7-day", "30 days"]);
+    assert.equal(findNodes(tree, (n) => n.props.className === "badge").length, 1, "the element part renders as it came");
+    assert.equal(rawText(tree), "Spend is running ahead of the 7-day average Last known 7 days over 30 days", "no character enters or leaves");
+  });
+
+  test("an AlertCard title composed as a Fragment with a badge keeps its day token whole", () => {
+    const title = h(Fragment, null, "Spend is running ahead of the 7-day average",
+      h(Fragment, null, " ", h(ui.Badge as Component, { tone: "neutral" }, "Last known")));
+    const card = renderScreen(h(ui.AlertCard as Component, { tone: "warn", title, body: "Today is 1.4× the 30-day mean" })) as RenderedNode;
+    const [titleNode] = findNodes(card, (n) => String(n.props.className ?? "").split(" ").includes("alert-card-title"));
+    assert.deepEqual(findNodes(titleNode, isNoWrap).map((n) => collectText(n)), ["7-day"]);
+    assert.match(collectText(titleNode), /Last known/, "the badge still rides the title");
+  });
 });

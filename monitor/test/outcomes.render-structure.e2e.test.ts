@@ -171,14 +171,12 @@ describe("outcomes status band and ledger as painted", () => {
           }));
           return {
             stats: band?.querySelectorAll(":scope > .stat").length ?? 0,
-            tiles: band?.closest(".card")?.querySelectorAll(".kpi").length ?? -1,
             ranges: ranges.length,
             summaries,
           };
         });
 
         assert.strictEqual(painted.stats, 4, "needs you, failed or blocked and the two volume facts sit in one stat row");
-        assert.strictEqual(painted.tiles, 0, "the band card holds no KPI tile");
         assert.strictEqual(painted.ranges, 0, "the comparison window sits in the band's ⓘ, never on a stat");
         // the needs-you read answers with the same fixture rows → the ledger paints at least every fixture row
         assert.ok(painted.summaries.length >= LEDGER_ROWS.length, `ledger rows painted: ${painted.summaries.length}`);

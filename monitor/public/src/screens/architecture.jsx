@@ -14,6 +14,8 @@ const {
 const MAP_LABEL = {
 	// map-only label size — the shared 14px renders under the 13px floor once the map is fitted to a 1024 pane
 	fontPx: 30,
+	// default-view label ceiling (CSS px) — a wide window shrinks the overview to it, so the pane clamps to the drawing and Part health rises onto the first screen
+	ceilingPx: 16,
 	// mermaid wrap ceiling (SVG units) — above the widest one-line map label, so mermaid never breaks one
 	wrapPx: 2000,
 	// map-only override at render time — layout engine, spacing and theme stay in the shared mermaid-config.js
@@ -76,17 +78,6 @@ const TRANSLATE_RE = /translate\(\s*([-\d.e]+)[\s,]+([-\d.e]+)\s*\)/;
 // 존 제목 띠 높이(SVG 사용자 단위) — 렌더 후 조정이라 지시자의 diagramPadding 여유 안이어야 viewBox 를 넘지 않음.
 const ZONE_TITLE_BAND = 8;
 
-const EDGE_COLORS = {
-	control_flow: "#94a3b8",
-	data_flow: "#38bdf8",
-	fires_event: "#a78bfa",
-	writes_to: "#fbbf24",
-	reads_from: "#facc15",
-	monitors: "#f87171",
-	escalates_to: "#f472b6",
-	triggers: "#4ade80",
-};
-
 // 화면이 선호하는 canonical 맵 id — 서버 CANONICAL_MAP.slug 와 같은 값이지만, 불일치는 payload 로 흡수함.
 const CANONICAL_DIAGRAM_ID = "v2-overview-entry";
 
@@ -103,6 +94,7 @@ const CANVAS = {
 };
 // map slot wrapper — outlives the error-to-map swap, so a map Retry hands focus here on recovery
 const MAP_REGION_ID_AR = "arch-map-region";
+const PAGE_HEAD_ID_AR = "arch-page-head";
 // undrawn-map slot — the drawn map measures ~340–349px at 1440, so loader and failure card hold that height
 const MAP_SLOT_MIN_PX = 340;
 const ARCH_SELECTORS = {
@@ -153,11 +145,11 @@ const RING_FOCUS_CLASS = "arch-ring-focus";
 // one health vocabulary for node accessible names and the caption's ring key.
 const HEALTH_WORD_AR = { ok: "ok", info: "not verified", warn: "needs attention", crit: "critical" };
 const UNVERIFIED_WORD_AR = "not verified";
-// border colours copy the drawn map's classDef strokes (diagrams-source.ts) — a unit test holds the pair together
+// role border = legend swatch token; its dark triplet is the drawn map's classDef stroke (diagrams-source.ts) — a unit test holds the pair together
 const MAP_BORDER_KEY_AR = [
-	// dark --cat-2 teal, not --cat-3 blue: blue is the dark --focus-ring, so a focused node would read as the orchestrator
-	{ key: "focal", color: "#2dd4bf", label: "Orchestrator" },
-	{ key: "security", color: "#a78bfa80", label: "Safety checks" },
+	// --cat-2 teal, not --cat-3 blue: blue is the dark --focus-ring, so a focused node would read as the orchestrator
+	{ key: "focal", token: "--cat-2", label: "Orchestrator" },
+	{ key: "security", token: "--cat-1", label: "Safety checks" },
 ];
 // a group whose title only repeats its single box's label — the title is hidden, the box stays
 const ZONE_TITLE_REDUNDANT_CLASS = "arch-zone-title-redundant";
@@ -583,7 +575,7 @@ function ScreenArchitecture(
 		[liveState.data, daemonHealthState, pgState, hookState, hookFailState],
 	);
 
-	// caption population per node — parts may share one node, so one glyph may stand for several.
+	// attention parts per node — parts may share one node, so one glyph may stand for several.
 	const attentionCountByNodeId = useMemoAR(
 		() => buildAttentionCountByNodeIdAR(healthPartRows),
 		[healthPartRows],
@@ -599,16 +591,7 @@ function ScreenArchitecture(
 	const pageRegions = pageReadEntries.map((entry) => entry.state);
 	const readTally = getRegionSummary(pageRegions);
 
-	// 머리글 문장 — 화면의 단 하나뿐인 harness health 수치. 부품 행이 곧 모집단임.
-	const healthCaption = getHealthCaptionAR(
-		healthPartRows,
-		healthPending,
-		healthStoreErrors.length,
-	);
-
-	// one freshness input for the stamp and the verdict — the two never disagree on how current the page is
 	const freshnessInput = getFreshnessInputAR(healthAsOf, pageRegions, diagState.data != null);
-	const pageVerdict = getPageVerdictAR(healthPartRows, healthCaption, nodeIndex, freshnessInput);
 	// part rows answer to the health reads alone — a failed map read does not age a part's verdict
 	const partFreshness = getFreshnessInputAR(healthAsOf, Object.values(headlineHealthStates), true);
 	const mapCopyNote = getMapCopyNoteAR(diagState);
@@ -674,18 +657,25 @@ function ScreenArchitecture(
 					".arch-part-health { flex-shrink: 0; } " +
 					// the card title outranks its rows — body-size row text under a control-size title read upside down
 					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; margin: 0; } " +
-					".arch-part-col-title { font-size: var(--fs-meta); font-weight: 600; margin: 0 0 var(--space-2); } " +
+					// head Status = the row status atom at head size
+					".arch-part-health-status { display: inline-flex; align-items: center; gap: var(--space-1_5); } " +
 					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
-					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-meta); font-weight: 400; } " +
+					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
-					// Part health list · one line per part: name | status atom | button, meta below — body text centred on the 32px button
+					// Part health list · one line per part: name, status atom and cause | quiet button, meta below — body text centred on the 32px button
+					".arch-part-body { display: flex; flex-direction: column; gap: var(--space-3); } " +
+					".arch-part-fold > summary { list-style: none; } " +
+					".arch-part-fold > ul { margin-top: var(--space-2); } " +
 					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); } " +
-					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
+					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
 					"font-size: var(--fs-body); line-height: var(--lh-row); } " +
-					".arch-part-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
+					".arch-part-line { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; } " +
+					".arch-part-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
+					".arch-part-cause { flex: 1 1 0; min-width: 0; font-size: var(--fs-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
 					".arch-part-status { display: inline-flex; align-items: center; gap: var(--space-1_5); white-space: nowrap; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
-					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
+					// the canvas is the card body, flush to the hairline → the card clips its corners, no second rounded frame inside
+					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; } " +
 					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
 					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
 					// 죽은 여백으로만 남았음(실측 800px 뷰포트에서 카드 663.5 중 body 560 — 아래 103 이 빔).
@@ -700,12 +690,17 @@ function ScreenArchitecture(
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
 					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
-					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 6px; overflow: hidden; position: relative; padding: 0; } " +
+					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 0; overflow: hidden; position: relative; padding: 0; } " +
 					".arch-mermaid-canvas .arch-mermaid-host > svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
 					// 노드 라벨 — 색만 보정한다.
 					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
 					// 서체(size·weight·family)를 건드리면 잰 상자보다 넓은 글리프 런이 그려져 끝 글자가 잘린다.
 					".arch-mermaid-canvas svg .nodeLabel, .arch-mermaid-canvas svg .node text, .arch-mermaid-canvas svg .node .label, .arch-mermaid-canvas svg .node foreignObject span { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; } " +
+					// dark theme only: the drawn map keeps dark fills in both themes, so light --ink / --dim on them would read lower than today (spec 44084 §13)
+					// the leaf p carries no inline style — the external classDef's faint colour sits inline on its span, so only the p rule reaches ink
+					'[data-theme="dark"] .arch-mermaid-canvas svg .node foreignObject p { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; } ' +
+					// zone titles and edge labels one step down — the boxes are what you click
+					'[data-theme="dark"] .arch-mermaid-canvas svg .cluster-label :is(.nodeLabel, text, span, p), [data-theme="dark"] .arch-mermaid-canvas svg .edgeLabel :is(text, span, p) { fill: rgb(var(--dim)) !important; color: rgb(var(--dim)) !important; } ' +
 					// 잰 상자와 그린 글리프 런의 잔여 오차(서브픽셀·힌팅)는 자르지 말고 흘려보냄 — 노드 rect 안쪽 패딩(12) 안이라 레이아웃 불변.
 					".arch-mermaid-canvas svg .node foreignObject { overflow: visible; } " +
 					// 모서리 — 업스트림 독트린 r=8. mermaid 가 rx 를 표현 속성으로 찍으므로 CSS 기하 속성이 이김
@@ -716,9 +711,10 @@ function ScreenArchitecture(
 					// pan-drag 중 SVG 텍스트 select 차단 (클릭/줌/팬 보존).
 					".arch-mermaid-canvas { user-select: none; -webkit-user-select: none; } " +
 					// 캔버스 우하단 작은 안내 — 박스 클릭 = 상세.
+					// canvas notes are prose — body sans · opaque chip so no map stroke runs through the words
 					".arch-canvas-hint { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-meta); " +
-					'color: rgb(var(--faint)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
-					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
+					"color: rgb(var(--faint)); pointer-events: none; " +
+					"background: rgb(var(--surface)); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					".arch-mermaid-canvas .node { cursor: pointer; } " +
 					// hover and keyboard focus brighten the shape, border included (hue kept) — the planted ring rects and the label keep their paint, the box keeps its size
 					`#${ARCH_CANVAS_ID} .node > ${NODE_SHAPE_SELECTOR} { transition: filter .12s; } ` +
@@ -754,9 +750,10 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-unverified > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-unverified > rect.arch-ring-state { display: inline; stroke: rgb(var(--faint)) !important; stroke-dasharray: 4 3 !important; } ` +
 					// dashed is reserved for the unverified ring — the security classDef's dashed amber stroke would read as a second meaning.
 					`#${ARCH_CANVAS_ID} .node.security > ${NODE_SHAPE_SELECTOR} { stroke-dasharray: none !important; } ` +
+					getMapBorderRulesAR() +
 					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; font-size: var(--fs-meta); " +
-					'color: rgb(var(--dim)); font-family: "JetBrains Mono", monospace; pointer-events: none; ' +
-					"background: rgb(var(--surface) / 0.7); padding: 0 var(--space-1_5); border-radius: 4px; } " +
+					"color: rgb(var(--faint)); pointer-events: none; " +
+					"background: rgb(var(--surface)); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					// corner badge at the label size, so it holds the same 13px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
 					"text-anchor: start; } " +
@@ -813,7 +810,8 @@ function ScreenArchitecture(
 					".arch-mermaid-canvas .node, .arch-mermaid-canvas .node > * { animation: none !important; transition: none !important; } }"}
 			</style>
 
-			<div className="flex-shrink-0">
+			{/* page-alert focus target — the header outlives the alert's recovery */}
+			<div id={PAGE_HEAD_ID_AR} tabIndex={-1} className="flex-shrink-0">
 				<PageHeader
 					title="System map"
 					freshness={<FreshnessStamp {...freshnessInput} />}
@@ -826,7 +824,7 @@ function ScreenArchitecture(
 						/>
 					}
 				/>
-				<MapCaptionAR verdict={pageVerdict} hasMap={diagState.data != null} />
+				{diagState.data != null && <MapCaptionAR />}
 			</div>
 
 			<div className="arch-page">
@@ -836,7 +834,7 @@ function ScreenArchitecture(
 						error={pageFailure.error}
 						onRetry={triggerRefresh}
 						isBusy={isRefreshBusy}
-						focusTargetId="arch-verdict"
+						focusTargetId={PAGE_HEAD_ID_AR}
 					/>
 				)}
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
@@ -864,8 +862,8 @@ function ScreenArchitecture(
 								</p>
 							)}
 							<div
-								className="card-body"
-								style={{ padding: 8, opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
+								className="card-body flush"
+								style={{ opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
 							>
 								<DiagramBody
 									diagState={diagState}
@@ -885,6 +883,7 @@ function ScreenArchitecture(
 
 				<PartHealthBlockAR
 					partRows={healthPartRows}
+					isPending={healthPending}
 					attentionEmpty={getAttentionEmptyAR(healthPartRows, healthPending, partFreshness)}
 					freshness={partFreshness}
 					nodeIndex={nodeIndex}
@@ -1077,11 +1076,12 @@ function MermaidCanvas({
 
 		const svgNodes = root.querySelectorAll("g.node");
 		svgNodes.forEach((el) => {
-			// classDef writes its dash inline with !important — only removing it lets the rule above win.
-			if (el.classList.contains("security"))
-				el.querySelectorAll(":scope > :is(rect, path, polygon, circle, ellipse)").forEach((shape) =>
-					shape.style.removeProperty("stroke-dasharray"),
-				);
+			// classDef writes its stroke and dash inline with !important — only removing them lets the rules above win.
+			if (MAP_BORDER_KEY_AR.some((item) => el.classList.contains(item.key)))
+				el.querySelectorAll(":scope > :is(rect, path, polygon, circle, ellipse)").forEach((shape) => {
+					shape.style.removeProperty("stroke");
+					shape.style.removeProperty("stroke-dasharray");
+				});
 
 			const labelText = extractMermaidNodeLabelAR(el);
 			if (!labelText) return;
@@ -1437,7 +1437,7 @@ function MermaidCanvas({
 						aria-label="Reset diagram view"
 						title="Reset view (0)"
 					>
-						<ArchIconAR name="target" />
+						<ArchIconAR name="maximize" />
 						Reset
 					</button>
 				</div>
@@ -1801,7 +1801,7 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
+			<h3 className="arch-drawer-heading">
 				Health ({rows.length + looseDaemons.length})
 			</h3>
 			<div className="arch-drawer-part-list">
@@ -1845,7 +1845,7 @@ function NodePartHealth({
 							{row.daemonName && row.cause && <div className="fs-meta text-dim">{row.cause}</div>}
 
 							{alsoLights.length > 0 && (
-								<div className="fs-meta font-mono text-faint">
+								<div className="fs-meta text-faint">
 									Also lights: {alsoLights.join(", ")}
 								</div>
 							)}
@@ -2099,7 +2099,7 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
+			<h3 className="arch-drawer-heading">
 				Records
 			</h3>
 			<a className="fs-body" href={`#${owner.id}`}>
@@ -2115,7 +2115,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading fs-meta font-mono text-faint uppercase tracking-wider">
+			<h3 className="arch-drawer-heading">
 				Connections ({total})
 			</h3>
 			<div className="space-y-2">
@@ -2152,9 +2152,6 @@ function FlowList({ title, items, nodeIndex, direction }) {
 			>
 				{items.map((f) => (
 					<li key={f.id} className="break-words">
-						<span aria-hidden="true" style={{ color: EDGE_COLORS[f.edge_type] || "#94a3b8" }}>
-							●
-						</span>{" "}
 						<span className="text-faint">{getDisplayName("edge", f.edge_type)}</span>{" "}
 						{peerWord} {getFlowPeerLabelAR(f, direction, nodeIndex)}
 						{f.label && <span className="text-faint"> · {f.label}</span>}
@@ -2268,11 +2265,11 @@ async function fetchJsonAR(url, signal) {
 	return res.json();
 }
 
-// default-view absolute scale from arguments alone (no DOM/instance) · unmeasured dims → DEFAULT_VIEW_SHARE at natural size
+// default-view absolute scale from arguments alone (no DOM/instance) · unmeasured dims → DEFAULT_VIEW_SHARE at natural size · never past the label ceiling
 function getDefaultViewScaleAR(paneW, paneH, graphW, graphH) {
 	if (!(paneW > 0 && paneH > 0 && graphW > 0 && graphH > 0)) return DEFAULT_VIEW_SHARE;
 	const containFit = Math.min(paneW / graphW, paneH / graphH);
-	return DEFAULT_VIEW_SHARE * Math.min(containFit, 1);
+	return Math.min(DEFAULT_VIEW_SHARE * Math.min(containFit, 1), MAP_LABEL.ceilingPx / MAP_LABEL.fontPx);
 }
 
 /**
@@ -2414,40 +2411,6 @@ function buildLiveDaemonsByNodeId(daemons) {
 	return m;
 }
 
-/**
- * 머리글 문장 — 손댈 곳의 수를 모집단과 함께 냄. 모집단은 헬스 모델의 부품 행 수이고,
- * 그려진 노드 수도 데몬 수도 아님 — 둘은 판정을 받지 않는 자리를 모집단에 섞음.
- * 로딩 · 못 읽음 · 미판정 · 정상이 저마다 다른 문장임: 하나로 접으면 안 읽힌 값이 0 으로 읽힘.
- */
-function getHealthCaptionAR(partRows, busy, errored = 0) {
-	const total = partRows.length;
-	if (total === 0)
-		return busy ? "Reading part health…" : "Part health unavailable";
-
-	// 'No data' (info) is not a verdict — it rings dashed, so it counts as unverified, not attention.
-	const judged = partRows.filter((row) => row.tone && row.tone !== "info");
-	const attention = judged.filter((row) => row.tone !== "ok");
-	const unverified = total - judged.length;
-	// 끊긴 저장소가 있으면 남은 빈칸은 '아직' 이 아니라 '못 읽음' 임 — 두 낱말이 그 둘을 가름.
-	const unjudgedWord = errored > 0 ? "unreadable" : "not verified";
-
-	if (attention.length > 0)
-		return `${attention.length} of ${total} parts need attention${getFlaggedNamesSuffixAR(attention)}`;
-	if (judged.length === 0) return getNoVerdictCaptionAR(total, busy, errored);
-	// first wave still out → no ok count yet; the early verdicts would read as the whole map
-	if (busy && unverified > 0) return `Reading ${unverified} of ${total} parts…`;
-	if (unverified > 0)
-		return `${judged.length} of ${total} parts ok · ${unverified} ${unjudgedWord}`;
-
-	return `All ${total} parts ok`;
-}
-
-// flagged parts by name — the caption answers 'what is wrong' before any click.
-function getFlaggedNamesSuffixAR(rows) {
-	const names = rows.map((row) => row.name).filter(Boolean);
-	return names.length > 0 ? `: ${names.join(", ")}` : "";
-}
-
 // legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.
 function getMapLegendItemsAR() {
 	const rings = ["warn", "crit"].map((tone) => ({
@@ -2462,29 +2425,34 @@ function getMapLegendItemsAR() {
 	return [...rings, count, dashed, ...borders];
 }
 
-// sentence-case status line over a swatch legend — the page header's sub line is uppercase 11px mono.
-function MapCaptionAR({ verdict, hasMap }) {
-	const { PageVerdict } = window.UI;
+/**
+ * Role node borders painted with their legend swatch token.
+ * Dark theme only: the drawn map keeps dark node fills in both themes, so a light --cat-* border would measure lower than the classDef stroke (spec 44084 §13).
+ * Light falls back to mermaid's own classDef rule, the same stroke as before.
+ */
+function getMapBorderRulesAR() {
+	return MAP_BORDER_KEY_AR.map(
+		(item) => `[data-theme="dark"] #${ARCH_CANVAS_ID} .node.${item.key} > ${NODE_SHAPE_SELECTOR} { stroke: rgb(var(${item.token})) !important; } `,
+	).join("");
+}
+
+// the key to the canvas, the one line under the h1 (spec 44084 §3.1, §12.5)
+function MapCaptionAR() {
 	return (
 		<div className="arch-caption">
-			<PageVerdict id="arch-verdict" tone={verdict.tone} chips={verdict.chips} freshness={verdict.freshness}>
-				{verdict.sentence}
-			</PageVerdict>
-			{hasMap && (
 			<ul className="arch-legend fs-meta text-dim" aria-label="Map legend">
 				{getMapLegendItemsAR().map((item) => (
 					<li key={item.key} className="arch-legend-item">
 						<span
 							aria-hidden="true"
 							className={`arch-legend-swatch arch-legend-swatch-${item.kind === "ring" ? item.key : item.kind}`}
-							style={item.color ? { borderColor: item.color } : undefined}>
+							style={item.token ? { borderColor: `rgb(var(${item.token}))` } : undefined}>
 							{item.mark || ""}
 						</span>
 						{item.text || (item.kind === "border" ? `${item.label} border` : `Ring ${item.label}`)}
 					</li>
 				))}
 			</ul>
-			)}
 		</div>
 	);
 }
@@ -2497,14 +2465,7 @@ function getNodeAccessibleNameAR(label, tone, isUnverified) {
 	return word ? `${label}, ${word}` : label;
 }
 
-// 판정이 하나도 안 선 상태 — 오는 중 · 못 읽음 · 미판정이 저마다 다른 문장임.
-function getNoVerdictCaptionAR(total, busy, errored) {
-	if (busy) return `Reading ${total} parts…`;
-	if (errored > 0) return `Couldn't read health for ${total} parts`;
-	return `No verdict yet for ${total} parts`;
-}
-
-// unscoped node id → attention parts bound there — the same population the caption counts.
+// unscoped node id → attention parts bound there — the same population the Part health head counts.
 function buildAttentionCountByNodeIdAR(partRows) {
 	const counts = new Map();
 	for (const row of partRows || []) {
@@ -2941,8 +2902,14 @@ function getMapCopyNoteAR(diagState) {
 function getAttentionEmptyAR(partRows, isBusy, freshness) {
 	if (isBusy) return "Checking part health…";
 	if (partRows.some((row) => row.tone)) {
-		const verdict = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" });
-		return verdict.tone === "ok" ? "No part needs attention" : "Last known: no part needed attention";
+		const isFresh = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" }).tone === "ok";
+		// listed "No data" rows → the lead names what the list holds, not only what it lacks
+		const unverifiedCount = partRows.filter((row) => row.tone === "info").length;
+		if (unverifiedCount > 0) {
+			const counted = `${unverifiedCount} ${UNVERIFIED_WORD_AR}`;
+			return isFresh ? `${counted} · none needs attention` : `Last known: ${counted} · none needed attention`;
+		}
+		return isFresh ? "No part needs attention" : "Last known: no part needed attention";
 	}
 	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read part health" : "Part health not read yet";
 }
@@ -2969,18 +2936,19 @@ function isPartFlaggedAR(row) {
 }
 
 // a down part says how often it runs and when it is due next, so the reader knows whether waiting fixes it
-function getPartScheduleAR(row, formatRelative) {
+function getPartScheduleAR(row, formatRelative, now = Date.now()) {
 	if (!isPartFlaggedAR(row)) return null;
 
 	const cadence = row.cadenceMinutes > 0 && `runs ${formatCadenceAR(row.cadenceMinutes)}`;
-	const nextRun = row.nextRunAt && `next run ${formatRelative(row.nextRunAt)}`;
+	// a due time already passed is overdue → "was due 2h ago", never "next run 2h ago"
+	const nextRun = row.nextRunAt && `${Date.parse(row.nextRunAt) <= now ? "was due" : "next run"} ${formatRelative(row.nextRunAt)}`;
 	return [cadence, nextRun].filter(Boolean).join(" · ") || null;
 }
 
 function formatCadenceAR(minutes) {
 	if (minutes === 60) return "hourly";
 	if (minutes === 1440) return "daily";
-	if (minutes % 1440 === 0) return `every ${minutes / 1440} d`;
+	if (minutes % 1440 === 0) return `every ${minutes / 1440} days`;
 	if (minutes % 60 === 0) return `every ${minutes / 60} h`;
 	return `every ${minutes} min`;
 }
@@ -2989,14 +2957,12 @@ function getPartToneRankAR(tone) {
 	return PART_TONE_RANK_AR[tone] ?? PART_UNJUDGED_RANK_AR;
 }
 
-// flagged, answered and not-loaded parts, each worst first — the same rows the caption counts
-function getPartHealthGroupsAR(partRows) {
+// listed = every part not judged healthy, worst first (flagged → not loaded → idle) · healthy = folded under its count
+// first read in flight → an unread part is loading, not Not loaded (spec 44084 §2.2), so it waits out of the list
+function getPartHealthGroupsAR(partRows, isPending) {
 	const sorted = [...partRows].sort((a, b) => getPartToneRankAR(a.tone) - getPartToneRankAR(b.tone));
-	return {
-		attention: sorted.filter(isPartFlaggedAR),
-		rest: sorted.filter((row) => row.tone && !isPartFlaggedAR(row)),
-		unloaded: sorted.filter((row) => !row.tone),
-	};
+	const listed = sorted.filter((row) => row.tone !== "ok" && (row.tone || !isPending));
+	return { listed, healthy: sorted.filter((row) => row.tone === "ok") };
 }
 
 // the drawer's drill target — the node's worst daemon part, so a failing part opens with its runs listed
@@ -3034,98 +3000,113 @@ function getPartCauseAR(facts) {
 	return null;
 }
 
-// the row's DOM id — the verdict chips focus it, so both sides read it here
+// the row's DOM id
 function getPartRowIdAR(row) {
 	return `arch-part-${row.id}`;
 }
 
-// page verdict — worst part tone, flagged parts named with their box as chips that focus their row
-function getPageVerdictAR(partRows, caption, nodeIndex, freshness) {
-	const { attention } = getPartHealthGroupsAR(partRows);
-	const judgedCount = partRows.filter((row) => row.tone && row.tone !== "info").length;
-	const isAllOk = judgedCount > 0 && judgedCount === partRows.length;
-	const chips = attention.map((row) => {
-		const box = getPartBoxAR(row, nodeIndex);
-		return { key: row.id, label: box ? `${row.name} · ${box.label}` : row.name, targetId: getPartRowIdAR(row) };
-	});
+// the legend's tone word, true of every row it counts — a critical part reads Down or Overdue on its own row
+function getFlaggedCountTextAR(tone, count) {
+	if (tone === "warn") return `${count} ${count === 1 ? "needs" : "need"} attention`;
+	return `${count} ${HEALTH_WORD_AR[tone]}`;
+}
 
-	return {
-		tone: attention[0]?.tone ?? (isAllOk ? "ok" : "neutral"),
-		sentence: attention.length > 0 ? `${attention.length} of ${partRows.length} parts need attention` : caption,
-		chips,
-		freshness,
-	};
+// Part health head Status — flagged counts worst tone first; null when nothing is flagged (no all-clear line)
+function getPartHealthStatusAR(partRows, freshness) {
+	const attention = getPartHealthGroupsAR(partRows).listed.filter(isPartFlaggedAR);
+	if (attention.length === 0) return null;
+
+	const tone = attention[0].tone;
+	const words = ["crit", "warn"]
+		.map((rowTone) => [rowTone, attention.filter((row) => row.tone === rowTone).length])
+		.filter(([, count]) => count > 0)
+		.map(([rowTone, count]) => getFlaggedCountTextAR(rowTone, count))
+		.join(" · ");
+	// held read → the verdict label gains a "Last known" lead; the head keeps the count first
+	const isHeld = window.UI.getFreshnessVerdict({ ...freshness, tone, label: words }).label !== words;
+	return { tone, text: isHeld ? `${words} · Last known` : words };
 }
 
 // every part's state on the page — the drawer stays the drill, not the only place a state is read
-function PartHealthBlockAR({ partRows, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
-	const { SplitRow, SplitColumn } = window.UI;
+function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nodeIndex, onSelectNode }) {
+	const { DisclosureChevron, HeadStatus } = window.UI;
 	if (partRows.length === 0) return null;
 
-	const { attention, rest, unloaded } = getPartHealthGroupsAR(partRows);
+	const { listed, healthy } = getPartHealthGroupsAR(partRows, isPending);
+	const status = getPartHealthStatusAR(partRows, freshness);
 	const listProps = { freshness, nodeIndex, onSelectNode };
 	return (
 		<section className="card arch-part-health" id={PART_HEALTH_ID_AR} aria-labelledby={`${PART_HEALTH_ID_AR}-title`}>
 			<div className="card-head">
-				<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
+				<div className="card-head-text">
+					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
+					{status && (
+						<HeadStatus tone={status.tone} className="card-sub arch-part-health-status">
+							{status.text}
+						</HeadStatus>
+					)}
+				</div>
 			</div>
-			<div className="card-body">
-				{/* two lists in one card, not peer cards → each column keeps its content height */}
-				<SplitRow ratio="1:1" layout="content">
-					<PartHealthListAR title="Needs attention" rows={attention} empty={attentionEmpty} {...listProps} />
-					<SplitColumn>
-						{/* a cold read leaves only unloaded parts → the Not loaded list speaks, not a false 'No other parts' */}
-						{(rest.length > 0 || unloaded.length === 0) && (
-							<PartHealthListAR title="Healthy or not verified" rows={rest} empty="No other parts" {...listProps} />
-						)}
-						{unloaded.length > 0 && <PartHealthListAR title="Not loaded" rows={unloaded} {...listProps} />}
-					</SplitColumn>
-				</SplitRow>
+			<div className="card-body arch-part-body">
+				{!listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim m-0">{attentionEmpty}</p>}
+				{listed.length > 0 && <PartHealthListAR rows={listed} {...listProps} />}
+				{healthy.length > 0 && (
+					<details className="arch-part-fold">
+						<summary className="group disclosure">
+							<DisclosureChevron />
+							<span>{`${healthy.length} healthy`}</span>
+						</summary>
+						<PartHealthListAR rows={healthy} isFolded {...listProps} />
+					</details>
+				)}
 			</div>
 		</section>
 	);
 }
 
-function PartHealthListAR({ title, rows, empty, freshness, nodeIndex, onSelectNode }) {
+function PartHealthListAR({ rows, isFolded = false, freshness, nodeIndex, onSelectNode }) {
 	return (
-		<div>
-			<h3 className="arch-part-col-title">{title}</h3>
-			{rows.length === 0 ? (
-				<p className="fs-meta text-dim m-0">{empty}</p>
-			) : (
-				<ul className="arch-part-list">
-					{rows.map((row) => (
-						<PartHealthRowAR key={row.id} row={row} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
-					))}
-				</ul>
-			)}
-		</div>
+		<ul className="arch-part-list">
+			{rows.map((row) => (
+				<PartHealthRowAR key={row.id} row={row} isFolded={isFolded} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
+			))}
+		</ul>
 	);
 }
 
-function PartHealthRowAR({ row, freshness, nodeIndex, onSelectNode }) {
+function PartHealthRowAR({ row, isFolded = false, freshness, nodeIndex, onSelectNode }) {
 	const { formatRelativeTime, Icon, TONE_ICON } = window.UI;
 	const box = getPartBoxAR(row, nodeIndex);
 	const status = getPartStatusAR(row, freshness);
+	// a folded row's Healthy is its fold summary's own word · a held Last known still says more, so it stays
+	const isStatusShown = !(isFolded && status.tone === "ok");
 	const schedule = getPartScheduleAR(row, formatRelativeTime);
-	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule, row.cause]
-		.filter(Boolean)
-		.join(" · ");
+	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule].filter(Boolean).join(" · ");
 
 	return (
 		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
-			<span className="arch-part-name" title={row.name}>
-				{row.name}
-			</span>
-			{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
-			<span className={`arch-part-status ${status.tone ? "text-dim" : "text-faint"}`}>
-				{status.tone && status.tone !== "neutral" && (
-					<Icon name={TONE_ICON[status.tone]} size={12} className={TONE_GLYPH_CLASS[status.tone]} />
+			{/* name → status → cause on one line, so the verdict reads beside the part it judges */}
+			<span className="arch-part-line">
+				<span className="arch-part-name" title={row.name}>
+					{row.name}
+				</span>
+				{/* verdict word stays neutral, tone on the glyph only · an unjudged row reads faint */}
+				{isStatusShown && (
+					<span className={`arch-part-status ${status.tone ? "text-dim" : "text-faint"}`}>
+						{status.tone && status.tone !== "neutral" && (
+							<Icon name={TONE_ICON[status.tone]} size={12} className={TONE_GLYPH_CLASS[status.tone]} />
+						)}
+						{status.text}
+					</span>
 				)}
-				{status.text}
+				{row.cause && (
+					<span className="arch-part-cause text-dim" title={row.cause}>
+						{row.cause}
+					</span>
+				)}
 			</span>
 			{box ? (
-				<button type="button" className="btn sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
+				<button type="button" className="btn ghost sm" onClick={() => onSelectNode(box.nodeId)} aria-label={`Open ${box.label} for ${row.name}`}>
 					Open box
 				</button>
 			) : (
@@ -3598,7 +3579,7 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 	groupEl.append(pill, glyph);
 	glyph.textContent = mark;
 
-	const geometry = getCornerBadgeGeometryAR(box, glyph.getBBox().width);
+	const geometry = getCornerBadgeGeometryAR(box, glyph.getBBox().width, groupEl.classList.contains("cluster"));
 	glyph.setAttribute("x", String(geometry.x + GLYPH_PILL_PAD_X));
 	// alphabetic baseline → cap ink centred in the pill
 	glyph.setAttribute("y", String(geometry.y + (geometry.height + MAP_LABEL.fontPx * GLYPH_CAP_EM) / 2));
@@ -3606,15 +3587,17 @@ function setCornerGlyphAR(groupEl, tone, attentionCount) {
 }
 
 /**
- * Opaque pill centred on the node's bottom border, right-aligned inside the rounded corner → half on the node, within its sides.
- * Cap-high, so its upper half stays inside the padding under the label's last line; the lower half stays in the gap to a stacked neighbour.
+ * Opaque pill centred on the box's top border, inside the rounded corner → half on the box, within its sides.
+ * Top, not bottom: outgoing edge labels start under the box, so a bottom badge lands on the first one.
+ * A node takes the right corner; a zone the left — incoming edge labels sit right of the spine and end on the zone's top border.
+ * Cap-high, so its lower half stays inside the padding above the label's first line; the upper half stays in the gap to a stacked neighbour.
  */
-function getCornerBadgeGeometryAR(box, textWidth) {
+function getCornerBadgeGeometryAR(box, textWidth, isZone) {
 	const width = textWidth + GLYPH_PILL_PAD_X * 2;
 	const height = MAP_LABEL.fontPx * GLYPH_CAP_EM + RING_GAP * 2;
 	const inset = NODE_CORNER_RADIUS + RING_GAP;
-	const x = Math.max(box.x + inset, box.x + box.width - inset - width);
-	return { x, y: box.y + box.height - height / 2, width, height, rx: height / 2, ry: height / 2 };
+	const x = isZone ? box.x + inset : Math.max(box.x + inset, box.x + box.width - inset - width);
+	return { x, y: box.y - height / 2, width, height, rx: height / 2, ry: height / 2 };
 }
 
 function getShapeBoxAR(groupEl) {

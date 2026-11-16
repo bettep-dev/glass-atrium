@@ -224,7 +224,7 @@ function buildAttributionLossNoteO(lossRate, totalAttributed) {
   }
   const rate  = Number(lossRate);
   const count = Math.round(rate * (Number(totalAttributed) || 0));
-  return `${formatIntO(count)} (~${(rate * 100).toFixed(1)}%) ${ATTRIBUTION_LOSS_CONTEXT}`;
+  return `${formatIntO(count)} (~${formatPctO(rate * 100)}) ${ATTRIBUTION_LOSS_CONTEXT}`;
 }
 
 // literal_omission_breakdown → 'Missing report' 세부 3-분해 (budget-kill / truncated / missing).
@@ -339,7 +339,7 @@ function loopResultMetaO(result) {
   if (result === 'verified') return { tone: 'ok', symbol: '✓', icon: 'check', label: 'Passed' };
   if (result === 'reject' || result === 'fail') return { tone: 'crit', symbol: '✕', icon: 'x', label: result === 'fail' ? 'Failed' : 'Declined' };
   if (typeof result === 'string' && result.endsWith('_dryrun')) return { tone: 'warn', symbol: '⚠', icon: 'warn', label: 'Dry run' };
-  return { tone: 'info', symbol: 'ℹ', icon: 'info', label: result || '—' };
+  return { tone: 'info', symbol: 'ℹ', icon: 'info', label: result || window.UI.EMPTY_VALUE_TEXT };
 }
 
 // 비-actionable pseudo-agent ID — attribution-fallback 버킷 (실 agent 아님).
@@ -962,8 +962,8 @@ function getBandTrendO(tile, priorTile) {
   if (priorTile.population < LOW_N_MIN) return 'No comparison';
   const points = (tile.count / tile.population - priorTile.count / priorTile.population) * 100;
   if (Math.abs(points) < 0.05) return 'Level';
-  // U+2212 minus → read as "minus", never as a dash
-  return `${points > 0 ? '+' : '\u2212'}${Math.abs(points).toFixed(1)} pt`;
+  // U+2212 minus → read as "minus", never as a dash; the points figure in the Dashboard trend's form
+  return `${points > 0 ? '+' : '\u2212'}${window.UI.formatDecimal(Math.abs(points))} pts`;
 }
 
 // One stat row card — needs you · failed or blocked · the volume facts; the window once in the sub-line.
@@ -1001,7 +1001,8 @@ function StatusBandO({ analyticsState, attentionState, windowDays, freshness, on
     .map((tile) => (freshness ? { ...tile, tone: getFreshnessVerdict({ ...freshness, tone: tile.tone }).tone } : tile));
   const reasons = buildNeedsYouReasonsO(analyticsState.data, attentionState.status === 'ready' ? attentionState.data : null);
   const unloadedText = getUnloadedSummaryO(attentionState.status);
-  const stats = tiles.map((tile) => buildBandStatO(tile, isLoading, tile.key === 'attention' ? unloadedText : '—'));
+  // only the needs-you count names its own wait; every other unread count takes the shared Not loaded mark
+  const stats = tiles.map((tile) => buildBandStatO(tile, isLoading, tile.key === 'attention' ? unloadedText : null));
   const isAttentionFailed = getRegionView(attentionState) === 'error';
 
   return (
@@ -1050,13 +1051,15 @@ function BandStatLabelO({ tile }) {
 }
 
 // a reachable count jumps to its ledger section → a link-styled control, never a button tile
-// unloadedText → a pending or failed count says so instead of a dash that reads as data
+// an unread count says so instead of a dash that reads as data: unloadedText when the tile names its own wait, else Not loaded
 function BandStatValueO({ tile, isLoading, unloadedText }) {
-  const { LoadingPlaceholder } = window.UI;
+  const { LoadingPlaceholder, AbsentValue } = window.UI;
   if (isLoading) {
     return <span className="inline-flex"><LoadingPlaceholder label={tile.label.toLowerCase()}/></span>;
   }
-  if (tile.count === null || tile.count === undefined) return <span className="fs-body text-dim">{unloadedText}</span>;
+  if (tile.count === null || tile.count === undefined) {
+    return unloadedText ? <span className="fs-body text-dim">{unloadedText}</span> : <AbsentValue kind="not-loaded"/>;
+  }
   const count = formatIntO(tile.count);
   if (!tile.jumpTo || tile.count === 0) return count;
   return (
@@ -1086,9 +1089,9 @@ function buildNeedsYouReasonsO(data, attention) {
   return remainder <= 0 ? reasons : [...reasons, { key: 'other', label: 'Changed between reads', count: remainder, tone: 'neutral' }];
 }
 
+// callers pass a population past their own > 0 check (buildBandStatO) → the share always has a denominator
 function formatShareO(count, population) {
-  if (!(population > 0)) return '—';
-  return `${((count / population) * 100).toFixed(1)}%`;
+  return formatPctO((count / population) * 100);
 }
 
 // the counting method and the delta's comparison window live here, never on a tile
@@ -1111,7 +1114,7 @@ function BandRulesO({ tiles, reasons, priorRange }) {
             <dd key={reason.key} className="flex items-center gap-label-inline text-dim">
               {glyph && <span className={`text-${reason.tone}`} aria-hidden="true"><GlyphO name={glyph} size={12}/></span>}
               {reason.label}
-              <span className="ml-auto tabular-nums text-ink">{reason.count === null ? '—' : formatIntO(reason.count)}</span>
+              <span className="ml-auto tabular-nums text-ink">{reason.count === null ? <window.UI.AbsentValue kind="not-loaded" title="The open-caveat records were not read"/> : formatIntO(reason.count)}</span>
             </dd>
           );
         })}
@@ -1259,11 +1262,11 @@ function AgentFailureRowO({ row, view }) {
   );
 }
 
-// Bar fill = the shared breakage rule over this row's own count · low-sample rows claim no tone.
+// Bar fill = the shared breakage rule over this row's own count → crit only over the stated share, else a quantity in --data · low-sample rows claim no tone.
 function getFailureRateFillO(row) {
   if (row.isLowSample) return '--faint';
   const { outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
-  return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--ok';
+  return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--data';
 }
 
 function AgentFailureRateCellO({ row, view }) {
@@ -1278,19 +1281,18 @@ function AgentFailureRateCellO({ row, view }) {
           <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
         </span>
         <LowSampleMark n={row.total}/>
-        <span className={`tabular-nums whitespace-nowrap ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate)}</span>
+        <span className={`tabular-nums whitespace-nowrap ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate, 1)}</span>
       </span>
     </TableCell>
   );
 }
 
-// null = the agent sits outside the top-10 rollup → em-dash, never a zero that was not loaded.
+// null = the agent sits outside the top-10 rollup → Not loaded, never a zero that was not read
 function OpenCaveatCellO({ count, view }) {
-  const isLoaded = count !== null;
   return (
-    <window.UI.TableCell view={view} textRole="meta" label="Open caveats" isNumeric className="text-ink"
-      title={isLoaded ? undefined : 'Not loaded — only the top 10 agents by volume carry an open-caveat count'}>
-      {isLoaded ? formatIntO(count) : '—'}
+    <window.UI.TableCell view={view} textRole="meta" label="Open caveats" isNumeric className="text-ink">
+      {count !== null ? formatIntO(count)
+        : <window.UI.AbsentValue kind="not-loaded" title="Only the top 10 agents by volume carry an open-caveat count"/>}
     </window.UI.TableCell>
   );
 }
@@ -1307,32 +1309,48 @@ function HeadStatusO({ tone, title, children }) {
   const glyph = HEAD_STATUS_GLYPHS_O[tone];
   return <span data-role="head-status" className="inline-flex items-center gap-label-inline fs-meta text-dim" title={title}>
     {glyph && <span className={`text-${tone}`} aria-hidden="true"><GlyphO name={glyph}/></span>}
-    {children}
+    {/* one inline span → the flex gap sits after the glyph only, never between the sentence's own runs */}
+    <span>{children}</span>
   </span>;
 }
 
 function AttributionHealthCard({ state, period, onRetry, shared }) {
   const { Card } = window.UI;
-
-  const summary = state.status === 'ready' ? state.data?.window_summary : null;
-  const omissionRate = summary ? summary.literal_omission_rate : null;
-  const badge = attributionOmissionBadgeO(omissionRate);
+  const badge = getAttributionHeadBadgeO(state, period);
 
   return (
     <div id={REGION_CARD_IDS.attribution} className="mb-section">
       <Card
         title="Record attribution"
-        right={
+        right={badge && (
           <HeadStatusO
             tone={toneFromColorVarO(badge.colorVar)}
             title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
             Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}
           </HeadStatusO>
-        }>
+        )}>
         <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
       </Card>
     </div>
   );
+}
+
+// a ready payload without window_summary → nothing read for the window: Not loaded in head and body, never the empty window
+const ATTRIBUTION_NO_SUMMARY_TITLE_O = 'The attribution read landed with no window summary, so the window was not read';
+
+// first read in flight → no head (the body's skeleton is the loading look) · failed or summary-less → Not loaded + its cause ·
+// read → the window's rate
+function getAttributionHeadBadgeO(state, period) {
+  const { getRegionView, getErrorCopy, AbsentValue } = window.UI;
+  const view = getRegionView(state);
+  if (view === 'loading') return null;
+  if (view === 'error') {
+    const { sentence, detail } = getErrorCopy(state.error, `record attribution for the last ${period} days`);
+    return { colorVar: null, text: <AbsentValue kind="not-loaded" title={`${sentence} ${detail}`}/> };
+  }
+  const summary = state.data?.window_summary;
+  if (!summary) return { colorVar: null, text: <AbsentValue kind="not-loaded" title={ATTRIBUTION_NO_SUMMARY_TITLE_O}/> };
+  return attributionOmissionBadgeO(summary.literal_omission_rate);
 }
 
 function AttributionHealthBody({ state, onRetry, shared }) {
@@ -1344,8 +1362,11 @@ function AttributionHealthBody({ state, onRetry, shared }) {
     return <RegionErrorO source="reporting health" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
   }
 
-  const summary = state.data?.window_summary || null;
-  const totalAttributed = Number(summary?.total_attributed) || 0;
+  const summary = state.data?.window_summary;
+  if (!summary) {
+    return <window.UI.AbsentValue kind="not-loaded" title={ATTRIBUTION_NO_SUMMARY_TITLE_O}/>;
+  }
+  const totalAttributed = Number(summary.total_attributed) || 0;
 
   // 귀속 기록된 실행 0건 (빈 window) → 안내 indicator.
   if (totalAttributed === 0) {
@@ -1368,12 +1389,12 @@ function AttributionHealthBody({ state, onRetry, shared }) {
   );
 }
 
-// Reporting-health detail breakdown — silent on loading/error/empty, which the status cards above already report.
+// Reporting-health detail breakdown — silent on loading/error/a summary-less payload, which the status cards above already report.
 function AttributionBreakdownO({ state }) {
-  if (state.status !== 'ready') return null;
-
   const summary = state.data?.window_summary;
-  if (!summary || !(Number(summary.total_attributed) > 0)) {
+  if (state.status !== 'ready' || !summary) return null;
+
+  if (!(Number(summary.total_attributed) > 0)) {
     return <EmptyStateO message="No daily breakdown in this period."/>;
   }
 
@@ -1490,7 +1511,7 @@ function AttributionDailyChart({ grid }) {
                     height={segH}
                     fill={`rgb(var(${meta.colorVar}))`}
                     opacity="0.92">
-                    <title>{`${point.day} · ${meta.label}: ${formatIntO(count)} (${(count / point.total * 100).toFixed(1)}%)`}</title>
+                    <title>{`${point.day} · ${meta.label}: ${formatIntO(count)} (${formatPctO(count / point.total * 100)})`}</title>
                   </rect>
                 );
               })}
@@ -1720,8 +1741,7 @@ function ChannelPeakBarsO({ channels, threshold }) {
             <div key={channel.attribution_source} className="grid items-center gap-label fs-meta"
               style={{ gridTemplateColumns: 'minmax(0, 11rem) minmax(0, 1fr) 4.5rem' }}>
               <span className="text-dim truncate" title={channel.attribution_source}><window.UI.MachineString>{channel.attribution_source}</window.UI.MachineString></span>
-              <BulletBar value={peak / scale} target={floor ? floor / scale : null} showValue={false} ariaLabel={label}
-                tone={toneFromColorVarO(channelLivenessMetaO(channel).colorVar)}/>
+              <BulletBar value={peak / scale} target={floor ? floor / scale : null} showValue={false} ariaLabel={label} tone="data"/>
               <span className="text-ink tabular-nums text-right">{formatIntO(peak)}/day</span>
             </div>
           );
@@ -1796,7 +1816,7 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
     const count = Number(breakdown[key]) || 0;
     // not_measured (legacy NULL) sits outside the graded_total denominator → no share
     const pct   = key !== 'not_measured' && gradedTotal > 0 ? (count / gradedTotal * 100) : null;
-    return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatIntO(count), context: pct != null ? `${pct.toFixed(1)}%` : 'not in share denominator' };
+    return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatIntO(count), context: pct != null ? formatPctO(pct) : 'not in share denominator' };
   });
 
   return (
@@ -1918,7 +1938,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
         )}
       </div>
       <span className="fs-meta tabular-nums text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
-        {total > 0 ? formatIntO(total) : '—'}
+        {formatIntO(total)}
       </span>
     </div>
   );
@@ -2040,7 +2060,7 @@ function CrosstabCell({ view, cell, max, rowLabel, colLabel }) {
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
       <span className="inline-flex items-center gap-label-inline justify-end">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
-        <span className="text-ink">{count > 0 ? formatIntO(count) : '·'}</span>
+        <span className={count > 0 ? 'text-ink' : 'text-faint'}>{formatIntO(count)}</span>
       </span>
       <span className="block mt-stack" aria-hidden="true" style={{ height: 3 }}>
         {/* anchored to the right edge → the bar ends under its right-aligned count */}
@@ -2573,7 +2593,7 @@ function QaScoreDotsO({ qaScore }) {
     <span
       className="inline-flex items-center gap-label-inline align-middle"
       role="img"
-      aria-label={`qa score ${avg.toFixed(1)} of 5`}
+      aria-label={`qa score ${formatDecimalO(avg)} of 5`}
       title={`QA score: ${qaScore}`}>
       {[0, 1, 2, 3, 4].map((i) => (
         <span
@@ -2610,7 +2630,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
       {...focusProps}
       aria-label={[row.agent, row.task_type, resultMeta.label, needsYouReason, row.summary].filter(Boolean).join(' ')}>
       <TableCell view={view} textRole="meta" label="Time" className="text-ink tabular-nums whitespace-nowrap">
-        {ts}
+        {ts ?? <window.UI.AbsentValue kind="none" title="No record time"/>}
       </TableCell>
       <TableCell view={view} textRole="meta" label="Agent" className="text-ink truncate" style={{ maxWidth: 140 }} title={row.agent}>
         <window.UI.AgentName name={row.agent}/>
@@ -3243,12 +3263,14 @@ function truncateO(str, len) {
 
 // 공용 formatInt 위임 (ui.jsx SoT) — 로컬 재구현 폐기. 음수/NaN → '—' 가드 승격 상속.
 const formatIntO = window.UI.formatInt;
+const formatPctO = window.UI.formatPct;
+const formatDecimalO = window.UI.formatDecimal;
 
-// record_ts = real-UTC ISO (server .toISOString()) → 표시 tz 'MM/DD HH:mm' 표시.
+// record_ts = real-UTC ISO (server .toISOString()) → 표시 tz 'MM-DD HH:mm' 표시 · 없음 → null (호출부가 None 표시).
 // 직접 getHours()/getMinutes() = 브라우저 로컬 tz → 사용자 지시 'tz 명시' 위반 →
 // window.UI.formatKstDateTime (Intl timeZone = config 시드 표시 tz, 로컬 tz 독립) 위임.
 function formatTimestampO(iso) {
-  if (!iso) return '—';
+  if (!iso) return null;
   return window.UI.formatKstDateTime(iso);
 }
 
@@ -3260,20 +3282,20 @@ function getClampedPageO(page, total, pageSize) {
 
 // ----- Attribution Health helpers -------------------------------------------
 
-// 비율(0-1 fraction) → 백분율 문자열. null/NaN → '—' (denominator 0 — 데이터 부재).
-function formatRateO(rate) {
-  if (rate === null || rate === undefined || Number.isNaN(Number(rate))) return '—';
-  return `${(Number(rate) * 100).toFixed(1)}%`;
+// 비율(0-1 fraction) → 백분율 문자열 · fixedDigits = 표 열 고정 소수. null/NaN (분모 0) → null → StatRow/호출부가 None 표시.
+function formatRateO(rate, fixedDigits) {
+  if (rate === null || rate === undefined || Number.isNaN(Number(rate))) return null;
+  return formatPctO(Number(rate) * 100, fixedDigits);
 }
 
-// literal-omission rate over the selected window → attribution head-status severity tone (colorVar) + copy · null → info tone '—' (no data)
+// literal-omission rate over the selected window → attribution head-status severity tone (colorVar) + copy · null → info tone None (no attributed records)
 function attributionOmissionBadgeO(rate) {
   if (rate === null || rate === undefined || Number.isNaN(Number(rate))) {
-    return { colorVar: '--info', text: '—' };
+    return { colorVar: '--info', text: window.UI.EMPTY_VALUE_TEXT };
   }
   const value = Number(rate);
   const band = ATTRIBUTION_OMISSION_BANDS.find((b) => value < b.max) || ATTRIBUTION_OMISSION_BANDS[ATTRIBUTION_OMISSION_BANDS.length - 1];
-  return { colorVar: band.colorVar, text: `${(value * 100).toFixed(2)}% ${band.label}` };
+  return { colorVar: band.colorVar, text: `${formatPctO(value * 100)} ${band.label}` };
 }
 
 // 활동일만 담긴 days_series ('YYYY-MM-DD' ASC) → 최근 N 일 0-fill 그리드.
@@ -3317,11 +3339,8 @@ function isoDayKeyO(date) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// 'YYYY-MM-DD' → 'MM/DD' (축 라벨용). 비정상 입력 → 원본 반환.
-function attributionDayLabelO(day) {
-  if (typeof day !== 'string' || day.length < 10) return day || '—';
-  return `${day.slice(5, 7)}/${day.slice(8, 10)}`;
-}
+// 'YYYY-MM-DD' → 'MM-DD' (축 라벨용)
+const attributionDayLabelO = window.UI.formatKstDay;
 
 // ----- 분석 섹션 helpers -----------------------------------------------------
 

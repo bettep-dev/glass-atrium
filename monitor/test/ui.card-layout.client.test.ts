@@ -81,19 +81,6 @@ describe("split column stack", () => {
   });
 });
 
-describe("tile split", () => {
-  test("the value side reads before the detail side", () => {
-    const tree = render("TileSplit", { lead: "42", detail: "since 09:00" });
-    assert.equal(collectText(tree).replace(/\s+/g, ""), "42since09:00");
-    assert.equal(findNodes(tree, (n) => classesOf(n).includes("tile-split-detail")).length, 1);
-  });
-
-  test("with no detail the tile renders no empty second column", () => {
-    const tree = render("TileSplit", { lead: "42" });
-    assert.equal(findNodes(tree, (n) => classesOf(n).includes("tile-split-detail")).length, 0);
-  });
-});
-
 // useState stub whose state starts at `state` and records every setter call → open/closed states without a DOM
 function loadWithState(state: unknown) {
   const calls: unknown[] = [];

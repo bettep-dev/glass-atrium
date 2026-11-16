@@ -15,7 +15,7 @@ import {
   renderScreen,
   type RenderedNode,
 } from "./lib/render-screen.js";
-import { getReducedMotionCss } from "./lib/css-source.js";
+import { getCssRules, getReducedMotionCss } from "./lib/css-source.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
@@ -483,15 +483,9 @@ test("each recording channel's busiest recent day is drawn against the watch flo
     const { value, target } = bar.props as { value: number; target: number };
     assert.ok(value >= 0 && value <= 1 && target > 0 && target <= 1, `${row.name}: bar stays on its track`);
     assert.equal(value >= target, row.peak >= floor, `${row.name}: fill reaches the floor marker only at or above the floor`);
+    assert.equal(bar.props.tone, "data", `${row.name}: the busiest day is a quantity → the data colour; liveness rides the row's glyph and word`);
   }
 });
-
-// [selector, body] for every flat rule of a stylesheet; nested @-blocks contribute their inner rules
-function getCssRules(css: string): Array<[string, string]> {
-  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap((m) =>
-    m[1].split(",").map((selector) => [selector.trim(), m[2]] as [string, string]),
-  );
-}
 
 function getDecl(body: string, prop: string): string | undefined {
   return body.match(new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+)`))?.[1].trim();
@@ -542,4 +536,53 @@ test("a loading skeleton pulses through its gated class, never through an inline
 
   assert.ok(pulsing.length > 0, "the loading screen draws pulsing skeletons");
   assert.equal(inline.length, 0, "no element animates through its own style");
+});
+
+describe("the Record attribution head reads None only over a read window with no records, Not loaded with its cause after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
+  const rows = [
+    { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: SERVER_ERROR },
+    { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, kinds: [], text: /None$/, hasGlyph: true, isBodyEmpty: true },
+    { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { days_series: [] }, error: null }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: "no window summary", isBodyEmpty: false },
+    { name: "read, a measured share", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, kinds: [], text: /1\.2% /, hasGlyph: true, isBodyEmpty: false },
+  ];
+  const renderCard = async (state: unknown) => {
+    const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+    const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+    return renderScreen(create(mod.AttributionHealthCard as Component, { state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+  };
+  const getHeads = (tree: RenderedNode) => findNodes(tree, (n) => n.props["data-role"] === "head-status");
+
+  test("loading: the head stays empty, leaving the loading look to the body's skeleton", async () => {
+    const tree = await renderCard({ status: "loading", busy: true, data: null, error: null });
+    assert.equal(getHeads(tree).length, 0);
+    assert.doesNotMatch(collectText(tree), /Not loaded|None/);
+  });
+
+  test("a payload without its window summary: the body reads Not loaded with the same cause, as the head does", async () => {
+    const tree = await renderCard({ status: "ready", busy: false, data: { days_series: [] }, error: null });
+    const [head] = getHeads(tree);
+    const bodyAbsent = findNodes(tree, (n) => n.type === "AbsentValue").filter((n) => !findNodes(head, (h) => h === n).length);
+    assert.deepEqual(bodyAbsent.map((n) => n.props.kind), ["not-loaded"]);
+    assert.ok(String(bodyAbsent[0]?.props.title).includes("no window summary"), "the body states the cause in its title");
+  });
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await renderCard(row.state);
+      const heads = getHeads(tree);
+      assert.equal(heads.length, 1);
+      const [status] = heads;
+      const absent = findNodes(status, (n) => n.type === "AbsentValue");
+      const elementChildren = status.children.filter((child) => typeof child !== "string");
+      assert.deepEqual(absent.map((n) => n.props.kind), row.kinds);
+      assert.match(collectText(status).trim(), row.text);
+      assert.doesNotMatch(collectText(status), row.hasGlyph ? /Not loaded/ : /None/);
+      assert.equal(elementChildren.length, row.hasGlyph ? 2 : 1, "the glyph, then the sentence as one inline element");
+      if (row.title) assert.ok(String(absent[0]?.props.title).includes(row.title), "the failed read's own cause is in the title");
+      if (row.isBodyEmpty !== undefined) {
+        const isBodyEmpty = /No attributed runs in this period/.test(collectText(tree));
+        assert.equal(isBodyEmpty, row.isBodyEmpty, "the head reads None exactly when the body reads the window as empty");
+      }
+    });
+  }
 });

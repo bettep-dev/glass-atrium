@@ -1,5 +1,5 @@
 // Screen 02 — Cost / Token (live data via /api/dashboard/* + /api/cost/*).
-// Decision tier: alarm lane → Spend stat card → cost trend → model ledger → session list.
+// Decision tier: Spend stat card (its alarm rows first) → cost trend → model ledger → session list.
 // Instrumentation tier: three closed disclosures — token volume, turn statistics, log integrity.
 // Single global period 토글이 모든 fetch 의 days 매개변수를 구동 (AbortController 1개/wave).
 // Hooks C-suffix aliased — window-scope 충돌 방지.
@@ -80,13 +80,13 @@ function ScreenCost() {
 
   const triggerRefresh = useCallbackC(() => setRefreshTick((t) => t + 1), []);
 
-  // One derivation, two readers — the lane states the same verdict tile 1 renders.
+  // One derivation, two readers — the Today stat's tone glyph and the Spend card's alarm rows.
   const hotVerdict = computeHotVerdict(kpiState.status === 'ready' ? (kpiState.data || {}) : {});
-  const latestOutsideBand = isLatestOutsideBand(tokenState);
   const alarmRows = computeAlarmRows({
     hot: hotVerdict,
-    latestOutsideBand,
+    outsideDay: getLatestOutsideBandC(tokenState),
     parseError: getParseErrorDayCounts(errorState),
+    heldReads: { kpi: isRegionHeldC(kpiState), trend: isRegionHeldC(tokenState), parseError: isRegionHeldC(errorState) },
   });
 
   useEffectC(() => {
@@ -147,19 +147,18 @@ function ScreenCost() {
         />
       </div>
 
-      {/* Decision tier — the facts a spend decision is made on, in priority order; the spend state reads on tile 1 or the lane */}
+      {/* Decision tier — the facts a spend decision is made on, in priority order; the spend state reads on tile 1 and the Spend card's alarm rows */}
       <div className="flex flex-col gap-section">
         {sourceFailures.banner && (
           <PageErrorBanner sources={sourceFailures.banner.sources} error={sourceFailures.banner.error} onRetry={triggerRefresh}
             isBusy={isRetrying} focusTargetId={COST_REGION_IDS.kpis}/>
         )}
 
-        <AlarmLaneC rows={alarmRows}/>
-
         <RefreshingRegionC id={COST_REGION_IDS.kpis} states={[kpiState, tokenState, modelState]}>
-          <KpiRowC
+          <SpendCardC
             kpiState={kpiState}
             hot={hotVerdict}
+            alarmRows={alarmRows}
             trendState={tokenState}
             modelState={modelState}
             days={days}
@@ -263,52 +262,88 @@ function InstrumentationTierC({ children }) {
 }
 
 /**
- * Alarm lane — structural, leading the screen, zero height when nothing fires.
- * One "running hot" row (today so far, its pace, or the latest day outside its own band)
+ * Spend alarm rows — the Spend card's first rows, none when nothing fires.
+ * One spend row (today so far, its pace, or the latest day outside its own band)
  * + a conditional parse-error row.
- * A payload FAILURE is never a lane row — that stays a banner at its owning group.
+ * A payload FAILURE is never an alarm row — that stays a banner at its owning group.
+ * @param outsideDay - the newest trend day when it left its rolling band, else null
+ * @param heldReads - per read, whether its loaded data stands beside a failed refresh → the row it feeds reads Last known (required: no default reads a row as current)
  */
-function computeAlarmRows({ hot, latestOutsideBand, parseError }) {
+function computeAlarmRows({ hot, outsideDay, parseError, heldReads }) {
   const rows = [];
-  const hotTone = getHotToneC(hot, latestOutsideBand);
+  const hotTone = getHotToneC(hot, outsideDay);
 
   if (hotTone !== null) {
-    rows.push({ key: 'hot', tone: hotTone, text: getHotAlarmText(hot, latestOutsideBand) });
+    rows.push({ key: 'hot', tone: hotTone, ...getSpendAlarmCopyC(hot, outsideDay), isHeld: isSpendRowHeldC(hot, outsideDay, heldReads) });
   }
   if (parseError.crit > 0) {
     rows.push({
       key: 'parse-error',
       tone: 'warn',
-      text: `${parseError.crit} of ${parseError.total} days over the unreadable-log threshold — some spend may be unrecorded.`,
+      title: `${parseError.crit} of ${parseError.total} days over the unreadable-log threshold`,
+      detail: 'Some spend may be unrecorded',
+      isHeld: heldReads.parseError,
     });
   }
 
   return rows;
 }
 
-// Hot-trigger tone, or null when none fires — red only past the so-far cut; a projection or one outlier day is a warning
-function getHotToneC(hot, latestOutsideBand) {
-  if (hot.isHot) return 'crit';
-  return hot.isPaceHot || latestOutsideBand ? 'warn' : null;
+// held when a read the row's sentence states is held — the kpi behind a spend leg, the trend behind the range fact
+function isSpendRowHeldC(hot, outsideDay, heldReads) {
+  return (isSpendLegHotC(hot) && heldReads.kpi) || (outsideDay !== null && heldReads.trend);
 }
 
-function getHotAlarmText(hot, latestOutsideBand) {
-  const clauses = [];
-  if (hot.isHot || hot.isPaceHot) clauses.push(hot.verdict);
-  if (latestOutsideBand) clauses.push('The latest day sits outside its own 7-day normal band.');
-  return clauses.join(' ');
+// loaded data still on screen while its latest refresh failed (ui.jsx putRegionFailure keeps both)
+function isRegionHeldC(state) {
+  return state.status === 'ready' && state.error != null;
+}
+
+// Spend-trigger tone, or null when none fires — one warning glyph for every leg
+function getHotToneC(hot, outsideDay) {
+  return isSpendLegHotC(hot) || outsideDay !== null ? 'warn' : null;
+}
+
+function isSpendLegHotC(hot) {
+  return hot.isHot || hot.isPaceHot;
+}
+
+const OUTSIDE_RANGE_C = 'outside its 7-day normal range';
+
+/**
+ * Spend row copy, amount first: the title holds today's figure (and where the day lands, when paced),
+ * the detail its multiple of the 7-day average.
+ * No spend leg at the cut → only the range trigger fired, so the day that tripped it leads, its band as the detail:
+ * a below-average today must not head a firing row.
+ */
+function getSpendAlarmCopyC(hot, outsideDay) {
+  if (!isSpendLegHotC(hot)) {
+    const day = window.UI.formatKstDay(outsideDay.fullDate);
+    return { title: `${formatUsdC(outsideDay.actual)} on ${day}, ${OUTSIDE_RANGE_C}`, detail: formatNormalRangeC(outsideDay) };
+  }
+  const { formatSpendSoFar, formatSpendMultiple } = window.UI;
+  const isPaced = hot.paceCost !== null;
+  const soFar = formatSpendSoFar(hot.todayCost);
+  const title = isPaced ? `${soFar}, on pace for ${formatUsdC(hot.paceCost)} by end of day` : soFar;
+  const basis = formatSpendMultiple(isPaced ? hot.paceRatio : hot.ratio, hot.normalDaily);
+  return { title, detail: outsideDay !== null ? `${basis} \u00b7 the latest day is ${OUTSIDE_RANGE_C}` : basis };
+}
+
+// a trend day's band in words, "Normal range $a – $b" — the alarm detail and the chart readout read one form
+function formatNormalRangeC(row) {
+  return `Normal range ${formatUsdC(row.lowerBand)} \u2013 ${formatUsdC(row.upperBand)}`;
 }
 
 /**
- * Is the newest day outside its own rolling band?
- * Below the rolling window the question has no answer, and "no answer" must not fire the lane.
+ * The newest trend day when it lies outside its own rolling band, else null.
+ * Below the rolling window the question has no answer, and "no answer" must not fire a spend row.
  */
-function isLatestOutsideBand(trendState) {
+function getLatestOutsideBandC(trendState) {
   const points = getTrendPoints(trendState);
-  if (points.length < ROLLING_WINDOW) return false;
+  if (points.length < ROLLING_WINDOW) return null;
   const rows = computeAnomalyRows(points, ROLLING_WINDOW, ANOMALY_SIGMA);
   const latest = rows[rows.length - 1];
-  return !!(latest && latest.isAnomaly);
+  return latest?.isAnomaly ? latest : null;
 }
 
 // cost-timeseries 응답은 `points` (구버전 `rows` 폴백 보존) · 미로드 state → 빈 배열.
@@ -317,7 +352,7 @@ function getTrendPoints(trendState) {
   return trendState.data?.points ?? trendState.data?.rows ?? [];
 }
 
-// Crit days travel with the population they came from — the lane never states a count alone.
+// Crit days travel with the population they came from — the alarm row never states a count alone.
 function getParseErrorDayCounts(errorState) {
   const rows = errorState.status === 'ready' ? (errorState.data?.rows ?? []) : [];
   const crit = rows.filter(isParseErrorCritDay).length;
@@ -328,28 +363,24 @@ function isParseErrorCritDay(row) {
   return (Number(row.error_ratio) || 0) > PARSE_ERROR_CRIT_THRESHOLD;
 }
 
-function AlarmLaneC({ rows }) {
-  const { Icon } = window.UI;
+// the Spend card's alarm rows under its head; a hairline closes the list above the stats
+function SpendAlarmRowsC({ rows }) {
+  const { AlarmRow } = window.UI;
 
   if (rows.length === 0) {
     return null;
   }
 
   return (
-    <div className="border-y border-line">
-      {rows.map((r) => (
-        <div key={r.key} role="alert" className="alarm-row" data-tone={r.tone}>
-          <span className="alarm-row-glyph"><Icon name="warn" size={16}/></span>
-          <div className="fs-body text-ink"><window.UI.DayTokens>{r.text}</window.UI.DayTokens></div>
-        </div>
-      ))}
+    <div className="border-b border-line">
+      {rows.map((r) => <AlarmRow key={r.key} role="alert" tone={r.tone} title={r.title} detail={r.detail} isHeld={r.isHeld}/>)}
     </div>
   );
 }
 
-// KPI band — today vs the 7-day normal · window total + trend · cost per task · cache share.
+// Spend stats — today vs the 7-day average · window total + trend · cost per task · cache share.
 
-// "Running hot" cut — today ≥ 1.25x the 7-day daily normal · defined once, inherited by the Dashboard.
+// "Running hot" cut — today ≥ 1.25x the 7-day average.
 const HOT_RATIO_CUT = 1.25;
 
 // Finite number or null — a missing or NaN payload field stays distinguishable from a real 0.
@@ -360,10 +391,10 @@ function toFiniteOrNull(value) {
 }
 
 /**
- * Tile state contract — loading · error · empty (payload arrived, window holds nothing) ·
+ * Stat state contract — loading · error · empty (payload arrived, window holds nothing) ·
  * unavailable (payload arrived, this measure is not derivable) · ready.
  */
-function getTileStatus(state, value, isEmpty) {
+function getStatStatus(state, value, isEmpty) {
   // same branch as the payload's error card → a cold error stays 'error' while its Retry is in flight
   if (window.UI.getRegionView(state) === 'error') return 'error';
   if (state.status === 'loading') return 'loading';
@@ -372,17 +403,16 @@ function getTileStatus(state, value, isEmpty) {
   return value === null || value === undefined ? 'unavailable' : 'ready';
 }
 
-// Non-ready tiles say why in words; the value slot stays an em dash so it never reads as measured.
-function getTileNote(status, unavailableNote) {
-  if (status === 'error') return 'Unavailable — this payload failed to load.';
+// Non-ready stats say why in words; the value slot holds None or Not loaded so it never reads as measured.
+function getStatNote(status, unavailableNote) {
   if (status === 'empty') return 'No cost recorded in this window.';
   if (status === 'unavailable') return unavailableNote || 'Not available for this window.';
   return '';
 }
 
 /**
- * Today so far against the operator's own 7-day daily normal.
- * Tone follows the so-far ratio ALONE — pace is a verdict clause, never a tone input.
+ * Today so far against the operator's own 7-day average.
+ * isHot follows the so-far ratio ALONE — pace is its own trigger, never folded into it.
  */
 function computeHotVerdict(kpi) {
   const todayCost = toFiniteOrNull(kpi.today_cost_usd);
@@ -394,18 +424,17 @@ function computeHotVerdict(kpi) {
 
   const ratio = normalDaily !== null && todayCost !== null ? todayCost / normalDaily : null;
   // Where today lands: spend so far + the 3h burn held for the rest of the bucket day.
-  const paceRatio = ratio !== null && burnRate !== null && hoursLeft !== null
-    ? (todayCost + burnRate * hoursLeft) / normalDaily
-    : null;
+  const paceCost = ratio !== null && burnRate !== null && hoursLeft !== null ? todayCost + burnRate * hoursLeft : null;
+  const paceRatio = paceCost === null ? null : paceCost / normalDaily;
 
   return {
     todayCost,
     normalDaily,
     ratio,
+    paceCost,
     paceRatio,
     isHot: ratio !== null && ratio >= HOT_RATIO_CUT,
     isPaceHot: paceRatio !== null && paceRatio >= HOT_RATIO_CUT,
-    verdict: getHotVerdictText(ratio, paceRatio),
   };
 }
 
@@ -426,17 +455,6 @@ function getDayHoursLeft(fetchedAt, timeZone) {
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
 
   return 24 - hour - minute / 60;
-}
-
-// So-far clause always; the pace clause joins it only when a pace figure exists.
-function getHotVerdictText(ratio, paceRatio) {
-  if (ratio === null) return '';
-  const soFar = `${(ratio * 100).toFixed(0)}% of the 7-day daily normal so far`;
-  if (paceRatio === null) return `Today is ${soFar}.`;
-  const pace = paceRatio >= HOT_RATIO_CUT
-    ? `on pace for ${paceRatio.toFixed(1)}x it`
-    : `on pace for ${(paceRatio * 100).toFixed(0)}% of it`;
-  return `Today is ${soFar}, ${pace}.`;
 }
 
 // Window total + its change against the server's prior window over the period the toggle selects.
@@ -497,21 +515,27 @@ function computeCacheShare(modelState) {
   };
 }
 
-function KpiRowC({ kpiState, hot, trendState, modelState, days, failures, onRetry }) {
+// the payload behind the Today and per-task stats — its failure notice sits right above the Spend card
+const KPI_SOURCE_C = 'cost KPIs';
+
+function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, days, failures, onRetry }) {
   const { getRegionView, RegionFailure, Card, StatRow } = window.UI;
   const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
   const notes = stats.filter((stat) => stat.info);
+  const bannerSources = failures?.banner?.sources ?? [];
 
   return (
     <>
-      {/* Payload failure is reported at the owning group — the KPI payload feeds stats 1 and 3. */}
+      {/* Payload failure is reported at the owning group — the /api/cost/kpi payload feeds stats 1 and 3. */}
       {getRegionView(kpiState) === 'error' && (
-        <RegionFailure source="cost KPIs" error={kpiState.error} isBusy={kpiState.busy}
+        <RegionFailure source={KPI_SOURCE_C} error={kpiState.error} isBusy={kpiState.busy}
           focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
       )}
-      <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read">
-        <div aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
-          <StatRow stats={stats.map(buildStatC)}/>
+      {/* flush body → the alarm rows span the card under its head; the stat row keeps the card padding */}
+      <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read" isFlush>
+        <SpendAlarmRowsC rows={alarmRows}/>
+        <div className="p-card-pad" aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
+          <StatRow stats={stats.map((stat) => buildStatC(stat, bannerSources))}/>
         </div>
       </Card>
     </>
@@ -529,15 +553,18 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   const modelDays = getShownDays(modelState, days);
   return [
     {
-      key: 'today', label: 'Today vs. normal', tone: getHotToneC(hot, false),
-      status: getTileStatus(kpiState, hot.ratio, false),
+      key: 'today', label: 'Today vs. average', tone: getHotToneC(hot, null),
+      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
+      status: getStatStatus(kpiState, hot.ratio, false),
       value: formatUsdC(hot.todayCost),
-      hint: hot.normalDaily === null ? '' : `${formatUsdC(hot.normalDaily)} 7-day normal/day`,
-      unavailableNote: 'No cost in the last 7 days — no normal to compare against.',
+      // a firing stat is value + glyph → its alarm row above already states the average
+      hint: hot.normalDaily === null || getHotToneC(hot, null) !== null ? '' : `7-day average ${formatUsdC(hot.normalDaily)}/day`,
+      unavailableNote: 'No cost in the last 7 days — no average to compare against.',
     },
     {
       key: 'window', label: `Cost, last ${trendDays} days`,
-      status: getTileStatus(trendState, windowTotal.total, windowTotal.isEmpty),
+      source: 'cost trend', isHeld: isRegionHeldC(trendState),
+      status: getStatStatus(trendState, windowTotal.total, windowTotal.isEmpty),
       value: formatUsdC(windowTotal.total),
       context: <TrendDeltaTextC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>,
       info: windowTotal.total === null ? WINDOW_COST_RULE_C
@@ -546,7 +573,8 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     },
     {
       key: 'per-task', label: 'Cost per finished task',
-      status: getTileStatus(kpiState, costPerDone, false),
+      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
+      status: getStatStatus(kpiState, costPerDone, false),
       value: formatUsdC(costPerDone),
       hint: `7-day cost / ${formatIntC(doneCount)} finished`,
       info: <window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens>,
@@ -554,8 +582,9 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     },
     {
       key: 'cache', label: `Cache share, last ${modelDays} days`,
-      status: getTileStatus(modelState, cacheShare.share, cacheShare.isEmpty),
-      value: cacheShare.share === null ? null : `${(cacheShare.share * 100).toFixed(0)}%`,
+      source: 'cost by model', isHeld: isRegionHeldC(modelState),
+      status: getStatStatus(modelState, cacheShare.share, cacheShare.isEmpty),
+      value: cacheShare.share === null ? null : window.UI.formatPct(cacheShare.share * 100),
       hint: cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`,
       // the window ("30 days") stays one token; the sentence wraps around it
       info: cacheShare.totalCost === null ? null : (
@@ -608,43 +637,37 @@ function SpendStatNotesC({ stats }) {
   );
 }
 
-// stat model → one StatRow stat; a non-ready stat says why on its context line, under the unknown dash
-function buildStatC(stat) {
-  const { DayTokens } = window.UI;
-  const isReady = stat.status === 'ready';
+// stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
+function buildStatC(stat, bannerSources) {
+  const { DayTokens, LAST_KNOWN_TEXT, getHeldCause } = window.UI;
+  if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true };
+  const value = <SpendStatValueC stat={stat}/>;
+  // held figures stand, the line says so in the Dashboard's word; the failed refresh rides the hover
+  if (stat.status === 'ready' && stat.isHeld) {
+    return { key: stat.key, label: stat.label, value, context: <span title={getHeldCause(stat.source)}>{LAST_KNOWN_TEXT}</span> };
+  }
+  if (stat.status === 'ready' && stat.context) return { key: stat.key, label: stat.label, value, context: stat.context };
   // the hint or the state note, one plain string → its title carries it whole, and its day tokens stay whole
-  const note = isReady ? (stat.hint || null) : getTileNote(stat.status, stat.unavailableNote);
-  const context = isReady && stat.context ? stat.context
-    : note && <span title={note}><DayTokens>{note}</DayTokens></span>;
-  return { key: stat.key, label: stat.label, value: <SpendStatValueC stat={stat}/>, context: context || null };
+  const note = getStatContextNoteC(stat, bannerSources);
+  return { key: stat.key, label: stat.label, value, context: note ? <span title={note}><DayTokens>{note}</DayTokens></span> : null };
 }
 
-// Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm lane holds the words.
+// a failed read points at the notice that states it — above for the KPI payload or a banner source, else its own card below
+function getStatContextNoteC(stat, bannerSources) {
+  if (stat.status === 'ready') return stat.hint || null;
+  if (stat.status !== 'error') return getStatNote(stat.status, stat.unavailableNote);
+  const isAbove = stat.source === KPI_SOURCE_C || bannerSources.includes(stat.source);
+  return window.UI.getNoticePointer(null, isAbove ? undefined : `the ${stat.source} notice below`);
+}
+
+// Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
 function SpendStatValueC({ stat }) {
-  const { Icon, TONE_ICON, LoadingPlaceholder } = window.UI;
-  // loading is stated once, through the shared placeholder — inline-flex keeps it on the stat's start edge
-  if (stat.status === 'loading') {
-    return <div className="inline-flex"><LoadingPlaceholder label={stat.label.toLowerCase()}/></div>;
-  }
-  // the unknown dash names its cause on the context line; a failed read is named here as well
-  if (stat.status !== 'ready') {
-    const isFailed = stat.status === 'error';
-    return (
-      <span className="text-faint">
-        <span aria-hidden={isFailed ? 'true' : undefined}>—</span>
-        {isFailed && <span className="sr-only">Not loaded</span>}
-      </span>
-    );
-  }
+  const { AbsentValue, ToneGlyph } = window.UI;
+  // a failed read is Not loaded, a read that holds nothing is None → the context line names the cause
+  if (stat.status !== 'ready') return <AbsentValue kind={stat.status === 'error' ? 'not-loaded' : 'none'}/>;
   if (!stat.tone) return stat.value;
-  const toneLabel = stat.tone === 'crit' ? 'Running hot' : 'Heading above normal';
-  return (
-    <>
-      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={13}/></span>
-      <span className="sr-only">{`${toneLabel}:`}</span>
-      {stat.value}
-    </>
-  );
+  const toneLabel = 'Running hot';
+  return <><ToneGlyph tone={stat.tone} label={toneLabel} title={toneLabel}/>{stat.value}</>;
 }
 
 // Window change on its own block line — the token card's foot.
@@ -663,7 +686,7 @@ function TrendDeltaTextC({ delta, prior, noun }) {
     <>
       <span className="mr-label-inline" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
-      <DayTokens>{`${Math.abs(delta).toFixed(0)}% vs ${span}, cut at this time of day`}</DayTokens>
+      <DayTokens>{`${window.UI.formatPct(Math.abs(delta))} vs ${span}, cut at this time of day`}</DayTokens>
     </>
   );
 }
@@ -736,7 +759,7 @@ function markPartialDay(rows) {
   }));
 }
 
-// One decimal count for every tick of an axis → "$0" never sits beside "$0.00"; under $100 ticks step in cents.
+// One precision per axis (design.md §12.2 Axis precision) → "$0" never sits beside "$0.00"; under $100 ticks step in cents.
 function getUsdAxisFormatter(maxValue) {
   const decimals = maxValue >= 100 ? 0 : 2;
   return (value) => '$' + (Number(value) || 0).toLocaleString('en-US', {
@@ -765,7 +788,7 @@ function toTrendReadoutPoint(row) {
 function getTrendReadout(row, bandOn) {
   const base = window.UI.getChartReadout(toTrendReadoutPoint(row), formatUsdC);
   const hasBand = bandOn && Number.isFinite(row.lowerBand) && Number.isFinite(row.upperBand);
-  return hasBand ? `${base}, normal range ${formatUsdC(row.lowerBand)} – ${formatUsdC(row.upperBand)}` : base;
+  return hasBand ? `${base}, ${formatNormalRangeC(row).toLowerCase()}` : base;
 }
 
 /**
@@ -850,9 +873,9 @@ function CostTrendChart({ rows, bandOn }) {
               <Line
                 type="linear"
                 dataKey="rollingMean"
-                stroke="rgb(var(--dim))"
+                stroke="rgb(var(--faint))"
                 strokeDasharray="4 4"
-                strokeWidth={1.5}
+                strokeWidth={1}
                 dot={false}
                 isAnimationActive={false}
                 connectNulls={false}
@@ -861,17 +884,17 @@ function CostTrendChart({ rows, bandOn }) {
             <Line
               type="linear"
               dataKey="completeCost"
-              stroke="rgb(var(--accent))"
+              stroke="rgb(var(--data))"
               strokeWidth={2}
-              dot={{ r: 2, fill: 'rgb(var(--accent))', stroke: 'none' }}
-              activeDot={{ r: 4 }}
+              dot={{ r: 2, fill: 'rgb(var(--data))', stroke: 'none' }}
+              activeDot={{ r: 4, fill: 'rgb(var(--ink))', stroke: 'none' }}
               isAnimationActive={false}
               connectNulls={false}
             />
             <Line
               type="linear"
               dataKey="partialCost"
-              stroke="rgb(var(--accent))"
+              stroke="rgb(var(--data))"
               strokeWidth={2}
               strokeDasharray="4 3"
               dot={renderPartialDot}
@@ -902,7 +925,7 @@ function renderPartialDot({ cx, cy, index, payload }) {
       cy={cy}
       r={payload && payload.isPartial ? 3.5 : 0}
       fill="rgb(var(--elev))"
-      stroke="rgb(var(--accent))"
+      stroke="rgb(var(--data))"
       strokeWidth={1.5}
     />
   );
@@ -913,16 +936,16 @@ function CostTrendLegendC({ bandOn, rows }) {
   return (
     <div className="flex items-center gap-x-block gap-y-list flex-wrap mt-label fs-meta text-dim">
       <span className="flex items-center gap-label-inline">
-        <span aria-hidden="true" style={{ width: 14, height: 2, background: 'rgb(var(--accent))' }}/>
+        <span aria-hidden="true" style={{ width: 14, height: 2, background: 'rgb(var(--data))' }}/>
         Daily cost
       </span>
       <span className="flex items-center gap-label-inline">
-        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgb(var(--accent))' }}/>
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgb(var(--data))' }}/>
         Today so far
       </span>
       {bandOn && (
         <span className="flex items-center gap-label-inline">
-          <span aria-hidden="true" style={{ width: 14, borderTop: '1.5px dashed rgb(var(--dim))' }}/>
+          <span aria-hidden="true" style={{ width: 14, borderTop: '1px dashed rgb(var(--faint))' }}/>
           7-day average
         </span>
       )}
@@ -948,7 +971,7 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
     <div className={tooltip.className} style={tooltip.style}>
       <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
       <div className={tooltip.rowClassName}>
-        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--data))' }}/>
         {row.isPartial ? 'Today so far' : 'Daily cost'} {row.actual === null ? 'no data' : formatUsdC(row.actual)}
       </div>
       {hasBand && (
@@ -1041,7 +1064,7 @@ function getTokenDayPoints(points) {
 
 const TOKEN_AXIS_UNITS = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
 
-// Unit + decimals fixed by the data max → one unit per axis, ≤5 chars inside the 48px axis.
+// Unit + decimals fixed by the data max (design.md §12.2 Axis precision) → one unit per axis, ≤5 chars inside the 48px axis.
 function getTokenAxisFormatter(maxValue) {
   const [unit, suffix] = TOKEN_AXIS_UNITS.find(([u]) => maxValue >= u) || [1, ''];
   const decimals = maxValue / unit >= 10 ? 0 : 1;
@@ -1073,8 +1096,7 @@ function getTokenStackOrder(shares) {
 }
 
 function formatTokenShareC(share) {
-  const pct = share * 100;
-  return pct > 0 && pct < 0.1 ? '<0.1%' : `${pct.toFixed(1)}%`;
+  return window.UI.formatPct(share * 100, 1);
 }
 
 // Input/Output are invisible against cache read on the shared axis → their shares stated as text.
@@ -1163,7 +1185,7 @@ function TokenStackedColumn({ points, order }) {
           tickLine={false}
           width={48}
         />
-        <Tooltip content={<TokenTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
+        <Tooltip content={<TokenTooltipC/>} cursor={{ fill: 'rgb(var(--ink) / 0.06)' }} isAnimationActive={false}/>
         {order.map((cat) => (
           <Bar
             key={cat.key}
@@ -1249,7 +1271,7 @@ function CategoryShareRowC({ rows }) {
       <div
         className="flex h-2 rounded-sm overflow-hidden bg-sunken"
         role="img"
-        aria-label={rows.map((r) => `${r.label} ${(r.pct * 100).toFixed(0)}%`).join(', ')}>
+        aria-label={rows.map((r) => `${r.label} ${window.UI.formatPct(r.pct * 100)}`).join(', ')}>
         {rows.map((r) => (
           <div key={r.key} style={{ width: `${r.pct * 100}%`, background: `rgb(var(${r.colorVar}) / 0.8)` }}/>
         ))}
@@ -1258,7 +1280,7 @@ function CategoryShareRowC({ rows }) {
         {rows.map((r) => (
           <span key={r.key} className="flex items-center gap-label-inline fs-meta text-dim">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
-            {r.label} {(r.pct * 100).toFixed(0)}% · {formatUsdC(r.cost)}
+            {r.label} {window.UI.formatPct(r.pct * 100)} · {formatUsdC(r.cost)}
           </span>
         ))}
       </div>
@@ -1376,6 +1398,8 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
   const modelRows = buildModelCostRows(rows);
   const { top } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
+  const formatCost = getMoneyColumnFormatC([...top.map((r) => r.cost_usd), totalCost]);
+  const formatAvg = getMoneyColumnFormatC(top.map(getAvgPerSessionC).filter((v) => v !== null));
 
   return (
     // the body is flush for the ledger → the labels and the share block take the card padding themselves
@@ -1391,13 +1415,16 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
           foot={(view) => (
             <TableRow view={view}>
               <TableCell view={view} kind="row-header">Total</TableCell>
-              <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatUsdC(totalCost)}</TableCell>
-              {/* A session spanning several models sits in each model's count → the column does not sum. */}
-              <TableCell view={view} textRole="meta" label="Sessions" isNumeric><NoneCellC/></TableCell>
-              <TableCell view={view} textRole="meta" label="Avg / session" isNumeric><NoneCellC/></TableCell>
+              <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatCost(totalCost)}</TableCell>
+              <TableCell view={view} kind="span" start={2} textRole="meta" className="text-faint">
+                {/* contain: inline-size → the sentence wraps inside the cell and never widens a column (Model names stay on one line) */}
+                <span className="block" style={{ contain: 'inline-size' }}>
+                  Sessions not summed — a session using several models counts under each
+                </span>
+              </TableCell>
             </TableRow>
           )}>
-          {(view) => top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view}/>)}
+          {(view) => top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view} formatCost={formatCost} formatAvg={formatAvg}/>)}
         </Table>
       </Stack>
     </Stack>
@@ -1411,19 +1438,24 @@ const MODEL_COLUMNS = Object.freeze([
   { key: 'avg', label: 'Avg / session', isNumeric: true },
 ]);
 
-// an empty cell reads None in faint ink, never blank or a dash
-function NoneCellC() {
-  return <span className="text-faint">None</span>;
+function getAvgPerSessionC(r) {
+  return r.session_count > 0 ? r.cost_usd / r.session_count : null;
+}
+
+// one precision per money column (spec 44084 §2.1) → any cell under $100 keeps cents in every cell, so the total checks against its rows
+function getMoneyColumnFormatC(values) {
+  return values.some((v) => Math.abs(v) < 100) ? window.UI.formatUsd : formatUsdC;
 }
 
 /**
  * One ledger row — token columns behind the row's own expand.
  * The default table stays at the four columns a spend decision needs.
+ * formatCost / formatAvg are required: the card picks one precision per money column (getMoneyColumnFormatC).
  */
-function ModelCostRow({ r, view }) {
+function ModelCostRow({ r, view, formatCost, formatAvg }) {
   const { DisclosureChevron, TableRow, TableCell } = window.UI;
   const [expanded, setExpanded] = useStateC(false);
-  const avgPerSession = r.session_count > 0 ? r.cost_usd / r.session_count : null;
+  const avgPerSession = getAvgPerSessionC(r);
 
   return (
     <>
@@ -1439,12 +1471,12 @@ function ModelCostRow({ r, view }) {
             <span>{r.model}</span>
           </button>
         </TableCell>
-        <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatUsdC(r.cost_usd)}</TableCell>
+        <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatCost(r.cost_usd)}</TableCell>
         <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
-          {r.session_count === null ? <NoneCellC/> : formatIntC(r.session_count)}
+          {r.session_count === null ? <window.UI.AbsentValue kind="none"/> : formatIntC(r.session_count)}
         </TableCell>
         <TableCell view={view} textRole="meta" label="Avg / session" isNumeric>
-          {avgPerSession === null ? <NoneCellC/> : formatUsdC(avgPerSession)}
+          {avgPerSession === null ? <window.UI.AbsentValue kind="none"/> : formatAvg(avgPerSession)}
         </TableCell>
       </TableRow>
       {expanded && (
@@ -1580,18 +1612,18 @@ function CacheHitBody({ state, days, failures, onRetry }) {
     <Stack gap="block">
       <div className="flex items-baseline gap-label">
         <div className="fs-stat font-semibold tabular-nums">
-          {pooledRate === null ? '—' : (pooledRate * 100).toFixed(1) + '%'}
+          {pooledRate === null ? <window.UI.AbsentValue kind="none"/> : window.UI.formatPct(pooledRate * 100)}
         </div>
         <div className="fs-meta text-dim">pooled hit rate</div>
         {gapLabel && <div className="fs-meta text-faint">{gapLabel}</div>}
       </div>
       {flatRate === null ? (
         <div style={{ width: '100%', height: 220 }}
-          {...window.UI.getChartImageProps(getGapNameC('Daily cache hit rate', ratePoints), ratePoints, formatRatePctC)}>
+          {...window.UI.getChartImageProps(getGapNameC('Daily cache hit rate', ratePoints), ratePoints, (v) => window.UI.formatPct(v))}>
           <CacheHitChart rows={chartRows} yDomain={yDomain}/>
         </div>
       ) : (
-        <div className="fs-meta text-dim">{`Flat at ${formatRatePctC(flatRate)} every day with data — no line to draw.`}</div>
+        <div className="fs-meta text-dim">{`Flat at ${window.UI.formatPct(flatRate)} every day with data — no line to draw.`}</div>
       )}
     </Stack>
   );
@@ -1611,16 +1643,12 @@ function computeCacheYDomain(chartRows) {
   return [Math.max(0, min - pad), Math.min(100, max + pad)];
 }
 
-function formatRatePctC(value) {
-  return `${value.toFixed(1)}%`;
-}
-
 // Every day with data reads as one figure at the shown precision → a sentence, not a 220px flat line; null otherwise.
 function getFlatCacheRate(chartRows) {
   const vals = chartRows.map((r) => r.rate_pct).filter(Number.isFinite);
   if (vals.length === 0) return null;
-  const labels = new Set(vals.map(formatRatePctC));
-  return labels.size === 1 ? Math.round(vals[0] * 10) / 10 : null;
+  const labels = new Set(vals.map((v) => window.UI.formatPct(v)));
+  return labels.size === 1 ? vals[0] : null;
 }
 
 // Widest tick label ("100.0%") sets the axis width → the top label is never clipped.
@@ -1646,7 +1674,7 @@ function getRoundStepC(raw) {
 function CacheHitChart({ rows, yDomain = [0, 100] }) {
   const { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } = window.Recharts;
 
-  // 실측 도메인 폭이 좁으면(<5%p) 소수 1자리 눈금, 넓으면 정수 눈금.
+  // 실측 도메인 폭이 좁으면(<5%p) 소수 1자리 눈금, 넓으면 정수 눈금 — 한 축 한 정밀도 (design.md §12.2 Axis precision).
   const narrow = yDomain[1] - yDomain[0] < 5;
 
   return (
@@ -1662,7 +1690,7 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <YAxis
           domain={yDomain}
           ticks={getCacheTicks(yDomain)}
-          tickFormatter={(v) => v.toFixed(narrow ? 1 : 0) + '%'}
+          tickFormatter={(v) => window.UI.formatPct(v, narrow ? 1 : 0)}
           tick={axisTickStyle}
           axisLine={{ stroke: 'rgb(var(--line))' }}
           tickLine={false}
@@ -1694,7 +1722,7 @@ function CacheHitTooltipC({ active, payload }) {
     <div className={tooltip.className} style={tooltip.style}>
       <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
       <div className="text-dim">
-        Hit rate {ratePct === null || ratePct === undefined ? 'no data' : ratePct.toFixed(1) + '%'}
+        Hit rate {ratePct === null || ratePct === undefined ? 'no data' : window.UI.formatPct(ratePct)}
       </div>
       <div className="text-dim">
         cache_read {formatTokenCompactC(row.total_cache_read)} · input {formatTokenCompactC(row.total_input)}
@@ -1731,9 +1759,8 @@ function getSpendConcentration(sessions, topN) {
 
 function getSpendConcentrationText(concentration, sessionCount) {
   if (!concentration) return null;
-  const pct = Math.round(concentration.share * 100);
   const who = concentration.count === 1 ? 'The costliest session' : `The costliest ${concentration.count} sessions`;
-  return `${who} of ${formatIntC(sessionCount)} ${concentration.count === 1 ? 'holds' : 'hold'} ${pct}% of the spend in this window.`;
+  return `${who} of ${formatIntC(sessionCount)} ${concentration.count === 1 ? 'holds' : 'hold'} ${window.UI.formatPct(concentration.share * 100)} of the spend in this window.`;
 }
 
 function SessionDistributionCard({ state, days, failures, onRetry }) {
@@ -1877,7 +1904,7 @@ function SessionRowC({ session, view, focusProps, onOpen }) {
       <TableCell view={view} textRole="meta" label="Cost" isNumeric className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</TableCell>
       <TableCell view={view} textRole="meta" label="Tokens" isNumeric>{formatTokenCompactC(session.total_tokens)}</TableCell>
       <TableCell view={view} textRole="meta" label="Last seen" isNumeric title={lastSeen ? formatKstFull(lastSeen) : undefined}>
-        {lastSeen ? formatRelativeTime(lastSeen) : <NoneCellC/>}
+        {lastSeen ? formatRelativeTime(lastSeen) : <window.UI.AbsentValue kind="none"/>}
       </TableCell>
     </TableRow>
   );
@@ -1943,8 +1970,8 @@ function SessionHistogramDrawerC({ bins, total, onClose }) {
 function SessionHistogramLegendC() {
   const outlierFloor = SESSION_COST_BINS.find((b) => b.isOutlier)?.min;
   const items = [
-    { key: 'typical', color: 'rgb(var(--accent) / 0.85)', label: 'Sessions per cost band' },
-    { key: 'outlier', color: 'rgb(var(--warn) / 0.85)', label: `Outlier bands — $${outlierFloor} or more per session` },
+    { key: 'typical', color: 'rgb(var(--data))', label: 'Sessions per cost band' },
+    { key: 'outlier', color: 'rgb(var(--warn) / 0.85)', tone: 'warn', label: `Outlier bands — $${outlierFloor} or more per session` },
   ];
 
   return (
@@ -1952,6 +1979,7 @@ function SessionHistogramLegendC() {
       {items.map((item) => (
         <li key={item.key} className="flex items-center gap-label-inline">
           <span className="inline-block w-3 h-3 rounded-sm" style={{ background: item.color }} aria-hidden="true"/>
+          {item.tone && <span className={`text-${item.tone}`} aria-hidden="true">{window.UI.TONE_GLYPH[item.tone]}</span>}
           {item.label}
         </li>
       ))}
@@ -1983,10 +2011,10 @@ function SessionDistributionChart({ bins }) {
           tickLine={false}
           width={36}
         />
-        <Tooltip content={<SessionBinTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
+        <Tooltip content={<SessionBinTooltipC/>} cursor={{ fill: 'rgb(var(--ink) / 0.06)' }} isAnimationActive={false}/>
         <Bar dataKey="count" isAnimationActive={false}>
           {bins.map((b, i) => (
-            <Cell key={i} fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--accent) / 0.85)'}/>
+            <Cell key={i} fill={b.isOutlier ? 'rgb(var(--warn) / 0.85)' : 'rgb(var(--data))'}/>
           ))}
         </Bar>
       </BarChart>
@@ -2002,7 +2030,7 @@ function SessionBinTooltipC({ active, payload }) {
   return (
     <div className={tooltip.className} style={tooltip.style}>
       <div className="mb-label text-ink font-semibold">{bin.label}</div>
-      <div className="text-dim">{bin.count.toLocaleString('en-US')} sessions</div>
+      <div className="text-dim">{formatIntC(bin.count)} sessions</div>
     </div>
   );
 }
@@ -2050,7 +2078,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
         <>
           {critDays > 0 && (
             <div>
-              {/* The lane owns this alarm; inside the disclosure the count is a neutral fact. */}
+              {/* The Spend card's alarm rows own this alarm; inside the disclosure the count is a neutral fact. */}
               <Badge role="metadata">{critDays} of <window.UI.NoWrap>{dayCount} days</window.UI.NoWrap> over threshold</Badge>
             </div>
           )}
@@ -2098,9 +2126,9 @@ const PARSE_ERROR_THRESHOLD_LABEL = `Threshold (${PARSE_ERROR_CRIT_THRESHOLD * 1
 
 // Legend ↔ chart share these → the swatches cannot drift from the bars and line
 const PARSE_ERROR_COLOR = {
-  bar: 'rgb(var(--accent) / 0.65)',
-  critBar: 'rgb(var(--crit) / 0.85)',
-  threshold: 'rgb(var(--crit))', // crit tone → the line and the days that cross it read as one alarm
+  bar: 'rgb(var(--data))',
+  critBar: 'rgb(var(--crit) / 0.85)', // over the stated threshold → the one mark that takes a tone
+  threshold: 'rgb(var(--faint))', // a reference line, never a series colour
 };
 
 function ParseErrorLegendC({ hasCritDay }) {
@@ -2109,10 +2137,10 @@ function ParseErrorLegendC({ hasCritDay }) {
     <ul className="flex flex-wrap gap-x-block gap-y-list mt-label fs-meta text-dim" aria-label="Log integrity legend">
       <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.bar }}/>Unreadable entries</li>
       {hasCritDay && (
-        <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/>Day over threshold</li>
+        <li className="flex items-center gap-label-inline"><span aria-hidden="true" className={swatchClass} style={{ background: PARSE_ERROR_COLOR.critBar }}/><span className="text-crit" aria-hidden="true">{window.UI.TONE_GLYPH.crit}</span>Day over threshold</li>
       )}
       <li className="flex items-center gap-label-inline">
-        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, borderTop: `2px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
+        <span aria-hidden="true" style={{ display: 'inline-block', width: 14, borderTop: `1px dashed ${PARSE_ERROR_COLOR.threshold}` }}/>
         {PARSE_ERROR_THRESHOLD_LABEL}
       </li>
     </ul>
@@ -2140,7 +2168,7 @@ function ParseErrorChart({ rows }) {
           tickLine={false}
           width={36}
         />
-        <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
+        <Tooltip content={<ParseErrorTooltipC/>} cursor={{ fill: 'rgb(var(--ink) / 0.06)' }} isAnimationActive={false}/>
         <Bar yAxisId="count" dataKey="error_count" isAnimationActive={false}>
           {rows.map((r, i) => (
             <Cell key={i} fill={r.isCrit ? PARSE_ERROR_COLOR.critBar : PARSE_ERROR_COLOR.bar}/>
@@ -2152,7 +2180,7 @@ function ParseErrorChart({ rows }) {
           dataKey="threshold_count"
           name={PARSE_ERROR_THRESHOLD_LABEL}
           stroke={PARSE_ERROR_COLOR.threshold}
-          strokeWidth={1.5}
+          strokeWidth={1}
           strokeDasharray="4 3"
           dot={false}
           isAnimationActive={false}
@@ -2174,7 +2202,7 @@ function ParseErrorTooltipC({ active, payload }) {
         Errors {formatIntC(row.error_count)} / total {formatIntC(row.total_count)}
       </div>
       <div className="text-dim">
-        Rate {row.error_ratio_pct.toFixed(2)}% · threshold {formatIntC(Math.ceil(row.threshold_count))}{row.isCrit ? ' · over threshold' : ''}
+        Rate {window.UI.formatPct(row.error_ratio_pct)} · threshold {formatIntC(Math.ceil(row.threshold_count))}{row.isCrit ? ' · over threshold' : ''}
       </div>
     </div>
   );
@@ -2269,7 +2297,7 @@ const STOP_REASON_META = {
 };
 
 function turnStopReasonMeta(reason) {
-  const meta = STOP_REASON_META[reason] || { label: reason || '—', colorVar: '--faint', desc: '' };
+  const meta = STOP_REASON_META[reason || 'unknown'] || { label: reason, colorVar: '--faint', desc: '' };
   return { ...meta, raw: reason || '' };
 }
 
@@ -2318,7 +2346,7 @@ function getTurnHeadline(turns, sessionPopulation) {
   if (counted === 0) {
     return { value: null, note: 'No session in this window logged a turn count.' };
   }
-  const value = (Number(turns.avg_turns_per_session) || 0).toFixed(1);
+  const value = window.UI.formatDecimal(Number(turns.avg_turns_per_session) || 0);
   const note = counted >= sessionPopulation
     ? `turns per session, across ${formatIntC(counted)} sessions`
     : `turns per session, over the ${formatIntC(counted)} of ${formatIntC(sessionPopulation)} sessions that logged a turn count`;
@@ -2330,7 +2358,7 @@ function getTurnHeadline(turns, sessionPopulation) {
 function TurnAggregateRow({ turns, sessionPopulation }) {
   const headline = getTurnHeadline(turns, sessionPopulation);
   const secondary = [
-    { label: 'Avg turns per logged event', value: (Number(turns.avg_turns) || 0).toFixed(2) },
+    { label: 'Avg turns per logged event', value: window.UI.formatDecimal(Number(turns.avg_turns) || 0) },
     { label: 'Most turns in one event', value: formatIntC(Number(turns.max_turns) || 0) },
     { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
   ];
@@ -2381,11 +2409,11 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
               </div>
             </TableCell>
             <TableCell view={view} textRole="meta" label="Events" isNumeric>
-              {/* inline bar normalised to the max row (sandbox-safe, no chart runtime) */}
+              {/* inline bar normalised to the max row (sandbox-safe, no chart runtime) · a quantity → --data, never the reason's colour */}
               <div className="flex items-center justify-end gap-label">
                 <span
                   className="inline-block h-1.5 rounded-sm"
-                  style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: `rgb(var(${meta.colorVar}) / 0.7)` }}
+                  style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: 'rgb(var(--data))' }}
                 />
                 <span className="tabular-nums">{formatIntC(events)}</span>
               </div>
@@ -2393,10 +2421,10 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
             <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
               {formatIntC(sessions)}
               {sessionShare !== null && (
-                <span className="text-dim"> · {(sessionShare * 100).toFixed(0)}%</span>
+                <span className="text-dim"> · {window.UI.formatPct(sessionShare * 100, 0)}</span>
               )}
             </TableCell>
-            <TableCell view={view} textRole="meta" label="Event share" isNumeric>{(pct * 100).toFixed(1)}%</TableCell>
+            <TableCell view={view} textRole="meta" label="Event share" isNumeric>{window.UI.formatPct(pct * 100, 1)}</TableCell>
           </TableRow>
         );
       })}
@@ -2470,8 +2498,8 @@ function computeSessionBins(sessions) {
   }));
 }
 
-// series 첫→끝 변화율 (%) — KPI delta 화살표.
-// 길이 < 2 또는 baseline=0 이면 null (KPI Delta 가 typeof==='number' 체크).
+// series 첫→끝 변화율 (%) — computePriorDelta 의 이전 창 대비 delta.
+// 길이 < 2 또는 baseline=0 이면 null.
 function computeSparkDeltaC(series) {
   if (!Array.isArray(series) || series.length < 2) return null;
   const first = Number(series[0]) || 0;

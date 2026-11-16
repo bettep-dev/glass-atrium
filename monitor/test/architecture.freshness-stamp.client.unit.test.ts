@@ -35,11 +35,6 @@ interface PartRow {
   nodeIds: string[];
 }
 
-interface MapVerdict {
-  tone: string;
-  freshness: FreshnessInput;
-}
-
 interface StampSandbox {
   window: {
     UI: {
@@ -48,7 +43,7 @@ interface StampSandbox {
     };
   };
   getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], hasMap: boolean) => FreshnessInput;
-  getPageVerdictAR: (partRows: PartRow[], caption: string, nodeIndex: null, freshness: FreshnessInput) => MapVerdict;
+  getPartHealthStatusAR: (partRows: PartRow[], freshness: FreshnessInput & { now: number }) => { tone: string; text: string } | null;
   getPartStatusAR: (row: PartRow, freshness: FreshnessInput & { now: number }) => { tone: string | null; text: string };
   getMapCopyNoteAR: (diagState: RegionState) => string | null;
 }
@@ -89,19 +84,17 @@ function getPart(id: string, tone: string | null): PartRow {
   return { id, name: id, tone, nodeIds: [] };
 }
 
-test("the map verdict follows the stamp's freshness: a failed re-read over an all-ok map reads Last known", () => {
-  const okParts = [getPart("pg", "ok"), getPart("hooks", "ok")];
+test("the Part health head status follows the stamp's freshness: a failed re-read over a flagged part reads Last known", () => {
+  const parts = [getPart("pg", "crit"), getPart("hooks", "ok")];
   const rows = [
-    { name: "settled read", regions: [HELD, HELD], expected: "Healthy" },
-    { name: "re-read failed over held data", regions: [FAILED_OVER_HELD, HELD], expected: "Last known" },
-    { name: "every re-read failed", regions: [FAILED_OVER_HELD, FAILED_OVER_HELD], expected: "Last known" },
+    { name: "settled read", regions: [HELD, HELD], expected: "1 critical" },
+    { name: "re-read failed over held data", regions: [FAILED_OVER_HELD, HELD], expected: "1 critical · Last known" },
+    { name: "every re-read failed", regions: [FAILED_OVER_HELD, FAILED_OVER_HELD], expected: "1 critical · Last known" },
   ];
 
   for (const row of rows) {
-    const freshness = sandbox.getFreshnessInputAR(READ_AT, row.regions, true);
-    const verdict = sandbox.getPageVerdictAR(okParts, "All 2 parts ok", null, freshness);
-    const shown = sandbox.window.UI.getFreshnessVerdict({ ...verdict.freshness, tone: verdict.tone, now: NOW });
-    assert.strictEqual(shown.label, row.expected, row.name);
+    const status = sandbox.getPartHealthStatusAR(parts, { ...sandbox.getFreshnessInputAR(READ_AT, row.regions, true), now: NOW });
+    assert.strictEqual(status?.text, row.expected, row.name);
   }
 });
 

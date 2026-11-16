@@ -13,7 +13,7 @@
 //
 // Runner: npx tsx --test test/improvement.reject-buckets.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -40,9 +40,11 @@ type BoardColumns = Record<"safety" | "applied" | "rejected", Array<{ id: number
 
 interface SplitSandbox {
   React: { createElement: unknown };
+  window: { UI: { CardInfo: unknown } };
   RejectSparkI: (props: { trend: Array<{ reject: number }> }) => RecordedElement;
   RejectBucketSplitI: (props: {
     summary: RejectBucketSummary | null | undefined;
+    trend?: Array<{ date: string; verified: number; reject: number }>;
   }) => RecordedElement | null;
   groupByColumnI: (proposals: Array<{ id: number; status: string }>) => BoardColumns;
   CompactProposalCardI: (props: {
@@ -134,7 +136,6 @@ type HeaderProps = {
   summary: RejectBucketSummary | null;
   label: string;
   symbol: string;
-  trend: Array<{ date: string; verified: number; reject: number }>;
 };
 
 const renderHeader = (props: Partial<HeaderProps>) =>
@@ -143,32 +144,59 @@ const renderHeader = (props: Partial<HeaderProps>) =>
     summary: null,
     label: "Rejected",
     symbol: "✕",
-    trend: [],
     ...props,
   });
 
-// Header count + cause split below it share one population → the split sums to the count.
-test("the rejected header counts the same day window its cause split breaks down", () => {
-  const texts = collectStrings(renderHeader({ summary: MIXED }), []);
-  const splitTotal = Object.values(readCounts(sandbox.RejectBucketSplitI({ summary: MIXED })))
-    .map(Number)
-    .reduce((sum, count) => sum + count, 0);
+// Visible strings only — the ⓘ drawer body (CardInfo children) is not on the page.
+function collectVisibleStrings(node: unknown, out: string[]): string[] {
+  if (isElement(node) && node.type === sandbox.window.UI.CardInfo) return out;
+  if (typeof node === "string") {
+    out.push(node);
+    return out;
+  }
+  if (!isElement(node)) return out;
+  const children = node.props.children;
+  const list = Array.isArray(children) ? children : [children];
+  for (const child of list) collectVisibleStrings(child, out);
+  return out;
+}
 
-  assert.ok(texts.includes(String(splitTotal)), texts.join(" | "));
-  assert.ok(!texts.includes("40"), "the fetched row count is a different population");
-  assert.match(texts.join(" "), /last 30 days/i);
+const summaryRows = [
+  { name: "with a server window", summary: MIXED },
+  { name: "without a server window", summary: null },
+];
+
+// The head heads the lane's rows → its count is their count, whatever the server window holds.
+describe("the rejected header counts the rows it heads and names their basis", () => {
+  for (const row of summaryRows) {
+    test(row.name, () => {
+      const visible = collectVisibleStrings(renderHeader({ summary: row.summary }), []);
+
+      assert.ok(visible.includes("40"), visible.join(" | "));
+      assert.match(visible.join(" "), /latest 50/i);
+      assert.doesNotMatch(visible.join(" "), /last \d+ days/i, "the window basis stays behind ⓘ");
+    });
+  }
 });
 
-test("without a server window the rejected header counts the fetched rows and says so", () => {
-  const texts = collectStrings(renderHeader({ summary: null }), []);
+test("the rejected header keeps the day window's total behind its ⓘ", () => {
+  const all = collectStrings(renderHeader({ summary: MIXED }), []).join(" ");
+  const visible = collectVisibleStrings(renderHeader({ summary: MIXED }), []);
 
-  assert.ok(texts.includes("40"), texts.join(" | "));
-  assert.match(texts.join(" "), /latest 50/i);
+  assert.ok(!visible.includes(String(MIXED.total)), visible.join(" | "));
+  assert.match(all, new RegExp(`${MIXED.total} rejected in the last ${MIXED.window_days} days`));
 });
 
-test("the rejected header captions its sparkline with a unit", () => {
+test("the cause split names the day window it counts", () => {
+  const texts = collectStrings(sandbox.RejectBucketSplitI({ summary: MIXED }), []).join(" ");
+
+  assert.match(texts, new RegExp(`last ${MIXED.window_days} days`));
+});
+
+test("the cause split captions its sparkline with a unit", () => {
   const texts = collectStrings(
-    renderHeader({
+    sandbox.RejectBucketSplitI({
+      summary: MIXED,
       trend: [
         { date: "2026-09-24", verified: 1, reject: 2 },
         { date: "2026-09-25", verified: 2, reject: 1 },
@@ -198,6 +226,14 @@ for (const row of sparkRows) {
     assert.match(name, new RegExp(`${total} in total`));
   });
 }
+
+// design.md §4.3: rejections per day are a quantity series, and a severity colour is never a series colour
+test("the rejection sparkline draws its series in the data colour", () => {
+  const spark = sandbox.RejectSparkI({ trend: [2, 5, 1].map((reject) => ({ reject })) });
+  const line = spark.props.children as RecordedElement;
+
+  assert.equal(line.props.stroke, "rgb(var(--data))");
+});
 
 // The board renders safety from the actionable feed and only applied / rejected from the
 // terminal feed, so a terminal row grouped anywhere else leaves the board.
@@ -243,3 +279,22 @@ for (const row of rejectedColumnRows) {
     assert.equal(/declined/i.test(name), row.isVerdict, name);
   });
 }
+
+// A lane with no rejection in its window has nothing to break down or plot: a split of
+// zeros and a flat line spend the head's width on a fact the count already states.
+describe("a rejected lane with nothing in its window draws no cause split and no sparkline", () => {
+  const EMPTY_WINDOW: RejectBucketSummary = {
+    window_days: 30,
+    infra_count: 0,
+    quality_count: 0,
+    lifecycle_count: 0,
+    total: 0,
+  };
+  const FLAT_TREND = [
+    { date: "2026-11-14", verified: 0, reject: 0 },
+    { date: "2026-11-15", verified: 1, reject: 0 },
+  ];
+  test("the cause split and its sparkline render nothing", () => {
+    assert.equal(sandbox.RejectBucketSplitI({ summary: EMPTY_WINDOW, trend: FLAT_TREND }), null);
+  });
+});

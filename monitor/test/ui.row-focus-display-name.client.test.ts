@@ -1,4 +1,4 @@
-// Row focus (one Tab stop per row set / chip group, arrows inside) and the shared display-name map with hidden empty fields.
+// Row focus (one Tab stop per row set, arrows inside) and the shared display-name map with hidden empty fields.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -158,37 +158,6 @@ describe("row focus props drive DOM focus", () => {
     const active: number[] = [];
     (getRowFocusProps({ index: 2, activeIndex: 0, count: 3, onActiveChange: (i: number) => active.push(i) }).onFocus as () => void)();
     assert.deepEqual(active, [2]);
-  });
-});
-
-describe("chip group", () => {
-  const chips = [
-    { key: "all", label: "All", isPressed: true },
-    { key: "fail", label: "Failed", isPressed: false },
-    { key: "done", label: "Done", isPressed: false },
-  ];
-
-  test("is a named toolbar of toggle buttons with a single Tab stop", () => {
-    const tree = rendered("ChipGroup", { label: "Result filter", chips, onToggle: () => undefined });
-    const [toolbar] = findNodes(tree, (n) => n.props.role === "toolbar");
-    const buttons = findNodes(tree, (n) => n.type === "button");
-    assert.equal(toolbar.props["aria-label"], "Result filter");
-    assert.deepEqual(buttons.map((b) => b.props["aria-pressed"]), [true, false, false]);
-    assert.equal(buttons.filter((b) => b.props.tabIndex === 0).length, 1);
-    assert.equal(collectText(tree).replace(/\s+/g, ""), "AllFailedDone");
-  });
-
-  test("ArrowRight moves focus to the next chip", () => {
-    const focused: unknown[] = [];
-    const buttons = [0, 1, 2].map(() => {
-      const b = { focus: () => focused.push(b) };
-      return b;
-    });
-    const tree = rendered("ChipGroup", { label: "Result filter", chips, onToggle: () => undefined });
-    const [toolbar] = findNodes(tree, (n) => n.props.role === "toolbar");
-    const event = keyEvent("ArrowRight", { querySelectorAll: () => buttons }, buttons[0]);
-    (toolbar.props.onKeyDown as (e: unknown) => void)(event);
-    assert.equal(focused[0], buttons[1]);
   });
 });
 

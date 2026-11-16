@@ -39,7 +39,7 @@ interface Sandbox {
   KanbanCardI: Component;
   KanbanColumnI: Component;
   CompactProposalCardI: Component;
-  ViewToggleI: Component;
+  ViewTabsI: Component;
   LoopOutputGroupI: Component;
   AppliedHeroHeaderI: Component;
   LedgerSectionHeadI: Component;
@@ -52,8 +52,10 @@ interface Sandbox {
   StatusBandI: Component;
   RejectedHeaderI: Component;
   BoardRowI: Component;
-  HeldCauseStripI: Component;
+  HeldCauseTableI: Component;
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
+  confidenceBadgeMetaI: (value: unknown) => { label: string };
+  ConfidenceBadgeI: Component;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -122,6 +124,24 @@ test("a live candidate row names its agent once, never as a label suffix", () =>
   const text = visibleText(sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 3, onClick: () => {} }));
   assert.equal(occurrences(text, AGENT), 1, text);
   assert.ok(!text.includes("|"), text);
+});
+
+// the status glyph stands with no word beside it → it takes the alarm glyph size, the size that clears 3:1
+describe("a live candidate row draws its lone status glyph as the shared tone mark", () => {
+  const rows = [
+    { name: "a spotted pattern", status: "identified", tone: "info" },
+    { name: "a proposed pattern", status: "proposed", tone: "warn" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const pattern = { id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 3, status: row.status };
+      const tree = sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 3, onClick: () => {} });
+      const marks = findAll(tree, (el) => el.type === sandbox.window.UI.ToneGlyph);
+
+      assert.equal(marks.length, 1);
+      assert.equal(marks[0].props.tone, row.tone);
+    });
+  }
 });
 
 test("live rows sharing a title print it once, each row led by its agent", () => {
@@ -199,7 +219,8 @@ test("a rejected group prints its shared pattern label once, not per row", () =>
   assert.ok(text.includes("first reason") && text.includes("second reason"), text);
 });
 
-test("the board header states the window its applied and rejected counts cover", () => {
+// the sub slot carries the head Status → the window rides the header's ⓘ
+test("the board header's info states the window its applied and rejected counts cover", () => {
   const tree = sandbox.KanbanCardI({
     state: { status: "ready", data: {} },
     columnRows: { safety: [], applied: [], rejected: [] },
@@ -208,7 +229,42 @@ test("the board header states the window its applied and rejected counts cover",
   });
   const [head] = findAll(tree, (el) => el.props.title === "Suggestion board");
   assert.ok(head, "board header missing");
-  assert.match(String(head.props.sub), /latest 50 suggestions/);
+  assert.match(String(head.props.info), /latest 50 suggestions/);
+});
+
+describe("the board draws its lanes only when some lane holds a suggestion", () => {
+  const APPLIED_ROW = { id: 9, status: "applied", target_agent: AGENT, pattern_label: SIGNATURE };
+  const rows = [
+    { name: "every lane empty → the head and one line", columnRows: { safety: [], applied: [], rejected: [] }, lanes: 0, lines: 1 },
+    { name: "an applied suggestion → both terminal lanes, no empty line", columnRows: { applied: [APPLIED_ROW] }, lanes: 2, lines: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = sandbox.KanbanCardI({
+        state: { status: "ready", data: {} },
+        columnRows: row.columnRows,
+        onRowClick: () => {},
+        onRetry: () => {},
+      });
+      const lines = findAll(tree, (el) => el.type === sandbox.window.UI.EmptyState);
+      assert.equal(findAll(tree, (el) => el.type === sandbox.KanbanColumnI).length, row.lanes);
+      assert.equal(lines.length, row.lines);
+      for (const line of lines) assert.equal(line.props.hint, undefined, "the empty board states one line, no hint");
+    });
+  }
+});
+
+test("the applied and rejected lane heads share one line shape: glyph, label and count at the meta size", () => {
+  const heads = [
+    sandbox.AppliedHeroHeaderI({ count: 9, label: "Applied", symbol: "✓" }),
+    sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕" }),
+  ];
+  for (const head of heads) {
+    assert.ok(head, "lane head missing");
+    assert.match(classOf(head), /\bi-col-header\b/);
+    assert.match(classOf(head), /\bfs-meta\b/, classOf(head));
+    assert.deepEqual(findAll(head, (el) => /\bfs-stat\b/.test(classOf(el))), [], "no figure outgrows the shared line");
+  }
 });
 
 test("recurrence figure columns keep a gap so adjacent headers never run together", () => {
@@ -223,16 +279,12 @@ function classOf(el: RecordedElement): string {
   return String(el.props.className ?? "");
 }
 
-test("the view toggle is a segmented control whose pressed option alone carries aria-pressed", () => {
+test("the view switch is the shared tab row with the open view alone selected, never the range control", () => {
   for (const view of ["operator", "instrumentation"]) {
-    const tree = sandbox.ViewToggleI({ view, onChange: () => {} });
-    assert.ok(tree && /\bseg\b/.test(classOf(tree)), "toggle must use the shared .seg selected-state control");
-    const buttons = findAll(tree, (el) => el.type === "button");
-    assert.equal(buttons.length, 2);
-    const pressed = buttons.filter((b) => b.props["aria-pressed"] === true).map((b) => visibleText(b));
-    assert.equal(pressed.length, 1, view);
-    assert.match(pressed[0], view === "operator" ? /Operator/ : /Instrumentation/);
-    for (const b of buttons) assert.doesNotMatch(classOf(b), /\btext-(ink|faint)\b/, "a colour class would mask the selected fill");
+    const tree = sandbox.ViewTabsI({ view, onChange: () => {} });
+    assert.equal(tree?.type, sandbox.window.UI.Tabs, "a view switch drawn as the segmented range control reads as a range");
+    assert.equal(tree?.props.value, view);
+    assert.deepEqual(Array.from(tree?.props.tabs as Array<{ key: string }>, (t) => t.key), ["operator", "instrumentation"]);
   }
 });
 
@@ -255,6 +307,54 @@ test("applied and declined rows render through one row atom with the prose set i
   }
 });
 
+test("board rows print a cycle date in the day form and sans figures, and a missing date as None", () => {
+  const dated = [
+    sandbox.AppliedHistoryRowI({ row: { id: 7, target_agent: AGENT, cycle_date: "2026-09-20" }, onClick: () => {} }),
+    sandbox.CompactProposalCardI({ row: { id: 8, cycle_date: "2026-09-21" }, onClick: () => {} }),
+  ];
+  for (const [i, tree] of dated.entries()) {
+    const day = `09-${20 + i}`;
+    const [stamp] = findAll(expand(tree), (el) => el.type === "span" && visibleText(el) === day);
+    assert.ok(stamp, `row ${i}: the date reads ${day}`);
+    assert.doesNotMatch(classOf(stamp), /\bfont-mono\b/, `row ${i}: a date is set in sans`);
+  }
+
+  const undated = expand(sandbox.AppliedHistoryRowI({ row: { id: 9, target_agent: AGENT }, onClick: () => {} }));
+  const absent = findAll(undated, (el) => el.type === sandbox.window.UI.AbsentValue);
+  assert.equal(absent.length, 1, "a row with no cycle date shows the nothing atom");
+  assert.equal(absent[0].props.kind, "none", "a loaded row without a date is known-empty");
+  assert.ok(!visibleText(undated).includes("—"), visibleText(undated));
+});
+
+describe("a suggestion's confidence reads in the shared percentage form", () => {
+  const rows = [
+    { name: "a fractional share keeps one decimal", value: 0.734, label: "Confidence 73.4%" },
+    { name: "a whole share drops the .0", value: 0.7, label: "Confidence 70%" },
+    { name: "a non-zero share never rounds to 0%", value: 0.0004, label: "Confidence <0.1%" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(sandbox.confidenceBadgeMetaI(row.value).label, row.label);
+    });
+  }
+});
+
+describe("a suggestion card draws a confidence chip only for a measured confidence", () => {
+  const rows = [
+    { name: "never measured (null) → no chip", value: null, hasChip: false },
+    { name: "field absent → no chip", value: undefined, hasChip: false },
+    { name: "not a number → no chip", value: "pending", hasChip: false },
+    { name: "a measured zero → its chip", value: 0, hasChip: true },
+    { name: "a measured share → its chip", value: 0.734, hasChip: true },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const chip = sandbox.ConfidenceBadgeI({ value: row.value });
+      assert.equal(chip != null, row.hasChip);
+    });
+  }
+});
+
 test("a board column may shrink below its content so long rows ellipsise instead of overflowing", () => {
   const column = { key: "rejected", label: "Rejected", symbol: "✕", variant: "compact" };
   const tree = sandbox.KanbanColumnI({ column, rows: [], onRowClick: () => {} });
@@ -266,6 +366,7 @@ test("the applied count sits below the status band's figure size", () => {
   const [count] = findAll(tree, (el) => el.props.children === "9");
   assert.ok(count, "count cell missing");
   assert.doesNotMatch(classOf(count), /\bfs-display\b/);
+  assert.doesNotMatch(classOf(count), /\bfont-mono\b/, "a count is set in sans figures");
 });
 
 test("loop output cards reflow instead of squeezing three abreast", () => {
@@ -468,8 +569,10 @@ test("ledger rows set their label at the body size, leaving the meta size to the
 
   assert.match(classOf(item), /\bfs-body\b/);
   assert.doesNotMatch(classOf(item), /\bfs-meta\b/);
-  const [stamp] = findAll(item, (el) => /\bfont-mono\b/.test(classOf(el)));
+  const [stamp] = findAll(item, (el) => visibleText(el) === "2026-09-10" && el.type === "span");
+  assert.ok(stamp, "the first-seen date reads YYYY-MM-DD");
   assert.match(classOf(stamp), /\bfs-meta\b/);
+  assert.doesNotMatch(classOf(stamp), /\bfont-mono\b/, "a date is set in sans");
 });
 
 test("a live candidate group heads its rows at the body size", () => {
@@ -488,30 +591,43 @@ test("a suggestion board row sets its title at the body size, leaving ids and da
   assert.doesNotMatch(classOf(title), /\bfs-meta\b/);
 });
 
-test("a held cause reads as one label line, its remedy kept off the strip for the ledger's drawer", () => {
+test("a held cause reads as one table row of cause, held count and agents, its remedy kept for the ledger's drawer", () => {
   const hint = "Raise the cap after a human reads the rows";
-  const tree = sandbox.HeldCauseStripI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
-  const text = visibleText(tree);
+  const tree = sandbox.HeldCauseTableI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
+  const [row] = findAll(tree, (el) => el.type === "tr" && visibleText(el).includes("Repeat-apply cap"));
 
-  assert.match(text, /Repeat-apply cap/);
-  assert.match(text, /2 held/);
-  assert.doesNotMatch(text, /Raise the cap/, "remedy prose on the strip");
+  assert.ok(row, visibleText(tree));
+  assert.deepEqual(findAll(row, (el) => el.type === "td").map((cell) => visibleText(cell).trim()), ["Repeat-apply cap", "2", "1"]);
+  assert.doesNotMatch(visibleText(tree), /Raise the cap/, "remedy prose in the table");
 });
 
 test("the rejected column header never wraps its label, count or basis", () => {
-  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕", trend: [] });
+  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: null, label: "Rejected", symbol: "✕" });
 
   assert.ok(tree, "the rejected header renders nothing");
   assert.match(classOf(tree), /\bwhitespace-nowrap\b/);
 });
 
 test("the rejected column header's basis ellipsizes with its full text in the title", () => {
-  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: { window_days: 30, total: 12 }, label: "Rejected", symbol: "✕", trend: [] });
+  const tree = sandbox.RejectedHeaderI({ rowCount: 4, summary: { window_days: 30, total: 12 }, label: "Rejected", symbol: "✕" });
   const [basis] = findAll(tree, (el) => /\btruncate\b/.test(classOf(el)));
 
   assert.ok(basis, "the basis is the header's truncating slot");
-  assert.equal(visibleText(basis), "last 30 days");
-  assert.equal(basis.props.title, "last 30 days", "a clipped basis keeps its whole text in the title");
+  assert.equal(visibleText(basis), "of the latest 50");
+  assert.equal(basis.props.title, "of the latest 50", "a clipped basis keeps its whole text in the title");
+});
+
+test("the drawer keeps the full review stamp in the title only", () => {
+  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 1, approval_tier: "auto", reviewed_at: "2026-09-10T05:20:07Z" }));
+  const stamped = findAll(tree, (el) => typeof el.props.title === "string" && el.props.title.includes("2026-09-10 14:20:07"));
+  assert.equal(stamped.length, 1);
+  assert.equal(visibleText(stamped[0]), "09-10 14:20");
+});
+
+test("a learning status the board does not know keeps its word, and a missing one reads None", () => {
+  const getBadge = (sandbox as unknown as { learningStatusBadgeI: (s: unknown) => { label: string } }).learningStatusBadgeI;
+  assert.equal(getBadge(null).label, "None");
+  assert.equal(getBadge("archived").label, "archived");
 });
 
 test("the drawer names the approval tier in words, never echoing the raw tier key", () => {
@@ -530,6 +646,7 @@ describe("the drawer prints each field in words, never the stored machine key", 
     cycle_date: "2026-09-10",
     haiku_status: "skipped:quota-limit",
     cost_guard_state: "warn",
+    reviewed_at: "2026-09-10T05:20:07Z",
   };
   const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
   const terms = findAll(tree, (el) => el.type === "dt");
@@ -540,7 +657,8 @@ describe("the drawer prints each field in words, never the stored machine key", 
     { name: "classification", label: "Classification", printed: "Recommended to apply", mono: false },
     { name: "model check", label: "Model check", printed: "Skipped — quota limit", mono: false },
     { name: "cost guard", label: "Cost guard", printed: "Quota or budget cap hit", mono: false },
-    { name: "cycle date", label: "Cycle date", printed: "2026/09/10", mono: true },
+    { name: "cycle date", label: "Cycle date", printed: "2026-09-10", mono: false },
+    { name: "review time in the Day + time form", label: "Reviewed at", printed: "09-10 14:20", mono: false },
     { name: "target file path", label: "Target file", printed: row.target_file, mono: true },
   ];
   for (const item of rows) {
@@ -550,6 +668,43 @@ describe("the drawer prints each field in words, never the stored machine key", 
       assert.ok(value, `${item.label} is printed`);
       assert.equal(visibleText(value), item.printed);
       assert.equal(/\bfont-mono\b/.test(classOf(value)), item.mono, `${item.label} mono`);
+    });
+  }
+});
+
+test("the run breakdown names its window in the short form the band's Applied, 7d uses", () => {
+  const screen = sandbox as unknown as Record<string, Component>;
+  assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /Run breakdown \(7d\)/);
+});
+
+describe("Learning labels read in sentence case, never letter-spaced capitals", () => {
+  const screen = sandbox as unknown as Record<string, Component>;
+  const rows = [
+    {
+      name: "pattern drawer",
+      tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ kind: "pattern", id: 7, pattern_signature: SIGNATURE, agent: AGENT, example: "e", last_transition_reason: "r" })),
+      label: /Last transition|LAST TRANSITION/,
+    },
+    {
+      name: "suggestion drawer with a pre-verify result",
+      tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 9, approval_tier: "auto", pattern_label: "Scope note", rationale: "Repeated overrun", pre_verify_status: "failed", pre_verify_passed: false, pre_verify_rationale: "One axis failed", pre_verify_axes: { C1: true, C4: false } })),
+      label: /Pattern label[\s\S]*Rationale[\s\S]*Pre-verify/,
+    },
+    { name: "run breakdown", tree: () => screen.CycleDecompositionRowI({ stats: {} }), label: /Run breakdown/ },
+    { name: "not-judged rejected row", tree: () => screen.RejectedCompactListI({ rows: [{ id: 3, summary: "s", status: "unadjudicated", cycle_date: "2026-09-10" }], onRowClick: () => {} }), label: /Not judged/ },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree: RecordedElement[] = [];
+      findRendered(row.tree(), (el) => {
+        tree.push(el);
+        return false;
+      });
+      assert.match(visibleText(row.tree()), row.label);
+      const capped = tree.filter((el) => /\b(uppercase|tracking-wider)\b/.test(classOf(el)));
+      assert.deepEqual(capped.map((el) => visibleText(el)), []);
+      const shouted = tree.map((el) => visibleText(el).trim()).filter((text) => /^[A-Z][A-Z -]{3,}$/.test(text));
+      assert.deepEqual(shouted, [], "a label typed in capitals");
     });
   }
 });

@@ -267,7 +267,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .btn.danger {
 	background: rgb(var(--crit));
-	color: rgb(var(--elev)); /* knock-out like the alert-card glyph — white on the pale dark-theme crit is 2.77 */
+	color: rgb(var(--elev)); /* knock-out — white on the pale dark-theme crit is 2.77 */
 	border-color: rgb(var(--crit));
 }
 .btn.ghost {
@@ -380,12 +380,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-width: 24px;
 	appearance: none;
 	margin: 0;
-	border: 1px solid transparent; /* the toggle edge's room → no state resizes the chip, and a non-toggle chip stays borderless */
+	border: 1px solid transparent; /* the bordered .btn family's box, drawn borderless */
 	cursor: pointer;
-}
-/* a toggle chip rests on the control edge → its box reads at rest, not only once selected */
-.pill--interactive[aria-pressed] {
-	border-color: rgb(var(--control-edge));
 }
 
 /* a level above the rows of a list inside a card (§12.9) — the one row of a card body on the page ground, dim 13/600, its count a tag count badge.
@@ -1581,28 +1577,6 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-width: 0;
 }
 
-/* Tile split (TileSplit) — value + badge over detail by default */
-/* 641px to below xl: the detail sits beside the lead while it keeps its basis, else it wraps under the lead */
-.tile-split {
-	--tile-split-detail-basis: 16rem; /* a two-line hint's width (a size, outside the ladder) */
-	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	gap: var(--space-1) var(--space-4);
-	align-items: start;
-}
-.tile-split-lead,
-.tile-split-detail { min-width: 0; }
-
-@media (min-width: 641px) and (max-width: 1279px) {
-	.tile-split {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-start;
-	}
-	.tile-split-lead { flex: 0 1 auto; max-width: 100%; }
-	.tile-split-detail { flex: 1 1 var(--tile-split-detail-basis); }
-}
-
 @media (min-width: 1280px) {
 	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
@@ -1882,8 +1856,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 }
 /* a pressed toggle keeps its resting fill → an ink edge marks it, never the --selected-fill inversion */
 .btn[aria-pressed="true"],
-.btn[aria-pressed="true"]:hover,
-.pill--interactive[aria-pressed="true"] {
+.btn[aria-pressed="true"]:hover {
 	border-color: rgb(var(--ink));
 	color: rgb(var(--ink));
 }
@@ -1958,7 +1931,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	color: rgb(var(--ink));
 }
 /* value ↔ chevron = the 6 glyph gap of 14px text, over the 4 inline-label gap */
-.filter-trigger > .disclosure-chevron {
+.filter-trigger > .filter-trigger-chevron {
 	margin-inline-start: calc(var(--space-1_5) - var(--gap-label-inline));
 }
 
@@ -2198,16 +2171,20 @@ a.prose-link:hover {
 }
 
 /* stat row — one card's top-line numbers: a hairline between stats, no tile per stat; stacked on a hairline at 640px or narrower */
+/* label · value · context rows shared by every stat (subgrid) → a wrapped label lowers the whole value line, never its own value */
 .stat-row {
-	display: flex;
+	display: grid;
+	grid-auto-flow: column;
+	grid-auto-columns: minmax(0, 1fr);
+	grid-template-rows: repeat(3, auto);
 	margin: 0;
 }
 .stat {
-	flex: 1 1 0;
+	grid-row: span 3;
 	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-stack);
+	display: grid;
+	grid-template-rows: subgrid;
+	row-gap: 0;
 	padding-inline: var(--space-4);
 	border-inline-start: 1px solid rgb(var(--line));
 }
@@ -2222,8 +2199,9 @@ a.prose-link:hover {
 	line-height: 1.4;
 	color: rgb(var(--dim));
 }
+/* margin, not row-gap → a row with no context line keeps no empty gap below its values */
 .stat-value {
-	margin: 0;
+	margin: var(--gap-stack) 0 0;
 	font-size: var(--fs-stat);
 	font-weight: 600;
 	line-height: 1.3;
@@ -2237,14 +2215,25 @@ a.prose-link:hover {
 	font-weight: 500;
 	color: rgb(var(--dim));
 }
+/* a box one text line tall → its content centres on that line, not on the Icon's text nudge: a tone glyph, a stat's Retry */
+.one-line-box {
+	display: inline-flex;
+	align-items: center;
+	height: 1lh;
+	vertical-align: top;
+}
+/* a head Status spaces its glyph with its own flex gap → only the stat value line adds this one */
+.stat-value .tone-glyph {
+	margin-inline-end: var(--gap-label-inline);
+}
 .stat-context {
-	margin: 0;
+	margin: var(--gap-stack) 0 0;
 	font-size: var(--fs-meta);
 	line-height: 1.4;
 	color: rgb(var(--dim));
 }
 @media (max-width: 640px) {
-	.stat-row { flex-direction: column; }
+	.stat-row { display: flex; flex-direction: column; }
 	.stat,
 	.stat:first-child,
 	.stat:last-child {
@@ -2256,164 +2245,6 @@ a.prose-link:hover {
 		padding-block-start: 0;
 		border-block-start: 0;
 	}
-}
-
-.kpi {
-	background: rgb(var(--elev));
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-card);
-	padding: var(--card-pad);
-	position: relative;
-	transition: border-color 0.12s;
-	min-height: 110px;
-	width: 100%;
-	text-align: left;
-}
-/* only a clickable tile reads as one — a labelled group keeps the default cursor and a still border */
-button.kpi {
-	cursor: pointer;
-}
-button.kpi:hover {
-	border-color: rgb(var(--faint));
-}
-
-/* UI.KPI anatomy — label row · value row · delta · hint · foot */
-.kpi-tile {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-}
-/* 1 label row — one --lh-row line box; the label ellipsizes, the aside window tag never does */
-.kpi-head {
-	display: flex;
-	align-items: baseline;
-	gap: var(--space-1);
-	min-width: 0;
-	height: var(--lh-row);
-	line-height: var(--lh-row); /* an h2 label row takes preflight's inherited size and zero margin */
-}
-.kpi--info .kpi-head {
-	/* room for the ⓘ (its 32px box ends at the edge offset below) + the 4px meta gap before it */
-	padding-right: calc(var(--ctl-min-h) - var(--space-2) + var(--space-1));
-}
-.kpi-label-text {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	line-height: var(--lh-row);
-}
-.kpi-aside {
-	flex-shrink: 0;
-	white-space: nowrap;
-	line-height: var(--lh-row);
-}
-/* the ⓘ is placed on the label row's centre line, so a tile with one keeps its value on the band's baseline */
-/* offset, never a transform: a transform would trap the fixed drawer this slot renders into a 32px box */
-.kpi-info {
-	position: absolute;
-	top: calc(var(--card-pad) + (var(--lh-row) - var(--ctl-min-h)) / 2);
-	right: calc(var(--card-pad) - var(--space-2));
-	display: flex;
-}
-/* 2 value row — figure, unit and badge on one baseline; a badge that does not fit wraps below, whole */
-.kpi-main {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	column-gap: var(--space-2);
-	row-gap: var(--space-1);
-	margin-top: var(--space-2);
-	min-width: 0;
-}
-.kpi-main--loading {
-	align-items: center;
-}
-.kpi-main .kpi-value {
-	margin-top: 0;
-}
-/* word value: the block keeps the figure's mono strut → one baseline (half-leading differs by font size) */
-/* the word span's own line box (line-height 1) stays inside that strut */
-.kpi-value--word > .kpi-value-word {
-	font-size: var(--fs-stat);
-	font-family: "Pretendard Variable", sans-serif;
-	font-weight: 600;
-	letter-spacing: normal;
-	line-height: 1;
-}
-/* 3 delta · 4 hint — each 4 below the row above it */
-.kpi-delta-row {
-	margin-top: var(--space-1);
-}
-.kpi-delta-row .kpi-delta {
-	margin-top: 0;
-}
-/* two-line clamp — a KPI tile's plain hint and the Dashboard tile detail and hint */
-.clamp-2 {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	overflow: hidden;
-}
-/* a fact-list tile has no value row → its facts take the value row's place, 8 below the label row */
-.kpi--facts > .kpi-hint {
-	margin-top: var(--space-2);
-}
-.kpi--spark .kpi-hint {
-	padding-right: calc(var(--kpi-spark-w) + var(--space-2)); /* the spark's width, set on the tile by KPI (ui.jsx KPI_SPARK.w), + 8 */
-}
-/* split tile — the value column carries the row's top margin; the detail column starts level with it */
-.kpi-split {
-	margin-top: var(--space-2);
-}
-.kpi-split .kpi-main,
-.kpi-split .tile-split-detail > .kpi-hint:first-child {
-	margin-top: 0;
-}
-/* 5 foot — drill link / Retry pinned to the bottom, at least 8 below the last fact */
-.kpi-foot {
-	margin-top: auto;
-	padding-top: var(--space-2);
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-2);
-}
-.kpi-hint {
-	line-height: 1.45;
-	margin-top: var(--space-1);
-}
-.kpi-value {
-	font-size: var(--fs-kpi);
-	line-height: 1.15;
-	font-weight: 600;
-	letter-spacing: -0.025em;
-	margin-top: var(--space-2);
-	font-variant-numeric: tabular-nums;
-}
-.kpi-value .unit {
-	font-size: var(--fs-title); /* half of --fs-kpi → 2:1 figure-to-unit */
-	color: rgb(var(--dim));
-	font-weight: 500;
-	margin-left: var(--space-1);
-	font-family: "Pretendard Variable", sans-serif;
-}
-.kpi-delta {
-	font-size: var(--fs-meta);
-	font-family: "JetBrains Mono", monospace;
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	margin-top: 4px;
-	color: rgb(var(--dim)); /* tone rides on the arrow (Delta), never the numeral */
-}
-.kpi-spark {
-	position: absolute;
-	right: var(--card-pad);
-	bottom: var(--card-pad);
-	opacity: 0.85;
-	pointer-events: none;
 }
 
 /* skip link — off-canvas until keyboard focus lands on it (first Tab stop) */
@@ -2450,7 +2281,6 @@ button.kpi:hover {
 		justify-content: center;
 	}
 	.shell-sidebar .rail-hide,
-	.shell-sidebar .nav-badge ~ .nav-badge,
 	.shell-sidebar .nav-count ~ .nav-count {
 		position: absolute;
 		width: 1px;
@@ -2459,15 +2289,15 @@ button.kpi:hover {
 		clip: rect(0 0 0 0);
 		white-space: nowrap;
 	}
+	/* the count stacks under the icon → the icon stays whole, so two counted rows still differ by their icon */
 	.shell-sidebar .nav-item {
 		position: relative;
+		flex-direction: column;
 		justify-content: center;
+		gap: var(--space-0_5);
 		padding: 8px 0;
 	}
-	.shell-sidebar :is(.nav-badge, .nav-count) {
-		position: absolute;
-		top: 0;
-		right: 0;
+	.shell-sidebar .nav-count {
 		margin-left: 0;
 	}
 }
@@ -2491,110 +2321,90 @@ button.kpi:hover {
 	background: rgb(var(--sunken));
 	color: rgb(var(--ink));
 }
+/* --surface-raised-2 equals the light sidebar fill → the select tint; weight 500 + aria-current carry it beyond the fill */
 .nav-item.active {
-	background: rgb(var(--sunken));
+	background: var(--tint-select);
 	color: rgb(var(--ink));
 	font-weight: 500;
 }
-/* the filled nav numeral (Queue) — the Badge family's solid count, at the row end like the edged one */
+/* every nav numeral — the Badge count shape (quiet, or solid for the Queue and a crit count), at the row end */
 .nav-count {
 	margin-left: auto;
 	flex: none;
 }
-.nav-badge {
-	margin-left: auto;
-	font-family: "JetBrains Mono", monospace;
-	font-size: var(--fs-meta);
-	background: rgb(var(--sunken));
-	border: 1px solid rgb(var(--line));
-	padding: 0 var(--space-1_5);
-	border-radius: 999px;
-	color: rgb(var(--dim));
-}
 
-/* flat hairline alarm row — tone rides on the leading glyph, never a stripe or tinted fill */
-.alarm-row {
+/* one alarm-row geometry (§7.9) — glyph · content · actions on a 32 first line between 8 paddings: a one-line row is 48.
+   Tone rides on the bare leading glyph, never a stripe, a tinted fill or a tile */
+.alarm-row,
+.alert-card-grid {
 	display: grid;
-	grid-template-columns: auto 1fr auto;
-	gap: 12px;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	column-gap: var(--space-3);
 	align-items: start;
-	padding: 12px 16px;
+	padding: var(--space-2) var(--card-pad);
+}
+/* the row is its own container → its actions drop at the row's content width, wherever a screen puts the row */
+.alarm-row {
+	container-type: inline-size;
 	border-bottom: 1px solid rgb(var(--line));
 }
 .alarm-row:last-child {
 	border-bottom: none;
 }
-.alarm-row-glyph {
+/* a 32 slot → the glyph centres on the first line */
+.alarm-row-glyph,
+.alert-card-glyph {
 	display: inline-flex;
-	padding-top: 2px;
-	line-height: 1;
+	align-items: center;
+	height: var(--ctl-min-h);
+}
+/* half the 32 first line less the 20 title line → the title centres on the glyph slot */
+.alarm-row > .alarm-row-glyph + *,
+.alert-card-content {
+	padding-block: calc((var(--ctl-min-h) - var(--lh-row)) / 2);
+}
+/* two classes → outrank a same-element .fs-body (15 × 1.45 = 21.75), so the title line stays the 20 the row adds up to */
+.alarm-row > .alarm-row-glyph + *,
+.alert-card-title.alert-card-title {
+	line-height: var(--lh-row);
 }
 .alarm-row[data-tone="crit"] .alarm-row-glyph { color: rgb(var(--crit)); }
 .alarm-row[data-tone="warn"] .alarm-row-glyph { color: rgb(var(--warn)); }
 .alarm-row[data-tone="info"] .alarm-row-glyph { color: rgb(var(--info)); }
 .alarm-row[data-tone="ok"] .alarm-row-glyph { color: rgb(var(--ok)); }
+.alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
+.alarm-row-detail,
+.alert-card-body {
+	max-width: 72ch;
+	line-height: 1.4;
+}
+.alarm-row-detail {
+	display: block;
+	margin-top: 4px;
+}
 
-/* alert card — tone rides on the glyph well; never a stripe, a tinted card fill or a tone border.
-   light: solid well + knock-out glyph (a tinted light well leaves --warn at 2.81:1) · dark: tinted well + tone glyph */
+/* alert card — the alarm row on a card shell: the grid holds the padding, the shell stays neutral (no stripe, tinted fill or
+   tone border) and the bare glyph takes the tone — ≥ 3.15:1 on --elev and --sunken in both themes */
 .alert-card {
 	--alert-tone: var(--crit);
-	--alert-well-fill: rgb(var(--alert-tone));
-	--alert-glyph: rgb(var(--elev));
 	container-type: inline-size;
-	padding: 12px 16px;
+	padding: 0;
 	/* motion: effects-fast — an opacity-only entry, stopped under reduced motion */
 	animation: detailFade 150ms cubic-bezier(0.2, 0, 0, 1);
-}
-[data-theme="dark"] .alert-card {
-	--alert-well-fill: rgb(var(--alert-tone) / 0.12);
-	--alert-glyph: rgb(var(--alert-tone));
 }
 .alert-card[data-tone="crit"] { --alert-tone: var(--crit); }
 .alert-card[data-tone="warn"] { --alert-tone: var(--warn); }
 .alert-card[data-tone="info"] { --alert-tone: var(--info); }
 .alert-card[data-tone="ok"] { --alert-tone: var(--ok); }
 .alert-card[data-tone="neutral"] { --alert-tone: var(--dim); }
-.alert-card.is-inset {
-	padding: 12px;
+.alert-card-glyph {
+	color: rgb(var(--alert-tone));
 }
-.alert-card-grid {
-	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
-	column-gap: 12px;
-	align-items: start;
-}
-.alert-card-well {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: var(--ctl-min-h);
-	height: var(--ctl-min-h);
-	border-radius: var(--radius-tile);
-	background: var(--alert-well-fill);
-	color: var(--alert-glyph);
-}
-.alert-card.is-inset .alert-card-well {
-	width: 24px;
-	height: 24px;
-	border-radius: var(--radius-control);
-}
-/* 6px → the 20px title line centres on the 32px well (2px on the 24px inset well) */
 .alert-card-content {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
 	min-width: 0;
-	padding-top: 6px;
-}
-.alert-card.is-inset .alert-card-content {
-	padding-top: 2px;
-}
-.alert-card-title {
-	line-height: 20px;
-}
-.alert-card-body {
-	max-width: 72ch;
-	line-height: 1.4;
 }
 .alert-card-subjects {
 	display: flex;
@@ -2602,11 +2412,18 @@ button.kpi:hover {
 	gap: 4px;
 	margin-top: 4px;
 }
+.alarm-row-actions,
 .alert-card-actions {
 	display: flex;
 	gap: 8px;
 }
+/* a Link action is one 20 text line → the slot holds the 32 first line, so it centres on the glyph and title */
+.alarm-row-actions {
+	min-height: var(--ctl-min-h);
+	align-items: center;
+}
 @container (max-width: 36rem) {
+	.alarm-row-actions,
 	.alert-card-actions {
 		grid-column: 2;
 		margin-top: 8px;
@@ -2680,38 +2497,6 @@ button.kpi:hover {
 .detail-confirm { align-items: center; justify-content: center; }
 /* confirm 은 열린 drawer/fullscreen 위로 재차 스택 — 더 높은 z 로 위 레이어 확보. */
 .detail-overlay.detail-confirm { z-index: var(--z-confirm); }
-
-/* Page verdict (PageVerdict) — glyph carries the tone colour, the word and sentence stay ink for contrast */
-.page-verdict {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 4px 12px;
-}
-.page-verdict-tone {
-	display: inline-flex;
-	align-items: baseline;
-	gap: 6px;
-	font-weight: 600;
-	white-space: nowrap;
-}
-.page-verdict--ok .page-verdict-glyph { color: rgb(var(--ok)); }
-.page-verdict--warn .page-verdict-glyph { color: rgb(var(--warn)); }
-.page-verdict--crit .page-verdict-glyph { color: rgb(var(--crit)); }
-.page-verdict--info .page-verdict-glyph { color: rgb(var(--info)); }
-.page-verdict--neutral .page-verdict-glyph { color: rgb(var(--faint)); }
-.page-verdict-chips {
-	display: inline-flex;
-	flex-wrap: wrap;
-	gap: 8px;
-}
-/* A chip is an action beside the sentence → resting button chrome, never bare text */
-.page-verdict-chips .btn.ghost {
-	border-color: rgb(var(--line));
-	background: rgb(var(--elev));
-	color: rgb(var(--ink));
-}
-.page-verdict-chips .btn.ghost:hover { background: rgb(var(--sunken)); }
 
 /* Low-sample marker (LowSampleMark) — muted n beside a small-sample rate */
 .low-sample {
@@ -2864,14 +2649,13 @@ button.kpi:hover {
 	.alert-card {
 		animation: none;
 	}
-	.btn,
-	.kpi {
+	.btn {
 		transition: none;
 	}
 }
 
 /* ── Shared form controls (R1 subtle polish) ─────────────────────────────────
-   Chrome 정합: .btn(radius 6px·elev fill·0.12s transition·disabled opacity 0.5) + .seg/.kpi(elev resting fill) 미러 ·
+   Chrome 정합: .btn(radius 6px·elev fill·0.12s transition·disabled opacity 0.5) + .seg(elev resting fill) 미러 ·
    테두리 = 1px --control-edge(토글 resting edge — plain .btn 의 --line 아님) · focus = accent border + 전역 :focus-visible ring.
    신규 토큰 없음 — 전부 tokens.css 재참조.
    높이 = padding 6px+6px + --lh-ctl line box + 1px×2 border = --ctl-min-h(32px) 정확히. */
@@ -2896,7 +2680,7 @@ button.kpi:hover {
 	font-size: var(--ctl-font);        /* .btn 본문과 동일 — fs-body 계열 */
 	line-height: var(--ctl-line);
 	color: rgb(var(--ink));
-	background: rgb(var(--elev));       /* .btn/.seg/.kpi resting fill 정합 */
+	background: rgb(var(--elev));       /* .btn/.seg resting fill 정합 */
 	border: 1px solid rgb(var(--control-edge)); /* the control edge → the box reads at rest on every surface, one step under the --faint hover */
 	border-radius: var(--ctl-radius);  /* .btn radius 정합 */
 	transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;

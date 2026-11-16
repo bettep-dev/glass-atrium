@@ -62,7 +62,7 @@ const noop = () => undefined;
 const LONG =
   "Move the verification gate ahead of the regex removal so reviewers see the API change before the three matching suite edits, " +
   "then rerun the full suite once the gate lands so the recorded red value and the green value come from one tree";
-const getToggle = (view: string) => getMarkup("ViewToggleI", { view, onChange: noop });
+const getToggle = (view: string) => getMarkup("ViewTabsI", { view, onChange: noop });
 const getLane = () =>
   [
     getMarkup("AppliedHistoryRowI", {
@@ -131,14 +131,14 @@ after(async () => {
   await browser?.close();
 });
 
-const getOption = (view: string, label: string) => `#view-${view} .seg > button:nth-child(${TOGGLE_OPTIONS.indexOf(label as never) + 1})`;
+const getOption = (view: string, label: string) => `#view-${view} [role="tab"]:nth-child(${TOGGLE_OPTIONS.indexOf(label as never) + 1})`;
 
-describe("the Learning view toggle keeps one box per option whichever view is pressed", () => {
+describe("the Learning view tabs keep one box per tab whichever view is selected", () => {
   for (const label of TOGGLE_OPTIONS) {
-    test(`the ${label} option is as wide pressed as unpressed`, async () => {
+    test(`the ${label} tab is as wide selected as unselected`, async () => {
       const operator = await readBox(getOption("operator", label));
       const instrumentation = await readBox(getOption("instrumentation", label));
-      assert.ok(isSameBox(operator, instrumentation), `${label} ${operator.width}x${operator.height} with Operator pressed vs ${instrumentation.width}x${instrumentation.height}`);
+      assert.ok(isSameBox(operator, instrumentation), `${label} ${operator.width}x${operator.height} with Operator selected vs ${instrumentation.width}x${instrumentation.height}`);
       assert.equal(operator.height, 32);
     });
   }

@@ -101,7 +101,7 @@ async function withInstrumentationPage(width: number, check: (page: Page) => Pro
   try {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
     await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
-    await page.getByRole("button", { name: "Instrumentation", exact: true }).click();
+    await page.getByRole("tab", { name: "Instrumentation", exact: true }).click();
     await page.getByRole("heading", { name: "Add-only patches" }).waitFor({ timeout: 30_000 });
     await page.getByRole("heading", { name: "Results by check status" }).waitFor({ timeout: 30_000 });
     await page.evaluate(() => document.fonts.ready);

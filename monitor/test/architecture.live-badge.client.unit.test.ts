@@ -23,6 +23,7 @@ import { readFileSync } from "node:fs";
 import esbuild from "esbuild";
 
 import { CANONICAL_MAP } from "../src/server/architecture/diagrams-source.js";
+import { contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ARCH_SRC = resolve(__dirname, "../public/src/screens/architecture.jsx");
@@ -145,6 +146,8 @@ function createArchContext(): Record<string, unknown> {
       (DAEMON_STATUS_TONE[s] || { tone: "info" }).tone,
     daemonStatusLabel: (s: string) =>
       (DAEMON_STATUS_TONE[s] || { label: s || "—" }).label,
+    // a settled read — the freshness wording has its own tests
+    getFreshnessVerdict: (input: { tone: string; label: string }) => ({ tone: input.tone, label: input.label }),
   };
   const ctx: Record<string, unknown> = {
     window: { UI: uiStub },
@@ -353,25 +356,29 @@ test("AC-T2 판정 필드가 없으면 상태를 지어내지 않고 미상으�
   );
 });
 
-// --- default-view scale — 90% of the contain fit ---
+// default-view scale — 90% of the contain fit, under the label ceiling
 
 // the default view's share of the contain fit — paired with the screen's overview rule
 const DEFAULT_VIEW_SHARE = 0.9;
 
-// pane/graph grid spanning fits far under the retired 12px floor, around 1, and above the natural-size cap
+// largest default-view scale: the 16px label ceiling over the map's 30-unit declared label — owned here, never read from the screen
+const LABEL_CEILING_SCALE = 16 / 30;
+
+// pane/graph grid spanning fits far under the ceiling, either side of it, and above the natural-size cap
 const FIT_GRID: Array<{ name: string; dims: [number, number, number, number]; containFit: number }> = [
   { name: "a very wide graph (width fit 0.1)", dims: [400, 400, 4000, 200], containFit: 0.1 },
   { name: "a square graph larger than the pane (fit 1/3)", dims: [400, 400, 1200, 1200], containFit: 1 / 3 },
+  { name: "a graph whose 90% share lands just under the ceiling (fit 0.55)", dims: [550, 550, 1000, 1000], containFit: 0.55 },
   { name: "a graph slightly larger than the pane (fit 0.8)", dims: [1200, 800, 1500, 1000], containFit: 0.8 },
   { name: "a graph exactly the pane size (fit 1)", dims: [400, 400, 400, 400], containFit: 1 },
   { name: "a small graph capped at natural size (fit 4)", dims: [800, 800, 200, 200], containFit: 4 },
 ];
 
-describe("the default view scale is 90% of the contain fit capped at natural size", () => {
+describe("the default view scale is 90% of the contain fit, capped at natural size and at the label ceiling", () => {
   for (const row of FIT_GRID) {
     test(row.name, () => {
       const s = arch.getDefaultViewScaleAR(...row.dims);
-      const expected = DEFAULT_VIEW_SHARE * Math.min(row.containFit, 1);
+      const expected = Math.min(DEFAULT_VIEW_SHARE * Math.min(row.containFit, 1), LABEL_CEILING_SCALE);
       assert.ok(Math.abs(s - expected) < 1e-9, `${row.dims.join("x")} -> ${s}, expected ${expected}`);
     });
   }
@@ -953,62 +960,6 @@ const archCtx = arch as unknown as Record<string, unknown>;
 // 값 읽기 — callInCtx 는 부르기만 함. 표(ALARM_TONE_RANK 등)는 함수가 아님.
 const readInCtx = <T,>(name: string): T => vm.runInContext(name, archCtx) as T;
 
-type PartRow = { tone: string | null };
-const partRows = (...tones: (string | null)[]): PartRow[] =>
-  tones.map((tone) => ({ tone }));
-
-// 상태 종류(비었음 · 오는 중 · 못 읽음 · 미판정 · 일부 판정 · 전부 정상)마다 문장이 갈려야 함.
-// 문장 하나를 통째로 박지 않고 '어느 낱말이 반드시 서는가' 로 잼 — 표현이 바뀌어도 사실은 남음.
-const CAPTION_CASES: {
-  name: string;
-  rows: PartRow[];
-  busy: boolean;
-  errored: number;
-  must: string[];
-}[] = [
-  { name: "model absent + still loading", rows: [], busy: true, errored: 0, must: ["Reading part health"] },
-  { name: "model absent", rows: [], busy: false, errored: 0, must: ["unavailable"] },
-  { name: "all four in flight", rows: partRows(null, null), busy: true, errored: 0, must: ["Reading", "2"] },
-  { name: "nothing judged, nothing failed", rows: partRows(null, null), busy: false, errored: 0, must: ["No verdict yet", "2"] },
-  { name: "nothing judged because stores failed", rows: partRows(null, null), busy: false, errored: 2, must: ["Couldn't read", "2"] },
-  { name: "some ok, rest not yet judged", rows: partRows("ok", null), busy: false, errored: 0, must: ["1 of 2", "not verified"] },
-  { name: "some ok while the rest is still being read", rows: partRows("ok", null), busy: true, errored: 0, must: ["Reading 1 of 2"] },
-  { name: "some ok, rest unreadable", rows: partRows("ok", null), busy: false, errored: 1, must: ["1 of 2", "unreadable"] },
-  { name: "attention outranks everything", rows: partRows("crit", null), busy: true, errored: 1, must: ["1 of 2", "need attention"] },
-  { name: "all judged ok", rows: partRows("ok", "ok"), busy: false, errored: 0, must: ["All 2 parts ok"] },
-  { name: "a 'No data' part is unverified, not attention", rows: partRows("ok", "ok", "info"), busy: false, errored: 0, must: ["2 of 3", "not verified"] },
-];
-
-test("M1 every health state renders its own caption sentence", () => {
-  const read = new Map<string, string>();
-
-  for (const c of CAPTION_CASES) {
-    const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", c.rows, c.busy, c.errored);
-    for (const needle of c.must)
-      assert.ok(
-        caption.includes(needle),
-        `${c.name}: caption must carry "${needle}" — read: "${caption}"`,
-      );
-    read.set(c.name, caption);
-  }
-
-  // 낱말 단언만으로는 두 상태가 같은 문장으로 접히는 것을 못 잡음 — 접히면 안 읽힌 값이 0 으로 읽힘.
-  const distinct = new Set(read.values());
-  assert.strictEqual(
-    distinct.size,
-    CAPTION_CASES.length,
-    `each state must read differently — read: ${JSON.stringify([...read])}`,
-  );
-});
-
-test("M1 a zero never stands in for a reading that never arrived", () => {
-  const unread = callInCtx<string>(archCtx, "getHealthCaptionAR", partRows(null, null, null), false, 3);
-  const clean = callInCtx<string>(archCtx, "getHealthCaptionAR", partRows("ok", "ok", "ok"), false, 0);
-
-  assert.ok(!unread.includes("0 of"), `an unread map must not report a count — read: "${unread}"`);
-  assert.notStrictEqual(unread, clean, "an all-failed read must not render as an all-clear");
-});
-
 // --- 레인: 심각도 정렬과 live-overlay 행 (제거된 strip 의 유일한 대체 표면) ---------
 const alarmRows = (over: Record<string, unknown> = {}) =>
   callInCtx<{ key: string; tone: string; note: string }[]>(archCtx, "getAlarmRows", {
@@ -1209,7 +1160,7 @@ test("C1 a daemons store that has not answered leaves no verdict ring from the l
   }
 });
 
-test("C2 the per-node attention counts add up to the caption's attention count", () => {
+test("the per-node attention counts add up to the Part health head's count", () => {
   const rows = [
     { tone: "crit", nodeIds: ["cron"] },
     { tone: "crit", nodeIds: ["cron"] },
@@ -1219,10 +1170,10 @@ test("C2 the per-node attention counts add up to the caption's attention count",
     { tone: null, nodeIds: ["hook_pipeline"] },
   ];
   const counts = callInCtx<Map<string, number>>(archCtx, "buildAttentionCountByNodeIdAR", rows);
-  const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", rows, false, 0);
-  const captionCount = Number(/^(\d+) of/.exec(caption)?.[1]);
+  const status = callInCtx<{ text: string }>(archCtx, "getPartHealthStatusAR", rows, { at: null, regions: [] });
+  const headCount = [...status.text.matchAll(/\d+/g)].reduce((sum, m) => sum + Number(m[0]), 0);
 
-  assert.strictEqual([...counts.values()].reduce((a, b) => a + b, 0), captionCount, caption);
+  assert.strictEqual([...counts.values()].reduce((a, b) => a + b, 0), headCount, status.text);
   assert.strictEqual(counts.get("cron"), 2);
 });
 
@@ -1254,29 +1205,13 @@ test("C4 an unjudged part and a 'No data' part never share a drawer label", () =
   assert.notStrictEqual(unjudged, "—");
 });
 
-// --- P1: caption names, ring key, node accessible names, focus ring, security hue ---------
-test("P1 the attention caption names every flagged part and no settled one", () => {
-  const rows = [
-    { tone: "crit", name: "Autoagent daemon", nodeIds: [] },
-    { tone: "warn", name: "Hook pipeline", nodeIds: [] },
-    { tone: "ok", name: "Wiki daemon", nodeIds: [] },
-    { tone: null, name: "Postgres", nodeIds: [] },
-  ];
-  const caption = callInCtx<string>(archCtx, "getHealthCaptionAR", rows, false, 0);
-
-  for (const row of rows)
-    assert.strictEqual(
-      caption.includes(row.name),
-      row.tone === "crit" || row.tone === "warn",
-      `only flagged parts are named — read: "${caption}"`,
-    );
-});
+// ring key, node accessible names, focus ring, security hue
 
 interface LegendItem {
   key: string;
   kind: string;
   mark?: string;
-  color?: string;
+  token?: string;
   label: string;
 }
 
@@ -1297,23 +1232,66 @@ test("the legend names every mark the canvas can draw", () => {
   );
 });
 
-test("every coloured node border the drawn map assigns has a legend swatch in that colour", () => {
+// one theme block of tokens.css → name → "r g b" triplet
+function readTokenBlock(selector: string): Map<string, string> {
+  const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
+  const start = css.indexOf(`${selector} {`);
+  assert.ok(start !== -1, `tokens.css must contain a ${selector} block`);
+  const body = css.slice(start, css.indexOf("}", start));
+  return new Map([...body.matchAll(/(--[\w-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)].map((m) => [m[1], `${m[2]} ${m[3]} ${m[4]}`]));
+}
+
+function getTripletRgba(triplet: string | undefined): Rgba {
+  assert.ok(triplet, "token triplet must be declared");
+  return parseColor(`rgb(${triplet.split(" ").join(", ")})`);
+}
+
+const THEME_TOKENS = [
+  { name: "light", tokens: readTokenBlock(":root") },
+  { name: "dark", tokens: readTokenBlock('[data-theme="dark"]') },
+];
+
+test("every coloured node border the drawn map assigns has a legend swatch whose token is that border's colour", () => {
   const source = CANONICAL_MAP.mermaid_drawn;
   const assigned = new Set([...source.matchAll(/^\s*class\s+\S+\s+(\w+)\s*$/gm)].map((m) => m[1]));
   const strokeByClass = new Map(
-    [...source.matchAll(/^\s*classDef\s+(\w+)\s+.*?stroke:(#[0-9a-fA-F]+)/gm)].map((m) => [m[1], m[2].toLowerCase()]),
+    [...source.matchAll(/^\s*classDef\s+(\w+)\s+.*?stroke:#([0-9a-fA-F]{6})/gm)].map((m) => [m[1], m[2].toLowerCase()]),
   );
   // the 'external' class draws the neutral line colour — it marks no role, so it takes no swatch
   const coloured = [...assigned].filter((name) => name !== "external");
   const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
+  const dark = THEME_TOKENS[1].tokens;
 
   assert.ok(coloured.length > 0, "fixture precondition: the drawn map assigns a coloured border");
-  for (const name of coloured)
-    assert.ok(
-      swatches.some((item) => item.color?.toLowerCase() === strokeByClass.get(name)),
-      `class '${name}' strokes ${strokeByClass.get(name)} with no matching swatch — read: ${JSON.stringify(swatches)}`,
-    );
+  for (const name of coloured) {
+    const swatch = swatches.find((item) => item.key === name);
+    assert.ok(swatch?.token, `class '${name}' has no legend swatch token — read: ${JSON.stringify(swatches)}`);
+    const tokenHex = getTripletRgba(dark.get(swatch.token));
+    const drawnHex = [tokenHex.r, tokenHex.g, tokenHex.b].map((n) => n.toString(16).padStart(2, "0")).join("");
+    assert.strictEqual(drawnHex, strokeByClass.get(name), `class '${name}' draws a hue other than its swatch token ${swatch.token}`);
+  }
   assert.strictEqual(swatches.length, coloured.length, "one swatch per coloured border, none for a colour the map never draws");
+});
+
+test("the drawn node border rule paints each role class with its own legend swatch token", () => {
+  const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
+  const rules = callInCtx<string>(archCtx, "getMapBorderRulesAR");
+
+  for (const swatch of swatches) {
+    const rule = rules.split("} ").find((line) => line.includes(`.node.${swatch.key} >`));
+    assert.ok(rule, `no node border rule for class '${swatch.key}' — read: ${rules}`);
+    assert.match(rule, new RegExp(`stroke: rgb\\(var\\(${swatch.token}\\)\\)`), `class '${swatch.key}' rule paints another colour`);
+  }
+});
+
+describe("every role border swatch clears 3:1 on the page ground", () => {
+  const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
+  const rows = THEME_TOKENS.flatMap((theme) => swatches.map((swatch) => ({ name: `${swatch.label} in ${theme.name}`, theme, swatch })));
+  for (const row of rows)
+    test(row.name, () => {
+      const ratio = contrastRatio(getTripletRgba(row.theme.tokens.get(row.swatch.token!)), getTripletRgba(row.theme.tokens.get("--surface")));
+      assert.ok(ratio >= 3, `${row.name}: ${ratio.toFixed(2)} on --surface`);
+    });
 });
 
 test("a group title is dropped only where its single member's label already says it", () => {
@@ -1330,7 +1308,7 @@ test("a group title is dropped only where its single member's label already says
   }
 });
 
-test("P1 a node's accessible name carries its label and a distinct health word per state", () => {
+test("a node's accessible name carries its label and a distinct health word per state", () => {
   const states: [string | undefined, boolean][] = [["crit", false], ["warn", false], ["ok", false], [undefined, true]];
   const names = states.map(([tone, isUnverified]) =>
     callInCtx<string>(archCtx, "getNodeAccessibleNameAR", "Autoagent daemon", tone, isUnverified),
@@ -1341,7 +1319,7 @@ test("P1 a node's accessible name carries its label and a distinct health word p
   assert.ok(names[3].endsWith("not verified"), names[3]);
 });
 
-test("P1 the focus ring sits outside the health ring and never moves it", () => {
+test("the focus ring sits outside the health ring and never moves it", () => {
   const box = { x: 10, y: 20, width: 100, height: 40 };
   const state = callInCtx<Record<string, number>>(archCtx, "getRingGeometryAR", box, "arch-ring-state");
   const focus = callInCtx<Record<string, number>>(archCtx, "getRingGeometryAR", box, "arch-ring-focus");
@@ -1362,7 +1340,7 @@ test("P1 the focus ring sits outside the health ring and never moves it", () => 
   );
 });
 
-test("P1 the security category's node stroke uses no status hue", () => {
+test("the security category's node stroke uses no status hue", () => {
   const src = readFileSync(resolve(__dirname, "../src/server/architecture/diagrams-source.ts"), "utf8");
   const stroke = /classDef security [^\n]*stroke:(#[0-9a-fA-F]{6})/.exec(src)?.[1]?.toLowerCase();
   const tokens = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");

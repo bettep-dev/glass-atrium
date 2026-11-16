@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=1280" />
 <!-- Shell CSP — any script in this origin can call owner routes with the session cookie → only these exact files and the two inline scripts by hash; editing an inline script means updating its hash (test/app-shell.supply-chain.static.test.ts) -->
 <meta http-equiv="Content-Security-Policy" content="script-src 'self'
-  'sha256-kdLNSx1Cdcg3FOsC9gQxQkJOS9SHg+g/FetcdLSsmAQ='
+  'sha256-wy/mDUanJCjHLAukPipZktoIWJFohOsDstm7RhI90t8='
   'sha256-Vp26zPrkN0ylL9phKMPonsJppUPta8GPsCE54VR1Lko='
   https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js
   https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.2/dist/svg-pan-zoom.min.js
@@ -71,6 +71,7 @@
           warn:    { DEFAULT: "rgb(var(--warn) / <alpha-value>)" },
           ok:      { DEFAULT: "rgb(var(--ok) / <alpha-value>)" },
           info:    { DEFAULT: "rgb(var(--info) / <alpha-value>)" },
+          data:    { DEFAULT: "rgb(var(--data) / <alpha-value>)" },
         },
         // role keys → tokens.css role tokens; padding holds the two insets, every other kind is atom-owned
         // no key named "card" → it would collide with base.css .gap-card
@@ -85,8 +86,8 @@
     },
   };
 </script>
-<link rel="stylesheet" href="styles/tokens.css?v=12" />
-<link rel="stylesheet" href="styles/base.css?v=49" />
+<link rel="stylesheet" href="styles/tokens.css?v=14" />
+<link rel="stylesheet" href="styles/base.css?v=57" />
 <!-- 스크립트 이전 첫 페인트 = 다크 기본 표면 (벤더링된 Tailwind 런타임의 bg-surface 는 런타임 생성이라 늦다) — Tweaks 가 마운트 후 사용자 테마로 덮는다 -->
 <style>html, body { background: rgb(var(--surface)); }</style>
 <!-- Mermaid 11.15.0 — native flowchart rendering, dagre layout 내장. 옵시디언 system-diagrams.md 의 mermaid 블록을 백엔드(/api/architecture/diagrams.mermaid_source)가 그대로 전달, 프론트는 mermaid.render() 로 SVG 변환. 버전은 package.json 의존성과 정확히 같은 값으로 고정 — 뜬 태그(`mermaid@11`)는 CDN 이 패치를 낼 때마다 뷰어 엔진을 말없이 바꿔, 내보내기가 주입하는 번들과 같은 소스를 다른 폭으로 눕힌다(대조: test/mermaid-config.parity.test.ts). -->

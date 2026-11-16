@@ -13,3 +13,10 @@ export function getReducedMotionCss(source: string): string {
   }
   return blocks.join("\n");
 }
+
+/** [selector, body] for every flat rule of a stylesheet; nested @-blocks contribute their inner rules. */
+export function getCssRules(css: string): Array<[string, string]> {
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap((m) =>
+    m[1].split(",").map((selector) => [selector.trim(), m[2]] as [string, string]),
+  );
+}

@@ -1,6 +1,6 @@
-// The System map's page-level state copy: which failed reads earn the one page alert, how the
-// caption's failure count lines up with the stamp's, when the stamp may name a read time, and
-// what a drawer connection row names.
+// The System map's page-level state copy: which failed reads earn the one page alert, when the
+// stamp may name a read time, how the Part health block groups, leads, counts and explains its
+// parts, and what a drawer row names.
 //
 // Runner: npx tsx --test test/architecture.page-state.client.unit.test.ts
 
@@ -32,11 +32,6 @@ interface PageFailure {
   error: string;
 }
 
-interface PartRow {
-  name: string;
-  tone: string | null;
-}
-
 interface Flow {
   id: string;
   from: string;
@@ -55,27 +50,22 @@ interface PageStateSandbox {
     healthStates: Record<string, RegionState>,
   ) => Array<{ source: string; state: RegionState }>;
   getPageFailureAR: (entries: Array<{ source: string; state: RegionState }>) => PageFailure | null;
-  getHealthCaptionAR: (partRows: PartRow[], busy: boolean, errored: number) => string;
   getFreshnessInputAR: (
     healthAsOf: string | null,
     regions: RegionState[],
     hasMap: boolean,
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
-  getPartHealthGroupsAR: (partRows: HealthRow[]) => { attention: HealthRow[]; rest: HealthRow[]; unloaded: HealthRow[] };
+  getPartHealthGroupsAR: (partRows: HealthRow[], isPending?: boolean) => { listed: HealthRow[]; healthy: HealthRow[] };
   getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, freshness: HealthFreshness) => string;
   getPartStatusAR: (row: HealthRow & { statusLabel: string }, freshness: HealthFreshness) => { tone: string | null; text: string };
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
   getPartCauseAR: (facts: Record<string, unknown>) => string | null;
-  getPartScheduleAR: (row: ScheduleRow, formatRelative: (iso: string) => string) => string | null;
+  getPartScheduleAR: (row: ScheduleRow, formatRelative: (iso: string) => string, now: number) => string | null;
   getDrillDaemonAR: (partRows: DaemonPartRow[], unscopedId: string) => string | null;
   getRunSummaryAR: (runs: RunRow[]) => { text: string; failures: RunRow[] };
   getMapLegendItemsAR: () => Array<{ key: string; mark?: string; text?: string }>;
-  getPageVerdictAR: (
-    partRows: HealthRow[],
-    caption: string,
-    nodeIndex: Map<string, { label: string }>,
-  ) => { tone: string; sentence: string; chips: Array<{ key: string; label: string; targetId: string }> };
+  getPartHealthStatusAR: (partRows: HealthRow[], freshness: HealthFreshness) => { tone: string; text: string } | null;
 }
 
 interface DaemonPartRow {
@@ -151,22 +141,6 @@ test("the alert names each source mid-sentence, so only a proper noun keeps its 
   }
 });
 
-test("the caption states one population — the part rows — once, leaving read failures to the stamp", () => {
-  const tones = (...list: Array<string | null>): PartRow[] => list.map((tone, i) => ({ name: `part ${i}`, tone }));
-  const rows: Array<{ name: string; parts: PartRow[]; errored: number }> = [
-    { name: "some ok, the rest unreadable", parts: tones("ok", "ok", "ok", null, null, null, null), errored: 1 },
-    { name: "some ok, the rest not verified", parts: tones("ok", "ok", null), errored: 0 },
-    { name: "a part needs attention", parts: tones("ok", "crit", null), errored: 1 },
-    { name: "every part ok", parts: tones("ok", "ok"), errored: 0 },
-  ];
-
-  for (const row of rows) {
-    const caption = sandbox.getHealthCaptionAR(row.parts, false, row.errored);
-    const denominators = [...caption.matchAll(/\bof (\d+)\b/g)].map((match) => Number(match[1]));
-    assert.ok(denominators.length <= 1, `${row.name}: "${caption}" states ${denominators.length} populations`);
-    for (const denominator of denominators) assert.strictEqual(denominator, row.parts.length, `${row.name}: "${caption}"`);
-  }
-});
 
 test("every health store the stamp counts is also named by the page alert", () => {
   const stores = ["daemonState", "hookState", "pgState", "hookFailState"];
@@ -220,20 +194,31 @@ const MIXED_ROWS: HealthRow[] = [
   healthRow("f", "crit"),
 ];
 
-test("the part health block holds every part once — flagged, answered and not-loaded parts each in their own group, worst first", () => {
-  const { attention, rest, unloaded } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
-  const rank = (tone: string | null) => ["crit", "warn", "info", "ok"].indexOf(tone ?? "");
+test("the part health block holds every part once — healthy parts folded apart, every other part listed worst first, flagged before the rest", () => {
+  const { listed, healthy } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
+  const rank = (tone: string | null) => ["crit", "warn", null, "info"].indexOf(tone);
+  const isFlagged = (row: HealthRow) => row.tone === "crit" || row.tone === "warn";
 
-  assert.deepStrictEqual([...attention, ...rest, ...unloaded].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
-  assert.ok(attention.every((row) => row.tone === "crit" || row.tone === "warn"), "a non-flagged part sits in attention");
-  assert.ok(rest.every((row) => row.tone === "info" || row.tone === "ok"), "a flagged or not-loaded part sits with the answered ones");
-  assert.ok(unloaded.every((row) => row.tone === null), "an answered part sits in the not-loaded group");
-  for (const group of [attention, rest])
-    for (let i = 1; i < group.length; i++)
-      assert.ok(rank(group[i - 1].tone) <= rank(group[i].tone), `${group[i - 1].id} before ${group[i].id} breaks worst-first`);
+  assert.deepStrictEqual([...listed, ...healthy].map((row) => row.id).sort(), MIXED_ROWS.map((row) => row.id).sort());
+  assert.ok(healthy.length > 0 && healthy.every((row) => row.tone === "ok"), "the fold holds exactly the healthy parts");
+  assert.ok(listed.every((row) => row.tone !== "ok"), "a healthy part sits in the list");
+  for (let i = 1; i < listed.length; i++) {
+    assert.ok(rank(listed[i - 1].tone) <= rank(listed[i].tone), `${listed[i - 1].id} before ${listed[i].id} breaks worst-first`);
+    assert.ok(isFlagged(listed[i - 1]) || !isFlagged(listed[i]), `flagged ${listed[i].id} sits after unflagged ${listed[i - 1].id}`);
+  }
 });
 
-describe("the empty Needs attention column says why it is empty, and its all-clear reads Last known exactly when the part rows do", () => {
+// spec 44084 §2.2 — a first read in flight is the loading state, never the Not-loaded mark
+test("while the first health read is in flight an unread part is left out of the list and every answered part keeps its place", () => {
+  const settled = sandbox.getPartHealthGroupsAR(MIXED_ROWS, false);
+  const pending = sandbox.getPartHealthGroupsAR(MIXED_ROWS, true);
+
+  assert.ok(settled.listed.some((row) => row.tone === null), "fixture precondition: a settled read lists the unread part");
+  assert.deepStrictEqual(pending.listed.map((row) => row.id), settled.listed.filter((row) => row.tone !== null).map((row) => row.id));
+  assert.deepStrictEqual(pending.healthy.map((row) => row.id), settled.healthy.map((row) => row.id));
+});
+
+describe("the Part health lead line says why nothing is flagged, and its all-clear reads Last known exactly when the part rows do", () => {
   const now = Date.parse("2026-01-10T12:00:00.000Z");
   const readAt = new Date(now - 60_000).toISOString();
   const held: RegionState = { status: "ready", data: { ok: true }, error: null, busy: false };
@@ -242,12 +227,16 @@ describe("the empty Needs attention column says why it is empty, and its all-cle
   const down: RegionState = { status: "error", data: null, error: "HTTP 500", busy: false };
   const judged = [healthRow("a", "ok"), healthRow("b", null)];
   const unjudged = [healthRow("a", null)];
+  // the empty-store case: two daemon parts answered "No data" — listed, so the lead names what the list is
+  const unverified = [healthRow("a", "ok"), healthRow("b", "info"), healthRow("c", "info")];
   const rows = [
     { name: "a read in flight is still checking", partRows: judged, busy: true, at: readAt, regions: [down], expected: /^Checking/ },
     { name: "an all-clear under a warm-error re-read is last known", partRows: judged, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known/ },
     { name: "an all-clear under a cold store failure is last known", partRows: judged, busy: false, at: readAt, regions: [down, held], expected: /^Last known/ },
     { name: "an all-clear older than the stale threshold is last known", partRows: judged, busy: false, at: new Date(now - 10 * 60_000).toISOString(), regions: [held], expected: /^Last known/ },
     { name: "an all-clear with every store freshly read is a plain all-clear", partRows: judged, busy: false, at: readAt, regions: [held, held], expected: /^No part needs attention$/ },
+    { name: "listed unverified parts are counted while none is flagged", partRows: unverified, busy: false, at: readAt, regions: [held], expected: /^2 not verified · none needs attention$/ },
+    { name: "listed unverified parts under a failed re-read are counted as last known", partRows: unverified, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: 2 not verified · none needed attention$/ },
     { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, at: null, regions: [down, down], expected: /^Couldn't read part health$/ },
     { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, at: null, regions: [held], expected: /^Part health not read yet$/ },
   ];
@@ -298,38 +287,36 @@ interface ScheduleRow {
 
 describe("a down part says how often it runs and when it is due next, from the served cadence and next-run fields", () => {
   const formatRelative = (iso: string) => `at ${iso}`;
+  const NOW = Date.parse("2026-01-10T12:00:00.000Z");
   const NEXT = "2026-01-10T12:15:00.000Z";
+  const MISSED = "2026-01-10T10:00:00.000Z";
   const rows: Array<{ name: string; row: ScheduleRow; schedule: string | null }> = [
     { name: "a minute cadence with a next run", row: { tone: "crit", cadenceMinutes: 15, nextRunAt: NEXT }, schedule: `runs every 15 min · next run at ${NEXT}` },
     { name: "an hour cadence with no next run served", row: { tone: "warn", cadenceMinutes: 60, nextRunAt: null }, schedule: "runs hourly" },
     { name: "a multi-hour cadence", row: { tone: "crit", cadenceMinutes: 120, nextRunAt: null }, schedule: "runs every 2 h" },
+    { name: "a multi-day cadence in the sentence form of a window", row: { tone: "crit", cadenceMinutes: 2880, nextRunAt: null }, schedule: "runs every 2 days" },
+    { name: "a next run already past reads as overdue, never as a next run", row: { tone: "crit", cadenceMinutes: 60, nextRunAt: MISSED }, schedule: `runs hourly · was due at ${MISSED}` },
     { name: "a daily cadence", row: { tone: "crit", cadenceMinutes: 1440, nextRunAt: NEXT }, schedule: `runs daily · next run at ${NEXT}` },
     { name: "a next run with no cadence served", row: { tone: "crit", cadenceMinutes: null, nextRunAt: NEXT }, schedule: `next run at ${NEXT}` },
     { name: "a healthy part", row: { tone: "ok", cadenceMinutes: 15, nextRunAt: NEXT }, schedule: null },
     { name: "a down part with neither field", row: { tone: "crit", cadenceMinutes: null, nextRunAt: null }, schedule: null },
   ];
   for (const { name, row, schedule } of rows)
-    test(name, () => assert.strictEqual(sandbox.getPartScheduleAR(row, formatRelative), schedule));
+    test(name, () => assert.strictEqual(sandbox.getPartScheduleAR(row, formatRelative, NOW), schedule));
 });
 
-test("the page verdict takes the worst part tone, with one chip per flagged part focusing its row", () => {
-  const nodeIndex = new Map([["canonical.cron", { label: "Scheduled jobs" }]]);
+describe("the Part health head counts the flagged parts once, worst tone first, and says nothing when none is flagged", () => {
+  const settled = { at: "2026-01-10T11:59:00.000Z", regions: [], now: Date.parse("2026-01-10T12:00:00.000Z") };
   const rows = [
-    { name: "a critical part outranks a warning", parts: [healthRow("a", "warn"), healthRow("b", "crit", ["cron"])], tone: "crit" },
-    { name: "a warning alone", parts: [healthRow("a", "warn"), healthRow("b", "ok")], tone: "warn" },
-    { name: "every part ok", parts: [healthRow("a", "ok"), healthRow("b", "ok")], tone: "ok" },
-    { name: "nothing judged yet", parts: [healthRow("a", null), healthRow("b", "info")], tone: "neutral" },
+    { name: "a critical part outranks a warning", parts: [healthRow("a", "warn"), healthRow("b", "crit")], status: { tone: "crit", text: "1 critical · 1 needs attention" } },
+    { name: "two critical parts", parts: [healthRow("a", "crit"), healthRow("b", "crit"), healthRow("c", "ok")], status: { tone: "crit", text: "2 critical" } },
+    { name: "warnings alone", parts: [healthRow("a", "warn"), healthRow("b", "warn")], status: { tone: "warn", text: "2 need attention" } },
+    { name: "every part ok", parts: [healthRow("a", "ok"), healthRow("b", "ok")], status: null },
+    { name: "nothing judged yet", parts: [healthRow("a", null), healthRow("b", "info")], status: null },
   ];
-
-  for (const row of rows) {
-    const verdict = sandbox.getPageVerdictAR(row.parts, "caption", nodeIndex);
-    const flagged = row.parts.filter((part) => part.tone === "crit" || part.tone === "warn");
-
-    assert.strictEqual(verdict.tone, row.tone, row.name);
-    assert.deepStrictEqual([...verdict.chips.map((chip) => chip.targetId)].sort(), flagged.map((part) => `arch-part-${part.id}`).sort(), row.name);
-  }
-  const [chip] = sandbox.getPageVerdictAR([healthRow("b", "crit", ["cron"])], "caption", nodeIndex).chips;
-  assert.ok(chip.label.includes("Part b") && chip.label.includes("Scheduled jobs"), `chip "${chip.label}" pairs the part with its box`);
+  for (const row of rows)
+    // JSON round trip → a plain object; the sandbox's own Object prototype never equals this realm's
+    test(row.name, () => assert.deepStrictEqual(JSON.parse(JSON.stringify(sandbox.getPartHealthStatusAR(row.parts, settled))), row.status));
 });
 
 test("a drawer drills into its node's worst daemon part, and into the first one when none is flagged", () => {

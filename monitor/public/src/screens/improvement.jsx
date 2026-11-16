@@ -79,9 +79,7 @@ const KANBAN_COLUMNS = [
 	},
 ];
 
-// AWAITING(safety) 은 그리드 밖 ROW-1 배너/스트립으로 이관 (T2) → 종결 그리드는
-// applied·rejected 2트랙만 순회 (T3). safety 엔트리 label/symbol 은 ROW-1 이 소비.
-const SAFETY_COLUMN = KANBAN_COLUMNS.find((col) => col.key === "safety");
+// AWAITING(safety) 행은 보드 머리의 AwaitingListI 가 소비 → 종결 그리드는 applied·rejected 2트랙만 순회.
 const TERMINAL_COLUMNS = KANBAN_COLUMNS.filter((col) => col.key !== "safety");
 
 // 카드 액션 가능 status (mutation 엔드포인트 actionable set 미러 — routes/improvement.ts
@@ -362,9 +360,6 @@ function ScreenImprovement({ onNav }) {
         @keyframes spinI { from{transform:rotate(0)} to{transform:rotate(360deg)} }
         @media (prefers-reduced-motion: reduce) { .i-act-spin { animation-duration:0.01ms !important; } }
         .i-row-card { cursor:pointer; }
-        /* icon + label head: the icon centres on the label's first line (1lh), unshrunk, whether or not the label wraps */
-        .i-icon-head { display:flex; align-items:flex-start; gap:var(--space-1); }
-        .i-icon-head > svg { flex-shrink:0; margin-top:calc((1lh - var(--fs-meta)) / 2); }
         /* interactive tile — hover = raised-2 shadow step + faint ring, never a transform lift */
         .i-tile-hover { transition:box-shadow 120ms; }
         .i-tile-hover:hover { box-shadow:0 0 0 1px rgb(var(--faint)), var(--shadow-raised-2); }
@@ -391,6 +386,14 @@ function ScreenImprovement({ onNav }) {
         .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
         .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:8px var(--card-pad) 0; }
         .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
+        .i-loop-visual:empty { padding:0; }
+        /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
+        .i-ledger-body { padding-block:var(--space-1) var(--space-3); }
+        .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
+        /* the section already holds the card's inline edge → its empty line takes no second inset */
+        .i-ledger-sec .placeholder { padding-inline:0; }
+        /* held rows are what a human acts on → the house table's body step, never the card's smallest text */
+        .i-held-table { font-size:var(--fs-control); }
         /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
         .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
@@ -398,32 +401,25 @@ function ScreenImprovement({ onNav }) {
         .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
-        /* awaiting zone — 0 rows = slim neutral idle strip · 1+ rows = the warn AlertCard over the scrolling list */
-        .i-await-strip { display:flex; align-items:center; gap:6px; min-height:30px; padding:0 12px;
-          background:rgb(var(--sunken)); border:1px solid rgb(var(--line)); border-radius:8px;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); }
-        .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; }
+        /* 1px inset → the sub-card ring (an outside box-shadow) draws inside the scroll box, never clipped by it */
+        .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; padding:1px; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
-           헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). 26px = fs-stat 18px count 를 담는 높이. */
+           헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
-        /* applied hero — ink count below the status band's figure size · ✓ + label grouped so the glyph centres on the label */
-        .i-applied-hero { gap:6px; }
         /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
         .i-compact-row { display:flex; align-items:center; gap:6px; padding:var(--space-1_5) var(--space-2); }
         /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
         .i-more-btn { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:4px; width:100%;
           padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
-          color:rgb(var(--faint)); font-family:'JetBrains Mono',monospace; font-size:var(--fs-meta); cursor:pointer;
+          color:rgb(var(--faint)); font-size:var(--fs-meta); cursor:pointer;
           white-space:normal; text-align:center; min-height:32px; overflow:visible; }
         .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
       `}</style>
 
 			<div className="flex-shrink-0">
-				{/* the view switch re-lays the whole screen, so it rides `actions`, set apart from the status group */}
 				<PageHeader
 					sub="Self-improvement loop"
 					title="Learning"
-					actions={<ViewToggleI view={view} onChange={setView} />}
 					freshness={<FreshnessStamp at={asOf} regions={regionStates} />}
 					refresh={
 						<RefreshButton
@@ -434,6 +430,7 @@ function ScreenImprovement({ onNav }) {
 						/>
 					}
 				/>
+				<ViewTabsI view={view} onChange={setView} />
 			</div>
 
 			{/* 다섯 표면의 순서 — 알람 레인 → 상태 밴드 → 제안 보드 → 패턴 원장 → 루프 산출.
@@ -452,6 +449,7 @@ function ScreenImprovement({ onNav }) {
 						onRetry={triggerRefresh}
 					/>
 				) : null}
+				<div className="space-sections" {...window.UI.getTabPanelProps(VIEW_TABS_ID_I, view)}>
 				{view === "instrumentation" ? (
 					<InstrumentationViewI
 						listState={listState}
@@ -476,10 +474,10 @@ function ScreenImprovement({ onNav }) {
 							learningLogState={learningLogState}
 							suppression={loopSuppression}
 							awaiting={columnRows.safety.length}
+							failures={failures}
 							styleRef={styleRef}
 							corpusAuditState={corpusAuditState}
 							onOpenInstrumentation={() => setView("instrumentation")}
-							onRetry={regionRetry}
 						/>
 						<div className="flex-1 min-h-0" id="improvement-board">
 							<KanbanCardI
@@ -512,6 +510,7 @@ function ScreenImprovement({ onNav }) {
 						/>
 					</>
 				)}
+				</div>
 			</div>
 
 			{drawerRow && (
@@ -537,115 +536,14 @@ function getSuccessToastI(action, id, body) {
 const sumCountsI = (list) =>
 	list.reduce((sum, b) => sum + Number(b.count ?? 0), 0);
 
-// ----- Status band (Skim) — 화면을 여는 이유 네 가지에 타일 하나씩. --------
-//
-// 각 타일은 자기 payload 의 상태(loading / error / unavailable / ready)를 따로 렌더한다:
-// 한 payload 가 죽었을 때 나머지가 0 으로 읽히면 밴드 전체가 거짓말이 된다. 숫자는 항상
-// 자기 모집단을 데리고 다닌다 — 이웃 타일끼리 게이트가 다르기 때문이다.
-
-function StatusBandI({
-	asOf,
-	statsState,
-	listState,
-	learningLogState,
-	suppression,
-	awaiting,
-	styleRef,
-	corpusAuditState,
-	onOpenInstrumentation,
-	onRetry,
-}) {
-	const { PageVerdict, NoWrap } = window.UI;
-	const s = statsState.data || {};
-	const cycleTotal = Number(s.cycle_total_7d ?? 0);
-	const applied = Number(s.cycles_generated_applied_7d ?? 0);
-	const pendingTotal = Number(suppression?.pending_total ?? 0);
-	const promptable = Math.max(
-		0,
-		pendingTotal - Number(suppression?.pending_unpromptable ?? 0),
-	);
-	const statsStatus = bandTileStatusI(statsState, statsState.data);
-	const appliedHeld = getHeldLabelI(asOf, statsState);
-	// the stamp renders as one unbreakable token; the plain-string pair also feeds the clamped hint's title
-	const appliedLead = `${appliedHeld ? `${appliedHeld} · ` : ""}of ${getCycleCountTextI(cycleTotal)} · last `;
-	const appliedStamp = formatCycleStampI(s.latest_cycle_started_at);
-	// a waiting suggestion warns whatever the read's age; only the all-clear needs a fresh read
-	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
-	// 보류 중 사람이 오늘 풀 수 있는 원인만 센다 — 설계 결정으로 닫아 둔 원인은 wedged 가
-	// 아니다. 판정 집합은 원장 held 구역과 같은 것 하나: 갈라지면 타일과 구역이 다른 수를 말한다.
-	const heldBuckets = getSuppressionListI(suppression, "parked");
-	const heldNeedingHuman = sumCountsI(
-		heldBuckets.filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)),
-	);
-	const verdict = getBandVerdictI({
-		status: getBandStatusI([statsState, listState, learningLogState], statsState.data && suppression),
-		awaiting,
-		applied,
-		heldNeedingHuman,
-	});
-
+// Loop status — only the counts that change the next action, one stat row; the alarm itself lives in the card that owns the rows (spec 44084 §3.1).
+function StatusBandI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures, styleRef, corpusAuditState, onOpenInstrumentation }) {
+	const { Card, StatRow } = window.UI;
 	return (
-		<section className="mb-3 flex flex-col gap-2" aria-label="Loop status">
-			<PageVerdict
-				id={ANCHOR_ID_I.verdict}
-				tone={verdict.tone}
-				chips={verdict.chips}
-				freshness={{ at: asOf, regions: [statsState, listState, learningLogState] }}
-			>
-				{verdict.sentence}
-			</PageVerdict>
-			{/* two columns below xl, as the Dashboard and Cost bands → a narrow tile keeps its label and hint readable */}
-			<div className="grid grid-cols-2 xl:grid-cols-4 gap-card">
-				<StatusTileI
-					status={bandTileStatusI(listState, listState.data)}
-					tone={awaiting > 0 ? "text-warn" : awaitingHeld ? undefined : "text-ok"}
-					symbol={awaiting > 0 ? "⚠" : awaitingHeld ? null : "✓"}
-					label="Awaiting your decision"
-					value={formatIntI(awaiting)}
-					owner="suggestion board"
-					population={`${awaitingHeld ? `${awaitingHeld} · ` : ""}Suggestions that need your approval`}
-					basis="Pending or snoozed, any age"
-					onRetry={onRetry}
-				/>
-				<StatusTileI
-					status={statsStatus}
-					tone={appliedHeld ? undefined : "text-ok"}
-					symbol={appliedHeld ? null : "✓"}
-					label="Applied (7 days)"
-					value={formatIntI(applied)}
-					owner="loop output"
-					population={
-						<>
-							{appliedLead}
-							<NoWrap>{appliedStamp}</NoWrap>
-						</>
-					}
-					populationTitle={`${appliedLead}${appliedStamp}`}
-					basis="Cycles started in the last 7 days"
-					onRetry={onRetry}
-				/>
-				<StatusTileI
-					status={bandTileStatusI(learningLogState, suppression)}
-					symbol={null}
-					label="Backlog that can propose"
-					value={formatIntI(promptable)}
-					owner="pattern ledger"
-					population={`of ${formatIntI(pendingTotal)} patterns can still propose`}
-					basis="Pending patterns across every agent, counted per pattern label"
-					onRetry={onRetry}
-				/>
-				<StatusTileI
-					status={bandTileStatusI(learningLogState, suppression)}
-					tone={heldNeedingHuman > 0 ? "text-warn" : undefined}
-					symbol={heldNeedingHuman > 0 ? "⚠" : null}
-					label="Held, needs a human"
-					value={formatIntI(heldNeedingHuman)}
-					owner="pattern ledger"
-					population={`of ${formatIntI(sumCountsI(heldBuckets))} held patterns`}
-					basis="Held patterns of any age that no cycle will re-arm on its own"
-					onRetry={onRetry}
-				/>
-			</div>
+		<section id={ANCHOR_ID_I.status} className="flex flex-col gap-2" aria-label="Loop status">
+			<Card>
+				<StatRow stats={getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures })} />
+			</Card>
 			<InstrumentationStripI
 				styleRef={styleRef}
 				corpusAuditState={corpusAuditState}
@@ -656,44 +554,70 @@ function StatusBandI({
 	);
 }
 
+function getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures }) {
+	const s = statsState.data || {};
+	const noticeSources = failures?.banner?.sources ?? [];
+	const appliedHeld = getHeldLabelI(asOf, statsState);
+	// a waiting suggestion is news whatever the read's age; only the empty queue needs a fresh read
+	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
+	const heldBuckets = getSuppressionListI(suppression, "parked");
+	const heldNeedingHuman = getHeldNeedingHumanI(suppression);
+	return [
+		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", isCovered: noticeSources.includes("suggestions"), status: getBandStatStatusI(listState, listState.data),
+			value: formatIntI(awaiting), context: getHeldTextI(awaitingHeld, "Pending or snoozed suggestions") }),
+		buildBandStatI({ key: "applied", label: "Applied, 7d", owner: "loop output", isCovered: noticeSources.includes("loop stats"), status: getBandStatStatusI(statsState, statsState.data),
+			value: formatIntI(Number(s.cycles_generated_applied_7d ?? 0)),
+			context: getAppliedContextI(appliedHeld, s) }),
+		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", isCovered: noticeSources.includes("pattern ledger"), status: getBandStatStatusI(learningLogState, suppression),
+			value: heldNeedingHuman > 0 ? <JumpLinkI targetId={ANCHOR_ID_I.heldPatterns}>{formatIntI(heldNeedingHuman)}</JumpLinkI> : formatIntI(0),
+			context: `of ${formatIntI(sumCountsI(heldBuckets))} held patterns` }),
+	];
+}
+
+// no cycle on record → one phrase, never "last None" inside a sentence (spec 44084 §2.2)
+function getAppliedContextI(held, stats) {
+	const total = Number(stats.cycle_total_7d ?? 0);
+	if (total === 0 && !stats.latest_cycle_started_at) return getHeldTextI(held, "No cycles yet");
+	return (
+		<>
+			{getHeldTextI(held, `of ${getCycleCountTextI(total)} · last `)}
+			<window.UI.NoWrap>{formatCycleStampI(stats.latest_cycle_started_at)}</window.UI.NoWrap>
+		</>
+	);
+}
+
+function getHeldTextI(held, text) {
+	return held ? `${held} · ${text}` : text;
+}
+
+// a value slot never shows a number it did not read → busy while in flight, Not loaded once failed or empty (spec 44084 §2.2)
+const BAND_ABSENT_CONTEXT_I = {
+	unavailable: () => "Not measured — this payload carried no value for it",
+	// the value already reads Not loaded → the line is the pointer alone, to whichever surface states the cause
+	announced: (owner, isCovered) => window.UI.getNoticePointer(null, isCovered ? undefined : `the ${owner} below`),
+};
+
+function buildBandStatI({ key, label, owner, isCovered, status, value, context }) {
+	if (status === "ready") return { key, label, value, context };
+	if (status === "loading") return { key, label, isLoading: true };
+	const cause = BAND_ABSENT_CONTEXT_I[status](owner, isCovered);
+	return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={cause} />, context: cause };
+}
+
+// in-page jump → scroll and focus the target, never a hash change (the app routes on the hash)
+function JumpLinkI({ targetId, children }) {
+	const onClick = (event) => {
+		event.preventDefault();
+		window.UI.putCardFocus(targetId);
+	};
+	return <window.UI.Link href={`#${targetId}`} onClick={onClick}>{children}</window.UI.Link>;
+}
+
 // held count under a failed or aged read → its Last known label, null while fresh (shared verdict rule)
 function getHeldLabelI(at, state) {
 	if (!at) return null;
 	const verdict = window.UI.getFreshnessVerdict({ tone: "ok", at, regions: [state] });
 	return verdict.tone === "ok" ? null : verdict.label;
-}
-
-// Any failed payload → error, never "still loading" · ready only once every payload and value has landed.
-function getBandStatusI(states, value) {
-	if (states.some((st) => st.status === "error")) return "error";
-	return states.every((st) => st.status === "ready") && value ? "ready" : "loading";
-}
-
-// Band one-line verdict — warn when anything awaits a human; no state claimed before payloads land.
-function getBandVerdictI({ status, awaiting, applied, heldNeedingHuman }) {
-	if (status === "error") {
-		return { tone: "neutral", sentence: "Loop status could not load", chips: [] };
-	}
-	if (status !== "ready") {
-		// shown over a warm read only (cold → PageVerdict's shared first-read note) → the shared notes all claim a first read, false here
-		return { tone: "neutral", sentence: "Still reading the loop status.", chips: [] };
-	}
-	const parts = [`${formatIntI(applied)} applied in the last 7 days`];
-	const chips = [];
-	if (awaiting > 0) {
-		parts.push(`${formatIntI(awaiting)} awaiting your decision`);
-		chips.push({ label: "Suggestion board", targetId: "improvement-board" });
-	}
-	if (heldNeedingHuman > 0) {
-		parts.push(`${formatIntI(heldNeedingHuman)} held for a human`);
-		chips.push({ label: "Held patterns", targetId: ANCHOR_ID_I.patternLedger });
-	}
-	if (chips.length === 0) parts.push("nothing needs a human");
-	return {
-		tone: chips.length > 0 ? "warn" : "ok",
-		sentence: parts.join(" · "),
-		chips,
-	};
 }
 
 const NOT_READ_CHIP_I = Object.freeze({
@@ -733,17 +657,21 @@ function getHeldChipI(chip, state, at) {
 		: { ...chip, label: verdict.label };
 }
 
-// Operations-view instrumentation health line — the instrumentation tab's alert state, visible without switching tabs.
+const DEVIATION_TONES_I = new Set(["warn", "crit"]);
+
+// Operations-view instrumentation line — a gauge that deviates, visible without switching tabs; silent when every gauge reads fine.
 function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 	const verdicts = window.ImprovementInstrumentationVerdicts;
 	if (!verdicts) return null;
-	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at);
+	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at).filter((chip) =>
+		DEVIATION_TONES_I.has(toneKeyI(chip.tone)),
+	);
+	if (chips.length === 0) return null;
 	return (
 		<div
 			className="flex flex-wrap items-center gap-x-3 gap-y-1 fs-meta"
 			data-testid="instrumentation-strip"
 		>
-			<span className="text-dim">Instrumentation</span>
 			{chips.map((chip) => (
 				<span
 					key={chip.key}
@@ -762,128 +690,39 @@ function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 	);
 }
 
-// payload 상태 → 타일 상태. ready 인데 값 자체가 없으면 0 이 아니라 "측정되지 않음"이다.
-function tileStatusI(state, value) {
+// payload 상태 → stat 상태. ready 인데 값 자체가 없으면 0 이 아니라 "측정되지 않음"이다.
+function getStatStatusI(state, value) {
 	if (state.status === "loading") return "loading";
 	if (state.status === "error") return "error";
 	if (!value) return "unavailable";
 	return "ready";
 }
 
-// 밴드 타일은 실패를 알리지 않는다 — 배너는 payload 를 소유한 그룹에 하나만.
-function bandTileStatusI(state, value) {
-	const status = tileStatusI(state, value);
+// 밴드 stat 은 실패를 알리지 않는다 — 배너는 payload 를 소유한 그룹에 하나만.
+function getBandStatStatusI(state, value) {
+	const status = getStatStatusI(state, value);
 	return status === "error" ? "announced" : status;
 }
 
-// label: the glyph stays whole and centred on the text line; the text ellipsizes in its own span, its full text in that span's title.
-// hint: ≤2 lines, clamped; the title carries the whole population line (populationTitle when the line is a node), then its basis.
-function StatusTileI({ status, tone, symbol, label, value, population, populationTitle, basis, owner, onRetry }) {
-	const { KPI } = window.UI;
-	if (status !== "ready") {
-		return (
-			<TilePlaceholderI
-				status={status}
-				label={label}
-				owner={owner}
-				onRetry={onRetry}
-			/>
-		);
-	}
-	const hintText = populationTitle ?? (typeof population === "string" ? population : undefined);
-	const hintTitle = [hintText, basis].filter(Boolean).join("\n") || undefined;
-	return (
-		<KPI
-			label={
-				<span className="flex items-baseline gap-1.5 min-w-0">
-					{symbol ? <SymI s={symbol} className={`${tone ?? ""} self-center shrink-0`.trim()} size={12} /> : null}
-					<span className="truncate min-w-0" title={label}>
-						{label}
-					</span>
-				</span>
-			}
-			value={value}
-			hint={population}
-			hintTitle={hintTitle}
-			isHintClamped
-			hintClassName="fs-meta"
-		/>
-	);
-}
-
-// 값 자리에 절대 0 을 쓰지 않는다 — 적재되지 않은 payload 가 0 으로 읽히는 것이 이 밴드가
-// 막으려는 단 하나의 오독이다. 세 상태는 문구도 형태도 서로 다르다.
-// The ready tile's own KPI anatomy carries every state → the label row and tile height hold when the value lands.
-const TILE_PLACEHOLDER_STATE_I = { loading: "loading", error: "error", unavailable: "empty", announced: "error" };
-
-function TilePlaceholderI({ status, label, owner, onRetry }) {
-	const { KPI } = window.UI;
-	const notes = {
-		error: "Couldn't load",
-		unavailable: "Not measured — this payload carried no value for it",
-		announced: `Not read — see the ${owner} below`,
-	};
-	return (
-		<KPI
-			label={label}
-			state={TILE_PLACEHOLDER_STATE_I[status] ?? "empty"}
-			loadingLabel={label}
-			hint={notes[status]}
-			hintFace="card-sub is-wrap"
-			foot={
-				status === "error" ? (
-					<button
-						type="button"
-						className="btn ghost sm"
-						onClick={onRetry}
-						aria-label={`Retry loading ${label}`}
-					>
-						Retry
-					</button>
-				) : null
-			}
-		/>
-	);
-}
-
-// 마지막 사이클 시각 — 값이 없으면 "unknown". 0 이나 오래된 스탬프로 대체하지 않는다.
+// 마지막 사이클 시각 (MM-DD HH:mm, 표시 tz) — 값이 없으면 공용 None. 0 이나 오래된 스탬프로 대체하지 않는다.
 function formatCycleStampI(iso) {
-	if (!iso) return "unknown";
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return "unknown";
-	return d.toLocaleString(undefined, {
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-	});
+	if (!iso || Number.isNaN(new Date(iso).getTime())) return <window.UI.AbsentValue kind="none" title="No cycle recorded" />;
+	return window.UI.formatKstDateTime(iso);
 }
 
 function getCycleCountTextI(count) {
 	return `${formatIntI(count)} ${count === 1 ? "cycle" : "cycles"}`;
 }
 
-// 뷰 전환 — nav 항목이 아니라 화면 안의 전환. 선택 상태 = aria-pressed + selected fill 의 휘도 반전(색상 비의존 cue),
-// 상태 전용 글리프 없음 → 눌림과 무관하게 옵션 박스 하나(DESIGN.md §7.16).
-function ViewToggleI({ view, onChange }) {
-	const options = [
-		["operator", "Operator"],
-		["instrumentation", "Instrumentation"],
+const VIEW_TABS_ID_I = "improvement-view";
+
+// the view switch is a label-only tab row under the header → the segmented control in the head slot stays the range control on every screen
+function ViewTabsI({ view, onChange }) {
+	const tabs = [
+		{ key: "operator", label: "Operator" },
+		{ key: "instrumentation", label: "Instrumentation" },
 	];
-	return (
-		<div className="seg" role="group" aria-label="Screen view">
-			{options.map(([key, label]) => (
-				<button
-					key={key}
-					type="button"
-					aria-pressed={view === key}
-					onClick={() => onChange(key)}
-				>
-					{label}
-				</button>
-			))}
-		</div>
-	);
+	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3 mb-4" />;
 }
 
 // ----- Rolling trend card (T-IMP-4) ------------------------------------------
@@ -894,7 +733,7 @@ function ViewToggleI({ view, onChange }) {
 // 헤더에 한 번만 적는다. 기준이 다른 카드는 자기 것을 스스로 말한다(CTM/EPM = 전체 기간).
 // reporting health 는 카드가 아니라 링크다 — 이 화면은 그 수치를 호스팅하지 않는다.
 function TrendCardI({ state, aggregate, failures, onRetry }) {
-	const { CardHead, TrendChart, LoadingPlaceholder, getRegionView } = window.UI;
+	const { CardHead, TrendChart, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
@@ -917,22 +756,18 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-4 pb-4">
-					<LoadingPlaceholder label="the trend" minHeight={60} />
-				</div>
+				{getLoopLoadingSlotI("the trend")}
 			</div>
 		);
 	}
 
 	const series = aggregate.trend || [];
-	// 2-포인트 미만 → 추세선 무의미 → 안내 (Sparkline 도 <2 면 null 반환).
-	if (series.length < 2) {
+	// under 2 days, or no scored cycle in the recent half → nothing to plot or rate → one line, no chart
+	if (series.length < 2 || !aggregate.failAfter?.total) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-4 pb-4">
-					<div className="placeholder">Not enough days to plot a trend</div>
-				</div>
+				<window.UI.EmptyState message="Not enough scored cycles to chart yet" />
 			</div>
 		);
 	}
@@ -951,16 +786,16 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 				visual: (
 					<TrendChart
 						label="Share of scored cycles rejected, per day"
-						tone="warn"
 						kind="bars"
 						h={112}
 						yScale
 						maxTicks={5}
-						formatValue={(v) => `${Math.round(v * 100)}%`}
+						formatValue={(v) => window.UI.formatPct(v * 100)}
 						points={points}
 					/>
 				),
-				foot: `Share rejected per day · all ${formatIntI(series.length)} cycle days: ${formatIntI(aggregate.verifiedTotal)} verified · ${formatIntI(aggregate.rejectTotal)} rejected`,
+				isPlotted: true,
+				foot: `${formatIntI(aggregate.verifiedTotal)} verified and ${formatIntI(aggregate.rejectTotal)} rejected across all ${formatIntI(series.length)} cycle days`,
 			})}
 		</div>
 	);
@@ -969,7 +804,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 // counts, never a percentage · each half names its cycle days so neither reads as the all-days total
 function getRejectRatePhraseI(before, after) {
 	if (!after || !after.total) return "No scored cycles yet";
-	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected in the latest ${formatIntI(after.days)} cycle days`;
+	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected in the latest ${formatIntI(after.days)} ${after.days === 1 ? "cycle day" : "cycle days"}`;
 	if (!before || !before.total) return recent;
 	return `${recent} (${formatIntI(before.count)} of ${formatIntI(before.total)} in the ${formatIntI(before.days)} before)`;
 }
@@ -980,7 +815,7 @@ function RejectRateHeadlineI({ before, after }) {
 	const isMuted = isLowSample(after?.total);
 	return (
 		<span className="inline-flex items-center gap-1.5 fs-meta" title={window.UI.titleOf(trend.hint)}>
-			<SymI s={trend.symbol} className={trend.tone} size={12} />
+			<window.UI.ToneGlyph tone={trend.tone} label={trend.hint} />
 			<span className={isMuted ? "text-faint" : "text-ink"}>{getRejectRatePhraseI(before, after)}</span>
 			<LowSampleMark n={after?.total} />
 		</span>
@@ -1072,12 +907,12 @@ function CycleDecompositionRowI({ stats }) {
 	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
 	return (
 		<div className="flex items-center gap-2 mt-2 px-4 flex-wrap">
-			<span className="fs-meta text-faint uppercase tracking-wider">
-				Run breakdown (<window.UI.NoWrap>7 days</window.UI.NoWrap>)
+			<span className="fs-meta text-dim font-medium">
+				Run breakdown (7d)
 			</span>
 			{chips.map(([sym, tone, label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
-					<SymI s={sym} className={tone} size={12} />
+					{count > 0 ? <SymI s={sym} className={tone} size={12} /> : null}
 					<span>{label}</span>
 					<Badge role="count">{formatIntI(count)}</Badge>
 				</span>
@@ -1090,7 +925,7 @@ function CycleDecompositionRowI({ stats }) {
 
 function KanbanCardI({
 	state,
-	columnRows,
+	columnRows = {},
 	loopAggregate,
 	onRowClick,
 	onAction,
@@ -1102,9 +937,10 @@ function KanbanCardI({
 	const isLoading = state.status === "loading";
 	const isError = getRegionView(state) === "error";
 	const rejectBuckets = state.data?.reject_bucket_summary || null;
+	const awaitingRows = columnRows.safety || [];
+	const isBoardEmpty = KANBAN_COLUMNS.every((col) => !(columnRows[col.key] || []).length);
 
-	// 카드 max-h:70vh — 본문 페이지 무한 늘어남 차단 · 컬럼 내부만 자체 스크롤.
-	// 레이아웃: ROW-1 = AWAITING 존(그리드 밖 배너/스트립, T2) · ROW-2 = 종결 그리드(2fr/1fr, T3).
+	// card max-h 70vh → only the lanes scroll · awaiting list above the applied 2fr / rejected 1fr grid
 	return (
 		<section
 			className="card flex flex-col"
@@ -1115,7 +951,7 @@ function KanbanCardI({
 			<div className="flex-shrink-0">
 				<CardHead
 					title="Suggestion board"
-					sub={`Lanes: latest ${BOARD_RECENT_LIMIT} suggestions`}
+					sub={<HeadStatusI count={isLoading || isError ? 0 : awaitingRows.length} words="awaiting" />}
 					info={`Applied and rejected lanes read the latest ${BOARD_RECENT_LIMIT} suggestions. Awaiting shows every open one.`}
 				/>
 			</div>
@@ -1135,16 +971,18 @@ function KanbanCardI({
 				<div className="flex flex-col p-3 flex-1 min-h-0">
 					<LoadingPlaceholder label="suggestions" className="flex-1" />
 				</div>
+			) : isBoardEmpty ? (
+				<window.UI.EmptyState message="No suggestions yet" />
 			) : (
 				<div className="flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-hidden">
-					{/* ROW-1 — AWAITING 존 (승인 대기, 유일한 행동 유발 레인 → 최상단 배치). */}
-					<AwaitingZoneI
-						rows={columnRows.safety || []}
-						onRowClick={onRowClick}
-						onAction={onAction}
-						pendingActionId={pendingActionId}
-					/>
-					{/* ROW-2 — 종결 그리드 (applied 2fr : rejected 1fr, safety 제외). */}
+					{awaitingRows.length > 0 ? (
+						<AwaitingListI
+							rows={awaitingRows}
+							onRowClick={onRowClick}
+							onAction={onAction}
+							pendingActionId={pendingActionId}
+						/>
+					) : null}
 					<div className="board-terminal-grid flex-1 min-h-0 overflow-hidden">
 						{TERMINAL_COLUMNS.map((col) => (
 							<KanbanColumnI
@@ -1163,65 +1001,36 @@ function KanbanCardI({
 	);
 }
 
-// ROW-1 AWAITING 존 (T2/T8) — aria-live 래퍼는 count 무관 항상 DOM 상주(영속),
-// 스트립 ↔ 배너 콘텐츠만 그 안에서 교체 → 마운트/언마운트 aria-live 레이스 회피.
-function AwaitingZoneI({ rows, onRowClick, onAction, pendingActionId }) {
-	const hasItems = rows.length > 0;
+// head Status in the card sub slot — the live region stays mounted so a count arriving later is announced (spec 44084 §3.1)
+function HeadStatusI({ count, words }) {
 	return (
-		<div role="status" aria-live="polite" className="flex-shrink-0">
-			{hasItems ? (
-				<AwaitingBannerI
-					rows={rows}
-					onRowClick={onRowClick}
+		<span role="status" aria-live="polite" className="inline-flex">
+			{count > 0 ? (
+				<window.UI.HeadStatus tone="warn">{`${formatIntI(count)} ${words}`}</window.UI.HeadStatus>
+			) : null}
+		</span>
+	);
+}
+
+// Awaiting suggestions — the only lane asking for an action, so it leads the board · list scrolls past 40vh
+function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
+	return (
+		<div className="i-await-body flex-shrink-0">
+			{rows.map((row) => (
+				<ProposalCardI
+					key={row.id}
+					row={row}
+					onClick={() => onRowClick(row)}
 					onAction={onAction}
 					pendingActionId={pendingActionId}
 				/>
-			) : (
-				<AwaitingStripI />
-			)}
+			))}
 		</div>
 	);
 }
 
-// 1+ rows — the warn AlertCard heads the list (the zone around it is the live region) · list scrolls past 40vh
-function AwaitingBannerI({ rows, onRowClick, onAction, pendingActionId }) {
-	const { AlertCard } = window.UI;
-	return (
-		<div className="flex flex-col gap-2">
-			<AlertCard
-				tone="warn"
-				hasLiveHost
-				title={`${SAFETY_COLUMN.label} · ${formatIntI(rows.length)}`}
-				body="Your call"
-			/>
-			<div className="i-await-body">
-				{rows.map((row) => (
-					<ProposalCardI
-						key={row.id}
-						row={row}
-						onClick={() => onRowClick(row)}
-						onAction={onAction}
-						pendingActionId={pendingActionId}
-					/>
-				))}
-			</div>
-		</div>
-	);
-}
-
-// 0건 — 슬림 idle 스트립 (~30px, amber 없음 · --sunken/--line 중립 · ℹ dual-encode).
-// 레이아웃에서 제거하지 않아 발견가능성 유지(collapse-not-hide, G3).
-function AwaitingStripI() {
-	return (
-		<div className="i-await-strip">
-			<SymI s="ℹ" size={12} />
-			<span>No suggestions awaiting approval</span>
-		</div>
-	);
-}
-
-// 종결 레인 — variant 라우팅(T4): full → AppliedHistoryRowI · compact → CompactProposalCardI(폴백 full).
-// 헤더는 레인별 분기(T6 APPLIED hero · Rejected 중립 헤더 + reject 스파크) · Bar 부피막대 폐기(DR-3).
+// 종결 레인 — variant 라우팅: full → AppliedHistoryRowI · compact → CompactProposalCardI(폴백 full).
+// 두 레인 헤더는 같은 한 줄 모양 · Rejected 만 원인 분할 + reject 스파크를 더한다.
 function KanbanColumnI({
 	column,
 	rows,
@@ -1268,9 +1077,8 @@ function KanbanColumnI({
 							summary={rejectBuckets}
 							label={column.label}
 							symbol={column.symbol}
-							trend={loopAggregate?.trend}
 						/>
-						<RejectBucketSplitI summary={rejectBuckets} />
+						<RejectBucketSplitI summary={rejectBuckets} trend={loopAggregate?.trend} />
 					</React.Fragment>
 				)}
 			</div>
@@ -1341,10 +1149,10 @@ function AppliedHistoryRowI({ row, onClick }) {
 				<>
 					<window.UI.AgentName
 						name={row.target_agent}
-						className="font-mono text-dim truncate shrink-0 max-w-[10rem]"
+						className="text-dim truncate shrink-0 max-w-[10rem]"
 					/>
-					<span className="font-mono text-faint tnum shrink-0">
-						{row.cycle_date ? formatDateI(row.cycle_date) : "—"}
+					<span className="text-faint tnum shrink-0">
+						{row.cycle_date ? formatDateI(row.cycle_date) : <window.UI.AbsentValue kind="none" title="No cycle date recorded" />}
 					</span>
 				</>
 			}
@@ -1371,50 +1179,36 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 	);
 }
 
-// applied lane header — ink count + ok ✓ glyph + dim label; the tone rides on the glyph alone
+// applied lane header — the rejected head's one-line shape: ok ✓ glyph, dim label, ink count
 function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
-		<div className="i-applied-hero i-col-header">
-			<span
-				className="fs-stat tnum font-mono text-ink"
-				style={{ lineHeight: 1 }}
-			>
-				{formatIntI(count)}
-			</span>
-			<span className="inline-flex items-center gap-1.5">
-				<SymI s={symbol} className="text-ok" size={14} />
-				<span className="fs-meta uppercase tracking-wider text-dim">
-					{label}
-				</span>
-			</span>
+		<div className="i-col-header gap-1.5 fs-meta whitespace-nowrap min-w-0">
+			<SymI s={symbol} className="text-ok" size={13} />
+			<span className="text-dim">{label}</span>
+			<span className="text-ink tnum">{formatIntI(count)}</span>
 		</div>
 	);
 }
 
 // rejected lane header — crit on the ✕ glyph and the reject spark only · label dim, count ink
-// count + cause split share the server day window; the fetched rows count only when no window came back
-function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
-	const hasSpark = Array.isArray(trend) && trend.length >= 2;
+// count = the rows it heads (latest-50 list) · the server day window's total sits behind ⓘ
+function RejectedHeaderI({ rowCount, summary, label, symbol }) {
 	const windowDays = Number(summary?.window_days);
 	const windowTotal = Number(summary?.total);
 	const hasWindow = Number.isFinite(windowDays) && Number.isFinite(windowTotal);
-	const count = hasWindow ? windowTotal : rowCount;
-	const basis = hasWindow
-		? `last ${formatIntI(windowDays)} days`
-		: `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
+	const basis = `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
 	return (
-		<div className="i-col-header gap-1.5 fs-meta font-mono uppercase tracking-wider whitespace-nowrap min-w-0">
+		<div className="i-col-header gap-1.5 fs-meta whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
-			<span className="text-ink tnum">{formatIntI(count)}</span>
-			<span className="text-faint normal-case tracking-normal truncate min-w-0" title={basis}>
+			<span className="text-ink tnum">{formatIntI(rowCount)}</span>
+			<span className="text-faint truncate min-w-0" title={basis}>
 				{basis}
 			</span>
-			{hasSpark ? (
-				<span className="ml-auto flex items-center gap-1">
-					<RejectSparkI trend={trend} />
-					<span className="text-faint normal-case tracking-normal">rejections per day</span>
-				</span>
+			{hasWindow ? (
+				<window.UI.CardInfo label="How the rejected count is counted">
+					{`${formatIntI(windowTotal)} rejected in the last ${formatIntI(windowDays)} days — the window the cause split counts. The lane lists the rejected rows among the latest ${formatIntI(BOARD_RECENT_LIMIT)} suggestions.`}
+				</window.UI.CardInfo>
 			) : null}
 		</div>
 	);
@@ -1423,8 +1217,9 @@ function RejectedHeaderI({ rowCount, summary, label, symbol, trend }) {
 // T7 — REJECTED 3분할(quality/infra/lifecycle) · 서버 집계(provenance 필터 포함)를 그대로 표시.
 // 클라 재집계/재필터 금지 — 행 모집단이 서버 윈도우와 달라 수치가 어긋난다.
 // summary 부재(구 payload) → null = 오늘과 동일 렌더 · chrome 중립(--crit 은 헤더 전용, T7 색상 예약).
-function RejectBucketSplitI({ summary }) {
-	if (!summary) return null;
+function RejectBucketSplitI({ summary, trend }) {
+	// no summary (older payload) or nothing rejected in the window → no split to show
+	if (!summary || !(Number(summary.total) > 0)) return null;
 
 	// quality 만 실질 반려 — infra/lifecycle 은 품질 판정에 도달조차 못한 건.
 	const cells = [
@@ -1444,27 +1239,35 @@ function RejectBucketSplitI({ summary }) {
 			"Superseded by a fresher same-agent proposal — terminated by the cycle, never judged",
 		],
 	];
-	// the header above names the day window → the split only names its axis
+	// a flat line plots nothing
+	const hasSpark = Array.isArray(trend) && trend.length >= 2 && trend.some((d) => Number(d.reject) > 0);
+	// the header above counts the lane's rows → the split names its own day window, with its daily trend
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-meta">
 			{[
-				<span key="basis" className="text-faint">By cause</span>,
+				<span key="basis" className="text-faint">{`By cause, last ${formatIntI(Number(summary.window_days))} days`}</span>,
 				...cells.map(([label, count, hint]) => (
 				<span
 					key={label}
 					className="inline-flex items-baseline gap-1"
 					title={hint}>
-					<span className="text-faint uppercase tracking-wider">{label}</span>
+					<span className="text-dim font-medium">{label}</span>
 					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
 				</span>
 			)),
+				hasSpark ? (
+					<span key="spark" className="ml-auto flex items-center gap-1">
+						<RejectSparkI trend={trend} />
+						<span className="text-faint">rejections per day</span>
+					</span>
+				) : null,
 			]}
 		</div>
 	);
 }
 
-// reject 단일-시리즈 소형 인라인 SVG 스파크 (T5). 출처 = loopAggregate.trend 의 reject 계열.
-// stroke = --crit/0.6 (심볼 톤 · --warn 아님, T7). 데이터 2포인트 미만/null → 생략(카운트는 유지).
+// reject 단일-시리즈 소형 인라인 SVG 스파크 · 출처 = loopAggregate.trend 의 reject 계열 · 2포인트 미만 → 생략(카운트는 유지)
+// stroke = --data — reject 건수는 수량 시리즈, 임계 초과 표식 아님 → severity 색 금지 (design.md §4.3)
 function RejectSparkI({ trend }) {
 	const reject = Array.isArray(trend)
 		? trend.map((d) => Number(d.reject) || 0)
@@ -1493,7 +1296,7 @@ function RejectSparkI({ trend }) {
 			<path
 				d={path}
 				fill="none"
-				stroke="rgb(var(--crit) / 0.6)"
+				stroke="rgb(var(--data))"
 				strokeWidth="1.4"
 				strokeLinecap="round"
 				strokeLinejoin="round"
@@ -1573,7 +1376,7 @@ function CompactProposalCardI({ row, onClick }) {
 			lead={
 				isJudged ? null : (
 					<span
-						className="text-faint uppercase tracking-wider shrink-0"
+						className="text-dim font-medium shrink-0"
 						title="Closed by the loop without a verdict — not a rejection">
 						Not judged
 					</span>
@@ -1584,7 +1387,7 @@ function CompactProposalCardI({ row, onClick }) {
 				<>
 					<span className="font-mono text-faint shrink-0">#{row.id}</span>
 					{row.cycle_date && (
-						<span className="font-mono text-faint tnum shrink-0">
+						<span className="text-faint tnum shrink-0">
 							{formatDateI(row.cycle_date)}
 						</span>
 					)}
@@ -1640,8 +1443,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 					>
 						Pre-check
 					</Badge>
-					{/* confidence_observed(NN%) — NULL → "n/a" 폴백(confidenceBadgeMetaI guard, FIX-B).
-              밴드 색은 status Badge 내부 Icon tone 에만. */}
+					{/* confidence_observed(NN%) — not measured → no chip · 밴드 색은 status Badge 내부 Icon tone 에만. */}
 					<ConfidenceBadgeI value={row.confidence_observed} />
 					{isSnoozed && (
 						<Badge
@@ -1757,9 +1559,10 @@ const REJECT_OUTLINE_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(
 
 // confidence_observed(NN%) 배지 — empirical posterior (0.0-1.0).
 // canonical status Badge(.pill)로 렌더 — 밴드 tone 은 선행 Icon(TONE_ICON[tone])이 운반, shell 은 neutral.
-// guard 는 confidenceBadgeMetaI 재사용(NULL/NaN → "n/a" 폴백 보존) · label "Confidence " 접두 제거(percent/"n/a" 만).
+// not measured → no chip (spec 44084 §2.2 has no n/a word) · label "Confidence " 접두 제거(percent 만).
 function ConfidenceBadgeI({ value }) {
 	const { Badge } = window.UI;
+	if (!isConfidenceMeasuredI(value)) return null;
 	const badge = confidenceBadgeMetaI(value);
 	const short = badge.label.replace("Confidence ", "");
 	return (
@@ -1776,8 +1579,7 @@ function ConfidenceBadgeI({ value }) {
 }
 
 // confidence_observed → canonical 4-badge dual-encoded mapping.
-// NULL/undefined → ℹ "n/a" — 개별 proposal 의 실측 신뢰도 미산정분에 대한 방어 분기
-// (daemon 이 대부분 채우지만 산정 전 row 존재 가능). `classes` = pill 배경 (proposal 카드 배지) · `tone` = text class (KPI tile · 표).
+// NULL/undefined → ℹ "n/a" — instrumentation view 의 평균 미산정분 (proposal 카드는 chip 자체를 생략). `tone` = text class.
 function confidenceBadgeMetaI(value) {
 	const { TONE_GLYPH, TONE_ICON } = window.UI;
 	// tone → symbol/icon 은 registry(TONE_GLYPH/TONE_ICON) 단일 출처 — 로컬 tone/symbol 맵 제거.
@@ -1788,14 +1590,16 @@ function confidenceBadgeMetaI(value) {
 		label,
 		titleHint,
 	});
-	if (value === null || value === undefined || Number.isNaN(Number(value))) {
-		return build("info", "n/a", "Not measured for this suggestion");
-	}
+	if (!isConfidenceMeasuredI(value)) return build("info", "n/a", "Not measured for this suggestion");
 	const v = Number(value);
-	const pct = `${(v * 100).toFixed(0)}%`;
+	const pct = window.UI.formatPct(v * 100);
 	if (v >= 0.7) return build("ok", `Confidence ${pct}`, `${v.toFixed(4)} (high)`);
 	if (v >= 0.4) return build("warn", `Confidence ${pct}`, `${v.toFixed(4)} (medium)`);
 	return build("crit", `Confidence ${pct}`, `${v.toFixed(4)} (low)`);
+}
+
+function isConfidenceMeasuredI(value) {
+	return value !== null && value !== undefined && !Number.isNaN(Number(value));
 }
 
 // pre_verify_status → canonical 4-badge dual-encoded mapping.
@@ -1829,7 +1633,7 @@ function preVerifyBadgeI(status, passed) {
 // ----- Bucket row (Read-bridge) — CTM/EPM + outcome_summary + join_meta 시각화. ---
 
 function BucketRowI({ state, buckets, failures, onRetry }) {
-	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
+	const { CardHead, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
@@ -1853,11 +1657,9 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead
 					title="Learning memory"
-					sub="CTM/EPM · all time"
+					sub="All time"
 				/>
-				<div className="p-3">
-					<LoadingPlaceholder label="learning memory" minHeight={68} />
-				</div>
+				{getLoopLoadingSlotI("learning memory")}
 			</div>
 		);
 	}
@@ -1873,31 +1675,27 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		<div className="card" id={ANCHOR_ID_I.learningMemory}>
 			<CardHead
 				title="Learning memory"
-				sub="CTM/EPM · all time"
+				sub="All time"
+				info={
+					<div className="flex flex-col gap-3 fs-body">
+						{cards.map(([, , label, , hint]) => (
+							<p key={label}>
+								<span className="text-ink font-semibold">{label}</span> — {hint}
+							</p>
+						))}
+					</div>
+				}
 			/>
 			{getLoopSlotsI({
 				metric: cards.map(([sym, tone, label, value]) => (
 					<span key={label} className="inline-flex items-baseline gap-1">
-						<SymI s={sym} className={tone} size={13} />
-						<span className="fs-stat font-semibold text-ink font-mono">{formatIntI(value)}</span>
+						{Number(value) > 0 ? <SymI s={sym} className={tone} size={13} /> : null}
+						<span className="fs-stat font-semibold text-ink tnum">{formatIntI(value)}</span>
 						<span className="fs-meta text-dim">{label}</span>
 					</span>
 				)),
-				visual: (
-					<div className="grid grid-cols-2 gap-2">
-						{cards.map(([sym, tone, label, , hint]) => (
-							<div key={label} className="sub-card bg-elev p-3 min-w-0">
-								{/* icon + label: one atom, the meta-size icon centred on the label's first line, 4 apart */}
-								<div className="i-icon-head fs-meta">
-									<SymI s={sym} className={tone} size={13} />
-									<span>{label}</span>
-								</div>
-								<div className="card-sub is-wrap fs-meta mt-1">{hint}</div>
-							</div>
-						))}
-					</div>
-				),
-				foot: "All agents · not the group's 7-day window",
+				visual: null,
+				foot: "All agents over all time, not the group's 7-day window",
 			})}
 		</div>
 	);
@@ -1953,6 +1751,11 @@ function getSuppressionListI(suppression, key) {
 	return Array.isArray(suppression?.[key]) ? suppression[key] : [];
 }
 
+// held rows a human can clear today — the status band and the ledger head read this one count
+function getHeldNeedingHumanI(suppression) {
+	return sumCountsI(getSuppressionListI(suppression, "parked").filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)));
+}
+
 // 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
 // 발견 윈도우를 걸면 숫자는 0 이 아닌데 구역만 비는 판독 불가 상태가 된다.
 // 반려 행은 서버가 원인별로 이미 나눠 보낸다 — 7일 목록에서 따로 모으면 같은 행이 두 번 선다.
@@ -1961,13 +1764,13 @@ function LedgerHeldSectionI({ suppression }) {
 	if (buckets.length === 0) return null;
 	const rows = getSuppressionListI(suppression, "parked_patterns");
 	return (
-		<div className="px-3 pb-3">
+		<div id={ANCHOR_ID_I.heldPatterns} className="i-ledger-sec">
 			<LedgerSectionHeadI
 				label="Held — terminal rows"
 				basis="all time"
 				count={sumCountsI(buckets)}
 			/>
-			<HeldCauseStripI buckets={buckets} />
+			<HeldCauseTableI buckets={buckets} />
 			{buckets.map((b) => (
 				<HeldCauseGroupI
 					key={b.cause}
@@ -1979,40 +1782,39 @@ function LedgerHeldSectionI({ suppression }) {
 	);
 }
 
-// One line per cause — held count · agent count · re-arm condition, readable without opening the list.
-function HeldCauseStripI({ buckets }) {
+// One row per cause — held count · agents, readable without opening a row list · the remedy lives in the drawer
+function HeldCauseTableI({ buckets }) {
 	return (
-		<ul className="flex flex-col gap-1 mb-1">
-			{buckets.map((b) => {
-				const agents = Number(b.agents ?? 0);
-				const isHumanCause = !HELD_DESIGN_DECISION_CAUSES.has(b.cause);
-				return (
-					<li
-						key={b.cause}
-						className="fs-meta flex flex-wrap items-baseline gap-x-2"
-					>
-						<span title={isHumanCause ? "Needs a human" : "Held by design decision"}>
-							<SymI
-								s={isHumanCause ? "⚠" : "ℹ"}
-								className={isHumanCause ? "text-warn" : "text-faint"}
-								size={13}
-							/>
-						</span>
-						<span className="text-ink">{b.label}</span>
-						<span className="text-ink tnum">
-							{`${formatIntI(Number(b.count ?? 0))} held`}
-						</span>
-						<span className="text-dim tnum">
-							{`${formatIntI(agents)} ${agents === 1 ? "agent" : "agents"}`}
-						</span>
-					</li>
-				);
-			})}
-		</ul>
+		<table className="w-full i-held-table mb-1">
+			<thead className="tbl-head">
+				<tr className="fs-meta text-dim">
+					<th className="text-left font-medium">Cause</th>
+					<th className="text-right font-medium pl-4">Held</th>
+					<th className="text-right font-medium pl-4">Agents</th>
+				</tr>
+			</thead>
+			<tbody className="tbl-compact">
+				{buckets.map((b) => {
+					const isHumanCause = !HELD_DESIGN_DECISION_CAUSES.has(b.cause);
+					return (
+						<tr key={b.cause} className="border-t border-line/50">
+							<td className="text-left text-ink">
+								<span title={isHumanCause ? "Needs a human" : "Held by design decision"}>
+									<SymI s={isHumanCause ? "⚠" : "ℹ"} className={isHumanCause ? "text-warn" : "text-faint"} size={13} />
+								</span>{" "}
+								{b.label}
+							</td>
+							<td className="text-right pl-4 text-ink tnum">{formatIntI(Number(b.count ?? 0))}</td>
+							<td className="text-right pl-4 text-dim tnum">{formatIntI(Number(b.agents ?? 0))}</td>
+						</tr>
+					);
+				})}
+			</tbody>
+		</table>
 	);
 }
 
-// Per-cause row list — every group folds the same way; the strip above already states status.
+// Per-cause row list — every group folds the same way; the cause table above already states the counts.
 function HeldCauseGroupI({ bucket, rows }) {
 	return (
 		<details className="mt-1.5">
@@ -2046,7 +1848,7 @@ function LedgerPlainRowsI({ rows }) {
 						{truncateI(patternNameI(r.pattern_signature, r.agent), 120)}
 					</span>
 					<window.UI.AgentName name={r.agent} className="text-dim whitespace-nowrap" />
-					<span className="font-mono fs-meta text-faint shrink-0 tnum">
+					<span className="fs-meta text-faint shrink-0 tnum">
 						{formatDateFullI(r.discovered_date)}
 					</span>
 				</li>
@@ -2065,18 +1867,47 @@ function LedgerSectionHeadI({ label, basis, count }) {
 }
 
 // 비활성(inert) 구역 — status 는 pending 인데 intake 가 라벨로 매번 건너뛴다. 활성 목록에
-// 섞여 있으면 건강한 backlog 로 읽히는 지점이 정확히 여기다.
+// 섞여 있으면 건강한 backlog 로 읽히는 지점이 정확히 여기다 → 접힌 채, 라벨당 한 줄.
 function LedgerInertSectionI({ rows }) {
 	if (rows.length === 0) return null;
 	return (
-		<div className="px-3 pb-3">
-			<LedgerSectionHeadI
-				label="Inert — the intake skips this label every cycle"
-				basis="discovered in the last 7 days"
-				count={rows.length}
-			/>
-			<LedgerPlainRowsI rows={rows} />
-		</div>
+		<details className="i-ledger-sec">
+			<summary className="group disclosure select-none">
+				<window.UI.DisclosureChevron />
+				<LedgerSectionHeadI
+					label="Inert — the intake skips this label every cycle"
+					basis="discovered in the last 7 days"
+					count={rows.length}
+				/>
+			</summary>
+			<InertLabelRowsI groups={getPatternGroupsI(rows)} />
+		</details>
+	);
+}
+
+// one line per label — row count past one · its agent, or how many · latest first-seen date
+function InertLabelRowsI({ groups }) {
+	return (
+		<ul className="mt-1.5 i-plain-rows">
+			{groups.map(({ title, entries }) => {
+				const agents = [...new Set(entries.map(({ pattern }) => pattern.agent))];
+				const latest = entries.map(({ pattern }) => String(pattern.discovered_date ?? "")).sort().at(-1);
+				return (
+					<li key={title} className="fs-body">
+						<span className="text-ink truncate min-w-0" title={title}>
+							{truncateI(title, 120)}
+							{entries.length > 1 ? <span className="text-dim tnum">{` ${formatIntI(entries.length)} rows`}</span> : null}
+						</span>
+						{agents.length === 1 ? (
+							<window.UI.AgentName name={agents[0]} className="text-dim whitespace-nowrap" />
+						) : (
+							<span className="text-dim whitespace-nowrap tnum" title={agents.join(", ")}>{`${formatIntI(agents.length)} agents`}</span>
+						)}
+						<span className="fs-meta text-faint shrink-0 tnum">{formatDateFullI(latest)}</span>
+					</li>
+				);
+			})}
+		</ul>
 	);
 }
 
@@ -2087,7 +1918,7 @@ function LedgerRecurrenceSectionI({ suppression }) {
 	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
-		<div className="px-3 pb-3">
+		<div className="i-ledger-sec">
 			<div
 				className="fs-meta text-dim mb-1"
 				title="Recurrences, not distinct patterns — these mechanisms write no lifecycle transition, so the same row is re-suppressed on every cycle."
@@ -2105,17 +1936,17 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 	return (
 		<table className="i-recurrence-tbl w-full fs-meta">
 			<thead className="tbl-head">
-				<tr className="text-faint uppercase tracking-wider">
-					<th className="text-left pl-1.5">Cause</th>
-					<th className="text-right pl-4">Agents affected</th>
-					<th className="text-right pl-4">Cycle days</th>
-					<th className="text-right pl-4 pr-1.5">Events</th>
+				<tr className="text-faint">
+					<th className="text-left font-medium">Cause</th>
+					<th className="text-right font-medium pl-4">Agents affected</th>
+					<th className="text-right font-medium pl-4">Cycle days</th>
+					<th className="text-right font-medium pl-4">Events</th>
 				</tr>
 			</thead>
 			<tbody className="tbl-compact">
 				{buckets.map((b) => (
 					<tr key={b.cause} className="border-t border-line/50">
-						<td className="text-left pl-1.5 text-ink" title={b.hint}>
+						<td className="text-left text-ink" title={b.hint}>
 							{b.label}
 						</td>
 						<td className="text-right pl-4 text-ink tnum">
@@ -2124,7 +1955,7 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 						<td className="text-right pl-4 text-ink tnum">
 							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
 						</td>
-						<td className="text-right pl-4 pr-1.5 text-dim tnum">
+						<td className="text-right pl-4 text-dim tnum">
 							{formatIntI(Number(b.count ?? 0))}
 						</td>
 					</tr>
@@ -2191,8 +2022,8 @@ function learningStatusBadgeI(status) {
 		rejected: { tone: "crit", label: "Declined" },
 		identified: { tone: "info", label: "Spotted" },
 	};
-	const meta = map[status] || { tone: "info", label: status || "—" };
-	return { tone: `text-${meta.tone}`, symbol: TONE_GLYPH[meta.tone], label: meta.label };
+	const meta = map[status] || { tone: "info", label: status || window.UI.EMPTY_VALUE_TEXT };
+	return { tone: `text-${meta.tone}`, severity: meta.tone, symbol: TONE_GLYPH[meta.tone], label: meta.label };
 }
 
 // ----- Detail drawer (Read) — 공용 DetailSurface(variant=drawer) 위임. -------
@@ -2217,7 +2048,7 @@ function DetailDrawerI({ row, onClose }) {
 
 // Detail body — fields grid + 0..N text sections + pre-verify keyed block (pattern / proposal 공용).
 function DetailBodyI({ fields, sections, footnote, preVerify }) {
-	const labelCls = "fs-meta text-faint uppercase tracking-wider";
+	const labelCls = "fs-meta text-dim font-medium";
 	return (
 		<div className="flex flex-col gap-3">
 			<dl className="grid gap-1.5" style={{ gridTemplateColumns: "120px 1fr" }}>
@@ -2225,7 +2056,7 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 					<React.Fragment key={k}>
 						<dt className={labelCls}>{k}</dt>
 						<dd className={`fs-body text-ink break-words${mono ? " font-mono" : ""}`}>
-							{String(v)}
+							{typeof v === "object" ? v : String(v)}
 						</dd>
 					</React.Fragment>
 				))}
@@ -2254,13 +2085,13 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 	);
 }
 
-// PRE-VERIFY drawer 블록 — badge 헤더 + rationale + keyed axis 행 (P10 · 원시 JSON 대체).
-// axis value boolean → PASS/FAIL 배지 · 그 외 → 문자열.
+// Pre-verify drawer 블록 — badge 헤더 + rationale + keyed axis 행 (P10 · 원시 JSON 대체).
+// axis value boolean → Passed/Failed 배지 · 그 외 → 문자열.
 function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 	const { Badge } = window.UI;
 	return (
 		<div>
-			<div className={`${labelCls} mb-1`}>PRE-VERIFY</div>
+			<div className={`${labelCls} mb-1`}>Pre-verify</div>
 			<div className="bg-sunken p-3 rounded-md flex flex-col gap-2">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
@@ -2287,8 +2118,8 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 											role="status"
 											tone={value ? "ok" : "crit"}
 											icon
-											title={`${label}: ${value ? "PASS" : "FAIL"}`}>
-											{value ? "PASS" : "FAIL"}
+											title={`${label}: ${value ? "Passed" : "Failed"}`}>
+											{value ? "Passed" : "Failed"}
 										</Badge>
 									) : (
 										<span className="fs-meta text-ink">
@@ -2341,9 +2172,9 @@ function buildDetailPropsI(row) {
 				],
 			],
 			sections: [
-				["PATTERN", row?.pattern_signature || row?.summary, false],
-				["LAST TRANSITION", row?.last_transition_reason, false],
-				["EXAMPLE", row?.example, true],
+				["Pattern", row?.pattern_signature || row?.summary, false],
+				["Last transition", row?.last_transition_reason, false],
+				["Example", row?.example, true],
 			],
 		};
 	}
@@ -2369,18 +2200,21 @@ function buildDetailPropsI(row) {
 			["Target agent", row?.target_agent],
 			["Target file", row?.target_file, true],
 			// cycle_date = date-only string → tz-safe formatDateFullI · reviewed_at = UTC instant → formatKstFull
-			["Cycle date", row?.cycle_date ? formatDateFullI(row.cycle_date) : null, true],
+			["Cycle date", row?.cycle_date ? formatDateFullI(row.cycle_date) : null],
 			["Model check", getModelCheckWordsI(row?.haiku_status)],
 			["Cost guard", getDetailWordsI("costGuard", row?.cost_guard_state)],
 			[
 				"Reviewed at",
-				row?.reviewed_at ? window.UI.formatKstFull(row.reviewed_at) : null,
-				true,
+				row?.reviewed_at ? (
+					<span title={window.UI.formatKstFull(row.reviewed_at)}>
+						{window.UI.formatKstDateTime(row.reviewed_at)}
+					</span>
+				) : null,
 			],
 		],
 		sections: [
-			["PATTERN LABEL", row?.pattern_label, false],
-			["RATIONALE", row?.rationale, false],
+			["Pattern label", row?.pattern_label, false],
+			["Rationale", row?.rationale, false],
 		],
 		preVerify: preVerifyDetail,
 	};
@@ -2467,7 +2301,7 @@ function composePreVerifyI(badge, rationale, axes) {
 // 전/후반 reject 비율을 formatPctWithDenominator 로 — 분모 0 → '—' (가짜 0% 차단).
 
 function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
-	const { CardHead, LoadingPlaceholder, getRegionView } = window.UI;
+	const { CardHead, getRegionView } = window.UI;
 	if (getRegionView(state) === "error") {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
@@ -2490,27 +2324,19 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-4 pb-4">
-					<LoadingPlaceholder label="applied changes" minHeight={68} />
-				</div>
+				{getLoopLoadingSlotI("applied changes")}
 			</div>
 		);
 	}
 
-	const { added, removed, changedCount, eventCount, failBefore, failAfter } = aggregate;
+	const { added, removed, changedCount, eventCount } = aggregate;
 
 	// 데이터 부재 — 윈도우 내 사이클 이벤트 0건 → 안내 indicator (가짜 0 채움 금지).
 	if (eventCount === 0) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-4 pb-4">
-					<div
-						className="placeholder"
-					>
-						No improvement cycles recorded yet
-					</div>
-				</div>
+				<window.UI.EmptyState message="No improvement cycles recorded yet" />
 			</div>
 		);
 	}
@@ -2523,17 +2349,10 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 				sub={<span title={basis.title}>{basis.text}</span>}
 			/>
 			{getLoopSlotsI({
+				// the reject rate is the trend card's sentence → this card leads with its own counts
 				metric: (
 					<div>
-						<div className="fs-meta text-faint uppercase tracking-wider">
-							Reject rate, recent half
-						</div>
-						<RejectRateHeadlineI before={failBefore} after={failAfter} />
-					</div>
-				),
-				visual: (
-					<>
-						<div className="fs-meta text-faint uppercase tracking-wider">
+						<div className="fs-meta text-dim font-medium">
 							Lines changed
 						</div>
 						<div className="mt-1 flex items-baseline gap-x-4 gap-y-1 flex-wrap">
@@ -2552,7 +2371,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 								title={`${formatIntI(removed)} rule/instruction ${removed === 1 ? "line" : "lines"} removed across ${getCycleCountTextI(eventCount)}`}
 							/>
 						</div>
-					</>
+					</div>
 				),
 				foot: `${formatIntI(changedCount)} of ${getCycleCountTextI(eventCount)} changed rule lines`,
 			})}
@@ -2561,18 +2380,28 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 }
 
 // One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards; the foot keeps its day tokens whole.
-function getLoopSlotsI({ metric, visual, foot }) {
+// plot height only under a drawn plot → a row where nothing plots ends at its content
+function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
 		<>
 			<div className="i-loop-metric">{metric}</div>
-			<div className="i-loop-visual" style={{ height: CARD_SLOTS.S.plotPx }}>
+			<div className="i-loop-visual" style={isPlotted ? { height: CARD_SLOTS.S.plotPx } : undefined}>
 				{visual}
 			</div>
 			<div className="card-foot">
 				<window.UI.DayTokens>{foot}</window.UI.DayTokens>
 			</div>
 		</>
+	);
+}
+
+// a loading loop card → its line in the metric slot, so sibling cards draw it at one height
+function getLoopLoadingSlotI(label) {
+	return (
+		<div className="i-loop-metric">
+			<window.UI.LoadingPlaceholder label={label} />
+		</div>
 	);
 }
 
@@ -2587,13 +2416,12 @@ function LineCountI({ symbol, tone, count, word, title }) {
 	);
 }
 
-// before→after reject 비율 추이 → dual-encoded 배지 (낮을수록 좋음 = inverse).
+// before→after reject 비율 추이 → 톤 마크 + hint 문구 (낮을수록 좋음 = inverse).
 // 분모 부족(둘 중 하나라도 0) → ℹ 중립 ('—' 비교 불가). 하락=✓ ok · 상승=⚠ warn · 동률=ℹ.
 function failTrendMetaI(before, after) {
 	if (!before.total || !after.total) {
 		return {
-			tone: "text-info",
-			symbol: "ℹ",
+			tone: "info",
 			hint: "Rejected ÷ scored cycles (newer half) — not enough to compare",
 		};
 	}
@@ -2601,19 +2429,16 @@ function failTrendMetaI(before, after) {
 	const aRate = after.count / after.total;
 	if (aRate < bRate)
 		return {
-			tone: "text-ok",
-			symbol: "✓",
+			tone: "ok",
 			hint: "Rejected ÷ scored cycles (newer half) — reject rate fell",
 		};
 	if (aRate > bRate)
 		return {
-			tone: "text-warn",
-			symbol: "⚠",
+			tone: "warn",
 			hint: "Rejected ÷ scored cycles (newer half) — reject rate rose",
 		};
 	return {
-		tone: "text-info",
-		symbol: "ℹ",
+		tone: "info",
 		hint: "Rejected ÷ scored cycles (newer half) — unchanged",
 	};
 }
@@ -2682,58 +2507,37 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 	// severity 밴드 = 최대 빈도 대비 — StatusDot 색 + 텍스트 빈도 동반 (dual-encode).
 	const maxFreq = Math.max(1, ...sorted.map((p) => Number(p.frequency ?? 0)));
 
-	const liveSection = (
-		<LedgerLiveSectionI rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />
-	);
-	const sideSections = getLedgerSectionsI(inert, suppression);
-	const columns =
-		inert.length > 0
-			? getLedgerColumnsI(1 + live.length + getLiveRowGroupsI(live).length, sideSections)
-			: null;
+	const candidates = [
+		<LedgerLiveSectionI key="live" rows={live} maxFreq={maxFreq} onRowClick={onRowClick} />,
+		<LedgerInertSectionI key="inert" rows={inert} />,
+	];
+	// held + recurrence = the problems a human acts on → they lead · none → the candidates take the whole card
+	const hasProblems = ["parked", "per_cycle"].some((key) => getSuppressionListI(suppression, key).length > 0);
+	const heldNeedingHuman = getHeldNeedingHumanI(suppression);
 
 	return (
 		<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger} data-testid="pattern-ledger">
-			<CardHead title="Pattern ledger" info={<LedgerNotesI suppression={suppression} />} />
-			{columns ? (
-				<SplitRow ratio="1:1" layout="equal" className="i-ledger-cols">
-					<SplitColumn>
-						{liveSection}
-						{columns.live.map((section) => section.node)}
-					</SplitColumn>
-					<SplitColumn>{columns.side.map((section) => section.node)}</SplitColumn>
-				</SplitRow>
-			) : (
-				<>
-					{liveSection}
-					{sideSections.map((section) => section.node)}
-				</>
-			)}
+			<CardHead
+				title="Pattern ledger"
+				sub={<HeadStatusI count={heldNeedingHuman} words={heldNeedingHuman === 1 ? "needs a human" : "need a human"} />}
+				info={<LedgerNotesI suppression={suppression} />}
+			/>
+			<div className="i-ledger-body">
+				{hasProblems ? (
+					<SplitRow ratio="1:1" layout="equal" className="i-ledger-cols">
+						<SplitColumn>
+							<LedgerHeldSectionI suppression={suppression} />
+							<LedgerRecurrenceSectionI suppression={suppression} />
+						</SplitColumn>
+						<SplitColumn>{candidates}</SplitColumn>
+					</SplitRow>
+				) : (
+					candidates
+				)}
+			</div>
 			<LedgerFooterI total={total} declined={declinedAllTime} />
 		</section>
 	);
-}
-
-// Ledger sections beside the live list, each weighted by its rendered lines (head + rows · held = strip line + folded summary per cause).
-function getLedgerSectionsI(inert, suppression) {
-	const heldBuckets = getSuppressionListI(suppression, "parked");
-	const recurrenceBuckets = getSuppressionListI(suppression, "per_cycle");
-	return [
-		{ key: "inert", weight: inert.length > 0 ? 1 + inert.length : 0, node: <LedgerInertSectionI key="inert" rows={inert} /> },
-		{ key: "held", weight: heldBuckets.length > 0 ? 1 + 2 * heldBuckets.length : 0, node: <LedgerHeldSectionI key="held" suppression={suppression} /> },
-		{ key: "recurrence", weight: recurrenceBuckets.length > 0 ? 2 + recurrenceBuckets.length : 0, node: <LedgerRecurrenceSectionI key="recurrence" suppression={suppression} /> },
-	];
-}
-
-// Each section, in order, joins the lighter column so far → neither column ends in a tall empty run.
-function getLedgerColumnsI(liveWeight, sections) {
-	const columns = { live: [], side: [] };
-	const total = { live: liveWeight, side: 0 };
-	for (const section of sections) {
-		const target = total.side <= total.live ? "side" : "live";
-		columns[target].push(section);
-		total[target] += section.weight;
-	}
-	return columns;
 }
 
 // Live zone — proposal-eligible rows only, card kept when empty (held still reads) · same-title rows grouped, each led by its agent.
@@ -2747,7 +2551,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	);
 	if (rows.length === 0) {
 		return (
-			<div className="px-3 pb-3">
+			<div className="i-ledger-sec">
 				{head}
 				<div className="placeholder">
 					No candidate patterns in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>
@@ -2756,9 +2560,9 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 		);
 	}
 	return (
-		<div className="px-3 pb-3 flex flex-col gap-1.5">
+		<div className="i-ledger-sec flex flex-col gap-1.5">
 			{head}
-			{getLiveRowGroupsI(rows).map((group) => (
+			{getPatternGroupsI(rows).map((group) => (
 				<div key={group.title} className="flex flex-col gap-1">
 					<div className="fs-body text-ink truncate" title={group.title}>
 						{truncateI(group.title, 120)}
@@ -2779,7 +2583,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 }
 
 // Group by shared title — first-appearance order kept, rank stays the overall frequency rank.
-function getLiveRowGroupsI(rows) {
+function getPatternGroupsI(rows) {
 	const groups = new Map();
 	rows.forEach((pattern, i) => {
 		const title = patternNameI(pattern.pattern_signature, pattern.agent);
@@ -2824,14 +2628,11 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 					ariaLabel={`Seen ${freq} times; the most-seen live pattern ${maxFreq}`}
 				/>
 			</span>
-			<span
-				className={`fs-meta shrink-0 ${badge.tone}`}
-				title={`Status: ${badge.label}`}
-			>
-				<SymI s={badge.symbol} size={11} />
+			<span className="fs-meta shrink-0 inline-flex">
+				<window.UI.ToneGlyph tone={badge.severity} label={`Status: ${badge.label}`} title={`Status: ${badge.label}`} />
 			</span>
 			<span
-				className="fs-meta font-mono text-dim tnum shrink-0"
+				className="fs-meta text-dim tnum shrink-0"
 				title="Times this pattern was seen"
 			>
 				×{formatIntI(freq)}
@@ -2950,12 +2751,12 @@ function getLoopBasisI(aggregate) {
 	return { text, title: `${text} · ${getDateSpanI(trend[0].date, trend[trend.length - 1].date)}` };
 }
 
-// MM/DD drops the year → a span across a year boundary states its years instead
+// MM-DD drops the year → a span across a year boundary states its years instead
 function getDateSpanI(first, last) {
 	const firstYear = String(first).slice(0, 4);
 	const lastYear = String(last).slice(0, 4);
 	if (firstYear !== lastYear) return `${firstYear}–${lastYear}`;
-	return `${formatDateI(first)}–${formatDateI(last)}`;
+	return `${formatDateI(first)} – ${formatDateI(last)}`;
 }
 
 // newest request per region setter → a superseded answer cannot move the stamp either
@@ -3032,19 +2833,19 @@ function groupByColumnI(proposals) {
 // 공용 formatInt 위임 (ui.jsx SoT) — 로컬 재구현 폐기. 음수/NaN → '—' 가드 승격 상속.
 const formatIntI = window.UI.formatInt;
 // date-only "YYYY-MM-DD" 문자열 전용 (cycle_date · discovered_date · window_start/end ·
-// latest_window_end — 서버 formatDateOnly 직렬화). new Date 파싱 회피 → tz 일자 shift 차단
-// (UTC 자정 문자열을 브라우저 로컬로 해석하면 음수 오프셋에서 전날로 밀림). 문자열에서 MM/DD 만 추출.
+// latest_window_end — 서버 formatDateOnly 직렬화). day key 만 formatKstDay 로 → zone shift 없는 MM-DD
+// (UTC 자정 문자열을 브라우저 로컬로 해석하면 음수 오프셋에서 전날로 밀림).
 function formatDateI(iso) {
 	const s = String(iso ?? "");
-	const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-	return m ? `${m[2]}/${m[3]}` : s;
+	const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+	return m ? window.UI.formatKstDay(m[0]) : s;
 }
-// formatDateI 와 동일한 tz-safe 문자열 추출 — 연도까지 포함 (YYYY/MM/DD).
-// discovered_date 표시 전용 (First seen 컬럼) → 연도 식별 필요.
+// formatDateI 와 동일한 tz-safe 문자열 추출 — 연도까지 포함 (YYYY-MM-DD, formatKstDate 형).
+// 연도 식별이 필요한 곳 전용 (First seen 컬럼 · drawer Cycle date).
 function formatDateFullI(iso) {
 	const s = String(iso ?? "");
-	const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-	return m ? `${m[1]}/${m[2]}/${m[3]}` : s;
+	const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+	return m ? m[0] : s;
 }
 // signatures are "<label>|<agent>" — the agent already has its own cell
 function patternLabelI(signature, agent) {
@@ -3081,7 +2882,8 @@ function InstrumentationViewI(props) {
 // banner Retry hands focus to the open view's own anchor → the id must exist in whichever view is showing
 // region keys sit on every branch root of their card → the node outlives recovery and takes the Retry's focus
 const ANCHOR_ID_I = Object.freeze({
-	verdict: "improvement-verdict",
+	status: "improvement-status",
+	heldPatterns: "improvement-held-patterns",
 	instrumentation: "improvement-instrumentation",
 	loopOutput: "improvement-loop-output",
 	trend: "improvement-trend",
@@ -3092,7 +2894,7 @@ const ANCHOR_ID_I = Object.freeze({
 });
 
 function getBannerFocusTargetI(view) {
-	return view === "instrumentation" ? ANCHOR_ID_I.instrumentation : ANCHOR_ID_I.verdict;
+	return view === "instrumentation" ? ANCHOR_ID_I.instrumentation : ANCHOR_ID_I.status;
 }
 
 // Screen-shared atoms for the instrumentation view — this file owns the SymI glyph and confidenceBadgeMetaI verdicts.
