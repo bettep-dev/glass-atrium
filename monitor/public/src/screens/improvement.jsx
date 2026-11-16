@@ -562,17 +562,28 @@ function getBandStatsI({ asOf, statsState, listState, learningLogState, suppress
 	const awaitingHeld = awaiting > 0 ? null : getHeldLabelI(asOf, listState);
 	const heldBuckets = getSuppressionListI(suppression, "parked");
 	const heldNeedingHuman = getHeldNeedingHumanI(suppression);
-	const appliedLead = getHeldTextI(appliedHeld, `of ${getCycleCountTextI(Number(s.cycle_total_7d ?? 0))} · last `);
 	return [
 		buildBandStatI({ key: "awaiting", label: "Awaiting your decision", owner: "suggestion board", isCovered: noticeSources.includes("suggestions"), status: getBandStatStatusI(listState, listState.data),
 			value: formatIntI(awaiting), context: getHeldTextI(awaitingHeld, "Pending or snoozed suggestions") }),
 		buildBandStatI({ key: "applied", label: "Applied, 7d", owner: "loop output", isCovered: noticeSources.includes("loop stats"), status: getBandStatStatusI(statsState, statsState.data),
 			value: formatIntI(Number(s.cycles_generated_applied_7d ?? 0)),
-			context: <>{appliedLead}<window.UI.NoWrap>{formatCycleStampI(s.latest_cycle_started_at)}</window.UI.NoWrap></> }),
+			context: getAppliedContextI(appliedHeld, s) }),
 		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", isCovered: noticeSources.includes("pattern ledger"), status: getBandStatStatusI(learningLogState, suppression),
 			value: heldNeedingHuman > 0 ? <JumpLinkI targetId={ANCHOR_ID_I.heldPatterns}>{formatIntI(heldNeedingHuman)}</JumpLinkI> : formatIntI(0),
 			context: `of ${formatIntI(sumCountsI(heldBuckets))} held patterns` }),
 	];
+}
+
+// no cycle on record → one phrase, never "last None" inside a sentence (spec 44084 §2.2)
+function getAppliedContextI(held, stats) {
+	const total = Number(stats.cycle_total_7d ?? 0);
+	if (total === 0 && !stats.latest_cycle_started_at) return getHeldTextI(held, "No cycles yet");
+	return (
+		<>
+			{getHeldTextI(held, `of ${getCycleCountTextI(total)} · last `)}
+			<window.UI.NoWrap>{formatCycleStampI(stats.latest_cycle_started_at)}</window.UI.NoWrap>
+		</>
+	);
 }
 
 function getHeldTextI(held, text) {

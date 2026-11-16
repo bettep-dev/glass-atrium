@@ -198,12 +198,21 @@ test("the applied stat names a one-cycle week in the singular", () => {
   assert.match(textOf(applied?.context), /of 1 cycle · /);
 });
 
-test("a week with no recorded cycle names its last cycle through the shared None atom", () => {
-  const applied = getBandStats({ statsState: { ...LANDED, data: { cycles_generated_applied_7d: 0, cycle_total_7d: 0 } } }).get("applied");
-  const absent = collectElements(applied?.context, []).find((el) => el.type === sandbox.window.UI.AbsentValue);
+// §2.2 None is a cell word, never dropped into a sentence → a loop with no cycle on record says so whole
+describe("a week with no cycle names its last cycle only when one is on record", () => {
+  const rows = [
+    { name: "no cycle ever recorded", latest: null, expected: /^No cycles yet$/ },
+    { name: "an older cycle on record", latest: "2026-09-01T03:00:00Z", expected: /^of 0 cycles · last / },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const data = { cycles_generated_applied_7d: 0, cycle_total_7d: 0, latest_cycle_started_at: row.latest };
+      const applied = getBandStats({ statsState: { ...LANDED, data } }).get("applied");
 
-  assert.match(textOf(applied?.context), /of 0 cycles · last /);
-  assert.equal(absent?.props.kind, "none", "a known absence reads None, never unknown");
+      assert.match(textOf(applied?.context), row.expected);
+      assert.equal(collectElements(applied?.context, []).some((el) => el.type === sandbox.window.UI.AbsentValue), false);
+    });
+  }
 });
 
 test("the held count links to the ledger's held section only while a held pattern needs a human", () => {
