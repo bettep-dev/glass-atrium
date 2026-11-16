@@ -16,6 +16,8 @@ import { CSRF_HEADER, DEVICE_COOKIE, getCsrfToken } from "../src/server/remote/s
 const HOST = "owner-mac.local:16146";
 const ORIGIN = `https://${HOST}`;
 const START = Date.parse("2026-11-14T14:20:00.123Z");
+// internal detail a thrown error carries → never in a reply to an unregistered device
+const STORE_DETAIL = "/opt/atrium-test/monitor 127.0.0.1:5432";
 
 const CLASSES = new Map<string, RouteClass>([
   ["GET /api/health", "page"],
@@ -27,6 +29,8 @@ const CLASSES = new Map<string, RouteClass>([
   ["POST /api/remote/register", "remote-pre-auth"],
   ["GET /api/remote/session", "remote-device"],
   ["POST /api/remote/logout", "remote-device"],
+  ["POST /api/remote/off", "remote-device"],
+  ["GET /api/failing", "page"],
 ]);
 
 interface Harness {
@@ -39,7 +43,7 @@ interface Harness {
   issueDevice: () => string;
 }
 
-async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Harness> {
+async function buildHarness(options: { isAuditDown?: boolean; isDeviceStoreDown?: boolean } = {}): Promise<Harness> {
   const app = Fastify();
   const handled: string[] = [];
   const audits: Harness["audits"] = [];
@@ -49,7 +53,10 @@ async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Ha
   await registerRemoteGate(app, {
     getHosts: () => new Set([HOST, "192.168.0.24:16146"]),
     getPageOrigins: () => new Set([ORIGIN]),
-    findDevice: async (presented) => devices.get(presented) ?? null,
+    findDevice: async (presented) => {
+      if (options.isDeviceStoreDown === true) throw new Error(`device store unreachable at ${STORE_DETAIL}`);
+      return devices.get(presented) ?? null;
+    },
     getRouteClass: (method, path) => CLASSES.get(`${method === "HEAD" ? "GET" : method} ${path}`) ?? null,
     preAuthRoutes: new Set(["POST /api/remote/register"]),
     connections: new DeviceConnections(),
@@ -77,12 +84,22 @@ async function buildHarness(options: { isAuditDown?: boolean } = {}): Promise<Ha
   app.post("/api/queue/items", record("items"));
   app.post("/api/remote/registration", record("registration"));
   app.post("/api/remote/cli/devices/revoke-all", record("cli-revoke-all"));
-  app.post("/api/remote/register", record("register"));
+  app.post("/api/remote/register", async (request) => {
+    if ((request.body as { fail?: boolean } | undefined)?.fail === true) throw new Error(`store failed at ${STORE_DETAIL}`);
+    handled.push("register");
+    return { ok: true };
+  });
   app.get("/api/remote/session", async (request) => {
     handled.push("session");
     return { id: String(getAdmittedDevice(request)?.id) };
   });
   app.post("/api/remote/logout", record("logout"));
+  app.post("/api/remote/off", record("off"));
+  // the static wildcard → an /api path no route claims falls through to it
+  app.get("/*", record("static"));
+  app.get("/api/failing", async () => {
+    throw new Error(`handler failed at ${STORE_DETAIL}`);
+  });
   app.get("/api/framed", async (_request, reply) => {
     reply.header("content-security-policy", "sandbox; frame-ancestors 'self'");
     return { ok: true };
@@ -227,6 +244,42 @@ test("a denied route is audited with the device as actor", async () => {
   ]);
 });
 
+test("a registered device's refused read of an /api path no route claims is audited with that path, query dropped", async () => {
+  const harness = await buildHarness();
+  const presented = harness.issueDevice();
+  const rows = [
+    { method: "GET" as const, url: "/api/remote/devices?limit=5", route: "/api/remote/devices" },
+    { method: "HEAD" as const, url: "/api/remote/cli/devices/", route: "/api/remote/cli/devices/" },
+  ];
+  for (const row of rows) await send(harness, { method: row.method, url: row.url, headers: asDevice(presented) });
+  assert.deepEqual(
+    harness.events.map((event) => [event.actionKind, event.payload]),
+    rows.map((row) => ["remote.route_denied", { method: row.method, route: row.route }]),
+  );
+});
+
+describe("a failure behind the gate", () => {
+  test("a device store failure refuses with 503 and an opaque body", async () => {
+    const harness = await buildHarness({ isDeviceStoreDown: true });
+    const response = await send(harness, { method: "GET", url: "/api/health", headers: asDevice(randomBytes(32).toString("base64url")) });
+    assert.deepEqual([response.statusCode, response.json()], [503, { error: "device_lookup_unavailable" }]);
+  });
+
+  const rows = [
+    { name: "a malformed JSON body on the code POST", url: "/api/remote/register", isRegistered: false, payload: "{", status: 400, error: "bad_request" },
+    { name: "a throwing handler behind the code POST", url: "/api/remote/register", isRegistered: false, payload: '{"fail":true}', status: 500, error: "internal_error" },
+    { name: "a throwing handler a registered device reaches", url: "/api/failing", isRegistered: true, payload: undefined, status: 500, error: "internal_error" },
+  ];
+  for (const row of rows) {
+    test(`${row.name} answers ${row.status} with one opaque body and no internal detail`, async () => {
+      const harness = await buildHarness();
+      const headers = row.isRegistered ? asDevice(harness.issueDevice()) : { host: HOST, "sec-fetch-site": "same-origin", "content-type": "application/json" };
+      const response = await send(harness, { method: row.payload === undefined ? "GET" : "POST", url: row.url, headers, ...(row.payload === undefined ? {} : { payload: row.payload }) });
+      assert.deepEqual([response.statusCode, response.json()], [row.status, { error: row.error }]);
+    });
+  }
+});
+
 describe("mutations from a registered device", () => {
   const rows: readonly { name: string; build: (presented: string) => Record<string, string>; isAdmitted: boolean }[] = [
     { name: "same-origin fetch metadata and the CSRF value", build: (p) => asPageMutation(p), isAdmitted: true },
@@ -266,6 +319,16 @@ describe("mutations from a registered device", () => {
     assert.equal(response.statusCode, 503);
     assert.deepEqual(response.json(), { error: "audit_unavailable" });
     assert.deepEqual(harness.handled, []);
+  });
+
+  test("logout and off still run when their audit row cannot be written, unlike any other mutation", async () => {
+    const harness = await buildHarness({ isAuditDown: true });
+    const presented = harness.issueDevice();
+    const statuses: number[] = [];
+    for (const url of ["/api/remote/logout", "/api/remote/off", "/api/queue/owner/items/7/answer"]) {
+      statuses.push((await send(harness, { method: "POST", url, headers: asPageMutation(presented), payload: {} })).statusCode);
+    }
+    assert.deepEqual([statuses, harness.handled], [[200, 200, 503], ["logout", "off"]]);
   });
 
   test("a read writes no audit row", async () => {

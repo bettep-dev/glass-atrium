@@ -72,6 +72,8 @@ const SIGN_IN_PAGE = "/sign-in.html";
 const ACTOR_MAX_LENGTH = 64;
 // an unmatched path is caller-chosen → bounded before it reaches the audit payload
 const ROUTE_MAX_LENGTH = 256;
+// reduce-only closes → they run even when their intent row cannot be written (route-classes condition 13)
+const REDUCE_ONLY_ROUTES = new Set(["POST /api/remote/off", "POST /api/remote/logout"]);
 // request → admitted device; a WeakMap, not a decoration → nothing outside this module can mark a request registered
 const ADMITTED = new WeakMap<FastifyRequest, DeviceState>();
 
@@ -91,6 +93,14 @@ export async function registerRemoteGate(app: FastifyInstance, deps: RemoteGateD
     return payload;
   });
   app.addHook("onResponse", (request, reply) => recordAuditResult(request, reply, deps.audit));
+  app.setErrorHandler(replyOpaqueError);
+}
+
+// a thrown error's message, code and schema text never reach a remote caller → status class + one fixed code
+function replyOpaqueError(error: { statusCode?: number }, request: FastifyRequest, reply: FastifyReply): FastifyReply {
+  const statusCode = error.statusCode !== undefined && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
+  if (statusCode === 500) request.log.error({ err: error, method: request.method, route: request.routeOptions.url }, "remote request failed");
+  return refuse(reply, statusCode, statusCode === 500 ? "internal_error" : "bad_request");
 }
 
 async function admitRequest(request: FastifyRequest, reply: FastifyReply, deps: RemoteGateDeps, limiters: Limiters): Promise<FastifyReply | undefined> {
@@ -106,9 +116,20 @@ async function admitRequest(request: FastifyRequest, reply: FastifyReply, deps: 
     const isFromPage = !MUTATION_METHODS.has(request.method) || getPageOriginSignal(request.headers, deps.getPageOrigins()) !== null;
     return isFromPage ? undefined : refuse(reply, 403, "not_page_origin");
   }
+  return admitPresentedDevice(request, reply, deps, limiters);
+}
+
+async function admitPresentedDevice(request: FastifyRequest, reply: FastifyReply, deps: RemoteGateDeps, limiters: Limiters): Promise<FastifyReply | undefined> {
   const presented = request.cookies[DEVICE_COOKIE.NAME];
   if (presented === undefined || presented.length === 0) return refuseUnregistered(request, reply, deps);
-  const device = await deps.findDevice(presented);
+  let device: DeviceSummary | null;
+  try {
+    device = await deps.findDevice(presented);
+  } catch (error) {
+    request.log.error({ err: error, method: request.method }, "remote request refused: device lookup failed");
+    return refuse(reply, 503, "device_lookup_unavailable");
+  }
+  const address = getSourceAddress(request);
   if (device === null) {
     // an absent cookie is a first visit, not a failed credential → only a presented, unknown one counts and is audited
     limiters.failedSession.hit(address);
@@ -162,6 +183,10 @@ async function writeAuditIntent(request: FastifyRequest, reply: FastifyReply, au
     const actor = getRemoteActor(state.device, getSourceAddress(request));
     state.auditId = await audit.insertIntent({ actor, method: request.method, route, targetId: extractTargetId(request) });
   } catch (error) {
+    if (REDUCE_ONLY_ROUTES.has(`${request.method} ${route}`)) {
+      request.log.warn({ err: error, method: request.method, route }, "remote close runs without its audit intent row");
+      return undefined;
+    }
     request.log.error({ err: error, method: request.method, route }, "remote mutation refused: audit intent row not written");
     return refuse(reply, 503, "audit_unavailable");
   }
@@ -181,7 +206,10 @@ async function recordAuditResult(request: FastifyRequest, reply: FastifyReply, a
 
 // fire-and-forget → a refusal is never delayed or turned into a 500 by the audit write
 function recordEvent(request: FastifyRequest, audit: RemoteAuditWriter, event: { actor: string; actionKind: string }): void {
-  const payload = { method: request.method, route: (request.routeOptions.url ?? request.url.split("?")[0] ?? "").slice(0, ROUTE_MAX_LENGTH) };
+  const matched = request.routeOptions.url;
+  // the static wildcard names no path → the asked path, so a refused /api read shows what it tried
+  const route = matched === undefined || matched === STATIC_WILDCARD ? (request.url.split("?")[0] ?? "") : matched;
+  const payload = { method: request.method, route: route.slice(0, ROUTE_MAX_LENGTH) };
   audit.insertEvent({ ...event, result: "blocked", payload }).catch((error: unknown) => {
     request.log.warn({ err: error, actionKind: event.actionKind }, "remote audit event not recorded");
   });
