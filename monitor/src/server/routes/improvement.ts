@@ -9,7 +9,7 @@
 // tier_distribution is process-cached for STATS_CACHE_TTL_MS (monotonic clock);
 // main /api/improvement re-computes per-request.
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -24,6 +24,7 @@ import {
 import { STRUCTUREDOUTPUT_COMPLETION_SOURCE } from "../attribution-sources.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
+import { errnoCode } from "../errno.js";
 import { parseIdParam } from "../route-params.js";
 import { TASK_TYPES } from "../task-types.js";
 import type {
@@ -1856,6 +1857,56 @@ export function resolveApplyScript(): string {
   return path.join(homedir(), ".glass-atrium", "autoagent", "daemon-apply.sh");
 }
 
+const APPLY_TIMEOUT_MS = 10 * 60 * 1000; // --auto-regen runs a model regen + pre-verify → minutes, never unbounded
+const APPLY_STDERR_MAX_CHARS = 64 * 1024;
+
+// AUTOAGENT_APPLY_TIMEOUT_MS: server-startup test seam (process-env, never request-derived).
+function getApplyTimeoutMs(): number {
+  const override = Number.parseInt(process.env.AUTOAGENT_APPLY_TIMEOUT_MS ?? "", 10);
+  return Number.isInteger(override) && override > 0 ? override : APPLY_TIMEOUT_MS;
+}
+
+interface ApplyRun {
+  exitCode: number;
+  stderr: string;
+  isTimedOut: boolean;
+}
+
+// Own process group → the timeout ends the script's python / git children too, which would otherwise hold its pipes open.
+async function runApplyScript(args: string[]): Promise<ApplyRun> {
+  const child = spawn(resolveApplyScript(), args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    if (stderr.length < APPLY_STDERR_MAX_CHARS) stderr += chunk;
+  });
+  let isTimedOut = false;
+  const timer = setTimeout(() => {
+    isTimedOut = true;
+    killProcessGroup(child.pid);
+  }, getApplyTimeoutMs());
+  try {
+    const exitCode = await new Promise<number>((resolve) => {
+      child.once("error", (error) => {
+        stderr ||= error.message;
+        resolve(-1);
+      });
+      child.once("close", (code) => resolve(code ?? -1));
+    });
+    return { exitCode, stderr, isTimedOut };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function killProcessGroup(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch (error) {
+    if (errnoCode(error) !== "ESRCH") throw error;
+  }
+}
+
 // Who an approval through this route files the row under. One member of the closed
 // actor set declared at monitor/prisma/schema.prisma -> AutoagentProposal, and the
 // same literal handleReject stamps: both routes are the same operator, so both name
@@ -1955,29 +2006,23 @@ async function handleApprove(
   // execFile (not exec) — id passed as a discrete argv element, no shell interpolation
   // (defense-in-depth atop the int guard). --auto-regen: on a stale stored diff the script
   // regenerates + pre-verifies + re-applies inline instead of dead-ending at exit 9.
-  let exitCode: number;
-  let stderr: string;
-  try {
-    await execFileAsync(resolveApplyScript(), [
-      "--proposal-id",
-      String(id),
-      "--auto-regen",
-      "--actor",
-      REVIEW_ACTOR_OPERATOR,
-    ]);
-    // Resolved promise → exit 0.
-    exitCode = APPLY_EXIT_APPLIED;
-    stderr = "";
-  } catch (error) {
-    const parsed = parseExecFileError(error);
-    exitCode = parsed.code;
-    stderr = parsed.stderr;
-  }
+  const run = await runApplyScript(["--proposal-id", String(id), "--auto-regen", "--actor", REVIEW_ACTOR_OPERATOR]);
+  const { exitCode, stderr } = run;
 
   // Loud-fail logging — never swallow the exit code / stderr. info on the
   // actionable branches, error on the infra-class failures so a 500 is observable
   // in the daemon log.
   const logBase = { route: "/api/improvement/:id/approve", id, exitCode, durationMs: Date.now() - start };
+
+  if (run.isTimedOut) {
+    request.log.error({ ...logBase, stderr }, "approve failed — daemon-apply ran past its timeout and was stopped");
+    reply.code(504);
+    return {
+      status: "apply_error",
+      id,
+      reason: `daemon-apply ran past ${Math.round(getApplyTimeoutMs() / 1000)} s and was stopped — refresh the board before approving again`,
+    };
+  }
 
   if (exitCode === APPLY_EXIT_APPLIED) {
     request.log.info(logBase, "proposal approved + applied via daemon-apply --proposal-id");
@@ -2180,8 +2225,8 @@ async function handleReject(
   // UPDATE ... RETURNING — the returned row count IS the idempotency gate:
   //   - 1 row  → transitioned pending/snoozed → rejected (200).
   //   - 0 rows → predicate matched nothing = already terminal/approved (409).
-  // reviewed_by stamped 'monitor-user' — local single-user trust boundary (no
-  // auth layer, 127.0.0.1 only).
+  // reviewed_by 'monitor-user' — one owner on the Mac and every registered device (no per-device rights);
+  // a remote call passes the device gate first and its audit row's actor names the device.
   interface RejectedRow {
     id: bigint;
     reviewed_at: Date;
