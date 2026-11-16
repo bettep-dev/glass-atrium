@@ -651,7 +651,7 @@ describe("Learning labels read in sentence case, never letter-spaced capitals", 
     },
     {
       name: "suggestion drawer with a pre-verify result",
-      tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 9, approval_tier: "auto", pattern_label: "Scope note", rationale: "Repeated overrun", pre_verify_status: "failed", pre_verify_passed: false, pre_verify_rationale: "One axis failed", pre_verify_axes: { scope_ok: true, regression_free: false } })),
+      tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 9, approval_tier: "auto", pattern_label: "Scope note", rationale: "Repeated overrun", pre_verify_status: "failed", pre_verify_passed: false, pre_verify_rationale: "One axis failed", pre_verify_axes: { C1: true, C4: false } })),
       label: /Pattern label[\s\S]*Rationale[\s\S]*Pre-verify/,
     },
     { name: "run breakdown", tree: () => screen.CycleDecompositionRowI({ stats: {} }), label: /Run breakdown/ },
