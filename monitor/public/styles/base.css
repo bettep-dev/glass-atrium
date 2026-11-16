@@ -2101,6 +2101,14 @@ a.prose-link:hover {
 	font-weight: 500;
 	color: rgb(var(--dim));
 }
+/* a box one value line tall → the firing stat's glyph centres on that line, not on the Icon's text nudge */
+.stat-tone-glyph {
+	display: inline-flex;
+	align-items: center;
+	height: 1lh;
+	vertical-align: top;
+	margin-inline-end: var(--gap-label-inline);
+}
 .stat-context {
 	margin: var(--gap-stack) 0 0;
 	font-size: var(--fs-meta);

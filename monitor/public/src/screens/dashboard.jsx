@@ -365,18 +365,11 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
 const FIRING_TONES = new Set(['warn', 'crit']);
 
 function StatValue({ stat }) {
-  const { Icon, TONE_ICON, AbsentValue, ALERT_SEVERITY_WORD } = window.UI;
+  const { AbsentValue, StatToneGlyph } = window.UI;
   if (stat.absent) return <AbsentValue kind={stat.absent}/>;
   const figure = <span className={`whitespace-nowrap${stat.isBusy ? ' opacity-70' : ''}`}>{stat.value}</span>;
   if (!FIRING_TONES.has(stat.tone)) return figure;
-  return (
-    <>
-      {/* the alarm row's 16 → at 13 the 1.6 stroke paints under a pixel and the worst state reads faintest */}
-      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true"><Icon name={TONE_ICON[stat.tone]} size={16}/></span>
-      <span className="sr-only">{`${ALERT_SEVERITY_WORD[stat.tone]}: `}</span>
-      {figure}
-    </>
-  );
+  return <><StatToneGlyph tone={stat.tone}/>{figure}</>;
 }
 
 // the card's one ⓘ — each stat's notes led by its label

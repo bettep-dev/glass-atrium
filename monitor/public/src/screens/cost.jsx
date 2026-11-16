@@ -637,18 +637,12 @@ function buildStatC(stat) {
 
 // Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
 function SpendStatValueC({ stat }) {
-  const { Icon, TONE_ICON, AbsentValue } = window.UI;
+  const { AbsentValue, StatToneGlyph } = window.UI;
   // a failed read is Not loaded, a read that holds nothing is None → the context line names the cause
   if (stat.status !== 'ready') return <AbsentValue kind={stat.status === 'error' ? 'not-loaded' : 'none'}/>;
   if (!stat.tone) return stat.value;
   const toneLabel = 'Running hot';
-  return (
-    <>
-      <span className={`text-${stat.tone} mr-label-inline`} aria-hidden="true" title={toneLabel}><Icon name={TONE_ICON[stat.tone]} size={16}/></span>
-      <span className="sr-only">{`${toneLabel}:`}</span>
-      {stat.value}
-    </>
-  );
+  return <><StatToneGlyph tone={stat.tone} label={toneLabel} title={toneLabel}/>{stat.value}</>;
 }
 
 // Window change on its own block line — the token card's foot.

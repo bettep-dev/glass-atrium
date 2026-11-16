@@ -766,6 +766,18 @@ function StatRow({ stats, className = '' }) {
   </dl>;
 }
 
+/**
+ * A firing stat's tone mark: the alarm row's glyph on the value line, its word read before the figure.
+ * @param label - the word a screen reader hears first; defaults to the tone's severity word
+ * @param title - hover text on the glyph
+ */
+function StatToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
+  return <>
+    <span className={`stat-tone-glyph text-${tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
+    <span className="sr-only">{`${label}: `}</span>
+  </>;
+}
+
 // the figure's 600 is not the placeholder's → regular weight; the empty context line keeps the settled height (design.md §3.3)
 function LoadingStat({ label }) {
   return <div className="stat">
@@ -2654,10 +2666,13 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
  * @param actions - a Link to the owning page or the row's own control
  * @param role - 'alert' when no live container announces the row
  */
+// at 13 the 1.6 stroke paints under a pixel and the worst state reads faintest → every alarm mark, a firing stat's included
+const ALARM_GLYPH_SIZE = 16;
+
 function AlarmRow({ tone, title, detail, isHeld = false, actions, role }) {
   return (
     <div role={role} className="alarm-row" data-tone={tone}>
-      <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[tone]} size={16}/></span>
+      <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
       {/* fs-body on the content cell itself → base.css holds its line at the 20 row line; a child .fs-body would set 21.75 */}
       <div className="min-w-0 fs-body text-ink">
         <span className="font-medium">
@@ -3113,7 +3128,7 @@ window.UI = {
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
-  getDisplayName, hasFieldValue, DetailField, AbsentValue, getAbsentText, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
+  getDisplayName, hasFieldValue, DetailField, StatToneGlyph, AbsentValue, getAbsentText, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,

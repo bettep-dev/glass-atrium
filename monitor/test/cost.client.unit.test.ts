@@ -1099,15 +1099,13 @@ test("a spend stat that read nothing says so in faint words — Not loaded for a
   }
 });
 
-// a smaller stroke never reaches the tone colour → the firing stat's mark matches the alarm row's, as on the Dashboard
-test("a firing spend stat draws its tone glyph at the alarm row's glyph size", async () => {
+test("a firing spend stat draws the shared stat tone glyph in its tone, read as running hot, before the figure", async () => {
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
-  const getIconSizes = (tree: RenderedNode) => findNodes(tree, (n) => n.props.atom === "Icon").map((n) => n.props.size);
-  const getGlyphSizes = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "svg").map((n) => n.props.width);
   const stat = renderIn(mod, "SpendStatValueC", { stat: { key: "today", label: "Today", status: "ready", tone: "warn", value: "$1,790" } });
-  const alarm = renderIn(mod, "SpendAlarmRowsC", { rows: [{ key: "hot", tone: "warn", title: "$1,790 so far today", detail: null, isHeld: false }] });
+  const glyphs = findNodes(stat, (n) => n.props.atom === "StatToneGlyph");
 
-  assert.deepEqual(getIconSizes(stat), getGlyphSizes(alarm));
+  assert.deepEqual(glyphs.map((n) => [n.props.tone, n.props.label]), [["warn", "Running hot"]]);
+  assert.equal(collectText(stat).trim(), "$1,790");
 });
 
 function hasFaintClass(node: RenderedNode): boolean {

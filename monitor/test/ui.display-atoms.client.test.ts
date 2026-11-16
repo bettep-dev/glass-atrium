@@ -158,6 +158,22 @@ describe("stat row", () => {
     assert.equal(findNodes(context, (n) => n.props["aria-hidden"] === "true").length, 1, "the reserved line is hidden from assistive tech");
   });
 
+  test("a firing stat's tone glyph is the alarm row's glyph, hidden from assistive tech, its word read before the figure", () => {
+    const [alarmGlyph] = findNodes(render("AlarmRow", { tone: "crit", title: "2 of 7 agents down" }), (n) => n.type === "svg");
+    const rows = [
+      { name: "the tone's severity word by default", props: { tone: "crit" }, word: `${(ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD.crit}:` },
+      { name: "a caller's own word", props: { tone: "warn", label: "Running hot" }, word: "Running hot:" },
+    ];
+    for (const row of rows) {
+      const tree = render("StatToneGlyph", row.props);
+      const [glyph] = findNodes(tree, (n) => n.type === "svg");
+      const hidden = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
+      assert.equal(glyph.props.width, alarmGlyph.props.width, `${row.name}: the alarm row's glyph size`);
+      assert.ok(hidden.length === 1 && findNodes(hidden[0], (n) => n === glyph).length === 1, `${row.name}: the glyph is hidden`);
+      assert.equal(collectText(tree).trim(), row.word, row.name);
+    }
+  });
+
   const valueRows = [
     { name: "zero is a real value", value: 0, text: "0" },
     { name: "null reads None", value: null, text: "None" },

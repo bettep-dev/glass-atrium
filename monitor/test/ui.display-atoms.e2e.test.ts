@@ -41,6 +41,11 @@ const statWrap = renderToStaticMarkup(h(UI.StatRow, { stats: [
   { label: "Synthesized", value: "3.6%", context: "72 of 1,998" },
   { label: "Missing", value: "4.4%" },
 ] }));
+// a firing stat beside another, one a drill-down link → the tone glyph sits in either value's line
+const toneStats = renderToStaticMarkup(h(UI.StatRow, { stats: [
+  { label: "Spend today", value: h(React.Fragment, null, h(UI.StatToneGlyph, { tone: "warn", label: "Running hot" }), "$1,790") },
+  { label: "Agents", value: h(React.Fragment, null, h(UI.StatToneGlyph, { tone: "crit" }), "2 of 7 down"), href: "#/agents" },
+] }));
 const badges = renderToStaticMarkup(h("div", null,
   h(UI.Badge, { role: "metadata" }, "html"),
   h(UI.Badge, { role: "count" }, "1,284"),
@@ -74,7 +79,7 @@ const empties = renderToStaticMarkup(h("div", null,
 ));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -159,6 +164,18 @@ describe("the stat row", () => {
     assert.ok(stats[0].textHeight > stats[1].textHeight + 1, `the long label wraps: ${stats.map((stat) => stat.textHeight).join(", ")}px`);
     assert.ok(stats.every((stat) => !stat.isLabelClipped), "no label is clipped");
     assert.ok(stats.every((stat) => Math.abs(stat.valueTop - stats[0].valueTop) < 1), `value tops ${stats.map((stat) => stat.valueTop).join(", ")}`);
+  });
+
+  test("a firing stat's tone glyph centres on its value's line, a linked value included", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const offsets = await page.$$eval("#tone-stats .stat-value", (els) => els.map((el) => {
+      const glyph = el.querySelector("svg")?.getBoundingClientRect();
+      const line = el.getBoundingClientRect();
+      return glyph ? glyph.top + glyph.height / 2 - (line.top + line.height / 2) : Number.NaN;
+    }));
+
+    assert.equal(offsets.length, 2);
+    for (const offset of offsets) assert.ok(Math.abs(offset) < 0.5, `glyph centre ${offset}px off the value line centre`);
   });
 });
 

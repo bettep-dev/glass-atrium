@@ -578,7 +578,6 @@ test("each stat's value is a Link to its owning screen; a loading stat reaches t
 });
 
 // the alarm row's own glyph → a firing stat's mark reads at the same size as the row that states its alarm
-const ALARM_GLYPH_SIZE = findNodes(alarmRowsOf(render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} }))[0], (n) => n.type === "svg")[0].props.width;
 
 test("a firing stat shows its value and tone glyph only; a calm stat shows the value alone, and no stat carries a badge", () => {
   const rows = [
@@ -588,13 +587,10 @@ test("a firing stat shows its value and tone glyph only; a calm stat shows the v
   for (const row of rows) {
     const { tree, items } = renderStatusCard([{ ...READY_STAT, tone: row.tone, value: "2 of 7 down" }]);
     const value = nodeOf(items[0].value);
-    const glyphs = findNodes(value, (n) => n.props.atom === "Icon");
-    assert.equal(glyphs.length, row.hasGlyph ? 1 : 0, `${row.tone}: glyph`);
-    for (const glyph of glyphs) assert.equal(glyph.props.size, ALARM_GLYPH_SIZE, `${row.tone}: the glyph is drawn at the alarm-row size`);
+    const glyphs = findNodes(value, (n) => n.props.atom === "StatToneGlyph");
+    assert.deepEqual(glyphs.map((glyph) => glyph.props.tone), row.hasGlyph ? [row.tone] : [], `${row.tone}: the shared stat tone glyph, in the stat's tone`);
     assert.equal(findNodes(tree, (n) => n.props.atom === "Badge").length, 0, `${row.tone}: never a badge`);
-    const text = collectText(value).replace(/\s+/g, " ").trim();
-    assert.equal(text, row.hasGlyph ? `${realUi.ALERT_SEVERITY_WORD && (realUi.ALERT_SEVERITY_WORD as Record<string, string>)[row.tone]}: 2 of 7 down` : "2 of 7 down",
-      `${row.tone}: the sr-only tone word is the only word beside the figure`);
+    assert.equal(collectText(value).replace(/\s+/g, " ").trim(), "2 of 7 down", `${row.tone}: no word beside the figure but the glyph's own`);
     assert.equal(findNodes(value, (n) => hasClass(n, "whitespace-nowrap")).length, 1, `${row.tone}: the figure never wraps`);
   }
 });
