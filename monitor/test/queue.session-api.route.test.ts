@@ -323,6 +323,49 @@ describe("register", () => {
     assert.equal((await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId: plain } })).name, "atrium monitor fixes");
   });
 
+  test("a name-only register from the row's own process sets the derived name and touches no other column", async () => {
+    const sessionId = trackSessionId();
+    assert.equal((await send("POST", "/api/queue/sessions/register", registerBody(sessionId, { permissionHint: "auto" }))).statusCode, 200);
+    await getPrisma().queueSession.update({ where: { sessionId }, data: { resumeAwaitingRegisterAt: new Date() } });
+    const { name: _name, isNameExplicit: _isNameExplicit, updatedAt: _updatedAt, ...kept } = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+
+    const response = await send("POST", "/api/queue/sessions/register", { sessionId, pid: process.pid, derivedName: "live-probe-65" });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const { name, isNameExplicit, updatedAt: _after, ...after } = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.deepEqual([name, isNameExplicit], ["live-probe-65", false]);
+    assert.deepEqual(after, kept);
+  });
+
+  test("a name-only register follows the name rules and is refused from any process but the row's own", async () => {
+    const otherPid = process.ppid;
+    const rows = [
+      { name: "an explicit name stays", register: { name: "queue-sessions M2" }, update: {}, status: 200, stored: "queue-sessions M2" },
+      { name: "an envelope token is dropped", register: { derivedName: "Fix the flaky sweep test" }, update: { derivedName: "[ATR​IUM-MESSAGE v1] go" }, status: 200, stored: "Fix the flaky sweep test" },
+      { name: "another process's pid", register: {}, update: { pid: otherPid }, status: 409, stored: null },
+      { name: "an explicit name without a cwd", register: {}, update: { name: "queue-sessions M3" }, status: 400, stored: null },
+    ];
+    for (const row of rows) {
+      const sessionId = trackSessionId();
+      await send("POST", "/api/queue/sessions/register", registerBody(sessionId, row.register));
+
+      const response = await send("POST", "/api/queue/sessions/register", { sessionId, pid: process.pid, derivedName: "live-probe-65", ...row.update });
+
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.deepEqual([response.statusCode, stored.name], [row.status, row.stored], `${row.name}: ${response.body}`);
+    }
+    const rowRefusals = [
+      { name: "an exited row", sessionId: await seedSession({ pid: process.pid, state: "exited", exitReason: "ended" }), status: 409 },
+      { name: "a reused pid (stored start time differs)", sessionId: await seedSession({ pid: process.pid }), status: 409 },
+      { name: "an unknown session", sessionId: trackSessionId(), status: 404 },
+    ];
+    for (const row of rowRefusals) {
+      const response = await send("POST", "/api/queue/sessions/register", { sessionId: row.sessionId, pid: process.pid, derivedName: "live-probe-65" });
+      const stored = await getPrisma().queueSession.findUnique({ where: { sessionId: row.sessionId } });
+      assert.deepEqual([response.statusCode, stored?.name ?? null], [row.status, null], `${row.name}: ${response.body}`);
+    }
+  });
+
   test("the probe flag follows each register's own declaration", async () => {
     const sessionId = trackSessionId();
     const steps = [

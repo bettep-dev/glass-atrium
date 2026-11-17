@@ -10,7 +10,7 @@ import { errnoCode } from "../errno.js";
 import { hasEnvelopeToken } from "./envelope.js";
 import { QueueEnvironmentError, QueueRequestError } from "./errors.js";
 import { getProcessStartTime } from "./process-start-time.js";
-import type { DeregisterBody, PERMISSION_HINTS, RegisterBody } from "./schemas.js";
+import type { DeregisterBody, NameUpdateBody, PERMISSION_HINTS, RegisterBody } from "./schemas.js";
 
 const DEFAULT_PROFILE_LABEL = "default";
 const DEFAULT_CONFIG_DIR_NAME = ".claude";
@@ -108,6 +108,27 @@ export async function getAnsweredCount(tx: Prisma.TransactionClient, sessionId: 
   const where = { sessionId, status: "answered" } as const;
   const [answeredWaiting, relayWaiting] = await Promise.all([tx.queueItem.count({ where }), tx.queueItem.count({ where: { ...where, kind: "relay" } })]);
   return { answeredWaiting, relayWaiting };
+}
+
+/**
+ * Name-only update from the row's own process: the derived name under the register's name rules, no other column touched
+ * → none of a full register's side effects (marker clear, cwd, permission hint, replaced rows).
+ * @throws QueueRequestError 404 unknown_session · 409 not_session_process when the row is not live for this pid and start time
+ */
+export async function putSessionName(body: NameUpdateBody): Promise<void> {
+  const startTime = await getProcessStartTime(body.pid);
+  await getPrisma().$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<LockedSession & { processStartTime: string }>>`
+      SELECT "pid", "state"::text AS "state", "process_start_time" AS "processStartTime"
+      FROM "monitor"."queue_sessions" WHERE "session_id" = ${body.sessionId}::uuid FOR UPDATE`;
+    const row = rows[0];
+    if (row === undefined) throw new QueueRequestError(404, "unknown_session", "session not registered");
+    if (row.state !== "live" || row.pid !== body.pid || row.processStartTime !== startTime) {
+      throw new QueueRequestError(409, "not_session_process", "only the session's own live process may update its name");
+    }
+    const nameUpdate = await getNameUpdate(tx, body);
+    if (nameUpdate.name !== undefined) await tx.queueSession.update({ where: { sessionId: body.sessionId }, data: nameUpdate });
+  });
 }
 
 export interface DeregisterResult {
@@ -270,7 +291,10 @@ async function putLiveSession(tx: Prisma.TransactionClient, body: RegisterBody, 
  * session's title may quote its own envelope, and a refused register would leave it unregistered).
  * @throws QueueRequestError 400 envelope_token
  */
-async function getNameUpdate(tx: Prisma.TransactionClient, body: RegisterBody): Promise<{ name?: string; isNameExplicit?: boolean }> {
+async function getNameUpdate(
+  tx: Prisma.TransactionClient,
+  body: Pick<RegisterBody, "sessionId" | "name" | "derivedName">,
+): Promise<{ name?: string; isNameExplicit?: boolean }> {
   if (body.name !== undefined && hasEnvelopeToken(body.name)) throw new QueueRequestError(400, "envelope_token", "a session name may not carry an envelope token");
   if (body.name !== undefined) return { name: body.name, isNameExplicit: true };
   if (body.derivedName === undefined || hasEnvelopeToken(body.derivedName)) return {};

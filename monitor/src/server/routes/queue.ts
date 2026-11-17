@@ -16,7 +16,7 @@ import { createItem, getClaimViews, getCount, getItemOrThrow } from "../queue/it
 import { getPeerSessions } from "../queue/owner-sessions.js";
 import { createRelay, getRefusalResponse } from "../queue/relay.js";
 import { getSecretScannerPath } from "../queue/relay-scan.js";
-import { deregisterSession, registerSession } from "../queue/registry.js";
+import { deregisterSession, putSessionName, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook } from "../queue/request-gate.js";
 import { hasBrowserSignal } from "../request-guards.js";
 import {
@@ -25,7 +25,7 @@ import {
   pendingBodySchema,
   pendingCountBodySchema,
   postItemBodySchema,
-  registerBodySchema,
+  registerRouteBodySchema,
   relayBodySchema,
   sessionBodySchema,
 } from "../queue/schemas.js";
@@ -84,9 +84,9 @@ function registerSessionRoutes(app: FastifyInstance, homeDir: string): void {
   app.post("/api/queue/sessions/register", POST_ROUTE_OPTIONS, async (request, reply) =>
     handleParsed(request, reply, {
       route: "/api/queue/sessions/register",
-      schema: registerBodySchema,
+      schema: registerRouteBodySchema,
       input: request.body,
-      work: (body) => registerSession(body, homeDir),
+      work: (body): Promise<object> => ("cwd" in body ? registerSession(body, homeDir) : putSessionName(body).then(() => ({ ok: true }))),
     }),
   );
   app.post("/api/queue/sessions/deregister", POST_ROUTE_OPTIONS, async (request, reply) =>

@@ -65,6 +65,11 @@ export const registerBodySchema = z.strictObject({
   isProbe: z.boolean().optional(),
 });
 
+// A register with no cwd: the name-only update a turn-end hook sends once the transcript has a title (registry.ts → putSessionName)
+export const nameUpdateBodySchema = z.strictObject({ sessionId, pid, derivedName: sessionName });
+
+export const registerRouteBodySchema = z.union([registerBodySchema, nameUpdateBodySchema]);
+
 export const deregisterBodySchema = z.strictObject({
   sessionId,
   pid: pid.optional(),
@@ -185,6 +190,7 @@ export const recentResumesQuerySchema = z.strictObject({
 });
 
 export type RegisterBody = z.infer<typeof registerBodySchema>;
+export type NameUpdateBody = z.infer<typeof nameUpdateBodySchema>;
 export type DeregisterBody = z.infer<typeof deregisterBodySchema>;
 export type PostItemBody = z.infer<typeof postItemBodySchema>;
 export type AckBody = z.infer<typeof ackBodySchema>;
