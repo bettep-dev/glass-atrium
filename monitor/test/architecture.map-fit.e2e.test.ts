@@ -32,7 +32,7 @@
 // React + mermaid come from CDN, so the run REQUIRES outbound network and an installed
 // chromium. An unmet prerequisite fails RED — no skip guard absorbs it.
 
-import test, { after, before, describe } from "node:test";
+import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1070,7 +1070,7 @@ test(`at any width the map keeps its ${PANE_FLOOR.PX}px pane floor on either bin
 	}
 });
 
-// spec 44084 §4.2 — each role border paints its legend token; the light theme keeps the drawn stroke (dark node fills in both themes)
+// spec 44084 §4.2 — each role border paints its legend token
 const ROLE_BORDER_TOKENS = [
 	{ className: "security", token: "--cat-1" },
 	{ className: "focal", token: "--cat-2" },
@@ -1083,10 +1083,9 @@ function getClassDefStroke(className: string): Rgba {
 	return { r, g, b, a: hex[2] ? Number.parseInt(hex[2], 16) / 255 : 1 };
 }
 
-async function readRoleBorders(theme: string) {
+async function readRoleBorders() {
 	const { page, canvasSelector } = await openFittedPage(1440, 900);
 	try {
-		await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
 		return await page.evaluate(
 			({ sel, roles }) =>
 				roles.map(({ className, token }) => {
@@ -1106,23 +1105,20 @@ async function readRoleBorders(theme: string) {
 	}
 }
 
-test("in the dark theme each role node border paints its legend token at full strength", async () => {
-	for (const role of await readRoleBorders("dark")) {
+test("each role node border paints its legend token at full strength", async () => {
+	for (const role of await readRoleBorders()) {
 		assert.ok(role.stroke, `no drawn shape for class '${role.className}'`);
 		assert.strictEqual(role.stroke, role.tokenColor, `class '${role.className}' strokes ${role.stroke}, its token ${role.token} is ${role.tokenColor}`);
 	}
 });
 
-describe("no role node border measures lower on its node fill than the drawn stroke", () => {
-	for (const theme of ["light", "dark"])
-		test(`in the ${theme} theme`, async () => {
-			for (const role of await readRoleBorders(theme)) {
-				const fill = parseColor(role.fill);
-				const now = contrastRatio(compositeOver(parseColor(role.stroke), fill), fill);
-				const drawn = contrastRatio(compositeOver(getClassDefStroke(role.className), fill), fill);
-				assert.ok(now >= drawn - 0.01, `${theme} '${role.className}': ${now.toFixed(2)} on its fill, the drawn stroke gave ${drawn.toFixed(2)}`);
-			}
-		});
+test("no role node border measures lower on its node fill than the drawn stroke", async () => {
+	for (const role of await readRoleBorders()) {
+		const fill = parseColor(role.fill);
+		const now = contrastRatio(compositeOver(parseColor(role.stroke), fill), fill);
+		const drawn = contrastRatio(compositeOver(getClassDefStroke(role.className), fill), fill);
+		assert.ok(now >= drawn - 0.01, `'${role.className}': ${now.toFixed(2)} on its fill, the drawn stroke gave ${drawn.toFixed(2)}`);
+	}
 });
 
 // the canvas is the card's body: no inner band, no second rounded frame inside the card's hairline

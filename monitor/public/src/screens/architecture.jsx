@@ -696,11 +696,11 @@ function ScreenArchitecture(
 					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
 					// 서체(size·weight·family)를 건드리면 잰 상자보다 넓은 글리프 런이 그려져 끝 글자가 잘린다.
 					".arch-mermaid-canvas svg .nodeLabel, .arch-mermaid-canvas svg .node text, .arch-mermaid-canvas svg .node .label, .arch-mermaid-canvas svg .node foreignObject span { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; } " +
-					// dark theme only: the drawn map keeps dark fills in both themes, so light --ink / --dim on them would read lower than today (spec 44084 §13)
 					// the leaf p carries no inline style — the external classDef's faint colour sits inline on its span, so only the p rule reaches ink
-					'[data-theme="dark"] .arch-mermaid-canvas svg .node foreignObject p { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; } ' +
+					// canvas id → the weight that wins over mermaid's generated label rules
+					`#${ARCH_CANVAS_ID} svg .node foreignObject p { fill: rgb(var(--ink)) !important; color: rgb(var(--ink)) !important; } ` +
 					// zone titles and edge labels one step down — the boxes are what you click
-					'[data-theme="dark"] .arch-mermaid-canvas svg .cluster-label :is(.nodeLabel, text, span, p), [data-theme="dark"] .arch-mermaid-canvas svg .edgeLabel :is(text, span, p) { fill: rgb(var(--dim)) !important; color: rgb(var(--dim)) !important; } ' +
+					`#${ARCH_CANVAS_ID} svg .cluster-label :is(.nodeLabel, text, span, p), #${ARCH_CANVAS_ID} svg .edgeLabel :is(text, span, p) { fill: rgb(var(--dim)) !important; color: rgb(var(--dim)) !important; } ` +
 					// 잰 상자와 그린 글리프 런의 잔여 오차(서브픽셀·힌팅)는 자르지 말고 흘려보냄 — 노드 rect 안쪽 패딩(12) 안이라 레이아웃 불변.
 					".arch-mermaid-canvas svg .node foreignObject { overflow: visible; } " +
 					// 모서리 — 업스트림 독트린 r=8. mermaid 가 rx 를 표현 속성으로 찍으므로 CSS 기하 속성이 이김
@@ -2425,14 +2425,10 @@ function getMapLegendItemsAR() {
 	return [...rings, count, dashed, ...borders];
 }
 
-/**
- * Role node borders painted with their legend swatch token.
- * Dark theme only: the drawn map keeps dark node fills in both themes, so a light --cat-* border would measure lower than the classDef stroke (spec 44084 §13).
- * Light falls back to mermaid's own classDef rule, the same stroke as before.
- */
+// role node borders painted with their legend swatch token
 function getMapBorderRulesAR() {
 	return MAP_BORDER_KEY_AR.map(
-		(item) => `[data-theme="dark"] #${ARCH_CANVAS_ID} .node.${item.key} > ${NODE_SHAPE_SELECTOR} { stroke: rgb(var(${item.token})) !important; } `,
+		(item) => `#${ARCH_CANVAS_ID} .node.${item.key} > ${NODE_SHAPE_SELECTOR} { stroke: rgb(var(${item.token})) !important; } `,
 	).join("");
 }
 
