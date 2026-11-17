@@ -26,6 +26,8 @@ setup() {
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET ATRIUM_QUEUE_PROBE \
     CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR ATRIUM_QUEUE_WAIT_POLL_S ATRIUM_QUEUE_WAIT_BOUND_S
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
+  # the profile config the register hook's shadowing check reads → never the running user's own
+  export HOME="${BATS_TEST_TMPDIR}/home"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
   export CLAUDE_CODE_SESSION_ID="${SESSION_ID}"
@@ -446,8 +448,12 @@ ${foreign/\%s/6}" \
     "already-handled|200|{\"result\":\"already_handled\"}|0|already handled" \
     "unknown-msg-id|404|{\"error\":\"unknown_msg_id\",\"reason\":\"msg id belongs to no delivery of this item\"}|2|"; do
     IFS='|' read -r _ reply_status reply expected_status expected_output <<<"${row}"
-    set_reply "${reply_status}" "${reply}"
+    stop_stub
+    set_nth_reply 1 "${reply_status}" "${reply}"
+    # a first ack reads the item's kind next
+    set_reply 200 "$(jq -nc --arg s "${SESSION_ID}" '{id: 17, kind: "decision", sessionId: $s, status: "delivered"}')"
     : >"${BATS_TEST_TMPDIR}/requests.log"
+    start_stub
     run_cli ack 17 "${MSG_ID}"
     [[ "${status}" -eq "${expected_status}" && "${output}" == "${expected_output}" ]] || {
       echo "row ${row%%|*}: status=${status} ${output}${stderr}"
@@ -1590,4 +1596,49 @@ record_file() {
       return 1
     }
   done
+}
+
+@test "a session holding only relays is told of peer relays, never of owner answers or messages, and its ack never prints a bare first" {
+  local row label reply owner_text
+  for row in "relays only|{\"answeredWaiting\":2,\"relayWaiting\":2}|" \
+    "owner and relay|{\"answeredWaiting\":3,\"relayWaiting\":1}|2 owner queue answer(s) or message(s)"; do
+    IFS='|' read -r label reply owner_text <<<"${row}"
+    stop_stub
+    set_reply 200 "${reply}"
+    start_stub
+    run_cli register
+    [[ "${status}" -eq 0 && "${output}" == *"peer relay(s)"* ]] || {
+      echo "register ${label}: status=${status} ${output}${stderr}"
+      return 1
+    }
+    if [[ -z "${owner_text}" ]]; then
+      [[ "${output}" != *"owner queue answer(s) or message(s)"* ]] || {
+        echo "register ${label}: ${output}"
+        return 1
+      }
+    else
+      [[ "${output}" == *"${owner_text}"* ]] || {
+        echo "register ${label}: ${output}"
+        return 1
+      }
+    fi
+  done
+  stop_stub
+  set_nth_reply 1 200 "{\"items\":[{\"id\":{\"item\":30,\"msg\":\"${MSG_ID}\"},\"source\":\"peer\",\"sender\":null}]}"
+  set_reply 200 '{"items":[]}'
+  start_stub
+  run_cli pending
+  [[ "${status}" -eq 0 && "${output}" == *"peer relay"* && "${output}" != *"answer or message"* && "${output}" != *'"first"'* ]] || {
+    echo "pending: status=${status} ${output}${stderr}"
+    return 1
+  }
+  stop_stub
+  set_nth_reply 1 200 '{"result":"first"}'
+  set_reply 200 "$(jq -nc --arg s "${SESSION_ID}" '{id: 30, kind: "relay", sessionId: $s, status: "delivered"}')"
+  start_stub
+  run_cli ack 30 "${MSG_ID}"
+  [[ "${status}" -eq 0 && "${output}" != first && "${output}" == first*"peer"* ]] || {
+    echo "ack: status=${status} ${output}${stderr}"
+    return 1
+  }
 }

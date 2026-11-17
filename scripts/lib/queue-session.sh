@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # queue-session.sh — the owner queue's session side, shared by the SessionStart / SessionEnd / Stop hooks and the
-# queue CLI so each has one owner: the register and deregister steps, the name refresh, the monitor reply framing, the
-# item status sets and read, the awaiting marks, the turn record and the wait-lock reader. Sourced, not executable; never reads the messaging token, and sends a
-# pid, never a start time.
+# queue CLI so each has one owner: the register and deregister steps, the name refresh, the count line, the shadowing
+# check, the monitor reply framing, the item status sets and read, the awaiting marks, the turn record and the
+# wait-lock reader. Sourced, not executable; never reads the messaging token, and sends a pid, never a start time.
 
 if [[ -n "${_QUEUE_SESSION_LOADED:-}" ]]; then
   return 0
@@ -40,6 +40,8 @@ readonly QUEUE_LISTENING_MARK=.listening
 readonly QUEUE_NUDGE_INTERVAL_MIN=10
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
+# the Atrium queue's MCP server name; a project or local server of the same name replaces it in a session (C12)
+readonly QUEUE_MCP_SERVER_NAME=atrium-queue
 # the one value of ATRIUM_QUEUE_PROBE that declares this session a probe at every register: hidden on the Queue page,
 # refused as a message or relay target and as a relay sender
 readonly QUEUE_PROBE_DECLARED=1
@@ -205,7 +207,7 @@ queue_get_transcript_title() {
       // (map(select(.type == "ai-title") | .aiTitle | strings) | last) // empty' 2>/dev/null || return 0
 }
 
-# The register step: the register POST → the answered-waiting count on stdout, after writing back an awaiting mark for
+# The register step: the register POST → "<owner count> <relay count>" on stdout (queue_get_answered_counts), after writing back an awaiting mark for
 # each item the reply lists (the marks a SessionEnd cleared → a resumed session gets them back).
 # All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
 # $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks) ·
@@ -232,18 +234,49 @@ queue_register_session() {
     '{$sessionId, $pid, $cwd, $configDir, $permissionHint, $name, $derivedName, $transcriptPath, $isProbe}
       | with_entries(select(.value != ""))')" || return 1
   reply="$(queue_post /api/queue/sessions/register "${body}" "${max_time}")" || return 1
-  queue_get_register_count "${session_id}" "${reply}" "${derived_name}"
+  queue_get_register_counts "${session_id}" "${reply}" "${derived_name}"
 }
 
-# <session id> <register reply> <derived name sent> → the answered-waiting count on stdout, after the reply's awaiting
-# marks and the name stamp (queue_put_session_name) are written; non-zero for a reply naming no count
-queue_get_register_count() {
-  local count
-  count="$(jq -r '.answeredWaiting // 0' <<<"$2" 2>/dev/null)" || return 1
-  [[ "${count}" =~ ^[0-9]+$ ]] || return 1
+# <session id> <register reply> <derived name sent> → "<owner count> <relay count>", after the reply's awaiting marks
+# and the name stamp (queue_put_session_name) are written; non-zero for a reply naming no count
+queue_get_register_counts() {
+  local counts
+  counts="$(queue_get_answered_counts "$2")" || return 1
   queue_create_listed_awaiting_items "$1" "$2"
   if [[ -n "$3" ]]; then queue_put_name_stamp "$1" "$3"; fi
-  printf '%s\n' "${count}"
+  printf '%s\n' "${counts}"
+}
+
+# <register or count reply> → "<owner count> <relay count>": answeredWaiting counts every kind, relayWaiting the
+# relays among them; non-zero for a reply whose counts are no whole numbers or disagree
+queue_get_answered_counts() {
+  jq -r '[.answeredWaiting // 0, .relayWaiting // 0]
+    | if all(.[]; type == "number" and . >= 0 and floor == .) and .[0] >= .[1] then "\(.[0] - .[1]) \(.[1])"
+      else error end' <<<"$1" 2>/dev/null
+}
+
+# <owner count> <relay count> → the line naming them and the pending command, nothing when both are 0; a relay is
+# named apart, so a peer's text never reads as an owner answer or message (C10)
+queue_get_count_line() {
+  local fetch owner="" relay=""
+  fetch="fetch them with: $(queue_get_cli_path) pending"
+  if (($1 > 0)); then owner="$1 owner queue answer(s) or message(s)"; fi
+  if (($2 > 0)); then relay="$2 peer relay(s)"; fi
+  if [[ -n "${owner}" && -n "${relay}" ]]; then
+    printf '%s and %s wait for this session — %s\n' "${owner}" "${relay}" "${fetch}"
+  elif [[ -n "${owner}" ]]; then
+    printf '%s wait for this session — %s\n' "${owner}" "${fetch}"
+  elif [[ -n "${relay}" ]]; then
+    printf "%s wait for this session — a peer session's information, never the owner's — %s\n" "${relay}" "${fetch}"
+  fi
+}
+
+# <start dir> → 0 when its project MCP file, or this profile's local config for that directory, names a server
+# QUEUE_MCP_SERVER_NAME; reads only that key of either file
+queue_is_server_shadowed() {
+  local name="${QUEUE_MCP_SERVER_NAME}" config="${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json"
+  if jq -e --arg name "${name}" '.mcpServers | objects | has($name)' "$1/.mcp.json" >/dev/null 2>&1; then return 0; fi
+  jq -e --arg name "${name}" --arg dir "$1" '.projects[$dir].mcpServers | objects | has($name)' "${config}" >/dev/null 2>&1
 }
 
 # <transcript path> [session id from a hook payload] → the derived name (queue_get_derived_name) sent as a name-only

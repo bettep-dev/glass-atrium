@@ -417,3 +417,13 @@ expected_rearm() {
   assert_forced_block "$(expected_wake 5)" ""
   [[ "${output}" != *"write error"* ]]
 }
+
+@test "answered relays alone wake the session with a peer relay count, never as owner answers or messages" {
+  start_stub
+  set_reply 200 '{"answeredWaiting":2,"relayWaiting":2}'
+  run_hook
+  [[ "${status}" -eq 2 && "${stderr}" == "${WAKE_LEAD} 2 peer relay(s)"*"pending" && "${stderr}" != *"owner queue answer(s) or message(s)"* ]] || {
+    echo "status=${status} err=${stderr}"
+    return 1
+  }
+}

@@ -20,6 +20,8 @@ setup() {
   unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET ATRIUM_QUEUE_PROBE \
     CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
+  # the profile config the shadowing check reads → never the running user's own
+  export HOME="${BATS_TEST_TMPDIR}/home"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
   export CLAUDE_CODE_SESSION_ID="${SESSION_ID}"
@@ -517,4 +519,51 @@ run_lib() {
       }
     fi
   done
+}
+
+@test "the pointer line names peer relays apart from owner answers or messages, and a relay alone never as the owner's" {
+  start_stub
+  local row label reply want lacks
+  for row in "owner only|{\"answeredWaiting\":2,\"relayWaiting\":0}|2 owner queue answer(s) or message(s) wait|peer relay" \
+    "relay only|{\"answeredWaiting\":1,\"relayWaiting\":1}|1 peer relay(s)|owner queue answer(s) or message(s)" \
+    "both|{\"answeredWaiting\":3,\"relayWaiting\":1}|2 owner queue answer(s) or message(s) and 1 peer relay(s) wait|[ATRIUM-QUEUE] 3 "; do
+    IFS='|' read -r label reply want lacks <<<"${row}"
+    set_reply 200 "${reply}"
+    run_register
+    [[ "${status}" -eq 0 && "${#lines[@]}" -eq 1 && "${output}" == *"${want}"* && "${output}" != *"${lacks}"* ]] || {
+      echo "row ${label}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a start directory whose project or local MCP config names a server atrium-queue prints one shadowing line, and no other config does" {
+  start_stub
+  local dir="${BATS_TEST_TMPDIR}/project" row label lines_want
+  export CLAUDE_CONFIG_DIR="${BATS_TEST_TMPDIR}/profile"
+  for row in "project file naming it|1" "local config naming it|1" "project file naming another server|0" "no config|0"; do
+    IFS='|' read -r label lines_want <<<"${row}"
+    mkdir -p "${dir}" "${CLAUDE_CONFIG_DIR}"
+    printf '{}\n' >"${CLAUDE_CONFIG_DIR}/.claude.json"
+    printf '{"mcpServers":{}}\n' >"${dir}/.mcp.json"
+    case "${label}" in
+      "project file naming it") printf '{"mcpServers":{"atrium-queue":{"command":"x"}}}\n' >"${dir}/.mcp.json" ;;
+      "local config naming it") jq -nc --arg d "${dir}" '{projects: {($d): {mcpServers: {"atrium-queue": {command: "x"}}}}}' \
+        >"${CLAUDE_CONFIG_DIR}/.claude.json" ;;
+      "project file naming another server") printf '{"mcpServers":{"atrium-queue-dev":{"command":"x"}}}\n' >"${dir}/.mcp.json" ;;
+    esac
+    run_register "$(jq -nc --arg cwd "${dir}" '{hook_event_name: "SessionStart", source: "startup", cwd: $cwd}')"
+    [[ "${status}" -eq 0 && "$(grep -c 'shadows' <<<"${output}")" == "${lines_want}" ]] || {
+      echo "row ${label}: status=${status} ${output}"
+      return 1
+    }
+  done
+  printf '{"mcpServers":{"atrium-queue":{"command":"x"}}}\n' >"${dir}/.mcp.json"
+  stop_stub
+  export ATRIUM_MONITOR_PORT=1
+  run_register "$(jq -nc --arg cwd "${dir}" '{hook_event_name: "SessionStart", source: "startup", cwd: $cwd}')"
+  [[ "${status}" -eq 0 && "${output}" == "[ATRIUM-QUEUE] harness:"*"shadows"*"${GA_ROOT}/scripts/atrium-queue.sh"* ]] || {
+    echo "monitor down: ${output}"
+    return 1
+  }
 }
