@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
-# shellcheck disable=SC2016,SC2030,SC2031,SC2154,SC2249,SC2312  # backticked verdict forms are literal text; a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison; each case arm is a row
+# shellcheck disable=SC2016,SC2030,SC2031,SC2154,SC2249,SC2312  # backticked tool and command names are literal text; a row's export stays inside its own bats test; BATS_* and run results are set by bats; a masked status fails its comparison; each case arm is a row
 # The owner queue's turn-end check (Stop hook) against a stand-in monitor: it keeps a turn from ending at most once
-# per turn, asking an interactive or background session's tool-using turn for its [QUEUE-VERDICT] line, naming the
+# per turn, asking an interactive or background session's tool-using turn for its queue record, naming the
 # wait command while an item of this session awaits the owner, no wait or listener of this Claude process runs and
 # none of its listeners ever started, or both in one block — never twice for the same items, never with item text,
 # and never when it cannot decide.
@@ -29,7 +29,7 @@ setup() {
   new_root
   # a live pid → its start time exists, as the session's own Claude process has one
   export CLAUDE_PID="$$"
-  # an interactive or background session, the kinds the verdict check asks
+  # an interactive or background session, the kinds the record check asks
   export CLAUDE_CODE_ENTRYPOINT=cli
   : >"${BATS_TEST_TMPDIR}/requests.log"
   set_reply 200 "$(item_reply open)"
@@ -154,6 +154,18 @@ put_listening_mark() {
   (source "${GA}/scripts/lib/queue-session.sh" && queue_put_listening_mark "${SESSION_ID}" "${owner}")
 }
 
+# <offset s> → the UTC time that far from now, in the transcript's timestamp form
+get_utc_ms() {
+  perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time + $ARGV[0];
+    printf "%s.%03dZ\n", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000' -- "$1"
+}
+
+# this session's turn record, written now by the session library
+put_record() {
+  # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/queue-session.sh
+  (source "${GA}/scripts/lib/queue-session.sh" && queue_put_record "${SESSION_ID}" nothing)
+}
+
 # the reason of the block decision in the hook's stdout; non-zero when that stdout is not JSON
 get_block_reason() {
   jq -r 'select(.decision == "block") | .reason' <<<"${output}" 2>/dev/null
@@ -178,12 +190,13 @@ assert_continuation() {
   assert_no_item_text "$1"
 }
 
-# <row name> <text the reason carries> → one verdict ask, teaching the line forms, with no item text
-assert_verdict_ask() {
-  local reason
+# <row name> → one record ask, naming the record tool and the CLI's record forms, with no item text
+assert_record_ask() {
+  local reason cli="${GA_ROOT}/scripts/atrium-queue.sh"
   reason="$(get_block_reason)" || reason=""
-  [[ "${status}" -eq 0 && "${output}" != *$'\n'* && "${reason}" == *"$2"* &&
-    "${reason}" == *'`[QUEUE-VERDICT] nothing to post`'* ]] || {
+  [[ "${status}" -eq 0 && "${output}" != *$'\n'* && "${reason}" == "Queue record (harness): "* &&
+    "${reason}" == *'`record` tool'* && "${reason}" == *"\`${cli} record nothing\`"* &&
+    "${reason}" == *"\`${cli} record posted <id>...\`"* ]] || {
     echo "$1: status=${status} stdout=${output} stderr=${stderr}"
     return 1
   }
@@ -251,7 +264,7 @@ assert_silent_turn_end() {
   }
 }
 
-@test "the turn ends silently with no monitor call for a running wait and for a listener of this Claude process holding or taking the lock, and for a continued stop, a subagent or no session even on a tool-using turn with no verdict" {
+@test "the turn ends silently with no monitor call for a running wait and for a listener of this Claude process holding or taking the lock, and for a continued stop, a subagent or no session even on a tool-using turn with no record" {
   start_stub
   local row name payload
   for row in "running wait" "listener holding the lock" "listener taking the lock" "continued stop" "subagent" \
@@ -416,13 +429,13 @@ assert_silent_turn_end() {
   }
 }
 
-@test "a verdict stamp that cannot be written ends the turn with one stderr line and no verdict ask" {
+@test "a record-ask stamp that cannot be written ends the turn with one stderr line and no record ask" {
   start_stub
   write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
   # a directory in the stamp's place → the write fails as on a read-only data root
-  mkdir -p "${AWAITING}/.verdict-asked"
+  mkdir -p "${AWAITING}/.record-asked"
   run_hook
-  [[ "${status}" -eq 0 && -z "${output}" && "${stderr}" == "queue-turn-end-check: no verdict stamp"* &&
+  [[ "${status}" -eq 0 && -z "${output}" && "${stderr}" == "queue-turn-end-check: no record-ask stamp"* &&
     "${stderr}" != *$'\n'* ]] || {
     echo "status=${status} stdout=${output} stderr=${stderr}"
     return 1
@@ -517,54 +530,45 @@ assert_silent_turn_end() {
   }
 }
 
-@test "a tool-using turn's last line decides the verdict ask: an accepted verdict ends the turn, anything else is asked by fixed text" {
+@test "a tool-using turn ends silently only when its last tool call is a record call and the record was written at or after the turn's start" {
   start_stub
-  local row name message reply fetched expect
-  # Row shape: name|final message (printf %b)|monitor reply status|item ids fetched|silent or the text the ask carries
+  local row name tokens record message expect payload
+  # Row shape: name|tokens|record (none, fresh: written after the turn's start, stale: before it)|final message (yes or
+  # none: the end-turn path)|silent or ask
   for row in \
-    'no verdict line|The build passed.|200||ends without a queue verdict line' \
-    'nothing to post|The build passed.\n[QUEUE-VERDICT] nothing to post|200||silent' \
-    'trailing blanks after the line|Done.\n[QUEUE-VERDICT] nothing to post  \n \n|200||silent' \
-    "this session's item|Asked the owner.\n[QUEUE-VERDICT] posted #41|200|41|silent" \
-    "several of this session's items|[QUEUE-VERDICT] posted #41 #42|200|41 42|silent" \
-    'an item not of this session|[QUEUE-VERDICT] posted #77|404|77|#77 is not an item of this session' \
-    'verdict above the last line|[QUEUE-VERDICT] nothing to post\nThe build passed.|200||ends without a queue verdict line' \
-    'posted with no id|[QUEUE-VERDICT] posted|200||is not a queue verdict form' \
-    'malformed id|[QUEUE-VERDICT] posted #41x|200||is not a queue verdict form'; do
-    IFS='|' read -r name message reply fetched expect <<<"${row}"
-    printf -v message '%b' "${message}"
+    'no record|start:t-1 tool result text|none|yes|ask' \
+    'record tool last|start:t-1 tool result text record result|fresh|yes|silent' \
+    'CLI record last|start:t-1 tool result clirecord result|fresh|yes|silent' \
+    'record tool last with no final message|start:t-1 tool result record result|fresh|none|silent' \
+    'record of an earlier turn|start:t-1 tool result record result|stale|yes|ask' \
+    'a tool call after the record|start:t-1 record result tool result text|fresh|yes|ask' \
+    'no final message and no record call|start:t-1 tool result|fresh|none|ask' \
+    'another CLI subcommand last|start:t-1 clirecord result clipending result|fresh|yes|ask'; do
+    IFS='|' read -r name tokens record message expect <<<"${row}"
+    IFS=' ' read -r -a tokens <<<"${tokens}"
     new_root
-    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
-    set_reply "${reply}" "$(item_reply open)"
+    case "${record}" in
+      fresh) TURN_STARTED_AT="$(get_utc_ms -60)" && put_record ;;
+      stale) put_record && TURN_STARTED_AT="$(get_utc_ms 60)" ;;
+    esac
+    write_turn_transcript "${TRANSCRIPT}" "${tokens[@]}"
+    payload="$(stop_payload)"
+    if [[ "${message}" == none ]]; then payload="$(jq -c 'del(.last_assistant_message)' <<<"${payload}")"; fi
     : >"${BATS_TEST_TMPDIR}/requests.log"
-    run_hook "$(stop_payload "${message}")"
+    run_hook "${payload}"
     if [[ "${expect}" == silent ]]; then
       assert_silent_turn_end "row ${name}" || return 1
     else
-      assert_verdict_ask "row ${name}" "${expect}" || return 1
+      assert_record_ask "row ${name}" || return 1
     fi
-    [[ "$(requested_paths | sed 's|?.*||; s|.*/||' | tr '\n' ' ')" == "${fetched:+${fetched} }" &&
-    "${output}" != *41x* ]] || {
-      echo "row ${name}: fetched $(requested_paths) · stdout=${output}"
+    [[ ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+      echo "row ${name}: $(requested_paths)"
       return 1
     }
   done
 }
 
-@test "of the ids on a verdict line only those the monitor does not know for this session are named, by number alone" {
-  start_stub
-  set_nth_reply 1 200 "$(item_reply open)"
-  set_nth_reply 2 404 '{"error":"unknown_item"}'
-  write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
-  run_hook "$(stop_payload '[QUEUE-VERDICT] posted #41 #77')"
-  assert_verdict_ask "one foreign id" "#77 is not an item of this session" || return 1
-  [[ "$(jq -r '.reason' <<<"${output}")" != *"#41"* ]] || {
-    echo "this session's item was named: ${output}"
-    return 1
-  }
-}
-
-@test "a turn that called no tool owes no verdict, a notification turn after a tool turn included" {
+@test "a turn that called no tool owes no record, a notification turn after a tool turn included" {
   start_stub
   local row name tokens
   for row in 'tool-free turn|start:t-1 text' \
@@ -578,7 +582,7 @@ assert_silent_turn_end() {
   done
 }
 
-@test "a headless claude -p run or a host naming no entrypoint is never asked for a verdict, even on a tool-using turn" {
+@test "a headless claude -p run or a host naming no entrypoint is never asked for a record, even on a tool-using turn" {
   start_stub
   local row name entrypoint
   for row in 'headless -p run|sdk-cli' 'no entrypoint|-'; do
@@ -592,47 +596,23 @@ assert_silent_turn_end() {
   done
 }
 
-@test "a missing verdict and an awaiting item with no wait end the turn in one block carrying both lines" {
+@test "a missing record and an awaiting item with no wait end the turn in one block carrying both lines" {
   start_stub
   mark_items 41
   write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
   run_hook
   assert_continuation "both due" || return 1
-  assert_verdict_ask "both due" "ends without a queue verdict line"
+  [[ "$(get_block_reason)" == "Queue record (harness): "*$'\n'"[ATRIUM-QUEUE]"* ]] || {
+    echo "both due: ${output}"
+    return 1
+  }
 }
 
-@test "the verdict ask's wait sentence follows what serves this Claude process: start a wait only when no wait or listener does" {
-  start_stub
-  local row name lock sentence
-  for row in \
-    "nothing serves|none|A decision posted now needs \`<cli> wait\` started as a background command." \
-    "running wait|live|A decision posted now needs no new wait: the wait this session runs claims the owner's answer." \
-    "listener holding the lock|listener|A decision posted now needs no wait: this session's listener announces the owner's answer." \
-    "listener taking the lock|mark|A decision posted now needs no wait: this session's listener announces the owner's answer."; do
-    IFS='|' read -r name lock sentence <<<"${row}"
-    new_root
-    sentence="${sentence//<cli>/${GA_ROOT}/scripts/atrium-queue.sh}"
-    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
-    case "${lock}" in
-      none) ;;
-      mark) put_listening_mark "${CLAUDE_PID}" ;;
-      *) hold_wait_lock "${lock}" ;;
-    esac
-    run_hook
-    assert_verdict_ask "row ${name}" "${sentence}" || return 1
-    [[ "$(get_block_reason)" == *"${sentence}" ]] || {
-      echo "row ${name}: the ask does not end with its wait sentence: ${output}"
-      return 1
-    }
-    stop_waiter
-  done
-}
-
-@test "a turn is asked for its verdict once: a later fire of the same turn is silent and the next tool-using turn is asked again" {
+@test "a turn is asked for its record once: a later fire of the same turn is silent and the next tool-using turn is asked again" {
   start_stub
   write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
   run_hook
-  assert_verdict_ask "first fire" "ends without a queue verdict line" || return 1
+  assert_record_ask "first fire" || return 1
   local row name tokens
   for row in 'same turn, its continuation ran a tool|start:t-1 tool result text feedback tool result text|silent' \
     'same turn, compacted after the ask|start:t-1 tool result text feedback compact:c-1 tool result text|silent' \
@@ -645,14 +625,14 @@ assert_silent_turn_end() {
     if [[ "${expect}" == silent ]]; then
       assert_silent_turn_end "row ${name}" || return 1
     else
-      assert_verdict_ask "row ${name}" "ends without a queue verdict line" || return 1
+      assert_record_ask "row ${name}" || return 1
     fi
   done
 }
 
-@test "an unreadable turn, a missing final message or a monitor down while checking ids ends the turn with one stderr line" {
+@test "an unreadable turn or one whose start has no time ends the turn with one stderr line and no record ask" {
   local row payload
-  for row in "unreadable transcript" "no transcript path" "no turn start" "no final message" "monitor down"; do
+  for row in "unreadable transcript" "no transcript path" "no turn start" "no start time"; do
     stop_stub
     new_root
     mark_items 41
@@ -663,32 +643,15 @@ assert_silent_turn_end() {
       "unreadable transcript") TRANSCRIPT="${BATS_TEST_TMPDIR}/no-such.jsonl" && payload="$(stop_payload)" ;;
       "no transcript path") payload="$(jq -c 'del(.transcript_path)' <<<"${payload}")" ;;
       "no turn start") write_turn_transcript "${TRANSCRIPT}" tool result text ;;
-      "no final message") payload="$(jq -c 'del(.last_assistant_message)' <<<"${payload}")" ;;
-      "monitor down") payload="$(stop_payload '[QUEUE-VERDICT] posted #41')" && export ATRIUM_MONITOR_PORT=1 ;;
+      "no start time") TURN_STARTED_AT="" && write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text ;;
     esac
-    # an item awaits with no wait → the wait line alone, or nothing when the monitor is down
+    # an item awaits with no wait → the wait line alone
     run_hook "${payload}"
     [[ "${status}" -eq 0 && "${stderr}" == queue-turn-end-check:* && "${stderr}" != *$'\n'* &&
-      "${output}" != *"queue verdict"* ]] || {
+      "$(get_block_reason)" == "[ATRIUM-QUEUE]"* ]] || {
       echo "row ${row}: status=${status} stdout=${output} stderr=${stderr}"
       return 1
     }
     TRANSCRIPT="${BATS_TEST_TMPDIR}/transcript.jsonl"
   done
-}
-
-@test "every verdict form the rule text teaches is one the check accepts, under the keyword the session-start core names" {
-  local role="${GA}/skills/glass-atrium-ops-orchestrator-role.md" core="${GA}/scoped/orchestrator-core.md" forms form
-  forms="$(grep -o '`\[QUEUE-VERDICT\] [^`]*`' "${role}" | tr -d '`' | sort -u)"
-  [[ "$(wc -l <<<"${forms}" | tr -d ' ')" -eq 3 ]] && grep -q '`\[QUEUE-VERDICT\]`' "${core}" || {
-    echo "forms in the role file: ${forms}"
-    return 1
-  }
-  start_stub
-  while IFS= read -r form; do
-    new_root
-    write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result text
-    run_hook "$(stop_payload "${form//<item-id>/41}")"
-    assert_silent_turn_end "form ${form}" || return 1
-  done <<<"${forms}"
 }
