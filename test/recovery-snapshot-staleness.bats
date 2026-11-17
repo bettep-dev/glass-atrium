@@ -143,9 +143,10 @@ run_doctor_sandbox() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$2"
       ga_init_env "$1"
       run_doctor
-    ' _ "${GA_SBX}"
+    ' _ "${GA_SBX}" "${GA}/test/lib/remote-run-stub.bash"
 }
 
 # === 1. dirty tracked change -> STALE warn + remediation + recency detail =======
