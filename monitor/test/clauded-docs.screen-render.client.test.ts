@@ -1327,6 +1327,39 @@ function viewerDoc(extra: Record<string, unknown> = {}) {
   return { id: 9, title: "Doc 9", format: "txt", body: "probe", doc_status: "open", supersedes_id: null, superseded_by_id: null, ...extra };
 }
 
+function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>) {
+  return renderScreen((screen.ViewerPanelCD as Component)({
+    state, pendingDelete: null, onDelete: noop, onClose: noop, onPickStage: noop, togglingIds: new Set(),
+    optimisticStatusOverrides: new Map(), onNavigate: noop, showToast: noop,
+  }));
+}
+
+test("a ready viewer renders its head, the metadata rail and exactly one document body", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc() });
+
+  assert.equal(findNodes(tree, isAtom("CardHead")).length, 1, "the viewer head");
+  assert.equal(findNodes(tree, (n) => n.type === "aside" && n.props["aria-label"] === "Document metadata").length, 1, "the metadata rail");
+  assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 1, "one document body");
+});
+
+describe("a viewer with no rendered document shows its state in place of the body", () => {
+  const rows = [
+    { name: "idle", state: { status: "idle" }, shown: isAtom("EmptyState") },
+    { name: "loading", state: { status: "loading" }, shown: isAtom("LoadingPlaceholder") },
+    { name: "failed read", state: { status: "error", error: "HTTP 500" }, shown: isAtom("RegionUnavailable") },
+    { name: "body that cannot render", state: { status: "ready", data: viewerDoc({ format: "md", body: "# x" }) }, shown: isAtom("AlertCard") },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderViewerPanel(screen, row.state);
+      assert.equal(findNodes(tree, row.shown).length, 1, `${row.name}: its state is shown`);
+      assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 0, `${row.name}: no document body renders`);
+    });
+  }
+});
+
 test("a newer revision announces itself as one inset warn alert card whose action opens the latest revision", async () => {
   const screen = await loadDocsScreen();
   const opened: unknown[] = [];
