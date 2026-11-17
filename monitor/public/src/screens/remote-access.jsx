@@ -19,6 +19,9 @@ const CODE_WINDOW_MS_RA = 5 * 60_000;
 const DEVICE_POLL_MS_RA = 5_000;
 // the name step 1 quotes → the file the person finds in Downloads or the share sheet
 const CERTIFICATE_FILE_NAME_RA = "Glass Atrium Local CA.pem";
+// Action: isNumeric for the atom's right-end alignment (a button, no figures) · 1% → the column shrinks to its button
+const DEVICE_COLUMNS_RA = [{ key: "label", label: "Device" }, { key: "created", label: "Registered" }, { key: "seen", label: "Last seen" }, { key: "act", label: "Action", isNumeric: true }];
+const DEVICE_WIDTHS_RA = [undefined, undefined, undefined, "1%"];
 const DESTRUCTIVE_STYLE_RA = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))", background: "transparent" };
 const PROSE_STYLE_RA = { maxWidth: "var(--measure-prose)" };
 
@@ -471,27 +474,28 @@ function DevicesCardRA({ devices, limit, foot, onChanged, onRemoveAll }) {
 			.finally(onChanged);
 	};
 	const removeAll = devices.length >= 2 && <QuietButton onClick={onRemoveAll}>Remove all</QuietButton>;
+	const hasTable = devices.length > 0;
+	// flush only under the table → its edge cells take the card padding; the error line under it insets itself
 	return (
-		<Card title="Registered devices" sub={`${devices.length} of ${limit}`} right={removeAll} foot={foot}>
-			{devices.length === 0
-				? <EmptyState message="No device registered" hint="A device appears here after step 5." />
-				: <DeviceTableRA devices={devices} pendingId={act.pendingId} onRemove={onRemove} />}
-			{act.error && <ActErrorRA error={act.error} />}
+		<Card title="Registered devices" sub={`${devices.length} of ${limit}`} right={removeAll} foot={foot} isFlush={hasTable}>
+			{hasTable
+				? <DeviceTableRA devices={devices} pendingId={act.pendingId} onRemove={onRemove} />
+				: <EmptyState message="No device registered" hint="A device appears here after step 5." />}
+			{act.error && <div className={hasTable ? "p-card-pad" : undefined}><ActErrorRA error={act.error} /></div>}
 		</Card>
 	);
 }
 
 function DeviceTableRA({ devices, pendingId, onRemove }) {
 	const { Table, TableRow, TableCell, AbsentValue, formatKstDateTime } = window.UI;
-	const columns = [{ key: "label", label: "Device" }, { key: "created", label: "Registered" }, { key: "seen", label: "Last seen" }, { key: "act", label: "Action" }];
 	return (
-		<Table caption="Registered devices" columns={columns}>
+		<Table caption="Registered devices" columns={DEVICE_COLUMNS_RA} widths={DEVICE_WIDTHS_RA}>
 			{devices.map((device) => (
 				<TableRow key={device.id}>
 					<TableCell kind="row-header">{device.label}</TableCell>
 					<TableCell>{formatKstDateTime(device.createdAt)}</TableCell>
 					<TableCell>{device.lastSeenAt ? formatKstDateTime(device.lastSeenAt) : <AbsentValue kind="none" />}</TableCell>
-					<TableCell>
+					<TableCell isNumeric>
 						<button type="button" className="btn sm" style={DESTRUCTIVE_STYLE_RA} aria-label={`Remove ${device.label}`}
 							aria-busy={pendingId === device.id || undefined} onClick={() => onRemove(device)}>
 							{pendingId === device.id ? "Removing…" : "Remove"}

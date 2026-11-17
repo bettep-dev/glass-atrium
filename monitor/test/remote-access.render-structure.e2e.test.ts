@@ -1,5 +1,6 @@
 // E2E chromium harness for the Remote access screen (screens/remote-access.jsx): painted facts a node render cannot hold —
-// where focus lands in a widening confirm, the step list's own numerals, and the page fitting 1440 with no sideways scroll.
+// where focus lands in a widening confirm, the step list's own numerals, the page fitting 1440 with no sideways scroll, and the
+// device table on the card's inline column.
 //
 // Runner: npx tsx --test test/remote-access.render-structure.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
@@ -26,6 +27,11 @@ const SETUP_OFF = {
   fingerprint: "9A:3F:1C:07:5E:B2:44:D0:61:0B:F8:2A:93:7C:E5:18:C4:2D:70:AB:06:9E:53:F1:8B:14:D7:3A:6F:20:CE:95",
 };
 const SETUP_ON = { ...SETUP_OFF, enabled: true, listenReason: "trusted", isNetworkTrusted: true, trustedCount: 1, isAnswering: true };
+const DEVICES = [
+  { id: "3", label: "Minji's iPhone 15 Pro Max", createdAt: "2026-11-17T08:41:40.123Z", lastSeenAt: "2026-11-17T14:02:11.456Z" },
+  { id: "7", label: "iPad", createdAt: "2026-11-02T21:15:02.001Z", lastSeenAt: "2026-11-16T23:48:59.999Z" },
+  { id: "9", label: "Living-room tablet (kitchen)", createdAt: "2026-10-28T07:03:12.500Z", lastSeenAt: null },
+];
 
 interface RenderContext {
   app: FastifyInstance;
@@ -34,12 +40,12 @@ interface RenderContext {
   acts: string[];
 }
 
-async function openRenderContext(setup: Record<string, unknown>): Promise<RenderContext> {
+async function openRenderContext(setup: Record<string, unknown>, devices: unknown[] = []): Promise<RenderContext> {
   const acts: string[] = [];
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   app.get(REMOTE_ADMIN_PATH.SETUP, async () => setup);
-  app.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ devices: [] }));
+  app.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ devices }));
   app.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, async () => ({ router: ROUTER, link: "wifi", isNetworkTrusted: false }));
   app.get(REMOTE_ADMIN_PATH.CERTIFICATE, async (_request, reply) => reply.code(404).send({ error: "certificate_unavailable" }));
   app.post("/api/remote/*", async (request) => {
@@ -105,5 +111,39 @@ describe("remote access on at 1440px, the connect steps", () => {
     const width = await ctx.page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
 
     assert.equal(width.scroll, width.client);
+  });
+});
+
+describe("remote access on with devices at 1440px, the registered devices card", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON, DEVICES);
+    await ctx.page.getByRole("table", { name: "Registered devices" }).waitFor({ timeout: WAIT_TIMEOUT_MS });
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("the table's first and last columns sit on the card head's inline column", async () => {
+    // anonymous callbacks only: the test transform names a const-bound function with a helper the page lacks
+    const edges = await ctx.page.evaluate(() => {
+      const card = [...document.querySelectorAll(".card")].find((el) => el.querySelector("table") !== null);
+      const heads = [...(card?.querySelectorAll("thead th") ?? [])];
+      const buttons = [...(card?.querySelectorAll("button") ?? [])];
+      const textBoxes = [card?.querySelector(".card-title"), heads[0], card?.querySelector("tbody th"), heads.at(-1)].map((el) => {
+        if (!el) return null;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        return range.getBoundingClientRect();
+      });
+      const removeAll = buttons.find((button) => button.textContent?.trim() === "Remove all");
+      const rowRemove = buttons.filter((button) => button.textContent?.trim() === "Remove").at(-1);
+      return {
+        start: textBoxes.slice(0, 3).map((box) => Math.round(box?.left ?? Number.NaN)),
+        end: [removeAll?.getBoundingClientRect(), textBoxes[3], rowRemove?.getBoundingClientRect()].map((box) => Math.round(box?.right ?? Number.NaN)),
+      };
+    });
+
+    assert.ok([...edges.start, ...edges.end].every(Number.isFinite), `every edge was measured: ${JSON.stringify(edges)}`);
+    assert.deepEqual(edges.start, [edges.start[0], edges.start[0], edges.start[0]], "title, Device header and first cell start together");
+    assert.deepEqual(edges.end, [edges.end[0], edges.end[0], edges.end[0]], "Remove all, the Action header and a row's Remove end together");
   });
 });
