@@ -5,9 +5,7 @@
 # Writes config.toml, the keys and monitor/.env only → the monitor applies the change itself (no restart, no
 # monitor call); the typed confirmation stays with the terminal entries, whose write steps these are.
 # Argv: `on` · `off` · `trust <interface> <gateway> <hardware address>` — the network the monitor's confirm showed.
-# Exit: 0 written · 2 argv not one of those · 6 network unreadable or trusted list malformed · 7 keys not created ·
-# 8 config written, env not rendered · 9 network already trusted · 10 the network read is not the one shown
-# (9 and 10 write nothing) · 1 other write failure.
+# Exit: 0 written · 2 argv not one of those · a GA_REMOTE_* write-step code (lib/ga-remote.sh) · 1 other write failure.
 set -Eeuo pipefail
 IFS=$'\n\t'
 trap 'printf "remote-access-set: line %s: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2' ERR
@@ -18,9 +16,6 @@ readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/lib/atrium-config.sh"
 # shellcheck source=../lib/ga-remote.sh
 source "${SCRIPT_DIR}/../lib/ga-remote.sh"
-
-readonly RENDER_FAILED=8
-readonly NETWORK_NOT_SHOWN=10
 
 main() {
   local rc=0
@@ -42,7 +37,7 @@ main() {
   ((rc == 0)) || return "${rc}"
   if ! ga_remote_render_env; then
     printf 'remote: config.toml written, but monitor/.env was not rendered\n' >&2
-    return "${RENDER_FAILED}"
+    return "${GA_REMOTE_ENV_NOT_RENDERED}"
   fi
 }
 
@@ -68,7 +63,7 @@ set_trust() {
   identity="$(ga_remote_get_trust_identity)" || return
   if [[ "${identity}" != "${shown}" ]]; then
     printf 'remote: the network now is not the one shown — nothing written\n' >&2
-    return "${NETWORK_NOT_SHOWN}"
+    return "${GA_REMOTE_NETWORK_NOT_SHOWN}"
   fi
   ga_remote_trust_network "${identity}"
 }

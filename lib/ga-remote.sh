@@ -5,6 +5,15 @@
 
 GA_REMOTE_PORT_DEFAULT=16146 # config.toml.example → [remote_access].port
 
+# Write-step exit codes, shared with scripts/remote-access-set.sh; the monitor maps each (start.ts → ACCESS_STEP_OUTCOME)
+GA_REMOTE_NETWORK_UNREADABLE=6 # a malformed trusted list included
+GA_REMOTE_KEYS_NOT_CREATED=7
+# shellcheck disable=SC2034  # read by scripts/remote-access-set.sh after sourcing
+GA_REMOTE_ENV_NOT_RENDERED=8
+GA_REMOTE_ALREADY_TRUSTED=9    # nothing written
+# shellcheck disable=SC2034  # read by scripts/remote-access-set.sh after sourcing
+GA_REMOTE_NETWORK_NOT_SHOWN=10 # nothing written
+
 # --- value rules (one owner: the renderer and every CLI write validate through these) -------------
 
 # Remote port: 1024-65535 and never the monitor's own port (monitor/src/server/remote/settings.ts → getPort).
@@ -418,7 +427,7 @@ ga_remote_enable() {
   dir="$(ga_remote_get_key_dir)"
   if ! ga_remote_create_ca "${dir}" || { ga_remote_is_leaf_due "${dir}" && ! ga_remote_issue_leaf "${dir}"; }; then
     printf 'remote: the certificates could not be created — nothing changed\n' >&2
-    return 7
+    return "${GA_REMOTE_KEYS_NOT_CREATED}"
   fi
   # a device's off outlives monitor restarts until this on replaces it
   if ! (umask 077 && printf 'on\n' >"${dir}/access-state" && chmod 600 "${dir}/access-state"); then
@@ -445,14 +454,12 @@ ga_remote_cmd_trust() {
   printf 'remote: network trusted\n'
 }
 
-GA_REMOTE_ALREADY_TRUSTED=9
-
-# The current network's identity; unreadable → the refusal is printed and 6 returned.
+# The current network's identity; unreadable → the refusal is printed and GA_REMOTE_NETWORK_UNREADABLE returned.
 ga_remote_get_trust_identity() {
   # shellcheck disable=SC2310  # verdict branched on — unreadable is a refusal, never an abort
   if ga_remote_get_network_identity; then return 0; fi
   printf 'remote: network identity unreadable (no default gateway, a public gateway, or no gateway hardware address) — nothing written\n' >&2
-  return 6
+  return "${GA_REMOTE_NETWORK_UNREADABLE}"
 }
 
 # Terminal trust (CLI and install): the identity and what trusting it means, the typed word, then the write step.
@@ -476,12 +483,12 @@ ga_remote_trust_network() {
   entry="${entry% *}@${identity##* }"
   if ! ga_remote_is_trusted_entry "${entry}"; then
     printf 'remote: not a network identity — nothing written\n' >&2
-    return 6
+    return "${GA_REMOTE_NETWORK_UNREADABLE}"
   fi
   current="$(atrium_toml_get "[remote_access]" "trusted_networks")"
   if ! list="$(ga_remote_get_trusted_list "${current}")"; then
     printf 'remote: [remote_access].trusted_networks is malformed — nothing written\n' >&2
-    return 6
+    return "${GA_REMOTE_NETWORK_UNREADABLE}"
   fi
   if [[ ",${list}," == *",${entry},"* ]]; then
     printf 'remote: this network is already trusted\n'
@@ -498,11 +505,11 @@ ga_remote_cmd_reissue() {
   dir="$(ga_remote_get_key_dir)"
   if [[ ! -f "${dir}/ca.key" ]]; then
     printf "remote: no local CA — run 'glass-atrium remote on' first\n" >&2
-    return 7
+    return "${GA_REMOTE_KEYS_NOT_CREATED}"
   fi
   if ! ga_remote_issue_leaf "${dir}"; then
     printf 'remote: the leaf was not reissued — the current leaf stays\n' >&2
-    return 7
+    return "${GA_REMOTE_KEYS_NOT_CREATED}"
   fi
   printf 'remote: leaf reissued; the monitor serves it from its next network check\n'
 }

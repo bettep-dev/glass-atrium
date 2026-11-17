@@ -3,9 +3,12 @@
 
 import test, { after, describe } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import pino from "pino";
 
@@ -15,6 +18,8 @@ import type { RemoteSettings } from "../src/server/remote/settings.js";
 import { type AccessSwitchDeps, CONFIRM_TTL_MS, RemoteAccessSwitch, runAccessStep } from "../src/server/remote/start.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 
+// the write step's library → its exit-code constants
+const SHELL_LIB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "lib", "ga-remote.sh");
 const HOME_NETWORK = { gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33" };
 const OFFICE_NETWORK = { gateway: "10.20.0.1", hardwareAddress: "3c:22:fb:9a:01:7e" };
 const OFF: RemoteSettings = { enabled: false, port: 16443, trusted: [] };
@@ -349,19 +354,28 @@ describe("the shell's write step", () => {
     return file;
   }
 
-  const rows: { exitCode: number; outcome: AccessStepOutcome }[] = [
-    { exitCode: 0, outcome: "written" },
-    { exitCode: 6, outcome: "network_unreadable" },
-    { exitCode: 7, outcome: "keys_not_created" },
-    { exitCode: 8, outcome: "env_not_rendered" },
-    { exitCode: 9, outcome: "already_trusted" },
-    { exitCode: 10, outcome: "network_changed" },
-    { exitCode: 2, outcome: "write_failed" },
-    { exitCode: 1, outcome: "write_failed" },
+  /** The value a shell constant holds once the write step's library is sourced; "" when it is not set. */
+  async function getShellCode(name: string): Promise<string> {
+    const { stdout } = await promisify(execFile)("/bin/bash", ["-c", 'source "$1" && printf "%s" "${!2-}"', "_", SHELL_LIB, name]);
+    return stdout;
+  }
+
+  // a named code is read from the shell → renumbering it there, or the monitor's map, turns its row red
+  const rows: { exit: number | string; outcome: AccessStepOutcome }[] = [
+    { exit: 0, outcome: "written" },
+    { exit: "GA_REMOTE_NETWORK_UNREADABLE", outcome: "network_unreadable" },
+    { exit: "GA_REMOTE_KEYS_NOT_CREATED", outcome: "keys_not_created" },
+    { exit: "GA_REMOTE_ENV_NOT_RENDERED", outcome: "env_not_rendered" },
+    { exit: "GA_REMOTE_ALREADY_TRUSTED", outcome: "already_trusted" },
+    { exit: "GA_REMOTE_NETWORK_NOT_SHOWN", outcome: "network_changed" },
+    { exit: 2, outcome: "write_failed" },
+    { exit: 1, outcome: "write_failed" },
   ];
   for (const row of rows) {
-    test(`exit ${row.exitCode} reads as ${row.outcome}`, async () => {
-      const file = await writeStep(row.exitCode);
+    test(`exit ${row.exit} reads as ${row.outcome}`, async () => {
+      const code = typeof row.exit === "number" ? String(row.exit) : await getShellCode(row.exit);
+      assert.match(code, /^[0-9]+$/, `${row.exit} is set by the shell`);
+      const file = await writeStep(Number(code));
       assert.equal(await runAccessStep({ act: "off" }, { file }), row.outcome);
     });
   }
