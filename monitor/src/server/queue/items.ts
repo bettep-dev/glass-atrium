@@ -62,8 +62,9 @@ export async function getCount(): Promise<QueueCount> {
       count(*) FILTER (WHERE "status" = 'open') AS "awaiting",
       count(*) FILTER (WHERE "status"::text IN (${Prisma.join(DEVIATION_STATUSES)})) AS "deviations",
       floor(extract(epoch FROM now() - min("asked_at") FILTER (WHERE "status" = 'open')))::int AS "oldest_age_seconds"
-    FROM "monitor"."queue_items"
-    WHERE "status" NOT IN ('delivered', 'seen', 'withdrawn')`;
+    FROM "monitor"."queue_items" i
+    WHERE "status" NOT IN ('delivered', 'seen', 'withdrawn')
+      AND NOT EXISTS (SELECT 1 FROM "monitor"."queue_sessions" s WHERE s."session_id" = i."session_id" AND s."is_probe")`;
   return { awaiting: Number(row?.awaiting ?? 0), deviations: Number(row?.deviations ?? 0), oldestAgeSeconds: row?.oldest_age_seconds ?? null };
 }
 

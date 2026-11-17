@@ -845,7 +845,7 @@ describe("peers", () => {
 });
 
 describe("count", () => {
-  test("counts open items as awaiting and only the unacked, held, expired and resume-pending items as deviations", async () => {
+  test("counts open items as awaiting and only the unacked, held, expired and resume-pending items as deviations, none of a probe session's", async () => {
     const readCount = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> =>
       (await send("GET", "/api/queue/count")).json();
     const measureSeedDelta = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
@@ -856,12 +856,14 @@ describe("count", () => {
       await seedItem(live, { status: "open", askedAt: new Date(Date.now() - 3_600_000) });
       for (const status of ["unacked", "held", "expired", "resume_pending"] as const) await seedItem(live, { status });
       for (const sessionId of [live, noSocket, stale]) await seedItem(sessionId, { status: "answered" });
+      const probe = await seedSession({ isProbe: true });
+      for (const status of ["open", "unacked"] as const) await seedItem(probe, { status, askedAt: new Date(Date.now() - 7_200_000) });
       const counted = await readCount();
       return { awaiting: counted.awaiting - baseline.awaiting, deviations: counted.deviations - baseline.deviations, oldestAgeSeconds: counted.oldestAgeSeconds };
     };
     // the count is database-wide → measured while no other suite holds queue items
     const delta = await withQueueRowsExclusive(measureSeedDelta);
     assert.deepEqual({ awaiting: delta.awaiting, deviations: delta.deviations }, { awaiting: 1, deviations: 4 }, "an answered item waits for its session's pull, never a deviation");
-    assert.ok((delta.oldestAgeSeconds ?? 0) >= 3600, `oldest age ${delta.oldestAgeSeconds}`);
+    assert.ok((delta.oldestAgeSeconds ?? 0) >= 3600 && (delta.oldestAgeSeconds ?? 0) < 7200, `oldest age ${delta.oldestAgeSeconds}`);
   });
 });

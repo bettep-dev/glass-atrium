@@ -155,7 +155,7 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
     where: {
       status: { notIn: TERMINAL },
       ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
-      ...(query.profile === undefined ? {} : { session: { profileLabel: query.profile } }),
+      session: { isProbe: false, ...(query.profile === undefined ? {} : { profileLabel: query.profile }) },
       ...(query.after === undefined ? {} : { queuePosition: { gt: BigInt(query.after) } }),
     },
     orderBy: { queuePosition: "asc" },

@@ -537,6 +537,19 @@ describe("list and item detail", () => {
   });
 });
 
+describe("probe sessions in the item list", () => {
+  test("a probe session's items are left out of the owner item list", async () => {
+    const profileLabel = `.claude-probe-${randomUUID().slice(0, 8)}`;
+    const id = { probe: await seedSession({ profileLabel, isProbe: true }), plain: await seedSession({ profileLabel }) };
+    await seedItem(id.probe);
+    const plainItemId = await seedItem(id.plain);
+
+    const response = await send("GET", `/api/queue/owner/items?profile=${encodeURIComponent(profileLabel)}`);
+
+    assert.deepEqual(response.json().items.map((item: { id: number }) => item.id), [Number(plainItemId)]);
+  });
+});
+
 describe("recent automatic resumes", () => {
   test("lists resume rows newest first with item and account, keeping a resume whose item was delivered", async () => {
     const sessionId = await seedSession({ state: "exited", exitReason: "dead", profileLabel: ".claude-work", cwd: "/Users/owner/Desktop/git/atrium/hooks" });
