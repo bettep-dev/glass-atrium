@@ -24,6 +24,7 @@ export const DEVIATION_STATUSES = ["unacked", "held", "expired", "resume_pending
 // Every state an answer leads to; open, seen and withdrawn carry no answer → never "answered outside"
 const ANSWERED_STATUSES = new Set<QueueItemStatus>([...ACKABLE, "delivered"]);
 export const SESSION_ID_PREFIX_LENGTH = 8;
+const RELAY_SIGNAL_WINDOW_MS = 24 * 3_600_000;
 
 export type Deviation = (typeof DEVIATION_STATUSES)[number];
 
@@ -202,6 +203,22 @@ export async function getRecentResumes(query: RecentResumesQuery): Promise<{ res
       session: { profileLabel: item.session.profileLabel, cwdTail: getCwdTail(item.session.cwd) },
     })),
   };
+}
+
+/**
+ * The relay signal the page raises: the newest of the last 24 hours' relay refusals the relay module decided (only those
+ * rows carry a reason), relays at hop 1 or more, and redactions; null when there is none.
+ */
+export async function getRelaySignal(): Promise<{ raisedAt: string | null }> {
+  const since = new Date(Date.now() - RELAY_SIGNAL_WINDOW_MS);
+  const [row] = await getPrisma().$queryRaw<Array<{ raisedAt: Date | null }>>`
+    SELECT GREATEST(
+      (SELECT max(a."event_ts") FROM "monitor"."audit_log" a
+        WHERE a."target_table" = 'queue-relay' AND a."result_code" = 'blocked' AND a."payload" -> 'change' ->> 'reason' IS NOT NULL AND a."event_ts" >= ${since}),
+      (SELECT max(i."asked_at") FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay' AND i."relay_hop" >= 1 AND i."asked_at" >= ${since}),
+      (SELECT max(i."relay_redacted_at") FROM "monitor"."queue_items" i WHERE i."relay_redacted_at" >= ${since})
+    ) AS "raisedAt"`;
+  return { raisedAt: row?.raisedAt?.toISOString() ?? null };
 }
 
 export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {

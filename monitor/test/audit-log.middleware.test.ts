@@ -410,7 +410,7 @@ test("each relay route is audited under the resource the archive rotation keeps 
   const rotation = readFileSync(new URL("../../scripts/_pg_archive_rotate.py", import.meta.url), "utf8");
   const kept = /^RELAY_RESOURCE = "([^"]+)"$/m.exec(rotation)?.[1];
   assert.ok(kept !== undefined, "the rotation declares RELAY_RESOURCE");
-  for (const route of ["/api/queue/relay"]) {
+  for (const route of ["/api/queue/relay", "/api/queue/owner/items/:id/redact"]) {
     assert.equal(ROUTE_RESOURCE.get(route), kept, route);
   }
 });

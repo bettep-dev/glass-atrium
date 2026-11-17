@@ -1,4 +1,4 @@
-// Owner-side item transitions: answer (decision), reply and Seen (report), Later (any open item), Resend.
+// Owner-side item transitions: answer (decision), reply and Seen (report), Later (any open item), Resend, relay redaction.
 // Each one is a status-guarded update, so a concurrent transition loses with a conflict instead of overwriting.
 
 import type { Prisma, QueueItem, QueueItemStatus } from "../../generated/prisma/client.js";
@@ -11,6 +11,8 @@ import { lockSession } from "./registry.js";
 import type { AnswerBody, ReplyBody } from "./schemas.js";
 
 const RESENDABLE: QueueItemStatus[] = ["unacked", "expired", "resume_pending"];
+/** The one text a redacted relay carries in place of its title and body; no request supplies another. */
+export const RELAY_REDACTION_MARKER = "[relay text redacted by the owner]";
 
 /** Answer + its record (route, page-origin signal) in one guarded write. */
 export async function putAnswer(id: number, body: AnswerBody, signal: PageOriginSignal): Promise<void> {
@@ -78,6 +80,31 @@ export async function putResend(id: number): Promise<void> {
     });
     if (moved.count !== 1) throw new QueueRequestError(409, "not_resendable", "the item moved on");
   });
+}
+
+/**
+ * Redaction: a relay's title and body → the fixed marker, stamped with the time and the original body length; first wins.
+ * @param record - the awaited audit row, written in the same transaction → no redaction stands without its record
+ * @throws QueueRequestError 404 unknown_item · 409 wrong_kind · 409 already_redacted
+ */
+export async function putRedaction(id: number, record: (tx: Prisma.TransactionClient) => Promise<void>): Promise<void> {
+  await getPrisma().$transaction(async (tx) => {
+    // SET reads the row as it was → the stored length is the original body's, in the unit the relay CHECK counts
+    const moved = await tx.$executeRaw`
+      UPDATE "monitor"."queue_items"
+      SET "relay_redacted_length" = char_length("body"), "relay_redacted_at" = now(),
+          "title" = ${RELAY_REDACTION_MARKER}, "body" = ${RELAY_REDACTION_MARKER}, "updated_at" = now()
+      WHERE "id" = ${BigInt(id)} AND "kind"::text = 'relay' AND "relay_redacted_at" IS NULL`;
+    if (moved === 0) await throwNotRedactable(tx, id);
+    await record(tx);
+  });
+}
+
+async function throwNotRedactable(tx: Prisma.TransactionClient, id: number): Promise<never> {
+  const item = await tx.queueItem.findUnique({ where: { id: BigInt(id) }, select: { kind: true } });
+  if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found");
+  if (item.kind !== "relay") throw new QueueRequestError(409, "wrong_kind", `this action applies to a relay, not a ${item.kind}`);
+  throw new QueueRequestError(409, "already_redacted", "this relay's text is already redacted");
 }
 
 async function getResendFacts(tx: Prisma.TransactionClient, id: number) {

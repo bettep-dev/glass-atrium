@@ -48,6 +48,8 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/queue/owner/messages/send", "queue-message"],
   // Session relay: kept out of the archive rotation by its resource (scripts/_pg_archive_rotate.py → RELAY_RESOURCE)
   ["/api/queue/relay", "queue-relay"],
+  // Owner redaction of a relay's text: the row names the relay (target id) and the page-origin signal that admitted it
+  ["/api/queue/owner/items/:id/redact", "queue-relay"],
 ]);
 
 /** Curated identifiers of what a mutation acted on (ids, names, changed field names) → never a body or credential value. */

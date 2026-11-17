@@ -3,11 +3,11 @@
 
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
-import { type AuditChangeCarrier, setAuditTarget } from "../middleware/audit-log.js";
+import { type AuditChangeCarrier, insertAudit, setAuditTarget } from "../middleware/audit-log.js";
 import { QueueRequestError } from "../queue/errors.js";
 import { IMAGE_BYTES_MAX, UPLOAD_CONTENT_TYPES, createImage, getImageFileOrThrow } from "../queue/images.js";
-import { putAnswer, putLater, putReply, putResend, putSeen } from "../queue/owner-items.js";
-import { getOwnerItemOrThrow, getOwnerItems, getOwnerOrders, getRecentResumes } from "../queue/owner-views.js";
+import { putAnswer, putLater, putRedaction, putReply, putResend, putSeen } from "../queue/owner-items.js";
+import { getOwnerItemOrThrow, getOwnerItems, getOwnerOrders, getRecentResumes, getRelaySignal } from "../queue/owner-views.js";
 import { createMessages, getOwnerSessions } from "../queue/owner-sessions.js";
 import { type PageOriginCarrier, buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
 import {
@@ -44,6 +44,7 @@ export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRout
   registerReadRoutes(app, options.cliPath);
   registerRecentResumesRoute(app);
   registerOrderHistoryRoute(app);
+  registerRelayRoutes(app);
   registerAnswerRoutes(app);
   registerSessionRoutes(app);
   await app.register(imageUploadPlugin, options);
@@ -92,6 +93,25 @@ function registerOrderHistoryRoute(app: FastifyInstance): void {
       schema: ownerOrdersQuerySchema,
       input: request.query,
       work: (query) => getOwnerOrders(query),
+    }),
+  );
+}
+
+function registerRelayRoutes(app: FastifyInstance): void {
+  app.get("/api/queue/owner/relays/signal", async (request, reply) =>
+    handleParsed(request, reply, { route: "/api/queue/owner/relays/signal", schema: emptyBodySchema, input: request.query, work: () => getRelaySignal() }),
+  );
+  // Only the id: the marker is fixed server-side → a strict empty body refuses any replacement text
+  app.post<{ Params: IdParams }>("/api/queue/owner/items/:id/redact", OWNER_ROUTE_OPTIONS, async (request, reply) =>
+    handleItemRequest(request, reply, {
+      route: "/api/queue/owner/items/:id/redact",
+      schema: emptyBodySchema,
+      input: request.body,
+      work: async (id) => {
+        setAuditTarget(request, { signal: getPageOriginSignalOrThrow(request) });
+        await putRedaction(id, (tx) => insertAudit(request, { statusCode: 200 }, tx));
+        return { ok: true };
+      },
     }),
   );
 }

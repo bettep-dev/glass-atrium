@@ -20,6 +20,7 @@ import pino from "pino";
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
+import { RELAY } from "../src/server/queue/relay.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -52,7 +53,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: owned } });
   await prisma.queueItem.deleteMany({ where: owned });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
-  await prisma.auditLog.deleteMany({ where: { actionKind: "queue-relay.relay", eventTs: { gte: suiteStart } } });
+  await prisma.auditLog.deleteMany({ where: { actionKind: { in: ["queue-relay.relay", "queue-relay.redact"] }, eventTs: { gte: suiteStart } } });
   await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
@@ -573,6 +574,73 @@ describe("relay refusal records", () => {
     const errors = lines.map((line) => JSON.parse(line) as { level: number; msg: string }).filter((line) => line.level === 50);
     assert.equal(errors.length, 1, lines.join(""));
     assert.equal((await findRefusalRows(sender)).length, 0);
+  });
+});
+
+describe("relay owner signal", () => {
+  async function getRaisedAt(): Promise<string | null> {
+    return (await app.inject({ method: "GET", url: "/api/queue/owner/relays/signal", headers: { host: HOST } })).json().raisedAt;
+  }
+
+  async function relayExpecting(body: object, status: number, headers: Record<string, string> = {}): Promise<void> {
+    const response = await relay(body, { headers });
+    assert.equal(response.statusCode, status, response.body);
+  }
+
+  test("is raised at the newest relay refusal, hop-1-or-more relay or redaction of the last 24 hours; a malformed body, an origin refusal or a hop-0 relay leaves it", async () => {
+    await withQueueRowsExclusive(async () => {
+      const rows = [
+        {
+          name: "a breaker trip",
+          act: async () => {
+            const [filler, sink, sender, recipient] = [await seedSession(), await seedSession(), await seedSession(), await seedSession()];
+            const existing = await getPrisma().queueItem.count({ where: { kind: "relay", askedAt: { gte: ago(HOUR_MS) } } });
+            for (let index = existing; index < RELAY.MACHINE; index += 1) await seedRelay(filler, sink, { askedAt: ago(10 * 60_000 + index) });
+            await relayExpecting({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." }, 429);
+            await getPrisma().queueItem.updateMany({ where: { fromSessionId: filler }, data: { askedAt: ago(2 * HOUR_MS) } });
+          },
+          isRaised: true,
+        },
+        {
+          name: "a malformed body",
+          act: async () => relayExpecting({ sessionId: await seedSession(), recipients: [prefixOf(await seedSession())], text: "Lint is green.", hop: 0 }, 400),
+          isRaised: false,
+        },
+        {
+          name: "an origin refusal",
+          act: async () => relayExpecting({ sessionId: await seedSession(), recipients: [prefixOf(await seedSession())], text: "Lint is green." }, 403, { origin: "https://evil.example" }),
+          isRaised: false,
+        },
+        { name: "a hop-0 relay", act: async () => relayExpecting({ sessionId: await seedSession(), recipients: [prefixOf(await seedSession())], text: "Lint is green." }, 201), isRaised: false },
+        {
+          name: "a hop-1 relay",
+          act: async () => {
+            const [peer, sender, recipient] = [await seedSession(), await seedSession(), await seedSession()];
+            await seedClaim(await seedRelay(peer, sender), ago(60_000));
+            await relayExpecting({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." }, 201);
+          },
+          isRaised: true,
+        },
+        { name: "a refusal the relay module decides", act: async () => { const sender = await seedSession(); await relayExpecting({ sessionId: sender, recipients: [prefixOf(sender)], text: "Lint is green." }, 409); }, isRaised: true },
+        {
+          name: "a redaction",
+          act: async () => {
+            const relayId = await seedRelay(await seedSession(), await seedSession());
+            const response = await app.inject({ method: "POST", url: `/api/queue/owner/items/${relayId}/redact`, headers: { host: HOST, "sec-fetch-site": "same-origin" } });
+            assert.equal(response.statusCode, 200, response.body);
+          },
+          isRaised: true,
+        },
+      ];
+      for (const row of rows) {
+        const before = await getRaisedAt();
+        const start = new Date();
+        await row.act();
+        const after = await getRaisedAt();
+        const isMoved = after !== null && after !== before && new Date(after) >= start;
+        assert.equal(isMoved, row.isRaised, `${row.name}: ${before} → ${after}`);
+      }
+    });
   });
 });
 

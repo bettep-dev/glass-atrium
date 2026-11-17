@@ -14,6 +14,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
 import { registerQueueRoutes, resolveQueueRouteOptions } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
@@ -26,6 +27,7 @@ const ACK_DEADLINE_MS = 120_000;
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-owner-api-"));
 const trackedSessionIds: string[] = [];
+const suiteStart = new Date();
 let app: FastifyInstance;
 
 before(async () => {
@@ -39,6 +41,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await prisma.auditLog.deleteMany({ where: { actionKind: "queue-relay.redact", eventTs: { gte: suiteStart } } });
   await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
@@ -867,6 +870,80 @@ describe("order history", () => {
     for (const row of rows) {
       const response = await getOrders(row.query);
       assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"], row.name);
+    }
+  });
+});
+
+describe("relay redaction", () => {
+  const text = "Rebased feature/queue-mcp onto main; the relay suite is green.";
+
+  async function seedRelay(overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Promise<bigint> {
+    const [sender, recipient] = [await seedSession(), await seedSession()];
+    const deliveredAt = new Date(Date.now() - 60_000);
+    return seedItem(recipient, {
+      kind: "relay", fromSessionId: sender, relayHop: 1, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: text,
+      isFreeTextAllowed: false, status: "delivered", deliveredAt, relayFetchedAt: deliveredAt, askedAt: new Date(Date.now() - 120_000), ...overrides,
+    });
+  }
+
+  function redact(itemId: bigint, body?: object, options: SendOptions = {}): Promise<LightMyRequestResponse> {
+    return send("POST", `/api/queue/owner/items/${itemId}/redact`, body, options);
+  }
+
+  // Every field but the text, its two redaction stamps and the row's own update time
+  async function getKeptFields(itemId: bigint) {
+    const { title, body, relayRedactedAt, relayRedactedLength, updatedAt, ...kept } = await getItemRow(itemId);
+    return kept;
+  }
+
+  test("replaces the relay's text with the fixed marker, keeps every other field and adds the redaction time and the original length", async () => {
+    const itemId = await seedRelay();
+    const kept = await getKeptFields(itemId);
+    const start = new Date();
+
+    const response = await redact(itemId);
+
+    assert.equal(response.statusCode, 200, response.body);
+    const row = await getItemRow(itemId);
+    assert.deepEqual([row.title, row.body, row.relayRedactedLength], [RELAY_REDACTION_MARKER, RELAY_REDACTION_MARKER, text.length]);
+    assert.ok(row.relayRedactedAt !== null && row.relayRedactedAt >= start, "redaction time set");
+    assert.deepEqual(await getKeptFields(itemId), kept);
+  });
+
+  test("is first-wins: a second redaction changes nothing, its stamp included", async () => {
+    const itemId = await seedRelay();
+    assert.equal((await redact(itemId)).statusCode, 200);
+    const first = await getItemRow(itemId);
+
+    const second = await redact(itemId);
+
+    assert.deepEqual([second.statusCode, second.json().error], [409, "already_redacted"]);
+    assert.deepEqual(await getItemRow(itemId), first);
+  });
+
+  test("writes its audit row before it answers, naming the relay and the page-origin signal that admitted it", async () => {
+    const itemId = await seedRelay();
+
+    const response = await redact(itemId, undefined, { headers: { origin: `http://127.0.0.1:${PORT}` } });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const rows = await getPrisma().auditLog.findMany({ where: { actionKind: "queue-relay.redact", targetId: itemId } });
+    assert.deepEqual(rows.map((row) => [row.resultCode, row.targetTable, (row.payload as { change?: unknown } | null)?.change]), [["success", "queue-relay", { signal: "origin" }]]);
+  });
+
+  test("refuses replacement text, an owner message, a report, a request without the page-origin signal and any session route", async () => {
+    const rows = [
+      { name: "replacement text in the body", itemId: await seedRelay(), call: (id: bigint) => redact(id, { text: "nothing happened" }), status: 400 },
+      { name: "an owner message", itemId: await seedItem(await seedSession(), { kind: "message", isFreeTextAllowed: false, status: "delivered", answeredAt: new Date(), answerRoute: "message", answerSignal: "fetch_metadata" }), call: (id: bigint) => redact(id), status: 409 },
+      { name: "a report", itemId: await seedItem(await seedSession()), call: (id: bigint) => redact(id), status: 409 },
+      { name: "no page-origin header", itemId: await seedRelay(), call: (id: bigint) => redact(id, undefined, { headers: {} }), status: 403 },
+      { name: "a session route", itemId: await seedRelay(), call: (id: bigint) => send("POST", `/api/queue/items/${id}/redact`, { sessionId: randomUUID() }, { headers: {} }), status: 404 },
+    ];
+    for (const row of rows) {
+      const before = await getItemRow(row.itemId);
+      const response = await row.call(row.itemId);
+      assert.equal(response.statusCode, row.status, `${row.name}: ${response.body}`);
+      assert.deepEqual(await getItemRow(row.itemId), before, row.name);
     }
   });
 });
