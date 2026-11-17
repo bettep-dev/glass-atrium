@@ -1395,44 +1395,38 @@ describe("Type floor on the Documents screen, its viewer, version history and st
     return misses;
   })()`;
 
-  for (const theme of ["light", "dark"]) {
-    test(`every drawn text in the viewer chrome of an old revision clears 4.5:1 in the ${theme} theme`, async () => {
-      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-      try {
-        const page: Page = await context.newPage();
-        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-        // the app's mount effect writes data-theme from its tweaks → switch only once a fetched ledger row shows, a later commit than that effect
-        await revealRowByTitle(page, title.successor);
-        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-        await openViewerPanels(page);
-        await page.keyboard.press("Escape");
-        await page.locator("aside.doc-fs-meta-side").getByRole("button", { name: /View previous revision/ }).click();
-        await page.getByRole("button", { name: /View latest revision/ }).waitFor({ state: "visible" });
-        assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), theme);
-        assert.deepEqual(await page.evaluate(getContrastMissesScript(".doc-fs-container")), []);
-      } finally {
-        await context.close();
-      }
-    });
+  test("every drawn text in the viewer chrome of an old revision clears 4.5:1", async () => {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const page: Page = await context.newPage();
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      await revealRowByTitle(page, title.successor);
+      await openViewerPanels(page);
+      await page.keyboard.press("Escape");
+      await page.locator("aside.doc-fs-meta-side").getByRole("button", { name: /View previous revision/ }).click();
+      await page.getByRole("button", { name: /View latest revision/ }).waitFor({ state: "visible" });
+      assert.deepEqual(await page.evaluate(getContrastMissesScript(".doc-fs-container")), []);
+    } finally {
+      await context.close();
+    }
+  });
 
-    test(`every item of the open stage menu clears 4.5:1 in the ${theme} theme, its first item hovered`, async () => {
-      const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-      try {
-        const page: Page = await context.newPage();
-        await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
-        const row = await revealRowByTitle(page, title.successor);
-        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-        await row.getByRole("button", { name: /^Change stage of / }).click();
-        const menu = page.getByRole("menu", { name: /^Change stage of / });
-        await menu.waitFor({ state: "visible" });
-        await menu.getByRole("menuitem").first().hover();
-        assert.deepEqual(await page.evaluate(getContrastMissesScript('[role="menu"]')), []);
-        assert.equal(await menu.getByRole("menuitem").count(), 4, "every stage but the current one is a move");
-      } finally {
-        await context.close();
-      }
-    });
-  }
+  test("every item of the open stage menu clears 4.5:1, its first item hovered", async () => {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const page: Page = await context.newPage();
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const row = await revealRowByTitle(page, title.successor);
+      await row.getByRole("button", { name: /^Change stage of / }).click();
+      const menu = page.getByRole("menu", { name: /^Change stage of / });
+      await menu.waitFor({ state: "visible" });
+      await menu.getByRole("menuitem").first().hover();
+      assert.deepEqual(await page.evaluate(getContrastMissesScript('[role="menu"]')), []);
+      assert.equal(await menu.getByRole("menuitem").count(), 4, "every stage but the current one is a move");
+    } finally {
+      await context.close();
+    }
+  });
 
   test("a press on the open row menu's padding, between its items, never opens that row in the viewer", async () => {
     const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });

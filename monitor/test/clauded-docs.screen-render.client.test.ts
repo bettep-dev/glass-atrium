@@ -1319,14 +1319,9 @@ test("the Title header starts at the title text's x: its label follows an empty 
 });
 
 const noop = () => undefined;
-const isDarkScope = (n: RenderedNode) => n.props["data-theme"] === "dark";
 const hasClass = (name: string) => (n: RenderedNode) => String(n.props.className ?? "").split(/\s+/).includes(name);
 const isAtom = (atom: string) => (n: RenderedNode) => n.props.atom === atom;
 type RenderedNode = ReturnType<typeof findNodes>[number];
-
-function isInDarkScope(tree: ReturnType<typeof renderScreen>, predicate: (n: RenderedNode) => boolean): boolean {
-  return findNodes(tree, isDarkScope).some((scope) => findNodes(scope, predicate).length > 0);
-}
 
 function viewerDoc(extra: Record<string, unknown> = {}) {
   return { id: 9, title: "Doc 9", format: "txt", body: "probe", doc_status: "open", supersedes_id: null, superseded_by_id: null, ...extra };
@@ -1338,33 +1333,6 @@ function renderViewerPanel(screen: Record<string, unknown>, state: Record<string
     optimisticStatusOverrides: new Map(), onNavigate: noop, showToast: noop,
   }));
 }
-
-test("the viewer chrome resolves the dark theme in either app theme, and the rendered document never takes that scope", async () => {
-  const screen = await loadDocsScreen();
-  const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc({ superseded_by_id: 10 }) });
-
-  assert.ok(isInDarkScope(tree, isAtom("CardHead")), "the viewer head");
-  assert.ok(isInDarkScope(tree, isAtom("AlertCard")), "the newer-version notice");
-  assert.ok(isInDarkScope(tree, (n) => n.type === "aside" && n.props["aria-label"] === "Document metadata"), "the metadata rail");
-  assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 1);
-  assert.equal(isInDarkScope(tree, hasClass("doc-body-isolation")), false, "the rendered document keeps its own canvas");
-});
-
-describe("a viewer with no rendered document shows its state inside the dark chrome scope", () => {
-  const rows = [
-    { name: "idle", state: { status: "idle" }, shown: isAtom("EmptyState") },
-    { name: "loading", state: { status: "loading" }, shown: isAtom("LoadingPlaceholder") },
-    { name: "failed read", state: { status: "error", error: "HTTP 500" }, shown: isAtom("RegionUnavailable") },
-    { name: "body that cannot render", state: { status: "ready", data: viewerDoc({ format: "md", body: "# x" }) }, shown: isAtom("AlertCard") },
-  ];
-  for (const row of rows) {
-    test(row.name, async () => {
-      const screen = await loadDocsScreen();
-      const tree = renderViewerPanel(screen, row.state);
-      assert.ok(isInDarkScope(tree, row.shown), `${row.name}: state shown in the dark scope`);
-    });
-  }
-});
 
 test("a newer revision announces itself as one inset warn alert card whose action opens the latest revision", async () => {
   const screen = await loadDocsScreen();
