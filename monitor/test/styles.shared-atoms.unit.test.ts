@@ -67,8 +67,14 @@ function getPx(value: string): number {
 
 const TOKENS = getRootBlock(TOKENS_CSS);
 
-test("the page declares the one dark colour scheme, so native widgets draw dark under any OS setting", () => {
-  assert.equal(getDecl(TOKENS, "color-scheme"), "dark");
+// each served page → the one stylesheet that holds its :root (sign-in.html loads no tokens.css)
+const PAGE_ROOTS = [
+  { page: "index.html", root: TOKENS },
+  { page: "sign-in.html", root: getRootBlock(readFileSync(resolve(STYLES, "../sign-in.css"), "utf8")) },
+];
+
+test("every page declares the one dark colour scheme, so native widgets draw dark under any OS setting", () => {
+  for (const { page, root } of PAGE_ROOTS) assert.equal(getDecl(root, "color-scheme"), "dark", page);
 });
 
 test("every font size in the shared stylesheets is a whole-pixel step at or above the 13px meta floor", () => {
