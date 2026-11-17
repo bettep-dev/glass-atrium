@@ -4,6 +4,7 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import "dotenv/config";
 
@@ -401,6 +402,16 @@ test("coverage-drift guard: ROUTE_RESOURCE is a superset of all registered mutat
       registered.has(auditedKey),
       `ROUTE_RESOURCE key '${auditedKey}' no longer matches any registered mutating route (stale)`,
     );
+  }
+});
+
+// The rotation keeps relay records by their resource label → a relay route audited under another label would be archived away
+test("each relay route is audited under the resource the archive rotation keeps in audit_log", () => {
+  const rotation = readFileSync(new URL("../../scripts/_pg_archive_rotate.py", import.meta.url), "utf8");
+  const kept = /^RELAY_RESOURCE = "([^"]+)"$/m.exec(rotation)?.[1];
+  assert.ok(kept !== undefined, "the rotation declares RELAY_RESOURCE");
+  for (const route of ["/api/queue/relay"]) {
+    assert.equal(ROUTE_RESOURCE.get(route), kept, route);
   }
 });
 

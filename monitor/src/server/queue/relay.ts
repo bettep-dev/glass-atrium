@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import type { AuditTarget } from "../middleware/audit-log.js";
 import { getComparableText, hasEnvelopeToken } from "./envelope.js";
 import { QueueRequestError } from "./errors.js";
 import { assertLinkedDocsExist } from "./items.js";
@@ -66,6 +67,10 @@ export interface RecipientCandidate {
 
 export interface RelayRefusal {
   reason: RelayRefusalReason;
+  /** Sessions the recipients resolved to before the refusal; none for a refusal decided on the sender alone. */
+  recipientIds: string[];
+  /** Recipient inputs that named no single session → recorded as a count, never as the caller's string. */
+  unresolvedCount?: number;
   candidates?: RecipientCandidate[];
   /** The scanner's pattern code on a match; null when its reply named none. */
   pattern?: string | null;
@@ -97,17 +102,22 @@ export async function createRelay(body: RelayBody, scannerPath: string): Promise
   if (sender.state !== "live") return refuse("sender_not_live");
   const recipients = await resolveRecipients(sender, body.recipients);
   if ("refusal" in recipients) return recipients;
-  if (hasEnvelopeToken(body.text)) return refuse("token");
+  if (hasEnvelopeToken(body.text)) return refuse("token", recipients.ids);
   const scan = await scanText(scannerPath, `${body.text}\n${getComparableText(body.text)}`);
-  if (scan.verdict === "match") return { refusal: { reason: "secret", pattern: scan.pattern } };
-  if (scan.verdict === "unavailable") return refuse("scan_unavailable");
+  if (scan.verdict === "match") return { refusal: { reason: "secret", recipientIds: recipients.ids, pattern: scan.pattern } };
+  if (scan.verdict === "unavailable") return refuse("scan_unavailable", recipients.ids);
   return getPrisma().$transaction((tx) => insertRelay(tx, body, recipients.ids));
 }
 
-/** Status and body a refusal answers with: the reason code, its fixed message, and never any caller text. */
-export function getRefusalResponse(refusal: RelayRefusal): { statusCode: number; body: object } {
+/**
+ * Status and body a refusal answers with — the reason code, its fixed message, never any caller text — and its audit
+ * record: sender, resolved recipients, reason and the unresolved count, never the text.
+ */
+export function getRefusalResponse(senderId: string, refusal: RelayRefusal): { statusCode: number; body: object; record: AuditTarget } {
   const { statusCode, message } = REFUSAL[refusal.reason];
-  return { statusCode, body: { error: `relay_${refusal.reason}`, reason: message, ...pickDetails(refusal) } };
+  const { reason, recipientIds, unresolvedCount } = refusal;
+  const record = { reason, senderId, recipientIds, ...(unresolvedCount === undefined ? {} : { unresolvedCount }) };
+  return { statusCode, body: { error: `relay_${reason}`, reason: message, ...pickDetails(refusal) }, record };
 }
 
 function pickDetails(refusal: RelayRefusal): object {
@@ -116,8 +126,8 @@ function pickDetails(refusal: RelayRefusal): object {
   return {};
 }
 
-function refuse(reason: RelayRefusalReason): { refusal: RelayRefusal } {
-  return { refusal: { reason } };
+function refuse(reason: RelayRefusalReason, recipientIds: string[] = []): { refusal: RelayRefusal } {
+  return { refusal: { reason, recipientIds } };
 }
 
 async function getSenderOrThrow(sessionId: string): Promise<SenderRow> {
@@ -126,17 +136,17 @@ async function getSenderOrThrow(sessionId: string): Promise<SenderRow> {
   return { id: sessionId, ...row };
 }
 
+// Every input is resolved before any refusal → the record names all the sessions the call did resolve to
 async function resolveRecipients(sender: SenderRow, recipients: string[]): Promise<{ ids: string[] } | { refusal: RelayRefusal }> {
-  if (recipients.some((recipient) => isNamedBy(sender, recipient))) return refuse("self");
+  if (recipients.some((recipient) => isNamedBy(sender, recipient))) return refuse("self", [sender.id]);
   const peers = await getPeerRows(sender.id);
-  const ids = new Set<string>();
-  for (const recipient of recipients) {
-    const [match, ...others] = peers.filter((peer) => isNamedBy(peer, recipient));
-    if (match === undefined) return refuse("recipient");
-    if (others.length > 0) return { refusal: { reason: "recipient_ambiguous", candidates: [match, ...others].map(toCandidate) } };
-    ids.add(match.id);
-  }
-  return { ids: [...ids] };
+  const matches = recipients.map((recipient) => peers.filter((peer) => isNamedBy(peer, recipient)));
+  const ids = [...new Set(matches.flatMap((match) => (match.length === 1 ? match.map((peer) => peer.id) : [])))];
+  const unresolvedCount = matches.filter((match) => match.length !== 1).length;
+  if (matches.some((match) => match.length === 0)) return { refusal: { reason: "recipient", recipientIds: ids, unresolvedCount } };
+  const ambiguous = matches.find((match) => match.length > 1);
+  if (ambiguous !== undefined) return { refusal: { reason: "recipient_ambiguous", recipientIds: ids, unresolvedCount, candidates: ambiguous.map(toCandidate) } };
+  return { ids };
 }
 
 // An id prefix as the peers read shows it (or longer), or the shown name exactly
@@ -152,12 +162,12 @@ function toCandidate(row: ListedSessionRow): RecipientCandidate {
 async function insertRelay(tx: Prisma.TransactionClient, body: RelayBody, recipientIds: string[]): Promise<RelayOutcome> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${RELAY_LOCK_KEY})`;
   const lockRefusal = getLockedRefusal(await lockSessions(tx, [body.sessionId, ...recipientIds]), body.sessionId);
-  if (lockRefusal !== null) return refuse(lockRefusal);
+  if (lockRefusal !== null) return refuse(lockRefusal, recipientIds);
   const capRefusal = await getCapRefusal(tx, body.sessionId, recipientIds);
-  if (capRefusal !== null) return refuse(capRefusal);
+  if (capRefusal !== null) return refuse(capRefusal, recipientIds);
   const parent = await findHopParent(tx, body.sessionId);
   const hop = parent === null ? 0 : parent.hop + 1;
-  if (hop >= RELAY.HOP_LIMIT) return refuse("hop");
+  if (hop >= RELAY.HOP_LIMIT) return refuse("hop", recipientIds);
   await assertLinkedDocsExist(tx, body.linkedDocIds);
   const sendId = randomUUID();
   const fields = { kind: "relay", fromSessionId: body.sessionId, relayHop: hop, relayParentId: parent?.id ?? null, linkedDocIds: body.linkedDocIds.map(BigInt) } as const;

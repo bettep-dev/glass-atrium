@@ -2,6 +2,7 @@
 // Registered in app.ts (buildApp) after registerRoutes(), before main.ts calls app.listen(); covers the ROUTE_RESOURCE routes.
 // Safety bar: INSERT is not awaited (zero added latency); a failed/slow audit must NEVER block/delay/fail the mutation.
 // Hook failure = silent log only. Scope: mutating methods (POST/PUT/PATCH/DELETE) on covered routes only (reads/other routes ignored).
+// Exception: a handler whose row is itself the record (insertAudit) awaits it, and the hook then skips that response.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Prisma } from "../../generated/prisma/client.js";
@@ -57,6 +58,8 @@ export type AuditTarget = Readonly<Record<string, unknown>>;
 // (model-config AC-9: exactly 1 row per PUT). Remote: the gate records it as the row's `target` with the outcome, every route.
 export interface AuditChangeCarrier {
   auditChange?: AuditTarget;
+  /** Set by insertAudit → the onResponse hook writes no second row for the response. */
+  isAuditWritten?: boolean;
 }
 
 export function setAuditTarget(request: FastifyRequest, target: AuditTarget): void {
@@ -72,9 +75,17 @@ const METHOD_VERB: Readonly<Record<string, string>> = {
   DELETE: "delete",
 };
 
+type AuditResultCode = "success" | "blocked" | "error";
+
+/** A response's status, and the result it records when the status alone does not decide it (a 503 refusal is blocked). */
+export interface AuditOutcome {
+  statusCode: number;
+  resultCode?: AuditResultCode;
+}
+
 interface AuditSnapshot {
   actionKind: string;
-  resultCode: "success" | "blocked" | "error";
+  resultCode: AuditResultCode;
   targetTable: string;
   targetId: bigint | null;
   payload: Record<string, unknown> | null;
@@ -95,7 +106,7 @@ function extractRouteKey(request: FastifyRequest): string | null {
  *   2xx → success · 4xx → blocked (validation / not-found / forbidden) · 5xx → error.
  *   1xx/3xx fall through to success (no mutation rejection occurred).
  */
-export function deriveResultCode(statusCode: number): "success" | "blocked" | "error" {
+export function deriveResultCode(statusCode: number): AuditResultCode {
   if (statusCode >= 500) {
     return "error";
   }
@@ -165,42 +176,21 @@ function buildPayload(
 
 /**
  * Register the audit-log hook. Called by app.ts (buildApp) after registerRoutes(), before main.ts calls app.listen().
- * onResponse (post-send, zero latency) → skip non-mutating/uncovered routes → fire-and-forget INSERT
+ * onResponse (post-send, zero latency) → skip non-mutating/uncovered routes and responses insertAudit recorded → fire-and-forget INSERT
  * (not awaited) → INSERT failure = silent log + swallow (the mutation already completed).
  */
 export function registerAuditLogHook(app: FastifyInstance): void {
   app.addHook("onResponse", async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
-      const method = request.method.toUpperCase();
-      if (!MUTATION_METHODS.has(method)) {
+      const snapshot = getAuditSnapshot(request, { statusCode: reply.statusCode });
+      if (snapshot === null || (request as FastifyRequest & AuditChangeCarrier).isAuditWritten === true) {
         return;
       }
-      const routeKey = extractRouteKey(request);
-      if (routeKey === null) {
-        return;
-      }
-      const resource = ROUTE_RESOURCE.get(routeKey);
-      if (resource === undefined) {
-        // Route is a mutation but not in the audited set — skip (bounded cardinality).
-        return;
-      }
-
-      const statusCode = reply.statusCode;
-      const snapshot: AuditSnapshot = {
-        actionKind: deriveActionKind(routeKey, method, resource),
-        resultCode: deriveResultCode(statusCode),
-        targetTable: resource,
-        targetId: extractTargetId(request),
-        payload: buildPayload(
-          method,
-          routeKey,
-          statusCode,
-          (request as FastifyRequest & AuditChangeCarrier).auditChange,
-        ),
-      };
-
       // Fire-and-forget — not awaited; void marks the intentionally floating promise.
-      void insertAudit(app, snapshot);
+      void writeAuditRow(getPrisma(), snapshot).catch((error: unknown) => {
+        // Silent — the response was already sent, so no user impact.
+        app.log.warn({ err: error, actionKind: snapshot.actionKind }, "audit-log middleware: INSERT failed (continuing in degraded mode)");
+      });
     } catch (error) {
       // Must not affect response handling — silent log.
       app.log.warn(
@@ -212,33 +202,53 @@ export function registerAuditLogHook(app: FastifyInstance): void {
 }
 
 /**
- * Async INSERT — server-side NOW() for event_ts (avoids adapter-pg Date serialization).
- * On failure, silent log + swallow. Separated so the inner try/catch absorbs every throw off the request path.
+ * Awaited row for a response its handler records itself (a relay refusal, a redaction), in place of the hook's.
+ * @param outcome - the status the handler is about to answer with
+ * @param db - a transaction client → the row commits or rolls back with the handler's own write
+ * @throws on an uncovered route or a failed INSERT; the hook writes no row for this response either way
  */
-async function insertAudit(app: FastifyInstance, snapshot: AuditSnapshot): Promise<void> {
-  try {
-    const prisma = getPrisma();
-    const payloadJson = snapshot.payload === null ? null : JSON.stringify(snapshot.payload);
-    await prisma.$executeRaw`
-      INSERT INTO monitor.audit_log
-        (event_ts, actor, action_kind, target_table, target_id, payload, result_code)
-      VALUES (
-        NOW(),
-        ${AUDIT_ACTOR},
-        ${snapshot.actionKind},
-        ${snapshot.targetTable},
-        ${snapshot.targetId},
-        ${payloadJson}::jsonb,
-        ${snapshot.resultCode}::monitor."AuditResultCode"
-      )
-    `;
-  } catch (error) {
-    // Silent — the response was already sent, so no user impact.
-    app.log.warn(
-      { err: error, actionKind: snapshot.actionKind },
-      "audit-log middleware: INSERT failed (continuing in degraded mode)",
-    );
+export async function insertAudit(request: FastifyRequest, outcome: AuditOutcome, db: Prisma.TransactionClient = getPrisma()): Promise<void> {
+  const snapshot = getAuditSnapshot(request, outcome);
+  if (snapshot === null) {
+    throw new Error(`audit-log: ${request.method} ${request.routeOptions.url} is no audited mutation route`);
   }
+  (request as FastifyRequest & AuditChangeCarrier).isAuditWritten = true;
+  await writeAuditRow(db, snapshot);
+}
+
+/** Row a mutating covered route's response records; null for a read, an unmatched or an uncovered route. */
+function getAuditSnapshot(request: FastifyRequest, { statusCode, resultCode }: AuditOutcome): AuditSnapshot | null {
+  const method = request.method.toUpperCase();
+  const routeKey = extractRouteKey(request);
+  const resource = routeKey === null ? undefined : ROUTE_RESOURCE.get(routeKey);
+  if (!MUTATION_METHODS.has(method) || routeKey === null || resource === undefined) {
+    return null;
+  }
+  return {
+    actionKind: deriveActionKind(routeKey, method, resource),
+    resultCode: resultCode ?? deriveResultCode(statusCode),
+    targetTable: resource,
+    targetId: extractTargetId(request),
+    payload: buildPayload(method, routeKey, statusCode, (request as FastifyRequest & AuditChangeCarrier).auditChange),
+  };
+}
+
+/** Server-side NOW() for event_ts (avoids adapter-pg Date serialization). */
+async function writeAuditRow(db: Prisma.TransactionClient, snapshot: AuditSnapshot): Promise<void> {
+  const payloadJson = snapshot.payload === null ? null : JSON.stringify(snapshot.payload);
+  await db.$executeRaw`
+    INSERT INTO monitor.audit_log
+      (event_ts, actor, action_kind, target_table, target_id, payload, result_code)
+    VALUES (
+      NOW(),
+      ${AUDIT_ACTOR},
+      ${snapshot.actionKind},
+      ${snapshot.targetTable},
+      ${snapshot.targetId},
+      ${payloadJson}::jsonb,
+      ${snapshot.resultCode}::monitor."AuditResultCode"
+    )
+  `;
 }
 
 /**

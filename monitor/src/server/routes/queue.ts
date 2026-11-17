@@ -7,6 +7,7 @@ import path from "node:path";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { insertAudit, setAuditTarget } from "../middleware/audit-log.js";
 import { getMonitorPort } from "../monitor-port.js";
 import { ackItem, claimPendingItems, getPendingCount, withdrawItem } from "../queue/delivery.js";
 import { getQueueCliPath } from "../queue/envelope.js";
@@ -182,7 +183,11 @@ function registerRelayRoute(app: FastifyInstance, scannerPath: string): void {
           reply.code(201);
           return outcome.relay;
         }
-        const refusal = getRefusalResponse(outcome.refusal);
+        const refusal = getRefusalResponse(body.sessionId, outcome.refusal);
+        setAuditTarget(request, refusal.record);
+        await insertAudit(request, { statusCode: refusal.statusCode, resultCode: "blocked" }).catch((error: unknown) => {
+          request.log.error({ err: error, route: "/api/queue/relay", reason: outcome.refusal.reason }, "relay refusal audit row not written — the refusal is still returned");
+        });
         reply.code(refusal.statusCode);
         return refusal.body;
       },
