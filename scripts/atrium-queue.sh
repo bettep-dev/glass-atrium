@@ -17,16 +17,11 @@ if [[ -L "${self}" ]]; then
 fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${self}")" && pwd)"
 readonly SCRIPT_DIR
-# shellcheck source-path=SCRIPTDIR source=lib/queue-session.sh
-source "${SCRIPT_DIR}/lib/queue-session.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/queue-ops.sh
+source "${SCRIPT_DIR}/lib/queue-ops.sh"
 
-readonly CLI_MAX_TIME_S=10
-# a file name the monitor makes for an owner image: a random id and the extension of the type its bytes hold
-readonly IMAGE_NAME_SHAPE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|gif)$'
 # the monitor's route bodyLimit
 readonly ITEM_MAX_BYTES=196608
-# one call's pull rounds → its drain bound, the monitor's ANSWERED_IDS_LIMIT (delivery.ts → PULL.ROUNDS_MAX, test-bound)
-readonly PULL_ROUNDS_MAX=10
 # the monitor's waiting-fact freshness window is two of these
 readonly WAIT_POLL_S=5
 readonly WAIT_BACKOFF_MAX_S=60
@@ -47,7 +42,7 @@ readonly LISTEN_LIFETIME_S=82800
 # the same answered set to the same Claude process: the wake, then one re-announce for a wake folded into a busy turn;
 # QUEUE_NUDGE_INTERVAL_MIN since the last announce opens the next interval of LISTEN_ANNOUNCE_MAX, at most
 # LISTEN_INTERVAL_RESETS_MAX times per set → an unclaimed set wakes a session a bounded number of times, never every
-# interval; a changed set, a claim or a count read back at 0 starts the whole bound over (drop_announce_record), and the
+# interval; a changed set, a claim or a count read back at 0 starts the whole bound over (queue_delete_announce_record), and the
 # lifetime end's re-arm names the count again regardless
 readonly LISTEN_ANNOUNCE_MAX=2
 readonly LISTEN_INTERVAL_RESETS_MAX=3
@@ -61,9 +56,6 @@ listen_child=""
 listen_count=0
 listen_set=""
 LISTEN_OUT=""
-readonly ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
-  "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
-
 # The monitor's postItemBodySchema rules → one line per problem; nothing when the item passes.
 ITEM_PROBLEMS_JQ="$(
   cat <<'JQ'
@@ -176,101 +168,40 @@ warn() {
   printf 'atrium-queue: %s\n' "$1" >&2
 }
 
-require_session_id() {
-  local session_id
-  session_id="$(queue_get_session_id)"
-  [[ -n "${session_id}" ]] || fail 64 "CLAUDE_CODE_SESSION_ID is unset or not a UUID — run this inside a Claude Code session"
-  printf '%s\n' "${session_id}"
+# <operation> <args…> → its result document; a failed operation ends the run with its message and exit code
+get_result() {
+  local result status=0
+  result="$("$@")" || status=$?
+  if ((status != 0)); then fail_with "${status}" "${result}"; fi
+  printf '%s\n' "${result}"
 }
 
-require_item_id() {
-  [[ "${1:-}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || fail 64 "item id must be a positive integer, got '${1:-}'"
-}
-
-# <method> <route> [json body] → the 2xx reply body; a refusal exits 2, anything else exits 1.
-call_monitor() {
-  local route="$2" reply code
-  # shellcheck disable=SC2310  # no reply → the named exit below
-  reply="$(queue_send "$1" "${route}" "${3:-}" "${CLI_MAX_TIME_S}")" \
-    || fail 1 "no reply from the monitor on ${route} (down or slow)"
-  # shellcheck disable=SC2310  # neither 2xx nor 4xx → the named exit below
-  if ! check_reply_status "${route}" "${reply}"; then
-    code="$(queue_get_reply_code "${reply}")"
-    fail 1 "monitor failed (${code}) on ${route}"
-  fi
-  queue_get_reply_body "${reply}"
-}
-
-# <route> <queue_send reply> → 0 on a 2xx, 1 on any status but 2xx or 4xx; a 4xx refusal exits 2
-check_reply_status() {
-  local code body reason
-  code="$(queue_get_reply_code "$2")"
-  case "${code}" in
-    2??) ;;
-    4??)
-      body="$(queue_get_reply_body "$2")"
-      reason="$(describe_error "${body}")"
-      fail 2 "refused (${code}) on $1: ${reason}"
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-# The monitor's {error, reason} as one control-free line, capped → safe to print to a terminal or transcript.
-describe_error() {
-  jq -r '[.error, .reason] | map(strings) | join(": ") | gsub("[[:cntrl:]]"; " ") | .[:300]' <<<"$1" 2>/dev/null \
-    || printf 'unreadable reply\n'
+# <exit code> <error document> → fail with the document's message
+fail_with() {
+  local message
+  message="$(jq -r '.message | strings' <<<"$2" 2>/dev/null)" || message=""
+  fail "$1" "${message:-the queue operation failed}"
 }
 
 post_item() {
-  local kind="$1" source="${2:-}" session_id raw body reply id allows_reply
+  local kind="$1" source="${2:-}" raw result id next
   [[ -n "${source}" && $# -eq 2 ]] || fail_usage "${kind} takes one item file, or - for stdin"
-  session_id="$(require_session_id)"
+  get_result queue_require_session_id >/dev/null
   raw="$(read_item "${source}")"
-  body="$(build_item_body "${kind}" "${session_id}" "${raw}")"
-  reply="$(call_monitor POST /api/queue/items "${body}")"
-  id="$(jq -r '.id' <<<"${reply}" 2>/dev/null)" || id=""
-  [[ "${id}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || fail 1 "the monitor's reply named no item id"
+  check_item "${kind}" "${raw}"
+  result="$(get_result queue_create_item "${kind}" "${raw}")"
   # callers read the id from this first line → its form stays fixed
+  id="$(jq -r '.id' <<<"${result}")"
   printf 'posted %s item %s\n' "${kind}" "${id}"
-  allows_reply="$(jq -r '.isFreeTextAllowed' <<<"${raw}")"
-  if [[ "${kind}" == decision || "${allows_reply}" == true ]]; then
-    put_awaiting_item "${session_id}" "${id}"
-    print_wait_step "${session_id}"
-  fi
+  next="$(jq -r '.next | strings' <<<"${result}")"
+  if [[ -n "${next}" ]]; then printf 'next: %s\n' "${next}"; fi
 }
 
-# <session id> <item id> → marks the item awaiting for the turn-end check; a failed mark costs only that check's
-# reminder → a warning, never the post's exit or its id line
-put_awaiting_item() {
-  # shellcheck disable=SC2310  # a failed mark → the warning below
-  if ! queue_create_awaiting_item "$1" "$2"; then
-    warn "item $2 is posted, but its awaiting mark could not be written — no turn-end reminder will name it"
-    return 0
-  fi
-  # shellcheck disable=SC2310  # a failed prune → the warning below
-  queue_delete_stale_awaiting || warn "could not drop the stale awaiting sets of ended sessions"
-}
-
-# <session id> → one line naming this session's next queue step, by what polls for it (queue_get_poller): start no
-# other wait beside a running one · start none beside its listener, which announces what a wait would claim · else
-# start a background wait
+# <session id> → one line naming this session's next queue step (queue_get_wait_step)
 print_wait_step() {
-  local cli poller
-  poller="$(queue_get_poller "$1")"
-  if [[ "${poller}" == wait ]]; then
-    printf 'next: a wait of this session already runs — owner answers and messages reach this session through it;'
-    printf ' start no other wait\n'
-    return 0
-  fi
-  if [[ "${poller}" == listener ]]; then
-    printf "next: this session's listener announces owner answers and messages to it — start no wait; to wait for"
-    printf ' the owner, end the turn\n'
-    return 0
-  fi
-  cli="$(queue_get_cli_path)"
-  printf 'next: start the wait as a background command: %s wait — owner answers and messages reach this session' "${cli}"
-  printf ' only through it\n'
+  local step
+  step="$(queue_get_wait_step "$1")"
+  printf 'next: %s\n' "${step}"
 }
 
 read_item() {
@@ -287,179 +218,86 @@ read_item() {
 }
 
 # Local validation first → a rejected item never reaches the monitor; the monitor validates again.
-build_item_body() {
-  local kind="$1" session_id="$2" raw="$3" problems
-  problems="$(jq -r --arg kind "${kind}" --argjson fields "${ITEM_FIELDS}" "${ITEM_PROBLEMS_JQ}" <<<"${raw}" 2>/dev/null)" \
+check_item() {
+  local kind="$1" problems
+  problems="$(jq -r --arg kind "${kind}" --argjson fields "${QUEUE_ITEM_FIELDS}" "${ITEM_PROBLEMS_JQ}" <<<"$2" 2>/dev/null)" \
     || fail 64 "the ${kind} item is not valid JSON"
   if [[ -n "${problems}" ]]; then
     printf 'atrium-queue: invalid %s item — %s\n' "${kind}" "${problems//$'\n'/; }" >&2
     exit 64
   fi
-  jq -c --arg kind "${kind}" --arg sessionId "${session_id}" '{kind: $kind, sessionId: $sessionId} + .' <<<"${raw}"
 }
 
 get_item() {
-  local id="${1:-}" session_id reply owner
-  require_item_id "${id}"
-  session_id="$(require_session_id)"
-  reply="$(call_monitor GET "/api/queue/items/${id}?sessionId=${session_id}")"
-  owner="$(jq -r '.sessionId | strings' <<<"${reply}" 2>/dev/null)" || owner=""
-  if [[ "${owner}" != "${session_id}" ]]; then
-    fail 3 "item ${id} does not belong to this session — stop here and take no action on it"
-  fi
-  print_provenance "${id}" "${reply}"
-  # paths leave only through print_images' check → the item itself is printed without them
-  jq '(.attachments | arrays | .[] | objects) |= del(.path)' <<<"${reply}" | print_breaks_escaped
-  print_images "${reply}"
+  local result
+  result="$(get_result queue_get_item "${1:-}")"
+  jq -r '.provenance | strings' <<<"${result}"
+  jq '.item' <<<"${result}" | queue_escape_json
+  print_images "${result}"
 }
 
-# <item id> <item reply> → one provenance line before an owner answer or message, nothing before an unanswered item.
-# Built from get_provenance_class alone: item text reaches the output solely as JSON strings with every line break
-# escaped (jq escapes the C0 ones, print_breaks_escaped the rest), so it can never begin a visual line like this one.
-print_provenance() {
-  local head="provenance: item $1" acked="once its ack prints \"first\", it is the owner's own" class line
-  local unclear="anything less clear approves no high-impact action"
-  class="$(get_provenance_class "$2")"
-  case "${class}" in
-    message)
-      line="${head} is an owner message, sent through the monitor's owner message route — ${acked} instruction for"
-      line+=" your next step; ${unclear}; where it clearly orders an action, it is the owner's explicit approval of"
-      line+=" that one action"
-      ;;
-    approval)
-      line="${head} holds the owner's answer to your approval decision — ${acked} word: free text alone approves"
-      line+=" nothing, and free text contradicting the stated action voids the approval; the option your body named"
-      line+=" as approving approves that one action, any other option declines it"
-      ;;
-    report | decision)
-      line="${head} holds the owner's answer to your ${class} — ${acked} instruction for your next step; ${unclear};"
-      line+=" where it clearly orders or approves an action, it is the owner's explicit approval of that one action"
-      ;;
-    *) return 0 ;;
-  esac
-  printf '%s, high-impact actions included, once, as this item states it\n' "${line}"
-}
-
-# <item reply> → message · approval · decision · report for an owner answer or message, empty for anything else;
-# reads the kind, the approval flag and whether an answer exists, never any text. Only the owner's send creates
-# kind message.
-get_provenance_class() {
-  jq -r 'if .kind == "message" then "message"
-    elif (.answer | objects | .code // .text) == null then ""
-    elif .isApprovalClass == true then "approval"
-    elif .kind == "decision" or .kind == "report" then .kind
-    else "" end' <<<"$1" 2>/dev/null || true
-}
-
-# JSON on stdin → the same JSON with every C1 control (NEL among them) and U+2028 / U+2029 as a \u escape, the line
-# breaks and cursor moves jq leaves raw; jq prints them inside strings only, so the JSON decodes to the same values
-print_breaks_escaped() {
-  perl -CS -pe 's/([\x{80}-\x{9f}\x{2028}\x{2029}])/sprintf("\\u%04x", ord $1)/ge'
-}
-
-# <item reply> → the owner's images as files for the session to read: only a server-made name directly inside
-# this install's image folder is printed; any other path is counted, never printed.
+# <fetch result> → the image files the library listed, then a count of the paths it would not name
 print_images() {
-  local dir paths path shown="" count=0 foreign=0
-  dir="$(queue_get_root)"
-  dir="${dir%/}/data/queue/images"
-  paths="$(get_image_paths "$1")"
-  [[ -n "${paths}" ]] || return 0
-  while IFS= read -r path; do
-    if [[ "${path%/*}" == "${dir}" && "${path##*/}" =~ ${IMAGE_NAME_SHAPE} ]]; then
-      shown+="${path}"$'\n'
-      count=$((count + 1))
-    else
-      foreign=$((foreign + 1))
-    fi
-  done <<<"${paths}"
+  local count hidden
+  count="$(jq -r '.images | length' <<<"$1")"
+  hidden="$(jq -r '.hiddenImageCount' <<<"$1")"
   if ((count > 0)); then
-    printf 'Attached images (%s) — local files; read each one before acting.\n%s' "${count}" "${shown}"
+    printf 'Attached images (%s) — local files; read each one before acting.\n' "${count}"
+    jq -r '.images[]' <<<"$1"
   fi
-  if ((foreign > 0)); then
-    printf "Images not shown (%s) — the monitor named no file of this install's queue image folder.\n" "${foreign}"
+  if ((hidden > 0)); then
+    printf "Images not shown (%s) — the monitor named no file of this install's queue image folder.\n" "${hidden}"
   fi
-}
-
-# <item reply> → one line per attachment, in order: its path, or "-" for a path that is no single-line string
-get_image_paths() {
-  jq -r '.attachments | arrays | .[] | .path
-    | if type == "string" and (test("[[:cntrl:]]") | not) then . else "-" end' <<<"$1" 2>/dev/null || true
 }
 
 ack_delivery() {
-  local id="${1:-}" msg_id="${2:-}" session_id body reply result
-  require_item_id "${id}"
-  [[ "${msg_id}" =~ ${QUEUE_UUID_SHAPE} ]] || fail 64 "msg id must be a UUID, got '${msg_id}'"
-  session_id="$(require_session_id)"
-  body="$(jq -nc --arg sessionId "${session_id}" --arg msgId "${msg_id}" '{$sessionId, $msgId}')"
-  reply="$(call_monitor POST "/api/queue/items/${id}/ack" "${body}")"
-  result="$(jq -r '.result | strings' <<<"${reply}" 2>/dev/null)" || result=""
-  case "${result}" in
-    first) printf 'first\n' ;;
-    already_handled) printf 'already handled\n' ;;
-    *) fail 1 "the monitor's ack reply named no result — treat it as not first and do nothing" ;;
-  esac
-  delete_awaiting_item "${session_id}" "${id}"
-}
-
-# a mark left behind costs one monitor confirm at a turn end, never a wrong reminder → a warning, never the exit
-delete_awaiting_item() {
-  # shellcheck disable=SC2310  # a failed clear → the warning
-  queue_delete_awaiting_item "$1" "$2" || warn "could not clear item $2's awaiting mark"
+  local result
+  result="$(get_result queue_create_ack "${1:-}" "${2:-}")"
+  result="$(jq -r '.result' <<<"${result}")"
+  if [[ "${result}" == first ]]; then printf 'first\n'; else printf 'already handled\n'; fi
 }
 
 withdraw_item() {
   local id="${1:-}" session_id body
-  require_item_id "${id}"
-  session_id="$(require_session_id)"
+  get_result queue_check_item_id "${id}" >/dev/null
+  session_id="$(get_result queue_require_session_id)"
   body="$(jq -nc --arg sessionId "${session_id}" '{$sessionId}')"
-  call_monitor POST "/api/queue/items/${id}/withdraw" "${body}" >/dev/null
+  get_result queue_call_monitor POST "/api/queue/items/${id}/withdraw" "${body}" >/dev/null
   printf 'withdrew item %s\n' "${id}"
-  delete_awaiting_item "${session_id}" "${id}"
+  queue_delete_awaiting_mark "${session_id}" "${id}"
 }
 
-# Pulls until a pull claims nothing (bounded); each claim's ids are checked before they go into a printed command.
 pull_pending() {
-  local session_id body reply claims total=0 round
-  session_id="$(require_session_id)"
-  body="$(jq -nc --arg sessionId "${session_id}" '{$sessionId}')"
-  for ((round = 1; round <= PULL_ROUNDS_MAX; round++)); do
-    reply="$(call_monitor POST /api/queue/pending "${body}")"
-    # shellcheck disable=SC2310  # a malformed reply → the named exit
-    claims="$(get_claims "${reply}")" || fail 1 "the monitor's pending reply is malformed"
-    [[ -n "${claims}" ]] || break
+  local result claims next
+  result="$(get_result queue_pull_pending)"
+  claims="$(jq -c '.claims' <<<"${result}")"
+  if [[ "${claims}" == '[]' ]]; then
+    printf 'no owner answer or message waits for this session\n'
+  else
     print_claims "${claims}"
-    drop_announce_record "${session_id}"
-    total=$((total + $(wc -l <<<"${claims}")))
-  done
-  if ((total == 0)); then printf 'no owner answer or message waits for this session\n'; fi
-  print_wait_step "${session_id}"
+  fi
+  next="$(jq -r '.next' <<<"${result}")"
+  printf 'next: %s\n' "${next}"
 }
 
-# <pending reply body> → one "<item id>\t<msg id>" line per claim; non-zero when malformed
-get_claims() {
-  jq -r '.items[] | "\(.id.item)\t\(.id.msg)"' <<<"$1" 2>/dev/null
-}
-
+# <claims JSON array, ids shape-checked by the library> → the fetch and ack steps per claim
 print_claims() {
-  local cli id msg_id
+  local cli id msg_id rows
   cli="$(queue_get_cli_path)"
+  rows="$(jq -r '.[] | "\(.item)\t\(.msg)"' <<<"$1")"
   while IFS=$'\t' read -r id msg_id; do
-    [[ "${id}" =~ ${QUEUE_ITEM_ID_SHAPE} && "${msg_id}" =~ ${QUEUE_UUID_SHAPE} ]] \
-      || fail 1 "the monitor's pending reply carries a malformed item or msg id"
     printf 'item %s · msg %s — follow in order:\n' "${id}" "${msg_id}"
     printf '1. Fetch it: %s get %s — if the fetched session id is not yours, stop here.\n' "${cli}" "${id}"
     printf '2. Ack it: %s ack %s %s — act only when the reply is "first".\n' "${cli}" "${id}" "${msg_id}"
     printf '3. Act on the answer or message as the next step of your task.\n'
-  done <<<"$1"
+  done <<<"${rows}"
 }
 
 # One wait: the lock, then polls until a claim, a refusal, the bound or the owning Claude process ending.
 wait_for_claims() {
   local bound_s session_id body
   bound_s="$(get_wait_bound_s "$@")"
-  session_id="$(require_session_id)"
+  session_id="$(get_result queue_require_session_id)"
   set_wait_holder "${session_id}" ""
   take_wait_lock
   trap drop_wait_lock EXIT
@@ -513,6 +351,7 @@ take_wait_lock() {
       stale | listener)
         ln -sfn -- "${WAIT_RECORD}" "${take}" || fail 1 "cannot build the replacement wait lock record"
         if ! mv -f -- "${take}" "${WAIT_LOCK}"; then
+          # shellcheck disable=SC2310  # a refused path skips the delete
           if ga_guard_path "${take}"; then rm -f -- "${take:?}"; fi
           fail 1 "cannot replace the stale wait lock ${WAIT_LOCK}"
         fi
@@ -532,6 +371,7 @@ drop_wait_lock() {
   take_waits_mutex || return 0
   state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   if [[ "${state}" == mine ]]; then
+    # shellcheck disable=SC2310  # a refused path skips the delete
     if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
   fi
   drop_waits_mutex
@@ -590,17 +430,17 @@ check_wait_owner() {
 
 # <body> → 0 claimed and printed · 1 no reply or a 5xx · 3 nothing claimed; a refusal exits 2
 poll_wait() {
-  local reply body claims
-  # shellcheck disable=SC2310  # no reply → the backoff outcome
-  reply="$(queue_send POST /api/queue/pending "$1" "${CLI_MAX_TIME_S}")" || return 1
-  # shellcheck disable=SC2310  # a 5xx → the backoff outcome
-  check_reply_status /api/queue/pending "${reply}" || return 1
-  body="$(queue_get_reply_body "${reply}")"
+  local body status=0 claims session_id
+  # shellcheck disable=SC2310  # each outcome is branched on below
+  body="$(queue_call_monitor POST /api/queue/pending "$1")" || status=$?
+  if ((status == 2)); then fail_with 2 "${body}"; fi
+  ((status == 0)) || return 1
   # shellcheck disable=SC2310  # a malformed reply → the named exit
-  claims="$(get_claims "${body}")" || fail 1 "the monitor's pending reply is malformed"
-  [[ -n "${claims}" ]] || return 3
+  claims="$(queue_get_claims "${body}")" || fail 1 "the monitor's pending reply is malformed"
+  [[ "${claims}" != '[]' ]] || return 3
   print_claims "${claims}"
-  drop_announce_record "${CLAUDE_CODE_SESSION_ID:-}"
+  session_id="$(queue_get_session_id)"
+  queue_delete_announce_record "${session_id}"
 }
 
 # <last poll outcome> → exits 1 on no reply, else 4 with the step by what polls once this wait ends (queue_get_poller):
@@ -630,7 +470,7 @@ listen_for_answers() {
   is_listening=true
   trap 'end_run 1' ERR
   (($# == 0)) || fail 64 "listen takes no argument"
-  session_id="$(require_session_id)"
+  session_id="$(get_result queue_require_session_id)"
   set_wait_holder "${session_id}" "${QUEUE_LISTENER_KIND}"
   take_wait_lock
   # shellcheck disable=SC2310  # an unwritten mark only leaves the turn-end check nudging a wait, its fallback
@@ -655,7 +495,7 @@ run_listen_loop() {
     # shellcheck disable=SC2310  # no reply or a 5xx → the backoff, the announce state left as it was
     if set_listen_count "$2" "$((SECONDS - started < grace_s))"; then
       delay="${poll_s}"
-      if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}" "${listen_set}"; else drop_announce_record "$1"; fi
+      if ((listen_count > 0)); then announce_if_due "$1" "${listen_count}" "${listen_set}"; else queue_delete_announce_record "$1"; fi
     else
       delay="$(get_backoff_s "${delay}")"
     fi
@@ -689,9 +529,9 @@ run_child() {
 # refusal); 1 on no reply or a 5xx, both left as the last count read → the lifetime end's re-arm still names it; any
 # other refusal or an unreadable reply ends the listener with one stderr line
 set_listen_count() {
-  local route=/api/queue/pending/count reply code body
+  local route=/api/queue/pending/count reply code body status
   # shellcheck disable=SC2310  # no reply → the backoff outcome
-  run_child queue_send POST "${route}" "$1" "${CLI_MAX_TIME_S}" || return 1
+  run_child queue_send POST "${route}" "$1" "${QUEUE_OPS_MAX_TIME_S}" || return 1
   reply="$(<"${LISTEN_OUT}")"
   code="$(queue_get_reply_code "${reply}")"
   if [[ "${code}" == 404 || "${code}" == 409 ]] && (($2 == 1)); then
@@ -699,9 +539,11 @@ set_listen_count() {
     listen_set=""
     return 0
   fi
-  # shellcheck disable=SC2310  # a 5xx → the backoff outcome; a refusal exits 2
-  check_reply_status "${route}" "${reply}" || return 1
-  body="$(queue_get_reply_body "${reply}")"
+  status=0
+  # shellcheck disable=SC2310  # inside the || the listener's inherited ERR trap stays off → the refusal's own status reaches the branch below
+  body="$(queue_get_reply_result "${route}" "${reply}" || exit "$?")" || status=$?
+  if ((status == 2)); then fail_with 2 "${body}"; fi
+  ((status == 0)) || return 1
   set_listen_answered "${body}"
 }
 
@@ -726,7 +568,7 @@ announce_if_due() {
   take_waits_mutex || return 0
   state="$(queue_get_wait_lock_state "${WAIT_LOCK}" "${WAIT_OWNER}" "${WAIT_RECORD}")"
   [[ "${state}" == mine ]] || end_run 5
-  record="$(queue_get_awaiting_dir "$1")/.announced"
+  record="$(queue_get_announce_record_path "$1")"
   announced="$(get_announce_count "${record}" "$3")"
   IFS=' ' read -r told resets <<<"${announced}"
   if ((told >= LISTEN_ANNOUNCE_MAX || resets > LISTEN_INTERVAL_RESETS_MAX)) && [[ "${4:-}" != rearm ]]; then
@@ -736,6 +578,7 @@ announce_if_due() {
   if (($2 > 0 && told < LISTEN_ANNOUNCE_MAX && resets <= LISTEN_INTERVAL_RESETS_MAX)); then
     put_announce_record "${record}" "$3" "$((told + 1))" "${resets}"
   fi
+  # shellcheck disable=SC2310  # a refused path skips the delete
   if ga_guard_path "${WAIT_LOCK}"; then rm -f -- "${WAIT_LOCK:?}"; fi
   drop_waits_mutex
   print_wake "$2"
@@ -766,15 +609,6 @@ get_announce_count() {
   fi
 }
 
-# <session id> → its announce record gone: the answered set changed, so the next arrival is announced anew
-drop_announce_record() {
-  local dir record
-  # shellcheck disable=SC2310  # no UUID → no record to drop
-  dir="$(queue_get_awaiting_dir "$1")" || return 0
-  record="${dir}/.announced"
-  if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
-}
-
 # <count> → the wake line: the count and the pending command, or the re-arm line at 0; subshell write → no interrupt
 # from an un-waited child reaches it, and the exit comes from the caller's code path
 print_wake() {
@@ -796,6 +630,7 @@ stop_listening() {
     kill "${listen_child}" 2>/dev/null || true
   fi
   drop_wait_lock
+  # shellcheck disable=SC2310  # a refused path skips the delete
   if ga_guard_path "${LISTEN_OUT}"; then rm -f -- "${LISTEN_OUT:?}"; fi
 }
 
@@ -806,11 +641,11 @@ register_session() {
     name="$(queue_get_shown_name "$2")"
     [[ -n "${name}" ]] || fail 64 "--name must hold a visible character"
   fi
-  session_id="$(require_session_id)"
+  session_id="$(get_result queue_require_session_id)"
   pid="$(queue_get_pid)"
   [[ -n "${pid}" ]] || fail 64 "CLAUDE_PID is unset or not a pid — run this inside a Claude Code session"
   # shellcheck disable=SC2310  # a failed register → the named exit below
-  count="$(queue_register_session "" "${CLI_MAX_TIME_S}" "" "" "${name}")" \
+  count="$(queue_register_session "" "${QUEUE_OPS_MAX_TIME_S}" "" "" "${name}")" \
     || fail 1 "register failed (monitor down, slow or refusing)"
   printf 'registered this session with the Atrium queue\n'
   if ((count > 0)); then

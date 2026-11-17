@@ -67,11 +67,54 @@ queue_get_token_dir() {
   printf '%s/data/queue/tokens\n' "${root}"
 }
 
-# This session's id: $1 (a hook payload's session_id) when a UUID, else the session env; empty when neither is.
+# This session's id: $1 (a hook payload's session_id) when a UUID, else the one this Claude process last registered
+# (queue_get_registered_session_id), else the session env; empty when none is
 queue_get_session_id() {
   local id="${1:-}"
+  [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]] || id="$(queue_get_registered_session_id)"
   [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]] || id="${CLAUDE_CODE_SESSION_ID:-}"
   if [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]]; then printf '%s\n' "${id}"; fi
+}
+
+# <pid> → the path of its owner record: "<its start>|<session id>", written by each SessionStart register → a /clear's
+# new id reaches every later call, though an already-started process (the MCP server) keeps the old id in its env
+queue_get_owner_record_path() {
+  local root
+  root="$(queue_get_root)"
+  printf '%s/data/queue/owners/%s\n' "${root}" "$1"
+}
+
+# → the session id the owner record of CLAUDE_PID names while that process still runs with the recorded start;
+# nothing for no pid, no record, a recycled pid or an unreadable record
+queue_get_registered_session_id() {
+  local pid record recorded="" id="" started
+  pid="$(queue_get_pid)"
+  [[ -n "${pid}" ]] || return 0
+  record="$(queue_get_owner_record_path "${pid}")"
+  [[ -f "${record}" ]] || return 0
+  IFS='|' read -r recorded id <"${record}" || true
+  started="$(queue_get_start_time "${pid}")"
+  if [[ -n "${recorded}" && "${recorded}" == "${started}" ]]; then printf '%s\n' "${id}"; fi
+}
+
+# <session id> <pid> → the owner record names the session for that process; a record not written leaves the session
+# env as the fallback → never the register's result
+queue_put_owner_record() {
+  local record started
+  record="$(queue_get_owner_record_path "$2")"
+  started="$(queue_get_start_time "$2")"
+  [[ -n "${started}" ]] || return 0
+  { mkdir -p -- "${record%/*}" && printf '%s|%s\n' "${started}" "$1" >"${record}"; } 2>/dev/null || true
+}
+
+# <session id> <pid> → the owner record goes when it names that session
+queue_delete_owner_record() {
+  local record id=""
+  record="$(queue_get_owner_record_path "$2")"
+  [[ -f "${record}" ]] || return 0
+  IFS='|' read -r _ id <"${record}" || true
+  [[ "${id}" == "$1" ]] || return 0
+  if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
 }
 
 # The session's start directory: $1 (a hook payload's cwd) when an absolute directory, else this process's cwd.
@@ -167,6 +210,7 @@ queue_register_session() {
   session_id="$(queue_get_session_id "${4:-}")"
   pid="$(queue_get_pid)"
   [[ -n "${session_id}" && -n "${pid}" ]] || return 1
+  queue_put_owner_record "${session_id}" "${pid}"
   [[ "${QUEUE_PERMISSION_HINTS}" == *" ${hint} "* ]] || hint=""
   cwd="$(queue_get_cwd "${3:-}")"
   if [[ -n "${5:-}" ]]; then
@@ -215,6 +259,7 @@ queue_deregister_session() {
   # retired messaging token → also deleted here, not only by the monitor sweep, so a down monitor leaves none behind
   token_file="$(queue_get_token_dir)/${session_id}"
   if ga_guard_path "${token_file}"; then rm -f -- "${token_file:?}"; fi
+  if [[ -n "${pid}" ]]; then queue_delete_owner_record "${session_id}" "${pid}"; fi
   reply="$(queue_post /api/queue/sessions/deregister "${body}")" || return 1
   if [[ -n "${pid}" ]]; then
     is_ended="$(jq -r '.isEnded == true' <<<"${reply}" 2>/dev/null)" || is_ended=false
@@ -330,6 +375,21 @@ queue_get_poller() {
   else
     printf 'none\n'
   fi
+}
+
+# <session id> → the listener's announce record in its awaiting set; non-zero for anything but a UUID
+queue_get_announce_record_path() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  printf '%s/.announced\n' "${dir}"
+}
+
+# <session id> → its announce record gone: the answered set changed, so the next arrival is announced anew
+queue_delete_announce_record() {
+  local record
+  # shellcheck disable=SC2310  # no UUID → no record to drop
+  record="$(queue_get_announce_record_path "$1")" || return 0
+  if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
 }
 
 # <path> → 0 when modified within QUEUE_NUDGE_INTERVAL_MIN; non-zero when older, missing or unreadable

@@ -398,3 +398,24 @@ run_deregister() {
     return 1
   }
 }
+
+@test "after a register names a new session id for this Claude process, the session id resolves to it, not to the session env" {
+  start_stub
+  local new_id="9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d" row label pid expected got
+  sleep 300 3>&- &
+  local owner=$!
+  sleep 300 3>&- &
+  local other=$!
+  export CLAUDE_PID="${owner}"
+  run_register "$(jq -nc --arg id "${new_id}" '{hook_event_name: "SessionStart", source: "clear", session_id: $id}')"
+  for row in "same process|${owner}|${new_id}" "another process|${other}|${SESSION_ID}"; do
+    IFS='|' read -r label pid expected <<<"${row}"
+    got="$(CLAUDE_PID="${pid}" bash -c 'source "$1"; queue_get_session_id' _ "${GA}/scripts/lib/queue-session.sh")"
+    [[ "${got}" == "${expected}" ]] || {
+      echo "row ${label}: ${got}"
+      kill "${owner}" "${other}"
+      return 1
+    }
+  done
+  kill "${owner}" "${other}"
+}
