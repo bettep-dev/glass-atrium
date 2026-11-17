@@ -12,7 +12,7 @@ import { setNoStoreHeader } from "../response-headers.js";
 import type { DeviceConnections } from "./connections.js";
 import type { DeviceListing } from "./devices.js";
 import { type RemoteAuditEvent, getRoutePayload, recordEvent } from "./gate.js";
-import { WindowLimiter } from "./limits.js";
+import { type WindowLimit, WindowLimiter, buildWindowLimitHook } from "./limits.js";
 import type { ListenReason, NetworkLink, TrustedNetwork } from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
 import { EMPTY_BODY_LIMIT_BYTES, hasBody } from "./request-body.js";
@@ -178,9 +178,9 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
   await app.register(async (scope) => {
     scope.addHook("onRequest", refuseUnlessMacPage);
     scope.addHook("onSend", setNoStoreHeader);
-    const openLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.REGISTRATION_OPEN, deps.now ?? Date.now);
     const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
-    scope.post(REMOTE_ADMIN_PATH.REGISTRATION, options, (request, reply) => openRegistration(request, reply, { deps, openLimiter }));
+    const openOptions = { ...options, preHandler: buildLimitHook(REMOTE_ADMIN_LIMITS.REGISTRATION_OPEN, deps) };
+    scope.post(REMOTE_ADMIN_PATH.REGISTRATION, openOptions, (request, reply) => openRegistration(request, reply, deps));
     scope.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ ...(await getDeviceList(deps)), access: getAccessView(deps.getAccess()) }));
     scope.delete<{ Params: DeviceParams }>(REMOTE_ADMIN_PATH.DEVICE, { ...options, schema: DEVICE_PARAMS_SCHEMA }, (request, reply) =>
       revokeOne(request, reply, { deps, actor: AUDIT_ACTOR }),
@@ -191,20 +191,26 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
 }
 
 function registerAccessRoutes(scope: FastifyInstance, deps: RemoteAdminDeps): void {
-  const getNow = deps.now ?? Date.now;
-  const queue = new ActQueue();
-  const widen = { deps, queue, limiter: new WindowLimiter(REMOTE_ADMIN_LIMITS.ACCESS_WIDEN, getNow) };
-  const off = { deps, queue, limiter: new WindowLimiter(REMOTE_ADMIN_LIMITS.ACCESS_OFF, getNow) };
-  const setupLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.SETUP_READ, getNow);
-  const certificateLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.CERTIFICATE_READ, getNow);
-  const confirmLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.CONFIRM_READ, getNow);
+  const route = { deps, queue: new ActQueue() };
   const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
-  scope.post(REMOTE_ADMIN_PATH.ACCESS_ON, options, (request, reply) => widenAccess(request, reply, { ...widen, act: "on" }));
-  scope.post(REMOTE_ADMIN_PATH.TRUST, options, (request, reply) => widenAccess(request, reply, { ...widen, act: "trust" }));
-  scope.post(REMOTE_ADMIN_PATH.ACCESS_OFF, options, (request, reply) => turnOffAccess(request, reply, off));
-  scope.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, (_request, reply) => getConfirmNetwork(reply, { deps, limiter: confirmLimiter }));
-  scope.get(REMOTE_ADMIN_PATH.SETUP, (request, reply) => getSetup(request, reply, { deps, limiter: setupLimiter }));
-  scope.get(REMOTE_ADMIN_PATH.CERTIFICATE, (request, reply) => getCertificateFile(request, reply, { deps, limiter: certificateLimiter }));
+  // one hook for on and trust → one shared budget
+  const widenOptions = { ...options, preHandler: buildLimitHook(REMOTE_ADMIN_LIMITS.ACCESS_WIDEN, deps) };
+  scope.post(REMOTE_ADMIN_PATH.ACCESS_ON, widenOptions, (request, reply) => widenAccess(request, reply, { ...route, act: "on" }));
+  scope.post(REMOTE_ADMIN_PATH.TRUST, widenOptions, (request, reply) => widenAccess(request, reply, { ...route, act: "trust" }));
+  scope.post(REMOTE_ADMIN_PATH.ACCESS_OFF, { ...options, preHandler: buildLimitHook(REMOTE_ADMIN_LIMITS.ACCESS_OFF, deps) }, (request, reply) =>
+    turnOffAccess(request, reply, route),
+  );
+  scope.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, { preHandler: buildLimitHook(REMOTE_ADMIN_LIMITS.CONFIRM_READ, deps) }, (_request, reply) =>
+    getConfirmNetwork(reply, deps),
+  );
+  scope.get(REMOTE_ADMIN_PATH.SETUP, { preHandler: buildLimitHook(REMOTE_ADMIN_LIMITS.SETUP_READ, deps) }, (request, reply) => getSetup(request, reply, deps));
+  scope.get(REMOTE_ADMIN_PATH.CERTIFICATE, { preHandler: buildLimitHook(REMOTE_ADMIN_LIMITS.CERTIFICATE_READ, deps) }, (request, reply) =>
+    getCertificateFile(request, reply, deps),
+  );
+}
+
+function buildLimitHook(limit: WindowLimit, deps: Pick<RemoteAdminDeps, "now">): ReturnType<typeof buildWindowLimitHook> {
+  return buildWindowLimitHook(new WindowLimiter(limit, deps.now ?? Date.now));
 }
 
 // GET included: the root request guard never judges a GET, and a device list is not for a neighbour page or a document's image
@@ -215,20 +221,15 @@ async function refuseUnlessMacPage(request: FastifyRequest, reply: FastifyReply)
   return undefined;
 }
 
-async function openRegistration(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  input: { deps: RemoteAdminDeps; openLimiter: WindowLimiter },
-): Promise<FastifyReply> {
-  if (!input.openLimiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
+async function openRegistration(request: FastifyRequest, reply: FastifyReply, deps: RemoteAdminDeps): Promise<FastifyReply> {
   try {
     // row first → a registration the trail does not show is never opened
-    await input.deps.audit.insertEvent({ actor: AUDIT_ACTOR, actionKind: "remote.registration_opened", result: "success", payload: getRoutePayload(request) });
+    await deps.audit.insertEvent({ actor: AUDIT_ACTOR, actionKind: "remote.registration_opened", result: "success", payload: getRoutePayload(request) });
   } catch (error) {
     request.log.error({ err: error }, "remote registration not opened: audit row not written");
     return reply.code(503).send({ error: "audit_unavailable" });
   }
-  return reply.send({ code: input.deps.codes.open() });
+  return reply.send({ code: deps.codes.open() });
 }
 
 export async function getDeviceList(deps: Pick<RemoteAdminDeps, "devices">): Promise<{ devices: Record<string, string>[] }> {
@@ -270,7 +271,6 @@ class ActQueue {
 interface AccessRoute {
   readonly deps: RemoteAdminDeps;
   readonly queue: ActQueue;
-  readonly limiter: WindowLimiter;
 }
 
 const WIDENING_ACT_KIND = { on: "remote.access_enabled", trust: "remote.network_trusted" } as const;
@@ -290,7 +290,6 @@ const FAILED_ACT_STATUS: Record<Exclude<AccessApplyOutcome, "written">, number> 
  * An on that also trusted the network shown answers the trust's outcome beside its own; the on stands either way.
  */
 async function widenAccess(request: FastifyRequest, reply: FastifyReply, route: AccessRoute & { act: "on" | "trust" }): Promise<FastifyReply> {
-  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
   if (route.queue.isBusy) return reply.code(409).send({ error: "act_in_progress" });
   return route.queue.run(async () => {
     if (!(await putAccessRequest(request, route.deps))) return reply.code(503).send({ error: "audit_unavailable" });
@@ -334,7 +333,6 @@ async function putAccessRequest(request: FastifyRequest, deps: RemoteAdminDeps):
  * Every wait bounded: the store calls and the close by WAIT_TIMEOUT_MS, the persist by its own step timeout.
  */
 async function turnOffAccess(request: FastifyRequest, reply: FastifyReply, route: AccessRoute): Promise<FastifyReply> {
-  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
   const { failed, revoked } = await route.queue.run(async () => {
     await putAccessRequest(request, route.deps);
     return putAccessOff(request, route.deps);
@@ -377,16 +375,14 @@ async function getWithin<T>(work: Promise<T>, deps: Pick<RemoteAdminDeps, "waitT
 }
 
 /** Field by field → the router's hardware address and the interface never reach the page. */
-async function getConfirmNetwork(reply: FastifyReply, route: Omit<AccessRoute, "queue">): Promise<FastifyReply> {
-  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
-  const facts = await route.deps.access.getConfirmFacts();
+async function getConfirmNetwork(reply: FastifyReply, deps: RemoteAdminDeps): Promise<FastifyReply> {
+  const facts = await deps.access.getConfirmFacts();
   return reply.send({ router: facts.router, link: facts.link, isNetworkTrusted: facts.isNetworkTrusted });
 }
 
 /** Field by field → a wider value from the caller (router, interface, key paths) never reaches the page. */
-async function getSetup(request: FastifyRequest, reply: FastifyReply, route: Omit<AccessRoute, "queue">): Promise<FastifyReply> {
-  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
-  const [facts, certificate] = await Promise.all([route.deps.access.getSetupFacts(), getCertificate(request, route.deps.access)]);
+async function getSetup(request: FastifyRequest, reply: FastifyReply, deps: RemoteAdminDeps): Promise<FastifyReply> {
+  const [facts, certificate] = await Promise.all([deps.access.getSetupFacts(), getCertificate(request, deps.access)]);
   return reply.send({
     enabled: facts.enabled,
     isOffByDevice: facts.isOffByDevice,
@@ -403,9 +399,8 @@ async function getSetup(request: FastifyRequest, reply: FastifyReply, route: Omi
   });
 }
 
-async function getCertificateFile(request: FastifyRequest, reply: FastifyReply, route: Omit<AccessRoute, "queue">): Promise<FastifyReply> {
-  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
-  const certificate = await getCertificate(request, route.deps.access);
+async function getCertificateFile(request: FastifyRequest, reply: FastifyReply, deps: RemoteAdminDeps): Promise<FastifyReply> {
+  const certificate = await getCertificate(request, deps.access);
   if (certificate === null) return reply.code(404).send({ error: "certificate_unavailable" });
   return reply
     .header("content-type", CA_DOWNLOAD.CONTENT_TYPE)
