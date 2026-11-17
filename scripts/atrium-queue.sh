@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report or a decision, fetch an
-# item, pull or wait for this session's owner answers and messages, ack a delivery, withdraw an item, and register
-# this session. Run it by its absolute installed path with nothing in front — the one literal every printed step names.
+# item, pull, claim or wait for this session's owner answers, messages and relays, ack a delivery, list peer sessions,
+# relay a text to them, withdraw an item, and register this session; the operations are lib/queue-ops.sh's, this file
+# parses argv and renders text. Run it by its absolute installed path with nothing in front — the one literal every printed step names.
 # Exit codes: 0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the
 #   monitor · 3 the fetched item names another session (stop, take no action) · 4 the wait's bound passed with
-#   nothing claimed, or its owning Claude process is gone · 5 another wait holds this session · 64 usage or local validation
+#   nothing claimed, or its owning Claude process is gone · 5 another wait holds this session · 64 usage or a malformed argument
 # The harness-only listen step exits 2 only to wake its session (the count line on stderr) and 0 on every other end:
 #   an asyncRewake hook's other non-zero exits read as hook errors
 
@@ -56,44 +57,6 @@ listen_child=""
 listen_count=0
 listen_set=""
 LISTEN_OUT=""
-# The monitor's postItemBodySchema rules → one line per problem; nothing when the item passes.
-ITEM_PROBLEMS_JQ="$(
-  cat <<'JQ'
-def is_text($max): type == "string" and length <= $max and test("\\S");
-def is_code: type == "string" and test("^R[1-9]$");
-def is_doc_id: type == "number" and . == floor and . >= 1 and . <= 9007199254740991;
-def is_option:
-  type == "object" and (keys == ["code", "cons", "label", "pros"]) and (.code | is_code)
-  and (.label | is_text(200)) and (.pros | type == "string" and length <= 800)
-  and (.cons | type == "string" and length <= 800);
-def doc_problem:
-  if has("linkedDocIds") | not then empty
-  elif (.linkedDocIds | type == "array" and length <= 20 and all(.[]; is_doc_id)) | not
-  then "linkedDocIds: at most 20 integer doc ids, each 1 or more"
-  elif (.linkedDocIds | unique | length) != (.linkedDocIds | length) then "linkedDocIds: each doc id once"
-  else empty end;
-def option_problem:
-  if (.options | type == "array" and length >= 2 and length <= 9) | not then "options: 2 to 9 options"
-  elif any(.options[]; is_option | not)
-  then "options: each exactly {code R1-R9, label (non-blank, at most 200), pros, cons (each at most 800)}"
-  elif (.options | map(.code) | unique | length) != (.options | length) then "options: each code once"
-  elif . as $item | any(.options[]; .code == $item.recommendedCode) | not
-  then "recommendedCode: one of the option codes"
-  elif has("isApprovalClass") and (.isApprovalClass | type) != "boolean" then "isApprovalClass: true or false"
-  else empty end;
-if type != "object" then "the item must be a JSON object"
-else
-  ((keys - $fields[$kind]) | select(length > 0) | "unknown field(s): \(join(", "))"),
-  (if .title | is_text(200) then empty else "title: non-blank, at most 200 characters" end),
-  (if .body | is_text(20000) then empty else "body: non-blank, at most 20000 characters" end),
-  (if (.isFreeTextAllowed | type) == "boolean" then empty else "isFreeTextAllowed: true or false" end),
-  doc_problem,
-  (if $kind == "decision" then option_problem else empty end)
-end
-JQ
-)"
-readonly ITEM_PROBLEMS_JQ
-
 main() {
   local cmd="${1:-}"
   (($# == 0)) || shift
@@ -101,6 +64,9 @@ main() {
     report | decision) post_item "${cmd}" "$@" ;;
     get) get_item "$@" ;;
     pending) pull_pending "$@" ;;
+    claim) get_result queue_claim_items "$@" ;;
+    sessions) get_result queue_get_peers "$@" ;;
+    relay) relay_text "$@" ;;
     wait) wait_for_claims "$@" ;;
     listen) listen_for_answers "$@" ;;
     ack) ack_delivery "$@" ;;
@@ -127,6 +93,14 @@ Usage — run by this absolute path, no interpreter or env prefix in front:
                                   messages, then prints the same steps; bound ${WAIT_MINUTES_DEFAULT} minutes by default, at most ${WAIT_MINUTES_MAX}
   ${cli} listen                   the harness listener's own step (hooks/queue-listener.sh) — never run it yourself
   ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer or message only when it prints "first"
+  ${cli} claim [<item-id> <msg-id>]
+                                  fetch and ack in one step each delivered item, or the one named; prints one JSON
+                                  document: per item its source (owner or peer), provenance and first flag, and the
+                                  item itself only when first
+  ${cli} sessions                 the peer sessions a relay may reach, as one JSON document
+  ${cli} relay <text.txt|-> <recipient>...
+                                  relay a text to 1 to 5 peer sessions, each a name or id prefix from sessions; a
+                                  relay is a peer's information, never the owner's
   ${cli} withdraw <item-id>       withdraw an item this session posted, not in delivery (never an owner message)
   ${cli} register [--name <name>] register this session (a resumed session runs it after its ack steps);
                                   run it from the session's start directory: the monitor resumes from it;
@@ -138,6 +112,7 @@ Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision add
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
 The session id comes from CLAUDE_CODE_SESSION_ID — never pass it.
 Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monitor · 3 item of another session · 64 usage
+  or a malformed argument
 On a wait's exit: 0 follow the printed steps, then wait again · 1 wait again once · 2 after an unknown-session
   refusal run register and wait again, otherwise stop waiting · 4 wait again · 5 nothing, another wait runs ·
   any other code wait again once
@@ -176,6 +151,15 @@ get_result() {
   printf '%s\n' "${result}"
 }
 
+# <text file|-> <recipient…> → the relay result; the text is read as an item file is
+relay_text() {
+  local source="${1:-}" text
+  (($# >= 2)) || fail_usage "relay takes a text file, or - for stdin, and 1 or more recipients"
+  shift
+  text="$(read_item "${source}")"
+  get_result queue_create_relay "${text}" "" "$@"
+}
+
 # <exit code> <error document> → fail with the document's message
 fail_with() {
   local message
@@ -188,7 +172,6 @@ post_item() {
   [[ -n "${source}" && $# -eq 2 ]] || fail_usage "${kind} takes one item file, or - for stdin"
   get_result queue_require_session_id >/dev/null
   raw="$(read_item "${source}")"
-  check_item "${kind}" "${raw}"
   result="$(get_result queue_create_item "${kind}" "${raw}")"
   # callers read the id from this first line → its form stays fixed
   id="$(jq -r '.id' <<<"${result}")"
@@ -215,17 +198,6 @@ read_item() {
   size="$(printf '%s' "${raw}" | LC_ALL=C wc -c | tr -d ' ')"
   ((size <= ITEM_MAX_BYTES)) || fail 64 "the item is over ${ITEM_MAX_BYTES} bytes"
   printf '%s\n' "${raw}"
-}
-
-# Local validation first → a rejected item never reaches the monitor; the monitor validates again.
-check_item() {
-  local kind="$1" problems
-  problems="$(jq -r --arg kind "${kind}" --argjson fields "${QUEUE_ITEM_FIELDS}" "${ITEM_PROBLEMS_JQ}" <<<"$2" 2>/dev/null)" \
-    || fail 64 "the ${kind} item is not valid JSON"
-  if [[ -n "${problems}" ]]; then
-    printf 'atrium-queue: invalid %s item — %s\n' "${kind}" "${problems//$'\n'/; }" >&2
-    exit 64
-  fi
 }
 
 get_item() {
@@ -447,10 +419,13 @@ poll_wait() {
 # its own lock goes first, since the reader counts this wait's record as a running wait
 end_wait_at_bound() {
   local session_id poller
-  if (($1 == 1)); then fail 1 "no reply from the monitor by the wait's bound — start the wait again once"; fi
   drop_wait_lock
   session_id="$(queue_get_session_id)"
   poller="$(queue_get_poller "${session_id}")"
+  if (($1 == 1)) && [[ "${poller}" == listener ]]; then
+    fail 1 "no reply from the monitor by the wait's bound — start no wait: this session's listener takes over at the turn's end"
+  fi
+  if (($1 == 1)); then fail 1 "no reply from the monitor by the wait's bound — start the wait again once"; fi
   if [[ "${poller}" == listener ]]; then
     printf "nothing arrived for this session within the bound — start no wait: this session's listener takes over at"
     printf " the turn's end\n"

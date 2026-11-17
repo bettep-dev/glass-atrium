@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # shellcheck disable=SC2030,SC2031,SC2154,SC2249,SC2312  # each test is a subshell → its exports are its own; BATS_* and run results are set by bats; each case arm is a row; a masked status fails its comparison
-# The owner queue CLI against a stand-in monitor. Protects local validation before any request, the
+# The owner queue CLI and its session ops library against a stand-in monitor. Protects the request bodies, the
 # session id taken from the env, the foreign-item stop, the ack verdict lines, the pull loop's printed
 # commands, the register step it shares with the SessionStart hook, and the absolute-path help literal.
 #
@@ -224,6 +224,7 @@ run_cli() {
 
 # <function> <args…> → one session operation of the library, run in a strict shell as both front ends run it
 run_ops() {
+  # shellcheck disable=SC2016  # the inner script expands its own arguments
   run --separate-stderr bash -c 'set -Eeuo pipefail; source "$1"; shift; "$@"' _ "${GA}/scripts/lib/queue-ops.sh" "$@"
 }
 
@@ -264,33 +265,41 @@ get_hostile_text() {
   }
 }
 
-@test "an item the monitor would reject is refused locally with exit 64 and no request" {
+@test "an item that is no JSON object is refused with exit 64 and no request" {
   start_stub
-  local row kind item
-  for row in \
-    "not-json|report|{\"title\":" \
-    "not-an-object|report|[1,2]" \
-    "unknown-field|report|$(jq -c '. + {priority: 1}' <<<"${REPORT}")" \
-    "session-id-supplied|report|$(jq -c --arg s "${FOREIGN_SESSION_ID}" '. + {sessionId: $s}' <<<"${REPORT}")" \
-    "blank-title|report|$(jq -c '.title = "   "' <<<"${REPORT}")" \
-    "long-title|report|$(jq -c '.title = ("x" * 201)' <<<"${REPORT}")" \
-    "free-text-flag-missing|report|$(jq -c 'del(.isFreeTextAllowed)' <<<"${REPORT}")" \
-    "fractional-doc-id|report|$(jq -c '.linkedDocIds = [1.5]' <<<"${REPORT}")" \
-    "repeated-doc-id|report|$(jq -c '.linkedDocIds = [7, 7]' <<<"${REPORT}")" \
-    "options-on-a-report|report|$(jq -c '. + {options: []}' <<<"${REPORT}")" \
-    "one-option|decision|$(jq -c '.options |= .[:1]' <<<"${DECISION}")" \
-    "repeated-code|decision|$(jq -c '.options[1].code = "R1"' <<<"${DECISION}")" \
-    "bad-code|decision|$(jq -c '.options[1].code = "R0"' <<<"${DECISION}")" \
-    "option-extra-field|decision|$(jq -c '.options[0].note = "x"' <<<"${DECISION}")" \
-    "recommended-not-an-option|decision|$(jq -c '.recommendedCode = "R3"' <<<"${DECISION}")"; do
-    IFS='|' read -r _ kind item <<<"${row}"
-    printf '%s' "${item}" >"${BATS_TEST_TMPDIR}/item.json"
-    run_cli "${kind}" "${BATS_TEST_TMPDIR}/item.json"
+  local row
+  for row in 'not-json|{"title":' "not-an-object|[1,2]"; do
+    printf '%s' "${row#*|}" >"${BATS_TEST_TMPDIR}/item.json"
+    run_cli report "${BATS_TEST_TMPDIR}/item.json"
     [[ "${status}" -eq 64 && -n "${stderr}" && ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
       echo "row ${row%%|*}: status=${status} ${stderr}"
       return 1
     }
   done
+}
+
+@test "the monitor's refusal of an item passes through with exit 2 and the monitor's reason" {
+  start_stub
+  set_reply 400 '{"error":"invalid_item","reason":"title: at most 200 characters"}'
+  jq -c '.title = ("x" * 201)' <<<"${REPORT}" >"${BATS_TEST_TMPDIR}/item.json"
+  run_cli report "${BATS_TEST_TMPDIR}/item.json"
+  [[ "${status}" -eq 2 && "${stderr}" == *"title: at most 200 characters"* && -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+    echo "status=${status} ${stderr}"
+    return 1
+  }
+}
+
+@test "an item file carrying a session id, a kind or an unknown field changes neither the session id nor the kind sent" {
+  start_stub
+  set_reply 201 '{"id":17}'
+  jq -c --arg s "${FOREIGN_SESSION_ID}" '. + {sessionId: $s, kind: "decision", priority: 1}' <<<"${REPORT}" \
+    >"${BATS_TEST_TMPDIR}/item.json"
+  run_cli report "${BATS_TEST_TMPDIR}/item.json"
+  [[ "${status}" -eq 0 && "$(request_body /api/queue/items | jq -Sc .)" == "$(jq -Sc --arg s "${SESSION_ID}" '. + {kind: "report", sessionId: $s}' <<<"${REPORT}")" ]] || {
+    echo "status=${status} ${stderr}"
+    cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
 }
 
 @test "get fetches the item by id for this session and prints it" {
@@ -580,6 +589,20 @@ ${foreign/\%s/6}" \
     queue_put_listening_mark "${SESSION_ID}" "${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")")
   run_cli wait
   [[ "${status}" -eq 4 && "${output}" == "nothing arrived for this session within the bound — start no wait: this session's listener takes over at the turn's end" ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+}
+
+@test "a wait that displaced this Claude process's listener and got no reply by the bound exits 1, starting no wait" {
+  start_owner
+  use_fast_wait 2
+  export ATRIUM_MONITOR_PORT=1
+  # shellcheck source-path=SCRIPTDIR source=../lib/queue-session.sh
+  (source "${GA}/scripts/lib/queue-session.sh" \
+    && queue_put_listening_mark "${SESSION_ID}" "${OWNER_PID}|$(get_recorded_start "${OWNER_PID}")")
+  run_cli wait
+  [[ "${status}" -eq 1 && "${stderr}" == *"start no wait: this session's listener takes over"* && "${stderr}" != *"start the wait again"* ]] || {
     echo "status=${status} ${output}${stderr}"
     return 1
   }
@@ -929,8 +952,8 @@ SHIM
   for row in "${rows[@]}"; do
     IFS='|' read -r -a argv <<<"${row}"
     name="${argv[0]}"
-    pid_mode=set
-    if [[ "${name}" == no-pid ]]; then pid_mode=unset; fi
+    pid_mode="set"
+    if [[ "${name}" == no-pid ]]; then pid_mode="unset"; fi
     if [[ "${pid_mode}" == unset ]]; then unset CLAUDE_PID; else export CLAUDE_PID="${OWNER_PID}"; fi
     run_cli wait "${argv[@]:1}"
     [[ "${status}" -eq 64 && ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
@@ -1363,8 +1386,10 @@ mark_awaiting() {
   cd "${BATS_TEST_TMPDIR}"
   : >glob-hit
   local text item
+  # shellcheck disable=SC1003,SC2016  # the literal hostile text, nothing to expand
   text='$(touch pwned) `touch pwned` * -n %s%n %%d ${PATH} '"'q'"' "d" \'
   set_reply 201 '{"sendId":"7d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a","hop":0,"copies":[]}'
+  # shellcheck disable=SC2016  # the literal hostile value, nothing to expand
   run_ops queue_create_relay "${text}" "" -n '$(touch pwned)' '*' '%s'
   [[ "${status}" -eq 0 && "$(request_body /api/queue/relay | jq -c '{text, recipients}')" == "$(jq -nc --arg t "${text}" '{text: $t, recipients: ["-n", "$(touch pwned)", "*", "%s"]}')" ]] || {
     echo "relay: status=${status} ${output}${stderr}"
@@ -1379,6 +1404,7 @@ mark_awaiting() {
     return 1
   }
   : >requests.log
+  # shellcheck disable=SC2016  # the literal hostile value, nothing to expand
   run_ops queue_claim_items 'x[$(touch pwned)]' "${MSG_ID}"
   [[ "${status}" -eq 64 && ! -s requests.log ]] || {
     echo "id: status=${status} ${output}"
@@ -1450,4 +1476,35 @@ mark_awaiting() {
     }
     line="${first}"
   done
+}
+
+@test "claim, sessions and relay print the library's JSON result for the route each one calls" {
+  start_stub
+  local row label route
+  for row in "claim|/api/queue/pending|.claims" "sessions|/api/queue/peers|.peers" "relay|/api/queue/relay|.copies"; do
+    IFS='|' read -r label route _ <<<"${row}"
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    case "${label}" in
+      claim) set_reply 200 '{"items":[]}' ;;
+      sessions) set_reply 200 '{"peers":[]}' ;;
+      relay) set_reply 201 '{"sendId":"7d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a","hop":0,"copies":[{"id":30,"sessionIdPrefix":"0a1b2c3d"}]}' ;;
+    esac
+    if [[ "${label}" == relay ]]; then
+      run --separate-stderr "${CLI}" relay - "Build helper" 0a1b2c3d <<<"The suite is green."
+    else
+      run_cli "${label}"
+    fi
+    [[ "${status}" -eq 0 && "$(jq -r '[.method, .path] | join(" ")' "${BATS_TEST_TMPDIR}/requests.log" | head -1)" == "POST ${route}" ]] || {
+      echo "row ${label}: status=${status} ${output}${stderr}"
+      return 1
+    }
+    [[ "$(jq -c "${row##*|} | type" <<<"${output}")" == '"array"' ]] || {
+      echo "row ${label}: ${output}"
+      return 1
+    }
+  done
+  [[ "$(request_body /api/queue/relay | jq -c '{text, recipients}')" == '{"text":"The suite is green.","recipients":["Build helper","0a1b2c3d"]}' ]] || {
+    cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
 }
