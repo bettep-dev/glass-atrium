@@ -3,6 +3,7 @@
 #
 # Function: Move aged rows from monitor.audit_log -> monitor.audit_log_archive
 # (180 days). Each MOVE = single transaction (INSERT ... RETURNING id, then DELETE).
+# Relay records never move: they stay the owner's trace of session-to-session relays.
 #
 # Idempotency: If 0 rows old enough, the transaction reports 0 moved.
 # Designed to run every Sunday from daemon-weekly-clear.sh autoagent role.
@@ -30,8 +31,12 @@ def _connect():
     return psycopg.connect("dbname=glass_atrium", connect_timeout=2)
 
 
+# Audit resource label of the relay and redaction routes (monitor ROUTE_RESOURCE) → refusals, sends, redactions
+RELAY_RESOURCE = "queue-relay"
+
+
 def rotate_audit_log(conn):
-    """Move monitor.audit_log rows older than 180 days into monitor.audit_log_archive.
+    """Move monitor.audit_log rows older than 180 days, relay records excepted, into monitor.audit_log_archive.
 
     INSERT-RETURNING + DELETE single-transaction pattern. Returns int (rows moved).
     """
@@ -44,12 +49,13 @@ def rotate_audit_log(conn):
             payload, result_code, NOW()
         FROM monitor.audit_log
         WHERE event_ts < NOW() - INTERVAL '180 days'
+          AND target_table IS DISTINCT FROM %s
         RETURNING id
     """
     sql_delete = "DELETE FROM monitor.audit_log WHERE id = ANY(%s)"
 
     with conn.cursor() as cur:
-        cur.execute(sql_insert)
+        cur.execute(sql_insert, (RELAY_RESOURCE,))
         moved_ids = [row[0] for row in cur.fetchall()]
         if moved_ids:
             cur.execute(sql_delete, (moved_ids,))
