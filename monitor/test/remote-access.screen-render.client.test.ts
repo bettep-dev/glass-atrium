@@ -204,6 +204,20 @@ describe("each state shows its own words, and the on/off act sits on the title l
   });
 });
 
+describe("the page mounts the type scale its own text classes take", () => {
+  test("every fs-* class on the page has a rule in a style the page renders", async () => {
+    const { mod } = await loadScreen();
+
+    const { tree } = renderPage(mod as Mod, ready(SETUP_ON, DEVICES));
+
+    const css = findNodes(tree, (node) => node.type === "style").map((node) => collectText(node)).join("\n");
+    const classNames = findNodes(tree, (node) => typeof node.props.className === "string").flatMap((node) => String(node.props.className).split(/\s+/));
+    const scaleClasses = new Set(classNames.filter((name) => name.startsWith("fs-")));
+    assert.ok(scaleClasses.size > 0, "the page carries type-scale classes");
+    for (const name of scaleClasses) assert.match(css, new RegExp(`\\.${name}\\s*\\{`), `.${name} has a rule on the page`);
+  });
+});
+
 describe("before a read lands, the page offers no act", () => {
   const rows = [
     { name: "the first read shows the loading placeholder", read: { status: "loading", data: null, error: null, at: null }, atom: "LoadingPlaceholder" },

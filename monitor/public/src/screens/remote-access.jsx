@@ -198,6 +198,7 @@ function ScreenRemoteAccess() {
 }
 
 function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
+	const { TypeScaleStyle } = window.UI;
 	const [dialog, setDialog] = useSRA(null);
 	const [check, setCheck] = useSRA({ act: null, error: null });
 	const data = read.data;
@@ -216,6 +217,7 @@ function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
 	};
 	return (
 		<div className="flex flex-col gap-section">
+			<TypeScaleStyle />
 			<HeaderRA read={read} view={view} checkingAct={check.act} onReload={onReload} onWiden={onWiden} onOff={() => setDialog({ act: "off" })} />
 			{data === null
 				? <FirstReadRA read={read} onRetry={onReload} />
