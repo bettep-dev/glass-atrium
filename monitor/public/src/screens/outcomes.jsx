@@ -2070,7 +2070,7 @@ function CrosstabCell({ view, cell, max, rowLabel, colLabel }) {
   );
 }
 
-// solid bar, never a translucent tint → the fill holds 3:1 on the card in both themes while the count stays on the plain card
+// solid bar, never a translucent tint → the fill holds 3:1 on the card while the count stays on the plain card
 function getCrosstabBarO(cell, max) {
   const count = cell.count || 0;
   if (!(count > 0) || !(max > 0)) return null;

@@ -86,7 +86,7 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
 // Hard rules (DESIGN.md §4.2/§7.3 neutral shell):
 //   · shell neutral in every tone (--sunken/--dim/--line) — no tone fill on the .pill shell.
 //   · tone only on the inner symbol (Icon/glyph) via text-{tone} → dual-encode = shape (glyph) + color + adjacent label (DESIGN.md §8).
-//   · label text stays --dim (AA-safe: light warn/ok/info tones on --sunken read 3.15–3.45:1, sub-AA at --fs-meta) — a glyph=false status keeps a neutral label too.
+//   · label text stays --dim — a glyph=false status keeps a neutral label too.
 //   · metadata/count stay neutral even when given a tone (color ≠ metadata/count).
 // Variants: absent=true → .pill--absent (dashed/faint) · interactive=true → <button> + .pill--interactive (WCAG 2.2 §2.5.8 target)
 // fill (DESIGN.md §7.3): quiet = the neutral shell above · solid = waits for the owner · tag = a fact worth a glance · warn = did not arrive.
