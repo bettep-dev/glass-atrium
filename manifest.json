@@ -1584,7 +1584,7 @@
     "monitor/public/src/data/pricing.js": "e988ea9859abfbd6b6ec5e475c6d0c6f833653666f1888ea7485dacf9bdff8ab",
     "monitor/public/src/screens/agents.jsx": "c9dbe0bfc856af019565f62b102fc1e08cfb2e842635e25d4587affaac6c9957",
     "monitor/public/src/screens/architecture.jsx": "d192d5e89fcd3bd5b0645b34c674f673f70f03f09824927efd915a8b9868b5dc",
-    "monitor/public/src/screens/clauded-docs.jsx": "7662504ae907ee6351b9d5cafcb776f46443490ae8c9a3d9a62df6adc649d035",
+    "monitor/public/src/screens/clauded-docs.jsx": "4ce6fcaf4c675e5f3ead2ceb077d4d8bc1a3f1dc04b3b82a9aec61d5db1d7d82",
     "monitor/public/src/screens/cost.jsx": "5331fc297c6188128bcc47adee5823347495016d03fc85ed71d2b732f88f4d30",
     "monitor/public/src/screens/dashboard.jsx": "a16070d63df7ee1e551378744a67acde5d58f2b455dc2bc1482463e61a66436a",
     "monitor/public/src/screens/improvement-instrumentation.jsx": "1019eee12ae605f7d7ff609bd06958c4f08ac92b61cc9f764a47949669a1297c",

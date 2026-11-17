@@ -902,10 +902,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
         /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
-        /* accent row-state ladder viewer 0.035 < checked 0.07 < both 0.11 · the heavier title is the viewer's non-colour cue, the checkbox the checked one */
+        /* accent row-state ladder viewer 0.035 < checked 0.07 < both 0.11 → the empty stage pip, the faintest mark on a row, holds ≥ 3:1 on every step at the default accent (3.52 · 3.38 · 3.22) · the heavier title is the viewer's non-colour cue, the checkbox the checked one */
         .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.035); }
         .doc-row.is-selected .doc-title-text { font-weight: 600; }
-        /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone. */
+        /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
+           no row opacity — a fade drops the empty pip on a checked row below 3:1 (default accent: 0.85 → 2.85; unfaded 3.38) */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot + title row gap → the snippet starts under the title */
         .doc-snippet { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
