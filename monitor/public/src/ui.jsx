@@ -496,7 +496,7 @@ function TrendChart({ label, points, kind = 'line', h = 64, formatValue = String
 const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint', data:'--data' };
 
 // tone KEY → 인라인 CSS 색 문자열 `rgb(var(--tone))` — SVG fill/stroke 등 하드코딩 rgb 리터럴 대체.
-//   테마/토큰 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).
+//   토큰 값 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).
 function toneVarColor(tone) {
   return `rgb(var(${BAR_TONE_VAR[tone] || BAR_TONE_VAR.neutral}))`;
 }
