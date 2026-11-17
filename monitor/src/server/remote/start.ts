@@ -181,6 +181,7 @@ export interface AccessSwitchDeps {
   readonly readSettings: () => Promise<RemoteSettings>;
   readonly open: (settings: RemoteSettings) => Promise<SwitchedController>;
   readonly isDeviceOff: () => Promise<boolean>;
+  readonly setDeviceOff: () => Promise<void>;
   readonly readIdentity: () => Promise<NetworkIdentity | null>;
   readonly readLink: (networkInterface: string) => Promise<NetworkLink>;
   readonly readHostName: () => Promise<string | null>;
@@ -244,9 +245,16 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     return shown === null ? Promise.resolve({ outcome: "confirm_stale", trustedCount: null }) : this.#trustShown(shown);
   }
 
+  /** an off step that did not write leaves the device-off marker → config may still say on, a restart stays off */
   async setOff(): Promise<AccessStepOutcome> {
     const outcome = await this.deps.runStep({ act: "off" });
-    if (outcome === "written") this.#settings = { ...this.#settings, enabled: false };
+    if (outcome === "written") {
+      this.#settings = { ...this.#settings, enabled: false };
+      return outcome;
+    }
+    await this.deps.setDeviceOff().catch((error: unknown) => {
+      this.deps.log.error({ err: error, outcome }, "remote access off: neither the off step nor the device-off marker was written; a restart reopens");
+    });
     return outcome;
   }
 
@@ -339,6 +347,7 @@ export function buildRemoteAccessSwitch(input: RemoteAccessInput & { readonly se
       readSettings: () => readRenderedSettings(input.monitorPort),
       open: (settings) => openRemoteAccess(settings, input),
       isDeviceOff: () => isDeviceOff(dataDir),
+      setDeviceOff: () => setDeviceOff(dataDir),
       readIdentity: () => getNetworkIdentity(),
       readLink: (networkInterface) => getNetworkLink(networkInterface),
       readHostName: () => getLocalHostName(),

@@ -48,6 +48,12 @@ export const REMOTE_ADMIN_LIMITS = {
   CONFIRM_READ: { limit: 20, windowMs: 60_000 },
 } as const;
 
+/** How long the off and a widening act wait on a store call or the listener close → a stalled call counts as failed. */
+const WAIT_TIMEOUT_MS = 5_000;
+
+// the whole file one certificate block → the download carries nothing outside the fingerprint shown
+const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----\r?\n([A-Za-z0-9+/=\r\n]+?)\r?\n-----END CERTIFICATE-----\r?\n?$/;
+
 /** The one file the download serves, under a fixed name and type → never a caller-named file. */
 export const CA_DOWNLOAD = { FILE_NAME: "glass-atrium-local-ca.pem", CONTENT_TYPE: "application/x-x509-ca-cert" } as const;
 
@@ -137,6 +143,8 @@ export interface RemoteAdminDeps {
   readonly getAccess: () => RemoteAccessState;
   readonly access: RemoteAccessActs;
   readonly now?: () => number;
+  /** tests pass a short one; WAIT_TIMEOUT_MS otherwise */
+  readonly waitTimeoutMs?: number;
 }
 
 export interface RemoteAccessState {
@@ -311,8 +319,9 @@ function sendActOutcome(reply: FastifyReply, result: AccessApplyResult, fields: 
 /** @returns false when the row was not written; the page-origin stamp is a record, not a check */
 async function putAccessRequest(request: FastifyRequest, deps: RemoteAdminDeps): Promise<boolean> {
   const pageOrigin = getPageOriginSignal(request.headers, new Set()) ?? "none";
+  const event: RemoteAuditEvent = { actor: AUDIT_ACTOR, actionKind: "remote.access_requested", result: "success", payload: { ...getRoutePayload(request), pageOrigin } };
   try {
-    await deps.audit.insertEvent({ actor: AUDIT_ACTOR, actionKind: "remote.access_requested", result: "success", payload: { ...getRoutePayload(request), pageOrigin } });
+    await getWithin(deps.audit.insertEvent(event), deps);
     return true;
   } catch (error) {
     request.log.error({ err: error }, "remote access act: request row not written");
@@ -320,7 +329,10 @@ async function putAccessRequest(request: FastifyRequest, deps: RemoteAdminDeps):
   }
 }
 
-/** Reduce-only: runs without its request row and behind an act in flight; persist, revoke, close — each step runs when another fails. */
+/**
+ * Reduce-only: runs without its request row and behind an act in flight; persist, revoke, close — each step runs when another fails.
+ * Every wait bounded: the store calls and the close by WAIT_TIMEOUT_MS, the persist by its own step timeout.
+ */
 async function turnOffAccess(request: FastifyRequest, reply: FastifyReply, route: AccessRoute): Promise<FastifyReply> {
   if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
   const { failed, revoked } = await route.queue.run(async () => {
@@ -338,16 +350,30 @@ async function putAccessOff(request: FastifyRequest, deps: RemoteAdminDeps): Pro
   if (persisted !== "written") failed.push("persist");
   let revoked = 0;
   try {
-    revoked = (await revokeAll(request, { deps, actor: AUDIT_ACTOR })).revoked;
+    revoked = (await getWithin(revokeAll(request, { deps, actor: AUDIT_ACTOR }), deps)).revoked;
   } catch (error) {
     request.log.error({ err: error }, "remote access off: revoking the registered devices failed");
     failed.push("revoke");
   }
-  await deps.access.close().catch((error: unknown) => {
+  await getWithin(deps.access.close(), deps).catch((error: unknown) => {
     request.log.error({ err: error }, "remote access off: the listener did not close");
     failed.push("close");
   });
   return { failed, revoked };
+}
+
+/** @returns the work's value; rejects once the wait bound passes, the work left running */
+async function getWithin<T>(work: Promise<T>, deps: Pick<RemoteAdminDeps, "waitTimeoutMs">): Promise<T> {
+  const timeoutMs = deps.waitTimeoutMs ?? WAIT_TIMEOUT_MS;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs} ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Field by field → the router's hardware address and the interface never reach the page. */
@@ -389,14 +415,17 @@ async function getCertificateFile(request: FastifyRequest, reply: FastifyReply, 
 
 /**
  * The CA certificate and its SHA-256 over the encoded certificate, from the same bytes the download serves.
- * @returns null when no file, a file holding any private key, or anything but one CA certificate
+ * @returns null when no file, or anything but exactly one CA certificate: a key, a second block, any other content
  */
 async function getCertificate(request: FastifyRequest, access: RemoteAccessActs): Promise<{ bytes: Buffer; fingerprint: string } | null> {
   const bytes = await access.readCertificate();
-  if (bytes === null || bytes.includes("PRIVATE KEY")) return null;
+  const encoded = bytes === null ? undefined : PEM_CERTIFICATE.exec(bytes.toString("latin1"))?.[1];
+  if (bytes === null || encoded === undefined) return null;
+  const der = Buffer.from(encoded, "base64");
   try {
-    const certificate = new X509Certificate(bytes);
-    return certificate.ca ? { bytes, fingerprint: certificate.fingerprint256 } : null;
+    const certificate = new X509Certificate(der);
+    // raw ≠ the block's bytes → the block held more than the certificate the fingerprint covers
+    return certificate.ca && certificate.raw.equals(der) ? { bytes, fingerprint: certificate.fingerprint256 } : null;
   } catch (error) {
     request.log.warn({ err: error }, "remote CA certificate unreadable");
     return null;

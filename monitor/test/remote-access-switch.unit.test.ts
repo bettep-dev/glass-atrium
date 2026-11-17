@@ -89,6 +89,9 @@ async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
     },
     open,
     isDeviceOff: async () => input.isDeviceOff ?? false,
+    setDeviceOff: async () => {
+      steps.push("device-off marker");
+    },
     readIdentity: async () => {
       network.reads += 1;
       return network.current;
@@ -274,6 +277,11 @@ describe("turning access off from the Mac page", () => {
       [true],
       { enabled: false, trusted: [HOME_NETWORK] },
     ]);
+  });
+
+  test("an off step that did not write leaves the device-off marker instead, so a restart does not reopen", async () => {
+    const { access, steps } = await buildSwitch({ booted: ON, step: "write_failed" });
+    assert.deepEqual([await access.setOff(), steps], ["write_failed", ["off", "device-off marker"]]);
   });
 });
 

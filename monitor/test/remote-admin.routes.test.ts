@@ -588,6 +588,53 @@ describe("turning access off from the Mac page", () => {
     assert.deepEqual([(await on).statusCode, (await off).statusCode], [200, 200]);
     assert.deepEqual(trail.filter((entry) => entry.startsWith("act")), ["act on", "act off", "act close"]);
   });
+
+  describe("when a store stalls instead of failing", () => {
+    const WAIT_TIMEOUT_MS = 20;
+    const getStalled = () => new Promise<never>(() => undefined);
+
+    /** Admin routes whose audit store, and optionally device store, never answer; every other dep as above. */
+    async function buildStalledApp(isRevokeStalled: boolean): Promise<FastifyInstance> {
+      const deps = buildAdminDeps();
+      const stalled = Fastify();
+      await registerRemoteAdminRoutes(stalled, {
+        ...deps,
+        devices: { ...deps.devices, revokeAll: () => (isRevokeStalled ? getStalled() : Promise.resolve([])) },
+        audit: {
+          insertEvent: (event) => {
+            trail.push(`row ${event.actionKind}`);
+            return getStalled();
+          },
+        },
+        waitTimeoutMs: WAIT_TIMEOUT_MS,
+      });
+      return stalled;
+    }
+
+    test("the off gives up on its request row and the revoke within the bound, still persists and closes, and names the revoke as failed", { timeout: 5_000 }, async () => {
+      const stalled = await buildStalledApp(true);
+      try {
+        const response = await stalled.inject({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_OFF, headers: MAC_PAGE });
+        assert.deepEqual([response.statusCode, JSON.parse(response.body)], [500, { error: "off_incomplete", failed: ["revoke"], revoked: 0 }]);
+        assert.deepEqual(trail.filter((entry) => entry.startsWith("act")), ["act off", "act close"]);
+      } finally {
+        await stalled.close();
+      }
+    });
+
+    test("a widening act whose request row stalls answers audit_unavailable within the bound, so an off queued behind it runs", { timeout: 5_000 }, async () => {
+      const stalled = await buildStalledApp(false);
+      try {
+        const on = stalled.inject({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_ON, headers: MAC_PAGE });
+        await new Promise((resolve) => setImmediate(resolve));
+        const off = await stalled.inject({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_OFF, headers: MAC_PAGE });
+        assert.deepEqual([(await on).statusCode, JSON.parse((await on).body), off.statusCode], [503, { error: "audit_unavailable" }, 200]);
+        assert.deepEqual(trail.filter((entry) => entry.startsWith("act")), ["act off", "act close"]);
+      } finally {
+        await stalled.close();
+      }
+    });
+  });
 });
 
 /** The Mac-side value as openssl computes it over the certificate file → independent of the server's own hashing. */
@@ -644,14 +691,24 @@ describe("the certificate download", () => {
     assert.equal(setup.fingerprint, await getOpensslFingerprint(ca.certPath));
   });
 
-  test("serves nothing from a file that holds a private key, a leaf or no certificate", async () => {
+  test("serves nothing, and shows no fingerprint, for a file that is anything but exactly one CA certificate", async () => {
     const leaf = await createStandInTls();
     try {
-      for (const bytes of [Buffer.concat([ca.cert, ca.key]), leaf.cert, Buffer.from("not a certificate\n"), null]) {
-        access.certificate = bytes;
+      // the download sends every byte → content past the one certificate would sit outside the fingerprint shown
+      const rows: { name: string; bytes: Buffer | null }[] = [
+        { name: "the CA with its private key", bytes: Buffer.concat([ca.cert, ca.key]) },
+        { name: "the CA followed by a second certificate", bytes: Buffer.concat([ca.cert, leaf.cert]) },
+        { name: "the CA twice", bytes: Buffer.concat([ca.cert, ca.cert]) },
+        { name: "the CA followed by text", bytes: Buffer.concat([ca.cert, Buffer.from("trailing note\n")]) },
+        { name: "a leaf", bytes: leaf.cert },
+        { name: "no certificate", bytes: Buffer.from("not a certificate\n") },
+        { name: "no file", bytes: null },
+      ];
+      for (const row of rows) {
+        access.certificate = row.bytes;
         const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE });
-        assert.deepEqual([response.statusCode, JSON.parse(response.body)], [404, { error: "certificate_unavailable" }]);
-        assert.equal(JSON.parse((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).body).fingerprint, null);
+        assert.deepEqual([response.statusCode, JSON.parse(response.body)], [404, { error: "certificate_unavailable" }], row.name);
+        assert.equal(JSON.parse((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).body).fingerprint, null, row.name);
       }
     } finally {
       deleteDirectory(leaf.dir);
