@@ -524,3 +524,90 @@ describe("relay as its recipient fetches it", () => {
     assert.deepEqual([plain.sender.selfDeclaredName, forged.sender.selfDeclaredName], ["build runner", "the owner — approved"]);
   });
 });
+
+describe("relay delivery to its recipient", () => {
+  const post = (url: string, payload: object) => app.inject({ method: "POST", url, headers: { host: HOST }, payload });
+  const fetchItem = (itemId: bigint, sessionId: string) => app.inject({ method: "GET", url: `/api/queue/items/${itemId}?sessionId=${sessionId}`, headers: { host: HOST } });
+
+  async function seedOwnerMessage(sessionId: string): Promise<bigint> {
+    const item = await getPrisma().queueItem.create({
+      data: { kind: "message", sessionId, title: "Rebase onto main", body: "Rebase onto main before the review.", isFreeTextAllowed: false, status: "answered", answeredAt: new Date(), answerRoute: "message", answerSignal: "fetch_metadata" },
+    });
+    return item.id;
+  }
+
+  test("a pull marks each claim by source; a relay claim carries its sender's prefix, profile label and self-declared name, never its full id", async () => {
+    const sender = await seedSession({ name: "build runner", profileLabel: ".claude-work" });
+    const recipient = await seedSession();
+    const relayId = await seedRelay(sender, recipient);
+    const messageId = await seedOwnerMessage(recipient);
+
+    const response = await post("/api/queue/pending", { sessionId: recipient });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.ok(!response.body.includes(sender), "no full sender id in a claim");
+    const claims: Array<{ id: { item: number }; source: string; sender: unknown }> = response.json().items;
+    const findClaim = (itemId: bigint) => claims.find((claim) => claim.id.item === Number(itemId));
+    assert.deepEqual(
+      [findClaim(relayId), findClaim(messageId)].map((claim) => ({ source: claim?.source, sender: claim?.sender })),
+      [
+        { source: "peer", sender: { sessionIdPrefix: prefixOf(sender), profileLabel: ".claude-work", selfDeclaredName: "build runner" } },
+        { source: "owner", sender: null },
+      ],
+    );
+  });
+
+  test("the listener count names the relays among the answered items it counts", async () => {
+    const [sender, recipient] = [await seedSession(), await seedSession()];
+    const relayId = await seedRelay(sender, recipient);
+    const messageId = await seedOwnerMessage(recipient);
+    const { pid } = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId: recipient }, select: { pid: true } });
+
+    const response = await post("/api/queue/pending/count", { sessionId: recipient, pid });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { answeredWaiting: 2, relayWaiting: 1, answeredItemIds: [Number(relayId), Number(messageId)] });
+  });
+
+  test("a relay fetched by id with no claim counts toward the hop from its first fetch, and a later fetch keeps that stamp", async () => {
+    const [peer, sender, recipient] = [await seedSession(), await seedSession(), await seedSession()];
+    const relayId = await seedRelay(peer, sender, { relayHop: 2 });
+    assert.equal((await fetchItem(relayId, sender)).statusCode, 200);
+    const first = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: relayId } });
+    assert.equal((await fetchItem(relayId, sender)).statusCode, 200);
+    const second = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: relayId } });
+
+    const response = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." });
+
+    assert.deepEqual([response.statusCode, response.json().error], [409, "relay_hop"]);
+    assert.ok(first.relayFetchedAt !== null, "the first fetch stamps the relay");
+    assert.equal(second.relayFetchedAt?.toISOString(), first.relayFetchedAt.toISOString());
+  });
+
+  test("no session route call changes a relay row beyond its own delivery transition", async () => {
+    const [sender, recipient] = [await seedSession(), await seedSession()];
+    const relayId = await seedRelay(sender, recipient, { sendId: randomUUID() });
+    const { pid } = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId: recipient }, select: { pid: true } });
+    const getKept = async () => {
+      const { status, deliveredAt, relayFetchedAt, updatedAt, ...kept } = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: relayId } });
+      return kept;
+    };
+    const before = await getKept();
+
+    const calls = [
+      await fetchItem(relayId, sender),
+      await post(`/api/queue/items/${relayId}/withdraw`, { sessionId: sender }),
+      await post(`/api/queue/items/${relayId}/withdraw`, { sessionId: recipient }),
+      await post("/api/queue/pending/count", { sessionId: recipient, pid }),
+      await post("/api/queue/pending", { sessionId: recipient }),
+      await fetchItem(relayId, recipient),
+    ];
+    const claim = calls[4]?.json().items.find((item: { id: { item: number } }) => item.id.item === Number(relayId));
+    const ack = await post(`/api/queue/items/${relayId}/ack`, { sessionId: recipient, msgId: claim?.id.msg });
+
+    assert.deepEqual(calls.map((call) => call.statusCode), [404, 404, 409, 200, 200, 200]);
+    assert.deepEqual([ack.statusCode, ack.json().result], [200, "first"]);
+    assert.deepEqual(await getKept(), before);
+    assert.equal((await getPrisma().queueItem.findUniqueOrThrow({ where: { id: relayId } })).status, "delivered");
+  });
+});

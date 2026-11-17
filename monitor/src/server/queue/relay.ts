@@ -23,6 +23,8 @@ export const RELAY = {
   HOP_WINDOW_MS: 24 * 3_600_000,
   /** The first hop refused. */
   HOP_LIMIT: 3,
+  /** An undelivered relay on a row ended this long lapses (sweep.ts); a replaced row's lapses at once. */
+  LAPSE_MS: 3 * 24 * 3_600_000,
 } as const;
 // Every relay transaction takes it first → the machine-wide count and the insert never interleave across senders
 const RELAY_LOCK_KEY = 771_113_403;

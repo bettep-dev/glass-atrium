@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma, QueueItemKind, QueueItemStatus } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { QueueRequestError } from "./errors.js";
-import { type LockedSession, lockSession } from "./registry.js";
+import { type AnsweredCount, type LockedSession, getAnsweredCount, lockSession } from "./registry.js";
 
 export const PULL = {
   // The session fetches then acks right after a pull → a missed window means the process died mid-turn
@@ -69,23 +69,22 @@ export async function claimPendingItems(sessionId: string, wait?: WaitPoll): Pro
 }
 
 /** The caller's answered items as the listener sees them. */
-export interface PendingCount {
-  answeredWaiting: number;
+export interface PendingCount extends AnsweredCount {
   /** ascending, the first ANSWERED_IDS_LIMIT → the listener keys its announce bound on the set, not the count */
   answeredItemIds: number[];
 }
 
 /**
- * Counts the caller's own answered items (answers and owner messages) without claiming any — the harness listener's poll.
+ * Counts the caller's own answered items (answers, owner messages and relays) without claiming any — the harness listener's poll.
  * Refused with 409 unless the row is live for the poll's pid; accepted → the session is waiting, as after a wait poll.
  */
 export async function getPendingCount(sessionId: string, poll: WaitPoll): Promise<PendingCount> {
   const where = { sessionId, status: "answered" } as const;
   const pending = await getPrisma().$transaction(async (tx) => {
     assertLiveFor(await lockOwnSession(tx, sessionId), poll.pid);
-    const answeredWaiting = await tx.queueItem.count({ where });
+    const count = await getAnsweredCount(tx, sessionId);
     const rows = await tx.queueItem.findMany({ where, orderBy: { id: "asc" }, take: ANSWERED_IDS_LIMIT, select: { id: true } });
-    return { answeredWaiting, answeredItemIds: rows.map((row) => Number(row.id)) };
+    return { ...count, answeredItemIds: rows.map((row) => Number(row.id)) };
   });
   putWaitPoll(sessionId, Date.now());
   return pending;

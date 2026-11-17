@@ -380,15 +380,17 @@ describe("register", () => {
     assert.deepEqual([row.new.state, row.new.exitReason], ["live", null]);
   });
 
-  test("clears the marker, returns resume-pending items to answered and reports the answered count", async () => {
+  test("clears the marker, returns resume-pending items to answered and reports the answered count with the relays among it", async () => {
     const sessionId = await seedSession({ pid: process.pid, socketPath: null, state: "exited", exitReason: "dead", resumeAwaitingRegisterAt: new Date() });
+    const peer = await seedSession();
     const resumePending = await seedItem(sessionId, { status: "resume_pending" });
     await seedItem(sessionId, { status: "answered" });
     await seedItem(sessionId, { status: "open" });
+    await seedItem(sessionId, { kind: "relay", fromSessionId: peer, relayHop: 0, title: "Lint is green", body: "Lint is green.", isFreeTextAllowed: false, status: "answered" });
     const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
     const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
     assert.equal(response.statusCode, 200);
-    assert.equal(response.json().answeredWaiting, 2);
+    assert.deepEqual([response.json().answeredWaiting, response.json().relayWaiting], [3, 1]);
     assert.deepEqual([stored.state, stored.exitReason, stored.resumeAwaitingRegisterAt], ["live", null, null]);
     assert.equal(await getStatus(resumePending), "answered");
   });
@@ -413,7 +415,7 @@ describe("register", () => {
     const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
     await seedItem(sessionId, { isFreeTextAllowed: false, status: "open" });
     const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
-    assert.deepEqual([response.statusCode, response.json()], [200, { answeredWaiting: 0, awaitingItemIds: [] }]);
+    assert.deepEqual([response.statusCode, response.json()], [200, { answeredWaiting: 0, relayWaiting: 0, awaitingItemIds: [] }]);
   });
 
   test("the awaiting list stops at its limit and keeps the newest ids", async () => {
@@ -630,7 +632,7 @@ describe("pending count (listener read)", () => {
     const response = await send("POST", "/api/queue/pending/count", { sessionId: caller, pid });
 
     assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(response.json(), { answeredWaiting: 2, answeredItemIds: [Number(items[0]), Number(items[1])] });
+    assert.deepEqual(response.json(), { answeredWaiting: 2, relayWaiting: 0, answeredItemIds: [Number(items[0]), Number(items[1])] });
     assert.deepEqual(await Promise.all(items.map(getStatus)), statusesBefore);
     assert.equal(await getPrisma().queueDelivery.count({ where: { itemId: { in: items } } }), 0);
   });

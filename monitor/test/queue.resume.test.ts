@@ -250,7 +250,7 @@ describe("automatic resume of an exited session", () => {
     assert.equal(await isMarked(sessionId), true);
   });
 
-  test("an undelivered relay on an exited row starts no process and writes no resume row", async () => {
+  test("an undelivered relay on an exited row never turns resume-pending, starts no process and writes no resume row", async () => {
     const senderId = await seedSession({ state: "live", cwd: newFixtureDir("relay-sender") });
     const recipientId = await seedSession({ cwd: newFixtureDir("relay-recipient"), configDir: dir.home });
     const { id: relayId } = await getPrisma().queueItem.create({
@@ -269,6 +269,7 @@ describe("automatic resume of an exited session", () => {
 
     await runPasses(harness, 2);
 
+    assert.equal(await getStatus(relayId), "answered");
     assert.equal(harness.fake.calls.length, 0);
     assert.deepEqual(await getResumeRows(relayId), []);
     assert.equal(await isMarked(recipientId), false);

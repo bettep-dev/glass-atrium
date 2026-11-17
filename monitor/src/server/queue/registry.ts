@@ -75,9 +75,13 @@ export async function findWorktreeRoot(cwd: string): Promise<string | null> {
   }
 }
 
-export interface RegisterResult {
-  /** answered items now waiting for this session (the SessionStart pointer line) */
+/** Items in status answered waiting for one session's pull: every kind, and the peers' relays among them. */
+export interface AnsweredCount {
   answeredWaiting: number;
+  relayWaiting: number;
+}
+
+export interface RegisterResult extends AnsweredCount {
   /** this session's non-terminal items that expect an owner answer, newest first → the lib re-derives its awaiting marks */
   awaitingItemIds: number[];
 }
@@ -95,9 +99,15 @@ export async function registerSession(body: RegisterBody, homeDir: string): Prom
     await putLiveSession(tx, body, facts);
     await markReplaced(tx, replacedIds, identity);
     await tx.queueItem.updateMany({ where: { sessionId: body.sessionId, status: "resume_pending" }, data: { status: "answered" } });
-    const answeredWaiting = await tx.queueItem.count({ where: { sessionId: body.sessionId, status: "answered" } });
-    return { answeredWaiting, awaitingItemIds: await findAwaitingItemIds(tx, body.sessionId) };
+    return { ...(await getAnsweredCount(tx, body.sessionId)), awaitingItemIds: await findAwaitingItemIds(tx, body.sessionId) };
   });
+}
+
+/** The register pointer line and the listener poll read this one count → both name relays apart from owner items. */
+export async function getAnsweredCount(tx: Prisma.TransactionClient, sessionId: string): Promise<AnsweredCount> {
+  const where = { sessionId, status: "answered" } as const;
+  const [answeredWaiting, relayWaiting] = await Promise.all([tx.queueItem.count({ where }), tx.queueItem.count({ where: { ...where, kind: "relay" } })]);
+  return { answeredWaiting, relayWaiting };
 }
 
 export interface DeregisterResult {

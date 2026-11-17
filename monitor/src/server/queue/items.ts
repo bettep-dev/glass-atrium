@@ -1,7 +1,8 @@
-// Queue items, session side: post, get by id (owning session only), and the count-only badge numbers.
+// Queue items, session side: post, get by id (owning session only), the source facts of a pull claim, and the count-only badge numbers.
 
-import { Prisma, type QueueItem } from "../../generated/prisma/client.js";
+import { Prisma, type QueueItem, type QueueItemKind } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import type { PullClaim } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type SessionImageView, getSessionImageViews } from "./images.js";
 import { DEVIATION_STATUSES, SESSION_ID_PREFIX_LENGTH } from "./owner-views.js";
@@ -41,6 +42,14 @@ export interface RelaySender {
   selfDeclaredName: string | null;
 }
 
+type SourceFacts = Pick<QueueItemView, "source" | "sender">;
+
+interface SenderRow {
+  sessionId: string;
+  profileLabel: string;
+  name: string | null;
+}
+
 const SENDER_ARGS = { select: { sessionId: true, profileLabel: true, name: true } } as const;
 
 /** Badge numbers only: awaiting-owner items, deviations, and the oldest awaiting item's age. */
@@ -61,6 +70,7 @@ export async function createItem(body: PostItemBody): Promise<{ id: number }> {
   });
 }
 
+/** A relay's first fetch is stamped → a relay read without a claim still counts toward its reader's hop. */
 export async function getItemOrThrow(id: number, sessionId: string, imageDir: string): Promise<QueueItemView> {
   const item = await getPrisma().queueItem.findFirst({
     where: { id: BigInt(id), sessionId },
@@ -68,12 +78,27 @@ export async function getItemOrThrow(id: number, sessionId: string, imageDir: st
   });
   // another session's item answers the same as a missing one → no existence leak
   if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found for this session");
-  return {
-    ...toItemView(item),
-    attachments: getSessionImageViews(imageDir, item.images),
-    source: item.kind === "relay" ? "peer" : "owner",
-    sender: item.fromSession === null ? null : toRelaySender(item.fromSession),
-  };
+  if (item.kind === "relay" && item.relayFetchedAt === null) {
+    await getPrisma().queueItem.updateMany({ where: { id: item.id, relayFetchedAt: null }, data: { relayFetchedAt: new Date() } });
+  }
+  return { ...toItemView(item), attachments: getSessionImageViews(imageDir, item.images), ...getSourceFacts(item) };
+}
+
+/** A pull claim with the facts that tell a peer's relay from an owner item before the session fetches it. */
+export type ClaimView = PullClaim & SourceFacts;
+
+export async function getClaimViews(claims: PullClaim[]): Promise<ClaimView[]> {
+  const items = await getPrisma().queueItem.findMany({
+    where: { id: { in: claims.map((claim) => BigInt(claim.id.item)) } },
+    select: { id: true, kind: true, fromSession: SENDER_ARGS },
+  });
+  const byId = new Map(items.map((item) => [Number(item.id), item]));
+  return claims.map((claim) => {
+    const item = byId.get(claim.id.item);
+    // claimed rows are never deleted → a miss is a broken invariant, not a caller error
+    if (item === undefined) throw new Error(`claimed queue item ${claim.id.item} not found`);
+    return { ...claim, ...getSourceFacts(item) };
+  });
 }
 
 /** An answered item waits for its session's pull → never a deviation. */
@@ -109,7 +134,11 @@ function buildItemRow(body: PostItemBody): Prisma.QueueItemUncheckedCreateInput 
   return { ...shared, options: body.options, recommendedCode: body.recommendedCode, isApprovalClass: body.isApprovalClass };
 }
 
-function toRelaySender(session: { sessionId: string; profileLabel: string; name: string | null }): RelaySender {
+function getSourceFacts(item: { kind: QueueItemKind; fromSession: SenderRow | null }): SourceFacts {
+  return { source: item.kind === "relay" ? "peer" : "owner", sender: item.fromSession === null ? null : toRelaySender(item.fromSession) };
+}
+
+function toRelaySender(session: SenderRow): RelaySender {
   return { sessionIdPrefix: session.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH), profileLabel: session.profileLabel, selfDeclaredName: session.name };
 }
 

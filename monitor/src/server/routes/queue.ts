@@ -11,7 +11,7 @@ import { getMonitorPort } from "../monitor-port.js";
 import { ackItem, claimPendingItems, getPendingCount, withdrawItem } from "../queue/delivery.js";
 import { getQueueCliPath } from "../queue/envelope.js";
 import { getQueueImageDir } from "../queue/images.js";
-import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
+import { createItem, getClaimViews, getCount, getItemOrThrow } from "../queue/items.js";
 import { getPeerSessions } from "../queue/owner-sessions.js";
 import { createRelay, getRefusalResponse } from "../queue/relay.js";
 import { getSecretScannerPath } from "../queue/relay-scan.js";
@@ -124,7 +124,7 @@ function registerDeliveryRoutes(app: FastifyInstance): void {
       route: "/api/queue/pending",
       schema: pendingBodySchema,
       input: request.body,
-      work: async (body) => ({ items: await claimPendingItems(body.sessionId, body.pid === undefined ? undefined : { pid: body.pid }) }),
+      work: async (body) => ({ items: await getClaimViews(await claimPendingItems(body.sessionId, body.pid === undefined ? undefined : { pid: body.pid })) }),
     }),
   );
   app.post<{ Params: IdParams }>("/api/queue/items/:id/ack", POST_ROUTE_OPTIONS, async (request, reply) =>
