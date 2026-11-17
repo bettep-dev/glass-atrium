@@ -37,6 +37,8 @@ const DEVICES_RESIGN_CID = "2026-11-16T2200_lan-close_2f8b";
 const PENDING_COUNT_CID = "2026-11-16T2025_deploy65-prep_a9e3";
 // seven queue-owner rows' reasons re-signed in place (owner-rows-verdict.md): route, class and order kept → same digest
 const OWNER_ROWS_CID = "2026-11-16T2215_owner-rows-verdict_e6b0";
+// rows 110-113 appended, six reasons re-signed in place (route-rows-verdict.md) → the 109-row digest still verifies as its prefix
+const RELAY_ROWS_CID = "2026-11-17T1135_queue-mcp-2_e5f8";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -143,6 +145,33 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 109,
     sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a",
+    supersededBy: RELAY_ROWS_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S6",
+    // every row of the entry before it carried unchanged, C1-C3 included; peers, relay, relay-signal and redact appended; six queue reasons re-signed
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // R1 the session-only guard counts Origin, Referer, any Sec-Fetch header and Cookie; a refused peers or relay request runs no handler query, no scan, stores no relay row
+    // R2 the signal and redact rows are page on the plan's word that the Queue page calls both → no remote access for a build without those call sites; a dropped one is re-classed agent
+    // R3 the redaction audit row names the relay id; an accepted relay's audit row holds no relay text; after a redaction the text is in no table
+    // R4 the updated_at a redaction bumps is read by no delivery deadline, lapse clock or sweep rule for a relay
+    // R5 the page shows relay text and the self-declared name as text only, never markup, and labels the name self-declared
+    cids: [
+      RELAY_ROWS_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 113,
+    sha256: "795839947a232258b4eef1ddda2792ab252f8b300c7e63ba416af17b849924c4",
   },
 ];
 
@@ -220,18 +249,18 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /api/wiki/backlog", cls: "page", reason: "page calls it; handler read: no caller input, newest 90 payload rows read and the newest one's dedup and dead-link slices returned as stored" },
   { route: "GET /api/model-config", cls: "page", reason: "page calls it; handler read: model ids, budget caps and tier values from the DB, daemon-config.json and agent model lines — no credential read" },
   { route: "PUT /api/model-config", cls: "page", reason: "page function, high-impact (model-config write) kept page by owner decision; handler read: validate-all-first against fixed keys, then rewrites daemon-config.json and agent model pins" },
-  { route: "GET /api/queue/count", cls: "page", reason: "page calls it; route read: item counts only (behind the queue Host allowlist, see notes)" },
-  { route: "POST /api/queue/sessions/register", cls: "agent", reason: "no page call site; called by scripts/lib/queue-session.sh only; no credential, registers whatever session and config directory the body names; work function not opened" },
+  { route: "GET /api/queue/count", cls: "page", reason: "page calls it (nav badge and Queue page); route read: no caller input, item counts only (behind the queue Host allowlist, see notes); count function not opened at this sign-off — the build notes state relays and probe sessions' items are left out of the counts and the oldest age" },
+  { route: "POST /api/queue/sessions/register", cls: "agent", reason: "no page call site; called by the session-start hook and the queue CLI (call sites as the build notes list them, not re-read); route read: the body is either a full register, which registers whatever session and config directory it names, or a name-only update sent to the name writer when it carries no cwd; no credential beyond a named session id, plus a pid on the name-only shape; body schema and both work functions not opened" },
   { route: "POST /api/queue/sessions/deregister", cls: "agent", reason: "no page call site; called by scripts/lib/queue-session.sh only; no credential, acts on whatever session id the body names; work function not opened" },
   { route: "POST /api/queue/items", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; a remote caller could post items to the owner as any session; work function not opened" },
   { route: "GET /api/queue/items/:id", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh and hooks/queue-turn-end-check.sh; returns the owner's answer to whoever names the session id; work function not opened" },
   { route: "POST /api/queue/pending", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; work function read: claims up to 20 of the named session's answered items per call, a wait poll refused unless the session is live for its pid; a remote caller could claim another session's answered items" },
   { route: "POST /api/queue/items/:id/ack", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
   { route: "POST /api/queue/items/:id/withdraw", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
-  { route: "GET /api/queue/owner/items", cls: "page", reason: "page calls it; handler read: profile, session id, cursor and limit 1-200 validated and bound; returns each open item's title, body, options, the owner's answer text, image views and resume records, its session's absolute working and config directories and permission hint, plus the installed CLI path" },
-  { route: "GET /api/queue/owner/items/:id", cls: "agent", reason: "no call site anywhere, so not a page function; route read: read-only owner view — flip to page if the page starts calling it" },
+  { route: "GET /api/queue/owner/items", cls: "page", reason: "page calls it; handler read: profile, session id, cursor and limit 1-200 validated and bound; returns each non-terminal item's title, body, options, the owner's answer text, image views and resume records, its session's full id and 8-character id prefix, absolute working and config directories and permission hint, plus the installed CLI path; an undelivered relay is listed too, with its peer-written text (the fixed marker once redacted), hop, parent relay id and send time, sender and parent-sender id prefix, profile label and self-declared name, no deviation and no Resend" },
+  { route: "GET /api/queue/owner/items/:id", cls: "agent", reason: "page call site not shown to this sign-off, so not a page function; handler read: integer id and empty query schema; returns one item's full owner view in any state — the same fields as the owner list, relay text and relay facts included; writes nothing — page only by a new sign-off that names the page call site" },
   { route: "GET /api/queue/owner/resumes", cls: "page", reason: "page calls it; handler read: limit 1-50 is the only input; returns the newest resume deliveries with attempt, result, abort reason and background id, each item's id and title, the session's profile label and directory tail" },
-  { route: "GET /api/queue/owner/orders", cls: "page", reason: "page calls it; route read: read-only order history, query schema-validated" },
+  { route: "GET /api/queue/owner/orders", cls: "page", reason: "page calls it; handler read: query schema-validated and every value bound (kind order or relay, session filter, cursor, limit; schema file not opened); returns every copy of each paged send in every state as the full owner item view — title and body (an owner message, or for kind relay a peer-written relay text, the fixed marker once redacted), answer text, image views, resume records, the recipient session's full id, absolute working and config directories and permission hint; a relay adds hop, parent relay id and send time, sender and parent-sender id prefix, profile label and self-declared name, fetch, redaction and lapse times; kind relay adds at most 100 refusal records per page (time, reason code, sender and recipient id prefixes, unresolved count, no text); writes nothing" },
   { route: "POST /api/queue/owner/items/:id/answer", cls: "page", reason: "page function, high-impact kept page by owner decision: the answer counts as the owner's word, approvals included, and for an ended session the sweep starts a local claude process to deliver it; handlers read: option code R1-R9 and one of the item's own, free text only where the item allows it, at most 20000 chars, bound writes only; the resumed process takes its session id, directory and config directory from the registry row and a fixed text naming item and message ids, never the answer; page-origin stamp required and recorded" },
   { route: "POST /api/queue/owner/items/:id/reply", cls: "page", reason: "page function, high-impact kept page by owner decision: the reply counts as the owner's word and for an ended session the sweep starts a local claude process to deliver it; handlers read: open report that allows a reply, text at most 20000 chars, up to 8 image ids of unused uploads from the last day, bound writes only; no value reaches the resume command, directory, environment or text; page-origin stamp required and recorded" },
   { route: "GET /api/queue/owner/sessions", cls: "page", reason: "page calls it; handler read: optional profile filter bound, at most 200 rows; returns full session ids, names, profile labels, absolute working directories, state and exit reason, waiting flag, item counts and the resume marker time" },
@@ -240,7 +269,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /api/queue/owner/images/:id", cls: "page", reason: "page calls it; route read: serves image bytes with nosniff, same-origin resource policy and a sandbox CSP" },
   { route: "POST /api/queue/owner/items/:id/later", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
   { route: "POST /api/queue/owner/items/:id/seen", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
-  { route: "POST /api/queue/owner/items/:id/resend", cls: "page", reason: "page function, high-impact kept page by owner decision: re-queues one delivery and, for an ended session, lets the sweep start a local claude process again; handler read: empty body, only an unacked or expired item or a resume-pending one whose attempt is used, refused while the session's earlier resume has not registered; no caller text" },
+  { route: "POST /api/queue/owner/items/:id/resend", cls: "page", reason: "page function, high-impact kept page by owner decision: re-queues one delivery and, for an ended session, lets the sweep start a local claude process again; handler read: empty body, only an unacked or expired item or a resume-pending one whose attempt is used, refused while the session's earlier resume has not registered; a relay in any state is refused 409 and nothing is written, so a relay is never re-queued or resumed through this route; no caller text" },
   { route: "POST /api/remote/registration", cls: "remote-admin", reason: "loopback only; Sec-Fetch-Site exactly same-origin, empty body, open-rate limit; audit row before the code, no row → no code; code in this response body only, no-store" },
   { route: "GET /api/remote/devices", cls: "remote-admin", reason: "loopback only; same Sec-Fetch-Site rule although a GET; devices: id, label, created, last seen only; access: whether the feature is on in this process, and each trusted network's gateway address and gateway hardware address, nothing else (cli-channel C17); no-store" },
   { route: "DELETE /api/remote/devices/:id", cls: "remote-admin", reason: "loopback only; same rule, decimal id, no body; remote.revoke after the revoke, audit failure never blocks it; one device_not_found" },
@@ -256,6 +285,10 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /sign-in.js", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; the sign-in form's script, names no feature" },
   { route: "GET /sign-in.css", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; self-contained, the shared stylesheets stay behind registration" },
   { route: "POST /api/queue/pending/count", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh (listen step, run by hooks/queue-listener.sh) only; handler read: strict session id and pid body, refused unless the named session is live for that pid, returns the count and first 200 ids of that session's answered items, claims nothing, marks the session waiting in memory for 10 s; no credential beyond a named session id and pid" },
+  { route: "POST /api/queue/peers", cls: "agent", reason: "session route, never a page function: any request carrying a browser signal is refused 403 before the body is parsed (guard function not opened); called by the session ops library (sessions tool and CLI); handler read: session-id body, 404 for an unregistered caller; returns the live, listed sessions other than the caller — 8-character id prefix, shown name, profile label, directory tail, state and waiting flag, never a full id; writes nothing; no credential beyond a named session id, so a remote caller could list this Mac's sessions as any session" },
+  { route: "POST /api/queue/relay", cls: "agent", reason: "session route, never a page function: any request carrying a browser signal is refused 403 before the body is parsed (guard function not opened); called by the session ops library (relay tool and CLI); handler read: sender must be a registered, live, non-probe session; recipients resolved by id prefix or shown name against the live listed peers only; envelope-token check, then the install's secret scanner on raw and normalized text before any lock; one transaction under a machine-wide lock: 10 copies per sender, 5 per pair and 30 per machine in a rolling hour, hop bound 3 over 24 hours, linked docs must exist, one relay item per recipient or none; each refusal recorded (awaited) with sender, resolved recipients, reason code and unresolved count, never text; replies with item ids and id prefixes only; body schema not opened; no credential beyond a named session id — a remote caller could put text before any live session as any session with no owner act" },
+  { route: "GET /api/queue/owner/relays/signal", cls: "page", reason: "Queue page function (relay history button state; the page call site lands with stream 10 and was absent at sign-off); handler read: no caller input (empty query schema), four fixed aggregates — relay refusal records, relays at hop 1 or more and redactions of the last 24 hours, and whether any relay or refusal is on record; returns three counts and one flag, no id, name or text; writes nothing" },
+  { route: "POST /api/queue/owner/items/:id/redact", cls: "page", reason: "page function, high-impact (irreversible) kept page by owner decision: redaction is an owner route, never a session one (the page call site lands with stream 10 and was absent at sign-off); handler read: integer id and an empty body schema, so no request supplies replacement text; one bound update replaces a relay's title and body with the fixed server marker and stamps the time and the original body length; first wins (409 on a second call, nothing changed), every other kind refused 409; sender, recipient, send id, hop, parent, linked docs and delivery state untouched; the audit row carrying the page-origin signal is written in the same transaction, so no redaction stands without its record; page-origin stamp required" },
 ];
 
 /** `METHOD /path` keys the remote gate answers without a registered device → only rows the reviewer classed remote-pre-auth. */

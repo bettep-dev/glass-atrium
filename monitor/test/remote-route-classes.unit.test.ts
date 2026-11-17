@@ -64,10 +64,20 @@ const PENDING_COUNT_CID = "2026-11-16T2025_deploy65-prep_a9e3";
 const SIGNED_PENDING_COUNT_LINE = "POST /api/queue/pending/count agent";
 // seven queue-owner rows' reasons re-signed in place: route, class and order kept, so the 109-row digest stays
 const OWNER_ROWS_CID = "2026-11-16T2215_owner-rows-verdict_e6b0";
-// the 108-row table the append extends → its digest still verifies over the live table's leading rows
+// the peers, relay, relay-signal and redact rows appended as rows 110-113, six reasons re-signed in place
+const RELAY_ROWS_CID = "2026-11-17T1135_queue-mcp-2_e5f8";
+const SIGNED_RELAY_LINES = [
+  "POST /api/queue/peers agent",
+  "POST /api/queue/relay agent",
+  "GET /api/queue/owner/relays/signal page",
+  "POST /api/queue/owner/items/:id/redact page",
+];
+// the 108-row table the pending-count append extended
 const SUPERSEDED_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
+// the 109-row table the relay append extends → its digest still verifies over the live table's leading rows
+const OWNER_ROWS_TABLE = { rowCount: 109, sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a" };
 // the signed table, held here → any class change in route-classes.ts also needs a test edit naming its verdict
-const SIGNED_TABLE = { rowCount: 109, sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a" };
+const SIGNED_TABLE = { rowCount: 113, sha256: "795839947a232258b4eef1ddda2792ab252f8b300c7e63ba416af17b849924c4" };
 
 // class changes the re-sign carries, each a verdict's exact line → a class edited back without a new sign-off fails
 const RESIGNED_CLASS_CHANGES = [
@@ -143,16 +153,20 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
+  test("the latest sign-off names the reviewer, the relay-rows verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
     assert.deepEqual(
       { reviewer: latest?.reviewer, cids: latest?.cids },
-      { reviewer: "glass-atrium-sec-guard", cids: [OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS] },
+      { reviewer: "glass-atrium-sec-guard", cids: [RELAY_ROWS_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS] },
     );
   });
 
-  test("the superseded table still verifies over the live table's leading rows, so the new row was appended, not inserted", () => {
-    assert.equal(getRouteClassDigest(REVIEWED_ROUTES.slice(0, SUPERSEDED_TABLE.rowCount)), SUPERSEDED_TABLE.sha256);
+  test("every superseded table an append extended still verifies over the live table's leading rows, so new rows were appended, not inserted", () => {
+    const rows = [
+      { name: "before the pending-count append", table: SUPERSEDED_TABLE },
+      { name: "before the relay append", table: OWNER_ROWS_TABLE },
+    ];
+    for (const row of rows) assert.equal(getRouteClassDigest(REVIEWED_ROUTES.slice(0, row.table.rowCount)), row.table.sha256, row.name);
   });
 
   test("every earlier sign-off is kept as history, marked superseded by the sign-off after it re-signed its rows, with its row count and digest", () => {
@@ -164,14 +178,15 @@ describe("reviewer sign-offs", () => {
         [["2026-11-14T2145_lan-cli-channel_5f0c"], 105, "7801ce43f3335b0f6fe0aad59b39425b951fe49ad60116cb601f5dc66ccc9e32", RESIGN_CIDS[0]],
         [[...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, DEVICES_RESIGN_CID],
         [[DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, PENDING_COUNT_CID],
-        [[PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, OWNER_ROWS_CID],
+        [[PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], OWNER_ROWS_TABLE.rowCount, OWNER_ROWS_TABLE.sha256, OWNER_ROWS_CID],
+        [[OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], OWNER_ROWS_TABLE.rowCount, OWNER_ROWS_TABLE.sha256, RELAY_ROWS_CID],
       ],
     );
   });
 
   test("every row past the first 94 is the reviewer's signed line at its place", () => {
     const added = REVIEWED_ROUTES.slice(FIRST_SIGNED_ROW_COUNT).map((entry) => `${entry.route} ${entry.cls}`);
-    assert.deepEqual(added, [...SIGNED_REMOTE_LINES, SIGNED_PENDING_COUNT_LINE]);
+    assert.deepEqual(added, [...SIGNED_REMOTE_LINES, SIGNED_PENDING_COUNT_LINE, ...SIGNED_RELAY_LINES]);
   });
 
   test("the re-sign's class changes are in the table as signed", () => {
