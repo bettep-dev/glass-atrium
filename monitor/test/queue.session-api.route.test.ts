@@ -845,7 +845,7 @@ describe("peers", () => {
 });
 
 describe("count", () => {
-  test("counts open items as awaiting and only the unacked, held, expired and resume-pending items as deviations, none of a probe session's", async () => {
+  test("counts open items as awaiting and only the unacked, held, expired and resume-pending items as deviations, none of a probe session's and no relay", async () => {
     const readCount = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> =>
       (await send("GET", "/api/queue/count")).json();
     const measureSeedDelta = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
@@ -858,6 +858,9 @@ describe("count", () => {
       for (const sessionId of [live, noSocket, stale]) await seedItem(sessionId, { status: "answered" });
       const probe = await seedSession({ isProbe: true });
       for (const status of ["open", "unacked"] as const) await seedItem(probe, { status, askedAt: new Date(Date.now() - 7_200_000) });
+      for (const status of ["unacked", "held", "expired"] as const) {
+        await seedItem(live, { kind: "relay", fromSessionId: stale, relayHop: 0, isFreeTextAllowed: false, status, askedAt: new Date(Date.now() - 7_200_000) });
+      }
       const counted = await readCount();
       return { awaiting: counted.awaiting - baseline.awaiting, deviations: counted.deviations - baseline.deviations, oldestAgeSeconds: counted.oldestAgeSeconds };
     };

@@ -394,6 +394,7 @@ describe("list and item detail", () => {
     assert.deepEqual(items.map((item) => item.id), [Number(first), Number(second)], "non-terminal items only, queue order");
     assert.deepEqual(items[0]?.session, {
       id: sessionId,
+      sessionIdPrefix: sessionId.slice(0, 8),
       name: "monitor",
       isNameRegistered: false,
       profileLabel,
@@ -927,8 +928,9 @@ describe("relay history", () => {
   });
 
   test("an entry carries hop, parent, sender, fetch, redaction and lapse facts; an owner order carries none", async () => {
-    const [sender, recipient] = [await seedSession({ name: "relay sender" }), await seedSession()];
-    const parentId = await seedRelay(recipient, sender, minutesAgo(30));
+    const [sender, recipient] = [await seedSession({ name: "relay sender" }), await seedSession({ name: "parent sender" })];
+    const parentSentAt = minutesAgo(30);
+    const parentId = await seedRelay(recipient, sender, parentSentAt);
     const childId = await seedRelay(sender, recipient, minutesAgo(20), { relayHop: 1, relayParentId: parentId });
     const lapsedAt = minutesAgo(1);
     const lapsedId = await seedRelay(sender, recipient, minutesAgo(10), { status: "withdrawn", deliveredAt: null, relayFetchedAt: null, relayClosedAt: lapsedAt });
@@ -941,17 +943,41 @@ describe("relay history", () => {
 
     assert.deepEqual(items.find((item) => item.id === Number(childId))?.relay, {
       hop: 1,
-      parentId: Number(parentId),
+      parent: { id: Number(parentId), sender: { sessionIdPrefix: recipient.slice(0, 8), profileLabel: "default", selfDeclaredName: "parent sender" }, sentAt: parentSentAt.toISOString() },
       sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender" },
       fetchedAt: redacted.relayFetchedAt?.toISOString(),
       redaction: { at: redacted.relayRedactedAt?.toISOString(), length: text.length },
       lapsedAt: null,
     });
     assert.deepEqual(items.find((item) => item.id === Number(lapsedId))?.relay, {
-      hop: 0, parentId: null, sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender" },
+      hop: 0, parent: null, sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender" },
       fetchedAt: null, redaction: null, lapsedAt: lapsedAt.toISOString(),
     });
     assert.equal(order.relay, null);
+  });
+
+  test("an entry names its recipient by the 8-character id prefix beside its sender's", async () => {
+    const [sender, recipient] = [await seedSession(), await seedSession()];
+    const relayId = await seedRelay(sender, recipient, minutesAgo(5));
+
+    const entry = (await getHistory(`sessionIds=${recipient}`)).json().items.find((item: { id: number }) => item.id === Number(relayId));
+
+    assert.deepEqual([entry.session.sessionIdPrefix, entry.relay.sender.sessionIdPrefix], [recipient.slice(0, 8), sender.slice(0, 8)]);
+  });
+
+  test("a relay carries no deviation and no Resend in any state, and Resend refuses it", async () => {
+    const [sender, recipient] = [await seedSession(), await seedSession()];
+    const states = ["answered", "delivering", "unacked", "held", "expired", "delivered", "withdrawn"] as const;
+    for (const status of states) {
+      const relayId = await seedRelay(sender, recipient, minutesAgo(5), { status, deliveredAt: status === "delivered" ? minutesAgo(4) : null, relayClosedAt: status === "withdrawn" ? minutesAgo(1) : null });
+      const view = (await send("GET", `/api/queue/owner/items/${relayId}`, undefined, { headers: {} })).json();
+      const before = await getItemRow(relayId);
+
+      const resend = await send("POST", `/api/queue/owner/items/${relayId}/resend`);
+
+      assert.deepEqual([view.deviation, view.canResend, resend.statusCode], [null, false, 409], status);
+      assert.deepEqual(await getItemRow(relayId), before, status);
+    }
   });
 
   test("each page carries the refusal records of its own time span, either end in the filter, once across pages, with no text", async () => {

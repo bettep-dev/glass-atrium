@@ -8,6 +8,7 @@ import {
   type QueueAnswerSignal,
   type QueueDelivery,
   type QueueItem,
+  type QueueItemKind,
   type QueueItemStatus,
   type QueueSession,
 } from "../../generated/prisma/client.js";
@@ -54,6 +55,7 @@ export interface SessionName {
 
 export interface OwnerSessionView extends SessionName {
   id: string;
+  sessionIdPrefix: string;
   profileLabel: string;
   cwd: string;
   cwdTail: string;
@@ -93,10 +95,17 @@ export type RelaySenderRow = Pick<QueueSession, "sessionId" | "profileLabel" | "
 
 export const SENDER_ARGS = { select: { sessionId: true, profileLabel: true, name: true } } as const satisfies Prisma.QueueSessionDefaultArgs;
 
+/** The relay that set a hop-1 or hop-2 relay's hop. */
+export interface RelayParent {
+  id: number;
+  sender: RelaySender;
+  sentAt: string;
+}
+
 /** What a relay entry adds to the owner item view. */
 export interface RelayFacts {
   hop: number;
-  parentId: number | null;
+  parent: RelayParent | null;
   sender: RelaySender;
   /** The recipient's first fetch; null → never fetched. */
   fetchedAt: string | null;
@@ -113,6 +122,13 @@ export interface RelayRefusalView {
   recipientIdPrefixes: string[];
   /** Recipient names that resolved to no single peer; null on a reason that resolves none. */
   unresolvedCount: number | null;
+}
+
+export interface RelaySignal {
+  /** The last 24 hours: refusals, relays sent at hop 1 or 2, redactions. */
+  count: { refused: number; forwarded: number; redacted: number };
+  /** Any relay or relay refusal on record, of any age. */
+  hasRecord: boolean;
 }
 
 /** How the owner's answer was made; its time is the item's `answeredAt`. */
@@ -167,6 +183,7 @@ export interface OwnerOrdersPage {
 
 /** Inputs of the Resend rule, shared by the views and the resend transition so page and server agree. */
 export interface ResendFacts {
+  kind: QueueItemKind;
   status: QueueItemStatus;
   nextAttempt: number;
   isSessionMarked: boolean;
@@ -200,9 +217,9 @@ interface SessionFacts {
   lastResumeBgId: string | null;
 }
 
-/** Resend: unacked · expired, or resume-pending once its attempt's automatic resume is used; never while marked. */
+/** Resend: unacked · expired, or resume-pending once its attempt's automatic resume is used; never while marked, never a relay. */
 export function canResend(facts: ResendFacts): boolean {
-  if (facts.isSessionMarked) return false;
+  if (facts.isSessionMarked || facts.kind === "relay") return false;
   if (facts.status === "unacked" || facts.status === "expired") return true;
   return facts.status === "resume_pending" && facts.resumeAttempts.includes(facts.nextAttempt);
 }
@@ -264,18 +281,19 @@ export async function getRecentResumes(query: RecentResumesQuery): Promise<{ res
 }
 
 /**
- * The relay signal the page raises: the newest of the last 24 hours' relay refusals the relay module decided (only those
- * rows carry a reason), relays at hop 1 or more, and redactions; null when there is none.
+ * The relay signal the page raises: the last 24 hours' relay refusals the relay module decided (only those rows carry a
+ * reason), relays sent at hop 1 or more, and redactions, each counted; plus whether any relay or refusal is on record.
  */
-export async function getRelaySignal(): Promise<{ raisedAt: string | null }> {
+export async function getRelaySignal(): Promise<RelaySignal> {
   const since = new Date(Date.now() - RELAY_SIGNAL_WINDOW_MS);
-  const [row] = await getPrisma().$queryRaw<Array<{ raisedAt: Date | null }>>`
-    SELECT GREATEST(
-      (SELECT max(a."event_ts") FROM "monitor"."audit_log" a WHERE ${RELAY_REFUSAL_FILTER} AND a."event_ts" >= ${since}),
-      (SELECT max(i."asked_at") FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay' AND i."relay_hop" >= 1 AND i."asked_at" >= ${since}),
-      (SELECT max(i."relay_redacted_at") FROM "monitor"."queue_items" i WHERE i."relay_redacted_at" >= ${since})
-    ) AS "raisedAt"`;
-  return { raisedAt: row?.raisedAt?.toISOString() ?? null };
+  const [row] = await getPrisma().$queryRaw<Array<RelaySignal["count"] & { hasRecord: boolean }>>`
+    SELECT
+      (SELECT count(*)::int FROM "monitor"."audit_log" a WHERE ${RELAY_REFUSAL_FILTER} AND a."event_ts" >= ${since}) AS "refused",
+      (SELECT count(*)::int FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay' AND i."relay_hop" >= 1 AND i."asked_at" >= ${since}) AS "forwarded",
+      (SELECT count(*)::int FROM "monitor"."queue_items" i WHERE i."relay_redacted_at" >= ${since}) AS "redacted",
+      (EXISTS (SELECT 1 FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay')
+        OR EXISTS (SELECT 1 FROM "monitor"."audit_log" a WHERE ${RELAY_REFUSAL_FILTER})) AS "hasRecord"`;
+  return { count: { refused: row?.refused ?? 0, forwarded: row?.forwarded ?? 0, redacted: row?.redacted ?? 0 }, hasRecord: row?.hasRecord ?? false };
 }
 
 export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {
@@ -367,6 +385,7 @@ const ITEM_RELATIONS = {
   deliveries: { where: { route: "resume" }, orderBy: { id: "desc" } },
   images: ITEM_IMAGES_ARGS,
   fromSession: SENDER_ARGS,
+  relayParent: { select: { id: true, askedAt: true, fromSession: SENDER_ARGS } },
 } as const satisfies Prisma.QueueItemInclude;
 
 async function buildViews(items: ItemWithRelations[]): Promise<OwnerItemView[]> {
@@ -425,9 +444,9 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     ...getAnswerRecordView(item),
     session: toSessionView(item.session, factsById.get(item.sessionId)?.lastResumeBgId ?? null),
     resumes,
-    deviation: getDeviation(item.status),
+    deviation: item.kind === "relay" ? null : getDeviation(item.status),
     skipReason: item.status === "resume_pending" ? getSkipReason(item, factsById) : null,
-    canResend: canResend({ status: item.status, nextAttempt: item.nextAttempt, isSessionMarked, resumeAttempts: resumes.map((resume) => resume.attempt) }),
+    canResend: canResend({ kind: item.kind, status: item.status, nextAttempt: item.nextAttempt, isSessionMarked, resumeAttempts: resumes.map((resume) => resume.attempt) }),
     relay: getRelayFacts(item),
   };
 }
@@ -438,12 +457,18 @@ function getRelayFacts(item: ItemWithRelations): RelayFacts | null {
   const { relayRedactedAt: redactedAt, relayRedactedLength: redactedLength } = item;
   return {
     hop: item.relayHop,
-    parentId: item.relayParentId === null ? null : Number(item.relayParentId),
+    parent: getRelayParent(item.relayParent),
     sender: toRelaySender(item.fromSession),
     fetchedAt: item.relayFetchedAt?.toISOString() ?? null,
     redaction: redactedAt === null || redactedLength === null ? null : { at: redactedAt.toISOString(), length: redactedLength },
     lapsedAt: item.relayClosedAt?.toISOString() ?? null,
   };
+}
+
+// A parent is itself a relay → its sender is set (queue_items_relay_check)
+function getRelayParent(parent: ItemWithRelations["relayParent"]): RelayParent | null {
+  if (parent?.fromSession == null) return null;
+  return { id: Number(parent.id), sender: toRelaySender(parent.fromSession), sentAt: parent.askedAt.toISOString() };
 }
 
 export function toRelaySender(session: RelaySenderRow): RelaySender {
@@ -462,6 +487,7 @@ function toSessionView(session: QueueSession, lastResumeBgId: string | null): Ow
   const markedAt = session.resumeAwaitingRegisterAt;
   return {
     id: session.sessionId,
+    sessionIdPrefix: session.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH),
     ...getSessionName(session),
     profileLabel: session.profileLabel,
     cwd: session.cwd,

@@ -65,6 +65,7 @@ function getAt(minutesAgo: number): string {
 function buildSessionView(key: SessionKey): OwnerSessionView {
   return {
     id: SESSION_IDS[key],
+    sessionIdPrefix: SESSION_IDS[key].slice(0, 8),
     name: key,
     isNameRegistered: true,
     profileLabel: ".claude-work",

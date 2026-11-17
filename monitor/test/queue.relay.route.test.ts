@@ -578,8 +578,13 @@ describe("relay refusal records", () => {
 });
 
 describe("relay owner signal", () => {
-  async function getRaisedAt(): Promise<string | null> {
-    return (await app.inject({ method: "GET", url: "/api/queue/owner/relays/signal", headers: { host: HOST } })).json().raisedAt;
+  interface RelaySignal {
+    count: { refused: number; forwarded: number; redacted: number };
+    hasRecord: boolean;
+  }
+
+  async function getSignal(): Promise<RelaySignal> {
+    return (await app.inject({ method: "GET", url: "/api/queue/owner/relays/signal", headers: { host: HOST } })).json();
   }
 
   async function relayExpecting(body: object, status: number, headers: Record<string, string> = {}): Promise<void> {
@@ -587,7 +592,7 @@ describe("relay owner signal", () => {
     assert.equal(response.statusCode, status, response.body);
   }
 
-  test("is raised at the newest relay refusal, hop-1-or-more relay or redaction of the last 24 hours; a malformed body, an origin refusal or a hop-0 relay leaves it", async () => {
+  test("counts the last 24 hours' relay refusals, hop-1-or-more relays and redactions; a malformed body, an origin refusal or a hop-0 relay counts in none", async () => {
     await withQueueRowsExclusive(async () => {
       const rows = [
         {
@@ -599,19 +604,19 @@ describe("relay owner signal", () => {
             await relayExpecting({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." }, 429);
             await getPrisma().queueItem.updateMany({ where: { fromSessionId: filler }, data: { askedAt: ago(2 * HOUR_MS) } });
           },
-          isRaised: true,
+          added: { refused: 1, forwarded: 0, redacted: 0 },
         },
         {
           name: "a malformed body",
           act: async () => relayExpecting({ sessionId: await seedSession(), recipients: [prefixOf(await seedSession())], text: "Lint is green.", hop: 0 }, 400),
-          isRaised: false,
+          added: { refused: 0, forwarded: 0, redacted: 0 },
         },
         {
           name: "an origin refusal",
           act: async () => relayExpecting({ sessionId: await seedSession(), recipients: [prefixOf(await seedSession())], text: "Lint is green." }, 403, { origin: "https://evil.example" }),
-          isRaised: false,
+          added: { refused: 0, forwarded: 0, redacted: 0 },
         },
-        { name: "a hop-0 relay", act: async () => relayExpecting({ sessionId: await seedSession(), recipients: [prefixOf(await seedSession())], text: "Lint is green." }, 201), isRaised: false },
+        { name: "a hop-0 relay", act: async () => relayExpecting({ sessionId: await seedSession(), recipients: [prefixOf(await seedSession())], text: "Lint is green." }, 201), added: { refused: 0, forwarded: 0, redacted: 0 } },
         {
           name: "a hop-1 relay",
           act: async () => {
@@ -619,9 +624,9 @@ describe("relay owner signal", () => {
             await seedClaim(await seedRelay(peer, sender), ago(60_000));
             await relayExpecting({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." }, 201);
           },
-          isRaised: true,
+          added: { refused: 0, forwarded: 1, redacted: 0 },
         },
-        { name: "a refusal the relay module decides", act: async () => { const sender = await seedSession(); await relayExpecting({ sessionId: sender, recipients: [prefixOf(sender)], text: "Lint is green." }, 409); }, isRaised: true },
+        { name: "a refusal the relay module decides", act: async () => { const sender = await seedSession(); await relayExpecting({ sessionId: sender, recipients: [prefixOf(sender)], text: "Lint is green." }, 409); }, added: { refused: 1, forwarded: 0, redacted: 0 } },
         {
           name: "a redaction",
           act: async () => {
@@ -629,17 +634,27 @@ describe("relay owner signal", () => {
             const response = await app.inject({ method: "POST", url: `/api/queue/owner/items/${relayId}/redact`, headers: { host: HOST, "sec-fetch-site": "same-origin" } });
             assert.equal(response.statusCode, 200, response.body);
           },
-          isRaised: true,
+          added: { refused: 0, forwarded: 0, redacted: 1 },
         },
       ];
       for (const row of rows) {
-        const before = await getRaisedAt();
-        const start = new Date();
+        const before = await getSignal();
         await row.act();
-        const after = await getRaisedAt();
-        const isMoved = after !== null && after !== before && new Date(after) >= start;
-        assert.equal(isMoved, row.isRaised, `${row.name}: ${before} → ${after}`);
+        const after = await getSignal();
+        const added = { refused: after.count.refused - before.count.refused, forwarded: after.count.forwarded - before.count.forwarded, redacted: after.count.redacted - before.count.redacted };
+        assert.deepEqual(added, row.added, row.name);
       }
+    });
+  });
+
+  test("a relay older than the 24-hour window counts in none of the counts, yet the record says it holds one", async () => {
+    await withQueueRowsExclusive(async () => {
+      const before = await getSignal();
+      await seedRelay(await seedSession(), await seedSession(), { relayHop: 2, relayRedactedAt: ago(30 * 24 * HOUR_MS), relayRedactedLength: 62, askedAt: ago(30 * 24 * HOUR_MS) });
+
+      const after = await getSignal();
+
+      assert.deepEqual([after.count, after.hasRecord], [before.count, true]);
     });
   });
 });

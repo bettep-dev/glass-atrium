@@ -111,6 +111,7 @@ async function getResendFacts(tx: Prisma.TransactionClient, id: number) {
   const item = await tx.queueItem.findUniqueOrThrow({
     where: { id: BigInt(id) },
     select: {
+      kind: true,
       status: true,
       nextAttempt: true,
       session: { select: { resumeAwaitingRegisterAt: true } },
@@ -118,6 +119,7 @@ async function getResendFacts(tx: Prisma.TransactionClient, id: number) {
     },
   });
   return {
+    kind: item.kind,
     status: item.status,
     nextAttempt: item.nextAttempt,
     isSessionMarked: item.session.resumeAwaitingRegisterAt !== null,
