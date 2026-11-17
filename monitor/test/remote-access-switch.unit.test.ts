@@ -9,7 +9,7 @@ import path from "node:path";
 
 import pino from "pino";
 
-import type { AccessStepOutcome } from "../src/server/remote/admin-routes.js";
+import type { AccessStepOutcome, SetupFacts } from "../src/server/remote/admin-routes.js";
 import type { NetworkIdentity, NetworkLink } from "../src/server/remote/network.js";
 import type { RemoteSettings } from "../src/server/remote/settings.js";
 import { type AccessSwitchDeps, CONFIRM_TTL_MS, RemoteAccessSwitch, runAccessStep } from "../src/server/remote/start.js";
@@ -108,6 +108,12 @@ async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
   return { access, opened, steps, handed, network };
 }
 
+/** What the page reads of the feature after an act: on in config, the trusted count, the listener answering. */
+async function getView(access: RemoteAccessSwitch): Promise<Pick<SetupFacts, "enabled" | "trustedCount" | "isAnswering">> {
+  const facts = await access.getSetupFacts();
+  return { enabled: facts.enabled, trustedCount: facts.trustedCount, isAnswering: facts.isAnswering };
+}
+
 /** The page's order: the confirm reads the network, then the person confirms the act. */
 async function confirmThen<T>(access: RemoteAccessSwitch, act: () => Promise<T>): Promise<T> {
   await access.getConfirmFacts();
@@ -119,7 +125,7 @@ describe("turning access on or trusting a network from the Mac page", () => {
     const { access, opened, steps } = await buildSwitch({ written: ON });
     const result = await confirmThen(access, () => access.turnOn());
     assert.deepEqual([result, steps, opened.map((controller) => controller.settings)], [{ outcome: "written", trustedCount: 1, trust: null }, ["on"], [ON]]);
-    assert.deepEqual(access.getAccess(), { enabled: true, trusted: [HOME_NETWORK] });
+    assert.deepEqual(await getView(access), { enabled: true, trustedCount: 1, isAnswering: true });
   });
 
   test("trusting closes the open listener and opens one that knows the network the step added", async () => {
@@ -133,13 +139,13 @@ describe("turning access on or trusting a network from the Mac page", () => {
     const { access, opened, steps } = await buildSwitch({ booted: ON, step: "already_trusted", written: { ...ON, trusted: [] } });
     const result = await confirmThen(access, () => access.trust());
     assert.deepEqual([result, steps, opened.map((controller) => controller.isOpen)], [{ outcome: "already_trusted", trustedCount: null }, ["trust"], [true]]);
-    assert.deepEqual(access.getAccess(), { enabled: true, trusted: [HOME_NETWORK] });
+    assert.deepEqual(await getView(access), { enabled: true, trustedCount: 1, isAnswering: true });
   });
 
   test("a device's off holds over a trust, so nothing reopens", async () => {
     const { access, opened } = await buildSwitch({ booted: ON, isDeviceOff: true });
     const result = await confirmThen(access, () => access.trust());
-    assert.deepEqual([result.outcome, opened.filter((controller) => controller.isOpen).length, access.getAccess().enabled], ["written", 0, false]);
+    assert.deepEqual([result.outcome, opened.filter((controller) => controller.isOpen).length, (await getView(access)).isAnswering], ["written", 0, false]);
   });
 
   const failedStarts: { name: string; input: SwitchCase }[] = [
@@ -151,7 +157,7 @@ describe("turning access on or trusting a network from the Mac page", () => {
     test(`when ${row.name}, the step's write stays for the next restart and this process is left closed and reports start_failed`, async () => {
       const { access, opened } = await buildSwitch({ ...row.input, booted: { ...OFF } });
       const result = await confirmThen(access, () => access.turnOn());
-      assert.deepEqual([result, opened.filter((controller) => controller.isOpen).length, access.getAccess().enabled], [
+      assert.deepEqual([result, opened.filter((controller) => controller.isOpen).length, (await getView(access)).isAnswering], [
         { outcome: "start_failed", trustedCount: null, trust: null },
         0,
         false,
@@ -271,11 +277,11 @@ describe("turning access off from the Mac page", () => {
     const { access, opened, steps } = await buildSwitch({ booted: ON });
     const outcome = await access.setOff();
     await access.close();
-    assert.deepEqual([outcome, steps, opened.map((controller) => controller.isTurnedOff), access.getAccess()], [
+    assert.deepEqual([outcome, steps, opened.map((controller) => controller.isTurnedOff), await getView(access)], [
       "written",
       ["off"],
       [true],
-      { enabled: false, trusted: [HOME_NETWORK] },
+      { enabled: false, trustedCount: 1, isAnswering: false },
     ]);
   });
 

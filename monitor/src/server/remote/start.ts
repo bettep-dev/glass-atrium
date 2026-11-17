@@ -21,7 +21,6 @@ import type {
   AccessStepOutcome,
   ConfirmFacts,
   RemoteAccessActs,
-  RemoteAccessState,
   SetupFacts,
   TurnOnResult,
 } from "./admin-routes.js";
@@ -171,7 +170,7 @@ async function openRemoteAccess(settings: RemoteSettings, input: RemoteAccessInp
   return controller;
 }
 
-export type SwitchedController = Pick<RemoteListenerController, "isTurnedOff" | "isOpen" | "turnOff" | "stop">;
+export type SwitchedController = Pick<RemoteListenerController, "isOpen" | "turnOff" | "stop">;
 
 export interface AccessSwitchDeps {
   /** the boot path → its own audit row and device-off rule */
@@ -210,12 +209,6 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     settings: RemoteSettings,
   ) {
     this.#settings = settings;
-  }
-
-  /** the Mac page's view: on and open to devices in this process, and the networks it opens on */
-  getAccess(): RemoteAccessState {
-    const isOn = this.#controller !== null && !this.#controller.isTurnedOff;
-    return { enabled: isOn, trusted: this.#settings.trusted };
   }
 
   async boot(): Promise<void> {

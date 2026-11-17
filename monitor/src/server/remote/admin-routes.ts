@@ -13,7 +13,7 @@ import type { DeviceConnections } from "./connections.js";
 import type { DeviceListing } from "./devices.js";
 import { type RemoteAuditEvent, getRoutePayload, recordEvent } from "./gate.js";
 import { type WindowLimit, WindowLimiter, buildWindowLimitHook } from "./limits.js";
-import type { ListenReason, NetworkLink, TrustedNetwork } from "./network.js";
+import type { ListenReason, NetworkLink } from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
 import { EMPTY_BODY_LIMIT_BYTES, hasBody } from "./request-body.js";
 
@@ -139,23 +139,10 @@ export interface RemoteAdminDeps {
   /** shared with the remote gate → a revoke ends the device's open sockets at once */
   readonly connections: Pick<DeviceConnections, "close">;
   readonly audit: { insertEvent(event: RemoteAuditEvent): Promise<void> };
-  /** the Mac page's view of the feature: on in this process, and the networks it opens on */
-  readonly getAccess: () => RemoteAccessState;
   readonly access: RemoteAccessActs;
   readonly now?: () => number;
   /** tests pass a short one; WAIT_TIMEOUT_MS otherwise */
   readonly waitTimeoutMs?: number;
-}
-
-export interface RemoteAccessState {
-  readonly enabled: boolean;
-  readonly trusted: readonly TrustedNetwork[];
-}
-
-/** The devices read's view of the feature: no router or hardware address → the router shows in the confirm read only. */
-export interface AccessView {
-  readonly enabled: boolean;
-  readonly trustedCount: number;
 }
 
 /** The acts the Mac page and the CLI share → one code path per act (revoke → close sockets → audit). */
@@ -181,7 +168,7 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
     const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
     const openOptions = { ...options, preHandler: buildLimitHook(REMOTE_ADMIN_LIMITS.REGISTRATION_OPEN, deps) };
     scope.post(REMOTE_ADMIN_PATH.REGISTRATION, openOptions, (request, reply) => openRegistration(request, reply, deps));
-    scope.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ ...(await getDeviceList(deps)), access: getAccessView(deps.getAccess()) }));
+    scope.get(REMOTE_ADMIN_PATH.DEVICES, () => getDeviceList(deps));
     scope.delete<{ Params: DeviceParams }>(REMOTE_ADMIN_PATH.DEVICE, { ...options, schema: DEVICE_PARAMS_SCHEMA }, (request, reply) =>
       revokeOne(request, reply, { deps, actor: AUDIT_ACTOR }),
     );
@@ -242,11 +229,6 @@ export async function getDeviceList(deps: Pick<RemoteAdminDeps, "devices">): Pro
       lastSeenAt: device.lastSeenAt.toISOString(),
     })),
   };
-}
-
-/** Field by field → a wider value from the caller (the trusted list, port, paths, interface) never reaches the page. */
-function getAccessView(access: RemoteAccessState): AccessView {
-  return { enabled: access.enabled, trustedCount: access.trusted.length };
 }
 
 /** One access act at a time, in arrival order → two config writes never interleave. */

@@ -126,7 +126,6 @@ async function collectLiveRoutes(): Promise<Set<string>> {
       devices,
       connections: new DeviceConnections(),
       audit,
-      getAccess: () => ({ enabled: false, trusted: [] }),
       access,
     });
     await registerRemoteCliRoutes(app, { devices, connections: new DeviceConnections(), audit });

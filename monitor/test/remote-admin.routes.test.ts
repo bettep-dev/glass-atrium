@@ -41,16 +41,6 @@ import { deleteDirectory } from "./lib/remove-dir.js";
 
 const PORT = 16199;
 const MAC_PAGE: Record<string, string> = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin", [MAC_PAGE_HEADER.NAME]: MAC_PAGE_HEADER.VALUE };
-const ACCESS = { enabled: true, trusted: [{ gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33" }] };
-// what a careless caller could hand the route: the whole settings value, port, interface and paths included
-const WIDE_ACCESS = {
-  ...ACCESS,
-  port: 16443,
-  host: "192.168.0.24",
-  certificatePath: "/Users/owner/.glass-atrium/monitor/data/remote-access/leaf.pem",
-  trusted: ACCESS.trusted.map((entry) => ({ ...entry, interfaceName: "en0" })),
-};
-
 const SETUP_FACTS: SetupFacts = {
   enabled: true,
   isOffByDevice: false,
@@ -112,7 +102,6 @@ function buildAdminDeps(): RemoteAdminDeps {
         events.push(event);
       },
     },
-    getAccess: () => WIDE_ACCESS,
     access: {
       getConfirmFacts: async () => {
         trail.push("read confirm");
@@ -397,12 +386,6 @@ describe("listing devices", () => {
         [String(kept.id), "Owner iPhone", ["createdAt", "id", "label", "lastSeenAt"]],
       ]);
     });
-  });
-
-  test("carries only whether access is on and how many networks are trusted, never a router or hardware address, whatever wider value the caller holds", async () => {
-    const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.DEVICES });
-    const body = JSON.parse(response.body) as { access: unknown };
-    assert.deepEqual([Object.keys(body).sort(), body.access], [["access", "devices"], { enabled: true, trustedCount: ACCESS.trusted.length }]);
   });
 });
 

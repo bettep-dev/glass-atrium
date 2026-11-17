@@ -39,7 +39,7 @@ async function openRenderContext(setup: Record<string, unknown>): Promise<Render
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   app.get(REMOTE_ADMIN_PATH.SETUP, async () => setup);
-  app.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ devices: [], access: { enabled: setup.enabled, trustedCount: setup.trustedCount } }));
+  app.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ devices: [] }));
   app.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, async () => ({ router: ROUTER, link: "wifi", isNetworkTrusted: false }));
   app.get(REMOTE_ADMIN_PATH.CERTIFICATE, async (_request, reply) => reply.code(404).send({ error: "certificate_unavailable" }));
   app.post("/api/remote/*", async (request) => {

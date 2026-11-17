@@ -69,7 +69,6 @@ function buildAdminDeps(): RemoteAdminDeps {
         events.push(event);
       },
     },
-    getAccess: () => ({ enabled: true, trusted: [] }),
     access: ACCESS,
     now,
   };

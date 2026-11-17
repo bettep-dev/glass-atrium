@@ -88,7 +88,6 @@ async function main(): Promise<void> {
       devices: { list: () => listActiveDevices(getPrisma()), revoke: (id) => revokeDevice(getPrisma(), id), revokeAll: () => revokeAllDevices(getPrisma()) },
       connections: deviceConnections,
       audit: buildRemoteAuditWriter(),
-      getAccess: () => remoteAccess.getAccess(),
       access: remoteAccess,
     },
   });
