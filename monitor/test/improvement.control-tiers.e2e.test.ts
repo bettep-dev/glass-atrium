@@ -95,7 +95,7 @@ const LEARNING_MEMORY = getMarkup("BucketRowI", {
 
 // the board lane widths the audit measured: 1440 (378) and 820 (226)
 const LANE_WIDTHS = [378, 226] as const;
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div style="padding: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;">
     <div id="view-operator">${getToggle("operator")}</div>
     <div id="view-instrumentation">${getToggle("instrumentation")}</div>

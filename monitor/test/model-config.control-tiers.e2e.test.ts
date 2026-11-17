@@ -96,7 +96,7 @@ const RESULTS = getMarkup("SurfaceResultsCardMC", {
 // a field's saved line: overridden (Saved value + Reset) and back at the saved value (the empty slot)
 const getSavedLine = (overridden: boolean) => getMarkup("GhostResetMC", { overridden, defaultValue: overridden ? MODEL : null, onReset: noop });
 
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="models" style="width: 760px; padding: 24px;">${MODELS}</div>
   <div id="caps" style="width: 560px; padding: 24px;">${CAPS}</div>
   <div id="results" style="width: 560px; padding: 24px;">${RESULTS}</div>

@@ -1232,11 +1232,11 @@ test("the legend names every mark the canvas can draw", () => {
   );
 });
 
-// one theme block of tokens.css → name → "r g b" triplet
-function readTokenBlock(selector: string): Map<string, string> {
+// the :root block of tokens.css → name → "r g b" triplet
+function readRootTokens(): Map<string, string> {
   const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
-  const start = css.indexOf(`${selector} {`);
-  assert.ok(start !== -1, `tokens.css must contain a ${selector} block`);
+  const start = css.indexOf(":root {");
+  assert.ok(start !== -1, "tokens.css must contain a :root block");
   const body = css.slice(start, css.indexOf("}", start));
   return new Map([...body.matchAll(/(--[\w-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)].map((m) => [m[1], `${m[2]} ${m[3]} ${m[4]}`]));
 }
@@ -1246,10 +1246,7 @@ function getTripletRgba(triplet: string | undefined): Rgba {
   return parseColor(`rgb(${triplet.split(" ").join(", ")})`);
 }
 
-const THEME_TOKENS = [
-  { name: "light", tokens: readTokenBlock(":root") },
-  { name: "dark", tokens: readTokenBlock('[data-theme="dark"]') },
-];
+const ROOT_TOKENS = readRootTokens();
 
 test("every coloured node border the drawn map assigns has a legend swatch whose token is that border's colour", () => {
   const source = CANONICAL_MAP.mermaid_drawn;
@@ -1260,13 +1257,12 @@ test("every coloured node border the drawn map assigns has a legend swatch whose
   // the 'external' class draws the neutral line colour — it marks no role, so it takes no swatch
   const coloured = [...assigned].filter((name) => name !== "external");
   const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
-  const dark = THEME_TOKENS[1].tokens;
 
   assert.ok(coloured.length > 0, "fixture precondition: the drawn map assigns a coloured border");
   for (const name of coloured) {
     const swatch = swatches.find((item) => item.key === name);
     assert.ok(swatch?.token, `class '${name}' has no legend swatch token — read: ${JSON.stringify(swatches)}`);
-    const tokenHex = getTripletRgba(dark.get(swatch.token));
+    const tokenHex = getTripletRgba(ROOT_TOKENS.get(swatch.token));
     const drawnHex = [tokenHex.r, tokenHex.g, tokenHex.b].map((n) => n.toString(16).padStart(2, "0")).join("");
     assert.strictEqual(drawnHex, strokeByClass.get(name), `class '${name}' draws a hue other than its swatch token ${swatch.token}`);
   }
@@ -1286,11 +1282,10 @@ test("the drawn node border rule paints each role class with its own legend swat
 
 describe("every role border swatch clears 3:1 on the page ground", () => {
   const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
-  const rows = THEME_TOKENS.flatMap((theme) => swatches.map((swatch) => ({ name: `${swatch.label} in ${theme.name}`, theme, swatch })));
-  for (const row of rows)
-    test(row.name, () => {
-      const ratio = contrastRatio(getTripletRgba(row.theme.tokens.get(row.swatch.token!)), getTripletRgba(row.theme.tokens.get("--surface")));
-      assert.ok(ratio >= 3, `${row.name}: ${ratio.toFixed(2)} on --surface`);
+  for (const swatch of swatches)
+    test(swatch.label, () => {
+      const ratio = contrastRatio(getTripletRgba(ROOT_TOKENS.get(swatch.token!)), getTripletRgba(ROOT_TOKENS.get("--surface")));
+      assert.ok(ratio >= 3, `${swatch.label}: ${ratio.toFixed(2)} on --surface`);
     });
 });
 
@@ -1349,7 +1344,7 @@ test("the security category's node stroke uses no status hue", () => {
   );
 
   assert.ok(stroke, "security classDef must declare a stroke");
-  assert.ok(statusHexes.length >= 6, `precondition: both themes' ok/warn/crit read — ${statusHexes}`);
+  assert.equal(statusHexes.length, 3, `precondition: ok/warn/crit read — ${statusHexes}`);
   assert.ok(!statusHexes.includes(stroke), `${stroke} collides with a status hue ${statusHexes}`);
 });
 

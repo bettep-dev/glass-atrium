@@ -44,7 +44,7 @@ const STATES = {
 type State = keyof typeof STATES;
 
 // the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint placeholder, the stale flag's warn glyph, the crit glyph and the ink title
-const getLedgerPage = () => `<!doctype html><html data-theme="dark" style="--accent: ${RUNTIME_ACCENT};"><head><style>${UTILITIES}</style></head><body style="margin: 0;">
+const getLedgerPage = () => `<!doctype html><html style="--accent: ${RUNTIME_ACCENT};"><head><style>${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td class="doc-age-cell doc-col-num text-dim"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
@@ -250,7 +250,7 @@ const ageCellHtml = (label: string) =>
 const AGE_PREFLIGHT =
   "*, ::before, ::after { box-sizing: border-box; border: 0 solid; } html { line-height: 1.5; } svg { display: block; vertical-align: middle; } table { border-collapse: collapse; }" +
   " .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }";
-const ageCellPage = (floor: number) => `<!doctype html><html data-theme="dark"><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
+const ageCellPage = (floor: number) => `<!doctype html><html><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px; width: 600px;"><div class="card"><table class="tbl"><thead><tr><th>Title</th><th class="doc-col-num" style="width: ${floor}px; min-width: ${floor}px;">Created</th></tr></thead><tbody>
     <tr id="two-digit" class="doc-row"><td>Plan</td>${ageCellHtml("15d")}</tr>
     <tr id="three-digit" class="doc-row"><td>Plan</td>${ageCellHtml("120d")}</tr>
@@ -348,7 +348,7 @@ const STAGE_FACES = [
 const stageCellHtml = (face: (typeof STAGE_FACES)[number]) =>
   getHtml(renderScreen((docsScreen.DocStageCD as (props: unknown) => unknown)({ docTitle: "Plan", onPickStage: () => {}, ...face })) as RenderedNode);
 // the Status cell is an interior column → it sits between two neighbours; the capped table carries .doc-ledger (the label cap) at the floor, the natural one neither
-const stageCellPage = (floor: number) => `<!doctype html><html data-theme="dark"><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
+const stageCellPage = (floor: number) => `<!doctype html><html><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card">
     <table class="tbl doc-ledger"><thead><tr><th>Sel</th><th style="width: ${floor}px; min-width: ${floor}px;">Status</th><th>Title</th></tr></thead><tbody>
       ${STAGE_FACES.map((face) => `<tr id="capped-${face.id}" class="doc-row"><td>·</td><td class="status">${stageCellHtml(face)}</td><td>Plan</td></tr>`).join("")}
@@ -514,7 +514,7 @@ describe("a group member nests one lead slot under its root on both table modes"
   const groupRows = (mode: string) => `
     <tr class="doc-row is-group-root"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-root"><div class="doc-title-row"><span class="doc-title-lead"><button type="button" class="doc-group-toggle inline-target" aria-label="Collapse group (2 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan</span></div></td></tr>
     <tr class="doc-row is-group-member"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-member"><div class="doc-title-row"><span class="doc-title-lead"><span class="doc-drag-handle">⠿</span></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan rev 2</span></div></td></tr>`;
-  const nestPage = `<!doctype html><html data-theme="dark"><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
+  const nestPage = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card">
       <table class="tbl doc-ledger" style="width: 600px;"><tbody>${groupRows("wide")}</tbody></table>
       <table class="tbl tbl--stacked doc-ledger" style="width: 600px;"><tbody>${groupRows("stacked")}</tbody></table>

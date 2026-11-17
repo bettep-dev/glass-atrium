@@ -70,7 +70,7 @@ const SESSIONS_CARD = getMarkup(closedScreen, "SessionDistributionCard", {
   days: 30, failures: {}, onRetry: noop,
 });
 
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="card" style="width: 640px; padding: 24px;">${MODEL_CARD}</div>
   <div id="closed" style="padding: 24px;">${getLedger(closedScreen)}</div>
   <div id="open" style="padding: 24px;">${getLedger(openScreen)}</div>

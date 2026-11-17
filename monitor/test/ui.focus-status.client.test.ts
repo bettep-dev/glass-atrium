@@ -10,7 +10,7 @@ import { collectText, createEffectReact, createFakeDocument, findNodes, loadScre
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = resolve(__dirname, "../public");
 const SRC = resolve(PUBLIC, "src");
-const THEME_CSS = readFileSync(resolve(PUBLIC, "styles/tokens.css"), "utf8");
+const TOKENS_CSS = readFileSync(resolve(PUBLIC, "styles/tokens.css"), "utf8");
 
 type Component = (props: Record<string, unknown>) => unknown;
 
@@ -30,18 +30,15 @@ function getSourceFiles(dir: string): string[] {
   );
 }
 
-test("the focus colour clears 3:1 against every surface it can sit on, in both themes", () => {
-  const light = getBlock(THEME_CSS, ":root");
-  const dark = getBlock(THEME_CSS, '[data-theme="dark"]');
-  for (const [theme, block] of [["light", light], ["dark", dark]] as const) {
-    const ring = getTriplet(block, "--focus-ring");
-    assert.ok(ring, `${theme} theme declares --focus-ring`);
-    for (const surface of ["--surface", "--elev", "--sunken"]) {
-      const bg = getTriplet(block, surface);
-      assert.ok(bg, `${theme} ${surface}`);
-      const ratio = contrastRatio(ring, bg);
-      assert.ok(ratio >= 3, `${theme} --focus-ring on ${surface} = ${ratio.toFixed(2)}:1`);
-    }
+test("the focus colour clears 3:1 against every surface it can sit on", () => {
+  const tokens = getBlock(TOKENS_CSS, ":root");
+  const ring = getTriplet(tokens, "--focus-ring");
+  assert.ok(ring, "tokens.css declares --focus-ring");
+  for (const surface of ["--surface", "--elev", "--sunken"]) {
+    const bg = getTriplet(tokens, surface);
+    assert.ok(bg, surface);
+    const ratio = contrastRatio(ring, bg);
+    assert.ok(ratio >= 3, `--focus-ring on ${surface} = ${ratio.toFixed(2)}:1`);
   }
 });
 

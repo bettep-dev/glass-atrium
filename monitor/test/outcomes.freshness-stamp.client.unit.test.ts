@@ -116,16 +116,14 @@ function getLuminance(rgb: number[]): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-// One token map per theme — the dark theme spans its main block and the root-only accent default.
-function getThemeTokens(): Array<Record<string, number[]>> {
+// the plain :root block of tokens.css → name → [r, g, b]
+function getRootTokens(): Record<string, number[]> {
   const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const themes = { light: {} as Record<string, number[]>, dark: {} as Record<string, number[]> };
-  for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
-    const theme = selector.trim() === ":root" ? themes.light : selector.includes('[data-theme="dark"]') ? themes.dark : null;
-    if (!theme) continue;
-    for (const m of body.matchAll(/--([a-z-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)) theme[m[1]] = [Number(m[2]), Number(m[3]), Number(m[4])];
-  }
-  return [themes.light, themes.dark].filter((tokens) => tokens.ink && tokens.elev && tokens.accent && tokens.warn);
+  const body = css.match(/(?:^|\n):root\s*\{([^}]*)\}/)?.[1];
+  assert.ok(body, "tokens.css must contain a plain :root block");
+  const tokens: Record<string, number[]> = {};
+  for (const m of body.matchAll(/--([a-z-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)) tokens[m[1]] = [Number(m[2]), Number(m[3]), Number(m[4])];
+  return tokens;
 }
 
 function getContrast(a: number[], b: number[]): number {
@@ -134,19 +132,16 @@ function getContrast(a: number[], b: number[]): number {
 }
 
 for (const isPolar of [false, true]) {
-  test(`the busiest ${isPolar ? "polar" : "plain"} crosstab cell keeps its count at 4.5:1 and its fill at 3:1 in every theme`, () => {
+  test(`the busiest ${isPolar ? "polar" : "plain"} crosstab cell keeps its count at 4.5:1 and its fill at 3:1`, () => {
     const tree = render("CrosstabCell", { cell: { count: 8623, isPolar }, max: 8623, rowLabel: "high", colLabel: "pass" });
     const td = findNodes(tree, (n) => n.type === "td")[0];
     assert.strictEqual((td.props.style as { background?: string } | undefined)?.background, undefined, "the count sits on the plain card");
     const fill = findNodes(tree, (n) => /^rgb\(var\(--[a-z]+\)\)$/.test(String((n.props.style as { background?: string } | undefined)?.background)))[0];
     assert.ok(fill, "solid fill not found");
     const fillVar = /--([a-z]+)/.exec(String((fill.props.style as { background: string }).background))![1];
-    const themes = getThemeTokens();
-    assert.strictEqual(themes.length, 2);
-    for (const tokens of themes) {
-      assert.ok(getContrast(tokens.ink, tokens.elev) >= 4.5, "count contrast");
-      const fillContrast = getContrast(tokens[fillVar], tokens.elev);
-      assert.ok(fillContrast >= 3, `fill contrast ${fillContrast.toFixed(2)}`);
-    }
+    const tokens = getRootTokens();
+    assert.ok(getContrast(tokens.ink, tokens.elev) >= 4.5, "count contrast");
+    const fillContrast = getContrast(tokens[fillVar], tokens.elev);
+    assert.ok(fillContrast >= 3, `fill contrast ${fillContrast.toFixed(2)}`);
   });
 }

@@ -158,7 +158,7 @@ const REFRESH_STATES = [
   { name: "refreshing", id: "refresh-busy", markup: render(ui.RefreshButton, { isBusy: true, hasRead: true, onRefresh: () => {} }) },
 ] as const;
 
-const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
   ${ICON_ROWS.map((row) => `<p id="${row.id}" style="width: 320px;">${row.markup} Healthy</p>`).join("\n  ")}
   <p id="bare" style="width: 320px;"><svg width="14" height="14" viewBox="0 0 24 24"></svg> Healthy</p>
   <table class="tbl" style="width: 480px;"><tbody>

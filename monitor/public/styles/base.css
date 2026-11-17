@@ -40,7 +40,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .inline-target.inline-target {
 	line-height: var(--lh-row);
 }
-/* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget (light-scheme on a dark surface);
+/* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget;
    neutral at rest, the one selected state when checked or mixed. Its label takes .inline-target for the 24 hit area.
    An input carries no pseudo-element in every engine → the check / minus glyph is a .ctl-checkbox-mark overlay. A toggle is discrete → no transition */
 .ctl-checkbox {
@@ -125,7 +125,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 
 /* flex column → the body takes the remaining height and the foot pins to the bottom edge.
-   One hairline edge in both themes — no shadow, no inset highlight.
+   One hairline edge — no shadow, no inset highlight.
    clip, not hidden → no scroll container, so a sticky inside sticks to the page scroller;
    min 0 on both axes = the automatic minimum a scroll container had → flex and grid parents lay out unchanged */
 .card {
@@ -267,7 +267,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .btn.danger {
 	background: rgb(var(--crit));
-	color: rgb(var(--elev)); /* knock-out — white on the pale dark-theme crit is 2.77 */
+	color: rgb(var(--elev)); /* knock-out — white on the pale crit is 2.77 */
 	border-color: rgb(var(--crit));
 }
 .btn.ghost {
@@ -351,7 +351,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	background: var(--tint-fill);
 	color: rgb(var(--ink));
 }
-/* the amber tint alone is 1.43:1 → the ⚠ and the word carry the state, both in ink (--warn on its own tint is 2.87 in light) */
+/* the amber tint alone is 1.43:1 → the ⚠ and the word carry the state, both in ink */
 .pill--warn {
 	background: var(--tint-warn);
 	color: rgb(var(--ink));
@@ -1394,7 +1394,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	border-color: rgb(var(--ink));
 	color: rgb(var(--surface));
 }
-/* disabled → the press sign goes; the label or glyph stays readable at full strength (half strength is 2.34:1 light), on no fill */
+/* disabled → the press sign goes; the label or glyph stays readable at full strength, on no fill */
 .queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon),
 .queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon):is(:hover, :active),
 .queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]),
@@ -2321,7 +2321,7 @@ a.prose-link:hover {
 	background: rgb(var(--sunken));
 	color: rgb(var(--ink));
 }
-/* --surface-raised-2 equals the light sidebar fill → the select tint; weight 500 + aria-current carry it beyond the fill */
+/* --surface-raised-2 is 1.08:1 on the sidebar → the select tint; weight 500 + aria-current carry it beyond the fill */
 .nav-item.active {
 	background: var(--tint-select);
 	color: rgb(var(--ink));
@@ -2384,7 +2384,7 @@ a.prose-link:hover {
 }
 
 /* alert card — the alarm row on a card shell: the grid holds the padding, the shell stays neutral (no stripe, tinted fill or
-   tone border) and the bare glyph takes the tone — ≥ 3.15:1 on --elev and --sunken in both themes */
+   tone border) and the bare glyph takes the tone — ≥ 3.15:1 on --elev and --sunken */
 .alert-card {
 	--alert-tone: var(--crit);
 	container-type: inline-size;
@@ -2563,7 +2563,7 @@ a.prose-link:hover {
 	border-radius: 0;
 	animation: detailFade 180ms ease-out;
 }
-/* panel over a scrim → ring inset on the panel's own fill: an outer ring lands on the scrim (light 1.64:1) or off the viewport edge */
+/* panel over a scrim → ring inset on the panel's own fill: an outer ring lands on the scrim or off the viewport edge */
 .detail-drawer .detail-panel:focus-visible,
 .detail-fullscreen .detail-panel:focus-visible,
 .detail-confirm .detail-panel:focus-visible {
@@ -2722,26 +2722,22 @@ a.prose-link:hover {
 
 /* ── select — native <select> 유지 + 토큰 색 chevron ─────────────────────────
    appearance:none 으로 OS 기본 화살표 제거 후, currentColor 대신 --faint 고정색
-   인라인 SVG data-uri 를 우측에 배치 → 다크/라이트 양쪽 동일 톤. 우측 padding 으로
+   인라인 SVG data-uri (--faint 160 154 150 톤) 를 우측에 배치. 우측 padding 으로
    chevron 자리 확보. background 는 fill(elev) + chevron 2겹 합성. */
 .field-select {
 	--select-chevron: 12px;  /* the chevron's size (a size, outside the ladder) */
 	/* the chevron gutter = inset + chevron + the same gap before the value text (28 today) */
 	padding-right: calc(2 * var(--space-2) + var(--select-chevron));
-	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23706a65' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a09a96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 	background-repeat: no-repeat;
 	background-position: right var(--space-2) center;
 	background-size: var(--select-chevron) var(--select-chevron);
 	cursor: pointer;
 }
-/* 다크 테마 chevron — --faint(dark)=160 154 150 톤으로 교체해 어두운 면에서 가시화 */
-[data-theme="dark"] .field-select {
-	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a09a96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
-}
 .field-select:focus-visible {
 	background-position: right var(--space-2) center; /* focus 시 ring 추가돼도 chevron 고정 */
 }
-/* 옵션 목록은 OS 네이티브 렌더 — 다크 일관성은 [data-theme] 무관(브라우저 소관) */
+/* 옵션 목록은 OS 네이티브 렌더 — tokens.css 의 color-scheme: dark 가 다크로 그림 */
 
 /* ── inline-affix wrapper — 예산 "$" 등 ($ 가 input 높이 안에서 정렬, 높이 불변) ──
    wrapper 가 border/radius/fill/focus-ring 을 소유, 내부 input 은 borderless 투명.

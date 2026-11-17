@@ -12,7 +12,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
 
 // a zero-row Results card: the open filter panel is far taller than the card, and another card sits right below it
-const SHORT_CARD_PAGE = `<!doctype html><html data-theme="light"><body>
+const SHORT_CARD_PAGE = `<!doctype html><html><body>
   <div style="width: 640px; padding: 24px;">
     <div class="card" id="results">
       <div class="card-head">
@@ -65,7 +65,7 @@ describe("Popover panel inside a card head", () => {
 
 // three stacked rows in an open panel; `tokens` overrides the role tokens on the wrapper (inherited by the panel)
 function buildRowsPage(tokens: string): string {
-  return `<!doctype html><html data-theme="light"><body>
+  return `<!doctype html><html><body>
   <div style="width: 640px; padding: 24px; ${tokens}">
     <div class="popover-root" style="float: right;">
       <button type="button" class="btn ghost sm">Info</button>
