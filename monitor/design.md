@@ -32,7 +32,7 @@
 1) **중심 명료 영역** — 본문 데이터 면(카드 그리드 · 차트 · 테이블)이 뷰포트에서 가장 밝고 선명한 plane. 사이드바 · 페이지 헤더 chrome 은 `--dim`/`--faint` 로 물러난다 (`aside` = `bg-elev` · `border-r`).
 2) **가리지 않는 깊이** — 깊이 = **휘도 차 + border**, blur 아님. 사이드바 · 카드 = raised · drawer/dialog/popover = overlay (§6.1).
    - Every product surface is opaque, the drawer and dialog scrim included (§12.9); blur stays only in the dev-only tweaks panel (§3.5).
-3) **Flat surfaces** — a card is one hairline on the page ground in both themes: no shadow, no inset highlight; dark raises it by the fill step alone (§6.2 · §7.1 · §12.9).
+3) **Flat surfaces** — a card is one hairline on the page ground: no shadow, no inset highlight; the fill step alone raises it (§6.2 · §7.1 · §12.9).
 4) **숨 쉴 공간** — 하나의 간격 세트: the `--gap-*` role tokens (§12.1). 글자가 커지면 padding 은 **더 좁게**.
    - zone 당 1차 초점 요소 ≤ 5. 밀도는 여백이 아니라 sparkline · sub-card · 점진적 공개로:
      - `Disclosure` fold: `kind="status"` 열림 시작 · `kind="detail"` 접힘 시작 · warn/crit 이 되면 스스로 열리고 회복해도 강제로 닫지 않는다 (`getDisclosureOpen`).
