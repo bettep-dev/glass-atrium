@@ -168,7 +168,7 @@ const orderCursor = z
     return { at: BigInt(at), id: BigInt(id) };
   });
 
-// The thread a history read pages: the owner's orders, or ended relays
+// The thread a history read pages: the owner's orders, or relays
 export const ownerOrdersQuerySchema = z.strictObject({
   kind: z.enum(["order", "relay"]).default("order"),
   sessionIds: z

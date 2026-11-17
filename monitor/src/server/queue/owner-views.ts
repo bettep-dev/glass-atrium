@@ -227,7 +227,7 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
 
 /**
  * A history thread, newest first, paged by order: the owner's orders (message items and reports carrying an owner reply)
- * or ended relays, in every status. Every copy of a paged order is on that page, the copies to sessions the filter
+ * or relays, in every status. Every copy of a paged order is on that page, the copies to sessions the filter
  * leaves out included. Items come order by order, the copies of one order in id order.
  */
 export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<OwnerOrdersPage> {
@@ -320,7 +320,7 @@ const HISTORY_THREADS = {
     unsentKey: Prisma.sql`CASE WHEN i."kind" = 'message' THEN concat('m:', t."at", ':', md5(i."body")) ELSE concat('i:', i."id") END`,
   },
   relay: {
-    items: Prisma.sql`i."kind" = 'relay' AND i."status"::text IN (${Prisma.join(TERMINAL)})`,
+    items: Prisma.sql`i."kind" = 'relay'`,
     time: Prisma.sql`i."asked_at"`,
     unsentKey: Prisma.sql`concat('i:', i."id")`,
   },

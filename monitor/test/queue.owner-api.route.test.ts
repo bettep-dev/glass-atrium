@@ -907,21 +907,22 @@ describe("relay history", () => {
     return eventTs.toISOString();
   }
 
-  test("lists ended relays with either end in the filter, newest send first, each send whole, and leaves them out of the orders thread", async () => {
+  test("lists every relay in every state with either end in the filter, newest send first, each send whole, and leaves them out of the orders thread", async () => {
     const [sender, left, right, stranger] = [await seedSession(), await seedSession(), await seedSession(), await seedSession()];
     const sendId = randomUUID();
     const ids = {
       toBoth: [await seedRelay(sender, left, minutesAgo(40), { sendId }), await seedRelay(sender, right, minutesAgo(40), { sendId })],
       lapsedToSender: await seedRelay(right, sender, minutesAgo(30), { status: "withdrawn", deliveredAt: null, relayFetchedAt: null, relayClosedAt: minutesAgo(1) }),
+      unackedFetched: await seedRelay(sender, right, minutesAgo(25), { status: "unacked", deliveredAt: null }),
+      onItsWay: await seedRelay(sender, left, minutesAgo(20), { status: "answered", deliveredAt: null, relayFetchedAt: null }),
     };
-    await seedRelay(sender, left, minutesAgo(20), { status: "answered", deliveredAt: null, relayFetchedAt: null });
     await seedRelay(stranger, left, minutesAgo(10));
 
     const history = await getHistory(`sessionIds=${sender}`);
     const orders = await getOrders(`sessionIds=${sender},${left},${right}`);
 
     assert.equal(history.statusCode, 200, history.body);
-    assert.deepEqual(history.json().items.map((item: { id: number }) => item.id), [ids.lapsedToSender, ...ids.toBoth].map(Number));
+    assert.deepEqual(history.json().items.map((item: { id: number }) => item.id), [ids.onItsWay, ids.unackedFetched, ids.lapsedToSender, ...ids.toBoth].map(Number));
     assert.deepEqual(orders.json().items, [], "a relay is no order");
   });
 
