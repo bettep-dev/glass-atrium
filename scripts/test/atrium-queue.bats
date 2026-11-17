@@ -23,7 +23,7 @@ DECISION='{"title":"Pick the retention window","body":"Backups now take 40 GB a 
 
 setup() {
   # the ambient session's own CLAUDE_* values must never reach the CLI under test
-  unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
+  unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET ATRIUM_QUEUE_PROBE \
     CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR ATRIUM_QUEUE_WAIT_POLL_S ATRIUM_QUEUE_WAIT_BOUND_S
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
   # no secrets dir: a session needs nothing provisioned
@@ -1507,4 +1507,87 @@ mark_awaiting() {
     cat "${BATS_TEST_TMPDIR}/requests.log"
     return 1
   }
+}
+
+# this session's turn record file, as the record operation writes it
+record_file() {
+  printf '%s/data/queue/awaiting/%s/.record\n' "${GA_ROOT}" "${SESSION_ID}"
+}
+
+@test "record writes the turn's record for nothing to post or for items this session posted, and refuses any other form" {
+  local own row label expected_status form record
+  own="$(jq -nc --arg s "${SESSION_ID}" '{id: 41, kind: "decision", sessionId: $s, status: "open"}')"
+  set_reply 200 "${own}"
+  start_stub
+  for row in "nothing to post|0|nothing" "items posted|0|posted 41 42" "posted with no id|64|posted" \
+    "nothing with an id|64|nothing 41" "an unknown form|64|later" "an id with a path segment|64|posted 4/../1" "no form|64|"; do
+    IFS='|' read -r label expected_status form <<<"${row}"
+    record="$(record_file)"
+    if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    IFS=' ' read -r -a argv <<<"${form}"
+    run_cli record "${argv[@]}"
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "row ${label}: status=${status} ${output}${stderr}"
+      return 1
+    }
+    if ((expected_status == 0)); then
+      [[ -f "$(record_file)" && "$(jq -c '[.form, .itemIds, .isChecked]' <<<"${output}")" == "$(jq -nc --arg f "${argv[0]}" \
+        '[$f, ($ARGS.positional | map(tonumber)), true]' --args "${argv[@]:1}")" ]] || {
+        echo "row ${label}: ${output}"
+        return 1
+      }
+    else
+      [[ ! -e "$(record_file)" && ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+        echo "row ${label}: a refused record wrote a file or asked the monitor"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "record refuses an id this session did not post with exit 3, and records unchecked when the monitor is down" {
+  local row label code body expected_status record
+  local own="{\"id\":41,\"kind\":\"decision\",\"sessionId\":\"${SESSION_ID}\",\"status\":\"open\"}"
+  for row in "unknown item|404|{\"error\":\"unknown_item\"}|3" "a relay it received|200|${own/decision/relay}|3" \
+    "an owner message|200|${own/decision/message}|3" "a down monitor|down||0"; do
+    IFS='|' read -r label code body expected_status <<<"${row}"
+    stop_stub
+    record="$(record_file)"
+    if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
+    if [[ "${code}" == down ]]; then
+      export ATRIUM_MONITOR_PORT=1
+    else
+      set_reply "${code}" "${body}"
+      start_stub
+    fi
+    run_cli record posted 41
+    [[ "${status}" -eq "${expected_status}" ]] || {
+      echo "row ${label}: status=${status} ${output}${stderr}"
+      return 1
+    }
+    if ((expected_status == 0)); then
+      [[ -f "$(record_file)" && "$(jq -c '[.form, .isChecked]' <<<"${output}")" == '["posted",false]' ]] || {
+        echo "row ${label}: ${output}"
+        return 1
+      }
+    else
+      [[ ! -e "$(record_file)" && "${stderr}" == *"item 41"* ]] || {
+        echo "row ${label}: ${stderr}"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "record with a session env that is no UUID exits 64 and writes no record file anywhere" {
+  local id
+  for id in "../../../escape" "not-a-uuid"; do
+    export CLAUDE_CODE_SESSION_ID="${id}"
+    run_cli record nothing
+    [[ "${status}" -eq 64 && -z "$(find "${BATS_TEST_TMPDIR}" -name '.record' 2>/dev/null)" ]] || {
+      echo "id ${id}: status=${status} $(find "${BATS_TEST_TMPDIR}" -name '.record')"
+      return 1
+    }
+  done
 }

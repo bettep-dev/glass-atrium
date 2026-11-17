@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # queue-session.sh — the owner queue's session side, shared by the SessionStart / SessionEnd / Stop hooks and the
-# queue CLI so each has one owner: the register and deregister steps, the monitor reply framing, the item status sets,
-# the awaiting marks and the wait-lock reader. Sourced, not executable; never reads the messaging token, and sends a
+# queue CLI so each has one owner: the register and deregister steps, the name refresh, the monitor reply framing, the
+# item status sets and read, the awaiting marks, the turn record and the wait-lock reader. Sourced, not executable; never reads the messaging token, and sends a
 # pid, never a start time.
 
 if [[ -n "${_QUEUE_SESSION_LOADED:-}" ]]; then
@@ -26,6 +26,8 @@ readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions don
 # (queue-turn-end-check.bats compares the two)
 # shellcheck disable=SC2034  # read by the sourcing turn-end hook
 readonly QUEUE_TERMINAL_STATUSES=' delivered seen withdrawn '
+# the kinds a session posts → an owner message or a relay is never an item this session posted
+readonly QUEUE_POSTED_KINDS=' report decision '
 # the states a running wait carries forward: open (no answer yet) and answered (claimed by the wait)
 # shellcheck disable=SC2034  # read by the sourcing turn-end hook
 readonly QUEUE_WAIT_RESOLVED_STATUSES=' open answered '
@@ -38,6 +40,11 @@ readonly QUEUE_LISTENING_MARK=.listening
 readonly QUEUE_NUDGE_INTERVAL_MIN=10
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
+# the one value of ATRIUM_QUEUE_PROBE that declares this session a probe at every register: hidden on the Queue page,
+# refused as a message or relay target and as a relay sender
+readonly QUEUE_PROBE_DECLARED=1
+# the record's write time, in the transcript's own timestamp form → the turn-end check compares the two as strings
+readonly QUEUE_RECORD_TIME_SHAPE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'
 # space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
 QUEUE_NAME_JQ="$(
   cat <<'JQ'
@@ -203,31 +210,72 @@ queue_get_transcript_title() {
 # All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
 # $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks) ·
 # $5 an explicit session name, already in shown form (queue_get_shown_name), sent as name ·
-# else $6 a transcript path → queue_get_derived_name, sent as derivedName
+# $6 the payload's transcript path, sent as transcriptPath (the monitor keeps it only under the profile's projects/)
+# and, without $5, read by queue_get_derived_name, sent as derivedName
 # (the monitor lets only an explicit name replace an explicit one)
 queue_register_session() {
-  local hint="${1:-}" max_time="${2:-}" cwd session_id pid name="" derived_name="" body reply count
+  local hint="${1:-}" max_time="${2:-}" cwd session_id pid name="${5:-}" derived_name="" transcript="${6:-}" body reply
+  local is_probe=false
   session_id="$(queue_get_session_id "${4:-}")"
   pid="$(queue_get_pid)"
   [[ -n "${session_id}" && -n "${pid}" ]] || return 1
   queue_put_owner_record "${session_id}" "${pid}"
   [[ "${QUEUE_PERMISSION_HINTS}" == *" ${hint} "* ]] || hint=""
+  [[ "${transcript}" == /* ]] || transcript=""
+  if [[ "${ATRIUM_QUEUE_PROBE:-}" == "${QUEUE_PROBE_DECLARED}" ]]; then is_probe=true; fi
   cwd="$(queue_get_cwd "${3:-}")"
-  if [[ -n "${5:-}" ]]; then
-    name="$5"
-  else
-    derived_name="$(queue_get_derived_name "${6:-}" "${session_id}")" || derived_name=""
-  fi
+  if [[ -z "${name}" ]]; then derived_name="$(queue_get_derived_name "${transcript}" "${session_id}")" || derived_name=""; fi
   body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg cwd "${cwd}" \
     --arg configDir "${CLAUDE_CONFIG_DIR:-}" --arg permissionHint "${hint}" --arg name "${name}" \
-    --arg derivedName "${derived_name}" \
-    '{$sessionId, $pid, $cwd, $configDir, $permissionHint, $name, $derivedName}
+    --arg derivedName "${derived_name}" --arg transcriptPath "${transcript}" \
+    --argjson isProbe "${is_probe}" \
+    '{$sessionId, $pid, $cwd, $configDir, $permissionHint, $name, $derivedName, $transcriptPath, $isProbe}
       | with_entries(select(.value != ""))')" || return 1
   reply="$(queue_post /api/queue/sessions/register "${body}" "${max_time}")" || return 1
-  count="$(jq -r '.answeredWaiting // 0' <<<"${reply}" 2>/dev/null)" || return 1
+  queue_get_register_count "${session_id}" "${reply}" "${derived_name}"
+}
+
+# <session id> <register reply> <derived name sent> → the answered-waiting count on stdout, after the reply's awaiting
+# marks and the name stamp (queue_put_session_name) are written; non-zero for a reply naming no count
+queue_get_register_count() {
+  local count
+  count="$(jq -r '.answeredWaiting // 0' <<<"$2" 2>/dev/null)" || return 1
   [[ "${count}" =~ ^[0-9]+$ ]] || return 1
-  queue_create_listed_awaiting_items "${session_id}" "${reply}"
+  queue_create_listed_awaiting_items "$1" "$2"
+  if [[ -n "$3" ]]; then queue_put_name_stamp "$1" "$3"; fi
   printf '%s\n' "${count}"
+}
+
+# <transcript path> [session id from a hook payload] → the derived name (queue_get_derived_name) sent as a name-only
+# register once it differs from the last one sent for this session; nothing sent with no name, pid or session id.
+# Non-zero only when an update was due and the monitor did not accept it → the next turn end sends it again.
+queue_put_session_name() {
+  local session_id pid name stamp body
+  session_id="$(queue_get_session_id "${2:-}")"
+  pid="$(queue_get_pid)"
+  [[ -n "${session_id}" && -n "${pid}" ]] || return 0
+  name="$(queue_get_derived_name "${1:-}" "${session_id}")" || name=""
+  [[ -n "${name}" ]] || return 0
+  stamp="$(queue_get_name_stamp_path "${session_id}")"
+  if [[ -f "${stamp}" && "$(<"${stamp}")" == "${name}" ]]; then return 0; fi
+  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg derivedName "${name}" \
+    '{$sessionId, $pid, $derivedName}')"
+  queue_post /api/queue/sessions/register "${body}" "${QUEUE_CONNECT_TIMEOUT_S}" >/dev/null || return 1
+  queue_put_name_stamp "${session_id}" "${name}"
+}
+
+# <session id> → the path of the last derived name sent for it
+queue_get_name_stamp_path() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  printf '%s/.named\n' "${dir}"
+}
+
+# <session id> <name> → the name stamp; a stamp not written costs one repeated update → never the caller's result
+queue_put_name_stamp() {
+  local stamp
+  stamp="$(queue_get_name_stamp_path "$1")" || return 0
+  { mkdir -p -- "${stamp%/*}" && printf '%s\n' "$2" >"${stamp}"; } 2>/dev/null || true
 }
 
 # <session id> <register reply> → an awaiting mark per id in its awaitingItemIds; an older monitor's reply lists none.
@@ -424,6 +472,57 @@ queue_get_awaiting_items() {
     if [[ -f "${marker}" && "${marker##*/}" =~ ${QUEUE_ITEM_ID_SHAPE} ]]; then ids+="${marker##*/}"$'\n'; fi
   done
   if [[ -n "${ids}" ]]; then sort -rn <<<"${ids%$'\n'}"; fi
+}
+
+# <session id> <item id> [max seconds] → the status of an item this session posted; gone when the monitor knows no such
+# item of this session or it is one a session never posts (an owner message, a relay). 1 on no reply, 2 on an id off
+# its shape or an unusable reply
+queue_get_item_status() {
+  local reply code body status
+  [[ "$2" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 2
+  # shellcheck disable=SC2310  # no reply → this function's own status 1
+  reply="$(queue_send GET "/api/queue/items/$2?sessionId=$1" "" "${3:-}")" || return 1
+  code="$(queue_get_reply_code "${reply}")"
+  if [[ "${code}" == 404 ]]; then
+    printf 'gone\n'
+    return 0
+  fi
+  [[ "${code}" == 2?? ]] || return 2
+  body="$(queue_get_reply_body "${reply}")"
+  status="$(jq -r --arg session "$1" --arg kinds "${QUEUE_POSTED_KINDS}" \
+    '" \(.kind) " as $kind | if .sessionId == $session and ($kinds | contains($kind)) then .status | strings else "gone" end' \
+    <<<"${body}" 2>/dev/null)" || return 2
+  [[ "${status}" =~ ^[a-z_]+$ ]] || return 2
+  printf '%s\n' "${status}"
+}
+
+# The turn record: one line "<written at>|<form>|<item ids, space-separated>" in the session's awaiting set, written
+# by the record operation and read by the turn-end check, which accepts a turn whose record is no older than its start
+
+# <session id> → the path of its turn record; non-zero for anything but a UUID
+queue_get_record_path() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  printf '%s/.record\n' "${dir}"
+}
+
+# <session id> <form> [item id…] → the record written now, in UTC to the millisecond
+queue_put_record() {
+  local record written IFS=' '
+  record="$(queue_get_record_path "$1")" || return 1
+  shift
+  written="$(perl -MTime::HiRes=time -MPOSIX=strftime \
+    -e '$t = time; printf "%s.%03dZ\n", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000')" || return 1
+  { mkdir -p -- "${record%/*}" && printf '%s|%s|%s\n' "${written}" "$1" "${*:2}" >"${record}"; } 2>/dev/null
+}
+
+# <session id> → its record's write time; nothing for no record or an unreadable one
+queue_get_record_time() {
+  local record written=""
+  record="$(queue_get_record_path "$1")" || return 0
+  [[ -f "${record}" ]] || return 0
+  IFS='|' read -r written _ <"${record}" || true
+  if [[ "${written}" =~ ${QUEUE_RECORD_TIME_SHAPE} ]]; then printf '%s\n' "${written}"; fi
 }
 
 # <session id> → its awaiting set removed

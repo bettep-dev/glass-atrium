@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# queue-ops.sh — the owner queue's session operations, one owner each: post, fetch, ack, claim, pending, peers and
-# relay, their provenance lines and their JSON results, for the queue CLI (text rendering) and the MCP adapter (JSON-RPC
+# queue-ops.sh — the owner queue's session operations, one owner each: post, fetch, ack, claim, pending, record, peers
+# and relay, their provenance lines and their JSON results, for the queue CLI (text rendering) and the MCP adapter (JSON-RPC
 # dispatch). Each operation prints one JSON document on stdout — its result, or {error, message} — and returns:
 #   0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the monitor · 3 the item names another
-#   session · 64 a malformed argument or no session id
+#   session, or is no item this session posted · 64 a malformed argument or no session id
 # Arguments are values only: each reaches jq as a --arg value, and every id is shape-checked before any numeric use.
 # Sourced, not executable.
 
@@ -412,6 +412,61 @@ queue_claim_item() {
   jq -c --argjson id "$1" --arg msg "$2" --arg result "${result}" '{$id, msgId: $msg,
     source: (if .item.kind == "relay" then "peer" else "owner" end), provenance, isFirst: ($result == "first")}
     + if $result == "first" then {item, images, hiddenImageCount} else {status: .item.status} end' <<<"${fetched}"
+}
+
+# <form nothing|posted> [item id…] → {form, itemIds, isChecked}: the turn's record written (queue_put_record); posted
+# names 1 or more ids, nothing none; 3 for an id that is no item this session posted
+queue_create_record() {
+  local form="${1:-}" session_id is_checked
+  (($# == 0)) || shift
+  queue_check_record_form "${form}" "$@" || return
+  session_id="$(queue_require_session_id)" || {
+    queue_put_back "$?" "${session_id}"
+    return
+  }
+  is_checked="$(queue_get_record_check "${session_id}" "$@")" || {
+    queue_put_back "$?" "${is_checked}"
+    return
+  }
+  # shellcheck disable=SC2310  # an unwritten record → the error document
+  queue_put_record "${session_id}" "${form}" "$@" || {
+    queue_put_error 1 unwritten "the turn record could not be written"
+    return
+  }
+  jq -nc --arg form "${form}" --argjson isChecked "${is_checked}" \
+    '{$form, itemIds: ($ARGS.positional | map(tonumber)), $isChecked}' --args "$@" | queue_print_json
+}
+
+# <form> [item id…] → 0 for nothing with no id or posted with 1 or more ids, each shape-checked; else the error and 64
+queue_check_record_form() {
+  local form="$1" id
+  shift
+  if ! [[ "${form}" == nothing && $# -eq 0 || "${form}" == posted && $# -gt 0 ]]; then
+    queue_put_error 64 invalid "record takes nothing, or posted and the id of each item this turn posted"
+    return
+  fi
+  for id in "$@"; do
+    queue_check_item_id "${id}" || return
+  done
+}
+
+# <session id> [item id…] → true once every id reads as an item this session posted, false when the monitor gave no
+# usable reply (the ids left unchecked, fail-open); the error and 3 for an id the session did not post
+queue_get_record_check() {
+  local session_id="$1" id status
+  shift
+  for id in "$@"; do
+    # shellcheck disable=SC2310  # no usable reply → recorded unchecked
+    status="$(queue_get_item_status "${session_id}" "${id}")" || {
+      printf 'false\n'
+      return 0
+    }
+    if [[ "${status}" == gone ]]; then
+      queue_put_error 3 foreign_item "item ${id} is no item this session posted — record only the ids this session's posts printed"
+      return
+    fi
+  done
+  printf 'true\n'
 }
 
 # → {peers: [{sessionIdPrefix, name, profileLabel, cwdTail, state, isWaiting}]}: the sessions a relay may reach

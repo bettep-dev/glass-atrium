@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report or a decision, fetch an
-# item, pull, claim or wait for this session's owner answers, messages and relays, ack a delivery, list peer sessions,
-# relay a text to them, withdraw an item, and register this session; the operations are lib/queue-ops.sh's, this file
+# item, pull, claim or wait for this session's owner answers, messages and relays, ack a delivery, record the turn,
+# list peer sessions, relay a text to them, withdraw an item, and register this session; the operations are lib/queue-ops.sh's, this file
 # parses argv and renders text. Run it by its absolute installed path with nothing in front — the one literal every printed step names.
 # Exit codes: 0 done · 1 monitor unreachable, failing or replying malformed · 2 refused by the
-#   monitor · 3 the fetched item names another session (stop, take no action) · 4 the wait's bound passed with
+#   monitor · 3 the fetched item names another session (stop, take no action), or a recorded id is no item this session
+#   posted · 4 the wait's bound passed with
 #   nothing claimed, or its owning Claude process is gone · 5 another wait holds this session · 64 usage or a malformed argument
 # The harness-only listen step exits 2 only to wake its session (the count line on stderr) and 0 on every other end:
 #   an asyncRewake hook's other non-zero exits read as hook errors
@@ -65,6 +66,7 @@ main() {
     get) get_item "$@" ;;
     pending) pull_pending "$@" ;;
     claim) get_result queue_claim_items "$@" ;;
+    record) get_result queue_create_record "$@" ;;
     sessions) get_result queue_get_peers "$@" ;;
     relay) relay_text "$@" ;;
     wait) wait_for_claims "$@" ;;
@@ -97,6 +99,9 @@ Usage — run by this absolute path, no interpreter or env prefix in front:
                                   fetch and ack in one step each delivered item, or the one named; prints one JSON
                                   document: per item its source (owner or peer), provenance and first flag, and the
                                   item itself only when first
+  ${cli} record nothing | posted <item-id>...
+                                  the turn's record, its last act: nothing to post, or the id of each item this turn
+                                  posted; prints one JSON document
   ${cli} sessions                 the peer sessions a relay may reach, as one JSON document
   ${cli} relay <text.txt|-> <recipient>...
                                   relay a text to 1 to 5 peer sessions, each a name or id prefix from sessions; a
@@ -111,8 +116,8 @@ The wait step: start a background wait, or start none — a wait of this session
 Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
 The session id comes from CLAUDE_CODE_SESSION_ID — never pass it.
-Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monitor · 3 item of another session · 64 usage
-  or a malformed argument
+Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monitor · 3 item of another session, or a
+  recorded id this session did not post · 64 usage or a malformed argument
 On a wait's exit: 0 follow the printed steps, then wait again · 1 wait again once · 2 after an unknown-session
   refusal run register and wait again, otherwise stop waiting · 4 wait again · 5 nothing, another wait runs ·
   any other code wait again once

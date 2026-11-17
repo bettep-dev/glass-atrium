@@ -3,7 +3,8 @@
 # text: (1) an interactive or background main-session turn that called a tool and whose final message's last
 # non-blank line is no [QUEUE-VERDICT] form, or names an id that is not an item of this session, is asked for its
 # verdict once per turn; (2) while an item this session posted awaits the owner and nothing polls the monitor for this
-# Claude process (queue_get_poller), the wait command — a fallback for processes no listener serves.
+# Claude process (queue_get_poller), the wait command — a fallback for processes no listener serves. Each turn end also
+# sends the transcript's title as the session's name once it changed (queue_put_session_name).
 # The verdict check confirms only that a verdict is stated and its ids are this session's items, never the judgment.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_poller).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
@@ -73,6 +74,8 @@ main() {
     set_verdict_reason "${session_id}" "${transcript}" "${has_message}" "${last_line}"
   fi
   if [[ "${is_check_spent}" == false ]]; then set_wait_reason "${session_id}"; fi
+  # shellcheck disable=SC2310  # a refused update is sent again at the next turn end
+  queue_put_session_name "${transcript}" "${session_id}" || true
   [[ -n "${verdict_reason}${wait_reason}" ]] || exit 0
   print_block
 }
@@ -250,36 +253,22 @@ get_wait_resolved_item() {
   done
 }
 
-# <session id> <item id> → get_item_status while CHECK_BUDGET_S lasts; non-zero, after one warning, once it has run out
+# <session id> <item id> → queue_get_item_status while CHECK_BUDGET_S lasts; non-zero, after one warning, once it has run
+# out, on no reply or on an unusable one
 get_budgeted_item_status() {
+  local code=0
   if ((SECONDS >= check_deadline)); then
     warn "the ${CHECK_BUDGET_S} s check budget ran out before item $2"
     return 1
   fi
-  get_item_status "$1" "$2"
-}
-
-# <session id> <item id> → its status, "gone" when the monitor knows no such item of this session; non-zero, after the
-# warning, on no reply or an unusable one
-get_item_status() {
-  local reply code body status
-  # shellcheck disable=SC2310  # no reply → the warning below
-  if ! reply="$(queue_send GET "/api/queue/items/$2?sessionId=$1" "" "${CHECK_FETCH_MAX_S}")"; then
-    warn "the monitor gave no reply within ${CHECK_FETCH_MAX_S} s"
-    return 1
-  fi
-  code="$(queue_get_reply_code "${reply}")"
-  if [[ "${code}" == 404 ]]; then
-    printf 'gone\n'
-    return 0
-  fi
-  body="$(queue_get_reply_body "${reply}")"
-  status="$(jq -r '.status | strings' <<<"${body}" 2>/dev/null)" || status=""
-  if [[ "${code}" != 2?? || ! "${status}" =~ ^[a-z_]+$ ]]; then
-    warn "the monitor's item reply was unusable (HTTP ${code})"
-    return 1
-  fi
-  printf '%s\n' "${status}"
+  # shellcheck disable=SC2310  # its status picks the warning below
+  queue_get_item_status "$1" "$2" "${CHECK_FETCH_MAX_S}" || code=$?
+  case "${code}" in
+    0) return 0 ;;
+    1) warn "the monitor gave no reply within ${CHECK_FETCH_MAX_S} s" ;;
+    *) warn "the monitor's item reply was unusable" ;;
+  esac
+  return 1
 }
 
 # one block for both checks: the verdict ask, then the wait command, one per line
