@@ -11,6 +11,7 @@ import {
   getListenDecision,
   getLocalHostName,
   getNetworkIdentity,
+  getNetworkLink,
   isPrivateIPv4,
   runCommand,
 } from "../src/server/remote/network.js";
@@ -141,6 +142,36 @@ test("a gateway arp cannot see is read from configd's record of the same gateway
   assert.deepEqual(calls.slice(2), [
     ["/usr/sbin/scutil", "show State:/Network/Global/IPv4\nquit\n"],
     ["/usr/sbin/scutil", `show State:/Network/Service/${SERVICE_ID}/IPv4\nquit\n`],
+  ]);
+});
+
+/** configd's setup record of a service's port, as `show Setup:/Network/Service/<id>/Interface` prints it. */
+function getConfigdPort(input: { device: string; hardware: string }): string {
+  return `<dictionary> {\n  DeviceName : ${input.device}\n  Hardware : ${input.hardware}\n  Type : Ethernet\n  UserDefinedName : Port\n}\n`;
+}
+
+function createLinkRunner(outputs: { global: string | Error; port: string | Error }): { run: CommandRunner; calls: string[][] } {
+  return createRunner({ configd: { global: outputs.global, service: outputs.port } });
+}
+
+test("the link kind is Wi-Fi or wired only when configd's primary service port is on the route's interface", async () => {
+  const rows: { name: string; global: string | Error; port: string | Error; expected: string }[] = [
+    { name: "an AirPort port", global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en1", hardware: "AirPort" }), expected: "wifi" },
+    { name: "an Ethernet port", global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en1", hardware: "Ethernet" }), expected: "wired" },
+    { name: "a port of another kind", global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en1", hardware: "Modem" }), expected: "unknown" },
+    { name: "a Wi-Fi port on another interface", global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en0", hardware: "AirPort" }), expected: "unknown" },
+    { name: "no primary service", global: "<dictionary> {\n  Router : 192.168.45.1\n}\n", port: getConfigdPort({ device: "en1", hardware: "AirPort" }), expected: "unknown" },
+    { name: "a failed read", global: CONFIGD_GLOBAL, port: new Error("timeout"), expected: "unknown" },
+  ];
+  for (const row of rows) assert.equal(await getNetworkLink("en1", createLinkRunner(row).run), row.expected, row.name);
+});
+
+test("the link kind is read from configd alone, the primary service's port record", async () => {
+  const { run, calls } = createLinkRunner({ global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en1", hardware: "AirPort" }) });
+  await getNetworkLink("en1", run);
+  assert.deepEqual(calls, [
+    ["/usr/sbin/scutil", "show State:/Network/Global/IPv4\nquit\n"],
+    ["/usr/sbin/scutil", `show Setup:/Network/Service/${SERVICE_ID}/Interface\nquit\n`],
   ]);
 });
 

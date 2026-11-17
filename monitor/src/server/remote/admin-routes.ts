@@ -13,7 +13,7 @@ import type { DeviceConnections } from "./connections.js";
 import type { DeviceListing } from "./devices.js";
 import { type RemoteAuditEvent, getRoutePayload, recordEvent } from "./gate.js";
 import { WindowLimiter } from "./limits.js";
-import type { ListenReason, TrustedNetwork } from "./network.js";
+import type { ListenReason, NetworkLink, TrustedNetwork } from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
 import { EMPTY_BODY_LIMIT_BYTES, hasBody } from "./request-body.js";
 
@@ -26,6 +26,8 @@ export const REMOTE_ADMIN_PATH = {
   // never POST /api/remote/off → that path is the device's own off, another class
   ACCESS_OFF: "/api/remote/access/off",
   TRUST: "/api/remote/access/trust",
+  // read when a turn-on or trust confirm opens → the act then refuses any other network
+  CONFIRM_NETWORK: "/api/remote/access/network",
   SETUP: "/api/remote/setup",
   CERTIFICATE: "/api/remote/certificate",
 } as const;
@@ -42,6 +44,8 @@ export const REMOTE_ADMIN_LIMITS = {
   // the screen polls it; each read runs the network commands
   SETUP_READ: { limit: 60, windowMs: 60_000 },
   CERTIFICATE_READ: { limit: 10, windowMs: 60_000 },
+  // one per opened confirm, its re-read after a refusal included; each runs the network commands
+  CONFIRM_READ: { limit: 20, windowMs: 60_000 },
 } as const;
 
 /** The one file the download serves, under a fixed name and type → never a caller-named file. */
@@ -50,13 +54,29 @@ export const CA_DOWNLOAD = { FILE_NAME: "glass-atrium-local-ca.pem", CONTENT_TYP
 /** What the shell's write step reported. */
 export type AccessStepOutcome = "written" | "network_unreadable" | "keys_not_created" | "env_not_rendered" | "already_trusted" | "write_failed";
 
+/** Refused before any step: no confirm read in force, or the network differs from the one it showed. */
+export type ConfirmRefusal = "confirm_stale" | "network_changed";
+
 /** start_failed → the step wrote, this process could not apply it; the next restart does. */
-export type AccessApplyOutcome = AccessStepOutcome | "start_failed";
+export type AccessApplyOutcome = AccessStepOutcome | "start_failed" | ConfirmRefusal;
 
 export interface AccessApplyResult {
   readonly outcome: AccessApplyOutcome;
   /** trusted networks after the apply; null when nothing was applied */
   readonly trustedCount: number | null;
+}
+
+export interface TurnOnResult extends AccessApplyResult {
+  /** the trust of the network shown, in the same act; null when none was tried (the on did not write, or the network was trusted) */
+  readonly trust: AccessApplyResult | null;
+}
+
+/** What a turn-on or trust confirm shows: the router the act would trust, never its hardware address. */
+export interface ConfirmFacts {
+  /** null when no router was read → no confirm opens */
+  readonly router: string | null;
+  readonly link: NetworkLink;
+  readonly isNetworkTrusted: boolean;
 }
 
 export interface SetupFacts {
@@ -79,7 +99,10 @@ export interface SetupFacts {
 
 /** The Mac page's on, off and trust: the shell step writes, this process applies. */
 export interface RemoteAccessActs {
-  turnOn(): Promise<AccessApplyResult>;
+  /** remembers the network it read → the next on or trust acts on that network or refuses */
+  getConfirmFacts(): Promise<ConfirmFacts>;
+  /** on, then the trust of the network shown when it is not trusted yet */
+  turnOn(): Promise<TurnOnResult>;
   trust(): Promise<AccessApplyResult>;
   /** persists the off only → the route revokes and closes */
   setOff(): Promise<AccessStepOutcome>;
@@ -153,10 +176,12 @@ function registerAccessRoutes(scope: FastifyInstance, deps: RemoteAdminDeps): vo
   const off = { deps, queue, limiter: new WindowLimiter(REMOTE_ADMIN_LIMITS.ACCESS_OFF, getNow) };
   const setupLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.SETUP_READ, getNow);
   const certificateLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.CERTIFICATE_READ, getNow);
+  const confirmLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.CONFIRM_READ, getNow);
   const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
   scope.post(REMOTE_ADMIN_PATH.ACCESS_ON, options, (request, reply) => widenAccess(request, reply, { ...widen, act: "on" }));
   scope.post(REMOTE_ADMIN_PATH.TRUST, options, (request, reply) => widenAccess(request, reply, { ...widen, act: "trust" }));
   scope.post(REMOTE_ADMIN_PATH.ACCESS_OFF, options, (request, reply) => turnOffAccess(request, reply, off));
+  scope.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, (_request, reply) => getConfirmNetwork(reply, { deps, limiter: confirmLimiter }));
   scope.get(REMOTE_ADMIN_PATH.SETUP, (request, reply) => getSetup(request, reply, { deps, limiter: setupLimiter }));
   scope.get(REMOTE_ADMIN_PATH.CERTIFICATE, (request, reply) => getCertificateFile(request, reply, { deps, limiter: certificateLimiter }));
 }
@@ -238,20 +263,39 @@ const FAILED_ACT_STATUS: Record<Exclude<AccessApplyOutcome, "written">, number> 
   env_not_rendered: 500,
   write_failed: 500,
   start_failed: 500,
+  confirm_stale: 409,
+  network_changed: 409,
 };
 
-/** On or trust: request row first (no row → no act), one act at a time, then the outcome row with the trusted count. */
+/**
+ * On or trust: request row first (no row → no act), one act at a time, then one outcome row per step with the trusted count.
+ * An on that also trusted the network shown answers the trust's outcome beside its own; the on stands either way.
+ */
 async function widenAccess(request: FastifyRequest, reply: FastifyReply, route: AccessRoute & { act: "on" | "trust" }): Promise<FastifyReply> {
   if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
   if (route.queue.isBusy) return reply.code(409).send({ error: "act_in_progress" });
   return route.queue.run(async () => {
     if (!(await putAccessRequest(request, route.deps))) return reply.code(503).send({ error: "audit_unavailable" });
-    const result = await (route.act === "on" ? route.deps.access.turnOn() : route.deps.access.trust());
-    const payload = { outcome: result.outcome, ...(result.trustedCount === null ? {} : { trustedNetworkCount: result.trustedCount }) };
-    const isWritten = result.outcome === "written";
-    recordEvent(request, route.deps.audit, { actor: AUDIT_ACTOR, actionKind: WIDENING_ACT_KIND[route.act], result: isWritten ? "success" : "error", payload });
-    return result.outcome === "written" ? reply.send({ outcome: result.outcome }) : reply.code(FAILED_ACT_STATUS[result.outcome]).send({ error: result.outcome });
+    if (route.act === "trust") {
+      const trust = await route.deps.access.trust();
+      putActOutcome(request, route.deps, "trust", trust);
+      return sendActOutcome(reply, trust, {});
+    }
+    const on = await route.deps.access.turnOn();
+    putActOutcome(request, route.deps, "on", on);
+    if (on.trust !== null) putActOutcome(request, route.deps, "trust", on.trust);
+    return sendActOutcome(reply, on, { trust: on.trust?.outcome ?? null });
   });
+}
+
+function putActOutcome(request: FastifyRequest, deps: RemoteAdminDeps, act: "on" | "trust", result: AccessApplyResult): void {
+  const payload = { outcome: result.outcome, ...(result.trustedCount === null ? {} : { trustedNetworkCount: result.trustedCount }) };
+  recordEvent(request, deps.audit, { actor: AUDIT_ACTOR, actionKind: WIDENING_ACT_KIND[act], result: result.outcome === "written" ? "success" : "error", payload });
+}
+
+function sendActOutcome(reply: FastifyReply, result: AccessApplyResult, fields: Record<string, unknown>): FastifyReply {
+  if (result.outcome !== "written") return reply.code(FAILED_ACT_STATUS[result.outcome]).send({ error: result.outcome });
+  return reply.send({ outcome: result.outcome, ...fields });
 }
 
 /** @returns false when the row was not written; the page-origin stamp is a record, not a check */
@@ -294,6 +338,13 @@ async function putAccessOff(request: FastifyRequest, deps: RemoteAdminDeps): Pro
     failed.push("close");
   });
   return { failed, revoked };
+}
+
+/** Field by field → the router's hardware address and the interface never reach the page. */
+async function getConfirmNetwork(reply: FastifyReply, route: Omit<AccessRoute, "queue">): Promise<FastifyReply> {
+  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
+  const facts = await route.deps.access.getConfirmFacts();
+  return reply.send({ router: facts.router, link: facts.link, isNetworkTrusted: facts.isNetworkTrusted });
 }
 
 /** Field by field → a wider value from the caller (router, interface, key paths) never reaches the page. */

@@ -21,7 +21,9 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { LOGGER_OPTIONS } from "../src/server/logger.js";
 import {
   type AccessApplyOutcome,
+  type AccessApplyResult,
   type AccessStepOutcome,
+  type ConfirmFacts,
   CA_DOWNLOAD,
   MAC_PAGE_HEADER,
   REMOTE_ADMIN_LIMITS,
@@ -64,6 +66,9 @@ const SETUP_FACTS: SetupFacts = {
 };
 // a careless caller's setup value: the router, the interface and the key path beside the facts
 const WIDE_SETUP_FACTS = { ...SETUP_FACTS, gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33", interface: "en0", caKeyPath: "/Users/owner/ca.key" };
+const CONFIRM_FACTS: ConfirmFacts = { router: "10.20.0.1", link: "wifi", isNetworkTrusted: false };
+// a careless caller's confirm value: the router's hardware address and the interface beside the facts
+const WIDE_CONFIRM_FACTS = { ...CONFIRM_FACTS, hardwareAddress: "3c:22:fb:9a:01:7e", interface: "en0" };
 
 class Rollback extends Error {}
 
@@ -80,6 +85,8 @@ const access = {
   isCloseFailing: false,
   hold: Promise.resolve(),
   certificate: null as Buffer | null,
+  // the trust the on added in the same act; null → none tried
+  onTrust: null as AccessApplyResult | null,
 };
 const trail: string[] = [];
 let ca: Awaited<ReturnType<typeof createStandInTls>>;
@@ -107,7 +114,11 @@ function buildAdminDeps(): RemoteAdminDeps {
     },
     getAccess: () => WIDE_ACCESS,
     access: {
-      turnOn: () => runAccessAct("on"),
+      getConfirmFacts: async () => {
+        trail.push("read confirm");
+        return WIDE_CONFIRM_FACTS;
+      },
+      turnOn: async () => ({ ...(await runAccessAct("on")), trust: access.onTrust }),
       trust: () => runAccessAct("trust"),
       setOff: async () => {
         trail.push("act off");
@@ -143,7 +154,7 @@ beforeEach(() => {
   openedCodes = [];
   isAuditDown = false;
   trail.length = 0;
-  Object.assign(access, { outcome: "written", offOutcome: "written", isCloseFailing: false, hold: Promise.resolve(), certificate: ca.cert });
+  Object.assign(access, { outcome: "written", offOutcome: "written", isCloseFailing: false, hold: Promise.resolve(), certificate: ca.cert, onTrust: null });
 });
 
 after(async () => {
@@ -208,6 +219,7 @@ const ROUTES: { name: string; method: InjectOptions["method"]; getUrl: (id: bigi
   { name: "turn on", method: "POST", getUrl: () => REMOTE_ADMIN_PATH.ACCESS_ON },
   { name: "turn off", method: "POST", getUrl: () => REMOTE_ADMIN_PATH.ACCESS_OFF },
   { name: "trust this network", method: "POST", getUrl: () => REMOTE_ADMIN_PATH.TRUST },
+  { name: "read the network to confirm", method: "GET", getUrl: () => REMOTE_ADMIN_PATH.CONFIRM_NETWORK },
   { name: "read the setup facts", method: "GET", getUrl: () => REMOTE_ADMIN_PATH.SETUP },
   { name: "download the certificate", method: "GET", getUrl: () => REMOTE_ADMIN_PATH.CERTIFICATE },
 ];
@@ -460,15 +472,15 @@ describe("revoking every device", () => {
 });
 
 const WIDENING_ACTS = [
-  { name: "turning on", url: REMOTE_ADMIN_PATH.ACCESS_ON, act: "act on", actionKind: "remote.access_enabled" },
-  { name: "trusting this network", url: REMOTE_ADMIN_PATH.TRUST, act: "act trust", actionKind: "remote.network_trusted" },
+  { name: "turning on", url: REMOTE_ADMIN_PATH.ACCESS_ON, act: "act on", actionKind: "remote.access_enabled", body: { outcome: "written", trust: null } },
+  { name: "trusting this network", url: REMOTE_ADMIN_PATH.TRUST, act: "act trust", actionKind: "remote.network_trusted", body: { outcome: "written" } },
 ];
 
 describe("an act that widens access", () => {
   for (const row of WIDENING_ACTS) {
     test(`${row.name} writes its request row first, then acts, then records the outcome with the trusted-network count`, async () => {
       const response = await callAdmin({ method: "POST", url: row.url });
-      assert.deepEqual([response.statusCode, JSON.parse(response.body)], [200, { outcome: "written" }]);
+      assert.deepEqual([response.statusCode, JSON.parse(response.body)], [200, row.body]);
       assert.deepEqual(trail, ["row remote.access_requested", row.act, `row ${row.actionKind}`]);
       assert.deepEqual(
         events.map((event) => [event.actor, event.result, event.payload]),
@@ -494,6 +506,8 @@ describe("an act that widens access", () => {
       { outcome: "env_not_rendered", status: 500 },
       { outcome: "write_failed", status: 500 },
       { outcome: "start_failed", status: 500 },
+      { outcome: "confirm_stale", status: 409 },
+      { outcome: "network_changed", status: 409 },
     ];
     for (const row of rows) {
       events.length = 0;
@@ -503,6 +517,20 @@ describe("an act that widens access", () => {
       assert.deepEqual([response.statusCode, JSON.parse(response.body)], [row.status, { error: row.outcome }], row.outcome);
       assert.deepEqual(events.map((event) => event.result), ["success", "error"], row.outcome);
     }
+  });
+
+  test("turning on a network not yet trusted records the on, then the trust of the network shown, each with its own outcome", async () => {
+    access.onTrust = { outcome: "network_changed", trustedCount: null };
+    const response = await callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_ON });
+    assert.deepEqual([response.statusCode, JSON.parse(response.body)], [200, { outcome: "written", trust: "network_changed" }]);
+    assert.deepEqual(trail, ["row remote.access_requested", "act on", "row remote.access_enabled", "row remote.network_trusted"]);
+    assert.deepEqual(
+      events.slice(1).map((event) => [event.result, event.payload?.outcome]),
+      [
+        ["success", "written"],
+        ["error", "network_changed"],
+      ],
+    );
   });
 
   test("turning on and trusting share one rate limit, and past it nothing more runs", async () => {
@@ -590,6 +618,22 @@ describe("the setup read", () => {
       assert.equal((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).statusCode, 200);
     }
     assert.equal((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).statusCode, 429);
+  });
+});
+
+describe("the confirm read", () => {
+  test("carries the router, the link kind and whether the network is trusted, field by field, whatever wider value the caller holds", async () => {
+    const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CONFIRM_NETWORK });
+    assert.deepEqual([response.statusCode, JSON.parse(response.body)], [200, CONFIRM_FACTS]);
+  });
+
+  test("past its rate limit is refused with 429 and reads no network", async () => {
+    for (let index = 0; index < REMOTE_ADMIN_LIMITS.CONFIRM_READ.limit; index += 1) {
+      assert.equal((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CONFIRM_NETWORK })).statusCode, 200);
+    }
+    trail.length = 0;
+    const limited = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CONFIRM_NETWORK });
+    assert.deepEqual([limited.statusCode, trail], [429, []]);
   });
 });
 

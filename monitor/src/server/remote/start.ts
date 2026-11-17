@@ -16,13 +16,29 @@ import { buildRemoteApp } from "../app.js";
 import { getPrisma } from "../db.js";
 import { buildRemoteAuditWriter } from "../middleware/audit-log.js";
 import type { QueueRouteOptions } from "../routes/queue.js";
-import type { AccessApplyResult, AccessStepOutcome, RemoteAccessActs, RemoteAccessState, SetupFacts } from "./admin-routes.js";
+import type {
+  AccessApplyResult,
+  AccessStepOutcome,
+  ConfirmFacts,
+  RemoteAccessActs,
+  RemoteAccessState,
+  SetupFacts,
+  TurnOnResult,
+} from "./admin-routes.js";
 import type { DeviceConnections } from "./connections.js";
 import { type RemoteListenerOpener, RemoteListenerController, getInterfaceAddress } from "./controller.js";
 import { DEVICE, createDevice, findActiveDevice, revokeAllDevices, revokeDevice } from "./devices.js";
 import type { RemoteAuditEvent, RemoteGateDeps } from "./gate.js";
 import { isLeafDue, readRemoteTls, setRemoteCertificate } from "./listener.js";
-import { type NetworkIdentity, getListenDecision, getLocalHostName, getNetworkIdentity, isTrustedNetwork } from "./network.js";
+import {
+  type NetworkIdentity,
+  type NetworkLink,
+  getListenDecision,
+  getLocalHostName,
+  getNetworkIdentity,
+  getNetworkLink,
+  isTrustedNetwork,
+} from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
 import { REMOTE_PRE_AUTH_ROUTES, getRouteClass } from "./route-classes.js";
 import type { RemoteDeviceDeps, RemoteRegistrationDeps } from "./routes.js";
@@ -53,6 +69,8 @@ const BOOT_ACTOR = "monitor-boot";
 // "off" once a device turned access off → outlives a restart; the CLI's on writes "on"
 const ACCESS_STATE_FILE = "access-state";
 const DEVICE_OFF = "off";
+/** How long the network a confirm showed stays the one an on or trust may act on → the page keeps it only while its dialog is open. */
+export const CONFIRM_TTL_MS = 120_000;
 
 export interface BootAccessDeps {
   readonly revokeAll: () => Promise<bigint[]>;
@@ -164,10 +182,12 @@ export interface AccessSwitchDeps {
   readonly open: (settings: RemoteSettings) => Promise<SwitchedController>;
   readonly isDeviceOff: () => Promise<boolean>;
   readonly readIdentity: () => Promise<NetworkIdentity | null>;
+  readonly readLink: (networkInterface: string) => Promise<NetworkLink>;
   readonly readHostName: () => Promise<string | null>;
   readonly getAddress: (networkInterface: string) => string | null;
   readonly readCertificate: () => Promise<Buffer | null>;
   readonly log: Pick<FastifyBaseLogger, "error">;
+  readonly now: () => number;
 }
 
 export type AccessAct = "on" | "off" | "trust";
@@ -179,6 +199,7 @@ export type AccessAct = "on" | "off" | "trust";
 export class RemoteAccessSwitch implements RemoteAccessActs {
   #controller: SwitchedController | null = null;
   #settings: RemoteSettings;
+  #shown: { readonly identity: NetworkIdentity; readonly at: number } | null = null;
 
   constructor(
     private readonly deps: AccessSwitchDeps,
@@ -197,12 +218,27 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     this.#controller = await this.deps.boot(this.#settings);
   }
 
-  turnOn(): Promise<AccessApplyResult> {
-    return this.#write("on");
+  async getConfirmFacts(): Promise<ConfirmFacts> {
+    const identity = await this.deps.readIdentity();
+    this.#shown = identity === null ? null : { identity, at: this.deps.now() };
+    if (identity === null) return { router: null, link: "unknown", isNetworkTrusted: false };
+    const link = await this.deps.readLink(identity.interface);
+    return { router: identity.gateway, link, isNetworkTrusted: isTrustedNetwork(this.#settings.trusted, identity) };
+  }
+
+  async turnOn(): Promise<TurnOnResult> {
+    const shown = this.#takeShown();
+    if (shown === null) return { outcome: "confirm_stale", trustedCount: null, trust: null };
+    const refusal = await this.#getChange(shown);
+    if (refusal !== null) return { outcome: refusal, trustedCount: null, trust: null };
+    const on = await this.#write("on");
+    if (on.outcome !== "written" || isTrustedNetwork(this.#settings.trusted, shown)) return { ...on, trust: null };
+    return { ...on, trust: await this.#trustShown(shown) };
   }
 
   trust(): Promise<AccessApplyResult> {
-    return this.#write("trust");
+    const shown = this.#takeShown();
+    return shown === null ? Promise.resolve({ outcome: "confirm_stale", trustedCount: null }) : this.#trustShown(shown);
   }
 
   async setOff(): Promise<AccessStepOutcome> {
@@ -244,6 +280,24 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     };
   }
 
+  // one read serves one act → a second act needs a fresh confirm
+  #takeShown(): NetworkIdentity | null {
+    const shown = this.#shown;
+    this.#shown = null;
+    return shown !== null && this.deps.now() - shown.at <= CONFIRM_TTL_MS ? shown.identity : null;
+  }
+
+  // the step reads the network itself → refused here when that would be a network the person did not see
+  async #getChange(shown: NetworkIdentity): Promise<"network_changed" | null> {
+    const current = await this.deps.readIdentity();
+    return current !== null && current.interface === shown.interface && isTrustedNetwork([shown], current) ? null : "network_changed";
+  }
+
+  async #trustShown(shown: NetworkIdentity): Promise<AccessApplyResult> {
+    const refusal = await this.#getChange(shown);
+    return refusal === null ? this.#write("trust") : { outcome: refusal, trustedCount: null };
+  }
+
   async #write(act: "on" | "trust"): Promise<AccessApplyResult> {
     const outcome = await this.deps.runStep(act);
     return outcome === "written" ? this.#apply(act) : { outcome, trustedCount: null };
@@ -276,10 +330,12 @@ export function buildRemoteAccessSwitch(input: RemoteAccessInput & { readonly se
       open: (settings) => openRemoteAccess(settings, input),
       isDeviceOff: () => isDeviceOff(dataDir),
       readIdentity: () => getNetworkIdentity(),
+      readLink: (networkInterface) => getNetworkLink(networkInterface),
       readHostName: () => getLocalHostName(),
       getAddress: (networkInterface) => getInterfaceAddress(networkInterfaces(), networkInterface),
       readCertificate: () => readCaCertificate(dataDir),
       log: input.log,
+      now: Date.now,
     },
     input.settings,
   );

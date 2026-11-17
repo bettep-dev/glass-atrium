@@ -27,7 +27,10 @@ const CLI = { host: `127.0.0.1:${PORT}`, "x-glass-atrium-cli": "remote-access" }
 
 // the page's access acts never run from the CLI channel
 const ACCESS: RemoteAccessActs = {
-  turnOn: async () => ({ outcome: "write_failed", trustedCount: null }),
+  getConfirmFacts: async () => {
+    throw new Error("the confirm read is not part of this test");
+  },
+  turnOn: async () => ({ outcome: "write_failed", trustedCount: null, trust: null }),
   trust: async () => ({ outcome: "write_failed", trustedCount: null }),
   setOff: async () => "write_failed",
   close: async () => undefined,

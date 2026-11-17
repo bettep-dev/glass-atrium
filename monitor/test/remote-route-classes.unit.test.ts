@@ -97,7 +97,10 @@ async function collectLiveRoutes(): Promise<Set<string>> {
     const devices = { list: async () => [], revoke: async () => false, revokeAll: async () => [] };
     const audit = { insertEvent: async () => undefined };
     const access: RemoteAccessActs = {
-      turnOn: async () => ({ outcome: "write_failed", trustedCount: null }),
+      getConfirmFacts: async () => {
+        throw new Error("the confirm read is not part of this test");
+      },
+      turnOn: async () => ({ outcome: "write_failed", trustedCount: null, trust: null }),
       trust: async () => ({ outcome: "write_failed", trustedCount: null }),
       setOff: async () => "write_failed",
       close: async () => undefined,
