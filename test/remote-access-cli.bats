@@ -399,14 +399,17 @@ rendered_access() { grep -E '^ATRIUM_REMOTE_ACCESS=' "${SANDBOX}/monitor/.env"; 
   ! grep -q launchctl "${CALLS}" || { echo "restarted"; return 1; }
 }
 
-@test "the page's trust writes the network it reads itself, needs no terminal, and writes it once" {
+# The network the stubs read, as the monitor hands the confirm's identity to the step: interface, gateway, address.
+SHOWN=(en1 192.168.0.1 00:1b:2c:0d:4e:5f)
+
+@test "the page's trust writes the network it reads itself when it is the one shown, needs no terminal, and writes it once" {
   write_render_config
   printf '\n[remote_access]\nenabled = true\nport = 16146\n' >>"${SANDBOX}/config.toml"
   local rows=('new network|0|192.168.0.1@00:1b:2c:0d:4e:5f' 'already trusted|9|192.168.0.1@00:1b:2c:0d:4e:5f')
   local row name want_status want_list
   for row in "${rows[@]}"; do
     IFS='|' read -r name want_status want_list <<<"${row}"
-    run_page_step trust
+    run_page_step trust "${SHOWN[@]}"
     [[ "${status}" -eq "${want_status}" ]] || { echo "${name}: ${status} ${output}"; return 1; }
     [[ "$(atrium_toml_get "[remote_access]" "trusted_networks")" == "${want_list}" ]] || { echo "${name}: list"; return 1; }
   done
@@ -414,12 +417,28 @@ rendered_access() { grep -E '^ATRIUM_REMOTE_ACCESS=' "${SANDBOX}/monitor/.env"; 
   ! grep -q launchctl "${CALLS}" || { echo "restarted"; return 1; }
 }
 
+@test "the page's trust exits 10 and writes nothing when the network it reads is not the one shown" {
+  write_render_config
+  printf '\n[remote_access]\nenabled = true\nport = 16146\n' >>"${SANDBOX}/config.toml"
+  local rows=('another router|en1 192.168.0.254 00:1b:2c:0d:4e:5f' 'another router hardware address|en1 192.168.0.1 00:1b:2c:0d:4e:60'
+    'another link to the same router|en0 192.168.0.1 00:1b:2c:0d:4e:5f')
+  local row name shown config_before
+  config_before="$(file_sum "${SANDBOX}/config.toml")"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name shown <<<"${row}"
+    # shellcheck disable=SC2086  # a row's network is three argv words
+    run_page_step trust ${shown}
+    [[ "${status}" -eq 10 ]] || { echo "${name}: ${status} ${output}"; return 1; }
+  done
+  [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${SANDBOX}/monitor/.env" ]] || return 1
+}
+
 @test "the page's trust on an unreadable network writes nothing" {
   write_render_config
   ARP_OUT=""
   local config_before
   config_before="$(file_sum "${SANDBOX}/config.toml")"
-  run_page_step trust
+  run_page_step trust "${SHOWN[@]}"
   [[ "${status}" -eq 6 ]] || { echo "${output}"; return 1; }
   [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${SANDBOX}/monitor/.env" ]] || return 1
 }
@@ -443,8 +462,11 @@ rendered_access() { grep -E '^ATRIUM_REMOTE_ACCESS=' "${SANDBOX}/monitor/.env"; 
   [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "false" ]] || return 1
 }
 
-@test "the page's write step, run by absolute path, takes exactly one of on, off or trust and writes nothing otherwise" {
-  local rows=('no act|' 'an unknown act|reissue' 'a second word|on extra' 'a flag|--yes')
+@test "the page's write step, run by absolute path, takes on or off alone or trust with a well-formed network, and writes nothing otherwise" {
+  local rows=('no act|' 'an unknown act|reissue' 'a second word|on extra' 'a flag|--yes' 'trust with no network|trust'
+    'on with a network|on en1 192.168.0.1 00:1b:2c:0d:4e:5f' 'trust with a public gateway|trust en1 8.8.8.8 00:1b:2c:0d:4e:5f'
+    'trust with an unpadded hardware address|trust en1 192.168.0.1 0:1b:2c:d:4e:5f' 'trust with an interface that is no name|trust en/1 192.168.0.1 00:1b:2c:0d:4e:5f'
+    'trust with a fourth network word|trust en1 192.168.0.1 00:1b:2c:0d:4e:5f extra')
   local row name argv config_before
   config_before="$(file_sum "${SANDBOX}/config.toml")"
   for row in "${rows[@]}"; do

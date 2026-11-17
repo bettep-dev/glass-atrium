@@ -4,8 +4,10 @@
 # Internal: run only by the monitor's loopback routes, never listed by `glass-atrium remote` or its help.
 # Writes config.toml, the keys and monitor/.env only → the monitor applies the change itself (no restart, no
 # monitor call); the typed confirmation stays with the terminal entries, whose write steps these are.
-# Exit: 0 written · 2 argv not exactly one act · 6 network unreadable or trusted list malformed · 7 keys not
-# created · 8 config written, env not rendered · 9 network already trusted (nothing written) · 1 other write failure.
+# Argv: `on` · `off` · `trust <interface> <gateway> <hardware address>` — the network the monitor's confirm showed.
+# Exit: 0 written · 2 argv not one of those · 6 network unreadable or trusted list malformed · 7 keys not created ·
+# 8 config written, env not rendered · 9 network already trusted · 10 the network read is not the one shown
+# (9 and 10 write nothing) · 1 other write failure.
 set -Eeuo pipefail
 IFS=$'\n\t'
 trap 'printf "remote-access-set: line %s: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2' ERR
@@ -18,17 +20,20 @@ source "${SCRIPT_DIR}/lib/atrium-config.sh"
 source "${SCRIPT_DIR}/../lib/ga-remote.sh"
 
 readonly RENDER_FAILED=8
+readonly NETWORK_NOT_SHOWN=10
 
 main() {
   local rc=0
-  if (($# != 1)); then
-    print_usage
-    return 2
-  fi
-  case "$1" in
-    on) ga_remote_enable || rc=$? ;;
-    off) set_off || rc=$? ;;
-    trust) set_trust || rc=$? ;;
+  case "$#:${1:-}" in
+    1:on) ga_remote_enable || rc=$? ;;
+    1:off) set_off || rc=$? ;;
+    4:trust)
+      if ! is_network_identity "$2" "$3" "$4"; then
+        print_usage
+        return 2
+      fi
+      set_trust "$2 $3 $4" || rc=$?
+      ;;
     *)
       print_usage
       return 2
@@ -42,7 +47,12 @@ main() {
 }
 
 print_usage() {
-  printf 'usage: remote-access-set.sh on|off|trust\n' >&2
+  printf 'usage: remote-access-set.sh on|off|trust <interface> <gateway> <hardware address>\n' >&2
+}
+
+# The identity's form as ga_remote_get_network_identity prints it: an interface name, a private gateway, a normalized address.
+is_network_identity() {
+  [[ "$1" =~ ^[a-z0-9]+$ ]] && ga_remote_is_trusted_entry "$2@$3"
 }
 
 set_off() {
@@ -52,9 +62,14 @@ set_off() {
   fi
 }
 
+# Trusts only the network shown: a change between the monitor's match and this read writes nothing.
 set_trust() {
-  local identity
+  local shown="$1" identity
   identity="$(ga_remote_get_trust_identity)" || return
+  if [[ "${identity}" != "${shown}" ]]; then
+    printf 'remote: the network now is not the one shown — nothing written\n' >&2
+    return "${NETWORK_NOT_SHOWN}"
+  fi
   ga_remote_trust_network "${identity}"
 }
 

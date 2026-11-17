@@ -52,7 +52,14 @@ export const REMOTE_ADMIN_LIMITS = {
 export const CA_DOWNLOAD = { FILE_NAME: "glass-atrium-local-ca.pem", CONTENT_TYPE: "application/x-x509-ca-cert" } as const;
 
 /** What the shell's write step reported. */
-export type AccessStepOutcome = "written" | "network_unreadable" | "keys_not_created" | "env_not_rendered" | "already_trusted" | "write_failed";
+export type AccessStepOutcome =
+  | "written"
+  | "network_unreadable"
+  | "keys_not_created"
+  | "env_not_rendered"
+  | "already_trusted"
+  | "network_changed"
+  | "write_failed";
 
 /** Refused before any step: no confirm read in force, or the network differs from the one it showed. */
 export type ConfirmRefusal = "confirm_stale" | "network_changed";

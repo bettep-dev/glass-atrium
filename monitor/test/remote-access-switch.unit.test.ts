@@ -59,12 +59,15 @@ interface BuiltSwitch {
   readonly access: RemoteAccessSwitch;
   readonly opened: StandInController[];
   readonly steps: string[];
+  /** the network each trust step was handed */
+  readonly handed: NetworkIdentity[];
   readonly network: StandInNetwork;
 }
 
 async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
   const opened: StandInController[] = [];
   const steps: string[] = [];
+  const handed: NetworkIdentity[] = [];
   const network: StandInNetwork = { current: input.identity === undefined ? { ...HOME_NETWORK, interface: "en0" } : input.identity, clock: Date.parse("2026-11-17T09:00:00.000Z"), reads: 0 };
   const open = async (settings: RemoteSettings) => {
     if (input.isOpenFailing === true) throw new Error("listener build failed");
@@ -74,9 +77,10 @@ async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
   };
   const deps: AccessSwitchDeps = {
     boot: async (settings) => (settings.enabled ? open(settings) : null),
-    runStep: async (act) => {
-      steps.push(act);
-      input.afterStep?.(act, network);
+    runStep: async (step) => {
+      steps.push(step.act);
+      if (step.act === "trust") handed.push(step.shown);
+      input.afterStep?.(step.act, network);
       return input.step ?? "written";
     },
     readSettings: async () => {
@@ -98,7 +102,7 @@ async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
   };
   const access = new RemoteAccessSwitch(deps, input.booted ?? OFF);
   await access.boot();
-  return { access, opened, steps, network };
+  return { access, opened, steps, handed, network };
 }
 
 /** The page's order: the confirm reads the network, then the person confirms the act. */
@@ -234,6 +238,15 @@ describe("the network the confirm showed", () => {
     });
   }
 
+  for (const act of ["turnOn", "trust"] as const) {
+    test(`${act} hands the trust step the network the confirm showed, for the step to match against its own read`, async () => {
+      const shown = { ...OFFICE_NETWORK, interface: "en0" };
+      const { access, handed } = await buildSwitch({ booted: OFF, written: ON, identity: shown });
+      await confirmThen(access, () => access[act]());
+      assert.deepEqual(handed, [shown]);
+    });
+  }
+
   test("turning on a network not yet trusted trusts the network shown, in the same act after the on", async () => {
     const { access, steps } = await buildSwitch({ booted: OFF, written: ON, identity: { ...OFFICE_NETWORK, interface: "en0" } });
     const result = await confirmThen(access, () => access.turnOn());
@@ -328,22 +341,38 @@ describe("the shell's write step", () => {
     { exitCode: 7, outcome: "keys_not_created" },
     { exitCode: 8, outcome: "env_not_rendered" },
     { exitCode: 9, outcome: "already_trusted" },
+    { exitCode: 10, outcome: "network_changed" },
     { exitCode: 2, outcome: "write_failed" },
     { exitCode: 1, outcome: "write_failed" },
   ];
   for (const row of rows) {
-    test(`exit ${row.exitCode} reads as ${row.outcome}, the act passed as the one argument`, async () => {
+    test(`exit ${row.exitCode} reads as ${row.outcome}`, async () => {
       const file = await writeStep(row.exitCode);
-      const outcome = await runAccessStep("trust", { file });
-      const argv = await readFile(path.join(path.dirname(file), "argv"), "utf8");
-      assert.deepEqual([outcome, argv], [row.outcome, "1\ntrust\n"]);
+      assert.equal(await runAccessStep({ act: "off" }, { file }), row.outcome);
     });
   }
+
+  test("on and off pass the act alone; trust passes the network shown as interface, gateway and hardware address", async () => {
+    const rows = [
+      { name: "on", step: { act: "on" } as const, argv: "1\non\n" },
+      { name: "off", step: { act: "off" } as const, argv: "1\noff\n" },
+      {
+        name: "trust",
+        step: { act: "trust", shown: { ...HOME_NETWORK, interface: "en1" } } as const,
+        argv: "4\ntrust\nen1\n192.168.0.1\na4:2b:b0:11:22:33\n",
+      },
+    ];
+    for (const row of rows) {
+      const file = await writeStep(0);
+      await runAccessStep(row.step, { file });
+      assert.equal(await readFile(path.join(path.dirname(file), "argv"), "utf8"), row.argv, row.name);
+    }
+  });
 
   test("a step that outlives its timeout is killed and reads as write_failed", async () => {
     const file = await writeStep(0, 5);
     const started = Date.now();
-    const outcome = await runAccessStep("on", { file, timeoutMs: 300 });
+    const outcome = await runAccessStep({ act: "on" }, { file, timeoutMs: 300 });
     assert.deepEqual([outcome, Date.now() - started < 4_000], ["write_failed", true]);
   });
 });

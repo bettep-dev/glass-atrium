@@ -176,7 +176,7 @@ export type SwitchedController = Pick<RemoteListenerController, "isTurnedOff" | 
 export interface AccessSwitchDeps {
   /** the boot path → its own audit row and device-off rule */
   readonly boot: (settings: RemoteSettings) => Promise<SwitchedController | null>;
-  readonly runStep: (act: AccessAct) => Promise<AccessStepOutcome>;
+  readonly runStep: (step: AccessStep) => Promise<AccessStepOutcome>;
   /** the settings the step rendered */
   readonly readSettings: () => Promise<RemoteSettings>;
   readonly open: (settings: RemoteSettings) => Promise<SwitchedController>;
@@ -190,7 +190,8 @@ export interface AccessSwitchDeps {
   readonly now: () => number;
 }
 
-export type AccessAct = "on" | "off" | "trust";
+/** One write step: on and off alone; trust names the network the confirm showed → the step refuses any other it reads. */
+export type AccessStep = { readonly act: "on" | "off" } | { readonly act: "trust"; readonly shown: NetworkIdentity };
 
 /**
  * The feature's state in this process: boot, then the Mac page's acts. The shell step writes; the switch re-reads what it
@@ -233,7 +234,7 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     if (shown === null) return { outcome: "confirm_stale", trustedCount: null, trust: null };
     const refusal = await this.#getChange(shown);
     if (refusal !== null) return { outcome: refusal, trustedCount: null, trust: null };
-    const on = await this.#write("on");
+    const on = await this.#write({ act: "on" });
     if (on.outcome !== "written" || isTrustedNetwork(this.#settings.trusted, shown)) return { ...on, trust: null };
     return { ...on, trust: await this.#trustShown(shown) };
   }
@@ -244,7 +245,7 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
   }
 
   async setOff(): Promise<AccessStepOutcome> {
-    const outcome = await this.deps.runStep("off");
+    const outcome = await this.deps.runStep({ act: "off" });
     if (outcome === "written") this.#settings = { ...this.#settings, enabled: false };
     return outcome;
   }
@@ -296,7 +297,7 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     return shown !== null && this.deps.now() - shown.at <= CONFIRM_TTL_MS ? shown.identity : null;
   }
 
-  // the step reads the network itself → refused here when that would be a network the person did not see
+  // refused here before any step; the step's own read refuses a change after this one
   async #getChange(shown: NetworkIdentity): Promise<"network_changed" | null> {
     const current = await this.deps.readIdentity();
     return current !== null && current.interface === shown.interface && isTrustedNetwork([shown], current) ? null : "network_changed";
@@ -304,12 +305,12 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
 
   async #trustShown(shown: NetworkIdentity): Promise<AccessApplyResult> {
     const refusal = await this.#getChange(shown);
-    return refusal === null ? this.#write("trust") : { outcome: refusal, trustedCount: null };
+    return refusal === null ? this.#write({ act: "trust", shown }) : { outcome: refusal, trustedCount: null };
   }
 
-  async #write(act: "on" | "trust"): Promise<AccessApplyResult> {
-    const outcome = await this.deps.runStep(act);
-    return outcome === "written" ? this.#apply(act) : { outcome, trustedCount: null };
+  async #write(step: AccessStep & { readonly act: "on" | "trust" }): Promise<AccessApplyResult> {
+    const outcome = await this.deps.runStep(step);
+    return outcome === "written" ? this.#apply(step.act) : { outcome, trustedCount: null };
   }
 
   async #apply(act: "on" | "trust"): Promise<AccessApplyResult> {
@@ -334,7 +335,7 @@ export function buildRemoteAccessSwitch(input: RemoteAccessInput & { readonly se
   return new RemoteAccessSwitch(
     {
       boot: (settings) => startRemoteAccess({ ...input, settings }),
-      runStep: (act) => runAccessStep(act),
+      runStep: (step) => runAccessStep(step),
       readSettings: () => readRenderedSettings(input.monitorPort),
       open: (settings) => openRemoteAccess(settings, input),
       isDeviceOff: () => isDeviceOff(dataDir),
@@ -356,15 +357,18 @@ const ACCESS_STEP_OUTCOME: ReadonlyMap<number, AccessStepOutcome> = new Map([
   [7, "keys_not_created"],
   [8, "env_not_rendered"],
   [9, "already_trusted"],
+  [10, "network_changed"],
 ]);
 
 /**
- * The write step for one act: fixed binary, the act as the one argument, no shell string, nothing from a request.
+ * The write step for one act: fixed binary, fixed argv positions, no shell string, nothing from a request.
+ * - trust: the network this process read for the confirm → interface, gateway, hardware address
  * @returns write_failed for any exit the step does not name, a timeout included
  */
-export async function runAccessStep(act: AccessAct, step: { file?: string; timeoutMs?: number } = {}): Promise<AccessStepOutcome> {
+export async function runAccessStep(step: AccessStep, run: { file?: string; timeoutMs?: number } = {}): Promise<AccessStepOutcome> {
+  const args = step.act === "trust" ? [step.act, step.shown.interface, step.shown.gateway, step.shown.hardwareAddress] : [step.act];
   try {
-    await promisify(execFile)(CLI_CALL.BASH, [step.file ?? ACCESS_STEP_FILE, act], { env: getCliEnv(), timeout: step.timeoutMs ?? CLI_CALL.TIMEOUT_MS });
+    await promisify(execFile)(CLI_CALL.BASH, [run.file ?? ACCESS_STEP_FILE, ...args], { env: getCliEnv(), timeout: run.timeoutMs ?? CLI_CALL.TIMEOUT_MS });
     return "written";
   } catch (error) {
     const code = (error as { code?: unknown }).code;
