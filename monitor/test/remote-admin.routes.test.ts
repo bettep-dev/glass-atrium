@@ -17,14 +17,20 @@ import type { Prisma } from "../src/generated/prisma/client.js";
 import { buildApp } from "../src/server/app.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { LOGGER_OPTIONS } from "../src/server/logger.js";
-import { REMOTE_ADMIN_LIMITS, REMOTE_ADMIN_PATH, type RemoteAdminDeps, registerRemoteAdminRoutes } from "../src/server/remote/admin-routes.js";
+import {
+  MAC_PAGE_HEADER,
+  REMOTE_ADMIN_LIMITS,
+  REMOTE_ADMIN_PATH,
+  type RemoteAdminDeps,
+  registerRemoteAdminRoutes,
+} from "../src/server/remote/admin-routes.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import { createDevice, findActiveDevice, listActiveDevices, revokeAllDevices, revokeDevice } from "../src/server/remote/devices.js";
 import type { RemoteAuditEvent } from "../src/server/remote/gate.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 
 const PORT = 16199;
-const MAC_PAGE = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin" };
+const MAC_PAGE: Record<string, string> = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin", [MAC_PAGE_HEADER.NAME]: MAC_PAGE_HEADER.VALUE };
 const ACCESS = { enabled: true, trusted: [{ gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33" }] };
 // what a careless caller could hand the route: the whole settings value, port, interface and paths included
 const WIDE_ACCESS = {
@@ -142,15 +148,58 @@ const ROUTES: { name: string; method: InjectOptions["method"]; getUrl: (id: bigi
   { name: "revoke all", method: "POST", getUrl: () => REMOTE_ADMIN_PATH.REVOKE_ALL },
 ];
 
+/** The Mac page's own request with one header replaced, or dropped when no value is given. */
+function getMacPageHeaders(name: string, value?: string): Record<string, string> {
+  const { [name]: _replaced, ...rest } = MAC_PAGE;
+  return value === undefined ? rest : { ...rest, [name]: value };
+}
+
+// what a document's markup can send at a same-origin route: fetch metadata yes, a script-set header never
+const DOCUMENT_ORIGIN = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin", origin: `http://127.0.0.1:${PORT}` };
+const MARKUP_REQUESTS: { name: string; method: "GET" | "POST"; headers: Record<string, string>; payload?: string }[] = [
+  {
+    name: "an empty form post",
+    method: "POST",
+    headers: { ...DOCUMENT_ORIGIN, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document", "content-type": "application/x-www-form-urlencoded" },
+    payload: "",
+  },
+  {
+    name: "an empty text/plain form post",
+    method: "POST",
+    headers: { ...DOCUMENT_ORIGIN, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document", "content-type": "text/plain" },
+    payload: "",
+  },
+  {
+    name: "a link ping",
+    method: "POST",
+    headers: {
+      ...DOCUMENT_ORIGIN,
+      "sec-fetch-mode": "no-cors",
+      "sec-fetch-dest": "empty",
+      "content-type": "text/ping",
+      "ping-from": `http://127.0.0.1:${PORT}/#clauded-docs`,
+      "ping-to": "https://example.com/setup",
+    },
+    payload: "PING",
+  },
+  {
+    name: "an image request",
+    method: "GET",
+    headers: { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image", accept: "image/avif,image/webp,*/*" },
+  },
+];
+
 describe("every admin route", () => {
-  test("refuses with 403 unless the request is same-origin by fetch metadata at a loopback Host, and changes nothing", async () => {
+  test("refuses with 403 unless the request is the page's script, same-origin by fetch metadata at a loopback Host, and changes nothing", async () => {
     const refusals: { name: string; headers: Record<string, string> }[] = [
-      { name: "no fetch metadata", headers: { host: `127.0.0.1:${PORT}` } },
-      { name: "fetch metadata none", headers: { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "none" } },
-      { name: "same-site", headers: { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-site" } },
-      { name: "cross-site", headers: { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "cross-site" } },
-      { name: "same-origin at a rebound Host", headers: { host: `owner-mac.local:${PORT}`, "sec-fetch-site": "same-origin" } },
-      { name: "same-origin at the loopback name on another port", headers: { host: "localhost:16145", "sec-fetch-site": "same-origin" } },
+      { name: "no fetch metadata", headers: getMacPageHeaders("sec-fetch-site") },
+      { name: "fetch metadata none", headers: getMacPageHeaders("sec-fetch-site", "none") },
+      { name: "same-site", headers: getMacPageHeaders("sec-fetch-site", "same-site") },
+      { name: "cross-site", headers: getMacPageHeaders("sec-fetch-site", "cross-site") },
+      { name: "same-origin at a rebound Host", headers: getMacPageHeaders("host", `owner-mac.local:${PORT}`) },
+      { name: "same-origin at the loopback name on another port", headers: getMacPageHeaders("host", "localhost:16145") },
+      { name: "no page header", headers: getMacPageHeaders(MAC_PAGE_HEADER.NAME) },
+      { name: "the page header with another value", headers: getMacPageHeaders(MAC_PAGE_HEADER.NAME, "1") },
     ];
     await runRolledBack(async () => {
       const device = await addDevice("Owner iPhone");
@@ -159,6 +208,21 @@ describe("every admin route", () => {
           const response = await callAdmin({ method: route.method, url: route.getUrl(device.id), headers: refusal.headers });
           assert.equal(response.statusCode, 403, `${route.name} / ${refusal.name}: ${response.body}`);
           assert.ok(!("code" in JSON.parse(response.body)), `${route.name} / ${refusal.name}`);
+        }
+      }
+      assert.deepEqual([openedCodes, events, (await listActiveDevices(db)).map((entry) => entry.id)], [[], [], [device.id]]);
+    });
+  });
+
+  test("refuses what a document's markup can send — a form post, a link ping, an image request — and no act answers a GET", async () => {
+    await runRolledBack(async () => {
+      const device = await addDevice("Owner iPhone");
+      for (const route of ROUTES) {
+        for (const markup of MARKUP_REQUESTS) {
+          const response = await callAdmin({ method: markup.method, url: route.getUrl(device.id), headers: markup.headers, payload: markup.payload });
+          // no route of the markup's method at this path → the router's 404; one there → the page gate's 403
+          const expected = markup.method === route.method ? 403 : 404;
+          assert.equal(response.statusCode, expected, `${route.name} / ${markup.name}: ${response.statusCode} ${response.body}`);
         }
       }
       assert.deepEqual([openedCodes, events, (await listActiveDevices(db)).map((entry) => entry.id)], [[], [], [device.id]]);

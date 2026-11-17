@@ -20,6 +20,9 @@ export const REMOTE_ADMIN_PATH = {
   REVOKE_ALL: "/api/remote/devices/revoke-all",
 } as const;
 
+/** Set only by the page's own script → a document's form, link ping or image request at a same-origin route never carries it. */
+export const MAC_PAGE_HEADER = { NAME: "x-glass-atrium-page", VALUE: "remote-access" } as const;
+
 export const REMOTE_ADMIN_LIMITS = {
   REGISTRATION_OPEN: { limit: 5, windowMs: 60_000 },
 } as const;
@@ -62,7 +65,7 @@ export const DEVICE_PARAMS_SCHEMA = {
   },
 } as const;
 
-/** Every route answers only a same-origin page request by fetch metadata; the loopback Host allowlist runs at the root. */
+/** Every route answers only the page's own script, same-origin by fetch metadata; the loopback Host allowlist runs at the root. */
 export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: RemoteAdminDeps): Promise<void> {
   await app.register(async (scope) => {
     scope.addHook("onRequest", refuseUnlessMacPage);
@@ -78,9 +81,10 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
   });
 }
 
-// GET included: the root request guard never judges a GET, and a device list is not for a neighbour page
+// GET included: the root request guard never judges a GET, and a device list is not for a neighbour page or a document's image
 async function refuseUnlessMacPage(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> {
   if (request.headers["sec-fetch-site"] !== "same-origin") return reply.code(403).send({ error: "not_mac_page" });
+  if (request.headers[MAC_PAGE_HEADER.NAME] !== MAC_PAGE_HEADER.VALUE) return reply.code(403).send({ error: "not_mac_page" });
   if (hasBody(request)) return reply.code(400).send({ error: "body_not_allowed" });
   return undefined;
 }

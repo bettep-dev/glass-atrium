@@ -7,6 +7,8 @@ const URL_RA = {
 	REGISTRATION: "/api/remote/registration",
 	REVOKE_ALL: "/api/remote/devices/revoke-all",
 };
+// admin-routes.ts → MAC_PAGE_HEADER (bound by remote-access.screen-render) — a document's markup can never send it
+const PAGE_HEADERS_RA = { "x-glass-atrium-page": "remote-access" };
 // registration-code.ts → REGISTRATION_CODE.WINDOW_MS (bound by remote-access.screen-render)
 const CODE_WINDOW_MS_RA = 5 * 60_000;
 const REVOKE_OUTLINE_STYLE_RA = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
@@ -19,26 +21,26 @@ const CA_PATH_RA = "~/.glass-atrium/monitor/data/remote-access/ca.pem";
 
 /** The registered devices and the feature's state, in one read. */
 async function readDevicesRA() {
-	const res = await fetch(URL_RA.DEVICES, { headers: { Accept: "application/json" } });
+	const res = await fetch(URL_RA.DEVICES, { headers: { ...PAGE_HEADERS_RA, Accept: "application/json" } });
 	if (!res.ok) throw await window.UI.getFetchError(res);
 	return res.json();
 }
 
 /** Opens a registration and returns its code; a refused open rejects with the reason the owner can act on. */
 async function createRegistrationRA() {
-	const res = await fetch(URL_RA.REGISTRATION, { method: "POST" });
+	const res = await fetch(URL_RA.REGISTRATION, { method: "POST", headers: PAGE_HEADERS_RA });
 	if (res.ok) return (await res.json()).code;
 	throw OPEN_REFUSAL_RA[res.status] ? new Error(OPEN_REFUSAL_RA[res.status]) : await window.UI.getFetchError(res);
 }
 
 /** Revokes one device; one already gone counts as revoked. */
 async function deleteDeviceRA(id) {
-	const res = await fetch(`${URL_RA.DEVICES}/${encodeURIComponent(id)}`, { method: "DELETE" });
+	const res = await fetch(`${URL_RA.DEVICES}/${encodeURIComponent(id)}`, { method: "DELETE", headers: PAGE_HEADERS_RA });
 	if (!res.ok && res.status !== 404) throw await window.UI.getFetchError(res);
 }
 
 async function deleteAllDevicesRA() {
-	const res = await fetch(URL_RA.REVOKE_ALL, { method: "POST" });
+	const res = await fetch(URL_RA.REVOKE_ALL, { method: "POST", headers: PAGE_HEADERS_RA });
 	if (!res.ok) throw await window.UI.getFetchError(res);
 }
 

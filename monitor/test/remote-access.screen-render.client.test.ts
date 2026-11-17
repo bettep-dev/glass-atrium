@@ -6,6 +6,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+import { MAC_PAGE_HEADER } from "../src/server/remote/admin-routes.js";
 import { REGISTRATION_CODE } from "../src/server/remote/registration-code.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
@@ -16,6 +17,7 @@ interface SentRequest {
   readonly url: string;
   readonly method: string;
   readonly body: unknown;
+  readonly pageHeader: string | null;
 }
 
 interface Answer {
@@ -30,7 +32,7 @@ async function loadScreen(answer: Answer) {
   const mod = await loadScreenModule(SCREEN_SRC, {
     UI: ui,
     fetch: async (url: string, init: RequestInit = {}) => {
-      sent.push({ url, method: init.method ?? "GET", body: init.body });
+      sent.push({ url, method: init.method ?? "GET", body: init.body, pageHeader: new Headers(init.headers).get(MAC_PAGE_HEADER.NAME) });
       return new Response(JSON.stringify(answer.body), { status: answer.status, statusText: "x" });
     },
   });
@@ -60,9 +62,25 @@ describe("the Mac page reads and acts on the remote access routes", () => {
 
     const code = await (mod.createRegistrationRA as () => Promise<string>)();
 
-    assert.deepEqual(sent, [{ url: "/api/remote/registration", method: "POST", body: undefined }]);
+    assert.deepEqual(sent, [{ url: "/api/remote/registration", method: "POST", body: undefined, pageHeader: MAC_PAGE_HEADER.VALUE }]);
     assert.equal(code, "K7QMR2XD");
   });
+
+  const calls = [
+    { name: "the device read", act: "readDevicesRA", arg: undefined },
+    { name: "opening registration", act: "createRegistrationRA", arg: undefined },
+    { name: "revoking one device", act: "deleteDeviceRA", arg: "7" },
+    { name: "revoking every device", act: "deleteAllDevicesRA", arg: undefined },
+  ];
+  for (const row of calls) {
+    test(`${row.name} carries the page header the admin routes require`, async () => {
+      const { mod, sent } = await loadScreen({ status: 200, body: { ...DEVICES_BODY, code: "K7QMR2XD", revoked: 1 } });
+
+      await (mod[row.act] as (id?: string) => Promise<unknown>)(row.arg);
+
+      assert.deepEqual(sent.map((entry) => entry.pageHeader), [MAC_PAGE_HEADER.VALUE], row.name);
+    });
+  }
 
   const refusals = [
     { name: "a rate-limited open names the wait", status: 429, error: "too_many_requests", message: /wait a minute/i },
