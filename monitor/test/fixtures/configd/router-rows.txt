@@ -1,0 +1,5 @@
+configd names this router on this interface|en1|IPv4.Router=192.168.45.1;IPv4.RouterHardwareAddress=50:e:a5:7:1c:f2|50:0e:a5:07:1c:f2
+configd primary service on another interface|en0|IPv4.Router=192.168.45.1;IPv4.RouterHardwareAddress=50:e:a5:7:1c:f2|-
+configd names another router|en1|IPv4.Router=192.168.45.7;IPv4.RouterHardwareAddress=50:e:a5:7:1c:f2|-
+configd signature without a hardware address|en1|IPv4.Router=192.168.45.1|-
+configd hardware address not six octets|en1|IPv4.Router=192.168.45.1;IPv4.RouterHardwareAddress=50:e:a5:7:1c|-

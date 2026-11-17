@@ -170,38 +170,50 @@ file_sum() { cksum <"$1"; }
 
 # --- network identity -------------------------------------------------------------------------------
 
-# configd's record of the primary service (`scutil` → show State:/Network/Service/<id>/IPv4), as macOS prints it
+# configd's records as macOS prints them, shared with monitor/test/remote-network.unit.test.ts → one capture, one row set
+CONFIGD_FIXTURES="${GA}/monitor/test/fixtures/configd"
+
+# The captured service record (`scutil` → show State:/Network/Service/<id>/IPv4) with this interface and signature.
 configd_service_for() {
-  printf '<dictionary> {\n  InterfaceName : %s\n  NetworkSignature : IPv4.Router=%s;IPv4.RouterHardwareAddress=%s\n  Router : %s\n}\n' \
-    "$1" "$2" "$3" "$2"
+  INTERFACE="$1" SIGNATURE="$2" awk '
+    $1 == "InterfaceName" { sub(/: .*/, ": " ENVIRON["INTERFACE"]) }
+    $1 == "NetworkSignature" { sub(/: .*/, ": " ENVIRON["SIGNATURE"]) }
+    { print }
+  ' "${CONFIGD_FIXTURES}/service-ipv4.txt"
 }
 
-@test "network identity is the gateway and its ARP entry on the route's interface, else configd's record of it, else unreadable" {
-  local good_arp="${ARP_OUT}" no_entry='192.168.0.1 (192.168.0.1) -- no entry'
+@test "network identity is the gateway and its ARP entry on the route's interface, else unreadable" {
+  local good_arp="${ARP_OUT}"
   local rows=(
-    "matching entry|${good_arp}|192.168.0.1|-|en1 192.168.0.1 00:1b:2c:0d:4e:5f"
-    "no ARP entry, no configd record||192.168.0.1|-|"
-    "entry on another interface|? (192.168.0.1) at 0:1b:2c:d:4e:5f on en0 ifscope [ethernet]|192.168.0.1|-|"
-    "incomplete entry|? (192.168.0.1) at (incomplete) on en1 ifscope [ethernet]|192.168.0.1|-|"
-    "public gateway|? (8.8.8.8) at 0:1b:2c:d:4e:5f on en1 ifscope [ethernet]|8.8.8.8|-|"
-    "arp no entry, configd names this router on this interface|${no_entry}|192.168.0.1|en1 192.168.0.1 0:1b:2c:d:4e:5f|en1 192.168.0.1 00:1b:2c:0d:4e:5f"
-    "arp no entry, configd service on another interface|${no_entry}|192.168.0.1|en0 192.168.0.1 0:1b:2c:d:4e:5f|"
-    "arp no entry, configd names another router|${no_entry}|192.168.0.1|en1 192.168.0.254 0:1b:2c:d:4e:5f|"
-    "arp no entry, configd address not six octets|${no_entry}|192.168.0.1|en1 192.168.0.1 0:1b:2c:d:4e|"
+    "matching entry|${good_arp}|192.168.0.1|en1 192.168.0.1 00:1b:2c:0d:4e:5f"
+    "no ARP entry, no configd record||192.168.0.1|"
+    "entry on another interface|? (192.168.0.1) at 0:1b:2c:d:4e:5f on en0 ifscope [ethernet]|192.168.0.1|"
+    "incomplete entry|? (192.168.0.1) at (incomplete) on en1 ifscope [ethernet]|192.168.0.1|"
+    "public gateway|? (8.8.8.8) at 0:1b:2c:d:4e:5f on en1 ifscope [ethernet]|8.8.8.8|"
   )
-  local row name gateway configd expected actual
+  local row name gateway expected actual
   for row in "${rows[@]}"; do
-    IFS='|' read -r name ARP_OUT gateway configd expected <<<"${row}"
+    IFS='|' read -r name ARP_OUT gateway expected <<<"${row}"
     ROUTE_OUT=$'    gateway: '"${gateway}"$'\n  interface: en1\n'
-    CONFIGD_GLOBAL="" CONFIGD_SERVICE=""
-    if [[ "${configd}" != "-" ]]; then
-      CONFIGD_GLOBAL=$'<dictionary> {\n  PrimaryInterface : en1\n  PrimaryService : 7A1F3C2E-0B4D-4E6A-9C1D-2F8B5E7A9D30\n}'
-      # shellcheck disable=SC2086  # the row's three configd fields are three argv words
-      CONFIGD_SERVICE="$(IFS=' ' && configd_service_for ${configd})"
-    fi
     actual="$(ga_remote_get_network_identity)" || actual=""
     [[ "${actual}" == "${expected}" ]] || { echo "${name}: '${actual}'"; return 1; }
   done
+}
+
+@test "with no ARP entry, network identity is configd's record of the same router on the route's interface" {
+  ARP_OUT='192.168.45.1 (192.168.45.1) -- no entry'
+  ROUTE_OUT=$'    gateway: 192.168.45.1\n  interface: en1\n'
+  CONFIGD_GLOBAL="$(<"${CONFIGD_FIXTURES}/global-ipv4.txt")"
+  local name network_interface signature address expected actual count=0
+  while IFS='|' read -r name network_interface signature address; do
+    CONFIGD_SERVICE="$(configd_service_for "${network_interface}" "${signature}")"
+    expected="en1 192.168.45.1 ${address}"
+    [[ "${address}" != "-" ]] || expected=""
+    actual="$(ga_remote_get_network_identity)" || actual=""
+    [[ "${actual}" == "${expected}" ]] || { echo "${name}: '${actual}'"; return 1; }
+    count=$((count + 1))
+  done <"${CONFIGD_FIXTURES}/router-rows.txt"
+  ((count > 0)) || { echo "no router rows read"; return 1; }
 }
 
 # --- on / trust (interactive, typed confirmation, no skip flag) -----------------------------------

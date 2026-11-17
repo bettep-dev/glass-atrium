@@ -80,7 +80,7 @@ ga_remote_run() {
   esac
 }
 
-# --- network facts (the same reads as the monitor's network.ts → getNetworkIdentity) ---------------------
+# --- network facts ------------------------------------------------------------------------------------
 
 # `route -n get default` → "<gateway> <interface>"; returns 1 when either is unreadable.
 ga_remote_get_default_route() {
@@ -111,7 +111,7 @@ ga_remote_get_network_identity() {
 # A child of the monitor's node gets arp "no entry" for the gateway (measured); configd answers over IPC.
 _ga_remote_get_configd_hardware_address() {
   local gateway="$1" network_interface="$2" record service_id service_interface signature
-  local pattern='IPv4\.Router=([^;]+);IPv4\.RouterHardwareAddress=([0-9A-Fa-f:]+)'
+  local pattern='IPv4\.Router=([^;[:space:]]+);IPv4\.RouterHardwareAddress=([0-9A-Fa-f:]+)'
   record="$(ga_remote_run scutil <<<$'show State:/Network/Global/IPv4\nquit' 2>/dev/null)" || return 0
   service_id="$(awk '$1 == "PrimaryService" && $2 == ":" { print $3; exit }' <<<"${record}")"
   [[ "${service_id}" =~ ^[0-9A-Fa-f-]{1,64}$ ]] || return 0

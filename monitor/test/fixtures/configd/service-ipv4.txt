@@ -1,0 +1,7 @@
+<dictionary> {
+  ARPResolvedHardwareAddress : 50:e:a5:7:1c:f2
+  ARPResolvedIPAddress : 192.168.45.1
+  InterfaceName : en1
+  NetworkSignature : IPv4.Router=192.168.45.1;IPv4.RouterHardwareAddress=50:e:a5:7:1c:f2
+  Router : 192.168.45.1
+}
