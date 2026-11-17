@@ -13,6 +13,8 @@ import { getQueueCliPath } from "../queue/envelope.js";
 import { getQueueImageDir } from "../queue/images.js";
 import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
 import { getPeerSessions } from "../queue/owner-sessions.js";
+import { createRelay, getRefusalResponse } from "../queue/relay.js";
+import { getSecretScannerPath } from "../queue/relay-scan.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook } from "../queue/request-gate.js";
 import { hasBrowserSignal } from "../request-guards.js";
@@ -23,6 +25,7 @@ import {
   pendingCountBodySchema,
   postItemBodySchema,
   registerBodySchema,
+  relayBodySchema,
   sessionBodySchema,
 } from "../queue/schemas.js";
 import { ownerRoutesPlugin } from "./queue-owner.js";
@@ -41,6 +44,8 @@ export interface QueueRouteOptions {
   cliPath: string;
   /** Owner image folder: uploads land here, the serve route and the session-side read name files in it. */
   imageDir: string;
+  /** The install's secret scanner the relay route runs, fixed here so no request can name another. */
+  scannerPath: string;
 }
 
 /** Defaults resolved at registration time (never import time) → a GA_ROOT set after import still wins. */
@@ -51,6 +56,7 @@ export function resolveQueueRouteOptions(): QueueRouteOptions {
     homeDir: os.homedir(),
     cliPath: getQueueCliPath(gaRoot),
     imageDir: getQueueImageDir(gaRoot),
+    scannerPath: getSecretScannerPath(gaRoot),
   };
 }
 
@@ -69,6 +75,7 @@ async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Pr
   registerPendingCountRoute(app);
   registerWithdrawRoute(app);
   registerPeerRoute(app);
+  registerRelayRoute(app, options.scannerPath);
   await app.register(ownerRoutesPlugin, options);
 }
 
@@ -159,6 +166,26 @@ function registerPeerRoute(app: FastifyInstance): void {
       schema: sessionBodySchema,
       input: request.body,
       work: (body) => getPeerSessions(body.sessionId),
+    }),
+  );
+}
+
+function registerRelayRoute(app: FastifyInstance, scannerPath: string): void {
+  app.post("/api/queue/relay", SESSION_ONLY_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/relay",
+      schema: relayBodySchema,
+      input: request.body,
+      work: async (body) => {
+        const outcome = await createRelay(body, scannerPath);
+        if ("relay" in outcome) {
+          reply.code(201);
+          return outcome.relay;
+        }
+        const refusal = getRefusalResponse(outcome.refusal);
+        reply.code(refusal.statusCode);
+        return refusal.body;
+      },
     }),
   );
 }

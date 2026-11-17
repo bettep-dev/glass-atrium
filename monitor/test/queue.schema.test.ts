@@ -11,7 +11,7 @@ import "dotenv/config";
 
 import { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { registerBodySchema } from "../src/server/queue/schemas.js";
+import { RELAY_TEXT_MAX, registerBodySchema } from "../src/server/queue/schemas.js";
 
 /** Thrown last inside a case's transaction → the transaction rolls back and nothing persists. */
 class Rollback extends Error {}
@@ -364,7 +364,7 @@ describe("monitor.queue_items relay kind", () => {
     },
     { name: "accepts a redacted relay carrying its original length", change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}, "relay_redacted_length" = 4000` },
     { name: "accepts a lapsed relay closed at its lapse", change: () => Prisma.sql`"status" = 'withdrawn', "relay_closed_at" = ${SENT_AT}` },
-    { name: "accepts a relay body at the 4,000-character cap", change: () => Prisma.sql`"body" = ${"b".repeat(4000)}` },
+    { name: "accepts a relay body at the route's text cap", change: () => Prisma.sql`"body" = ${"b".repeat(RELAY_TEXT_MAX)}` },
     { name: "rejects a relay with no sender", change: () => Prisma.sql`"from_session_id" = NULL`, error: /queue_items_relay_check/ },
     { name: "rejects a relay with no hop", change: () => Prisma.sql`"relay_hop" = NULL`, error: /queue_items_relay_check/ },
     { name: "rejects a relay to its own sender", change: (ids) => Prisma.sql`"session_id" = ${ids.senderId}::uuid`, error: /queue_items_relay_check/ },
@@ -385,7 +385,7 @@ describe("monitor.queue_items relay kind", () => {
       error: /queue_items_decision_options_check/,
     },
     { name: "rejects a relay in the approval class", change: () => Prisma.sql`"approval_class" = true`, error: /queue_items_relay_check/ },
-    { name: "rejects a relay body past 4,000 characters", change: () => Prisma.sql`"body" = ${"b".repeat(4001)}`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay body past the route's text cap", change: () => Prisma.sql`"body" = ${"b".repeat(RELAY_TEXT_MAX + 1)}`, error: /queue_items_relay_check/ },
     { name: "rejects a redaction stamp with no original length", change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}`, error: /queue_items_relay_check/ },
     { name: "rejects an original length with no redaction stamp", change: () => Prisma.sql`"relay_redacted_length" = 12`, error: /queue_items_relay_check/ },
     {

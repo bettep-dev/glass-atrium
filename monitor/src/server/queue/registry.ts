@@ -40,6 +40,7 @@ export interface LockedSession {
 
 export interface LockedSessionRow {
   sessionId: string;
+  state: string;
   exitReason: string | null;
   isProbe: boolean;
 }
@@ -224,7 +225,8 @@ async function findReplacedSessionIds(tx: Prisma.TransactionClient, sessionId: s
 /** Locks the registry rows in ascending session id (the shared lock order); unknown ids are simply absent. */
 export async function lockSessions(tx: Prisma.TransactionClient, sessionIds: string[]): Promise<LockedSessionRow[]> {
   return tx.$queryRaw<LockedSessionRow[]>`
-    SELECT "session_id"::text AS "sessionId", "exit_reason"::text AS "exitReason", "is_probe" AS "isProbe" FROM "monitor"."queue_sessions"
+    SELECT "session_id"::text AS "sessionId", "state"::text AS "state", "exit_reason"::text AS "exitReason", "is_probe" AS "isProbe"
+    FROM "monitor"."queue_sessions"
     WHERE "session_id" = ANY(${sessionIds}::uuid[]) ORDER BY "session_id" FOR UPDATE`;
 }
 

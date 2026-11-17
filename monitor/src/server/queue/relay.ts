@@ -1,0 +1,213 @@
+// Session relay: one queue item per recipient that a session sends to its peers, delivered with no owner act.
+// Every rule a relay must pass is decided here, never in a front end: sender, recipients, envelope token, secret scan,
+// caps and hop. A refusal is a returned value, not a throw, so its caller records it before it answers.
+
+import { randomUUID } from "node:crypto";
+
+import type { Prisma } from "../../generated/prisma/client.js";
+import { getPrisma } from "../db.js";
+import { getComparableText, hasEnvelopeToken } from "./envelope.js";
+import { QueueRequestError } from "./errors.js";
+import { assertLinkedDocsExist } from "./items.js";
+import { type ListedSessionRow, createCopies, getPeerRows } from "./owner-sessions.js";
+import { SESSION_ID_PREFIX_LENGTH, getSessionName } from "./owner-views.js";
+import { scanText } from "./relay-scan.js";
+import { type LockedSessionRow, lockSessions } from "./registry.js";
+import type { RelayBody } from "./schemas.js";
+
+export const RELAY = {
+  CAP_WINDOW_MS: 3_600_000,
+  PER_SENDER: 10,
+  PER_PAIR: 5,
+  MACHINE: 30,
+  HOP_WINDOW_MS: 24 * 3_600_000,
+  /** The first hop refused. */
+  HOP_LIMIT: 3,
+} as const;
+// Every relay transaction takes it first → the machine-wide count and the insert never interleave across senders
+const RELAY_LOCK_KEY = 771_113_403;
+
+export type RelayRefusalReason =
+  | "sender_probe"
+  | "sender_not_live"
+  | "self"
+  | "recipient"
+  | "recipient_ambiguous"
+  | "token"
+  | "secret"
+  | "scan_unavailable"
+  | "sender_cap"
+  | "pair_cap"
+  | "machine_cap"
+  | "hop";
+
+const REFUSAL: Record<RelayRefusalReason, { statusCode: number; message: string }> = {
+  sender_probe: { statusCode: 409, message: "a probe session sends no relay" },
+  sender_not_live: { statusCode: 409, message: "the sending session is not live — a replaced or ended id sends no relay" },
+  self: { statusCode: 409, message: "a session relays to its peers, never to itself" },
+  recipient: { statusCode: 404, message: "every recipient must name one live, listed peer by its id prefix or name" },
+  recipient_ambiguous: { statusCode: 409, message: "a recipient names more than one peer — name it by its id prefix" },
+  token: { statusCode: 400, message: "relay text may not carry an envelope header" },
+  secret: { statusCode: 422, message: "relay text matches a credential pattern" },
+  scan_unavailable: { statusCode: 503, message: "the secret scan could not run — relay refused" },
+  sender_cap: { statusCode: 429, message: `a session sends at most ${RELAY.PER_SENDER} relay copies per rolling hour` },
+  pair_cap: { statusCode: 429, message: `a session reaches one peer at most ${RELAY.PER_PAIR} times per rolling hour` },
+  machine_cap: { statusCode: 429, message: `this Mac carries at most ${RELAY.MACHINE} relay copies per rolling hour` },
+  hop: { statusCode: 409, message: "this relay would pass the hop bound — wait for the owner's next answer or message" },
+};
+
+/** A peer a name or prefix matched: never its full id. */
+export interface RecipientCandidate {
+  sessionIdPrefix: string;
+  name: string;
+}
+
+export interface RelayRefusal {
+  reason: RelayRefusalReason;
+  candidates?: RecipientCandidate[];
+  /** The scanner's pattern code on a match; null when its reply named none. */
+  pattern?: string | null;
+}
+
+export interface CreatedRelay {
+  sendId: string;
+  hop: number;
+  copies: Array<{ id: number; sessionIdPrefix: string }>;
+}
+
+export type RelayOutcome = { relay: CreatedRelay } | { refusal: RelayRefusal };
+
+interface SenderRow {
+  id: string;
+  name: string | null;
+  cwd: string;
+  state: string;
+  isProbe: boolean;
+}
+
+/**
+ * Sends one relay copy per recipient, all or nothing. The secret scan runs before any row lock.
+ * @throws QueueRequestError 404 unknown_session · 400 unknown_linked_doc
+ */
+export async function createRelay(body: RelayBody, scannerPath: string): Promise<RelayOutcome> {
+  const sender = await getSenderOrThrow(body.sessionId);
+  if (sender.isProbe) return refuse("sender_probe");
+  if (sender.state !== "live") return refuse("sender_not_live");
+  const recipients = await resolveRecipients(sender, body.recipients);
+  if ("refusal" in recipients) return recipients;
+  if (hasEnvelopeToken(body.text)) return refuse("token");
+  const scan = await scanText(scannerPath, `${body.text}\n${getComparableText(body.text)}`);
+  if (scan.verdict === "match") return { refusal: { reason: "secret", pattern: scan.pattern } };
+  if (scan.verdict === "unavailable") return refuse("scan_unavailable");
+  return getPrisma().$transaction((tx) => insertRelay(tx, body, recipients.ids));
+}
+
+/** Status and body a refusal answers with: the reason code, its fixed message, and never any caller text. */
+export function getRefusalResponse(refusal: RelayRefusal): { statusCode: number; body: object } {
+  const { statusCode, message } = REFUSAL[refusal.reason];
+  return { statusCode, body: { error: `relay_${refusal.reason}`, reason: message, ...pickDetails(refusal) } };
+}
+
+function pickDetails(refusal: RelayRefusal): object {
+  if (refusal.candidates !== undefined) return { candidates: refusal.candidates };
+  if (refusal.pattern !== undefined) return { pattern: refusal.pattern };
+  return {};
+}
+
+function refuse(reason: RelayRefusalReason): { refusal: RelayRefusal } {
+  return { refusal: { reason } };
+}
+
+async function getSenderOrThrow(sessionId: string): Promise<SenderRow> {
+  const row = await getPrisma().queueSession.findUnique({ where: { sessionId }, select: { name: true, cwd: true, state: true, isProbe: true } });
+  if (row === null) throw new QueueRequestError(404, "unknown_session", "session not registered");
+  return { id: sessionId, ...row };
+}
+
+async function resolveRecipients(sender: SenderRow, recipients: string[]): Promise<{ ids: string[] } | { refusal: RelayRefusal }> {
+  if (recipients.some((recipient) => isNamedBy(sender, recipient))) return refuse("self");
+  const peers = await getPeerRows(sender.id);
+  const ids = new Set<string>();
+  for (const recipient of recipients) {
+    const [match, ...others] = peers.filter((peer) => isNamedBy(peer, recipient));
+    if (match === undefined) return refuse("recipient");
+    if (others.length > 0) return { refusal: { reason: "recipient_ambiguous", candidates: [match, ...others].map(toCandidate) } };
+    ids.add(match.id);
+  }
+  return { ids: [...ids] };
+}
+
+// An id prefix as the peers read shows it (or longer), or the shown name exactly
+function isNamedBy(row: Pick<ListedSessionRow, "id" | "name" | "cwd">, recipient: string): boolean {
+  const isPrefix = recipient.length >= SESSION_ID_PREFIX_LENGTH && row.id.startsWith(recipient.toLowerCase());
+  return isPrefix || getSessionName(row).name === recipient;
+}
+
+function toCandidate(row: ListedSessionRow): RecipientCandidate {
+  return { sessionIdPrefix: row.id.slice(0, SESSION_ID_PREFIX_LENGTH), name: getSessionName(row).name };
+}
+
+async function insertRelay(tx: Prisma.TransactionClient, body: RelayBody, recipientIds: string[]): Promise<RelayOutcome> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${RELAY_LOCK_KEY})`;
+  const lockRefusal = getLockedRefusal(await lockSessions(tx, [body.sessionId, ...recipientIds]), body.sessionId);
+  if (lockRefusal !== null) return refuse(lockRefusal);
+  const capRefusal = await getCapRefusal(tx, body.sessionId, recipientIds);
+  if (capRefusal !== null) return refuse(capRefusal);
+  const parent = await findHopParent(tx, body.sessionId);
+  const hop = parent === null ? 0 : parent.hop + 1;
+  if (hop >= RELAY.HOP_LIMIT) return refuse("hop");
+  await assertLinkedDocsExist(tx, body.linkedDocIds);
+  const sendId = randomUUID();
+  const fields = { kind: "relay", fromSessionId: body.sessionId, relayHop: hop, relayParentId: parent?.id ?? null, linkedDocIds: body.linkedDocIds.map(BigInt) } as const;
+  const copies = await createCopies(tx, { sessionIds: recipientIds, text: body.text, sendId }, fields);
+  return { relay: { sendId, hop, copies: copies.map((copy) => ({ id: copy.id, sessionIdPrefix: copy.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH) })) } };
+}
+
+// Re-read under the row locks: the sender or a recipient may have ended, been replaced or turned probe since resolution
+function getLockedRefusal(locked: LockedSessionRow[], senderId: string): RelayRefusalReason | null {
+  const sender = locked.find((row) => row.sessionId === senderId);
+  if (sender?.isProbe === true) return "sender_probe";
+  if (sender?.state !== "live") return "sender_not_live";
+  return locked.every((row) => row.state === "live" && !row.isProbe) ? null : "recipient";
+}
+
+async function getCapRefusal(tx: Prisma.TransactionClient, senderId: string, recipientIds: string[]): Promise<RelayRefusalReason | null> {
+  const windowStart = new Date(Date.now() - RELAY.CAP_WINDOW_MS);
+  const [count] = await tx.$queryRaw<Array<{ sender: number; pair: number; machine: number }>>`
+    SELECT
+      (SELECT count(*) FROM "monitor"."queue_items" i
+        WHERE i."kind"::text = 'relay' AND i."from_session_id" = ${senderId}::uuid AND i."asked_at" >= ${windowStart})::int AS "sender",
+      (SELECT COALESCE(max(p."copies"), 0) FROM (
+        SELECT count(*) AS "copies" FROM "monitor"."queue_items" i
+        WHERE i."kind"::text = 'relay' AND i."from_session_id" = ${senderId}::uuid AND i."session_id" = ANY(${recipientIds}::uuid[])
+          AND i."asked_at" >= ${windowStart}
+        GROUP BY i."session_id") p)::int AS "pair",
+      (SELECT count(*) FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay' AND i."asked_at" >= ${windowStart})::int AS "machine"`;
+  if ((count?.sender ?? 0) + recipientIds.length > RELAY.PER_SENDER) return "sender_cap";
+  if ((count?.pair ?? 0) + 1 > RELAY.PER_PAIR) return "pair_cap";
+  if ((count?.machine ?? 0) + recipientIds.length > RELAY.MACHINE) return "machine_cap";
+  return null;
+}
+
+/**
+ * The highest-hop relay the sender claimed (a Delivery row) or fetched within the hop window, counted only after the
+ * newest owner item it acked first; null when none → hop 0.
+ */
+async function findHopParent(tx: Prisma.TransactionClient, senderId: string): Promise<{ id: bigint; hop: number } | null> {
+  const windowStart = new Date(Date.now() - RELAY.HOP_WINDOW_MS);
+  const rows = await tx.$queryRaw<Array<{ id: bigint; hop: number }>>`
+    WITH "reset" AS (
+      SELECT max("delivered_at") AS "at" FROM "monitor"."queue_items"
+      WHERE "session_id" = ${senderId}::uuid AND "kind"::text <> 'relay'
+    ), "received" AS (
+      SELECT r."id", r."relay_hop" AS "hop",
+        GREATEST(r."relay_fetched_at", (SELECT max(d."sent_at") FROM "monitor"."queue_deliveries" d WHERE d."item_id" = r."id")) AS "at"
+      FROM "monitor"."queue_items" r
+      WHERE r."session_id" = ${senderId}::uuid AND r."kind"::text = 'relay'
+    )
+    SELECT "received"."id", "received"."hop"::int AS "hop" FROM "received" CROSS JOIN "reset"
+    WHERE "received"."at" >= ${windowStart} AND ("reset"."at" IS NULL OR "received"."at" > "reset"."at")
+    ORDER BY "received"."hop" DESC, "received"."at" DESC, "received"."id" DESC
+    LIMIT 1`;
+  return rows[0] ?? null;
+}

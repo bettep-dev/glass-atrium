@@ -1,5 +1,5 @@
 // Session-side delivery transitions: pull claim (`pending` and the CLI's `wait` polls), ack (first valid ack wins),
-// withdraw (never an owner message), the listener's non-claiming count read, and the in-memory waiting fact both polls refresh.
+// withdraw (never an owner message or a relay), the listener's non-claiming count read, and the in-memory waiting fact both polls refresh.
 // Each transaction locks the caller's registry row before touching item rows (registry.ts lock order).
 
 import { randomUUID } from "node:crypto";
@@ -125,7 +125,7 @@ export async function withdrawItem(itemId: number, sessionId: string): Promise<v
   await getPrisma().$transaction(async (tx) => {
     await lockOwnSession(tx, sessionId);
     const { status, kind } = await assertOwnItem(tx, itemId, sessionId);
-    if (kind === "message") throw new QueueRequestError(409, "not_withdrawable", "an owner message cannot be withdrawn by its session");
+    if (kind === "message" || kind === "relay") throw new QueueRequestError(409, "not_withdrawable", `a ${kind === "message" ? "owner message" : "relay"} cannot be withdrawn by its session`);
     const moved = await tx.queueItem.updateMany({
       where: { id: BigInt(itemId), status: { in: WITHDRAWABLE } },
       data: { status: "withdrawn" },

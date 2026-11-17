@@ -46,7 +46,7 @@ after(async () => {
 
 async function buildApp(): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
-  await registerQueueRoutes(instance, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images") });
+  await registerQueueRoutes(instance, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images"), scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
   await instance.ready();
   return instance;
 }
@@ -513,13 +513,14 @@ describe("list and item detail", () => {
     assert.equal((await send("GET", "/api/queue/owner/items?limit=1")).json().cliPath, CLI_PATH);
   });
 
-  test("the CLI path and the image folder follow GA_ROOT, so a non-default install uses its own", () => {
+  test("the CLI path, the image folder and the secret scanner follow GA_ROOT, so a non-default install uses its own", () => {
     const saved = process.env.GA_ROOT;
     process.env.GA_ROOT = "/Volumes/tools/atrium";
     try {
       const options = resolveQueueRouteOptions();
       assert.equal(options.cliPath, "/Volumes/tools/atrium/scripts/atrium-queue.sh");
       assert.equal(options.imageDir, "/Volumes/tools/atrium/data/queue/images");
+      assert.equal(options.scannerPath, "/Volumes/tools/atrium/scripts/lib/secret-scan.sh");
     } finally {
       if (saved === undefined) delete process.env.GA_ROOT;
       else process.env.GA_ROOT = saved;

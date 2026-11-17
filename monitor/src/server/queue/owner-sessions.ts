@@ -1,5 +1,6 @@
-// Owner session list and owner message send. A message is one `message` item per target, inserted already answered,
-// so the existing delivery (pull or wait claim, ack, deadline, Resend, automatic resume) carries it unchanged.
+// Owner session list, the peers read and the one copy insert. An owner message or a relay is one item per target, inserted
+// already answered, so the existing delivery (pull or wait claim, ack, deadline, Resend) carries it unchanged; only an
+// owner message is ever resumed (envelope.ts → ResumableKind).
 
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
@@ -46,10 +47,22 @@ export interface PeerSessionRow extends SessionName {
   isWaiting: boolean;
 }
 
-export interface CreatedMessage {
+export interface CreatedCopy {
   id: number;
   sessionId: string;
 }
+
+/** One send: the same text to every target under one send id. */
+export interface CopySend {
+  sessionIds: string[];
+  text: string;
+  sendId: string;
+}
+
+/** What sets a copy's kind apart: the owner's answer record, or the relay's sender, hop and parent. */
+export type CopyFields =
+  | { kind: "message"; answeredAt: Date; answerRoute: "message"; answerSignal: PageOriginSignal }
+  | { kind: "relay"; fromSessionId: string; relayHop: number; relayParentId: bigint | null; linkedDocIds: bigint[] };
 
 interface SessionListRow {
   id: string;
@@ -67,7 +80,7 @@ interface SessionListRow {
   transcriptPath: string | null;
 }
 
-interface ListedSessionRow extends SessionListRow {
+export interface ListedSessionRow extends SessionListRow {
   isHidden: boolean;
 }
 
@@ -87,8 +100,13 @@ export async function getOwnerSessions(query: OwnerSessionsQuery): Promise<{ ses
 export async function getPeerSessions(callerId: string): Promise<{ peers: PeerSessionRow[] }> {
   const caller = await getPrisma().queueSession.findUnique({ where: { sessionId: callerId }, select: { sessionId: true } });
   if (caller === null) throw new QueueRequestError(404, "unknown_session", "session not registered");
+  return { peers: (await getPeerRows(callerId)).map(toPeerRow) };
+}
+
+/** The peers set with full ids, for the server's own use: the relay resolves its recipients against exactly these rows. */
+export async function getPeerRows(callerId: string): Promise<ListedSessionRow[]> {
   const rows = await findSessionRows(Prisma.sql`s."state" = 'live' AND s."session_id" <> ${callerId}::uuid`);
-  return { peers: rows.filter((row) => !row.isHidden).slice(0, SESSION_LIST_LIMIT).map(toPeerRow) };
+  return rows.filter((row) => !row.isHidden).slice(0, SESSION_LIST_LIMIT);
 }
 
 async function findSessionRows(filter: Prisma.Sql): Promise<ListedSessionRow[]> {
@@ -141,33 +159,36 @@ async function hasFile(filePath: string): Promise<boolean> {
  * every copy links the same images.
  * @throws QueueRequestError 404 when an id names no session · 409 when a target was replaced or an image cannot be taken
  */
-export async function createMessages(body: MessageBody, signal: PageOriginSignal): Promise<{ sendId: string; items: CreatedMessage[] }> {
-  const title = getMessageTitle(body.text);
+export async function createMessages(body: MessageBody, signal: PageOriginSignal): Promise<{ sendId: string; items: CreatedCopy[] }> {
   const sendId = randomUUID();
   return getPrisma().$transaction(async (tx) => {
     const locked = await lockSessions(tx, body.sessionIds);
     if (locked.length !== body.sessionIds.length) throw new QueueRequestError(404, "unknown_session", "every target must be a registered session");
     if (!locked.every(isMessageTarget)) throw new QueueRequestError(409, "session_replaced", "a replaced session takes no message");
     if (locked.some((row) => row.isProbe)) throw new QueueRequestError(409, "session_probe", "a probe session takes no message");
-    const answeredAt = new Date();
-    const created = await tx.queueItem.createManyAndReturn({
-      data: body.sessionIds.map((sessionId) => ({
-        kind: "message" as const,
-        sessionId,
-        title,
-        body: body.text,
-        isFreeTextAllowed: false,
-        status: "answered" as const,
-        answeredAt,
-        answerRoute: "message" as const,
-        answerSignal: signal,
-        sendId,
-      })),
-      select: { id: true, sessionId: true },
-    });
-    await putItemImages(tx, created.map((item) => item.id), body.attachmentIds);
-    return { sendId, items: created.map((item) => ({ id: Number(item.id), sessionId: item.sessionId })) };
+    const fields = { kind: "message", answeredAt: new Date(), answerRoute: "message", answerSignal: signal } as const;
+    const items = await createCopies(tx, { sessionIds: body.sessionIds, text: body.text, sendId }, fields);
+    await putItemImages(tx, items.map((item) => BigInt(item.id)), body.attachmentIds);
+    return { sendId, items };
   });
+}
+
+/** The one insert of an owner message or a relay: one answered copy per target; the caller holds the target rows locked. */
+export async function createCopies(tx: Prisma.TransactionClient, send: CopySend, fields: CopyFields): Promise<CreatedCopy[]> {
+  const title = getMessageTitle(send.text);
+  const created = await tx.queueItem.createManyAndReturn({
+    data: send.sessionIds.map((sessionId) => ({
+      sessionId,
+      title,
+      body: send.text,
+      isFreeTextAllowed: false,
+      status: "answered" as const,
+      sendId: send.sendId,
+      ...fields,
+    })),
+    select: { id: true, sessionId: true },
+  });
+  return created.map((item) => ({ id: Number(item.id), sessionId: item.sessionId }));
 }
 
 function toSessionRow(row: ListedSessionRow): OwnerSessionRow {
@@ -205,7 +226,7 @@ function isMessageTarget(row: { exitReason: string | null }): boolean {
   return row.exitReason !== "replaced";
 }
 
-// The send schema guarantees a non-blank text → some line survives the trim; cut by code point, never mid-surrogate
+// Both send schemas guarantee a non-blank text → some line survives the trim; cut by code point, never mid-surrogate
 function getMessageTitle(text: string): string {
   const firstLine = text.split("\n").map((line) => line.trim()).find((line) => line !== "") ?? text.trim();
   return Array.from(firstLine).slice(0, ITEM_TITLE_MAX).join("");

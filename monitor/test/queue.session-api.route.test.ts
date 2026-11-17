@@ -56,7 +56,7 @@ after(async () => {
 async function buildApp(): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
   instance.get("/api/root-probe", async () => ({ ok: true }));
-  await registerQueueRoutes(instance, { port: PORT, homeDir: dir.home, cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images") });
+  await registerQueueRoutes(instance, { port: PORT, homeDir: dir.home, cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images"), scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
   await instance.ready();
   return instance;
 }
@@ -767,22 +767,20 @@ describe("withdraw", () => {
     }
   });
 
-  test("refuses an owner message in every withdrawable state and leaves it in place", async () => {
+  test("refuses an owner message or a peer's relay in every withdrawable state and leaves it in place", async () => {
     const sessionId = await seedSession();
-    for (const status of ["answered", "unacked", "held", "expired", "resume_pending"] as const) {
-      const itemId = await seedItem(sessionId, {
-        kind: "message",
-        title: "Rebase onto main",
-        body: "Rebase onto main before the review.",
-        isFreeTextAllowed: false,
-        status,
-        answeredAt: new Date(),
-        answerRoute: "message",
-        answerSignal: "fetch_metadata",
-      });
-      const response = await send("POST", `/api/queue/items/${itemId}/withdraw`, { sessionId });
-      assert.deepEqual([response.statusCode, response.json().error], [409, "not_withdrawable"], status);
-      assert.equal(await getStatus(itemId), status, status);
+    const peer = await seedSession();
+    const kinds = [
+      { name: "owner message", fields: ownerMessageItem() },
+      { name: "relay", fields: { kind: "relay" as const, fromSessionId: peer, relayHop: 0, title: "Lint is green", body: "Lint is green.", isFreeTextAllowed: false } },
+    ];
+    for (const kind of kinds) {
+      for (const status of ["answered", "unacked", "held", "expired", "resume_pending"] as const) {
+        const itemId = await seedItem(sessionId, { ...kind.fields, status });
+        const response = await send("POST", `/api/queue/items/${itemId}/withdraw`, { sessionId });
+        assert.deepEqual([response.statusCode, response.json().error], [409, "not_withdrawable"], `${kind.name} ${status}`);
+        assert.equal(await getStatus(itemId), status, `${kind.name} ${status}`);
+      }
     }
   });
 });

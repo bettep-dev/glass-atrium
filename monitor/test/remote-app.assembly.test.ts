@@ -59,6 +59,7 @@ before(async () => {
       homeDir: path.join(fixtureRoot, "home"),
       cliPath: "/opt/atrium-test/scripts/atrium-queue.sh",
       imageDir: path.join(fixtureRoot, "images"),
+      scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh",
     },
   });
   await app.ready();
