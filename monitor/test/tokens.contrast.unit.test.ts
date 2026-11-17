@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+import { getRootBlock, getTripletOrFail } from "./lib/css-source.js";
 import { compositeOver, contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,31 +17,10 @@ const TOKENS_CSS = resolve(__dirname, "../public/styles/tokens.css");
 
 const css = readFileSync(TOKENS_CSS, "utf8");
 
-// the plain :root block — not the narrow-viewport :root inside the media query
-function getRootBlock(source: string): string {
-  const m = source.match(/(?:^|\n):root\s*\{([^}]*)\}/);
-  assert.ok(m, "tokens.css must contain a plain :root block");
-  return m[1];
-}
-
-// Parse a space-separated `R G B` triplet for the given custom property,
-// e.g. `--dim: 214 211 209` → { r: 214, g: 211, b: 209, a: 1 }.
-function parseTriplet(block: string, name: string): Rgba {
-  const m = block.match(
-    new RegExp(`${name}\\s*:\\s*(\\d{1,3})\\s+(\\d{1,3})\\s+(\\d{1,3})`),
-  );
-  assert.ok(m, `the :root block must define ${name} as a space-separated RGB triplet`);
-  const rgb: Rgba = { r: Number(m[1]), g: Number(m[2]), b: Number(m[3]), a: 1 };
-  for (const c of [rgb.r, rgb.g, rgb.b]) {
-    assert.ok(c >= 0 && c <= 255, `${name} channel out of 0-255 range`);
-  }
-  return rgb;
-}
-
 const root = getRootBlock(css);
-const surface = parseTriplet(root, "--surface");
-const dim = parseTriplet(root, "--dim");
-const ink = parseTriplet(root, "--ink");
+const surface = getTripletOrFail(root, "--surface");
+const dim = getTripletOrFail(root, "--dim");
+const ink = getTripletOrFail(root, "--ink");
 
 const AA_NORMAL = 4.5;
 
@@ -77,16 +57,16 @@ function getAliasTarget(name: string): string {
 test("the resting control edge of toggles and fields clears 3:1 against every surface it sits on", () => {
   const edge = getAliasTarget("--control-edge");
   for (const ground of SURFACES) {
-    const ratio = contrastRatio(parseTriplet(root, edge), parseTriplet(root, ground));
+    const ratio = contrastRatio(getTripletOrFail(root, edge), getTripletOrFail(root, ground));
     assert.ok(ratio >= UI_GLYPH, `--control-edge (${edge}) on ${ground} = ${ratio.toFixed(2)}:1 < ${UI_GLYPH}:1`);
   }
 });
 
 test("the hover edge stays a visible step above the resting control edge", () => {
   const edge = getAliasTarget("--control-edge");
-  const elev = parseTriplet(root, "--elev");
-  const rest = contrastRatio(parseTriplet(root, edge), elev);
-  const hover = contrastRatio(parseTriplet(root, "--faint"), elev);
+  const elev = getTripletOrFail(root, "--elev");
+  const rest = contrastRatio(getTripletOrFail(root, edge), elev);
+  const hover = contrastRatio(getTripletOrFail(root, "--faint"), elev);
   assert.ok(hover > rest, `hover --faint ${hover.toFixed(2)}:1 must exceed the resting edge ${rest.toFixed(2)}:1 on --elev`);
 });
 
@@ -94,17 +74,17 @@ test("the hover edge stays a visible step above the resting control edge", () =>
 test("base-look text and the focus ring clear their floors on every surface they sit on", () => {
   for (const fg of ["--ink", "--dim", "--faint", "--accent"]) {
     for (const ground of SURFACES) {
-      const ratio = contrastRatio(parseTriplet(root, fg), parseTriplet(root, ground));
+      const ratio = contrastRatio(getTripletOrFail(root, fg), getTripletOrFail(root, ground));
       assert.ok(ratio >= AA_NORMAL, `${fg} on ${ground} = ${ratio.toFixed(2)}:1 < ${AA_NORMAL}:1`);
     }
   }
-  const ring = contrastRatio(parseTriplet(root, "--focus-ring"), surface);
+  const ring = contrastRatio(getTripletOrFail(root, "--focus-ring"), surface);
   assert.ok(ring >= UI_GLYPH, `--focus-ring on --surface = ${ring.toFixed(2)}:1 < ${UI_GLYPH}:1`);
 });
 
 test("--crit carries words on every opaque surface at 4.5:1", () => {
   for (const ground of SURFACES) {
-    const ratio = contrastRatio(parseTriplet(root, "--crit"), parseTriplet(root, ground));
+    const ratio = contrastRatio(getTripletOrFail(root, "--crit"), getTripletOrFail(root, ground));
     assert.ok(ratio >= AA_NORMAL, `--crit on ${ground} = ${ratio.toFixed(2)}:1 < ${AA_NORMAL}:1`);
   }
 });
@@ -112,7 +92,7 @@ test("--crit carries words on every opaque surface at 4.5:1", () => {
 test("every tone reads as a glyph on every opaque surface at 3:1", () => {
   for (const tone of ["--crit", "--warn", "--ok", "--info"]) {
     for (const ground of SURFACES) {
-      const ratio = contrastRatio(parseTriplet(root, tone), parseTriplet(root, ground));
+      const ratio = contrastRatio(getTripletOrFail(root, tone), getTripletOrFail(root, ground));
       assert.ok(ratio >= UI_GLYPH, `${tone} on ${ground} = ${ratio.toFixed(2)}:1 < ${UI_GLYPH}:1`);
     }
   }
@@ -122,13 +102,13 @@ test("every tone reads as a glyph on every opaque surface at 3:1", () => {
 function getTintColour(name: string): Rgba {
   const m = root.match(new RegExp(`${name}\\s*:\\s*rgb\\(var\\((--[\\w-]+)\\)\\s*/\\s*([\\d.]+)\\)`));
   assert.ok(m, `the :root block must declare ${name} as rgb(var(--token) / alpha)`);
-  return { ...parseTriplet(root, m[1]), a: Number(m[2]) };
+  return { ...getTripletOrFail(root, m[1]), a: Number(m[2]) };
 }
 
 // a ground stack, bottom first: one opaque token, then the tints laid over it → the colour a person sees there
 function getGroundColour(stack: readonly string[]): Rgba {
   const [base, ...tints] = stack;
-  return tints.reduce((ground, tint) => compositeOver(getTintColour(tint), ground), parseTriplet(root, base));
+  return tints.reduce((ground, tint) => compositeOver(getTintColour(tint), ground), getTripletOrFail(root, base));
 }
 
 const ON_SELECTED_ROW = ["--elev", "--tint-select"] as const;
@@ -158,7 +138,7 @@ interface ContrastPair {
 function assertPairFloors(pair: ContrastPair): void {
   for (const fg of pair.fgs) {
     for (const ground of pair.grounds) {
-      const ratio = contrastRatio(parseTriplet(root, fg), getGroundColour(ground));
+      const ratio = contrastRatio(getTripletOrFail(root, fg), getGroundColour(ground));
       assert.ok(ratio >= pair.floor, `${fg} on ${ground.join(" + ")} = ${ratio.toFixed(2)}:1 < ${pair.floor}:1`);
     }
   }
@@ -192,7 +172,7 @@ const HEAT_STEP_MIN = 1.4;
 
 describe("the hour-grid heat ramp on the card", () => {
   test("its lowest step reads as a mark against the card at 3:1", () => {
-    const ratio = contrastRatio(getGroundColour(["--elev", HEAT_RAMP[0]]), parseTriplet(root, "--elev"));
+    const ratio = contrastRatio(getGroundColour(["--elev", HEAT_RAMP[0]]), getTripletOrFail(root, "--elev"));
     assert.ok(ratio >= UI_GLYPH, `${HEAT_RAMP[0]} on --elev = ${ratio.toFixed(2)}:1 < ${UI_GLYPH}:1`);
   });
 

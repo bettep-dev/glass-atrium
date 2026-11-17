@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
+import { getRootBlock, getTripletOrFail } from "./lib/css-source.js";
+import { contrastRatio } from "./lib/wcag-contrast.js";
 import { collectText, createEffectReact, createFakeDocument, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -14,16 +15,6 @@ const TOKENS_CSS = readFileSync(resolve(PUBLIC, "styles/tokens.css"), "utf8");
 
 type Component = (props: Record<string, unknown>) => unknown;
 
-function getBlock(source: string, selector: string): string {
-  const open = source.indexOf("{", source.indexOf(selector));
-  return source.slice(open + 1, source.indexOf("}", open));
-}
-
-function getTriplet(block: string, name: string): Rgba | null {
-  const m = block.match(new RegExp(`${name}\\s*:\\s*(\\d{1,3})\\s+(\\d{1,3})\\s+(\\d{1,3})`));
-  return m ? { r: Number(m[1]), g: Number(m[2]), b: Number(m[3]), a: 1 } : null;
-}
-
 function getSourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? getSourceFiles(resolve(dir, e.name)) : /\.(jsx|css)$/.test(e.name) ? [resolve(dir, e.name)] : [],
@@ -31,13 +22,10 @@ function getSourceFiles(dir: string): string[] {
 }
 
 test("the focus colour clears 3:1 against every surface it can sit on", () => {
-  const tokens = getBlock(TOKENS_CSS, ":root");
-  const ring = getTriplet(tokens, "--focus-ring");
-  assert.ok(ring, "tokens.css declares --focus-ring");
+  const tokens = getRootBlock(TOKENS_CSS);
+  const ring = getTripletOrFail(tokens, "--focus-ring");
   for (const surface of ["--surface", "--elev", "--sunken"]) {
-    const bg = getTriplet(tokens, surface);
-    assert.ok(bg, surface);
-    const ratio = contrastRatio(ring, bg);
+    const ratio = contrastRatio(ring, getTripletOrFail(tokens, surface));
     assert.ok(ratio >= 3, `--focus-ring on ${surface} = ${ratio.toFixed(2)}:1`);
   }
 });

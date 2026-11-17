@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { getReducedMotionCss } from "./lib/css-source.js";
+import { getReducedMotionCss, getRootBlock, getTripletOrFail } from "./lib/css-source.js";
 import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const STYLES = resolve(dirname(fileURLToPath(import.meta.url)), "../public/styles");
@@ -21,11 +21,6 @@ const SOURCES = [
 
 const CONTROL_FLOOR_PX = 32;
 const META_FLOOR_PX = 13;
-
-function getBlock(source: string, selector: string): string {
-  const open = source.indexOf("{", source.indexOf(selector));
-  return source.slice(open + 1, source.indexOf("}", open));
-}
 
 // Every rule whose comma-separated selector list names `selector` exactly.
 function getRuleBodies(source: string, selector: string): string[] {
@@ -70,13 +65,7 @@ function getPx(value: string): number {
   return Number(m[1]);
 }
 
-function getTriplet(block: string, name: string): Rgba {
-  const m = block.match(new RegExp(`${name}\\s*:\\s*(\\d{1,3})\\s+(\\d{1,3})\\s+(\\d{1,3})`));
-  assert.ok(m, `the :root block declares ${name} as an RGB triplet`);
-  return { r: Number(m[1]), g: Number(m[2]), b: Number(m[3]), a: 1 };
-}
-
-const TOKENS = getBlock(TOKENS_CSS, ":root");
+const TOKENS = getRootBlock(TOKENS_CSS);
 
 test("the page declares the one dark colour scheme, so native widgets draw dark under any OS setting", () => {
   assert.equal(getDecl(TOKENS, "color-scheme"), "dark");
@@ -160,9 +149,9 @@ test("section and sub-card labels keep sentence case: no uppercase transform or 
 });
 
 test("the selected fill reads as text-safe and stands apart from the resting control fill", () => {
-  const fill = getTriplet(TOKENS, "--selected-fill");
-  const ink = getTriplet(TOKENS, "--selected-ink");
-  const elev = getTriplet(TOKENS, "--elev");
+  const fill = getTripletOrFail(TOKENS, "--selected-fill");
+  const ink = getTripletOrFail(TOKENS, "--selected-ink");
+  const elev = getTripletOrFail(TOKENS, "--elev");
   assert.ok(contrastRatio(ink, fill) >= 4.5, `selected ink on fill ${contrastRatio(ink, fill).toFixed(2)}`);
   assert.ok(contrastRatio(fill, elev) >= 3, `selected fill on elev ${contrastRatio(fill, elev).toFixed(2)}`);
 });
@@ -175,7 +164,7 @@ test("a segmented-control child draws its focus ring inside its own box, so the 
 
 test("an empty stage pip clears 3:1 against every surface it sits on", () => {
   for (const surface of ["--surface", "--elev", "--sunken"]) {
-    const ratio = contrastRatio(getTriplet(TOKENS, "--pip-empty"), getTriplet(TOKENS, surface));
+    const ratio = contrastRatio(getTripletOrFail(TOKENS, "--pip-empty"), getTripletOrFail(TOKENS, surface));
     assert.ok(ratio >= 3, `--pip-empty on ${surface} = ${ratio.toFixed(2)}:1`);
   }
   const pip = getRuleBodies(BASE_CSS, ".stage-pip").join(";");
@@ -247,7 +236,7 @@ test("an alert card carries its tone only on its bare glyph, and the glyph clear
     const toneRule = getRuleBodies(BASE_CSS, `.alert-card[data-tone="${tone}"]`).join(";");
     assert.equal(getDecl(toneRule, "--alert-tone"), `var(${token})`, `${tone} → ${token}`);
     for (const ground of ["--elev", "--sunken"]) {
-      const ratio = contrastRatio(getTriplet(TOKENS, token), getTriplet(TOKENS, ground));
+      const ratio = contrastRatio(getTripletOrFail(TOKENS, token), getTripletOrFail(TOKENS, ground));
       assert.ok(ratio >= 3, `${tone} glyph on ${ground} = ${ratio.toFixed(2)}:1`);
     }
   }
@@ -287,7 +276,7 @@ function getTokenColor(decl: string | undefined): Rgba {
   if (decl === "white") return { r: 255, g: 255, b: 255, a: 1 };
   const name = decl?.match(/^rgb\(var\((--[\w-]+)\)\)$/)?.[1];
   assert.ok(name, `colour ${decl} is rgb(var(--token)) or white`);
-  return getTriplet(TOKENS, name);
+  return getTripletOrFail(TOKENS, name);
 }
 
 test("a danger button's label clears 4.5:1 on its crit fill", () => {
@@ -307,7 +296,7 @@ test("a transient shell stays neutral in every tone, and a toast's tone rides on
     const toned = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
     assert.doesNotMatch(toned, /(^|[;\s])(background|border|border-color|color)\s*:/, `.doc-toast.${tone} paints its shell or text`);
     assert.equal(getDecl(toned, "--toast-tone"), `var(--${tone})`, `.doc-toast.${tone} names its glyph tone`);
-    const ratio = contrastRatio(getTriplet(TOKENS, `--${tone}`), getTriplet(TOKENS, "--overlay-surface"));
+    const ratio = contrastRatio(getTripletOrFail(TOKENS, `--${tone}`), getTripletOrFail(TOKENS, "--overlay-surface"));
     assert.ok(ratio >= 3, `${tone} toast glyph = ${ratio.toFixed(2)}:1`);
   }
   assert.equal(getDecl(glyph, "color"), "rgb(var(--toast-tone))", "the glyph draws the toast's tone");

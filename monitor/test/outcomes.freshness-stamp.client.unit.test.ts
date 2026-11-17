@@ -10,7 +10,9 @@ import { dirname, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { getRootBlock, getTripletOrFail } from "./lib/css-source.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { contrastRatio } from "./lib/wcag-contrast.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
@@ -107,29 +109,7 @@ test("each reporting-health category is one stat whose name, share and run count
   }
 });
 
-// WCAG relative luminance over "R G B" token triplets
-function getLuminance(rgb: number[]): number {
-  const [r, g, b] = rgb.map((c) => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-// the plain :root block of tokens.css → name → [r, g, b]
-function getRootTokens(): Record<string, number[]> {
-  const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const body = css.match(/(?:^|\n):root\s*\{([^}]*)\}/)?.[1];
-  assert.ok(body, "tokens.css must contain a plain :root block");
-  const tokens: Record<string, number[]> = {};
-  for (const m of body.matchAll(/--([a-z-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)) tokens[m[1]] = [Number(m[2]), Number(m[3]), Number(m[4])];
-  return tokens;
-}
-
-function getContrast(a: number[], b: number[]): number {
-  const [hi, lo] = [getLuminance(a), getLuminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
+const ROOT_TOKENS = getRootBlock(readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8"));
 
 for (const isPolar of [false, true]) {
   test(`the busiest ${isPolar ? "polar" : "plain"} crosstab cell keeps its count at 4.5:1 and its fill at 3:1`, () => {
@@ -139,9 +119,9 @@ for (const isPolar of [false, true]) {
     const fill = findNodes(tree, (n) => /^rgb\(var\(--[a-z]+\)\)$/.test(String((n.props.style as { background?: string } | undefined)?.background)))[0];
     assert.ok(fill, "solid fill not found");
     const fillVar = /--([a-z]+)/.exec(String((fill.props.style as { background: string }).background))![1];
-    const tokens = getRootTokens();
-    assert.ok(getContrast(tokens.ink, tokens.elev) >= 4.5, "count contrast");
-    const fillContrast = getContrast(tokens[fillVar], tokens.elev);
+    const elev = getTripletOrFail(ROOT_TOKENS, "--elev");
+    assert.ok(contrastRatio(getTripletOrFail(ROOT_TOKENS, "--ink"), elev) >= 4.5, "count contrast");
+    const fillContrast = contrastRatio(getTripletOrFail(ROOT_TOKENS, `--${fillVar}`), elev);
     assert.ok(fillContrast >= 3, `fill contrast ${fillContrast.toFixed(2)}`);
   });
 }

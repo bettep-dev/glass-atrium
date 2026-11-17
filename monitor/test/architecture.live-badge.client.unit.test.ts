@@ -23,7 +23,8 @@ import { readFileSync } from "node:fs";
 import esbuild from "esbuild";
 
 import { CANONICAL_MAP } from "../src/server/architecture/diagrams-source.js";
-import { contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
+import { getRootBlock, getTripletOrFail } from "./lib/css-source.js";
+import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ARCH_SRC = resolve(__dirname, "../public/src/screens/architecture.jsx");
@@ -1232,21 +1233,12 @@ test("the legend names every mark the canvas can draw", () => {
   );
 });
 
-// the :root block of tokens.css → name → "r g b" triplet
-function readRootTokens(): Map<string, string> {
-  const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
-  const start = css.indexOf(":root {");
-  assert.ok(start !== -1, "tokens.css must contain a :root block");
-  const body = css.slice(start, css.indexOf("}", start));
-  return new Map([...body.matchAll(/(--[\w-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)].map((m) => [m[1], `${m[2]} ${m[3]} ${m[4]}`]));
-}
+const ROOT_TOKENS = getRootBlock(readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8"));
 
-function getTripletRgba(triplet: string | undefined): Rgba {
-  assert.ok(triplet, "token triplet must be declared");
-  return parseColor(`rgb(${triplet.split(" ").join(", ")})`);
+// opaque colour → "rrggbb", the form the drawn map's classDef strokes carry
+function getHex(c: Rgba): string {
+  return [c.r, c.g, c.b].map((n) => n.toString(16).padStart(2, "0")).join("");
 }
-
-const ROOT_TOKENS = readRootTokens();
 
 test("every coloured node border the drawn map assigns has a legend swatch whose token is that border's colour", () => {
   const source = CANONICAL_MAP.mermaid_drawn;
@@ -1262,8 +1254,7 @@ test("every coloured node border the drawn map assigns has a legend swatch whose
   for (const name of coloured) {
     const swatch = swatches.find((item) => item.key === name);
     assert.ok(swatch?.token, `class '${name}' has no legend swatch token — read: ${JSON.stringify(swatches)}`);
-    const tokenHex = getTripletRgba(ROOT_TOKENS.get(swatch.token));
-    const drawnHex = [tokenHex.r, tokenHex.g, tokenHex.b].map((n) => n.toString(16).padStart(2, "0")).join("");
+    const drawnHex = getHex(getTripletOrFail(ROOT_TOKENS, swatch.token));
     assert.strictEqual(drawnHex, strokeByClass.get(name), `class '${name}' draws a hue other than its swatch token ${swatch.token}`);
   }
   assert.strictEqual(swatches.length, coloured.length, "one swatch per coloured border, none for a colour the map never draws");
@@ -1284,7 +1275,7 @@ describe("every role border swatch clears 3:1 on the page ground", () => {
   const swatches = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR").filter((item) => item.kind === "border");
   for (const swatch of swatches)
     test(swatch.label, () => {
-      const ratio = contrastRatio(getTripletRgba(ROOT_TOKENS.get(swatch.token!)), getTripletRgba(ROOT_TOKENS.get("--surface")));
+      const ratio = contrastRatio(getTripletOrFail(ROOT_TOKENS, swatch.token!), getTripletOrFail(ROOT_TOKENS, "--surface"));
       assert.ok(ratio >= 3, `${swatch.label}: ${ratio.toFixed(2)} on --surface`);
     });
 });
@@ -1338,13 +1329,9 @@ test("the focus ring sits outside the health ring and never moves it", () => {
 test("the security category's node stroke uses no status hue", () => {
   const src = readFileSync(resolve(__dirname, "../src/server/architecture/diagrams-source.ts"), "utf8");
   const stroke = /classDef security [^\n]*stroke:(#[0-9a-fA-F]{6})/.exec(src)?.[1]?.toLowerCase();
-  const tokens = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
-  const statusHexes = [...tokens.matchAll(/--(?:ok|warn|crit):\s*(\d+)\s+(\d+)\s+(\d+)/g)].map((m) =>
-    `#${m.slice(1, 4).map((n) => Number(n).toString(16).padStart(2, "0")).join("")}`,
-  );
+  const statusHexes = ["--ok", "--warn", "--crit"].map((name) => `#${getHex(getTripletOrFail(ROOT_TOKENS, name))}`);
 
   assert.ok(stroke, "security classDef must declare a stroke");
-  assert.equal(statusHexes.length, 3, `precondition: ok/warn/crit read — ${statusHexes}`);
   assert.ok(!statusHexes.includes(stroke), `${stroke} collides with a status hue ${statusHexes}`);
 });
 
