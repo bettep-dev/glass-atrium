@@ -159,7 +159,7 @@ export const imageUploadQuerySchema = z.strictObject({ name: oneLineText(IMAGE_N
 
 export const imageParamsSchema = z.strictObject({ id: z.uuid() });
 
-// "<answered-at epoch µs>:<first copy id>" from the previous page → 18 digits each stay inside int8
+// "<order time epoch µs>:<first copy id>" from the previous page → 18 digits each stay inside int8
 const orderCursor = z
   .string()
   .regex(/^\d{1,18}:\d{1,18}$/, "must be a cursor the history read returned")
@@ -168,7 +168,9 @@ const orderCursor = z
     return { at: BigInt(at), id: BigInt(id) };
   });
 
+// The thread a history read pages: the owner's orders, or ended relays
 export const ownerOrdersQuerySchema = z.strictObject({
+  kind: z.enum(["order", "relay"]).default("order"),
   sessionIds: z
     .string()
     .transform((value) => value.split(","))

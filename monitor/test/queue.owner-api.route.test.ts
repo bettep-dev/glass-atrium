@@ -41,7 +41,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
-  await prisma.auditLog.deleteMany({ where: { actionKind: "queue-relay.redact", eventTs: { gte: suiteStart } } });
+  await prisma.auditLog.deleteMany({ where: { actionKind: { in: ["queue-relay.relay", "queue-relay.redact"] }, eventTs: { gte: suiteStart } } });
   await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
@@ -866,6 +866,7 @@ describe("order history", () => {
       { name: "a limit past the page cap", query: "limit=101" },
       { name: "a cursor of another shape", query: "before=12" },
       { name: "an unknown key", query: "status=delivered" },
+      { name: "an item kind with no history", query: "kind=decision" },
     ];
     for (const row of rows) {
       const response = await getOrders(row.query);
@@ -874,8 +875,131 @@ describe("order history", () => {
   });
 });
 
-describe("relay redaction", () => {
+describe("relay history", () => {
   const text = "Rebased feature/queue-mcp onto main; the relay suite is green.";
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+  const getHistory = (query: string) => send("GET", `/api/queue/owner/orders?kind=relay&${query}`, undefined, { headers: {} });
+  const getOrders = (query: string) => send("GET", `/api/queue/owner/orders?${query}`, undefined, { headers: {} });
+  // refusal rows placed in the past fall before suiteStart → removed here by id
+  const placedRefusalIds: bigint[] = [];
+
+  after(async () => {
+    await getPrisma().auditLog.deleteMany({ where: { id: { in: placedRefusalIds } } });
+  });
+
+  function seedRelay(from: string, to: string, askedAt: Date, overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Promise<bigint> {
+    return seedItem(to, {
+      kind: "relay", fromSessionId: from, relayHop: 0, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: text,
+      isFreeTextAllowed: false, status: "delivered", askedAt, deliveredAt: askedAt, relayFetchedAt: askedAt, ...overrides,
+    });
+  }
+
+  // The relay route writes the refusal record, then the row is placed at the given time
+  async function seedRefusal(sender: string, recipients: string[], eventTs: Date): Promise<string> {
+    const response = await send("POST", "/api/queue/relay", { sessionId: sender, recipients: recipients.map((id) => id.slice(0, 8)), text }, { headers: {} });
+    assert.match(response.json().error, /^relay_/, response.body);
+    const row = await getPrisma().auditLog.findFirstOrThrow({
+      where: { targetTable: "queue-relay", resultCode: "blocked", payload: { path: ["change", "senderId"], equals: sender } },
+      orderBy: { id: "desc" },
+    });
+    await getPrisma().auditLog.update({ where: { id: row.id }, data: { eventTs } });
+    placedRefusalIds.push(row.id);
+    return eventTs.toISOString();
+  }
+
+  test("lists ended relays with either end in the filter, newest send first, each send whole, and leaves them out of the orders thread", async () => {
+    const [sender, left, right, stranger] = [await seedSession(), await seedSession(), await seedSession(), await seedSession()];
+    const sendId = randomUUID();
+    const ids = {
+      toBoth: [await seedRelay(sender, left, minutesAgo(40), { sendId }), await seedRelay(sender, right, minutesAgo(40), { sendId })],
+      lapsedToSender: await seedRelay(right, sender, minutesAgo(30), { status: "withdrawn", deliveredAt: null, relayFetchedAt: null, relayClosedAt: minutesAgo(1) }),
+    };
+    await seedRelay(sender, left, minutesAgo(20), { status: "answered", deliveredAt: null, relayFetchedAt: null });
+    await seedRelay(stranger, left, minutesAgo(10));
+
+    const history = await getHistory(`sessionIds=${sender}`);
+    const orders = await getOrders(`sessionIds=${sender},${left},${right}`);
+
+    assert.equal(history.statusCode, 200, history.body);
+    assert.deepEqual(history.json().items.map((item: { id: number }) => item.id), [ids.lapsedToSender, ...ids.toBoth].map(Number));
+    assert.deepEqual(orders.json().items, [], "a relay is no order");
+  });
+
+  test("an entry carries hop, parent, sender, fetch, redaction and lapse facts; an owner order carries none", async () => {
+    const [sender, recipient] = [await seedSession({ name: "relay sender" }), await seedSession()];
+    const parentId = await seedRelay(recipient, sender, minutesAgo(30));
+    const childId = await seedRelay(sender, recipient, minutesAgo(20), { relayHop: 1, relayParentId: parentId });
+    const lapsedAt = minutesAgo(1);
+    const lapsedId = await seedRelay(sender, recipient, minutesAgo(10), { status: "withdrawn", deliveredAt: null, relayFetchedAt: null, relayClosedAt: lapsedAt });
+    assert.equal((await send("POST", `/api/queue/owner/items/${childId}/redact`)).statusCode, 200);
+    const redacted = await getItemRow(childId);
+    await send("POST", "/api/queue/owner/messages/send", { sessionIds: [recipient], text: "Rebase onto main." });
+
+    const items = (await getHistory(`sessionIds=${sender}`)).json().items as Array<{ id: number; relay: unknown }>;
+    const order = (await getOrders(`sessionIds=${recipient}`)).json().items[0];
+
+    assert.deepEqual(items.find((item) => item.id === Number(childId))?.relay, {
+      hop: 1,
+      parentId: Number(parentId),
+      sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender" },
+      fetchedAt: redacted.relayFetchedAt?.toISOString(),
+      redaction: { at: redacted.relayRedactedAt?.toISOString(), length: text.length },
+      lapsedAt: null,
+    });
+    assert.deepEqual(items.find((item) => item.id === Number(lapsedId))?.relay, {
+      hop: 0, parentId: null, sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender" },
+      fetchedAt: null, redaction: null, lapsedAt: lapsedAt.toISOString(),
+    });
+    assert.equal(order.relay, null);
+  });
+
+  test("each page carries the refusal records of its own time span, either end in the filter, once across pages, with no text", async () => {
+    const [sender, recipient, stranger] = [await seedSession(), await seedSession(), await seedSession()];
+    await seedRelay(sender, recipient, minutesAgo(50));
+    const olderRefusal = await seedRefusal(sender, [sender], minutesAgo(45));
+    await seedRelay(recipient, sender, minutesAgo(40));
+    const middleRefusal = await seedRefusal(sender, [sender], minutesAgo(35));
+    await seedRelay(sender, recipient, minutesAgo(30));
+    // the filtered session as a resolved recipient, beside a prefix no session has
+    const newestRefusal = await seedRefusal(recipient, [sender, randomUUID()], minutesAgo(25));
+    await seedRefusal(stranger, [stranger], minutesAgo(36));
+
+    const pages: Array<Array<{ at: string; reason: string; senderIdPrefix: string; recipientIdPrefixes: string[]; unresolvedCount: number | null }>> = [];
+    let query = `sessionIds=${sender}&limit=1`;
+    for (let round = 0; round < 10; round += 1) {
+      const page = (await getHistory(query)).json() as { refusals: (typeof pages)[number]; nextCursor: string | null };
+      pages.push(page.refusals);
+      if (page.nextCursor === null) break;
+      query = `sessionIds=${sender}&limit=1&before=${encodeURIComponent(page.nextCursor)}`;
+    }
+
+    const selfRefusal = (at: string) => ({ at, reason: "self", senderIdPrefix: sender.slice(0, 8), recipientIdPrefixes: [sender.slice(0, 8)], unresolvedCount: null });
+    const unresolvedRefusal = { at: newestRefusal, reason: "recipient", senderIdPrefix: recipient.slice(0, 8), recipientIdPrefixes: [sender.slice(0, 8)], unresolvedCount: 1 };
+    assert.deepEqual(pages, [[unresolvedRefusal], [selfRefusal(middleRefusal)], [selfRefusal(olderRefusal)]]);
+  });
+
+  test("a page's refusal records stop at the cap, newest kept, and say they were cut", async () => {
+    const sender = await seedSession();
+    await seedRelay(await seedSession(), sender, minutesAgo(10));
+    const cap = 100;
+    for (let index = 0; index <= cap; index += 1) {
+      await send("POST", "/api/queue/relay", { sessionId: sender, recipients: [sender.slice(0, 8)], text }, { headers: {} });
+    }
+    const stored = await getPrisma().auditLog.findMany({
+      where: { targetTable: "queue-relay", payload: { path: ["change", "senderId"], equals: sender } },
+      orderBy: [{ eventTs: "desc" }, { id: "desc" }],
+    });
+
+    const page = (await getHistory(`sessionIds=${sender}`)).json() as { refusals: Array<{ at: string }>; isRefusalListCut: boolean };
+
+    assert.equal(stored.length, cap + 1);
+    assert.deepEqual(page.refusals.map((refusal) => refusal.at), stored.slice(0, cap).map((row) => row.eventTs.toISOString()));
+    assert.equal(page.isRefusalListCut, true);
+  });
+});
+
+describe("relay redaction", () => {
+  const text ="Rebased feature/queue-mcp onto main; the relay suite is green.";
 
   async function seedRelay(overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Promise<bigint> {
     const [sender, recipient] = [await seedSession(), await seedSession()];

@@ -105,7 +105,7 @@ function buildItem(id: number, key: SessionKey, fields: Partial<OwnerItemView>):
     isFreeTextAllowed: true, isApprovalClass: false, status: "open", queuePosition: id, deferCount: 0, nextAttempt: 1,
     answer: { code: null, text: null }, askedAt: getAt(9), answeredAt: null, deliveredAt: null, sendId: null,
     attachments: [], answerRecord: null, isAnsweredOutside: false, session: buildSessionView(key), resumes: [],
-    deviation: null, skipReason: null, canResend: false,
+    deviation: null, skipReason: null, canResend: false, relay: null,
     ...fields,
   };
 }

@@ -5,7 +5,7 @@ import { getPrisma } from "../db.js";
 import type { PullClaim } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type SessionImageView, getSessionImageViews } from "./images.js";
-import { DEVIATION_STATUSES, SESSION_ID_PREFIX_LENGTH } from "./owner-views.js";
+import { DEVIATION_STATUSES, type RelaySender, type RelaySenderRow, SENDER_ARGS, toRelaySender } from "./owner-views.js";
 import { lockSession } from "./registry.js";
 import type { PostItemBody } from "./schemas.js";
 
@@ -35,22 +35,7 @@ export interface QueueItemView {
   sender: RelaySender | null;
 }
 
-export interface RelaySender {
-  sessionIdPrefix: string;
-  profileLabel: string;
-  /** The name the sender registered; null when it registered none. */
-  selfDeclaredName: string | null;
-}
-
 type SourceFacts = Pick<QueueItemView, "source" | "sender">;
-
-interface SenderRow {
-  sessionId: string;
-  profileLabel: string;
-  name: string | null;
-}
-
-const SENDER_ARGS = { select: { sessionId: true, profileLabel: true, name: true } } as const;
 
 /** Badge numbers only: awaiting-owner items, deviations, and the oldest awaiting item's age. */
 export interface QueueCount {
@@ -134,12 +119,8 @@ function buildItemRow(body: PostItemBody): Prisma.QueueItemUncheckedCreateInput 
   return { ...shared, options: body.options, recommendedCode: body.recommendedCode, isApprovalClass: body.isApprovalClass };
 }
 
-function getSourceFacts(item: { kind: QueueItemKind; fromSession: SenderRow | null }): SourceFacts {
+function getSourceFacts(item: { kind: QueueItemKind; fromSession: RelaySenderRow | null }): SourceFacts {
   return { source: item.kind === "relay" ? "peer" : "owner", sender: item.fromSession === null ? null : toRelaySender(item.fromSession) };
-}
-
-function toRelaySender(session: SenderRow): RelaySender {
-  return { sessionIdPrefix: session.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH), profileLabel: session.profileLabel, selfDeclaredName: session.name };
 }
 
 function toItemView(item: QueueItem): Omit<QueueItemView, "attachments" | "source" | "sender"> {
