@@ -1035,6 +1035,29 @@ describe("relay redaction", () => {
     assert.deepEqual(await getKeptFields(itemId), kept);
   });
 
+  test("leaves no line of the text in any stored column, audit row or read, the title included", async () => {
+    const lines = ["Rebased feature/queue-mcp onto main", "the relay suite is green, merge when ready"];
+    const recipient = await seedSession();
+    const itemId = await seedRelay({ sessionId: recipient, title: lines[0], body: lines.join("\n"), status: "answered", deliveredAt: null, relayFetchedAt: null });
+    assert.equal((await redact(itemId)).statusCode, 200);
+    const asJson = (value: unknown) => JSON.stringify(value, (_key, field: unknown) => (typeof field === "bigint" ? field.toString() : field));
+
+    const sources = {
+      "stored row": asJson(await getItemRow(itemId)),
+      "audit rows": asJson(await getPrisma().auditLog.findMany({ where: { targetId: itemId } })),
+      "owner item": (await send("GET", `/api/queue/owner/items/${itemId}`, undefined, { headers: {} })).body,
+      "owner list": (await send("GET", `/api/queue/owner/items?sessionId=${recipient}`, undefined, { headers: {} })).body,
+      "relay history": (await send("GET", `/api/queue/owner/orders?kind=relay&sessionIds=${recipient}`, undefined, { headers: {} })).body,
+      "session get": (await send("GET", `/api/queue/items/${itemId}?sessionId=${recipient}`, undefined, { headers: {} })).body,
+      "session claim": (await send("POST", "/api/queue/pending", { sessionId: recipient }, { headers: {} })).body,
+    };
+
+    for (const [name, source] of Object.entries(sources)) {
+      assert.ok(source.includes(String(itemId)), `${name} reads the relay`);
+      for (const line of lines) assert.ok(!source.includes(line), `${name} holds "${line}"`);
+    }
+  });
+
   test("is first-wins: a second redaction changes nothing, its stamp included", async () => {
     const itemId = await seedRelay();
     assert.equal((await redact(itemId)).statusCode, 200);
