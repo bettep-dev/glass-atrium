@@ -1297,6 +1297,8 @@ enum QueueItemKind {
   decision
   // Owner → session; inserted answered by the owner send route only (CHECK queue_items_message_check)
   message
+  // Session → session, delivered with no owner act; carries sender and hop (CHECK queue_items_relay_check)
+  relay
 
   @@schema("monitor")
 }
@@ -1383,6 +1385,7 @@ enum QueueCanaryResult {
 ///   - socket_path, when present = /tmp or /private/tmp cc-socks/<pid>.sock → confines legacy history values
 ///   - exit_reason present ⇔ state = exited · pid > 0 · profile_label, process_start_time non-empty
 ///   - name, when present: non-blank, no control character
+///   - transcript_path, when present: absolute, ending .jsonl
 /// No relation from items is cascaded → an exited row that still owns items is never pruned.
 model QueueSession {
   // UUID-only → never readable as a `--resume` option
@@ -1411,22 +1414,30 @@ model QueueSession {
   lastSeenAt               DateTime                @map("last_seen_at") @db.Timestamptz(6)
   // Session marker: an automatic resume spawned, its register not yet seen → blocks further resumes
   resumeAwaitingRegisterAt DateTime?               @map("resume_awaiting_register_at") @db.Timestamptz(6)
+  // Agent-made session → hidden from the Queue page, refused as a message or relay end; set by the register declaration
+  isProbe                  Boolean                 @default(false) @map("is_probe")
+  // The SessionStart payload's transcript; NULL → the row stays listed although unused
+  transcriptPath           String?                 @map("transcript_path")
   createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  items QueueItem[]
+  items     QueueItem[] @relation("QueueItemRecipient")
+  sentItems QueueItem[] @relation("QueueItemSender")
 
   @@map("queue_sessions")
   @@schema("monitor")
 }
 
-/// One report or decision a session put in front of the owner, or one message the owner sent to a session.
+/// One report or decision a session put in front of the owner, one message the owner sent to a session, or one relay a session sent another.
 /// CHECKs (migration raw SQL only):
 ///   - title non-blank · body 1..20000 chars · answer_text ≤ 20000 chars · linked_doc_ids ≤ 20 entries
 ///   - decision ⇔ options (2..9-entry JSON array) + recommended_code naming one entry's code; report ⇒ neither
 ///   - options serialized text ≤ 20000 chars → the route's per-field caps for 9 entries must fit under it
 ///   - answer_code only on a decision, naming one entry's code · next_attempt ≥ 1 · defer_count ≥ 0
 ///   - message ⇔ answer_route message; a message carries no answer text, no approval class, never open or seen
+///   - relay ⇔ from_session_id ⇔ relay_hop; to another session, hop 0..2, body ≤ 4000 chars; no answer record, answer text
+///     or approval class, never open or seen · parent, fetch and redaction stamps on a relay only
+///   - relay_redacted_at ⇔ relay_redacted_length (1..4000) · relay_closed_at ⇔ a relay in withdrawn (lapsed)
 /// Per-entry option shape and unique codes → the post route's Zod schema (a CHECK cannot iterate the array).
 model QueueItem {
   id                BigInt          @id @default(autoincrement())
@@ -1458,16 +1469,32 @@ model QueueItem {
   deliveredAt       DateTime?       @map("delivered_at") @db.Timestamptz(6)
   // One id on every copy of one owner send; NULL on other kinds and on messages sent before the column existed
   sendId            String?         @map("send_id") @db.Uuid
+  fromSessionId     String?         @map("from_session_id") @db.Uuid
+  // One more than the highest hop the sender claimed or fetched in its window; the relay that set it → relayParentId
+  relayHop          Int?            @map("relay_hop") @db.SmallInt
+  relayParentId     BigInt?         @map("relay_parent_id")
+  // First fetch by the recipient → counts toward its hop before any ack
+  relayFetchedAt    DateTime?       @map("relay_fetched_at") @db.Timestamptz(6)
+  // Owner redaction: text replaced by a fixed marker, original length kept
+  relayRedactedAt     DateTime?     @map("relay_redacted_at") @db.Timestamptz(6)
+  relayRedactedLength Int?          @map("relay_redacted_length")
+  relayClosedAt     DateTime?       @map("relay_closed_at") @db.Timestamptz(6)
   updatedAt         DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  session    QueueSession    @relation(fields: [sessionId], references: [sessionId], onDelete: Restrict, onUpdate: Restrict)
-  deliveries QueueDelivery[]
-  images     QueueItemImage[]
+  session       QueueSession     @relation("QueueItemRecipient", fields: [sessionId], references: [sessionId], onDelete: Restrict, onUpdate: Restrict)
+  fromSession   QueueSession?    @relation("QueueItemSender", fields: [fromSessionId], references: [sessionId], onDelete: Restrict, onUpdate: Restrict)
+  relayParent   QueueItem?       @relation("QueueRelayParent", fields: [relayParentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  relayChildren QueueItem[]      @relation("QueueRelayParent")
+  deliveries    QueueDelivery[]
+  images        QueueItemImage[]
 
   // FK index; leading session_id + status → a session's items in one state (withdraw, resume claim)
   @@index([sessionId, status], map: "queue_items_session_status_idx")
   // the history read fetches every copy of a paged send
   @@index([sendId], map: "queue_items_send_id_idx")
+  // FK index; the per-sender and per-pair relay caps count by send time
+  @@index([fromSessionId, askedAt], map: "queue_items_from_session_asked_idx")
+  @@index([relayParentId], map: "queue_items_relay_parent_id_idx")
   @@map("queue_items")
   @@schema("monitor")
 }

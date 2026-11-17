@@ -5,18 +5,21 @@ import path from "node:path";
 
 import type { QueueItemKind } from "../../generated/prisma/client.js";
 
+// A relay never starts or resumes a process → no envelope can name one
+export type ResumableKind = Exclude<QueueItemKind, "relay">;
+
 export interface EnvelopeItem {
   id: number;
-  kind: QueueItemKind;
+  kind: ResumableKind;
   msgId: string;
 }
 
-const HEADER: Record<QueueItemKind, string> = {
+const HEADER: Record<ResumableKind, string> = {
   decision: "[ATRIUM-DECISION v1]",
   report: "[ATRIUM-REPORT v1]",
   message: "[ATRIUM-MESSAGE v1]",
 };
-const SUBJECT: Record<QueueItemKind, string> = {
+const SUBJECT: Record<ResumableKind, string> = {
   decision: "The owner answered your Atrium queue decision.",
   report: "The owner replied to your Atrium queue report.",
   message: "The owner sent you a message through the Atrium queue.",

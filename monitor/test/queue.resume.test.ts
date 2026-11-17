@@ -250,6 +250,30 @@ describe("automatic resume of an exited session", () => {
     assert.equal(await isMarked(sessionId), true);
   });
 
+  test("an undelivered relay on an exited row starts no process and writes no resume row", async () => {
+    const senderId = await seedSession({ state: "live", cwd: newFixtureDir("relay-sender") });
+    const recipientId = await seedSession({ cwd: newFixtureDir("relay-recipient"), configDir: dir.home });
+    const { id: relayId } = await getPrisma().queueItem.create({
+      data: {
+        kind: "relay",
+        sessionId: recipientId,
+        fromSessionId: senderId,
+        relayHop: 0,
+        title: "Schema review is done",
+        body: "Schema review is done; the relay CHECKs are in the migration.",
+        isFreeTextAllowed: false,
+        status: "answered",
+      },
+    });
+    const harness = buildHarness([recipientId]);
+
+    await runPasses(harness, 2);
+
+    assert.equal(harness.fake.calls.length, 0);
+    assert.deepEqual(await getResumeRows(relayId), []);
+    assert.equal(await isMarked(recipientId), false);
+  });
+
   test("an owner message to an exited session is resumed exactly once, under the message header", async () => {
     const sessionId = await seedSession({ cwd: newFixtureDir("message") });
     const { items: [message] } = await createMessages({ sessionIds: [sessionId], text: "Rebase onto main before the review.", attachmentIds: [] }, "fetch_metadata");

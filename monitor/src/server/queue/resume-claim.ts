@@ -4,10 +4,10 @@
 
 import { randomUUID } from "node:crypto";
 
-import { Prisma, type QueueDeliveryAbortReason, type QueueItemKind, type QueueItemStatus } from "../../generated/prisma/client.js";
+import { Prisma, type QueueDeliveryAbortReason, type QueueItemStatus } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { logger } from "../logger.js";
-import type { EnvelopeItem } from "./envelope.js";
+import type { EnvelopeItem, ResumableKind } from "./envelope.js";
 import { findWorktreeRoot, lockSession } from "./registry.js";
 
 const RESUME = {
@@ -37,7 +37,7 @@ export type RereadOutcome = "spawn" | QueueDeliveryAbortReason;
 
 interface ResumeCandidate {
   id: bigint;
-  kind: QueueItemKind;
+  kind: ResumableKind;
   nextAttempt: number;
 }
 
@@ -49,8 +49,8 @@ export const buildResumeInFlightSql = (sessionIdColumn: Prisma.Sql): Prisma.Sql 
   WHERE i."session_id" = ${sessionIdColumn} AND i."status" = 'delivering'
     AND (SELECT d."route"::text FROM "monitor"."queue_deliveries" d WHERE d."item_id" = i."id" ORDER BY d."id" DESC LIMIT 1) = 'resume')`;
 
-// A resume-pending item (alias i) the claim can take: no resume row for its current attempt
-const CLAIMABLE_ITEM_SQL = Prisma.sql`i."status" = 'resume_pending' AND NOT EXISTS (
+// A resume-pending item (alias i) the claim can take: never a relay, no resume row for its current attempt
+const CLAIMABLE_ITEM_SQL = Prisma.sql`i."status" = 'resume_pending' AND i."kind"::text <> 'relay' AND NOT EXISTS (
   SELECT 1 FROM "monitor"."queue_deliveries" d WHERE d."item_id" = i."id" AND d."route" = 'resume' AND d."attempt" = i."next_attempt")`;
 
 /**
