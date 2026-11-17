@@ -1,4 +1,4 @@
-// Screen class-string lock: the ten plan-owned screens take spacing, type and colour only through role keys,
+// Screen class-string lock: the plan-owned screens take spacing, type and colour only through role keys,
 // atoms and tokens. Read as a syntax tree, never evaluated; queue.jsx stays outside (the Queue track owns it).
 
 import test, { describe } from "node:test";
@@ -14,7 +14,7 @@ import { ROLE_PREFIXES, getRoleKeys, type RoleSection } from "./lib/role-keys.js
 const SCREEN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src/screens");
 const SCREENS = [
   "agents", "architecture", "clauded-docs", "cost", "dashboard",
-  "improvement", "improvement-instrumentation", "model-config", "outcomes", "wiki",
+  "improvement", "improvement-instrumentation", "model-config", "outcomes", "remote-access", "wiki",
 ];
 
 // design.md §12.1 W1-T3 names · §12.11 and base.css deprecations · the deleted verdict, KPI and split-tile classes
