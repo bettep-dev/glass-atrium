@@ -77,10 +77,11 @@ describe("sign-in page load", () => {
 
       const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
 
-      assert.match(text, /Enter the code shown on the Mac: Remote access → Connect a device → step 5\./);
+      assert.match(text, /Enter the code shown on the Mac in step 5\./);
       assert.match(text, /One use · a new code on the Mac replaces it/);
       assert.equal(await page.getByRole("heading", { name: "Connection warning" }).count(), 1);
-      assert.match(text, /said the connection is not private, stop and do not enter the code\. On the Mac, open Remote access → Connect a device, finish steps 1 to 3/);
+      assert.match(text, /said the connection is not private, stop and do not enter the code\. On the Mac, finish steps 1 to 3, then reopen this page\./);
+      assert.doesNotMatch(text, /Remote access|Connect a device|Registered devices/, "a page shown before sign-in names no Mac screen or feature");
       assert.equal(await page.getByRole("heading", { name: "Certificate" }).count(), 0, "the certificate steps live on the Mac screen only");
       assert.doesNotMatch(text, /fingerprint|SHA-256|AirDrop|~\/|\.pem|revoke|Open registration|Android/i);
       assert.equal(await page.locator("ol").count(), 0, "no step list on the device");
