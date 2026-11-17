@@ -13,6 +13,9 @@
 # <target>/settings.json) at a throwaway temp dir, so the test drives the REAL
 # run_doctor against a synthetic settings.json without touching ~/.claude. We
 # assert ONLY on the §6 binding lines; §1-5 verdicts are out of scope here.
+# Every doctor run reads the remote listener through the ga_remote_run shadow
+# (test/lib/remote-run-stub.bash) — none open unless a row sets LISTEN_NAME — never
+# this host's sockets, where a live monitor's remote listener would FAIL the verdict.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
@@ -24,6 +27,7 @@ source "${GA}/scripts/lib/path-guard.sh"
 setup() {
   load 'lib/bats-db-seal'
   ga_bats_db_seal
+  load 'lib/remote-run-stub'
   # the doctor reads its drop log, rewire marker and auth reports under GA_DATA_ROOT → this test's own root
   export GA_DATA_ROOT="${BATS_TEST_TMPDIR:?}/ga-data-root"
   mkdir -p "${GA_DATA_ROOT}/logs" "${GA_DATA_ROOT}/data"
@@ -143,7 +147,8 @@ JSON
 # with dormant-binding warnings, so `run` (which records exit in $status) tolerates
 # a §1-5 FAIL too — we assert on stdout lines, not the exit code.
 run_doctor_sandbox() {
-  GA_TARGET_HOME="${TARGET}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${REAL_GA}" doctor
+  make_ga_sandbox
+  run_doctor_ga_sandbox
 }
 
 # --- executability of WIRED hooks (§6 second dormant class) -------------------
@@ -151,8 +156,9 @@ run_doctor_sandbox() {
 # A hook can be wired in settings.json AND present on disk yet mode-644: Claude Code
 # spawns each binding as a COMMAND, so the protection never runs. Covering that class
 # needs a GA root whose hooks/ dir the test OWNS — the real repo hooks dir is mode-755
-# and a test must never chmod it. lib/ + scripts/ are symlinked so the code under test
-# is the REAL doctor; only the entry point is COPIED, because resolve_self walks a
+# and a test must never chmod it. scripts/ and each lib file are symlinked so the code
+# under test is the REAL doctor; lib/ga-remote.sh alone also sources the listener shadow
+# (make_remote_stub_lib). Only the entry point is COPIED, because resolve_self walks a
 # symlink chain back to its origin (a symlinked entry would re-resolve to the repo).
 # The hook files are stubs: the check stats the mode, never the content.
 make_ga_sandbox() {
@@ -160,7 +166,7 @@ make_ga_sandbox() {
   mkdir -p "${GA_SANDBOX}/hooks"
   cp "${REAL_GA}" "${GA_SANDBOX}/glass-atrium"
   chmod 755 "${GA_SANDBOX}/glass-atrium"
-  ln -s "${GA}/lib" "${GA_SANDBOX}/lib"
+  make_remote_stub_lib "${GA_SANDBOX}" "${GA}"
   # hooks/lib carries the chunker core the split-channel rows below ask for its slot constant.
   # COPIED from the producer rather than stubbed — the constant and the audit grammar are the
   # producer's, and a stub would let a rename here pass while the live reader went blind. A
@@ -186,7 +192,7 @@ make_ga_sandbox() {
 # bypasses the executable bit, which is the very defect class these rows exist to catch.
 run_doctor_ga_sandbox() {
   GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${GA_SANDBOX}/manifest.json" \
-    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" LISTEN_NAME="${LISTEN_NAME:-}" \
     run "${GA_SANDBOX}/glass-atrium" doctor
 }
 
@@ -395,6 +401,19 @@ drop_group() {
   [[ "${output}" != *"missing the executable bit"* ]]
   [[ "${output}" == *"doctor: PASS"* ]]
   [[ "${status}" -eq 0 ]]
+}
+
+@test "the doctor reads the sandbox's listener, never the host's: the one a row opens is the one it reports" {
+  # access off with a listener open must still FAIL — the remote rows' own home is
+  # test/remote-access-lifecycle.bats; this row proves the shadow reaches the doctor child.
+  make_ga_sandbox
+  write_full_settings
+  LISTEN_NAME="192.168.0.10:16146" run_doctor_ga_sandbox
+  [[ "${output}" == *"FAIL : remote access off but a listener is open on 192.168.0.10:16146 — restart the monitor"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${status}" -ne 0 ]]
 }
 
 @test "one hook wired under two matchers -> ONE executability FAIL line (per-file, not per-tuple)" {
