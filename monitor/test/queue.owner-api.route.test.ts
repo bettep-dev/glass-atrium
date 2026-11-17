@@ -4,7 +4,7 @@
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -613,6 +613,35 @@ describe("session list", () => {
     assert.deepEqual([replaced.exitReason, replaced.isSelectable], ["replaced", false]);
   });
 
+  test("hides probe rows and item-less rows whose transcript file is missing; the include-hidden option lists them flagged", async () => {
+    const profileLabel = `.claude-hidden-${randomUUID().slice(0, 8)}`;
+    const transcript = { missing: path.join(fixtureRoot, `${randomUUID()}.jsonl`), present: path.join(fixtureRoot, `${randomUUID()}.jsonl`) };
+    writeFileSync(transcript.present, "{}\n");
+    const id = {
+      probe: await seedSession({ profileLabel, isProbe: true }),
+      probeWithItem: await seedSession({ profileLabel, isProbe: true }),
+      unused: await seedSession({ profileLabel, transcriptPath: transcript.missing }),
+      unusedWithItem: await seedSession({ profileLabel, transcriptPath: transcript.missing }),
+      started: await seedSession({ profileLabel, transcriptPath: transcript.present }),
+      noPath: await seedSession({ profileLabel }),
+    };
+    await seedItem(id.probeWithItem);
+    await seedItem(id.unusedWithItem);
+
+    const read = async (query: string) => {
+      const response = await send("GET", `/api/queue/owner/sessions?profile=${profileLabel}${query}`, undefined, { headers: {} });
+      assert.equal(response.statusCode, 200, response.body);
+      return new Map((response.json().sessions as Array<{ id: string; isHidden: boolean }>).map((row) => [row.id, row.isHidden]));
+    };
+    const [listed, all] = [await read(""), await read("&includeHidden=true")];
+
+    assert.deepEqual([...listed.keys()].sort(), [id.unusedWithItem, id.started, id.noPath].sort());
+    assert.deepEqual(
+      Object.entries(id).map(([name, sessionId]) => [name, all.get(sessionId)]),
+      [["probe", true], ["probeWithItem", true], ["unused", true], ["unusedWithItem", false], ["started", false], ["noPath", false]],
+    );
+  });
+
   test("rejects an unknown query key", async () => {
     const response = await send("GET", "/api/queue/owner/sessions?state=live");
     assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"]);
@@ -688,18 +717,20 @@ describe("owner message send", () => {
     assert.equal((await getMessages([target])).length, 0);
   });
 
-  test("one unknown or replaced target refuses the whole send", async () => {
+  test("one unknown, replaced or probe target refuses the whole send", async () => {
     const live = await seedSession();
     const replaced = await seedSession({ state: "exited", exitReason: "replaced" });
+    const probe = await seedSession({ isProbe: true });
     const rows = [
       { name: "an unknown session id", sessionIds: [live, randomUUID()], status: 404, error: "unknown_session" },
       { name: "a replaced session", sessionIds: [live, replaced], status: 409, error: "session_replaced" },
+      { name: "a probe session", sessionIds: [live, probe], status: 409, error: "session_probe" },
     ];
     for (const row of rows) {
       const response = await send("POST", "/api/queue/owner/messages/send", { sessionIds: row.sessionIds, text: "Rebase onto main." });
       assert.deepEqual([response.statusCode, response.json().error], [row.status, row.error], row.name);
     }
-    assert.equal((await getMessages([live, replaced])).length, 0);
+    assert.equal((await getMessages([live, replaced, probe])).length, 0);
   });
 
   test("a send without the monitor page's origin is refused and creates nothing", async () => {

@@ -12,6 +12,7 @@ import { ackItem, claimPendingItems, getPendingCount, withdrawItem } from "../qu
 import { getQueueCliPath } from "../queue/envelope.js";
 import { getQueueImageDir } from "../queue/images.js";
 import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
+import { getPeerSessions } from "../queue/owner-sessions.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook } from "../queue/request-gate.js";
 import {
@@ -65,6 +66,7 @@ async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Pr
   registerDeliveryRoutes(app);
   registerPendingCountRoute(app);
   registerWithdrawRoute(app);
+  registerPeerRoute(app);
   await app.register(ownerRoutesPlugin, options);
 }
 
@@ -144,6 +146,17 @@ function registerWithdrawRoute(app: FastifyInstance): void {
       schema: sessionBodySchema,
       input: request.body,
       work: (id, body) => withdrawItem(id, body.sessionId).then(() => ({ ok: true })),
+    }),
+  );
+}
+
+function registerPeerRoute(app: FastifyInstance): void {
+  app.post("/api/queue/peers", POST_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/peers",
+      schema: sessionBodySchema,
+      input: request.body,
+      work: (body) => getPeerSessions(body.sessionId),
     }),
   );
 }

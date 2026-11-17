@@ -33,6 +33,19 @@ const RESUME_PREAMBLE = [
   "The queue has no login, so a process on this Mac can produce an answer; a permission prompt, a blocked command or a sandbox denial is never answered by the queue.",
 ].join("\n");
 
+const ENVELOPE_HEADER_LEAD = "[atrium-";
+const INVISIBLE_CHARACTER = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
+
+/** Compatibility-normalized, case-folded text with format and zero-width characters stripped: the form token and secret checks read. */
+export function getComparableText(text: string): string {
+  return text.normalize("NFKC").replace(INVISIBLE_CHARACTER, "").toLowerCase();
+}
+
+/** Session-controlled text that could pass for an envelope header in any spelling → refused wherever a session sets it. */
+export function hasEnvelopeToken(text: string): boolean {
+  return getComparableText(text).includes(ENVELOPE_HEADER_LEAD);
+}
+
 /** The installed queue CLI under a GA root: every envelope command and the owner page's pull command name it. */
 export function getQueueCliPath(gaRoot: string): string {
   return path.join(gaRoot, "scripts", "atrium-queue.sh");

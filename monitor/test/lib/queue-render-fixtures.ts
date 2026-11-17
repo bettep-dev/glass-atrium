@@ -95,6 +95,7 @@ function buildSessionRow(key: SessionKey, count: OwnerSessionRow["count"], minut
     count,
     markerSetAt: null,
     isSelectable: true,
+    isHidden: false,
   };
 }
 

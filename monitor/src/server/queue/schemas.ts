@@ -50,6 +50,10 @@ export const registerBodySchema = z.strictObject({
   permissionHint: z.enum(PERMISSION_HINTS).optional(),
   name: sessionName.optional(),
   derivedName: sessionName.optional(),
+  // The SessionStart payload's own path → kept only under the row's config dir (registry.ts → getTranscriptPath)
+  transcriptPath: absolutePath.optional(),
+  // Absent → not a probe: the flag comes from each register's own declaration
+  isProbe: z.boolean().optional(),
 });
 
 export const deregisterBodySchema = z.strictObject({
@@ -126,7 +130,7 @@ export const ownerListQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(MAX_LIST_LIMIT).default(100),
 });
 
-export const ownerSessionsQuerySchema = z.strictObject({ profile: profileLabel.optional() });
+export const ownerSessionsQuerySchema = z.strictObject({ profile: profileLabel.optional(), includeHidden: z.stringbool().default(false) });
 
 export const messageBodySchema = z.strictObject({
   sessionIds: z
