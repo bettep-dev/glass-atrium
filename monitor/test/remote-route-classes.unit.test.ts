@@ -11,7 +11,7 @@ import Fastify, { type RouteOptions } from "fastify";
 
 import { registerSurface } from "../src/server/app.js";
 import { disconnectPrisma } from "../src/server/db.js";
-import { registerRemoteAdminRoutes } from "../src/server/remote/admin-routes.js";
+import { type RemoteAccessActs, registerRemoteAdminRoutes } from "../src/server/remote/admin-routes.js";
 import { registerRemoteCliRoutes } from "../src/server/remote/cli-routes.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
@@ -96,12 +96,23 @@ async function collectLiveRoutes(): Promise<Set<string>> {
     await registerSurface(app);
     const devices = { list: async () => [], revoke: async () => false, revokeAll: async () => [] };
     const audit = { insertEvent: async () => undefined };
+    const access: RemoteAccessActs = {
+      turnOn: async () => ({ outcome: "write_failed", trustedCount: null }),
+      trust: async () => ({ outcome: "write_failed", trustedCount: null }),
+      setOff: async () => "write_failed",
+      close: async () => undefined,
+      getSetupFacts: async () => {
+        throw new Error("the setup read is not part of this test");
+      },
+      readCertificate: async () => null,
+    };
     await registerRemoteAdminRoutes(app, {
       codes: new RegistrationCodes(),
       devices,
       connections: new DeviceConnections(),
       audit,
       getAccess: () => ({ enabled: false, trusted: [] }),
+      access,
     });
     await registerRemoteCliRoutes(app, { devices, connections: new DeviceConnections(), audit });
     await registerRemoteDeviceRoutes(app, {

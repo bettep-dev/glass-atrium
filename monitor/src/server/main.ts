@@ -16,10 +16,9 @@ import { type QueueScheduler, getSweepDeps, startQueueScheduler } from "./queue/
 import { DeviceConnections } from "./remote/connections.js";
 import { listActiveDevices, revokeAllDevices, revokeDevice } from "./remote/devices.js";
 import { buildRemoteAuditWriter } from "./middleware/audit-log.js";
-import type { RemoteListenerController } from "./remote/controller.js";
 import { RegistrationCodes } from "./remote/registration-code.js";
 import { getRemoteSettings } from "./remote/settings.js";
-import { startRemoteAccess } from "./remote/start.js";
+import { buildRemoteAccessSwitch } from "./remote/start.js";
 
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
 const PORT = getMonitorPort();
@@ -41,13 +40,18 @@ if (!isLoopbackHost(HOST)) {
   process.exit(1);
 }
 let queueScheduler: QueueScheduler | null = null;
-let remoteAccess: RemoteListenerController | null = null;
 // one owner → the remote gate tracks device sockets here and a cut-off closes them
 const deviceConnections = new DeviceConnections();
 // one owner → the Mac's loopback page opens the code the remote code POST consumes
 const registrationCodes = new RegistrationCodes();
-// read once → the boot record, the listener and the Mac page's view agree on one state
-const remoteSettings = getRemoteSettings(process.env, PORT);
+// one owner of the feature state → the boot record, the listener, the Mac page's view and its acts agree
+const remoteAccess = buildRemoteAccessSwitch({
+  settings: getRemoteSettings(process.env, PORT),
+  monitorPort: PORT,
+  connections: deviceConnections,
+  codes: registrationCodes,
+  log: logger,
+});
 
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
@@ -66,7 +70,7 @@ function attachShutdown(app: FastifyInstance): void {
 async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<void> {
   try {
     await queueScheduler?.stop();
-    await remoteAccess?.stop();
+    await remoteAccess.stop();
     await app.close();
     await disconnectPrisma();
     app.log.info({ signal }, "graceful shutdown complete");
@@ -84,8 +88,8 @@ async function main(): Promise<void> {
       devices: { list: () => listActiveDevices(getPrisma()), revoke: (id) => revokeDevice(getPrisma(), id), revokeAll: () => revokeAllDevices(getPrisma()) },
       connections: deviceConnections,
       audit: buildRemoteAuditWriter(),
-      // null after boot → off in config, a device's off that outlived a restart, or a failed start
-      getAccess: () => ({ enabled: remoteAccess !== null && !remoteAccess.isTurnedOff, trusted: remoteSettings.trusted }),
+      getAccess: () => remoteAccess.getAccess(),
+      access: remoteAccess,
     },
   });
   attachShutdown(app);
@@ -122,7 +126,7 @@ async function main(): Promise<void> {
 
   // after the loopback listener → a remote failure never takes the Mac's own page down
   try {
-    remoteAccess = await startRemoteAccess({ settings: remoteSettings, connections: deviceConnections, codes: registrationCodes, log: app.log });
+    await remoteAccess.boot();
   } catch (error) {
     app.log.error({ err: error }, "remote access start failed — remote listener stays closed");
   }

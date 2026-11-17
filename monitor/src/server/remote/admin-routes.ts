@@ -1,15 +1,19 @@
-// Remote-access admin routes for the Mac's own page: open a registration code, list devices, revoke one or all.
+// Remote-access admin routes for the Mac's own page: open a registration code, list devices, revoke one or all,
+// turn access on or off, trust this network, read the setup facts and download the CA certificate.
 // Registered by the loopback assembly alone (buildApp) → the remote listener never carries them.
+
+import { X509Certificate } from "node:crypto";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { AUDIT_ACTOR } from "../middleware/audit-log.js";
+import { getPageOriginSignal } from "../request-guards.js";
 import { setNoStoreHeader } from "../response-headers.js";
 import type { DeviceConnections } from "./connections.js";
 import type { DeviceListing } from "./devices.js";
 import { type RemoteAuditEvent, getRoutePayload, recordEvent } from "./gate.js";
 import { WindowLimiter } from "./limits.js";
-import type { TrustedNetwork } from "./network.js";
+import type { ListenReason, TrustedNetwork } from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
 import { EMPTY_BODY_LIMIT_BYTES, hasBody } from "./request-body.js";
 
@@ -18,6 +22,12 @@ export const REMOTE_ADMIN_PATH = {
   DEVICES: "/api/remote/devices",
   DEVICE: "/api/remote/devices/:id",
   REVOKE_ALL: "/api/remote/devices/revoke-all",
+  ACCESS_ON: "/api/remote/access/on",
+  // never POST /api/remote/off → that path is the device's own off, another class
+  ACCESS_OFF: "/api/remote/access/off",
+  TRUST: "/api/remote/access/trust",
+  SETUP: "/api/remote/setup",
+  CERTIFICATE: "/api/remote/certificate",
 } as const;
 
 /** Set only by the page's own script → a document's form, link ping or image request at a same-origin route never carries it. */
@@ -25,7 +35,60 @@ export const MAC_PAGE_HEADER = { NAME: "x-glass-atrium-page", VALUE: "remote-acc
 
 export const REMOTE_ADMIN_LIMITS = {
   REGISTRATION_OPEN: { limit: 5, windowMs: 60_000 },
+  // on and trust together → each runs the shell step
+  ACCESS_WIDEN: { limit: 5, windowMs: 60_000 },
+  // its own budget → widening acts never use up the off
+  ACCESS_OFF: { limit: 10, windowMs: 60_000 },
+  // the screen polls it; each read runs the network commands
+  SETUP_READ: { limit: 60, windowMs: 60_000 },
+  CERTIFICATE_READ: { limit: 10, windowMs: 60_000 },
 } as const;
+
+/** The one file the download serves, under a fixed name and type → never a caller-named file. */
+export const CA_DOWNLOAD = { FILE_NAME: "glass-atrium-local-ca.pem", CONTENT_TYPE: "application/x-x509-ca-cert" } as const;
+
+/** What the shell's write step reported. */
+export type AccessStepOutcome = "written" | "network_unreadable" | "keys_not_created" | "env_not_rendered" | "already_trusted" | "write_failed";
+
+/** start_failed → the step wrote, this process could not apply it; the next restart does. */
+export type AccessApplyOutcome = AccessStepOutcome | "start_failed";
+
+export interface AccessApplyResult {
+  readonly outcome: AccessApplyOutcome;
+  /** trusted networks after the apply; null when nothing was applied */
+  readonly trustedCount: number | null;
+}
+
+export interface SetupFacts {
+  /** on in config */
+  readonly enabled: boolean;
+  readonly isOffByDevice: boolean;
+  readonly listenReason: ListenReason;
+  readonly hasRouter: boolean;
+  readonly isNetworkTrusted: boolean;
+  readonly trustedCount: number;
+  /** the remote listener is open in this process */
+  readonly isAnswering: boolean;
+  /** `<name>.local`; null when unreadable */
+  readonly hostName: string | null;
+  /** the Wi-Fi interface's address; null when unreadable */
+  readonly address: string | null;
+  readonly port: number;
+  readonly deviceLimit: number;
+}
+
+/** The Mac page's on, off and trust: the shell step writes, this process applies. */
+export interface RemoteAccessActs {
+  turnOn(): Promise<AccessApplyResult>;
+  trust(): Promise<AccessApplyResult>;
+  /** persists the off only → the route revokes and closes */
+  setOff(): Promise<AccessStepOutcome>;
+  /** closes the listener; stays closed until the next on */
+  close(): Promise<void>;
+  getSetupFacts(): Promise<SetupFacts>;
+  /** the CA certificate file's bytes; null when none was created */
+  readCertificate(): Promise<Buffer | null>;
+}
 
 export interface RemoteAdminDeps {
   /** shared with the remote code POST, which consumes the code */
@@ -42,6 +105,7 @@ export interface RemoteAdminDeps {
   readonly audit: { insertEvent(event: RemoteAuditEvent): Promise<void> };
   /** the Mac page's view of the feature: on in this process, and the networks it opens on */
   readonly getAccess: () => RemoteAccessState;
+  readonly access: RemoteAccessActs;
   readonly now?: () => number;
 }
 
@@ -78,7 +142,23 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
       revokeOne(request, reply, { deps, actor: AUDIT_ACTOR }),
     );
     scope.post(REMOTE_ADMIN_PATH.REVOKE_ALL, options, (request) => revokeAll(request, { deps, actor: AUDIT_ACTOR }));
+    registerAccessRoutes(scope, deps);
   });
+}
+
+function registerAccessRoutes(scope: FastifyInstance, deps: RemoteAdminDeps): void {
+  const getNow = deps.now ?? Date.now;
+  const queue = new ActQueue();
+  const widen = { deps, queue, limiter: new WindowLimiter(REMOTE_ADMIN_LIMITS.ACCESS_WIDEN, getNow) };
+  const off = { deps, queue, limiter: new WindowLimiter(REMOTE_ADMIN_LIMITS.ACCESS_OFF, getNow) };
+  const setupLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.SETUP_READ, getNow);
+  const certificateLimiter = new WindowLimiter(REMOTE_ADMIN_LIMITS.CERTIFICATE_READ, getNow);
+  const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
+  scope.post(REMOTE_ADMIN_PATH.ACCESS_ON, options, (request, reply) => widenAccess(request, reply, { ...widen, act: "on" }));
+  scope.post(REMOTE_ADMIN_PATH.TRUST, options, (request, reply) => widenAccess(request, reply, { ...widen, act: "trust" }));
+  scope.post(REMOTE_ADMIN_PATH.ACCESS_OFF, options, (request, reply) => turnOffAccess(request, reply, off));
+  scope.get(REMOTE_ADMIN_PATH.SETUP, (request, reply) => getSetup(request, reply, { deps, limiter: setupLimiter }));
+  scope.get(REMOTE_ADMIN_PATH.CERTIFICATE, (request, reply) => getCertificateFile(request, reply, { deps, limiter: certificateLimiter }));
 }
 
 // GET included: the root request guard never judges a GET, and a device list is not for a neighbour page or a document's image
@@ -123,6 +203,143 @@ function getAccessView(access: RemoteAccessState): RemoteAccessState {
     enabled: access.enabled,
     trusted: access.trusted.map((network) => ({ gateway: network.gateway, hardwareAddress: network.hardwareAddress })),
   };
+}
+
+/** One access act at a time, in arrival order → two config writes never interleave. */
+class ActQueue {
+  #tail: Promise<unknown> = Promise.resolve();
+  #pending = 0;
+
+  get isBusy(): boolean {
+    return this.#pending > 0;
+  }
+
+  run<T>(work: () => Promise<T>): Promise<T> {
+    this.#pending += 1;
+    const result = this.#tail.then(work).finally(() => {
+      this.#pending -= 1;
+    });
+    this.#tail = result.catch(() => undefined);
+    return result;
+  }
+}
+
+interface AccessRoute {
+  readonly deps: RemoteAdminDeps;
+  readonly queue: ActQueue;
+  readonly limiter: WindowLimiter;
+}
+
+const WIDENING_ACT_KIND = { on: "remote.access_enabled", trust: "remote.network_trusted" } as const;
+const FAILED_ACT_STATUS: Record<Exclude<AccessApplyOutcome, "written">, number> = {
+  already_trusted: 409,
+  network_unreadable: 409,
+  keys_not_created: 500,
+  env_not_rendered: 500,
+  write_failed: 500,
+  start_failed: 500,
+};
+
+/** On or trust: request row first (no row → no act), one act at a time, then the outcome row with the trusted count. */
+async function widenAccess(request: FastifyRequest, reply: FastifyReply, route: AccessRoute & { act: "on" | "trust" }): Promise<FastifyReply> {
+  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
+  if (route.queue.isBusy) return reply.code(409).send({ error: "act_in_progress" });
+  return route.queue.run(async () => {
+    if (!(await putAccessRequest(request, route.deps))) return reply.code(503).send({ error: "audit_unavailable" });
+    const result = await (route.act === "on" ? route.deps.access.turnOn() : route.deps.access.trust());
+    const payload = { outcome: result.outcome, ...(result.trustedCount === null ? {} : { trustedNetworkCount: result.trustedCount }) };
+    const isWritten = result.outcome === "written";
+    recordEvent(request, route.deps.audit, { actor: AUDIT_ACTOR, actionKind: WIDENING_ACT_KIND[route.act], result: isWritten ? "success" : "error", payload });
+    return result.outcome === "written" ? reply.send({ outcome: result.outcome }) : reply.code(FAILED_ACT_STATUS[result.outcome]).send({ error: result.outcome });
+  });
+}
+
+/** @returns false when the row was not written; the page-origin stamp is a record, not a check */
+async function putAccessRequest(request: FastifyRequest, deps: RemoteAdminDeps): Promise<boolean> {
+  const pageOrigin = getPageOriginSignal(request.headers, new Set()) ?? "none";
+  try {
+    await deps.audit.insertEvent({ actor: AUDIT_ACTOR, actionKind: "remote.access_requested", result: "success", payload: { ...getRoutePayload(request), pageOrigin } });
+    return true;
+  } catch (error) {
+    request.log.error({ err: error }, "remote access act: request row not written");
+    return false;
+  }
+}
+
+/** Reduce-only: runs without its request row and behind an act in flight; persist, revoke, close — each step runs when another fails. */
+async function turnOffAccess(request: FastifyRequest, reply: FastifyReply, route: AccessRoute): Promise<FastifyReply> {
+  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
+  const { failed, revoked } = await route.queue.run(async () => {
+    await putAccessRequest(request, route.deps);
+    return putAccessOff(request, route.deps);
+  });
+  const result = failed.length === 0 ? "success" : "error";
+  recordEvent(request, route.deps.audit, { actor: AUDIT_ACTOR, actionKind: "remote.access_disabled", result, payload: { count: revoked, failed: failed.join(",") } });
+  return failed.length === 0 ? reply.send({ revoked }) : reply.code(500).send({ error: "off_incomplete", failed, revoked });
+}
+
+async function putAccessOff(request: FastifyRequest, deps: RemoteAdminDeps): Promise<{ failed: string[]; revoked: number }> {
+  const failed: string[] = [];
+  const persisted = await deps.access.setOff().catch(() => "write_failed");
+  if (persisted !== "written") failed.push("persist");
+  let revoked = 0;
+  try {
+    revoked = (await revokeAll(request, { deps, actor: AUDIT_ACTOR })).revoked;
+  } catch (error) {
+    request.log.error({ err: error }, "remote access off: revoking the registered devices failed");
+    failed.push("revoke");
+  }
+  await deps.access.close().catch((error: unknown) => {
+    request.log.error({ err: error }, "remote access off: the listener did not close");
+    failed.push("close");
+  });
+  return { failed, revoked };
+}
+
+/** Field by field → a wider value from the caller (router, interface, key paths) never reaches the page. */
+async function getSetup(request: FastifyRequest, reply: FastifyReply, route: Omit<AccessRoute, "queue">): Promise<FastifyReply> {
+  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
+  const [facts, certificate] = await Promise.all([route.deps.access.getSetupFacts(), getCertificate(request, route.deps.access)]);
+  return reply.send({
+    enabled: facts.enabled,
+    isOffByDevice: facts.isOffByDevice,
+    listenReason: facts.listenReason,
+    hasRouter: facts.hasRouter,
+    isNetworkTrusted: facts.isNetworkTrusted,
+    trustedCount: facts.trustedCount,
+    isAnswering: facts.isAnswering,
+    hostName: facts.hostName,
+    address: facts.address,
+    port: facts.port,
+    deviceLimit: facts.deviceLimit,
+    fingerprint: certificate?.fingerprint ?? null,
+  });
+}
+
+async function getCertificateFile(request: FastifyRequest, reply: FastifyReply, route: Omit<AccessRoute, "queue">): Promise<FastifyReply> {
+  if (!route.limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
+  const certificate = await getCertificate(request, route.deps.access);
+  if (certificate === null) return reply.code(404).send({ error: "certificate_unavailable" });
+  return reply
+    .header("content-type", CA_DOWNLOAD.CONTENT_TYPE)
+    .header("content-disposition", `attachment; filename="${CA_DOWNLOAD.FILE_NAME}"`)
+    .send(certificate.bytes);
+}
+
+/**
+ * The CA certificate and its SHA-256 over the encoded certificate, from the same bytes the download serves.
+ * @returns null when no file, a file holding any private key, or anything but one CA certificate
+ */
+async function getCertificate(request: FastifyRequest, access: RemoteAccessActs): Promise<{ bytes: Buffer; fingerprint: string } | null> {
+  const bytes = await access.readCertificate();
+  if (bytes === null || bytes.includes("PRIVATE KEY")) return null;
+  try {
+    const certificate = new X509Certificate(bytes);
+    return certificate.ca ? { bytes, fingerprint: certificate.fingerprint256 } : null;
+  } catch (error) {
+    request.log.warn({ err: error }, "remote CA certificate unreadable");
+    return null;
+  }
 }
 
 interface DeviceAct {

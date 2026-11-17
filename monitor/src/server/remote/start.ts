@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { parse } from "dotenv";
 import type { FastifyBaseLogger } from "fastify";
 
 import type { Prisma } from "../../generated/prisma/client.js";
@@ -15,16 +16,17 @@ import { buildRemoteApp } from "../app.js";
 import { getPrisma } from "../db.js";
 import { buildRemoteAuditWriter } from "../middleware/audit-log.js";
 import type { QueueRouteOptions } from "../routes/queue.js";
+import type { AccessApplyResult, AccessStepOutcome, RemoteAccessActs, RemoteAccessState, SetupFacts } from "./admin-routes.js";
 import type { DeviceConnections } from "./connections.js";
 import { type RemoteListenerOpener, RemoteListenerController, getInterfaceAddress } from "./controller.js";
-import { createDevice, findActiveDevice, revokeAllDevices, revokeDevice } from "./devices.js";
+import { DEVICE, createDevice, findActiveDevice, revokeAllDevices, revokeDevice } from "./devices.js";
 import type { RemoteAuditEvent, RemoteGateDeps } from "./gate.js";
 import { isLeafDue, readRemoteTls, setRemoteCertificate } from "./listener.js";
-import { getLocalHostName, getNetworkIdentity } from "./network.js";
+import { type NetworkIdentity, getListenDecision, getLocalHostName, getNetworkIdentity, isTrustedNetwork } from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
 import { REMOTE_PRE_AUTH_ROUTES, getRouteClass } from "./route-classes.js";
 import type { RemoteDeviceDeps, RemoteRegistrationDeps } from "./routes.js";
-import type { RemoteSettings } from "./settings.js";
+import { REMOTE_ENV, type RemoteSettings, getRemoteSettings } from "./settings.js";
 
 export interface RemoteOpenerInput {
   readonly port: number;
@@ -38,7 +40,13 @@ export interface RemoteOpenerInput {
 const REMOTE_DATA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "remote-access");
 // install root holding the `glass-atrium` CLI → the CLI writes the leaf into this same data dir
 const ATRIUM_ROOT = path.resolve(REMOTE_DATA_DIR, "..", "..", "..");
-const REISSUE = { BASH: "/bin/bash", PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TIMEOUT_MS: 30_000 } as const;
+const CLI_CALL = { BASH: "/bin/bash", PATH: "/usr/bin:/bin:/usr/sbin:/sbin", TIMEOUT_MS: 30_000 } as const;
+// the Mac page's write step: internal, absent from the CLI's dispatch and help
+const ACCESS_STEP_FILE = path.join(ATRIUM_ROOT, "scripts", "remote-access-set.sh");
+// rendered by the write step from config.toml → the same file the boot read
+const RENDERED_ENV_FILE = path.join(ATRIUM_ROOT, "monitor", ".env");
+// the public CA certificate only; ca.key beside it is never read by this process
+const CA_CERTIFICATE_FILE = "ca.pem";
 const NETWORK_CHECK_MS = 10_000;
 // differs from the page and CLI actors → a boot-time act is told apart in the audit trail
 const BOOT_ACTOR = "monitor-boot";
@@ -51,6 +59,16 @@ export interface BootAccessDeps {
   readonly connections: Pick<DeviceConnections, "close">;
   readonly audit: { insertEvent(event: RemoteAuditEvent): Promise<void> };
   readonly log: FastifyBaseLogger;
+}
+
+/** The boot input without its settings → the switch opens with the settings each act wrote. */
+export interface RemoteAccessInput {
+  readonly connections: DeviceConnections;
+  readonly codes: RegistrationCodes;
+  readonly log: FastifyBaseLogger;
+  readonly db?: Prisma.TransactionClient;
+  /** leaf and access-state directory; tests pass a temporary one, production the fixed data dir */
+  readonly dataDir?: string;
 }
 
 /** @returns an opener taking the bound address and the `<name>.local` name (null → only the numeric address is admitted) */
@@ -84,18 +102,8 @@ export function buildRemoteOpener(input: RemoteOpenerInput): RemoteListenerOpene
  * @param input.db - the device and audit store; tests pass a rolled-back transaction, production the shared client
  * @returns the controller → main.ts stops it on shutdown
  */
-export async function startRemoteAccess(input: {
-  readonly settings: RemoteSettings;
-  readonly connections: DeviceConnections;
-  readonly codes: RegistrationCodes;
-  readonly log: FastifyBaseLogger;
-  readonly db?: Prisma.TransactionClient;
-  /** leaf and access-state directory; tests pass a temporary one, production the fixed data dir */
-  readonly dataDir?: string;
-}): Promise<RemoteListenerController | null> {
-  const dataDir = input.dataDir ?? REMOTE_DATA_DIR;
-  // a device's off holds over config on until the CLI turns access on again
-  const settings = input.settings.enabled && (await isDeviceOff(dataDir)) ? { ...input.settings, enabled: false } : input.settings;
+export async function startRemoteAccess(input: RemoteAccessInput & { readonly settings: RemoteSettings }): Promise<RemoteListenerController | null> {
+  const settings = await getEffectiveSettings(input.settings, () => isDeviceOff(input.dataDir ?? REMOTE_DATA_DIR));
   const getDb = () => input.db ?? getPrisma();
   await putBootAccessState(settings, {
     revokeAll: () => revokeAllDevices(getDb()),
@@ -103,7 +111,18 @@ export async function startRemoteAccess(input: {
     audit: buildRemoteAuditWriter(getDb()),
     log: input.log,
   });
-  if (!settings.enabled) return null;
+  return settings.enabled ? openRemoteAccess(settings, input) : null;
+}
+
+// a device's off holds over config on until an on writes access-state again
+async function getEffectiveSettings(settings: RemoteSettings, isOff: () => Promise<boolean>): Promise<RemoteSettings> {
+  return settings.enabled && (await isOff()) ? { ...settings, enabled: false } : settings;
+}
+
+/** The network watch for settings that are on: the first check runs before this resolves. */
+async function openRemoteAccess(settings: RemoteSettings, input: RemoteAccessInput): Promise<RemoteListenerController> {
+  const dataDir = input.dataDir ?? REMOTE_DATA_DIR;
+  const getDb = () => input.db ?? getPrisma();
   const open = buildRemoteOpener({
     port: settings.port,
     gate: { findDevice: (presented) => findActiveDevice(getDb(), presented), audit: buildRemoteAuditWriter(getDb()), connections: input.connections },
@@ -130,8 +149,177 @@ export async function startRemoteAccess(input: {
     log: input.log,
   });
   await controller.sync();
-  setInterval(() => void controller.sync(), NETWORK_CHECK_MS).unref();
+  controller.watch(NETWORK_CHECK_MS);
   return controller;
+}
+
+export type SwitchedController = Pick<RemoteListenerController, "isTurnedOff" | "isOpen" | "turnOff" | "stop">;
+
+export interface AccessSwitchDeps {
+  /** the boot path → its own audit row and device-off rule */
+  readonly boot: (settings: RemoteSettings) => Promise<SwitchedController | null>;
+  readonly runStep: (act: AccessAct) => Promise<AccessStepOutcome>;
+  /** the settings the step rendered */
+  readonly readSettings: () => Promise<RemoteSettings>;
+  readonly open: (settings: RemoteSettings) => Promise<SwitchedController>;
+  readonly isDeviceOff: () => Promise<boolean>;
+  readonly readIdentity: () => Promise<NetworkIdentity | null>;
+  readonly readHostName: () => Promise<string | null>;
+  readonly getAddress: (networkInterface: string) => string | null;
+  readonly readCertificate: () => Promise<Buffer | null>;
+  readonly log: Pick<FastifyBaseLogger, "error">;
+}
+
+export type AccessAct = "on" | "off" | "trust";
+
+/**
+ * The feature's state in this process: boot, then the Mac page's acts. The shell step writes; the switch re-reads what it
+ * wrote and reopens. A write it cannot apply leaves the listener closed, and the next restart applies it.
+ */
+export class RemoteAccessSwitch implements RemoteAccessActs {
+  #controller: SwitchedController | null = null;
+  #settings: RemoteSettings;
+
+  constructor(
+    private readonly deps: AccessSwitchDeps,
+    settings: RemoteSettings,
+  ) {
+    this.#settings = settings;
+  }
+
+  /** the Mac page's view: on and open to devices in this process, and the networks it opens on */
+  getAccess(): RemoteAccessState {
+    const isOn = this.#controller !== null && !this.#controller.isTurnedOff;
+    return { enabled: isOn, trusted: this.#settings.trusted };
+  }
+
+  async boot(): Promise<void> {
+    this.#controller = await this.deps.boot(this.#settings);
+  }
+
+  turnOn(): Promise<AccessApplyResult> {
+    return this.#write("on");
+  }
+
+  trust(): Promise<AccessApplyResult> {
+    return this.#write("trust");
+  }
+
+  async setOff(): Promise<AccessStepOutcome> {
+    const outcome = await this.deps.runStep("off");
+    if (outcome === "written") this.#settings = { ...this.#settings, enabled: false };
+    return outcome;
+  }
+
+  async close(): Promise<void> {
+    const controller = this.#controller;
+    this.#controller = null;
+    await controller?.turnOff();
+  }
+
+  async stop(): Promise<void> {
+    await this.#controller?.stop();
+  }
+
+  readCertificate(): Promise<Buffer | null> {
+    return this.deps.readCertificate();
+  }
+
+  async getSetupFacts(): Promise<SetupFacts> {
+    const settings = this.#settings;
+    const [identity, hostName, isOffByDevice] = await Promise.all([this.deps.readIdentity(), this.deps.readHostName(), this.deps.isDeviceOff()]);
+    const address = identity === null ? null : this.deps.getAddress(identity.interface);
+    return {
+      enabled: settings.enabled,
+      isOffByDevice,
+      listenReason: getListenDecision({ ...settings, identity, address }).reason,
+      hasRouter: identity !== null,
+      isNetworkTrusted: identity !== null && isTrustedNetwork(settings.trusted, identity),
+      trustedCount: settings.trusted.length,
+      isAnswering: this.#controller?.isOpen ?? false,
+      hostName,
+      address,
+      port: settings.port,
+      deviceLimit: DEVICE.MAX_ACTIVE,
+    };
+  }
+
+  async #write(act: "on" | "trust"): Promise<AccessApplyResult> {
+    const outcome = await this.deps.runStep(act);
+    return outcome === "written" ? this.#apply(act) : { outcome, trustedCount: null };
+  }
+
+  async #apply(act: "on" | "trust"): Promise<AccessApplyResult> {
+    try {
+      await this.close();
+      const settings = await this.deps.readSettings();
+      this.#settings = settings;
+      if (act === "on" && !settings.enabled) throw new Error("remote access settings still off after the on step");
+      if ((await getEffectiveSettings(settings, this.deps.isDeviceOff)).enabled) this.#controller = await this.deps.open(settings);
+      return { outcome: "written", trustedCount: settings.trusted.length };
+    } catch (error) {
+      this.deps.log.error({ err: error, act }, "remote access written but not applied: the listener stays closed until the next restart");
+      await this.close();
+      return { outcome: "start_failed", trustedCount: null };
+    }
+  }
+}
+
+/** The production switch: the fixed write step, the rendered env file and the fixed data dir. */
+export function buildRemoteAccessSwitch(input: RemoteAccessInput & { readonly settings: RemoteSettings; readonly monitorPort: number }): RemoteAccessSwitch {
+  const dataDir = input.dataDir ?? REMOTE_DATA_DIR;
+  return new RemoteAccessSwitch(
+    {
+      boot: (settings) => startRemoteAccess({ ...input, settings }),
+      runStep: (act) => runAccessStep(act),
+      readSettings: () => readRenderedSettings(input.monitorPort),
+      open: (settings) => openRemoteAccess(settings, input),
+      isDeviceOff: () => isDeviceOff(dataDir),
+      readIdentity: () => getNetworkIdentity(),
+      readHostName: () => getLocalHostName(),
+      getAddress: (networkInterface) => getInterfaceAddress(networkInterfaces(), networkInterface),
+      readCertificate: () => readCaCertificate(dataDir),
+      log: input.log,
+    },
+    input.settings,
+  );
+}
+
+const ACCESS_STEP_OUTCOME: ReadonlyMap<number, AccessStepOutcome> = new Map([
+  [0, "written"],
+  [6, "network_unreadable"],
+  [7, "keys_not_created"],
+  [8, "env_not_rendered"],
+  [9, "already_trusted"],
+]);
+
+/**
+ * The write step for one act: fixed binary, the act as the one argument, no shell string, nothing from a request.
+ * @returns write_failed for any exit the step does not name, a timeout included
+ */
+export async function runAccessStep(act: AccessAct, step: { file?: string; timeoutMs?: number } = {}): Promise<AccessStepOutcome> {
+  try {
+    await promisify(execFile)(CLI_CALL.BASH, [step.file ?? ACCESS_STEP_FILE, act], { env: getCliEnv(), timeout: step.timeoutMs ?? CLI_CALL.TIMEOUT_MS });
+    return "written";
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    return (typeof code === "number" ? ACCESS_STEP_OUTCOME.get(code) : undefined) ?? "write_failed";
+  }
+}
+
+// only the remote keys → nothing else in the file enters these settings
+async function readRenderedSettings(monitorPort: number): Promise<RemoteSettings> {
+  const rendered = parse(await readFile(RENDERED_ENV_FILE));
+  const remote = Object.fromEntries(Object.values(REMOTE_ENV).map((key) => [key, rendered[key]]));
+  return getRemoteSettings(remote, monitorPort);
+}
+
+/** @returns null when no CA was created yet */
+async function readCaCertificate(dataDir: string): Promise<Buffer | null> {
+  return readFile(path.join(dataDir, CA_CERTIFICATE_FILE)).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
 }
 
 /**
@@ -139,11 +327,15 @@ export async function startRemoteAccess(input: {
  * Fixed binary and argv, no shell string, nothing from a request; key content never reaches this process's output.
  */
 async function reissueLeaf(): Promise<void> {
-  const home = process.env.HOME === undefined ? {} : { HOME: process.env.HOME };
-  await promisify(execFile)(REISSUE.BASH, [path.join(ATRIUM_ROOT, "glass-atrium"), "remote", "reissue"], {
-    env: { PATH: REISSUE.PATH, LC_ALL: "C", GA_ROOT: ATRIUM_ROOT, ...home },
-    timeout: REISSUE.TIMEOUT_MS,
+  await promisify(execFile)(CLI_CALL.BASH, [path.join(ATRIUM_ROOT, "glass-atrium"), "remote", "reissue"], {
+    env: getCliEnv(),
+    timeout: CLI_CALL.TIMEOUT_MS,
   });
+}
+
+function getCliEnv(): NodeJS.ProcessEnv {
+  const home = process.env.HOME === undefined ? {} : { HOME: process.env.HOME };
+  return { PATH: CLI_CALL.PATH, LC_ALL: "C", GA_ROOT: ATRIUM_ROOT, ...home };
 }
 
 /** true only for the exact off a device wrote; a missing or unreadable file leaves config in charge */

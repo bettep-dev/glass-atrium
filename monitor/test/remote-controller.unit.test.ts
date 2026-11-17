@@ -176,6 +176,21 @@ describe("opening and closing with the network", () => {
   });
 });
 
+describe("the network watch", () => {
+  test("checks every interval, and once stopped reopens nothing at the next interval", async (context) => {
+    context.mock.timers.enable({ apis: ["setInterval"] });
+    const { controller, opened } = buildHarness();
+    controller.watch(10_000);
+    context.mock.timers.tick(10_000);
+    await controller.sync();
+    const openedByWatch = getOpenAddresses(opened);
+    await controller.stop();
+    context.mock.timers.tick(10_000);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual([openedByWatch, opened.length], [["192.168.0.10"], 1]);
+  });
+});
+
 describe("the leaf on disk", () => {
   test("a reissued leaf is handed to the open listener without reopening it", async () => {
     const { controller, state, opened } = buildHarness();

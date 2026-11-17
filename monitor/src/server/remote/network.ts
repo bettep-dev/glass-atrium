@@ -85,13 +85,15 @@ export function getListenDecision(input: {
 }): ListenDecision {
   if (!input.enabled) return { open: false, reason: "disabled" };
   if (input.identity === null) return { open: false, reason: "identity_unreadable" };
-  const { gateway, hardwareAddress } = input.identity;
-  const isTrusted = input.trusted.some(
-    (network) => network.gateway === gateway && getNormalizedHardwareAddress(network.hardwareAddress) === hardwareAddress,
-  );
-  if (!isTrusted) return { open: false, reason: "untrusted" };
+  if (!isTrustedNetwork(input.trusted, input.identity)) return { open: false, reason: "untrusted" };
   if (input.address === null || !isPrivateIPv4(input.address)) return { open: false, reason: "address_not_private" };
   return { open: true, reason: "trusted" };
+}
+
+export function isTrustedNetwork(trusted: readonly TrustedNetwork[], identity: NetworkIdentity): boolean {
+  return trusted.some(
+    (network) => network.gateway === identity.gateway && getNormalizedHardwareAddress(network.hardwareAddress) === identity.hardwareAddress,
+  );
 }
 
 /** RFC 1918 only: 10/8, 172.16/12, 192.168/16. */

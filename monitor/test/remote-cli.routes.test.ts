@@ -14,7 +14,7 @@ import type { FastifyInstance, InjectOptions } from "fastify";
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { buildApp } from "../src/server/app.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { REMOTE_ADMIN_PATH, type RemoteAdminDeps } from "../src/server/remote/admin-routes.js";
+import { REMOTE_ADMIN_PATH, type RemoteAccessActs, type RemoteAdminDeps } from "../src/server/remote/admin-routes.js";
 import { REMOTE_CLI_LIMITS, REMOTE_CLI_PATH } from "../src/server/remote/cli-routes.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import { createDevice, findActiveDevice, listActiveDevices, revokeAllDevices, revokeDevice } from "../src/server/remote/devices.js";
@@ -24,6 +24,18 @@ import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 const PORT = 16198;
 // the contract the shell CLI sends (lib/ga-remote.sh → GA_REMOTE_CLI_HEADER)
 const CLI = { host: `127.0.0.1:${PORT}`, "x-glass-atrium-cli": "remote-access" };
+
+// the page's access acts never run from the CLI channel
+const ACCESS: RemoteAccessActs = {
+  turnOn: async () => ({ outcome: "write_failed", trustedCount: null }),
+  trust: async () => ({ outcome: "write_failed", trustedCount: null }),
+  setOff: async () => "write_failed",
+  close: async () => undefined,
+  getSetupFacts: async () => {
+    throw new Error("the setup read is not part of this test");
+  },
+  readCertificate: async () => null,
+};
 
 class Rollback extends Error {}
 
@@ -55,6 +67,7 @@ function buildAdminDeps(): RemoteAdminDeps {
       },
     },
     getAccess: () => ({ enabled: true, trusted: [] }),
+    access: ACCESS,
     now,
   };
 }

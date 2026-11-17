@@ -53,12 +53,22 @@ export class RemoteListenerController {
   #isTurnedOff = false;
   #queue: Promise<void> = Promise.resolve();
   #reissueAttempt: { readonly key: string; readonly at: number } | null = null;
+  #watch: NodeJS.Timeout | null = null;
 
   constructor(private readonly deps: RemoteControllerDeps) {}
 
   /** true once a device's off has run in this process; a restart reads the persisted off instead */
   get isTurnedOff(): boolean {
     return this.#isTurnedOff;
+  }
+
+  get isOpen(): boolean {
+    return this.#current !== null;
+  }
+
+  /** A check every interval until turned off or stopped → a replaced controller leaves no timer behind. */
+  watch(intervalMs: number): void {
+    this.#watch ??= setInterval(() => void this.sync(), intervalMs).unref();
   }
 
   /** One network check; checks run one at a time and never reject → safe to call from a timer. */
@@ -69,11 +79,18 @@ export class RemoteListenerController {
   /** A device's off: closes now and every later check in this process stays closed. */
   turnOff(): Promise<void> {
     this.#isTurnedOff = true;
+    this.#stopWatch();
     return this.#enqueue(() => this.#close("turned_off"));
   }
 
   stop(): Promise<void> {
+    this.#stopWatch();
     return this.#enqueue(() => this.#close("stopped"));
+  }
+
+  #stopWatch(): void {
+    if (this.#watch !== null) clearInterval(this.#watch);
+    this.#watch = null;
   }
 
   #enqueue(work: () => Promise<void>): Promise<void> {

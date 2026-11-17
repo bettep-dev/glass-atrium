@@ -4,9 +4,11 @@
 
 import test, { after, before, beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
 import { Writable } from "node:stream";
+import { promisify } from "node:util";
 
 import "dotenv/config";
 
@@ -18,16 +20,22 @@ import { buildApp } from "../src/server/app.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { LOGGER_OPTIONS } from "../src/server/logger.js";
 import {
+  type AccessApplyOutcome,
+  type AccessStepOutcome,
+  CA_DOWNLOAD,
   MAC_PAGE_HEADER,
   REMOTE_ADMIN_LIMITS,
   REMOTE_ADMIN_PATH,
   type RemoteAdminDeps,
+  type SetupFacts,
   registerRemoteAdminRoutes,
 } from "../src/server/remote/admin-routes.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import { createDevice, findActiveDevice, listActiveDevices, revokeAllDevices, revokeDevice } from "../src/server/remote/devices.js";
 import type { RemoteAuditEvent } from "../src/server/remote/gate.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
+import { createStandInTls } from "./lib/remote-tls.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
 
 const PORT = 16199;
 const MAC_PAGE: Record<string, string> = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin", [MAC_PAGE_HEADER.NAME]: MAC_PAGE_HEADER.VALUE };
@@ -41,6 +49,22 @@ const WIDE_ACCESS = {
   trusted: ACCESS.trusted.map((entry) => ({ ...entry, interfaceName: "en0" })),
 };
 
+const SETUP_FACTS: SetupFacts = {
+  enabled: true,
+  isOffByDevice: false,
+  listenReason: "trusted",
+  hasRouter: true,
+  isNetworkTrusted: true,
+  trustedCount: 1,
+  isAnswering: true,
+  hostName: "owner-mac.local",
+  address: "192.168.0.24",
+  port: 16443,
+  deviceLimit: 10,
+};
+// a careless caller's setup value: the router, the interface and the key path beside the facts
+const WIDE_SETUP_FACTS = { ...SETUP_FACTS, gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33", interface: "en0", caKeyPath: "/Users/owner/ca.key" };
+
 class Rollback extends Error {}
 
 let clock = Date.parse("2026-11-14T16:40:00.000Z");
@@ -49,6 +73,16 @@ let db: Prisma.TransactionClient = getPrisma();
 const events: RemoteAuditEvent[] = [];
 let isAuditDown = false;
 let openedCodes: string[] = [];
+// the page's acts as the shell step and the in-process apply answer them; the trail orders acts against audit rows
+const access = {
+  outcome: "written" as AccessApplyOutcome,
+  offOutcome: "written" as AccessStepOutcome,
+  isCloseFailing: false,
+  hold: Promise.resolve(),
+  certificate: null as Buffer | null,
+};
+const trail: string[] = [];
+let ca: Awaited<ReturnType<typeof createStandInTls>>;
 const connections = new DeviceConnections();
 let app: FastifyInstance;
 
@@ -66,16 +100,38 @@ function buildAdminDeps(): RemoteAdminDeps {
     connections,
     audit: {
       insertEvent: async (event) => {
+        trail.push(`row ${event.actionKind}`);
         if (isAuditDown) throw new Error("audit store unavailable");
         events.push(event);
       },
     },
     getAccess: () => WIDE_ACCESS,
+    access: {
+      turnOn: () => runAccessAct("on"),
+      trust: () => runAccessAct("trust"),
+      setOff: async () => {
+        trail.push("act off");
+        return access.offOutcome;
+      },
+      close: async () => {
+        trail.push("act close");
+        if (access.isCloseFailing) throw new Error("listener close failed");
+      },
+      getSetupFacts: async () => WIDE_SETUP_FACTS,
+      readCertificate: async () => access.certificate,
+    },
     now,
   };
 }
 
+async function runAccessAct(act: string): Promise<{ outcome: AccessApplyOutcome; trustedCount: number }> {
+  trail.push(`act ${act}`);
+  await access.hold;
+  return { outcome: access.outcome, trustedCount: 2 };
+}
+
 before(async () => {
+  ca = await createStandInTls({ isCa: true });
   app = await buildApp(PORT, { admin: buildAdminDeps() });
   await app.ready();
 });
@@ -86,11 +142,14 @@ beforeEach(() => {
   events.length = 0;
   openedCodes = [];
   isAuditDown = false;
+  trail.length = 0;
+  Object.assign(access, { outcome: "written", offOutcome: "written", isCloseFailing: false, hold: Promise.resolve(), certificate: ca.cert });
 });
 
 after(async () => {
   await app.close();
   await disconnectPrisma();
+  deleteDirectory(ca.dir);
 });
 
 function runRolledBack(work: () => Promise<void>): Promise<void> {
@@ -146,6 +205,11 @@ const ROUTES: { name: string; method: InjectOptions["method"]; getUrl: (id: bigi
   { name: "list devices", method: "GET", getUrl: () => REMOTE_ADMIN_PATH.DEVICES },
   { name: "revoke one", method: "DELETE", getUrl: (id) => `${REMOTE_ADMIN_PATH.DEVICES}/${id}` },
   { name: "revoke all", method: "POST", getUrl: () => REMOTE_ADMIN_PATH.REVOKE_ALL },
+  { name: "turn on", method: "POST", getUrl: () => REMOTE_ADMIN_PATH.ACCESS_ON },
+  { name: "turn off", method: "POST", getUrl: () => REMOTE_ADMIN_PATH.ACCESS_OFF },
+  { name: "trust this network", method: "POST", getUrl: () => REMOTE_ADMIN_PATH.TRUST },
+  { name: "read the setup facts", method: "GET", getUrl: () => REMOTE_ADMIN_PATH.SETUP },
+  { name: "download the certificate", method: "GET", getUrl: () => REMOTE_ADMIN_PATH.CERTIFICATE },
 ];
 
 /** The Mac page's own request with one header replaced, or dropped when no value is given. */
@@ -210,7 +274,7 @@ describe("every admin route", () => {
           assert.ok(!("code" in JSON.parse(response.body)), `${route.name} / ${refusal.name}`);
         }
       }
-      assert.deepEqual([openedCodes, events, (await listActiveDevices(db)).map((entry) => entry.id)], [[], [], [device.id]]);
+      assert.deepEqual([openedCodes, trail, (await listActiveDevices(db)).map((entry) => entry.id)], [[], [], [device.id]]);
     });
   });
 
@@ -225,7 +289,7 @@ describe("every admin route", () => {
           assert.equal(response.statusCode, expected, `${route.name} / ${markup.name}: ${response.statusCode} ${response.body}`);
         }
       }
-      assert.deepEqual([openedCodes, events, (await listActiveDevices(db)).map((entry) => entry.id)], [[], [], [device.id]]);
+      assert.deepEqual([openedCodes, trail, (await listActiveDevices(db)).map((entry) => entry.id)], [[], [], [device.id]]);
     });
   });
 
@@ -256,7 +320,7 @@ describe("every admin route", () => {
         });
         assert.equal(response.statusCode, 400, `${route.name}: ${response.body}`);
       }
-      assert.deepEqual([openedCodes, (await listActiveDevices(db)).map((entry) => entry.id)], [[], [device.id]]);
+      assert.deepEqual([openedCodes, trail, (await listActiveDevices(db)).map((entry) => entry.id)], [[], [], [device.id]]);
     });
   });
 });
@@ -392,5 +456,172 @@ describe("revoking every device", () => {
       );
       assert.deepEqual(events.map((event) => [event.actionKind, event.result, event.targetId, event.payload?.count]), [["remote.revoke", "success", undefined, 2]]);
     });
+  });
+});
+
+const WIDENING_ACTS = [
+  { name: "turning on", url: REMOTE_ADMIN_PATH.ACCESS_ON, act: "act on", actionKind: "remote.access_enabled" },
+  { name: "trusting this network", url: REMOTE_ADMIN_PATH.TRUST, act: "act trust", actionKind: "remote.network_trusted" },
+];
+
+describe("an act that widens access", () => {
+  for (const row of WIDENING_ACTS) {
+    test(`${row.name} writes its request row first, then acts, then records the outcome with the trusted-network count`, async () => {
+      const response = await callAdmin({ method: "POST", url: row.url });
+      assert.deepEqual([response.statusCode, JSON.parse(response.body)], [200, { outcome: "written" }]);
+      assert.deepEqual(trail, ["row remote.access_requested", row.act, `row ${row.actionKind}`]);
+      assert.deepEqual(
+        events.map((event) => [event.actor, event.result, event.payload]),
+        [
+          ["monitor-web", "success", { method: "POST", route: row.url, pageOrigin: "fetch_metadata" }],
+          ["monitor-web", "success", { method: "POST", route: row.url, outcome: "written", trustedNetworkCount: 2 }],
+        ],
+      );
+    });
+
+    test(`${row.name} does nothing when its request row cannot be written`, async () => {
+      isAuditDown = true;
+      const response = await callAdmin({ method: "POST", url: row.url });
+      assert.deepEqual([response.statusCode, JSON.parse(response.body), trail], [503, { error: "audit_unavailable" }, ["row remote.access_requested"]]);
+    });
+  }
+
+  test("answers each outcome the step and the apply reported with its own status and records it as not succeeded", async () => {
+    const rows: { outcome: AccessApplyOutcome; status: number }[] = [
+      { outcome: "already_trusted", status: 409 },
+      { outcome: "network_unreadable", status: 409 },
+      { outcome: "keys_not_created", status: 500 },
+      { outcome: "env_not_rendered", status: 500 },
+      { outcome: "write_failed", status: 500 },
+      { outcome: "start_failed", status: 500 },
+    ];
+    for (const row of rows) {
+      events.length = 0;
+      clock += 60 * 60_000;
+      access.outcome = row.outcome;
+      const response = await callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_ON });
+      assert.deepEqual([response.statusCode, JSON.parse(response.body)], [row.status, { error: row.outcome }], row.outcome);
+      assert.deepEqual(events.map((event) => event.result), ["success", "error"], row.outcome);
+    }
+  });
+
+  test("turning on and trusting share one rate limit, and past it nothing more runs", async () => {
+    for (let index = 0; index < REMOTE_ADMIN_LIMITS.ACCESS_WIDEN.limit; index += 1) {
+      const url = index % 2 === 0 ? REMOTE_ADMIN_PATH.ACCESS_ON : REMOTE_ADMIN_PATH.TRUST;
+      assert.equal((await callAdmin({ method: "POST", url })).statusCode, 200);
+    }
+    trail.length = 0;
+    const limited = await callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.TRUST });
+    assert.deepEqual([limited.statusCode, trail], [429, []]);
+  });
+
+  test("a second widening act while one runs is refused with 409, so two config writes never interleave", async () => {
+    let release = () => undefined as void;
+    access.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const first = callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_ON });
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = await callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.TRUST });
+    release();
+    assert.deepEqual([second.statusCode, (await first).statusCode, trail.filter((entry) => entry.startsWith("act"))], [409, 200, ["act on"]]);
+  });
+});
+
+describe("turning access off from the Mac page", () => {
+  test("persists the off, revokes every device through revoke-all and closes the listener, in that order", async () => {
+    await runRolledBack(async () => {
+      const device = await addDevice("Owner iPhone");
+      const socket = await trackOpenSocket(device.id);
+      const response = await callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_OFF });
+      assert.deepEqual([response.statusCode, JSON.parse(response.body)], [200, { revoked: 1 }]);
+      assert.deepEqual(trail, ["row remote.access_requested", "act off", "row remote.revoke", "act close", "row remote.access_disabled"]);
+      assert.deepEqual([socket.destroyed, await findActiveDevice(db, device.presented)], [true, null]);
+    });
+  });
+
+  test("runs every step when its audit row cannot be written or another step fails, and names the failed steps", async () => {
+    await runRolledBack(async () => {
+      const device = await addDevice("Owner iPhone");
+      isAuditDown = true;
+      access.offOutcome = "write_failed";
+      access.isCloseFailing = true;
+      const response = await callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_OFF });
+      assert.deepEqual([response.statusCode, JSON.parse(response.body)], [500, { error: "off_incomplete", failed: ["persist", "close"], revoked: 1 }]);
+      assert.deepEqual([trail.filter((entry) => entry.startsWith("act")), await findActiveDevice(db, device.presented)], [["act off", "act close"], null]);
+    });
+  });
+
+  test("waits for a widening act in flight instead of refusing, so an off is never lost", async () => {
+    let release = () => undefined as void;
+    access.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    const on = callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_ON });
+    await new Promise((resolve) => setImmediate(resolve));
+    const off = callAdmin({ method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_OFF });
+    release();
+    assert.deepEqual([(await on).statusCode, (await off).statusCode], [200, 200]);
+    assert.deepEqual(trail.filter((entry) => entry.startsWith("act")), ["act on", "act off", "act close"]);
+  });
+});
+
+/** The Mac-side value as openssl computes it over the certificate file → independent of the server's own hashing. */
+async function getOpensslFingerprint(certPath: string): Promise<string> {
+  const { stdout } = await promisify(execFile)("/usr/bin/openssl", ["x509", "-in", certPath, "-noout", "-fingerprint", "-sha256"]);
+  return stdout.trim().split("=")[1] ?? "";
+}
+
+describe("the setup read", () => {
+  test("carries the setup facts field by field and the fingerprint of the certificate the download serves, whatever wider value the caller holds", async () => {
+    const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(JSON.parse(response.body), { ...SETUP_FACTS, fingerprint: await getOpensslFingerprint(ca.certPath) });
+  });
+
+  test("shows no fingerprint before a certificate was created", async () => {
+    access.certificate = null;
+    const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP });
+    assert.equal(JSON.parse(response.body).fingerprint, null);
+  });
+
+  test("past its rate limit is refused with 429", async () => {
+    for (let index = 0; index < REMOTE_ADMIN_LIMITS.SETUP_READ.limit; index += 1) {
+      assert.equal((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).statusCode, 200);
+    }
+    assert.equal((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).statusCode, 429);
+  });
+});
+
+describe("the certificate download", () => {
+  test("serves the one CA file as an attachment with a fixed name and type, its bytes hashing to the fingerprint the setup read shows", async () => {
+    const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE });
+    const setup = JSON.parse((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).body) as { fingerprint: string };
+    assert.deepEqual(
+      [response.statusCode, response.headers["content-type"], response.headers["content-disposition"], response.rawPayload.equals(ca.cert)],
+      [200, CA_DOWNLOAD.CONTENT_TYPE, `attachment; filename="${CA_DOWNLOAD.FILE_NAME}"`, true],
+    );
+    assert.equal(setup.fingerprint, await getOpensslFingerprint(ca.certPath));
+  });
+
+  test("serves nothing from a file that holds a private key, a leaf or no certificate", async () => {
+    const leaf = await createStandInTls();
+    try {
+      for (const bytes of [Buffer.concat([ca.cert, ca.key]), leaf.cert, Buffer.from("not a certificate\n"), null]) {
+        access.certificate = bytes;
+        const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE });
+        assert.deepEqual([response.statusCode, JSON.parse(response.body)], [404, { error: "certificate_unavailable" }]);
+        assert.equal(JSON.parse((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).body).fingerprint, null);
+      }
+    } finally {
+      deleteDirectory(leaf.dir);
+    }
+  });
+
+  test("past its rate limit is refused with 429", async () => {
+    for (let index = 0; index < REMOTE_ADMIN_LIMITS.CERTIFICATE_READ.limit; index += 1) {
+      assert.equal((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE })).statusCode, 200);
+    }
+    assert.equal((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE })).statusCode, 429);
   });
 });
