@@ -435,7 +435,7 @@ _tui_remote_ask() {
   enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
   # shellcheck disable=SC2310  # verdict branched on — a failed restart is reported, never an abort
   if [[ "${enabled}" == "true" ]] && ! ga_remote_apply_config; then
-    printf "remote access: on in config.toml, but the monitor restart failed — run 'glass-atrium remote on'\n" >>"${TTY}"
+    printf 'remote access: on, but the monitor did not restart — once it runs, open the monitor and choose Remote access\n' >>"${TTY}"
   fi
   printf 'press any key to return to the menu …' >>"${TTY}"
   IFS= read -rsn1 _ <"${TTY}" || true
