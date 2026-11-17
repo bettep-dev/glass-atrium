@@ -10,7 +10,7 @@ import path from "node:path";
 
 import "dotenv/config";
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, HTTPMethods } from "fastify";
 
 import { buildApp, buildRemoteApp } from "../src/server/app.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
@@ -121,6 +121,21 @@ describe("routes owned by the loopback listener", () => {
       const [method = "", url = ""] = route.split(" ");
       return app.hasRoute({ method: method as "GET", url });
     });
+    assert.deepEqual(present, []);
+  });
+
+  // named by path, not by class → a reclassed row still cannot put the Mac page's acts on the remote listener
+  test("the remote app registers none of the Mac page's access, setup and certificate routes, HEAD included", () => {
+    const macPageRoutes: { method: HTTPMethods; url: string }[] = [
+      { method: "POST", url: "/api/remote/access/on" },
+      { method: "POST", url: "/api/remote/access/off" },
+      { method: "POST", url: "/api/remote/access/trust" },
+      ...["/api/remote/access/network", "/api/remote/setup", "/api/remote/certificate"].flatMap((url) => [
+        { method: "GET" as const, url },
+        { method: "HEAD" as const, url },
+      ]),
+    ];
+    const present = macPageRoutes.filter((route) => app.hasRoute(route)).map((route) => `${route.method} ${route.url}`);
     assert.deepEqual(present, []);
   });
 
