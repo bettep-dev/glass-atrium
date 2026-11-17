@@ -8,7 +8,7 @@
   - React 18 + JSX → esbuild precompile(`npm run build:jsx` → `public/dist/` · screen 은 `public/dist/screens/`). 로드 순서 tweaks-panel → ui → screens → app (window-global 의존).
   - Tailwind CDN(JIT) + 런타임 `tailwind.config` 객체 · `rgb(var(--ink) / <alpha>)` 규약.
   - 아이콘: Lucide 0.469 를 `Icon` atom 으로만 (기본 size 16 · stroke 1.6). 손수 복사한 SVG path 금지.
-  - 기본 테마 dark (`<html data-theme="dark">` + `app.jsx` → `TWEAK_DEFAULTS.theme`), Tweaks 패널이 light 로 전환.
+  - 한 테마, dark — 값은 `tokens.css` `:root` 한 세트 (§3).
   - System map: mermaid 11 + svg-pan-zoom.
 - 용어는 영어 토큰/CSS 원형, 설명은 한국어.
 
@@ -66,9 +66,10 @@
 
 ### 3.0 구조
 
-- **Tier 1 — primitive**: `tokens.css` `:root` / `[data-theme="dark"]`. 색은 raw `R G B` triplet (kind A), 길이·스칼라·그림자·z 는 완결 리터럴 (kind B).
+- **Tier 1 — primitive**: `tokens.css` `:root`. 색은 raw `R G B` triplet (kind A), 길이·스칼라·그림자·z 는 완결 리터럴 (kind B).
 - **Tier 2 — semantic / material**: 표면 elevation alias · shadow 합성 토큰.
 - **Tier 3 — component**: `base.css` class + `window.UI` atom (§3.3).
+- **One theme, dark**: one set of values; `:root` declares `color-scheme: dark` first, so native widgets (option lists, scrollbars, bare form controls) draw dark whatever the OS setting; the page reads no OS colour setting.
 
 ### 3.1 Tier 1 — PRIMITIVE (kind A 색 · 전체)
 
@@ -76,45 +77,32 @@
 
 ```css
 :root {
+  color-scheme: dark;
   /* neutral (warm-stone) */
-  --surface: 250 250 249;  --elev: 255 255 255;  --sunken: 245 245 244;  --line: 231 229 228;
-  --ink: 28 25 23;  --dim: 87 83 78;  --faint: 112 106 101;
-  /* interaction */
-  --accent: 37 99 235;        /* fallback — 런타임 값은 Tweaks accent (§4.4) */
-  --focus-ring: 37 99 235;    /* theme-owned, accent 와 분리 */
-  --selected-fill: 28 25 23;  --selected-ink: 250 250 249;
-  --pip-empty: 138 132 127;
-  /* severity */
-  --crit: 216 33 34;  --warn: 210 113 0;  --ok: 5 150 105;  --info: 8 145 178;
-  /* categorical — chart fill only */
-  --cat-1: 124 58 237;  --cat-2: 13 148 136;  --cat-3: 37 99 235;  --cat-4: 219 39 119;
-  /* chart data — a series mark that carries a quantity (§4.3); the --faint value as its own token */
-  --data: 112 106 101;
-  /* elevation primitives */
-  --elev-2: 252 252 251;  --overlay-surface: 255 255 255;
-}
-[data-theme="dark"] {
   --surface: 12 10 9;  --elev: 28 25 23;  --sunken: 24 20 17;  --line: 41 37 36;
   --ink: 250 250 249;  --dim: 214 211 209;  --faint: 160 154 150;
-  --focus-ring: 96 165 250;
+  /* interaction */
+  --accent: 96 165 250;       /* fallback — 런타임 값은 Tweaks accent (§4.4) */
+  --focus-ring: 96 165 250;   /* 고정색, accent 와 분리 */
   --selected-fill: 214 211 209;  --selected-ink: 12 10 9;
   --pip-empty: 120 113 108;
+  /* severity */
   --crit: 248 113 113;  --warn: 251 191 36;  --ok: 52 211 153;  --info: 34 211 238;
+  /* categorical — chart fill only */
   --cat-1: 167 139 250;  --cat-2: 45 212 191;  --cat-3: 96 165 250;  --cat-4: 244 114 182;
+  /* chart data — a series mark that carries a quantity (§4.3); the --faint value as its own token */
   --data: 160 154 150;
+  /* elevation primitives */
   --elev-2: 36 32 30;  --overlay-surface: 28 25 23;
-}
-:root[data-theme="dark"] {
-  --accent: 96 165 250;       /* root 에만 → 중첩 dark scope 는 사용자 accent tweak 을 상속 */
 }
 ```
 
 ### 3.2 Tier 2 — SEMANTIC / MATERIAL
 
 ```css
-/* surface elevation aliases — var() 는 선언한 자리에서 풀린다 → 모든 themed scope(중첩 dark chrome 포함)가 자기 primitive 로 재해석 */
-:root, [data-theme] {
-  --surface-raised-2: var(--elev);            /* light: 순백 유지, 떠오름은 shadow */
+:root {
+  /* surface elevation aliases */
+  --surface-raised-2: var(--elev-2);          /* 휘도 step (36 > 28) */
   --surface-overlay:  var(--overlay-surface);
   --control-edge:     var(--pip-empty);       /* resting toggle and field edge — ≥3:1 on every opaque surface, under the --faint hover edge (§4.1) */
   --tint-select: rgb(var(--ink) / 0.08);      /* here, or mine — a selected or scoped row, a picked option (§12.4) */
@@ -123,27 +111,18 @@
   --tint-row-1: rgb(var(--ink) / 0.02);       /* row-state ladder: opened row (§7.5) */
   --tint-row-2: rgb(var(--ink) / 0.055);      /* checked row */
   --tint-row-3: rgb(var(--ink) / 0.066);      /* opened and checked — the ceiling (§4.1) */
-  --heat-1: rgb(var(--ink) / 0.48);  --heat-2: rgb(var(--ink) / 0.60);  --heat-3: rgb(var(--ink) / 0.74);  --heat-4: rgb(var(--ink) / 0.88);   /* hour-grid ramp, light alphas */
-}
-:root {
+  --heat-1: rgb(var(--ink) / 0.36);  --heat-2: rgb(var(--ink) / 0.50);  --heat-3: rgb(var(--ink) / 0.65);  --heat-4: rgb(var(--ink) / 0.80);   /* hour-grid ramp */
   /* shadow (kind B box-shadow list) */
-  --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
-  --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
-}
-[data-theme="dark"] {
-  --surface-raised-2: var(--elev-2);          /* dark: 휘도 step (36 > 28) */
-  --heat-1: rgb(var(--ink) / 0.36);  --heat-2: rgb(var(--ink) / 0.50);  --heat-3: rgb(var(--ink) / 0.65);  --heat-4: rgb(var(--ink) / 0.80);   /* hour-grid ramp, dark alphas — declared after the alias rule, so it wins on every dark scope */
   --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25);
   --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
 }
 ```
 
-- **dark 휘도 서열**: `base(--surface 12) < sunken(24) < raised(--elev 28) < raised-2(--elev-2 36)` → z 가 오를수록 R 값 단조 증가, 휘도 step 단독으로 elevation 성립.
-- **light raised-2 인버전 회피**: `--elev` 255 가 천장이라 `--elev-2` 252 는 raised 보다 어둡다 → light raised-2 는 fill 을 바꾸지 않고 `--shadow-raised-2` 로만 표현. `--elev-2` fill 은 dark 전용.
-- **Tints**: an existing colour at a fixed alpha, declared in the alias rule so a nested dark scope re-tints them; text on a tint is always ink.
+- **휘도 서열**: `base(--surface 12) < sunken(24) < raised(--elev 28) < raised-2(--elev-2 36)` → z 가 오를수록 R 값 단조 증가, 휘도 step 단독으로 elevation 성립.
+- **Tints**: an existing colour at a fixed alpha; text on a tint is always ink.
   - `--tint-select` · `--tint-fill` · `--tint-warn` — the three shell and selection tints.
-  - `--tint-row-1` … `--tint-row-3` — the row-state ladder, one alpha in both themes; contrast §4.1.
-  - `--heat-1` … `--heat-4` — the hour-grid ramp, ink at four steps; the only tints whose alpha differs by theme (dark alphas in `[data-theme="dark"]`).
+  - `--tint-row-1` … `--tint-row-3` — the row-state ladder; contrast §4.1.
+  - `--heat-1` … `--heat-4` — the hour-grid ramp, ink at four steps.
 - `--data` is the one colour primitive added after the base set: the `--faint` value held as its own token, so the chart data colour can move without moving metadata text.
 - shadow 의 내부 `rgba()` 농도는 의도적으로 alpha-비합성 — box-shadow 는 `<alpha-value>` 보간 대상이 아니므로 테마별 값에 baked-in.
 
@@ -247,7 +226,7 @@
 
 ---
 
-## 4. 컬러 (Color — Light / Dark · Semantic · Severity vs Categorical)
+## 4. 컬러 (Color — Semantic · Severity vs Categorical)
 
 - 베이스 = **warm-stone** 중립 (≈ Tailwind stone). 새 hue 를 발명하지 않는다. triplet 값은 §3.1.
 
@@ -255,17 +234,17 @@
 
 | Token | Role |
 |-------|------|
-| `--surface` | 페이지 바탕 (dark 에선 가장 어두움) |
+| `--surface` | 페이지 바탕 (가장 어두움) |
 | `--elev` | 카드 · 패널 · 사이드바 면 (raised) |
-| `--elev-2` | raised-2 fill — **dark 전용** (light 는 인버전이라 미사용) |
+| `--elev-2` | raised-2 fill |
 | `--overlay-surface` | drawer · dialog · popover 불투명 면 |
 | `--sunken` | 함몰 홈 · `th` · 배지 shell |
 | `--line` | 1px 경계선 · ring |
-| `--ink` | 본문 텍스트 (dark 에서도 순백 아님) |
+| `--ink` | 본문 텍스트 (순백 아님) |
 | `--dim` | 읽는 캡션 · 2차 텍스트 · card meta |
 | `--faint` | timestamp · ID · 차트 tick 같은 진짜 메타데이터만 (`base.css` → `.card-sub` 주석) |
 | `--accent` | 인터랙션 (fallback 값 — §4.4) |
-| `--focus-ring` | focus outline — theme-owned, accent 와 분리 |
+| `--focus-ring` | focus outline — 고정색, accent 와 분리 |
 | `--selected-fill` / `--selected-ink` | checkbox checked / mixed fill only (`.ctl-checkbox`); toggles mark selection by thumb or edge (§7.6) |
 | `--pip-empty` | 빈 stage pip — 불투명 면(surface · elev · sunken · elev-2)에서 ≥ 3:1 |
 | `--data` | chart data colour — every series mark that carries a quantity, not a severity (§4.3); ≥ 3:1 on elev · surface · sunken |
@@ -374,8 +353,7 @@
 ### 4.4 Accent
 
 - `--accent` 는 인터랙션 전용 (focus 된 field border · 선택 hint). 화면당 ≤ 2 (CTA/인터랙션 한정, 장식 금지). categorical 팔레트에 새 색 추가 금지.
-- **런타임 값은 Tweaks**: `App` effect 가 `<html>` 에 `--accent` 를 `tweaks.accent` 로 inline 기록 (기본 `#3b82f6` = 59 130 246, 양 테마 공통) → `tokens.css` 값은 fallback.
-  - dark fallback 은 `:root[data-theme="dark"]` 에만 → 중첩 `data-theme="dark"` scope (문서 viewer chrome, §6.5) 도 사용자 accent 를 상속.
+- **런타임 값은 Tweaks**: `App` effect 가 `<html>` 에 `--accent` 를 `tweaks.accent` 로 inline 기록 (기본 `#3b82f6` = 59 130 246) → `tokens.css` 값은 fallback.
 - Selected and current marks (tab, current page, selected row, checks) never take accent — strong ink (§12.4).
 - accent 가 사용자 선택이므로 focus 는 `--focus-ring` (테마별 고정, 모든 면에서 ≥ 3:1).
 - 본문 링크 (`outcomes.jsx` → `.outcome-md a`) = `--ink` 텍스트 + `currentColor` underline — accent 는 링크 텍스트를 칠하지 않는다 (사용자 선택이라 명암 무한정). 링크 신호는 underline (색 단독 아님), ink 는 모든 면에서 ≥ 15.46 (§4.1).
@@ -448,13 +426,13 @@
 | raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 hover (`.i-tile-hover`) | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` |
 | **overlay** | `--surface-overlay` | drawer · dialog · popover | 255 fill + `--shadow-overlay` | 28 fill + `--shadow-overlay` |
 
-- 5단계 이상 금지. overlay 는 그림자 필수, raised 는 테마별로 다르다.
-- raised = fill step + one hairline in both themes, `.card` included; shadows only on floating layers (popover · dialog · toast · scrolled table header, §12.9).
+- 5단계 이상 금지. overlay 는 그림자 필수.
+- raised = fill step + one hairline, `.card` included; shadows only on floating layers (popover · dialog · toast · scrolled table header, §12.9).
 
 ### 6.2 떠오름 채널 — blur 가 아니라 border · luminance
 
-- **light**: `--surface` 250 < `--elev` 255 → resting 카드 = one hairline 1px `--line`, no shadow or inset in both themes (`base.css` → `.card` 주석). hover/focus(raised-2) 는 fill 을 바꾸지 않고 `--shadow-raised-2` + border `--faint` — `--elev-2` fill 금지 (인버전).
-- **dark**: shadow 가 거의 안 보이므로 휘도 step 이 주채널 (raised 28 → raised-2 36), shadow 는 보조.
+- resting 카드 = one hairline 1px `--line`, no shadow or inset (`base.css` → `.card` 주석).
+- shadow 가 거의 안 보이므로 휘도 step 이 주채널 (raised 28 → raised-2 36), shadow 는 보조.
 - **상단 inset 하이라이트**: retired on `.card` — one hairline (§12.9).
 
 ### 6.3 backdrop-filter — 허용 / 금지
@@ -489,12 +467,11 @@
   - fixed 우하단 24px (model-config 는 위치만 inline 으로 우상단) · `--radius-tile` · `--fs-body` · max-w 480 · 불투명 `--overlay-surface` + 1px `--line` + `--shadow-overlay` · 텍스트 `--ink`.
   - tone class (`.info` · `.ok` · `.warn` · `.crit`) 는 root 에서 `--toast-tone` 만 정하고, 그 색은 메시지 앞 `.doc-toast-glyph` (`TONE_GLYPH`, aria-hidden) 에만.
   - 명암 (불투명 shell → 어떤 면 위에서도 같다): 텍스트 light 17.49 · dark 16.74 · glyph light ≥ 3.44 · dark ≥ 6.32.
-- **문서 viewer chrome — dark scope** (`clauded-docs.jsx` fullscreen viewer):
-  - viewer 는 앱 테마와 무관하게 고정 dark 캔버스 (`.doc-fs-container` `rgb(9 9 11)` · meta aside `rgb(13 13 16)`) → chrome 영역에 `data-theme="dark"`.
-  - chrome = head · superseded 알림 · meta aside · 비-ready 상태 (idle · loading · read 실패 · 렌더 불가). 렌더된 문서 본문엔 달지 않는다 — 문서 캔버스는 토큰 체계 밖 carve-out.
-  - 중첩 scope 해석: `--surface-*` alias 는 `:root, [data-theme]` 에서 선언 (§3.2) · dark `--accent` 기본값은 root 에만 (§3.1) · 상속 텍스트 색은 `.doc-fs-container [data-theme="dark"] { color: rgb(var(--ink)) }` 가 재해석.
-  - 검증: `clauded-docs.load-more.e2e` — 두 앱 테마 모두 chrome 텍스트 ≥ 4.5.
-- **z stack** (`tokens.css` → `--z-overlay` 주석, 테마 무관):
+- **문서 viewer chrome** (`clauded-docs.jsx` fullscreen viewer):
+  - viewer 는 고정 캔버스 (`.doc-fs-container` `rgb(9 9 11)` · meta aside `rgb(13 13 16)`); chrome 은 root 토큰을 그대로 쓴다.
+  - chrome = head · superseded 알림 · meta aside · 비-ready 상태 (idle · loading · read 실패 · 렌더 불가). 렌더된 문서 본문은 토큰 체계 밖 carve-out.
+  - 검증: `clauded-docs.load-more.e2e` — chrome 텍스트 ≥ 4.5.
+- **z stack** (`tokens.css` → `--z-overlay` 주석):
 
 | z | 레이어 |
 |---|--------|
@@ -516,7 +493,7 @@
 ### 7.1 Card — `Card` · `CardHead` · `CardInfo` (`.card*`)
 
 - **anatomy** = flex column, head(고정) · body(남은 높이) · foot(하단 고정):
-  - `.card`: `--elev` fill · 1px `--line` · `--radius-card` 12 · `overflow: hidden` · shadow · inset 없음 (both themes).
+  - `.card`: `--elev` fill · 1px `--line` · `--radius-card` 12 · `overflow: hidden` · shadow · inset 없음.
   - `.card-head`: 한 줄 · min-height `--card-head-h` 48 · padding `4px` × `--card-pad` · gap 8×12 · 하단 1px `--line`. 컨트롤이 안 들어갈 때만 wrap.
   - `.card-body`: padding `--card-pad` 16 · `flex: 1 1 auto` · `.flush` = padding 0. `max-height: 70vh` 내부 스크롤은 **혼자 놓인 무크기 또는 L 카드에만** — stretched row · S · M 카드는 스크롤 없이 자란다.
   - `.card-foot`: `margin-top: auto` · min-height `--row-h` 40 · `--fs-meta` `--dim` · 상단 1px `--line`. 내용 = `Show all N` · `Other` · footnote 1줄 중 하나.
@@ -553,7 +530,7 @@
 - Tiers (§12.3): primary `.primary` = `--ink` fill + `--surface` text, the one commit action per surface · secondary = base `.btn`, elev fill + 1px `--control-edge` (fill + border is an open decision) · quiet `.ghost` = 투명 · `--dim` → hover `--sunken` + `--ink`, every action inside a bar or header line.
 - Queue screen (`.queue-screen`, its image viewer's bar included; a drawer's own close excluded): a word button carries a 1px edge at rest — the quiet one `--control-edge` too. Hover / pressed walk the edge control edge → `--faint` → `--ink` and the primary's fill `--ink` → `--dim` → `--faint`. Disabled = no fill · `--line` edge · `--faint` label at full opacity. In progress (`aria-busy`) = the rest look at full opacity with the `…ing…` label. Other screens keep the system button.
   - A familiar glyph that is not a commit is an icon button `.btn.ghost.icon`: the glyph alone, 16 in a 32 square, no edge in any state · `--dim` glyph at rest · hover `--tint-select` fill (the sunken fill is 1.05:1 on the card, no shape) + `--ink` glyph · held `--tint-fill`, one step stronger · disabled `--faint` glyph, no fill · an `aria-label` with the act, a `title` with the act and its key (`Back to the list (Esc)`) · the global focus ring. A commit, a re-send (`Try again` on a failed upload), `later`, `Show`, `Show more` and `Show earlier` keep their word.
-- `.danger`: `--crit` fill + `--elev` knock-out text (light 는 흰색) — light 5.05 · dark 6.32.
+- `.danger`: `--crit` fill + `--elev` knock-out text — 6.32.
 - **red-outline destructive** (§4.2 destructive action): `.btn` variant 아닌 screen-local inline style — crit 텍스트 + crit border, fill 없음.
   - `agents.jsx` → `DELETE_OUTLINE_STYLE` "Delete" · `improvement.jsx` → `REJECT_OUTLINE_STYLE` "Reject": `.btn` 의 `--elev` 위 light 5.05 · dark 6.32 · hover `--sunken` light 4.63 · dark 6.62.
   - `model-config.jsx` → `DiscardConfirmMC` "Discard changes": `background: transparent` → `.detail-foot` `--sunken` 위, rest · hover light 4.63 · dark 6.62.
@@ -778,7 +755,7 @@
   - no state-conditional content inside an inline-sized box; block-width menu rows are exempt
   - hover and focus never unclamp truncated text (§5.3 clamp stands)
 - **O1 law** (§12.3): a bar (search, filter, toolbar, pagination) draws no border on its controls; a border belongs only to form inputs, checkbox marks and the card edge.
-- The resting edge (`--control-edge`, 3:1 or more against every surface it sits on in both themes) applies to the secondary button, the selected `.seg` thumb and the form-field family, and to nothing else:
+- The resting edge (`--control-edge`, 3:1 or more against every surface it sits on) applies to the secondary button, the selected `.seg` thumb and the form-field family, and to nothing else:
   - a selected toggle's non-color cue is its edge, thumb or ✓ glyph (the pressed-toggle glyph pending S2a) — never a fill inversion
   - `.field`, `.field-select` and `.field-affix` rest on it; hover lifts it to `--faint`, and focus paints it `--accent` plus the global outline
 - A control row has one tier height, every item centered on one line, and role gaps: `--gap-control` 8 between controls, `--gap-control-group` 16 between groups, `--gap-label-inline` 4 from a label to its group.
@@ -846,8 +823,8 @@
   - First load moves no focus (`app.jsx` → `focusedRoute` guard).
   - `.seg` 버튼은 inset ring (`outline-offset` = −`--focus-ring-width`) · `.field-affix` 는 `:has(:focus-visible)` 로 wrapper outline · `outline: none` 은 대체 표시가 있을 때만.
   - Panel ring: a panel over a scrim (drawer · fullscreen · confirm) rings inset, on its own fill; a floating panel with no scrim (popover) keeps the outer 2px gap ring.
-    - Why: an outer ring on a scrim-backed panel lands on the scrim (light: 1.64:1) or off the viewport edge.
-    - Pinned: `app.focus-ring.e2e` — every surface ≥3:1 against the colours under its ring, both themes.
+    - Why: an outer ring on a scrim-backed panel lands on the scrim or off the viewport edge.
+    - Pinned: `app.focus-ring.e2e` — every surface ≥3:1 against the colours under its ring.
 - skip link = 첫 Tab stop → `#main-content`.
 - ⓘ 정의는 버튼 + `aria-describedby`, hover-only 금지. tone glyph 는 aria-hidden, 단어는 sr-only (`StatusDot` · nav badge).
 - 키보드: overlay 는 focus trap + 트리거 복귀 (§7.8) · 테이블 행 · chip 은 roving focus 헬퍼 (`getRovingIndex` · `getRowFocusProps`).
@@ -897,7 +874,7 @@
 
 **유리 · 깊이**
 - [ ] product 표면에 backdrop-filter 없음 — scrim solid 0.42 · card = one hairline, shadow · inset 없음 (§12.9); dev-only tweaks 패널만 예외 (§3.5).
-- [ ] light raised = border 만, shadow 는 raised-2 · overlay 부터, light raised-2 에 `--elev-2` fill 없음 · dark 떠오름은 휘도 step.
+- [ ] raised = border 만, shadow 는 raised-2 · overlay 부터 · 떠오름은 휘도 step.
 - [ ] glass 표면에 scrim + border + dark 보상 + reduced-transparency fallback.
 
 **모션**
@@ -933,7 +910,7 @@
 - severity = glyph + 색 + 단어, tone 은 glyph 에만 — shell · stripe · fill · border 금지 (§4.2 허용 예외만).
 - focus 는 `--focus-ring` outline (`--accent` 아님), ring iff `:focus-visible` · 인터랙티브 atom 높이 `--ctl-min-h`.
 - 모든 product 표면 불투명, scrim solid, card = one hairline (§12.9).
-- light raised = border 만 · light raised-2 = shadow (`--elev-2` fill 금지) · dark raised-2 = `--elev-2`.
+- raised = border 만 · raised-2 = `--elev-2`.
 - 모든 glass 에 reduced-transparency fallback, 모든 모션에 reduced-motion 게이트.
 
 **Flexible**
@@ -948,7 +925,6 @@
 - ✕ `.alarm-row[data-tone="crit"] { background: rgb(var(--crit) / 0.12); backdrop-filter: blur(10px); }` — tone 을 행 fill 에 칠하고 severity 위 blur (AP-6).
 - ✕ `<span className="pill" style={{ background: 'rgb(var(--warn) / 0.15)' }}>` — tone 을 배지 shell 에 칠함. `Badge role="status" tone="warn"` 로.
 - ✕ `.card-sub { font-size: 12px; }` — floor 아래 px 리터럴.
-- ✕ light 모드 `.card:focus { background: rgb(var(--elev-2)); }` — 252 < 255 휘도 인버전 (§6.2).
 - ✕ `<input className="field" type="search">` in a filter bar — a bordered bar search (O1); the bar search is sunken fill + icon (§12.3).
 - ✕ `<h3 className="uppercase tracking-wider">` — an eyebrow label; sentence case (§12.2).
 - ✕ `className="p-3 mb-4 gap-1.5"` in a screen — raw ladder steps; take a role key (§12.1).
