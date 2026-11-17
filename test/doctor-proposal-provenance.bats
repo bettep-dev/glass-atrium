@@ -138,6 +138,7 @@ path_without_psql() {
 DOCTOR_DRIVER='
   set -Eeuo pipefail
   source "$1/lib/ga-core.sh"
+  source "$1/test/lib/remote-run-stub.bash"
   ga_init_env "$2"
   shift 2
   "$@"
@@ -149,6 +150,7 @@ DOCTOR_DRIVER='
 STEP_DRIVER='
   set -Eeuo pipefail
   source "$1/lib/ga-core.sh"
+  source "$1/test/lib/remote-run-stub.bash"
   ga_init_env "$2"
   if [[ "$3" == tui ]]; then GA_TUI_STEP=1; fi
   shift 3

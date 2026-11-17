@@ -29,28 +29,7 @@ setup() {
   source "${GA}/scripts/lib/atrium-config.sh"
   # shellcheck source=../lib/ga-remote.sh
   source "${GA}/lib/ga-remote.sh"
-  ga_remote_run() {
-    local tool="$1"
-    shift
-    case "${tool}" in
-      openssl) /usr/bin/openssl "$@" ;;
-      route) printf '%s' "${ROUTE_OUT}" ;;
-      arp) printf '%s\n' "${ARP_OUT}" ;;
-      scutil) printf '%s\n' "${HOST_NAME}" ;;
-      ipconfig) printf '%s\n' "${WIFI_ADDRESS}" ;;
-      tmutil)
-        printf 'tmutil %s\n' "$*" >>"${CALLS}"
-        [[ "$1" != "isexcluded" ]] || printf '%s    %s\n' "${EXCLUDED}" "$2"
-        ;;
-      launchctl) printf 'launchctl %s\n' "$*" >>"${CALLS}" ;;
-      lsof)
-        [[ -n "${LISTEN_NAME}" ]] || return 1
-        printf 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 501 owner 23u IPv4 0x1 0t0 TCP %s (LISTEN)\n' "${LISTEN_NAME}"
-        ;;
-      socketfilterfw) printf '%s\n' "${FIREWALL_OUT}" ;;
-      *) return 127 ;;
-    esac
-  }
+  load 'lib/remote-run-stub'
   psql() {
     printf 'psql %s | %s\n' "$*" "$(tr '\n' ' ')" >>"${CALLS}"
     return "${PSQL_RC}"

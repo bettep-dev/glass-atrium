@@ -92,6 +92,7 @@ run_doctor_sandbox() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$1/test/lib/remote-run-stub.bash"
       ga_init_env "$1"
       is_sandbox_target() { printf "%s\n" "${GA_TEST_SANDBOX_VERDICT}"; }
       run_doctor
