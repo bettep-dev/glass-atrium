@@ -1327,13 +1327,6 @@ function viewerDoc(extra: Record<string, unknown> = {}) {
   return { id: 9, title: "Doc 9", format: "txt", body: "probe", doc_status: "open", supersedes_id: null, superseded_by_id: null, ...extra };
 }
 
-function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>) {
-  return renderScreen((screen.ViewerPanelCD as Component)({
-    state, pendingDelete: null, onDelete: noop, onClose: noop, onPickStage: noop, togglingIds: new Set(),
-    optimisticStatusOverrides: new Map(), onNavigate: noop, showToast: noop,
-  }));
-}
-
 test("a newer revision announces itself as one inset warn alert card whose action opens the latest revision", async () => {
   const screen = await loadDocsScreen();
   const opened: unknown[] = [];
