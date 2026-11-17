@@ -44,7 +44,7 @@ const DEVICES_BODY = {
     { id: "3", label: "Pixel 8", createdAt: "2026-11-14T09:12:40.123Z", lastSeenAt: "2026-11-14T13:02:11.456Z" },
     { id: "7", label: "<b>iPad</b>", createdAt: "2026-11-13T21:40:02.001Z", lastSeenAt: "2026-11-14T08:15:59.999Z" },
   ],
-  access: { enabled: true, trusted: [{ gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33" }] },
+  access: { enabled: true, trustedCount: 1 },
 };
 
 describe("the Mac page reads and acts on the remote access routes", () => {
@@ -112,10 +112,10 @@ describe("the Mac page reads and acts on the remote access routes", () => {
 
 describe("the access line states on/off and what keeps the listener closed", () => {
   const rows = [
-    { name: "on with trusted networks names their count", access: { enabled: true, trusted: [{}, {}] }, expected: /^On · 2 trusted networks$/ },
-    { name: "on with one trusted network uses the singular", access: { enabled: true, trusted: [{}] }, expected: /^On · 1 trusted network$/ },
-    { name: "on with no trusted network says the listener stays closed", access: { enabled: true, trusted: [] }, expected: /^On · no trusted network — closed$/ },
-    { name: "off says only off", access: { enabled: false, trusted: [{}] }, expected: /^Off$/ },
+    { name: "on with trusted networks names their count", access: { enabled: true, trustedCount: 2 }, expected: /^On · 2 trusted networks$/ },
+    { name: "on with one trusted network uses the singular", access: { enabled: true, trustedCount: 1 }, expected: /^On · 1 trusted network$/ },
+    { name: "on with no trusted network says the listener stays closed", access: { enabled: true, trustedCount: 0 }, expected: /^On · no trusted network — closed$/ },
+    { name: "off says only off", access: { enabled: false, trustedCount: 1 }, expected: /^Off$/ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -126,21 +126,6 @@ describe("the access line states on/off and what keeps the listener closed", () 
       assert.match(line, row.expected, row.name);
     });
   }
-});
-
-test("the access card lists each trusted network's gateway and hardware address as text", async () => {
-  const { mod } = await loadScreen({ status: 200, body: {} });
-  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-  const trusted = [
-    { gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33" },
-    { gateway: "10.0.1.1", hardwareAddress: "<i>f0:9f:c2:0a:0b:0c</i>" },
-  ];
-
-  const tree = renderScreen(React.createElement(mod.AccessCardRA, { access: { enabled: true, trusted } })) as RenderedNode;
-
-  const text = collectText(tree);
-  assert.deepEqual(trusted.filter((entry) => !text.includes(`${entry.gateway} · ${entry.hardwareAddress}`)), [], "every entry shown");
-  assert.equal(findNodes(tree, (node) => node.type === "i").length, 0, "an entry never parsed as markup");
 });
 
 test("each device row shows its label as text and a revoke button named for it", async () => {

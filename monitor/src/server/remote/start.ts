@@ -200,6 +200,8 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
   #controller: SwitchedController | null = null;
   #settings: RemoteSettings;
   #shown: { readonly identity: NetworkIdentity; readonly at: number } | null = null;
+  // overlapping reads share one run of the network commands; no result outlives its read → never stale after an act
+  #pendingSetup: Promise<SetupFacts> | null = null;
 
   constructor(
     private readonly deps: AccessSwitchDeps,
@@ -261,7 +263,14 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     return this.deps.readCertificate();
   }
 
-  async getSetupFacts(): Promise<SetupFacts> {
+  getSetupFacts(): Promise<SetupFacts> {
+    this.#pendingSetup ??= this.#readSetupFacts().finally(() => {
+      this.#pendingSetup = null;
+    });
+    return this.#pendingSetup;
+  }
+
+  async #readSetupFacts(): Promise<SetupFacts> {
     const settings = this.#settings;
     const [identity, hostName, isOffByDevice] = await Promise.all([this.deps.readIdentity(), this.deps.readHostName(), this.deps.isDeviceOff()]);
     const address = identity === null ? null : this.deps.getAddress(identity.interface);

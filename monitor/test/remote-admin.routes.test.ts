@@ -399,14 +399,10 @@ describe("listing devices", () => {
     });
   });
 
-  test("carries only the feature state and each trusted network's gateway and hardware address, whatever wider value the caller holds", async () => {
+  test("carries only whether access is on and how many networks are trusted, never a router or hardware address, whatever wider value the caller holds", async () => {
     const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.DEVICES });
-    const body = JSON.parse(response.body) as { access: { trusted: Record<string, unknown>[] } };
-    assert.deepEqual(
-      [Object.keys(body).sort(), Object.keys(body.access).sort(), body.access.trusted.map((entry) => Object.keys(entry).sort())],
-      [["access", "devices"], ["enabled", "trusted"], [["gateway", "hardwareAddress"]]],
-    );
-    assert.deepEqual(body.access, ACCESS);
+    const body = JSON.parse(response.body) as { access: unknown };
+    assert.deepEqual([Object.keys(body).sort(), body.access], [["access", "devices"], { enabled: true, trustedCount: ACCESS.trusted.length }]);
   });
 });
 

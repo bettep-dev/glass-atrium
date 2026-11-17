@@ -51,6 +51,8 @@ interface SwitchCase {
 interface StandInNetwork {
   current: NetworkIdentity | null;
   clock: number;
+  /** network reads so far → a shared read is counted once */
+  reads: number;
 }
 
 interface BuiltSwitch {
@@ -63,7 +65,7 @@ interface BuiltSwitch {
 async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
   const opened: StandInController[] = [];
   const steps: string[] = [];
-  const network: StandInNetwork = { current: input.identity === undefined ? { ...HOME_NETWORK, interface: "en0" } : input.identity, clock: Date.parse("2026-11-17T09:00:00.000Z") };
+  const network: StandInNetwork = { current: input.identity === undefined ? { ...HOME_NETWORK, interface: "en0" } : input.identity, clock: Date.parse("2026-11-17T09:00:00.000Z"), reads: 0 };
   const open = async (settings: RemoteSettings) => {
     if (input.isOpenFailing === true) throw new Error("listener build failed");
     const controller = new StandInController(settings);
@@ -83,7 +85,10 @@ async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
     },
     open,
     isDeviceOff: async () => input.isDeviceOff ?? false,
-    readIdentity: async () => network.current,
+    readIdentity: async () => {
+      network.reads += 1;
+      return network.current;
+    },
     readLink: async () => input.link ?? "wifi",
     readHostName: async () => "owner-mac.local",
     getAddress: () => "192.168.0.24",
@@ -292,6 +297,14 @@ describe("the setup facts", () => {
       });
     });
   }
+});
+
+test("setup reads that overlap share one network read, and a read after them reads again", async () => {
+  const { access, network } = await buildSwitch({ booted: ON });
+  const [first, second] = await Promise.all([access.getSetupFacts(), access.getSetupFacts()]);
+  const readsWhileShared = network.reads;
+  await access.getSetupFacts();
+  assert.deepEqual([first, readsWhileShared, network.reads], [second, 1, 2]);
 });
 
 describe("the shell's write step", () => {

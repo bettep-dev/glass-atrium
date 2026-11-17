@@ -137,6 +137,12 @@ export interface RemoteAccessState {
   readonly trusted: readonly TrustedNetwork[];
 }
 
+/** The devices read's view of the feature: no router or hardware address → the router shows in the confirm read only. */
+export interface AccessView {
+  readonly enabled: boolean;
+  readonly trustedCount: number;
+}
+
 /** The acts the Mac page and the CLI share → one code path per act (revoke → close sockets → audit). */
 export type DeviceActDeps = Pick<RemoteAdminDeps, "devices" | "connections" | "audit">;
 
@@ -222,12 +228,9 @@ export async function getDeviceList(deps: Pick<RemoteAdminDeps, "devices">): Pro
   };
 }
 
-/** Field by field, as the signed row names them → a wider value from the caller (port, paths, interface) never reaches the page. */
-function getAccessView(access: RemoteAccessState): RemoteAccessState {
-  return {
-    enabled: access.enabled,
-    trusted: access.trusted.map((network) => ({ gateway: network.gateway, hardwareAddress: network.hardwareAddress })),
-  };
+/** Field by field → a wider value from the caller (the trusted list, port, paths, interface) never reaches the page. */
+function getAccessView(access: RemoteAccessState): AccessView {
+  return { enabled: access.enabled, trustedCount: access.trusted.length };
 }
 
 /** One access act at a time, in arrival order → two config writes never interleave. */

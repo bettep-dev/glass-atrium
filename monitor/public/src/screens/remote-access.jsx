@@ -46,14 +46,9 @@ async function deleteAllDevicesRA() {
 
 function getAccessLineRA(access) {
 	if (!access.enabled) return "Off";
-	const count = access.trusted.length;
+	const count = access.trustedCount;
 	if (count === 0) return "On · no trusted network — closed";
 	return `On · ${count} trusted ${count === 1 ? "network" : "networks"}`;
-}
-
-/** One text line per trusted network → the owner sees which networks open the listener. */
-function getTrustedLinesRA(access) {
-	return access.trusted.map((network) => `${network.gateway} · ${network.hardwareAddress}`);
 }
 
 function ScreenRemoteAccess() {
@@ -161,13 +156,6 @@ function AccessCardRA({ access }) {
 	];
 	return (
 		<Card title="Access and certificate" sub={access === null ? "State not read" : getAccessLineRA(access)}>
-			{access !== null && access.trusted.length > 0 && (
-				<ul className="flex flex-col gap-label" aria-label="Trusted networks (gateway · hardware address)">
-					{getTrustedLinesRA(access).map((line) => (
-						<li key={line}><MachineString>{line}</MachineString></li>
-					))}
-				</ul>
-			)}
 			<dl className="flex flex-col gap-stack">
 				{steps.map(([term, command]) => (
 					<div key={term} className="flex flex-col gap-label">
