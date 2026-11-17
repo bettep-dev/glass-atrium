@@ -96,6 +96,14 @@ export function isAllowedRequest(method: string, headers: IncomingHttpHeaders): 
   return isLoopbackOrigin(origin);
 }
 
+/**
+ * Session-only routes (relay, peers): no page calls them, so any Origin or Sec-Fetch-Site header marks a browser request,
+ * refused even where the mutation gate would admit it (a loopback Origin on another port with no fetch metadata).
+ */
+export function hasBrowserSignal(headers: IncomingHttpHeaders): boolean {
+  return getHeader(headers, "sec-fetch-site") !== undefined || getHeader(headers, "origin") !== undefined;
+}
+
 /** Which page-origin signal admitted an owner mutation; the answer record stores it. */
 export type PageOriginSignal = "fetch_metadata" | "origin";
 

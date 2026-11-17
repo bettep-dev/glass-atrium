@@ -61,8 +61,8 @@ async function buildApp(): Promise<FastifyInstance> {
   return instance;
 }
 
-function send(method: "GET" | "POST", url: string, body?: object, options: { host?: string } = {}): Promise<LightMyRequestResponse> {
-  const headers = { host: options.host ?? HOST };
+function send(method: "GET" | "POST", url: string, body?: object, options: { host?: string; headers?: Record<string, string> } = {}): Promise<LightMyRequestResponse> {
+  const headers = { host: options.host ?? HOST, ...options.headers };
   return app.inject({ method, url, headers, ...(body === undefined ? {} : { payload: body }) });
 }
 
@@ -820,6 +820,21 @@ describe("peers", () => {
     const prefixes = new Set(peers.map((peer) => peer.sessionIdPrefix));
     for (const hidden of [caller, id.probe, id.unused, id.stale, id.exited]) {
       assert.ok(!prefixes.has(hidden.slice(0, 8)), "caller, probe, unused, stale and exited rows are no peers");
+    }
+  });
+
+  test("refuses any browser origin signal, a loopback Origin on another port included; only the header-less request passes", async () => {
+    const caller = await seedSession();
+    const rows = [
+      { name: "foreign Origin", headers: { origin: "https://evil.example" } as Record<string, string>, status: 403 },
+      { name: "loopback Origin on another port, no fetch metadata", headers: { origin: "http://127.0.0.1:5173" }, status: 403 },
+      { name: "cross-site fetch metadata", headers: { "sec-fetch-site": "cross-site" }, status: 403 },
+      { name: "same-origin fetch metadata", headers: { "sec-fetch-site": "same-origin" }, status: 403 },
+      { name: "header-less", headers: {}, status: 200 },
+    ];
+    for (const row of rows) {
+      const response = await send("POST", "/api/queue/peers", { sessionId: caller }, { headers: row.headers });
+      assert.equal(response.statusCode, row.status, row.name);
     }
   });
 

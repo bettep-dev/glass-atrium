@@ -5,7 +5,7 @@
 import os from "node:os";
 import path from "node:path";
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { getMonitorPort } from "../monitor-port.js";
 import { ackItem, claimPendingItems, getPendingCount, withdrawItem } from "../queue/delivery.js";
@@ -15,6 +15,7 @@ import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
 import { getPeerSessions } from "../queue/owner-sessions.js";
 import { deregisterSession, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook } from "../queue/request-gate.js";
+import { hasBrowserSignal } from "../request-guards.js";
 import {
   ackBodySchema,
   deregisterBodySchema,
@@ -29,6 +30,7 @@ import { type IdParams, handleItemRequest, handleParsed, handleQueueRequest } fr
 
 /** Title 200 + body 20000 + options 20000 chars at up to 4 UTF-8 bytes each, plus JSON framing. */
 const POST_ROUTE_OPTIONS = { bodyLimit: 192 * 1024 } as const;
+const SESSION_ONLY_ROUTE_OPTIONS = { ...POST_ROUTE_OPTIONS, onRequest: refuseBrowserRequest } as const;
 
 export interface QueueRouteOptions {
   /** Port the Host allowlist and the page-origin leg pin (`127.0.0.1:<port>` · `localhost:<port>` · `[::1]:<port>`). */
@@ -151,7 +153,7 @@ function registerWithdrawRoute(app: FastifyInstance): void {
 }
 
 function registerPeerRoute(app: FastifyInstance): void {
-  app.post("/api/queue/peers", POST_ROUTE_OPTIONS, async (request, reply) =>
+  app.post("/api/queue/peers", SESSION_ONLY_ROUTE_OPTIONS, async (request, reply) =>
     handleParsed(request, reply, {
       route: "/api/queue/peers",
       schema: sessionBodySchema,
@@ -159,4 +161,10 @@ function registerPeerRoute(app: FastifyInstance): void {
       work: (body) => getPeerSessions(body.sessionId),
     }),
   );
+}
+
+async function refuseBrowserRequest(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!hasBrowserSignal(request.headers)) return;
+  request.log.warn({ route: request.routeOptions.url, method: request.method }, "browser request refused on a session-only queue route");
+  await reply.code(403).send({ error: "browser_request_refused" });
 }
