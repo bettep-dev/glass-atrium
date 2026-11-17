@@ -264,7 +264,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - The trigger line names no wait: a session reaches the wait rows through a trigger it already has — background job, posting, or the resume prompt's own wait step.
   - The trigger line states no relay rule: a recipient reaches `## Owner Queue Relay` through the `[ATRIUM-QUEUE]` trigger and `### Claimed items`, and each relay's provenance line states its own reading.
 - The section restates no command list or item JSON: their home is `scripts/atrium-queue.sh` → `print_usage`.
-  - A tool's inputs live in the MCP adapter's tool schemas: `## Owner Queue Tools` names the tools and their CLI counterparts, and no input.
+  - A tool's inputs live in the MCP adapter's tool schemas (`scripts/atrium-queue-mcp.sh` → `TOOLS`): `## Owner Queue Tools` names the tools and their CLI counterparts, and no input.
   - Its `wait` exit rows, under `### On a wait's exit`, are the one exit-code list it carries: a mirror of `print_usage` → `On a wait's exit`, canonical there, so both stay.
     - `print_usage` states each action bare; the rule binds the rows to a background job session and a resumed one, and has an interactive session restart no `wait`.
   - The wait's bound is named, never quoted: its values live in `scripts/atrium-queue.sh` → `WAIT_MINUTES_DEFAULT` · `WAIT_MINUTES_MAX`.
@@ -311,7 +311,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
     - `## Owner Queue Relay` → `### Reading a relay` · the server instructions · `SECURITY.md` → **Session relays**;
   - the relay's honest backing — adherence-only compliance, unauthenticated sender: `### Relay honest backing` · `SECURITY.md` → **Session relays**;
   - the main-session rule and its backing: `### Main session only` · the server instructions · `SECURITY.md` → **Session relays**.
-- The server instructions are the MCP adapter's own text, shown to every session that lists the tools.
+- The server instructions are the MCP adapter's own text (`scripts/atrium-queue-mcp.sh` → `SERVER_INSTRUCTIONS`), shown to every session that lists the tools.
   - They restate, in short form, the tools, the main-session rule, the record duty, the source-and-first keying, the relay reading and the shadowing rule, and point at `## Owner Queue` for the rest.
 - Texts that tell a session whether to start a `wait`, each keyed on the session's wait state; a change to one lands in each of the others:
   - `scripts/lib/queue-ops.sh` → `queue_get_wait_step` (the `next` step of a post, a `pending` and a register) · `scripts/atrium-queue.sh` → `end_wait_at_bound` · `hooks/queue-turn-end-check.sh` → `WAIT_REASON_LEAD`;
@@ -333,7 +333,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 ### `## Owner Queue Tools`
 
 - What the section's lines rest on:
-  - one library behind both routes: `scripts/lib/queue-ops.sh`, sourced by `scripts/atrium-queue.sh` and by the MCP adapter;
+  - one library behind both routes: `scripts/lib/queue-ops.sh`, sourced by `scripts/atrium-queue.sh` and by the MCP adapter `scripts/atrium-queue-mcp.sh`;
   - the session id read per call: `scripts/lib/queue-session.sh` → `queue_get_session_id`, through the owner record each SessionStart register writes (`queue_put_owner_record`);
   - the shadowing detection: `scripts/lib/queue-session.sh` → `queue_is_server_shadowed`, called by `hooks/queue-session-register.sh`;
   - a headless run listing no tool: `hooks/lib/session-entrypoint.sh` → `is_owner_facing_session`, the adapter's entrypoint gate;

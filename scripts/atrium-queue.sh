@@ -22,8 +22,6 @@ readonly SCRIPT_DIR
 # shellcheck source-path=SCRIPTDIR source=lib/queue-ops.sh
 source "${SCRIPT_DIR}/lib/queue-ops.sh"
 
-# the monitor's route bodyLimit
-readonly ITEM_MAX_BYTES=196608
 # the monitor's waiting-fact freshness window is two of these
 readonly WAIT_POLL_S=5
 readonly WAIT_BACKOFF_MAX_S=60
@@ -197,13 +195,13 @@ print_wait_step() {
 read_item() {
   local source="$1" raw size
   if [[ "${source}" == - ]]; then
-    raw="$(head -c "$((ITEM_MAX_BYTES + 1))")"
+    raw="$(head -c "$((QUEUE_ITEM_MAX_BYTES + 1))")"
   else
     [[ -f "${source}" && -r "${source}" ]] || fail 64 "no readable item file at ${source}"
-    raw="$(head -c "$((ITEM_MAX_BYTES + 1))" -- "${source}")"
+    raw="$(head -c "$((QUEUE_ITEM_MAX_BYTES + 1))" -- "${source}")"
   fi
   size="$(printf '%s' "${raw}" | LC_ALL=C wc -c | tr -d ' ')"
-  ((size <= ITEM_MAX_BYTES)) || fail 64 "the item is over ${ITEM_MAX_BYTES} bytes"
+  ((size <= QUEUE_ITEM_MAX_BYTES)) || fail 64 "the item is over ${QUEUE_ITEM_MAX_BYTES} bytes"
   printf '%s\n' "${raw}"
 }
 

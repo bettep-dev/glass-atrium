@@ -17,6 +17,9 @@ readonly _QUEUE_OPS_LOADED=1
 source "${BASH_SOURCE[0]%/*}/queue-session.sh"
 
 readonly QUEUE_OPS_MAX_TIME_S=10
+# the monitor's route bodyLimit
+# shellcheck disable=SC2034  # read by both front ends
+readonly QUEUE_ITEM_MAX_BYTES=196608
 # one call's pull rounds → its drain bound, the monitor's ANSWERED_IDS_LIMIT (delivery.ts → PULL.ROUNDS_MAX, test-bound)
 readonly QUEUE_PULL_ROUNDS_MAX=10
 # a file name the monitor makes for an owner image: a random id and the extension of the type its bytes hold
