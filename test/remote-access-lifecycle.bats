@@ -131,7 +131,6 @@ OFF_LINE='Remote access is off. To turn it on later, open the monitor and choose
       return 1
     }
   done
-  ! declare -F ga_remote_print_device_steps >/dev/null || return 1
   ! grep -q apply "${CALLS}" || {
     echo "restarted during install"
     return 1
