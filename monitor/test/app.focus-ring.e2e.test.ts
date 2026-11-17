@@ -197,19 +197,17 @@ function getContrast([r1, g1, b1]: Rgba, [r2, g2, b2]: Rgba): number {
   return (high + 0.05) / (low + 0.05);
 }
 
-const RING_CONTRAST_ROWS = (["light", "dark"] as const).flatMap((theme) => [
-  { theme, surface: "drawer", fixture: "drawer-on-trigger" as FixtureKind },
-  { theme, surface: "fullscreen", fixture: "fullscreen-on-trigger" as FixtureKind },
-  { theme, surface: "confirm", fixture: "confirm-on-trigger" as FixtureKind },
-  { theme, surface: "popover", fixture: "popover-in-view" as FixtureKind, trigger: "#fixture button[aria-haspopup='dialog']" },
-]);
+const RING_CONTRAST_ROWS: Array<{ surface: string; fixture: FixtureKind; trigger?: string }> = [
+  { surface: "drawer", fixture: "drawer-on-trigger" },
+  { surface: "fullscreen", fixture: "fullscreen-on-trigger" },
+  { surface: "confirm", fixture: "confirm-on-trigger" },
+  { surface: "popover", fixture: "popover-in-view", trigger: "#fixture button[aria-haspopup='dialog']" },
+];
 
-describe("a keyboard-focused panel ring reaches 3:1 against the colours it is drawn on, on every side, in both themes (WCAG 1.4.11)", () => {
+describe("a keyboard-focused panel ring reaches 3:1 against the colours it is drawn on, on every side (WCAG 1.4.11)", () => {
   for (const row of RING_CONTRAST_ROWS) {
-    test(`${row.surface} in the ${row.theme} theme`, async () => {
+    test(row.surface, async () => {
       const page = await openApp();
-      // data-theme = the attribute tweaks.theme writes
-      await page.evaluate((theme) => document.documentElement.setAttribute("data-theme", theme), row.theme);
       await openSurfaceByEnter(page, row.fixture, row.trigger);
 
       const { ring, ground } = await readRingGround(page);

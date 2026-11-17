@@ -19,7 +19,6 @@ const NAV = [
 
 // EDITMODE 마커 — host 프로토콜이 디스크 위 JSON 블록 재기록
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/ {
-	theme: "dark",
 	density: "comfortable",
 	accent: "#3b82f6",
 } /*EDITMODE-END*/;
@@ -347,7 +346,7 @@ function RemoteBanner() {
 }
 
 function App() {
-	// tweaks → data-theme / --accent / data-density 동기화
+	// tweaks → --accent / data-density 동기화
 	const [tweaks, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
 
 	const [active, setActive] = useS(parseHashScreen);
@@ -364,13 +363,12 @@ function App() {
 
 	// density 는 attribute 만 노출, CSS 매핑은 차후
 	useE(() => {
-		document.documentElement.setAttribute("data-theme", tweaks.theme);
 		document.documentElement.setAttribute("data-density", tweaks.density);
 		document.documentElement.style.setProperty(
 			"--accent",
 			hexToRgbTriplet(tweaks.accent),
 		);
-	}, [tweaks.theme, tweaks.density, tweaks.accent]);
+	}, [tweaks.density, tweaks.accent]);
 
 	// hash → state (뒤로/앞으로, 수동 편집, 딥링크)
 	useE(() => {
@@ -520,22 +518,13 @@ function useDisplayTimezone(healthTimezone) {
 	return timezone;
 }
 
-// 테마(모드+강조색) + 레이아웃(밀도) 두 섹션. TweaksPanel 미로드 시 null
+// 테마(강조색) + 레이아웃(밀도) 두 섹션. TweaksPanel 미로드 시 null
 function TweaksUI({ tweaks, setTweak }) {
 	const { TweaksPanel, TweakSection, TweakRadio, TweakColor } = window;
 	if (!TweaksPanel) return null;
 	return (
 		<TweaksPanel title="Tweaks">
 			<TweakSection label="Theme">
-				<TweakRadio
-					label="Mode"
-					value={tweaks.theme}
-					onChange={(v) => setTweak("theme", v)}
-					options={[
-						{ label: "Dark", value: "dark" },
-						{ label: "Light", value: "light" },
-					]}
-				/>
 				<TweakColor
 					label="Accent color"
 					value={tweaks.accent}
