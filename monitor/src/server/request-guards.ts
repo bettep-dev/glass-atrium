@@ -26,6 +26,8 @@ export const MUTATION_METHODS: ReadonlySet<string> = new Set(["POST", "PUT", "PA
 
 // same-origin = the monitor UI itself · none = address-bar / bookmark entry.
 const ALLOWED_FETCH_SITES = new Set(["same-origin", "none"]);
+const BROWSER_HEADERS = ["origin", "referer", "cookie"] as const;
+const FETCH_METADATA_PREFIX = "sec-fetch-";
 
 /** Fastify 5 default, restated so the ceiling is a stated decision rather than an inherited one. */
 export const BODY_LIMIT_BYTES = 1024 * 1024;
@@ -97,11 +99,12 @@ export function isAllowedRequest(method: string, headers: IncomingHttpHeaders): 
 }
 
 /**
- * Session-only routes (relay, peers): no page calls them, so any Origin or Sec-Fetch-Site header marks a browser request,
- * refused even where the mutation gate would admit it (a loopback Origin on another port with no fetch metadata).
+ * Session-only routes (relay, peers): no page calls them and their callers send none of these headers, so an Origin,
+ * Referer, Cookie or any fetch metadata header marks a browser request, refused even where the mutation gate would
+ * admit it (a loopback Origin on another port with no fetch metadata).
  */
 export function hasBrowserSignal(headers: IncomingHttpHeaders): boolean {
-  return getHeader(headers, "sec-fetch-site") !== undefined || getHeader(headers, "origin") !== undefined;
+  return BROWSER_HEADERS.some((name) => headers[name] !== undefined) || Object.keys(headers).some((name) => name.startsWith(FETCH_METADATA_PREFIX));
 }
 
 /** Which page-origin signal admitted an owner mutation; the answer record stores it. */

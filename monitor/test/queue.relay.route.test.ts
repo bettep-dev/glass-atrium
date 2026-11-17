@@ -22,12 +22,14 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { RELAY } from "../src/server/queue/relay.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
+import { recordQueries } from "./lib/query-recorder.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 
 const PORT = 16145;
 const HOST = `127.0.0.1:${PORT}`;
 const HOUR_MS = 3_600_000;
+const AUDIT_INSERT = /^\s*INSERT INTO monitor\.audit_log\b/;
 const SCANNER_PATH = fileURLToPath(new URL("../../scripts/lib/secret-scan.sh", import.meta.url));
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-relay-"));
@@ -218,20 +220,33 @@ describe("relay copies", () => {
     assert.equal((await findRelaysFrom(sender)).length, 0);
   });
 
-  test("refuses any browser origin signal, a loopback Origin on another port included; only the header-less request passes", async () => {
+  test("refuses any browser signal — Origin, Referer, any fetch metadata header or a Cookie — before any query or scan, storing nothing; only the header-less request relays", async () => {
     const sender = await seedSession();
     const recipient = await seedSession();
+    const callsFile = path.join(fixtureRoot, `browser-calls-${randomUUID().slice(0, 8)}`);
+    const scanner = writeScanner("browser-capture", `echo call >> '${callsFile}'\ncat > /dev/null\nexit 0`);
     const rows = [
       { name: "foreign Origin", headers: { origin: "https://evil.example" } as Record<string, string>, status: 403 },
       { name: "loopback Origin on another port, no fetch metadata", headers: { origin: "http://127.0.0.1:5173" }, status: 403 },
       { name: "cross-site fetch metadata", headers: { "sec-fetch-site": "cross-site" }, status: 403 },
+      { name: "fetch mode alone", headers: { "sec-fetch-mode": "cors" }, status: 403 },
+      { name: "fetch destination alone", headers: { "sec-fetch-dest": "empty" }, status: 403 },
+      { name: "Referer alone", headers: { referer: `http://${HOST}/queue` }, status: 403 },
+      { name: "Cookie alone", headers: { cookie: "theme=dark" }, status: 403 },
       { name: "header-less", headers: {}, status: 201 },
     ];
-    for (const row of rows) {
-      const response = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." }, { headers: row.headers });
-      assert.equal(response.statusCode, row.status, row.name);
-    }
-    assert.equal((await findRelaysFrom(sender)).length, 1);
+    await withScanner(scanner, async (instance) => {
+      for (const row of rows) {
+        const body = { sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." };
+        const { result: response, queries } = await recordQueries(() => relay(body, { headers: row.headers, on: instance }));
+        const relayed = row.status === 201;
+        // the general audit hook records every covered response, a refusal included → the one query a refusal may send
+        const handlerQueries = queries.filter((sql) => !AUDIT_INSERT.test(sql));
+        const scans = existsSync(callsFile) ? readFileSync(callsFile, "utf8").split("\n").filter(Boolean).length : 0;
+        const stored = (await findRelaysFrom(sender)).length;
+        assert.deepEqual([response.statusCode, handlerQueries.length > 0, scans, stored], [row.status, relayed, relayed ? 1 : 0, relayed ? 1 : 0], row.name);
+      }
+    });
   });
 });
 

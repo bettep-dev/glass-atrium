@@ -23,6 +23,7 @@ import { AWAITING_IDS_LIMIT } from "../src/server/queue/registry.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
+import { recordQueries } from "./lib/query-recorder.js";
 
 const PORT = 16145;
 const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
@@ -866,18 +867,22 @@ describe("peers", () => {
     }
   });
 
-  test("refuses any browser origin signal, a loopback Origin on another port included; only the header-less request passes", async () => {
+  test("refuses any browser signal — Origin, Referer, any fetch metadata header or a Cookie — before any query; only the header-less request reads", async () => {
     const caller = await seedSession();
     const rows = [
       { name: "foreign Origin", headers: { origin: "https://evil.example" } as Record<string, string>, status: 403 },
       { name: "loopback Origin on another port, no fetch metadata", headers: { origin: "http://127.0.0.1:5173" }, status: 403 },
       { name: "cross-site fetch metadata", headers: { "sec-fetch-site": "cross-site" }, status: 403 },
       { name: "same-origin fetch metadata", headers: { "sec-fetch-site": "same-origin" }, status: 403 },
+      { name: "fetch mode alone", headers: { "sec-fetch-mode": "cors" }, status: 403 },
+      { name: "fetch destination alone", headers: { "sec-fetch-dest": "empty" }, status: 403 },
+      { name: "Referer alone", headers: { referer: `http://${HOST}/queue` }, status: 403 },
+      { name: "Cookie alone", headers: { cookie: "theme=dark" }, status: 403 },
       { name: "header-less", headers: {}, status: 200 },
     ];
     for (const row of rows) {
-      const response = await send("POST", "/api/queue/peers", { sessionId: caller }, { headers: row.headers });
-      assert.equal(response.statusCode, row.status, row.name);
+      const { result: response, queries } = await recordQueries(() => send("POST", "/api/queue/peers", { sessionId: caller }, { headers: row.headers }));
+      assert.deepEqual([response.statusCode, queries.length > 0], [row.status, row.status === 200], row.name);
     }
   });
 
