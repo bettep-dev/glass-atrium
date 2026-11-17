@@ -917,8 +917,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
            CARVE-OUT(rgb 9 9 11) — --surface(warm 12 10 9) 미사용은 의도적. 문서 자체 bg-zinc-950 과 hue·값을 정확히 일치시켜 cascade 비결정성 제거 (cool zinc reading palette). --surface 교체 시 hue 불일치 + 결정성 붕괴 → swap 금지.
-           행간·자간 base default — 승리값은 specificity 높은 .doc-fs-body-inner > .doc-body-isolation 에 위치(아래) · 여기 base 는 문서 leading 부재 시 fallback. */
-        .doc-body-isolation { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; overflow: visible; background: rgb(9 9 11); border-radius: 0; box-shadow: none; box-sizing: border-box; line-height: 1.7; letter-spacing: 0.01em; }
+           행간·자간 base default — 승리값은 specificity 높은 .doc-fs-body-inner > .doc-body-isolation 에 위치(아래) · 여기 base 는 문서 leading 부재 시 fallback.
+           contain: layout — 문서의 fixed/absolute 요소가 이 상자를 기준으로 배치 → 넘침은 .doc-fs-body-wrap 스크롤 영역이 잘라냄, 뷰어 chrome 덮기 불가 (paint 는 넓게/전폭 breakout 까지 잘라내므로 미사용). */
+        .doc-body-isolation { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; overflow: visible; contain: layout; background: rgb(9 9 11); border-radius: 0; box-shadow: none; box-sizing: border-box; line-height: 1.7; letter-spacing: 0.01em; }
         /* 본문 다이어그램 폭 — 공유 설정(public/mermaid-config.js)이 채택 타입마다 useMaxWidth 를 껐으므로 SVG 가 고유폭을 유지함 → 넘침을 컨테이너가 스크롤로 받아 잘림을 막음.
            index.html 은 그 전역을 initialize 에 넘길 뿐 값을 갖지 않음 — 이 규칙이 서 있는 값의 출처는 설정 파일 한 곳임.
            svg max-width:none 은 문서가 자기 스타일시트에서 svg 폭을 묶는 경우의 방어 — 맵 캔버스(architecture.jsx)가 같은 이유로 두는 규칙과 같은 성격. */
@@ -3787,12 +3788,26 @@ function renderMarkdownCD(mdBody, scopeClass, title) {
 
 // DOMPurify config — 화이트리스트 외 태그/속성 통째 차단.
 // FORBID_TAGS: script (내용 포함) · iframe (srcdoc 중첩 포함) · object · embed · base · meta · link.
-// FORBID_ATTR: on* 인라인 이벤트 + formaction (form 하이재킹).
+//   + form · input · button · select · textarea — 클릭 한 번의 same-origin 요청 경로, md 본문은 서버 sanitize 를 거치지 않으므로 이 config 가 md·html 공통의 유일한 차단선.
+// FORBID_ATTR: on* 인라인 이벤트 + formaction (form 하이재킹) + ping (링크 클릭 시 POST).
 // ALLOW_UNKNOWN_PROTOCOLS=false → javascript: / data: URL 차단.
 // KEEP_CONTENT=true → 제거된 태그의 텍스트 내용은 유지 (단 script 내용은 default 로 제거됨).
 // WHOLE_DOCUMENT=true → <html>/<head>/<body> 보존 (default 는 body unwrap → class 유실). body className lift 가능.
 const DOMPURIFY_CONFIG_CD = {
-	FORBID_TAGS: ["script", "iframe", "object", "embed", "base", "meta", "link"],
+	FORBID_TAGS: [
+		"script",
+		"iframe",
+		"object",
+		"embed",
+		"base",
+		"meta",
+		"link",
+		"form",
+		"input",
+		"button",
+		"select",
+		"textarea",
+	],
 	FORBID_ATTR: [
 		"onerror",
 		"onload",
@@ -3834,6 +3849,7 @@ const DOMPURIFY_CONFIG_CD = {
 		"onanimationiteration",
 		"ontransitionend",
 		"formaction",
+		"ping",
 	],
 	ALLOW_UNKNOWN_PROTOCOLS: false,
 	KEEP_CONTENT: true,
@@ -3845,18 +3861,12 @@ const HTML_TO_REACT_ATTR_CD = {
 	class: "className",
 	for: "htmlFor",
 	tabindex: "tabIndex",
-	readonly: "readOnly",
-	maxlength: "maxLength",
-	minlength: "minLength",
-	autocomplete: "autoComplete",
 	autofocus: "autoFocus",
 	colspan: "colSpan",
 	rowspan: "rowSpan",
 	cellpadding: "cellPadding",
 	cellspacing: "cellSpacing",
 	crossorigin: "crossOrigin",
-	enctype: "encType",
-	novalidate: "noValidate",
 	srcdoc: "srcDoc",
 	spellcheck: "spellCheck",
 	contenteditable: "contentEditable",
@@ -3905,7 +3915,7 @@ function htmlToReactCD(htmlString, scopeClass) {
 
 // React 가 직접 text child 를 거부하는 부모 태그 집합 — DOM nesting validation rule.
 //   · table/thead/tbody/tfoot/tr/colgroup — table content model 은 whitespace text 허용 안 함
-//   · select/optgroup — option 외 child 거부
+//   · optgroup — option 외 child 거부
 //   · HTML source 의 들여쓰기 (`<table>\n  <thead>`) 가 DOMParser 단계에서 text node 로 보존 →
 //     React 가 validateDOMNesting 경고 발생 → 본 set 의 자식인 whitespace-only text 는 drop.
 //   · 비-whitespace text 는 보존 — 사용자 의도된 텍스트 (희귀, 사실상 invalid HTML) 까지 silent suppress 금지.
@@ -3916,7 +3926,6 @@ const NO_TEXT_CHILD_PARENTS_CD = new Set([
 	"tfoot",
 	"tr",
 	"colgroup",
-	"select",
 	"optgroup",
 ]);
 
@@ -3971,10 +3980,7 @@ function convertNodeCD(node, scopeClass, keyPath) {
 
 			// javascript: URL defensive drop — DOMPurify ALLOW_UNKNOWN_PROTOCOLS=false 이중 방어.
 			if (
-				(name === "href" ||
-					name === "src" ||
-					name === "action" ||
-					name === "formaction") &&
+				(name === "href" || name === "src") &&
 				typeof value === "string" &&
 				/^\s*javascript\s*:/i.test(value)
 			) {
