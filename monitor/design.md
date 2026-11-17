@@ -52,9 +52,9 @@
 1. **Data-density first** — 장식이 데이터 표면의 명료성을 떨어뜨리면 제거 (Smashing: zone 당 1차 초점 ≤ ~5).
 2. **Legibility is non-negotiable** — 렌더된 실제 배경 대비 WCAG AA (본문 4.5:1 · large-text 3:1, 측정표 §4.1) · 렌더 텍스트 ≥ 13px (§5.2) · 투명 표면 위 텍스트는 scrim (§6.4 · §9).
 3. **Restraint** — every product surface is opaque, the overlay scrim included (§12.9); the dev-only tweaks panel is the one glass carve-out (§3.5).
-4. **Elevation through border and luminance, not blur** — 테마별 채널: §6.1 · §6.2.
+4. **Elevation through border and luminance, not blur** — 채널: §6.1 · §6.2.
 5. **정확히 4단계 elevation** — `sunken → base → raised → overlay`. raised-2 는 raised 의 hover/focus 상태이지 단계가 아니다.
-6. **Semantic 토큰은 테마별로 값이 갈리는 곳을 매개한다** — Tier 2 alias 가 테마마다 다른 primitive 를 가리키면(예: `--surface-raised-2`) alias 를 쓴다. 그 외엔 primitive(`--elev` · `--overlay-surface` · `--line`) 직접 참조 가능. 새 **색** 은 primitive 로만 (§3.2a).
+6. **Semantic 토큰은 상태 · 역할을 이름 짓는 곳을 매개한다** — Tier 2 alias 가 primitive 에 상태나 역할 이름을 붙이면(예: `--surface-raised-2` · `--control-edge`) alias 를 쓴다. 그 외엔 primitive(`--elev` · `--overlay-surface` · `--line`) 직접 참조 가능. 새 **색** 은 primitive 로만 (§3.2a).
 7. **Motion clarifies change, never decorates** — no ambient loop, no blinking status mark (§12.9). 로딩 표시(skeleton pulse · spinner)는 로딩 중에만 도는 별도 범주, `prefers-reduced-motion` 게이트 필수 (§8).
 8. **색맹 안전 (dual-encoding)** — severity = 기호 + 색 + 단어, 색 단독 금지 (`TONE_GLYPH` ✓/⚠/✕/ℹ). tone 은 선행 glyph 에만 — shell · stripe · 카드 fill · tone border 아님 (§4.2).
    - `ui.jsx` → `Badge` 주석의 "DESIGN.md §8" 은 이 원칙 8 을 가리킨다.
@@ -124,7 +124,7 @@
   - `--tint-row-1` … `--tint-row-3` — the row-state ladder; contrast §4.1.
   - `--heat-1` … `--heat-4` — the hour-grid ramp, ink at four steps.
 - `--data` is the one colour primitive added after the base set: the `--faint` value held as its own token, so the chart data colour can move without moving metadata text.
-- shadow 의 내부 `rgba()` 농도는 의도적으로 alpha-비합성 — box-shadow 는 `<alpha-value>` 보간 대상이 아니므로 테마별 값에 baked-in.
+- shadow 의 내부 `rgba()` 농도는 의도적으로 alpha-비합성 — box-shadow 는 `<alpha-value>` 보간 대상이 아니므로 값에 baked-in.
 
 ### 3.2a 토큰 종류 2종 (Dual Token Convention)
 
@@ -254,40 +254,40 @@
 
 - **계산된 명암비** (WCAG 2.2 상대휘도):
 
-| fg | Light: elev / surface / sunken | Dark: elev / surface / sunken / elev-2 |
-|----|-------------------------------|----------------------------------------|
-| `--ink` | 17.49 / 16.74 / 16.03 | 16.74 / 18.92 / 17.53 / 15.46 |
-| `--dim` | 7.63 / 7.30 / 6.99 | 11.74 / 13.26 / 12.29 / 10.84 |
-| `--faint` | 5.33 / 5.11 / 4.89 | 6.29 / 7.11 / 6.59 / 5.81 |
-| `--focus-ring` (≥3:1 UI) | 5.17 / 4.95 / 4.74 | 6.88 / 7.77 / 7.20 / 6.35 |
-| `--pip-empty` (≥3:1 UI) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
-| `--control-edge` → `--pip-empty` (≥3:1 UI, resting toggle and field edge) | 3.69 / 3.54 / 3.38 | 3.65 / 4.12 / 3.82 / 3.37 |
-| `--data` (≥3:1 UI) | 5.33 / 5.11 / 4.89 | 6.29 / 7.11 / 6.59 / 5.81 |
-| `--selected-ink` on `--selected-fill` | 16.74 | 13.26 |
-| `--crit` (텍스트 ≥4.5 — 단어를 싣는 유일한 tone) | 5.05 / 4.83 / 4.63 | 6.32 / 7.14 / 6.62 / 5.84 |
-| `--warn` (glyph ≥3:1) | 3.44 / 3.29 / 3.15 | 10.48 / 11.83 / 10.97 / 9.67 |
-| `--ok` (glyph ≥3:1) | 3.77 / 3.61 / 3.45 | 9.10 / 10.28 / 9.52 / 8.40 |
-| `--info` (glyph ≥3:1) | 3.68 / 3.53 / 3.38 | 9.68 / 10.93 / 10.13 / 8.94 |
+| fg | elev / surface / sunken / elev-2 |
+|----|----------------------------------|
+| `--ink` | 16.74 / 18.92 / 17.53 / 15.46 |
+| `--dim` | 11.74 / 13.26 / 12.29 / 10.84 |
+| `--faint` | 6.29 / 7.11 / 6.59 / 5.81 |
+| `--focus-ring` (≥3:1 UI) | 6.88 / 7.77 / 7.20 / 6.35 |
+| `--pip-empty` (≥3:1 UI) | 3.65 / 4.12 / 3.82 / 3.37 |
+| `--control-edge` → `--pip-empty` (≥3:1 UI, resting toggle and field edge) | 3.65 / 4.12 / 3.82 / 3.37 |
+| `--data` (≥3:1 UI) | 6.29 / 7.11 / 6.59 / 5.81 |
+| `--selected-ink` on `--selected-fill` | 13.26 |
+| `--crit` (텍스트 ≥4.5 — 단어를 싣는 유일한 tone) | 6.32 / 7.14 / 6.62 / 5.84 |
+| `--warn` (glyph ≥3:1) | 10.48 / 11.83 / 10.97 / 9.67 |
+| `--ok` (glyph ≥3:1) | 9.10 / 10.28 / 9.52 / 8.40 |
+| `--info` (glyph ≥3:1) | 9.68 / 10.93 / 10.13 / 8.94 |
 
 - 모든 텍스트 쌍 ≥ 4.5 (AA), 모든 UI 쌍 ≥ 3.0 — 불투명 토큰 면 기준.
 - **Heat ramp** (composited on `--elev`, ≥ 3:1 UI at step 1, ≥ 1.4:1 per step):
 
-| | Light | Dark |
-|---|---|---|
-| `--heat-1` on `--elev` | 3.16 | 3.25 |
-| step 2 / 3 / 4 over the step below | 1.45 / 1.62 / 1.65 | 1.55 / 1.52 / 1.44 |
-| `--heat-4` on `--elev` | 12.26 | 11.01 |
+| Pair | Ratio |
+|---|---|
+| `--heat-1` on `--elev` | 3.25 |
+| step 2 / 3 / 4 over the step below | 1.55 / 1.52 / 1.44 |
+| `--heat-4` on `--elev` | 11.01 |
 
 - **Row-state ladder** (composited on `--elev`; text ≥ 4.5, glyph and pip ≥ 3.0):
 
-| Fill, dark / light | ink | dim | faint | crit glyph | warn glyph | empty pip |
+| Fill | ink | dim | faint | crit glyph | warn glyph | empty pip |
 |---|---|---|---|---|---|---|
-| `--tint-row-1` | 15.96 / 16.81 | 11.19 / 7.34 | 6.00 / 5.13 | 6.03 / 4.85 | 9.99 / 3.31 | 3.47 / 3.55 |
-| `--tint-row-2` | 14.52 / 15.67 | 10.18 / 6.84 | 5.46 / 4.78 | 5.48 / 4.52 | 9.08 / 3.08 | 3.16 / 3.31 |
-| `--tint-row-3` | 14.05 / 15.33 | 9.85 / 6.69 | 5.28 / 4.67 | 5.31 / 4.42 | 8.79 / 3.02 | 3.06 / 3.24 |
+| `--tint-row-1` | 15.96 | 11.19 | 6.00 | 6.03 | 9.99 | 3.47 |
+| `--tint-row-2` | 14.52 | 10.18 | 5.46 | 5.48 | 9.08 | 3.16 |
+| `--tint-row-3` | 14.05 | 9.85 | 5.28 | 5.31 | 8.79 | 3.06 |
 
-  - Ceiling: `--tint-row-3` stays at or under 0.066 — the light warn glyph reaches 3.0 at 0.07, the dark empty pip at 0.072. `--tint-select` (0.08) is no row state: the light warn glyph on it is 2.93.
-- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — light · dark 블록 둘 다 파싱, light `--crit` ≥ 4.5 와 모든 light tone ≥ 3.0 (elev · surface · sunken) 고정. `--control-edge` 는 alias 를 target 으로 풀어 light elev · surface · sunken 과 dark 에 elev-2 를 더해 ≥ 3.0, `--faint` hover edge 가 그보다 한 step 위임을 고정. 렌더된 값은 `test/ui.control-state.e2e.test.ts` 가 고정 — toggle 은 card 위, field family 는 elev · surface · sunken 위, 두 테마 모두 ≥ 3.0. `test/tokens.contrast.unit.test.ts` also pins `--data` on elev · surface · sunken, the heat ramp's step-1 and per-step floors, and every row-state ladder pair above, in both themes.
+  - Ceiling: `--tint-row-3` stays at or under 0.066 — the empty pip reaches 3.0 at 0.072. `--tint-select` (0.08) is no row state: the empty pip on it is 2.93.
+- 회귀 테스트: `test/tokens.contrast.unit.test.ts` — `:root` 블록 하나를 파싱, `--crit` ≥ 4.5 와 모든 tone ≥ 3.0 (elev · surface · sunken · elev-2) 고정. `--control-edge` 는 alias 를 target 으로 풀어 elev · surface · sunken · elev-2 위 ≥ 3.0, `--faint` hover edge 가 그보다 한 step 위임을 고정. 렌더된 값은 `test/ui.control-state.e2e.test.ts` 가 고정 — toggle 은 card 위, field family 는 elev · surface · sunken 위 ≥ 3.0. `test/tokens.contrast.unit.test.ts` also pins `--data` on elev · surface · sunken, the heat ramp's step-1 and per-step floors, and every row-state ladder pair above.
 
 ### 4.2 Severity (crit / warn / info / ok) — 색만 쓰지 말 것
 
@@ -305,21 +305,21 @@
   - `StatusDot`: glyph + sr-only 단어(`STATUS_DOT_WORD` OK/Warning/Critical/Info) · 미지 status 는 `–` + "Unknown" (`--faint`).
 - **허용 예외** — tone border/stroke 가 glyph 또는 단어와 짝을 이룰 때만:
   - **폼 오류** (`.field.is-error` · `.field-affix.is-error`, §7.13): full-opacity `--crit` border (hover · focus 중에도 유지) + 메시지 `fs-meta text-crit` `role="alert"` = 단어.
-    - 메시지 crit 은 모든 불투명 면에서 ≥ 4.5: light 최저 4.63 (`--sunken` — hover 된 `.tbl` 행 포함; `--elev` 5.05 · `--surface` 4.83) · dark 최저 5.84 (`--elev-2`).
+    - 메시지 crit 은 모든 불투명 면에서 ≥ 4.5: 최저 5.84 (`--elev-2`; `--sunken` 6.62 — hover 된 `.tbl` 행 포함 · `--elev` 6.32 · `--surface` 7.14).
   - **System map 상태 링** (`architecture.jsx` → `LIVE_RING_CLASS` / `ZONE_RING_CLASS`, §7.14): warn · crit 노드와 zone.
     - 링 = 노드 도형 밖의 별도 `rect.arch-ring-state`, 2.5px full-opacity tone stroke. 노드 자체 border 는 범주 border(map border key) → shell 에 tone 없음.
     - 짝: 모서리 badge (`rect.arch-ring-glyph-pill` `--surface` fill · 1.5px tone stroke + `text.arch-ring-glyph` mark `!` warn · `!!` crit, label 크기 700) + 노드 accessible name 의 health word (`HEALTH_WORD_AR`).
     - ok 는 링 없음 · unverified = `--faint` dashed 링 · focus = 그 바깥 `rect.arch-ring-focus` `--focus-ring`.
-    - 명암비 (`--surface` · `--elev` 위): light warn ≥ 3.29 · crit ≥ 4.83 (UI 3:1) · dark ≥ 6.32.
-  - **System map 범례 swatch** (`.arch-legend-swatch-warn` / `-crit` / `-count`) = 링의 key: 2px tone border + mark (`!` · `!!` · `!!×N`) + `--dim` 라벨 ("Ring needs attention" · "Ring critical" · "N parts in this box need attention"). page `--surface` 위 → light warn 3.29 · crit 4.83 · dark ≥ 7.14.
-  - **Amber badge** (`.pill--warn`, §7.3): `--tint-warn` shell + `⚠` + word, both in ink — the tint alone is 1.43 (dark) / 1.20 (light) on `--elev`, so the glyph shape and the word carry it; ink on it ≥ 9.33 / 12.64. `--warn` on its own tint is 2.87 in light → the glyph is never toned there.
+    - 명암비 (`--surface` · `--elev` 위): warn ≥ 10.48 · crit ≥ 6.32 (UI 3:1).
+  - **System map 범례 swatch** (`.arch-legend-swatch-warn` / `-crit` / `-count`) = 링의 key: 2px tone border + mark (`!` · `!!` · `!!×N`) + `--dim` 라벨 ("Ring needs attention" · "Ring critical" · "N parts in this box need attention"). page `--surface` 위 → warn 11.83 · crit 7.14.
+  - **Amber badge** (`.pill--warn`, §7.3): `--tint-warn` shell + `⚠` + word, both in ink — the tint alone is 1.43 on `--elev`, so the glyph shape and the word carry it; ink on it ≥ 9.33.
 - **범위 밖 — destructive action** (severity 아닌 action role, 단어 = 버튼 라벨): `.btn.danger` · red-outline 버튼 (`DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) — §7.4.
 - **Badge 3 role** (`ui.jsx` → `Badge`):
   - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone, 라벨 `--dim`. `glyph` false 면 tone 없음 (라벨도 neutral). tone 있는 `Pill` → glyph 가 있는 status `Badge`.
   - `metadata` — 서술 속성 (agent-only · md · model id): neutral · glyph 없음 · 소문자.
   - `count` — 순수 수량: neutral · glyph 없음 · sans tabular (§12.2, look → §12.3 Count); a count in prose or a row retires to a plain sans tnum number (§12.3).
   - 변형: `absent`(무테 · 무배경 · `--faint`) · `interactive`(`<button>`).
-- **alert-card glyph** (`base.css` → `.alert-card-glyph`): bare tone glyph on the card surface — no well, fill or radius (§12.3 Icons). 명암비 (raised `--elev` / inset `--sunken`): light warn 3.44 / 3.15 · ok 3.77 / 3.45 · info 3.68 / 3.38 · crit 5.05 / 4.63 · dark ≥ 6.32.
+- **alert-card glyph** (`base.css` → `.alert-card-glyph`): bare tone glyph on the card surface — no well, fill or radius (§12.3 Icons). 명암비 (raised `--elev` / inset `--sunken`): warn 10.48 / 10.97 · ok 9.10 / 9.52 · info 9.68 / 10.13 · crit 6.32 / 6.62.
 - **severity 요소는 glass/blur 위에 두지 않는다** — desaturation 이 응급 신호를 약화 (§6.3).
 - **finder** (merged tree 기준): hit 마다 읽고 아래 분류에 넣는다. 분류 밖 hit = 새 위반.
   - finder 1 (alpha tint · inset stripe): `grep -rnE "var\((--(crit|warn|ok|info)|(--)?[$]\{[^}]+\})\) */ *0?\.[0-9]+|(bg|border)-(crit|warn|ok|info)/|inset [0-9]+px 0 0 rgb\(var\(--(crit|warn|ok|info)\)\)" public/src public/styles`.
@@ -342,12 +342,12 @@
 - `--cat-1..4` (값 §3.1) = 분류 시각화 (chart fill · swatch) 전용, 위험도용 아님.
 - `--data` (값 §3.1) = the chart data colour: one neutral token for every series mark that carries a quantity, not a severity or a category. ≥ 3:1 on elev · surface · sunken (§4.1). A severity colour is never a series colour.
   - closed day = filled bar · today's partial day = 1px dashed `--data` outline (or dashed line segment), no fill · zero day = no mark over one 1px `--line` baseline.
-  - second series over bars = straight `--ink` 1.5px polyline (no smoothing, no dots) over a 3.5px `--elev` under-stroke → its neighbour is the card ground (17.49 / 16.74), never a `--data` bar (3.28 / 2.66).
+  - second series over bars = straight `--ink` 1.5px polyline (no smoothing, no dots) over a 3.5px `--elev` under-stroke → its neighbour is the card ground (16.74), never a `--data` bar (2.66).
   - reference line (threshold · normal) = 1px dashed `--faint` · hovered mark + readout = `--ink` · `--accent` paints no chart mark.
   - severity colour only on a mark itself over a stated threshold, keyed by glyph + word in the legend (`cost.jsx` session outlier band · log-integrity day over threshold · `agents.jsx` success-rate matrix sparkline of a pair over the fail-share step).
   - a share-of-states stack keeps each state's tone, every segment keyed by its glyph + word — a split of one total by state, not a quantity series (`wiki.jsx` status mix · `outcomes.jsx` attribution mix · grader breakdown).
   - a bar atom asks for the data colour by `tone="data"` (`ui.jsx` → `BAR_TONE_VAR`), never `neutral` (= `--faint`, a text role).
-- `--cat-2` 3.74:1 · `--cat-4` 4.60:1 on light `--elev` (sunken 3.43 / 4.21) → **fill/swatch 한정, text 색 금지**.
+- `--cat-1..4` on `--elev` 6.43 · 9.39 · 6.88 · 6.60 → **fill/swatch 한정, text 색 금지** — 명암이 아니라 역할 (분류 시각화 전용, 위) 이 막는다.
 - **agent 식별은 `AgentName` 텍스트로만** (§3.3) — 이니셜 아바타 없음. 모든 이름이 `glass-atrium-` 으로 시작해 이니셜이 전부 G (`agents.screen-render.client.test.ts`).
 
 ### 4.4 Accent
@@ -355,7 +355,7 @@
 - `--accent` 는 인터랙션 전용 (focus 된 field border · 선택 hint). 화면당 ≤ 2 (CTA/인터랙션 한정, 장식 금지). categorical 팔레트에 새 색 추가 금지.
 - **런타임 값은 Tweaks**: `App` effect 가 `<html>` 에 `--accent` 를 `tweaks.accent` 로 inline 기록 (기본 `#3b82f6` = 59 130 246) → `tokens.css` 값은 fallback.
 - Selected and current marks (tab, current page, selected row, checks) never take accent — strong ink (§12.4).
-- accent 가 사용자 선택이므로 focus 는 `--focus-ring` (테마별 고정, 모든 면에서 ≥ 3:1).
+- accent 가 사용자 선택이므로 focus 는 `--focus-ring` (고정 값, 모든 면에서 ≥ 3:1).
 - 본문 링크 (`outcomes.jsx` → `.outcome-md a`) = `--ink` 텍스트 + `currentColor` underline — accent 는 링크 텍스트를 칠하지 않는다 (사용자 선택이라 명암 무한정). 링크 신호는 underline (색 단독 아님), ink 는 모든 면에서 ≥ 15.46 (§4.1).
 
 ---
@@ -418,13 +418,13 @@
 
 ### 6.1 4-Level Elevation (정본)
 
-| Level | 토큰 | 쓰임 | Light | Dark |
-|-------|------|------|-------|------|
-| **sunken** | `--sunken` | 홈 · `th` · 배지 shell · 미니바 트랙 | 245 fill | 24 fill |
-| **base** | `--surface` | 페이지 바탕 | 250 | 12 (가장 어두움) |
-| **raised** | `--elev` | 카드 · 사이드바 | 255 fill + 1px `--line`, **shadow 없음** | 28 fill + 1px `--line`, **shadow · inset 없음** |
-| raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 hover (`.i-tile-hover`) | raised + `--shadow-raised-2` + border `--faint` | 36 fill + `--shadow-raised-2` |
-| **overlay** | `--surface-overlay` | drawer · dialog · popover | 255 fill + `--shadow-overlay` | 28 fill + `--shadow-overlay` |
+| Level | 토큰 | 쓰임 | 값 |
+|-------|------|------|-----|
+| **sunken** | `--sunken` | 홈 · `th` · 배지 shell · 미니바 트랙 | 24 fill |
+| **base** | `--surface` | 페이지 바탕 | 12 (가장 어두움) |
+| **raised** | `--elev` | 카드 · 사이드바 | 28 fill + 1px `--line`, **shadow · inset 없음** |
+| raised-2 (상태) | `--surface-raised-2` | 인터랙티브 타일 hover (`.i-tile-hover`) | 36 fill + `--shadow-raised-2` |
+| **overlay** | `--surface-overlay` | drawer · dialog · popover | 28 fill + `--shadow-overlay` |
 
 - 5단계 이상 금지. overlay 는 그림자 필수.
 - raised = fill step + one hairline, `.card` included; shadows only on floating layers (popover · dialog · toast · scrolled table header, §12.9).
@@ -459,14 +459,14 @@
 
 ### 6.5 기타 표면 · z stack
 
-- **`.sub-card`** (`SubCard`): 중첩 섹션 · 메트릭 타일. `--radius-tile` 8 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset in both themes. 면 = `bg-elev` 또는 `sunken`.
+- **`.sub-card`** (`SubCard`): 중첩 섹션 · 메트릭 타일. `--radius-tile` 8 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset. 면 = `bg-elev` 또는 `sunken`.
 - **`.popover-panel`** (`Popover`, non-modal): 트리거 아래 우측 정렬 (`top: calc(100% + 4px)`) · min 240 · max min(360px, 100vw − 32px) · max-h 60vh · inset `--card-pad` · rows stacked on `--gap-list` · `--overlay-surface` + 1px `--line` + `--radius-card` + `--shadow-overlay`.
   - z = overlay − 1 → 열린 `DetailSurface` 가 덮는다. 열려 있는 동안만 카드가 overflow 를 푼다 (`.card:has(.popover-panel)`).
 - **`.save-banner`**: sticky bottom dirty-state 바 — 불투명 `--elev` + 상단 1px `--line` + `--shadow-overlay` · z 10 · padding 12px 20px.
 - **`.doc-toast`**: 유일한 toast (소비처 clauded-docs · model-config · improvement `ToastI`), z 200 의 overlay 면.
   - fixed 우하단 24px (model-config 는 위치만 inline 으로 우상단) · `--radius-tile` · `--fs-body` · max-w 480 · 불투명 `--overlay-surface` + 1px `--line` + `--shadow-overlay` · 텍스트 `--ink`.
   - tone class (`.info` · `.ok` · `.warn` · `.crit`) 는 root 에서 `--toast-tone` 만 정하고, 그 색은 메시지 앞 `.doc-toast-glyph` (`TONE_GLYPH`, aria-hidden) 에만.
-  - 명암 (불투명 shell → 어떤 면 위에서도 같다): 텍스트 light 17.49 · dark 16.74 · glyph light ≥ 3.44 · dark ≥ 6.32.
+  - 명암 (불투명 shell → 어떤 면 위에서도 같다): 텍스트 16.74 · glyph ≥ 6.32.
 - **문서 viewer chrome** (`clauded-docs.jsx` fullscreen viewer):
   - viewer 는 고정 캔버스 (`.doc-fs-container` `rgb(9 9 11)` · meta aside `rgb(13 13 16)`); chrome 은 root 토큰을 그대로 쓴다.
   - chrome = head · superseded 알림 · meta aside · 비-ready 상태 (idle · loading · read 실패 · 렌더 불가). 렌더된 문서 본문은 토큰 체계 밖 carve-out.
@@ -517,7 +517,7 @@
 
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · no border · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
-  - glyph 명암 (`--sunken` shell 위): light warn 3.15 · info 3.38 · ok 3.45 · crit 4.63 · dark ≥ 6.62.
+  - glyph 명암 (`--sunken` shell 위): warn 10.97 · info 10.13 · ok 9.52 · crit 6.62.
 - 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes).
 - **fill** (`Badge fill`): `quiet` (default — the neutral shell above) · `solid` = `.pill--solid`, `--ink` shell + `--surface` text — waits for the owner · `tag` = `.pill--tag`, `--tint-fill` + ink — a fact worth a glance · `warn` = `.pill--warn`, `--tint-warn` + ink, led by an ink `⚠` the atom draws — did not arrive. Every fill is 13 / 600, line 1, 20 high, no border.
   - **Count shape** (`role="count"` with a fill, and the quiet nav count): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
@@ -532,8 +532,8 @@
   - A familiar glyph that is not a commit is an icon button `.btn.ghost.icon`: the glyph alone, 16 in a 32 square, no edge in any state · `--dim` glyph at rest · hover `--tint-select` fill (the sunken fill is 1.05:1 on the card, no shape) + `--ink` glyph · held `--tint-fill`, one step stronger · disabled `--faint` glyph, no fill · an `aria-label` with the act, a `title` with the act and its key (`Back to the list (Esc)`) · the global focus ring. A commit, a re-send (`Try again` on a failed upload), `later`, `Show`, `Show more` and `Show earlier` keep their word.
 - `.danger`: `--crit` fill + `--elev` knock-out text — 6.32.
 - **red-outline destructive** (§4.2 destructive action): `.btn` variant 아닌 screen-local inline style — crit 텍스트 + crit border, fill 없음.
-  - `agents.jsx` → `DELETE_OUTLINE_STYLE` "Delete" · `improvement.jsx` → `REJECT_OUTLINE_STYLE` "Reject": `.btn` 의 `--elev` 위 light 5.05 · dark 6.32 · hover `--sunken` light 4.63 · dark 6.62.
-  - `model-config.jsx` → `DiscardConfirmMC` "Discard changes": `background: transparent` → `.detail-foot` `--sunken` 위, rest · hover light 4.63 · dark 6.62.
+  - `agents.jsx` → `DELETE_OUTLINE_STYLE` "Delete" · `improvement.jsx` → `REJECT_OUTLINE_STYLE` "Reject": `.btn` 의 `--elev` 위 6.32 · hover `--sunken` 6.62.
+  - `model-config.jsx` → `DiscardConfirmMC` "Discard changes": `background: transparent` → `.detail-foot` `--sunken` 위, rest · hover 6.62.
 - 긍정 action (improvement Approve) = `.btn sm` + ✓ glyph `text-ok`, 라벨 `--ink`.
 - `.sm`: padding 6px 8px (`--space-1_5` × `--space-2`) · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
 - disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) keeps its resting fill: ink edge + ink text + a leading ✓ glyph (glyph pending S2a — `base.css` draws none yet), no `--selected-fill` inversion.
@@ -676,7 +676,7 @@
 
 - **`.field`** (form input · select — never a bar search, §12.3): min-height `--ctl-h` 32 · padding `--ctl-pad-y` × `--ctl-pad-x` · `--ctl-font` · `--elev` · 1px `--control-edge` (resting edge, §7.16) · `--ctl-radius` · disabled opacity 0.5.
   - hover border `--faint` · focus = `--accent` border + 전역 focus outline · error `.is-error` = `--crit` border (error 가 hover 보다 우선 — hover 중에도 `--crit`) + `--fs-meta` crit 메시지 — §4.2 허용 예외 (메시지는 crit ≥ 4.5 인 면 위에서만).
-  - `.field--mono`: mono tnum · `.field-select`: 테마별 `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border (`--control-edge`) · focus 소유, `:has(:focus-visible)` 로 outline.
+  - `.field--mono`: mono tnum · `.field-select`: `--faint` chevron · `.field-affix` (`$` 등): wrapper 가 border (`--control-edge`) · focus 소유, `:has(:focus-visible)` 로 outline.
 - **`.stage-pip`**: 8px 원 · 빈 pip `--pip-empty` · 채움 `--ink`.
 - **`.low-sample`** (`LowSampleMark`): 작은 표본 비율 옆 `--faint` `(n=N)`, no italic.
 - **`.section-label`** (`SectionLabel`): `--fs-meta` 600 sentence case `--dim`, 실제 h2/h3.
@@ -718,7 +718,7 @@
 - **Part health 목록** (`PartHealthBlockAR`): 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
   - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 action "Open box" = `btn ghost sm` (quiet tier).
   - healthy 부품은 `N healthy` fold (`details` + `summary.disclosure`) 안으로 접힘 — 접힌 기본 상태. fold 안 행은 status atom 없음 (summary 가 이미 healthy) — 잡아 둔 읽기의 `Last known` 만 행에 남음.
-- **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0 (양 테마). 노드 테두리 override 는 dark 에서만: 그려진 map 은 양 테마 모두 어두운 노드 fill 이라 light `--cat-*` 가 오늘보다 낮게 잼 (spec 44084 §13) → light 는 classDef stroke 그대로. light 의 범례 swatch (light `--cat-*`) ↔ 노드 테두리 (classDef hex) 일치는 map light theme follow-up FU1 몫. 라벨도 같음: box 라벨 `p` 의 `--ink` · zone 제목과 edge 라벨의 `--dim` 은 dark 에서만, light 는 오늘의 라벨 색 그대로 (FU1).
+- **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0; 노드 테두리는 `getMapBorderRulesAR` 가 `#${ARCH_CANVAS_ID}` 범위에서 classDef stroke 를 같은 `--cat-*` 로 덮는다. 라벨도 같은 범위: box 라벨 `p` 의 `--ink` · zone 제목과 edge 라벨의 `--dim`.
 
 ### 7.15 Control size tiers
 
@@ -882,7 +882,7 @@
 - [ ] 모든 모션에 `prefers-reduced-motion: reduce` 게이트 — CSS 는 reduce 블록, Tailwind 유틸은 `motion-safe:`, inline `animation` 금지. §8.4 finder 2개는 허용 hit 만 · Recharts `Tooltip` 은 `isAnimationActive={false}`.
 
 **접근성 · 성능**
-- [ ] 본문 텍스트 ≥ 4.5:1, UI · glyph ≥ 3:1 — 모든 면에서. glass/투명 표면 위 텍스트는 합성 대비를 가장 불리한 배경에서 light · dark 양쪽 실측해 기록 (토큰 self-attestation 아님).
+- [ ] 본문 텍스트 ≥ 4.5:1, UI · glyph ≥ 3:1 — 모든 면에서. glass/투명 표면 위 텍스트는 합성 대비를 가장 불리한 배경에서 실측해 기록 (토큰 self-attestation 아님).
 - [ ] 인터랙티브 atom 높이 ≥ `--ctl-min-h` 32, 절대 하한 24×24 · 보이는 focus outline 하나, ring iff `:focus-visible` (§9.1), `outline: none` 은 대체 표시와 함께만.
 
 **슬롭 금지**
@@ -915,7 +915,7 @@
 
 **Flexible**
 
-- dev-only glass blur (8–12px) · glass fill 불투명도 (light 0.7–0.8 / dark 0.8–0.85).
+- dev-only glass blur (8–12px) · glass fill 불투명도 0.8–0.85.
 - 카드 slot 선택 (S/M/L) · `SplitRow layout` 선택 (근거: peer 여부).
 - overlay 진입 easing (effects 계열, overshoot 없음).
 
@@ -1152,16 +1152,15 @@
 - Retiring, marked in place until the owning stream lands:
   - pressed-toggle ✓ glyph (§7.4 · §7.6 · §7.16) → built with the S2a controls
 
-### 12.12 Contrast (measured, WCAG 2.2, both themes)
+### 12.12 Contrast (measured, WCAG 2.2)
 
-- Dark: ink on elev-2 15.46 · ink on elev 16.74 · dim on elev 11.74 / sunken 12.29 · faint on elev 6.29 / sunken 6.59 / elev-2 5.81 · `--control-edge` on elev-2 3.37 / sunken 3.82 / elev 3.65 · accent on elev-2 6.35 · focus ring on surface 7.77.
-- Light: ink on elev 17.49 / sunken 16.03 · dim on elev 7.63 / sunken 6.99 · faint on elev 5.33 / sunken 4.89 · `--control-edge` on elev 3.69 / sunken 3.38 · accent on elev 5.17.
-- A sunken fill on elev is 1.05:1 (dark) / 1.09:1 (light) — never a cue alone:
-  - bar search → the faint search icon (≥ 4.89:1); filter trigger → the faint chevron (≥ 5.33:1) + dim label;
+- ink on elev-2 15.46 · ink on elev 16.74 · dim on elev 11.74 / sunken 12.29 · faint on elev 6.29 / sunken 6.59 / elev-2 5.81 · `--control-edge` on elev-2 3.37 / sunken 3.82 / elev 3.65 · accent on elev-2 6.35 · focus ring on surface 7.77.
+- A sunken fill on elev is 1.05:1 — never a cue alone:
+  - bar search → the faint search icon (≥ 6.59:1); filter trigger → the faint chevron (≥ 6.29:1) + dim label;
   - selected row → the checked checkbox; current page → ink label at 500 vs dim at 400.
 - Every selected state also carries a non-colour cue (edge, ✓ glyph, checkbox or weight).
-- Tints (composited on `--elev`): ink on `--tint-select` 13.47 (dark) / 14.89 (light) · dim 9.44 / 6.50 · ink on `--tint-fill` 12.64 / 14.28 · dim 8.87 / 6.23 · ink on `--tint-warn` 11.74 / 14.60 · surface on ink (solid badge) 18.92 / 16.74. Faint on `--tint-fill` is 4.35 in light → a tinted shell holds no faint text.
-- Heat ramp and row-state ladder (composited on `--elev`): `--heat-1` 3.25 (dark) / 3.16 (light), each step ≥ 1.44 / 1.45 over the one below · lowest row-state pairs warn glyph 3.02 (light, `--tint-row-3`) · empty pip 3.06 (dark, `--tint-row-3`) · faint 4.67 (light) — full tables §4.1.
+- Tints (composited on `--elev`): ink on `--tint-select` 13.47 · dim 9.44 · ink on `--tint-fill` 12.64 · dim 8.87 · faint 4.75 · ink on `--tint-warn` 11.74 · surface on ink (solid badge) 18.92. A tinted shell holds no faint text.
+- Heat ramp and row-state ladder (composited on `--elev`): `--heat-1` 3.25, each step ≥ 1.44 over the one below · lowest row-state pairs (`--tint-row-3`) empty pip 3.06 · faint 5.28 · crit glyph 5.31 — full tables §4.1.
 - Regression: `test/tokens.contrast.unit.test.ts` (base-look pairs on every surface, ring on surface, the tints and badge fills on every ground they stand on, `--data`, the heat ramp, the row-state ladder).
 
 ---
