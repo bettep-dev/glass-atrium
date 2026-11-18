@@ -93,7 +93,7 @@ export interface ConfirmFacts {
 }
 
 export interface SetupFacts {
-  /** on in config */
+  /** on in config and not turned off by a device */
   readonly enabled: boolean;
   readonly isOffByDevice: boolean;
   readonly listenReason: ListenReason;

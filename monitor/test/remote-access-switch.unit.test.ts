@@ -15,7 +15,7 @@ import pino from "pino";
 import type { AccessStepOutcome, SetupFacts } from "../src/server/remote/admin-routes.js";
 import type { NetworkIdentity, NetworkLink } from "../src/server/remote/network.js";
 import type { RemoteSettings } from "../src/server/remote/settings.js";
-import { type AccessSwitchDeps, CONFIRM_TTL_MS, RemoteAccessSwitch, runAccessStep } from "../src/server/remote/start.js";
+import { type AccessSwitchDeps, CONFIRM_TTL_MS, RemoteAccessSwitch, isDeviceOff, runAccessStep, setDeviceOff } from "../src/server/remote/start.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 
 // the write step's library → its exit-code constants
@@ -50,6 +50,8 @@ interface SwitchCase {
   readonly link?: NetworkLink;
   /** runs after each step → a network that changes mid-act */
   readonly afterStep?: (act: string, network: StandInNetwork) => void;
+  /** the real access-state marker in this directory instead of the stand-in */
+  readonly dataDir?: string;
 }
 
 /** The network the Mac is on now, as the switch reads it, and the clock it reads. */
@@ -93,7 +95,7 @@ async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
       return input.written ?? ON;
     },
     open,
-    isDeviceOff: async () => input.isDeviceOff ?? false,
+    isDeviceOff: async () => (input.dataDir === undefined ? (input.isDeviceOff ?? false) : isDeviceOff(input.dataDir)),
     setDeviceOff: async () => {
       steps.push("device-off marker");
     },
@@ -329,6 +331,20 @@ describe("the setup facts", () => {
       });
     });
   }
+
+  test("after a registered device turns access off, the facts report access off by the device while config still says on", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "access-state-"));
+    try {
+      const { access, opened } = await buildSwitch({ booted: ON, dataDir });
+      // the device's off: the open listener turned off, the marker written (start.ts → openRemoteAccess)
+      await opened[0]?.turnOff();
+      await setDeviceOff(dataDir);
+      const { enabled, isOffByDevice, listenReason, isAnswering } = await access.getSetupFacts();
+      assert.deepEqual({ enabled, isOffByDevice, listenReason, isAnswering }, { enabled: false, isOffByDevice: true, listenReason: "disabled", isAnswering: false });
+    } finally {
+      deleteDirectory(dataDir);
+    }
+  });
 });
 
 test("setup reads that overlap share one network read, and a read after them reads again", async () => {

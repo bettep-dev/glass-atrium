@@ -132,7 +132,7 @@ export async function startRemoteAccess(input: RemoteAccessInput & { readonly se
 }
 
 // a device's off holds over config on until an on writes access-state again
-async function getEffectiveSettings(settings: RemoteSettings, isOff: () => Promise<boolean>): Promise<RemoteSettings> {
+async function getEffectiveSettings(settings: RemoteSettings, isOff: () => Promise<boolean> | boolean): Promise<RemoteSettings> {
   return settings.enabled && (await isOff()) ? { ...settings, enabled: false } : settings;
 }
 
@@ -273,8 +273,8 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
   }
 
   async #readSetupFacts(): Promise<SetupFacts> {
-    const settings = this.#settings;
     const [identity, hostName, isOffByDevice] = await Promise.all([this.deps.readIdentity(), this.deps.readHostName(), this.deps.isDeviceOff()]);
+    const settings = await getEffectiveSettings(this.#settings, () => isOffByDevice);
     const address = identity === null ? null : this.deps.getAddress(identity.interface);
     return {
       enabled: settings.enabled,
