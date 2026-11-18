@@ -109,7 +109,11 @@ function registerRelayRoutes(app: FastifyInstance): void {
       input: request.body,
       work: async (id) => {
         setAuditTarget(request, { signal: getPageOriginSignalOrThrow(request) });
-        await putRedaction(id, (tx) => insertAudit(request, { statusCode: 200 }, tx));
+        await putRedaction(id, (tx) => insertAudit(request, { statusCode: 200 }, tx)).catch((error: unknown) => {
+          // the audit row rolled back with the redaction → the response's own row stands in
+          (request as FastifyRequest & AuditChangeCarrier).isAuditWritten = false;
+          throw error;
+        });
         return { ok: true };
       },
     }),

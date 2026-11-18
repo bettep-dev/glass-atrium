@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import "dotenv/config";
 
@@ -14,6 +15,7 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
 import { registerQueueRoutes, resolveQueueRouteOptions } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -47,9 +49,10 @@ after(async () => {
   deleteDirectory(fixtureRoot);
 });
 
-async function buildApp(): Promise<FastifyInstance> {
+async function buildApp(isAudited = false): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
   await registerQueueRoutes(instance, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images"), scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
+  if (isAudited) registerAuditLogHook(instance);
   await instance.ready();
   return instance;
 }
@@ -1103,6 +1106,29 @@ describe("relay redaction", () => {
     assert.equal(response.statusCode, 200, response.body);
     const rows = await getPrisma().auditLog.findMany({ where: { actionKind: "queue-relay.redact", targetId: itemId } });
     assert.deepEqual(rows.map((row) => [row.resultCode, row.targetTable, (row.payload as { change?: unknown } | null)?.change]), [["success", "queue-relay", { signal: "origin" }]]);
+  });
+
+  test("a redaction whose transaction rolls back after its audit row is written changes nothing and leaves the response's own error row", async () => {
+    const itemId = await seedRelay();
+    const before = await getItemRow(itemId);
+    const prisma = getPrisma();
+    const originalTransaction = prisma.$transaction.bind(prisma);
+    (prisma as { $transaction: unknown }).$transaction = ((work: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+      originalTransaction(async (tx) => { await work(tx); throw new Error("forced rollback after the audit row"); })) as unknown as typeof prisma.$transaction;
+    const audited = await buildApp(true);
+    let response: LightMyRequestResponse;
+    try {
+      response = await audited.inject({ method: "POST", url: `/api/queue/owner/items/${itemId}/redact`, headers: { host: HOST, ...SAME_ORIGIN } });
+      await delay(150);
+    } finally {
+      (prisma as { $transaction: unknown }).$transaction = originalTransaction;
+      await audited.close();
+    }
+
+    assert.equal(response.statusCode, 503, response.body);
+    assert.deepEqual(await getItemRow(itemId), before);
+    const rows = await prisma.auditLog.findMany({ where: { actionKind: "queue-relay.redact", targetId: itemId } });
+    assert.deepEqual(rows.map((row) => row.resultCode), ["error"]);
   });
 
   test("refuses replacement text, an owner message, a report, a request without the page-origin signal and any session route", async () => {

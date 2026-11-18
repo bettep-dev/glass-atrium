@@ -60,7 +60,7 @@ export type AuditTarget = Readonly<Record<string, unknown>>;
 // (model-config AC-9: exactly 1 row per PUT). Remote: the gate records it as the row's `target` with the outcome, every route.
 export interface AuditChangeCarrier {
   auditChange?: AuditTarget;
-  /** Set by insertAudit → the onResponse hook writes no second row for the response. */
+  /** Set by insertAudit once its row is written → the onResponse hook writes no second row for the response. */
   isAuditWritten?: boolean;
 }
 
@@ -207,15 +207,15 @@ export function registerAuditLogHook(app: FastifyInstance): void {
  * Awaited row for a response its handler records itself (a relay refusal, a redaction), in place of the hook's.
  * @param outcome - the status the handler is about to answer with
  * @param db - a transaction client → the row commits or rolls back with the handler's own write
- * @throws on an uncovered route or a failed INSERT; the hook writes no row for this response either way
+ * @throws on an uncovered route or a failed INSERT → no row stands, so the hook writes the response's own row
  */
 export async function insertAudit(request: FastifyRequest, outcome: AuditOutcome, db: Prisma.TransactionClient = getPrisma()): Promise<void> {
   const snapshot = getAuditSnapshot(request, outcome);
   if (snapshot === null) {
     throw new Error(`audit-log: ${request.method} ${request.routeOptions.url} is no audited mutation route`);
   }
-  (request as FastifyRequest & AuditChangeCarrier).isAuditWritten = true;
   await writeAuditRow(db, snapshot);
+  (request as FastifyRequest & AuditChangeCarrier).isAuditWritten = true;
 }
 
 /** Row a mutating covered route's response records; null for a read, an unmatched or an uncovered route. */

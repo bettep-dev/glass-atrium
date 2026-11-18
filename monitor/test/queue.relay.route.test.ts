@@ -572,14 +572,16 @@ describe("relay refusal records", () => {
     }
   });
 
-  test("a refusal whose audit row cannot be written is still returned, logged at error level, and no second row is written", async () => {
+  test("a refusal whose awaited audit row cannot be written is still returned, logged at error level, and the response's own row stands in once", async () => {
     const lines: string[] = [];
     const sink = new Writable({ write(chunk: Buffer, _encoding, done) { lines.push(chunk.toString("utf8")); done(); } });
     const logged = await buildApp(SCANNER_PATH, pino({ level: "info" }, sink));
     const sender = await seedSession();
     const prisma = getPrisma();
     const originalExecuteRaw = prisma.$executeRaw.bind(prisma);
-    (prisma as { $executeRaw: unknown }).$executeRaw = (() => Promise.reject(new Error("forced audit insert failure"))) as unknown as typeof prisma.$executeRaw;
+    let failures = 0;
+    (prisma as { $executeRaw: unknown }).$executeRaw = ((...args: Parameters<typeof prisma.$executeRaw>) =>
+      failures++ === 0 ? Promise.reject(new Error("forced audit insert failure")) : originalExecuteRaw(...args)) as unknown as typeof prisma.$executeRaw;
     let response: LightMyRequestResponse;
     try {
       response = await relay({ sessionId: sender, recipients: [prefixOf(sender)], text: "Lint is green." }, { on: logged });
@@ -592,7 +594,8 @@ describe("relay refusal records", () => {
     assert.deepEqual([response.statusCode, response.json().error], [409, "relay_self"]);
     const errors = lines.map((line) => JSON.parse(line) as { level: number; msg: string }).filter((line) => line.level === 50);
     assert.equal(errors.length, 1, lines.join(""));
-    assert.equal((await findRefusalRows(sender)).length, 0);
+    const records = await findRefusalRows(sender);
+    assert.deepEqual(records.map((record) => [record.resultCode, (record.payload as { change?: { reason?: string } } | null)?.change?.reason]), [["blocked", "self"]]);
   });
 });
 
