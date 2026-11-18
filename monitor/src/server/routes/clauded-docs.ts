@@ -1366,6 +1366,7 @@ async function handleHtmlExportSingle(
   reply.header("Content-Type", "text/html; charset=utf-8");
   reply.header("Content-Disposition", buildHtmlExportContentDisposition(row));
   reply.header("X-Content-Type-Options", "nosniff");
+  applyHtmlBodyCspHeader(reply);
   reply.header("ETag", etag);
   reply.header("Cache-Control", "private, max-age=0, must-revalidate");
 

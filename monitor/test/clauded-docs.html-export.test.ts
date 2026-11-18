@@ -488,6 +488,7 @@ test("GET /:id/html-export: Korean title — attachment Content-Disposition dual
   assert.ok(typeof disposition === "string", "Content-Disposition present");
   assert.ok(disposition.startsWith("attachment; filename="), `attachment disposition, got: ${disposition}`);
   assert.strictEqual(res.headers["x-content-type-options"], "nosniff", "the download is never sniffed into a page");
+  assert.strictEqual(res.headers["content-security-policy"], "sandbox; frame-ancestors 'self'", "rendered as a page anyway, the body runs sandboxed like every other document body");
   for (let i = 0; i < disposition.length; i += 1) {
     assert.ok(disposition.charCodeAt(i) <= 0x7f, `non-ASCII at ${i}: ${disposition}`);
   }
