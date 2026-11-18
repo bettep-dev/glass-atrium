@@ -91,21 +91,10 @@ function loadInjectMdTypographyClasses(): (html: string) => string {
   return new Function(`${source}\nreturn ${name};`)() as (html: string) => string;
 }
 
-/**
- * The viewer's own DOMPurify config, lifted from the source file.
- *
- * Same slice technique and same reason as the injector above: a copy of the
- * config here would let the test pass while the shipped sanitizer stripped the
- * container. Sliced on the column-0 `};`.
- */
-function loadDompurifyConfig(): Record<string, unknown> {
-  const jsx = readFileSync(VIEWER_SCREEN_PATH, "utf8");
-  const open = jsx.indexOf("const DOMPURIFY_CONFIG_CD = {");
-  assert.notEqual(open, -1, "DOMPURIFY_CONFIG_CD not found in clauded-docs.jsx");
-  const close = jsx.indexOf("\n};\n", open);
-  assert.notEqual(close, -1, "DOMPURIFY_CONFIG_CD has no column-0 closing brace");
-  const source = jsx.slice(open, close + 3);
-  return new Function(`${source}\nreturn DOMPURIFY_CONFIG_CD;`)() as Record<string, unknown>;
+/** The viewer's own DOMPurify config, as the shipped ui.jsx exposes it (a copy here could pass while the shipped sanitizer stripped the container). */
+async function loadDompurifyConfig(): Promise<Record<string, unknown>> {
+  const ui = (await loadScreenModule(resolve(MONITOR_ROOT, "public/src/ui.jsx"))).UI as { SANITIZE_CONFIG: Record<string, unknown> };
+  return ui.SANITIZE_CONFIG;
 }
 
 let injectorCache: ((html: string) => string) | null = null;
@@ -469,7 +458,7 @@ test("the diagram container survives the viewer's sanitizer with its source inta
   // different React would be a claim about code no reader runs. The sanitizer is
   // where the risk is; React cannot drop a className off a parsed node.
   const converted = convertMdBody(MD_BODY);
-  const config = loadDompurifyConfig();
+  const config = await loadDompurifyConfig();
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.route("**/*", (route) => route.abort());

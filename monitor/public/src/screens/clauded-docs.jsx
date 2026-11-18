@@ -3770,76 +3770,6 @@ function renderMarkdownCD(mdBody, scopeClass, title) {
 //   콘솔에서 `window.__claudedDocsTest = true; location.reload()` → reload 직후 콘솔 결과 확인.
 //   테스트 케이스: <script> · onerror · javascript: URL · <svg onload> · <style body{}> 스코핑 · Tailwind className · <iframe srcdoc>.
 
-// DOMPurify config — 화이트리스트 외 태그/속성 통째 차단.
-// FORBID_TAGS: script (내용 포함) · iframe (srcdoc 중첩 포함) · object · embed · base · meta · link.
-//   + form · input · button · select · textarea — 클릭 한 번의 same-origin 요청 경로, md 본문은 서버 sanitize 를 거치지 않으므로 이 config 가 md·html 공통의 유일한 차단선.
-// FORBID_ATTR: on* 인라인 이벤트 + formaction (form 하이재킹) + ping (링크 클릭 시 POST).
-// ALLOW_UNKNOWN_PROTOCOLS=false → javascript: / data: URL 차단.
-// KEEP_CONTENT=true → 제거된 태그의 텍스트 내용은 유지 (단 script 내용은 default 로 제거됨).
-// WHOLE_DOCUMENT=true → <html>/<head>/<body> 보존 (default 는 body unwrap → class 유실). body className lift 가능.
-const DOMPURIFY_CONFIG_CD = {
-	FORBID_TAGS: [
-		"script",
-		"iframe",
-		"object",
-		"embed",
-		"base",
-		"meta",
-		"link",
-		"form",
-		"input",
-		"button",
-		"select",
-		"textarea",
-	],
-	FORBID_ATTR: [
-		"onerror",
-		"onload",
-		"onclick",
-		"onmouseover",
-		"onfocus",
-		"onblur",
-		"onchange",
-		"oninput",
-		"onsubmit",
-		"onreset",
-		"onselect",
-		"onkeydown",
-		"onkeyup",
-		"onkeypress",
-		"onabort",
-		"oncanplay",
-		"oncanplaythrough",
-		"ondurationchange",
-		"onemptied",
-		"onended",
-		"onloadeddata",
-		"onloadedmetadata",
-		"onloadstart",
-		"onpause",
-		"onplay",
-		"onplaying",
-		"onprogress",
-		"onratechange",
-		"onseeked",
-		"onseeking",
-		"onstalled",
-		"onsuspend",
-		"ontimeupdate",
-		"onvolumechange",
-		"onwaiting",
-		"onanimationstart",
-		"onanimationend",
-		"onanimationiteration",
-		"ontransitionend",
-		"formaction",
-		"ping",
-	],
-	ALLOW_UNKNOWN_PROTOCOLS: false,
-	KEEP_CONTENT: true,
-	WHOLE_DOCUMENT: true,
-};
-
 // HTML attribute → React prop 매핑 (DOMPurify 통과 attr 만 처리 — 화이트리스트 추가 sanitize 후 React 가 받음).
 const HTML_TO_REACT_ATTR_CD = {
 	class: "className",
@@ -3866,7 +3796,7 @@ function htmlToReactCD(htmlString, scopeClass) {
 	if (typeof DOMParser === "undefined") return null;
 
 	try {
-		const sanitized = purifier.sanitize(htmlString, DOMPURIFY_CONFIG_CD);
+		const sanitized = purifier.sanitize(htmlString, window.UI.SANITIZE_CONFIG);
 		if (typeof sanitized !== "string") return null;
 		const dom = new DOMParser().parseFromString(sanitized, "text/html");
 		if (!dom || !dom.documentElement) return null;

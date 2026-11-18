@@ -43,10 +43,12 @@ type Viewer = {
   htmlToReactCD: (body: string, scope: string) => Rendered;
 };
 
-// what the screen reads at load: UI atoms (each a recording element) and the group-expand store
+const { SANITIZE_CONFIG } = (await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"))).UI as { SANITIZE_CONFIG: unknown };
+
+// what the screen reads at load: the shipped sanitizer config, UI atoms (each a recording element) and the group-expand store
 function getScreenGlobals(): Record<string, unknown> {
   const atom = (name: string) => (props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } });
-  const UI = new Proxy({}, { get: (_t, name: string) => atom(name), has: () => true });
+  const UI = new Proxy({}, { get: (_t, name: string) => (name === "SANITIZE_CONFIG" ? SANITIZE_CONFIG : atom(name)), has: () => true });
   const items = new Map<string, string>();
   const localStorage = { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), removeItem: (k: string) => void items.delete(k) };
   return { UI, localStorage };
