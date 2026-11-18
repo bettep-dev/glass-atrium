@@ -363,6 +363,15 @@ configd_service_for() {
   run bash "${GA}/glass-atrium" --help
   [[ "${status}" -eq 0 && "${output}" == *"glass-atrium remote <sub>"* && "${output}" != *"remote-access-set"* ]] \
     || { echo "${output}"; return 1; }
+  # the step's own argv through the public entry reaches the terminal acts, which refuse without a terminal
+  local config_before argv
+  config_before="$(file_sum "${SANDBOX}/config.toml")"
+  for argv in 'on' 'trust en1 192.168.0.1 00:1b:2c:0d:4e:5f'; do
+    # shellcheck disable=SC2086  # a row's argv is split into its words
+    run bash "${GA}/glass-atrium" remote ${argv} </dev/null
+    [[ "${status}" -eq 4 ]] || { echo "remote ${argv}: ${status} ${output}"; return 1; }
+  done
+  [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${KEY_DIR}" ]] || return 1
 }
 
 # --- the Mac page's write step (scripts/remote-access-set.sh: no terminal, no restart, no monitor call) --
@@ -399,6 +408,32 @@ rendered_access() { grep -E '^ATRIUM_REMOTE_ACCESS=' "${SANDBOX}/monitor/.env"; 
   ! grep -q launchctl "${CALLS}" || { echo "restarted"; return 1; }
 }
 
+@test "the page's on again keeps the CA key and certificate the first on made" {
+  write_render_config
+  run_page_step on
+  local ca_before
+  ca_before="$(file_sum "${KEY_DIR}/ca.key")$(file_sum "${KEY_DIR}/ca.pem")"
+  run_page_step on
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(file_sum "${KEY_DIR}/ca.key")$(file_sum "${KEY_DIR}/ca.pem")" == "${ca_before}" ]] || return 1
+}
+
+# A config write either replaces config.toml whole by a rename, or leaves it byte-identical; no temp file stays.
+@test "a config write renames a complete file into place, and a failed write leaves config.toml as it was" {
+  printf '\n[remote_access]\nenabled = false\n' >>"${SANDBOX}/config.toml"
+  local inode_before sum_before
+  inode_before="$(ls -i "${SANDBOX}/config.toml")"
+  ga_remote_set_config enabled true
+  [[ "$(ls -i "${SANDBOX}/config.toml")" != "${inode_before}" ]] || { echo "rewritten in place"; return 1; }
+  [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 1
+  sum_before="$(file_sum "${SANDBOX}/config.toml")"
+  awk() { printf '[remote_access]\n'; return 1; }
+  ! ga_remote_set_config enabled false || { echo "a failed write reported success"; return 1; }
+  unset -f awk
+  [[ "$(file_sum "${SANDBOX}/config.toml")" == "${sum_before}" ]] || { echo "partial write reached config.toml"; return 1; }
+  [[ -z "$(find "${SANDBOX}" -maxdepth 1 -name '.config.toml.*')" ]] || { echo "temp file left"; return 1; }
+}
+
 # The network the stubs read, as the monitor hands the confirm's identity to the step: interface, gateway, address.
 SHOWN=(en1 192.168.0.1 00:1b:2c:0d:4e:5f)
 
@@ -406,7 +441,8 @@ SHOWN=(en1 192.168.0.1 00:1b:2c:0d:4e:5f)
   write_render_config
   printf '\n[remote_access]\nenabled = true\nport = 16146\n' >>"${SANDBOX}/config.toml"
   local rows=('new network|0|192.168.0.1@00:1b:2c:0d:4e:5f' 'already trusted|9|192.168.0.1@00:1b:2c:0d:4e:5f')
-  local row name want_status want_list
+  local row name want_status want_list others_before
+  others_before="$(grep -v '^trusted_networks' "${SANDBOX}/config.toml")"
   for row in "${rows[@]}"; do
     IFS='|' read -r name want_status want_list <<<"${row}"
     run_page_step trust "${SHOWN[@]}"
@@ -414,6 +450,9 @@ SHOWN=(en1 192.168.0.1 00:1b:2c:0d:4e:5f)
     [[ "$(atrium_toml_get "[remote_access]" "trusted_networks")" == "${want_list}" ]] || { echo "${name}: list"; return 1; }
   done
   grep -q '^ATRIUM_REMOTE_TRUSTED_NETWORKS=192.168.0.1@00:1b:2c:0d:4e:5f$' "${SANDBOX}/monitor/.env" || return 1
+  [[ "$(grep -v '^trusted_networks' "${SANDBOX}/config.toml")" == "${others_before}" ]] \
+    || { echo "a line other than the trusted list changed"; return 1; }
+  [[ ! -e "${KEY_DIR}" ]] || { echo "trust touched the key dir"; return 1; }
   ! grep -q launchctl "${CALLS}" || { echo "restarted"; return 1; }
 }
 
