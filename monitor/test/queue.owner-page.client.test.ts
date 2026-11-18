@@ -14,6 +14,7 @@ import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, repl
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRelayHistoryFixture } from "./lib/queue-render-fixtures.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const QUEUE_SRC = resolve(__dirname, "../public/src/screens/queue.jsx");
@@ -114,6 +115,8 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       busy: { id: null, error: null },
       resumes: READY_RESUMES,
       readResumes: record("readResumes"),
+      relaySignal: { status: "ready", data: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: false }, error: null, busy: false },
+      relayHistory: { thread: { status: "loading", items: [], refusals: [], nextCursor: null, error: null }, read: record("readRelayHistory"), showEarlier: record("showEarlierRelays") },
       drafts: {},
       setDraft: record("setDraft"),
       later: record("later"),
@@ -551,18 +554,19 @@ describe("recent automatic resumes", () => {
   });
 
   // spec §4.4: the foot button's count and ⚠ follow the page's own tick, as the list does
-  test("the page's tick reads the resume record beside the list, the sessions, the count and the thread", async () => {
+  test("the page's tick reads the resume record and the relay signal beside the list, the sessions, the count and the thread", async () => {
     const reads: string[] = [];
     const read = (name: string, answer: unknown = undefined) => async () => { reads.push(name); return answer; };
     const isGood = await (screen.getPageReadQ as (deps: unknown) => Promise<boolean>)({
       readList: read("list", { isGood: true, arrived: [], turned: [] }),
       readResumes: read("resumes"),
+      readRelaySignal: read("relay signal"),
       sessions: { read: read("sessions") },
       orders: { reread: read("thread") },
       onReadQueueCount: read("count"),
       setStatus: () => undefined,
     });
-    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "list", "resumes", "sessions", "thread"]]);
+    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "list", "relay signal", "resumes", "sessions", "thread"]]);
   });
 
   test("the record is read from the resume route, whatever the owner list holds", async () => {
@@ -579,6 +583,87 @@ describe("recent automatic resumes", () => {
     await (module.getResumesQ as (deps: unknown) => Promise<void>)({ setResumes });
     assert.deepEqual(urls, ["/api/queue/owner/resumes"]);
     assert.deepEqual((getPlain(region) as { data: Array<{ item: { id: number } }> }).data.map((resume) => resume.item.id), [9]);
+  });
+});
+
+describe("relay history", () => {
+  const fixture = getRelayHistoryFixture();
+  const READY_SIGNAL = { status: "ready", data: fixture.signal, error: null, busy: false };
+  const history = (thread: Record<string, unknown> = {}) => ({
+    thread: { status: "ready", items: fixture.items, refusals: fixture.refusals, nextCursor: null, error: null, ...thread },
+    read: () => undefined,
+    showEarlier: () => undefined,
+  });
+  const flat = (node: RenderedNode | string) => collectText(node).replace(/\s+/g, " ").trim();
+  const entries = (tree: RenderedNode) => findNodes(tree, (node) => node.type === "article");
+
+  test("the history read asks the server's relay thread, unscoped by the ticks", async () => {
+    const urls: string[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      URLSearchParams,
+      window: { UI: realUi },
+      fetch: async (url: string) => { urls.push(url); return { status: 200, json: async () => ({ items: [], nextCursor: null, refusals: [] }) }; },
+    })) as ScreenModule;
+    await (module.getThreadQ as (deps: unknown) => Promise<void>)({ ids: [], before: null, setThread: () => undefined, kind: "relay" });
+    const [path, query] = (urls[0] ?? "").split("?");
+    assert.equal(path, "/api/queue/owner/orders");
+    assert.deepEqual(ownerOrdersQuerySchema.parse(Object.fromEntries(new URLSearchParams(query))), { kind: "relay", limit: 30 });
+  });
+
+  test("entries run oldest first, one per send, each named by its sender, its recipients and its send time", () => {
+    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
+    assert.deepEqual(entries(tree).map((node) => node.props["aria-label"]), [
+      "Relay from atrium to gersona, sent 2026-11-12 12:00",
+      "Relay from aidl to yoaida and portfolio, sent 2026-11-13 11:00",
+      "Relay from gersona to atrium, sent 2026-11-13 13:00",
+    ]);
+  });
+
+  test("each copy reads its relay id and one outcome: received, lapsed or not yet", () => {
+    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
+    const rows = findNodes(tree, (node) => node.type === "li" && node.props.className === "queue-relay-copy").map(flat);
+    assert.deepEqual(rows, [
+      "→ gersona 25a65a54 #398 ✓ Received 12:01",
+      "→ yoaida fa32c7cb #412 ✓ Received 11:04",
+      "→ portfolio 5d0e77a1 #413 ⚠ Lapsed 14:00",
+      "→ atrium e8923338 #415 Not yet",
+    ]);
+  });
+
+  test("a passed-on relay names its parent on the hop line; a relay at hop 0 has none", () => {
+    const [received, forwarded] = entries(render("RelayLogQ", { history: history({ refusals: [] }) }));
+    assert.match(flat(forwarded!), /Hop 1 · sent after aidl received relay #398 from atrium at 2026-11-12 12:00/);
+    assert.doesNotMatch(flat(received!), /Hop/);
+  });
+
+  test("relay text reaches the page as text: the prose atom gets the raw string and nothing sets inner HTML", () => {
+    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
+    const texts = findNodes(tree, (node) => node.props?.atom === "ProseText").map((node) => String(node.props.text));
+    assert.ok(texts.some((text) => text.includes("<b>굵게</b>")), String(texts));
+    assert.equal(findNodes(tree, (node) => node.props?.dangerouslySetInnerHTML !== undefined).length, 0);
+  });
+
+  const buttons = [
+    { name: "a record with any relay or refusal shows the button", hasRecord: true, count: 1 },
+    { name: "an empty record shows no button", hasRecord: false, count: 0 },
+  ];
+  for (const row of buttons) {
+    test(row.name, () => {
+      const signal = { ...READY_SIGNAL, data: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: row.hasRecord } };
+      const tree = render("RelayHistoryQ", { signal, history: history() });
+      assert.equal(buttonLabelled(tree, "Relay history").length, row.count);
+    });
+  }
+
+  test("opening the drawer reads the record again; its foot says the names are self-declared", () => {
+    let reads = 0;
+    const tree = render("RelayHistoryQ", { signal: READY_SIGNAL, history: { ...history(), read: () => { reads += 1; } } });
+    const [button] = findNodes(tree, (node) => node.type === "button" && /Relay history$/.test(collectText(node).trim()));
+    (button?.props.onClick as () => void)();
+    const [drawer] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
+    assert.equal(reads, 1);
+    assert.equal(drawer?.props.title, "Relay history");
+    assert.equal(flat(renderScreen(drawer?.props.footer) as RenderedNode), "Names are what sessions call themselves, and the queue has no login: any local process can send as any session, or redact. Read this as evidence, not proof.");
   });
 });
 

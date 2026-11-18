@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { getImageFacts } from "../../src/server/queue/image-format.js";
 import { ITEM_TITLE_MAX, SESSION_NAME_MAX } from "../../src/server/queue/schemas.js";
 import type { ImageView } from "../../src/server/queue/images.js";
-import type { OwnerItemView, OwnerSessionView, RecentResume } from "../../src/server/queue/owner-views.js";
+import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySignal } from "../../src/server/queue/owner-views.js";
 import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -604,5 +604,77 @@ export function getNotListeningFixture(): QueueFixture {
     items: [...rest.items, NOT_LISTENING_DECISION, ...NOT_LISTENING_ORDERS],
     sessions: [...sessions, ...Object.values(NOT_LISTENING_SESSIONS).map((session) => session.row)],
     orders: [...rest.orders, ...NOT_LISTENING_ORDERS],
+  };
+}
+
+/** What the relay reads answer: the history page (newest send first, each send's copies together), its refusal records and the signal. */
+export interface RelayHistoryFixture {
+  items: OwnerItemView[];
+  refusals: RelayRefusalView[];
+  signal: RelaySignal;
+}
+
+interface RelaySend {
+  firstId: number;
+  sendId: string;
+  from: SessionKey;
+  minutesAgo: number;
+  text: string;
+  to: Array<[SessionKey, Partial<Pick<RelayFacts, "fetchedAt" | "lapsedAt">> & { deliveredAt?: string }]>;
+  facts?: Partial<Pick<RelayFacts, "hop" | "parent" | "redaction">>;
+  linkedDocIds?: number[];
+}
+
+// one copy per recipient under one send id, as relay.ts stores them: answered at send time, the title the text's first line
+function buildRelayCopies(send: RelaySend): OwnerItemView[] {
+  const sender = { sessionIdPrefix: SESSION_IDS[send.from].slice(0, 8), profileLabel: ".claude-work", selfDeclaredName: send.from };
+  return send.to.map(([key, copy], index) => buildItem(send.firstId + index, key, {
+    kind: "relay", title: send.text.split("\n")[0], body: send.text, isFreeTextAllowed: false,
+    status: copy.lapsedAt ? "withdrawn" : copy.deliveredAt ? "delivered" : "answered",
+    askedAt: getAt(send.minutesAgo), answeredAt: getAt(send.minutesAgo), deliveredAt: copy.deliveredAt ?? null, sendId: send.sendId,
+    linkedDocIds: send.linkedDocIds ?? [],
+    relay: { hop: 0, parent: null, sender, fetchedAt: copy.fetchedAt ?? copy.deliveredAt ?? null, redaction: null, lapsedAt: copy.lapsedAt ?? null, ...send.facts },
+  }));
+}
+
+const RELAY_SEND_IDS = {
+  received: "3a1b2c3d-0001-4e5f-8a9b-0c1d2e3f4a01",
+  forwarded: "3a1b2c3d-0002-4e5f-8a9b-0c1d2e3f4a02",
+  redacted: "3a1b2c3d-0003-4e5f-8a9b-0c1d2e3f4a03",
+} as const;
+
+const RECEIVED_RELAY = buildRelayCopies({
+  firstId: 398, sendId: RELAY_SEND_IDS.received, from: "atrium", minutesAgo: 27 * 60,
+  text: "배포 65 의 마이그레이션 순서를 공유합니다.\n1) 큐 스키마 2) 릴레이 색인 3) 감사 기록 순서로 반영합니다.",
+  to: [["gersona", { deliveredAt: getAt(27 * 60 - 1) }]],
+});
+
+/** The relay passed on at hop 1: one copy received, one lapsed; its parent the received relay above. */
+export const FORWARDED_RELAY = buildRelayCopies({
+  firstId: 412, sendId: RELAY_SEND_IDS.forwarded, from: "aidl", minutesAgo: 240,
+  text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다. 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.\n<b>굵게</b> 표시는 글자 그대로 읽힙니다.",
+  to: [["yoaida", { deliveredAt: getAt(236) }], ["portfolio", { lapsedAt: getAt(60) }]],
+  facts: { hop: 1, parent: { id: 398, sender: { sessionIdPrefix: SESSION_IDS.atrium.slice(0, 8), profileLabel: ".claude-work", selfDeclaredName: "atrium" }, sentAt: getAt(27 * 60) } },
+  linkedDocIds: [44099],
+});
+
+const REDACTED_RELAY = buildRelayCopies({
+  firstId: 415, sendId: RELAY_SEND_IDS.redacted, from: "gersona", minutesAgo: 120,
+  text: "[relay text redacted by the owner]",
+  to: [["atrium", {}]],
+  facts: { redaction: { at: getAt(30), length: 1284 } },
+});
+
+/** A refusal between the sends: gersona over its hourly limit to yoaida. */
+export const PAIR_CAP_REFUSAL: RelayRefusalView = {
+  at: getAt(180), reason: "pair_cap", senderIdPrefix: SESSION_IDS.gersona.slice(0, 8), recipientIdPrefixes: [SESSION_IDS.yoaida.slice(0, 8)], unresolvedCount: null,
+};
+
+/** Relay history with the signal on: a received relay, the hop-1 relay under it with a lapsed copy, a refused one, a redacted one. */
+export function getRelayHistoryFixture(): RelayHistoryFixture {
+  return {
+    items: [...REDACTED_RELAY, ...FORWARDED_RELAY, ...RECEIVED_RELAY],
+    refusals: [PAIR_CAP_REFUSAL],
+    signal: { count: { refused: 1, forwarded: 1, redacted: 1 }, hasRecord: true },
   };
 }

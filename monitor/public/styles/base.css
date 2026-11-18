@@ -911,6 +911,67 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-weight: 600;
 	color: rgb(var(--ink));
 }
+/* Relay history (spec §9.9): the thread's form with every entry at the column's start and no fill → never read as the owner's bubble */
+.queue-relay-log {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+}
+.queue-relay-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+}
+.queue-relay {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1_5);
+	font-size: var(--fs-control);
+}
+.queue-relay-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-1_5);
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+.queue-relay-head > time {
+	color: rgb(var(--faint));
+	font-variant-numeric: tabular-nums;
+}
+/* the end slot: Redact text, the Redacted tag or ✕ Refused */
+.queue-relay-slot {
+	margin-inline-start: auto;
+}
+.queue-relay-name {
+	font-weight: 600;
+	color: rgb(var(--ink));
+}
+.queue-relay-head > .queue-relay-name {
+	font-size: var(--fs-control);
+}
+.queue-relay-copies {
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-stack);
+}
+.queue-relay-copy {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-height: 24px;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+/* the relay's text in the history: the bubble's clamp without its fill or inset */
+.queue-bubble.is-plain {
+	max-width: var(--measure-prose);
+	padding: 0;
+	background: none;
+	border-radius: 0;
+}
 /* a pane: head, bar and foot fixed, the body the only scroller on its axis */
 .queue-pane > .card-body {
 	max-height: none;
