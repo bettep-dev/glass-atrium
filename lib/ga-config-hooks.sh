@@ -902,7 +902,11 @@ put_queue_mcp_registration() {
   log "queue MCP registration (${mode}): the owner approves these writes before any is made"
   print_queue_mcp_writes "${name}" "${entries}" "${lines}" "${mode}"
   if "${DRY_RUN}" || ! "${APPROVE_PROFILE_WRITES}"; then
-    log "queue MCP registration: nothing written — once approved, rerun with --approve-profile-writes to write exactly these"
+    if [[ "${mode}" == add ]]; then
+      log "queue MCP registration: nothing written — once approved, '${GA_ROOT}/glass-atrium queue-mcp --approve-profile-writes' writes exactly these"
+    else
+      log "queue MCP registration: nothing written — once approved, rerun the uninstall with --approve-profile-writes to remove exactly these"
+    fi
     return 0
   fi
   put_queue_mcp_entries "${name}" "${entries}"

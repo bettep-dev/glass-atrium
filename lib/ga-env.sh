@@ -396,9 +396,11 @@ log() { (printf '%s\n' "$*") >&2 || true; }
 
 # The queue MCP server as its adapter announces it → line 1 the server name, then one tool name per line; the single
 # source the installer, updater and doctor read — the name's owner is scripts/lib/queue-session.sh, the tools' the
-# adapter. Non-zero when the adapter answers no name or no tool.
+# adapter. Non-zero when the adapter answers no name or no tool. Call it only inside `$( )`: bash 3.2 fires an
+# inherited ERR trap in a substitution even under `if !`, so the trap cleared here must be that subshell's.
 get_queue_mcp_identity() {
   local identity
+  trap - ERR
   [[ -r "${GA_ROOT}/hooks/lib/session-entrypoint.sh" && -r "${QUEUE_MCP_ADAPTER}" ]] || return 1
   identity="$(
     # shellcheck source=hooks/lib/session-entrypoint.sh

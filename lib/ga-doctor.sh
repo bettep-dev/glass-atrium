@@ -1905,8 +1905,8 @@ _doctor_report_profile_links() {
 _doctor_report_queue_mcp() {
   local identity profiles name lines gaps=0 count=0 file dir state line
   # shellcheck disable=SC2310,SC2311  # each failed read is the skip note
-  if ! identity="$(get_queue_mcp_identity)" || ! profiles="$(get_profile_config_files)" \
-    || ! lines="$(get_queue_mcp_allow_writes add "${identity}")"; then
+  if ! identity="$(get_queue_mcp_identity)" || ! profiles="$(_get_command_output get_profile_config_files)" \
+    || ! lines="$(_get_command_output get_queue_mcp_allow_writes add "${identity}")"; then
     log "  note : queue MCP: check skipped — needs ${QUEUE_MCP_ADAPTER} answering its name and tools, the config-root grammar and a JSON ${SETTINGS_JSON}"
     return 0
   fi
@@ -1930,7 +1930,7 @@ _doctor_report_queue_mcp() {
   done <<<"${lines}"
   _doctor_report_queue_mcp_switch "${name}"
   if [[ "${gaps}" -gt 0 ]]; then
-    log "  note : queue MCP: 'glass-atrium install --dry-run' prints each write; the owner approves them with --approve-profile-writes"
+    log "  note : queue MCP: '${GA_ROOT}/glass-atrium queue-mcp --dry-run' prints each write; the owner approves them with --approve-profile-writes"
   else
     gaps=0
     while IFS= read -r line; do gaps=$((gaps + 1)); done <<<"${identity#*$'\n'}"

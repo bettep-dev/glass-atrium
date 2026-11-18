@@ -3,7 +3,7 @@
 # The owner queue's MCP registration: the one writer of every profile's user-scope entry and the shared allow lines,
 # and the doctor's read of them. Protects: a dry run and an unapproved run print each write and write nothing; an
 # approved run writes exactly the printed set, once; a removal restores every file it wrote to; the doctor reports
-# each gap and the project-server auto-approval switch (C12) and never writes.
+# each gap and the project-server auto-approval switch and never writes.
 #
 # Hermetic: HOME, the target home and every profile are temp dirs; `claude` is a stand-in that records its argv and
 # edits the config file the host would, so no real profile and no real registration command is touched.
@@ -50,13 +50,14 @@ STUB
   chmod +x "${BATS_TEST_TMPDIR}/bin/claude"
 }
 
-# <mode> <flag…> → the real writer in a fresh strict-mode engine shell, --dry-run and --approve-profile-writes set
-# as the launcher's ga_parse_args sets them
+# <mode> <flag…> → the real writer in a fresh strict-mode engine shell with the launcher's ERR trap, --dry-run and
+# --approve-profile-writes set as the launcher's ga_parse_args sets them; ROOT = the install root, default this tree
 run_writer() {
   local mode="$1"
   shift
   run --separate-stderr bash -c '
     set -Eeuo pipefail
+    trap '\''echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2'\'' ERR
     source "$1/lib/ga-core.sh"
     ga_init_env "$1"
     mode="$2"
@@ -69,16 +70,17 @@ run_writer() {
       esac
     done
     put_queue_mcp_registration "${mode}"
-  ' _ "${GA}" "${mode}" "$@"
+  ' _ "${ROOT:-${GA}}" "${mode}" "$@"
 }
 
 run_doctor_row() {
   run --separate-stderr bash -c '
     set -Eeuo pipefail
+    trap '\''echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2'\'' ERR
     source "$1/lib/ga-core.sh"
     ga_init_env "$1"
     _doctor_report_queue_mcp
-  ' _ "${GA}"
+  ' _ "${ROOT:-${GA}}"
 }
 
 # → every profile file and the settings file, with their bytes, in one comparable text
@@ -222,4 +224,49 @@ get_snapshot() {
     echo "${stderr}"
     return 1
   }
+}
+
+@test "the launcher's queue-mcp step prints the writes and writes nothing on a dry run, and makes them on approval" {
+  local before
+  before="$(get_snapshot)"
+  run --separate-stderr "${GA}/glass-atrium" queue-mcp --dry-run
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *"${HOME}/.claude-work/.claude.json: mcpServers.atrium-queue"* &&
+    "${stderr}" == *"permissions.allow + mcp__atrium-queue__post"* && "$(get_snapshot)" == "${before}" ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  run --separate-stderr "${GA}/glass-atrium" queue-mcp --approve-profile-writes
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  [[ "$(jq -r '.mcpServers["atrium-queue"].args[0]' "${HOME}/.claude-work/.claude.json")" == "${ADAPTER}" &&
+  "$(jq '[.permissions.allow[] | select(startswith("mcp__atrium-queue__"))] | length' \
+    "${GA_TARGET_HOME}/settings.json")" == 5 ]]
+}
+
+@test "with no adapter to answer, the installer and the doctor each skip with one note and raise no error" {
+  local before
+  # an install root without the adapter: the engine libs alone
+  ROOT="${BATS_TEST_TMPDIR}/root"
+  mkdir -p "${ROOT}/scripts"
+  ln -s "${GA}/lib" "${ROOT}/lib"
+  ln -s "${GA}/hooks" "${ROOT}/hooks"
+  ln -s "${GA}/scripts/lib" "${ROOT}/scripts/lib"
+  before="$(get_snapshot)"
+  run_writer add --approve-profile-writes
+  [[ "${status}" -eq 0 && "${stderr}" == *"queue MCP registration (add): warn: skipped"* && "${stderr}" != *"ERROR:"* ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  run_doctor_row
+  [[ "${status}" -eq 0 && "${stderr}" == *"note : queue MCP: check skipped"* && "${stderr}" != *"ERROR:"* ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  [[ "$(get_snapshot)" == "${before}" ]]
 }

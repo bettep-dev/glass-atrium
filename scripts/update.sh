@@ -2894,6 +2894,23 @@ update_wire_hooks_post_apply() {
   update_log "settings.json hook bindings reconciled to the applied release"
 }
 
+# Post-apply report of the queue MCP registration, never a write: the launcher's queue-mcp step on a dry run prints
+# each profile entry and allow line the applied release still needs, with the command the owner approves them by.
+# Profile writes need the owner's approval, which a headless update cannot carry. A failed report WARNs and never
+# fails the applied update; the doctor reports the same gaps.
+update_report_queue_mcp_post_apply() {
+  local launcher rc=0
+  launcher="$(update_ga_root)/glass-atrium"
+  if [[ ! -x "${launcher}" ]]; then
+    update_log "WARN: launcher missing or not executable (${launcher}) — the queue MCP registration was not checked"
+    return 0
+  fi
+  "${launcher}" queue-mcp --dry-run || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    update_log "WARN: the queue MCP registration check failed (rc=${rc}) — '${launcher} queue-mcp --dry-run' repeats it"
+  fi
+}
+
 # Post-apply `npm ci` / `prisma generate` on an apply-set trigger or a self-heal need
 # (update_get_monitor_heal): a release ships a new package-lock or schema but never node_modules
 # or the git-ignored generated client, and the build's tsc fails on them yet still emits dist/server.
@@ -4872,6 +4889,7 @@ update_run() {
   # Runs AFTER the verified apply + farm refresh so the atomic-restore/rollback
   # contract is intact and the hook files the bindings point at already exist.
   update_wire_hooks_post_apply
+  update_report_queue_mcp_post_apply
 
   # Step 8.5 — refresh the monitor dependencies / Prisma client BEFORE migrate (so it runs
   # the CLI the release pins) and before the build — see update_install_monitor_deps.

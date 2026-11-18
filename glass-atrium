@@ -750,8 +750,8 @@ PREFLIGHT_GROUP2_RUNNABLE=0
 # the subcommand to the caller (already peeled off). Both the install-side flags
 # (--dry-run/--repoint-launchd/--load-launchd/--no-load-launchd/--re-render/
 # --collision-prompt/--recreate-db/--recreate-yes) and the uninstall-side flags
-# (--orphan-scan/--purge-config/--verify-clean/--yes) are recognized, and both sides take
-# --approve-profile-writes (put_queue_mcp_registration); an unknown
+# (--orphan-scan/--purge-config/--verify-clean/--yes) are recognized, and install, uninstall and
+# queue-mcp take --approve-profile-writes (put_queue_mcp_registration); an unknown
 # flag is a loud die. --no-load-launchd is the CHANGE 1 opt-out for the menu's
 # auto-load 11th step (inert on the passthrough path, which loads only behind
 # --load-launchd); accepting it here keeps a CI harness that drives the menu's
@@ -882,6 +882,7 @@ passthrough() {
       exit "${pf_rc}"
       ;;
     wire-hooks) wire_hooks ;;
+    queue-mcp) put_queue_mcp_registration add ;;
     render-config) render_config ;;
     render-plists) render_plists ;;
     db-setup) run_db_setup ;;
