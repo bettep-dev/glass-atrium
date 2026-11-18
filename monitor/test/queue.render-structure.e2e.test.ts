@@ -1242,6 +1242,28 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(found, { isHead: true, entry: "Relay from aidl to yoaida and portfolio", tag: true });
   });
 
+  test("the redaction dialog draws its body at the body size and Cancel then Redact text at the foot's end", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    harness.refusals.clear();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await askRedaction(page);
+    const found = await page.getByRole("dialog", { name: "Redact this relay's text?" }).evaluate((surface) => {
+      const foot = surface.querySelector(".detail-foot");
+      const buttons = [...(foot?.querySelectorAll("button") ?? [])];
+      const footEnd = foot === null ? 0 : foot.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(foot).paddingRight);
+      const body = surface.querySelector(".detail-body p");
+      return {
+        buttons: buttons.map((button) => button.textContent),
+        // the panel is centred on a fractional x → the button edge snaps within a pixel of the foot's content end
+        isAtEnd: Math.abs(footEnd - (buttons.at(-1)?.getBoundingClientRect().right ?? 0)) < 1,
+        bodySize: body === null ? "" : getComputedStyle(body).fontSize,
+      };
+    });
+    await page.close();
+
+    assert.deepEqual(found, { buttons: ["Cancel", "Redact text"], isAtEnd: true, bodySize: "15px" });
+  });
+
   test("the history read pages by order and returns every copy of an order one ticked session received", async () => {
     harness.fixture = getRestFixture();
     const first = await harness.app.inject({ url: `/api/queue/owner/orders?sessionIds=${FIXTURE_SESSION_IDS.aidl}&limit=1` });

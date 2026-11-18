@@ -3170,13 +3170,13 @@ function RedactConfirmQ({ redaction }) {
 	const names = getNameListQ(target.copies.map((copy) => copy.session.name));
 	const footer = (
 		<>
-			<button ref={cancelRef} type="button" className="btn secondary" aria-disabled={isBusy} onClick={isBusy ? undefined : redaction.cancel}>Cancel</button>
+			<button ref={cancelRef} type="button" className="btn secondary ml-auto" aria-disabled={isBusy} onClick={isBusy ? undefined : redaction.cancel}>Cancel</button>
 			<BusyButtonQ className="btn primary" label="Redact text" busyLabel="Redacting…" isBusy={isBusy} onPress={redaction.confirm} />
 		</>
 	);
 	return (
 		<DetailSurface open variant="confirm" suppressOutsideClose onClose={isBusy ? () => undefined : redaction.cancel} title="Redact this relay's text?" footer={footer}>
-			<p className="text-dim">{`The text ${getSenderNameQ(target.item.relay.sender)} sent to ${names} is replaced by a fixed marker in the record, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
+			<p className="fs-body text-dim">{`The text ${getSenderNameQ(target.item.relay.sender)} sent to ${names} is replaced by a fixed marker in the record, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
 			<p role="alert" className="fs-meta queue-relay-error">{redaction.error ?? ""}</p>
 		</DetailSurface>
 	);
