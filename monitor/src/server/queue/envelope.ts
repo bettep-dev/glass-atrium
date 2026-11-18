@@ -36,9 +36,14 @@ const RESUME_PREAMBLE = [
 const ENVELOPE_HEADER_LEAD = "[atrium-";
 const INVISIBLE_CHARACTER = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 
-/** Compatibility-normalized, case-folded text with format and zero-width characters stripped: the form token and secret checks read. */
+/** Compatibility-normalized text with format and zero-width characters stripped, case kept: a credential's fixed upper-case part survives. */
+export function getStrippedText(text: string): string {
+  return text.normalize("NFKC").replace(INVISIBLE_CHARACTER, "");
+}
+
+/** The stripped text case-folded: the form token and secret checks read. */
 export function getComparableText(text: string): string {
-  return text.normalize("NFKC").replace(INVISIBLE_CHARACTER, "").toLowerCase();
+  return getStrippedText(text).toLowerCase();
 }
 
 /** Session-controlled text that could pass for an envelope header in any spelling → refused wherever a session sets it. */

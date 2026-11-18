@@ -26,7 +26,7 @@ export function getSecretScannerPath(gaRoot: string): string {
 
 /**
  * Scans the text in one scanner run; a scanner past its timeout is killed with its whole process group.
- * @param text - every form the checks read, one per line (raw and normalized)
+ * @param text - every form the checks read, one per line (raw, normalized with case kept, normalized and case-folded)
  */
 export function scanText(scannerPath: string, text: string): Promise<ScanOutcome> {
   return new Promise((resolve) => {

@@ -465,6 +465,8 @@ describe("relay text checks", () => {
     const rows = [
       { name: "credential assignment", text: `the db ${["pass", "word"].join("")} = ${value}`, pattern: "SEC-013", leak: value },
       { name: "zero-width-split token", text: `use ${["gh", "p_"].join("")}​${"a1".repeat(18)} for the push`, pattern: "SEC-002", leak: "a1".repeat(18) },
+      { name: "zero-width-split upper-case key prefix", text: `key ${["AK", "IA"].join("\u200b")}${"QZ7X".repeat(4)} for the bucket`, pattern: "SEC-001", leak: "QZ7X".repeat(4) },
+      { name: "zero-width-split PEM header", text: `-----${["BEG", "IN"].join("\u200b")} RSA ${["PRIV", "ATE"].join("\u200b")} KEY-----\nMIIEow`, pattern: "SEC-014", leak: "MIIEow" },
     ];
     for (const row of rows) {
       const response = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: row.text });
@@ -474,7 +476,7 @@ describe("relay text checks", () => {
     assert.equal((await findRelaysFrom(sender)).length, 0);
   });
 
-  test("the scanner runs once, with no argument, a minimal environment and the raw and normalized text on stdin only", async () => {
+  test("the scanner runs once, with no argument, a minimal environment and the raw text, its case-kept normalized form and its lower-cased form on stdin only", async () => {
     const sender = await seedSession();
     const recipient = await seedSession();
     const captureDir = path.join(fixtureRoot, `capture-${randomUUID().slice(0, 8)}`);
@@ -494,7 +496,7 @@ describe("relay text checks", () => {
     const keys = env.split("\n").filter(Boolean).map((line) => line.split("=")[0]);
     assert.deepEqual(keys.filter((key) => !["PATH", "LC_ALL", "PWD", "SHLVL", "_", "OLDPWD"].includes(key ?? "")), []);
     assert.ok(!env.includes("Rebased"), "the text never reaches the environment");
-    assert.equal(readFileSync(path.join(captureDir, "stdin"), "utf8"), `${text}\nrebased and pushed.`);
+    assert.equal(readFileSync(path.join(captureDir, "stdin"), "utf8"), `${text}\nRebased and pushed.\nrebased and pushed.`);
   });
 
   test("fails closed: a scanner that exits 1, hangs, is killed, is missing or echoes its input lets no relay through", async () => {

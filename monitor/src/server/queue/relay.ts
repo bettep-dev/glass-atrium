@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import type { AuditTarget } from "../middleware/audit-log.js";
-import { getComparableText, hasEnvelopeToken } from "./envelope.js";
+import { getComparableText, getStrippedText, hasEnvelopeToken } from "./envelope.js";
 import { QueueRequestError } from "./errors.js";
 import { assertLinkedDocsExist } from "./items.js";
 import { type ListedSessionRow, createCopies, getPeerRows } from "./owner-sessions.js";
@@ -103,7 +103,8 @@ export async function createRelay(body: RelayBody, scannerPath: string): Promise
   const recipients = await resolveRecipients(sender, body.recipients);
   if ("refusal" in recipients) return recipients;
   if (hasEnvelopeToken(body.text)) return refuse("token", recipients.ids);
-  const scan = await scanText(scannerPath, `${body.text}\n${getComparableText(body.text)}`);
+  // each form on its own line → a match never depends on the scanner's case handling
+  const scan = await scanText(scannerPath, [body.text, getStrippedText(body.text), getComparableText(body.text)].join("\n"));
   if (scan.verdict === "match") return { refusal: { reason: "secret", recipientIds: recipients.ids, pattern: scan.pattern } };
   if (scan.verdict === "unavailable") return refuse("scan_unavailable", recipients.ids);
   return getPrisma().$transaction((tx) => insertRelay(tx, body, recipients.ids));
