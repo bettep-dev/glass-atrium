@@ -30,6 +30,7 @@ import { respondDbFailure } from "../db-failure.js";
 import { errnoCode } from "../errno.js";
 import { setAuditTarget } from "../middleware/audit-log.js";
 import { BODY_LIMIT_BYTES } from "../request-guards.js";
+import { getAttachmentDisposition } from "../response-headers.js";
 import { parseIdParam, parseOffsetParam } from "../route-params.js";
 import { extractIndexableText } from "../clauded-docs/indexable-text.js";
 import {
@@ -1295,31 +1296,6 @@ async function getDocRowById(
   return row;
 }
 
-// RFC 5987 attr-char set — chars that DO NOT require percent-encoding inside an
-// ext-value. encodeURIComponent already escapes everything outside its own
-// unreserved set, but it leaves `!*'()` raw (RFC 3986 sub-delims that RFC 5987
-// excludes from attr-char) — escape those too so the ext-value stays strictly
-// token-safe per the grammar.
-const RFC5987_EXTRA_ESCAPE: ReadonlyMap<string, string> = new Map([
-  ["!", "%21"],
-  ["*", "%2A"],
-  ["'", "%27"],
-  ["(", "%28"],
-  [")", "%29"],
-]);
-
-/**
- * Percent-encodes `value` for an RFC 5987 ext-value (filename*). Output is
- * guaranteed ASCII — every byte > 0x7F is UTF-8 percent-encoded by
- * encodeURIComponent; the residual sub-delims are escaped via the map above.
- */
-function encodeRfc5987(value: string): string {
-  return encodeURIComponent(value).replace(
-    /[!*'()]/g,
-    (ch) => RFC5987_EXTRA_ESCAPE.get(ch) ?? ch,
-  );
-}
-
 // GET /api/clauded-docs/:id/html-export — single-doc offline self-contained HTML.
 // Renders the stored sanitized body via Playwright into an OFFLINE self-contained .html; a
 // non-HTML row gets a minimal dark shell wrap (no browser). Render contract → html-export.ts.
@@ -1677,7 +1653,7 @@ function buildHtmlExportContentDisposition(row: ClaudedDocDbRow): string {
     .replace(/^-+|-+$/g, "");
   const asciiBase = asciiSlug.length === 0 ? `doc-${docId}` : asciiSlug;
   const asciiName = `${asciiBase}.html`;
-  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeRfc5987(utf8Name)}`;
+  return getAttachmentDisposition(utf8Name, asciiName);
 }
 
 /**

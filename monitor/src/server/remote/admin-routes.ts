@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { AUDIT_ACTOR } from "../middleware/audit-log.js";
 import { getPageOriginSignal } from "../request-guards.js";
-import { setNoStoreHeader } from "../response-headers.js";
+import { getAttachmentDisposition, setNoStoreHeader } from "../response-headers.js";
 import type { DeviceConnections } from "./connections.js";
 import type { DeviceListing } from "./devices.js";
 import { type RemoteAuditEvent, getRoutePayload, recordEvent } from "./gate.js";
@@ -54,8 +54,8 @@ const WAIT_TIMEOUT_MS = 5_000;
 // the whole file one certificate block → the download carries nothing outside the fingerprint shown
 const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----\r?\n([A-Za-z0-9+/=\r\n]+?)\r?\n-----END CERTIFICATE-----\r?\n?$/;
 
-/** The one file the download serves, under a fixed name and type → never a caller-named file. */
-export const CA_DOWNLOAD = { FILE_NAME: "glass-atrium-local-ca.pem", CONTENT_TYPE: "application/x-x509-ca-cert" } as const;
+/** The one file the download serves, under a fixed name and type → never a caller-named file; the page saves it under this name. */
+export const CA_DOWNLOAD = { FILE_NAME: "Glass Atrium Local CA.pem", CONTENT_TYPE: "application/x-x509-ca-cert" } as const;
 
 /** What the shell's write step reported. */
 export type AccessStepOutcome =
@@ -389,7 +389,7 @@ async function getCertificateFile(request: FastifyRequest, reply: FastifyReply, 
   if (certificate === null) return reply.code(404).send({ error: "certificate_unavailable" });
   return reply
     .header("content-type", CA_DOWNLOAD.CONTENT_TYPE)
-    .header("content-disposition", `attachment; filename="${CA_DOWNLOAD.FILE_NAME}"`)
+    .header("content-disposition", getAttachmentDisposition(CA_DOWNLOAD.FILE_NAME))
     .send(certificate.bytes);
 }
 

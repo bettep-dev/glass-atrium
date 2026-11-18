@@ -668,9 +668,10 @@ describe("the certificate download", () => {
   test("serves the one CA file as an attachment with a fixed name and type, its bytes hashing to the fingerprint the setup read shows", async () => {
     const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE });
     const setup = JSON.parse((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).body) as { fingerprint: string };
+    // the page names the saved file from this header → the server is the one owner of the name
     assert.deepEqual(
       [response.statusCode, response.headers["content-type"], response.headers["content-disposition"], response.rawPayload.equals(ca.cert)],
-      [200, CA_DOWNLOAD.CONTENT_TYPE, `attachment; filename="${CA_DOWNLOAD.FILE_NAME}"`, true],
+      [200, CA_DOWNLOAD.CONTENT_TYPE, `attachment; filename="Glass Atrium Local CA.pem"; filename*=UTF-8''Glass%20Atrium%20Local%20CA.pem`, true],
     );
     assert.equal(setup.fingerprint, await getOpensslFingerprint(ca.certPath));
   });
