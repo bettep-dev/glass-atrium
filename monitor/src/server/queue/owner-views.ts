@@ -29,7 +29,7 @@ const RELAY_SIGNAL_WINDOW_MS = 24 * 3_600_000;
 // ponytail: refusals past this cap in one page's time span are cut (isRefusalListCut) → upgrade: their own cursor
 const REFUSAL_PAGE_MAX = 100;
 // The relay refusals the relay module decided: only those audit rows carry a reason
-const RELAY_REFUSAL_FILTER = Prisma.sql`a."target_table" = 'queue-relay' AND a."result_code" = 'blocked' AND a."payload" -> 'change' ->> 'reason' IS NOT NULL`;
+export const RELAY_REFUSAL_FILTER = Prisma.sql`a."target_table" = 'queue-relay' AND a."result_code" = 'blocked' AND a."payload" -> 'change' ->> 'reason' IS NOT NULL`;
 
 export type Deviation = (typeof DEVIATION_STATUSES)[number];
 

@@ -215,6 +215,11 @@ export async function insertAudit(request: FastifyRequest, outcome: AuditOutcome
     throw new Error(`audit-log: ${request.method} ${request.routeOptions.url} is no audited mutation route`);
   }
   await writeAuditRow(db, snapshot);
+  setAuditRecorded(request);
+}
+
+/** The response is already covered by a written row (its own, or a refusal window's one counted row) → the hook writes none. */
+export function setAuditRecorded(request: FastifyRequest): void {
   (request as FastifyRequest & AuditChangeCarrier).isAuditWritten = true;
 }
 

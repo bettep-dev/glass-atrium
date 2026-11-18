@@ -7,14 +7,14 @@ import path from "node:path";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import { insertAudit, setAuditTarget } from "../middleware/audit-log.js";
+import { insertAudit, setAuditRecorded, setAuditTarget } from "../middleware/audit-log.js";
 import { getMonitorPort } from "../monitor-port.js";
 import { ackItem, claimPendingItems, getPendingCount, withdrawItem } from "../queue/delivery.js";
 import { getQueueCliPath } from "../queue/envelope.js";
 import { getQueueImageDir } from "../queue/images.js";
 import { createItem, getClaimViews, getCount, getItemOrThrow } from "../queue/items.js";
 import { getPeerSessions } from "../queue/owner-sessions.js";
-import { createRelay, getRefusalResponse } from "../queue/relay.js";
+import { type RelayRefusal, createRelay, getRefusalResponse } from "../queue/relay.js";
 import { getSecretScannerPath } from "../queue/relay-scan.js";
 import { deregisterSession, putSessionName, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook } from "../queue/request-gate.js";
@@ -184,15 +184,23 @@ function registerRelayRoute(app: FastifyInstance, scannerPath: string): void {
           return outcome.relay;
         }
         const refusal = getRefusalResponse(body.sessionId, outcome.refusal);
-        setAuditTarget(request, refusal.record);
-        await insertAudit(request, { statusCode: refusal.statusCode, resultCode: "blocked" }).catch((error: unknown) => {
-          request.log.error({ err: error, route: "/api/queue/relay", reason: outcome.refusal.reason }, "relay refusal audit row not written — the refusal is still returned");
-        });
+        await recordRelayRefusal(request, outcome.refusal, refusal);
         reply.code(refusal.statusCode);
         return refusal.body;
       },
     }),
   );
+}
+
+async function recordRelayRefusal(request: FastifyRequest, outcome: RelayRefusal, refusal: ReturnType<typeof getRefusalResponse>): Promise<void> {
+  if (outcome.isRecorded === false) {
+    setAuditRecorded(request);
+    return;
+  }
+  setAuditTarget(request, refusal.record);
+  await insertAudit(request, { statusCode: refusal.statusCode, resultCode: "blocked" }).catch((error: unknown) => {
+    request.log.error({ err: error, route: "/api/queue/relay", reason: outcome.reason }, "relay refusal audit row not written — the refusal is still returned");
+  });
 }
 
 async function refuseBrowserRequest(request: FastifyRequest, reply: FastifyReply): Promise<void> {

@@ -11,7 +11,7 @@ import { getComparableText, getStrippedText, hasEnvelopeToken } from "./envelope
 import { QueueRequestError } from "./errors.js";
 import { assertLinkedDocsExist } from "./items.js";
 import { type ListedSessionRow, createCopies, getPeerRows } from "./owner-sessions.js";
-import { SESSION_ID_PREFIX_LENGTH, getSessionIdPrefix, getSessionName } from "./owner-views.js";
+import { RELAY_REFUSAL_FILTER, SESSION_ID_PREFIX_LENGTH, getSessionIdPrefix, getSessionName } from "./owner-views.js";
 import { scanText } from "./relay-scan.js";
 import { type LockedSessionRow, lockSessions } from "./registry.js";
 import type { RelayBody } from "./schemas.js";
@@ -26,6 +26,8 @@ export const RELAY = {
   HOP_LIMIT: 3,
   /** An undelivered relay on a row ended this long lapses (sweep.ts); a replaced row's lapses at once. */
   LAPSE_MS: 3 * 24 * 3_600_000,
+  /** Refusals a sender draws per cap window before its calls get one answer with no lookup, scan or further record. */
+  REFUSALS_PER_SENDER: 20,
   /** The longest id prefix a recipient may name: the id's first two groups → a probe never confirms a full id. */
   RECIPIENT_PREFIX_MAX: 13,
 } as const;
@@ -44,7 +46,8 @@ export type RelayRefusalReason =
   | "sender_cap"
   | "pair_cap"
   | "machine_cap"
-  | "hop";
+  | "hop"
+  | "refusal_cap";
 
 const REFUSAL: Record<RelayRefusalReason, { statusCode: number; message: string }> = {
   sender_probe: { statusCode: 409, message: "a probe session sends no relay" },
@@ -59,6 +62,7 @@ const REFUSAL: Record<RelayRefusalReason, { statusCode: number; message: string 
   pair_cap: { statusCode: 429, message: `a session reaches one peer at most ${RELAY.PER_PAIR} times per rolling hour` },
   machine_cap: { statusCode: 429, message: `this Mac carries at most ${RELAY.MACHINE} relay copies per rolling hour` },
   hop: { statusCode: 409, message: "this relay would pass the hop bound — wait for the owner's next answer or message" },
+  refusal_cap: { statusCode: 429, message: `a session draws at most ${RELAY.REFUSALS_PER_SENDER} relay refusals per rolling hour — later calls are refused unchecked and unrecorded` },
 };
 
 /** A peer a name or prefix matched: never its full id. */
@@ -76,6 +80,8 @@ export interface RelayRefusal {
   candidates?: RecipientCandidate[];
   /** The scanner's pattern code on a match; null when its reply named none. */
   pattern?: string | null;
+  /** false → the window's first refusal_cap row already records this answer. */
+  isRecorded?: boolean;
 }
 
 export interface CreatedRelay {
@@ -100,11 +106,16 @@ interface SenderRow {
  */
 export async function createRelay(body: RelayBody, scannerPath: string): Promise<RelayOutcome> {
   const sender = await getSenderOrThrow(body.sessionId);
+  const bound = await getRefusalBound(sender.id);
+  if (bound !== null) return bound;
   if (sender.isProbe) return refuse("sender_probe");
   if (sender.state !== "live") return refuse("sender_not_live");
   const recipients = await resolveRecipients(sender, body.recipients);
   if ("refusal" in recipients) return recipients;
   if (hasEnvelopeToken(body.text)) return refuse("token", recipients.ids);
+  // the locked re-check in insertRelay stays the one that counts; this one spares a capped call the scan
+  const capRefusal = await getCapRefusal(getPrisma(), sender.id, recipients.ids);
+  if (capRefusal !== null) return refuse(capRefusal, recipients.ids);
   // each form on its own line → a match never depends on the scanner's case handling
   const scan = await scanText(scannerPath, [body.text, getStrippedText(body.text), getComparableText(body.text)].join("\n"));
   if (scan.verdict === "match") return { refusal: { reason: "secret", recipientIds: recipients.ids, pattern: scan.pattern } };
@@ -131,6 +142,17 @@ function pickDetails(refusal: RelayRefusal): object {
 
 function refuse(reason: RelayRefusalReason, recipientIds: string[] = []): { refusal: RelayRefusal } {
   return { refusal: { reason, recipientIds } };
+}
+
+// Counted from the refusal rows the relay module records; the refusal_cap row itself counts too
+async function getRefusalBound(senderId: string): Promise<{ refusal: RelayRefusal } | null> {
+  const windowStart = new Date(Date.now() - RELAY.CAP_WINDOW_MS);
+  const [row] = await getPrisma().$queryRaw<Array<{ refused: number; isBoundRecorded: boolean | null }>>`
+    SELECT count(*)::int AS "refused", bool_or(a."payload" -> 'change' ->> 'reason' = 'refusal_cap') AS "isBoundRecorded"
+    FROM "monitor"."audit_log" a
+    WHERE ${RELAY_REFUSAL_FILTER} AND a."payload" -> 'change' ->> 'senderId' = ${senderId} AND a."event_ts" >= ${windowStart}`;
+  if ((row?.refused ?? 0) < RELAY.REFUSALS_PER_SENDER) return null;
+  return { refusal: { reason: "refusal_cap", recipientIds: [], isRecorded: row?.isBoundRecorded !== true } };
 }
 
 async function getSenderOrThrow(sessionId: string): Promise<SenderRow> {

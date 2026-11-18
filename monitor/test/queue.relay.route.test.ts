@@ -338,6 +338,24 @@ describe("relay caps", () => {
     assert.equal((await findRelaysFrom(sender)).filter((row) => fresh.includes(row.sessionId)).length, 2);
   });
 
+  test("a call a cap refuses never reaches the secret scan", async () => {
+    const rows = [
+      { name: "sender cap", reason: "sender_cap", arrange: async (from: string) => { for (const to of [await seedSession(), await seedSession()]) for (let index = 0; index < 5; index += 1) await seedRelay(from, to, { askedAt: ago(60_000 + index) }); } },
+      { name: "pair cap", reason: "pair_cap", arrange: async (from: string, to: string) => { for (let index = 0; index < 5; index += 1) await seedRelay(from, to, { askedAt: ago(60_000 + index) }); } },
+    ];
+    for (const row of rows) {
+      const [sender, recipient] = [await seedSession(), await seedSession()];
+      await row.arrange(sender, recipient);
+      const calls = path.join(fixtureRoot, `calls-${randomUUID().slice(0, 8)}`);
+
+      const response = await withScanner(writeScanner(`count-${row.reason}`, `echo call >> '${calls}'\nexit 0`), (instance) =>
+        relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." }, { on: instance }));
+
+      assert.deepEqual([response.statusCode, response.json().error], [429, `relay_${row.reason}`], row.name);
+      assert.ok(!existsSync(calls), `${row.name}: no scan`);
+    }
+  });
+
   test("a sender reaches one recipient at most 5 times per rolling hour; another recipient still takes its copy", async () => {
     const sender = await seedSession();
     const [recipient, other] = [await seedSession(), await seedSession()];
@@ -570,6 +588,25 @@ describe("relay refusal records", () => {
       const stored = JSON.stringify(records[0]?.payload);
       for (const leak of [text, "correct-horse-battery", "ATRIUM-MESSAGE", "twin"]) assert.ok(!stored.includes(leak), `${row.name}: no caller text in the row (${leak})`);
     }
+  });
+
+  test("past its hourly refusal bound a sender is answered relay_refusal_cap with no scan, and only the window's first such answer is recorded", async () => {
+    const sender = await seedSession();
+    const recipient = await seedSession();
+    for (let index = 0; index < RELAY.REFUSALS_PER_SENDER; index += 1) {
+      const refused = await relay({ sessionId: sender, recipients: [prefixOf(sender)], text: "Lint is green." });
+      assert.equal(refused.json().error, "relay_self");
+    }
+    const calls = path.join(fixtureRoot, `calls-${randomUUID().slice(0, 8)}`);
+    const body = { sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." };
+
+    const answers = await withScanner(writeScanner("count-bound", `echo call >> '${calls}'\nexit 0`), async (instance) => [await relay(body, { on: instance }), await relay(body, { on: instance })]);
+
+    assert.deepEqual(answers.map((answer) => [answer.statusCode, answer.json().error]), [[429, "relay_refusal_cap"], [429, "relay_refusal_cap"]]);
+    assert.ok(!existsSync(calls), "no scan");
+    const reasons = (await findRefusalRows(sender)).map((record) => (record.payload as { change?: { reason?: string } } | null)?.change?.reason);
+    assert.deepEqual([reasons.length, reasons.filter((reason) => reason === "refusal_cap").length], [RELAY.REFUSALS_PER_SENDER + 1, 1]);
+    assert.equal((await findRelaysFrom(sender)).length, 0);
   });
 
   test("a refusal whose awaited audit row cannot be written is still returned, logged at error level, and the response's own row stands in once", async () => {
