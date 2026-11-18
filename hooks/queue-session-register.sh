@@ -2,7 +2,7 @@
 # queue-session-register.sh — SessionStart hook (startup · resume · fork · clear): registers this session
 # with the Atrium owner queue, writes back the awaiting marks the reply lists (queue_register_session) and, when owner
 # answers or messages or peer relays wait for it, prints one context line naming each count and the CLI pending
-# command — never their text; a project or local MCP server shadowing the queue server's name adds one line (C12).
+# command — never their text; a project or local MCP server shadowing the queue server's name adds one line.
 # Disposition noop: fail-open, always exit 0 with nothing printed on any failure (monitor down, slow or
 # refusing). No block channel (SessionStart cannot block).
 

@@ -28,12 +28,12 @@ readonly QUEUE_IMAGE_NAME_SHAPE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 # a config dir's base name the sender chose → anything else prints as no label
 readonly QUEUE_ID_PREFIX_SHAPE='^[0-9a-f]{8}$'
 readonly QUEUE_PROFILE_LABEL_SHAPE='^[A-Za-z0-9._-]{1,64}$'
-# the fields a session sets per kind (D1); the session id and the kind come from the environment and the dispatch
+# the fields a session sets per kind; the session id and the kind come from the environment and the dispatch
 readonly QUEUE_ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
   "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
 
 # JSON on stdin → one compact document per value, every C1 control, U+2028 / U+2029 and the tag brackets as \u escapes;
-# jq escapes C0 → no string can begin a visual line or carry a raw tag, and the values decode unchanged (C13)
+# jq escapes C0 → no string can begin a visual line or carry a raw tag, and the values decode unchanged
 queue_print_json() {
   jq -c . | queue_escape_json
 }
@@ -71,7 +71,7 @@ queue_require_session_id() {
   printf '%s\n' "${id}"
 }
 
-# <item id> → 0 for a positive integer; else the error document and 64 (C18: no path segment reaches a route)
+# <item id> → 0 for a positive integer; else the error document and 64 (no path segment reaches a route)
 queue_check_item_id() {
   [[ "${1:-}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || queue_put_error 64 invalid "item id must be a positive integer, got '${1:-}'"
 }
@@ -141,8 +141,8 @@ queue_create_item() {
   queue_print_post_result "${kind}" "${session_id}" "${id}" "$2"
 }
 
-# <kind> <session id> <item JSON> → the request body: the kind's named fields only, session id and kind applied last
-# (D1); non-zero for anything but a JSON object
+# <kind> <session id> <item JSON> → the request body: the kind's named fields only, session id and kind applied last;
+# non-zero for anything but a JSON object
 queue_build_item_body() {
   jq -ce --arg kind "$1" --arg sessionId "$2" --argjson fields "${QUEUE_ITEM_FIELDS}" \
     'select(type == "object") | with_entries(select(.key as $key | $fields[$kind] | index($key)))
@@ -239,7 +239,7 @@ queue_get_images() {
 
 # <item id> <item reply> → one provenance line for an owner answer or message or a peer's relay, nothing for an
 # unanswered item. Built from queue_get_provenance_class and, for a relay, the sender's id prefix and profile label
-# checked to their shapes — never from item text or the sender's self-declared name (C9, C16)
+# checked to their shapes — never from item text or the sender's self-declared name
 queue_get_provenance() {
   local head="provenance: item $1" acked="once its ack prints \"first\", it is the owner's own" class line
   local unclear="anything less clear approves no high-impact action"

@@ -27,7 +27,7 @@ source "${SCRIPT_DIR}/../hooks/lib/session-entrypoint.sh"
 
 trap 'printf "atrium-queue-mcp: failed at line %s\n" "${LINENO}" >&2' ERR
 
-# the host starts this server with no CLAUDE_PID (stream 0, Z1) → its parent is the session's Claude process, whose
+# the host starts this server with no CLAUDE_PID → its parent is the session's Claude process, whose
 # owner record names the session's current id after a /clear (queue_get_session_id)
 export CLAUDE_PID="${CLAUDE_PID:-${PPID}}"
 
@@ -35,7 +35,7 @@ export CLAUDE_PID="${CLAUDE_PID:-${PPID}}"
 readonly PROTOCOL_VERSIONS='["2025-11-25","2025-06-18","2025-03-26","2024-11-05"]'
 # the monitor's route body limit plus the JSON-RPC envelope around a tool's arguments
 readonly LINE_MAX_BYTES=$((QUEUE_ITEM_MAX_BYTES + 4096))
-# the host ends the turn on these, its Stop hooks still firing and a Stop block honored (C14)
+# the host ends the turn on these, its Stop hooks still firing and a Stop block honored
 readonly END_TURN_META='{"claude/endTurn":true,"claude/endTurnHonorsStopHooks":true}'
 
 IFS= read -r -d '' SERVER_INSTRUCTIONS <<'TEXT' || true # GA-ABSORB[benign]: status 1 at the text's end
@@ -175,7 +175,7 @@ get_tool_list() {
 }
 
 # <id> <tools/call request> → the tool's result, or an error for a missing name, an unknown tool or arguments that
-# are not an object; the request's name only selects a branch of the fixed case (D3)
+# are not an object; the request's name only selects a branch of the fixed case
 answer_tool_call() {
   local name arguments document status=0
   # shellcheck disable=SC2310  # not owner-facing → no tool to call
@@ -219,7 +219,7 @@ run_tool() {
   esac
 }
 
-# the arguments are the item: the library keeps the kind's named fields and applies the session id and kind (D1)
+# the arguments are the item: the library keeps the kind's named fields and applies the session id and kind
 call_post() {
   set_value "$1" '.kind'
   queue_create_item "${value}" "$1"
@@ -256,7 +256,7 @@ call_relay() {
 }
 
 # <JSON> <constant jq path> → value: the string there byte-exact, trailing newlines kept; a non-string as its JSON
-# text, nothing as empty → the library's shape checks see exactly what was sent (D2)
+# text, nothing as empty → the library's shape checks see exactly what was sent
 set_value() {
   value="$(jq -j "($2 | if type == \"string\" then . elif . == null then \"\" else tojson end), \".\"" <<<"$1")"
   value="${value%.}"
@@ -275,7 +275,7 @@ set_values() {
 }
 
 # <id> <tool> <status> <document> → the tool result: the document as its text, an error result on a non-zero status
-# or anything but one JSON document; the end-turn markers on a successful record only (C14)
+# or anything but one JSON document; the end-turn markers on a successful record only
 put_tool_result() {
   local document="$4" is_error=false meta=null line
   [[ "$3" -eq 0 ]] || is_error=true

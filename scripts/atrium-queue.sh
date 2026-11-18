@@ -234,7 +234,7 @@ ack_delivery() {
   if [[ "${result}" == first ]]; then print_first "$1"; else printf 'already handled\n'; fi
 }
 
-# <item id> → the first-ack line by the item's kind: a relay's "first" confers nothing (C10); a kind it cannot read
+# <item id> → the first-ack line by the item's kind: a relay's "first" confers nothing; a kind it cannot read
 # points back to the item's provenance line
 print_first() {
   local fetched kind cli

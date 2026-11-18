@@ -1646,7 +1646,7 @@ run_doctor() {
 
   # 32. owner queue MCP registration — registration kind B (report-only): each profile's entry runs this
   #     install's adapter, the tools' allow lines are present, and no shared switch starts a project server
-  #     that would shadow the name (C12). Reads one mcpServers key per profile file; never writes.
+  #     that would shadow the name. Reads one mcpServers key per profile file; never writes.
   _doctor_report_queue_mcp
 
   if [[ "${fail}" -eq 0 ]]; then
@@ -1938,11 +1938,11 @@ _doctor_report_queue_mcp() {
   fi
 }
 
-# C12: a shared switch that starts every project's .mcp.json server unasked lets a project server take the name
+# a shared switch that starts every project's .mcp.json server unasked lets a project server take the name
 _doctor_report_queue_mcp_switch() {
   [[ -f "${SETTINGS_JSON}" ]] || return 0 # GA-ABSORB[benign]: no settings file holds no switch
   if jq -e '.enableAllProjectMcpServers == true' -- "${SETTINGS_JSON}" >/dev/null; then
-    log "  note : queue MCP: ${SETTINGS_JSON} sets enableAllProjectMcpServers — every project's .mcp.json server starts unasked, so a project server named $1 shadows this one and that session must use the queue CLI (C12)"
+    log "  note : queue MCP: ${SETTINGS_JSON} sets enableAllProjectMcpServers — every project's .mcp.json server starts unasked, so a project server named $1 shadows this one and that session must use the queue CLI"
   fi
 }
 

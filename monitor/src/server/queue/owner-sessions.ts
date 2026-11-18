@@ -38,7 +38,7 @@ export interface OwnerSessionRow extends SessionName {
   isHidden: boolean;
 }
 
-/** The relay-facing projection of a session-list row: never the full session id (C17). */
+/** The relay-facing projection of a session-list row: never the full session id, the one credential the session routes ask for. */
 export interface PeerSessionRow extends SessionName {
   sessionIdPrefix: string;
   profileLabel: string;

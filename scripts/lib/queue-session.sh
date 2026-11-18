@@ -40,7 +40,7 @@ readonly QUEUE_LISTENING_MARK=.listening
 readonly QUEUE_NUDGE_INTERVAL_MIN=10
 # in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
 readonly QUEUE_NAME_MAX=100
-# the Atrium queue's MCP server name; a project or local server of the same name replaces it in a session (C12)
+# the Atrium queue's MCP server name; a project or local server of the same name replaces it in a session
 readonly QUEUE_MCP_SERVER_NAME=atrium-queue
 # the one value of ATRIUM_QUEUE_PROBE that declares this session a probe at every register: hidden on the Queue page,
 # refused as a message or relay target and as a relay sender
@@ -256,7 +256,7 @@ queue_get_answered_counts() {
 }
 
 # <owner count> <relay count> → the line naming them and the pending command, nothing when both are 0; a relay is
-# named apart, so a peer's text never reads as an owner answer or message (C10)
+# named apart, so a peer's text never reads as an owner answer or message
 queue_get_count_line() {
   local fetch owner="" relay=""
   fetch="fetch them with: $(queue_get_cli_path) pending"
