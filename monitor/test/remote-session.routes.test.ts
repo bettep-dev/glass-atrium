@@ -253,6 +253,12 @@ describe("the Mac-only admin paths on the remote listener", () => {
       { method: "GET", url: "/api/remote/devices" },
       { method: "DELETE", url: "/api/remote/devices/1" },
       { method: "POST", url: "/api/remote/devices/revoke-all" },
+      { method: "POST", url: "/api/remote/access/on" },
+      { method: "POST", url: "/api/remote/access/off" },
+      { method: "POST", url: "/api/remote/access/trust" },
+      { method: "GET", url: "/api/remote/access/network" },
+      { method: "GET", url: "/api/remote/setup" },
+      { method: "GET", url: "/api/remote/certificate" },
     ] as const;
     await runRolledBack(async () => {
       const caller = await addDevice("Owner iPhone");
