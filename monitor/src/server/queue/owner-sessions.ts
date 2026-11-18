@@ -12,7 +12,7 @@ import type { PageOriginSignal } from "../request-guards.js";
 import { ACKABLE, isSessionWaiting } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { putItemImages } from "./images.js";
-import { SESSION_ID_PREFIX_LENGTH, type SessionName, getCwdTail, getSessionName } from "./owner-views.js";
+import { type SessionName, getCwdTail, getSessionIdPrefix, getSessionName } from "./owner-views.js";
 import { lockSessions } from "./registry.js";
 import { ITEM_TITLE_MAX, type MessageBody, type OwnerSessionsQuery, SESSION_LIST_LIMIT } from "./schemas.js";
 
@@ -194,7 +194,7 @@ export async function createCopies(tx: Prisma.TransactionClient, send: CopySend,
 function toSessionRow(row: ListedSessionRow): OwnerSessionRow {
   return {
     id: row.id,
-    sessionIdPrefix: row.id.slice(0, SESSION_ID_PREFIX_LENGTH),
+    sessionIdPrefix: getSessionIdPrefix(row.id),
     ...getSessionName(row),
     profileLabel: row.profileLabel,
     cwd: row.cwd,
@@ -212,7 +212,7 @@ function toSessionRow(row: ListedSessionRow): OwnerSessionRow {
 
 function toPeerRow(row: ListedSessionRow): PeerSessionRow {
   return {
-    sessionIdPrefix: row.id.slice(0, SESSION_ID_PREFIX_LENGTH),
+    sessionIdPrefix: getSessionIdPrefix(row.id),
     ...getSessionName(row),
     profileLabel: row.profileLabel,
     cwdTail: getCwdTail(row.cwd),

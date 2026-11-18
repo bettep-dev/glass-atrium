@@ -11,7 +11,7 @@ import { getComparableText, hasEnvelopeToken } from "./envelope.js";
 import { QueueRequestError } from "./errors.js";
 import { assertLinkedDocsExist } from "./items.js";
 import { type ListedSessionRow, createCopies, getPeerRows } from "./owner-sessions.js";
-import { SESSION_ID_PREFIX_LENGTH, getSessionName } from "./owner-views.js";
+import { SESSION_ID_PREFIX_LENGTH, getSessionIdPrefix, getSessionName } from "./owner-views.js";
 import { scanText } from "./relay-scan.js";
 import { type LockedSessionRow, lockSessions } from "./registry.js";
 import type { RelayBody } from "./schemas.js";
@@ -156,7 +156,7 @@ function isNamedBy(row: Pick<ListedSessionRow, "id" | "name" | "cwd">, recipient
 }
 
 function toCandidate(row: ListedSessionRow): RecipientCandidate {
-  return { sessionIdPrefix: row.id.slice(0, SESSION_ID_PREFIX_LENGTH), name: getSessionName(row).name };
+  return { sessionIdPrefix: getSessionIdPrefix(row.id), name: getSessionName(row).name };
 }
 
 async function insertRelay(tx: Prisma.TransactionClient, body: RelayBody, recipientIds: string[]): Promise<RelayOutcome> {
@@ -172,7 +172,7 @@ async function insertRelay(tx: Prisma.TransactionClient, body: RelayBody, recipi
   const sendId = randomUUID();
   const fields = { kind: "relay", fromSessionId: body.sessionId, relayHop: hop, relayParentId: parent?.id ?? null, linkedDocIds: body.linkedDocIds.map(BigInt) } as const;
   const copies = await createCopies(tx, { sessionIds: recipientIds, text: body.text, sendId }, fields);
-  return { relay: { sendId, hop, copies: copies.map((copy) => ({ id: copy.id, sessionIdPrefix: copy.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH) })) } };
+  return { relay: { sendId, hop, copies: copies.map((copy) => ({ id: copy.id, sessionIdPrefix: getSessionIdPrefix(copy.sessionId) })) } };
 }
 
 // Re-read under the row locks: the sender or a recipient may have ended, been replaced or turned probe since resolution

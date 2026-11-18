@@ -325,8 +325,7 @@ async function getRefusalPage(query: OwnerOrdersQuery, nextCursor: string | null
 }
 
 function toRefusalView(row: RefusalRow): RelayRefusalView {
-  const toPrefix = (sessionId: string) => sessionId.slice(0, SESSION_ID_PREFIX_LENGTH);
-  return { at: row.at.toISOString(), reason: row.reason, senderIdPrefix: toPrefix(row.senderId), recipientIdPrefixes: row.recipientIds.map(toPrefix), unresolvedCount: row.unresolvedCount };
+  return { at: row.at.toISOString(), reason: row.reason, senderIdPrefix: getSessionIdPrefix(row.senderId), recipientIdPrefixes: row.recipientIds.map(getSessionIdPrefix), unresolvedCount: row.unresolvedCount };
 }
 
 // The history threads: which items, the order time, and the fold key of an item with no send id
@@ -472,7 +471,7 @@ function getRelayParent(parent: ItemWithRelations["relayParent"]): RelayParent |
 }
 
 export function toRelaySender(session: RelaySenderRow): RelaySender {
-  return { sessionIdPrefix: session.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH), profileLabel: session.profileLabel, selfDeclaredName: session.name };
+  return { sessionIdPrefix: getSessionIdPrefix(session.sessionId), profileLabel: session.profileLabel, selfDeclaredName: session.name };
 }
 
 // CHECK queue_items_answer_record_check pairs the two columns → one null means both are
@@ -487,7 +486,7 @@ function toSessionView(session: QueueSession, lastResumeBgId: string | null): Ow
   const markedAt = session.resumeAwaitingRegisterAt;
   return {
     id: session.sessionId,
-    sessionIdPrefix: session.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH),
+    sessionIdPrefix: getSessionIdPrefix(session.sessionId),
     ...getSessionName(session),
     profileLabel: session.profileLabel,
     cwd: session.cwd,
@@ -541,11 +540,16 @@ function getOccupants(session: QueueSession, factsById: Map<string, SessionFacts
 }
 
 function toMarkedOccupant(facts: SessionFacts): MarkedOccupant {
-  return { profileLabel: facts.profileLabel, cwdTail: getCwdTail(facts.cwd), sessionIdPrefix: facts.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH) };
+  return { profileLabel: facts.profileLabel, cwdTail: getCwdTail(facts.cwd), sessionIdPrefix: getSessionIdPrefix(facts.sessionId) };
 }
 
 export function getSessionName(session: { name: string | null; cwd: string }): SessionName {
   return { name: session.name ?? getCwdBasename(session.cwd), isNameRegistered: session.name !== null };
+}
+
+/** The short id every surface shows in place of a session's full id. */
+export function getSessionIdPrefix(sessionId: string): string {
+  return sessionId.slice(0, SESSION_ID_PREFIX_LENGTH);
 }
 
 export function getCwdTail(cwd: string): string {
