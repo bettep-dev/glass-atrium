@@ -6,13 +6,14 @@
 GA_REMOTE_PORT_DEFAULT=16146 # config.toml.example → [remote_access].port
 
 # Write-step exit codes, shared with scripts/remote-access-set.sh; the monitor maps each (start.ts → ACCESS_STEP_OUTCOME)
-GA_REMOTE_NETWORK_UNREADABLE=6 # a malformed trusted list included
+GA_REMOTE_NETWORK_UNREADABLE=6
 GA_REMOTE_KEYS_NOT_CREATED=7
 # shellcheck disable=SC2034  # read by scripts/remote-access-set.sh after sourcing
 GA_REMOTE_ENV_NOT_RENDERED=8
-GA_REMOTE_ALREADY_TRUSTED=9    # nothing written
+GA_REMOTE_ALREADY_TRUSTED=9 # nothing written
 # shellcheck disable=SC2034  # read by scripts/remote-access-set.sh after sourcing
 GA_REMOTE_NETWORK_NOT_SHOWN=10 # nothing written
+GA_REMOTE_CONFIG_MALFORMED=11  # config.toml's trusted list; nothing written
 
 # --- value rules (one owner: the renderer and every CLI write validate through these) -------------
 
@@ -487,8 +488,8 @@ ga_remote_trust_network() {
   fi
   current="$(atrium_toml_get "[remote_access]" "trusted_networks")"
   if ! list="$(ga_remote_get_trusted_list "${current}")"; then
-    printf 'remote: [remote_access].trusted_networks is malformed — nothing written\n' >&2
-    return "${GA_REMOTE_NETWORK_UNREADABLE}"
+    printf 'remote: config.toml [remote_access].trusted_networks is malformed — nothing written\n' >&2
+    return "${GA_REMOTE_CONFIG_MALFORMED}"
   fi
   if [[ ",${list}," == *",${entry},"* ]]; then
     printf 'remote: this network is already trusted\n'

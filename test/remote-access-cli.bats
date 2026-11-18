@@ -433,14 +433,26 @@ SHOWN=(en1 192.168.0.1 00:1b:2c:0d:4e:5f)
   [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${SANDBOX}/monitor/.env" ]] || return 1
 }
 
-@test "the page's trust on an unreadable network writes nothing" {
-  write_render_config
-  ARP_OUT=""
-  local config_before
-  config_before="$(file_sum "${SANDBOX}/config.toml")"
-  run_page_step trust "${SHOWN[@]}"
-  [[ "${status}" -eq 6 ]] || { echo "${output}"; return 1; }
-  [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${SANDBOX}/monitor/.env" ]] || return 1
+@test "the page's trust writes nothing and exits apart for an unreadable network and a malformed trusted list" {
+  local rows=("unreadable network||${GA_REMOTE_NETWORK_UNREADABLE}|network identity unreadable"
+    "malformed trusted list|8.8.8.8@00:1b:2c:0d:4e:5f|${GA_REMOTE_CONFIG_MALFORMED}|trusted_networks is malformed")
+  local row name trusted want_status want_text config_before
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name trusted want_status want_text <<<"${row}"
+    write_render_config
+    if [[ -n "${trusted}" ]]; then
+      printf '\n[remote_access]\ntrusted_networks = "%s"\n' "${trusted}" >>"${SANDBOX}/config.toml"
+      ARP_OUT='? (192.168.0.1) at 0:1b:2c:d:4e:5f on en1 ifscope [ethernet]'
+    else
+      ARP_OUT=""
+    fi
+    config_before="$(file_sum "${SANDBOX}/config.toml")"
+    run_page_step trust "${SHOWN[@]}"
+    [[ -n "${want_status}" && "${status}" -eq "${want_status}" && "${output}" == *"${want_text}"* ]] \
+      || { echo "${name}: ${status} ${output}"; return 1; }
+    [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${SANDBOX}/monitor/.env" ]] \
+      || { echo "${name}: written"; return 1; }
+  done
 }
 
 @test "the page's off writes enabled false and renders the env, with no monitor call and no restart" {
