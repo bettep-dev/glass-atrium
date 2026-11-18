@@ -223,18 +223,21 @@ function getMacPageHeaders(name: string, value?: string): Record<string, string>
 
 // what a document's markup can send at a same-origin route: fetch metadata yes, a script-set header never
 const DOCUMENT_ORIGIN = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin", origin: `http://127.0.0.1:${PORT}` };
-const MARKUP_REQUESTS: { name: string; method: "GET" | "POST"; headers: Record<string, string>; payload?: string }[] = [
+// formStatus: the root request guard refuses a form content type before routing (request-guards.ts)
+const MARKUP_REQUESTS: { name: string; method: "GET" | "POST"; headers: Record<string, string>; payload?: string; formStatus?: 415 }[] = [
   {
     name: "an empty form post",
     method: "POST",
     headers: { ...DOCUMENT_ORIGIN, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document", "content-type": "application/x-www-form-urlencoded" },
     payload: "",
+    formStatus: 415,
   },
   {
     name: "an empty text/plain form post",
     method: "POST",
     headers: { ...DOCUMENT_ORIGIN, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document", "content-type": "text/plain" },
     payload: "",
+    formStatus: 415,
   },
   {
     name: "a link ping",
@@ -287,8 +290,8 @@ describe("every admin route", () => {
       for (const route of ROUTES) {
         for (const markup of MARKUP_REQUESTS) {
           const response = await callAdmin({ method: markup.method, url: route.getUrl(device.id), headers: markup.headers, payload: markup.payload });
-          // no route of the markup's method at this path → the router's 404; one there → the page gate's 403
-          const expected = markup.method === route.method ? 403 : 404;
+          // a form → the root guard's 415 at any path; else no route of the markup's method → the router's 404, one there → the page gate's 403
+          const expected = markup.formStatus ?? (markup.method === route.method ? 403 : 404);
           assert.equal(response.statusCode, expected, `${route.name} / ${markup.name}: ${response.statusCode} ${response.body}`);
         }
       }
