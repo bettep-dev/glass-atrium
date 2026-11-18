@@ -72,8 +72,11 @@ export type AccessStepOutcome =
 /** Refused before any step: no confirm read in force, or the network differs from the one it showed. */
 export type ConfirmRefusal = "confirm_stale" | "network_changed";
 
-/** start_failed → the step wrote, this process could not apply it; the next restart does. */
-export type AccessApplyOutcome = AccessStepOutcome | "start_failed" | ConfirmRefusal;
+/**
+ * start_failed → the step wrote, this process could not apply it; the next restart does.
+ * act_failed → the act threw → what it wrote is unknown until the next restart.
+ */
+export type AccessApplyOutcome = AccessStepOutcome | "start_failed" | "act_failed" | ConfirmRefusal;
 
 export interface AccessApplyResult {
   readonly outcome: AccessApplyOutcome;
@@ -266,28 +269,44 @@ const FAILED_ACT_STATUS: Record<Exclude<AccessApplyOutcome, "written">, number> 
   config_malformed: 500,
   write_failed: 500,
   start_failed: 500,
+  act_failed: 500,
   confirm_stale: 409,
   network_changed: 409,
 };
 
+// the on may add a trust of the network shown → its request row names that before any step
+const WIDENING_REQUEST_PAYLOAD = { on: { mayTrust: "network_shown" }, trust: {} } as const;
+const ACT_FAILED: AccessApplyResult = { outcome: "act_failed", trustedCount: null };
+
 /**
  * On or trust: request row first (no row → no act), one act at a time, then one outcome row per step with the trusted count.
  * An on that also trusted the network shown answers the trust's outcome beside its own; the on stands either way.
+ * An act that throws still gets its outcome row → no request row is left without one.
  */
 async function widenAccess(request: FastifyRequest, reply: FastifyReply, route: AccessRoute & { act: "on" | "trust" }): Promise<FastifyReply> {
   if (route.queue.isBusy) return reply.code(409).send({ error: "act_in_progress" });
   return route.queue.run(async () => {
-    if (!(await putAccessRequest(request, route.deps))) return reply.code(503).send({ error: "audit_unavailable" });
-    if (route.act === "trust") {
-      const trust = await route.deps.access.trust();
-      putActOutcome(request, route.deps, "trust", trust);
-      return sendActOutcome(reply, trust, {});
+    if (!(await putAccessRequest(request, route.deps, WIDENING_REQUEST_PAYLOAD[route.act]))) return reply.code(503).send({ error: "audit_unavailable" });
+    try {
+      return await runWideningAct(request, reply, route);
+    } catch (error) {
+      request.log.error({ err: error, act: route.act }, "remote access act threw: state unknown until the next restart");
+      putActOutcome(request, route.deps, route.act, ACT_FAILED);
+      return sendActOutcome(reply, ACT_FAILED, {});
     }
-    const on = await route.deps.access.turnOn();
-    putActOutcome(request, route.deps, "on", on);
-    if (on.trust !== null) putActOutcome(request, route.deps, "trust", on.trust);
-    return sendActOutcome(reply, on, { trust: on.trust?.outcome ?? null });
   });
+}
+
+async function runWideningAct(request: FastifyRequest, reply: FastifyReply, route: AccessRoute & { act: "on" | "trust" }): Promise<FastifyReply> {
+  if (route.act === "trust") {
+    const trust = await route.deps.access.trust();
+    putActOutcome(request, route.deps, "trust", trust);
+    return sendActOutcome(reply, trust, {});
+  }
+  const on = await route.deps.access.turnOn();
+  putActOutcome(request, route.deps, "on", on);
+  if (on.trust !== null) putActOutcome(request, route.deps, "trust", on.trust);
+  return sendActOutcome(reply, on, { trust: on.trust?.outcome ?? null });
 }
 
 function putActOutcome(request: FastifyRequest, deps: RemoteAdminDeps, act: "on" | "trust", result: AccessApplyResult): void {
@@ -301,9 +320,10 @@ function sendActOutcome(reply: FastifyReply, result: AccessApplyResult, fields: 
 }
 
 /** @returns false when the row was not written; the page-origin stamp is a record, not a check */
-async function putAccessRequest(request: FastifyRequest, deps: RemoteAdminDeps): Promise<boolean> {
+async function putAccessRequest(request: FastifyRequest, deps: RemoteAdminDeps, extra: Readonly<Record<string, string>> = {}): Promise<boolean> {
   const pageOrigin = getPageOriginSignal(request.headers, new Set()) ?? "none";
-  const event: RemoteAuditEvent = { actor: AUDIT_ACTOR, actionKind: "remote.access_requested", result: "success", payload: { ...getRoutePayload(request), pageOrigin } };
+  const payload = { ...getRoutePayload(request), pageOrigin, ...extra };
+  const event: RemoteAuditEvent = { actor: AUDIT_ACTOR, actionKind: "remote.access_requested", result: "success", payload };
   try {
     await getWithin(deps.audit.insertEvent(event), deps);
     return true;

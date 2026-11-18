@@ -73,6 +73,7 @@ const access = {
   outcome: "written" as AccessApplyOutcome,
   offOutcome: "written" as AccessStepOutcome,
   isCloseFailing: false,
+  isActThrowing: false,
   hold: Promise.resolve(),
   certificate: null as Buffer | null,
   // the trust the on added in the same act; null → none tried
@@ -127,6 +128,7 @@ function buildAdminDeps(): RemoteAdminDeps {
 async function runAccessAct(act: string): Promise<{ outcome: AccessApplyOutcome; trustedCount: number }> {
   trail.push(`act ${act}`);
   await access.hold;
+  if (access.isActThrowing) throw new Error(`${act} threw inside the apply`);
   return { outcome: access.outcome, trustedCount: 2 };
 }
 
@@ -143,7 +145,7 @@ beforeEach(() => {
   openedCodes = [];
   isAuditDown = false;
   trail.length = 0;
-  Object.assign(access, { outcome: "written", offOutcome: "written", isCloseFailing: false, hold: Promise.resolve(), certificate: ca.cert, onTrust: null });
+  Object.assign(access, { outcome: "written", offOutcome: "written", isCloseFailing: false, isActThrowing: false, hold: Promise.resolve(), certificate: ca.cert, onTrust: null });
 });
 
 after(async () => {
@@ -451,8 +453,9 @@ describe("revoking every device", () => {
 });
 
 const WIDENING_ACTS = [
-  { name: "turning on", url: REMOTE_ADMIN_PATH.ACCESS_ON, act: "act on", actionKind: "remote.access_enabled", body: { outcome: "written", trust: null } },
-  { name: "trusting this network", url: REMOTE_ADMIN_PATH.TRUST, act: "act trust", actionKind: "remote.network_trusted", body: { outcome: "written" } },
+  // the on may trust the network shown in the same act → its request row says so
+  { name: "turning on", url: REMOTE_ADMIN_PATH.ACCESS_ON, act: "act on", actionKind: "remote.access_enabled", body: { outcome: "written", trust: null }, requested: { mayTrust: "network_shown" } },
+  { name: "trusting this network", url: REMOTE_ADMIN_PATH.TRUST, act: "act trust", actionKind: "remote.network_trusted", body: { outcome: "written" }, requested: {} },
 ];
 
 describe("an act that widens access", () => {
@@ -464,8 +467,21 @@ describe("an act that widens access", () => {
       assert.deepEqual(
         events.map((event) => [event.actor, event.result, event.payload]),
         [
-          ["monitor-web", "success", { method: "POST", route: row.url, pageOrigin: "fetch_metadata" }],
+          ["monitor-web", "success", { method: "POST", route: row.url, pageOrigin: "fetch_metadata", ...row.requested }],
           ["monitor-web", "success", { method: "POST", route: row.url, outcome: "written", trustedNetworkCount: 2 }],
+        ],
+      );
+    });
+
+    test(`${row.name} records an error outcome row and answers act_failed when the act throws, so no request row is left without an outcome`, async () => {
+      access.isActThrowing = true;
+      const response = await callAdmin({ method: "POST", url: row.url });
+      assert.deepEqual([response.statusCode, JSON.parse(response.body)], [500, { error: "act_failed" }]);
+      assert.deepEqual(
+        events.map((event) => [event.actionKind, event.result, event.payload?.outcome]),
+        [
+          ["remote.access_requested", "success", undefined],
+          [row.actionKind, "error", "act_failed"],
         ],
       );
     });
