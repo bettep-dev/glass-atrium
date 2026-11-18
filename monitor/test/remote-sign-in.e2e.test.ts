@@ -71,13 +71,13 @@ describe("sign-in page load", () => {
     });
   });
 
-  test("the page says where the code is shown and warns before a connection that is not private, with no certificate steps", async () => {
+  test("the page says to open a code at the Mac's step 5 and warns before a connection that is not private, with no certificate steps", async () => {
     await withPage(async (page) => {
       await openSignIn(page);
 
       const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
 
-      assert.match(text, /Enter the code shown on the Mac in step 5\./);
+      assert.match(text, /Open a code on the Mac at step 5, then enter it here\. This device stays registered until it is removed on the Mac\./);
       assert.match(text, /One use · a new code on the Mac replaces it/);
       assert.equal(await page.getByRole("heading", { name: "Connection warning" }).count(), 1);
       assert.match(text, /said the connection is not private, stop and do not enter the code\. On the Mac, finish steps 1 to 3, then reopen this page\./);
