@@ -965,6 +965,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-size: var(--fs-meta);
 	color: rgb(var(--dim));
 }
+/* the redaction dialog's error slot keeps its one line while empty → the buttons never move */
+.queue-relay-error {
+	min-height: var(--lh-row);
+}
 /* the relay's text in the history: the bubble's clamp without its fill or inset */
 .queue-bubble.is-plain {
 	max-width: var(--measure-prose);

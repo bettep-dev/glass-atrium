@@ -672,6 +672,47 @@ describe("relay history", () => {
     assert.deepEqual(call<{ refusals: unknown[] }>("getReadThreadQ", prev, page, null, false).refusals, [{ at: "a" }]);
   });
 
+  test("a redacted send paints the page's own line from the stored time and length, never the stored text, and offers no control", () => {
+    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
+    const redacted = entries(tree)[2]!;
+    assert.match(flat(redacted), /Redacted Text redacted 2026-11-13 14:30 KST · it was 1,284 characters long/);
+    assert.doesNotMatch(flat(redacted), /relay text redacted by the owner/);
+    assert.equal(findNodes(redacted, (node) => node.props?.atom === "ProseText").length, 0);
+    assert.deepEqual(entries(tree).map((entry) => buttonLabelled(entry, "Redact text").length), [1, 1, 0]);
+  });
+
+  test("a send with one copy still holding its text keeps the text and its Redact text", () => {
+    const [kept, gone] = getRelayHistoryFixture().items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const partly = [kept!, { ...gone!, body: "[relay text redacted by the owner]", relay: { ...gone!.relay!, redaction: { at: "2026-11-13T05:30:00.000Z", length: 99 } } }];
+    const tree = render("RelayLogQ", { history: history({ items: partly, refusals: [] }) });
+    assert.equal(buttonLabelled(tree, "Redact text").length, 1);
+    assert.ok(findNodes(tree, (node) => node.props?.atom === "ProseText").some((node) => String(node.props.text).startsWith("파트너")));
+  });
+
+  test("the redaction posts one owner action per unredacted copy, each by its relay id, with no text", async () => {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: realUi },
+      fetch: async (url: string, init: { body?: string }) => { posts.push({ url, body: init.body }); return { status: 200, json: async () => ({ ok: true }) }; },
+    })) as ScreenModule;
+    const [kept, gone] = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const copies = [kept, { ...gone, relay: { ...gone!.relay, redaction: { at: "2026-11-13T05:30:00.000Z", length: 99 } } }];
+    await (module.putRelayRedactionQ as (copies: unknown) => Promise<unknown>)(copies);
+    assert.deepEqual(posts, [{ url: `/api/queue/owner/items/${kept!.id}/redact`, body: "{}" }]);
+  });
+
+  const outcomes = [
+    { name: "every copy taken is done", answers: [{ status: 200, data: { ok: true } }, { status: 200, data: { ok: true } }], error: null },
+    { name: "a copy already redacted counts as done", answers: [{ status: 409, data: { error: "already_redacted" } }, { status: 200, data: { ok: true } }], error: null },
+    { name: "some copies left says how many and asks again", answers: [{ status: 200, data: { ok: true } }, { status: 200, data: { ok: true } }, { status: 503, data: { error: "database_unavailable" } }], error: "✕ 1 of 3 copies was not redacted. Redact text again." },
+    { name: "every copy refused names the server's reason", answers: [{ status: 409, data: { error: "wrong_kind" } }], error: "✕ Refused: HTTP 409 wrong_kind." },
+  ];
+  for (const row of outcomes) {
+    test(`redaction outcome: ${row.name}`, () => {
+      assert.equal(call<{ error: string | null }>("getRedactionOutcomeQ", row.answers).error, row.error);
+    });
+  }
+
   const buttons = [
     { name: "a record with any relay or refusal shows the button", hasRecord: true, count: 1 },
     { name: "an empty record shows no button", hasRecord: false, count: 0 },

@@ -3086,19 +3086,77 @@ const RELAY_LOG_FOOT_Q = "Names are what sessions call themselves, and the queue
 function RelayHistoryQ({ signal, history }) {
 	const { DetailSurface } = window.UI;
 	const [isOpen, setOpen] = useStateQ(false);
+	const redaction = useRelayRedactionQ(history.read);
 	if (signal.data?.hasRecord !== true) return null;
 	return (
 		<>
 			<button type="button" className="btn ghost sm" onClick={() => { setOpen(true); history.read(); }}>Relay history</button>
 			<DetailSurface open={isOpen} onClose={() => setOpen(false)} title="Relay history" footer={<p className="fs-meta text-dim">{RELAY_LOG_FOOT_Q}</p>}>
-				<RelayLogQ history={history} />
+				<p role="status" className="fs-meta">{redaction.status}</p>
+				<RelayLogQ history={history} onRedact={redaction.ask} />
 			</DetailSurface>
+			{redaction.target !== null && <RedactConfirmQ redaction={redaction} />}
 		</>
 	);
 }
 
+/** The one act on a relay (spec §9.9): asked on an entry, confirmed in a dialog, sent per copy; partly done keeps the dialog open. */
+function useRelayRedactionQ(onDone) {
+	const [target, setTarget] = useStateQ(null);
+	const [state, setState] = useStateQ({ isBusy: false, error: null, status: "" });
+	const ask = useCallbackQ((entry) => { setTarget(entry); setState((prev) => ({ ...prev, error: null })); }, []);
+	const cancel = useCallbackQ(() => setTarget(null), []);
+	const confirm = useCallbackQ(async () => {
+		setState((prev) => ({ ...prev, isBusy: true, error: null }));
+		const { error } = getRedactionOutcomeQ(await putRelayRedactionQ(target.copies));
+		setState({ isBusy: false, error, status: error === null ? `✓ Text redacted: ${getRelayPairQ(target)}, ${window.UI.formatKstTime(getRelayAtQ(target))}` : "" });
+		if (error === null) setTarget(null);
+		onDone();
+	}, [target, onDone]);
+	return { target, ...state, ask, cancel, confirm };
+}
+
+// the owner route takes one relay id → one request per copy still holding its text, one after another
+async function putRelayRedactionQ(copies) {
+	const answers = [];
+	for (const copy of copies.filter((one) => one.relay.redaction === null)) answers.push(await sendOwnerRequestQ(`/items/${copy.id}/redact`, {}));
+	return answers;
+}
+
+// 409 already_redacted → that copy is done (first wins on the server); some copies left → the count and the ask to press again
+function getRedactionOutcomeQ(answers) {
+	const failed = answers.filter((answer) => !isOkAnswerQ(answer) && answer.data?.error !== "already_redacted");
+	if (failed.length === 0) return { error: null };
+	if (failed.length < answers.length) return { error: `✕ ${failed.length} of ${answers.length} copies ${failed.length === 1 ? "was" : "were"} not redacted. Redact text again.` };
+	return { error: getOutageStepQ(failed[0]) ?? `✕ Refused: ${getAnswerDetailQ(failed[0])}.` };
+}
+
+// `aidl → yoaida and sixmon`
+function getRelayPairQ(entry) {
+	return `${getSenderNameQ(entry.item.relay.sender)} → ${getNameListQ(entry.copies.map((copy) => copy.session.name))}`;
+}
+
+/** The confirmation over the drawer: no outside close, focus on Cancel, the commit last; the error slot holds its line. */
+function RedactConfirmQ({ redaction }) {
+	const { DetailSurface } = window.UI;
+	const { target, isBusy } = redaction;
+	const names = getNameListQ(target.copies.map((copy) => copy.session.name));
+	const footer = (
+		<>
+			<button type="button" className="btn secondary" autoFocus aria-disabled={isBusy} onClick={isBusy ? undefined : redaction.cancel}>Cancel</button>
+			<BusyButtonQ className="btn primary" label="Redact text" busyLabel="Redacting…" isBusy={isBusy} onPress={redaction.confirm} />
+		</>
+	);
+	return (
+		<DetailSurface open variant="confirm" suppressOutsideClose onClose={isBusy ? () => undefined : redaction.cancel} title="Redact this relay's text?" footer={footer}>
+			<p className="text-dim">{`The text ${getSenderNameQ(target.item.relay.sender)} sent to ${names} is replaced by a fixed marker in the record, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
+			<p role="alert" className="fs-meta queue-relay-error">{redaction.error ?? ""}</p>
+		</DetailSurface>
+	);
+}
+
 /** The record in the Orders thread's form: oldest at the top, day labels, one entry per send; not scoped by the ticks. */
-function RelayLogQ({ history }) {
+function RelayLogQ({ history, onRedact }) {
 	const { LoadingPlaceholder, RegionUnavailable } = window.UI;
 	const { thread } = history;
 	const entries = getRelayLogEntriesQ(thread);
@@ -3112,7 +3170,7 @@ function RelayLogQ({ history }) {
 				<div key={group.day} className="queue-day-group">
 					<p className="queue-day">{group.label}</p>
 					<ul className="queue-relay-list">
-						{group.entries.map((entry) => <li key={entry.id}>{entry.refusal ? <RefusedRelayQ refusal={entry.refusal} names={names} /> : <RelayEntryQ entry={entry} />}</li>)}
+						{group.entries.map((entry) => <li key={entry.id}>{entry.refusal ? <RefusedRelayQ refusal={entry.refusal} names={names} /> : <RelayEntryQ entry={entry} onRedact={onRedact} />}</li>)}
 					</ul>
 				</div>
 			))}
@@ -3205,10 +3263,12 @@ function getUnresolvedTextQ(count) {
 }
 
 /** One send: the head, the text, the documents, a row per copy, the hop line at hop 1 or 2. */
-function RelayEntryQ({ entry }) {
-	const { MachineString, formatKstTime } = window.UI;
+function RelayEntryQ({ entry, onRedact }) {
+	const { Badge, MachineString, formatKstTime } = window.UI;
 	const { item, copies } = entry;
 	const { sender, hop, parent } = item.relay;
+	// redacted only once every copy is → until then the text and the button stay (route-rows verdict, per-copy route)
+	const kept = copies.find((copy) => copy.relay.redaction === null);
 	const at = getRelayAtQ(entry);
 	const names = getNameListQ(copies.map((copy) => copy.session.name));
 	return (
@@ -3217,8 +3277,15 @@ function RelayEntryQ({ entry }) {
 				<time dateTime={at} title={`Sent ${getDatedTimeQ(at)}`}>{formatKstTime(at)}</time>
 				<span className="queue-relay-name">{getSenderNameQ(sender)}</span>
 				<MachineString>{sender.sessionIdPrefix}</MachineString>
+				<span className="queue-relay-slot">
+					{kept === undefined
+						? <Badge fill="tag">Redacted</Badge>
+						: <button type="button" className="btn ghost sm" onClick={() => onRedact?.(entry)}>Redact text</button>}
+				</span>
 			</p>
-			<OrderBubbleQ text={item.body} isPlain />
+			{kept === undefined
+				? <p className="fs-meta text-dim">{`Text redacted ${getDatedTimeQ(item.relay.redaction.at)} · it was ${item.relay.redaction.length.toLocaleString("en-US")} characters long`}</p>
+				: <OrderBubbleQ text={kept.body} isPlain />}
 			<DocumentsLineQ item={item} />
 			<ul className="queue-relay-copies" aria-label="Recipients">{copies.map((copy) => <RelayCopyQ key={copy.id} copy={copy} at={at} />)}</ul>
 			{hop > 0 && parent !== null && (
