@@ -26,6 +26,8 @@ export const RELAY = {
   HOP_LIMIT: 3,
   /** An undelivered relay on a row ended this long lapses (sweep.ts); a replaced row's lapses at once. */
   LAPSE_MS: 3 * 24 * 3_600_000,
+  /** The longest id prefix a recipient may name: the id's first two groups → a probe never confirms a full id. */
+  RECIPIENT_PREFIX_MAX: 13,
 } as const;
 // Every relay transaction takes it first → the machine-wide count and the insert never interleave across senders
 const RELAY_LOCK_KEY = 771_113_403;
@@ -150,9 +152,10 @@ async function resolveRecipients(sender: SenderRow, recipients: string[]): Promi
   return { ids };
 }
 
-// An id prefix as the peers read shows it (or longer), or the shown name exactly
+// An id prefix as the peers read shows it (or a few characters longer), or the shown name exactly
 function isNamedBy(row: Pick<ListedSessionRow, "id" | "name" | "cwd">, recipient: string): boolean {
-  const isPrefix = recipient.length >= SESSION_ID_PREFIX_LENGTH && row.id.startsWith(recipient.toLowerCase());
+  const isPrefixLength = recipient.length >= SESSION_ID_PREFIX_LENGTH && recipient.length <= RELAY.RECIPIENT_PREFIX_MAX;
+  const isPrefix = isPrefixLength && row.id.startsWith(recipient.toLowerCase());
   return isPrefix || getSessionName(row).name === recipient;
 }
 
