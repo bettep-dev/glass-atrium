@@ -17,8 +17,6 @@ const PAGE_HEADERS_RA = { "x-glass-atrium-page": "remote-access" };
 const CODE_WINDOW_MS_RA = 5 * 60_000;
 // while a code is open → a device that registers shows without a refresh
 const DEVICE_POLL_MS_RA = 5_000;
-// the name step 1 quotes → the file the person finds in Downloads or the share sheet
-const CERTIFICATE_FILE_NAME_RA = "Glass Atrium Local CA.pem";
 // Action: isNumeric for the atom's right-end alignment (a button, no figures) · 1% → the column shrinks to its button
 const DEVICE_COLUMNS_RA = [{ key: "label", label: "Device" }, { key: "created", label: "Registered" }, { key: "seen", label: "Last seen" }, { key: "act", label: "Action", isNumeric: true }];
 const DEVICE_WIDTHS_RA = [undefined, undefined, undefined, "1%"];
@@ -82,8 +80,13 @@ async function readConfirmNetworkRA() {
 	return (await requestRA(URL_RA.CONFIRM_NETWORK)).json();
 }
 
+/** The certificate as a file named by the server's Content-Disposition (admin-routes.ts → CA_DOWNLOAD). */
 async function readCertificateRA() {
-	return (await requestRA(URL_RA.CERTIFICATE)).blob();
+	const res = await requestRA(URL_RA.CERTIFICATE);
+	const name = window.UI.getAttachmentName(res.headers.get("content-disposition"));
+	if (name === null) throw new Error("The certificate download named no file.");
+	const blob = await res.blob();
+	return new File([blob], name, { type: blob.type });
 }
 
 async function readScreenRA() {
@@ -157,13 +160,12 @@ function getAddressesRA(setup) {
 	return hosts.map((host, i) => ({ label: i === 0 ? "Address" : "If that does not open", url: `https://${host}:${setup.port}` }));
 }
 
-function canShareFileRA() {
-	return typeof navigator.canShare === "function" && navigator.canShare({ files: [new File([""], CERTIFICATE_FILE_NAME_RA)] });
+function canShareFileRA(file) {
+	return file !== null && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] });
 }
 
 /** Share sheet where the browser offers one, else a download; a sheet the person closes is no error. */
-async function sendCertificateRA(blob, isShare) {
-	const file = new File([blob], CERTIFICATE_FILE_NAME_RA, { type: blob.type });
+async function sendCertificateRA(file, isShare) {
 	if (isShare) {
 		await navigator.share({ files: [file] }).catch((error) => {
 			if (error?.name !== "AbortError") throw error;
@@ -351,17 +353,17 @@ function StepTextRA({ children }) {
 }
 
 function CertificateStepRA() {
-	const [cert, setCert] = useSRA({ blob: null, isSending: false, error: null });
-	const isShare = canShareFileRA();
+	const [cert, setCert] = useSRA({ file: null, isSending: false, error: null });
+	const isShare = canShareFileRA(cert.file);
 	// read ahead → the share sheet opens inside the click, which a browser requires
 	useERA(() => {
-		readCertificateRA().then((blob) => setCert((prev) => ({ ...prev, blob })), () => undefined);
+		readCertificateRA().then((file) => setCert((prev) => ({ ...prev, file })), () => undefined);
 	}, []);
 	const onSend = () => {
 		if (cert.isSending) return;
 		setCert((prev) => ({ ...prev, isSending: true, error: null }));
-		const blob = cert.blob ? Promise.resolve(cert.blob) : readCertificateRA();
-		blob.then((value) => sendCertificateRA(value, isShare)).then(
+		const file = cert.file ? Promise.resolve(cert.file) : readCertificateRA();
+		file.then((value) => sendCertificateRA(value, isShare)).then(
 			() => setCert((prev) => ({ ...prev, isSending: false })),
 			(error) => setCert((prev) => ({ ...prev, isSending: false, error: { text: "The certificate was not downloaded. Try again.", detail: error.message } })),
 		);

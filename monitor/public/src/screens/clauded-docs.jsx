@@ -2286,22 +2286,6 @@ function ViewerPanelCD({
 	);
 }
 
-// Content-Disposition 헤더에서 filename 추출 — RFC 5987 filename*=UTF-8''… 우선, 평문 filename="…" 폴백.
-//   · 헤더 부재/파싱 실패 → 호출부 폴백 filename 사용 (저장명 회귀 차단).
-function parseContentDispositionFilenameCD(headerValue) {
-	if (!headerValue) return null;
-	const star = headerValue.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
-	if (star) {
-		try {
-			return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
-		} catch {
-			// malformed percent-encoding → 평문 filename 폴백 시도.
-		}
-	}
-	const plain = headerValue.match(/filename="?([^";]+)"?/i);
-	return plain ? plain[1].trim() : null;
-}
-
 function ViewerActionsCD({ doc, onClose, showToast }) {
 	const { Icon } = window.UI;
 	const [isExporting, setIsExporting] = useStateCD(false);
@@ -2323,7 +2307,7 @@ function ViewerActionsCD({ doc, onClose, showToast }) {
 				return;
 			}
 			const filename =
-				parseContentDispositionFilenameCD(
+				window.UI.getAttachmentName(
 					res.headers.get("content-disposition"),
 				) || `${doc.title || doc.id}.html`;
 			const blob = await res.blob();

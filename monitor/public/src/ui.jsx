@@ -2332,6 +2332,24 @@ async function getErrorBody(res) {
   }
 }
 
+/**
+ * The saved-file name a download's Content-Disposition names: RFC 5987 `filename*` first, the plain `filename` as fallback.
+ * @returns null when the header names no file
+ */
+function getAttachmentName(headerValue) {
+  if (!headerValue) return null;
+  const star = headerValue.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ''));
+    } catch (_err) {
+      // malformed percent-encoding → the plain filename below
+    }
+  }
+  const plain = headerValue.match(/filename="?([^";]+)"?/i);
+  return plain ? plain[1].trim() : null;
+}
+
 const FETCH_ERROR_NEXT_STEP = {
   network: 'The monitor server did not answer. Check that it is running, then retry.',
   database: "The monitor's database is unavailable. Retry in a moment.",
@@ -3038,7 +3056,7 @@ window.UI = {
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
   REMOTE_PAGE, isRemotePage, installRemoteFetch, readRemoteSession,
-  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getAttachmentName, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,

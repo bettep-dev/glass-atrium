@@ -6,7 +6,8 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { MAC_PAGE_HEADER, REMOTE_ADMIN_PATH } from "../src/server/remote/admin-routes.js";
+import { CA_DOWNLOAD, MAC_PAGE_HEADER, REMOTE_ADMIN_PATH } from "../src/server/remote/admin-routes.js";
+import { getAttachmentDisposition } from "../src/server/response-headers.js";
 import { REGISTRATION_CODE } from "../src/server/remote/registration-code.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
@@ -23,6 +24,7 @@ interface SentRequest {
 interface Answer {
   readonly status: number;
   readonly body: unknown;
+  readonly headers?: Record<string, string>;
 }
 
 const ui = (await loadScreenModule(resolve(SRC, "ui.jsx"))).UI as Record<string, unknown>;
@@ -32,9 +34,10 @@ async function loadScreen(answer: Answer = { status: 200, body: {} }) {
   const mod = await loadScreenModule(SCREEN_SRC, {
     UI: ui,
     navigator: {},
+    File,
     fetch: async (url: string, init: RequestInit = {}) => {
       sent.push({ url, method: init.method ?? "GET", body: init.body, pageHeader: new Headers(init.headers).get(MAC_PAGE_HEADER.NAME) });
-      return new Response(JSON.stringify(answer.body), { status: answer.status, statusText: "x" });
+      return new Response(JSON.stringify(answer.body), { status: answer.status, statusText: "x", headers: answer.headers });
     },
   });
   return { mod, sent };
@@ -385,7 +388,11 @@ describe("every Mac-only call carries the page header the admin routes require",
   ];
   for (const row of rows) {
     test(`${row.name} goes to its own route with the header and no body`, async () => {
-      const { mod, sent } = await loadScreen({ status: 200, body: { ...SETUP_ON, devices: [], code: "K7QM4XZP", revoked: 1, outcome: "written" } });
+      const { mod, sent } = await loadScreen({
+        status: 200,
+        body: { ...SETUP_ON, devices: [], code: "K7QM4XZP", revoked: 1, outcome: "written" },
+        headers: { "content-disposition": getAttachmentDisposition(CA_DOWNLOAD.FILE_NAME) },
+      });
 
       await (mod[row.act] as (arg?: string) => Promise<unknown>)(row.arg);
 
@@ -393,6 +400,21 @@ describe("every Mac-only call carries the page header the admin routes require",
       assert.deepEqual(sent.map((entry) => [entry.pageHeader, entry.body]), [[MAC_PAGE_HEADER.VALUE, undefined]], row.name);
     });
   }
+
+  test("the certificate file takes the name the download's header carries", async () => {
+    const name = "Studio Mac CA (2026).pem";
+    const { mod } = await loadScreen({ status: 200, body: {}, headers: { "content-disposition": getAttachmentDisposition(name) } });
+
+    const file = await (mod.readCertificateRA as () => Promise<File>)();
+
+    assert.equal(file.name, name);
+  });
+
+  test("a certificate download with no file name in its header is a failed read", async () => {
+    const { mod } = await loadScreen({ status: 200, body: {} });
+
+    await assert.rejects((mod.readCertificateRA as () => Promise<File>)());
+  });
 
   test("a device already gone counts as removed", async () => {
     const { mod } = await loadScreen({ status: 404, body: { error: "device_not_found" } });
