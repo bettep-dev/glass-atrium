@@ -50,6 +50,7 @@ const ATTENTION_RA = {
 };
 // the attention row above already says whether this network is trusted
 const COUNT_ONLY_VIEWS_RA = new Set(["closed", "no-network", "off-no-network"]);
+const CHECKING_LABEL_RA = "Checking network…";
 const ROUTER_LABEL_RA = { wifi: "Router of this Mac's Wi-Fi", wired: "Router of this Mac's wired network", unknown: "Router of this Mac's network" };
 const WIDEN_WORDS_RA = {
 	on: { title: "Turn on remote access?", lead: "This also trusts the network this Mac is on now. A device you connect with a code from this screen can then open this monitor whenever this Mac is on that network.", commit: { label: "Turn on and trust", busy: "Turning on…" } },
@@ -208,16 +209,24 @@ function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
 	const [check, setCheck] = useSRA({ act: null, error: null });
 	const data = read.data;
 	const view = data ? getViewRA(data.setup) : null;
-	const onWiden = (act) => {
+	// isReread → the open confirm's own read: a confirm cancelled meanwhile stays closed
+	const onWiden = (act, isReread = false) => {
 		if (check.act !== null) return;
 		setCheck({ act, error: null });
 		readConfirmNetworkRA().then(
 			(network) => {
 				setCheck({ act: null, error: null });
-				if (network.router === null || (act === "trust" && network.isNetworkTrusted)) onReload();
-				else setDialog({ act, network });
+				if (network.router !== null && !(act === "trust" && network.isNetworkTrusted)) {
+					setDialog((open) => (isReread && open === null ? null : { act, network }));
+					return;
+				}
+				setDialog(null);
+				onReload();
 			},
-			(error) => setCheck({ act: null, error: { act, text: "This Mac's network could not be read. Try again.", detail: error.message } }),
+			(error) => {
+				setDialog(null);
+				setCheck({ act: null, error: { act, text: "This Mac's network could not be read. Try again.", detail: error.message } });
+			},
 		);
 	};
 	return (
@@ -227,7 +236,8 @@ function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
 			{data === null
 				? <FirstReadRA read={read} onRetry={onReload} />
 				: <BodyRA setup={data.setup} devices={data.devices} view={view} check={check} onWiden={onWiden} onChanged={onReload} onDevicesRead={onDevicesRead} onRemoveAll={() => setDialog({ act: "remove-all" })} />}
-			{dialog && <AccessDialogRA dialog={dialog} count={data?.devices.length ?? 0} onClose={() => setDialog(null)} onDone={onReload} />}
+			{dialog && <AccessDialogRA dialog={dialog} count={data?.devices.length ?? 0} isChecking={check.act !== null}
+				onRecheck={() => onWiden(dialog.act, true)} onClose={() => setDialog(null)} onDone={onReload} />}
 		</div>
 	);
 }
@@ -238,7 +248,7 @@ function HeaderRA({ read, view, checkingAct, onReload, onWiden, onOff }) {
 	const status = view && STATUS_RA[view];
 	const turnOn = view === "off" && (
 		<button type="button" className="btn primary" aria-busy={checkingAct === "on" || undefined} onClick={() => onWiden("on")}>
-			{checkingAct === "on" ? "Checking network…" : "Turn on"}
+			{checkingAct === "on" ? CHECKING_LABEL_RA : "Turn on"}
 		</button>
 	);
 	return (
@@ -293,7 +303,7 @@ function AttentionRA({ row, isChecking, error, onTrust }) {
 	const { AlertCard } = window.UI;
 	const trust = row.canTrust && (
 		<button type="button" className="btn primary" aria-busy={isChecking || undefined} onClick={onTrust}>
-			{isChecking ? "Checking network…" : "Trust this network"}
+			{isChecking ? CHECKING_LABEL_RA : "Trust this network"}
 		</button>
 	);
 	return (
@@ -509,13 +519,13 @@ function DeviceTableRA({ devices, pendingId, onRemove }) {
 	);
 }
 
-/** The open confirm's act: a widening act whose network moved stays open and shows the network read again. */
-function AccessDialogRA({ dialog, count, onClose, onDone }) {
-	const [act, setAct] = useSRA({ isBusy: false, error: null, network: dialog.network });
+/** The open confirm's act: a widening act whose network moved stays open, its commit held until the page's fresh read is on screen. */
+function AccessDialogRA({ dialog, count, isChecking, onRecheck, onClose, onDone }) {
+	const [act, setAct] = useSRA({ isBusy: false, error: null });
 	const isWiden = dialog.act === "on" || dialog.act === "trust";
 	const onCommit = () => {
-		if (act.isBusy) return;
-		setAct((prev) => ({ ...prev, isBusy: true, error: null }));
+		if (act.isBusy || isChecking) return;
+		setAct({ isBusy: true, error: null });
 		const run = dialog.act === "remove-all" ? deleteAllDevicesRA() : postAccessRA(dialog.act);
 		run.then(
 			() => {
@@ -523,21 +533,21 @@ function AccessDialogRA({ dialog, count, onClose, onDone }) {
 				onDone();
 			},
 			(error) => {
-				const failure = { text: isWiden ? getWidenErrorTextRA(dialog.act, error) : END_ERROR_RA[dialog.act], detail: error.message };
-				setAct((prev) => ({ ...prev, isBusy: false, error: failure }));
-				if (isWiden && CONFIRM_REFUSALS_RA.has(error.code)) readConfirmNetworkRA().then((network) => setAct((prev) => ({ ...prev, network })), () => undefined);
+				setAct({ isBusy: false, error: { text: isWiden ? getWidenErrorTextRA(dialog.act, error) : END_ERROR_RA[dialog.act], detail: error.message } });
+				if (isWiden && CONFIRM_REFUSALS_RA.has(error.code)) onRecheck();
 			},
 		);
 	};
 	const props = { isBusy: act.isBusy, error: act.error, onCommit, onCancel: onClose };
-	return isWiden ? <WidenConfirmRA act={dialog.act} network={act.network} {...props} /> : <EndConfirmRA act={dialog.act} count={count} {...props} />;
+	return isWiden ? <WidenConfirmRA act={dialog.act} network={dialog.network} isChecking={isChecking} {...props} /> : <EndConfirmRA act={dialog.act} count={count} {...props} />;
 }
 
-function WidenConfirmRA({ act, network, isBusy, error, onCommit, onCancel }) {
+function WidenConfirmRA({ act, network, isChecking, isBusy, error, onCommit, onCancel }) {
 	const { DetailField } = window.UI;
 	const words = WIDEN_WORDS_RA[act === "on" && network.isNetworkTrusted ? "on-trusted" : act];
+	const commit = isChecking ? { ...words.commit, busy: CHECKING_LABEL_RA } : words.commit;
 	return (
-		<ConfirmRA title={words.title} commit={words.commit} isBusy={isBusy} error={error} onCommit={onCommit} onCancel={onCancel}>
+		<ConfirmRA title={words.title} commit={commit} isBusy={isBusy || isChecking} error={error} onCommit={onCommit} onCancel={onCancel}>
 			<p className="fs-body text-ink">{words.lead}</p>
 			<div className="flex flex-col gap-label">
 				<DetailField label={ROUTER_LABEL_RA[network.link] ?? ROUTER_LABEL_RA.unknown} value={network.router} mono />

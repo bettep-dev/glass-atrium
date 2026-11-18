@@ -10,7 +10,7 @@ import { dirname, resolve } from "node:path";
 import { CA_DOWNLOAD, MAC_PAGE_HEADER, REMOTE_ADMIN_PATH } from "../src/server/remote/admin-routes.js";
 import { getAttachmentDisposition } from "../src/server/response-headers.js";
 import { REGISTRATION_CODE } from "../src/server/remote/registration-code.js";
-import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { collectText, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src");
 const SCREEN_SRC = resolve(SRC, "screens/remote-access.jsx");
@@ -376,6 +376,114 @@ describe("a refused widening act names whether the network moved", () => {
       assert.equal((mod.getWidenErrorTextRA as (act: string, e: unknown) => string)(row.act, error), row.text, row.name);
     });
   }
+});
+
+describe("after a refused widening act the confirm offers its commit only on a fresh network read", () => {
+  const MOVED_ROUTER = "10.0.0.1";
+  const SETUP_CLOSED = { ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false };
+  const ROUTE = { NETWORK: `GET ${REMOTE_ADMIN_PATH.CONFIRM_NETWORK}`, ON: `POST ${REMOTE_ADMIN_PATH.ACCESS_ON}`, TRUST: `POST ${REMOTE_ADMIN_PATH.TRUST}` };
+  const OPENED = { status: 200, body: { router: ROUTER, link: "wifi", isNetworkTrusted: false } };
+  const TURN_ON = { setup: SETUP_OFF, open: "Turn on", commit: "Turn on and trust", route: ROUTE.ON, refusal: { status: 409, body: { error: "confirm_stale" } } };
+  const TRUST = { setup: SETUP_CLOSED, open: "Trust this network", commit: "Trust this network", route: ROUTE.TRUST, refusal: { status: 409, body: { error: "network_changed" } } };
+
+  // the page with live hook state over scripted replies; the second network read waits for release()
+  async function mountRefused(flow: typeof TURN_ON) {
+    const { react, flushEffects, resetCursor } = createStatefulReact();
+    let release: (answer: Answer) => void = () => undefined;
+    const replies: Record<string, Array<Answer | Promise<Answer>>> = {
+      [ROUTE.NETWORK]: [OPENED, new Promise<Answer>((resolve) => { release = resolve; })],
+      [flow.route]: [flow.refusal],
+    };
+    const sent: string[] = [];
+    const page = { sent, reloads: 0, release: (answer: Answer) => release(answer) };
+    const mod = await loadScreenModule(SCREEN_SRC, {
+      React: react,
+      UI: ui,
+      navigator: {},
+      File,
+      fetch: async (url: string, init: RequestInit = {}) => {
+        const route = `${init.method ?? "GET"} ${url}`;
+        sent.push(route);
+        const answer = await replies[route].shift();
+        assert.ok(answer, `an unscripted call: ${route}`);
+        return new Response(JSON.stringify(answer.body), { status: answer.status, statusText: "x" });
+      },
+    });
+    const render = (): RenderedNode => {
+      resetCursor();
+      const props = { read: ready(flow.setup), onReload: () => { page.reloads += 1; }, onDevicesRead: () => undefined };
+      const tree = renderScreen(react.createElement(mod.RemoteAccessPageRA, props)) as RenderedNode;
+      flushEffects();
+      return tree;
+    };
+    // a press inside the open confirm when one is open, else on the page
+    const press = async (name: string) => {
+      const tree = render();
+      const button = findNodes(getDialog(tree) ?? tree, (node) => node.type === "button" && collectText(node).trim() === name)[0];
+      assert.ok(button, `a button named "${name}"`);
+      (button.props.onClick as () => void)();
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+    await press(flow.open);
+    await press(flow.commit);
+    return Object.assign(page, { render, press });
+  }
+
+  function getDialog(tree: RenderedNode): RenderedNode | undefined {
+    return findNodes(tree, (node) => node.type === "DetailSurface")[0];
+  }
+
+  test("while the fresh read is out the commit is held and a press sends nothing", async () => {
+    const page = await mountRefused(TURN_ON);
+
+    await page.press("Checking network…");
+
+    assert.deepEqual(page.sent, [ROUTE.NETWORK, ROUTE.ON, ROUTE.NETWORK]);
+    assert.ok(!getButtonNames(getDialog(page.render()) as RenderedNode).includes(TURN_ON.commit));
+  });
+
+  test("a fresh read with a router puts that router on screen and offers the commit again", async () => {
+    const page = await mountRefused(TURN_ON);
+
+    page.release({ status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: false } });
+    await new Promise((resolve) => setImmediate(resolve));
+    const dialog = getDialog(page.render());
+
+    assert.ok(dialog, "the confirm stays open");
+    const text = collectText(dialog);
+    assert.ok(text.includes(MOVED_ROUTER) && !text.includes(ROUTER), "the fresh router replaces the earlier one");
+    assert.ok(text.includes("The network details were out of date. Nothing was turned on. Check the number again."));
+    assert.deepEqual(getButtonNames(dialog).filter((name) => name !== ""), ["Cancel", TURN_ON.commit]);
+  });
+
+  const closing = [
+    { name: "a fresh read that fails closes the confirm and says the network could not be read", flow: TURN_ON, reread: { status: 500, body: { error: "internal" } }, reloads: 0, notice: "This Mac's network could not be read. Try again." },
+    { name: "a fresh read with no router closes the confirm and rereads the page", flow: TURN_ON, reread: { status: 200, body: { router: null, link: "unknown", isNetworkTrusted: false } }, reloads: 1, notice: null },
+    { name: "a trust confirm whose fresh read finds the network trusted closes and rereads the page", flow: TRUST, reread: { status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: true } }, reloads: 1, notice: null },
+  ];
+  for (const row of closing) {
+    test(row.name, async () => {
+      const page = await mountRefused(row.flow);
+
+      page.release(row.reread);
+      await new Promise((resolve) => setImmediate(resolve));
+      const tree = page.render();
+
+      assert.equal(getDialog(tree), undefined, `${row.name}: confirm closed`);
+      assert.equal(page.reloads, row.reloads, `${row.name}: page reads`);
+      if (row.notice) assert.ok(collectText(tree).includes(row.notice), `${row.name}: "${row.notice}"`);
+    });
+  }
+
+  test("a confirm cancelled while the fresh read is out stays closed when the read lands", async () => {
+    const page = await mountRefused(TURN_ON);
+
+    await page.press("Cancel");
+    page.release({ status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: false } });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(getDialog(page.render()), undefined);
+  });
 });
 
 describe("every Mac-only call carries the page header the admin routes require", () => {
