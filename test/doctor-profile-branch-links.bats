@@ -72,9 +72,10 @@ run_doctor_sandbox() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$3"
       ga_init_env "$2"
       run_doctor
-    ' _ "${engine}" "${GA_SANDBOX}"
+    ' _ "${engine}" "${GA_SANDBOX}" "${GA}/test/lib/remote-run-stub.bash"
 }
 
 assert_output_has() {

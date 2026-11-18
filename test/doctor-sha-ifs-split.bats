@@ -157,6 +157,7 @@ run_doctor_strict_ifs() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$1/test/lib/remote-run-stub.bash"
       ga_init_env "$2"
       printf -v IFS "\n\t"
       run_doctor
