@@ -57,6 +57,21 @@ const SETUP_ON = {
   fingerprint: FINGERPRINT,
 };
 const SETUP_OFF = { ...SETUP_ON, enabled: false, listenReason: "disabled", isNetworkTrusted: false, trustedCount: 0, isAnswering: false };
+// remote-access-switch.unit.test.ts → the device-off facts row, as getSetupFacts returned it, + the route's fingerprint
+const SETUP_OFF_BY_DEVICE = {
+  enabled: false,
+  isOffByDevice: true,
+  listenReason: "disabled",
+  hasRouter: true,
+  isNetworkTrusted: true,
+  trustedCount: 1,
+  isAnswering: false,
+  hostName: "owner-mac.local",
+  address: "192.168.0.24",
+  port: 16443,
+  deviceLimit: 10,
+  fingerprint: FINGERPRINT,
+};
 const DEVICES = [
   { id: "3", label: "Minji's iPhone 15 Pro Max", createdAt: "2026-11-17T08:41:40.123Z", lastSeenAt: "2026-11-17T14:02:11.456Z" },
   { id: "7", label: "<b>iPad</b>", createdAt: "2026-11-02T21:15:02.001Z", lastSeenAt: "2026-11-16T23:48:59.999Z" },
@@ -111,9 +126,9 @@ describe("each state shows its own words, and the on/off act sits on the title l
     },
     {
       name: "off by a device says a device turned it off and every device was removed",
-      read: ready({ ...SETUP_OFF, isOffByDevice: true }),
-      present: ["Turn on", "A registered device turned remote access off.", "Every device was removed. Turn it on to connect them again."],
-      absent: ["A phone or tablet on the same network"],
+      read: ready(SETUP_OFF_BY_DEVICE),
+      present: ["Off", "Turn on", "A registered device turned remote access off.", "Every device was removed. Turn it on to connect them again.", "Trusted networks: 1 · this Mac's network is one of them"],
+      absent: ["Turn off", "Not answering", "Connect a device", "A phone or tablet on the same network"],
     },
     {
       name: "off with no router read offers no turn-on and says to join a network",
