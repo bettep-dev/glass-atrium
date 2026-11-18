@@ -89,11 +89,13 @@ export interface RelaySender {
   profileLabel: string;
   /** The name the sender registered; null when it registered none. */
   selfDeclaredName: string | null;
+  /** Tells two same-named senders apart by where they ran. */
+  cwdTail: string;
 }
 
-export type RelaySenderRow = Pick<QueueSession, "sessionId" | "profileLabel" | "name">;
+export type RelaySenderRow = Pick<QueueSession, "sessionId" | "profileLabel" | "name" | "cwd">;
 
-export const SENDER_ARGS = { select: { sessionId: true, profileLabel: true, name: true } } as const satisfies Prisma.QueueSessionDefaultArgs;
+export const SENDER_ARGS = { select: { sessionId: true, profileLabel: true, name: true, cwd: true } } as const satisfies Prisma.QueueSessionDefaultArgs;
 
 /** The relay that set a hop-1 or hop-2 relay's hop. */
 export interface RelayParent {
@@ -473,7 +475,12 @@ function getRelayParent(parent: ItemWithRelations["relayParent"]): RelayParent |
 }
 
 export function toRelaySender(session: RelaySenderRow): RelaySender {
-  return { sessionIdPrefix: getSessionIdPrefix(session.sessionId), profileLabel: session.profileLabel, selfDeclaredName: session.name };
+  return {
+    sessionIdPrefix: getSessionIdPrefix(session.sessionId),
+    profileLabel: session.profileLabel,
+    selfDeclaredName: session.name,
+    cwdTail: getCwdTail(session.cwd),
+  };
 }
 
 // CHECK queue_items_answer_record_check pairs the two columns → one null means both are

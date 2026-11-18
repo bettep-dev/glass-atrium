@@ -1264,6 +1264,19 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(found, { buttons: ["Cancel", "Redact text"], isAtEnd: true, bodySize: "15px" });
   });
 
+  test("an entry head names the sender's account and directory tail as its title and its description", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await openRelayHistory(page);
+    const found = await page.getByRole("article", { name: /^Relay from aidl/ }).locator(".queue-relay-head").evaluate((head) => {
+      const describedBy = head.getAttribute("aria-describedby");
+      return { title: head.getAttribute("title"), description: describedBy === null ? null : document.getElementById(describedBy)?.textContent };
+    });
+    await page.close();
+
+    assert.deepEqual(found, { title: ".claude-work · Users/owner", description: ".claude-work · Users/owner" });
+  });
+
   test("the history read pages by order and returns every copy of an order one ticked session received", async () => {
     harness.fixture = getRestFixture();
     const first = await harness.app.inject({ url: `/api/queue/owner/orders?sessionIds=${FIXTURE_SESSION_IDS.aidl}&limit=1` });

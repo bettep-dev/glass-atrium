@@ -753,7 +753,7 @@ describe("relay delivery to its recipient", () => {
     return item.id;
   }
 
-  test("a pull marks each claim by source; a relay claim carries its sender's prefix, profile label and self-declared name, never its full id", async () => {
+  test("a pull marks each claim by source; a relay claim carries its sender's prefix, profile label, self-declared name and directory tail, never its full id", async () => {
     const sender = await seedSession({ name: "build runner", profileLabel: ".claude-work" });
     const recipient = await seedSession();
     const relayId = await seedRelay(sender, recipient);
@@ -768,7 +768,7 @@ describe("relay delivery to its recipient", () => {
     assert.deepEqual(
       [findClaim(relayId), findClaim(messageId)].map((claim) => ({ source: claim?.source, sender: claim?.sender })),
       [
-        { source: "peer", sender: { sessionIdPrefix: prefixOf(sender), profileLabel: ".claude-work", selfDeclaredName: "build runner" } },
+        { source: "peer", sender: { sessionIdPrefix: prefixOf(sender), profileLabel: ".claude-work", selfDeclaredName: "build runner", cwdTail: "git/glass-atrium" } },
         { source: "owner", sender: null },
       ],
     );

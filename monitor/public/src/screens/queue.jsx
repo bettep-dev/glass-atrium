@@ -3068,7 +3068,7 @@ function RecentResumeListQ({ resumes }) {
 		<ul className="fs-body">
 			{resumes.map((resume) => (
 				<li key={`${resume.item.id}-${resume.attempt}-${resume.sentAt}`}>
-					<ResumeLineQ resume={resume} profileLabel={`${resume.session.profileLabel} · ${resume.session.cwdTail}`} />
+					<ResumeLineQ resume={resume} profileLabel={getSessionPlaceQ(resume.session)} />
 					<span className="fs-meta text-dim">{` — ${resume.item.title}`}</span>
 				</li>
 			))}
@@ -3298,9 +3298,11 @@ function RelayEntryQ({ entry, onRedact }) {
 	const kept = copies.find((copy) => copy.relay.redaction === null);
 	const at = getRelayAtQ(entry);
 	const names = getNameListQ(copies.map((copy) => copy.session.name));
+	const headId = `${RELAY_HEAD_ID_PREFIX_Q}${entry.id}`;
+	const place = getSessionPlaceQ(sender);
 	return (
 		<article tabIndex={-1} className="queue-relay" aria-label={`Relay from ${getSenderNameQ(sender)} to ${names}, sent ${window.UI.formatKstDate(at)} ${formatKstTime(at)}`}>
-			<p id={`${RELAY_HEAD_ID_PREFIX_Q}${entry.id}`} tabIndex={-1} className="queue-relay-head" title={sender.profileLabel}>
+			<p id={headId} tabIndex={-1} className="queue-relay-head" title={place} aria-describedby={`${headId}-place`}>
 				<time dateTime={at} title={`Sent ${getDatedTimeQ(at)}`}>{formatKstTime(at)}</time>
 				<span className="queue-relay-name">{getSenderNameQ(sender)}</span>
 				<MachineString>{sender.sessionIdPrefix}</MachineString>
@@ -3310,6 +3312,7 @@ function RelayEntryQ({ entry, onRedact }) {
 						: <button type="button" className="btn ghost sm" onClick={() => onRedact?.(entry)}>Redact text</button>}
 				</span>
 			</p>
+			<span id={`${headId}-place`} hidden>{place}</span>
 			{kept === undefined
 				? <p className="fs-meta text-dim">{`Text redacted ${getDatedTimeQ(item.relay.redaction.at)} · it was ${item.relay.redaction.length.toLocaleString("en-US")} characters long`}</p>
 				: <OrderBubbleQ text={kept.body} isPlain />}
@@ -3329,6 +3332,11 @@ function RelayEntryQ({ entry, onRedact }) {
 // the sender registers its own name → shown as written, the id prefix when it registered none
 function getSenderNameQ(sender) {
 	return sender.selfDeclaredName ?? sender.sessionIdPrefix;
+}
+
+// account + start-directory tail → tells two same-named sessions apart
+function getSessionPlaceQ(session) {
+	return `${session.profileLabel} · ${session.cwdTail}`;
 }
 
 /** One copy: `→`, the recipient, its id, the relay id, its outcome (a glyph and a word, or the tag badge). */

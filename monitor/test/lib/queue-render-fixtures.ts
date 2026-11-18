@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { getImageFacts } from "../../src/server/queue/image-format.js";
 import { ITEM_TITLE_MAX, SESSION_NAME_MAX } from "../../src/server/queue/schemas.js";
 import type { ImageView } from "../../src/server/queue/images.js";
-import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySignal } from "../../src/server/queue/owner-views.js";
+import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender, RelaySignal } from "../../src/server/queue/owner-views.js";
 import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -627,9 +627,14 @@ interface RelaySend {
   linkedDocIds?: number[];
 }
 
+function buildRelaySender(key: SessionKey): RelaySender {
+  const { sessionIdPrefix, profileLabel, cwdTail } = buildSessionView(key);
+  return { sessionIdPrefix, profileLabel, selfDeclaredName: key, cwdTail };
+}
+
 // one copy per recipient under one send id, as relay.ts stores them: answered at send time, the title the text's first line
 function buildRelayCopies(send: RelaySend): OwnerItemView[] {
-  const sender = { sessionIdPrefix: SESSION_IDS[send.from].slice(0, 8), profileLabel: ".claude-work", selfDeclaredName: send.from };
+  const sender = buildRelaySender(send.from);
   return send.to.map(([key, copy], index) => buildItem(send.firstId + index, key, {
     kind: "relay", title: send.text.split("\n")[0], body: send.text, isFreeTextAllowed: false,
     status: copy.lapsedAt ? "withdrawn" : copy.deliveredAt ? "delivered" : "answered",
@@ -656,7 +661,7 @@ export const FORWARDED_RELAY = buildRelayCopies({
   firstId: 412, sendId: RELAY_SEND_IDS.forwarded, from: "aidl", minutesAgo: 240,
   text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다. 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.\n<b>굵게</b> 표시는 글자 그대로 읽힙니다.",
   to: [["yoaida", { deliveredAt: getAt(236) }], ["portfolio", { lapsedAt: getAt(60) }]],
-  facts: { hop: 1, parent: { id: 398, sender: { sessionIdPrefix: SESSION_IDS.atrium.slice(0, 8), profileLabel: ".claude-work", selfDeclaredName: "atrium" }, sentAt: getAt(27 * 60) } },
+  facts: { hop: 1, parent: { id: 398, sender: buildRelaySender("atrium"), sentAt: getAt(27 * 60) } },
   linkedDocIds: [44099],
 });
 

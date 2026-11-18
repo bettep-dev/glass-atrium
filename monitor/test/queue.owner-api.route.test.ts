@@ -961,14 +961,14 @@ describe("relay history", () => {
 
     assert.deepEqual(items.find((item) => item.id === Number(childId))?.relay, {
       hop: 1,
-      parent: { id: Number(parentId), sender: { sessionIdPrefix: recipient.slice(0, 8), profileLabel: "default", selfDeclaredName: "parent sender" }, sentAt: parentSentAt.toISOString() },
-      sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender" },
+      parent: { id: Number(parentId), sender: { sessionIdPrefix: recipient.slice(0, 8), profileLabel: "default", selfDeclaredName: "parent sender", cwdTail: "glass-atrium/monitor" }, sentAt: parentSentAt.toISOString() },
+      sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender", cwdTail: "glass-atrium/monitor" },
       fetchedAt: redacted.relayFetchedAt?.toISOString(),
       redaction: { at: redacted.relayRedactedAt?.toISOString(), length: text.length },
       lapsedAt: null,
     });
     assert.deepEqual(items.find((item) => item.id === Number(lapsedId))?.relay, {
-      hop: 0, parent: null, sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender" },
+      hop: 0, parent: null, sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender", cwdTail: "glass-atrium/monitor" },
       fetchedAt: null, redaction: null, lapsedAt: lapsedAt.toISOString(),
     });
     assert.equal(order.relay, null);
