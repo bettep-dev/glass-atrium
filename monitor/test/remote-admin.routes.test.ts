@@ -675,6 +675,21 @@ describe("the certificate download", () => {
     assert.equal(setup.fingerprint, await getOpensslFingerprint(ca.certPath));
   });
 
+  test("serves the certificate re-encoded from the parsed object, never the file's own bytes, so the download is what the fingerprint covers", async () => {
+    const pem = ca.cert.toString("latin1");
+    const unwrapped = pem.replace(/\n(?!-----)/g, "").replace(/-----(?=MII)/, "-----\n").replace(/(?<=[A-Za-z0-9+/=])-----END/, "\n-----END");
+    const rows = [
+      { name: "CRLF line endings", bytes: Buffer.from(pem.replaceAll("\n", "\r\n"), "latin1") },
+      { name: "the base64 on one line", bytes: Buffer.from(unwrapped, "latin1") },
+    ];
+    for (const row of rows) {
+      assert.notDeepEqual(row.bytes, ca.cert, row.name);
+      access.certificate = row.bytes;
+      const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE });
+      assert.deepEqual([response.statusCode, response.rawPayload.equals(ca.cert)], [200, true], row.name);
+    }
+  });
+
   test("serves nothing, and shows no fingerprint, for a file that is anything but exactly one CA certificate", async () => {
     const leaf = await createStandInTls();
     try {

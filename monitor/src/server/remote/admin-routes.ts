@@ -394,7 +394,8 @@ async function getCertificateFile(request: FastifyRequest, reply: FastifyReply, 
 }
 
 /**
- * The CA certificate and its SHA-256 over the encoded certificate, from the same bytes the download serves.
+ * The CA certificate re-encoded from the parsed object and its SHA-256 over that same encoded certificate → the download
+ * serves only what the fingerprint covers, never the file's own bytes.
  * @returns null when no file, or anything but exactly one CA certificate: a key, a second block, any other content
  */
 async function getCertificate(request: FastifyRequest, access: RemoteAccessActs): Promise<{ bytes: Buffer; fingerprint: string } | null> {
@@ -405,7 +406,7 @@ async function getCertificate(request: FastifyRequest, access: RemoteAccessActs)
   try {
     const certificate = new X509Certificate(der);
     // raw ≠ the block's bytes → the block held more than the certificate the fingerprint covers
-    return certificate.ca && certificate.raw.equals(der) ? { bytes, fingerprint: certificate.fingerprint256 } : null;
+    return certificate.ca && certificate.raw.equals(der) ? { bytes: Buffer.from(certificate.toString()), fingerprint: certificate.fingerprint256 } : null;
   } catch (error) {
     request.log.warn({ err: error }, "remote CA certificate unreadable");
     return null;
