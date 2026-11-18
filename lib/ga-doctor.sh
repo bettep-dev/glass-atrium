@@ -1644,6 +1644,11 @@ run_doctor() {
     esac
   done <<<"${remote_rows}"
 
+  # 32. owner queue MCP registration — registration kind B (report-only): each profile's entry runs this
+  #     install's adapter, the tools' allow lines are present, and no shared switch starts a project server
+  #     that would shadow the name (C12). Reads one mcpServers key per profile file; never writes.
+  _doctor_report_queue_mcp
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1896,6 +1901,51 @@ _doctor_report_profile_links() {
   done <<<"${branches}"
 }
 
+# §32 — one note per gap, then one fix line; else one ok row.
+_doctor_report_queue_mcp() {
+  local identity profiles name lines gaps=0 count=0 file dir state line
+  # shellcheck disable=SC2310,SC2311  # each failed read is the skip note
+  if ! identity="$(get_queue_mcp_identity)" || ! profiles="$(get_profile_config_files)" \
+    || ! lines="$(get_queue_mcp_allow_writes add "${identity}")"; then
+    log "  note : queue MCP: check skipped — needs ${QUEUE_MCP_ADAPTER} answering its name and tools, the config-root grammar and a JSON ${SETTINGS_JSON}"
+    return 0
+  fi
+  name="${identity%%$'\n'*}"
+  while IFS=$'\x1f' read -r file dir; do
+    [[ -n "${file}" ]] || continue
+    count=$((count + 1))
+    state="$(get_queue_mcp_entry_state "${file}" "${name}")"
+    case "${state}" in
+      ok) continue ;;
+      missing) log "  note : queue MCP: ${file} has no ${name} entry" ;;
+      elsewhere) log "  note : queue MCP: ${file}: ${name} points elsewhere, not at ${QUEUE_MCP_ADAPTER}" ;;
+      *) log "  note : queue MCP: ${file} is not valid JSON — its ${name} entry is unread" ;;
+    esac
+    gaps=$((gaps + 1))
+  done <<<"${profiles}"
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    log "  note : queue MCP: ${SETTINGS_JSON} is missing ${line} in permissions.allow"
+    gaps=$((gaps + 1))
+  done <<<"${lines}"
+  _doctor_report_queue_mcp_switch "${name}"
+  if [[ "${gaps}" -gt 0 ]]; then
+    log "  note : queue MCP: 'glass-atrium install --dry-run' prints each write; the owner approves them with --approve-profile-writes"
+  else
+    gaps=0
+    while IFS= read -r line; do gaps=$((gaps + 1)); done <<<"${identity#*$'\n'}"
+    log "  ok   : queue MCP ${name} registered in ${count} profile(s), its ${gaps} allow line(s) present"
+  fi
+}
+
+# C12: a shared switch that starts every project's .mcp.json server unasked lets a project server take the name
+_doctor_report_queue_mcp_switch() {
+  [[ -f "${SETTINGS_JSON}" ]] || return 0 # GA-ABSORB[benign]: no settings file holds no switch
+  if jq -e '.enableAllProjectMcpServers == true' -- "${SETTINGS_JSON}" >/dev/null; then
+    log "  note : queue MCP: ${SETTINGS_JSON} sets enableAllProjectMcpServers — every project's .mcp.json server starts unasked, so a project server named $1 shadows this one and that session must use the queue CLI (C12)"
+  fi
+}
+
 # Branches: target-home siblings matching the shared config-root grammar.
 # Only dirs holding a .claude.json → never-launched and backup dirs skipped.
 # The target home matches the same grammar → excluded by identity.
@@ -1910,6 +1960,19 @@ _get_profile_link_branches() {
     [[ ! "${candidate}" -ef "${TARGET_HOME}" ]] || continue
     printf '%s\n' "${candidate}"
   done
+}
+
+# Every profile's own config file, where its user-scope MCP entries live → "<file>\x1f<config dir>": the target
+# home's beside it with no config dir (the host's default), then each branch's. Non-zero without the grammar.
+get_profile_config_files() {
+  local grammar="${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh" branches branch
+  [[ -r "${grammar}" ]] || return 1
+  # shellcheck disable=SC2311  # the -r guard above keeps its grammar source from failing
+  branches="$(_get_profile_link_branches "${grammar}")"
+  printf '%s\x1f\n' "${TARGET_HOME%/*}/.claude.json"
+  while IFS= read -r branch; do
+    [[ -z "${branch}" ]] || printf '%s\x1f%s\n' "${branch}/.claude.json" "${branch}"
+  done <<<"${branches}"
 }
 
 # Required items: every top-level manifest component the farm deploys into the target home.
