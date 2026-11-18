@@ -3312,7 +3312,6 @@ function RelayEntryQ({ entry, onRedact }) {
 						: <button type="button" className="btn ghost sm" onClick={() => onRedact?.(entry)}>Redact text</button>}
 				</span>
 			</p>
-			<span id={`${headId}-place`} hidden>{place}</span>
 			{kept === undefined
 				? <p className="fs-meta text-dim">{`Text redacted ${getDatedTimeQ(item.relay.redaction.at)} · it was ${item.relay.redaction.length.toLocaleString("en-US")} characters long`}</p>
 				: <OrderBubbleQ text={kept.body} isPlain />}
@@ -3325,6 +3324,7 @@ function RelayEntryQ({ entry, onRedact }) {
 					{` from ${getSenderNameQ(parent.sender)} at ${getEntryTimeQ(parent.sentAt, at)}`}
 				</p>
 			)}
+			<span id={`${headId}-place`} hidden>{place}</span>
 		</article>
 	);
 }
