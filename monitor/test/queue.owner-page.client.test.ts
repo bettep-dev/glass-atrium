@@ -725,6 +725,43 @@ describe("relay history", () => {
     });
   }
 
+  const signals = [
+    { name: "a refusal, a passed-on relay and a redaction put the glyph before the label and name each count", count: { refused: 1, forwarded: 1, redacted: 1 }, text: "⚠ Relay history", label: "Relay history — 1 refused, 1 passed on, 1 redacted in the last 24 hours", sub: "⚠ Last 24 hours: 1 refused · 1 passed on · 1 redacted" },
+    { name: "a count at zero is left out of the name and the drawer's sub line", count: { refused: 2, forwarded: 0, redacted: 0 }, text: "⚠ Relay history", label: "Relay history — 2 refused in the last 24 hours", sub: "⚠ Last 24 hours: 2 refused" },
+    { name: "nothing in the last 24 hours leaves the bare label and no sub line", count: { refused: 0, forwarded: 0, redacted: 0 }, text: "Relay history", label: undefined, sub: undefined },
+  ];
+  for (const row of signals) {
+    test(`the signal: ${row.name}`, () => {
+      const signal = { ...READY_SIGNAL, data: { count: row.count, hasRecord: true } };
+      const tree = render("RelayHistoryQ", { signal, history: history() });
+      const [button] = findNodes(tree, (node) => node.type === "button" && /Relay history$/.test(collectText(node).trim()));
+      const [drawer] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
+      assert.deepEqual(
+        { text: collectText(button!).trim(), label: button?.props["aria-label"], title: button?.props.title, sub: drawer?.props.sub === undefined ? undefined : flat(renderScreen(drawer.props.sub) as RenderedNode) },
+        { text: row.text, label: row.label, title: row.label, sub: row.sub },
+      );
+    });
+  }
+
+  test("a breaker trip changes only the Relay history button: the list, its status line and the rest of the rail stay as they were", () => {
+    const desk = (refused: number) => {
+      const relaySignal = { ...READY_SIGNAL, data: { count: { refused, forwarded: 0, redacted: 0 }, hasRecord: true } };
+      return { ...withList(buildQueue({ relaySignal }).queue, [buildItem({ id: 1 })]), status: "1 new report" };
+    };
+    const isRelayButton = (node: RenderedNode) => node.type === "button" && /Relay history$/.test(collectText(node).trim());
+    // what is drawn outside the Relay history control, without the inputs handed down (the trip is in them)
+    const drawn = (tree: RenderedNode) => JSON.parse(JSON.stringify(tree, (key, value) => {
+      if (key === "queue" || key === "signal") return undefined;
+      return value?.type === "RelayHistoryQ" ? "relay-history" : value;
+    }));
+    const [atRest, tripped] = [desk(0), desk(1)];
+    const rails = [atRest, tripped].map((queue) => renderCard("SessionsRegionQ", { queue }));
+    assert.deepEqual(rails.map((rail) => findNodes(rail, isRelayButton).map((node) => collectText(node).trim())), [["Relay history"], ["⚠ Relay history"]]);
+    assert.deepEqual(drawn(rails[1]!), drawn(rails[0]!));
+    assert.deepEqual(drawn(renderCard("QueueListQ", { queue: tripped })), drawn(renderCard("QueueListQ", { queue: atRest })));
+    assert.equal(findNodes(rails[1]!, (node) => node.props?.atom === "DetailSurface" && node.props.open === true).length, 0);
+  });
+
   test("opening the drawer reads the record again; its foot says the names are self-declared", () => {
     let reads = 0;
     const tree = render("RelayHistoryQ", { signal: READY_SIGNAL, history: { ...history(), read: () => { reads += 1; } } });
@@ -2727,6 +2764,12 @@ describe("sessions region", () => {
     const tree = render("QueueDeskQ", { queue: withList(buildQueue().queue, [buildItem({ id: 1 })]) });
     const order = findNodes(tree, (node) => ["SessionsRegionQ", "RecentResumesQ", "QueueListQ", "QueueSheetQ", "OrdersViewQ"].includes(node.type)).map((node) => node.type);
     assert.deepEqual(order, ["SessionsRegionQ", "QueueListQ", "QueueSheetQ", "OrdersViewQ"]);
+  });
+
+  test("an empty rail says a session joins it at its first prompt", () => {
+    const { tree } = renderRail({ region: { status: "ready", data: { sessions: [], hasMore: false }, error: null, busy: false } });
+    const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
+    assert.deepEqual({ message: empty?.props.message, hint: empty?.props.hint }, { message: "No connected sessions", hint: "A session appears here once it has received its first prompt." });
   });
 
   test("the Sessions head holds no New order", () => assert.equal(buttonLabelled(renderRail().tree, "New order").length, 0));

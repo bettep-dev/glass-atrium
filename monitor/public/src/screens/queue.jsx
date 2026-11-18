@@ -2302,7 +2302,7 @@ function SessionsBodyQ({ queue, rows }) {
 		<>
 			<p id={RAIL_HINT_Q.ID} hidden>{RAIL_HINT_Q.TEXT}</p>
 			<AllSessionsBandQ rows={rows} sessions={sessions} notReceived={[...view.notReceived.values()].reduce((sum, count) => sum + count, 0)} />
-			{live.length === 0 && <EmptyState message="No connected sessions" hint="A session appears here once it registers or posts to the queue." />}
+			{live.length === 0 && <EmptyState message="No connected sessions" hint="A session appears here once it has received its first prompt." />}
 			{live.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} />)}
 			{ended.length > 0 && <EndedBandQ count={ended.length} isOpen={sessions.isEndedShown} onToggle={() => sessions.setEndedShown(!sessions.isEndedShown)} />}
 			{sessions.isEndedShown && ended.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} />)}
@@ -3084,14 +3084,16 @@ const RELAY_LOG_FOOT_Q = "Names are what sessions call themselves, and the queue
  * @param signal - the relay signal region (getRelaySignalQ's read)
  */
 function RelayHistoryQ({ signal, history }) {
-	const { DetailSurface } = window.UI;
+	const { DetailSurface, TONE_GLYPH } = window.UI;
 	const [isOpen, setOpen] = useStateQ(false);
 	const redaction = useRelayRedactionQ(history.read);
 	if (signal.data?.hasRecord !== true) return null;
+	const counts = getRelaySignalCountsQ(signal.data.count);
+	const sub = counts.length > 0 ? <><span className="text-warn">{TONE_GLYPH.warn}</span>{` Last 24 hours: ${counts.join(" · ")}`}</> : undefined;
 	return (
 		<>
-			<button type="button" className="btn ghost sm" onClick={() => { setOpen(true); history.read(); }}>Relay history</button>
-			<DetailSurface open={isOpen} onClose={() => setOpen(false)} title="Relay history" footer={<p className="fs-meta text-dim">{RELAY_LOG_FOOT_Q}</p>}>
+			<RelayHistoryButtonQ counts={counts} onPress={() => { setOpen(true); history.read(); }} />
+			<DetailSurface open={isOpen} onClose={() => setOpen(false)} title="Relay history" sub={sub} footer={<p className="fs-meta text-dim">{RELAY_LOG_FOOT_Q}</p>}>
 				<p role="status" className="fs-meta">{redaction.status}</p>
 				<RelayLogQ history={history} onRedact={redaction.ask} />
 			</DetailSurface>
@@ -3099,6 +3101,24 @@ function RelayHistoryQ({ signal, history }) {
 		</>
 	);
 }
+
+// the signal (spec §9.9): `⚠` before the label while something happened in the last 24 hours → the name carries the words, never colour alone
+function RelayHistoryButtonQ({ counts, onPress }) {
+	const label = counts.length > 0 ? `Relay history — ${counts.join(", ")} in the last 24 hours` : undefined;
+	return (
+		<button type="button" className="btn ghost sm" aria-label={label} title={label} onClick={onPress}>
+			{label && <span className="text-warn">{window.UI.TONE_GLYPH.warn}</span>}
+			Relay history
+		</button>
+	);
+}
+
+// `1 refused`, `1 passed on`, `1 redacted` in this order, a count at zero left out
+function getRelaySignalCountsQ(count) {
+	return RELAY_SIGNAL_WORDS_Q.filter(([key]) => count?.[key] > 0).map(([key, word]) => `${count[key]} ${word}`);
+}
+
+const RELAY_SIGNAL_WORDS_Q = [["refused", "refused"], ["forwarded", "passed on"], ["redacted", "redacted"]];
 
 /** The one act on a relay (spec §9.9): asked on an entry, confirmed in a dialog, sent per copy; partly done keeps the dialog open. */
 function useRelayRedactionQ(onDone) {
