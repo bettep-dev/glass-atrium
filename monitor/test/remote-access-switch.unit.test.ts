@@ -384,6 +384,7 @@ describe("the shell's write step", () => {
     { exit: "GA_REMOTE_ENV_NOT_RENDERED", outcome: "env_not_rendered" },
     { exit: "GA_REMOTE_ALREADY_TRUSTED", outcome: "already_trusted" },
     { exit: "GA_REMOTE_NETWORK_NOT_SHOWN", outcome: "network_changed" },
+    { exit: "GA_REMOTE_CONFIG_MALFORMED", outcome: "config_malformed" },
     { exit: 2, outcome: "write_failed" },
     { exit: 1, outcome: "write_failed" },
   ];

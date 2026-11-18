@@ -360,6 +360,7 @@ const ACCESS_STEP_OUTCOME: ReadonlyMap<number, AccessStepOutcome> = new Map([
   [8, "env_not_rendered"],
   [9, "already_trusted"],
   [10, "network_changed"],
+  [11, "config_malformed"],
 ]);
 
 /**

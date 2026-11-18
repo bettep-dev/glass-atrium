@@ -65,6 +65,8 @@ export type AccessStepOutcome =
   | "env_not_rendered"
   | "already_trusted"
   | "network_changed"
+  // config.toml's trusted list does not parse → a fault on this Mac, never the network
+  | "config_malformed"
   | "write_failed";
 
 /** Refused before any step: no confirm read in force, or the network differs from the one it showed. */
@@ -261,6 +263,7 @@ const FAILED_ACT_STATUS: Record<Exclude<AccessApplyOutcome, "written">, number> 
   network_unreadable: 409,
   keys_not_created: 500,
   env_not_rendered: 500,
+  config_malformed: 500,
   write_failed: 500,
   start_failed: 500,
   confirm_stale: 409,

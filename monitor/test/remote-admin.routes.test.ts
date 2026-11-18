@@ -483,6 +483,7 @@ describe("an act that widens access", () => {
       { outcome: "network_unreadable", status: 409 },
       { outcome: "keys_not_created", status: 500 },
       { outcome: "env_not_rendered", status: 500 },
+      { outcome: "config_malformed", status: 500 },
       { outcome: "write_failed", status: 500 },
       { outcome: "start_failed", status: 500 },
       { outcome: "confirm_stale", status: 409 },
