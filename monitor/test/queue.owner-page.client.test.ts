@@ -643,6 +643,35 @@ describe("relay history", () => {
     assert.equal(findNodes(tree, (node) => node.props?.dangerouslySetInnerHTML !== undefined).length, 0);
   });
 
+  test("a refusal stands between the sends by its time, with its reason and its resolved recipient, and holds no text", () => {
+    const tree = render("RelayLogQ", { history: history() });
+    const all = entries(tree);
+    assert.equal(all[2]?.props["aria-label"], "Refused relay from gersona to yoaida, 2026-11-13 12:00");
+    assert.match(flat(all[2]!), /✕ Refused Too many to one session — gersona sent to yoaida more often than the hourly limit allows\. → yoaida fa32c7cb$/);
+    assert.equal(findNodes(all[2]!, (node) => node.props?.atom === "ProseText").length, 0);
+  });
+
+  test("every reason the page knows has a name and a sentence with no limit figure; an unknown one names its code", () => {
+    const codes = ["hop", "pair_cap", "sender_cap", "machine_cap", "token", "secret", "scan_unavailable", "sender_probe", "sender_not_live", "self", "recipient"];
+    const lines = codes.map((reason) => call<{ name: string; sentence: string }>("getRelayRefusalLineQ", reason, { sender: "gersona", recipient: "yoaida" }));
+    assert.equal(new Set(lines.map((line) => line.name)).size, codes.length);
+    assert.deepEqual(lines.filter((line) => /\d/.test(line.sentence) || line.name === "Refused"), []);
+    assert.deepEqual(call("getRelayRefusalLineQ", "recipient_ambiguous", { sender: "gersona", recipient: "yoaida" }), { name: "Refused", sentence: "The queue gave the reason", code: "recipient_ambiguous" });
+  });
+
+  test("a recipient that matched no session is a count, never a string", () => {
+    const refusal = { at: "2026-11-13T03:00:00.000Z", reason: "recipient", senderIdPrefix: "25a65a54", recipientIdPrefixes: [], unresolvedCount: 1 };
+    const tree = render("RelayLogQ", { history: history({ items: [], refusals: [refusal] }) });
+    assert.match(flat(entries(tree)[0]!), /→ 1 recipient that matched no session$/);
+  });
+
+  test("an earlier page's refusals join the loaded ones; a first page replaces them", () => {
+    const prev = { items: [], nextCursor: "c1", refusals: [{ at: "b" }] };
+    const page = { items: [], nextCursor: null, refusals: [{ at: "a" }] };
+    assert.deepEqual(call<{ refusals: unknown[] }>("getReadThreadQ", prev, page, "c1", false).refusals, [{ at: "a" }, { at: "b" }]);
+    assert.deepEqual(call<{ refusals: unknown[] }>("getReadThreadQ", prev, page, null, false).refusals, [{ at: "a" }]);
+  });
+
   const buttons = [
     { name: "a record with any relay or refusal shows the button", hasRecord: true, count: 1 },
     { name: "an empty record shows no button", hasRecord: false, count: 0 },

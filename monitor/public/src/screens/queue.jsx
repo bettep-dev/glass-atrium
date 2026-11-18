@@ -130,7 +130,7 @@ const DESK_KEY_LIST_Q = [
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text" };
 // the middle pane's parts: the list body whose scroll the sheet keeps (a hidden box does not keep its own), the sheet body, the list's tab stop
 const PANE_Q = { LIST_BODY: ".queue-list > .card-body", SHEET_BODY: ".queue-sheet > .card-body", TAB_STOP: '.queue-listbox [tabindex="0"]' };
-const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null });
+const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null, refusals: [] });
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
 
@@ -1137,11 +1137,13 @@ async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limi
 	if (!isQuiet) setThread((prev) => ({ ...prev, status: "error", error: getReadFailureQ(answer) }));
 }
 
-// an earlier page joins the thread, the page's own re-read merges into it, any other first page replaces it
+// an earlier page joins the thread, the page's own re-read merges into it, any other first page replaces it · the relay
+// thread's refusals (its page's time span) join or replace the same way
 function getReadThreadQ(prev, page, before, isQuiet) {
-	if (before !== null) return { items: putEarlierPageQ(prev.items, page.items), nextCursor: page.nextCursor ?? null };
+	const refusals = page.refusals ?? [];
+	if (before !== null) return { items: putEarlierPageQ(prev.items, page.items), nextCursor: page.nextCursor ?? null, refusals: [...refusals, ...(prev.refusals ?? [])] };
 	if (isQuiet) return getKeptBeyondQ(prev, page, () => true);
-	return { items: page.items, nextCursor: page.nextCursor ?? null };
+	return { items: page.items, nextCursor: page.nextCursor ?? null, refusals };
 }
 
 /**
@@ -3099,16 +3101,19 @@ function RelayHistoryQ({ signal, history }) {
 function RelayLogQ({ history }) {
 	const { LoadingPlaceholder, RegionUnavailable } = window.UI;
 	const { thread } = history;
-	const entries = getThreadEntriesQ(thread.items);
+	const entries = getRelayLogEntriesQ(thread);
+	const names = getRelayNamesQ(thread.items);
 	if (thread.status === "error") return <RegionUnavailable source="relay history" error={thread.error?.detail ?? thread.error} onRetry={history.read} />;
 	if (thread.status === "loading" && entries.length === 0) return <LoadingPlaceholder label="relay history" />;
 	return (
 		<div className="queue-relay-log" tabIndex={0}>
 			{thread.nextCursor !== null && <ShowEarlierQ isBusy={thread.status === "loading"} onShow={history.showEarlier} busyLabel="Loading earlier…" />}
-			{getDayGroupsQ(entries, new Date(), (entry) => getRelayAtQ(entry)).map((group) => (
+			{getDayGroupsQ(entries, new Date(), (entry) => entry.at).map((group) => (
 				<div key={group.day} className="queue-day-group">
 					<p className="queue-day">{group.label}</p>
-					<ul className="queue-relay-list">{group.entries.map((entry) => <li key={entry.id}><RelayEntryQ entry={entry} /></li>)}</ul>
+					<ul className="queue-relay-list">
+						{group.entries.map((entry) => <li key={entry.id}>{entry.refusal ? <RefusedRelayQ refusal={entry.refusal} names={names} /> : <RelayEntryQ entry={entry} />}</li>)}
+					</ul>
 				</div>
 			))}
 		</div>
@@ -3117,6 +3122,86 @@ function RelayLogQ({ history }) {
 
 function getRelayAtQ(entry) {
 	return entry.item.askedAt;
+}
+
+// the sends folded oldest first, the refusals set between them by time
+function getRelayLogEntriesQ(thread) {
+	const sends = getThreadEntriesQ(thread.items).map((entry) => ({ ...entry, at: getRelayAtQ(entry) }));
+	const refusals = (thread.refusals ?? []).map((refusal, index) => ({ id: `refusal-${index}-${refusal.at}`, at: refusal.at, refusal }));
+	return [...sends, ...refusals].sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+}
+
+// a refusal record holds id prefixes only → the names the loaded relays carry for them; an unknown prefix stays a bare id
+function getRelayNamesQ(items) {
+	const names = new Map();
+	for (const item of items) {
+		names.set(item.session.sessionIdPrefix, item.session.name);
+		if (item.relay?.sender.selfDeclaredName) names.set(item.relay.sender.sessionIdPrefix, item.relay.sender.selfDeclaredName);
+	}
+	return names;
+}
+
+// spec §9.9 → the reason table: the server's codes, the page's words; no sentence holds a limit (the server sets them)
+const RELAY_REFUSAL_Q = {
+	hop: ["Chain too long", () => "It would have passed on a relay that had already been passed on twice."],
+	pair_cap: ["Too many to one session", ({ sender, recipient }) => `${sender} sent to ${recipient} more often than the hourly limit allows.`],
+	sender_cap: ["Too many from one session", ({ sender }) => `${sender} sent more relays than the hourly limit allows.`],
+	machine_cap: ["Machine-wide limit", () => "All sessions together sent more relays than the hourly limit allows."],
+	token: ["Imitated a queue message", () => "Its text held the marker the queue's own messages start with."],
+	secret: ["Held a credential", () => "Its text matched a credential pattern."],
+	scan_unavailable: ["Could not be checked", () => "The credential check did not run, so the relay was not sent."],
+	sender_probe: ["From a test session", ({ sender }) => `${sender} is registered as an agent's test session.`],
+	sender_not_live: ["Sender not live", () => "The sending session had ended or been replaced."],
+	self: ["Sent to itself", ({ sender }) => `${sender} named itself as the recipient.`],
+	recipient: ["Recipient cannot take it", () => "A recipient was unknown, ended, replaced, unused or a test session."],
+};
+
+/** A refusal's reason line; a code the page does not know → `Refused` and the code itself. */
+function getRelayRefusalLineQ(reason, names) {
+	const known = Object.hasOwn(RELAY_REFUSAL_Q, reason) ? RELAY_REFUSAL_Q[reason] : null;
+	if (known === null) return { name: "Refused", sentence: "The queue gave the reason", code: reason };
+	return { name: known[0], sentence: known[1](names) };
+}
+
+/** A relay the queue refused: the head, one reason line, one row per resolved recipient; the queue stored no text. */
+function RefusedRelayQ({ refusal, names }) {
+	const { MachineString, formatKstDate, formatKstTime } = window.UI;
+	const sender = names.get(refusal.senderIdPrefix) ?? refusal.senderIdPrefix;
+	const recipients = refusal.recipientIdPrefixes.map((prefix) => ({ prefix, name: names.get(prefix) ?? null }));
+	const line = getRelayRefusalLineQ(refusal.reason, { sender, recipient: recipients[0]?.name ?? recipients[0]?.prefix ?? "" });
+	const unresolved = refusal.unresolvedCount ?? 0;
+	const to = getNameListQ([...recipients.map((recipient) => recipient.name ?? recipient.prefix), ...(unresolved > 0 ? [getUnresolvedTextQ(unresolved)] : [])]);
+	return (
+		<article tabIndex={-1} className="queue-relay" aria-label={`Refused relay from ${sender} to ${to}, ${formatKstDate(refusal.at)} ${formatKstTime(refusal.at)}`}>
+			<p className="queue-relay-head">
+				<time dateTime={refusal.at} title={getDatedTimeQ(refusal.at)}>{formatKstTime(refusal.at)}</time>
+				{names.has(refusal.senderIdPrefix) && <span className="queue-relay-name">{sender}</span>}
+				<MachineString>{refusal.senderIdPrefix}</MachineString>
+				<span className="queue-relay-slot" title="The queue refused this relay. Its text was not stored.">
+					<span aria-hidden="true" className="text-crit">✕</span>
+					<span className="font-medium">{" Refused"}</span>
+				</span>
+			</p>
+			<p className="fs-meta">
+				<span className="queue-relay-name">{line.name}</span>
+				<span className="text-dim">{` — ${line.sentence}`}{line.code !== undefined && <>{" "}<MachineString>{line.code}</MachineString>{"."}</>}</span>
+			</p>
+			<ul className="queue-relay-copies" aria-label="Recipients">
+				{recipients.map((recipient) => (
+					<li key={recipient.prefix} className="queue-relay-copy">
+						<span aria-hidden="true" className="text-dim">→</span>
+						{recipient.name !== null && <span className="queue-relay-name">{recipient.name}</span>}
+						<MachineString>{recipient.prefix}</MachineString>
+					</li>
+				))}
+				{unresolved > 0 && <li className="queue-relay-copy"><span aria-hidden="true" className="text-dim">→</span>{getUnresolvedTextQ(unresolved)}</li>}
+			</ul>
+		</article>
+	);
+}
+
+function getUnresolvedTextQ(count) {
+	return `${count} ${count === 1 ? "recipient" : "recipients"} that matched no session`;
 }
 
 /** One send: the head, the text, the documents, a row per copy, the hop line at hop 1 or 2. */
