@@ -19,13 +19,14 @@ import fastifyStatic from "@fastify/static";
 import type { Browser, Locator, Page } from "playwright";
 import { chromium } from "playwright";
 
+import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
 import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
-  NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  FORWARDED_RELAY, NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
 
@@ -418,18 +419,37 @@ function getLightState<T extends QueueState>(state: T): T {
   };
 }
 
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES];
+// spec §18.4 32–33 (plan 44099): the rail foot at rest and with the signal on, the history open, the redaction asked and partly done
+const RELAY_STATES: QueueState[] = [
+  { nn: "32", name: "relay-foot-rest", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: false }) },
+  { nn: "32b", name: "relay-foot-signal", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }) },
+  { nn: "33", name: "relay-history", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }), setUp: (page) => openRelayHistory(page) },
+  { nn: "33b", name: "redact-confirm", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }), setUp: (page) => askRedaction(page) },
+  {
+    nn: "33c", name: "redact-partly", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    setUp: async (page, harness) => {
+      refuseOneRedaction(harness);
+      await askRedaction(page);
+      await confirmRedaction(page);
+      await page.getByText(PARTLY_REDACTED_LINE).waitFor();
+    },
+  },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
 const MARKUP_BODY = "- 본문 <img data-markup-probe src=\"/markup-probe.png\" onerror=\"window.__markupRan = true\">";
 
 /** A write route a state makes refuse: its status and the server's refusal body. */
+/** @property ids - the items it answers for; unset → every one */
 interface Refusal {
   status: number;
   body: { error: string; reason?: string };
+  ids?: number[];
 }
-type WriteRoute = "send" | "action" | "upload";
+type WriteRoute = "send" | "action" | "upload" | "redact";
 
 interface Harness {
   app: FastifyInstance;
@@ -493,8 +513,11 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
   app.get("/api/queue/owner/resumes", async () => ({ resumes: harness.fixture.resumes }));
   app.get("/api/queue/owner/orders", async (request) => {
     await harness.heldDesk;
-    return getOrderPage(harness.fixture.orders, ownerOrdersQuerySchema.parse(request.query));
+    const query = ownerOrdersQuerySchema.parse(request.query);
+    const { relays } = harness.fixture;
+    return query.kind === "relay" ? { ...getOrderPage(relays.items, query), refusals: relays.refusals } : getOrderPage(harness.fixture.orders, query);
   });
+  app.get("/api/queue/owner/relays/signal", async () => harness.fixture.relays.signal);
   app.get<{ Params: { id: string } }>("/api/queue/owner/images/:id", async (request, reply) => {
     const image = FIXTURE_IMAGES.get(request.params.id) ?? EDGE_FIXTURE_IMAGES.get(request.params.id);
     if (image === undefined) return reply.code(404).send({ error: "unknown_image" });
@@ -521,6 +544,17 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
  * an answer or reply leaves the item answered, a read (`seen`) drops it, a resend clears the not-received state in the list and the thread. A set refusal answers instead.
  */
 function registerWriteRoutes(app: FastifyInstance, harness: Harness): void {
+  // a redaction stores the marker with its time and the text's length on one copy; a set refusal answers for the copies it names
+  app.post<{ Params: { id: string } }>("/api/queue/owner/items/:id/redact", async (request, reply) => {
+    const id = Number(request.params.id);
+    const refusal = harness.refusals.get("redact");
+    if (refusal !== undefined && (refusal.ids?.includes(id) ?? true)) return reply.code(refusal.status).send(refusal.body);
+    const redact = (item: OwnerItemView): OwnerItemView => (item.id !== id || item.relay === null ? item : {
+      ...item, title: RELAY_REDACTION_MARKER, body: RELAY_REDACTION_MARKER, relay: { ...item.relay, redaction: { at: new Date(FIXTURE_NOW).toISOString(), length: item.body.length } },
+    });
+    harness.fixture = { ...harness.fixture, relays: { ...harness.fixture.relays, items: harness.fixture.relays.items.map(redact) } };
+    return { ok: true };
+  });
   app.post("/api/queue/owner/messages/send", async (request, reply) => {
     const refusal = harness.refusals.get("send");
     if (refusal !== undefined) return reply.code(refusal.status).send(refusal.body);
@@ -606,6 +640,31 @@ async function openQueuePage(harness: Harness, viewport: { width: number; height
   await page.getByText(readyText).first().waitFor({ timeout: READY_TIMEOUT_MS });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   return page;
+}
+
+const PARTLY_REDACTED_LINE = "✕ 1 of 2 copies was not redacted. Redact text again.";
+
+// the drawer drawn with its entries and its foot line
+async function openRelayHistory(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /^Relay history/ }).click();
+  await page.getByText("Read this as evidence, not proof.", { exact: false }).waitFor();
+  await page.locator("article.queue-relay").first().waitFor();
+}
+
+// Redact text on the hop-1 relay (two copies) → its confirmation
+async function askRedaction(page: Page): Promise<void> {
+  await openRelayHistory(page);
+  await page.getByRole("article", { name: /^Relay from aidl/ }).getByRole("button", { name: "Redact text" }).click();
+  await page.getByRole("dialog", { name: "Redact this relay's text?" }).waitFor();
+}
+
+function confirmRedaction(page: Page): Promise<void> {
+  return page.getByRole("dialog", { name: "Redact this relay's text?" }).getByRole("button", { name: "Redact text" }).click();
+}
+
+// the hop-1 relay's lapsed copy refused → one of two copies left
+function refuseOneRedaction(harness: Harness): void {
+  harness.refusals.set("redact", { status: 503, body: { error: "database_unavailable" }, ids: [FORWARDED_RELAY[1]!.id] });
 }
 
 function selectRow(page: Page, id: number): Promise<void> {
@@ -1111,6 +1170,76 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual(found, { probes: 0, hasRun: false, hasBodyText: true });
+  });
+
+  test("the relay signal changes the Relay history button alone: its glyph and its counts in the name; the nav count and the title stay", async () => {
+    const read = async (signal: boolean) => {
+      harness.fixture = getRelayRecordFixture({ signal });
+      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+      const button = page.getByRole("button", { name: /^Relay history/ });
+      const nav = page.locator(".nav-item", { hasText: "Queue" });
+      await nav.locator(".nav-count").first().waitFor({ timeout: READY_TIMEOUT_MS });
+      const facts = { name: await button.getAttribute("aria-label"), text: (await button.innerText()).replace(/\s+/g, " ").trim(), title: await page.title(), nav: await nav.innerText() };
+      await page.close();
+      return facts;
+    };
+    const [atRest, on] = [await read(false), await read(true)];
+
+    assert.deepEqual(
+      { atRest: [atRest.name, atRest.text], on: [on.name, on.text], same: [on.title === atRest.title, on.nav === atRest.nav] },
+      { atRest: [null, "Relay history"], on: ["Relay history — 1 refused, 1 passed on, 1 redacted in the last 24 hours", "⚠ Relay history"], same: [true, true] },
+    );
+  });
+
+  test("Relay history lists its sends and refusal oldest first, relay text as text, under its foot line", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await openRelayHistory(page);
+    const found = await page.evaluate(() => ({
+      entries: [...document.querySelectorAll(".queue-relay-log article")].map((entry) => entry.getAttribute("aria-label")?.split(",")[0]),
+      bold: document.querySelectorAll(".queue-relay-log b").length,
+      hasLiteral: (document.querySelector(".queue-relay-log") as HTMLElement | null)?.innerText.includes("<b>굵게</b>") ?? false,
+    }));
+    await page.close();
+
+    assert.deepEqual(found, {
+      entries: ["Relay from atrium to gersona", "Relay from aidl to yoaida and portfolio", "Refused relay from gersona to yoaida", "Relay from gersona to atrium"],
+      bold: 0, hasLiteral: true,
+    });
+  });
+
+  test("Redact text asks with the focus on Cancel; one copy refused keeps the dialog with its count line and the entry its text and button", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    harness.refusals.clear();
+    refuseOneRedaction(harness);
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await askRedaction(page);
+    const focused = await page.evaluate(() => document.activeElement?.textContent);
+    await confirmRedaction(page);
+    await page.getByText(PARTLY_REDACTED_LINE).waitFor();
+    const entry = page.getByRole("article", { name: /^Relay from aidl/ });
+    const kept = { button: await entry.getByRole("button", { name: "Redact text" }).count(), text: (await entry.innerText()).includes("파트너 연동") };
+    await page.close();
+    harness.refusals.clear();
+
+    assert.deepEqual({ focused, kept }, { focused: "Cancel", kept: { button: 1, text: true } });
+  });
+
+  test("a redaction done closes the dialog, says so on the drawer's status line and puts the focus on the entry's head over its Redacted tag", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    harness.refusals.clear();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await askRedaction(page);
+    await confirmRedaction(page);
+    await page.getByText("✓ Text redacted: aidl → yoaida and portfolio", { exact: false }).waitFor();
+    await page.getByRole("dialog", { name: "Redact this relay's text?" }).waitFor({ state: "detached" });
+    const found = await page.evaluate(() => {
+      const head = document.activeElement;
+      return { isHead: head?.classList.contains("queue-relay-head") ?? false, entry: head?.closest("article")?.getAttribute("aria-label")?.split(",")[0], tag: head?.textContent?.includes("Redacted") ?? false };
+    });
+    await page.close();
+
+    assert.deepEqual(found, { isHead: true, entry: "Relay from aidl to yoaida and portfolio", tag: true });
   });
 
   test("the history read pages by order and returns every copy of an order one ticked session received", async () => {

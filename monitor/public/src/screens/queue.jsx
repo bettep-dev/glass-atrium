@@ -3076,6 +3076,8 @@ function RecentResumeListQ({ resumes }) {
 	);
 }
 
+const RELAY_HEAD_ID_PREFIX_Q = "queue-relay-head-";
+
 // spec §9.9 → the drawer's foot: what a person tracing a cause must hold about every entry, said once
 const RELAY_LOG_FOOT_Q = "Names are what sessions call themselves, and the queue has no login: any local process can send as any session, or redact. Read this as evidence, not proof.";
 
@@ -3131,7 +3133,9 @@ function useRelayRedactionQ(onDone) {
 		const { error } = getRedactionOutcomeQ(await putRelayRedactionQ(target.copies));
 		setState({ isBusy: false, error, status: error === null ? `✓ Text redacted: ${getRelayPairQ(target)}, ${window.UI.formatKstTime(getRelayAtQ(target))}` : "" });
 		if (error === null) setTarget(null);
-		onDone();
+		await onDone();
+		// after the re-read → the dialog's own focus return has run, and the head stays where the button gave way to the tag
+		if (error === null) window.document?.getElementById(`${RELAY_HEAD_ID_PREFIX_Q}${target.id}`)?.focus();
 	}, [target, onDone]);
 	return { target, ...state, ask, cancel, confirm };
 }
@@ -3160,10 +3164,13 @@ function getRelayPairQ(entry) {
 function RedactConfirmQ({ redaction }) {
 	const { DetailSurface } = window.UI;
 	const { target, isBusy } = redaction;
+	const cancelRef = useRefQ(null);
+	// the surface opens on its panel → focus moved on after its mount effect, so the dialog is entered on Cancel (spec §9.9)
+	useEffectQ(() => cancelRef.current?.focus(), []);
 	const names = getNameListQ(target.copies.map((copy) => copy.session.name));
 	const footer = (
 		<>
-			<button type="button" className="btn secondary" autoFocus aria-disabled={isBusy} onClick={isBusy ? undefined : redaction.cancel}>Cancel</button>
+			<button ref={cancelRef} type="button" className="btn secondary" aria-disabled={isBusy} onClick={isBusy ? undefined : redaction.cancel}>Cancel</button>
 			<BusyButtonQ className="btn primary" label="Redact text" busyLabel="Redacting…" isBusy={isBusy} onPress={redaction.confirm} />
 		</>
 	);
@@ -3293,7 +3300,7 @@ function RelayEntryQ({ entry, onRedact }) {
 	const names = getNameListQ(copies.map((copy) => copy.session.name));
 	return (
 		<article tabIndex={-1} className="queue-relay" aria-label={`Relay from ${getSenderNameQ(sender)} to ${names}, sent ${window.UI.formatKstDate(at)} ${formatKstTime(at)}`}>
-			<p className="queue-relay-head" title={sender.profileLabel}>
+			<p id={`${RELAY_HEAD_ID_PREFIX_Q}${entry.id}`} tabIndex={-1} className="queue-relay-head" title={sender.profileLabel}>
 				<time dateTime={at} title={`Sent ${getDatedTimeQ(at)}`}>{formatKstTime(at)}</time>
 				<span className="queue-relay-name">{getSenderNameQ(sender)}</span>
 				<MachineString>{sender.sessionIdPrefix}</MachineString>

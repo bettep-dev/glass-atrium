@@ -33,6 +33,7 @@ export interface QueueFixture {
   sessions: OwnerSessionRow[];
   orders: OwnerItemView[];
   resumes: RecentResume[];
+  relays: RelayHistoryFixture;
 }
 
 const SESSION_IDS = {
@@ -272,6 +273,7 @@ export function getRestFixture(): QueueFixture {
     sessions: SESSION_ROWS,
     orders: [...RECEIVED_ORDERS, ...IN_DELIVERY_ORDER],
     resumes: RESUMES,
+    relays: { items: [], refusals: [], signal: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: false } },
   };
 }
 
@@ -677,4 +679,10 @@ export function getRelayHistoryFixture(): RelayHistoryFixture {
     refusals: [PAIR_CAP_REFUSAL],
     signal: { count: { refused: 1, forwarded: 1, redacted: 1 }, hasRecord: true },
   };
+}
+
+/** The rest state with relays on record: the history fixture's, the signal on (`signal: true`) or off (all older than 24 hours). */
+export function getRelayRecordFixture({ signal }: { signal: boolean }): QueueFixture {
+  const relays = getRelayHistoryFixture();
+  return { ...getRestFixture(), relays: signal ? relays : { ...relays, signal: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: true } } };
 }
