@@ -74,6 +74,8 @@ const SIGNED_ACCESS_LINES = [
   "GET /api/remote/setup remote-admin",
   "GET /api/remote/certificate remote-admin",
 ];
+// the access, setup and certificate reasons re-signed in place: route, class and order kept, so the 115-row digest stays
+const CLOSE_CID = "2026-11-19T0700_onboarding-close_8e2d";
 // the 108-row table of the re-sign and the devices re-sign
 const SIGN_IN_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
 // the 109-row table the access rows extend → its digest still verifies over the live table's leading rows
@@ -168,13 +170,13 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer, the onboarding verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
+  test("the latest sign-off names the reviewer, the close re-sign, the onboarding verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
     assert.deepEqual(
       { reviewer: latest?.reviewer, cids: latest?.cids },
       {
         reviewer: "glass-atrium-sec-guard",
-        cids: [ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS],
+        cids: [CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS],
       },
     );
   });
@@ -194,6 +196,7 @@ describe("reviewer sign-offs", () => {
         [[DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGN_IN_TABLE.rowCount, SIGN_IN_TABLE.sha256, PENDING_COUNT_CID],
         [[PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, OWNER_ROWS_CID],
         [[OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, ONBOARDING_CID],
+        [[ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, CLOSE_CID],
       ],
     );
   });
