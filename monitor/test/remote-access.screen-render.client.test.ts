@@ -3,6 +3,7 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -13,6 +14,8 @@ import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNo
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src");
 const SCREEN_SRC = resolve(SRC, "screens/remote-access.jsx");
+// the file GET /dist/screens/remote-access.js serves to every registered device (npm test → pretest builds it)
+const SCREEN_BUNDLE = resolve(SRC, "../dist/screens/remote-access.js");
 
 interface SentRequest {
   readonly url: string;
@@ -87,6 +90,8 @@ const STEP_TITLES = [
   "Open this Mac's address on the device",
   "Enter the code on the device",
 ];
+// key directory (data/remote-access/), its CA and leaf files, a home path, and the commands that make or trust them
+const NEVER_IN_BUNDLE = [/remote-access\//, /\b(?:ca|leaf)\.(?:pem|key)\b/, /~\//, /\/Users\//, /glass-atrium remote/, /openssl/, /remote-access-set\.sh/, /add-trusted-cert/, /\bsudo\b/];
 // never on the page outside the open confirm: commands, key paths, the router, a hardware address, the Mac's link named as Wi-Fi
 const NEVER_ON_PAGE = [/glass-atrium remote/, /ca\.pem/, /openssl/, /~\//, /remote-access\//, new RegExp(ROUTER.replaceAll(".", "\\.") + "(?!\\d)"), /\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b/i, /Wi-Fi/];
 
@@ -468,4 +473,10 @@ test("the code's validity the Mac page states is the server's own window", async
   const { mod } = await loadScreen();
 
   assert.equal(vm.runInContext("CODE_WINDOW_MS_RA", mod), REGISTRATION_CODE.WINDOW_MS);
+});
+
+test("the served screen bundle carries no key-directory path and no command string", () => {
+  const bundle = readFileSync(SCREEN_BUNDLE, "utf8");
+
+  for (const pattern of NEVER_IN_BUNDLE) assert.doesNotMatch(bundle, pattern);
 });
