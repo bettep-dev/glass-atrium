@@ -228,6 +228,8 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
   const rows = await getPrisma().queueItem.findMany({
     where: {
       status: { notIn: TERMINAL },
+      // the list draws every row as the owner's own item → a relay, another session's message, is read in the relay history only
+      kind: { not: "relay" },
       ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
       session: { isProbe: false, ...(query.profile === undefined ? {} : { profileLabel: query.profile }) },
       ...(query.after === undefined ? {} : { queuePosition: { gt: BigInt(query.after) } }),

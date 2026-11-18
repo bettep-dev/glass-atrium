@@ -421,6 +421,21 @@ describe("list and item detail", () => {
     assert.equal((await send("GET", "/api/queue/owner/items?colour=red")).statusCode, 400);
   });
 
+  test("the list carries no relay, one on its way included, while the relay history does", async () => {
+    const [recipient, sender] = [await seedSession(), await seedSession()];
+    const orderId = await seedItem(recipient);
+    const relayId = await seedItem(recipient, {
+      kind: "relay", fromSessionId: sender, relayHop: 0, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: "The relay suite is green.",
+      isFreeTextAllowed: false, status: "answered", askedAt: new Date(Date.now() - 60_000),
+    });
+
+    const list = await send("GET", `/api/queue/owner/items?sessionId=${recipient}`);
+    const history = await send("GET", `/api/queue/owner/orders?kind=relay&sessionIds=${recipient}`, undefined, { headers: {} });
+
+    assert.deepEqual((list.json().items as Array<{ id: number }>).map((item) => item.id), [Number(orderId)]);
+    assert.deepEqual((history.json().items as Array<{ id: number }>).map((item) => item.id), [Number(relayId)]);
+  });
+
   test("paging with nextCursor returns every awaiting item exactly once, in queue order", async () => {
     const profileLabel = `.claude-page${randomUUID().slice(0, 6)}`;
     const sessionId = await seedSession({ profileLabel });
@@ -1009,18 +1024,20 @@ describe("relay history", () => {
   });
 
   test("a page's refusal records stop at the cap, newest kept, and say they were cut", async () => {
-    const sender = await seedSession();
-    await seedRelay(await seedSession(), sender, minutesAgo(10));
+    // spread over senders that each stay under the per-sender refusal bound
+    const senders = await Promise.all(Array.from({ length: 6 }, () => seedSession()));
+    await seedRelay(await seedSession(), senders[0] ?? "", minutesAgo(10));
     const cap = 100;
     for (let index = 0; index <= cap; index += 1) {
+      const sender = senders[index % senders.length] ?? "";
       await send("POST", "/api/queue/relay", { sessionId: sender, recipients: [sender.slice(0, 8)], text }, { headers: {} });
     }
     const stored = await getPrisma().auditLog.findMany({
-      where: { targetTable: "queue-relay", payload: { path: ["change", "senderId"], equals: sender } },
+      where: { targetTable: "queue-relay", OR: senders.map((sender) => ({ payload: { path: ["change", "senderId"], equals: sender } })) },
       orderBy: [{ eventTs: "desc" }, { id: "desc" }],
     });
 
-    const page = (await getHistory(`sessionIds=${sender}`)).json() as { refusals: Array<{ at: string }>; isRefusalListCut: boolean };
+    const page = (await getHistory(`sessionIds=${senders.join(",")}`)).json() as { refusals: Array<{ at: string }>; isRefusalListCut: boolean };
 
     assert.equal(stored.length, cap + 1);
     assert.deepEqual(page.refusals.map((refusal) => refusal.at), stored.slice(0, cap).map((row) => row.eventTs.toISOString()));
@@ -1075,7 +1092,6 @@ describe("relay redaction", () => {
       "stored row": asJson(await getItemRow(itemId)),
       "audit rows": asJson(await getPrisma().auditLog.findMany({ where: { targetId: itemId } })),
       "owner item": (await send("GET", `/api/queue/owner/items/${itemId}`, undefined, { headers: {} })).body,
-      "owner list": (await send("GET", `/api/queue/owner/items?sessionId=${recipient}`, undefined, { headers: {} })).body,
       "relay history": (await send("GET", `/api/queue/owner/orders?kind=relay&sessionIds=${recipient}`, undefined, { headers: {} })).body,
       "session get": (await send("GET", `/api/queue/items/${itemId}?sessionId=${recipient}`, undefined, { headers: {} })).body,
       "session claim": (await send("POST", "/api/queue/pending", { sessionId: recipient }, { headers: {} })).body,
