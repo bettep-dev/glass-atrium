@@ -3,7 +3,8 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { PROBE_MARKUP_LINES, PROBE_PROPS, PROBE_TAGS } from "./lib/probe-markup.js";
+import { collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
@@ -113,6 +114,15 @@ test("no part of hostile text reaches an href or an HTML sink — the one href i
   const htmlSinks = findNodes(tree, (node) => node.props.dangerouslySetInnerHTML !== undefined);
   assert.deepEqual(hrefs, ["#clauded-docs?doc=1", "#clauded-docs?doc=44060", "#clauded-docs?doc=12", "#clauded-docs?doc=9"]);
   assert.equal(htmlSinks.length, 0);
+});
+
+test("markup in the text shows as its literal tags and words, never as a control, a request attribute or a style element", () => {
+  const tree = renderProse(PROBE_MARKUP_LINES.join("\n"));
+  const reached = findNodes(tree, (node) => PROBE_TAGS.has(node.type) || PROBE_PROPS.some((prop) => node.props[prop] !== undefined));
+  const text = collectText(tree);
+
+  assert.deepEqual(reached.map((node) => node.type), []);
+  for (const line of PROBE_MARKUP_LINES) assert.ok(text.includes(line), line);
 });
 
 test("the root carries the prose class and its compact modifier, never the fs-body class whose later line height would win", () => {

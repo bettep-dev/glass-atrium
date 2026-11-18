@@ -8,6 +8,7 @@ import { dirname, resolve } from "node:path";
 import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
 
+import { PROBE_MARKUP_LINES, PROBE_WORDS } from "./lib/probe-markup.js";
 import { loadScreenModule } from "./lib/render-screen.js";
 
 // jsdom ships no types → the one constructor used here, typed by hand
@@ -16,22 +17,7 @@ const { JSDOM } = require("jsdom") as { JSDOM: new (html: string) => { window: {
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src");
 
-// markup aimed at the Mac-only routes, a click-sending link, and styles that paint outside the drawer
-const BODY = [
-  "# Result",
-  "",
-  "Done.",
-  "",
-  '<form action="/api/remote/devices/revoke-all" method="post"><input type="hidden" name="all" value="1"><button type="submit">Revoke all devices</button></form>',
-  "",
-  '<button formaction="/api/remote/registration" formmethod="post">Register</button> <select name="d"><option>Pixel</option></select> <textarea name="n">note</textarea>',
-  "",
-  'See the <a href="https://example.com/setup" ping="/api/remote/devices/revoke-all">setup guide</a>.',
-  "",
-  '<div style="position:fixed;inset:0;z-index:9999">Session expired — sign in again</div>',
-  "",
-  "<style>body { position: fixed; }</style>",
-].join("\n");
+const BODY = ["# Result", "Done.", ...PROBE_MARKUP_LINES].join("\n\n");
 
 const ui = (await loadScreenModule(resolve(SRC, "ui.jsx"))).UI;
 const outcomes = await loadScreenModule(resolve(SRC, "screens/outcomes.jsx"), { UI: ui, marked, DOMPurify });
@@ -67,5 +53,5 @@ test("a record body keeps no style that can paint outside the drawer", () => {
 test("a record body keeps the words of what it drops", () => {
   const text = renderBody().body.textContent ?? "";
 
-  for (const word of ["Result", "Revoke all devices", "setup guide", "Session expired — sign in again"]) assert.ok(text.includes(word), word);
+  for (const word of ["Result", ...PROBE_WORDS]) assert.ok(text.includes(word), word);
 });
