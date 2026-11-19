@@ -784,7 +784,7 @@ describe("the certificate download", () => {
   test("the download's file name, every Settings path the screen draws and its download line carry the CN the shell writes into the CA", async () => {
     const shell = await readFile(path.join(MONITOR_DIR, "..", "lib", "ga-remote.sh"), "utf8");
     const screen = await loadScreenModule(path.join(MONITOR_DIR, "public", "src", "screens", "remote-access.jsx"));
-    const steps = Object.values(vm.runInContext("STEPS_RA", screen) as Record<string, { steps: StepWords[] }>).flatMap((device) => device.steps);
+    const steps = vm.runInContext("STEPS_RA", screen) as StepWords[];
     const cn = CA_CN_LINE.exec(shell)?.[1] ?? "no CN line in the CA config";
 
     const paths = steps.flatMap((step) => step.path ?? []);

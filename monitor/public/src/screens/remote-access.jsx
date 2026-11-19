@@ -24,62 +24,55 @@ const DEVICE_COLUMNS_RA = [{ key: "label", label: "Device" }, { key: "created", 
 const DEVICE_WIDTHS_RA = [undefined, undefined, undefined, "1%"];
 const DESTRUCTIVE_STYLE_RA = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))", background: "transparent" };
 
+// the one device whose steps are ruled · hosts → the setup facts that make the address, first shown, second in the fold
+const DEVICE_RA = { name: "iPhone or iPad", hosts: ["hostName", "address"] };
 /**
- * The connect procedure per device (spec 44105 → Connect a device): a title, one line or one Settings path, at most three Trouble? lines.
+ * The connect procedure (spec 44105 → Connect a device): a title, one line or one Settings path, at most three Trouble? lines.
  * stop → a line the security ruling keeps visible beside the step's value, never behind Trouble?.
- * hosts → the setup facts that make the address, first shown, second in the fold · a device joins only once its steps are ruled (Android: A4).
  */
-const STEPS_RA = {
-	iphone: {
-		name: "iPhone or iPad",
-		hosts: ["hostName", "address"],
-		steps: [
-			{
-				kind: "send",
-				title: "Send the certificate to your iPhone",
-				line: { share: "Choose AirDrop, then your iPhone; it shows “Profile Downloaded”.", download: "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone." },
-				trouble: [{ text: "No AirDrop prompt? Unlock your iPhone and keep it near this Mac." }, { text: "Set up this iPhone before?", isJump: true }],
-			},
-			{
-				kind: "fingerprint",
-				title: "Match the fingerprint before installing",
-				path: "Settings › Profile Downloaded › More Details › Glass Atrium Local CA",
-				stop: "If lines differ, remove the profile and never turn on full trust.",
-				trouble: [{ text: "No lines before installing? Install, then check General › VPN & Device Management." }],
-			},
-			{ kind: "phone", title: "Install the certificate", line: "Go back, tap Install, enter your passcode, tap Install twice, then Done.", trouble: [{ text: "No “Profile Downloaded” in Settings? Repeat step 1." }] },
-			{
-				kind: "phone",
-				title: "Turn on full trust",
-				path: "Settings › General › About › Certificate Trust Settings › Glass Atrium Local CA",
-				trouble: [{ text: "No switch there? Repeat step 3." }, { text: "Asked to confirm? Tap Continue." }],
-			},
-			{
-				kind: "scan",
-				title: "Scan, name the device, tap Register",
-				line: "Close any page that says “This Connection Is Not Private”.",
-				trouble: [{ text: "Camera does nothing? Open this in Safari: {address}" }, { text: "Then type this code: {code}" }, { text: "Still nothing? Try: {address-2}" }],
-			},
-		],
+const STEPS_RA = [
+	{
+		kind: "send",
+		title: "Send the certificate to your iPhone",
+		line: { share: "Choose AirDrop, then your iPhone; it shows “Profile Downloaded”.", download: "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone." },
+		trouble: [{ text: "No AirDrop prompt? Unlock your iPhone and keep it near this Mac." }, { text: "Set up this iPhone before?", isJump: true }],
 	},
-};
+	{
+		kind: "fingerprint",
+		title: "Match the fingerprint before installing",
+		path: "Settings › Profile Downloaded › More Details › Glass Atrium Local CA",
+		stop: "If lines differ, remove the profile and never turn on full trust.",
+		trouble: [{ text: "No lines before installing? Install, then check General › VPN & Device Management." }],
+	},
+	{ kind: "phone", title: "Install the certificate", line: "Go back, tap Install, enter your passcode, tap Install twice, then Done.", trouble: [{ text: "No “Profile Downloaded” in Settings? Repeat step 1." }] },
+	{
+		kind: "phone",
+		title: "Turn on full trust",
+		path: "Settings › General › About › Certificate Trust Settings › Glass Atrium Local CA",
+		trouble: [{ text: "No switch there? Repeat step 3." }, { text: "Asked to confirm? Tap Continue." }],
+	},
+	{
+		kind: "scan",
+		title: "Scan, name the device, tap Register",
+		line: "Close any page that says “This Connection Is Not Private”.",
+		trouble: [{ text: "Camera does nothing? Open this in Safari: {address}" }, { text: "Then type this code: {code}" }, { text: "Still nothing? Try: {address-2}" }],
+	},
+];
 // a Trouble? line's value slot → its value; a line whose value is missing is left out
 const SLOT_RA = /(\{[a-z0-9-]+\})/;
 const PATH_SEPARATOR_RA = " › ";
-// spec 44105 → C-11: the device choice while only iPhone or iPad steps are ruled (A4)
-const PENDING_DEVICE_RA = "Android is not supported yet.";
 // routes.ts → SIGN_IN_FILES serves the page itself; sign-in.js reads the one fragment key → one scan fills the code
 const SIGN_IN_RA = { PATH: "/sign-in.html", FRAGMENT: "#code=" };
 // spec 44105 → The QR drawing: 4 CSS px a module, a 4-module quiet zone, modules in elev on an ink field (16.74:1)
 const QR_RA = { MODULE_PX: 4, QUIET: 4, FIELD: { fill: "rgb(var(--ink))" }, MODULE: { fill: "rgb(var(--elev))" } };
 
-// progress null → the device choice · open null → every step done
+// open null → every step done
+const START_PROGRESS_RA = { open: 0, done: STEPS_RA.map(() => false), isTroubleOpen: false, label: null };
 const PROGRESS_ACTS_RA = {
-	choose: (_, act) => ({ device: act.device, open: 0, done: STEPS_RA[act.device].steps.map(() => false), isTroubleOpen: false, label: null }),
-	change: () => null,
+	restart: () => START_PROGRESS_RA,
 	next: (progress) => putOpenStepRA(progress, progress.open + 1, progress.done.map((isDone, i) => isDone || i === progress.open)),
 	// the share sheet completes after the person may have moved on → only step 1 still open moves
-	sent: (progress) => (progress?.open === 0 ? PROGRESS_ACTS_RA.next(progress) : progress),
+	sent: (progress) => (progress.open === 0 ? PROGRESS_ACTS_RA.next(progress) : progress),
 	back: (progress) => putOpenStepRA(progress, progress.open - 1),
 	reopen: (progress, act) => putOpenStepRA(progress, act.index),
 	// a phone that already holds the certificate → straight to the scan step
@@ -205,9 +198,9 @@ function getOpenErrorTextRA(error) {
 	return OPEN_ERROR_RA[error?.status] ?? "No code was opened; try again.";
 }
 
-/** The connect card's progress after one act. */
+/** The connect card's progress after one act; null → not started. */
 function putProgressRA(progress, act) {
-	return PROGRESS_ACTS_RA[act.type](progress, act);
+	return PROGRESS_ACTS_RA[act.type](progress ?? START_PROGRESS_RA, act);
 }
 
 function putOpenStepRA(progress, open, done = progress.done) {
@@ -474,40 +467,20 @@ function ConnectBodyRA({ setup, devices, progress, onAct, onDevicesRead }) {
 	if (!isFinished && devices.length >= setup.deviceLimit) {
 		return <p className="fs-body text-dim">{`${devices.length} of ${setup.deviceLimit} devices registered; remove one to connect another.`}</p>;
 	}
-	if (progress === null) return <DeviceChoiceRA onAct={onAct} />;
-	return <ProcedureRA setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />;
-}
-
-function DeviceChoiceRA({ onAct }) {
-	const { Stack, Cluster } = window.UI;
-	return (
-		<Stack gap="stack">
-			<p className="fs-body text-ink">Which device are you connecting?</p>
-			<Cluster>
-				{Object.entries(STEPS_RA).map(([device, { name }]) => (
-					<button key={device} type="button" className="btn" onClick={() => onAct({ type: "choose", device })}>{name}</button>
-				))}
-			</Cluster>
-			<p className="fs-meta text-dim">{PENDING_DEVICE_RA}</p>
-		</Stack>
-	);
+	return <ProcedureRA setup={setup} devices={devices} progress={progress ?? START_PROGRESS_RA} onAct={onAct} onDevicesRead={onDevicesRead} />;
 }
 
 function ProcedureRA({ setup, devices, progress, onAct, onDevicesRead }) {
-	const { Stack, QuietButton, TONE_GLYPH } = window.UI;
-	const { name, steps } = STEPS_RA[progress.device];
+	const { Stack, TONE_GLYPH } = window.UI;
 	const isFinished = progress.open === null;
 	return (
 		<Stack gap="block">
-			<div className="flex items-center justify-between fs-meta text-dim">
-				<span>{isFinished ? `All ${steps.length} steps done · ${name}` : `Step ${progress.open + 1} of ${steps.length} · ${name}`}</span>
-				{!isFinished && <QuietButton onClick={() => onAct({ type: "change" })}>Change device</QuietButton>}
-			</div>
+			<p className="fs-meta text-dim">{isFinished ? `All ${STEPS_RA.length} steps done · ${DEVICE_RA.name}` : `Step ${progress.open + 1} of ${STEPS_RA.length} · ${DEVICE_RA.name}`}</p>
 			<StepListRA setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />
 			{isFinished && (
 				<Stack gap="stack" className="items-start">
 					<p className="fs-body text-ink"><span className="text-ok">{TONE_GLYPH.ok}</span> {`“${progress.label}” is connected.`}</p>
-					<button type="button" className="btn" onClick={() => onAct({ type: "change" })}>Connect another device</button>
+					<button type="button" className="btn" onClick={() => onAct({ type: "restart" })}>Connect another device</button>
 				</Stack>
 			)}
 		</Stack>
@@ -519,10 +492,9 @@ function StepListRA({ setup, devices, progress, onAct, onDevicesRead }) {
 	const titleRef = useRRA(null);
 	// a step opened by a press or by finishing → focus follows to its title
 	useERA(() => titleRef.current?.focus(), [progress.open]);
-	const { steps } = STEPS_RA[progress.device];
 	return (
 		<ol className="flex flex-col gap-list">
-			{steps.map((step, i) => (
+			{STEPS_RA.map((step, i) => (
 				<li key={step.title}>
 					{i === progress.open
 						? <OpenStepRA step={step} index={i} setup={setup} devices={devices} progress={progress} titleRef={titleRef} onAct={onAct} onDevicesRead={onDevicesRead} />
@@ -537,10 +509,9 @@ function StepListRA({ setup, devices, progress, onAct, onDevicesRead }) {
 
 function OpenStepRA({ step, index, setup, devices, progress, titleRef, onAct, onDevicesRead }) {
 	const { Stack, Cluster, QuietButton } = window.UI;
-	const { hosts, steps } = STEPS_RA[progress.device];
-	const values = getAddressesRA(setup, hosts);
+	const values = getAddressesRA(setup, DEVICE_RA.hosts);
 	// extra → values only the step itself knows (the open code), filling their Trouble? slots
-	const trouble = (extra) => <TroubleRA rows={step.trouble} values={{ ...values, ...extra }} isOpen={progress.isTroubleOpen} scanStep={steps.length} onAct={onAct} />;
+	const trouble = (extra) => <TroubleRA rows={step.trouble} values={{ ...values, ...extra }} isOpen={progress.isTroubleOpen} scanStep={STEPS_RA.length} onAct={onAct} />;
 	return (
 		<Stack gap="stack">
 			<p ref={titleRef} tabIndex={-1} aria-current="step" className="fs-body font-medium text-ink">{index + 1} {step.title}</p>

@@ -155,10 +155,10 @@ describe("each state shows its own words, and the on/off act sits on the title l
       absent: ["Turn off", "Connect a device"],
     },
     {
-      name: "on with no device opens the device choice and an empty device list",
+      name: "on with no device opens step 1 of the connect steps and an empty device list",
       read: ready(SETUP_ON),
-      present: ["On", "Turn off", "Connect a device", "Which device are you connecting?", "iPhone or iPad", "No device registered", "A device appears here once it registers.", "0 of 10", "Trusted networks: 1 · this Mac's network is one of them"],
-      absent: ["Remove all", "Closed on this network", IPHONE_TITLES[0], "https://"],
+      present: ["On", "Turn off", "Connect a device", "Step 1 of 5 · iPhone or iPad", IPHONE_TITLES[0], "No device registered", "A device appears here once it registers.", "0 of 10", "Trusted networks: 1 · this Mac's network is one of them"],
+      absent: ["Remove all", "Closed on this network", "https://"],
     },
     {
       name: "on with devices lists them with one remove each and a remove-all",
@@ -234,22 +234,13 @@ async function driveConnect(over: Record<string, unknown> = {}) {
 }
 
 describe("the connect card is a procedure: one device, one open step, done steps checked", () => {
-  test("it opens on the device choice, one button per device whose steps are built", async () => {
+  test("it opens on step 1 with the progress line and no device question, and every later title is faint text, not a control", async () => {
     const card = await driveConnect();
-
-    assert.ok(card.text().includes("Which device are you connecting?"));
-    assert.deepEqual(findNodes(card.view(), (node) => node.type === "button").map((node) => collectText(node).trim()), ["iPhone or iPad"]);
-    assert.ok(card.text().includes("Android is not supported yet."), "an Android owner is told why there is no Android button");
-  });
-
-  test("choosing a device opens its step 1 with the progress line, and every later title is faint text, not a control", async () => {
-    const card = await driveConnect();
-
-    card.press("iPhone or iPad");
 
     const tree = card.view();
     const text = card.text();
-    for (const word of ["Step 1 of 5 · iPhone or iPad", "Change device", "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone.", "Download certificate", "Next", ...IPHONE_TITLES]) {
+    assert.doesNotMatch(text, /Which device|Change device|Android/, "one device → no choice, and no word about another");
+    for (const word of ["Step 1 of 5 · iPhone or iPad", "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone.", "Download certificate", "Next", ...IPHONE_TITLES]) {
       assert.ok(text.includes(word), `shows "${word}"`);
     }
     assert.ok(!getButtonNames(tree).includes("Back"), "no Back on step 1");
@@ -261,7 +252,6 @@ describe("the connect card is a procedure: one device, one open step, done steps
 
   test("Next marks the open step done and opens the one after it; a done title reopens its step with every mark kept", async () => {
     const card = await driveConnect();
-    card.press("iPhone or iPad");
     card.press("Next");
     card.press("Next");
 
@@ -274,20 +264,17 @@ describe("the connect card is a procedure: one device, one open step, done steps
     assert.deepEqual(card.doneTitles(), [IPHONE_TITLES[0]]);
   });
 
-  test("Back opens the step before, and Change device returns to the device choice", async () => {
+  test("Back opens the step before", async () => {
     const card = await driveConnect();
-    card.press("iPhone or iPad");
     card.press("Next");
 
     card.press("Back");
+
     assert.ok(card.text().includes("Step 1 of 5"));
-    card.press("Change device");
-    assert.ok(card.text().includes("Which device are you connecting?"));
   });
 
   test("the fingerprint step shows the Settings path, the four lines and the stop line, its Trouble? fold closed until pressed and closed again on the next step", async () => {
     const card = await driveConnect();
-    card.press("iPhone or iPad");
     card.press("Next");
 
     const closed = card.text();
@@ -305,7 +292,6 @@ describe("the connect card is a procedure: one device, one open step, done steps
 
   test("a missing fingerprint says to refresh before installing, in its place", async () => {
     const card = await driveConnect({ setup: { ...SETUP_ON, fingerprint: null } });
-    card.press("iPhone or iPad");
     card.press("Next");
 
     assert.ok(card.text().includes("Fingerprint not shown; refresh this page before installing."));
@@ -313,7 +299,6 @@ describe("the connect card is a procedure: one device, one open step, done steps
 
   test("Go to step 5 marks every earlier step done and opens the scan step, which moves on by itself, never by Next", async () => {
     const card = await driveConnect();
-    card.press("iPhone or iPad");
     card.press("Trouble?");
 
     card.press("Go to step 5");
@@ -328,7 +313,6 @@ describe("the connect card is a procedure: one device, one open step, done steps
 
   test("with no code open the scan step offers Show QR code alone; the typed addresses wait behind Trouble?, with no code line", async () => {
     const card = await driveConnect();
-    card.press("iPhone or iPad");
     card.press("Trouble?");
     card.press("Go to step 5");
 
@@ -370,7 +354,6 @@ describe("the connect card is a procedure: one device, one open step, done steps
 
   test("a device registering in the scan step finishes the card, and Connect another device starts over", async () => {
     const card = await driveConnect();
-    card.press("iPhone or iPad");
     card.press("Trouble?");
     card.press("Go to step 5");
 
@@ -378,10 +361,9 @@ describe("the connect card is a procedure: one device, one open step, done steps
 
     const text = card.text();
     assert.ok(text.includes("All 5 steps done · iPhone or iPad") && text.includes("“Minji's iPhone” is connected."));
-    assert.ok(!text.includes("Change device"));
     assert.deepEqual(card.doneTitles(), IPHONE_TITLES);
     card.press("Connect another device");
-    assert.ok(card.text().includes("Which device are you connecting?"));
+    assert.deepEqual({ isStepOne: card.text().includes("Step 1 of 5"), done: card.doneTitles() }, { isStepOne: true, done: [] });
   });
 
   test("at the device limit the card holds the limit line alone", async () => {
@@ -399,7 +381,8 @@ describe("the step words keep to the card's caps", () => {
 
   test("every title holds at most 6 words, every line at most 14, every fold at most three lines of at most 14", async () => {
     const { mod } = await loadScreen();
-    const steps = Object.values(vm.runInContext("STEPS_RA", mod) as Record<string, { steps: StepWords[] }>).flatMap((device) => device.steps);
+    // copied out of the screen's realm → the result compares as a plain array
+    const steps = [...(vm.runInContext("STEPS_RA", mod) as StepWords[])];
 
     const over = steps.flatMap((step) => {
       const lines = [step.line, step.path, step.stop].flatMap((value) => (typeof value === "object" ? Object.values(value) : value ?? []));

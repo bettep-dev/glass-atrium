@@ -161,7 +161,6 @@ describe("remote access on at 1440px, the connect steps", () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON);
-    await ctx.page.getByRole("button", { name: "iPhone or iPad" }).click();
     await ctx.page.getByText("Step 1 of 5").waitFor({ timeout: WAIT_TIMEOUT_MS });
   });
   after(async () => closeRenderContext(ctx));
@@ -195,7 +194,6 @@ describe("remote access on at 1440px, the scan step, the tallest step", () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON, [], { acts: [{ status: 200, body: { code: "K7QM4XZP" } }] });
-    await ctx.page.getByRole("button", { name: "iPhone or iPad" }).click();
     await ctx.page.getByRole("button", { name: "Trouble?" }).click();
     await ctx.page.getByRole("button", { name: "Go to step 5" }).click();
     await ctx.page.getByRole("button", { name: "Show QR code" }).click();
