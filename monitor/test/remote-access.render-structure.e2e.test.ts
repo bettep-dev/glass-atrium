@@ -161,17 +161,27 @@ describe("remote access on at 1440px, the connect steps", () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON);
-    await ctx.page.getByText("Send this Mac's certificate to the device").waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await ctx.page.getByRole("button", { name: "iPhone or iPad" }).click();
+    await ctx.page.getByText("Step 1 of 5").waitFor({ timeout: WAIT_TIMEOUT_MS });
   });
   after(async () => closeRenderContext(ctx));
 
-  test("the five steps paint the list's own numerals", async () => {
-    const list = await ctx.page.locator("ol").evaluate((ol) => ({
-      marker: getComputedStyle(ol).listStyleType,
-      items: [...ol.children].map((li) => getComputedStyle(li).display),
-    }));
+  test("Next moves focus to the title of the step it opens", async () => {
+    await ctx.page.getByRole("button", { name: "Next" }).click();
 
-    assert.deepEqual(list, { marker: "decimal", items: ["list-item", "list-item", "list-item", "list-item", "list-item"] });
+    const focused = await ctx.page.evaluate(() => document.activeElement?.getAttribute("aria-current"));
+    assert.equal(focused, "step");
+  });
+
+  test("the card with a step and its fold open fits a 900px window without scrolling", async () => {
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+
+    const fit = await ctx.page.evaluate(() => {
+      const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
+      return { bottom: Math.ceil(card?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY), window: window.innerHeight, scrollTop: document.scrollingElement?.scrollTop };
+    });
+
+    assert.ok(fit.bottom <= fit.window && fit.scrollTop === 0, JSON.stringify(fit));
   });
 
   test("the page fits the window with no sideways scroll", async () => {

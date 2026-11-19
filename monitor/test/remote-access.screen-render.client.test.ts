@@ -83,12 +83,13 @@ const DEVICES = [
   { id: "7", label: "<b>iPad</b>", createdAt: "2026-11-02T21:15:02.001Z", lastSeenAt: "2026-11-16T23:48:59.999Z" },
   { id: "9", label: "Living-room tablet (kitchen)", createdAt: "2026-10-28T07:03:12.500Z", lastSeenAt: null },
 ];
-const STEP_TITLES = [
-  "Send this Mac's certificate to the device",
-  "Check and install the certificate",
-  "Turn on trust for the certificate",
-  "Open this Mac's address on the device",
-  "Enter the code on the device",
+// spec 44105 → iPhone or iPad, the scan step in its typed form (A8)
+const IPHONE_TITLES = [
+  "Send the certificate to your iPhone",
+  "Match the fingerprint before installing",
+  "Install the certificate",
+  "Turn on full trust",
+  "Open the address, type the code",
 ];
 // key directory (data/remote-access/), its CA and leaf files, a home path, and the commands that make or trust them
 const NEVER_IN_BUNDLE = [/remote-access\//, /\b(?:ca|leaf)\.(?:pem|key)\b/, /~\//, /\/Users\//, /glass-atrium remote/, /openssl/, /remote-access-set\.sh/, /add-trusted-cert/, /\bsudo\b/];
@@ -151,10 +152,10 @@ describe("each state shows its own words, and the on/off act sits on the title l
       absent: ["Turn off", "Connect a device"],
     },
     {
-      name: "on with no device opens the five steps and an empty device list",
+      name: "on with no device opens the device choice and an empty device list",
       read: ready(SETUP_ON),
-      present: ["On", "Turn off", "Connect a device", "iPhone or iPad", ...STEP_TITLES, "No device registered", "A device appears here after step 5.", "0 of 10", "https://studio-mac.local:16146", "https://192.168.0.12:16146", "9A 3F 1C 07 5E B2 44 D0", "Open a code", "A device removed earlier starts at step 4.", "Trusted networks: 1 · this Mac's network is one of them"],
-      absent: ["Remove all", "Closed on this network"],
+      present: ["On", "Turn off", "Connect a device", "Which device are you connecting?", "iPhone or iPad", "No device registered", "A device appears here after step 5.", "0 of 10", "Trusted networks: 1 · this Mac's network is one of them"],
+      absent: ["Remove all", "Closed on this network", IPHONE_TITLES[0], "https://"],
     },
     {
       name: "on with devices lists them with one remove each and a remove-all",
@@ -207,23 +208,167 @@ describe("each state shows its own words, and the on/off act sits on the title l
     });
   }
 
-  test("the five steps are one ordered list in the order they are done", async () => {
-    const { mod } = await loadScreen();
+});
 
-    const { tree } = renderPage(mod as Mod, ready(SETUP_ON));
+// the connect card driven through its own buttons: each press runs the screen's progress step over the card's last progress
+async function driveConnect(over: Record<string, unknown> = {}) {
+  const { mod } = await loadScreen();
+  let progress: unknown = null;
+  const putProgress = mod.putProgressRA as (current: unknown, act: unknown) => unknown;
+  const view = (): RenderedNode => render(mod as Mod, "ConnectBodyRA", {
+    setup: SETUP_ON, devices: [], onDevicesRead: () => undefined, ...over, progress, onAct: (act: unknown) => { progress = putProgress(progress, act); },
+  });
+  const getButtons = () => findNodes(view(), (node) => node.type === "button");
+  // a done step's button reads its ✓ glyph, then its title
+  const press = (name: string) => {
+    const button = getButtons().find((node) => collectText(node).replace("✓", "").trim() === name);
+    assert.ok(button, `a button named "${name}"`);
+    (button.props.onClick as () => void)();
+  };
+  const text = () => collectText(view()).replace(/\s+/g, " ");
+  const doneTitles = () => getButtons().map((node) => collectText(node)).filter((name) => name.includes("✓")).map((name) => name.replace("✓", "").trim());
+  return { view, press, text, doneTitles };
+}
 
-    const lists = findNodes(tree, (node) => node.type === "ol");
-    assert.equal(lists.length, 1);
-    const items = findNodes(lists[0], (node) => node.type === "li").map((node) => collectText(node));
-    assert.deepEqual(items.map((text, i) => text.startsWith(STEP_TITLES[i])), [true, true, true, true, true]);
+describe("the connect card is a procedure: one device, one open step, done steps checked", () => {
+  test("it opens on the device choice, one button per device whose steps are built", async () => {
+    const card = await driveConnect();
+
+    assert.ok(card.text().includes("Which device are you connecting?"));
+    assert.deepEqual(findNodes(card.view(), (node) => node.type === "button").map((node) => collectText(node).trim()), ["iPhone or iPad"]);
+  });
+
+  test("choosing a device opens its step 1 with the progress line, and every later title is faint text, not a control", async () => {
+    const card = await driveConnect();
+
+    card.press("iPhone or iPad");
+
+    const tree = card.view();
+    const text = card.text();
+    for (const word of ["Step 1 of 5 · iPhone or iPad", "Change device", "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone.", "Download certificate", "Next", ...IPHONE_TITLES]) {
+      assert.ok(text.includes(word), `shows "${word}"`);
+    }
+    assert.ok(!getButtonNames(tree).includes("Back"), "no Back on step 1");
+    assert.equal(findNodes(tree, (node) => node.type === "ol").length, 1);
+    assert.equal(findNodes(tree, (node) => node.type === "li").length, 5);
+    assert.deepEqual(findNodes(tree, (node) => node.props["aria-current"] === "step").map((node) => collectText(node).replace(/\s+/g, " ").trim()), [`1 ${IPHONE_TITLES[0]}`]);
+    assert.deepEqual(getButtonNames(tree).filter((name) => IPHONE_TITLES.some((title) => name.includes(title))), []);
+  });
+
+  test("Next marks the open step done and opens the one after it; a done title reopens its step with every mark kept", async () => {
+    const card = await driveConnect();
+    card.press("iPhone or iPad");
+    card.press("Next");
+    card.press("Next");
+
+    card.press(IPHONE_TITLES[0]);
+
+    assert.ok(card.text().includes("Step 1 of 5"));
+    assert.deepEqual(card.doneTitles(), [IPHONE_TITLES[1]]);
+    card.press("Next");
+    assert.ok(card.text().includes("Step 2 of 5"), "Next from a reopened step opens the step after it");
+    assert.deepEqual(card.doneTitles(), [IPHONE_TITLES[0]]);
+  });
+
+  test("Back opens the step before, and Change device returns to the device choice", async () => {
+    const card = await driveConnect();
+    card.press("iPhone or iPad");
+    card.press("Next");
+
+    card.press("Back");
+    assert.ok(card.text().includes("Step 1 of 5"));
+    card.press("Change device");
+    assert.ok(card.text().includes("Which device are you connecting?"));
+  });
+
+  test("the fingerprint step shows the Settings path and the four lines, its Trouble? fold closed until pressed and closed again on the next step", async () => {
+    const card = await driveConnect();
+    card.press("iPhone or iPad");
+    card.press("Next");
+
+    const closed = card.text();
+    card.press("Trouble?");
+    const opened = card.text();
+    card.press("Next");
+
+    for (const word of ["Settings › Profile Downloaded › More Details › Glass Atrium Local CA", "9A 3F 1C 07 5E B2 44 D0"]) assert.ok(closed.includes(word), `shows "${word}": ${closed}`);
+    assert.ok(!closed.includes("Lines differ?"), "closed by default");
+    for (const word of ["No lines before installing? Install, then check General › VPN & Device Management.", "Lines differ? Tap Remove Downloaded Profile and stop here."]) {
+      assert.ok(opened.includes(word), `the open fold shows "${word}": ${opened}`);
+    }
+    assert.ok(!card.text().includes("No “Profile Downloaded” in Settings? Repeat step 1."), "the next step's fold starts closed");
   });
 
   test("a missing fingerprint says to refresh before installing, in its place", async () => {
+    const card = await driveConnect({ setup: { ...SETUP_ON, fingerprint: null } });
+    card.press("iPhone or iPad");
+    card.press("Next");
+
+    assert.ok(card.text().includes("Fingerprint not shown; refresh this page before installing."));
+  });
+
+  test("Go to step 5 marks every earlier step done and opens the scan step, which moves on by itself, never by Next", async () => {
+    const card = await driveConnect();
+    card.press("iPhone or iPad");
+    card.press("Trouble?");
+
+    card.press("Go to step 5");
+
+    const text = card.text();
+    for (const word of ["Step 5 of 5", "Do this after step 4; close any page saying “This Connection Is Not Private”.", "Address", "https://studio-mac.local:16146", "Show a new code", "Back"]) {
+      assert.ok(text.includes(word), `shows "${word}"`);
+    }
+    assert.deepEqual(card.doneTitles(), IPHONE_TITLES.slice(0, 4));
+    assert.ok(!getButtonNames(card.view()).includes("Next"));
+    card.press("Trouble?");
+    assert.ok(card.text().includes("Still nothing? Try: https://192.168.0.12:16146"), card.text());
+  });
+
+  test("a device registering in the scan step finishes the card, and Connect another device starts over", async () => {
+    const card = await driveConnect();
+    card.press("iPhone or iPad");
+    card.press("Trouble?");
+    card.press("Go to step 5");
+
+    (findNodes(card.view(), (node) => node.type === "CodeStepRA")[0].props.onConnected as (label: string) => void)("Minji's iPhone");
+
+    const text = card.text();
+    assert.ok(text.includes("All 5 steps done · iPhone or iPad") && text.includes("“Minji's iPhone” is connected."));
+    assert.ok(!text.includes("Change device"));
+    assert.deepEqual(card.doneTitles(), IPHONE_TITLES);
+    card.press("Connect another device");
+    assert.ok(card.text().includes("Which device are you connecting?"));
+  });
+
+  test("at the device limit the card holds the limit line alone", async () => {
+    const card = await driveConnect({ devices: Array.from({ length: 10 }, (_, i) => ({ ...DEVICES[0], id: String(i) })) });
+
+    assert.equal(card.text().trim(), "10 of 10 devices registered; remove one to connect another.");
+    assert.deepEqual(getButtonNames(card.view()), []);
+  });
+});
+
+describe("the step words keep to the card's caps", () => {
+  // spec 44105 → Caps: a word is a whitespace-separated token holding a letter, digit, { or &
+  const countWords = (text: string) => text.split(/\s+/).filter((token) => /[\p{L}\p{N}{&]/u.test(token)).length;
+  interface StepWords { title: string; line?: string | Record<string, string>; path?: string; trouble: Array<{ text: string }> }
+
+  test("every title holds at most 6 words, every line at most 14, every fold at most three lines of at most 14", async () => {
     const { mod } = await loadScreen();
+    const steps = Object.values(vm.runInContext("STEPS_RA", mod) as Record<string, { steps: StepWords[] }>).flatMap((device) => device.steps);
 
-    const { text } = renderPage(mod as Mod, ready({ ...SETUP_ON, fingerprint: null }));
+    const over = steps.flatMap((step) => {
+      const lines = [step.line, step.path].flatMap((value) => (typeof value === "object" ? Object.values(value) : value ?? []));
+      return [
+        ...(countWords(step.title) > 6 ? [`title "${step.title}"`] : []),
+        ...lines.filter((line) => countWords(line) > 14).map((line) => `line "${line}"`),
+        ...(step.trouble.length > 3 ? [`fold of ${step.trouble.length} lines under "${step.title}"`] : []),
+        ...step.trouble.filter((row) => countWords(row.text) > 14).map((row) => `fold line "${row.text}"`),
+      ];
+    });
 
-    assert.ok(text.includes("Fingerprint not shown. Refresh this page before you install."));
+    assert.ok(steps.length >= 5, "the step table was read");
+    assert.deepEqual(over, []);
   });
 });
 
@@ -323,21 +468,19 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
   });
 });
 
-describe("step 5 shows one code at a time and what became of it", () => {
-  const base = { count: 0, limit: 10, onOpen: () => undefined };
+describe("the scan step shows one code at a time and what became of it", () => {
+  const base = { onOpen: () => undefined };
   const rows = [
-    { name: "at rest it offers to open a code", state: { status: "idle" }, present: ["Open a code"], absent: ["One use"] },
-    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Open a code"] },
-    { name: "an open code shows in two groups of four with its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["K7QM 4XZP", "One use · valid until", "Open a new code"], absent: ["expired"] },
-    { name: "an expired code gives way to the expired line", state: { status: "expired" }, present: ["That code expired. Open a new code.", "Open a code"], absent: ["K7QM"] },
-    { name: "a registered device gives way to the connected line", state: { status: "connected", label: "Minji's iPhone" }, present: ["“Minji's iPhone” is connected.", "Open a code"], absent: ["One use"] },
-    { name: "at the device limit the button gives way to the limit line", state: { status: "idle" }, count: 10, present: ["10 of 10 devices registered. Remove one to connect another."], absent: ["Open a code"] },
+    { name: "at rest it offers a code", state: { status: "idle" }, present: ["Show a new code"], absent: ["One use", "Code"] },
+    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show a new code"] },
+    { name: "an open code shows in two groups of four with its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired"] },
+    { name: "an expired code gives way to the expired line", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show a new code"], absent: ["K7QM"] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const { mod } = await loadScreen();
 
-      const text = collectText(render(mod as Mod, "CodeViewRA", { ...base, state: row.state, count: row.count ?? base.count }));
+      const text = collectText(render(mod as Mod, "CodeViewRA", { ...base, state: row.state }));
 
       for (const word of row.present) assert.ok(text.includes(word), `${row.name}: "${word}"`);
       for (const word of row.absent) assert.ok(!text.includes(word), `${row.name}: never "${word}"`);
@@ -345,9 +488,9 @@ describe("step 5 shows one code at a time and what became of it", () => {
   }
 
   const refusals = [
-    { name: "a rate-limited open says to wait a minute", status: 429, code: "too_many_requests", text: "Too many codes opened. Wait a minute, then open a code." },
-    { name: "an open with no audit row says the monitor could not record it", status: 503, code: "audit_unavailable", text: "No code was opened: the monitor could not record it. Try again in a minute." },
-    { name: "any other refusal says no code was opened", status: 500, code: "internal", text: "No code was opened. Try again." },
+    { name: "a rate-limited open says to wait a minute", status: 429, code: "too_many_requests", text: "Too many codes opened; wait a minute, then show a new one." },
+    { name: "an open with no audit row says to try again in a minute", status: 503, code: "audit_unavailable", text: "No code was opened; try again in a minute." },
+    { name: "any other refusal says no code was opened", status: 500, code: "internal", text: "No code was opened; try again." },
   ];
   for (const row of refusals) {
     test(row.name, async () => {
@@ -660,6 +803,23 @@ describe("every Mac-only call carries the page header the admin routes require",
 
     await (mod.deleteDeviceRA as (id: string) => Promise<void>)("7");
   });
+});
+
+describe("sending the certificate reports whether the share sheet completed", () => {
+  const rows = [
+    { name: "a completed share sheet counts as sent", share: async () => undefined, isSent: true },
+    { name: "a share sheet the person closed is not sent and no error", share: async () => { throw Object.assign(new Error("closed"), { name: "AbortError" }); }, isSent: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const { mod } = await loadScreen();
+      mod.navigator = { share: row.share };
+
+      const isSent = await (mod.sendCertificateRA as (file: File, isShare: boolean) => Promise<boolean>)(new File(["x"], "ca.cer"), true);
+
+      assert.equal(isSent, row.isSent, row.name);
+    });
+  }
 });
 
 test("the fingerprint reads as four lines of eight pairs that rejoin to the server's value", async () => {

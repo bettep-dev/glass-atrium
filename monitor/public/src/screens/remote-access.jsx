@@ -1,4 +1,4 @@
-// Remote access — the Mac's own page: whether devices can reach this monitor, the five steps that connect one, and the registered devices.
+// Remote access — the Mac's own page: whether devices can reach this monitor, the steps that connect one, and the registered devices.
 // Loopback only: its routes answer the Mac page alone (route-classes.ts → remote-admin), so the remote page never lists it.
 const { useState: useSRA, useEffect: useERA, useCallback: useCRA, useRef: useRRA } = React;
 
@@ -23,11 +23,61 @@ const DEVICE_POLL_MS_RA = 5_000;
 const DEVICE_COLUMNS_RA = [{ key: "label", label: "Device" }, { key: "created", label: "Registered" }, { key: "seen", label: "Last seen" }, { key: "act", label: "Action", isNumeric: true }];
 const DEVICE_WIDTHS_RA = [undefined, undefined, undefined, "1%"];
 const DESTRUCTIVE_STYLE_RA = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))", background: "transparent" };
-const PROSE_STYLE_RA = { maxWidth: "var(--measure-prose)" };
+
+/**
+ * The connect procedure per device (spec 44105 → Connect a device): a title, one line or one Settings path, at most three Trouble? lines.
+ * hosts → the setup facts that make the address, first shown, second in the fold · a device joins only once its steps are ruled (Android: A4).
+ */
+const STEPS_RA = {
+	iphone: {
+		name: "iPhone or iPad",
+		hosts: ["hostName", "address"],
+		steps: [
+			{
+				kind: "send",
+				title: "Send the certificate to your iPhone",
+				line: { share: "Choose AirDrop, then your iPhone; it shows “Profile Downloaded”.", download: "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone." },
+				trouble: [{ text: "No AirDrop prompt? Unlock your iPhone and keep it near this Mac." }, { text: "Set up this iPhone before?", isJump: true }],
+			},
+			{
+				kind: "fingerprint",
+				title: "Match the fingerprint before installing",
+				path: "Settings › Profile Downloaded › More Details › Glass Atrium Local CA",
+				trouble: [{ text: "No lines before installing? Install, then check General › VPN & Device Management." }, { text: "Lines differ? Tap Remove Downloaded Profile and stop here." }],
+			},
+			{ kind: "phone", title: "Install the certificate", line: "Go back, tap Install, enter your passcode, tap Install twice, then Done.", trouble: [{ text: "No “Profile Downloaded” in Settings? Repeat step 1." }] },
+			{
+				kind: "phone",
+				title: "Turn on full trust",
+				path: "Settings › General › About › Certificate Trust Settings › Glass Atrium Local CA",
+				trouble: [{ text: "No switch there? Repeat step 3." }, { text: "Asked to confirm? Tap Continue." }],
+			},
+			{ kind: "scan", title: "Open the address, type the code", line: "Do this after step 4; close any page saying “This Connection Is Not Private”.", trouble: [{ text: "Still nothing? Try: {address-2}" }] },
+		],
+	},
+};
+// a Trouble? line's value slot → its value; a line whose value is missing is left out
+const SLOT_RA = /(\{[a-z0-9-]+\})/;
+const PATH_SEPARATOR_RA = " › ";
+
+// progress null → the device choice · open null → every step done
+const PROGRESS_ACTS_RA = {
+	choose: (_, act) => ({ device: act.device, open: 0, done: STEPS_RA[act.device].steps.map(() => false), isTroubleOpen: false, label: null }),
+	change: () => null,
+	next: (progress) => putOpenStepRA(progress, progress.open + 1, progress.done.map((isDone, i) => isDone || i === progress.open)),
+	// the share sheet completes after the person may have moved on → only step 1 still open moves
+	sent: (progress) => (progress?.open === 0 ? PROGRESS_ACTS_RA.next(progress) : progress),
+	back: (progress) => putOpenStepRA(progress, progress.open - 1),
+	reopen: (progress, act) => putOpenStepRA(progress, act.index),
+	// a phone that already holds the certificate → straight to the scan step
+	jump: (progress) => putOpenStepRA(progress, progress.done.length - 1, progress.done.map((_, i) => i < progress.done.length - 1)),
+	connected: (progress, act) => ({ ...progress, open: null, done: progress.done.map(() => true), isTroubleOpen: false, label: act.label }),
+	trouble: (progress) => ({ ...progress, isTroubleOpen: !progress.isTroubleOpen }),
+};
 
 const OPEN_ERROR_RA = {
-	429: "Too many codes opened. Wait a minute, then open a code.",
-	503: "No code was opened: the monitor could not record it. Try again in a minute.",
+	429: "Too many codes opened; wait a minute, then show a new one.",
+	503: "No code was opened; try again in a minute.",
 };
 // admin-routes.ts → ConfirmRefusal: the network moved or the confirm's read went stale
 const CONFIRM_REFUSALS_RA = new Set(["confirm_stale", "network_changed"]);
@@ -139,7 +189,16 @@ async function postAccessRA(act, confirm = null) {
 }
 
 function getOpenErrorTextRA(error) {
-	return OPEN_ERROR_RA[error?.status] ?? "No code was opened. Try again.";
+	return OPEN_ERROR_RA[error?.status] ?? "No code was opened; try again.";
+}
+
+/** The connect card's progress after one act. */
+function putProgressRA(progress, act) {
+	return PROGRESS_ACTS_RA[act.type](progress, act);
+}
+
+function putOpenStepRA(progress, open, done = progress.done) {
+	return { ...progress, open, done, isTroubleOpen: false };
 }
 
 function getWidenErrorTextRA(act, error) {
@@ -185,27 +244,34 @@ function formatCodeRA(code) {
 	return code.match(/.{1,4}/g).join(" ");
 }
 
-/** The `.local` name first, the number second; an unreadable one is left out. */
-function getAddressesRA(setup) {
-	const hosts = [setup.hostName, setup.address].filter(Boolean);
-	return hosts.map((host, i) => ({ label: i === 0 ? "Address" : "If that does not open", url: `https://${host}:${setup.port}` }));
+/** The device's address slots from its hosts in order; an unreadable host is left out. */
+function getAddressesRA(setup, hosts) {
+	const [address, second] = hosts.map((key) => setup[key]).filter(Boolean).map((host) => `https://${host}:${setup.port}`);
+	return { address, "address-2": second };
 }
 
 function canShareFileRA(file) {
 	return file !== null && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] });
 }
 
-/** Share sheet where the browser offers one, else a download; a sheet the person closes is no error. */
+/**
+ * Share sheet where the browser offers one, else a download; a sheet the person closes is no error.
+ * @returns true only when the share sheet completed → step 1 finishes by itself; a download moves on by Next
+ */
 async function sendCertificateRA(file, isShare) {
 	if (isShare) {
-		await navigator.share({ files: [file] }).catch((error) => {
-			if (error?.name !== "AbortError") throw error;
-		});
-		return;
+		return navigator.share({ files: [file] }).then(
+			() => true,
+			(error) => {
+				if (error?.name !== "AbortError") throw error;
+				return false;
+			},
+		);
 	}
 	const url = URL.createObjectURL(file);
 	Object.assign(document.createElement("a"), { href: url, download: file.name }).click();
 	setTimeout(() => URL.revokeObjectURL(url), 0);
+	return false;
 }
 
 // first device → the fold stays as the person left it; back to none → a new key reopens it
@@ -317,6 +383,11 @@ function FirstReadRA({ read, onRetry }) {
 
 function BodyRA({ setup, devices, view, check, onWiden, onChanged, onDevicesRead, onRemoveAll }) {
 	const emptyKey = useEmptyKeyRA(devices.length);
+	// held over the card → a read that briefly finds the Mac not answering does not lose the person's place
+	const [progress, setProgress] = useSRA(null);
+	const onAct = useCRA((act) => setProgress((current) => putProgressRA(current, act)), []);
+	// access turned off → every device went with it, so the procedure starts over
+	if (!setup.enabled && progress !== null) setProgress(null);
 	const line = getTrustedLineRA(setup, view);
 	const foot = line && <span className="tabular-nums">{line}</span>;
 	const hasDevicesCard = setup.enabled || devices.length > 0;
@@ -325,7 +396,7 @@ function BodyRA({ setup, devices, view, check, onWiden, onChanged, onDevicesRead
 		<>
 			{!setup.enabled && <OffCardRA setup={setup} foot={hasDevicesCard ? null : foot} error={checkError("on")} />}
 			{setup.enabled && checkError("on") && <ActErrorRA error={checkError("on")} />}
-			{view === "on" && <ConnectCardRA key={emptyKey} setup={setup} devices={devices} onDevicesRead={onDevicesRead} />}
+			{view === "on" && <ConnectCardRA key={emptyKey} setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />}
 			{ATTENTION_RA[view]
 				? <AttentionRA row={ATTENTION_RA[view]} isChecking={check.act === "trust"} error={checkError("trust")} onTrust={() => onWiden("trust")} />
 				: checkError("trust") && <ActErrorRA error={checkError("trust")} />}
@@ -370,45 +441,170 @@ function ActErrorRA({ error }) {
 	);
 }
 
-function ConnectCardRA({ setup, devices, onDevicesRead }) {
+function ConnectCardRA({ setup, devices, progress, onAct, onDevicesRead }) {
 	const { Disclosure } = window.UI;
 	return (
-		<Disclosure kind={devices.length === 0 ? "status" : "detail"} title="Connect a device" sub="iPhone or iPad">
-			<div className="flex flex-col gap-block">
-				<ol className="flex flex-col gap-block list-decimal pl-card-pad">
-					<StepRA title="Send this Mac's certificate to the device"><CertificateStepRA /></StepRA>
-					<StepRA title="Check and install the certificate"><FingerprintStepRA fingerprint={setup.fingerprint} /></StepRA>
-					<StepRA title="Turn on trust for the certificate">
-						<StepTextRA>Do this only after the lines in step 2 matched. In Settings, open General → About → Certificate Trust Settings. Turn on Glass Atrium Local CA, then tap Continue.</StepTextRA>
-					</StepRA>
-					<StepRA title="Open this Mac's address on the device"><AddressStepRA setup={setup} /></StepRA>
-					<StepRA title="Enter the code on the device">
-						<StepTextRA>Open a code here. On the device, type it, give the device a name and tap Register device. The monitor opens on the device, and the device appears under Registered devices.</StepTextRA>
-						<CodeStepRA devices={devices} limit={setup.deviceLimit} onDevicesRead={onDevicesRead} />
-					</StepRA>
-				</ol>
-				<p className="fs-meta text-dim">A device removed earlier starts at step 4.</p>
-			</div>
+		<Disclosure kind={devices.length === 0 ? "status" : "detail"} title="Connect a device">
+			<ConnectBodyRA setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />
 		</Disclosure>
 	);
 }
 
-function StepRA({ title, children }) {
+// a finished card stays as it is at the limit → the device the person just connected is not hidden under the limit line
+function ConnectBodyRA({ setup, devices, progress, onAct, onDevicesRead }) {
+	const isFinished = progress?.open === null;
+	if (!isFinished && devices.length >= setup.deviceLimit) {
+		return <p className="fs-body text-dim">{`${devices.length} of ${setup.deviceLimit} devices registered; remove one to connect another.`}</p>;
+	}
+	if (progress === null) return <DeviceChoiceRA onAct={onAct} />;
+	return <ProcedureRA setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />;
+}
+
+function DeviceChoiceRA({ onAct }) {
+	const { Stack, Cluster } = window.UI;
 	return (
-		<li>
-			<div className="flex flex-col gap-stack">
-				<span className="fs-body font-medium text-ink">{title}</span>
-				<div className="flex flex-col gap-label items-start">{children}</div>
-			</div>
-		</li>
+		<Stack gap="stack">
+			<p className="fs-body text-ink">Which device are you connecting?</p>
+			<Cluster>
+				{Object.entries(STEPS_RA).map(([device, { name }]) => (
+					<button key={device} type="button" className="btn" onClick={() => onAct({ type: "choose", device })}>{name}</button>
+				))}
+			</Cluster>
+		</Stack>
 	);
 }
 
-function StepTextRA({ children }) {
-	return <p className="fs-body text-dim" style={PROSE_STYLE_RA}>{children}</p>;
+function ProcedureRA({ setup, devices, progress, onAct, onDevicesRead }) {
+	const { Stack, QuietButton, TONE_GLYPH } = window.UI;
+	const { name, steps } = STEPS_RA[progress.device];
+	const isFinished = progress.open === null;
+	return (
+		<Stack gap="block">
+			<div className="flex items-center justify-between fs-meta text-dim">
+				<span>{isFinished ? `All ${steps.length} steps done · ${name}` : `Step ${progress.open + 1} of ${steps.length} · ${name}`}</span>
+				{!isFinished && <QuietButton onClick={() => onAct({ type: "change" })}>Change device</QuietButton>}
+			</div>
+			<StepListRA setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />
+			{isFinished && (
+				<Stack gap="stack" className="items-start">
+					<p className="fs-body text-ink"><span className="text-ok">{TONE_GLYPH.ok}</span> {`“${progress.label}” is connected.`}</p>
+					<button type="button" className="btn" onClick={() => onAct({ type: "change" })}>Connect another device</button>
+				</Stack>
+			)}
+		</Stack>
+	);
 }
 
-function CertificateStepRA() {
+function StepListRA({ setup, devices, progress, onAct, onDevicesRead }) {
+	const { QuietButton, TONE_GLYPH } = window.UI;
+	const titleRef = useRRA(null);
+	// a step opened by a press or by finishing → focus follows to its title
+	useERA(() => titleRef.current?.focus(), [progress.open]);
+	const { steps } = STEPS_RA[progress.device];
+	return (
+		<ol className="flex flex-col gap-list">
+			{steps.map((step, i) => (
+				<li key={step.title}>
+					{i === progress.open
+						? <OpenStepRA step={step} index={i} setup={setup} devices={devices} progress={progress} titleRef={titleRef} onAct={onAct} onDevicesRead={onDevicesRead} />
+						: progress.done[i]
+							? <QuietButton onClick={() => onAct({ type: "reopen", index: i })}><span className="text-ok">{TONE_GLYPH.ok}</span> <span className="text-ink">{step.title}</span></QuietButton>
+							: <span className="fs-body text-faint">{i + 1} {step.title}</span>}
+				</li>
+			))}
+		</ol>
+	);
+}
+
+function OpenStepRA({ step, index, setup, devices, progress, titleRef, onAct, onDevicesRead }) {
+	const { Stack, Cluster, QuietButton } = window.UI;
+	const { hosts, steps } = STEPS_RA[progress.device];
+	const values = getAddressesRA(setup, hosts);
+	return (
+		<Stack gap="stack">
+			<p ref={titleRef} tabIndex={-1} aria-current="step" className="fs-body font-medium text-ink">{index + 1} {step.title}</p>
+			<Stack gap="block">
+				<Stack gap="label" className="items-start">
+					<StepBodyRA step={step} setup={setup} devices={devices} address={values.address} onAct={onAct} onDevicesRead={onDevicesRead} />
+					<TroubleRA rows={step.trouble} values={values} isOpen={progress.isTroubleOpen} scanStep={steps.length} onAct={onAct} />
+				</Stack>
+				<Cluster>
+					{index > 0 && <QuietButton onClick={() => onAct({ type: "back" })}>Back</QuietButton>}
+					{step.kind !== "scan" && <button type="button" className="btn" onClick={() => onAct({ type: "next" })}>Next</button>}
+				</Cluster>
+			</Stack>
+		</Stack>
+	);
+}
+
+function StepBodyRA({ step, setup, devices, address, onAct, onDevicesRead }) {
+	const { MachineString } = window.UI;
+	if (step.kind === "send") return <CertificateStepRA line={step.line} onSent={() => onAct({ type: "sent" })} />;
+	const lead = step.path ? <PathRA path={step.path} /> : <p className="fs-body text-dim">{step.line}</p>;
+	if (step.kind === "fingerprint") {
+		return (
+			<>
+				{lead}
+				{setup.fingerprint
+					? <MachineString className="block fs-meta text-ink">{formatFingerprintRA(setup.fingerprint).map((line) => <span key={line} className="block">{line}</span>)}</MachineString>
+					: <ActErrorRA error={{ text: "Fingerprint not shown; refresh this page before installing." }} />}
+			</>
+		);
+	}
+	if (step.kind !== "scan") return lead;
+	return (
+		<>
+			{lead}
+			{address && <ValueRA label="Address"><MachineString className="fs-body text-ink">{address}</MachineString></ValueRA>}
+			<CodeStepRA devices={devices} onConnected={(label) => onAct({ type: "connected", label })} onDevicesRead={onDevicesRead} />
+		</>
+	);
+}
+
+// a Settings path: the labels in the mono face, the separators in dim
+function PathRA({ path }) {
+	const { MachineString } = window.UI;
+	return (
+		<MachineString className="fs-body text-ink">
+			{path.split(PATH_SEPARATOR_RA).map((label, i) => (
+				<React.Fragment key={label}>{i > 0 && <span className="text-dim">{PATH_SEPARATOR_RA}</span>}{label}</React.Fragment>
+			))}
+		</MachineString>
+	);
+}
+
+function ValueRA({ label, children }) {
+	return (
+		<div className="flex flex-col">
+			<span className="fs-meta text-dim">{label}</span>
+			{children}
+		</div>
+	);
+}
+
+function TroubleRA({ rows, values, isOpen, scanStep, onAct }) {
+	const { Stack, DisclosureButton, QuietButton } = window.UI;
+	const lines = rows.filter((row) => row.text.split(SLOT_RA).every((part) => !SLOT_RA.test(part) || values[part.slice(1, -1)]));
+	if (lines.length === 0) return null;
+	return (
+		<Stack gap="label">
+			<DisclosureButton isOpen={isOpen} onToggle={() => onAct({ type: "trouble" })} label="Trouble?" />
+			{isOpen && lines.map((row) => (
+				<p key={row.text} className="fs-meta text-dim">
+					<TroubleTextRA text={row.text} values={values} />
+					{row.isJump && <> <QuietButton onClick={() => onAct({ type: "jump" })}>{`Go to step ${scanStep}`}</QuietButton></>}
+				</p>
+			))}
+		</Stack>
+	);
+}
+
+function TroubleTextRA({ text, values }) {
+	const { MachineString } = window.UI;
+	return <>{text.split(SLOT_RA).map((part) => (SLOT_RA.test(part) ? <MachineString key={part} className="text-ink">{values[part.slice(1, -1)]}</MachineString> : part))}</>;
+}
+
+function CertificateStepRA({ line, onSent }) {
 	const [cert, setCert] = useSRA({ file: null, isSending: false, error: null });
 	const isShare = canShareFileRA(cert.file);
 	// read ahead → the share sheet opens inside the click, which a browser requires
@@ -420,63 +616,30 @@ function CertificateStepRA() {
 		setCert((prev) => ({ ...prev, isSending: true, error: null }));
 		const file = cert.file ? Promise.resolve(cert.file) : readCertificateRA();
 		file.then((value) => sendCertificateRA(value, isShare)).then(
-			() => setCert((prev) => ({ ...prev, isSending: false })),
-			(error) => setCert((prev) => ({ ...prev, isSending: false, error: { text: "The certificate was not downloaded. Try again.", detail: error.message } })),
+			(isSent) => {
+				setCert((prev) => ({ ...prev, isSending: false }));
+				if (isSent) onSent();
+			},
+			(error) => setCert((prev) => ({ ...prev, isSending: false, error: { text: "The certificate was not sent; try again.", detail: error.message } })),
 		);
 	};
 	return (
 		<>
-			<StepTextRA>
-				{isShare
-					? "The certificate lets the device confirm it is talking to this Mac. Choose AirDrop, then the device. If the device asks, tap Accept. It then shows “Profile Downloaded”."
-					: "The certificate lets the device confirm it is talking to this Mac. In Downloads, right-click “Glass Atrium Local CA” and choose Share → AirDrop, then the device. If the device asks, tap Accept. It then shows “Profile Downloaded”."}
-			</StepTextRA>
+			<p className="fs-body text-dim">{isShare ? line.share : line.download}</p>
 			<button type="button" className="btn" aria-busy={cert.isSending || undefined} onClick={onSend}>{isShare ? "Share certificate…" : "Download certificate"}</button>
 			{cert.error && <ActErrorRA error={cert.error} />}
 		</>
 	);
 }
 
-function FingerprintStepRA({ fingerprint }) {
-	const { MachineString } = window.UI;
-	return (
-		<>
-			<StepTextRA>The device shows SHA-256 lines for the certificate, under Fingerprints. Before step 3, they must match these:</StepTextRA>
-			{fingerprint
-				? <MachineString className="block fs-meta text-ink">{formatFingerprintRA(fingerprint).map((line) => <span key={line} className="block">{line}</span>)}</MachineString>
-				: <ActErrorRA error={{ text: "Fingerprint not shown. Refresh this page before you install." }} />}
-			<StepTextRA>On the device, open Settings and tap Profile Downloaded, then More Details, then Glass Atrium Local CA. If the lines are there and match, go back and tap Install, enter the device passcode, then tap Install twice more and Done.</StepTextRA>
-			<StepTextRA>If the lines are not there before installing, install first with the same taps. Then open Settings → General → VPN &amp; Device Management → Glass Atrium Local CA → More Details and compare the lines there.</StepTextRA>
-			<StepTextRA>If the lines differ, stop and remove the certificate: tap Remove Downloaded Profile, or Remove Profile if it is already installed.</StepTextRA>
-		</>
-	);
-}
-
-// the typed-address form: the page carries no QR encoder (spec C-46)
-function AddressStepRA({ setup }) {
-	const { MachineString } = window.UI;
-	return (
-		<>
-			<StepTextRA>With the device on the same network as this Mac, open Safari and type this address. The page reads “Register this device”.</StepTextRA>
-			{getAddressesRA(setup).map((row) => (
-				<div key={row.label} className="flex flex-col">
-					<span className="fs-meta text-dim">{row.label}</span>
-					<MachineString className="fs-body text-ink">{row.url}</MachineString>
-				</div>
-			))}
-			<p className="fs-meta text-dim">If Safari says “This Connection Is Not Private”, close the page and repeat steps 2 and 3.</p>
-		</>
-	);
-}
-
-function CodeStepRA({ devices, limit, onDevicesRead }) {
+function CodeStepRA({ devices, onConnected, onDevicesRead }) {
 	const [state, setState] = useSRA({ status: "idle" });
 	const knownRef = useRRA(new Set());
 	useERA(() => {
 		if (state.status !== "open") return;
 		const added = devices.find((device) => !knownRef.current.has(device.id));
-		if (added) setState({ status: "connected", label: added.label });
-	}, [devices, state.status]);
+		if (added) onConnected(added.label);
+	}, [devices, state.status, onConnected]);
 	useERA(() => {
 		if (state.status !== "open") return undefined;
 		const expiry = setTimeout(() => setState({ status: "expired" }), Date.parse(state.expiresAt) - Date.now());
@@ -495,24 +658,22 @@ function CodeStepRA({ devices, limit, onDevicesRead }) {
 			(error) => setState({ status: "idle", error: { text: getOpenErrorTextRA(error), detail: error.message } }),
 		);
 	};
-	return <CodeViewRA state={state} count={devices.length} limit={limit} onOpen={onOpen} />;
+	return <CodeViewRA state={state} onOpen={onOpen} />;
 }
 
-function CodeViewRA({ state, count, limit, onOpen }) {
-	const { MachineString, TONE_GLYPH, formatKstTime } = window.UI;
+function CodeViewRA({ state, onOpen }) {
+	const { MachineString, formatKstTime } = window.UI;
 	const isOpen = state.status === "open";
-	const label = state.status === "opening" ? "Opening…" : isOpen ? "Open a new code" : "Open a code";
 	return (
 		<>
-			{isOpen && <MachineString className="fs-stat font-semibold text-ink">{formatCodeRA(state.code)}</MachineString>}
-			{isOpen && <p className="fs-meta text-dim">{`One use · valid until ${formatKstTime(state.expiresAt)}`}</p>}
-			{state.status === "expired" && <p className="fs-body text-dim">That code expired. Open a new code.</p>}
-			{state.status === "connected" && (
-				<p className="fs-body text-ink"><span className="text-ok" aria-hidden="true">{TONE_GLYPH.ok}</span> {`“${state.label}” is connected.`}</p>
+			{isOpen && (
+				<ValueRA label="Code">
+					<MachineString className="fs-stat font-semibold text-ink">{formatCodeRA(state.code)}</MachineString>
+					<span className="fs-meta text-dim">{`One use · valid until ${formatKstTime(state.expiresAt)}`}</span>
+				</ValueRA>
 			)}
-			{count >= limit
-				? <p className="fs-body text-dim">{`${count} of ${limit} devices registered. Remove one to connect another.`}</p>
-				: <button type="button" className="btn" aria-busy={state.status === "opening" || undefined} onClick={onOpen}>{label}</button>}
+			{state.status === "expired" && <p className="fs-body text-dim">That code expired; show a new one.</p>}
+			<button type="button" className="btn" aria-busy={state.status === "opening" || undefined} onClick={onOpen}>{state.status === "opening" ? "Opening…" : "Show a new code"}</button>
 			{state.error && <ActErrorRA error={state.error} />}
 		</>
 	);
