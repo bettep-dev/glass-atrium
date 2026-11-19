@@ -1,8 +1,9 @@
 """Retention pin for scripts/_pg_archive_rotate.py → rotate_audit_log.
 
 Relay records (refusals, sends, redactions) stay in monitor.audit_log for tracing; every other
-aged row still moves to the archive. Runs the real statements on a migrated test database
-named by MONITOR_TEST_DATABASE_URL — the stdlib stand-in cannot run the interval and array SQL.
+aged row still moves to the archive. The retention rows run the real statements on a migrated test
+database named by MONITOR_TEST_DATABASE_URL — the stdlib stand-in cannot run the interval and array
+SQL; the label row reads the monitor's route map and needs no database.
 
 Run with:
     MONITOR_TEST_DATABASE_URL=<test database URL> python3 -m pytest scripts/test/test_pg_archive_rotate.py -v
@@ -12,6 +13,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,12 +22,12 @@ from types import ModuleType
 
 import pytest
 
-psycopg = pytest.importorskip("psycopg")
-
 _SCRIPT = Path(__file__).resolve().parent.parent / "_pg_archive_rotate.py"
+_AUDIT_ROUTES = Path(__file__).resolve().parents[2] / "monitor/src/server/middleware/audit-log.ts"
 _TEST_URL = os.environ.get("MONITOR_TEST_DATABASE_URL")
-
-pytestmark = pytest.mark.skipif(_TEST_URL is None, reason="MONITOR_TEST_DATABASE_URL names no test database")
+_NEEDS_TEST_DB = pytest.mark.skipif(_TEST_URL is None, reason="MONITOR_TEST_DATABASE_URL names no test database")
+# the monitor routes whose audit rows are relay records: relay refusals and sends, owner redactions
+_RELAY_ROUTES = ("/api/queue/relay", "/api/queue/owner/items/:id/redact")
 
 _AGED = datetime.now(timezone.utc) - timedelta(days=181)
 _RECENT = datetime.now(timezone.utc) - timedelta(days=179)
@@ -41,6 +44,7 @@ def _load_rotate() -> ModuleType:
 @pytest.fixture
 def conn():
     """A connection to the test database only; rows written under one actor are removed from both tables after."""
+    psycopg = pytest.importorskip("psycopg")
     with psycopg.connect(_TEST_URL, connect_timeout=2) as connection:
         name = connection.execute("SELECT current_database()").fetchone()[0]
         assert name.startswith("glass_atrium_test"), f"refusing a non-test database: {name}"
@@ -71,6 +75,17 @@ def _is_in(conn, table: str, row_id: int) -> bool:
     return conn.execute(query, (row_id,)).fetchone()[0]
 
 
+@pytest.mark.parametrize("route", _RELAY_ROUTES)
+def test_rotation_keeps_the_resource_label_the_monitor_audits_relay_routes_under(route, monkeypatch):
+    # a stand-in only where psycopg is absent: the script exits at import without it, and no row here connects
+    monkeypatch.setitem(sys.modules, "psycopg", sys.modules.get("psycopg") or ModuleType("psycopg"))
+    source = _AUDIT_ROUTES.read_text(encoding="utf-8")
+    labels = re.findall(r'\[\s*"' + re.escape(route) + r'"\s*,\s*"([^"]+)"\s*\]', source)
+
+    assert labels == [_load_rotate().RELAY_RESOURCE], f"ROUTE_RESOURCE label of {route}: {labels}"
+
+
+@_NEEDS_TEST_DB
 @pytest.mark.parametrize(
     ("event_ts", "action_kind", "target_table", "result", "is_moved"),
     [

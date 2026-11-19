@@ -31,7 +31,7 @@ def _connect():
     return psycopg.connect("dbname=glass_atrium", connect_timeout=2)
 
 
-# Audit resource label of the relay and redaction routes (monitor ROUTE_RESOURCE) → refusals, sends, redactions
+# audit resource whose rows (relay refusals, sends, redactions) never move
 RELAY_RESOURCE = "queue-relay"
 
 
