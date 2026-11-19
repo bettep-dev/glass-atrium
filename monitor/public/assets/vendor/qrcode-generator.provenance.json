@@ -1,0 +1,14 @@
+{
+  "package": "qrcode-generator",
+  "version": "2.0.4",
+  "source_url": "https://registry.npmjs.org/qrcode-generator/-/qrcode-generator-2.0.4.tgz",
+  "resolved_from": "package/dist/qrcode.js",
+  "global_name": "qrcode",
+  "bundle_file": "qrcode-generator-2.0.4.js",
+  "bundle_sha256": "79ec86f82856005b1c887905cfccfcfbec3821ca61c7fd5a952faa5f778f791c",
+  "bundle_bytes": 56694,
+  "tarball_integrity": "sha512-mZSiP6RnbHl4xL2Ap5HfkjLnmxfKcPWpWe/c+5XxCuetEenqmNFf1FH/ftXPCtFG5/TDobjsjz6sSNL0Sr8Z9g==",
+  "license": "MIT",
+  "fetched_on": "2026-11-19",
+  "note": "Unmodified copy of the package's browser build, kept in the repository because the live install runs no npm install. No dependencies, no install script, no network request. The exact dev dependency in package.json is the npm-resolved witness: the lockfile integrity and the installed file must match this sidecar. Upgrade = bump the dev dependency, copy the new dist/qrcode.js under a new versioned name, update this sidecar, the notice row and the script tag in index.html."
+}

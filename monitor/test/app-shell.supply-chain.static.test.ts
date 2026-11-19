@@ -18,6 +18,9 @@ const VENDOR_ROOT = resolve(PUBLIC_ROOT, "assets", "vendor");
 const PATH = {
   INDEX: resolve(PUBLIC_ROOT, "index.html"),
   TAILWIND_PROVENANCE: resolve(VENDOR_ROOT, "tailwindcss-play-cdn.provenance.json"),
+  QR_PROVENANCE: resolve(VENDOR_ROOT, "qrcode-generator.provenance.json"),
+  LOCKFILE: resolve(PUBLIC_ROOT, "..", "package-lock.json"),
+  QR_INSTALLED: resolve(PUBLIC_ROOT, "..", "node_modules", "qrcode-generator", "dist", "qrcode.js"),
 };
 
 // below this the "every external script" loop could pass on a page that lost its CDN tags
@@ -120,5 +123,37 @@ describe("the Tailwind runtime is the vendored file its sidecar pins", () => {
       .split("\n")
       .find((line) => line.includes("`tailwindcss`") && line.includes("|"));
     assert.ok(notice?.includes(provenance.version) && notice.includes(provenance.license), "THIRD-PARTY-NOTICES.md has no matching tailwindcss row");
+  });
+});
+
+describe("the QR encoder is the unmodified package file its sidecar pins", () => {
+  const provenance = JSON.parse(readFileSync(PATH.QR_PROVENANCE, "utf8")) as TailwindProvenance & { tarball_integrity: string };
+  const bytes = readFileSync(resolve(VENDOR_ROOT, provenance.bundle_file));
+
+  test("the bytes on disk are the bytes the sidecar pins", () => {
+    assert.equal(bytes.length, provenance.bundle_bytes, "byte count vs sidecar");
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), provenance.bundle_sha256, "sha256 vs sidecar");
+  });
+
+  test("the copy is the file npm installed from the tarball the lockfile resolved", () => {
+    const lock = JSON.parse(readFileSync(PATH.LOCKFILE, "utf8")) as { packages: Record<string, { version: string; integrity: string }> };
+    const entry = lock.packages["node_modules/qrcode-generator"];
+    assert.equal(entry?.version, provenance.version, "lockfile version vs sidecar");
+    assert.equal(entry?.integrity, provenance.tarball_integrity, "lockfile integrity vs sidecar");
+    assert.ok(bytes.equals(readFileSync(PATH.QR_INSTALLED)), "vendored copy differs from node_modules/qrcode-generator/dist/qrcode.js");
+  });
+
+  test("the shell loads that file before the screens, from its own origin", () => {
+    const srcs = scripts.map((node) => node.getAttribute("src") ?? "");
+    const at = srcs.indexOf(`assets/vendor/${provenance.bundle_file}`);
+    assert.ok(at !== -1, `index.html does not load assets/vendor/${provenance.bundle_file}`);
+    assert.ok(at < srcs.indexOf("dist/screens/remote-access.js"), "the encoder loads after the screen that draws with it");
+  });
+
+  test("the notice names the same version and license", () => {
+    const notice = readFileSync(resolve(VENDOR_ROOT, "THIRD-PARTY-NOTICES.md"), "utf8")
+      .split("\n")
+      .find((line) => line.includes("`qrcode-generator`") && line.includes("|"));
+    assert.ok(notice?.includes(provenance.version) && notice.includes(provenance.license), "THIRD-PARTY-NOTICES.md has no matching qrcode-generator row");
   });
 });
