@@ -30,7 +30,7 @@ const variantRows = `
   <div class="split-row split-row--1-1 split-row--${layouts.equal}" data-variant="equal"><div style="height: 400px;">tall</div><div>short</div></div>
   <div class="split-row split-row--2-1 split-row--${layouts.content}" data-variant="rail"><div style="height: 2000px;">main</div>
     <div class="split-col split-col--rail" id="rail"><div style="height: 100px;">one</div><div style="height: 100px;">two</div></div></div>`;
-const LAYOUT_PAGE = `<!doctype html><html data-theme="light"><body style="margin: 0;">
+const LAYOUT_PAGE = `<!doctype html><html><body style="margin: 0;">
   <div style="padding: 24px;">${splitRows}
     ${variantRows}
   </div>
@@ -168,7 +168,7 @@ const controlledHead = (sub: string) => `<div class="card-head">
 </div>`;
 const collapsedFold = `<div class="card is-collapsed"><h2 style="margin: 0; padding: 4px 16px; font-size: 15px;">History</h2></div>`;
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too, so heights read as they render
-const ANATOMY_PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h2, p { margin: 0; }</style></head><body style="margin: 0;">
+const ANATOMY_PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h2, p { margin: 0; }</style></head><body style="margin: 0;">
   <div style="padding: 24px;">
     <div class="split-row split-row--1-1 split-row--${layouts.equal}" id="wrapped">
       <div>${anatomyCard(tallBody(300), '<div class="card-foot">Other</div>')}</div>
@@ -247,19 +247,12 @@ describe("card anatomy at real viewports", () => {
     assert.ok(Math.abs(body.left - card.left - 1 - CARD.PAD_PX) < 1, `inset ${body.left - card.left}px`);
   });
 
-  test("a card rests on one hairline in both themes, with no shadow or inset highlight", async () => {
-    const readEdge = () => anatomy.$eval("#head-card", (el) => {
+  test("a card rests on one hairline, with no shadow or inset highlight", async () => {
+    const edge = await anatomy.$eval("#head-card", (el) => {
       const style = getComputedStyle(el);
       return { shadow: style.boxShadow, width: style.borderTopWidth };
     });
-    for (const theme of ["light", "dark"]) {
-      await anatomy.evaluate((next) => document.documentElement.setAttribute("data-theme", next), theme);
-      try {
-        assert.deepEqual(await readEdge(), { shadow: "none", width: "1px" }, theme);
-      } finally {
-        await anatomy.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
-      }
-    }
+    assert.deepEqual(edge, { shadow: "none", width: "1px" });
   });
 
   test("a stretched row grows with its content instead of scrolling inside a card", async () => {
@@ -283,7 +276,7 @@ const stickyRows = Array.from({ length: 60 }, (_, i) => `<tr><td>claude-model-${
 const FLEX_COLUMN_PX = 200;
 const GRID_ROW_PX = 600;
 // a page-scrolled size-M card (cost by model) · a short card with an open head popover · a fixed-height card its body overflows · a card in a fixed-height flex column · a card on a 1fr track
-const CLIP_PAGE = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } h2, p { margin: 0; }
+const CLIP_PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h2, p { margin: 0; }
   #sticky-card th { position: sticky; top: 0; background: rgb(var(--elev)); }</style></head><body style="margin: 0;">
   <div style="padding: 24px;">
     <div class="card card--m" id="sticky-card"><div class="card-body"><table class="tbl"><thead><tr><th>Model</th><th>Runs</th></tr></thead><tbody>${stickyRows}</tbody></table></div></div>

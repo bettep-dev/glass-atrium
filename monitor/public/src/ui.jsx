@@ -86,7 +86,7 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
 // Hard rules (DESIGN.md §4.2/§7.3 neutral shell):
 //   · shell neutral in every tone (--sunken/--dim/--line) — no tone fill on the .pill shell.
 //   · tone only on the inner symbol (Icon/glyph) via text-{tone} → dual-encode = shape (glyph) + color + adjacent label (DESIGN.md §8).
-//   · label text stays --dim (AA-safe: light warn/ok/info tones on --sunken read 3.15–3.45:1, sub-AA at --fs-meta) — a glyph=false status keeps a neutral label too.
+//   · label text stays --dim — a glyph=false status keeps a neutral label too.
 //   · metadata/count stay neutral even when given a tone (color ≠ metadata/count).
 // Variants: absent=true → .pill--absent (dashed/faint) · interactive=true → <button> + .pill--interactive (WCAG 2.2 §2.5.8 target)
 // fill (DESIGN.md §7.3): quiet = the neutral shell above · solid = waits for the owner · tag = a fact worth a glance · warn = did not arrive.
@@ -496,7 +496,7 @@ function TrendChart({ label, points, kind = 'line', h = 64, formatValue = String
 const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint', data:'--data' };
 
 // tone KEY → 인라인 CSS 색 문자열 `rgb(var(--tone))` — SVG fill/stroke 등 하드코딩 rgb 리터럴 대체.
-//   테마/토큰 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).
+//   토큰 값 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).
 function toneVarColor(tone) {
   return `rgb(var(${BAR_TONE_VAR[tone] || BAR_TONE_VAR.neutral}))`;
 }

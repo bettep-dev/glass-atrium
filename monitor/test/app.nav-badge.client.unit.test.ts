@@ -570,7 +570,7 @@ test("every toned nav badge carries its tone's glyph, whichever store raised it"
   for (const b of badges) assert.strictEqual(b.glyph, app.ui.TONE_GLYPH[b.badgeTone], `${b.source} ${b.badgeTone} badge glyph`);
 });
 
-// Quiet counts sit on --sunken, where a toned numeral is sub-AA (light warn 2.51, crit 3.52) → tone on the glyph only.
+// Quiet counts sit on --sunken → tone on the glyph only.
 // A crit count is the item's one solid disc (spec 44084 §12.2b): ink shell, its glyph in the badge's own colour.
 test("a nav count is solid exactly when it is its item's first crit count, and only a quiet count tints its glyph", async (t) => {
   const crit = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));

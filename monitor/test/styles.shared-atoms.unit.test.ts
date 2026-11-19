@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { getReducedMotionCss } from "./lib/css-source.js";
+import { getReducedMotionCss, getRootBlock, getTripletOrFail } from "./lib/css-source.js";
 import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
 
 const STYLES = resolve(dirname(fileURLToPath(import.meta.url)), "../public/styles");
@@ -22,11 +22,6 @@ const SOURCES = [
 const CONTROL_FLOOR_PX = 32;
 const META_FLOOR_PX = 13;
 
-function getBlock(source: string, selector: string): string {
-  const open = source.indexOf("{", source.indexOf(selector));
-  return source.slice(open + 1, source.indexOf("}", open));
-}
-
 // Every rule whose comma-separated selector list names `selector` exactly.
 function getRuleBodies(source: string, selector: string): string[] {
   const bodies: string[] = [];
@@ -40,7 +35,7 @@ function getDecl(body: string, prop: string): string | undefined {
   return body.match(new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+)`))?.[1].trim();
 }
 
-// Custom properties declared in any light-theme :root block of either stylesheet.
+// Custom properties declared in any :root block of either stylesheet.
 function getRootVars(): Map<string, string> {
   const vars = new Map<string, string>();
   for (const [, css] of SOURCES) {
@@ -70,16 +65,17 @@ function getPx(value: string): number {
   return Number(m[1]);
 }
 
-function getTriplet(block: string, name: string): Rgba {
-  const m = block.match(new RegExp(`${name}\\s*:\\s*(\\d{1,3})\\s+(\\d{1,3})\\s+(\\d{1,3})`));
-  assert.ok(m, `theme block declares ${name} as an RGB triplet`);
-  return { r: Number(m[1]), g: Number(m[2]), b: Number(m[3]), a: 1 };
-}
+const TOKENS = getRootBlock(TOKENS_CSS);
 
-const THEMES = [
-  ["light", getBlock(TOKENS_CSS, ":root")],
-  ["dark", getBlock(TOKENS_CSS, '[data-theme="dark"]')],
-] as const;
+// each served page → the one stylesheet that holds its :root (sign-in.html loads no tokens.css)
+const PAGE_ROOTS = [
+  { page: "index.html", root: TOKENS },
+  { page: "sign-in.html", root: getRootBlock(readFileSync(resolve(STYLES, "../sign-in.css"), "utf8")) },
+];
+
+test("every page declares the one dark colour scheme, so native widgets draw dark under any OS setting", () => {
+  for (const { page, root } of PAGE_ROOTS) assert.equal(getDecl(root, "color-scheme"), "dark", page);
+});
 
 test("every font size in the shared stylesheets is a whole-pixel step at or above the 13px meta floor", () => {
   const offenders: string[] = [];
@@ -158,14 +154,12 @@ test("section and sub-card labels keep sentence case: no uppercase transform or 
   }
 });
 
-test("the selected fill reads as text-safe and stands apart from the resting control fill in both themes", () => {
-  for (const [theme, block] of THEMES) {
-    const fill = getTriplet(block, "--selected-fill");
-    const ink = getTriplet(block, "--selected-ink");
-    const elev = getTriplet(block, "--elev");
-    assert.ok(contrastRatio(ink, fill) >= 4.5, `${theme} selected ink on fill ${contrastRatio(ink, fill).toFixed(2)}`);
-    assert.ok(contrastRatio(fill, elev) >= 3, `${theme} selected fill on elev ${contrastRatio(fill, elev).toFixed(2)}`);
-  }
+test("the selected fill reads as text-safe and stands apart from the resting control fill", () => {
+  const fill = getTripletOrFail(TOKENS, "--selected-fill");
+  const ink = getTripletOrFail(TOKENS, "--selected-ink");
+  const elev = getTripletOrFail(TOKENS, "--elev");
+  assert.ok(contrastRatio(ink, fill) >= 4.5, `selected ink on fill ${contrastRatio(ink, fill).toFixed(2)}`);
+  assert.ok(contrastRatio(fill, elev) >= 3, `selected fill on elev ${contrastRatio(fill, elev).toFixed(2)}`);
 });
 
 test("a segmented-control child draws its focus ring inside its own box, so the clipping group cannot hide it", () => {
@@ -174,13 +168,10 @@ test("a segmented-control child draws its focus ring inside its own box, so the 
   assert.match(offset, /calc\(\s*var\(--focus-ring-width\)\s*\*\s*-1\s*\)/, `offset ${offset}`);
 });
 
-test("an empty stage pip clears 3:1 against every surface it sits on, in both themes", () => {
-  for (const [theme, block] of THEMES) {
-    const pip = getTriplet(block, "--pip-empty");
-    for (const surface of ["--surface", "--elev", "--sunken"]) {
-      const ratio = contrastRatio(pip, getTriplet(block, surface));
-      assert.ok(ratio >= 3, `${theme} --pip-empty on ${surface} = ${ratio.toFixed(2)}:1`);
-    }
+test("an empty stage pip clears 3:1 against every surface it sits on", () => {
+  for (const surface of ["--surface", "--elev", "--sunken"]) {
+    const ratio = contrastRatio(getTripletOrFail(TOKENS, "--pip-empty"), getTripletOrFail(TOKENS, surface));
+    assert.ok(ratio >= 3, `--pip-empty on ${surface} = ${ratio.toFixed(2)}:1`);
   }
   const pip = getRuleBodies(BASE_CSS, ".stage-pip").join(";");
   assert.match(pip, /background:\s*rgb\(var\(--pip-empty\)\)/);
@@ -212,7 +203,7 @@ test("an alarm row is a flat hairline row whose tone rides on its glyph, never a
   }
 });
 
-// spec 44084 §5: --surface-raised-2 equals the light sidebar fill, so the current item takes the select tint instead
+// spec 44084 §5: --surface-raised-2 is 1.08:1 on the sidebar, so the current item takes the select tint instead
 test("the current nav item sits on the select tint while hover keeps the sunken fill, both in ink", () => {
   const current = getRuleBodies(BASE_CSS, ".nav-item.active").join(";");
   const hover = getRuleBodies(BASE_CSS, ".nav-item:hover").join(";");
@@ -239,7 +230,7 @@ test("the shared alarm-row geometry takes every length from a token", () => {
   }
 });
 
-test("an alert card carries its tone only on its bare glyph, and the glyph clears 3:1 on --elev and --sunken in both themes", () => {
+test("an alert card carries its tone only on its bare glyph, and the glyph clears 3:1 on --elev and --sunken", () => {
   const TONE_TOKEN = { crit: "--crit", warn: "--warn", info: "--info", ok: "--ok", neutral: "--dim" } as const;
   const shell = getRuleBodies(BASE_CSS, ".alert-card").join(";");
   const glyph = getRuleBodies(BASE_CSS, ".alert-card-glyph").join(";");
@@ -250,11 +241,9 @@ test("an alert card carries its tone only on its bare glyph, and the glyph clear
   for (const [tone, token] of Object.entries(TONE_TOKEN)) {
     const toneRule = getRuleBodies(BASE_CSS, `.alert-card[data-tone="${tone}"]`).join(";");
     assert.equal(getDecl(toneRule, "--alert-tone"), `var(${token})`, `${tone} → ${token}`);
-    for (const [theme, block] of THEMES) {
-      for (const ground of ["--elev", "--sunken"]) {
-        const ratio = contrastRatio(getTriplet(block, token), getTriplet(block, ground));
-        assert.ok(ratio >= 3, `${theme} ${tone} glyph on ${ground} = ${ratio.toFixed(2)}:1`);
-      }
+    for (const ground of ["--elev", "--sunken"]) {
+      const ratio = contrastRatio(getTripletOrFail(TOKENS, token), getTripletOrFail(TOKENS, ground));
+      assert.ok(ratio >= 3, `${tone} glyph on ${ground} = ${ratio.toFixed(2)}:1`);
     }
   }
 });
@@ -288,20 +277,18 @@ test("every transitioning rule in the shared stylesheets drops its transition un
   }
 });
 
-// rgb(var(--name)) → that theme's triplet; the white keyword → 255 255 255
-function getThemeColor(decl: string | undefined, block: string): Rgba {
+// rgb(var(--name)) → its triplet; the white keyword → 255 255 255
+function getTokenColor(decl: string | undefined): Rgba {
   if (decl === "white") return { r: 255, g: 255, b: 255, a: 1 };
   const name = decl?.match(/^rgb\(var\((--[\w-]+)\)\)$/)?.[1];
   assert.ok(name, `colour ${decl} is rgb(var(--token)) or white`);
-  return getTriplet(block, name);
+  return getTripletOrFail(TOKENS, name);
 }
 
-test("a danger button's label clears 4.5:1 on its crit fill in both themes", () => {
+test("a danger button's label clears 4.5:1 on its crit fill", () => {
   const body = getRuleBodies(BASE_CSS, ".btn.danger").join(";");
-  for (const [theme, block] of THEMES) {
-    const ratio = contrastRatio(getThemeColor(getDecl(body, "color"), block), getThemeColor(getDecl(body, "background"), block));
-    assert.ok(ratio >= 4.5, `${theme} danger label on fill = ${ratio.toFixed(2)}:1`);
-  }
+  const ratio = contrastRatio(getTokenColor(getDecl(body, "color")), getTokenColor(getDecl(body, "background")));
+  assert.ok(ratio >= 4.5, `danger label on fill = ${ratio.toFixed(2)}:1`);
 });
 
 test("a transient shell stays neutral in every tone, and a toast's tone rides only on its glyph", () => {
@@ -315,31 +302,10 @@ test("a transient shell stays neutral in every tone, and a toast's tone rides on
     const toned = getRuleBodies(BASE_CSS, `.doc-toast.${tone}`).join(";");
     assert.doesNotMatch(toned, /(^|[;\s])(background|border|border-color|color)\s*:/, `.doc-toast.${tone} paints its shell or text`);
     assert.equal(getDecl(toned, "--toast-tone"), `var(--${tone})`, `.doc-toast.${tone} names its glyph tone`);
-    for (const [theme, block] of THEMES) {
-      const fg = getTriplet(block, `--${tone}`);
-      const ratio = contrastRatio(fg, getTriplet(block, "--overlay-surface"));
-      assert.ok(ratio >= 3, `${theme} ${tone} toast glyph = ${ratio.toFixed(2)}:1`);
-    }
+    const ratio = contrastRatio(getTripletOrFail(TOKENS, `--${tone}`), getTripletOrFail(TOKENS, "--overlay-surface"));
+    assert.ok(ratio >= 3, `${tone} toast glyph = ${ratio.toFixed(2)}:1`);
   }
   assert.equal(getDecl(glyph, "color"), "rgb(var(--toast-tone))", "the glyph draws the toast's tone");
-});
-
-// A nested [data-theme="dark"] scope (viewer chrome) must resolve aliases against its own tokens and keep the user's accent tweak.
-test("a nested dark scope resolves the surface and edge aliases against its own tokens and inherits the accent tweak", () => {
-  const rules = [...TOKENS_CSS.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
-    selectors: m[1].split(",").map((s) => s.trim()),
-    body: m[2],
-  }));
-  const isNestedThemed = (s: string) => /^\[data-theme(="dark")?\]$/.test(s);
-
-  for (const alias of ["--surface-raised-2", "--surface-overlay", "--control-edge"]) {
-    const declaring = rules.filter((r) => getDecl(r.body, alias) !== undefined);
-    assert.ok(declaring.length > 0, `${alias} is declared`);
-    assert.ok(declaring.every((r) => r.selectors.some(isNestedThemed)), `${alias} is declared only where a nested themed scope re-resolves it`);
-  }
-  const accent = rules.filter((r) => getDecl(r.body, "--accent") !== undefined);
-  assert.deepEqual(accent.filter((r) => r.selectors.some(isNestedThemed)).map((r) => r.selectors.join(", ")), []);
-  assert.ok(accent.some((r) => r.selectors.includes(':root[data-theme="dark"]')), "the dark accent default stays on the root");
 });
 
 // a label-only body row (a ledger group-label th spanning the row) would otherwise stop at its 36px line box

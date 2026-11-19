@@ -44,7 +44,7 @@ const STATES = {
 type State = keyof typeof STATES;
 
 // the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint placeholder, the stale flag's warn glyph, the crit glyph and the ink title
-const ledgerPage = (theme: string) => `<!doctype html><html data-theme="${theme}" style="--accent: ${RUNTIME_ACCENT};"><head><style>${UTILITIES}</style></head><body style="margin: 0;">
+const getLedgerPage = () => `<!doctype html><html style="--accent: ${RUNTIME_ACCENT};"><head><style>${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td class="doc-age-cell doc-col-num text-dim"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
@@ -72,8 +72,8 @@ interface Ledger {
   hovered: Record<State, RowReading>;
 }
 
-async function readLedger(theme: string): Promise<Ledger> {
-  const page = await openLedgerPage(theme);
+async function readLedger(): Promise<Ledger> {
+  const page = await openLedgerPage();
   const states = Object.keys(STATES) as State[];
   const rest = {} as Record<State, RowReading>;
   const hovered = {} as Record<State, RowReading>;
@@ -87,9 +87,9 @@ async function readLedger(theme: string): Promise<Ledger> {
   return { ...surfaces, rest, hovered };
 }
 
-async function openLedgerPage(theme: string): Promise<Page> {
+async function openLedgerPage(): Promise<Page> {
   const page = await browser.newPage({ viewport: { width: 900, height: 600 }, reducedMotion: "reduce" });
-  await page.setContent(ledgerPage(theme));
+  await page.setContent(getLedgerPage());
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
   await page.addStyleTag({ content: SCREEN_CSS });
@@ -146,12 +146,11 @@ const paintedText = (color: Rgba, row: RowReading, card: Rgba) => compositeOver(
 const rgbKey = (c: Rgba) => [c.r, c.g, c.b].map(Math.round).join(" ");
 
 let browser: Browser;
-const ledgers: Record<string, Ledger> = {};
-const THEMES = ["light", "dark"] as const;
+let ledger: Ledger;
 
 before(async () => {
   browser = await chromium.launch();
-  for (const theme of THEMES) ledgers[theme] = await readLedger(theme);
+  ledger = await readLedger();
 });
 
 after(async () => {
@@ -168,51 +167,47 @@ const UTILITIES = ".relative { position: relative; } .absolute { position: absol
   " .font-sans { font-family: \"Pretendard Variable\", Pretendard, ui-sans-serif, system-ui; } " + getRoleKeyCss();
 
 describe("ledger row fills under the shared table hover", () => {
-  for (const theme of THEMES) {
-    test(`${theme}: viewer focus, checked and both paint the same fill hovered as at rest`, () => {
-      const { card, rest, hovered } = ledgers[theme];
-      for (const state of ["viewer", "checked", "both"] as const) {
-        assert.equal(rgbKey(paintedFill(hovered[state], card)), rgbKey(paintedFill(rest[state], card)), `${state} row changes fill on hover`);
-      }
-    });
+  test("viewer focus, checked and both paint the same fill hovered as at rest", () => {
+    const { card, rest, hovered } = ledger;
+    for (const state of ["viewer", "checked", "both"] as const) {
+      assert.equal(rgbKey(paintedFill(hovered[state], card)), rgbKey(paintedFill(rest[state], card)), `${state} row changes fill on hover`);
+    }
+  });
 
-    test(`${theme}: a hovered plain row paints the shared table hover --sunken`, () => {
-      const { card, sunken, hovered } = ledgers[theme];
-      assert.equal(rgbKey(paintedFill(hovered.plain, card)), rgbKey(sunken));
-    });
+  test("a hovered plain row paints the shared table hover --sunken", () => {
+    const { card, sunken, hovered } = ledger;
+    assert.equal(rgbKey(paintedFill(hovered.plain, card)), rgbKey(sunken));
+  });
 
-    test(`${theme}: hover, viewer focus, checked and both paint four distinct fills, and hover differs from a resting row`, () => {
-      const { card, rest, hovered } = ledgers[theme];
-      const fills = {
-        hover: rgbKey(paintedFill(hovered.plain, card)),
-        viewer: rgbKey(paintedFill(rest.viewer, card)),
-        checked: rgbKey(paintedFill(rest.checked, card)),
-        both: rgbKey(paintedFill(rest.both, card)),
-      };
-      assert.equal(new Set(Object.values(fills)).size, 4, `fills ${JSON.stringify(fills)} must differ`);
-      assert.notEqual(fills.hover, rgbKey(paintedFill(rest.plain, card)), "a hovered row reads apart from a resting one");
-    });
+  test("hover, viewer focus, checked and both paint four distinct fills, and hover differs from a resting row", () => {
+    const { card, rest, hovered } = ledger;
+    const fills = {
+      hover: rgbKey(paintedFill(hovered.plain, card)),
+      viewer: rgbKey(paintedFill(rest.viewer, card)),
+      checked: rgbKey(paintedFill(rest.checked, card)),
+      both: rgbKey(paintedFill(rest.both, card)),
+    };
+    assert.equal(new Set(Object.values(fills)).size, 4, `fills ${JSON.stringify(fills)} must differ`);
+    assert.notEqual(fills.hover, rgbKey(paintedFill(rest.plain, card)), "a hovered row reads apart from a resting one");
+  });
 
-    test(`${theme}: no row state draws a stripe, and the viewer row's title carries the heavier weight`, () => {
-      const { rest, hovered } = ledgers[theme];
-      for (const reading of [...Object.values(rest), ...Object.values(hovered)]) assert.equal(reading.boxShadow, "none");
-      assert.equal(rest.viewer.title.weight, "600");
-      assert.equal(hovered.viewer.title.weight, "600");
-    });
-  }
+  test("no row state draws a stripe, and the viewer row's title carries the heavier weight", () => {
+    const { rest, hovered } = ledger;
+    for (const reading of [...Object.values(rest), ...Object.values(hovered)]) assert.equal(reading.boxShadow, "none");
+    assert.equal(rest.viewer.title.weight, "600");
+    assert.equal(hovered.viewer.title.weight, "600");
+  });
 });
 
 // a pending row's cue must leave every pair it carries as its non-pending twin paints it → no floor the twin holds can drop
 describe("pending-delete cue on every fill the row can paint", () => {
   const TWIN = { pending: "plain", pendingChecked: "checked" } as const;
-  const rows = THEMES.flatMap((theme) =>
-    (["pending", "pendingChecked"] as const).flatMap((state) =>
-      (["rest", "hovered"] as const).map((pointer) => ({ name: `${theme} ${state} row ${pointer}`, theme, state, pointer })),
-    ),
+  const rows = (["pending", "pendingChecked"] as const).flatMap((state) =>
+    (["rest", "hovered"] as const).map((pointer) => ({ name: `${state} row ${pointer}`, state, pointer })),
   );
   for (const row of rows) {
     test(`${row.name}: paints the fill, text and tone glyphs of its non-pending twin, and strikes the title through`, () => {
-      const { card, ...readings } = ledgers[row.theme];
+      const { card, ...readings } = ledger;
       const reading = readings[row.pointer][row.state];
       const twin = readings[row.pointer][TWIN[row.state]];
       const painted = (r: RowReading) =>
@@ -229,14 +224,12 @@ describe("row-state contrast floors on every fill", () => {
   const FLOORS = { dim: 4.5, faint: 4.5, ink: 4.5, crit: 3, warn: 3 } as const;
   type Pair = keyof typeof FLOORS;
   const pairColor = (r: RowReading, pair: Pair) => (pair === "crit" || pair === "warn" ? r.glyph[pair] : r[pair]);
-  const rows = THEMES.flatMap((theme) =>
-    (Object.keys(STATES) as State[]).flatMap((state) =>
-      (["rest", "hovered"] as const).map((pointer) => ({ name: `${theme} ${state} row ${pointer}`, theme, state, pointer })),
-    ),
+  const rows = (Object.keys(STATES) as State[]).flatMap((state) =>
+    (["rest", "hovered"] as const).map((pointer) => ({ name: `${state} row ${pointer}`, state, pointer })),
   );
   for (const row of rows) {
     const ratioOf = (pair: Pair) => {
-      const { card, ...readings } = ledgers[row.theme];
+      const { card, ...readings } = ledger;
       const reading = readings[row.pointer][row.state];
       return contrastRatio(paintedText(pairColor(reading, pair), reading, card), paintedFill(reading, card));
     };
@@ -257,7 +250,7 @@ const ageCellHtml = (label: string) =>
 const AGE_PREFLIGHT =
   "*, ::before, ::after { box-sizing: border-box; border: 0 solid; } html { line-height: 1.5; } svg { display: block; vertical-align: middle; } table { border-collapse: collapse; }" +
   " .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }";
-const ageCellPage = (floor: number) => `<!doctype html><html data-theme="dark"><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
+const ageCellPage = (floor: number) => `<!doctype html><html><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px; width: 600px;"><div class="card"><table class="tbl"><thead><tr><th>Title</th><th class="doc-col-num" style="width: ${floor}px; min-width: ${floor}px;">Created</th></tr></thead><tbody>
     <tr id="two-digit" class="doc-row"><td>Plan</td>${ageCellHtml("15d")}</tr>
     <tr id="three-digit" class="doc-row"><td>Plan</td>${ageCellHtml("120d")}</tr>
@@ -355,7 +348,7 @@ const STAGE_FACES = [
 const stageCellHtml = (face: (typeof STAGE_FACES)[number]) =>
   getHtml(renderScreen((docsScreen.DocStageCD as (props: unknown) => unknown)({ docTitle: "Plan", onPickStage: () => {}, ...face })) as RenderedNode);
 // the Status cell is an interior column → it sits between two neighbours; the capped table carries .doc-ledger (the label cap) at the floor, the natural one neither
-const stageCellPage = (floor: number) => `<!doctype html><html data-theme="dark"><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
+const stageCellPage = (floor: number) => `<!doctype html><html><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card">
     <table class="tbl doc-ledger"><thead><tr><th>Sel</th><th style="width: ${floor}px; min-width: ${floor}px;">Status</th><th>Title</th></tr></thead><tbody>
       ${STAGE_FACES.map((face) => `<tr id="capped-${face.id}" class="doc-row"><td>·</td><td class="status">${stageCellHtml(face)}</td><td>Plan</td></tr>`).join("")}
@@ -421,7 +414,7 @@ describe("the select column and the stage section heads sit on the ledger's grid
   // the shipped DocCheckboxCD; its wrapper lays out on Tailwind utilities, which the app loads from its CDN → their rules ride the page
   const checkbox = getHtml(renderScreen((docsScreen.DocCheckboxCD as (props: unknown) => unknown)({ checked: false, onChange: () => {}, ariaLabel: "Select Plan" })) as RenderedNode);
   // the app's preflight sizes boxes border-box → the select floor is the cell's whole width, as it renders
-  const gridPage = `<!doctype html><html data-theme="light"><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
+  const gridPage = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">
       <thead><tr><th scope="col" class="doc-checkbox-cell" id="head-select">${checkbox}</th><th scope="col">Title</th></tr></thead>
       <tbody>
@@ -521,7 +514,7 @@ describe("a group member nests one lead slot under its root on both table modes"
   const groupRows = (mode: string) => `
     <tr class="doc-row is-group-root"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-root"><div class="doc-title-row"><span class="doc-title-lead"><button type="button" class="doc-group-toggle inline-target" aria-label="Collapse group (2 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan</span></div></td></tr>
     <tr class="doc-row is-group-member"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-member"><div class="doc-title-row"><span class="doc-title-lead"><span class="doc-drag-handle">⠿</span></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan rev 2</span></div></td></tr>`;
-  const nestPage = `<!doctype html><html data-theme="dark"><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
+  const nestPage = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card">
       <table class="tbl doc-ledger" style="width: 600px;"><tbody>${groupRows("wide")}</tbody></table>
       <table class="tbl tbl--stacked doc-ledger" style="width: 600px;"><tbody>${groupRows("stacked")}</tbody></table>

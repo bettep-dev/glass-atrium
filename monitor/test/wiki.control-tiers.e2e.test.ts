@@ -52,7 +52,7 @@ const MAINTENANCE = getMarkup("WikiMaintenanceSection", { backlogState: READY_BA
 
 // the fold widths the audit measured: the 1440 content column (1170) and the 820 one
 const FOLD_WIDTHS = [1170, 740] as const;
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   ${FOLD_WIDTHS.map((w) => `<div id="runs-${w}" style="width: ${w}px; padding: 24px;">${RUN_TABLE}</div>`).join("")}
   <div id="merge" style="width: ${FOLD_WIDTHS[0]}px; padding: 24px;">${MAINTENANCE}</div>
 </body></html>`;

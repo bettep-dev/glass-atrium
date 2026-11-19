@@ -121,8 +121,7 @@ test("the warning is not hidden behind a hover-only tooltip", () => {
 
 // ----- The alarm lane: shared alert cards, no tint of its own, and the spine order ---
 //
-// Tone rides on a glyph or a severity bar and NEVER on text — severity hue as text
-// fails AA on the light theme. Every banner on the screen is the shared AlertCard,
+// Tone rides on a glyph or a severity bar and NEVER on text. Every banner on the screen is the shared AlertCard,
 // whose bare glyph alone carries the tone; the lane is a plain stack of them.
 
 const TEXT_CLASS = {

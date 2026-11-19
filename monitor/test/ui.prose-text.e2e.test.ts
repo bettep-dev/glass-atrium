@@ -51,7 +51,7 @@ function getProseHtml(isCompact: boolean): string {
   return getHtml(renderScreen(node) as RenderedNode);
 }
 
-const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px; width: 1600px;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px; width: 1600px;">
   <div data-case="sheet">${getProseHtml(false)}</div>
   <div data-case="compact" style="margin-top: 24px;">${getProseHtml(true)}</div>
   <div data-probe="measure-15" style="width: 66ch; font-size: 15px;"></div>

@@ -73,7 +73,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
 const REFERENCES = `<button id="ref-btn-icon" type="button" class="btn icon"><svg width="14" height="14"></svg></button>
   <button id="ref-btn-sm" type="button" class="btn sm">Reset</button>
   <button id="ref-disclosure" type="button" class="group disclosure fs-meta"><span>Runs</span></button>`;
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="refs" style="padding: 24px; display: flex; gap: 8px;">${REFERENCES}</div>
   <div style="width: 900px; height: 520px; padding: 24px; display: flex; flex-direction: column;">${CANVAS}</div>
   <div style="width: 420px; padding: 24px;">${HOOK_CHAIN}</div>

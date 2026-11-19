@@ -248,22 +248,6 @@ const REFUSAL_STATES: QueueState[] = [
 ];
 
 const LOOK_STATES: QueueState[] = [
-  { nn: "23", name: "light-01", setUp: (page) => setLightTheme(page) },
-  {
-    nn: "23", name: "light-05",
-    setUp: async (page) => {
-      await tickOrdersTo(page, ORDER_TO);
-      await selectRow(page, 103);
-      await setLightTheme(page);
-    },
-  },
-  {
-    nn: "23", name: "light-07",
-    setUp: async (page) => {
-      await sendOrderWithImages(page);
-      await setLightTheme(page);
-    },
-  },
   { nn: "25a", name: "focus-master-box", setUp: (page) => focusByKeyboard(page, page.getByLabel("Select all live sessions")) },
   { nn: "25g", name: "focus-rail-box", setUp: (page) => focusByKeyboard(page, page.getByLabel("Select gersona")) },
   {
@@ -311,20 +295,6 @@ const BUTTON_STATES: CloseUpState[] = [
     { rank: "quiet", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.ghost` },
     { rank: "primary", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.primary` },
   ].flatMap(getRankCloseUps),
-  {
-    nn: "29", name: "buttons-rest-head-light", closeUp: SHEET_HEAD,
-    setUp: async (page) => {
-      await selectRow(page, 103);
-      await setLightTheme(page);
-    },
-  },
-  {
-    nn: "29", name: "buttons-rest-foot-light", closeUp: SHEET_FOOT,
-    setUp: async (page) => {
-      await selectRow(page, 103);
-      await setLightTheme(page);
-    },
-  },
 ];
 
 // spec §18.4 29: one rank's button hovered, held and focused (by keyboard → its ring paints) on the open decision 103
@@ -346,7 +316,7 @@ function getRankCloseUps({ rank, closeUp, target }: { rank: string; closeUp: str
   }));
 }
 
-// spec §18.4 29's other close-ups, each in both themes
+// spec §18.4 29's other close-ups
 const PARTS: CloseUpState[] = [
   { nn: "29", name: "rail-ticked", closeUp: ".queue-sessions", setUp: (page) => tickSessions(page, ["gersona"]) },
   // §18.4 29's live and ended rows on one rail: a ticked live row and the ended rows under the open Ended band
@@ -387,13 +357,13 @@ const NOT_LISTENING_PARTS: CloseUpState[] = [
   },
 ];
 
-const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...[...PARTS, ...NOT_LISTENING_PARTS].flatMap((state) => [state, getLightState(state)])];
+const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...PARTS, ...NOT_LISTENING_PARTS];
 
-// spec §18.4 35 (Not listening stream only) at 1280, 1440 and 1920 in both themes: each Not listening surface in one frame with its Not yet
+// spec §18.4 35 (Not listening stream only) at 1280, 1440 and 1920: each Not listening surface in one frame with its Not yet
 // twin — the rail's two rows, the list's roll-ups, the mixed order's recipients, the composer with a listening and a not-listening tick, the two
 // answered sheets — then a list row with both badges, the five-or-more roll-up, the composer's other ticks, no session listening, the approval note
 const TWIN_VIEWPORTS = [MIN_WINDOW, VIEWPORTS[0], VIEWPORTS[2]] as const;
-const TWIN_DARK_STATES: QueueState[] = [
+const TWIN_STATES: QueueState[] = [
   { nn: "35a", name: "not-listening-desk", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => showNotListeningDesk(page) },
   { nn: "35b", name: "not-listening-composer", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["gersona", "nightly"]) },
   { nn: "35c", name: "not-listening-sheet", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => selectRow(page, NOT_LISTENING_IDS.answeredDecision) },
@@ -405,19 +375,6 @@ const TWIN_DARK_STATES: QueueState[] = [
   { nn: "35i", name: "none-listening", viewports: TWIN_VIEWPORTS, getFixture: getNoneListeningFixture, setUp: (page) => showNotListeningDesk(page) },
   { nn: "36", name: "approval-note", viewports: TWIN_VIEWPORTS, getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.approval) },
 ];
-const TWIN_STATES = TWIN_DARK_STATES.flatMap((state) => [state, getLightState(state)]);
-
-function getLightState<T extends QueueState>(state: T): T {
-  return {
-    ...state,
-    name: `${state.name}-light`,
-    setUp: async (page, harness) => {
-      await state.setUp?.(page, harness);
-      await setLightTheme(page);
-    },
-  };
-}
-
 const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
@@ -721,10 +678,6 @@ async function hangFileOverComposer(page: Page): Promise<void> {
 async function showNotListeningDesk(page: Page): Promise<void> {
   await page.locator(`#queue-row-${NOT_LISTENING_IDS.deafOrder}`).scrollIntoViewIfNeeded();
   await page.locator(`#queue-order-${NOT_LISTENING_IDS.mixedOrder}`).scrollIntoViewIfNeeded();
-}
-
-async function setLightTheme(page: Page): Promise<void> {
-  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
 }
 
 // a key press first → the browser treats the focus as keyboard focus and paints its ring
@@ -2429,7 +2382,7 @@ describe("queue page on the mockup fixtures", () => {
         row: [...document.querySelectorAll(`#queue-row-${id} .queue-row-facts .pill--tag`)].map((badge) => badge.textContent),
         letterhead: [...document.querySelectorAll(".queue-sheet > .card-head .pill--tag, .queue-date-line .pill--tag")].map((badge) => badge.textContent),
         note: document.querySelector(".queue-sheet .queue-note-text")?.textContent ?? "",
-        // the sentence's own colour against the ink and the glyph's against the info token, both in the theme on show
+        // the sentence's own colour against the ink and the glyph's against the info token
         tones: (() => {
           const line = document.querySelector(".queue-sheet .queue-note-text > p") as HTMLElement;
           const getToken = (name: string) => `rgb(${getComputedStyle(line).getPropertyValue(name).trim().split(/\s+/).join(", ")})`;

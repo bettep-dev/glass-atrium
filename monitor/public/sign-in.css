@@ -1,7 +1,8 @@
 /* Sign-in page — self-contained: its own tokens, controls and layout, no other stylesheet */
 
-/* values copied once from the design tokens (dark theme, the only one this page uses) → a later token change does not reach this file */
+/* values copied once from the design tokens → a later token change does not reach this file */
 :root {
+	color-scheme: dark;
 	--surface: 12 10 9;
 	--elev: 28 25 23;
 	--sunken: 24 20 17;

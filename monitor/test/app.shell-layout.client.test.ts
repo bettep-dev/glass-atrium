@@ -91,7 +91,7 @@ async function mountShell({ fetch = () => new Promise(() => undefined), createRo
       getElementById: (id: string) => (id === "main-content" ? main : null),
       documentElement: { setAttribute: () => undefined, style: { setProperty: () => undefined } },
     },
-    useTweaks: () => [{ theme: "dark", density: "comfortable", accent: "#3b82f6" }, () => undefined],
+    useTweaks: () => [{ density: "comfortable", accent: "#3b82f6" }, () => undefined],
     HealthModel: { foldHarness: foldHarness ?? (screens ? readyOnceAnswered : () => ({ status: "loading" })) },
     UI: {
       ...ui,

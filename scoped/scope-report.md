@@ -142,7 +142,7 @@ Apply the order below to every Mermaid block in a user-requested HTML primary, n
    - `doc-diagram-full` — zones (subgraphs) ≥ 3.
 5. **Semantic-role `classDef`** — the closed role-class set, nothing outside it: `focal` · `external` · `store` · `optional` · `security`.
    - `focal` is the accent: assigned to ≤ 2 nodes.
-   - Values are hex only, derived from the `monitor/public/styles/tokens.css` dark block — a parenthesized value such as `rgb(` matches the node-census opener and inflates the node count.
+   - Values are hex only, derived from the `monitor/public/styles/tokens.css` `:root` block — a parenthesized value such as `rgb(` matches the node-census opener and inflates the node count.
    - Hex-only is scoped to mermaid `classDef` / `themeVariables` values, which sit in the diagram source outside the d8 `inline-color-literal` scan surface; the d8 no-hex rule keeps governing every CSS surface.
 6. **Layout** — ELK is the global layout default from the shared mermaid init; a diagram carries no layout configuration of its own.
    - Never a YAML frontmatter block in a mermaid source: each `---` line is counted as an edge (Budget step).

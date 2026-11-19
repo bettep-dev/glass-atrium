@@ -1,6 +1,6 @@
 // Control-atom state invariance read in a real browser: no state of .btn or a .seg option changes its
 // border-box, so a selected option never reads as a bigger box than its siblings; a resting toggle's edge reads against its card
-// at 3:1 in both themes, so its box is visible before it is selected, and a resting field rests on that same edge, 3:1 on every surface;
+// at 3:1, so its box is visible before it is selected, and a resting field rests on that same edge, 3:1 on every surface;
 // an errored field keeps its error edge under hover; the shipped control row holds them on one 48 line.
 // Runner: npx tsx --test test/ui.control-state.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
@@ -52,7 +52,7 @@ const ERRORED_FIELDS = [
 const SURFACES = ["elev", "surface", "sunken"] as const;
 
 // the toolbar is the shipped control row; a static count pill rides it at the control height
-const PAGE = `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
   <div class="card">
     <div class="control-row" data-row="toolbar">
       ${ATOMS.map((atom) => atom.markup).join("\n      ")}
@@ -212,7 +212,6 @@ const RESTING_EDGES = [
   { name: "a small toggle button's border", id: "btn-sm", prop: "border-top-color" },
   { name: "a selected segment's thumb ring", id: "seg-thumb", prop: "box-shadow" },
 ] as const;
-const THEMES = ["light", "dark"] as const;
 const UI_CONTRAST = 3;
 
 const readCardFill = (): Promise<string> =>
@@ -225,20 +224,13 @@ const getEdgeColor = (value: string): string => {
   return color;
 };
 
-async function withTheme<T>(theme: (typeof THEMES)[number], read: () => Promise<T>): Promise<T> {
-  await page.evaluate((next) => { document.documentElement.dataset.theme = next; }, theme);
-  try { return await read(); } finally { await page.evaluate(() => { document.documentElement.dataset.theme = "light"; }); }
-}
-
 describe("a resting toggle draws an edge that reads against its card at 3:1", () => {
   for (const edge of RESTING_EDGES) {
-    for (const theme of THEMES) {
-      test(`${edge.name} in ${theme}`, async () => {
-        const [color, fill] = await withTheme(theme, async () => [getEdgeColor(await readStyle(edge.id, edge.prop)), await readCardFill()]);
-        const ratio = contrastRatio(parseColor(color), parseColor(fill));
-        assert.ok(ratio >= UI_CONTRAST, `${theme} ${edge.id} edge ${color} on card ${fill} = ${ratio.toFixed(2)}:1 < ${UI_CONTRAST}:1`);
-      });
-    }
+    test(edge.name, async () => {
+      const [color, fill] = [getEdgeColor(await readStyle(edge.id, edge.prop)), await readCardFill()];
+      const ratio = contrastRatio(parseColor(color), parseColor(fill));
+      assert.ok(ratio >= UI_CONTRAST, `${edge.id} edge ${color} on card ${fill} = ${ratio.toFixed(2)}:1 < ${UI_CONTRAST}:1`);
+    });
   }
 });
 
@@ -254,17 +246,15 @@ const getFieldSelector = (surface: (typeof SURFACES)[number], id: string) => `[d
 
 describe("a resting field-family control draws an edge that reads against the surface it sits on at 3:1", () => {
   for (const field of FIELDS) {
-    for (const theme of THEMES) {
-      for (const surface of SURFACES) {
-        test(`${field.name} on ${surface} in ${theme}`, async () => {
-          const [color, fill] = await withTheme(theme, () => Promise.all([
-            probe.readStyle(getFieldSelector(surface, field.id), "border-top-color"),
-            probe.readStyle(`[data-surface="${surface}"]`, "background-color"),
-          ]));
-          const ratio = contrastRatio(parseColor(color), parseColor(fill));
-          assert.ok(ratio >= UI_CONTRAST, `${theme} ${field.id} edge ${color} on ${surface} ${fill} = ${ratio.toFixed(2)}:1 < ${UI_CONTRAST}:1`);
-        });
-      }
+    for (const surface of SURFACES) {
+      test(`${field.name} on ${surface}`, async () => {
+        const [color, fill] = await Promise.all([
+          probe.readStyle(getFieldSelector(surface, field.id), "border-top-color"),
+          probe.readStyle(`[data-surface="${surface}"]`, "background-color"),
+        ]);
+        const ratio = contrastRatio(parseColor(color), parseColor(fill));
+        assert.ok(ratio >= UI_CONTRAST, `${field.id} edge ${color} on ${surface} ${fill} = ${ratio.toFixed(2)}:1 < ${UI_CONTRAST}:1`);
+      });
     }
   }
 });
@@ -272,14 +262,12 @@ describe("a resting field-family control draws an edge that reads against the su
 // one resting edge for toggles and fields → an edge that merely clears 3:1 (--dim, --ink) is still the wrong edge
 describe("a resting field-family control draws the toggle's resting edge", () => {
   for (const field of FIELDS) {
-    test(`${field.name} rests on a toggle button's edge in both themes`, async () => {
-      for (const theme of THEMES) {
-        const [fieldEdge, toggleEdge] = await withTheme(theme, () => Promise.all([
-          probe.readStyle(getFieldSelector("elev", field.id), "border-top-color"),
-          readStyle("btn", "border-top-color"),
-        ]));
-        assert.equal(fieldEdge, toggleEdge, `${theme} ${field.id} resting edge vs the resting toggle edge`);
-      }
+    test(`${field.name} rests on a toggle button's edge`, async () => {
+      const [fieldEdge, toggleEdge] = await Promise.all([
+        probe.readStyle(getFieldSelector("elev", field.id), "border-top-color"),
+        readStyle("btn", "border-top-color"),
+      ]);
+      assert.equal(fieldEdge, toggleEdge, `${field.id} resting edge vs the resting toggle edge`);
     });
   }
 });
@@ -291,18 +279,16 @@ describe("a field-family control's hover lifts its edge to --faint and focus pai
       test(`${field.name} under ${state.name}`, async () => {
         const selector = getFieldSelector("elev", field.id);
         const rest = await probe.readBox(selector);
-        for (const theme of THEMES) {
-          const [restEdge, tokenColor, stateEdge, stateBox] = await withTheme(theme, async () => {
-            const edge = await probe.readStyle(selector, "border-top-color");
-            const color = await probe.readStyle(`[data-probe="${state.token}"]`, "color");
-            await probe.forcePseudo(selector, state.pseudo);
-            try { return [edge, color, await probe.readStyle(selector, "border-top-color"), await probe.readBox(selector)] as const; }
-            finally { await probe.forcePseudo(selector, []); }
-          });
-          assert.equal(stateEdge, tokenColor, `${theme} ${field.id} ${state.name} edge vs --${state.token}`);
-          assert.notEqual(stateEdge, restEdge, `${theme} ${field.id} ${state.name} edge equals the resting edge`);
-          assert.ok(isSameBox(stateBox, rest), `${theme} ${field.id} ${state.name} ${stateBox.width}x${stateBox.height} vs resting ${rest.width}x${rest.height}`);
-        }
+        const restEdge = await probe.readStyle(selector, "border-top-color");
+        const tokenColor = await probe.readStyle(`[data-probe="${state.token}"]`, "color");
+        await probe.forcePseudo(selector, state.pseudo);
+        const [stateEdge, stateBox] = await (async () => {
+          try { return [await probe.readStyle(selector, "border-top-color"), await probe.readBox(selector)] as const; }
+          finally { await probe.forcePseudo(selector, []); }
+        })();
+        assert.equal(stateEdge, tokenColor, `${field.id} ${state.name} edge vs --${state.token}`);
+        assert.notEqual(stateEdge, restEdge, `${field.id} ${state.name} edge equals the resting edge`);
+        assert.ok(isSameBox(stateBox, rest), `${field.id} ${state.name} ${stateBox.width}x${stateBox.height} vs resting ${rest.width}x${rest.height}`);
       });
     }
   }
@@ -311,19 +297,17 @@ describe("a field-family control's hover lifts its edge to --faint and focus pai
 // error outranks hover → the pointer never hides an errored control's --crit edge, nor resizes its box
 describe("an errored field-family control keeps its error edge under hover", () => {
   for (const field of ERRORED_FIELDS) {
-    test(`${field.name} stays on --crit in both themes`, async () => {
+    test(`${field.name} stays on --crit`, async () => {
       const selector = `[data-field="${field.id}"]`;
       const rest = await probe.readBox(selector);
-      for (const theme of THEMES) {
-        const [crit, hoverEdge, hoverBox] = await withTheme(theme, async () => {
-          const critColor = await probe.readStyle('[data-probe="crit"]', "color");
-          await probe.forcePseudo(selector, ["hover"]);
-          try { return [critColor, await probe.readStyle(selector, "border-top-color"), await probe.readBox(selector)] as const; }
-          finally { await probe.forcePseudo(selector, []); }
-        });
-        assert.equal(hoverEdge, crit, `${theme} ${field.id} hover edge vs --crit`);
-        assert.ok(isSameBox(hoverBox, rest), `${theme} ${field.id} hover ${hoverBox.width}x${hoverBox.height} vs resting ${rest.width}x${rest.height}`);
-      }
+      const crit = await probe.readStyle('[data-probe="crit"]', "color");
+      await probe.forcePseudo(selector, ["hover"]);
+      const [hoverEdge, hoverBox] = await (async () => {
+        try { return [await probe.readStyle(selector, "border-top-color"), await probe.readBox(selector)] as const; }
+        finally { await probe.forcePseudo(selector, []); }
+      })();
+      assert.equal(hoverEdge, crit, `${field.id} hover edge vs --crit`);
+      assert.ok(isSameBox(hoverBox, rest), `${field.id} hover ${hoverBox.width}x${hoverBox.height} vs resting ${rest.width}x${rest.height}`);
     });
   }
 });
@@ -351,15 +335,10 @@ describe("the 40 tier: a composer box and its buttons share one height", () => {
 
   test("the composer box rests on the control edge and lifts to --faint on hover", async () => {
     const edgeOf = () => readStyle("compose-box", "border-top-color");
-    for (const theme of THEMES) {
-      const [rest, hover, tokens] = await withTheme(theme, async () => {
-        const resting = await edgeOf();
-        await forcePseudo("compose-box", ["hover"]);
-        const hovered = await edgeOf().finally(() => forcePseudo("compose-box", []));
-        return [resting, hovered, await Promise.all(["control-edge", "faint"].map(readProbe))] as const;
-      });
-      assert.deepEqual([rest, hover], tokens, theme);
-    }
+    const rest = await edgeOf();
+    await forcePseudo("compose-box", ["hover"]);
+    const hover = await edgeOf().finally(() => forcePseudo("compose-box", []));
+    assert.deepEqual([rest, hover], await Promise.all(["control-edge", "faint"].map(readProbe)));
   });
 
   test("keyboard focus on its text paints the box --accent and rings the box, not the bare text", async () => {
@@ -377,14 +356,12 @@ describe("the 40 tier: a composer box and its buttons share one height", () => {
 });
 
 describe("a radio", () => {
-  test("is a 16px round box on a --faint edge at rest and a --selected-fill when checked, in both themes", async () => {
+  test("is a 16px round box on a --faint edge at rest and a --selected-fill when checked", async () => {
     const box = await readBox("radio");
     assert.deepEqual([box.width, box.height, await readStyle("radio", "border-top-left-radius")], [16, 16, "50%"]);
-    for (const theme of THEMES) {
-      const [restEdge, checkedFill, faint, selected] = await withTheme(theme, () => Promise.all([
-        readStyle("radio", "border-top-color"), readStyle("radio-checked", "background-color"), readProbe("faint"), readProbe("selected-fill"),
-      ]));
-      assert.deepEqual([restEdge, checkedFill], [faint, selected], theme);
-    }
+    const [restEdge, checkedFill, faint, selected] = await Promise.all([
+      readStyle("radio", "border-top-color"), readStyle("radio-checked", "background-color"), readProbe("faint"), readProbe("selected-fill"),
+    ]);
+    assert.deepEqual([restEdge, checkedFill], [faint, selected]);
   });
 });

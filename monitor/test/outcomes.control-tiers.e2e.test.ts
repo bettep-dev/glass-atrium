@@ -80,7 +80,7 @@ const ATTRIBUTION_READ = { ...READY, data: { days_series: [], window_summary: { 
 const ATTRIBUTION = getMarkup("AttributionHealthCard", { state: ATTRIBUTION_READ, period: 30, onRetry: noop, shared: {} });
 const CHANNELS = getMarkup("ChannelLivenessCard", { state: LOADING, onRetry: noop, shared: {} });
 
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="first-page" style="width: 1170px; padding: 24px;">${getLedger(0)}</div>
   <div id="mid-page" style="width: 1170px; padding: 24px;">${getLedger(1)}</div>
   <div id="ledger-rows" style="width: 1170px; padding: 24px;">${LEDGER_WITH_ROWS}</div>

@@ -75,7 +75,7 @@ const VERSION_HISTORY = getMarkup("PredecessorPanelCD", { predecessorId: 39801, 
 
 // reference atoms the Documents controls must match
 const REFERENCES = `<input id="ref-field" class="field" value="x" /><button id="ref-btn-sm" type="button" class="btn ghost sm">Ref</button>`;
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="refs" style="padding: 24px; display: flex; gap: 8px;">${REFERENCES}</div>
   <div id="frame" style="padding: 24px;">${LIST_CARD}</div>
   <div style="width: 300px; padding: 24px;">${VERSION_HISTORY}</div>
@@ -195,7 +195,7 @@ describe("no Show, Audience or search state moves the Documents search, a trigge
     statePage = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
     const cards = FILTER_STATES.map((state, index) =>
       `<div data-state="${index}">${getMarkup("DocListCardCD", { ...LIST_CARD_PROPS, groupCounts: CORPUS_COUNTS, ...state.props })}</div>`);
-    await statePage.setContent(`<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">${cards.join("")}</body></html>`);
+    await statePage.setContent(`<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">${cards.join("")}</body></html>`);
     await statePage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
     await statePage.addStyleTag({ path: resolve(STYLES, "base.css") });
     await statePage.addStyleTag({ content: SCREEN_CSS });

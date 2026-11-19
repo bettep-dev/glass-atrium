@@ -59,7 +59,7 @@ const PAIRS = getMarkup("TopNFailingAgentsTable", {
   failureByAgent: new Map(), days: DAYS,
 });
 
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="lifecycle" style="width: 560px; padding: 24px;">${LIFECYCLE}</div>
   <div id="pairs" style="width: 640px; padding: 24px;">${PAIRS}</div>
 </body></html>`;

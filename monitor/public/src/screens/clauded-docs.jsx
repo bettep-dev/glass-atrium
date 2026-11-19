@@ -902,11 +902,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
         /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
-        /* accent row-state ladder viewer 0.035 < checked 0.07 < both 0.11 → ceiling = the light warn glyph ≥ 3:1 at the default accent (0.11: 3.03 · 0.12: 3.00) · the heavier title is the viewer's non-colour cue, the checkbox the checked one */
+        /* accent row-state ladder viewer 0.035 < checked 0.07 < both 0.11 → the empty stage pip, the faintest mark on a row, holds ≥ 3:1 on every step at the default accent (3.52 · 3.38 · 3.22) · the heavier title is the viewer's non-colour cue, the checkbox the checked one */
         .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.035); }
         .doc-row.is-selected .doc-title-text { font-weight: 600; }
         /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
-           no row opacity — any fade drops the light empty pip on a checked row below 3:1 (default accent: 0.85 → 2.72; unfaded 3.41) */
+           no row opacity — a fade drops the empty pip on a checked row below 3:1 (default accent: 0.85 → 2.85; unfaded 3.38) */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot + title row gap → the snippet starts under the title */
         .doc-snippet { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -978,8 +978,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
            line-height 1.75 · letter-spacing 0.012em(light-on-dark halation 보정) · 상속 base → 코드블록/헤딩 등 per-element 로컬 override 유지. */
         .doc-fs-body-inner > .doc-body-isolation { line-height: 1.75; letter-spacing: 0.012em; }
         /* meta sidebar — grid cell 풀높이 sticky · cool zinc(rgb 13 13 16 solid · 0.6 alpha 제거 → 본문 위 비침 제거) · border-left cool zinc(rgb 34 34 38 · --line warm 대체). */
-        /* inherited text colour was computed under the app theme → each chrome scope re-resolves it from its own ink */
-        .doc-fs-container [data-theme="dark"] { color: rgb(var(--ink)); }
         .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(34 34 38); background: rgb(13 13 16); padding: var(--space-4) var(--space-6); }
         /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 cool zinc 를 미디어 블록에서 재확인).
            max-width min(90%,1280px) 는 폰에서 90% 자동 승리(1280 캡 미발동) → px floor 없음 → overflow 무발생. 스크롤은 wrap 에서 동일 동작. */
@@ -2205,7 +2203,6 @@ function GroupMembersRowsCD({
 // 뷰어 패널 (전체화면 컨테이너 안에 마운트).
 // 외부 .doc-fs-container 가 카드 시각언어 담당 → 내부 .card 중첩 회피.
 // 본문 grid split: main(좌, fluid) + meta(우, sidebar). non-ready 상태는 main 만 표시.
-// chrome sits on the fixed dark viewer canvas in either app theme → data-theme="dark" on every chrome region, never on the rendered document
 function ViewerPanelCD({
 	state,
 	pendingDelete,
@@ -2221,7 +2218,6 @@ function ViewerPanelCD({
 	const isReady = state.status === "ready";
 	return (
 		<div className="h-full flex flex-col min-h-0">
-			<div data-theme="dark">
 			<CardHead
 				title={
 					isReady
@@ -2262,11 +2258,10 @@ function ViewerPanelCD({
 					/>
 				</div>
 			)}
-			</div>
 			{isReady ? (
 				<div className="doc-fs-split">
 					<ViewerBodyCD state={state} />
-					<aside className="doc-fs-meta-side" data-theme="dark" aria-label="Document metadata">
+					<aside className="doc-fs-meta-side" aria-label="Document metadata">
 						{/* doc(=viewer cache) 를 cachedRow 로 전달 → GET 스킵 (네트워크 절감). */}
 						<DocMetaPanelCD
 							doc={state.data}
@@ -2639,27 +2634,14 @@ function ViewerBodyCD({ state }) {
 		state.data?.format,
 	]);
 
-	// every state other than the rendered document is viewer chrome → the dark scope (see ViewerPanelCD)
 	if (state.status === "idle") {
-		return (
-			<div data-theme="dark">
-				<window.UI.EmptyState message="Select a document from the list" />
-			</div>
-		);
+		return <window.UI.EmptyState message="Select a document from the list" />;
 	}
 	if (state.status === "loading") {
-		return (
-			<div data-theme="dark">
-				<window.UI.LoadingPlaceholder label="the document" minHeight={260} className="p-card-pad" />
-			</div>
-		);
+		return <window.UI.LoadingPlaceholder label="the document" minHeight={260} className="p-card-pad" />;
 	}
 	if (state.status === "error") {
-		return (
-			<div data-theme="dark">
-				<window.UI.RegionUnavailable source="this document" error={state.error} className="p-card-pad" />
-			</div>
-		);
+		return <window.UI.RegionUnavailable source="this document" error={state.error} className="p-card-pad" />;
 	}
 
 	// 본문 렌더 — 분기 (MD primary + 4-format code viewer):
@@ -2687,7 +2669,7 @@ function ViewerBodyCD({ state }) {
 	}
 	if (renderError || rendered == null) {
 		return (
-			<div data-theme="dark" className="p-card-pad">
+			<div className="p-card-pad">
 				<ErrorBannerCD
 					title="Couldn't render the document body"
 					detail={

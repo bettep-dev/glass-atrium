@@ -17,7 +17,7 @@ const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
 const putCardFocus = ui.putCardFocus as (id: string) => void;
 
 // the probe resolves the ring tokens exactly as the shared rule should, so the focused element is compared against it
-const STATES_PAGE = `<!doctype html><html data-theme="light"><body style="margin: 0; padding: 24px;">
+const STATES_PAGE = `<!doctype html><html><body style="margin: 0; padding: 24px;">
   <button type="button" id="retry" onclick="putCardFocus('card')">Retry</button>
   <section id="card">card</section>
   <section id="plain" tabindex="-1">plain card</section>

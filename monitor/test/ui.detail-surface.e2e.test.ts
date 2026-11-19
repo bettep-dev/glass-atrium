@@ -27,7 +27,7 @@ const render = (type: unknown, props: Record<string, unknown>, ...children: unkn
   getHtml(renderScreen(h(type, props, ...children)) as RenderedNode);
 
 const pageOf = (body: string): string =>
-  `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">${body}</body></html>`;
+  `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">${body}</body></html>`;
 
 const VIEWPORT = { width: 1024, height: 700 };
 
@@ -54,7 +54,7 @@ const HEADS = [
   { name: "a one-line title", id: "one-line", props: { title: "Session cost" } },
   { name: "a title with a sub-line", id: "with-sub", props: { title: "dev-react", sub: "Agent · last 30 days" } },
   { name: "a title that wraps", id: "wrapped",
-    props: { title: "Review of the monitor control sizing plan, every route and every drawer, measured at both widths in both themes" } },
+    props: { title: "Review of the monitor control sizing plan, every route and every drawer, measured at both widths on every screen" } },
 ] as const;
 const HEAD_PAGE = HEADS.map((head) =>
   `<div data-head="${head.id}">${render(ui.DetailSurface, { open: true, onClose: () => undefined, ...head.props }, "body")}</div>`).join("\n");

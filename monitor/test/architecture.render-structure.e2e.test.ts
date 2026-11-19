@@ -548,30 +548,6 @@ describe("healthy live fixture", () => {
 		);
 	});
 
-	// the drawn map keeps dark fills in light (spec 44084 §13) → the ink and dim steps above would put dark text on them
-	test("in the light theme no label takes the dim step and the box labels keep their drawn paints", async () => {
-		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
-		const read = await ctx.page.evaluate((canvas) => {
-			const html = document.documentElement;
-			const theme = html.getAttribute("data-theme");
-			html.setAttribute("data-theme", "light");
-			const root = getComputedStyle(html);
-			const [ink, dim] = ["--ink", "--dim"].map((name) => `rgb(${root.getPropertyValue(name).trim().split(/\s+/).join(", ")})`);
-			const [node, zone, edge] = ["g.node", "g.cluster > .cluster-label", "g.edgeLabel"].map((scope) => [
-				...new Set(
-					[...document.querySelectorAll(`${canvas} svg ${scope} :is(text, tspan, span, p, div)`)]
-						.filter((el) => (el.textContent ?? "").trim() !== "" && el.children.length === 0)
-						.map((el) => (el instanceof SVGElement ? getComputedStyle(el).fill : getComputedStyle(el).color)),
-				),
-			]);
-			html.setAttribute("data-theme", theme ?? "dark");
-			return { ink, dim, node, zone, edge };
-		}, ctx.selectors.canvas);
-		assert.ok(read.node.length > 0 && read.zone.length > 0 && read.edge.length > 0, `every label kind was read: ${JSON.stringify(read)}`);
-		assert.ok(![...read.zone, ...read.edge].includes(read.dim), `a zone title or edge label reads the light dim step: ${JSON.stringify(read)}`);
-		assert.notDeepStrictEqual(read.node, [read.ink], "every box label collapsed to the light ink step");
-	});
-
 	// the canvas notes are prose, not data: body sans, faint, on an opaque chip so the map under them never shows through
 	test("the canvas hint and the loading note set body sans in faint on an opaque chip", async () => {
 		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
