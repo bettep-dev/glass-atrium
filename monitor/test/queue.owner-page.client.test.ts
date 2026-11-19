@@ -53,6 +53,10 @@ const screen = (await loadScreenModule(QUEUE_SRC, {
 const getPlain = <T>(value: T): T => (value === undefined ? value : JSON.parse(JSON.stringify(value)));
 const call = <T>(name: string, ...args: unknown[]): T => getPlain((screen[name] as (...a: unknown[]) => T)(...args));
 const render = (name: string, props: unknown): RenderedNode => renderScreen(screen.React.createElement(screen[name] as Component, props)) as RenderedNode;
+// spec §12.6: a sentence the page shows holds at most 12 words — a command or id counts as one, a lone mark (`·`, `/`, `+`) as none
+const SENTENCE_WORDS_MAX = 12;
+const getLongSentences = (texts: string[]) => texts.flatMap((text) => text.split(/(?<=[.?!])\s+/)).filter((sentence) => sentence.split(/\s+/).filter((word) => /[\p{L}\p{N}<]/u.test(word)).length > SENTENCE_WORDS_MAX);
+const getNoteText = (parts: Array<string | { machine: string }>) => parts.map((part) => (typeof part === "string" ? part : "<command>")).join("");
 
 const SESSION_ID = "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42";
 const CLI_PATH = "/Volumes/tools/atrium/scripts/atrium-queue.sh";
@@ -302,13 +306,14 @@ describe("receipt words", () => {
     }
   });
 
+  // spec §4.2, §9.4: the fact column reads received of sent; the tag column counts what is not plain waiting, worst first
   const rollUps = [
-    { name: "some copies received counts them", statuses: ["delivered", "answered", "delivering"], facts: ["1 of 3 received"] },
-    { name: "every copy waiting reads not yet", statuses: ["answered", "delivering", "held"], facts: ["Not yet"] },
-    { name: "a copy not received follows the count as its own warning", statuses: ["delivered", "unacked", "answered"], facts: ["1 of 3 received", "1 not received"] },
-    { name: "two copies whose sessions do not listen count them after the count", statuses: ["answered:deaf", "answered:deaf"], facts: ["0 of 2 received", "2 not listening"] },
-    { name: "a mixed order counts only the copy whose session does not listen", statuses: ["answered:listening", "answered:deaf"], facts: ["0 of 2 received", "1 not listening"] },
-    { name: "not listening stands before a recorded failure", statuses: ["delivered", "answered:deaf", "unacked"], facts: ["1 of 3 received", "1 not listening", "1 not received"] },
+    { name: "some copies received counts them", statuses: ["delivered", "answered", "delivering"], cells: { fact: "1 of 3", tags: [] } },
+    { name: "every copy waiting reads none received and draws no tag", statuses: ["answered", "delivering", "held"], cells: { fact: "0 of 3", tags: [] } },
+    { name: "a copy not received is counted in the tag column", statuses: ["delivered", "unacked", "answered"], cells: { fact: "1 of 3", tags: ["1 not received"] } },
+    { name: "two copies whose sessions do not listen are counted in the tag column", statuses: ["answered:deaf", "answered:deaf"], cells: { fact: "0 of 2", tags: ["2 not listening"] } },
+    { name: "a mixed order counts only the copy whose session does not listen", statuses: ["answered:listening", "answered:deaf"], cells: { fact: "0 of 2", tags: ["1 not listening"] } },
+    { name: "not received stands before not listening", statuses: ["delivered", "answered:deaf", "unacked"], cells: { fact: "1 of 3", tags: ["1 not received", "1 not listening"] } },
   ];
   // `status:deaf` → a live session that does not listen · `status:listening` → one that does · bare → an ended session
   const SESSION_OF: Record<string, Record<string, unknown>> = { deaf: { state: "live", isWaiting: false }, listening: { state: "live", isWaiting: true } };
@@ -318,8 +323,8 @@ describe("receipt words", () => {
         const [status, listen] = entry.split(":");
         return buildItem({ id: 90 + index, kind: "message", status, sendId: "send-1", answeredAt: "2026-11-12T12:26:40.118Z", session: buildSession({ id: randomUUID(), ...SESSION_OF[listen ?? ""] }) });
       });
-      const facts = call<Array<{ text: string }>>("getRowFactsQ", { item: copies[0], copies }, false).map((fact) => fact.text);
-      assert.deepEqual(facts, ["Order", ...row.facts]);
+      const cells = call<{ fact: string; tags: Array<{ word: string }> }>("getRowCellsQ", { item: copies[0], copies }, false);
+      assert.deepEqual({ fact: cells.fact, tags: cells.tags.map((tag) => tag.word) }, row.cells);
     });
   }
 });
@@ -371,10 +376,10 @@ describe("sheet state lines", () => {
     assert.doesNotMatch(text, /Answered|Replied|Sent as/);
   });
 
-  test("an approval-class decision's note slot says an approving answer approves the stated action once, with no terminal step", () => {
+  test("an approval-class decision's note slot says approving here approves the action once, with no terminal step", () => {
     const text = (item: unknown) => collectText(render("SheetFootQ", { item, draft: {}, queue: buildQueue().queue, isBusy: false, error: null }));
     const approval = text(buildItem({ isApprovalClass: true }));
-    assert.match(approval, /Approval: an approving answer here approves the stated action, once; glass-atrium does not ask again in its terminal\./);
+    assert.match(approval, /Approval: approving here approves the action once\. glass-atrium does not ask again in its terminal\./);
     assert.doesNotMatch(approval, /confirm once more/);
     assert.doesNotMatch(text(buildItem()), /Approval:/);
   });
@@ -384,17 +389,17 @@ describe("sheet precedence notes", () => {
   const occupant = { profileLabel: "personal", cwdTail: "wt/owner-queue", sessionIdPrefix: "9b2e7c41" };
   // a note's parts: a string is prose, { machine } renders through MachineString
   const markedLine = [
-    "waiting on personal · wt/owner-queue · ",
+    "Waiting on personal · wt/owner-queue · ",
     { machine: "9b2e7c41" },
-    ", whose automatic resume has not registered: this one waits until that session registers " +
-      "or is resumed in a terminal (see its card), and resumes automatically once that session has then ended",
+    ", whose resume has not registered. This one waits until that session registers or is resumed. It resumes by itself once that session ends.",
   ];
   const generic = ["another session is live or resuming in this worktree: this one resumes automatically once that one has ended"];
   const capturedIdNote = [
-    "the resumed session may still be running in the background: under profile work-dev, check it with ",
+    "It may still run under profile work-dev. Check it: ",
     { machine: "claude logs bg-7f3a" },
-    ", and resume it yourself in a terminal only after ",
+    ". Resume it in a terminal only after ",
     { machine: "claude stop bg-7f3a" },
+    ".",
   ];
   const markedSession = (bgId: string | null, configDir: string | null = null) =>
     buildSession({ marker: { setAt: "2026-11-10T06:20:11.204Z", bgId }, configDir });
@@ -411,17 +416,15 @@ describe("sheet precedence notes", () => {
     },
     { name: "the captured-id marker form names the bg id and the profile", item: pending({ kind: "marker" }, { session: markedSession("bg-7f3a") }), expected: [capturedIdNote] },
     {
-      name: "the listing marker form names the cwd and the full session id",
+      name: "the listing marker form names the cwd",
       item: pending({ kind: "marker" }, { session: markedSession(null) }),
       expected: [
         [
-          "the resumed session may still be running in the background: under profile work-dev, check ",
+          "It may still run under profile work-dev. Find it: ",
           { machine: "claude agents --json --cwd /Users/owner/Desktop/git/glass-atrium" },
-          " for the entry of session ",
-          { machine: SESSION_ID },
-          ", and resume it yourself in a terminal only once that entry is no longer listed, or after ",
+          ". Resume it in a terminal once it is gone, or after ",
           { machine: "claude stop <id>" },
-          " with that entry's id",
+          ".",
         ],
       ],
     },
@@ -717,6 +720,14 @@ describe("relay history", () => {
       assert.equal(call<{ error: string | null }>("getRedactionOutcomeQ", row.answers).error, row.error);
     });
   }
+
+  // one recipient → `<names>` one word, as spec §12.6 counts it
+  test("the redaction dialog's sentence runs at most twelve words", () => {
+    const [copy] = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const redaction = { target: { id: copy!.id, item: copy, copies: [copy] }, isBusy: false, error: null, ask: () => undefined, cancel: () => undefined, confirm: () => undefined };
+    const texts = findNodes(render("RedactConfirmQ", { redaction }), (node) => node.type === "p" && node.props?.className === "fs-body text-dim").map((node) => collectText(node));
+    assert.deepEqual([texts.length, getLongSentences(texts)], [1, []]);
+  });
 
   test("the dialog's error slot draws its cross in the crit tone before the words, as every other cross on the relay views", () => {
     const copies = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
@@ -3066,31 +3077,46 @@ describe("marks and counts on the desk", () => {
 describe("In delivery rows", () => {
   const answered = (status: string, overrides: Record<string, unknown> = {}) => buildItem({ status, answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", ...overrides });
   const rows = [
-    { name: "a copy not yet received shows the route word alone", item: answered("answered"), facts: [{ text: "Answer R1" }] },
-    { name: "a copy not received adds the amber badge", item: answered("unacked", { canResend: true }), facts: [{ text: "Answer R1" }, { text: "Not received", badge: "warn" }] },
+    { name: "a copy not yet received shows the route word alone", item: answered("answered"), cells: { tags: [], fact: "Answer R1", extras: [] } },
+    { name: "a copy not received counts one in the tag column", item: answered("unacked", { canResend: true }), cells: { tags: [{ glyph: "warn", count: 1, word: "1 not received" }], fact: "Answer R1", extras: [] } },
     {
-      name: "a copy whose session does not listen adds the not-listening badge",
+      name: "a copy whose session does not listen counts one not listening in the tag column",
       item: answered("answered", { session: buildSession({ state: "live", isWaiting: false }) }),
-      facts: [{ text: "Answer R1" }, { text: "Not listening", badge: "tag", glyph: "pause", title: "Not listening — delivers at its next turn end or restart", spoken: ", delivers at its next turn end or restart" }],
+      cells: { tags: [{ glyph: "pause", count: 1, word: "1 not listening" }], fact: "Answer R1", extras: [] },
+    },
+    {
+      name: "an order's images and the account ride only the row's title and accessible name",
+      item: buildItem({ kind: "message", status: "answered", answeredAt: "2026-11-12T12:26:40.118Z", attachments: [{ id: 1 }, { id: 2 }] }),
+      isAccountShown: true,
+      cells: { tags: [], fact: "Order", extras: ["work-dev", "2 images"] },
     },
   ];
-  for (const row of rows) test(row.name, () => assert.deepEqual(call("getRowFactsQ", { item: row.item, copies: [row.item] }, false), row.facts));
+  for (const row of rows) test(row.name, () => assert.deepEqual(call("getRowCellsQ", { item: row.item, copies: [row.item] }, row.isAccountShown ?? false), row.cells));
 
-  test("an order to several sessions all still waiting says Not yet as a word, not a pill", () => {
+  test("an order to several sessions all still waiting reads none received and draws no tag", () => {
     const copies = ["answered", "delivering"].map((status, index) => buildItem({ id: 90 + index, kind: "message", status, sendId: "send-1", answeredAt: "2026-11-12T12:26:40.118Z" }));
-    assert.deepEqual(call("getRowFactsQ", { item: copies[0], copies }, false), [{ text: "Order" }, { text: "Not yet" }]);
+    assert.deepEqual(call("getRowCellsQ", { item: copies[0], copies }, false), { tags: [], fact: "0 of 2", extras: [] });
   });
 
-  // spec §4.2: who, then what — the name in its own column ahead of the title, the meta line under the title holding the facts alone
-  test("a row's session name stands in its own column before the title, and its meta line holds only its facts, ` · ` between them", () => {
-    const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
-    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
+  // spec §4.2: one line on fixed columns — every cell drawn in its place, an empty one too, so no text ends where a tag starts
+  test("a row lays its cells in column order, name, title, tag, fact, age, chevron, an empty tag and fact cell included", () => {
+    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report", session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
     const [option] = findNodes(tree, (node) => node.props?.role === "option");
     const slots = (option?.children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [String((child as RenderedNode).props?.className ?? "")] : []));
-    const [who] = byClass(tree, "queue-row-who");
-    const [meta] = byClass(tree, "queue-row-meta");
-    assert.deepEqual([slots.slice(0, 3), collectText(who as RenderedNode)], [["queue-row-who", "queue-row-title", "queue-row-meta"], "gersona"]);
-    assert.match(collectText(meta as RenderedNode).replace(/\s+/g, " ").trim(), /^work-dev · 2 options \d/);
+    const empty = ["queue-row-tag", "queue-row-fact"].map((name) => collectText(byClass(tree, name)[0] as RenderedNode));
+    assert.deepEqual([slots, collectText(byClass(tree, "queue-row-who")[0] as RenderedNode), empty], [["queue-row-who", "queue-row-title", "queue-row-tag", "queue-row-fact", "queue-row-age", "queue-row-chevron"], "gersona", ["", ""]]);
+  });
+
+  // spec §4.2: what is off the row — the account, a name's start-directory mark — stays in the row's title and accessible name
+  test("a row's title and accessible name carry its fact, the account and a start directory's mark", () => {
+    const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
+    const item = buildItem({ isApprovalClass: true, session: buildSession({ name: "gersona", isNameRegistered: false }) });
+    const [option] = findNodes(render("QueueRowQ", { row: call("getSingleRowQ", item), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
+    assert.deepEqual(
+      [option?.props.title, String(option?.props["aria-label"]).replace(/posted .*$/, "posted")],
+      ["2 options · work-dev · start directory", `Decision from gersona: ${item.title}, Approval, 2 options, work-dev, start directory, posted`],
+    );
   });
 
   test("with exactly one session ticked a row paints no name column", () => {
@@ -3107,10 +3133,9 @@ describe("In delivery rows", () => {
     assert.deepEqual([findNodes(tree, (node) => node.props?.atom === "Badge").length, /\bNew\b/.test(String(option?.props["aria-label"]))], [0, false]);
   });
 
-  // spec §4.2: a name the session did not register is its start directory's, said under it; one name stands for one session alone
+  // spec §4.2: the name column holds one line — a start directory's mark rides the row's title; one name stands for one session alone
   const whoRows = [
-    { name: "an unregistered name of one session says start directory under it", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 1, lines: ["atrium-hooks", "start directory"] },
-    { name: "a registered name stands alone", session: { name: "gersona", isNameRegistered: true }, copies: 1, lines: ["gersona"] },
+    { name: "an unregistered name of one session stands alone on its line", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 1, lines: ["atrium-hooks"] },
     { name: "an order to several sessions names their count, never a directory", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 2, lines: ["2 sessions"] },
   ];
   for (const row of whoRows) {
@@ -3118,7 +3143,7 @@ describe("In delivery rows", () => {
       const item = buildItem({ kind: "message", sendId: "send-1", session: buildSession(row.session) });
       const copies = Array.from({ length: row.copies }, (_, index) => ({ ...item, id: item.id + index }));
       const tree = render("RowWhoQ", { row: { id: item.id, item, copies } });
-      assert.deepEqual(findNodes(tree, (node) => typeof node.props?.className === "string" && /^queue-row-(name|dir)$/.test(node.props.className)).map((node) => collectText(node)), row.lines);
+      assert.deepEqual(findNodes(tree, (node) => typeof node.props?.className === "string" && node.props.className.startsWith("queue-row-")).map((node) => collectText(node)), row.lines);
     });
   }
 });
@@ -3284,3 +3309,27 @@ function renderViewer(onStep: (next: unknown) => unknown = () => undefined): Ren
   const images = IMAGE_ID.map((id, index) => ({ id, name: `shot-${index + 1}.png`, bytes: 1024 * 1024, width: 800, height: 600 }));
   return render("ImageViewerQ", { images, index: 1, onStep, onClose: () => undefined });
 }
+
+// spec §12.6: every string its table rewrote, as the page builds it
+describe("twelve words a sentence", () => {
+  const occupant = { profileLabel: "personal", cwdTail: "wt/owner-queue", sessionIdPrefix: "9b2e7c41" };
+  const marked = (bgId: string | null) => buildSession({ marker: { setAt: "2026-11-10T06:20:11.204Z", bgId } });
+  const noteOf = (item: unknown) => call<Array<Array<string | { machine: string }>>>("getCardNotesQ", item).map(getNoteText);
+  const strings = () => [
+    vm.runInContext("RAIL_HINT_Q.TEXT", screen) as string,
+    vm.runInContext('DESK_KEY_LIST_Q.find((row) => row.keys === "Esc").does', screen) as string,
+    ...findNodes(render("DeskKeysQ", { keys: { isOn: true, toggle: () => undefined } }), (node) => node.type === "p").map((node) => collectText(node)),
+    ...noteOf(buildItem({ session: marked("bg-7f3a") })),
+    ...noteOf(buildItem({ session: marked(null) })),
+    ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [occupant], hasUnmarkedOccupant: false } })),
+    ...findNodes(render("SheetFootQ", { item: buildItem({ isApprovalClass: true }), draft: {}, queue: buildQueue().queue, isBusy: false, error: null }), (node) => typeof node.children?.[0] === "string" && String(node.children[0]).startsWith("Approval:")).map((node) => collectText(node)),
+    call<string>("getNotListeningSentenceQ", ["yoaida"], "this"),
+    call<string>("getNotListeningSentenceQ", ["yoaida", "gersona"]),
+    (vm.runInContext("RELAY_REFUSAL_Q.hop[1]", screen) as () => string)(),
+  ];
+
+  test("no sentence of the strings spec §12.6 rewrote runs past twelve words", () => {
+    const texts = strings();
+    assert.deepEqual([texts.every((text) => text.length > 0), getLongSentences(texts)], [true, []], JSON.stringify(texts));
+  });
+});

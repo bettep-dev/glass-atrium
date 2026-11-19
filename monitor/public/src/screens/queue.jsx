@@ -34,8 +34,10 @@ const LIST_GROUPS_Q = {
 
 // one vocabulary on every surface (spec §9.4): whether a recipient has the order, never why it waits
 const RECEIPT_Q = { received: "Received", notYet: "Not yet", notListening: "Not listening", notReceived: "Not received" };
-// the receipts a single copy shows and a roll-up keeps listed under its line
+// the receipts a roll-up keeps listed under its line
 const SHOWN_RECEIPTS_Q = ["notListening", "notReceived"];
+// a list row's receipt counts, worst first (spec §4.2): not received, then not listening
+const RECEIPT_TAGS_Q = [{ glyph: "warn", receipt: "notReceived" }, { glyph: "pause", receipt: "notListening" }];
 // WHEN → every not-listening sentence and badge title on the page
 const NOT_LISTENING_Q = { WHEN: "next turn end or restart", GLYPH: "pause" };
 
@@ -44,13 +46,12 @@ function getNotReceivedFactQ(count) {
 }
 
 /**
- * A not-listening tag badge: the pause glyph before `text`, the sentence in its title; `isSpoken` → screen readers also hear the sentence.
+ * A not-listening tag badge: the pause glyph before its word, the sentence in its title and for screen readers.
  * Under a recipient the sentence is spoken only (spec §9.3: no sentence under a recipient).
  */
-function getNotListeningFactQ(text, isSpoken = false) {
+function getNotListeningFactQ() {
 	const delivers = `delivers at its ${NOT_LISTENING_Q.WHEN}`;
-	const fact = { text, badge: "tag", glyph: NOT_LISTENING_Q.GLYPH, title: `${RECEIPT_Q.notListening} — ${delivers}` };
-	return isSpoken ? { ...fact, spoken: `, ${delivers}` } : fact;
+	return { text: RECEIPT_Q.notListening, badge: "tag", glyph: NOT_LISTENING_Q.GLYPH, title: `${RECEIPT_Q.notListening} — ${delivers}`, spoken: `, ${delivers}` };
 }
 
 /** `<names> gets <what> at its next turn.` — `what` unset → `<names> waits for its next turn.` — then the fix; plural for several names (spec §9.2). */
@@ -118,7 +119,7 @@ const DESK_KEY_LIST_Q = [
 	{ keys: "↓ / ↑", does: "Next / previous row, in the list" },
 	{ keys: "Home / End", does: "First / last row, in the list" },
 	{ keys: "Enter", does: "From a row into the sheet; on an order, into the thread" },
-	{ keys: "Esc", does: "From the sheet back to the row; from Orders back to the middle pane" },
+	{ keys: "Esc", does: "Back to the row, or from Orders to the middle pane" },
 	{ keys: "1 – 9", does: "Pick the option at that position" },
 	{ keys: "R", does: "The sheet's field" },
 	{ keys: "E", does: "Mark as read" },
@@ -264,23 +265,22 @@ function getConfigPrefixQ(session) {
 /** Marker note: captured-id form when the spawn recorded a bg id, else the listing form; `{ machine }` parts render mono. */
 function getMarkerNoteQ(session) {
 	const prefix = getConfigPrefixQ(session);
-	const lead = `the resumed session may still be running in the background: under profile ${session.profileLabel}, `;
+	const lead = `It may still run under profile ${session.profileLabel}.`;
 	const bgId = session.marker?.bgId;
 	if (bgId) {
 		const id = getShellWordQ(bgId);
-		return [`${lead}check it with `, { machine: `${prefix}claude logs ${id}` }, ", and resume it yourself in a terminal only after ", { machine: `${prefix}claude stop ${id}` }];
+		return [`${lead} Check it: `, { machine: `${prefix}claude logs ${id}` }, ". Resume it in a terminal only after ", { machine: `${prefix}claude stop ${id}` }, "."];
 	}
 	return [
-		`${lead}check `, { machine: `${prefix}claude agents --json --cwd ${getShellWordQ(session.cwd)}` }, " for the entry of session ", { machine: session.id },
-		", and resume it yourself in a terminal only once that entry is no longer listed, or after ", { machine: `${prefix}claude stop <id>` }, " with that entry's id",
+		`${lead} Find it: `, { machine: `${prefix}claude agents --json --cwd ${getShellWordQ(session.cwd)}` },
+		". Resume it in a terminal once it is gone, or after ", { machine: `${prefix}claude stop <id>` }, ".",
 	];
 }
 
 function getMarkedOccupantNoteQ(occupant) {
 	return [
-		`waiting on ${occupant.profileLabel} · ${occupant.cwdTail} · `, { machine: occupant.sessionIdPrefix },
-		", whose automatic resume has not registered: this one waits until that session registers or is resumed in a terminal (see its card), " +
-			"and resumes automatically once that session has then ended",
+		`Waiting on ${occupant.profileLabel} · ${occupant.cwdTail} · `, { machine: occupant.sessionIdPrefix },
+		", whose resume has not registered. This one waits until that session registers or is resumed. It resumes by itself once that session ends.",
 	];
 }
 
@@ -1449,7 +1449,7 @@ function DeskKeysQ({ keys }) {
 				<span className="inline-target"><CheckboxBoxQ isChecked={keys.isOn} onChange={keys.toggle} ariaLabel="Single-key shortcuts" /></span>
 				Single-key shortcuts
 			</label>
-			<p className="fs-meta text-dim">Letters and digits act while the focus is on the desk and not in a text field. Enter, Esc and Cmd / Ctrl + Enter work either way.</p>
+			<p className="fs-meta text-dim">Letters and digits work outside text fields. Enter, Esc and Cmd / Ctrl + Enter work anywhere.</p>
 			<dl className="queue-keys">{DESK_KEY_LIST_Q.map((row) => <React.Fragment key={row.keys}><dt>{row.keys}</dt><dd>{row.does}</dd></React.Fragment>)}</dl>
 		</div>
 	);
@@ -1527,68 +1527,65 @@ function QueueGroupQ({ group, queue, view }) {
 }
 
 // an order's row shows its entry in Orders, the list staying (spec §9.2); every other row opens its sheet in the list's place
-// who, then what (spec §4.2): the name column first, left out with one session ticked; an arrival paints no mark (§4.4), focusing it ends it
+// who, then what (spec §4.2): one line on fixed columns, every cell drawn so an empty one keeps its width; an arrival paints no mark (§4.4)
 function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, onSeen }) {
-	const { Icon, formatRelativeTime, formatKstDateTime } = window.UI;
+	const { Icon, formatKstDateTime } = window.UI;
 	const { item } = row;
-	const facts = getRowFactsQ(row, view.isAccountShown);
+	const cells = getRowCellsQ(row, view.isAccountShown);
+	const tip = [cells.fact, ...cells.extras].filter(Boolean).join(" · ");
 	return (
 		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={row.id === view.tabStopId ? 0 : -1}
-			aria-label={getRowLabelQ(row, facts, view.isNameShown)} className="queue-row"
+			aria-label={getRowLabelQ(row, cells, view.isNameShown)} title={tip || undefined} className="queue-row"
 			onFocus={isNew ? () => onSeen?.(row.id) : undefined} onClick={() => (getKindWordQ(item) === "Order" ? onOrder(row) : onSelect(row.id))}>
 			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} /></span>}
 			<span className="queue-row-title" title={item.title}>{item.title}</span>
-			<span className="queue-row-meta">
-				<span className="queue-row-facts"><RowFactsLineQ facts={facts} /></span>
-				<span className="queue-row-age" title={formatKstDateTime(item.askedAt)}>{formatRelativeTime(item.askedAt)}</span>
-			</span>
+			<span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>
+			<span className="queue-row-fact">{cells.fact}</span>
+			<span className="queue-row-age" title={formatKstDateTime(item.askedAt)}>{getRowAgeQ(item.askedAt)}</span>
 			<Icon name="chevR" size={16} className="queue-row-chevron" />
 		</div>
 	);
 }
 
-// one cut line, the whole name in its tooltip; an order to several sessions names their count, never a directory
+// one cut line, the whole name in its tooltip; an order to several sessions names their count
 function RowWhoQ({ row }) {
 	const count = row.copies.length;
-	if (count > 1) return <span className="queue-row-name" title={`${count} sessions`}>{`${count} sessions`}</span>;
-	return <ItemSessionNameQ session={row.item.session} isStacked />;
+	const name = count > 1 ? `${count} sessions` : row.item.session.name;
+	return <span className="queue-row-name" title={name}>{name}</span>;
 }
 
-/**
- * No registered name → the start-directory name, marked so it never reads as one the session chose.
- * `isStacked` → the list's name column: the name one cut line with its tooltip, the marker its own line under it.
- */
-function ItemSessionNameQ({ session, isStacked = false }) {
-	const hasMark = session.isNameRegistered === false;
-	if (!isStacked) return <>{session.name}{hasMark && <span className="font-normal text-dim">{" start directory"}</span>}</>;
-	return (
-		<>
-			<span className="queue-row-name" title={session.name}>{session.name}</span>
-			{hasMark && <span className="queue-row-dir">start directory</span>}
-		</>
-	);
+/** No registered name → the start-directory name, marked so it never reads as one the session chose. */
+function ItemSessionNameQ({ session }) {
+	return <>{session.name}{session.isNameRegistered === false && <span className="font-normal text-dim">{" start directory"}</span>}</>;
 }
 
-// a row's text facts run as one span, its badges trailing → a narrow column cuts the run from its end, the badges stay whole
-function RowFactsLineQ({ facts }) {
-	const texts = facts.filter((fact) => !fact.badge);
-	return (
-		<>
-			{texts.length > 0 && <span className="queue-row-facts-text"><RowFactsQ facts={texts} /></span>}
-			<RowFactsQ facts={facts.filter((fact) => fact.badge)} />
-		</>
-	);
+// the tag column: the Approval tag, or receipt counts — each the count atom led by its glyph, its words in its title (spec §4.2)
+function RowTagsQ({ tags }) {
+	const { Badge, TONE_GLYPH } = window.UI;
+	return tags.map((tag) => (tag.badge
+		? <Badge key={tag.text} fill={tag.badge}>{tag.text}</Badge>
+		: (
+			<Badge key={tag.word} role="count" fill="tag" title={tag.word}>
+				{tag.glyph === "warn" ? <span aria-hidden="true" className="text-warn">{TONE_GLYPH.warn}</span> : getPauseGlyphQ()}
+				{tag.count}
+			</Badge>
+		)));
+}
+
+// the age column's 32 (spec §4.2): the shared relative time without `ago`, under a minute `now`
+function getRowAgeQ(iso) {
+	const label = window.UI.formatRelativeTime(iso).replace(/ ago$/, "");
+	return /^\d+s$/.test(label) ? "now" : label;
 }
 
 // a settled receipt is a mark and a word, no shell (spec §9.4) → the mark rides the text, hidden from screen readers
-// `isYielding` → in a row's facts the words give way, glyph and count kept, once the dim text has none left (base.css → .pill--yield)
 function RowFactsQ({ facts }) {
 	const { Badge, TONE_GLYPH } = window.UI;
 	return <>{facts.map((fact, index) => (fact.badge
 		? (
-			<Badge key={fact.text} fill={fact.badge} title={fact.title} className={fact.isYielding ? "pill--yield" : ""}>
+			<Badge key={fact.text} fill={fact.badge} title={fact.title}>
 				{fact.glyph && getPauseGlyphQ()}
-				{fact.isYielding ? <span className="pill-words">{fact.text}</span> : fact.text}
+				{fact.text}
 				{fact.spoken && <span className="sr-only">{fact.spoken}</span>}
 			</Badge>
 		)
@@ -1612,40 +1609,43 @@ function getPauseGlyphQ() {
 }
 
 /**
- * What sets a row apart beside its band: a decision's option count and approval tag, an In delivery row's route word and receipt count.
- * @returns `{ text, badge? }` per fact — `badge` names the Badge fill
+ * A list row's cells (spec §4.2): `tags` — the Approval tag, or receipt counts worst first; `fact` — one short fact, or null;
+ * `extras` — the account, a start directory's mark and an order's images, in the row's title and accessible name only.
  */
-function getRowFactsQ(row, isAccountShown) {
+function getRowCellsQ(row, isAccountShown) {
 	const { item, copies } = row;
-	const account = isAccountShown ? [{ text: item.session.profileLabel }] : [];
+	const extras = [isAccountShown && item.session.profileLabel, copies.length === 1 && item.session.isNameRegistered === false && "start directory", getImagesWordQ(item)].filter(Boolean);
 	if (item.status === "open" && item.kind === "decision") {
 		const count = (item.options ?? []).length;
-		return [...account, { text: `${count} ${count === 1 ? "option" : "options"}` }, ...(item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [])];
+		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [], fact: `${count} ${count === 1 ? "option" : "options"}`, extras };
 	}
-	if (item.status === "open" && item.kind === "report") return account;
-	return [...account, ...getDeliveryFactsQ(item, copies)];
+	if (item.status === "open" && item.kind === "report") return { tags: [], fact: null, extras };
+	return { tags: getReceiptTagsQ(copies), fact: getDeliveryFactQ(item, copies), extras };
 }
 
-function getDeliveryFactsQ(item, copies) {
-	const images = item.attachments?.length ?? 0;
-	const route = item.kind === "decision" ? ["Answer", item.answer?.code].filter(Boolean).join(" ") : `Order${images > 0 ? ` · ${images} ${images === 1 ? "image" : "images"}` : ""}`;
-	return [{ text: route }, ...getReceiptFactsQ(copies)];
+function getImagesWordQ(item) {
+	const images = item.kind === "decision" ? 0 : item.attachments?.length ?? 0;
+	return images > 0 && `${images} ${images === 1 ? "image" : "images"}`;
 }
 
-// one copy → only a Not listening or a Not received shows · several → `2 of 3 received` (all waiting → the word Not yet), then `n not listening`, then any not received
-function getReceiptFactsQ(copies) {
+// an answer's route and code; an order or relay to several sessions → received of sent
+function getDeliveryFactQ(item, copies) {
+	if (item.kind === "decision") return ["Answer", item.answer?.code].filter(Boolean).join(" ");
+	if (copies.length > 1) return `${getReceiptCountQ(copies.map(getReceiptQ), "received")} of ${copies.length}`;
+	return item.kind === "relay" ? "Relay" : "Order";
+}
+
+// what is not plain waiting, as `{ glyph, count, word }` — one copy reads `⚠ 1` or `⏸ 1`
+function getReceiptTagsQ(copies) {
 	const receipts = copies.map(getReceiptQ);
-	if (receipts.length === 1) return SHOWN_RECEIPTS_Q.includes(receipts[0]) ? [getReceiptFactQ(receipts[0])] : [];
-	const received = getReceiptCountQ(receipts, "received");
-	const notListening = getReceiptCountQ(receipts, "notListening");
-	const failed = getReceiptCountQ(receipts, "notReceived");
-	const count = { text: received + notListening + failed === 0 ? RECEIPT_Q.notYet : `${received} of ${receipts.length} received` };
-	return [count, ...(notListening > 0 ? [{ ...getNotListeningFactQ(`${notListening} not listening`), isYielding: true }] : []), ...(failed > 0 ? [getNotReceivedFactQ(failed)] : [])];
+	return RECEIPT_TAGS_Q.map(({ glyph, receipt }) => ({ glyph, count: getReceiptCountQ(receipts, receipt), word: RECEIPT_Q[receipt].toLowerCase() }))
+		.filter((tag) => tag.count > 0)
+		.map((tag) => ({ ...tag, word: `${tag.count} ${tag.word}` }));
 }
 
 function getReceiptFactQ(receipt) {
 	if (receipt === "received") return { text: RECEIPT_Q.received, mark: "ok" };
-	if (receipt === "notListening") return getNotListeningFactQ(RECEIPT_Q.notListening, true);
+	if (receipt === "notListening") return getNotListeningFactQ();
 	return { text: RECEIPT_Q[receipt], badge: receipt === "notYet" ? "tag" : "warn" };
 }
 
@@ -1661,11 +1661,12 @@ function getReceiptQ(item) {
 	return "notYet";
 }
 
-// kind + session + title + facts + age → `Decision from gersona: <title>, 3 options, posted 9m ago`
-function getRowLabelQ(row, facts, isNameShown) {
+// kind + session + title + tag + fact + extras + age → `Decision from gersona: <title>, Approval, 3 options, posted 9m ago`
+function getRowLabelQ(row, cells, isNameShown) {
 	const { item } = row;
 	const from = isNameShown ? ` from ${row.copies.length > 1 ? `${row.copies.length} sessions` : item.session.name}` : "";
-	const parts = [`${getKindWordQ(item)}${from}: ${item.title}`, ...facts.map((fact) => fact.text), `posted ${window.UI.formatRelativeTime(item.askedAt)}`];
+	const tags = cells.tags.map((tag) => tag.text ?? tag.word);
+	const parts = [`${getKindWordQ(item)}${from}: ${item.title}`, ...tags, cells.fact, ...cells.extras, `posted ${window.UI.formatRelativeTime(item.askedAt)}`].filter(Boolean);
 	return parts.join(", ");
 }
 
@@ -1801,8 +1802,14 @@ function LetterheadQ({ item, nameNote = "" }) {
 }
 
 function LetterheadFactsQ({ item }) {
-	const facts = item.status === "open" ? getRowFactsQ({ item, copies: [item] }, false) : [getReceiptFactQ(getReceiptQ(item))];
+	const facts = item.status === "open" ? getOpenFactsQ(item) : [getReceiptFactQ(getReceiptQ(item))];
 	return facts.length > 0 ? <RowFactsQ facts={facts} /> : null;
+}
+
+// the row's fact, then its tag → `2 options` [Approval]
+function getOpenFactsQ(item) {
+	const { fact, tags } = getRowCellsQ({ item, copies: [item] }, false);
+	return [...(fact ? [{ text: fact }] : []), ...tags];
 }
 
 function LetterheadTimeQ({ item }) {
@@ -2013,7 +2020,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	const resend = item.canResend ? [{ label: "Resend", onPress: () => queue.send(item.id, "resend") }] : [];
 	const rest = `${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to ${name}.`;
 	// the pick is itself the approval, nobody asks again in a terminal → this one info line in ink (spec §6 → Note slot)
-	const approval = item.isApprovalClass ? <span className="text-ink">{`Approval: an approving answer here approves the stated action, once; ${name} does not ask again in its terminal.`}</span> : null;
+	const approval = item.isApprovalClass ? <span className="text-ink">{`Approval: approving here approves the action once. ${name} does not ask again in its terminal.`}</span> : null;
 	return (
 		<ComposerQ field={item.isFreeTextAllowed ? { id: `queue-text-${item.id}`, label: "Your own answer or a note on this decision (optional)" } : null}
 			text={draft.text ?? ""} onText={(text) => queue.setDraft(item.id, { text, error: null })} isBusy={isBusy}
@@ -3188,7 +3195,7 @@ function RedactConfirmQ({ redaction }) {
 	);
 	return (
 		<DetailSurface open variant="confirm" suppressOutsideClose onClose={isBusy ? () => undefined : redaction.cancel} title="Redact this relay's text?" footer={footer}>
-			<p className="fs-body text-dim">{`The text ${getSenderNameQ(target.item.relay.sender)} sent to ${names} is replaced by a fixed marker in the record, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
+			<p className="fs-body text-dim">{`The text ${getSenderNameQ(target.item.relay.sender)} sent to ${names} becomes a fixed marker, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
 			<p role="alert" className="fs-meta queue-relay-error">
 				{redaction.error !== null && <><span aria-hidden="true" className="text-crit">{`${TONE_GLYPH.crit} `}</span>{redaction.error}</>}
 			</p>
@@ -3242,7 +3249,7 @@ function getRelayNamesQ(items) {
 
 // spec §9.9 → the reason table: the server's codes, the page's words; no sentence holds a limit (the server sets them)
 const RELAY_REFUSAL_Q = {
-	hop: ["Chain too long", () => "It would have passed on a relay more times than the chain limit allows."],
+	hop: ["Chain too long", () => "It would pass a relay on more times than allowed."],
 	pair_cap: ["Too many to one session", ({ sender, recipient }) => `${sender} sent to ${recipient} more often than the hourly limit allows.`],
 	sender_cap: ["Too many from one session", ({ sender }) => `${sender} sent more relays than the hourly limit allows.`],
 	machine_cap: ["Machine-wide limit", () => "All sessions together sent more relays than the hourly limit allows."],

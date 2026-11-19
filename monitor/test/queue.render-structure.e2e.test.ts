@@ -1359,15 +1359,14 @@ describe("queue page on the mockup fixtures", () => {
     }
   });
 
-  test("the sheet's text is 15/24 within 66ch, its title 20/28, rows 68 or 88, bands 32 on the page ground, and its foot in view", async () => {
+  test("the sheet's text is 15/24 within 66ch, its title 20/28, rows 44, bands 32 on the page ground, and its foot in view", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const list = await getListFacts(page);
     await selectRow(page, 101);
     const sheet = await getSheetFacts(page);
     await page.close();
-    // a two-line title needs a narrower list than this desk's; the 88 row is the 200-character title's test
-    assert.deepEqual({ isRowHeight: list.rowHeights.length > 0 && list.rowHeights.every((height) => height === 68 || height === 88), bands: list.bands }, { isRowHeight: true, bands: ["32 true"] }, String(list.rowHeights));
+    assert.deepEqual({ isRowHeight: list.rowHeights.length > 0 && list.rowHeights.every((height) => height === 44), bands: list.bands }, { isRowHeight: true, bands: ["32 true"] }, String(list.rowHeights));
     assert.deepEqual({ text: sheet.text, title: sheet.title, isFootInView: sheet.isFootInView }, { text: ["15px", "24px", "true"], title: ["20px", "28px"], isFootInView: true });
   });
 
@@ -1437,14 +1436,14 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §3.2 / §4.2: the list shares the fixed middle pane → never wide enough for another row form
-  test("list rows are 68 or 88 high at every desk width, 2560 included", async () => {
+  test("list rows are 44 high at every desk width, 2560 included", async () => {
     harness.fixture = getRestFixture();
     const heights = [];
     for (const { viewport } of DESK_WIDTHS) {
       const page = await openQueuePage(harness, viewport, getRestReadyText());
       const { rowHeights } = await getListFacts(page);
       await page.close();
-      heights.push({ width: viewport.width, isRowHeight: rowHeights.length > 0 && rowHeights.every((height) => height === 68 || height === 88), rowHeights });
+      heights.push({ width: viewport.width, isRowHeight: rowHeights.length > 0 && rowHeights.every((height) => height === 44), rowHeights });
     }
 
     assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
@@ -2584,22 +2583,22 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown.filter((to) => to.at === MIN_WINDOW.width).map((to) => to.text).slice(2), ["sixmon [Not listening],", "nightly [Not listening]"]);
     });
 
-    test("an order to two sessions that do not listen reads 0 of 2 received and 2 not listening; the ended session's resume copy reads Not yet; nothing of the state is amber", async () => {
+    test("an order to two sessions that do not listen reads 0 of 2 and ⏸ 2 in its tag column; the ended session's resume copy reads Not yet; nothing of the state is amber", async () => {
       const page = await openNotListeningPage();
       const shown = await page.evaluate((ids) => {
         const textOf = (selector: string) => (document.querySelector(selector)?.textContent ?? "").replace(/\s+/g, " ").trim();
+        const cellsOf = (id: number) => ({ fact: textOf(`#queue-row-${id} .queue-row-fact`), tags: [...document.querySelectorAll(`#queue-row-${id} .queue-row-tag .pill`)].map((tag) => tag.getAttribute("title")) });
         const amber = [ids.mixedOrder, ids.deafOrder, ids.resumeOrder].flatMap((id) => [...document.querySelectorAll(`#queue-row-${id} .pill--warn, #queue-order-${id} .pill--warn`)]);
         return {
-          deaf: textOf(`#queue-row-${ids.deafOrder} .queue-row-facts`),
-          mixed: textOf(`#queue-row-${ids.mixedOrder} .queue-row-facts`),
+          deaf: cellsOf(ids.deafOrder),
+          mixed: cellsOf(ids.mixedOrder),
           resume: textOf(`#queue-order-${ids.resumeOrder} .queue-recipient .pill`),
           amber: amber.length,
         };
       }, { mixedOrder: NOT_LISTENING_IDS.mixedOrder, deafOrder: NOT_LISTENING_IDS.deafOrder, resumeOrder: NOT_LISTENING_IDS.resumeOrder });
       await page.close();
 
-      assert.match(shown.deaf, /0 of 2 received.*2 not listening/);
-      assert.match(shown.mixed, /0 of 2 received.*1 not listening/);
+      assert.deepEqual([shown.deaf, shown.mixed], [{ fact: "0 of 2", tags: ["2 not listening"] }, { fact: "0 of 2", tags: ["1 not listening"] }]);
       assert.deepEqual([shown.resume, shown.amber], ["Not yet", 0]);
     });
 
@@ -2636,7 +2635,7 @@ describe("queue page on the mockup fixtures", () => {
       const shown = await page.evaluate((id) => ({
         codes: [...document.querySelectorAll(".queue-sheet .queue-option-head .text-dim")].map((code) => code.textContent),
         picked: [...document.querySelectorAll<HTMLInputElement>(".queue-sheet .ctl-radio")].filter((radio) => radio.checked).length,
-        hasCount: document.querySelector(`#queue-row-${id} .queue-row-facts`)?.textContent?.includes("9 options") === true,
+        hasCount: document.querySelector(`#queue-row-${id} .queue-row-fact`)?.textContent === "9 options",
       }), EDGE_IDS.nineOptions);
       await page.close();
 
@@ -2645,18 +2644,18 @@ describe("queue page on the mockup fixtures", () => {
 
     test("an approval-class decision carries the Approval tag on its row and its date line, and its note says in ink after an info glyph that an approving answer approves the stated action once", async () => {
       const page = await openEdgePage(harness);
-      // the space between `2 options` and the Approval tag; the open sheet takes the list's box → the row is read first
+      // the space between `2 options` and the Approval tag on the date line
       const getGap = (selector: string) => page.evaluate((within) => {
         const facts = document.querySelector(within);
         const tag = facts?.querySelector(".pill--tag");
         const count = [...(facts?.querySelectorAll("span") ?? [])].find((span) => /^\d+ options$/.test(span.textContent ?? ""));
         return tag && count ? Math.round(tag.getBoundingClientRect().left - count.getBoundingClientRect().right) : null;
       }, selector);
-      const rowGap = await getGap(`#queue-row-${EDGE_IDS.approval} .queue-row-facts`);
+      // the open sheet takes the list's box → the row is read first
+      const row = await page.evaluate((id) => [...document.querySelectorAll(`#queue-row-${id} .queue-row-tag .pill--tag`)].map((badge) => badge.textContent), EDGE_IDS.approval);
       await selectRow(page, EDGE_IDS.approval);
       const dateGap = await getGap(".queue-sheet .queue-date-facts");
-      const shown = await page.evaluate((id) => ({
-        row: [...document.querySelectorAll(`#queue-row-${id} .queue-row-facts .pill--tag`)].map((badge) => badge.textContent),
+      const shown = await page.evaluate(() => ({
         letterhead: [...document.querySelectorAll(".queue-sheet > .card-head .pill--tag, .queue-date-line .pill--tag")].map((badge) => badge.textContent),
         note: document.querySelector(".queue-sheet .queue-note-text")?.textContent ?? "",
         // the sentence's own colour against the ink and the glyph's against the info token
@@ -2671,21 +2670,22 @@ describe("queue page on the mockup fixtures", () => {
             glyph: getComputedStyle(line.querySelector("[aria-hidden]") as Element).color === getToken("--info"),
           };
         })(),
-      }), EDGE_IDS.approval);
+      }));
       await page.close();
 
-      assert.deepEqual({ row: shown.row, letterhead: shown.letterhead }, { row: ["Approval"], letterhead: ["Decision", "Approval"] });
-      assert.deepEqual([rowGap, dateGap], [6, 6], "the date line keeps the row's 6 between the count and the tag");
-      assert.match(shown.note, /Approval: an approving answer here approves the stated action, once; aidl does not ask again in its terminal\./);
+      assert.deepEqual({ row, letterhead: shown.letterhead }, { row: ["Approval"], letterhead: ["Decision", "Approval"] });
+      assert.equal(dateGap, 6, "the date line keeps 6 between the count and the tag");
+      assert.match(shown.note, /Approval: approving here approves the action once\. aidl does not ask again in its terminal\./);
       assert.deepEqual(shown.tones, { text: true, glyph: true }, "the sentence in ink, its glyph in info");
     });
 
-    test("a 200-character title takes two lines on its 88 row with the whole title in its tooltip, and wraps in full at 20/28 on the sheet", async () => {
+    test("a 200-character title takes one cut line on its 44 row with the whole title in its tooltip, and wraps in full at 20/28 on the sheet", async () => {
       const page = await openEdgePage(harness, DESK_WIDTHS[0].viewport);
       // the row is measured before its press: an opened row puts the list away
       const row = await page.evaluate((id) => {
         const element = document.querySelector(`#queue-row-${id}`) as HTMLElement;
-        return [Math.round(element.getBoundingClientRect().height), element.querySelector(".queue-row-title")?.getAttribute("title")];
+        const title = element.querySelector(".queue-row-title") as HTMLElement;
+        return [Math.round(element.getBoundingClientRect().height), title.getAttribute("title"), getComputedStyle(title).textOverflow === "ellipsis" && title.scrollWidth > title.clientWidth];
       }, EDGE_IDS.longTitle);
       await selectRow(page, EDGE_IDS.longTitle);
       const sheet = await page.evaluate(() => {
@@ -2695,7 +2695,7 @@ describe("queue page on the mockup fixtures", () => {
       });
       await page.close();
 
-      assert.deepEqual({ row, sheet }, { row: [88, EDGE_LONG_TITLE], sheet: [EDGE_LONG_TITLE, true, "20px/28px"] });
+      assert.deepEqual({ row, sheet }, { row: [44, EDGE_LONG_TITLE, true], sheet: [EDGE_LONG_TITLE, true, "20px/28px"] });
     });
 
     test("a report whose text names its linked document links the id in its text and adds no Documents line", async () => {
@@ -2760,32 +2760,54 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 44, isCut: true, isInsideRail: true });
     });
 
-    // spec §4.2, §14.4: the name column is 104 at every width a list stands in; the 12 gap puts every title 116 further in.
-    // The edge fixture's 100-character session is only one recipient of a seven-session order, whose row reads `7 sessions` → one open item is sent from it here
-    test("with nothing ticked every list row leads with its session name in a 104 box at one x, every title and meta line at one x 116 further in, and a 100-character name cut inside its box, at 1280 and 1568", async () => {
-      const fixture = getNameColumnFixture();
+    // spec §4.2, §14.3: one 44 line on fixed columns — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
+    // either side of the title; an empty tag or fact cell keeps its width; under 160 of title (1280, names shown) the fact column is left out.
+    // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it
+    test("with nothing ticked every list row is one 44 line on the same columns at 1280, 1440 and 1568, empty cells keeping their width, the fact column left out at 1280, a 100-character name cut inside its 104", async () => {
+      // each cell's x from the row's start and its width; a cell drawn nowhere → `-`
+      const getLayout = (width: number, isFactShown: boolean) => {
+        const fixed = [80, isFactShown ? 64 : 0, 32, 16];
+        const title = width - 32 - 104 - fixed.reduce((sum, one) => sum + one) - 8 * (isFactShown ? 5 : 4) - 8;
+        let x = 16;
+        return [[104, 12], [title, 12], ...fixed.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
+          const at = cell === 0 ? "-" : `${x}+${cell}`;
+          x += cell! + after!;
+          return at;
+        }).join(" ");
+      };
       const shown = [];
-      for (const viewport of [MIN_WINDOW, { width: 1568, height: 759 }]) {
-        harness.fixture = fixture;
-        const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
-        const facts = await page.evaluate((longName) => {
-          const rows = [...document.querySelectorAll(".queue-row")];
-          const box = (row: Element, selector: string) => (row.querySelector(selector) as HTMLElement).getBoundingClientRect();
-          const long = [...document.querySelectorAll<HTMLElement>(".queue-row-name")].find((name) => name.title === longName);
-          const longBox = long?.closest(".queue-row-who")?.getBoundingClientRect();
-          return {
-            isNameFirst: rows.length > 0 && rows.every((row) => row.firstElementChild?.matches(".queue-row-who")),
-            widths: [...new Set(rows.map((row) => Math.round(box(row, ".queue-row-who").width)))],
-            nameStarts: new Set(rows.map((row) => Math.round(box(row, ".queue-row-who").left))).size,
-            titleOffsets: [...new Set(rows.flatMap((row) => [".queue-row-title", ".queue-row-meta"].map((selector) => Math.round(box(row, selector).left - box(row, ".queue-row-who").left))))],
-            isLongCut: long !== undefined && longBox !== undefined && getComputedStyle(long).textOverflow === "ellipsis" && long.scrollWidth > long.clientWidth && long.getBoundingClientRect().right <= longBox.right + 0.5,
-          };
-        }, EDGE_LONG_SESSION_NAME);
-        await page.close();
-        shown.push({ width: viewport.width, ...facts });
+      for (const { viewport } of DESK_WIDTHS.slice(0, 3)) {
+        for (const fixture of [getNameColumnFixture(), getEdgeFixture()]) {
+          harness.fixture = fixture;
+          const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
+          const facts = await page.evaluate((longName) => {
+            const rows = [...document.querySelectorAll(".queue-row")];
+            const cells = [".queue-row-who", ".queue-row-title", ".queue-row-tag", ".queue-row-fact", ".queue-row-age", ".queue-row-chevron"];
+            const getCells = (row: Element) => cells.map((selector) => {
+              const box = (row.querySelector(selector) as Element).getBoundingClientRect();
+              return box.width > 0 ? `${Math.round(box.left - row.getBoundingClientRect().left)}+${Math.round(box.width)}` : "-";
+            }).join(" ");
+            const long = [...document.querySelectorAll<HTMLElement>(".queue-row-name")].find((name) => name.title === longName);
+            const longBox = long?.closest(".queue-row-who")?.getBoundingClientRect();
+            return {
+              rowWidths: [...new Set(rows.map((row) => Math.round(row.getBoundingClientRect().width)))],
+              layouts: [...new Set(rows.map(getCells))],
+              heights: [...new Set(rows.map((row) => Math.round(row.getBoundingClientRect().height)))],
+              emptyTags: rows.filter((row) => (row.querySelector(".queue-row-tag") as Element).childElementCount === 0).length,
+              isLongCut: long === undefined || (longBox !== undefined && getComputedStyle(long).textOverflow === "ellipsis" && long.scrollWidth > long.clientWidth && long.getBoundingClientRect().right <= longBox.right + 0.5),
+            };
+          }, EDGE_LONG_SESSION_NAME);
+          await page.close();
+          shown.push({ width: viewport.width, ...facts });
+        }
       }
 
-      assert.deepEqual(shown, shown.map(({ width }) => ({ width, isNameFirst: true, widths: [104], nameStarts: 1, titleOffsets: [116], isLongCut: true })));
+      assert.ok(shown.every((one) => one.rowWidths.length === 1 && one.emptyTags > 0), "rows of one width, some with an empty tag cell");
+      assert.deepEqual(
+        shown.map(({ width, rowWidths, layouts, heights, isLongCut }) => ({ width, layouts, heights, isLongCut, pane: rowWidths[0] })),
+        shown.map(({ width, rowWidths }) => ({ width, layouts: [getLayout(rowWidths[0]!, width !== 1280)], heights: [44], isLongCut: true, pane: rowWidths[0] })),
+      );
+      assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [450, 450, 586, 586], "the panes of spec §4.2, less the card's two 1 px borders");
     });
 
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it
@@ -2942,9 +2964,9 @@ describe("queue page on the mockup fixtures", () => {
       });
     });
 
-    test("an order with eight images reads Order · 8 images on its row and shows eight 96 squares in its bubble, each named n of 8", async () => {
+    test("an order with eight images reads Order on its row, 8 images in the row's title, and shows eight 96 squares in its bubble, each named n of 8", async () => {
       const page = await openEdgePage(harness);
-      const row = await page.evaluate((id) => document.querySelector(`#queue-row-${id} .queue-row-facts`)?.textContent ?? "", EDGE_IDS.eightImages);
+      const row = await page.evaluate((id) => [document.querySelector(`#queue-row-${id} .queue-row-fact`)?.textContent, document.querySelector(`#queue-row-${id}`)?.getAttribute("title")], EDGE_IDS.eightImages);
       await waitForAllOrders(page);
       const images = await page.evaluate(() => {
         const entry = [...document.querySelectorAll("article.queue-order")].find((order) => order.querySelectorAll(".queue-bubble-image").length > 3);
@@ -2955,71 +2977,28 @@ describe("queue page on the mockup fixtures", () => {
       });
       await page.close();
 
-      assert.match(row, /Order · 8 images/);
+      assert.deepEqual(row, ["Order", "Order · 8 images"]);
       assert.deepEqual(images, Array.from({ length: 8 }, (_, index) => `96x96 Open image ${index + 1} of 8: queue-edge-0${index + 1}.webp`));
     });
 
-    // the narrowest list, at the minimum window: the dim text yields first, then a not-listening count badge down to its glyph and count;
-    // the amber `⚠ n not received` and every other badge stay whole
-    test("a list row keeps its amber and every fixed badge whole; its fact text yields first, then the not-listening count badge's words, its pause glyph kept at 12, each cut ending in an ellipsis, at 1280", async () => {
-      type FactsRow = {
-        text: string | null;
-        badges: Array<{ text: string | null; isWarn: boolean; isYielding: boolean; isWhole: boolean; isCutInPlace: boolean; glyphWidth: number | null }>;
-        textRoom: number;
-        isEarlyCut: boolean;
-        cutWithoutEllipsis: number;
-      };
-      const rows: FactsRow[] = [];
-      for (const getFixture of [getEdgeFixture, getNotListeningEdgeFixture]) {
-        harness.fixture = getFixture();
-        const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
-        rows.push(...await page.evaluate(() => [...document.querySelectorAll(".queue-row-facts")].map((facts) => {
-          const box = facts.getBoundingClientRect();
-          const textBox = facts.querySelector(".queue-row-facts-text");
-          const badges = [...facts.querySelectorAll(".pill")].map((badge) => {
-            const words = badge.querySelector(".pill-words");
-            // any overflow paints the ellipsis, a sub-pixel one included → the words' laid-out text against their box, to the hundredth
-            const isWordsCut = words !== null && (() => {
-              const range = document.createRange();
-              range.selectNodeContents(words);
-              return range.getBoundingClientRect().right > words.getBoundingClientRect().right + 0.01;
-            })();
-            return {
-              text: badge.textContent,
-              isWarn: badge.classList.contains("pill--warn"),
-              isYielding: words !== null,
-              isWhole: badge.getBoundingClientRect().right <= box.right + 0.5 && badge.scrollWidth <= badge.clientWidth && !isWordsCut,
-              isCutInPlace: words !== null && badge.getBoundingClientRect().right <= box.right + 0.5 && words.clientWidth > 0 && getComputedStyle(words).textOverflow === "ellipsis",
-              glyphWidth: badge.querySelector("svg")?.getBoundingClientRect().width ?? null,
-            };
-          });
-          // a fact's laid-out text against the nearest box that clips it, whichever span holds the fact
-          const texts = [...facts.querySelectorAll("span")].filter((span) => span.textContent && !span.closest(".pill, [aria-hidden]") && ![...span.children].some((child) => !child.matches("[aria-hidden]")));
-          const getClip = (span: Element) => {
-            for (let node: Element | null = span; node && node !== facts.parentElement; node = node.parentElement) if (getComputedStyle(node).overflowX === "hidden") return node;
-            return facts;
-          };
-          const getExtent = (span: Element) => {
-            const range = document.createRange();
-            range.selectNodeContents(span);
-            return range.getBoundingClientRect();
-          };
-          const cut = texts.filter((span) => getExtent(span).right > getClip(span).getBoundingClientRect().right + 0.5);
-          const last = texts.at(-1);
-          const isEarlyCut = last !== undefined && getClip(last).getBoundingClientRect().right > getExtent(last).left + 0.5 && cut.some((span) => span !== last);
-          return { text: facts.textContent, badges, textRoom: textBox?.getBoundingClientRect().width ?? 0, isEarlyCut, cutWithoutEllipsis: cut.filter((span) => getComputedStyle(getClip(span)).textOverflow !== "ellipsis").length };
-        })));
-        await page.close();
-      }
+    // spec §4.2, §14.3: receipts in the tag column, worst first — `⚠ n` before `⏸ n` — each a count atom, both whole inside its 80
+    test("a list row's receipt counts stand in its tag column, not received before not listening, both whole inside its 80, at 1280", async () => {
+      harness.fixture = getNotListeningEdgeFixture();
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+      const tags = await page.evaluate(() => [...document.querySelectorAll(".queue-row-tag")].filter((tag) => tag.childElementCount > 1).map((tag) => {
+        const box = tag.getBoundingClientRect();
+        const badges = [...tag.children];
+        return {
+          words: badges.map((badge) => (badge.getAttribute("title") ?? "").replace(/^\d+ /, "")),
+          isCountAtom: badges.every((badge) => badge.matches(".pill--tag.pill--num")),
+          isWhole: badges.every((badge) => badge.getBoundingClientRect().right <= box.right + 0.5 && badge.scrollWidth <= badge.clientWidth),
+          width: Math.round(box.width),
+        };
+      }));
+      await page.close();
 
-      const isBoth = (row: FactsRow) => row.badges.some((badge) => badge.isWarn) && row.badges.some((badge) => badge.isYielding);
-      assert.ok(rows.some((row) => row.badges.some((badge) => badge.text?.includes("not received")) && /received/.test(row.text?.replace(/⚠.*$/, "") ?? "")), "a row carries a count and its warning");
-      assert.ok(rows.some(isBoth), "a row carries a not-listening count badge beside its warning");
-      assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => !badge.isWhole && !badge.isCutInPlace).map((badge) => `${row.text}: ${badge.text}`)), [], "every badge whole, a not-listening count badge at most cut in place");
-      assert.deepEqual(rows.filter((row) => row.badges.some((badge) => badge.isYielding && !badge.isWhole) && row.textRoom > 0.5).map((row) => row.text), [], "the badge yields only once the fact text has yielded all its room");
-      assert.deepEqual(rows.flatMap((row) => row.badges.filter((badge) => badge.glyphWidth !== null && Math.abs(badge.glyphWidth - 12) > 0.01).map((badge) => `${row.text}: ${badge.text} ${badge.glyphWidth}`)), [], "a pause glyph stays 12 wide while its words give way");
-      assert.deepEqual(rows.filter((row) => row.cutWithoutEllipsis > 0).map((row) => row.text), [], "a cut fact text ends in an ellipsis");
-      assert.deepEqual(rows.filter((row) => row.isEarlyCut).map((row) => row.text), [], "an earlier fact text is cut only once the last one has yielded all its room");
+      assert.ok(tags.length > 0, "a row counts both");
+      assert.deepEqual(tags, tags.map(() => ({ words: ["not received", "not listening"], isCountAtom: true, isWhole: true, width: 80 })));
     });
   });
 
