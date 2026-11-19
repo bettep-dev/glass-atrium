@@ -172,6 +172,19 @@ describe("remote access on at 1440px, the connect steps", () => {
     assert.equal(focused, "step");
   });
 
+  test("a done step's check sits in the number column, so its title stays where it stood", async () => {
+    const starts = await ctx.page.evaluate(() =>
+      [...document.querySelectorAll("ol > li")].map((row) => {
+        const range = document.createRange();
+        range.selectNodeContents(row.querySelector("button, p, span") ?? row);
+        return Math.round(range.getBoundingClientRect().left);
+      }),
+    );
+
+    assert.equal(starts.length, 5);
+    assert.deepEqual(starts, starts.map(() => starts[0]), "done, open and later rows start on one column");
+  });
+
   test("the card with a step and its fold open fits a 900px window without scrolling", async () => {
     await ctx.page.getByRole("button", { name: "Trouble?" }).click();
 

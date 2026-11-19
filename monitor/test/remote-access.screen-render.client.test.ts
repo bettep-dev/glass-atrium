@@ -290,11 +290,21 @@ describe("the connect card is a procedure: one device, one open step, done steps
     assert.ok(!card.text().includes("No “Profile Downloaded” in Settings? Repeat step 1."), "the next step's fold starts closed");
   });
 
-  test("a missing fingerprint says to refresh before installing, in its place", async () => {
-    const card = await driveConnect({ setup: { ...SETUP_ON, fingerprint: null } });
-    card.press("Next");
+  describe("Next on the fingerprint step waits for the fingerprint on screen", () => {
+    const rows = [
+      { name: "a missing fingerprint says to refresh before installing, in its place, and holds Next", fingerprint: null, isHeld: true },
+      { name: "a fingerprint on screen lets Next move on", fingerprint: FINGERPRINT, isHeld: false },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const card = await driveConnect({ setup: { ...SETUP_ON, fingerprint: row.fingerprint } });
+        card.press("Next");
 
-    assert.ok(card.text().includes("Fingerprint not shown; refresh this page before installing."));
+        const next = findNodes(card.view(), (node) => node.type === "button" && collectText(node).trim() === "Next")[0];
+        assert.equal(card.text().includes("Fingerprint not shown; refresh this page before installing."), row.isHeld, row.name);
+        assert.equal(next?.props.disabled === true, row.isHeld, row.name);
+      });
+    }
   });
 
   test("Go to step 5 marks every earlier step done and opens the scan step, which moves on by itself, never by Next", async () => {

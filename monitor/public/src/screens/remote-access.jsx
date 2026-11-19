@@ -488,7 +488,7 @@ function ProcedureRA({ setup, devices, progress, onAct, onDevicesRead }) {
 }
 
 function StepListRA({ setup, devices, progress, onAct, onDevicesRead }) {
-	const { QuietButton, TONE_GLYPH } = window.UI;
+	const { TONE_GLYPH } = window.UI;
 	const titleRef = useRRA(null);
 	// a step opened by a press or by finishing → focus follows to its title
 	useERA(() => titleRef.current?.focus(), [progress.open]);
@@ -499,7 +499,8 @@ function StepListRA({ setup, devices, progress, onAct, onDevicesRead }) {
 					{i === progress.open
 						? <OpenStepRA step={step} index={i} setup={setup} devices={devices} progress={progress} titleRef={titleRef} onAct={onAct} onDevicesRead={onDevicesRead} />
 						: progress.done[i]
-							? <QuietButton onClick={() => onAct({ type: "reopen", index: i })}><span className="text-ok">{TONE_GLYPH.ok}</span> <span className="text-ink">{step.title}</span></QuietButton>
+							// no button inset → the check takes the number's place and the title stays on its column
+							? <button type="button" className="inline-target link fs-body" onClick={() => onAct({ type: "reopen", index: i })}><span className="text-ok">{TONE_GLYPH.ok}</span>&nbsp;{step.title}</button>
 							: <span className="fs-body text-faint">{i + 1} {step.title}</span>}
 				</li>
 			))}
@@ -522,7 +523,7 @@ function OpenStepRA({ step, index, setup, devices, progress, titleRef, onAct, on
 				</Stack>
 				<Cluster>
 					{index > 0 && <QuietButton onClick={() => onAct({ type: "back" })}>Back</QuietButton>}
-					{step.kind !== "scan" && <button type="button" className="btn" onClick={() => onAct({ type: "next" })}>Next</button>}
+					{step.kind !== "scan" && <button type="button" className="btn" disabled={step.kind === "fingerprint" && !setup.fingerprint} onClick={() => onAct({ type: "next" })}>Next</button>}
 				</Cluster>
 			</Stack>
 		</Stack>
