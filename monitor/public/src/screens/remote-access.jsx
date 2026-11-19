@@ -368,6 +368,11 @@ function hasQrEncoderRA() {
 	return typeof window.qrcode === "function";
 }
 
+// the one owner of "a QR code is drawn" → the code view draws it, the fold's Camera line follows it
+function isQrDrawnRA(state, address) {
+	return state.status === "open" && Boolean(address) && hasQrEncoderRA();
+}
+
 function canShareFileRA(file) {
 	return file !== null && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] });
 }
@@ -887,7 +892,7 @@ function CodeStepRA({ address, isTyped, devices, trouble, onConnected, onDevices
 	return (
 		<>
 			<CodeViewRA state={state} address={address} isTyped={isTyped} onOpen={onOpen} />
-			{trouble(isOpen ? { code: formatCodeRA(state.code) } : {}, isOpen && Boolean(address) && hasQrEncoderRA())}
+			{trouble(isOpen ? { code: formatCodeRA(state.code) } : {}, isQrDrawnRA(state, address))}
 		</>
 	);
 }
@@ -909,7 +914,7 @@ function CodeViewRA({ state, address, isTyped = false, onOpen }) {
 		return (
 			<div className="ra-code is-typed">
 				<CodeValueRA state={state} address={address} onOpen={onOpen} />
-				{qrText && hasQrEncoderRA() && <ValueRA label={STEP_TEXT_RA.code.scan}><QrCodeRA text={qrText} /></ValueRA>}
+				{isQrDrawnRA(state, address) && <ValueRA label={STEP_TEXT_RA.code.scan}><QrCodeRA text={qrText} /></ValueRA>}
 			</div>
 		);
 	}
