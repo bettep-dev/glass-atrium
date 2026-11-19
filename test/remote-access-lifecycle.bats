@@ -134,7 +134,7 @@ OFF_LINE='Remote access is off. To turn it on later, open the monitor and choose
 # panel instead: lift the panel and the gate out of the dispatch lib and run them with stub chrome.
 run_tui_install_panel() {
   local plan_rc="$1" enabled="$2" answer="$3" apply_rc="${4:-0}" body="${SANDBOX}/panel.sh"
-  awk '/^(dispatch_action_install_panel|tui_remote_opt_in_gate|_tui_remote_ask|_run_cooked)\(\) \{/ { f = 1 } f { print } f && /^}/ { f = 0 }' \
+  awk '/^(dispatch_action_install_panel|tui_remote_opt_in_gate|_tui_remote_ask|_tui_ask|_run_cooked)\(\) \{/ { f = 1 } f { print } f && /^}/ { f = 0 }' \
     "${GA}/lib/ga-tui-dispatch.sh" >"${body}"
   printf '%s\n' "${answer}" >"${SANDBOX}/tty"
   printf '%s\n' "${enabled}" >"${SANDBOX}/enabled"
@@ -156,6 +156,7 @@ run_tui_install_panel() {
       [[ "${reply}" != "y" ]] || printf "true\n" >"${STATE}/enabled"
     }
     ga_remote_apply_config() { printf "applied\n" >>"${STATE}/calls.log"; return "${APPLY_RC}"; }
+    tui_queue_mcp_gate() { printf "queue-%s\n" "$1" >>"${STATE}/calls.log"; }
     source "$1"
     rc=0
     dispatch_action_install_panel || rc=$?
@@ -163,12 +164,12 @@ run_tui_install_panel() {
   ' _ "${body}"
 }
 
-@test "the TUI asks the opt-in only after an install that succeeded with access off, and a yes restarts the monitor" {
+@test "the TUI asks the opt-in only after an install that succeeded with access off, a yes restarts the monitor, and the queue MCP question follows" {
   local rows=(
     'install failed|3|false|y|-|3'
-    'owner answers no|0|false|n|asked|0'
-    'owner answers yes|0|false|y|asked applied|0'
-    'access already on|0|true|y|-|0'
+    'owner answers no|0|false|n|asked queue-add|0'
+    'owner answers yes|0|false|y|asked applied queue-add|0'
+    'access already on|0|true|y|queue-add|0'
   )
   local row name plan_rc enabled answer want_calls want_rc got_rc calls
   for row in "${rows[@]}"; do

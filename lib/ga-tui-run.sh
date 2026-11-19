@@ -485,8 +485,9 @@ build_step_plan() {
   STEP_SUPPRESS=()
   case "${action}" in
     install)
-      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → queue MCP → migrate → DB →
-      # repoint → post-check → baseline capture) then run_bootstrap's build + health gate, THEN the
+      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → migrate → DB → monitor env →
+      # repoint → post-check → baseline capture; its queue MCP question is asked after the plan, by
+      # tui_queue_mcp_gate) then run_bootstrap's build + health gate, THEN the
       # last step that registers the active launchd roster (menu_load_launchd_jobs, opt-out
       # GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
       # The load step runs LAST — post-health-gate by position, so a loaded job always tracks
@@ -503,9 +504,9 @@ build_step_plan() {
         "Render launchd plists"
         "Symlink farm"
         "Wire hooks (settings.json)"
-        "Queue MCP registration"
         "Migrate legacy layout"
         "Database bootstrap"
+        "Render monitor env"
         "launchd repoint"
         "claude liveness (advisory)"
         "Capture install baseline"
@@ -520,9 +521,9 @@ build_step_plan() {
         "Rendering launchd plists…"
         "Farming symlinks…"
         "Wiring hooks…"
-        "Checking queue MCP registration…"
         "Migrating legacy layout…"
         "Bootstrapping database…"
+        "Rendering monitor env…"
         "Repointing launchd…"
         "Checking claude liveness…"
         "Capturing install baseline…"
@@ -537,9 +538,9 @@ build_step_plan() {
         "render_plists"
         "run_symlink_farm install"
         "wire_hooks"
-        "put_queue_mcp_registration add"
         "migrate_layout"
         "setup_database"
+        "render_monitor_env"
         "repoint_launchd"
         "doctor_postcheck"
         "capture_install_baseline"
@@ -552,7 +553,8 @@ build_step_plan() {
       # run_uninstall body: manifest containment gate → launchd teardown → detached-daemon stop →
       # remote access keys + device rows → DB drop →
       # node_modules removal → manifest-link removal → orphan sweep → empty-dir
-      # cleanup → update-state teardown → hook un-wire → queue MCP unregistration → shell-rc PATH-line removal.
+      # cleanup → update-state teardown → hook un-wire → shell-rc PATH-line removal. The engine's queue MCP
+      # unregistration asks at a terminal, so the menu asks it after this plan (tui_queue_mcp_gate).
       # launchd teardown runs FIRST, then the detached-daemon stop reaches the tmux
       # daemon sessions launchctl bootout does NOT, so all connections drain before
       # the DB is dropped and before their symlinked files are removed. The DB drop is BACKUP-BEFORE-DROP,
@@ -576,7 +578,6 @@ build_step_plan() {
         "Remove empty directories"
         "Tear down update state"
         "Un-wire hooks (settings.json)"
-        "Queue MCP unregistration"
         "Remove shell rc PATH lines"
       )
       STEP_LABEL_ACTIVE=(
@@ -591,7 +592,6 @@ build_step_plan() {
         "Removing empty directories…"
         "Tearing down update state…"
         "Un-wiring hooks…"
-        "Checking queue MCP unregistration…"
         "Removing shell rc PATH lines…"
       )
       STEP_FN=(
@@ -606,7 +606,6 @@ build_step_plan() {
         "remove_empty_dirs"
         "teardown_update_state"
         "unwire_hooks"
-        "put_queue_mcp_registration remove"
         "remove_rc_lines"
       )
       ;;

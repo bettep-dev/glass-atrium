@@ -35,7 +35,8 @@ setup() {
 }
 
 # a stand-in for the host's `claude mcp add|remove --scope user`: logs "<config dir>|<home>|<argv>" and edits the
-# file the host edits — <config dir>/.claude.json, or ~/.claude.json with no config dir
+# file the host edits — <config dir>/.claude.json, or ~/.claude.json with no config dir — leaving the key set the host
+# leaves for every stdio server (type, command, args, env)
 write_claude_stub() {
   cat >"${BATS_TEST_TMPDIR}/bin/claude" <<STUB
 #!/usr/bin/env bash
@@ -52,7 +53,8 @@ STUB
 }
 
 # <mode> <flag…> → the real writer in a fresh strict-mode engine shell with the launcher's ERR trap, --dry-run and
-# --approve-profile-writes set as the launcher's ga_parse_args sets them; ROOT = the install root, default this tree
+# --approve-profile-writes set as the launcher's ga_parse_args sets them; ROOT = the install root, default this tree;
+# IS_TERMINAL=true|false stands in for the terminal test, ANSWER is the typed reply on stdin
 run_writer() {
   local mode="$1"
   shift
@@ -70,8 +72,9 @@ run_writer() {
         *) exit 64 ;;
       esac
     done
+    [[ -z "${IS_TERMINAL:-}" ]] || ga_remote_is_terminal() { "${IS_TERMINAL}"; }
     put_queue_mcp_registration "${mode}"
-  ' _ "${ROOT:-${GA}}" "${mode}" "$@"
+  ' _ "${ROOT:-${GA}}" "${mode}" "$@" <<<"${ANSWER:-}"
 }
 
 run_doctor_row() {
@@ -82,6 +85,14 @@ run_doctor_row() {
     ga_init_env "$1"
     _doctor_report_queue_mcp
   ' _ "${ROOT:-${GA}}"
+}
+
+# <text> → its one line naming the queue-mcp command at a terminal
+get_remedy_line() {
+  local line
+  while IFS= read -r line; do
+    [[ "${line}" != *"${GA}/glass-atrium queue-mcp' at a terminal"* ]] || printf '%s\n' "${line}"
+  done <<<"$1"
 }
 
 # → every profile file and the settings file, with their bytes, in one comparable text
@@ -103,7 +114,7 @@ get_snapshot() {
       echo "flags=${flags} ${output} ${stderr}"
       return 1
     }
-    for row in "${HOME}/.claude.json: mcpServers.atrium-queue = {\"command\":\"/bin/bash\",\"args\":[\"${ADAPTER}\"]}" \
+    for row in "${HOME}/.claude.json: mcpServers.atrium-queue = {\"type\":\"stdio\",\"command\":\"/bin/bash\",\"args\":[\"${ADAPTER}\"],\"env\":{}}" \
       "${HOME}/.claude-work/.claude.json: mcpServers.atrium-queue" "${HOME}/.claude-personal/.claude.json: mcpServers.atrium-queue" \
       "${GA_TARGET_HOME}/settings.json: permissions.allow + mcp__atrium-queue__relay"; do
       [[ "${stderr}" == *"${row}"* ]] || {
@@ -178,6 +189,174 @@ get_snapshot() {
   }
 }
 
+# <file> <preview> → the entry JSON the preview shows for that profile file
+get_previewed_entry() {
+  local line
+  line="$(grep -F -- "$1: mcpServers.atrium-queue = " <<<"$2")" || return 1
+  line="${line#*mcpServers.atrium-queue = }"
+  printf '%s\n' "${line%% (*}"
+}
+
+@test "the preview shows each profile entry and the settings backup exactly as an approved write leaves them" {
+  local preview file want got backups
+  run_writer add --dry-run
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  preview="${stderr}"
+  run_writer add --approve-profile-writes
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  for file in "${HOME}/.claude.json" "${HOME}/.claude-work/.claude.json" "${HOME}/.claude-personal/.claude.json"; do
+    want="$(get_previewed_entry "${file}" "${preview}" | jq -cS .)" || want="(no preview line)"
+    got="$(jq -cS '.mcpServers["atrium-queue"]' "${file}")"
+    [[ "${got}" == "${want}" ]] || {
+      echo "${file}: previewed ${want}, written ${got}"
+      echo "${preview}"
+      return 1
+    }
+  done
+  backups=("${GA_TARGET_HOME}"/settings.json.ga-backup.*)
+  [[ "${#backups[@]}" -eq 1 && -f "${backups[0]}" &&
+    "${preview}" == *"${GA_TARGET_HOME}/settings.json: backed up first to ${GA_TARGET_HOME}/settings.json.ga-backup."* ]] || {
+    ls -A "${GA_TARGET_HOME}"
+    echo "${preview}"
+    return 1
+  }
+}
+
+@test "on a terminal an unflagged add shows the writes and asks, default No, and only a typed y makes them" {
+  local before row name answer want
+  local rows=('empty answer||no' 'n|n|no' 'y|y|yes')
+  before="$(get_snapshot)"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name answer want <<<"${row}"
+    IS_TERMINAL=true ANSWER="${answer}" run_writer add
+    [[ "${status}" -eq 0 && "${stderr}" == *"${HOME}/.claude-work/.claude.json: mcpServers.atrium-queue = "* &&
+      "${stderr}" == *"[y/N]"* ]] || {
+      echo "${name}: ${status} ${stderr}"
+      return 1
+    }
+    if [[ "${want}" == no ]]; then
+      [[ "$(get_snapshot)" == "${before}" && ! -s "${BATS_TEST_TMPDIR}/claude.log" ]] || {
+        echo "${name}: wrote"
+        return 1
+      }
+    else
+      [[ "$(jq -r '.mcpServers["atrium-queue"].args[0]' "${HOME}/.claude-work/.claude.json")" == "${ADAPTER}" &&
+      "$(jq '[.permissions.allow[] | select(startswith("mcp__atrium-queue__"))] | length' \
+        "${GA_TARGET_HOME}/settings.json")" == 5 ]] || {
+        echo "${name}: not written"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "on a terminal an unflagged removal warns of the failed server, asks default No, and only a typed y removes" {
+  local before row name answer want
+  local rows=('empty answer||no' 'y|y|yes')
+  before="$(get_snapshot)"
+  run_writer add --approve-profile-writes
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name answer want <<<"${row}"
+    IS_TERMINAL=true ANSWER="${answer}" run_writer remove
+    [[ "${status}" -eq 0 && "${stderr}" == *"failed MCP server"* && "${stderr}" == *"[y/N]"* ]] || {
+      echo "${name}: ${status} ${stderr}"
+      return 1
+    }
+    if [[ "${want}" == no ]]; then
+      [[ "$(jq -r '.mcpServers["atrium-queue"].args[0]' "${HOME}/.claude-work/.claude.json")" == "${ADAPTER}" ]] || {
+        echo "${name}: removed"
+        return 1
+      }
+    else
+      [[ "$(get_snapshot)" == "${before}" ]] || {
+        echo "${name}: not removed"
+        diff <(printf '%s\n' "${before}") <(get_snapshot)
+        return 1
+      }
+    fi
+  done
+}
+
+@test "with no claude CLI on PATH a terminal run says so in one line, asks nothing and writes nothing" {
+  local before
+  before="$(get_snapshot)"
+  PATH="/usr/bin:/bin:/usr/sbin:/sbin" IS_TERMINAL=true ANSWER=y run_writer add
+  [[ "${status}" -eq 0 && "${stderr}" == *"no claude CLI on PATH"* && "${stderr}" != *"[y/N]"* && "${stderr}" != *"ERROR:"* ]] || {
+    echo "${status} ${stderr}"
+    return 1
+  }
+  [[ "$(get_snapshot)" == "${before}" ]]
+}
+
+# <mode> <typed answer> → the menu's queue MCP question, lifted out of the dispatch lib, over the real engine with
+# stub chrome; ${TTY} is a file holding the answer and a key press, and receives what the question writes
+run_tui_gate() {
+  local body="${BATS_TEST_TMPDIR}/gate.sh"
+  awk '/^(tui_queue_mcp_gate|_tui_ask|_run_cooked)\(\) \{/ { f = 1 } f { print } f && /^}/ { f = 0 }' \
+    "${GA}/lib/ga-tui-dispatch.sh" >"${body}"
+  printf '%s\nk\n' "$2" >"${BATS_TEST_TMPDIR}/tty"
+  run --separate-stderr bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    tp() { :; }
+    stty() { :; }
+    reset_plate_geometry() { :; }
+    apply_plate_geometry() { :; }
+    ga_remote_is_terminal() { :; }
+    source "$2"
+    TTY="$3" TTY_SAVED="" RAW_ACTIVE=false
+    tui_queue_mcp_gate "$4"
+  ' _ "${GA}" "${body}" "${BATS_TEST_TMPDIR}/tty" "$1"
+}
+
+@test "the menu asks the queue MCP question in cooked mode after install and uninstall, writes only on y, and asks nothing when nothing is left" {
+  local before row name mode answer want
+  local rows=(
+    'install, default No|add||unregistered'
+    'install, y|add|y|registered'
+    'install again, nothing left|add|y|no question'
+    'uninstall, default No|remove||registered'
+    'uninstall, y|remove|y|unregistered'
+  )
+  before="$(get_snapshot)"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name mode answer want <<<"${row}"
+    run_tui_gate "${mode}" "${answer}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${status} ${output} ${stderr}"
+      return 1
+    }
+    case "${want}" in
+      'no question') ! grep -q '\[y/N\]' "${BATS_TEST_TMPDIR}/tty" || {
+        echo "${name}: asked"
+        return 1
+      } ;;
+      registered) grep -q '\[y/N\]' "${BATS_TEST_TMPDIR}/tty" \
+        && [[ "$(jq -r '.mcpServers["atrium-queue"].args[0]' "${HOME}/.claude-work/.claude.json")" == "${ADAPTER}" ]] || {
+        echo "${name}: not registered"
+        cat "${BATS_TEST_TMPDIR}/tty"
+        return 1
+      } ;;
+      *) grep -q '\[y/N\]' "${BATS_TEST_TMPDIR}/tty" && [[ "$(get_snapshot)" == "${before}" ]] || {
+        echo "${name}: changed or not asked"
+        cat "${BATS_TEST_TMPDIR}/tty"
+        return 1
+      } ;;
+    esac
+  done
+}
+
 @test "the doctor reports each unregistered profile, each missing allow line and the project-server switch, and writes nothing" {
   local before row
   jq '.enableAllProjectMcpServers = true' "${GA_TARGET_HOME}/settings.json" >"${BATS_TEST_TMPDIR}/s" \
@@ -202,7 +381,20 @@ get_snapshot() {
     echo "${stderr}"
     return 1
   }
-  [[ "$(get_snapshot)" == "${before}" ]]
+  [[ "$(get_snapshot)" == "${before}" ]] || return 1
+  # the remedy is the asking writer at a terminal, in the words the dry run (and so the update's summary) prints
+  local doctor_line writer_line
+  doctor_line="$(get_remedy_line "${stderr}")"
+  [[ "${stderr}" != *"--approve-profile-writes"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  run_writer add --dry-run
+  writer_line="$(get_remedy_line "${stderr}")"
+  [[ -n "${writer_line}" && "${doctor_line}" == "  note : ${writer_line}" ]] || {
+    echo "doctor: '${doctor_line}' writer: '${writer_line}'"
+    return 1
+  }
 }
 
 @test "the doctor reads a registered install as registered and the switch off as no finding" {

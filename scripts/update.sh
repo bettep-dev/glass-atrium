@@ -202,21 +202,9 @@ update_ga_root() {
   printf '%s\n' "${GA_ROOT:-${HOME}/.glass-atrium}"
 }
 
-# The autoagent daemon reports dir holding the shared .apply-lock — resolved with
-# the SAME precedence daemon-apply.sh uses, so updater and daemon contend on ONE
-# canonical lock directory.
-update_reports_dir() {
-  printf '%s\n' "${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
-}
-
 # The monitor checkout the dependency, migrate and build steps act on.
 update_get_monitor_dir() {
   printf '%s\n' "${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
-}
-
-# The daemon .apply-lock directory (mkdir-atomic lock, same as daemon-apply.sh).
-update_apply_lock_dir() {
-  printf '%s\n' "$(update_reports_dir)/.apply-lock"
 }
 
 # Resolve the GitHub release repo slug: ATRIUM_RELEASE_REPO env → config.toml
@@ -1432,7 +1420,7 @@ update_cleanup() {
   if [[ "${_update_lock_acquired}" -eq 1 ]]; then
     # Path-guarded rm -rf (via the shared lib) — the lock dir now holds a pid
     # file, so a bare rmdir would fail; the lib releases ONLY a lock we still own.
-    apply_lock_release "$(update_apply_lock_dir)"
+    apply_lock_release "$(apply_lock_get_dir)"
     _update_lock_acquired=0
   fi
   if [[ -n "${_update_workdir}" && -d "${_update_workdir}" ]]; then
@@ -1477,8 +1465,8 @@ update_serialize_begin() {
   local lock_dir
   # Ensure the reports dir exists (same as daemon-apply.sh) so the lock mkdir
   # fails ONLY on genuine contention, not a missing parent.
-  mkdir -p -- "$(update_reports_dir)"
-  lock_dir="$(update_apply_lock_dir)"
+  mkdir -p -- "$(apply_lock_get_reports_dir)"
+  lock_dir="$(apply_lock_get_dir)"
   # Shared stale-reclaim acquire: a crashed daemon (SIGKILL, no EXIT trap) leaves
   # a stranded lock that the lib reclaims once the holder is not-live AND aged
   # past the TTL — so the updater no longer loud-fails forever on a dead lock. A
@@ -2894,21 +2882,45 @@ update_wire_hooks_post_apply() {
   update_log "settings.json hook bindings reconciled to the applied release"
 }
 
-# Post-apply report of the queue MCP registration, never a write: the launcher's queue-mcp step on a dry run prints
-# each profile entry and allow line the applied release still needs, with the command the owner approves them by.
-# Profile writes need the owner's approval, which a headless update cannot carry. A failed report WARNs and never
-# fails the applied update; the doctor reports the same gaps.
+# the update's last line while any profile lacks the queue MCP registration (update_report_queue_mcp_summary)
+_UPDATE_QUEUE_MCP_SUMMARY=""
+
+# Post-apply queue MCP registration — every profile present now, one created after the last registration included.
+# A CLI update at a terminal runs the launcher's queue-mcp writer, which shows each write and asks (default No).
+# Any other update has no one to answer, so the dry run only reports and leaves the summary line. The terminal
+# test comes from the running updater's own lib, as update_reissue_remote_leaf sources it. A failure WARNs
+# and never fails the applied update; the doctor reports the same gaps.
 update_report_queue_mcp_post_apply() {
-  local launcher rc=0
+  local launcher report rc=0 line
   launcher="$(update_ga_root)/glass-atrium"
   if [[ ! -x "${launcher}" ]]; then
     update_log "WARN: launcher missing or not executable (${launcher}) — the queue MCP registration was not checked"
     return 0
   fi
-  "${launcher}" queue-mcp --dry-run || rc=$?
+  if ! declare -F ga_remote_is_terminal >/dev/null; then
+    # shellcheck source=/dev/null
+    source "${_update_script_dir}/../lib/ga-remote.sh"
+  fi
+  # shellcheck disable=SC2310  # pure predicate — the terminal decides who answers
+  if [[ "${_update_headless}" -ne 1 ]] && ga_remote_is_terminal; then
+    "${launcher}" queue-mcp || update_log "WARN: the queue MCP registration failed (rc=$?) — '${launcher} queue-mcp' repeats it"
+    return 0
+  fi
+  report="$("${launcher}" queue-mcp --dry-run 2>&1)" || rc=$?
+  printf '%s\n' "${report}" >&2
   if [[ "${rc}" -ne 0 ]]; then
     update_log "WARN: the queue MCP registration check failed (rc=${rc}) — '${launcher} queue-mcp --dry-run' repeats it"
+  else
+    # the launcher's own remedy line (print_queue_mcp_remedy), the doctor's words too
+    while IFS= read -r line; do
+      [[ "${line}" != "queue MCP: registration incomplete"* ]] || _UPDATE_QUEUE_MCP_SUMMARY="${line}"
+    done <<<"${report}"
   fi
+}
+
+# The summary line the post-apply report left, as the update's last line; never a write
+update_report_queue_mcp_summary() {
+  [[ -z "${_UPDATE_QUEUE_MCP_SUMMARY}" ]] || update_log "${_UPDATE_QUEUE_MCP_SUMMARY}"
 }
 
 # Post-apply `npm ci` / `prisma generate` on an apply-set trigger or a self-heal need
@@ -3138,7 +3150,7 @@ update_migrate_deploy_post_apply() {
 # no-op or failure can return, so the backfill still runs when the hand-off below does not.
 update_rearm_unadjudicated_backfill() {
   local reports
-  reports="$(update_reports_dir)"
+  reports="$(apply_lock_get_reports_dir)"
   if ! { mkdir -p -- "${reports}" && : >"${reports}/.unadjudicated-backfill-pending"; }; then
     update_log "WARN: could not write the unadjudicated-backfill re-arm marker under ${reports} — the update continues; the next update or '$(update_ga_root)/glass-atrium db-setup' re-arms it"
   fi
@@ -3159,7 +3171,7 @@ update_run_unadjudicated_backfill() {
     update_log "WARN: unadjudicated backfill skipped — no entry point at ${mode}; the re-arm marker leaves it to the daemon cycle"
     return 0
   fi
-  reports="$(update_reports_dir)"
+  reports="$(apply_lock_get_reports_dir)"
   update_log "migrate: running the unadjudicated backfill (${reports})"
   python3 "${mode}" --backfill-unadjudicated --reports-dir "${reports}" >&2 || rc=$?
   update_log_backfill_rc "${rc}"
@@ -3625,11 +3637,24 @@ update_build_monitor() {
   (cd -- "${monitor_dir}" && "${npm}" run typecheck && "${npm}" run build)
 }
 
-# Re-render the launchd plists + monitor env for config parity (FIXED script paths,
+# Re-resolve the config.toml binaries, then re-render the launchd plists + monitor env for config parity (FIXED script paths,
 # never request-derived — SECURITY), then (re)render the decoupled one-shot plist.
 # Each render is best-effort + loud (a failure warns, never aborts the applied update).
 update_render_parity() {
-  local render_launchd render_monitor_env
+  local launcher render_launchd render_monitor_env report rc=0 line
+  # [paths] binaries first, so the plists below render from them: the repair keeps a working value and moves a
+  # Homebrew Cellar one to its version-free twin (the fix for an install whose node path breaks on an upgrade);
+  # never the template render, so every other config byte stays. Its lines (a moved key, the backup) reach the log.
+  launcher="$(update_ga_root)/glass-atrium"
+  if [[ -x "${launcher}" ]]; then
+    report="$("${launcher}" repair-config-binaries 2>&1 >/dev/null)" || rc=$?
+    while IFS= read -r line; do
+      [[ -z "${line}" ]] || update_log "${line}"
+    done <<<"${report}"
+    [[ "${rc}" -eq 0 ]] || update_log "WARN: config binary repair failed (rc=${rc}) — config.toml [paths] binaries not re-resolved; run '${launcher} repair-config-binaries'"
+  else
+    update_log "WARN: launcher missing or not executable (${launcher}) — config.toml [paths] binaries not re-resolved"
+  fi
   render_launchd="${ATRIUM_UPDATE_RENDER_LAUNCHD:-${_update_script_dir}/render-launchd-plists.sh}"
   render_monitor_env="${ATRIUM_UPDATE_RENDER_MONITOR_ENV:-${_update_script_dir}/render-monitor-env.sh}"
   # Loud-fail an absent/non-executable render script (Precondition Loud-Fail Principle) — a SILENT
@@ -4910,6 +4935,7 @@ update_run() {
   # changed monitor and re-renders the env and plists, with no restart.
   update_finalize_success 1
   update_log "update complete"
+  update_report_queue_mcp_summary
 }
 
 # Usage checks for the operator reset flags, once every argument is read (flag order is

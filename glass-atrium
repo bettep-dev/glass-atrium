@@ -884,11 +884,18 @@ passthrough() {
     wire-hooks) wire_hooks ;;
     queue-mcp) put_queue_mcp_registration add ;;
     render-config) render_config ;;
+    repair-config-binaries) repair_config_binaries ;;
     render-plists) render_plists ;;
     db-setup) run_db_setup ;;
     agents-only) run_agents_only ;;
     migrate) migrate_layout ;;
     prune) run_prune ;;
+    reload-launchd)
+      # the doctor's launchd remedy; the rc is the reload verdict, so `exit` it (as in the doctor branch)
+      local reload_rc=0
+      reload_launchd_jobs || reload_rc=$?
+      exit "${reload_rc}"
+      ;;
     retire-launchd-jobs)
       # the autoagent-cycle retirement stage's entry: the routine's rc is the stage verdict, so `exit` it
       # (a non-zero `return` would trip the echo-only ERR trap, as in the doctor branch)
@@ -942,6 +949,9 @@ glass-atrium — the sole entry point for the Glass Atrium harness.
   glass-atrium -h | --help     show this help
   glass-atrium remote <sub>    monitor access from registered devices on a trusted Wi-Fi:
                                on · off · list · revoke <id> · revoke-all · trust · reissue
+  glass-atrium reload-launchd  re-render the launchd jobs and reload them (refused while an update runs)
+  glass-atrium repair-config-binaries
+                               re-resolve config.toml's node_bin / claude_bin; nothing else in it changes
 
 The menu is the whole interface (arrow keys / j,k to move · Enter to select · q to quit):
   Install      deps preflight + install + monitor build + health gate

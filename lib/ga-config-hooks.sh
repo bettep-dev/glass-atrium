@@ -65,17 +65,8 @@ render_config() {
     [[ -z "${unexpanded}" ]] && unexpanded=0
     if [[ "${unexpanded}" -eq 0 ]]; then
       log "render_config: ${CONFIG_TOML} already fully expanded — skip \${HOME} expansion (use --re-render to force)"
-      # E1: binary-path resolution MUST run on this early-return too, else a re-render leaves node_bin/claude_bin at the template default; this path bypasses the DRY_RUN check below, so DRY_RUN is guarded explicitly here.
-      if "${DRY_RUN}"; then
-        log "dry-run: would resolve absolute node_bin/claude_bin in ${CONFIG_TOML}"
-      else
-        # pre-write backup: this early-return skipped the full-render backup, so resolve_config_binaries would rewrite a possibly hand-tuned config with NO safety copy — mirror the full-render backup before resolving.
-        local backup
-        backup="${CONFIG_TOML}.ga-backup.$(date +%Y%m%d-%H%M%S)"
-        cp -p -- "${CONFIG_TOML}" "${backup}"
-        log "render_config: backed up existing config -> ${backup}"
-        resolve_config_binaries
-      fi
+      # E1: binary-path resolution MUST run on this early-return too, else a re-render leaves node_bin/claude_bin at the template default
+      repair_config_binaries
       return 0
     fi
     log "render_config: ${CONFIG_TOML} has ${unexpanded} unexpanded \${HOME} line(s) — re-rendering"
@@ -131,39 +122,49 @@ render_config() {
   resolve_config_binaries
 }
 
-# E1 binary-path resolver helpers (Stepdown: callees of render_config).
-# ga_resolve_bin — echo a binary's directory-canonicalized absolute path, macOS-portable (NO GNU realpath / readlink -f): canonicalizes the CONTAINING dir via `cd … && pwd -P` while PRESERVING the basename — deliberately NOT dereferencing a final bin/<tool> symlink, because Homebrew's stable /opt/homebrew/bin/<tool> symlink survives a minor upgrade whereas the Cellar target does not. Returns 1 (caller falls back to the literal input) when the dir is absent.
-ga_resolve_bin() {
-  local p="$1" dir base
-  [[ -n "${p}" ]] || return 1
-  dir="$(cd -- "$(dirname -- "${p}")" >/dev/null 2>&1 && pwd -P)" || return 1
-  base="$(basename -- "${p}")"
-  printf '%s/%s' "${dir}" "${base}"
+# repair_config_binaries — the [paths] binary repair of an existing config and nothing else: the `repair-config-binaries`
+# entry (the update's and the doctor's) and render_config's expanded-config branch; it never reaches the template render.
+# Honours DRY_RUN, which resolve_config_binaries does not read.
+repair_config_binaries() {
+  if "${DRY_RUN}"; then
+    log "dry-run: would resolve absolute node_bin/claude_bin in ${CONFIG_TOML}"
+    return 0
+  fi
+  resolve_config_binaries existing
 }
 
-# resolve_config_binaries — rewrite [paths].node_bin/claude_bin in CONFIG_TOML with the REAL host binaries (node_bin: `command -v node` absolute; claude_bin: `command -v claude` else the native-installer ${HOME}/.local/bin/claude absolute).
-# Idempotent + atomic (temp + mv, RENDER_TMP-tracked for the trap sweep); a missing claude_bin line (older configs) is INSERTED after node_bin, a present one replaced.
-# node absent on PATH leaves node_bin untouched (loud log, never a blank value); never replaces a non-empty config with an empty file.
+# E1 binary-path resolver helpers (Stepdown: callees of render_config).
+# ga_resolve_bin — echo a binary's absolute path in its upgrade-surviving form, macOS-portable (no GNU realpath / readlink -f); the basename is never dereferenced.
+# The containing dir is canonicalized physically (an fnm per-shell symlink dir dies with its shell, its target does not) — unless that lands in a Homebrew Cellar: then the given version-free dir is kept and a Cellar path moves to its opt twin (atrium_get_stable_bin). Returns 1 when the dir is absent.
+ga_resolve_bin() {
+  local p="$1" dir
+  [[ -n "${p}" ]] || return 1
+  dir="$(cd -P -- "$(dirname -- "${p}")" >/dev/null 2>&1 && pwd -P)" || return 1
+  if [[ "${dir}/" == */Cellar/* ]]; then
+    dir="$(cd -L -- "$(dirname -- "${p}")" >/dev/null 2>&1 && pwd -L)" || return 1
+  fi
+  atrium_get_stable_bin "${dir}/$(basename -- "${p}")"
+}
+
+# resolve_config_binaries [existing] — rewrite [paths].node_bin/claude_bin in CONFIG_TOML (get_config_bin picks each value; `existing` = an already-rendered config, whose working values are kept).
+# Idempotent + atomic (temp + mv, RENDER_TMP-tracked for the trap sweep); an unchanged result writes nothing, a change to an existing config is backed up first; a missing claude_bin line (older configs) is INSERTED after node_bin, a present one replaced.
+# No value for node_bin leaves its line untouched (loud log, never a blank value); never replaces a non-empty config with an empty file.
 resolve_config_binaries() {
+  local mode="${1:-template}"
   [[ -f "${CONFIG_TOML}" ]] || return 0
 
-  local node_src claude_src node_bin claude_bin
+  local node_src claude_src node_bin claude_bin node_was claude_was
+  node_was="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' node_bin)"
+  claude_was="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' claude_bin)"
   node_src="$(command -v node 2>/dev/null || true)"
   claude_src="$(command -v claude 2>/dev/null || true)"
   # native-installer location when claude is not yet on PATH (~/.local/bin/claude).
   [[ -n "${claude_src}" ]] || claude_src="${HOME}/.local/bin/claude"
-
-  node_bin=""
-  if [[ -n "${node_src}" ]]; then
-    # `|| printf` fallback degrades an unresolvable path to the PATH-absolute source instead of aborting; the cmd-sub + `||` intentionally masks set -e (same stdout-verdict idiom as the is_* helpers).
-    # shellcheck disable=SC2310,SC2311,SC2312
-    node_bin="$(ga_resolve_bin "${node_src}" 2>/dev/null || printf '%s' "${node_src}")"
-  else
-    log "resolve_config_binaries: node not on PATH — leaving existing node_bin untouched"
-  fi
-  # same `|| printf` fallback + set -e masking idiom as above.
-  # shellcheck disable=SC2310,SC2311,SC2312
-  claude_bin="$(ga_resolve_bin "${claude_src}" 2>/dev/null || printf '%s' "${claude_src}")"
+  # shellcheck disable=SC2311  # get_config_bin degrades every failure to a fallback value on stdout
+  node_bin="$(get_config_bin node_bin "${node_src}" "${mode}")"
+  [[ -n "${node_bin}" ]] || log "resolve_config_binaries: node not on PATH — leaving existing node_bin untouched"
+  # shellcheck disable=SC2311  # as above
+  claude_bin="$(get_config_bin claude_bin "${claude_src}" "${mode}")"
 
   # claude_bin line already present? older configs lack it → insert vs replace.
   # grep -c zero-match trap: `|| true` keeps set -e quiet, empty-guard normalizes to 0.
@@ -200,10 +201,66 @@ resolve_config_binaries() {
     RENDER_TMP=""
     die "resolve_config_binaries: rewrite produced an empty ${CONFIG_TOML} — aborting"
   fi
+  if cmp -s -- "${RENDER_TMP}" "${CONFIG_TOML}"; then
+    delete_temp_file "${RENDER_TMP}"
+    RENDER_TMP=""
+    log "resolve_config_binaries: node_bin/claude_bin already current"
+    return 0
+  fi
+  # an existing config may be hand-tuned → safety copy before the rewrite (a fresh render already took one)
+  if [[ "${mode}" == "existing" ]]; then
+    local backup
+    backup="${CONFIG_TOML}.ga-backup.$(date +%Y%m%d-%H%M%S)"
+    cp -p -- "${CONFIG_TOML}" "${backup}"
+    log "render_config: backed up existing config -> ${backup}"
+  fi
 
   mv -f -- "${RENDER_TMP}" "${CONFIG_TOML}"
   RENDER_TMP=""
-  log "resolve_config_binaries: node_bin=${node_bin:-<unchanged>} claude_bin=${claude_bin}"
+  # one line per key that moved, read back from the written file, old value to new — the update log carries these
+  node_bin="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' node_bin)"
+  claude_bin="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' claude_bin)"
+  [[ "${node_bin}" == "${node_was}" ]] || log "resolve_config_binaries: node_bin ${node_was:-<absent>} -> ${node_bin}"
+  [[ "${claude_bin}" == "${claude_was}" ]] || log "resolve_config_binaries: claude_bin ${claude_was:-<absent>} -> ${claude_bin}"
+}
+
+# get_config_bin <key> <path source> <mode> — the value resolve_config_binaries writes for one [paths] key:
+# on an `existing` config an executable current value in its stable form (never swapped for a different
+# PATH binary); otherwise the PATH source through ga_resolve_bin; empty = no source, leave the line as is.
+# Intended: "executable" is the doctor's own test (launchd_node_bin_probe) — a regular file with the x bit, the only
+# value the launchd jobs can run — so a directory, a non-executable file or a missing path is replaced from PATH.
+# --re-render is the owner's explicit reset to the template (backup taken): it calls this in template mode, so no
+# current value is kept and a node absent from PATH leaves the template's line.
+get_config_bin() {
+  local key="$1" src="$2" mode="$3" current=""
+  if [[ "${mode}" == "existing" ]]; then
+    current="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' "${key}")"
+    if [[ -f "${current}" && -x "${current}" ]]; then
+      atrium_get_stable_bin "${current}"
+      return 0
+    fi
+  fi
+  [[ -n "${src}" ]] || return 0
+  # an unresolvable dir degrades to the PATH-absolute source instead of aborting
+  # shellcheck disable=SC2310,SC2311
+  ga_resolve_bin "${src}" 2>/dev/null || printf '%s\n' "${src}"
+}
+
+# monitor/.env ← config.toml (timezone, schedules, remote access) on every install; after the DB bootstrap
+# that creates the file, before the monitor build. The renderer accepts only an existing docs root, and the
+# monitor creates that dir on first write → created here so a fresh install renders.
+render_monitor_env() {
+  local docs_root
+  if "${DRY_RUN}"; then
+    log "dry-run: would render ${GA_ROOT}/monitor/.env from ${CONFIG_TOML}"
+    return 0
+  fi
+  docs_root="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' 'monitor_docs_html_root')"
+  if [[ "${docs_root}" == /* ]]; then mkdir -p -- "${docs_root}"; fi
+  # shellcheck disable=SC2310  # verdict branched on — a failed render aborts the install by name
+  (export GA_ROOT ATRIUM_CONFIG_TOML="${CONFIG_TOML}" && ga_remote_render_env) \
+    || die "monitor env render failed (scripts/render-monitor-env.sh) — fix config.toml, then re-run install"
+  log "monitor/.env rendered from ${CONFIG_TOML}"
 }
 
 # wire repoint primitive: migrate old-dir hook commands to the new dir.
@@ -882,8 +939,8 @@ purge_config() {
 
 # The one writer of the owner queue's MCP registration: each profile's user-scope entry, by the host's own
 # `claude mcp add|remove --scope user`, and the tools' allow lines in the shared settings.json. Prints every write,
-# file by file, before any; writes only on --approve-profile-writes outside a dry run. $1 = add | remove — a removal
-# touches only an entry that runs this install's adapter, and only the tools' own allow lines.
+# file by file, before any; outside a dry run writes on --approve-profile-writes, or on a typed yes at a terminal.
+# $1 = add | remove — a removal touches only an entry that runs this install's adapter, and only the tools' own lines.
 put_queue_mcp_registration() {
   local mode="$1" identity name entries lines
   # shellcheck disable=SC2311  # a failed read is the warning branch
@@ -901,16 +958,50 @@ put_queue_mcp_registration() {
   fi
   log "queue MCP registration (${mode}): the owner approves these writes before any is made"
   print_queue_mcp_writes "${name}" "${entries}" "${lines}" "${mode}"
-  if "${DRY_RUN}" || ! "${APPROVE_PROFILE_WRITES}"; then
-    if [[ "${mode}" == add ]]; then
-      log "queue MCP registration: nothing written — once approved, '${GA_ROOT}/glass-atrium queue-mcp --approve-profile-writes' writes exactly these"
-    else
-      log "queue MCP registration: nothing written — once approved, rerun the uninstall with --approve-profile-writes to remove exactly these"
-    fi
-    return 0
-  fi
+  # shellcheck disable=SC2310  # the question's verdict is the branch
+  is_queue_mcp_write_confirmed "${mode}" "${entries}" || return 0
   put_queue_mcp_entries "${name}" "${entries}"
   put_queue_mcp_allow_lines "${mode}" "${lines}"
+}
+
+# <mode> <entry writes> → 0 outside a dry run on --approve-profile-writes or a typed y at a terminal (default No);
+# every other answer prints the one line saying why nothing is written
+is_queue_mcp_write_confirmed() {
+  "${DRY_RUN}" || ! "${APPROVE_PROFILE_WRITES}" || return 0
+  if ! "${DRY_RUN}" && [[ -n "$2" ]] && ! command -v claude >/dev/null 2>&1; then
+    log "queue MCP registration: no claude CLI on PATH — skipped, nothing written (the host's own command writes each profile's entry)"
+    return 1
+  fi
+  # shellcheck disable=SC2310  # the typed answer is the branch
+  if ! "${DRY_RUN}" && ga_remote_is_terminal && is_queue_mcp_answer_yes "$1"; then return 0; fi
+  if [[ "$1" == add ]]; then
+    log "queue MCP registration: nothing written — '${GA_ROOT}/glass-atrium queue-mcp --approve-profile-writes' writes exactly these unasked"
+    print_queue_mcp_remedy
+  else
+    log "queue MCP registration: nothing written — rerun the uninstall at a terminal, or with --approve-profile-writes, to remove exactly these"
+  fi
+  return 1
+}
+
+# [line prefix] → the one wording of the remedy for a missing registration: the doctor's note, and the line the
+# unapproved add prints, which the update replays as its summary (update_report_queue_mcp_post_apply)
+print_queue_mcp_remedy() {
+  log "${1:-}queue MCP: registration incomplete — '${GA_ROOT}/glass-atrium queue-mcp' at a terminal shows each write and asks before any"
+}
+
+# <mode> → 0 on a typed y or Y; an empty answer is the default No
+is_queue_mcp_answer_yes() {
+  [[ "$1" == add ]] || printf 'Sessions report a failed MCP server if the Glass Atrium tree is removed while these entries stay.\n' >&2
+  ga_remote_is_answer_yes 'Make the queue MCP writes listed above? [y/N]: '
+}
+
+# <mode> → 0 when the mode still has a profile entry or allow line to write; any failed read answers no
+is_queue_mcp_pending() {
+  local identity entries lines
+  identity="$(get_queue_mcp_identity)" || return 1
+  entries="$(get_queue_mcp_entry_writes "$1" "${identity%%$'\n'*}" 2>/dev/null)" || return 1
+  lines="$(get_queue_mcp_allow_writes "$1" "${identity}" 2>/dev/null)" || return 1
+  [[ -n "${entries}${lines}" ]]
 }
 
 # <mode> <server name> → "<add|replace|remove>\x1f<profile file>\x1f<config dir>" per profile the mode changes;
@@ -968,8 +1059,10 @@ get_queue_mcp_entry_state() {
     printf 'missing\n'
     return 0
   fi
-  jq -r --arg n "$2" --arg a "${QUEUE_MCP_ADAPTER}" '(.mcpServers // {})[$n] // null
-    | if . == null then "missing" elif .command == "/bin/bash" and .args == [$a] then "ok" else "elsewhere" end' \
+  local entry
+  entry="$(get_queue_mcp_entry)"
+  jq -r --arg n "$2" --argjson e "${entry}" '(.mcpServers // {})[$n] // null
+    | if . == null then "missing" elif .command == $e.command and .args == $e.args then "ok" else "elsewhere" end' \
     -- "$1" 2>/dev/null || printf 'unreadable\n' # GA-ABSORB[handled@the unreadable verdict]: a file jq cannot read is that verdict
 }
 
@@ -984,15 +1077,22 @@ get_queue_mcp_allow_writes() {
     | (if $mode == "add" then $missing else $want - $missing end)[]' <<<"${settings}"
 }
 
-# <server name> <entry writes> <allow writes> <mode> → one log line per write, naming its file
+# The entry `claude mcp add --scope user <name> -- <command> <args…>` leaves in a profile file: command and args are
+# this install's; type and env are the keys the host's command adds to every stdio server it writes
+get_queue_mcp_entry() {
+  jq -nc --arg a "${QUEUE_MCP_ADAPTER}" '{type: "stdio", command: "/bin/bash", args: [$a], env: {}}'
+}
+
+# <server name> <entry writes> <allow writes> <mode> → one log line per write, naming its file, then the backup
 print_queue_mcp_writes() {
-  local entry action file dir
-  entry="$(jq -nc --arg a "${QUEUE_MCP_ADAPTER}" '{command: "/bin/bash", args: [$a]}')"
+  local entry argv action file dir
+  entry="$(get_queue_mcp_entry)"
+  argv="$(jq -r '[.command] + .args | join(" ")' <<<"${entry}")"
   while IFS=$'\x1f' read -r action file dir; do
     [[ -n "${action}" ]] || continue
     case "${action}" in
       remove) log "  ${file}: mcpServers.$1 removed — by: ${dir:+CLAUDE_CONFIG_DIR=${dir} }claude mcp remove --scope user $1" ;;
-      *) log "  ${file}: mcpServers.$1 = ${entry} (${action}) — by: ${dir:+CLAUDE_CONFIG_DIR=${dir} }claude mcp add --scope user $1 -- /bin/bash ${QUEUE_MCP_ADAPTER}" ;;
+      *) log "  ${file}: mcpServers.$1 = ${entry} (${action}; type and env are the host's own keys) — by: ${dir:+CLAUDE_CONFIG_DIR=${dir} }claude mcp add --scope user $1 -- ${argv}" ;;
     esac
   done <<<"$2"
   local sign=+ line
@@ -1000,19 +1100,23 @@ print_queue_mcp_writes() {
   while IFS= read -r line; do
     [[ -z "${line}" ]] || log "  ${SETTINGS_JSON}: permissions.allow ${sign} ${line}"
   done <<<"$3"
+  [[ -z "$3" ]] || log "  ${SETTINGS_JSON}: backed up first to ${SETTINGS_JSON}.ga-backup.<YYYYmmdd-HHMMSS of the write>"
 }
 
 # <server name> <entry writes> → each through the host's command, run with that profile's config dir — the default
 # profile's with none and HOME at the target home's parent, so a sandboxed target never reaches the real home
 put_queue_mcp_entries() {
-  local claude action file dir
+  local claude entry words arg action file dir argv=()
   [[ -n "$2" ]] || return 0 # GA-ABSORB[benign]: no entry to write
   claude="$(command -v claude)" || die "queue MCP: no claude CLI on PATH — the host's own command writes each profile's entry"
+  entry="$(get_queue_mcp_entry)"
+  words="$(jq -r '.command, .args[]' <<<"${entry}")"
+  while IFS= read -r arg; do argv+=("${arg}"); done <<<"${words}"
   while IFS=$'\x1f' read -r action file dir; do
     [[ -n "${action}" ]] || continue
     if [[ "${action}" != add ]]; then run_claude_mcp "${claude}" "${dir}" remove --scope user "$1"; fi
     if [[ "${action}" != remove ]]; then
-      run_claude_mcp "${claude}" "${dir}" add --scope user "$1" -- /bin/bash "${QUEUE_MCP_ADAPTER}"
+      run_claude_mcp "${claude}" "${dir}" add --scope user "$1" -- "${argv[@]}"
     fi
     log "  written: ${file} (${action} $1)"
   done <<<"$2"

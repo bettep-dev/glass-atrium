@@ -392,10 +392,69 @@ remote_env_line() {
   done
 }
 
-@test "the rendered .env is owner-only" {
+# stub_env_mode_probe — a grep shadow logging the .env mode at each key lookup, the read right before each key's write.
+stub_env_mode_probe() {
+  local real_grep
+  real_grep="$(command -v grep)"
+  cat >"${STUB_BIN}/grep" <<STUB
+#!/usr/bin/env bash
+if [[ "\${!#}" == "${SANDBOX}/monitor/.env" ]]; then
+  perl -e 'printf "%o\n", (stat \$ARGV[0])[2] & 07777' -- "\${!#}" >>"${SANDBOX}/env-modes.log"
+fi
+exec "${real_grep}" "\$@"
+STUB
+  chmod +x "${STUB_BIN}/grep"
+}
+
+@test "every key lands in a pre-existing 644 .env only while it is owner-only" {
   printf 'DATABASE_URL=postgresql:///x?host=/tmp\n' >"${SANDBOX}/monitor/.env"
   chmod 644 "${SANDBOX}/monitor/.env"
+  stub_env_mode_probe
   run_render
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ -s "${SANDBOX}/env-modes.log" ]] || { echo "no key write observed"; return 1; }
+  [[ "$(sort -u "${SANDBOX}/env-modes.log")" == "600" ]] || { cat "${SANDBOX}/env-modes.log"; return 1; }
   [[ "$(perl -e 'printf "%o", (stat $ARGV[0])[2] & 07777' -- "${SANDBOX}/monitor/.env")" == "600" ]]
+}
+
+# ---------------------------------------------------------------------------
+# install's env step — the engine renders the env of the root it installs
+# ---------------------------------------------------------------------------
+
+# run_install_env_step <dry_run> — the engine's env step against the sandbox root and its config.
+run_install_env_step() {
+  run env -u ATRIUM_CONFIG_TOML GA_LIB_DIR="${GA}/scripts/lib" GA_CONFIG_TOML="${SANDBOX}/config.toml" \
+    GA_TARGET_HOME="${SANDBOX}/claude" GA_DATA_ROOT="${SANDBOX}/data" GA_PG_SOCKET="${SANDBOX}" \
+    PATH="${STUB_BIN}:${PATH}" bash -c '
+      set -Eeuo pipefail
+      trap - ERR
+      source "$1/lib/ga-core.sh"
+      ga_init_env "$2"
+      trap - ERR
+      DRY_RUN="$3"
+      render_monitor_env
+    ' _ "${GA}" "${SANDBOX}" "$1"
+}
+
+@test "the install's env step renders monitor/.env from the install's config, creating the docs root it names" {
+  local docs="${SANDBOX}/monitor/data/documents"
+  if ga_guard_path "${docs}"; then rm -rf -- "${docs:?}"; fi
+  run_install_env_step false
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  grep -q "^CLAUDED_DOCS_HTML_ROOT=${docs}$" "${SANDBOX}/monitor/.env" \
+    && grep -q "^ATRIUM_TIMEZONE=${HOST_TZ}$" "${SANDBOX}/monitor/.env"
+}
+
+@test "a dry-run install's env step writes nothing" {
+  local docs="${SANDBOX}/monitor/data/documents"
+  if ga_guard_path "${docs}"; then rm -rf -- "${docs:?}"; fi
+  run_install_env_step true
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ ! -e "${SANDBOX}/monitor/.env" && ! -e "${docs}" ]]
 }

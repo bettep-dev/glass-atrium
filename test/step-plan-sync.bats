@@ -21,12 +21,14 @@
 #               → health gate → launchd load)
 #   uninstall = run_uninstall's UNCONDITIONAL engine calls
 #
-# Two DELIBERATE divergences are normalized so the guard does not false-alarm:
+# Three DELIBERATE divergences are normalized so the guard does not false-alarm:
 #   1. install's load step is menu_load_launchd_jobs (a TUI wrapper that flips
 #      LOAD_LAUNCHD=true) where the engine tail calls load_launchd_jobs — intended.
 #   2. uninstall's purge_config is intentionally EXCLUDED from the base plan (it is
 #      a separate typed-confirm step in dispatch_action). It lives inside the
 #      `if "${PURGE_CONFIG}"` block, so the top-level extractor drops it naturally.
+#   3. the engine's put_queue_mcp_registration add|remove is no plan step: a plan step
+#      reads no terminal, so the menu asks it after the plan (tui_queue_mcp_gate).
 # Plus two TUI wrapper renames for engine-INLINE boundaries (behavior-identical
 # mirrors, not semantic divergences): run_doctor "preflight" → run_doctor_preflight
 # and the inline `npm run build` phase → build_monitor.
@@ -91,13 +93,14 @@ engine_calls() {
   '
 }
 
-# Map an engine token to its TUI STEP_FN spelling. Strips arg quotes, then applies
-# the two documented wrapper renames / divergences (see file header).
+# Map an engine token to its TUI STEP_FN spelling (nothing for a token the plan drops). Strips arg quotes,
+# then applies the documented wrapper renames / divergences (see file header).
 normalize_token() {
   local tok="${1//\"/}"
   case "${tok}" in
     "run_doctor preflight") tok="run_doctor_preflight" ;;
     "load_launchd_jobs") tok="menu_load_launchd_jobs" ;;
+    "put_queue_mcp_registration add" | "put_queue_mcp_registration remove") return 0 ;;
   esac
   printf '%s\n' "${tok}"
 }
@@ -168,6 +171,46 @@ tui_counts() { tui_plan_dump "$1" | sed -n 's/^CNT|//p'; }
 @test "install: capture_install_baseline is BOTH a run_install step and a TUI step (regression)" {
   derive_engine_order install | grep -qxF "capture_install_baseline"
   tui_step_fn install | grep -qxF "capture_install_baseline"
+}
+
+@test "install: the monitor env renders after the database bootstrap and before the monitor build" {
+  local order
+  order="$(tui_step_fn install | grep -xE 'setup_database|render_monitor_env|build_monitor' | tr '\n' ' ')"
+  [ "${order}" = "setup_database render_monitor_env build_monitor " ]
+}
+
+@test "install: the remote access question precedes the env render of the same run" {
+  run bash -c '
+    set -Eeuo pipefail
+    trap - ERR
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    trap - ERR
+    DRY_RUN=false
+    record() { printf "%s\n" "${FUNCNAME[1]}"; }
+    run_doctor() { record; }
+    retire_launchd_jobs_or_warn() { record; }
+    render_config() { record; }
+    ga_remote_install_opt_in() { record; }
+    render_plists() { record; }
+    run_symlink_farm() { record; }
+    wire_hooks() { record; }
+    put_queue_mcp_registration() { record; }
+    migrate_layout() { record; }
+    setup_database() { record; }
+    render_monitor_env() { record; }
+    repoint_launchd() { record; }
+    doctor_postcheck() { record; }
+    capture_install_baseline() { record; }
+    run_install
+  ' _ "${GA}"
+  [ "${status}" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+  local order
+  order="$(grep -xE 'ga_remote_install_opt_in|render_monitor_env' <<<"${output}" | tr '\n' ' ')"
+  [ "${order}" = "ga_remote_install_opt_in render_monitor_env " ]
 }
 
 # === uninstall ==============================================================

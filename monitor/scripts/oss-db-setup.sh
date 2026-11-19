@@ -320,10 +320,11 @@ else
   # DATABASE_URL/SHADOW: name the user + substitute the DB names to match step 1's
   # created targets (missing user → migrate deploy P1010); the ${HOME} literal is expanded
   # once here (dotenv does not expand it) — the same sed convention as the engine's render_config.
-  sed -e "s|^DATABASE_URL=postgresql:///[^?]*?|DATABASE_URL=postgresql://${DB_USER}@localhost/${DB_NAME}?|" \
+  # the file holds the database URLs → created owner-only; the subshell keeps the caller's mask for later steps
+  (umask 077 && sed -e "s|^DATABASE_URL=postgresql:///[^?]*?|DATABASE_URL=postgresql://${DB_USER}@localhost/${DB_NAME}?|" \
     -e "s|^SHADOW_DATABASE_URL=postgresql:///[^?]*?|SHADOW_DATABASE_URL=postgresql://${DB_USER}@localhost/${SHADOW_DB_NAME}?|" \
     -e "s|\${HOME}|${HOME}|g" \
-    .env.example >.env
+    .env.example >.env)
   log ".env.example → .env render complete (DB=${DB_NAME}, user=${DB_USER}) · review/edit the DATABASE_URL value before proceeding"
 fi
 

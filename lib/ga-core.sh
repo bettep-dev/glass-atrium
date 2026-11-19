@@ -195,7 +195,7 @@ run_install() {
   # dry-run (mutation-free staging).
   wire_hooks
 
-  # the owner queue's MCP server in every profile — printed always, written only on --approve-profile-writes
+  # the owner queue's MCP server in every profile — printed always, written on --approve-profile-writes or a y typed at a terminal
   put_queue_mcp_registration add
 
   # legacy-farm migration AFTER wire_hooks — repoint-first-THEN-sweep: the
@@ -208,6 +208,9 @@ run_install() {
   # needs the schema in place at first start. Skipped in dry-run; fast-path
   # no-op when the DB already exists (see setup_database).
   setup_database
+
+  # after the remote access answer above, so a yes reaches the env the monitor starts with
+  render_monitor_env
 
   # launchd repoint is the only step gated by --repoint-launchd + never dry-run
   repoint_launchd

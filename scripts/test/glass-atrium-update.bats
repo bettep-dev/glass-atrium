@@ -153,15 +153,13 @@ load_skill() {
 
 # resolution helpers
 
-@test "resolution helpers anchor on GA_ROOT and the daemon reports dir" {
+@test "resolution helpers anchor on GA_ROOT" {
   run bash -c '
     source "'"${SKILL}"'"
     GA_ROOT="/x" update_ga_root
-    AUTOAGENT_REPORTS_DIR="/r" update_apply_lock_dir
   '
   [ "$status" -eq 0 ]
   [[ "${lines[0]}" == "/x" ]]
-  [[ "${lines[1]}" == "/r/.apply-lock" ]]
 }
 
 @test "release slug prefers ATRIUM_RELEASE_REPO over config" {
@@ -252,7 +250,7 @@ load_skill() {
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     load_skill
     update_serialize_begin
-    lock="$(update_apply_lock_dir)"
+    lock="$(apply_lock_get_dir)"
     [[ -d "${lock}" ]] && echo "LOCK_HELD"
     update_cleanup
     [[ ! -d "${lock}" ]] && echo "LOCK_RELEASED"
@@ -506,6 +504,7 @@ STUB
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     export GA_TARGET_HOME="'"${WORK}"'/target"
     load_skill
+    _update_script_dir="'"${GA}"'/scripts"
     update_report_queue_mcp_post_apply
   '
   [[ "${status}" -eq 0 ]] || {
@@ -521,6 +520,99 @@ STUB
   local settings
   settings="$(jq -c . "${WORK}/target/settings.json")"
   [[ ! -e "${WORK}/.claude.json" && "${settings}" == '{"hooks":{}}' ]]
+}
+
+@test "post-apply: the update's last line names the queue-mcp command while any profile, a new one included, lacks the registration" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  mkdir -p "${INSTALL}/scripts" "${WORK}/target"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/hooks" "${INSTALL}/hooks"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  ln -s "${GA}/scripts/atrium-queue-mcp.sh" "${INSTALL}/scripts/atrium-queue-mcp.sh"
+  # registered in the one existing profile, its five allow lines present
+  jq -n --arg a "${INSTALL}/scripts/atrium-queue-mcp.sh" \
+    '{mcpServers: {"atrium-queue": {type: "stdio", command: "/bin/bash", args: [$a], env: {}}}}' >"${WORK}/.claude.json"
+  jq -n '{hooks: {}, permissions: {allow: ["post", "claim", "record", "sessions", "relay"] | map("mcp__atrium-queue__" + .)}}' \
+    >"${WORK}/target/settings.json"
+  local row name new_profile want last
+  local rows=('every profile registered||none' 'a profile created after the registration|.claude-work|line')
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name new_profile want <<<"${row}"
+    if [[ -n "${new_profile}" ]]; then
+      mkdir -p "${WORK}/${new_profile}"
+      printf '{}\n' >"${WORK}/${new_profile}/.claude.json"
+    fi
+    run --separate-stderr bash -c '
+      '"$(declare -f load_skill)"'
+      INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+      export GA_TARGET_HOME="'"${WORK}"'/target"
+      load_skill
+      _update_script_dir="'"${GA}"'/scripts"
+      update_report_queue_mcp_post_apply
+      update_log "update complete"
+      update_report_queue_mcp_summary
+    '
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output} ${stderr}"
+      return 1
+    }
+    last="${stderr##*$'\n'}"
+    if [[ "${want}" == none ]]; then
+      [[ "${last}" == *"update complete" ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    else
+      [[ "${last}" == *"'${INSTALL}/glass-atrium queue-mcp'"* && -z "$(jq -c '.mcpServers // empty' "${WORK}/${new_profile}/.claude.json")" ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "post-apply: a CLI update at a terminal runs the asking queue MCP writer and names no command; any other update only reports" {
+  local log="${WORK}/launcher.log"
+  cat >"${INSTALL}/glass-atrium" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${log}"
+# the dry run's remedy line, as the real launcher prints it while a write is pending
+[[ "\$*" != *--dry-run* ]] || printf '%s\n' "queue MCP: registration incomplete — '${INSTALL}/glass-atrium queue-mcp' at a terminal shows each write and asks before any" >&2
+STUB
+  chmod +x "${INSTALL}/glass-atrium"
+  local row name terminal headless want
+  local rows=('CLI at a terminal|true|0|queue-mcp' 'headless at a terminal|true|1|queue-mcp --dry-run'
+    'CLI without a terminal|false|0|queue-mcp --dry-run')
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name terminal headless want <<<"${row}"
+    : >"${log}"
+    run --separate-stderr bash -c '
+      '"$(declare -f load_skill)"'
+      INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+      load_skill
+      ga_remote_is_terminal() { '"${terminal}"'; }
+      _update_headless='"${headless}"'
+      update_report_queue_mcp_post_apply
+      update_report_queue_mcp_summary
+    '
+    [[ "${status}" -eq 0 && "$(<"${log}")" == "${want}" ]] || {
+      echo "${name}: status ${status}, launcher ran '$(<"${log}")': ${stderr}"
+      return 1
+    }
+    if [[ "${want}" == queue-mcp ]]; then
+      [[ "${stderr}" != *"shows each write and asks"* ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    else
+      [[ "${stderr##*$'\n'}" == *"'${INSTALL}/glass-atrium queue-mcp' at a terminal"* ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    fi
+  done
 }
 
 # roster-migration gate (T20 / gate G8)
@@ -2101,19 +2193,84 @@ read_calls() {
   done
 }
 
-@test "CLI apply re-renders the monitor env and the launchd plists without restarting anything" {
+@test "CLI apply re-resolves the config binaries, then re-renders the launchd plists and the monitor env, without restarting anything" {
   local render
   for render in env launchd; do
     printf '#!/usr/bin/env bash\nprintf "render-%s\\n" >>"%s"\n' "${render}" "${WORK}/renders.log" >"${WORK}/render-${render}.sh"
     chmod +x "${WORK}/render-${render}.sh"
   done
+  # the applied install's launcher; only its repair-config-binaries call belongs to this ordering
+  printf '#!/usr/bin/env bash\n[[ "$1" != repair-config-binaries ]] || printf "repair-config-binaries\\n" >>"%s"\n' "${WORK}/renders.log" >"${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
   export ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/render-env.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/render-launchd.sh"
   export ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist"
   run_cli_apply "scripts/tool.sh"
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
-  [[ "$(<"${WORK}/renders.log")" == $'render-launchd\nrender-env' ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${WORK}/renders.log")" == $'repair-config-binaries\nrender-launchd\nrender-env' ]] || { echo "${output}"; cat "${WORK}/renders.log"; return 1; }
   [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
+}
+
+@test "the update moves only a Cellar binary path of an existing config, names the move in its log, and WARNs on a failed repair" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  mkdir -p "${INSTALL}/scripts"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/hooks" "${INSTALL}/hooks"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  # the template a re-render would copy over the hand-tuned values below
+  ln -s "${GA}/config.toml.example" "${INSTALL}/config.toml.example"
+  local cellar="${WORK}/brew/Cellar/node@22/22.11.0/bin/node" opt="${WORK}/brew/opt/node@22/bin/node" claude="${WORK}/bin/claude"
+  mkdir -p "$(dirname -- "${cellar}")" "${WORK}/brew/opt" "${WORK}/bin"
+  printf '#!/bin/sh\n' | tee "${cellar}" >"${claude}"
+  chmod +x "${cellar}" "${claude}"
+  ln -s ../Cellar/node@22/22.11.0 "${WORK}/brew/opt/node@22"
+  printf '#!/usr/bin/env bash\n' >"${WORK}/render-noop.sh"
+  chmod +x "${WORK}/render-noop.sh"
+  # a ${HOME} token in a comment, and values no template carries
+  # shellcheck disable=SC2016
+  local before
+  before="$(printf '# hand note: the old tree lived under ${HOME}/old-atrium\n[paths]\nnode_bin = "%s"\nclaude_bin = "%s"\nmonitor_docs_html_root = "%s/docs"\n\n[remote_access]\nenabled = true\nport = 17001\n' \
+    "${cellar}" "${claude}" "${WORK}")"
+  printf '%s\n' "${before}" >"${INSTALL}/config.toml"
+
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export HOME="'"${WORK}"'" PATH="'"${WORK}"'/bin:/usr/bin:/bin"
+    export ATRIUM_UPDATE_RENDER_MONITOR_ENV="'"${WORK}"'/render-noop.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="'"${WORK}"'/render-noop.sh"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    update_render_parity
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  local want="${before//"${cellar}"/${opt}}"
+  [[ "$(<"${INSTALL}/config.toml")" == "${want}" ]] || {
+    diff <(printf '%s\n' "${want}") "${INSTALL}/config.toml"
+    return 1
+  }
+  [[ "${stderr}" == *"node_bin ${cellar} -> ${opt}"* && "${stderr}" != *"claude_bin "*" -> "* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+
+  printf '#!/usr/bin/env bash\nprintf "FATAL: config unreadable\\n" >&2\nexit 1\n' >"${INSTALL}/glass-atrium"
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_RENDER_MONITOR_ENV="'"${WORK}"'/render-noop.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="'"${WORK}"'/render-noop.sh"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    update_render_parity
+  '
+  [[ "${status}" -eq 0 && "${stderr}" == *"FATAL: config unreadable"*"WARN: "*"[paths] binaries not re-resolved"* ]] || {
+    echo "status ${status}: ${stderr}"
+    return 1
+  }
 }
 
 @test "CLI apply reissues a due remote leaf only while remote access is on" {

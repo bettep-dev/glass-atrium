@@ -132,7 +132,7 @@ assert_drift_term() {
 assert_retired_warns() {
   local job
   for job in "${RETIRED_JOBS[@]}"; do
-    [[ "${output}" == *"warn : retired launchd job still deployed: com.glass-atrium.${job} — run --load-launchd to retire it"* ]] \
+    [[ "${output}" == *"warn : retired launchd job still deployed: com.glass-atrium.${job} — run 'glass-atrium reload-launchd' to retire it"* ]] \
       || {
         echo "missing retired warn: ${job}"
         echo "${output}"
@@ -182,7 +182,7 @@ run_doctor_sandbox() {
 
   [[ "${output}" == *"stale-deployed launchd plist drift: com.glass-atrium.autoagent-cycle"* ]] || return 1
   # advisory: the drift feeds the warn summary, never a hard FAIL banner.
-  [[ "${output}" == *"stale-deployed launchd plist(s) — re-render + --load-launchd to redeploy"* ]] || return 1
+  [[ "${output}" == *"stale-deployed launchd plist(s) — run 'glass-atrium reload-launchd' to redeploy"* ]] || return 1
   # The rollup enumerates every warn category in section order. Anchored on two terms and the
   # ordering between them — NOT on whichever term sits last, which is what broke when a new
   # category was appended after data-sep-leftover.
@@ -352,9 +352,9 @@ pass_warning_total() {
   printf '%s\n' "${output}" | sed -n 's/.*== doctor: PASS (with \([0-9][0-9]*\) warning(s).*/\1/p' | head -1
 }
 
-@test "a deployed plist launchd has not loaded -> one counted warn naming the label and --load-launchd" {
+@test "a deployed plist launchd has not loaded -> one counted warn naming the label and the reload-launchd remedy" {
   deploy_ref monitor
-  local warn="warn : com.glass-atrium.monitor deployed but not loaded — run --load-launchd"
+  local warn="warn : com.glass-atrium.monitor deployed but not loaded — run 'glass-atrium reload-launchd'"
   local rows=("deployed and loaded|0|absent" "deployed but not loaded|113|present")
   local row name rc expect total loaded_total="" unloaded_total=""
 
@@ -386,4 +386,34 @@ pass_warning_total() {
   grep -q '^getenv ' "${LAUNCHCTL_LOG}" || { cat "${LAUNCHCTL_LOG}"; return 1; }
   ! grep -q '^print ' "${LAUNCHCTL_LOG}" || { cat "${LAUNCHCTL_LOG}"; return 1; }
   [[ "${output}" != *"deployed but not loaded"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "a [paths].node_bin that does not exist -> one counted warn naming the path and the remedy" {
+  local row name node_bin want
+  local -a rows=(
+    "node_bin missing|${SANDBOX}/gone/bin/node|1"
+    "node_bin present|/bin/sh|0"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name node_bin want <<<"${row}"
+    sed "s#^node_bin = .*#node_bin = \"${node_bin}\"#" "${FAKE_CONFIG}" >"${SANDBOX}/node-config.toml"
+    run --separate-stderr env HOME="${SANDBOX_HOME}" GA_DATA_ROOT="${SANDBOX_HOME}/.glass-atrium" \
+      GA_CONFIG_TOML="${SANDBOX}/node-config.toml" bash -c '
+        set -Eeuo pipefail
+        source "$1/lib/ga-core.sh"
+        ga_init_env "$1"
+        launchd_node_bin_probe
+      ' _ "${GA}"
+    [[ "${status}" -eq 0 && "${output}" == "${want}" ]] || {
+      echo "${name}: ${status} ${output} ${stderr}"
+      return 1
+    }
+    if [[ "${want}" == 1 ]]; then
+      [[ "${stderr}" == *"[paths].node_bin ${node_bin} does not exist"*"glass-atrium repair-config-binaries"*"glass-atrium reload-launchd"* ]] \
+        || {
+          echo "${name}: ${stderr}"
+          return 1
+        }
+    fi
+  done
 }

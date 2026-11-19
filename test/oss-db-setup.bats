@@ -180,6 +180,16 @@ get_script_partial_index_counts() {
   [[ "$(diff "${FAKE_ROOT}/.env" "${FAKE_ROOT}/.env.example" | grep -c '^[<>]')" -eq 6 ]]
 }
 
+@test "a fresh .env is owner-only under a permissive caller umask" {
+  run env -u GA_DB_NAME PATH="${STUB_BIN}:${PATH}" \
+    bash -c "umask 022 && cd \"${FAKE_ROOT}\" && exec bash \"${SETUP_SH}\""
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "$(perl -e 'printf "%o", (stat $ARGV[0])[2] & 07777' -- "${FAKE_ROOT}/.env")" == "600" ]]
+}
+
 @test "post-deploy step verifies the 5 value-domain CHECK constraints via pg_constraint" {
   # record every psql invocation's args; answer the pg_constraint count probe with 5 (all
   # present) and existence probes with 1 so the createdb branch is skipped and step 6 passes.
@@ -620,10 +630,10 @@ STUB
   local mode
   # Two 077 scopes run on this path — one around recreate_database's mkdir, one inside
   # backup_db_to_file around pg_dump — and the mask is process-global, so a leaked one
-  # governs every later step. The .env render is the first file the script creates after
-  # both scopes close, which makes it the probe; deleting EITHER restore line leaves the
-  # mask at 077 there (the inner scope captures whatever the outer one leaked) and turns
-  # this red, while every other assertion in this file stays green.
+  # governs every later step. The npm stub's probe file is created by the dependency step
+  # after both scopes close; deleting EITHER restore line leaves the mask at 077 there
+  # (the inner scope captures whatever the outer one leaked) and turns this red, while
+  # every other assertion in this file stays green.
   : >"${SANDBOX}/main-present"
   printf '#!/bin/bash\ncase "$*" in\n  *pg_constraint*) echo 5 ;; *budget_overages*) echo core.budget_overages ;; *pg_indexes*) echo 9 ;;\n  *pg_database*_shadow*) echo 1 ;;\n  *pg_database*) [[ -e "%s/main-present" ]] && echo 1 ;;\nesac\nexit 0\n' \
     "${SANDBOX}" >"${STUB_BIN}/psql"
@@ -636,7 +646,8 @@ if ga_guard_path "${SANDBOX}"; then rm -f -- "${SANDBOX:?}/main-present"; fi
 exit 0
 STUB
   printf '#!/bin/bash\nexit 0\n' >"${STUB_BIN}/createdb"
-  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb"
+  printf '#!/bin/bash\n: >"%s/npm-probe"\nexit 0\n' "${SANDBOX}" >"${STUB_BIN}/npm"
+  chmod +x "${STUB_BIN}/psql" "${STUB_BIN}/pg_dump" "${STUB_BIN}/dropdb" "${STUB_BIN}/createdb" "${STUB_BIN}/npm"
 
   run env GA_DB_RECREATE=1 GA_DB_NAME="claude_oss_e2e" \
     GA_DB_BACKUP_DIR="${SANDBOX}/backups" PATH="${STUB_BIN}:/usr/bin:/bin" \
@@ -645,11 +656,11 @@ STUB
     echo "recreate exit ${status}: ${output}" >&2
     return 1
   }
-  [[ -f "${FAKE_ROOT}/.env" ]] || {
-    echo "the .env render never ran, so the post-scope mask was never exercised; out=${output}" >&2
+  [[ -f "${SANDBOX}/npm-probe" ]] || {
+    echo "the dependency step never ran, so the post-scope mask was never exercised; out=${output}" >&2
     return 1
   }
-  mode="$(mode_of "${FAKE_ROOT}/.env")"
+  mode="$(mode_of "${SANDBOX}/npm-probe")"
   [[ "${mode}" == "644" ]] || {
     echo "post-scope creation mode = ${mode}, expected 644 (the caller's 022 mask)" >&2
     return 1
