@@ -26,8 +26,9 @@ setup() {
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
   export CLAUDE_CODE_SESSION_ID="${SESSION_ID}"
-  export CLAUDE_PID=4242
-  export CLAUDE_CODE_MESSAGING_SOCKET="/tmp/cc-socks/4242.sock"
+  # a pid no running process holds → a register leaves no owner record to steer a later row
+  export CLAUDE_PID=999999
+  export CLAUDE_CODE_MESSAGING_SOCKET="/tmp/cc-socks/999999.sock"
   printf -v CLAUDE_CODE_MESSAGING_TOKEN '%s' "${SOCKET_AUTH}"
   export CLAUDE_CODE_MESSAGING_TOKEN
   # curl shim: records each argv, then runs the real curl unchanged
@@ -102,7 +103,7 @@ run_deregister() {
   }
   local body
   body="$(request_body /api/queue/sessions/register)"
-  [[ "$(jq -c '{sessionId, pid, hasSocketPath: has("socketPath")}' <<<"${body}")" == "{\"sessionId\":\"${SESSION_ID}\",\"pid\":4242,\"hasSocketPath\":false}" ]] || {
+  [[ "$(jq -c '{sessionId, pid, hasSocketPath: has("socketPath")}' <<<"${body}")" == "{\"sessionId\":\"${SESSION_ID}\",\"pid\":999999,\"hasSocketPath\":false}" ]] || {
     echo "${body}"
     return 1
   }
@@ -324,8 +325,8 @@ run_deregister() {
 @test "deregister identifies the process by pid, else by socket path, else by session id alone, with no start time" {
   start_stub
   local row pid socket expected
-  for row in "pid|4242|/tmp/cc-socks/4242.sock|{\"pid\":4242,\"sessionId\":\"${SESSION_ID}\"}" \
-    "socket-only||/tmp/cc-socks/4242.sock|{\"sessionId\":\"${SESSION_ID}\",\"socketPath\":\"/tmp/cc-socks/4242.sock\"}" \
+  for row in "pid|999999|/tmp/cc-socks/999999.sock|{\"pid\":999999,\"sessionId\":\"${SESSION_ID}\"}" \
+    "socket-only||/tmp/cc-socks/999999.sock|{\"sessionId\":\"${SESSION_ID}\",\"socketPath\":\"/tmp/cc-socks/999999.sock\"}" \
     "neither|||{\"sessionId\":\"${SESSION_ID}\"}"; do
     IFS='|' read -r _ pid socket expected <<<"${row}"
     : >"${BATS_TEST_TMPDIR}/requests.log"
@@ -393,7 +394,7 @@ run_deregister() {
     "monitor refusing|kept"; do
     IFS='|' read -r name expected <<<"${row}"
     stop_stub
-    export CLAUDE_PID=4242
+    export CLAUDE_PID=999999
     mkdir -p "${dir}/${SESSION_ID}" "${dir}/${other}"
     : >"${dir}/${SESSION_ID}/41"
     : >"${dir}/${other}/7"
@@ -543,7 +544,7 @@ run_lib() {
         return 1
       }
     else
-      [[ "${status}" -eq 0 && "$(jq -c . <<<"${sent}")" == "{\"sessionId\":\"${SESSION_ID}\",\"pid\":4242,\"derivedName\":\"${title}\"}" ]] || {
+      [[ "${status}" -eq 0 && "$(jq -c . <<<"${sent}")" == "{\"sessionId\":\"${SESSION_ID}\",\"pid\":999999,\"derivedName\":\"${title}\"}" ]] || {
         echo "row ${label}: status=${status} sent=${sent}"
         return 1
       }
