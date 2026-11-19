@@ -23,8 +23,8 @@ import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
 import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
-  buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
+  buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
@@ -418,7 +418,20 @@ const RAIL_STATES: QueueState[] = [
   { nn: "37", name: "rail-states", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getRailFixture, setUp: (page) => openEndedBand(page) },
 ];
 
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES];
+// spec §4.6: Status Done at the three list widths — the done list, and an answered decision's read-only sheet
+const DONE_STATES: QueueState[] = [
+  { nn: "38", name: "done-list", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getDoneFixture, setUp: (page) => openDoneView(page) },
+  {
+    nn: "38b", name: "done-sheet", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getDoneFixture,
+    setUp: async (page) => {
+      await openDoneView(page);
+      await selectRow(page, DONE_IDS.answered);
+      await page.locator(".queue-sheet .card-foot", { hasText: "Answer R1 ·" }).waitFor();
+    },
+  },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
@@ -499,6 +512,7 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     await harness.heldDesk;
     const query = ownerOrdersQuerySchema.parse(request.query);
     const { relays } = harness.fixture;
+    if (query.kind === "item") return getOrderPage(getAccountItems(harness.fixture.done ?? [], query.profile), query, getFixtureDoneRows);
     return query.kind === "relay" ? { ...getOrderPage(relays.items, query), refusals: relays.refusals } : getOrderPage(harness.fixture.orders, query);
   });
   app.get("/api/queue/owner/relays/signal", async () => harness.fixture.relays.signal);
@@ -579,9 +593,9 @@ interface FixtureOrder {
  * The history read's observable contract (owner-views.ts → getOwnerOrders), modelled on the fixture copies:
  * newest order first, paged by order, every copy of an order any ticked session received, cursor `<µs>:<first id>`.
  */
-function getOrderPage(copies: OwnerItemView[], query: OwnerOrdersQuery): { items: OwnerItemView[]; nextCursor: string | null } {
+function getOrderPage(copies: OwnerItemView[], query: OwnerOrdersQuery, getRows = getFixtureOrders): { items: OwnerItemView[]; nextCursor: string | null } {
   const { sessionIds, before, limit } = query;
-  const orders = getFixtureOrders(copies)
+  const orders = getRows(copies)
     .filter((order) => sessionIds === undefined || order.copies.some((copy) => sessionIds.includes(copy.session.id)))
     .filter((order) => before === undefined || isOrderBefore(order, before));
   const page = orders.slice(0, limit);
@@ -600,6 +614,17 @@ function getFixtureOrders(copies: OwnerItemView[]): FixtureOrder[] {
     .map((group) => group.sort((left, right) => left.id - right.id))
     .map((group) => ({ at: getMaxMicros(group), id: BigInt(group[0]!.id), copies: group }))
     .sort((left, right) => (isOrderBefore(left, right) ? 1 : -1));
+}
+
+// the done read (kind item): one item a row, newest end first, the account filtering per item
+function getFixtureDoneRows(items: OwnerItemView[]): FixtureOrder[] {
+  return items
+    .map((item) => ({ at: BigInt(Date.parse(item.closedAt ?? "")) * 1000n, id: BigInt(item.id), copies: [item] }))
+    .sort((left, right) => (isOrderBefore(left, right) ? 1 : -1));
+}
+
+function getAccountItems(items: OwnerItemView[], profile: string | undefined): OwnerItemView[] {
+  return profile === undefined ? items : items.filter((item) => item.session.profileLabel === profile);
 }
 
 function getMaxMicros(group: OwnerItemView[]): bigint {
@@ -676,6 +701,13 @@ async function scrollList(page: Page): Promise<void> {
   await page.evaluate(() => {
     (document.querySelector(".queue-list > .card-body") as HTMLElement).scrollTop = 60;
   });
+}
+
+// the list's Status trigger → Done, settled once the first day band shows
+async function openDoneView(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /^Status/ }).click();
+  await page.getByRole("menuitemradio", { name: "Done" }).click();
+  await page.locator(".queue-band", { hasText: "Today" }).waitFor();
 }
 
 async function tickSessions(page: Page, names: string[]): Promise<void> {
@@ -2479,6 +2511,78 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec 44063 §9.1–§9.4 and §14.4 (Not listening stream only): Not listening and Not yet side by side on every surface
+  // spec §4.6, §14.3: Status Done — the history read with kind item, scoped on the server by the ticks; day bands; a read-only sheet
+  describe("on the done fixtures", () => {
+    const openDonePage = async (): Promise<{ page: Page; reads: URLSearchParams[] }> => {
+      harness.fixture = getDoneFixture();
+      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+      const reads: URLSearchParams[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname === "/api/queue/owner/orders" && url.searchParams.get("kind") === "item") reads.push(url.searchParams);
+      });
+      await openDoneView(page);
+      return { page, reads };
+    };
+    const getDoneRows = (page: Page) => page.evaluate(() => ({
+      hash: location.hash,
+      bands: [...document.querySelectorAll(".queue-listbox .queue-band")].map((band) => [band.textContent, band.querySelectorAll(".pill").length]),
+      rows: [...document.querySelectorAll(".queue-row")].map((row) => [row.id, row.querySelector(".queue-row-tag")?.textContent, row.querySelector(".queue-row-fact")?.textContent]),
+    }));
+
+    test("Status Done lists the done items newest end first in day bands with no count, each row how it ended and its kind, status=done in the hash; Reset filters returns to Open", async () => {
+      const { page, reads } = await openDonePage();
+      const shown = await getDoneRows(page);
+      await page.getByRole("button", { name: "Reset filters" }).click();
+      await page.locator(".queue-band", { hasText: "Decisions" }).waitFor();
+      const reset = await page.evaluate(() => location.hash);
+      await page.close();
+
+      assert.deepEqual(shown, {
+        hash: "#queue?status=done",
+        bands: [["Today", 0], ["Yesterday", 0], ["2026-11-09", 0]],
+        rows: [
+          ["queue-row-801", "Answer R1", "Decision"], ["queue-row-802", "Read", "Report"],
+          ["queue-row-803", "Withdrawn", "Decision"], ["queue-row-804", "Replied", "Report"], ["queue-row-805", "Answered", "Decision"],
+        ],
+      });
+      assert.deepEqual(reads.map((query) => Object.fromEntries(query)), [{ limit: "30", kind: "item" }]);
+      assert.equal(reset, "#queue");
+    });
+
+    test("ticking a session scopes the done read on the server, and the list holds what it returns", async () => {
+      const { page, reads } = await openDonePage();
+      await tickSessions(page, ["atrium"]);
+      await page.waitForFunction(() => document.querySelectorAll(".queue-row").length === 1);
+      const shown = await getDoneRows(page);
+      await page.close();
+
+      assert.deepEqual(shown.rows, [["queue-row-802", "Read", "Report"]]);
+      assert.deepEqual(reads.at(-1)?.get("sessionIds"), FIXTURE_SESSION_IDS.atrium);
+    });
+
+    test("a done row opens its read-only sheet: the answer shown, no composer, its foot how and when it ended; J steps to the next done item", async () => {
+      const { page } = await openDonePage();
+      await selectRow(page, DONE_IDS.answered);
+      const getSheet = () => page.evaluate(() => ({
+        kind: document.querySelector(".queue-sheet-head .pill")?.textContent,
+        foot: document.querySelector(".queue-sheet .card-foot")?.textContent,
+        controls: document.querySelectorAll(".queue-sheet .card-foot :is(button, textarea, input)").length,
+        hasAnswer: document.querySelector(".queue-sheet-body")?.textContent?.includes("Your answer"),
+        position: document.querySelector(".queue-steps")?.textContent,
+      }));
+      await page.locator(".queue-sheet .card-foot", { hasText: "Answer R1 ·" }).waitFor();
+      const answered = await getSheet();
+      await page.keyboard.press("j");
+      await page.locator(".queue-sheet .card-foot", { hasText: "Read ·" }).waitFor();
+      const read = { ...(await getSheet()), hash: await page.evaluate(() => location.hash) };
+      await page.close();
+
+      assert.deepEqual(answered, { kind: "Decision", foot: "Answer R1 · 2026-11-13 14:57 KST", controls: 0, hasAnswer: true, position: "1 of 5" });
+      assert.deepEqual(read, { kind: "Report", foot: "Read · 2026-11-13 14:00 KST", controls: 0, hasAnswer: false, position: "2 of 5", hash: "#queue?status=done&item=802" });
+    });
+  });
+
   describe("on the not-listening fixtures", () => {
     const SENTENCE = "Not listening — delivers at its next turn end or restart";
     const openNotListeningPage = (): Promise<Page> => {
@@ -2762,8 +2866,9 @@ describe("queue page on the mockup fixtures", () => {
 
     // spec §4.2, §14.3: one 44 line on fixed columns — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
     // either side of the title; an empty tag or fact cell keeps its width; under 160 of title (1280, names shown) the fact column is left out.
-    // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it
-    test("with nothing ticked every list row is one 44 line on the same columns at 1280, 1440 and 1568, empty cells keeping their width, the fact column left out at 1280, a 100-character name cut inside its 104", async () => {
+    // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it;
+    // the done list (spec §4.6) draws its rows on the same columns
+    test("with nothing ticked every list row, open or done, is one 44 line on the same columns at 1280, 1440 and 1568, empty cells keeping their width, the fact column left out at 1280, a 100-character name cut inside its 104", async () => {
       // each cell's x from the row's start and its width; a cell drawn nowhere → `-`
       const getLayout = (width: number, isFactShown: boolean) => {
         const fixed = [80, isFactShown ? 64 : 0, 32, 16];
@@ -2777,9 +2882,10 @@ describe("queue page on the mockup fixtures", () => {
       };
       const shown = [];
       for (const { viewport } of DESK_WIDTHS.slice(0, 3)) {
-        for (const fixture of [getNameColumnFixture(), getEdgeFixture()]) {
+        for (const [fixture, isDone] of [[getNameColumnFixture(), false], [getEdgeFixture(), false], [getDoneFixture(), true]] as const) {
           harness.fixture = fixture;
           const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
+          if (isDone) await openDoneView(page);
           const facts = await page.evaluate((longName) => {
             const rows = [...document.querySelectorAll(".queue-row")];
             const cells = [".queue-row-who", ".queue-row-title", ".queue-row-tag", ".queue-row-fact", ".queue-row-age", ".queue-row-chevron"];
@@ -2798,16 +2904,16 @@ describe("queue page on the mockup fixtures", () => {
             };
           }, EDGE_LONG_SESSION_NAME);
           await page.close();
-          shown.push({ width: viewport.width, ...facts });
+          shown.push({ width: viewport.width, isDone, ...facts });
         }
       }
 
-      assert.ok(shown.every((one) => one.rowWidths.length === 1 && one.emptyTags > 0), "rows of one width, some with an empty tag cell");
+      assert.ok(shown.every((one) => one.rowWidths.length === 1 && (one.isDone || one.emptyTags > 0)), "rows of one width, some open ones with an empty tag cell");
       assert.deepEqual(
         shown.map(({ width, rowWidths, layouts, heights, isLongCut }) => ({ width, layouts, heights, isLongCut, pane: rowWidths[0] })),
         shown.map(({ width, rowWidths }) => ({ width, layouts: [getLayout(rowWidths[0]!, width !== 1280)], heights: [44], isLongCut: true, pane: rowWidths[0] })),
       );
-      assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [450, 450, 586, 586], "the panes of spec §4.2, less the card's two 1 px borders");
+      assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [450, 450, 450, 586, 586, 586], "the panes of spec §4.2, less the card's two 1 px borders");
     });
 
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it

@@ -1045,24 +1045,36 @@ describe("queue filter bar", () => {
     return { bar, triggers, picks };
   };
 
-  // the rail's ticks are the session scope → the bar holds the Account axis alone (spec §4.1 → Filters)
+  // the rail's ticks are the session scope → the bar holds Status, then Account while it tells items apart (spec §4.1 → Bar)
   const rows = [
-    { name: "at defaults the Account trigger reads All and the reset stays hidden", filter: { profile: "" }, account: "All", isApplied: false },
-    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal" }, account: "personal", isApplied: true },
+    { name: "at defaults Status reads Open, Account All, and the reset stays hidden", filter: { profile: "", status: "" }, status: "Open", account: "All", isApplied: false },
+    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal", status: "" }, status: "Open", account: "personal", isApplied: true },
+    { name: "Status Done names Done and shows the reset", filter: { profile: "", status: "done" }, status: "Done", account: "All", isApplied: true },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const { bar, triggers } = renderBar(row.filter);
-      assert.deepEqual(Object.keys(triggers), ["Account"]);
-      assert.equal(triggers.Account?.value, row.account);
+      assert.deepEqual(Object.keys(triggers), ["Status", "Account"]);
+      assert.deepEqual([triggers.Status?.value, triggers.Account?.value], [row.status, row.account]);
       assert.equal(bar?.props.isApplied, row.isApplied);
     });
   }
 
-  test("Reset filters returns the account to All", () => {
-    const { bar, picks } = renderBar({ profile: "personal" });
+  test("items of one account and no account filter leave the Account trigger out, Status alone", () => {
+    const tree = render("QueueFilterBarQ", { items: [items[0]], filter: { profile: "", status: "" }, onFilter: () => undefined });
+    assert.deepEqual(findNodes(tree, (node) => node.props.atom === "FilterTrigger").map((node) => node.props.axis), ["Status"]);
+  });
+
+  test("Reset filters returns Status to Open and the account to All", () => {
+    const { bar, picks } = renderBar({ profile: "personal", status: "done" });
     (bar?.props.onReset as () => void)();
-    assert.deepEqual(getPlain(picks), [{ profile: "" }]);
+    assert.deepEqual(getPlain(picks), [{ profile: "", status: "" }]);
+  });
+
+  test("picking Done keeps the account", () => {
+    const { triggers, picks } = renderBar({ profile: "personal", status: "" });
+    (triggers.Status?.onPick as (key: string) => void)("done");
+    assert.deepEqual(getPlain(picks), [{ profile: "personal", status: "done" }]);
   });
 
   test("a chosen value no loaded item carries stays an option, so its trigger still names it", () => {
@@ -1082,23 +1094,24 @@ describe("filter state in the hash", () => {
     return { module, location };
   };
   const rows = [
-    { name: "the account round-trips through the screen query", start: "#queue", filter: { profile: "work-dev" } },
-    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal", filter: { profile: "" } },
+    { name: "the account round-trips through the screen query", start: "#queue", filter: { profile: "work-dev", status: "" } },
+    { name: "Status Done round-trips as status=done", start: "#queue", filter: { profile: "", status: "done" }, hash: "#queue?status=done" },
+    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal&status=done", filter: { profile: "", status: "" }, hash: "#queue" },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const { module, location } = await load(row.start);
       (module.setFilterHashQ as (filter: unknown) => void)(row.filter);
-      assert.ok(location.hash.startsWith("#queue"), location.hash);
+      assert.ok(row.hash === undefined ? location.hash.startsWith("#queue") : location.hash === row.hash, location.hash);
       assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), row.filter);
     });
   }
 
   // one hash writer merges every key → a filter write never erases the selected item or the ticks (spec §4.3 → Selection)
   const mergeRows = [
-    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev" }, expected: { profile: "work-dev", item: "41", to: "a,b" } },
-    { name: "an item write keeps the filter and the ticks", start: "#queue?profile=personal&to=s1", patch: { item: "7" }, expected: { profile: "personal", item: "7", to: "s1" } },
-    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { profile: "personal", item: "", to: "" } },
+    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev" }, expected: { profile: "work-dev", status: "", item: "41", to: "a,b" } },
+    { name: "an item write keeps the filter and the ticks", start: "#queue?profile=personal&to=s1", patch: { item: "7" }, expected: { profile: "personal", status: "", item: "7", to: "s1" } },
+    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { profile: "personal", status: "", item: "", to: "" } },
   ];
   for (const row of mergeRows) {
     test(row.name, async () => {
@@ -1117,7 +1130,7 @@ describe("filter state in the hash", () => {
   for (const row of oldLinks) {
     test(row.name, async () => {
       const { module, location } = await load(row.start);
-      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), { profile: "" });
+      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), { profile: "", status: "" });
       (module.setHashStateQ as (patch: unknown) => void)({ item: "" });
       assert.equal(location.hash, "#queue");
     });
@@ -1154,6 +1167,152 @@ describe("list groups", () => {
     { name: "copies with no send id fold by equal time and text", items: [order(21, gersona, null), order(22, yoaida, null), order(23, yoaida, null, "2026-11-12T12:21:00.000Z")], expected: [[21, [21, 22]], [23, [23]]] },
   ];
   for (const row of foldRows) test(row.name, () => assert.deepEqual(getShape(row.items)[0]?.rows, row.expected));
+});
+
+// spec §4.6: Status Done — the history read's decisions and reports no longer open, on the list's own rows and sheet
+describe("done items", () => {
+  const atrium = buildSession({ id: "c3", name: "atrium" });
+  const record = (route: string) => ({ route, signal: "fetch_metadata" });
+  const answered = { answeredAt: "2026-11-19T05:30:00.000Z", closedAt: "2026-11-19T05:30:00.000Z" };
+  const doneReport = (overrides: Record<string, unknown> = {}) =>
+    buildItem({ id: 806, kind: "report", title: "Deploy 65 finished", options: [], status: "seen", closedAt: "2026-11-19T05:30:00.000Z", session: atrium, ...overrides });
+  const doneDecision = (overrides: Record<string, unknown> = {}) =>
+    buildItem({ id: 812, status: "delivered", answer: { code: "R1", text: null }, answerRecord: record("answer"), ...answered, ...overrides });
+
+  // KST days: 2026-11-18T15:30Z is Nov 19 00:30 → Today beside Nov 19 14:30; Nov 18 → Yesterday; older → its date
+  test("each row stands in the band of its end's day, in the read's order, one item a row", () => {
+    const items = [
+      doneReport({ id: 5, closedAt: "2026-11-19T05:30:00.000Z" }),
+      doneReport({ id: 4, closedAt: "2026-11-18T15:30:00.000Z" }),
+      doneReport({ id: 3, closedAt: "2026-11-18T03:00:00.000Z" }),
+      doneReport({ id: 2, closedAt: "2026-11-16T10:00:00.000Z" }),
+      doneReport({ id: 1, closedAt: "2026-11-16T09:00:00.000Z" }),
+    ];
+    const groups = call<Array<{ label: string; rows: Array<{ id: number; copies: unknown[]; isDone: boolean }> }>>("getDoneGroupsQ", items, new Date("2026-11-19T06:00:00.000Z"));
+    assert.deepEqual(groups.map((group) => [group.label, group.rows.map((row) => [row.id, row.copies.length, row.isDone])]), [
+      ["Today", [[5, 1, true], [4, 1, true]]],
+      ["Yesterday", [[3, 1, true]]],
+      ["2026-11-16", [[2, 1, true], [1, 1, true]]],
+    ]);
+  });
+
+  // spec §4.6 → How it ended: an answer on the page first, whatever status followed it; the fact names the kind
+  const ends = [
+    { name: "an option picked on the page reads its code, its title the route", item: doneDecision(), tag: { text: "Answer R1", title: "Answered" }, fact: "Decision" },
+    { name: "free text alone reads Answered", item: doneDecision({ answer: { code: null, text: "R2로 가되" } }), tag: { text: "Answered", title: "Answered" }, fact: "Decision" },
+    { name: "an answer sent as a message names that route", item: doneDecision({ answer: { code: "R2", text: null }, answerRecord: record("message") }), tag: { text: "Answer R2", title: "Sent as a message" }, fact: "Decision" },
+    { name: "a decision withdrawn after its answer keeps its answer", item: doneDecision({ status: "withdrawn" }), tag: { text: "Answer R1", title: "Answered" }, fact: "Decision" },
+    { name: "an answer outside the page reads Answered with where", item: doneDecision({ status: "answered", answer: { code: null, text: null }, answerRecord: null, isAnsweredOutside: true }), tag: { text: "Answered", title: "Answered outside the Queue page." }, fact: "Decision" },
+    { name: "a report replied to reads Replied", item: doneReport({ status: "delivered", answerRecord: record("reply"), ...answered }), tag: { text: "Replied" }, fact: "Report" },
+    { name: "a report marked read reads Read", item: doneReport(), tag: { text: "Read" }, fact: "Report" },
+    { name: "a withdrawn report says the session withdrew it", item: doneReport({ status: "withdrawn" }), tag: { text: "Withdrawn", title: "The session withdrew it." }, fact: "Report" },
+  ];
+  for (const row of ends) {
+    test(`how it ended: ${row.name}`, () => {
+      assert.deepEqual(call("getRowCellsQ", { item: row.item, copies: [row.item], isDone: true }, false), { tags: [row.tag], fact: row.fact, extras: [] });
+    });
+  }
+
+  // a report out of open reads as an Order on the open list → on the done list it must still open its sheet
+  test("a done report opens its sheet and counts among the rows the sheet steps through", () => {
+    const groups = call("getDoneGroupsQ", [doneReport(), doneDecision()], new Date("2026-11-19T06:00:00.000Z"));
+    const sheet = call<{ kind: string; id: number }>("getSheetStateQ", groups, "806", null);
+    const steps = call<{ index: number; count: number }>("getStepsQ", groups, 806, -1);
+    assert.deepEqual([sheet.kind, sheet.id, steps.index, steps.count], ["item", 806, 0, 2]);
+  });
+
+  test("a done row draws how it ended as plain text and ages from its end, and its name says both", () => {
+    const item = doneReport({ status: "withdrawn", askedAt: "2026-11-10T06:12:43.518Z" });
+    const tree = render("QueueRowQ", { row: { id: item.id, item, copies: [item], isDone: true }, isSelected: false, view: { isNameShown: true, isAccountShown: false, tabStopId: item.id }, onSelect: () => undefined, onOrder: () => undefined });
+    const [row] = findNodes(tree, (node) => node.props?.role === "option");
+    const [tag] = byClass(tree, "queue-row-tag");
+    const [age] = byClass(tree, "queue-row-age");
+    const label = String(row?.props["aria-label"]);
+    assert.deepEqual(
+      [collectText(tag as RenderedNode), findNodes(tag as RenderedNode, (node) => node.props?.atom === "Badge").length, age?.props.title, label.split(",").slice(0, 2)],
+      ["Withdrawn", 0, "11-19 14:30", ["Report from atrium: Deploy 65 finished", " Withdrawn"]],
+    );
+    assert.match(label, /, ended \S+ ago$/);
+  });
+
+  test("the done read asks the history read for kind item, scoped by the ticks and the account", async () => {
+    const urls: string[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, { URLSearchParams, window: { UI: uiStub() }, fetch: async (url: string) => { urls.push(url); return { status: 200, json: async () => ({ items: [], nextCursor: null }) }; } })) as ScreenModule;
+    await (module.getThreadQ as (deps: unknown) => Promise<void>)({ ids: [SESSION_ID], before: null, setThread: () => undefined, kind: "item", profile: "personal" });
+    assert.deepEqual(Object.fromEntries(new URL(urls[0] as string, "http://monitor").searchParams), { limit: "30", kind: "item", sessionIds: SESSION_ID, profile: "personal" });
+  });
+
+  const doneQueue = (thread: Record<string, unknown>, filter = { profile: "", status: "done" }) => {
+    const { queue, calls } = buildQueue();
+    const done = { thread: { status: "ready", items: [], nextCursor: null, error: null, refusals: [], ...thread }, read: () => calls.push(["readDone"]), showEarlier: () => calls.push(["moreDone"]) };
+    const groups = call("getDoneGroupsQ", done.thread.items);
+    return { queue: { ...queue, done, filter, setFilter: (next: unknown) => calls.push(["setFilter", next]), groups, sheet: getSheet(groups, ""), selectedId: null, status: "" }, calls };
+  };
+  const bodyOf = (queue: unknown) => render("DoneBodyQ", { queue });
+
+  test("loading names done items, and a failed read is the list's in-card error with Retry reading again", () => {
+    const [placeholder] = findNodes(bodyOf(doneQueue({ status: "loading" }).queue), (node) => node.props?.atom === "LoadingPlaceholder");
+    const failed = doneQueue({ status: "error", error: { sentence: "The queue could not be read.", next: "Retry.", detail: "503" } });
+    const [failure] = findNodes(bodyOf(failed.queue), (node) => node.type === "QueueFailureQ");
+    (failure?.props.onRetry as () => void)();
+    assert.deepEqual([placeholder?.props.label, getPlain(failed.calls)], ["done items", [["readDone"]]]);
+  });
+
+  const empties = [
+    { name: "none in scope", filter: { profile: "", status: "done" }, message: "Nothing done here yet.", hasReset: false },
+    { name: "none under an account filter, with Reset filters", filter: { profile: "personal", status: "done" }, message: "No done items match these filters.", hasReset: true },
+  ];
+  for (const row of empties) {
+    test(`an empty done list says so once: ${row.name}`, () => {
+      const { queue, calls } = doneQueue({}, row.filter);
+      const tree = bodyOf(queue);
+      const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
+      const action = empty?.props.action ? (renderScreen(empty.props.action) as RenderedNode) : null;
+      const resets = buttonLabelled(action as RenderedNode, "Reset filters");
+      (resets[0]?.props.onClick as (() => void) | undefined)?.();
+      assert.deepEqual([empty?.props.message, resets.length > 0, getPlain(calls)], [row.message, row.hasReset, row.hasReset ? [["setFilter", { profile: "", status: "" }]] : []]);
+    });
+  }
+
+  test("loaded done items are the list's listbox of rows", () => {
+    const { queue } = doneQueue({ items: [doneReport(), doneDecision()] });
+    assert.deepEqual(findNodes(bodyOf(queue), (node) => node.type === "QueueRowQ").map((node) => (node.props.row as { id: number }).id), [806, 812]);
+  });
+
+  // spec §4.6: 30 a read, Show more for the next, and past 200 loaded a line in its place
+  const feet = [
+    { name: "a page with more behind it offers Show more", count: 30, nextCursor: "1:1", expected: { more: 1, line: false } },
+    { name: "the whole list loaded offers nothing", count: 30, nextCursor: null, expected: { more: 0, line: false } },
+    { name: "200 loaded with more behind them says only the newest show", count: 200, nextCursor: "1:1", expected: { more: 0, line: true } },
+  ];
+  for (const row of feet) {
+    test(`the done foot: ${row.name}`, () => {
+      const items = Array.from({ length: row.count }, (_, index) => doneReport({ id: index + 1 }));
+      const { queue } = doneQueue({ items, nextCursor: row.nextCursor });
+      const tree = render("ListFootQ", { queue });
+      const more = findNodes(tree, (node) => node.type === "ShowMoreQ");
+      const isLine = collectText(tree).includes("Showing the 200 most recent");
+      (more[0]?.props.onMore as (() => void) | undefined)?.();
+      assert.deepEqual({ more: more.length, line: isLine }, row.expected);
+    });
+  }
+
+  // spec §4.6: a done item's sheet is read-only — its answer shown, no composer, the foot how and when it ended
+  const sheets = [
+    { name: "an answered decision shows its answer, its foot the answer and its end", item: doneDecision(), kind: "Decision", foot: "Answer R1 · 2026-11-19 14:30 KST", hasAnswer: true },
+    { name: "a read report shows its text, its foot Read and its end", item: doneReport(), kind: "Report", foot: "Read · 2026-11-19 14:30 KST", hasAnswer: false },
+  ];
+  for (const row of sheets) {
+    test(`the done sheet: ${row.name}`, () => {
+      const tree = renderSheet({ item: row.item, queue: buildQueue().queue, cliPath: CLI_PATH, isDone: true });
+      const [foot] = byClass(tree, "card-foot");
+      const [kind] = findNodes(byClass(tree, "queue-sheet-head")[0] as RenderedNode, (node) => node.props?.atom === "Badge");
+      assert.deepEqual(
+        [collectText(foot as RenderedNode), findNodes(foot as RenderedNode, (node) => node.type === "button" || node.type === "ComposerQ").length, collectText(kind as RenderedNode), collectText(tree).includes("Your answer")],
+        [row.foot, 0, row.kind, row.hasAnswer],
+      );
+    });
+  }
 });
 
 describe("selection", () => {

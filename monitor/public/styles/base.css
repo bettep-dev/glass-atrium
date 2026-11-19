@@ -1131,6 +1131,14 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-row-tag .pill--num {
 	gap: var(--space-1);
 }
+/* how a done item ended (spec §4.6): plain dim text, no shell — every done row has one */
+.queue-row-end {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: rgb(var(--dim));
+}
 .queue-row-fact {
 	text-align: end;
 	color: rgb(var(--dim));

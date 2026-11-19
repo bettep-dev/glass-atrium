@@ -34,6 +34,8 @@ export interface QueueFixture {
   orders: OwnerItemView[];
   resumes: RecentResume[];
   relays: RelayHistoryFixture;
+  /** The history read's kind `item` (spec §4.6): decisions and reports no longer open; unset → none. */
+  done?: OwnerItemView[];
 }
 
 const SESSION_IDS = {
@@ -275,6 +277,28 @@ export function getRestFixture(): QueueFixture {
     resumes: RESUMES,
     relays: { items: [], refusals: [], signal: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: false } },
   };
+}
+
+export const DONE_IDS = { answered: 801, read: 802, withdrawn: 803, replied: 804, outside: 805 } as const;
+
+const DONE_ITEMS = [
+  buildItem(DONE_IDS.answered, "gersona", {
+    ...DECISIONS[0], id: DONE_IDS.answered, status: "delivered", answer: { code: "R1", text: null }, answeredAt: getAt(3), closedAt: getAt(3), deliveredAt: getAt(2),
+    answerRecord: { route: "answer", signal: "fetch_metadata" },
+  }),
+  buildItem(DONE_IDS.read, "atrium", { kind: "report", status: "seen", askedAt: getAt(75), closedAt: getAt(60), title: "배포 65 완료: 모니터 재시작, 화면 점검 통과", body: "- 모니터를 다시 띄우고 화면 다섯 개를 점검했습니다." }),
+  buildItem(DONE_IDS.withdrawn, "yoaida", { status: "withdrawn", askedAt: getAt(27 * 60), closedAt: getAt(26 * 60), title: "마이그레이션 순서: 스키마 먼저 vs 데이터 먼저", options: [{ code: "R1", label: "스키마 먼저", pros: null, cons: null }] }),
+  buildItem(DONE_IDS.replied, "aidl", {
+    kind: "report", status: "delivered", askedAt: getAt(29 * 60), answeredAt: getAt(28 * 60), closedAt: getAt(28 * 60), deliveredAt: getAt(28 * 60),
+    answer: { code: null, text: "API 후속 수정은 다음 배포에 넣어 주세요." }, answerRecord: { route: "reply", signal: "fetch_metadata" },
+    title: "파트너 연동 안내 초안 작성 완료", body: "- 안내 초안을 API 명세 위쪽에 두었습니다.",
+  }),
+  buildItem(DONE_IDS.outside, "portfolio", { status: "answered", askedAt: getAt(4 * 24 * 60 + 30), answeredAt: getAt(4 * 24 * 60), closedAt: getAt(4 * 24 * 60), isAnsweredOutside: true, title: "포트폴리오 배포 창: 오늘 밤 vs 내일 아침" }),
+];
+
+/** The rest state plus done items over three days: an answer, a read report, a withdraw, a reply and an answer outside the page. */
+export function getDoneFixture(): QueueFixture {
+  return { ...getRestFixture(), done: DONE_ITEMS };
 }
 
 /** The rest state plus the not-received order to `yoaida`, in the owner list and the history read alike. */
