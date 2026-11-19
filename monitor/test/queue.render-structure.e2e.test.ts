@@ -25,8 +25,8 @@ import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, ty
 import {
   buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
-  FORWARDED_RELAY, NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
 
@@ -431,7 +431,19 @@ const DONE_STATES: QueueState[] = [
   },
 ];
 
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES];
+// spec §4.2, §9.9: relays on their way under In delivery at the three list widths, and a relay to several on its read-only sheet
+const RELAY_ROW_STATES: QueueState[] = [
+  { nn: "39", name: "relay-rows", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getRelayRowFixture, setUp: (page) => page.locator(`#queue-row-${RELAY_ROW_IDS.several}`).scrollIntoViewIfNeeded() },
+  {
+    nn: "39b", name: "relay-sheet", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getRelayRowFixture,
+    setUp: async (page) => {
+      await selectRow(page, RELAY_ROW_IDS.several);
+      await page.locator(".queue-sheet .card-foot", { hasText: "Read-only." }).waitFor();
+    },
+  },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES, ...RELAY_ROW_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
@@ -2867,8 +2879,8 @@ describe("queue page on the mockup fixtures", () => {
     // spec §4.2, §14.3: one 44 line on fixed columns — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
     // either side of the title; an empty tag or fact cell keeps its width; under 160 of title (1280, names shown) the fact column is left out.
     // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it;
-    // the done list (spec §4.6) draws its rows on the same columns
-    test("with nothing ticked every list row, open or done, is one 44 line on the same columns at 1280, 1440 and 1568, empty cells keeping their width, the fact column left out at 1280, a 100-character name cut inside its 104", async () => {
+    // the done list (spec §4.6) and relays on their way (spec §9.9) draw their rows on the same columns
+    test("with nothing ticked every list row, open, done or a relay on its way, is one 44 line on the same columns at 1280, 1440 and 1568, empty cells keeping their width, the fact column left out at 1280, a 100-character name cut inside its 104", async () => {
       // each cell's x from the row's start and its width; a cell drawn nowhere → `-`
       const getLayout = (width: number, isFactShown: boolean) => {
         const fixed = [80, isFactShown ? 64 : 0, 32, 16];
@@ -2882,7 +2894,7 @@ describe("queue page on the mockup fixtures", () => {
       };
       const shown = [];
       for (const { viewport } of DESK_WIDTHS.slice(0, 3)) {
-        for (const [fixture, isDone] of [[getNameColumnFixture(), false], [getEdgeFixture(), false], [getDoneFixture(), true]] as const) {
+        for (const [fixture, isDone] of [[getNameColumnFixture(), false], [getEdgeFixture(), false], [getDoneFixture(), true], [getRelayRowFixture(), false]] as const) {
           harness.fixture = fixture;
           const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
           if (isDone) await openDoneView(page);
@@ -2913,7 +2925,7 @@ describe("queue page on the mockup fixtures", () => {
         shown.map(({ width, rowWidths, layouts, heights, isLongCut }) => ({ width, layouts, heights, isLongCut, pane: rowWidths[0] })),
         shown.map(({ width, rowWidths }) => ({ width, layouts: [getLayout(rowWidths[0]!, width !== 1280)], heights: [44], isLongCut: true, pane: rowWidths[0] })),
       );
-      assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [450, 450, 450, 586, 586, 586], "the panes of spec §4.2, less the card's two 1 px borders");
+      assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [450, 450, 450, 450, 586, 586, 586, 586], "the panes of spec §4.2, less the card's two 1 px borders");
     });
 
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it

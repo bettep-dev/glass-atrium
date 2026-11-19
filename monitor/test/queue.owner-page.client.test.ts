@@ -1315,6 +1315,135 @@ describe("done items", () => {
   }
 });
 
+// spec §4.2, §9.9: a relay on its way — a row under In delivery on the list's own columns, and the list's sheet read-only
+describe("a relay on its way", () => {
+  const TITLE = "필드 이름이 바뀌었습니다.";
+  const BODY = `${TITLE}\n요아이다 쪽 문서도 같은 이름으로 맞춰 주세요.`;
+  const sender = { sessionIdPrefix: "aca91592", profileLabel: "work", selfDeclaredName: "aidl", cwdTail: "git/a-idl" };
+  // one copy per recipient under one send id, as the open list returns them: answered at the send, the title the text's first line
+  const buildCopies = (recipients: Array<[string, Record<string, unknown>]>, facts: Record<string, unknown> = {}) =>
+    recipients.map(([name, overrides], index) => buildItem({
+      id: 412 + index, kind: "relay", title: TITLE, body: BODY, options: [], isFreeTextAllowed: false, status: "answered",
+      askedAt: "2026-11-19T05:20:00.000Z", answeredAt: "2026-11-19T05:20:00.000Z", sendId: "relay-send-1",
+      session: buildSession({ id: `5e55a0${index}0-0000-4000-8000-000000000000`, name, state: "live", isWaiting: true }),
+      relay: { hop: 0, parent: null, sender, fetchedAt: null, redaction: null, lapsedAt: null, ...facts },
+      ...overrides,
+    }));
+  const toYoaida = (overrides: Record<string, unknown> = {}, facts: Record<string, unknown> = {}) => buildCopies([["yoaida", overrides]], facts);
+  const toThree = () => buildCopies([["yoaida", { status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" }], ["atrium", {}], ["gersona", {}]]);
+  const renderRow = (copies: Array<{ id: number }>, isNameShown = true, handlers: Record<string, unknown> = {}) =>
+    render("QueueRowQ", { row: { id: copies[0]!.id, item: copies[0], copies }, isSelected: false, view: { isNameShown, isAccountShown: false, tabStopId: copies[0]!.id }, onSelect: () => undefined, onOrder: () => undefined, ...handlers });
+  const cellText = (tree: RenderedNode, name: string) => {
+    const [cell] = byClass(tree, name);
+    return cell === undefined ? null : collectText(cell).replace(/\s+/g, " ").trim();
+  };
+  const getRowShape = (tree: RenderedNode) => {
+    const [row] = findNodes(tree, (node) => node.props?.role === "option");
+    return {
+      who: cellText(tree, "queue-row-who"),
+      title: cellText(tree, "queue-row-title"),
+      tags: findNodes(byClass(tree, "queue-row-tag")[0] as RenderedNode, (node) => node.props?.atom === "Badge").map((badge) => badge.props.title),
+      fact: cellText(tree, "queue-row-fact"),
+      label: String(row?.props["aria-label"]).split(", sent ")[0],
+    };
+  };
+
+  const rows = [
+    {
+      name: "to one session it names its sender, leads its title with the recipient and reads Relay", copies: toYoaida(), isNameShown: true,
+      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+    },
+    {
+      name: "to several it names their count and reads received of sent", copies: toThree(), isNameShown: true,
+      shape: { who: "aidl", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from aidl to 3 sessions: ${TITLE}, 1 of 3` },
+    },
+    {
+      name: "a copy its session never acknowledged is not yet, never not received", copies: toYoaida({ status: "unacked", deviation: "unacked" }), isNameShown: true,
+      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+    },
+    {
+      name: "a copy whose session does not listen is counted in the tag column", copies: toYoaida({ session: buildSession({ name: "yoaida", state: "live", isWaiting: false }) }), isNameShown: true,
+      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: ["1 not listening"], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}, 1 not listening` },
+    },
+    {
+      name: "with one session ticked the name column is left out and the title names both ends", copies: toYoaida(), isNameShown: false,
+      shape: { who: null, title: `aidl → yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+    },
+    {
+      name: "a redacted relay reads Text redacted where its title stood", copies: toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
+      shape: { who: "aidl", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: "Relay from aidl to yoaida: Text redacted" },
+    },
+  ];
+  for (const row of rows) {
+    test(`a relay's row: ${row.name}`, () => {
+      const tree = renderRow(row.copies, row.isNameShown);
+      assert.deepEqual(getRowShape(tree), row.shape);
+      assert.match(String(findNodes(tree, (node) => node.props?.role === "option")[0]?.props["aria-label"]), /, sent \S+ ago$/);
+    });
+  }
+
+  test("a redacted relay's stored text is drawn nowhere on its row or its sheet", () => {
+    const copies = toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } });
+    const queue = withList(buildQueue().queue, copies);
+    const sheet = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } });
+    // every drawn string and every prop string, a prose atom's text and a title included
+    const props = [...findNodes(renderRow(copies), () => true), ...findNodes(sheet, () => true)].flatMap((node) => Object.values(node.props ?? {})).filter((value) => typeof value === "string");
+    const texts = [collectText(renderRow(copies)), collectText(sheet), ...props];
+    assert.deepEqual(texts.filter((text) => text.includes("필드") || text.includes("요아이다")), []);
+    assert.match(collectText(sheet), /Text redacted/);
+  });
+
+  test("a relay's row opens its sheet, never the Orders pane, and counts among the rows the sheet steps through", () => {
+    const pressed: string[] = [];
+    const copies = toThree();
+    const [row] = findNodes(renderRow(copies, true, { onSelect: () => pressed.push("sheet"), onOrder: () => pressed.push("orders") }), (node) => node.props?.role === "option");
+    (row?.props.onClick as () => void)();
+    const groups = call("getGroupsQ", [buildItem({ id: 3 }), ...copies]);
+    const sheet = call<{ kind: string; id: number }>("getSheetStateQ", groups, "412", null);
+    const steps = call<{ index: number; count: number }>("getStepsQ", groups, 412, -1);
+    assert.deepEqual([pressed, sheet.kind, sheet.id, steps.index, steps.count], [["sheet"], "item", 412, 1, 2]);
+  });
+
+  const getSheetShape = (copies: Array<{ id: number }>) => {
+    const queue = withList(buildQueue().queue, copies);
+    const tree = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } });
+    const [foot] = byClass(tree, "card-foot");
+    const [head] = findNodes(tree, (node) => node.type === "h2");
+    const [title] = findNodes(tree, (node) => node.type === "h3");
+    const [date] = byClass(tree, "queue-date-line");
+    return {
+      head: collectText(head as RenderedNode).replace(/\s+/g, " ").trim(),
+      title: collectText(title as RenderedNode),
+      date: collectText(date as RenderedNode),
+      foot: collectText(foot as RenderedNode).replace(/\s+/g, " ").trim(),
+      controls: findNodes(foot as RenderedNode, (node) => ["button", "textarea", "input"].includes(String(node.type))).length,
+      body: collectText(byClass(tree, "queue-sheet-body")[0] as RenderedNode),
+      prose: findNodes(tree, (node) => node.props?.atom === "ProseText").map((node) => node.props.text),
+    };
+  };
+
+  test("a relay to one session opens read-only: its two ends in the head and title, the text whole, no field and no button", () => {
+    const shape = getSheetShape(toYoaida());
+    assert.deepEqual(
+      { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
+      { head: "Relay from aidl → to yoaida", title: "Message from aidl to yoaida", foot: "Read-only. It reaches yoaida by itself and stays in Relay history.", controls: 0 },
+    );
+    assert.match(shape.date, /^Not yet\s+Sent\s+2026-11-19 14:20 KST$/);
+    assert.deepEqual(shape.prose, [BODY]);
+    for (const part of ["What aidl wrote", "This went to yoaida as aidl's message, without your approval.", "It does not carry your authority."]) assert.ok(shape.body.includes(part), part);
+    assert.doesNotMatch(shape.body, /Run in that session|Answered/);
+  });
+
+  test("a relay to several sessions reads received of sent on its sheet, and its foot names each session", () => {
+    const shape = getSheetShape(toThree());
+    assert.deepEqual(
+      { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
+      { head: "Relay from aidl → to 3 sessions", title: "Message from aidl to 3 sessions", foot: "Read-only. It reaches each session by itself and stays in Relay history.", controls: 0 },
+    );
+    assert.match(shape.date, /^1 of 3 received/);
+  });
+});
+
 describe("selection", () => {
   const groups = call("getGroupsQ", [buildItem({ id: 5, kind: "report" }), buildItem({ id: 3 }), buildItem({ id: 8, kind: "message", status: "delivered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" })]);
   const rows = [

@@ -724,6 +724,25 @@ export function getRelayHistoryFixture(): RelayHistoryFixture {
   };
 }
 
+export const RELAY_ROW_IDS = { one: 421, several: 424 } as const;
+
+/** The rest state plus two relays on their way under In delivery: aidl to yoaida, and gersona to three sessions with one copy received. */
+export function getRelayRowFixture(): QueueFixture {
+  const one = buildRelayCopies({
+    firstId: RELAY_ROW_IDS.one, sendId: "3a1b2c3d-0004-4e5f-8a9b-0c1d2e3f4a04", from: "aidl", minutesAgo: 2,
+    text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다.\n요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.",
+    to: [["yoaida", {}]],
+  });
+  const several = buildRelayCopies({
+    firstId: RELAY_ROW_IDS.several, sendId: "3a1b2c3d-0005-4e5f-8a9b-0c1d2e3f4a05", from: "gersona", minutesAgo: 9,
+    text: "배포 65 점검 결과를 공유합니다.\n모니터 화면 다섯 개를 점검했고 모두 통과했습니다.",
+    to: [["yoaida", { deliveredAt: getAt(5) }], ["atrium", {}], ["aidl", {}]],
+    facts: { hop: 1, parent: { id: 398, sender: buildRelaySender("atrium"), sentAt: getAt(12) } },
+  });
+  const rest = getRestFixture();
+  return { ...rest, items: [...rest.items, ...one, ...several] };
+}
+
 /** `rest` plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
 export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
   const hidden = [["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e91", "spare"], ["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e92", "deploy62-probe"]].map(([id, name]) => ({

@@ -1579,7 +1579,7 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, on
 			aria-label={getRowLabelQ(row, cells, view.isNameShown)} title={tip || undefined} className="queue-row"
 			onFocus={isNew ? () => onSeen?.(row.id) : undefined} onClick={() => (getRowKindQ(row) === "Order" ? onOrder(row) : onSelect(row.id))}>
 			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} /></span>}
-			<span className="queue-row-title" title={item.title}>{item.title}</span>
+			{getRowTitleQ(row, view.isNameShown)}
 			<span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>
 			<span className="queue-row-fact">{cells.fact}</span>
 			<span className="queue-row-age" title={formatKstDateTime(at)}>{getRowAgeQ(at)}</span>
@@ -1588,11 +1588,45 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, on
 	);
 }
 
-// one cut line, the whole name in its tooltip; an order to several sessions names their count
+// one cut line, the whole name in its tooltip
 function RowWhoQ({ row }) {
-	const count = row.copies.length;
-	const name = count > 1 ? `${count} sessions` : row.item.session.name;
+	const name = getRowNameQ(row);
 	return <span className="queue-row-name" title={name}>{name}</span>;
+}
+
+// the name column: a relay's sender (spec §9.9), else who the item is from or to
+function getRowNameQ(row) {
+	return row.item.kind === "relay" ? getSenderNameQ(row.item.relay.sender) : getCopiesNameQ(row.copies);
+}
+
+// one session's name, or `3 sessions` for a send to several
+function getCopiesNameQ(copies) {
+	return copies.length > 1 ? `${copies.length} sessions` : copies[0].session.name;
+}
+
+/**
+ * The title cell, one cut line: a relay's leads with its mark — `→ yoaida`, or `gersona → yoaida` with the name column left out (spec §4.2);
+ * a redacted relay's reads `Text redacted`, never its stored title. An element, not a component → the cell stays a direct child of the row's grid.
+ */
+function getRowTitleQ(row, isNameShown) {
+	const { item } = row;
+	if (item.kind !== "relay") return <span className="queue-row-title" title={item.title}>{item.title}</span>;
+	const from = getSenderNameQ(item.relay.sender);
+	const to = getCopiesNameQ(row.copies);
+	const isRedacted = item.relay.redaction !== null;
+	return (
+		<span className="queue-row-title" title={isRedacted ? undefined : item.title}>
+			{!isNameShown && from}
+			<span className="font-normal text-dim">{isNameShown ? "→ " : " → "}</span>
+			{to}
+			{" "}
+			<span className={isRedacted ? "font-normal text-dim" : undefined}>{getRelayTitleQ(item)}</span>
+		</span>
+	);
+}
+
+function getRelayTitleQ(item) {
+	return item.relay.redaction === null ? item.title : RELAY_REDACTED_Q;
 }
 
 /** No registered name → the start-directory name, marked so it never reads as one the session chose. */
@@ -1708,26 +1742,38 @@ function getReceiptFactQ(receipt) {
 
 /**
  * The receipt of one copy: `received` once its session acknowledged it; `notReceived` once the queue recorded it did not get there
- * (unacked, expired, or the set canResend names); `notListening` while an answered or held copy's session does not listen;
+ * (unacked, expired, or the set canResend names) — never a relay's: short of a lapse, which leaves the list, no relay copy failed (spec §9.9);
+ * `notListening` while an answered or held copy's session does not listen;
  * every other state → `notYet` (delivering → being taken now; an ended session's copy → a resume starts it).
  */
 function getReceiptQ(item) {
 	if (item.status === "delivered") return "received";
-	if (item.canResend || item.status === "unacked" || item.status === "expired") return "notReceived";
+	if (item.canResend || (item.kind !== "relay" && (item.status === "unacked" || item.status === "expired"))) return "notReceived";
 	if ((item.status === "answered" || item.status === "held") && isNotListeningQ(item.session)) return "notListening";
 	return "notYet";
 }
 
 // kind + session + title + tag + fact + extras + age → `Decision from gersona: <title>, Approval, 3 options, posted 9m ago`
 // a done row's fact is its kind, already said first → `Report from atrium: <title>, Read, ended 1h ago`
+// a relay names both ends whatever the ticks → `Relay from aidl to yoaida: <title>, sent 2m ago` (spec §9.9)
 function getRowLabelQ(row, cells, isNameShown) {
 	const { item } = row;
 	const kind = getRowKindQ(row);
-	const from = isNameShown ? ` from ${row.copies.length > 1 ? `${row.copies.length} sessions` : item.session.name}` : "";
 	const tags = cells.tags.map((tag) => tag.text ?? tag.word);
-	const age = `${row.isDone ? "ended" : "posted"} ${window.UI.formatRelativeTime(getRowAtQ(row))}`;
-	const parts = [`${kind}${from}: ${item.title}`, ...tags, cells.fact !== kind && cells.fact, ...cells.extras, age].filter(Boolean);
+	const age = `${getAgeVerbQ(row)} ${window.UI.formatRelativeTime(getRowAtQ(row))}`;
+	const title = item.kind === "relay" ? getRelayTitleQ(item) : item.title;
+	const parts = [`${kind}${getLabelEndsQ(row, isNameShown)}: ${title}`, ...tags, cells.fact !== kind && cells.fact, ...cells.extras, age].filter(Boolean);
 	return parts.join(", ");
+}
+
+function getLabelEndsQ(row, isNameShown) {
+	if (row.item.kind === "relay") return ` from ${getRowNameQ(row)} to ${getCopiesNameQ(row.copies)}`;
+	return isNameShown ? ` from ${getRowNameQ(row)}` : "";
+}
+
+function getAgeVerbQ(row) {
+	if (row.isDone) return "ended";
+	return row.item.kind === "relay" ? "sent" : "posted";
 }
 
 // a done row's time is its end, every other row's its post
@@ -1743,7 +1789,7 @@ function getRowKindQ(row) {
 function getKindWordQ(item) {
 	if (item.kind === "decision") return item.status === "open" ? "Decision" : "Answer";
 	if (item.kind === "report" && item.status === "open") return "Report";
-	return "Order";
+	return item.kind === "relay" ? "Relay" : "Order";
 }
 
 // the status line: the last act's result or a read's note · a line naming an order carries a quiet Show that opens the order view at it
@@ -1814,33 +1860,35 @@ function FilterAxisTriggerQ({ axis, options, value, onPick }) {
 function QueueSheetQ({ queue }) {
 	const { sheet } = queue;
 	if (sheet.kind !== "item" && sheet.kind !== "left") return null;
-	const isDone = getRowQ(queue.groups, sheet.id)?.isDone === true;
-	return <ItemSheetQ key={sheet.id} item={sheet.item} queue={queue} cliPath={queue.list.data?.cliPath} hasLeft={sheet.kind === "left"} isDone={isDone} />;
+	const row = getRowQ(queue.groups, sheet.id);
+	return <ItemSheetQ key={sheet.id} item={sheet.item} copies={row?.copies} queue={queue} cliPath={queue.list.data?.cliPath} hasLeft={sheet.kind === "left"} isDone={row?.isDone === true} />;
 }
 
 /**
  * One item on the sheet: head (the way back, kind and session, the stepping), body (the date line, title, text, kind block, state lines), foot (the composer).
  * Its own card markup: the head's h2 sits between two buttons, which the Card head's title slot cannot hold.
+ * @param copies - the row's copies: a relay to several sessions → one per recipient
  * @param cliPath - the installed queue CLI the server resolved (GA_ROOT-aware)
  * @param isDone - a row of the done list → read-only: no delivery lines, the foot how and when it ended (spec §4.6)
  */
-function ItemSheetQ({ item, queue, cliPath, hasLeft = false, isDone = false }) {
+function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, isDone = false }) {
 	const draft = queue.drafts[item.id] ?? {};
 	const isBusy = queue.busy.id === item.id;
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
 	return (
 		<div className="card queue-pane queue-sheet">
-			<SheetHeadQ item={item} queue={queue} kind={isDone ? DONE_KIND_Q[item.kind] : getKindWordQ(item)} />
+			<SheetHeadQ item={item} copies={copies} queue={queue} kind={isDone ? DONE_KIND_Q[item.kind] : getKindWordQ(item)} />
 			<div className="card-body" tabIndex={-1}>
-				<SheetBodyQ item={item} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} />
+				<SheetBodyQ item={item} copies={copies} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} />
 			</div>
-			<div className="card-foot">{getSheetFootQ({ item, draft, queue, isBusy, error, hasLeft, isDone })}</div>
+			<div className="card-foot">{getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone })}</div>
 		</div>
 	);
 }
 
-function getSheetFootQ({ item, draft, queue, isBusy, error, hasLeft, isDone }) {
+function getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone }) {
 	if (isDone) return <EndLineQ item={item} />;
+	if (item.kind === "relay") return <RelayFootQ copies={copies} />;
 	if (hasLeft) return <LeftQueueLineQ />;
 	return <SheetFootQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
 }
@@ -1851,8 +1899,14 @@ function EndLineQ({ item }) {
 	return <div className="queue-composer"><p className="fs-meta text-dim" title={end.title}>{`${end.text} · ${getDatedTimeQ(item.closedAt)}`}</p></div>;
 }
 
+// a relay's foot (spec §9.9): one line, no field and no button — nothing on it is the owner's to send
+function RelayFootQ({ copies }) {
+	const to = copies.length > 1 ? "each session" : copies[0].session.name;
+	return <div className="queue-composer"><p className="fs-meta text-dim">{`Read-only. It reaches ${to} by itself and stays in Relay history.`}</p></div>;
+}
+
 // the way back (its arrival count in its name, painted beside the glyph-only square) · the h2 · the position and previous / next (spec §4.3, §12.5)
-function SheetHeadQ({ item, queue, kind }) {
+function SheetHeadQ({ item, copies, queue, kind }) {
 	const { Badge, Icon } = window.UI;
 	const { steps } = queue;
 	const arrived = queue.list.newIds.length;
@@ -1864,7 +1918,7 @@ function SheetHeadQ({ item, queue, kind }) {
 				</button>
 				{arrived > 0 && <span aria-hidden="true"><Badge fill="solid">{arrived}</Badge></span>}
 			</span>
-			<h2 className="card-title"><LetterheadQ item={item} kind={kind} nameNote={getNameNoteQ(item.session, queue)} /></h2>
+			<h2 className="card-title"><LetterheadQ item={item} copies={copies} kind={kind} nameNote={getNameNoteQ(item.session, queue)} /></h2>
 			<span className="queue-steps">
 				{steps.index >= 0 && <span className="fs-meta text-dim tabular-nums">{`${steps.index + 1} of ${steps.count}`}</span>}
 				<button type="button" className="btn ghost sm icon" aria-label="Previous item" title="Previous item (K)" disabled={steps.prevId === null} onClick={() => queue.selectRow(steps.prevId)}><Icon name="chevron-up" size={16} /></button>
@@ -1883,8 +1937,9 @@ function getNameNoteQ(session, queue) {
 	return [isTwin && session.id.slice(0, SESSION_PREFIX_LENGTH_Q), isManyAccounts && session.profileLabel].filter(Boolean).map((part) => ` · ${part}`).join("");
 }
 
-// the head's h2 content: read as `Decision from gersona`; the session's account, directory and id ride its title
-function LetterheadQ({ item, kind, nameNote = "" }) {
+// the head's h2 content: read as `Decision from gersona`; the session's account, directory and id ride its title ·
+// a relay's two ends, read as `Relay from aidl to yoaida`: the sheet's Who lines carry their facts (spec §9.9)
+function LetterheadQ({ item, copies = [item], kind, nameNote = "" }) {
 	const { Badge } = window.UI;
 	const { session } = item;
 	const where = [session.profileLabel, session.cwd, session.id].filter(Boolean).join(" · ");
@@ -1892,12 +1947,16 @@ function LetterheadQ({ item, kind, nameNote = "" }) {
 		<span className="queue-letter">
 			<Badge fill="tag">{kind}</Badge>
 			<span className="sr-only">{" from "}</span>
-			<span className="queue-letter-name" title={where}><ItemSessionNameQ session={session} />{nameNote}</span>
+			{item.kind === "relay"
+				? <span className="queue-letter-name">{getSenderNameQ(item.relay.sender)}<span aria-hidden="true" className="font-normal text-dim">{" → "}</span><span className="sr-only">{" to "}</span>{getCopiesNameQ(copies)}</span>
+				: <span className="queue-letter-name" title={where}><ItemSessionNameQ session={session} />{nameNote}</span>}
 		</span>
 	);
 }
 
-function LetterheadFactsQ({ item }) {
+// a send to several reads received of sent → `1 of 3 received`
+function LetterheadFactsQ({ item, copies = [item] }) {
+	if (copies.length > 1) return <RowFactsQ facts={[{ text: `${getDeliveryFactQ(item, copies)} received` }]} />;
 	const facts = item.status === "open" ? getOpenFactsQ(item) : [getReceiptFactQ(getReceiptQ(item))];
 	return facts.length > 0 ? <RowFactsQ facts={facts} /> : null;
 }
@@ -1908,14 +1967,16 @@ function getOpenFactsQ(item) {
 	return [...(fact ? [{ text: fact }] : []), ...tags];
 }
 
+// a relay's time is its send, its verb visible: it carries no answer (spec §9.9)
 function LetterheadTimeQ({ item }) {
-	const isAnswered = item.status !== "open" && item.answeredAt;
-	const verb = isAnswered ? "Answered" : "Posted";
+	const isRelay = item.kind === "relay";
+	const isAnswered = !isRelay && item.status !== "open" && item.answeredAt;
+	const verb = isRelay ? "Sent" : isAnswered ? "Answered" : "Posted";
 	const time = getDatedTimeQ(isAnswered ? item.answeredAt : item.askedAt);
 	const record = isAnswered ? getAnswerLineQ(item) : null;
 	return (
 		<span className="fs-meta text-faint tabular-nums" title={record && !record.isOutside ? record.text : `${verb} ${time}`}>
-			<span className="sr-only">{`${verb} `}</span>{time}
+			<span className={isRelay ? undefined : "sr-only"}>{`${verb} `}</span>{time}
 		</span>
 	);
 }
@@ -1927,20 +1988,67 @@ function getDatedTimeQ(iso) {
 }
 
 // a done item's delivery lines (receipt, pull, not received) belong to In delivery → its sheet keeps the answer record alone
-function SheetBodyQ({ item, draft, onDraft, cliPath, isDone = false }) {
+function SheetBodyQ({ item, copies = [item], draft, onDraft, cliPath, isDone = false }) {
 	const isAnsweredDecision = item.kind === "decision" && item.status !== "open";
 	return (
 		<div className="queue-sheet-body">
 			<p className="queue-date-line">
-				<span className="queue-date-facts">{!isDone && <LetterheadFactsQ item={item} />}</span>
+				<span className="queue-date-facts">{!isDone && <LetterheadFactsQ item={item} copies={copies} />}</span>
 				<LetterheadTimeQ item={item} />
 			</p>
-			<h3 className="queue-sheet-title">{item.title}</h3>
-			{isAnsweredDecision ? <YourAnswerQ item={item} /> : <ItemTextQ item={item} />}
-			{item.kind === "decision" && item.status === "open" && <OptionsQ item={item} draft={draft} onDraft={onDraft} />}
-			{isDone ? <AnswerLineQ item={item} /> : <CardStateQ item={item} cliPath={cliPath} />}
-			{isAnsweredDecision && <OriginalQuestionQ item={item} />}
-			{item.resumes.length > 0 && <ResumeRecordListQ resumes={item.resumes} profileLabel={item.session.profileLabel} />}
+			{item.kind === "relay" ? <RelayBlockQ item={item} copies={copies} /> : (
+				<>
+					<h3 className="queue-sheet-title">{item.title}</h3>
+					{isAnsweredDecision ? <YourAnswerQ item={item} /> : <ItemTextQ item={item} />}
+					{item.kind === "decision" && item.status === "open" && <OptionsQ item={item} draft={draft} onDraft={onDraft} />}
+					{isDone ? <AnswerLineQ item={item} /> : <CardStateQ item={item} cliPath={cliPath} />}
+					{isAnsweredDecision && <OriginalQuestionQ item={item} />}
+					{item.resumes.length > 0 && <ResumeRecordListQ resumes={item.resumes} profileLabel={item.session.profileLabel} />}
+				</>
+			)}
+		</div>
+	);
+}
+
+/**
+ * A relay's kind block (spec §9.9): a title in the page's own words — the sender cannot write the sheet's largest line —
+ * who wrote to whom, the text whole, its hop, and that it carries none of the owner's authority.
+ */
+function RelayBlockQ({ item, copies }) {
+	const { sender } = item.relay;
+	const from = getSenderNameQ(sender);
+	const to = getCopiesNameQ(copies);
+	return (
+		<>
+			<h3 className="queue-sheet-title">{`Message from ${from} to ${to}`}</h3>
+			<RelayWhoQ sender={sender} copies={copies} />
+			<p className="fs-meta font-semibold text-dim">{`What ${from} wrote`}</p>
+			{item.relay.redaction === null ? <ItemTextQ item={item} /> : <p className="fs-meta text-dim">{RELAY_REDACTED_Q}</p>}
+			<RelayHopLineQ relay={item.relay} at={item.askedAt} />
+			<p className="fs-meta text-dim">{`This went to ${to} as ${from}'s message, without your approval. It does not carry your authority.`}</p>
+		</>
+	);
+}
+
+// From and To on Pros and Cons' 44 label column: the name a session gave itself beside the queue's own facts, a receipt per recipient of several
+function RelayWhoQ({ sender, copies }) {
+	const { MachineString } = window.UI;
+	return (
+		<div className="queue-option-sides">
+			<span className="queue-label">From</span>
+			<span>
+				<span className="font-semibold">{getSenderNameQ(sender)}</span>
+				{sender.selfDeclaredName !== null && " · name it gave itself"}{" · "}<MachineString>{sender.sessionIdPrefix}</MachineString>{` · ${getSessionPlaceQ(sender)}`}
+			</span>
+			{copies.map((copy, index) => (
+				<React.Fragment key={copy.id}>
+					<span className="queue-label">{index === 0 ? "To" : ""}</span>
+					<span>
+						<span className="font-semibold">{copy.session.name}</span>{" · "}<MachineString>{copy.session.sessionIdPrefix}</MachineString>{` · ${getSessionPlaceQ(copy.session)}`}
+						{copies.length > 1 && <>{" "}<RowFactsQ facts={[getReceiptFactQ(getReceiptQ(copy))]} /></>}
+					</span>
+				</React.Fragment>
+			))}
 		</div>
 	);
 }
@@ -3193,6 +3301,7 @@ function RecentResumeListQ({ resumes }) {
 }
 
 const RELAY_HEAD_ID_PREFIX_Q = "queue-relay-head-";
+const RELAY_REDACTED_Q = "Text redacted";
 
 // spec §9.9 → the drawer's foot: what a person tracing a cause must hold about every entry, said once
 const RELAY_LOG_FOOT_Q = "Names are what sessions call themselves, and the queue has no login: any local process can send as any session, or redact. Read this as evidence, not proof.";
@@ -3411,7 +3520,7 @@ function getUnresolvedTextQ(count) {
 function RelayEntryQ({ entry, onRedact }) {
 	const { Badge, MachineString, formatKstTime } = window.UI;
 	const { item, copies } = entry;
-	const { sender, hop, parent } = item.relay;
+	const { sender } = item.relay;
 	// redacted only once every copy is → until then the text and the button stay (route-rows verdict, per-copy route)
 	const kept = copies.find((copy) => copy.relay.redaction === null);
 	const at = getRelayAtQ(entry);
@@ -3431,19 +3540,27 @@ function RelayEntryQ({ entry, onRedact }) {
 				</span>
 			</p>
 			{kept === undefined
-				? <p className="fs-meta text-dim">{`Text redacted ${getDatedTimeQ(item.relay.redaction.at)} · it was ${item.relay.redaction.length.toLocaleString("en-US")} characters long`}</p>
+				? <p className="fs-meta text-dim">{`${RELAY_REDACTED_Q} ${getDatedTimeQ(item.relay.redaction.at)} · it was ${item.relay.redaction.length.toLocaleString("en-US")} characters long`}</p>
 				: <OrderBubbleQ text={kept.body} isPlain />}
 			<DocumentsLineQ item={item} />
 			<ul className="queue-relay-copies" aria-label="Recipients">{copies.map((copy) => <RelayCopyQ key={copy.id} copy={copy} at={at} />)}</ul>
-			{hop > 0 && parent !== null && (
-				<p className="fs-meta text-dim">
-					<span className="font-semibold">{`Hop ${hop}`}</span>
-					{` · sent after ${getSenderNameQ(sender)} received relay `}<MachineString>{`#${parent.id}`}</MachineString>
-					{` from ${getSenderNameQ(parent.sender)} at ${getEntryTimeQ(parent.sentAt, at)}`}
-				</p>
-			)}
+			<RelayHopLineQ relay={item.relay} at={at} />
 			<span id={`${headId}-place`} hidden>{place}</span>
 		</article>
+	);
+}
+
+// only a relay passed on (hop 1 or 2): `Hop 1 · sent after aidl received relay #398 from atrium at 17:02`
+function RelayHopLineQ({ relay, at }) {
+	const { MachineString } = window.UI;
+	const { sender, hop, parent } = relay;
+	if (hop === 0 || parent === null) return null;
+	return (
+		<p className="fs-meta text-dim">
+			<span className="font-semibold">{`Hop ${hop}`}</span>
+			{` · sent after ${getSenderNameQ(sender)} received relay `}<MachineString>{`#${parent.id}`}</MachineString>
+			{` from ${getSenderNameQ(parent.sender)} at ${getEntryTimeQ(parent.sentAt, at)}`}
+		</p>
 	);
 }
 
