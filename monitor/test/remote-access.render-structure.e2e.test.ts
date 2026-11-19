@@ -391,3 +391,58 @@ describe("remote access on with devices at 1440px, the registered devices card",
     assert.deepEqual(edges.end, [edges.end[0], edges.end[0], edges.end[0]], "Remove all, the Action header and a row's Remove end together");
   });
 });
+
+// the server's label cap (routes.ts → label maxLength 64), a real model name
+const LONG_LABEL = "Minji’s iPad Pro 12.9-inch (6th generation) Wi-Fi + Cellular 1TB";
+const NARROWEST_VIEWPORT = 1024;
+// narrower than the narrowest supported width → the Device column is narrower than the long name
+const CUTTING_VIEWPORT = 800;
+
+describe("remote access on with a 64-character device name, the device table", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON, [{ ...DEVICES[0], label: LONG_LABEL }, ...DEVICES.slice(1)]);
+    await ctx.page.getByRole("table", { name: "Registered devices" }).waitFor({ timeout: WAIT_TIMEOUT_MS });
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("a Device column narrower than the name keeps it on one line, cut with an ellipsis, whole in its title, its row as tall as a short name's", async () => {
+    await ctx.page.setViewportSize({ width: CUTTING_VIEWPORT, height: 900 });
+
+    const at = await ctx.page.evaluate(() => {
+      const rows = [...document.querySelectorAll("table tbody tr")];
+      const cell = rows[0]?.querySelector("th");
+      const cut = cell?.querySelector("[title]") ?? cell;
+      return {
+        title: cut?.getAttribute("title"),
+        isCut: cut ? cut.scrollWidth > cut.clientWidth && getComputedStyle(cut).textOverflow === "ellipsis" : false,
+        heights: rows.map((row) => Math.round(row.getBoundingClientRect().height)),
+      };
+    });
+
+    assert.deepEqual(at, { title: LONG_LABEL, isCut: true, heights: [at.heights[1], at.heights[1], at.heights[1]] });
+  });
+
+  test("at the narrowest supported width Registered and Last seen read each date on one line, their columns no wider than their widest text", async () => {
+    await ctx.page.setViewportSize({ width: NARROWEST_VIEWPORT, height: 900 });
+
+    const columns = await ctx.page.evaluate(() => {
+      const table = document.querySelector("table");
+      return [2, 3].map((nth) => {
+        const cells = [...(table?.querySelectorAll(`tr > :nth-child(${nth})`) ?? [])];
+        const texts = cells.map((cell) => {
+          const range = document.createRange();
+          range.selectNodeContents(cell);
+          const rects = [...range.getClientRects()];
+          return { width: range.getBoundingClientRect().width, lines: new Set(rects.map((rect) => Math.round(rect.top))).size };
+        });
+        const cell = cells[0];
+        const style = cell ? getComputedStyle(cell) : null;
+        const inner = cell && style ? cell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) : Number.NaN;
+        return { lines: texts.map((text) => text.lines), slack: Math.round(inner - Math.max(...texts.map((text) => text.width))) };
+      });
+    });
+
+    assert.deepEqual(columns, columns.map((column) => ({ lines: column.lines.map(() => 1), slack: 0 })), JSON.stringify(columns));
+  });
+});

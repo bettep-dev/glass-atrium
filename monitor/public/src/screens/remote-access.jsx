@@ -21,7 +21,8 @@ const CODE_WINDOW_MS_RA = 5 * 60_000;
 const DEVICE_POLL_MS_RA = 5_000;
 // Action: isNumeric for the atom's right-end alignment (a button, no figures) · 1% → the column shrinks to its button
 const DEVICE_COLUMNS_RA = [{ key: "label", label: "Device" }, { key: "created", label: "Registered" }, { key: "seen", label: "Last seen" }, { key: "act", label: "Action", isNumeric: true }];
-const DEVICE_WIDTHS_RA = [undefined, undefined, undefined, "1%"];
+// Device takes the slack; the dates and Remove hug their text (spec 44105 → Layout → Registered devices)
+const DEVICE_WIDTHS_RA = [undefined, "1%", "1%", "1%"];
 const DESTRUCTIVE_STYLE_RA = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))", background: "transparent" };
 
 // the one device whose steps are ruled · hosts → the setup facts that make the address, first shown, second in the fold
@@ -818,9 +819,12 @@ function DeviceTableRA({ devices, pendingId, onRemove }) {
 		<Table caption="Registered devices" columns={DEVICE_COLUMNS_RA} widths={DEVICE_WIDTHS_RA}>
 			{devices.map((device) => (
 				<TableRow key={device.id}>
-					<TableCell kind="row-header">{device.label}</TableCell>
-					<TableCell>{formatKstDateTime(device.createdAt)}</TableCell>
-					<TableCell>{device.lastSeenAt ? formatKstDateTime(device.lastSeenAt) : <AbsentValue kind="none" />}</TableCell>
+					{/* max-w-0 → the column takes the leftover width, not the name's nowrap width */}
+					<TableCell kind="row-header" className="w-full max-w-0">
+						<div className="truncate" title={device.label}>{device.label}</div>
+					</TableCell>
+					<TableCell className="whitespace-nowrap tabular-nums">{formatKstDateTime(device.createdAt)}</TableCell>
+					<TableCell className="whitespace-nowrap tabular-nums">{device.lastSeenAt ? formatKstDateTime(device.lastSeenAt) : <AbsentValue kind="none" />}</TableCell>
 					<TableCell isNumeric>
 						<button type="button" className="btn sm" style={DESTRUCTIVE_STYLE_RA} aria-label={`Remove ${device.label}`}
 							aria-busy={pendingId === device.id || undefined} onClick={() => onRemove(device)}>
