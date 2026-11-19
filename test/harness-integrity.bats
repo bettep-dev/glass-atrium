@@ -394,7 +394,7 @@ seed_failing_shasum() {
 run_whole_doctor() {
   run --separate-stderr env GA_MANIFEST="${ROOT}/manifest.json" "$@" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-1}" \
     GA_LIB_DIR="${GA}/scripts/lib" HOME="${FAKE_HOME}" GA_DATA_ROOT="${SANDBOX}/data" ATRIUM_UPDATE_STATE_DIR="${STATE}" \
-    GA_TARGET_HOME="${FAKE_HOME}/.claude" bash -c 'set -Eeuo pipefail; source "$1/lib/ga-core.sh"; ga_init_env "$2"; run_doctor' \
+    GA_TARGET_HOME="${FAKE_HOME}/.claude" bash -c 'set -Eeuo pipefail; source "$1/lib/ga-core.sh"; source "$1/test/lib/remote-run-stub.bash"; ga_init_env "$2"; run_doctor' \
     _ "${GA}" "${ROOT}"
 }
 

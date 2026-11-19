@@ -650,9 +650,12 @@ PY
   # must keep failing. A structural "no file was written" assertion alone would not survive that move.
   # GA_SKIP_DB_SETUP: the doctor's DB probes run `psql -h /tmp`, which no PGHOST reaches; skipping them
   # leaves the abort classifier, the section under test, untouched.
+  load '../../test/lib/remote-run-stub'
+  mkdir -p "${WORK}/ga-root"
+  make_remote_stub_root "${WORK}/ga-root" "${GA}"
   GA_SKIP_DB_SETUP=1 GA_TARGET_HOME="${target}" GA_DATA_ROOT="${data}" DOCTOR_AUTH_REPORTS_DIR="${reports}" \
     GA_GENERATE_MANIFEST="${target}/no-such-manifest-gen" GA_AUTH_CLAUDE_BIN="${target}/bin/claude" \
-    run "${GA}/glass-atrium" doctor
+    run "${WORK}/ga-root/glass-atrium" doctor
   [[ "${output}" == *"FAIL : autoagent apply aborted"* ]] || {
     echo "doctor output: ${output}" >&2
     return 1

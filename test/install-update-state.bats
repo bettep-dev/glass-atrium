@@ -215,7 +215,10 @@ file_hash() {
 
 @test "T27: doctor section-9 reports the baseline and no daemon-pause line" {
   write_manifest "agents/dev-x.md"
+  load 'lib/remote-run-stub'
+  mkdir -p "${SANDBOX}/doctor-root"
+  make_remote_stub_root "${SANDBOX}/doctor-root" "${REAL_GA_DIR}"
 
-  run "${REAL_GA}" doctor
+  run "${SANDBOX}/doctor-root/glass-atrium" doctor
   [[ "${output}" == *"base@install baseline"* ]] && [[ "${output}" != *"pause"* ]]
 }

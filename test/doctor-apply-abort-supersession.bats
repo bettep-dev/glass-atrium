@@ -45,6 +45,7 @@ source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   load 'lib/bats-db-seal'
+  load 'lib/remote-run-stub'
   ga_bats_db_seal
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   [[ -f "${APPLY_SH}" ]] || skip "daemon-apply.sh not found: ${APPLY_SH}"
@@ -52,7 +53,8 @@ setup() {
   DATA_ROOT="$(mktemp -d -t ga-doctor-supersede-data.XXXXXX)"
   WORK="$(cd -- "$(mktemp -d -t ga-doctor-supersede-work.XXXXXX)" && pwd -P)"
   REPORTS="${DATA_ROOT}/data/daemon-reports"
-  mkdir -p "${TARGET}/bin" "${REPORTS}" "${WORK}/agents" "${WORK}/home"
+  mkdir -p "${TARGET}/bin" "${REPORTS}" "${WORK}/agents" "${WORK}/home" "${WORK}/ga-root"
+  make_remote_stub_root "${WORK}/ga-root" "${GA}"
   # A fresh file in a plain dir: a `cat >` onto an inherited symlink would follow it and truncate the
   # REAL claude binary at the far end.
   if ga_guard_path "${TARGET}"; then rm -f -- "${TARGET:?}/bin/claude"; fi
@@ -77,7 +79,7 @@ teardown() {
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
     ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
-    DOCTOR_AUTH_REPORTS_DIR="${REPORTS}" run "${REAL_GA}" doctor
+    DOCTOR_AUTH_REPORTS_DIR="${REPORTS}" run "${WORK}/ga-root/glass-atrium" doctor
 }
 
 # Empty the daemon-reports dir between loop passes, so each emit_abort_row starts from no rows.
