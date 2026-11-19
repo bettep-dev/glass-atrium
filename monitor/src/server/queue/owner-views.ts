@@ -253,8 +253,9 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
 
 /**
  * A history thread, newest first, paged by order: the owner's orders (message items and reports carrying an owner reply)
- * or relays, in every status, or decisions and reports no longer open. Every copy of a paged order is on that page,
- * the copies to sessions the filter leaves out included. Items come order by order, the copies of one order in id order.
+ * or relays, in every status, or decisions and reports no longer open. Every copy of a paged order to a non-probe session
+ * is on that page, the copies to sessions the filter leaves out included; an order sent only to probe sessions is left out.
+ * Items come order by order, the copies of one order in id order.
  */
 export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<OwnerOrdersPage> {
   const rows = await getOrderCopyRows(query);
