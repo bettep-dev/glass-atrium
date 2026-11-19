@@ -558,7 +558,7 @@ function PaneRA({ setup, devices, progress, onAct, onDevicesRead }) {
 		<div className="ra-pane">
 			<Stack className="ra-pane-body">
 				<Stack gap="stack">
-					<h3 ref={titleRef} tabIndex={-1} className="fs-title font-semibold text-ink">{step.title}</h3>
+					<h3 ref={titleRef} tabIndex={-1} className="ra-pane-title fs-title font-semibold text-ink">{step.title}</h3>
 					<StepLineRA step={step} onAct={onAct} />
 				</Stack>
 				<StepValueRA step={step} setup={setup} devices={devices} address={values.address} trouble={trouble} onAct={onAct} onDevicesRead={onDevicesRead} />
@@ -574,7 +574,7 @@ function FinishedPaneRA({ label, titleRef, onAct }) {
 	return (
 		<div className="ra-pane">
 			<Stack gap="label" className="ra-pane-body items-start">
-				<h3 ref={titleRef} tabIndex={-1} className="fs-title font-semibold text-ink"><span className="text-ok">{TONE_GLYPH.ok}</span> {`“${label}” is connected.`}</h3>
+				<h3 ref={titleRef} tabIndex={-1} className="ra-pane-title fs-title font-semibold text-ink"><span className="text-ok">{TONE_GLYPH.ok}</span> {`“${label}” is connected.`}</h3>
 				<button type="button" className="btn" onClick={() => onAct({ type: "restart" })}>Connect another device</button>
 			</Stack>
 		</div>
@@ -801,13 +801,13 @@ function DevicesCardRA({ devices, limit, foot, onChanged, onRemoveAll }) {
 	};
 	const removeAll = devices.length >= 2 && <QuietButton onClick={onRemoveAll}>Remove all</QuietButton>;
 	const hasTable = devices.length > 0;
-	// flush only under the table → its edge cells take the card padding; the error line under it insets itself
+	// flush → the table's edge cells and EmptyState each carry the card padding once; the error line insets itself
 	return (
-		<Card title="Registered devices" sub={`${devices.length} of ${limit}`} right={removeAll} foot={foot} isFlush={hasTable}>
+		<Card title="Registered devices" sub={`${devices.length} of ${limit}`} right={removeAll} foot={foot} isFlush>
 			{hasTable
 				? <DeviceTableRA devices={devices} pendingId={act.pendingId} onRemove={onRemove} />
 				: <EmptyState message="No device registered" hint="A device appears here once it registers." />}
-			{act.error && <div className={hasTable ? "p-card-pad" : undefined}><ActErrorRA error={act.error} /></div>}
+			{act.error && <div className="p-card-pad"><ActErrorRA error={act.error} /></div>}
 		</Card>
 	);
 }

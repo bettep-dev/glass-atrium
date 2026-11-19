@@ -1643,19 +1643,18 @@ button.ra-step {
 button.ra-step:hover {
 	background: rgb(var(--sunken));
 }
+/* start-aligned → glyph and numeral stand under the head's first letter */
 .ra-step-mark {
-	text-align: center;
+	justify-self: start;
 	font-variant-numeric: tabular-nums;
 }
 /* the open row is a fill, not a bar */
 .ra-step.is-open {
 	background: var(--tint-select);
 }
+/* numeral 600, title 400: at 500 the longest title outgrows the 20rem rail's line */
 .ra-step.is-open > .ra-step-mark {
 	font-weight: 600;
-}
-.ra-step.is-open > .ra-step-title {
-	font-weight: 500;
 }
 .ra-step.is-ahead {
 	color: rgb(var(--faint));
@@ -1672,6 +1671,10 @@ button.ra-step:hover {
 .ra-pane-body > * {
 	max-width: var(--measure-prose);
 }
+/* a tabindex -1 landing for assistive tech, not a control → no ring that reads as a field */
+.ra-pane-title:focus {
+	outline: none;
+}
 /* on the pane's bottom edge → Next keeps one place on the rail-high steps */
 .ra-pane-foot {
 	margin-block-start: auto;
@@ -1687,9 +1690,9 @@ button.ra-step:hover {
 	font-weight: 500;
 	color: rgb(var(--ink));
 }
-/* 1ch in the mono face is its one space → the groups stand --space-3 apart while a copy keeps a single space */
+/* --space-3 beyond the one space the text keeps → pairs match in fours, a copy reads as the phone writes it */
 .ra-fingerprint-group {
-	margin-inline-start: calc(var(--space-3) - 1ch);
+	margin-inline-start: var(--space-3);
 }
 /* the QR field is its own scan margin: no frame, no fill around it */
 .ra-code {

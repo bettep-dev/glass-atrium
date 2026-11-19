@@ -200,6 +200,10 @@ const WIDTHS = [
 // spec 44105 → Layout → Connect a device: --ra-rail-w 20rem · the pane body and foot inset by --card-pad
 const RAIL_PX = 320;
 const CARD_PAD_PX = 16;
+// tokens.css → --space-3
+const SPACE_3_PX = 12;
+// a glyph's own side bearing, far under the 8px a centred numeral sits in from its 24px column
+const GLYPH_BEARING_PX = 2;
 // the owner's window (spec 44105 → Layout → Page)
 const OWNER_WINDOW = { width: 1568, height: 759 };
 
@@ -211,6 +215,16 @@ async function readProcedure(page: Page) {
     const pane = card?.querySelector(".ra-pane");
     const foot = pane?.querySelector(".ra-pane-foot");
     const lines = [...(pane?.querySelectorAll(".ra-fingerprint .machine > span") ?? [])];
+    // the step between the groups beyond one pair space: group 1's end → group 2's start, less the drawn width of a pair's space
+    const groupStep = lines.map((line) => {
+      const [first, second] = [...line.children];
+      const spaceText = first?.firstChild;
+      if (!second || !spaceText) return null;
+      const space = document.createRange();
+      space.setStart(spaceText, 2);
+      space.setEnd(spaceText, 3);
+      return Math.round(second.getBoundingClientRect().left - first.getBoundingClientRect().right - space.getBoundingClientRect().width);
+    });
     const [cardBox, rail, paneBox, footBox, footStart, footEnd] = [card, card?.querySelector(".ra-rail"), pane, foot, foot?.firstElementChild, foot?.lastElementChild].map((el) => {
       const rect = el?.getBoundingClientRect();
       return rect ? { left: Math.round(rect.left), right: Math.round(rect.right), top: Math.round(rect.top), bottom: Math.round(rect.bottom), width: Math.round(rect.width) } : null;
@@ -222,7 +236,7 @@ async function readProcedure(page: Page) {
       foot: footBox,
       footStart,
       footEnd,
-      fingerprint: { count: lines.length, size: lines[0] ? getComputedStyle(lines[0]).fontSize : null, groups: lines.map((line) => line.children.length) },
+      fingerprint: { count: lines.length, size: lines[0] ? getComputedStyle(lines[0]).fontSize : null, groups: lines.map((line) => line.children.length), groupStep, text: lines.map((line) => line.textContent) },
       scroll: { width: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, top: document.scrollingElement?.scrollTop },
     };
   });
@@ -262,12 +276,48 @@ describe("remote access on, the connect card's procedure at each supported width
     });
   }
 
-  test("the fingerprint reads at 16px, each of its four lines in two groups of four pairs", async () => {
+  test("the fingerprint reads at 16px, each of its four lines two groups of four pairs set --space-3 wider than a pair's space, its text single-spaced", async () => {
     await ctx.page.setViewportSize({ width: 1440, height: 900 });
+    const pairs = SETUP_ON.fingerprint.split(":");
+    const text = [0, 8, 16, 24].map((start) => pairs.slice(start, start + 8).join(" "));
 
     const { fingerprint } = await readProcedure(ctx.page);
 
-    assert.deepEqual(fingerprint, { count: 4, size: "16px", groups: [2, 2, 2, 2] });
+    assert.deepEqual(fingerprint, { count: 4, size: "16px", groups: [2, 2, 2, 2], groupStep: [SPACE_3_PX, SPACE_3_PX, SPACE_3_PX, SPACE_3_PX], text });
+  });
+
+  test("every rail title stays on one line at each supported width, the open one included", async () => {
+    const lines: Record<number, number[]> = {};
+    // the page's own face, not the fallback it paints before the font arrives
+    await ctx.page.evaluate(() => document.fonts.ready.then(() => undefined));
+    for (const row of WIDTHS) {
+      await ctx.page.setViewportSize({ width: row.viewport, height: 900 });
+      // two lines still fit the 40px row → count the title's own lines
+      lines[row.viewport] = await ctx.page.evaluate(() =>
+        [...document.querySelectorAll(".ra-rail .ra-step-title")].map((title) => Math.round(title.getBoundingClientRect().height / Number.parseFloat(getComputedStyle(title).lineHeight))),
+      );
+    }
+
+    assert.deepEqual(lines, Object.fromEntries(WIDTHS.map((row) => [row.viewport, [1, 1, 1, 1, 1]])));
+  });
+
+  test("the rail head's first letter, the done mark and every numeral start on one column", async () => {
+    await ctx.page.setViewportSize({ width: 1440, height: 900 });
+
+    const starts = await ctx.page.evaluate(() =>
+      [document.querySelector(".ra-rail-head"), ...document.querySelectorAll(".ra-rail .ra-step-mark")].map((el) => {
+        const walker = el ? document.createTreeWalker(el, NodeFilter.SHOW_TEXT) : null;
+        const glyph = walker?.nextNode();
+        if (!glyph) return Number.NaN;
+        const range = document.createRange();
+        range.setStart(glyph, 0);
+        range.setEnd(glyph, 1);
+        return range.getBoundingClientRect().left;
+      }),
+    );
+
+    assert.equal(starts.length, 6, JSON.stringify(starts));
+    assert.ok(starts.every((left) => Math.abs(left - starts[0]) <= GLYPH_BEARING_PX), `head, ✓ and numerals 2-5 within ${GLYPH_BEARING_PX}px: ${JSON.stringify(starts)}`);
   });
 
   test("a card narrower than 44rem stacks the rail over the pane", async () => {
@@ -312,6 +362,19 @@ describe("remote access on at 1440px, moving through the steps", () => {
 
     assert.equal(starts.length, 5);
     assert.deepEqual(starts, starts.map(() => starts[0]));
+  });
+
+  test("a heading a keyboard Next focuses draws no ring, so it never reads as a field", async () => {
+    await ctx.page.getByRole("button", { name: "Next", exact: true }).focus();
+    await ctx.page.keyboard.press("Enter");
+    await ctx.page.waitForFunction(() => document.activeElement?.tagName === "H3", null, { timeout: WAIT_TIMEOUT_MS });
+
+    const heading = await ctx.page.evaluate(() => {
+      const el = document.activeElement;
+      return { tag: el?.tagName, isFocusVisible: el?.matches(":focus-visible"), outline: el ? getComputedStyle(el).outlineStyle : null };
+    });
+
+    assert.deepEqual(heading, { tag: "H3", isFocusVisible: true, outline: "none" });
   });
 });
 
@@ -423,6 +486,30 @@ describe("remote access on with devices at 1440px, the registered devices card",
     assert.ok([...edges.start, ...edges.end].every(Number.isFinite), `every edge was measured: ${JSON.stringify(edges)}`);
     assert.deepEqual(edges.start, [edges.start[0], edges.start[0], edges.start[0]], "title, Device header and first cell start together");
     assert.deepEqual(edges.end, [edges.end[0], edges.end[0], edges.end[0]], "Remove all, the Action header and a row's Remove end together");
+  });
+});
+
+describe("remote access on with no device at 1440px, the registered devices card", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON);
+    await ctx.page.getByText("No device registered").waitFor({ timeout: WAIT_TIMEOUT_MS });
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("the empty line starts on the column of the card's title and its trusted-networks foot", async () => {
+    const starts = await ctx.page.evaluate(() => {
+      const card = [...document.querySelectorAll(".card")].find((el) => el.querySelector(".card-title")?.textContent === "Registered devices");
+      return [card?.querySelector(".card-title"), card?.querySelector(".placeholder > div"), card?.querySelector(".card-foot")].map((el) => {
+        if (!el) return Number.NaN;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        return Math.round(range.getBoundingClientRect().left);
+      });
+    });
+
+    assert.ok(starts.every(Number.isFinite), `every line was measured: ${JSON.stringify(starts)}`);
+    assert.deepEqual(starts, [starts[0], starts[0], starts[0]], "title, empty line and foot start together");
   });
 });
 
