@@ -3625,11 +3625,19 @@ update_build_monitor() {
   (cd -- "${monitor_dir}" && "${npm}" run typecheck && "${npm}" run build)
 }
 
-# Re-render the launchd plists + monitor env for config parity (FIXED script paths,
+# Re-resolve the config.toml binaries, then re-render the launchd plists + monitor env for config parity (FIXED script paths,
 # never request-derived — SECURITY), then (re)render the decoupled one-shot plist.
 # Each render is best-effort + loud (a failure warns, never aborts the applied update).
 update_render_parity() {
-  local render_launchd render_monitor_env
+  local launcher render_launchd render_monitor_env
+  # [paths] binaries first, so the plists below render from them: render-config keeps a working value and moves a
+  # Homebrew Cellar one to its version-free twin (the repair for an install whose node path breaks on an upgrade)
+  launcher="$(update_ga_root)/glass-atrium"
+  if [[ -x "${launcher}" ]]; then
+    "${launcher}" render-config >/dev/null 2>&1 || update_log "WARN: render-config failed — config.toml [paths] binaries not re-resolved; run '${launcher} render-config'"
+  else
+    update_log "WARN: launcher missing or not executable (${launcher}) — config.toml [paths] binaries not re-resolved"
+  fi
   render_launchd="${ATRIUM_UPDATE_RENDER_LAUNCHD:-${_update_script_dir}/render-launchd-plists.sh}"
   render_monitor_env="${ATRIUM_UPDATE_RENDER_MONITOR_ENV:-${_update_script_dir}/render-monitor-env.sh}"
   # Loud-fail an absent/non-executable render script (Precondition Loud-Fail Principle) — a SILENT

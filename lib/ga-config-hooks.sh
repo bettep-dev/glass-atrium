@@ -69,12 +69,7 @@ render_config() {
       if "${DRY_RUN}"; then
         log "dry-run: would resolve absolute node_bin/claude_bin in ${CONFIG_TOML}"
       else
-        # pre-write backup: this early-return skipped the full-render backup, so resolve_config_binaries would rewrite a possibly hand-tuned config with NO safety copy — mirror the full-render backup before resolving.
-        local backup
-        backup="${CONFIG_TOML}.ga-backup.$(date +%Y%m%d-%H%M%S)"
-        cp -p -- "${CONFIG_TOML}" "${backup}"
-        log "render_config: backed up existing config -> ${backup}"
-        resolve_config_binaries
+        resolve_config_binaries existing
       fi
       return 0
     fi
@@ -132,19 +127,23 @@ render_config() {
 }
 
 # E1 binary-path resolver helpers (Stepdown: callees of render_config).
-# ga_resolve_bin — echo a binary's directory-canonicalized absolute path, macOS-portable (NO GNU realpath / readlink -f): canonicalizes the CONTAINING dir via `cd … && pwd -P` while PRESERVING the basename — deliberately NOT dereferencing a final bin/<tool> symlink, because Homebrew's stable /opt/homebrew/bin/<tool> symlink survives a minor upgrade whereas the Cellar target does not. Returns 1 (caller falls back to the literal input) when the dir is absent.
+# ga_resolve_bin — echo a binary's absolute path in its upgrade-surviving form, macOS-portable (no GNU realpath / readlink -f); the basename is never dereferenced.
+# The containing dir is canonicalized physically (an fnm per-shell symlink dir dies with its shell, its target does not) — unless that lands in a Homebrew Cellar: then the given version-free dir is kept and a Cellar path moves to its opt twin (atrium_get_stable_bin). Returns 1 when the dir is absent.
 ga_resolve_bin() {
-  local p="$1" dir base
+  local p="$1" dir
   [[ -n "${p}" ]] || return 1
-  dir="$(cd -- "$(dirname -- "${p}")" >/dev/null 2>&1 && pwd -P)" || return 1
-  base="$(basename -- "${p}")"
-  printf '%s/%s' "${dir}" "${base}"
+  dir="$(cd -P -- "$(dirname -- "${p}")" >/dev/null 2>&1 && pwd -P)" || return 1
+  if [[ "${dir}/" == */Cellar/* ]]; then
+    dir="$(cd -L -- "$(dirname -- "${p}")" >/dev/null 2>&1 && pwd -L)" || return 1
+  fi
+  atrium_get_stable_bin "${dir}/$(basename -- "${p}")"
 }
 
-# resolve_config_binaries — rewrite [paths].node_bin/claude_bin in CONFIG_TOML with the REAL host binaries (node_bin: `command -v node` absolute; claude_bin: `command -v claude` else the native-installer ${HOME}/.local/bin/claude absolute).
-# Idempotent + atomic (temp + mv, RENDER_TMP-tracked for the trap sweep); a missing claude_bin line (older configs) is INSERTED after node_bin, a present one replaced.
-# node absent on PATH leaves node_bin untouched (loud log, never a blank value); never replaces a non-empty config with an empty file.
+# resolve_config_binaries [existing] — rewrite [paths].node_bin/claude_bin in CONFIG_TOML (get_config_bin picks each value; `existing` = an already-rendered config, whose working values are kept).
+# Idempotent + atomic (temp + mv, RENDER_TMP-tracked for the trap sweep); an unchanged result writes nothing, a change to an existing config is backed up first; a missing claude_bin line (older configs) is INSERTED after node_bin, a present one replaced.
+# No value for node_bin leaves its line untouched (loud log, never a blank value); never replaces a non-empty config with an empty file.
 resolve_config_binaries() {
+  local mode="${1:-template}"
   [[ -f "${CONFIG_TOML}" ]] || return 0
 
   local node_src claude_src node_bin claude_bin
@@ -152,18 +151,11 @@ resolve_config_binaries() {
   claude_src="$(command -v claude 2>/dev/null || true)"
   # native-installer location when claude is not yet on PATH (~/.local/bin/claude).
   [[ -n "${claude_src}" ]] || claude_src="${HOME}/.local/bin/claude"
-
-  node_bin=""
-  if [[ -n "${node_src}" ]]; then
-    # `|| printf` fallback degrades an unresolvable path to the PATH-absolute source instead of aborting; the cmd-sub + `||` intentionally masks set -e (same stdout-verdict idiom as the is_* helpers).
-    # shellcheck disable=SC2310,SC2311,SC2312
-    node_bin="$(ga_resolve_bin "${node_src}" 2>/dev/null || printf '%s' "${node_src}")"
-  else
-    log "resolve_config_binaries: node not on PATH — leaving existing node_bin untouched"
-  fi
-  # same `|| printf` fallback + set -e masking idiom as above.
-  # shellcheck disable=SC2310,SC2311,SC2312
-  claude_bin="$(ga_resolve_bin "${claude_src}" 2>/dev/null || printf '%s' "${claude_src}")"
+  # shellcheck disable=SC2311  # get_config_bin degrades every failure to a fallback value on stdout
+  node_bin="$(get_config_bin node_bin "${node_src}" "${mode}")"
+  [[ -n "${node_bin}" ]] || log "resolve_config_binaries: node not on PATH — leaving existing node_bin untouched"
+  # shellcheck disable=SC2311  # as above
+  claude_bin="$(get_config_bin claude_bin "${claude_src}" "${mode}")"
 
   # claude_bin line already present? older configs lack it → insert vs replace.
   # grep -c zero-match trap: `|| true` keeps set -e quiet, empty-guard normalizes to 0.
@@ -200,10 +192,41 @@ resolve_config_binaries() {
     RENDER_TMP=""
     die "resolve_config_binaries: rewrite produced an empty ${CONFIG_TOML} — aborting"
   fi
+  if cmp -s -- "${RENDER_TMP}" "${CONFIG_TOML}"; then
+    delete_temp_file "${RENDER_TMP}"
+    RENDER_TMP=""
+    log "resolve_config_binaries: node_bin/claude_bin already current"
+    return 0
+  fi
+  # an existing config may be hand-tuned → safety copy before the rewrite (a fresh render already took one)
+  if [[ "${mode}" == "existing" ]]; then
+    local backup
+    backup="${CONFIG_TOML}.ga-backup.$(date +%Y%m%d-%H%M%S)"
+    cp -p -- "${CONFIG_TOML}" "${backup}"
+    log "render_config: backed up existing config -> ${backup}"
+  fi
 
   mv -f -- "${RENDER_TMP}" "${CONFIG_TOML}"
   RENDER_TMP=""
   log "resolve_config_binaries: node_bin=${node_bin:-<unchanged>} claude_bin=${claude_bin}"
+}
+
+# get_config_bin <key> <path source> <mode> — the value resolve_config_binaries writes for one [paths] key:
+# on an `existing` config an executable current value in its stable form (never swapped for a different
+# PATH binary); otherwise the PATH source through ga_resolve_bin; empty = no source, leave the line as is.
+get_config_bin() {
+  local key="$1" src="$2" mode="$3" current=""
+  if [[ "${mode}" == "existing" ]]; then
+    current="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' "${key}")"
+    if [[ -f "${current}" && -x "${current}" ]]; then
+      atrium_get_stable_bin "${current}"
+      return 0
+    fi
+  fi
+  [[ -n "${src}" ]] || return 0
+  # an unresolvable dir degrades to the PATH-absolute source instead of aborting
+  # shellcheck disable=SC2310,SC2311
+  ga_resolve_bin "${src}" 2>/dev/null || printf '%s\n' "${src}"
 }
 
 # wire repoint primitive: migrate old-dir hook commands to the new dir.

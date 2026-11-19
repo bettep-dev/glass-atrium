@@ -2101,18 +2101,21 @@ read_calls() {
   done
 }
 
-@test "CLI apply re-renders the monitor env and the launchd plists without restarting anything" {
+@test "CLI apply re-resolves the config binaries, then re-renders the launchd plists and the monitor env, without restarting anything" {
   local render
   for render in env launchd; do
     printf '#!/usr/bin/env bash\nprintf "render-%s\\n" >>"%s"\n' "${render}" "${WORK}/renders.log" >"${WORK}/render-${render}.sh"
     chmod +x "${WORK}/render-${render}.sh"
   done
+  # the applied install's launcher; only its render-config call belongs to this ordering
+  printf '#!/usr/bin/env bash\n[[ "$1" != render-config ]] || printf "render-config\\n" >>"%s"\n' "${WORK}/renders.log" >"${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
   export ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/render-env.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/render-launchd.sh"
   export ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist"
   run_cli_apply "scripts/tool.sh"
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
-  [[ "$(<"${WORK}/renders.log")" == $'render-launchd\nrender-env' ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${WORK}/renders.log")" == $'render-config\nrender-launchd\nrender-env' ]] || { echo "${output}"; cat "${WORK}/renders.log"; return 1; }
   [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
 }
 
