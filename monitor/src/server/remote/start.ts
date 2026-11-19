@@ -2,6 +2,7 @@
 // listener controller on a timer. main.ts calls startRemoteAccess once, after the loopback listener is up.
 
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
@@ -71,6 +72,8 @@ const ACCESS_STATE_FILE = "access-state";
 const DEVICE_OFF = "off";
 /** How long the network a confirm showed stays the one an on or trust may act on → the page keeps it only while its dialog is open. */
 export const CONFIRM_TTL_MS = 120_000;
+// unguessable by another page → an act names the read it showed, never a read it did not
+const CONFIRM_VALUE_BYTES = 16;
 
 export interface BootAccessDeps {
   readonly revokeAll: () => Promise<bigint[]>;
@@ -203,7 +206,8 @@ export type AccessStep = { readonly act: "on" | "off" } | { readonly act: "trust
 export class RemoteAccessSwitch implements RemoteAccessActs {
   #controller: SwitchedController | null = null;
   #settings: RemoteSettings;
-  #shown: { readonly identity: NetworkIdentity; readonly at: number } | null = null;
+  // one entry per open confirm, keyed by the value its read returned → two pages never act on each other's read
+  readonly #shown = new Map<string, { readonly identity: NetworkIdentity; readonly at: number }>();
   // overlapping reads share one run of the network commands; no result outlives its read → never stale after an act
   #pendingSetup: Promise<SetupFacts> | null = null;
 
@@ -220,14 +224,16 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
 
   async getConfirmFacts(): Promise<ConfirmFacts> {
     const identity = await this.deps.readIdentity();
-    this.#shown = identity === null ? null : { identity, at: this.deps.now() };
-    if (identity === null) return { router: null, link: "unknown", isNetworkTrusted: false };
+    this.#dropExpiredReads();
+    if (identity === null) return { router: null, link: "unknown", isNetworkTrusted: false, confirm: null };
+    const confirm = randomBytes(CONFIRM_VALUE_BYTES).toString("base64url");
+    this.#shown.set(confirm, { identity, at: this.deps.now() });
     const link = await this.deps.readLink(identity.interface);
-    return { router: identity.gateway, link, isNetworkTrusted: isTrustedNetwork(this.#settings.trusted, identity) };
+    return { router: identity.gateway, link, isNetworkTrusted: isTrustedNetwork(this.#settings.trusted, identity), confirm };
   }
 
-  async turnOn(): Promise<TurnOnResult> {
-    const shown = this.#takeShown();
+  async turnOn(confirm: string | null): Promise<TurnOnResult> {
+    const shown = this.#takeShown(confirm);
     if (shown === null) return { outcome: "confirm_stale", trustedCount: null, trust: null };
     const refusal = await this.#getChange(shown);
     if (refusal !== null) return { outcome: refusal, trustedCount: null, trust: null };
@@ -236,8 +242,8 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     return { ...on, trust: await this.#trustShown(shown) };
   }
 
-  trust(): Promise<AccessApplyResult> {
-    const shown = this.#takeShown();
+  trust(confirm: string | null): Promise<AccessApplyResult> {
+    const shown = this.#takeShown(confirm);
     return shown === null ? Promise.resolve({ outcome: "confirm_stale", trustedCount: null }) : this.#trustShown(shown);
   }
 
@@ -295,10 +301,19 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
   }
 
   // one read serves one act → a second act needs a fresh confirm
-  #takeShown(): NetworkIdentity | null {
-    const shown = this.#shown;
-    this.#shown = null;
-    return shown !== null && this.deps.now() - shown.at <= CONFIRM_TTL_MS ? shown.identity : null;
+  #takeShown(confirm: string | null): NetworkIdentity | null {
+    const shown = confirm === null ? undefined : this.#shown.get(confirm);
+    if (confirm !== null) this.#shown.delete(confirm);
+    return shown !== undefined && this.#isFresh(shown.at) ? shown.identity : null;
+  }
+
+  // reads are rate-limited and expire → the map stays a handful of entries
+  #dropExpiredReads(): void {
+    for (const [confirm, shown] of this.#shown) if (!this.#isFresh(shown.at)) this.#shown.delete(confirm);
+  }
+
+  #isFresh(at: number): boolean {
+    return this.deps.now() - at <= CONFIRM_TTL_MS;
   }
 
   // refused here before any step; the step's own read refuses a change after this one

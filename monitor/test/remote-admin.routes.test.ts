@@ -25,6 +25,7 @@ import {
   type AccessStepOutcome,
   type ConfirmFacts,
   CA_DOWNLOAD,
+  CONFIRM_HEADER,
   MAC_PAGE_HEADER,
   REMOTE_ADMIN_LIMITS,
   REMOTE_ADMIN_PATH,
@@ -56,7 +57,7 @@ const SETUP_FACTS: SetupFacts = {
 };
 // a careless caller's setup value: the router, the interface and the key path beside the facts
 const WIDE_SETUP_FACTS = { ...SETUP_FACTS, gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:33", interface: "en0", caKeyPath: "/Users/owner/ca.key" };
-const CONFIRM_FACTS: ConfirmFacts = { router: "10.20.0.1", link: "wifi", isNetworkTrusted: false };
+const CONFIRM_FACTS: ConfirmFacts = { router: "10.20.0.1", link: "wifi", isNetworkTrusted: false, confirm: "q7Hk2mVx9TzR4wLp0sNcJa" };
 // a careless caller's confirm value: the router's hardware address and the interface beside the facts
 const WIDE_CONFIRM_FACTS = { ...CONFIRM_FACTS, hardwareAddress: "3c:22:fb:9a:01:7e", interface: "en0" };
 
@@ -78,6 +79,8 @@ const access = {
   certificate: null as Buffer | null,
   // the trust the on added in the same act; null → none tried
   onTrust: null as AccessApplyResult | null,
+  // the confirm value each act was handed
+  handed: [] as (string | null)[],
 };
 const trail: string[] = [];
 let ca: Awaited<ReturnType<typeof createStandInTls>>;
@@ -108,8 +111,14 @@ function buildAdminDeps(): RemoteAdminDeps {
         trail.push("read confirm");
         return WIDE_CONFIRM_FACTS;
       },
-      turnOn: async () => ({ ...(await runAccessAct("on")), trust: access.onTrust }),
-      trust: () => runAccessAct("trust"),
+      turnOn: async (confirm) => {
+        access.handed.push(confirm);
+        return { ...(await runAccessAct("on")), trust: access.onTrust };
+      },
+      trust: (confirm) => {
+        access.handed.push(confirm);
+        return runAccessAct("trust");
+      },
       setOff: async () => {
         trail.push("act off");
         return access.offOutcome;
@@ -145,7 +154,7 @@ beforeEach(() => {
   openedCodes = [];
   isAuditDown = false;
   trail.length = 0;
-  Object.assign(access, { outcome: "written", offOutcome: "written", isCloseFailing: false, isActThrowing: false, hold: Promise.resolve(), certificate: ca.cert, onTrust: null });
+  Object.assign(access, { outcome: "written", offOutcome: "written", isCloseFailing: false, isActThrowing: false, hold: Promise.resolve(), certificate: ca.cert, onTrust: null, handed: [] });
 });
 
 after(async () => {
@@ -668,6 +677,14 @@ describe("the setup read", () => {
 });
 
 describe("the confirm read", () => {
+  for (const url of [REMOTE_ADMIN_PATH.ACCESS_ON, REMOTE_ADMIN_PATH.TRUST]) {
+    test(`${url} hands the act the confirm value the page's script set, and none when the header is absent`, async () => {
+      await callAdmin({ method: "POST", url, headers: { ...MAC_PAGE, [CONFIRM_HEADER]: CONFIRM_FACTS.confirm ?? "" } });
+      await callAdmin({ method: "POST", url });
+      assert.deepEqual(access.handed, [CONFIRM_FACTS.confirm, null]);
+    });
+  }
+
   test("carries the router, the link kind and whether the network is trusted, field by field, whatever wider value the caller holds", async () => {
     const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CONFIRM_NETWORK });
     assert.deepEqual([response.statusCode, JSON.parse(response.body)], [200, CONFIRM_FACTS]);

@@ -35,6 +35,9 @@ export const REMOTE_ADMIN_PATH = {
 /** Set only by the page's own script → a document's form, link ping or image request at a same-origin route never carries it. */
 export const MAC_PAGE_HEADER = { NAME: "x-glass-atrium-page", VALUE: "remote-access" } as const;
 
+/** Carries the confirm value of the read the page showed → an on or trust acts on that read alone. */
+export const CONFIRM_HEADER = "x-glass-atrium-confirm";
+
 export const REMOTE_ADMIN_LIMITS = {
   REGISTRATION_OPEN: { limit: 5, windowMs: 60_000 },
   // on and trust together → each runs the shell step
@@ -95,6 +98,8 @@ export interface ConfirmFacts {
   readonly router: string | null;
   readonly link: NetworkLink;
   readonly isNetworkTrusted: boolean;
+  /** one-use, carried back in CONFIRM_HEADER; null when no router was read */
+  readonly confirm: string | null;
 }
 
 export interface SetupFacts {
@@ -117,11 +122,11 @@ export interface SetupFacts {
 
 /** The Mac page's on, off and trust: the shell step writes, this process applies. */
 export interface RemoteAccessActs {
-  /** remembers the network it read → the next on or trust acts on that network or refuses */
+  /** remembers the network it read under the confirm value it returns → an on or trust carrying that value acts on it or refuses */
   getConfirmFacts(): Promise<ConfirmFacts>;
-  /** on, then the trust of the network shown when it is not trusted yet */
-  turnOn(): Promise<TurnOnResult>;
-  trust(): Promise<AccessApplyResult>;
+  /** on, then the trust of the network shown when it is not trusted yet; null confirm → refused */
+  turnOn(confirm: string | null): Promise<TurnOnResult>;
+  trust(confirm: string | null): Promise<AccessApplyResult>;
   /** persists the off only → the route revokes and closes */
   setOff(): Promise<AccessStepOutcome>;
   /** closes the listener; stays closed until the next on */
@@ -298,12 +303,14 @@ async function widenAccess(request: FastifyRequest, reply: FastifyReply, route: 
 }
 
 async function runWideningAct(request: FastifyRequest, reply: FastifyReply, route: AccessRoute & { act: "on" | "trust" }): Promise<FastifyReply> {
+  const header = request.headers[CONFIRM_HEADER];
+  const confirm = typeof header === "string" ? header : null;
   if (route.act === "trust") {
-    const trust = await route.deps.access.trust();
+    const trust = await route.deps.access.trust(confirm);
     putActOutcome(request, route.deps, "trust", trust);
     return sendActOutcome(reply, trust, {});
   }
-  const on = await route.deps.access.turnOn();
+  const on = await route.deps.access.turnOn(confirm);
   putActOutcome(request, route.deps, "on", on);
   if (on.trust !== null) putActOutcome(request, route.deps, "trust", on.trust);
   return sendActOutcome(reply, on, { trust: on.trust?.outcome ?? null });
@@ -382,7 +389,7 @@ export async function getWithin<T>(work: Promise<T>, deps: Pick<RemoteAdminDeps,
 /** Field by field → the router's hardware address and the interface never reach the page. */
 async function getConfirmNetwork(reply: FastifyReply, deps: RemoteAdminDeps): Promise<FastifyReply> {
   const facts = await deps.access.getConfirmFacts();
-  return reply.send({ router: facts.router, link: facts.link, isNetworkTrusted: facts.isNetworkTrusted });
+  return reply.send({ router: facts.router, link: facts.link, isNetworkTrusted: facts.isNetworkTrusted, confirm: facts.confirm });
 }
 
 /** Field by field → a wider value from the caller (router, interface, key paths) never reaches the page. */

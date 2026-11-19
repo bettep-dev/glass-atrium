@@ -134,16 +134,16 @@ async function getView(access: RemoteAccessSwitch): Promise<Pick<SetupFacts, "en
   return { enabled: facts.enabled, trustedCount: facts.trustedCount, isAnswering: facts.isAnswering };
 }
 
-/** The page's order: the confirm reads the network, then the person confirms the act. */
-async function confirmThen<T>(access: RemoteAccessSwitch, act: () => Promise<T>): Promise<T> {
-  await access.getConfirmFacts();
-  return act();
+/** The page's order: the confirm reads the network, then the person confirms the act carrying the value that read returned. */
+async function confirmThen<T>(access: RemoteAccessSwitch, act: (confirm: string | null) => Promise<T>): Promise<T> {
+  const { confirm } = await access.getConfirmFacts();
+  return act(confirm);
 }
 
 describe("turning access on or trusting a network from the Mac page", () => {
   test("turning on runs the on step, then opens the listener in this process from the settings the step wrote, adding no trust on a trusted network", async () => {
     const { access, opened, steps } = await buildSwitch({ written: ON });
-    const result = await confirmThen(access, () => access.turnOn());
+    const result = await confirmThen(access, (confirm) => access.turnOn(confirm));
     assert.deepEqual([result, steps, opened.map((controller) => controller.settings)], [{ outcome: "written", trustedCount: 1, trust: null }, ["on"], [ON]]);
     assert.deepEqual(await getView(access), { enabled: true, trustedCount: 1, isAnswering: true });
   });
@@ -151,20 +151,20 @@ describe("turning access on or trusting a network from the Mac page", () => {
   test("trusting closes the open listener and opens one that knows the network the step added", async () => {
     const written = { ...ON, trusted: [HOME_NETWORK, OFFICE_NETWORK] };
     const { access, opened } = await buildSwitch({ booted: ON, written, identity: { ...OFFICE_NETWORK, interface: "en0" } });
-    const result = await confirmThen(access, () => access.trust());
+    const result = await confirmThen(access, (confirm) => access.trust(confirm));
     assert.deepEqual([result, opened.map((controller) => controller.isOpen), opened[1]?.settings], [{ outcome: "written", trustedCount: 2 }, [false, true], written]);
   });
 
   test("a step that wrote nothing leaves the listener and the settings as they were", async () => {
     const { access, opened, steps } = await buildSwitch({ booted: ON, step: "already_trusted", written: { ...ON, trusted: [] } });
-    const result = await confirmThen(access, () => access.trust());
+    const result = await confirmThen(access, (confirm) => access.trust(confirm));
     assert.deepEqual([result, steps, opened.map((controller) => controller.isOpen)], [{ outcome: "already_trusted", trustedCount: null }, ["trust"], [true]]);
     assert.deepEqual(await getView(access), { enabled: true, trustedCount: 1, isAnswering: true });
   });
 
   test("a device's off holds over a trust, so nothing reopens", async () => {
     const { access, opened } = await buildSwitch({ booted: ON, isDeviceOff: true });
-    const result = await confirmThen(access, () => access.trust());
+    const result = await confirmThen(access, (confirm) => access.trust(confirm));
     assert.deepEqual([result.outcome, opened.filter((controller) => controller.isOpen).length, (await getView(access)).isAnswering], ["written", 0, false]);
   });
 
@@ -176,7 +176,7 @@ describe("turning access on or trusting a network from the Mac page", () => {
   for (const row of failedStarts) {
     test(`when ${row.name}, the step's write stays for the next restart and this process is left closed and reports start_failed`, async () => {
       const { access, opened } = await buildSwitch({ ...row.input, booted: { ...OFF } });
-      const result = await confirmThen(access, () => access.turnOn());
+      const result = await confirmThen(access, (confirm) => access.turnOn(confirm));
       assert.deepEqual([result, opened.filter((controller) => controller.isOpen).length, (await getView(access)).isAnswering], [
         { outcome: "start_failed", trustedCount: null, trust: null },
         0,
@@ -187,7 +187,7 @@ describe("turning access on or trusting a network from the Mac page", () => {
 
   test("a start that fails after a trust also closes the listener that was open", async () => {
     const { access, opened } = await buildSwitch({ booted: ON, isReadFailing: true });
-    const result = await confirmThen(access, () => access.trust());
+    const result = await confirmThen(access, (confirm) => access.trust(confirm));
     assert.deepEqual([result.outcome, opened.map((controller) => controller.isOpen)], ["start_failed", [false]]);
   });
 });
@@ -201,18 +201,29 @@ describe("the network the confirm showed", () => {
   for (const row of confirmRows) {
     test(`the confirm read on ${row.name} names the router, the link and whether the network is trusted`, async () => {
       const { access } = await buildSwitch({ booted: ON, identity: row.identity, link: row.link });
-      assert.deepEqual(await access.getConfirmFacts(), row.expected);
+      const { confirm, ...facts } = await access.getConfirmFacts();
+      assert.deepEqual([facts, confirm === null], [row.expected, row.identity === null]);
     });
   }
 
   const OTHER_ROUTER = { ...HOME_NETWORK, gateway: "192.168.0.254", interface: "en0" };
-  const refusals: { name: string; arrange: (built: BuiltSwitch) => Promise<void>; expected: string }[] = [
-    { name: "no confirm read came first", arrange: async () => undefined, expected: "confirm_stale" },
+  // arrange → the confirm value the act then carries
+  const refusals: { name: string; arrange: (built: BuiltSwitch) => Promise<string | null>; expected: string }[] = [
+    { name: "no confirm read came first", arrange: async () => null, expected: "confirm_stale" },
+    {
+      name: "the value carried is not one a read returned",
+      arrange: async ({ access }) => {
+        await access.getConfirmFacts();
+        return "a-value-no-read-returned";
+      },
+      expected: "confirm_stale",
+    },
     {
       name: "the read is past its expiry",
       arrange: async ({ access, network }) => {
-        await access.getConfirmFacts();
+        const { confirm } = await access.getConfirmFacts();
         network.clock += CONFIRM_TTL_MS + 1;
+        return confirm;
       },
       expected: "confirm_stale",
     },
@@ -220,16 +231,28 @@ describe("the network the confirm showed", () => {
       name: "the read found no router",
       arrange: async ({ access, network }) => {
         network.current = null;
-        await access.getConfirmFacts();
+        const { confirm } = await access.getConfirmFacts();
         network.current = { ...HOME_NETWORK, interface: "en0" };
+        return confirm;
       },
       expected: "confirm_stale",
     },
     {
       name: "the read already served an act",
       arrange: async ({ access }) => {
+        const { confirm } = await access.getConfirmFacts();
+        await access.trust(confirm);
+        return confirm;
+      },
+      expected: "confirm_stale",
+    },
+    {
+      name: "a second press carries the read that served the first while a re-read is still open",
+      arrange: async ({ access }) => {
+        const { confirm } = await access.getConfirmFacts();
+        await access.trust(confirm);
         await access.getConfirmFacts();
-        await access.trust();
+        return confirm;
       },
       expected: "confirm_stale",
     },
@@ -241,8 +264,9 @@ describe("the network the confirm showed", () => {
     ].map((change) => ({
       name: `the network at the act has ${change.name}`,
       arrange: async ({ access, network }: BuiltSwitch) => {
-        await access.getConfirmFacts();
+        const { confirm } = await access.getConfirmFacts();
         network.current = change.current;
+        return confirm;
       },
       expected: "network_changed",
     })),
@@ -251,19 +275,31 @@ describe("the network the confirm showed", () => {
     for (const row of refusals) {
       test(`${act} refuses with ${row.expected} and runs no step when ${row.name}`, async () => {
         const built = await buildSwitch({ booted: OFF, written: ON });
-        await row.arrange(built);
+        const confirm = await row.arrange(built);
         built.steps.length = 0;
-        const result = await built.access[act]();
+        const result = await built.access[act](confirm);
         assert.deepEqual([result.outcome, result.trustedCount, built.steps], [row.expected, null, []]);
       });
     }
 
     test(`${act} runs its step when the network is the one shown, read just inside its expiry`, async () => {
       const { access, network, steps } = await buildSwitch({ booted: OFF, written: ON, identity: { ...OFFICE_NETWORK, interface: "en0" } });
-      await access.getConfirmFacts();
+      const { confirm } = await access.getConfirmFacts();
       network.clock += CONFIRM_TTL_MS;
-      const result = await access[act]();
+      const result = await access[act](confirm);
       assert.deepEqual([result.outcome, steps[0]], ["written", act === "turnOn" ? "on" : "trust"]);
+    });
+  }
+
+  for (const act of ["turnOn", "trust"] as const) {
+    test(`${act} from each of two open confirms runs on the network its own read showed, never on the latest read`, async () => {
+      const { access, network, handed } = await buildSwitch({ booted: OFF, written: ON, identity: { ...OFFICE_NETWORK, interface: "en0" } });
+      const { confirm: first } = await access.getConfirmFacts();
+      network.current = { ...OTHER_ROUTER };
+      const { confirm: second } = await access.getConfirmFacts();
+      const firstResult = await access[act](first);
+      const secondResult = await access[act](second);
+      assert.deepEqual([firstResult.outcome, secondResult.outcome, handed], ["network_changed", "written", [OTHER_ROUTER]]);
     });
   }
 
@@ -271,14 +307,14 @@ describe("the network the confirm showed", () => {
     test(`${act} hands the trust step the network the confirm showed, for the step to match against its own read`, async () => {
       const shown = { ...OFFICE_NETWORK, interface: "en0" };
       const { access, handed } = await buildSwitch({ booted: OFF, written: ON, identity: shown });
-      await confirmThen(access, () => access[act]());
+      await confirmThen(access, (confirm) => access[act](confirm));
       assert.deepEqual(handed, [shown]);
     });
   }
 
   test("turning on a network not yet trusted trusts the network shown, in the same act after the on", async () => {
     const { access, steps } = await buildSwitch({ booted: OFF, written: ON, identity: { ...OFFICE_NETWORK, interface: "en0" } });
-    const result = await confirmThen(access, () => access.turnOn());
+    const result = await confirmThen(access, (confirm) => access.turnOn(confirm));
     assert.deepEqual([result, steps], [{ outcome: "written", trustedCount: 1, trust: { outcome: "written", trustedCount: 1 } }, ["on", "trust"]]);
   });
 
@@ -287,7 +323,7 @@ describe("the network the confirm showed", () => {
       if (act === "on") network.current = { ...OTHER_ROUTER };
     };
     const { access, steps } = await buildSwitch({ booted: OFF, written: ON, identity: { ...OFFICE_NETWORK, interface: "en0" }, afterStep });
-    const result = await confirmThen(access, () => access.turnOn());
+    const result = await confirmThen(access, (confirm) => access.turnOn(confirm));
     assert.deepEqual([result, steps], [{ outcome: "written", trustedCount: 1, trust: { outcome: "network_changed", trustedCount: null } }, ["on"]]);
   });
 });
@@ -308,7 +344,7 @@ describe("turning access off from the Mac page", () => {
   // the route's act queue: the off starts only once the widening act before it has answered
   test("an off queued behind a trust whose old listener never finishes closing still completes, the trust answering start_failed", { timeout: 5_000 }, async () => {
     const { access } = await buildSwitch({ booted: ON, isCloseHanging: true, identity: { ...OFFICE_NETWORK, interface: "en0" } });
-    const trust = await confirmThen(access, () => access.trust());
+    const trust = await confirmThen(access, (confirm) => access.trust(confirm));
     const off = await access.setOff();
     await access.close();
     assert.deepEqual([trust, off, (await getView(access)).isAnswering], [{ outcome: "start_failed", trustedCount: null }, "written", false]);
@@ -320,7 +356,7 @@ describe("turning access off from the Mac page", () => {
       release = resolve;
     });
     const { access, opened } = await buildSwitch({ booted: OFF, written: ON, openHold });
-    const result = await confirmThen(access, () => access.turnOn());
+    const result = await confirmThen(access, (confirm) => access.turnOn(confirm));
     release();
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual([result.outcome, opened.map((controller) => controller.isOpen), (await getView(access)).isAnswering], ["start_failed", [false], false]);
