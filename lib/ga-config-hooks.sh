@@ -227,6 +227,10 @@ resolve_config_binaries() {
 # get_config_bin <key> <path source> <mode> — the value resolve_config_binaries writes for one [paths] key:
 # on an `existing` config an executable current value in its stable form (never swapped for a different
 # PATH binary); otherwise the PATH source through ga_resolve_bin; empty = no source, leave the line as is.
+# Intended: "executable" is the doctor's own test (launchd_node_bin_probe) — a regular file with the x bit, the only
+# value the launchd jobs can run — so a directory, a non-executable file or a missing path is replaced from PATH.
+# --re-render is the owner's explicit reset to the template (backup taken): it calls this in template mode, so no
+# current value is kept and a node absent from PATH leaves the template's line.
 get_config_bin() {
   local key="$1" src="$2" mode="$3" current=""
   if [[ "${mode}" == "existing" ]]; then

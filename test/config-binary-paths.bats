@@ -24,6 +24,8 @@ setup() {
   BREW="${SANDBOX}/brew"
   seed_homebrew_tree
   seed_fnm_tree
+  mkdir -p -- "${SANDBOX}/plain"
+  printf '#!/bin/sh\n' >"${SANDBOX}/plain/node"
   export GA_CONFIG_TOML="${SANDBOX}/config.toml" ATRIUM_CONFIG_TOML="${SANDBOX}/config.toml"
   export GA_DATA_ROOT="${SANDBOX}/data" AUTOAGENT_REPORTS_DIR="${SANDBOX}/data/reports"
   export GA_PG_SOCKET="${SANDBOX}"
@@ -53,6 +55,10 @@ seed_homebrew_tree() {
   mkdir -p -- "${BREW}/opt" "${BREW}/bin"
   ln -s ../Cellar/node@22/22.11.0 "${BREW}/opt/node@22"
   ln -s ../Cellar/node@22/22.11.0/bin/node "${BREW}/bin/node"
+  # the Intel prefix: a two-segment /usr/local in front of the same Cellar and opt layout
+  put_stub_bin "${SANDBOX}/usr/local/Cellar/node/23.1.0/bin/node"
+  mkdir -p -- "${SANDBOX}/usr/local/opt"
+  ln -s ../Cellar/node/23.1.0 "${SANDBOX}/usr/local/opt/node"
 }
 
 # fnm layout: a per-shell symlink dir that dies with its shell, pointing at the installed version.
@@ -74,6 +80,7 @@ write_paths_config() {
     "keg-only opt path kept|${BREW}/opt/node@22/bin/node|${BREW}/opt/node@22/bin/node"
     "prefix bin path kept|${BREW}/bin/node|${BREW}/bin/node"
     "Cellar path moves to its opt twin|${BREW}/Cellar/node@22/22.11.0/bin/node|${BREW}/opt/node@22/bin/node"
+    "Intel-prefix Cellar path moves to its opt twin|${SANDBOX}/usr/local/Cellar/node/23.1.0/bin/node|${SANDBOX}/usr/local/opt/node/bin/node"
     "Cellar path without an opt twin kept|${BREW}/Cellar/legacy/1.0/bin/node|${BREW}/Cellar/legacy/1.0/bin/node"
     "per-shell fnm symlink resolved to its install|${SANDBOX}/fnm/multishells/4711/bin/node|${SANDBOX}/fnm/node-versions/v22/installation/bin/node"
   )
@@ -93,6 +100,8 @@ write_paths_config() {
     "existing stable value kept over another PATH node|existing|${BREW}/opt/node@22/bin/node|${SANDBOX}/fnm/multishells/4711/bin|${BREW}/opt/node@22/bin/node"
     "existing Cellar value moves to its twin|existing|${BREW}/Cellar/node@22/22.11.0/bin/node|${SANDBOX}/fnm/multishells/4711/bin|${BREW}/opt/node@22/bin/node"
     "existing missing value takes the PATH node in stable form|existing|${SANDBOX}/gone/bin/node|${BREW}/opt/node@22/bin|${BREW}/opt/node@22/bin/node"
+    "existing directory value takes the PATH node|existing|${BREW}/opt/node@22/bin|${SANDBOX}/fnm/multishells/4711/bin|${SANDBOX}/fnm/node-versions/v22/installation/bin/node"
+    "existing non-executable value takes the PATH node|existing|${SANDBOX}/plain/node|${SANDBOX}/fnm/multishells/4711/bin|${SANDBOX}/fnm/node-versions/v22/installation/bin/node"
     "fresh template value takes the PATH node|template|${BREW}/bin/node|${BREW}/opt/node@22/bin|${BREW}/opt/node@22/bin/node"
   )
   for row in "${rows[@]}"; do
