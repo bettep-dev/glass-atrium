@@ -130,7 +130,7 @@ describe("remote access off at 1440px, a turn-on refused because the network mov
 });
 
 describe("remote access on over an untrusted network at 1440px, a trust whose answer leaves its state unknown", () => {
-  const UNKNOWN_WORDS = "This network may or may not be trusted.";
+  const UNKNOWN_WORDS = "This network may or may not be trusted; refresh to check.";
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext({ ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false }, [], { acts: [{ status: 500, body: { error: "act_failed" } }] });

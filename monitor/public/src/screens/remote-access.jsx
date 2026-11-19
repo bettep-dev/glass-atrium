@@ -87,19 +87,19 @@ const UNKNOWN_STATE_REFUSALS_RA = new Set(["act_failed", "write_failed", "env_no
 const RESTART_PENDING_REFUSAL_RA = "start_failed";
 const WIDEN_ERROR_RA = {
 	on: {
-		moved: "The network details were out of date. Nothing was turned on. Check the number again.",
-		unknown: "Remote access may or may not be on. Refresh; if wrong, turn it off and on.",
-		pending: "Remote access was turned on, but it starts only when the monitor restarts. Refresh; if you do not want it, turn it off.",
-		failed: "Remote access was not turned on. Try again.",
+		moved: "Nothing was turned on: the network changed; check the number again.",
+		unknown: "Remote access may or may not be on; refresh to check.",
+		pending: "Remote access starts at the next monitor restart; Turn off cancels it.",
+		failed: "Remote access was not turned on; try again.",
 	},
 	trust: {
-		moved: "The network details were out of date. Nothing was trusted. Check the number again.",
-		unknown: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on.",
-		pending: "This network was trusted, but it applies only when the monitor restarts. Refresh; if you do not want it, turn remote access off.",
-		failed: "This network was not trusted. Try again.",
+		moved: "Nothing was trusted: the network changed; check the number again.",
+		unknown: "This network may or may not be trusted; refresh to check.",
+		pending: "This network is trusted from the next monitor restart.",
+		failed: "This network was not trusted; try again.",
 	},
 };
-const END_ERROR_RA = { off: "Remote access is still on. Try again.", "remove-all": "No device was removed. Try again." };
+const END_ERROR_RA = { off: "Remote access is still on; try again.", "remove-all": "No device was removed; try again." };
 
 const STATUS_RA = {
 	off: { text: "Off", tone: "neutral" },
@@ -112,21 +112,21 @@ const STATUS_RA = {
 const ATTENTION_RA = {
 	closed: { tone: "warn", title: "This Mac is on a network you have not trusted", body: "Registered devices reach this Mac only on networks you trust.", canTrust: true },
 	"no-network": { tone: "warn", title: "This Mac is not on a network", body: "Registered devices reach this Mac only on a trusted network." },
-	"not-answering": { tone: "crit", title: "Remote access is on, but this Mac is not answering", body: "Refresh in a minute. If it stays, turn remote access off and on, then connect each device again from step 4." },
+	"not-answering": { tone: "crit", title: "Remote access is on, but this Mac is not answering", body: "Refresh in a minute; if it stays, turn off and on, then reconnect devices." },
 };
 // the attention row above already says whether this network is trusted
 const COUNT_ONLY_VIEWS_RA = new Set(["closed", "no-network", "off-no-network"]);
 const CHECKING_LABEL_RA = "Checking network…";
 const NETWORK_ERROR_RA = {
-	unread: "This Mac's network could not be read. Try again.",
+	unread: "This Mac's network could not be read; try again.",
 	// the re-read after a confirm refusal → the confirm closes, nothing was done
-	reread: "This Mac's network changed and could not be read again, so nothing was done. Try again.",
+	reread: "Nothing was done: this Mac's network could not be read again.",
 };
 const ROUTER_LABEL_RA = { wifi: "Router of this Mac's Wi-Fi", wired: "Router of this Mac's wired network", unknown: "Router of this Mac's network" };
 const WIDEN_WORDS_RA = {
-	on: { title: "Turn on remote access?", lead: "This also trusts the network this Mac is on now. A device you connect with a code from this screen can then open this monitor whenever this Mac is on that network.", commit: { label: "Turn on and trust", busy: "Turning on…" } },
-	"on-trusted": { title: "Turn on remote access?", lead: "This Mac is on a network you already trust. A device you connect with a code from this screen can open this monitor whenever this Mac is on a trusted network.", commit: { label: "Turn on", busy: "Turning on…" } },
-	trust: { title: "Trust this network?", lead: "This trusts the network this Mac is on now. Registered devices can then open this monitor whenever this Mac is on it.", commit: { label: "Trust this network", busy: "Trusting…" } },
+	on: { title: "Turn on remote access?", lead: "This also trusts this Mac's network; the trust stays after Turn off.", commit: { label: "Turn on and trust", busy: "Turning on…" } },
+	"on-trusted": { title: "Turn on remote access?", lead: "This Mac's network is already trusted.", commit: { label: "Turn on", busy: "Turning on…" } },
+	trust: { title: "Trust this network?", lead: "Registered devices can then reach this Mac here; the trust stays after Turn off.", commit: { label: "Trust this network", busy: "Trusting…" } },
 };
 
 /** Every Mac-only call: the page header and no body; a refusal rejects with its status and the server's error code. */
@@ -228,10 +228,11 @@ function getTrustedLineRA(setup, view) {
 	return `${head} · this Mac's network is ${setup.isNetworkTrusted ? "one" : "not one"} of them`;
 }
 
-function getOffLinesRA(setup) {
-	if (!setup.hasRouter) return { message: "This Mac is not on a network.", hint: "Connect it to the network your devices use, then turn remote access on here." };
-	if (setup.isOffByDevice) return { message: "A registered device turned remote access off.", hint: "Every device was removed. Turn it on to connect them again." };
-	return { message: "A phone or tablet on the same network can use this monitor, exactly as on this Mac.", hint: "Turn it on to see the steps for connecting a device." };
+// the setup read names no time for a device's turn-off → the line reads without one
+function getOffLineRA(setup) {
+	if (!setup.hasRouter) return "Connect this Mac to your network to turn this on.";
+	if (setup.isOffByDevice) return "A registered device turned this off; every device was removed.";
+	return "Turn on to use this monitor from a phone on your network.";
 }
 
 /** The server's colon-joined SHA-256 → four lines of eight pairs, as the device lists them. */
@@ -407,10 +408,9 @@ function BodyRA({ setup, devices, view, check, onWiden, onChanged, onDevicesRead
 
 function OffCardRA({ setup, foot, error }) {
 	const { Card, EmptyState } = window.UI;
-	const lines = getOffLinesRA(setup);
 	return (
 		<Card foot={foot}>
-			<EmptyState message={lines.message} hint={lines.hint} />
+			<EmptyState message={getOffLineRA(setup)} />
 			{error && <ActErrorRA error={error} />}
 		</Card>
 	);
@@ -688,7 +688,7 @@ function DevicesCardRA({ devices, limit, foot, onChanged, onRemoveAll }) {
 		deleteDeviceRA(device.id)
 			.then(
 				() => setAct({ pendingId: null, error: null }),
-				(error) => setAct({ pendingId: null, error: { text: `“${device.label}” was not removed. Try again.`, detail: error.message } }),
+				(error) => setAct({ pendingId: null, error: { text: `“${device.label}” was not removed; try again.`, detail: error.message } }),
 			)
 			.finally(onChanged);
 	};
@@ -699,7 +699,7 @@ function DevicesCardRA({ devices, limit, foot, onChanged, onRemoveAll }) {
 		<Card title="Registered devices" sub={`${devices.length} of ${limit}`} right={removeAll} foot={foot} isFlush={hasTable}>
 			{hasTable
 				? <DeviceTableRA devices={devices} pendingId={act.pendingId} onRemove={onRemove} />
-				: <EmptyState message="No device registered" hint="A device appears here after step 5." />}
+				: <EmptyState message="No device registered" hint="A device appears here once it registers." />}
 			{act.error && <div className={hasTable ? "p-card-pad" : undefined}><ActErrorRA error={act.error} /></div>}
 		</Card>
 	);
@@ -764,9 +764,9 @@ function WidenConfirmRA({ act, network, isChecking, isBusy, error, onCommit, onC
 			<p className="fs-body text-ink">{words.lead}</p>
 			<div className="flex flex-col gap-label">
 				<DetailField label={ROUTER_LABEL_RA[network.link] ?? ROUTER_LABEL_RA.unknown} value={network.router} mono />
-				<p className="fs-meta text-dim">Compare it on a phone joined to your own network: open Settings → Wi-Fi and tap the info button (ⓘ) beside the network. If “Router” there shows a different number, this Mac is on another network: choose Cancel.</p>
+				<p className="fs-meta text-dim">Match it with “Router” in your phone's Wi-Fi details; if different, choose Cancel.</p>
 			</div>
-			<p className="fs-body text-ink">Trusting a network keeps remote access closed while this Mac is on any other network. It does not check who else is on this one, so trust only a network you control, such as your home network.</p>
+			<p className="fs-body text-ink">Trust only a network you control: it does not check who else joins.</p>
 		</ConfirmRA>
 	);
 }
@@ -777,15 +777,15 @@ function EndConfirmRA({ act, count, isBusy, error, onCommit, onCancel }) {
 	const commit = isOff ? { label: "Turn off", busy: "Turning off…" } : { label: "Remove all devices", busy: "Removing…" };
 	return (
 		<ConfirmRA title={title} commit={commit} isDestructive isBusy={isBusy} error={error} onCommit={onCommit} onCancel={onCancel}>
-			<p className="fs-body text-ink">{isOff ? getOffBodyRA(count) : "Each device must be connected again from step 4 before it can open this monitor."}</p>
+			<p className="fs-body text-ink">{isOff ? getOffBodyRA(count) : "Each device must scan a new code to connect again."}</p>
 		</ConfirmRA>
 	);
 }
 
 function getOffBodyRA(count) {
-	if (count === 0) return "This Mac stops answering other devices.";
-	if (count === 1) return "1 registered device is removed, and this Mac stops answering other devices. To use it again, turn remote access on and connect it from step 4.";
-	return `${count} registered devices are removed, and this Mac stops answering other devices. To use a device again, turn remote access on and connect the device from step 4.`;
+	if (count === 0) return "This Mac stops answering other devices; trusted networks stay trusted.";
+	if (count === 1) return "This removes 1 registered device; trusted networks stay trusted.";
+	return `This removes ${count} registered devices; trusted networks stay trusted.`;
 }
 
 function ConfirmRA({ title, commit, isDestructive = false, isBusy, error, onCommit, onCancel, children }) {

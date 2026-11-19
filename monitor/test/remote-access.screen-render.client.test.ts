@@ -118,8 +118,8 @@ describe("each state shows its own words, and the on/off act sits on the title l
     {
       name: "off, never turned off by a device, before any trust",
       read: ready(SETUP_OFF),
-      present: ["Off", "Turn on", "A phone or tablet on the same network can use this monitor, exactly as on this Mac.", "Turn it on to see the steps for connecting a device."],
-      absent: ["Turn off", "Connect a device", "Registered devices", "Trusted networks"],
+      present: ["Off", "Turn on", "Turn on to use this monitor from a phone on your network."],
+      absent: ["Turn it on to see the steps", "Turn off", "Connect a device", "Registered devices", "Trusted networks"],
     },
     {
       name: "off on a trusted network shows the trusted count with this network among them",
@@ -136,13 +136,13 @@ describe("each state shows its own words, and the on/off act sits on the title l
     {
       name: "off by a device says a device turned it off and every device was removed",
       read: ready(SETUP_OFF_BY_DEVICE),
-      present: ["Off", "Turn on", "A registered device turned remote access off.", "Every device was removed. Turn it on to connect them again.", "Trusted networks: 1 · this Mac's network is one of them"],
-      absent: ["Turn off", "Not answering", "Connect a device", "A phone or tablet on the same network"],
+      present: ["Off", "Turn on", "A registered device turned this off; every device was removed.", "Trusted networks: 1 · this Mac's network is one of them"],
+      absent: ["Turn off", "Not answering", "Connect a device", "Turn on to use this monitor"],
     },
     {
       name: "off with no router read offers no turn-on and says to join a network",
       read: ready({ ...SETUP_OFF, hasRouter: false, trustedCount: 1 }),
-      present: ["Off", "This Mac is not on a network.", "Connect it to the network your devices use, then turn remote access on here.", "Trusted networks: 1"],
+      present: ["Off", "Connect this Mac to your network to turn this on.", "Trusted networks: 1"],
       absent: ["Turn on", "is one of them", "is not one of them"],
     },
     {
@@ -154,7 +154,7 @@ describe("each state shows its own words, and the on/off act sits on the title l
     {
       name: "on with no device opens the device choice and an empty device list",
       read: ready(SETUP_ON),
-      present: ["On", "Turn off", "Connect a device", "Which device are you connecting?", "iPhone or iPad", "No device registered", "A device appears here after step 5.", "0 of 10", "Trusted networks: 1 · this Mac's network is one of them"],
+      present: ["On", "Turn off", "Connect a device", "Which device are you connecting?", "iPhone or iPad", "No device registered", "A device appears here once it registers.", "0 of 10", "Trusted networks: 1 · this Mac's network is one of them"],
       absent: ["Remove all", "Closed on this network", IPHONE_TITLES[0], "https://"],
     },
     {
@@ -184,7 +184,7 @@ describe("each state shows its own words, and the on/off act sits on the title l
     {
       name: "on but not answering says to refresh and reconnect from step 4",
       read: ready({ ...SETUP_ON, isAnswering: false }),
-      present: ["Not answering", "Turn off", "Remote access is on, but this Mac is not answering", "Refresh in a minute. If it stays, turn remote access off and on, then connect each device again from step 4.", "Trusted networks: 1 · this Mac's network is one of them"],
+      present: ["Not answering", "Turn off", "Remote access is on, but this Mac is not answering", "Refresh in a minute; if it stays, turn off and on, then reconnect devices.", "Trusted networks: 1 · this Mac's network is one of them"],
       absent: ["Connect a device"],
     },
     {
@@ -414,9 +414,9 @@ describe("before a read lands, the page offers no act", () => {
 
 describe("the confirms name what they do, with Cancel before the commit", () => {
   const widen = [
-    { name: "turning on an untrusted network trusts it in the same act", act: "on", network: { router: ROUTER, link: "wifi", isNetworkTrusted: false }, title: "Turn on remote access?", lead: "This also trusts the network this Mac is on now.", label: "Router of this Mac's Wi-Fi", commit: "Turn on and trust" },
-    { name: "turning on a trusted network adds no trust", act: "on", network: { router: ROUTER, link: "wired", isNetworkTrusted: true }, title: "Turn on remote access?", lead: "This Mac is on a network you already trust.", label: "Router of this Mac's wired network", commit: "Turn on" },
-    { name: "trusting a network on a link the server cannot tell", act: "trust", network: { router: ROUTER, link: "unknown", isNetworkTrusted: false }, title: "Trust this network?", lead: "This trusts the network this Mac is on now.", label: "Router of this Mac's network", commit: "Trust this network" },
+    { name: "turning on an untrusted network trusts it in the same act", act: "on", network: { router: ROUTER, link: "wifi", isNetworkTrusted: false }, title: "Turn on remote access?", lead: "This also trusts this Mac's network; the trust stays after Turn off.", label: "Router of this Mac's Wi-Fi", commit: "Turn on and trust" },
+    { name: "turning on a trusted network adds no trust", act: "on", network: { router: ROUTER, link: "wired", isNetworkTrusted: true }, title: "Turn on remote access?", lead: "This Mac's network is already trusted.", label: "Router of this Mac's wired network", commit: "Turn on" },
+    { name: "trusting a network on a link the server cannot tell", act: "trust", network: { router: ROUTER, link: "unknown", isNetworkTrusted: false }, title: "Trust this network?", lead: "Registered devices can then reach this Mac here; the trust stays after Turn off.", label: "Router of this Mac's network", commit: "Trust this network" },
   ];
   for (const row of widen) {
     test(row.name, async () => {
@@ -425,7 +425,7 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
       const tree = render(mod as Mod, "WidenConfirmRA", { act: row.act, network: row.network, isBusy: false, error: null, onCommit: () => undefined, onCancel: () => undefined });
       const text = collectText(tree).replace(/\s+/g, " ");
 
-      for (const word of [row.title, row.lead, row.label, ROUTER, "If “Router” there shows a different number, this Mac is on another network: choose Cancel.", "It does not check who else is on this one, so trust only a network you control, such as your home network."]) {
+      for (const word of [row.title, row.lead, row.label, ROUTER, "Match it with “Router” in your phone's Wi-Fi details; if different, choose Cancel.", "Trust only a network you control: it does not check who else joins."]) {
         assert.ok(text.includes(word), `${row.name}: "${word}"`);
       }
       assert.deepEqual(getButtonNames(tree).filter((name) => name !== ""), ["Cancel", row.commit], row.name);
@@ -433,9 +433,9 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
   }
 
   const off = [
-    { name: "turning off with devices says how many are removed", count: 3, body: "3 registered devices are removed, and this Mac stops answering other devices." },
-    { name: "turning off with one device uses the singular", count: 1, body: "1 registered device is removed, and this Mac stops answering other devices. To use it again" },
-    { name: "turning off with no device says only that the Mac stops answering", count: 0, body: "This Mac stops answering other devices." },
+    { name: "turning off with devices says how many are removed", count: 3, body: "This removes 3 registered devices; trusted networks stay trusted." },
+    { name: "turning off with one device uses the singular", count: 1, body: "This removes 1 registered device; trusted networks stay trusted." },
+    { name: "turning off with no device says only that the Mac stops answering", count: 0, body: "This Mac stops answering other devices; trusted networks stay trusted." },
   ];
   for (const row of off) {
     test(row.name, async () => {
@@ -454,17 +454,17 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
     const tree = render(mod as Mod, "EndConfirmRA", { act: "remove-all", count: 3, isBusy: true, error: null, onCommit: () => undefined, onCancel: () => undefined });
     const text = collectText(tree);
 
-    assert.ok(text.includes("Remove all 3 devices?") && text.includes("Each device must be connected again from step 4 before it can open this monitor."));
+    assert.ok(text.includes("Remove all 3 devices?") && text.includes("Each device must scan a new code to connect again."));
     assert.deepEqual(getButtonNames(tree).filter((name) => name !== ""), ["Cancel", "Removing…"]);
   });
 
   test("a failed act shows its sentence as an alert inside the dialog", async () => {
     const { mod } = await loadScreen();
 
-    const tree = render(mod as Mod, "EndConfirmRA", { act: "off", count: 0, isBusy: false, error: { text: "Remote access is still on. Try again.", detail: "HTTP 500 x" }, onCommit: () => undefined, onCancel: () => undefined });
+    const tree = render(mod as Mod, "EndConfirmRA", { act: "off", count: 0, isBusy: false, error: { text: "Remote access is still on; try again.", detail: "HTTP 500 x" }, onCommit: () => undefined, onCancel: () => undefined });
 
     const alerts = findNodes(tree, (node) => node.props.role === "alert").map((node) => collectText(node));
-    assert.ok(alerts.some((text) => text.includes("Remote access is still on. Try again.")));
+    assert.ok(alerts.some((text) => text.includes("Remote access is still on; try again.")));
   });
 });
 
@@ -505,17 +505,17 @@ describe("the scan step shows one code at a time and what became of it", () => {
 
 describe("a refused widening act names whether the network moved", () => {
   const rows = [
-    { name: "a stale confirm on turn-on says nothing was turned on", act: "on", code: "confirm_stale", text: "The network details were out of date. Nothing was turned on. Check the number again." },
-    { name: "a changed network on trust says nothing was trusted", act: "trust", code: "network_changed", text: "The network details were out of date. Nothing was trusted. Check the number again." },
-    { name: "a turn-on whose write step ended unnamed says it may or may not be on", act: "on", code: "write_failed", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a turn-on that threw says it may or may not be on", act: "on", code: "act_failed", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a trust whose write step ended unnamed says it may or may not be trusted", act: "trust", code: "write_failed", text: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
-    { name: "a trust that threw says it may or may not be trusted", act: "trust", code: "act_failed", text: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
-    { name: "a turn-on whose config was written but not its monitor settings says it may or may not be on", act: "on", code: "env_not_rendered", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a turn-on written but not applied by this process says it starts at the next restart", act: "on", code: "start_failed", text: "Remote access was turned on, but it starts only when the monitor restarts. Refresh; if you do not want it, turn it off." },
-    { name: "a trust written but not applied by this process says it applies at the next restart", act: "trust", code: "start_failed", text: "This network was trusted, but it applies only when the monitor restarts. Refresh; if you do not want it, turn remote access off." },
-    { name: "any other turn-on failure says it was not turned on", act: "on", code: "keys_not_created", text: "Remote access was not turned on. Try again." },
-    { name: "any other trust failure says it was not trusted", act: "trust", code: "network_unreadable", text: "This network was not trusted. Try again." },
+    { name: "a stale confirm on turn-on says nothing was turned on", act: "on", code: "confirm_stale", text: "Nothing was turned on: the network changed; check the number again." },
+    { name: "a changed network on trust says nothing was trusted", act: "trust", code: "network_changed", text: "Nothing was trusted: the network changed; check the number again." },
+    { name: "a turn-on whose write step ended unnamed says it may or may not be on", act: "on", code: "write_failed", text: "Remote access may or may not be on; refresh to check." },
+    { name: "a turn-on that threw says it may or may not be on", act: "on", code: "act_failed", text: "Remote access may or may not be on; refresh to check." },
+    { name: "a trust whose write step ended unnamed says it may or may not be trusted", act: "trust", code: "write_failed", text: "This network may or may not be trusted; refresh to check." },
+    { name: "a trust that threw says it may or may not be trusted", act: "trust", code: "act_failed", text: "This network may or may not be trusted; refresh to check." },
+    { name: "a turn-on whose config was written but not its monitor settings says it may or may not be on", act: "on", code: "env_not_rendered", text: "Remote access may or may not be on; refresh to check." },
+    { name: "a turn-on written but not applied by this process says it starts at the next restart", act: "on", code: "start_failed", text: "Remote access starts at the next monitor restart; Turn off cancels it." },
+    { name: "a trust written but not applied by this process says it applies at the next restart", act: "trust", code: "start_failed", text: "This network is trusted from the next monitor restart." },
+    { name: "any other turn-on failure says it was not turned on", act: "on", code: "keys_not_created", text: "Remote access was not turned on; try again." },
+    { name: "any other trust failure says it was not trusted", act: "trust", code: "network_unreadable", text: "This network was not trusted; try again." },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -532,7 +532,7 @@ test("a failed act's line folds the server's answer under Details", async () => 
   const { mod } = await loadScreen();
   const detail = "HTTP 500 Internal Server Error: act_failed";
 
-  const tree = render(mod as Mod, "ActErrorRA", { error: { text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on.", detail } });
+  const tree = render(mod as Mod, "ActErrorRA", { error: { text: "Remote access may or may not be on; refresh to check.", detail } });
 
   assert.ok(collectText(tree).includes(detail));
   assert.ok(findNodes(tree, (node) => node.type === "details").length === 1);
@@ -545,7 +545,7 @@ describe("after a refused widening act the confirm offers its commit only on a f
   const OPENED = { status: 200, body: { router: ROUTER, link: "wifi", isNetworkTrusted: false, confirm: "q3Vx0Lr8TfWm1oKcYp2bGA" } };
   const FRESH_CONFIRM = "Zt7nE4sJk9HdQa0uCw6yRg";
   const SETUP_CLOSED_TITLE = "This Mac is on a network you have not trusted";
-  const NETWORK_CHANGED_AGAIN = "This Mac's network changed and could not be read again, so nothing was done. Try again.";
+  const NETWORK_CHANGED_AGAIN = "Nothing was done: this Mac's network could not be read again.";
   const TURN_ON = { setup: SETUP_OFF, open: "Turn on", commit: "Turn on and trust", route: ROUTE.ON, refusal: { status: 409, body: { error: "confirm_stale" } } };
   const TRUST = { setup: SETUP_CLOSED, open: "Trust this network", commit: "Trust this network", route: ROUTE.TRUST, refusal: { status: 409, body: { error: "network_changed" } } };
 
@@ -617,7 +617,7 @@ describe("after a refused widening act the confirm offers its commit only on a f
     assert.ok(dialog, "the confirm stays open");
     const text = collectText(dialog);
     assert.ok(text.includes(MOVED_ROUTER) && !text.includes(ROUTER), "the fresh router replaces the earlier one");
-    assert.ok(text.includes("The network details were out of date. Nothing was turned on. Check the number again."));
+    assert.ok(text.includes("Nothing was turned on: the network changed; check the number again."));
     assert.deepEqual(getButtonNames(dialog).filter((name) => name !== ""), ["Cancel", TURN_ON.commit]);
   });
 
@@ -663,10 +663,10 @@ describe("after a refused widening act the confirm offers its commit only on a f
 
   // the confirm value is spent → a second press could only answer confirm_stale over words the first press may have made false
   const unsettled = [
-    { name: "a turn-on that threw", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "act_failed" } } }, notice: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a trust whose write step ended unnamed", flow: { ...TRUST, refusal: { status: 500, body: { error: "write_failed" } } }, notice: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
-    { name: "a turn-on written but not applied, on a page reread to on", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "start_failed" } }, reloaded: { ...SETUP_ON, isAnswering: false } }, notice: "Remote access was turned on, but it starts only when the monitor restarts. Refresh; if you do not want it, turn it off." },
-    { name: "a trust written but not applied", flow: { ...TRUST, refusal: { status: 500, body: { error: "start_failed" } } }, notice: "This network was trusted, but it applies only when the monitor restarts. Refresh; if you do not want it, turn remote access off." },
+    { name: "a turn-on that threw", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "act_failed" } } }, notice: "Remote access may or may not be on; refresh to check." },
+    { name: "a trust whose write step ended unnamed", flow: { ...TRUST, refusal: { status: 500, body: { error: "write_failed" } } }, notice: "This network may or may not be trusted; refresh to check." },
+    { name: "a turn-on written but not applied, on a page reread to on", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "start_failed" } }, reloaded: { ...SETUP_ON, isAnswering: false } }, notice: "Remote access starts at the next monitor restart; Turn off cancels it." },
+    { name: "a trust written but not applied", flow: { ...TRUST, refusal: { status: 500, body: { error: "start_failed" } } }, notice: "This network is trusted from the next monitor restart." },
   ];
   for (const row of unsettled) {
     test(`${row.name} closes its confirm, rereads the page and keeps its words there`, async () => {
