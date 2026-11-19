@@ -202,21 +202,9 @@ update_ga_root() {
   printf '%s\n' "${GA_ROOT:-${HOME}/.glass-atrium}"
 }
 
-# The autoagent daemon reports dir holding the shared .apply-lock — resolved with
-# the SAME precedence daemon-apply.sh uses, so updater and daemon contend on ONE
-# canonical lock directory.
-update_reports_dir() {
-  printf '%s\n' "${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
-}
-
 # The monitor checkout the dependency, migrate and build steps act on.
 update_get_monitor_dir() {
   printf '%s\n' "${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
-}
-
-# The daemon .apply-lock directory (mkdir-atomic lock, same as daemon-apply.sh).
-update_apply_lock_dir() {
-  printf '%s\n' "$(update_reports_dir)/.apply-lock"
 }
 
 # Resolve the GitHub release repo slug: ATRIUM_RELEASE_REPO env → config.toml
@@ -1432,7 +1420,7 @@ update_cleanup() {
   if [[ "${_update_lock_acquired}" -eq 1 ]]; then
     # Path-guarded rm -rf (via the shared lib) — the lock dir now holds a pid
     # file, so a bare rmdir would fail; the lib releases ONLY a lock we still own.
-    apply_lock_release "$(update_apply_lock_dir)"
+    apply_lock_release "$(apply_lock_get_dir)"
     _update_lock_acquired=0
   fi
   if [[ -n "${_update_workdir}" && -d "${_update_workdir}" ]]; then
@@ -1477,8 +1465,8 @@ update_serialize_begin() {
   local lock_dir
   # Ensure the reports dir exists (same as daemon-apply.sh) so the lock mkdir
   # fails ONLY on genuine contention, not a missing parent.
-  mkdir -p -- "$(update_reports_dir)"
-  lock_dir="$(update_apply_lock_dir)"
+  mkdir -p -- "$(apply_lock_get_reports_dir)"
+  lock_dir="$(apply_lock_get_dir)"
   # Shared stale-reclaim acquire: a crashed daemon (SIGKILL, no EXIT trap) leaves
   # a stranded lock that the lib reclaims once the holder is not-live AND aged
   # past the TTL — so the updater no longer loud-fails forever on a dead lock. A
@@ -2899,19 +2887,19 @@ _UPDATE_QUEUE_MCP_SUMMARY=""
 
 # Post-apply queue MCP registration — every profile present now, one created after the last registration included.
 # A CLI update at a terminal runs the launcher's queue-mcp writer, which shows each write and asks (default No).
-# Any other update has no one to answer, so the dry run only reports and leaves the summary line. A failure WARNs
+# Any other update has no one to answer, so the dry run only reports and leaves the summary line. The terminal
+# test comes from the running updater's own lib, as update_reissue_remote_leaf sources it. A failure WARNs
 # and never fails the applied update; the doctor reports the same gaps.
 update_report_queue_mcp_post_apply() {
-  local root launcher report rc=0
-  root="$(update_ga_root)"
-  launcher="${root}/glass-atrium"
+  local launcher report rc=0
+  launcher="$(update_ga_root)/glass-atrium"
   if [[ ! -x "${launcher}" ]]; then
     update_log "WARN: launcher missing or not executable (${launcher}) — the queue MCP registration was not checked"
     return 0
   fi
   if ! declare -F ga_remote_is_terminal >/dev/null; then
     # shellcheck source=/dev/null
-    source "${root}/lib/ga-remote.sh"
+    source "${_update_script_dir}/../lib/ga-remote.sh"
   fi
   # shellcheck disable=SC2310  # pure predicate — the terminal decides who answers
   if [[ "${_update_headless}" -ne 1 ]] && ga_remote_is_terminal; then
@@ -3159,7 +3147,7 @@ update_migrate_deploy_post_apply() {
 # no-op or failure can return, so the backfill still runs when the hand-off below does not.
 update_rearm_unadjudicated_backfill() {
   local reports
-  reports="$(update_reports_dir)"
+  reports="$(apply_lock_get_reports_dir)"
   if ! { mkdir -p -- "${reports}" && : >"${reports}/.unadjudicated-backfill-pending"; }; then
     update_log "WARN: could not write the unadjudicated-backfill re-arm marker under ${reports} — the update continues; the next update or '$(update_ga_root)/glass-atrium db-setup' re-arms it"
   fi
@@ -3180,7 +3168,7 @@ update_run_unadjudicated_backfill() {
     update_log "WARN: unadjudicated backfill skipped — no entry point at ${mode}; the re-arm marker leaves it to the daemon cycle"
     return 0
   fi
-  reports="$(update_reports_dir)"
+  reports="$(apply_lock_get_reports_dir)"
   update_log "migrate: running the unadjudicated backfill (${reports})"
   python3 "${mode}" --backfill-unadjudicated --reports-dir "${reports}" >&2 || rc=$?
   update_log_backfill_rc "${rc}"

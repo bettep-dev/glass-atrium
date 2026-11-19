@@ -134,7 +134,8 @@ load_launchd_jobs() {
 # load_launchd_jobs, holding the shared .apply-lock (the updater's and daemon-apply's writer lock) so a reload never
 # interleaves with an update or an apply. Named exit: RELOAD_EXIT_LOCKED when a live holder keeps the lock.
 reload_launchd_jobs() {
-  local lock_dir="${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}/.apply-lock" rc=0
+  local lock_dir rc=0
+  lock_dir="$(apply_lock_get_dir)"
   mkdir -p -- "${lock_dir%/*}"
   apply_lock_acquire "${lock_dir}"
   if ! "${apply_lock_acquired}"; then

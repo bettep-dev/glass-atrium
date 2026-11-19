@@ -134,6 +134,7 @@ run_step() {
       set -Eeuo pipefail
       IFS=$'"'"'\n\t'"'"'
       source "$1"
+      source "${1%/*}/lib/apply-lock.sh"
       update_migrate_deploy_post_apply
     ' _ "${SKILL}"
 }
@@ -226,6 +227,7 @@ assert_prisma_never_ran() {
     bash -c '
       set -Eeuo pipefail
       source "$1"
+      source "${1%/*}/lib/apply-lock.sh"
       update_migrate_deploy_post_apply
     ' _ "${SKILL}"
   [[ "${status}" -eq 0 ]] || {
@@ -250,6 +252,7 @@ assert_prisma_never_ran() {
     bash -c '
       set -Eeuo pipefail
       source "$1"
+      source "${1%/*}/lib/apply-lock.sh"
       update_migrate_deploy_post_apply
     ' _ "${SKILL}"
   [[ "${status}" -eq 15 ]] || {

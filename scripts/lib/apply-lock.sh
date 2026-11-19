@@ -46,6 +46,18 @@ fi
 # shellcheck source-path=SCRIPTDIR source=path-guard.sh
 source "${BASH_SOURCE[0]%/*}/path-guard.sh" || return 1
 
+# The reports dir holding the shared lock: AUTOAGENT_REPORTS_DIR, else <GA_DATA_ROOT or ~/.glass-atrium>/data/daemon-reports
+apply_lock_get_reports_dir() {
+  printf '%s\n' "${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
+}
+
+# The shared .apply-lock every writer contends on
+apply_lock_get_dir() {
+  local reports
+  reports="$(apply_lock_get_reports_dir)"
+  printf '%s/.apply-lock\n' "${reports}"
+}
+
 # TTL (seconds) beyond which a not-live lock is treated as crashed-holder residue.
 # ATRIUM_APPLY_LOCK_TTL_SECS override; a non-positive / non-integer value falls
 # back to 1800s (30 min) — generous enough to outlast the slowest legitimate

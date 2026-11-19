@@ -153,15 +153,13 @@ load_skill() {
 
 # resolution helpers
 
-@test "resolution helpers anchor on GA_ROOT and the daemon reports dir" {
+@test "resolution helpers anchor on GA_ROOT" {
   run bash -c '
     source "'"${SKILL}"'"
     GA_ROOT="/x" update_ga_root
-    AUTOAGENT_REPORTS_DIR="/r" update_apply_lock_dir
   '
   [ "$status" -eq 0 ]
   [[ "${lines[0]}" == "/x" ]]
-  [[ "${lines[1]}" == "/r/.apply-lock" ]]
 }
 
 @test "release slug prefers ATRIUM_RELEASE_REPO over config" {
@@ -252,7 +250,7 @@ load_skill() {
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     load_skill
     update_serialize_begin
-    lock="$(update_apply_lock_dir)"
+    lock="$(apply_lock_get_dir)"
     [[ -d "${lock}" ]] && echo "LOCK_HELD"
     update_cleanup
     [[ ! -d "${lock}" ]] && echo "LOCK_RELEASED"
@@ -506,6 +504,7 @@ STUB
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     export GA_TARGET_HOME="'"${WORK}"'/target"
     load_skill
+    _update_script_dir="'"${GA}"'/scripts"
     update_report_queue_mcp_post_apply
   '
   [[ "${status}" -eq 0 ]] || {
@@ -550,6 +549,7 @@ STUB
       INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
       export GA_TARGET_HOME="'"${WORK}"'/target"
       load_skill
+      _update_script_dir="'"${GA}"'/scripts"
       update_report_queue_mcp_post_apply
       update_log "update complete"
       update_report_queue_mcp_summary
