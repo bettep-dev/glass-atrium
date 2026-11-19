@@ -308,9 +308,9 @@ queue_set_shadow_mark() {
   mark="$(queue_get_shadow_mark_path "$1")" || return 1
   if queue_is_server_shadowed "$2"; then
     { mkdir -p -- "${mark%/*}" && : >"${mark}"; } 2>/dev/null
-  elif ga_guard_path "${mark}"; then
-    rm -f -- "${mark:?}"
+    return
   fi
+  if ga_guard_path "${mark}"; then rm -f -- "${mark:?}"; fi
 }
 
 # <session id> → 0 when its start found the queue server shadowed
