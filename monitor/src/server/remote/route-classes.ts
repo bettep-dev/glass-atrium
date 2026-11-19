@@ -46,6 +46,10 @@ const RELAY_ROWS_CID = "2026-11-17T1135_queue-mcp-2_e5f8";
 const CLOSE_CID = "2026-11-19T0700_onboarding-close_8e2d";
 // the on, trust, network-read and single html-export reasons re-signed in place (route-rows-sign-last-verdict.md): route, class and order kept → same digest
 const SIGN_LAST_CID = "2026-11-19T0945_onboarding-close2_5b7c";
+// the last re-sign's confirm, frame-deny and page-words points read and met (sign-unconditional verdict): no row changed
+const UNCONDITIONAL_CID = "2026-11-19T1305_sign-unconditional_2a9e";
+// the relay rows appended after row 115, the relay-signal and redact reasons re-signed as they stand (merged-table-verdict.md)
+const MERGE_CID = "2026-11-19T1325_deploy69-prep_a6e3";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -179,6 +183,7 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 113,
     sha256: "795839947a232258b4eef1ddda2792ab252f8b300c7e63ba416af17b849924c4",
+    supersededBy: MERGE_CID,
   },
   {
     reviewer: "glass-atrium-sec-guard",
@@ -267,6 +272,45 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 115,
     sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351",
+    supersededBy: MERGE_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S7",
+    // rows 1-115 carried from the entry before it: route, class and order unchanged (its digest verifies as this table's prefix);
+    // rows 116-119 the relay entry's rows 110-113, same classes (agent, agent, page, page)
+    // reasons: 74, 75, 82, 83, 85, 94, 116 and 117 the relay verdict's signed texts; 118 and 119 re-signed as they stand
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // owner-rows C1-C3 carried
+    // C1-C8 of the entry before it met: C2, C4 and C8 read and met by the unconditional verdict; C4's frame-deny header use re-read: app.ts → registerSurface, remote/gate.ts → setRemoteHeaders; the page files not re-read in this table
+    // R1 counting met: request-guards.ts → hasBrowserSignal (Origin, Referer, Cookie, any sec-fetch- header); wiring on the tests' word, not read by the reviewer:
+    // routes/queue.ts → refuseBrowserRequest, the route onRequest of peers and relay; on buildApp for both, a loopback Origin on another port → 403, no handler query, scan or relay row;
+    // header-less JSON passes, a same-origin form → 415, a foreign Origin → 403; source: queue MCP security verdicts 2026-11-16T2215_queue-mcp-sec_7a4c and 2026-11-16T2330_queue-mcp-sec-delta_1e9d (condition 8)
+    // R2 met for call sites: queue.jsx → useRelaySignalQ, putRelayRedactionQ
+    // R3, R4, R5 carried, not re-read
+    // session-route callers send JSON: the ops library, the JSON-RPC adapter and the CLI post through queue-ops.sh → queue_call_monitor → queue_send, JSON content type with every body
+    // reachability (remote/gate.ts → admitDevice): peers and relay never reachable remotely (401 without a device, 403 route_not_available with one);
+    // the relay signal and redact reachable by a registered device behind page origin, the CSRF header, the mutation limit and the audit intent row
+    cids: [
+      MERGE_CID,
+      UNCONDITIONAL_CID,
+      SIGN_LAST_CID,
+      RELAY_ROWS_CID,
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 119,
+    sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6",
   },
 ];
 

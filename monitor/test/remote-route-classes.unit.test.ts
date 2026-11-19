@@ -88,12 +88,18 @@ const RELAY_TABLE = { rowCount: 113, sha256: "795839947a232258b4eef1ddda2792ab25
 const CLOSE_CID = "2026-11-19T0700_onboarding-close_8e2d";
 // the on, trust, network-read and single html-export reasons re-signed in place: route, class and order kept, so the 115-row digest stays
 const SIGN_LAST_CID = "2026-11-19T0945_onboarding-close2_5b7c";
+// the confirm, frame-deny and page-words points of the last re-sign read and met: comment facts only, no row changed
+const UNCONDITIONAL_CID = "2026-11-19T1305_sign-unconditional_2a9e";
+// the merged table: the relay rows appended after the access rows, the relay-signal and redact reasons re-signed as they stand
+const MERGE_CID = "2026-11-19T1325_deploy69-prep_a6e3";
 // the 108-row table of the re-sign and the devices re-sign
 const SIGN_IN_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
 // the 109-row table the access rows extend → its digest still verifies over the live table's leading rows
 const SUPERSEDED_TABLE = { rowCount: 109, sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a" };
+// the 115-row table the relay rows extend → its digest still verifies over the live table's leading rows
+const ACCESS_TABLE = { rowCount: 115, sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351" };
 // the signed table, held here → any class change in route-classes.ts also needs a test edit naming its verdict
-const SIGNED_TABLE = { rowCount: 115, sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351" };
+const SIGNED_TABLE = { rowCount: 119, sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6" };
 
 // class changes the re-sign carries, each a verdict's exact line → a class edited back without a new sign-off fails
 const RESIGNED_CLASS_CHANGES = [
@@ -182,13 +188,25 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer, the last re-sign, the close re-sign, the onboarding verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
+  test("the latest sign-off names the reviewer, the merge sign-off, the unconditional read, the last re-sign, the relay verdict, the close re-sign, the onboarding verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
     assert.deepEqual(
       { reviewer: latest?.reviewer, cids: latest?.cids },
       {
         reviewer: "glass-atrium-sec-guard",
-        cids: [SIGN_LAST_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS],
+        cids: [
+          MERGE_CID,
+          UNCONDITIONAL_CID,
+          SIGN_LAST_CID,
+          RELAY_ROWS_CID,
+          CLOSE_CID,
+          ONBOARDING_CID,
+          OWNER_ROWS_CID,
+          PENDING_COUNT_CID,
+          DEVICES_RESIGN_CID,
+          ...RESIGN_CIDS,
+          ...CARRIED_CIDS,
+        ],
       },
     );
   });
@@ -197,6 +215,7 @@ describe("reviewer sign-offs", () => {
     const rows = [
       { name: "before the pending-count append", table: SIGN_IN_TABLE },
       { name: "before the access and relay appends", table: SUPERSEDED_TABLE },
+      { name: "before the relay append", table: ACCESS_TABLE },
     ];
     for (const row of rows) assert.equal(getRouteClassDigest(REVIEWED_ROUTES.slice(0, row.table.rowCount)), row.table.sha256, row.name);
   });
@@ -212,9 +231,10 @@ describe("reviewer sign-offs", () => {
         [[DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGN_IN_TABLE.rowCount, SIGN_IN_TABLE.sha256, PENDING_COUNT_CID],
         [[PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, OWNER_ROWS_CID],
         [[OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, ONBOARDING_CID],
-        [[RELAY_ROWS_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], RELAY_TABLE.rowCount, RELAY_TABLE.sha256, undefined],
-        [[ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, CLOSE_CID],
-        [[CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, SIGN_LAST_CID],
+        [[RELAY_ROWS_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], RELAY_TABLE.rowCount, RELAY_TABLE.sha256, MERGE_CID],
+        [[ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, CLOSE_CID],
+        [[CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, SIGN_LAST_CID],
+        [[SIGN_LAST_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, MERGE_CID],
       ],
     );
   });
