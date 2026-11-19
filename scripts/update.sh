@@ -2897,15 +2897,25 @@ update_wire_hooks_post_apply() {
 # the update's last line while any profile lacks the queue MCP registration (update_report_queue_mcp_summary)
 _UPDATE_QUEUE_MCP_SUMMARY=""
 
-# Post-apply report of the queue MCP registration, never a write: the launcher's queue-mcp step on a dry run prints
-# each profile entry and allow line the applied release still needs — every profile present now, one created after
-# the last registration included. Profile writes need the owner's answer, which a headless update cannot carry. A
-# failed report WARNs and never fails the applied update; the doctor reports the same gaps.
+# Post-apply queue MCP registration — every profile present now, one created after the last registration included.
+# A CLI update at a terminal runs the launcher's queue-mcp writer, which shows each write and asks (default No).
+# Any other update has no one to answer, so the dry run only reports and leaves the summary line. A failure WARNs
+# and never fails the applied update; the doctor reports the same gaps.
 update_report_queue_mcp_post_apply() {
-  local launcher report rc=0
-  launcher="$(update_ga_root)/glass-atrium"
+  local root launcher report rc=0
+  root="$(update_ga_root)"
+  launcher="${root}/glass-atrium"
   if [[ ! -x "${launcher}" ]]; then
     update_log "WARN: launcher missing or not executable (${launcher}) — the queue MCP registration was not checked"
+    return 0
+  fi
+  if ! declare -F ga_remote_is_terminal >/dev/null; then
+    # shellcheck source=/dev/null
+    source "${root}/lib/ga-remote.sh"
+  fi
+  # shellcheck disable=SC2310  # pure predicate — the terminal decides who answers
+  if [[ "${_update_headless}" -ne 1 ]] && ga_remote_is_terminal; then
+    "${launcher}" queue-mcp || update_log "WARN: the queue MCP registration failed (rc=$?) — '${launcher} queue-mcp' repeats it"
     return 0
   fi
   report="$("${launcher}" queue-mcp --dry-run 2>&1)" || rc=$?

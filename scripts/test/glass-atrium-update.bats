@@ -573,6 +573,47 @@ STUB
   done
 }
 
+@test "post-apply: a CLI update at a terminal runs the asking queue MCP writer and names no command; any other update only reports" {
+  local log="${WORK}/launcher.log"
+  cat >"${INSTALL}/glass-atrium" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${log}"
+printf 'queue MCP registration: nothing written\n' >&2
+STUB
+  chmod +x "${INSTALL}/glass-atrium"
+  local row name terminal headless want
+  local rows=('CLI at a terminal|true|0|queue-mcp' 'headless at a terminal|true|1|queue-mcp --dry-run'
+    'CLI without a terminal|false|0|queue-mcp --dry-run')
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name terminal headless want <<<"${row}"
+    : >"${log}"
+    run --separate-stderr bash -c '
+      '"$(declare -f load_skill)"'
+      INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+      load_skill
+      ga_remote_is_terminal() { '"${terminal}"'; }
+      _update_headless='"${headless}"'
+      update_report_queue_mcp_post_apply
+      update_report_queue_mcp_summary
+    '
+    [[ "${status}" -eq 0 && "$(<"${log}")" == "${want}" ]] || {
+      echo "${name}: status ${status}, launcher ran '$(<"${log}")': ${stderr}"
+      return 1
+    }
+    if [[ "${want}" == queue-mcp ]]; then
+      [[ "${stderr}" != *"shows each write and asks"* ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    else
+      [[ "${stderr##*$'\n'}" == *"'${INSTALL}/glass-atrium queue-mcp' at a terminal"* ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    fi
+  done
+}
+
 # roster-migration gate (T20 / gate G8)
 
 # Seed a minimal agent-registry.json at $1 listing the agent keys $2.. so the
