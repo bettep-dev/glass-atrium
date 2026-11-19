@@ -97,6 +97,32 @@ describe("a document diagram puts no script, handler, form control or javascript
   }
 });
 
+test("a diagram with no markup in its source mounts the same elements and attributes with or without the viewer's pass", async () => {
+  const source = [
+    "flowchart LR",
+    '  subgraph gate["Delegation gate"]',
+    '    A["Request<br/>arrives"] -->|routes| B{Single agent?}',
+    "  end",
+    "  B -- yes --> C[(Outcome store)]",
+    "  B -. no .-> D([Team])",
+    "  classDef hot fill:#3b1d1d,stroke:#f87171",
+    "  class C hot",
+  ].join("\n");
+  const shape = async (isShipped: boolean) => page.evaluate(async ({ source, isShipped }) => {
+    const g = globalThis as unknown as Record<string, unknown> & {
+      mermaid: { render: (id: string, src: string) => Promise<{ svg: string }> };
+      getDiagramMarkupCD: (svg: string) => string;
+    };
+    const host = document.getElementById("host") as HTMLElement;
+    // one render id for both mounts → the two markups differ only by the pass
+    const { svg } = await g.mermaid.render("probe-plain", source);
+    host.innerHTML = isShipped ? g.getDiagramMarkupCD(svg) : svg;
+    return Array.from(host.querySelectorAll("*")).map((node) => `${node.tagName}[${node.getAttributeNames().sort().join(",")}]`);
+  }, { source, isShipped });
+
+  assert.deepEqual(await shape(true), await shape(false));
+});
+
 test("mermaid's own output keeps a label's form controls, which is why the viewer sanitizes it again", async () => {
   const form = PROBES.find((probe) => probe.words === "Send");
   assert.ok(form);
