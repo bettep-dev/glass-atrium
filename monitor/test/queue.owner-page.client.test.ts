@@ -638,7 +638,7 @@ describe("relay history", () => {
 
   test("a passed-on relay names its parent on the hop line; a relay at hop 0 has none", () => {
     const [received, forwarded] = entries(render("RelayLogQ", { history: history({ refusals: [] }) }));
-    assert.match(flat(forwarded!), /Hop 1 · sent after aidl received relay #398 from atrium at 2026-11-12 12:00/);
+    assert.match(flat(forwarded!), /Hop 1 · after aidl received relay #398 from atrium at 2026-11-12 12:00/);
     assert.doesNotMatch(flat(received!), /Hop/);
   });
 
@@ -655,7 +655,7 @@ describe("relay history", () => {
     const tree = render("RelayLogQ", { history: history() });
     const all = entries(tree);
     assert.equal(all[2]?.props["aria-label"], "Refused relay from gersona to yoaida, 2026-11-13 12:00");
-    assert.match(flat(all[2]!), /✕ Refused Too many to one session — gersona sent to yoaida more often than the hourly limit allows\. → yoaida fa32c7cb$/);
+    assert.match(flat(all[2]!), /✕ Refused Too many to one session — gersona hit the hourly limit for yoaida\. → yoaida fa32c7cb$/);
     assert.equal(findNodes(all[2]!, (node) => node.props?.atom === "ProseText").length, 0);
   });
 
@@ -3620,7 +3620,8 @@ describe("twelve words a sentence", () => {
     ...findNodes(render("SheetFootQ", { item: buildItem({ isApprovalClass: true }), draft: {}, queue: buildQueue().queue, isBusy: false, error: null }), (node) => typeof node.children?.[0] === "string" && String(node.children[0]).startsWith("Approval:")).map((node) => collectText(node)),
     call<string>("getNextTurnSentenceQ", ["yoaida"], "this"),
     call<string>("getNextTurnSentenceQ", ["yoaida", "gersona"]),
-    (vm.runInContext("RELAY_REFUSAL_Q.hop[1]", screen) as () => string)(),
+    ...(vm.runInContext("Object.values(RELAY_REFUSAL_Q)", screen) as Array<[string, (names: unknown) => string]>)
+      .map(([label, getSentence]) => `${label} — ${getSentence({ sender: "gersona", recipient: "yoaida" })}`),
     ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [], hasUnmarkedOccupant: true } })),
     collectText(render("AnswerLineQ", { item: buildItem({ status: "answered", isAnsweredOutside: true, answeredAt: "2026-11-19T05:30:00.000Z" }) })),
     vm.runInContext("RELAY_LOG_FOOT_Q", screen) as string,

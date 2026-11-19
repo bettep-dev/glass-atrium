@@ -3410,7 +3410,7 @@ function RedactConfirmQ({ redaction }) {
 	);
 	return (
 		<DetailSurface open variant="confirm" suppressOutsideClose onClose={isBusy ? () => undefined : redaction.cancel} title="Redact this relay's text?" footer={footer}>
-			<p className="fs-body text-dim">{`The text ${getSenderNameQ(target.item.relay.sender)} sent to ${names} becomes a fixed marker, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
+			<p className="fs-body text-dim">{`${getSenderNameQ(target.item.relay.sender)} sent it to ${names}. The text becomes a fixed marker, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
 			<p role="alert" className="fs-meta queue-relay-error">
 				{redaction.error !== null && <><span aria-hidden="true" className="text-crit">{`${TONE_GLYPH.crit} `}</span>{redaction.error}</>}
 			</p>
@@ -3464,17 +3464,17 @@ function getRelayNamesQ(items) {
 
 // spec §9.9 → the reason table: the server's codes, the page's words; no sentence holds a limit (the server sets them)
 const RELAY_REFUSAL_Q = {
-	hop: ["Chain too long", () => "It would pass a relay on more times than allowed."],
-	pair_cap: ["Too many to one session", ({ sender, recipient }) => `${sender} sent to ${recipient} more often than the hourly limit allows.`],
-	sender_cap: ["Too many from one session", ({ sender }) => `${sender} sent more relays than the hourly limit allows.`],
-	machine_cap: ["Machine-wide limit", () => "All sessions together sent more relays than the hourly limit allows."],
-	token: ["Imitated a queue message", () => "Its text held the marker the queue's own messages start with."],
+	hop: ["Chain too long", () => "It would pass a relay on too many times."],
+	pair_cap: ["Too many to one session", ({ sender, recipient }) => `${sender} hit the hourly limit for ${recipient}.`],
+	sender_cap: ["Too many from one session", ({ sender }) => `${sender} hit the hourly relay limit.`],
+	machine_cap: ["Machine-wide limit", () => "All sessions together hit the hourly relay limit."],
+	token: ["Imitated a queue message", () => "Its text held the queue's own message marker."],
 	secret: ["Held a credential", () => "Its text matched a credential pattern."],
-	scan_unavailable: ["Could not be checked", () => "The credential check did not run, so the relay was not sent."],
+	scan_unavailable: ["Could not be checked", () => "The credential check did not run. The relay was not sent."],
 	sender_probe: ["From a test session", ({ sender }) => `${sender} is registered as an agent's test session.`],
 	sender_not_live: ["Sender not live", () => "The sending session had ended or been replaced."],
 	self: ["Sent to itself", ({ sender }) => `${sender} named itself as the recipient.`],
-	recipient: ["Recipient cannot take it", () => "A recipient was unknown, ended, replaced, unused or a test session."],
+	recipient: ["Recipient cannot take it", () => "Unknown, ended, replaced, unused or a test session."],
 };
 
 /** A refusal's reason line; a code the page does not know → `Refused` and the code itself. */
@@ -3559,7 +3559,7 @@ function RelayEntryQ({ entry, onRedact }) {
 	);
 }
 
-// only a relay passed on (hop 1 or 2): `Hop 1 · sent after aidl received relay #398 from atrium at 17:02`
+// only a relay passed on (hop 1 or 2): `Hop 1 · after aidl received relay #398 from atrium at 17:02`
 function RelayHopLineQ({ relay, at }) {
 	const { MachineString } = window.UI;
 	const { sender, hop, parent } = relay;
@@ -3567,7 +3567,7 @@ function RelayHopLineQ({ relay, at }) {
 	return (
 		<p className="fs-meta text-dim">
 			<span className="font-semibold">{`Hop ${hop}`}</span>
-			{` · sent after ${getSenderNameQ(sender)} received relay `}<MachineString>{`#${parent.id}`}</MachineString>
+			{` · after ${getSenderNameQ(sender)} received relay `}<MachineString>{`#${parent.id}`}</MachineString>
 			{` from ${getSenderNameQ(parent.sender)} at ${getEntryTimeQ(parent.sentAt, at)}`}
 		</p>
 	);

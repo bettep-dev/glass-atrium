@@ -1086,18 +1086,48 @@ async function captureQueueStates(harness: Harness, dir: string): Promise<string
 }
 
 async function captureQueueState(harness: Harness, dir: string, viewport: Viewport, state: QueueState): Promise<void> {
+  const path = join(dir, getShotName(viewport, state));
+  // an entry transition still running → a half-faded surface; disabled → each capture shows the state's end frame
+  await readQueueState(harness, viewport, state, (page) => page.screenshot(state.isFirstLoad === true ? { path } : { path, animations: "disabled" }));
+}
+
+/** Drives a page to the named state on its fixture, reads it with `read`, and closes it. */
+async function readQueueState<T>(harness: Harness, viewport: Viewport, state: QueueState, read: (page: Page) => Promise<T>): Promise<T> {
   harness.fixture = state.getFixture?.() ?? getRestFixture();
   harness.refusals.clear();
-  if (state.isFirstLoad === true) return captureFirstLoad(harness, dir, viewport, state);
+  if (state.isFirstLoad === true) return readFirstLoad(harness, viewport, read);
   const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture), state.isClockDriven);
   try {
     await state.setUp?.(page, harness);
-    // an entry transition still running → a half-faded surface; disabled → each capture shows the state's end frame
-    await page.screenshot({ path: join(dir, getShotName(viewport, state)), animations: "disabled" });
+    return await read(page);
   } finally {
     harness.isListDown = false;
     await page.close();
   }
+}
+
+// a sentence the page shows holds at most 12 words (spec §12.6) — a command or id counts as one, a lone mark (`·`, `/`, `+`) as none
+const SENTENCE_WORDS_MAX = 12;
+
+/**
+ * The page's own sentences over 12 words in a named state: every line it shows, a session's prose left out, each
+ * multi-word string of the fixture (session-written) and each command or id (`code`) folded to one word.
+ */
+async function getLongSentences(page: Page, fixture: QueueFixture): Promise<string[]> {
+  const [shown, prose, codes] = await page.evaluate(() => ["body", ".prose-text", "code"].map((selector) => [...document.querySelectorAll<HTMLElement>(selector)]
+    .flatMap((node) => node.innerText.split("\n")).map((line) => line.trim()).filter((line) => line !== "")));
+  const lines = shown!.filter((line) => !prose!.includes(line));
+  const folded = [...new Set([...getFixtureStrings(fixture).filter((text) => /\s/.test(text.trim())), ...codes!])].sort((a, b) => b.length - a.length);
+  return lines
+    .map((line) => folded.reduce((text, one) => text.split(one).join(" ‹text› "), line))
+    .flatMap((line) => line.split(/(?<=[.?!])\s+/))
+    .filter((sentence) => sentence.split(/\s+/).filter((word) => /[\p{L}\p{N}‹]/u.test(word)).length > SENTENCE_WORDS_MAX);
+}
+
+function getFixtureStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (value === null || typeof value !== "object") return [];
+  return Object.values(value).flatMap(getFixtureStrings);
 }
 
 /** @returns the element's box in CSS pixels, read in the frame the close-up shows */
@@ -1119,7 +1149,7 @@ async function captureCloseUp(harness: Harness, dir: string, state: CloseUpState
 }
 
 // the item, session and order reads held open → the three cards' placeholders (spec §10, desk first load), captured once drawn
-async function captureFirstLoad(harness: Harness, dir: string, viewport: Viewport, state: QueueState): Promise<void> {
+async function readFirstLoad<T>(harness: Harness, viewport: Viewport, read: (page: Page) => Promise<T>): Promise<T> {
   let release = () => {};
   const held = new Promise<void>((resolve) => { release = resolve; });
   harness.heldRead = held;
@@ -1131,7 +1161,7 @@ async function captureFirstLoad(harness: Harness, dir: string, viewport: Viewpor
     await page.locator(".queue-screen").waitFor({ timeout: READY_TIMEOUT_MS });
     for (const text of ["Loading sessions…", "Loading the queue…", "Loading orders…"]) await page.getByText(text).waitFor({ timeout: READY_TIMEOUT_MS });
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
-    await page.screenshot({ path: join(dir, getShotName(viewport, state)) });
+    return await read(page);
   } finally {
     release();
     harness.heldRead = null;
@@ -3138,6 +3168,17 @@ describe("queue page on the mockup fixtures", () => {
       assert.ok(tags.length > 0, "a row counts both");
       assert.deepEqual(tags, tags.map(() => ({ words: ["not received", "next turn"], isCountAtom: true, isWhole: true, width: 80 })));
     });
+  });
+
+  test("every sentence the page shows in each named state is twelve words or fewer", async () => {
+    const long: string[] = [];
+    for (const state of [...QUEUE_STATES, ...CLOSE_UP_STATES]) {
+      const viewport = getStateViewports(state)[0] as Viewport;
+      const found = await readQueueState(harness, viewport, state, (page) => getLongSentences(page, harness.fixture));
+      long.push(...found.map((sentence) => `${state.nn}-${state.name}: ${sentence}`));
+    }
+
+    assert.deepEqual(long, []);
   });
 
   test("each named state is captured at every size §18.4 marks for it as a viewport-sized PNG named for the mockup", async (t) => {
