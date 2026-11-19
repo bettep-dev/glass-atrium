@@ -2123,7 +2123,7 @@
     "test/hook-repoint-dualdir.bats": "95e9cda8a46d6b3434ce80ac3688d4268eb71586d1a718105b6b9ac9898ea3c0",
     "test/install-acceptance-doctor-stub.bats": "03470f5bdb7791b81a6a6a94d16962bb0a1fef0f5952c9995a1e928c56a48ac7",
     "test/install-acceptance-untracked-listed.bats": "31d6b4e0e126871d7c18596708792b0c2151361ec509c0285f1510974ebf32de",
-    "test/install-acceptance.sh": "34e1b8d70a567b8c7d7c712c9e4a41acb73bdd35c886a8e41f507ed5380ba2ea",
+    "test/install-acceptance.sh": "ba5eca4f82af1ffd5b58ab0c719c8bf129160d2373ec83f254d1b6444f329bdd",
     "test/install-bootstrap-subcommand.bats": "e4fb4d9170c758c8e689e0678042e70d8ebff4bd1d1de60c568719464e255781",
     "test/install-orphan-ownership-exec-harness.sh": "03cd0e55bee5c2358f007358a56a0a415a1d77e6b3ac3718afd7ff48d81694fb",
     "test/install-orphan-ownership.bats": "6b90eafdc327bf6a5ba0d83623e94714399cc4070cdf2b6405ba64e13680ff0e",
