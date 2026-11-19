@@ -3233,7 +3233,7 @@ function getRelayNamesQ(items) {
 
 // spec §9.9 → the reason table: the server's codes, the page's words; no sentence holds a limit (the server sets them)
 const RELAY_REFUSAL_Q = {
-	hop: ["Chain too long", () => "It would have passed on a relay that had already been passed on twice."],
+	hop: ["Chain too long", () => "It would have passed on a relay more times than the chain limit allows."],
 	pair_cap: ["Too many to one session", ({ sender, recipient }) => `${sender} sent to ${recipient} more often than the hourly limit allows.`],
 	sender_cap: ["Too many from one session", ({ sender }) => `${sender} sent more relays than the hourly limit allows.`],
 	machine_cap: ["Machine-wide limit", () => "All sessions together sent more relays than the hourly limit allows."],

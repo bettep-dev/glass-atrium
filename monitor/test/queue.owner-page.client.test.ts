@@ -586,6 +586,9 @@ describe("recent automatic resumes", () => {
   });
 });
 
+// a limit is the server's → no sentence holds one, as a digit or as a count word
+const LIMIT_FIGURE = /\d|\b(?:once|twice|thrice|one|two|three|four|five|six|seven|eight|nine|ten|single|double|triple)\b/i;
+
 describe("relay history", () => {
   const fixture = getRelayHistoryFixture();
   const READY_SIGNAL = { status: "ready", data: fixture.signal, error: null, busy: false };
@@ -653,11 +656,11 @@ describe("relay history", () => {
     assert.equal(findNodes(all[2]!, (node) => node.props?.atom === "ProseText").length, 0);
   });
 
-  test("every reason the page knows has a name and a sentence with no limit figure; an unknown one names its code", () => {
+  test("every reason the page knows has a name and a sentence with no limit figure, in digits or in words; an unknown one names its code", () => {
     const codes = ["hop", "pair_cap", "sender_cap", "machine_cap", "token", "secret", "scan_unavailable", "sender_probe", "sender_not_live", "self", "recipient"];
     const lines = codes.map((reason) => call<{ name: string; sentence: string }>("getRelayRefusalLineQ", reason, { sender: "gersona", recipient: "yoaida" }));
     assert.equal(new Set(lines.map((line) => line.name)).size, codes.length);
-    assert.deepEqual(lines.filter((line) => /\d/.test(line.sentence) || line.name === "Refused"), []);
+    assert.deepEqual(lines.filter((line) => LIMIT_FIGURE.test(line.sentence) || line.name === "Refused"), []);
     assert.deepEqual(call("getRelayRefusalLineQ", "recipient_ambiguous", { sender: "gersona", recipient: "yoaida" }), { name: "Refused", sentence: "The queue gave the reason", code: "recipient_ambiguous" });
   });
 
