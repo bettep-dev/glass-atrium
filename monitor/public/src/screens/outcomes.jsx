@@ -2996,7 +2996,18 @@ function sanitizeMarkdownToHtmlO(markdown) {
   } catch (_e) {
     return null;
   }
-  return purifier.sanitize(raw);
+  return purifier.sanitize(raw, getBodySanitizeConfigO());
+}
+
+// the shared viewer config + no style tag or attribute → nothing paints outside the drawer, which has no style containment
+function getBodySanitizeConfigO() {
+  const { SANITIZE_CONFIG } = window.UI;
+  return {
+    ...SANITIZE_CONFIG,
+    FORBID_TAGS: [...SANITIZE_CONFIG.FORBID_TAGS, 'style'],
+    FORBID_ATTR: [...SANITIZE_CONFIG.FORBID_ATTR, 'style'],
+    WHOLE_DOCUMENT: false,
+  };
 }
 
 function MarkdownView({ markdown }) {

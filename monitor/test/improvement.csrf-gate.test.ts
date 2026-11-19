@@ -6,7 +6,8 @@
 //   - gate leg · sec-fetch-site decision rows (same-origin / none / cross-site / same-site)
 //   - gate leg · origin fallback rows (absent / loopback / foreign / opaque / unparseable)
 //   - gate leg · header-absence pass-through (curl + agent paths) and GET exemption
-//   - parser leg · text/plain with a body → 415 (the one row a gate 403 cannot mask)
+//   - form leg · a form content type (urlencoded, multipart, text/plain), empty or filled → 415 before any handler,
+//     on every method the gate judges and every POST route of the route table; JSON still passes
 //   - body-limit leg · over-limit JSON → 413
 //   - production assembly · guards ahead of the routes (queue owner route: text/plain → 415) and attached (cross-site → 403)
 //
@@ -18,7 +19,7 @@
 //   - App: stripped Fastify + registerRequestGuards() attached exactly as buildApp does,
 //     then app.inject() — no port binding.
 
-import test, { after, before } from "node:test";
+import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { randomInt } from "node:crypto";
 
@@ -28,6 +29,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { buildApp } from "../src/server/app.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { REVIEWED_ROUTES } from "../src/server/remote/route-classes.js";
 import { BODY_LIMIT_BYTES, registerRequestGuards } from "../src/server/request-guards.js";
 
 
@@ -108,10 +110,60 @@ test("gate: agent/curl body-less POST → passes (parsers only apply to bodied r
   assert.strictEqual(res.statusCode, 200);
 });
 
-// Proves the parser leg is really wired — the one row where a gate 403 cannot mask it.
-test("parser: text/plain with a body and no signal headers → 415", async () => {
-  const status = await postMutation({ "content-type": "text/plain" }, "hello");
-  assert.strictEqual(status, 415);
+// A document's form can send only these types → each is refused whatever the body, so a field-less form is too
+const FORM_REQUESTS = [
+  { name: "an empty urlencoded form", contentType: "application/x-www-form-urlencoded", payload: "" },
+  { name: "a filled urlencoded form", contentType: "application/x-www-form-urlencoded", payload: "code=R1" },
+  { name: "an empty multipart form", contentType: "multipart/form-data; boundary=----form", payload: "" },
+  { name: "a filled multipart form", contentType: "Multipart/Form-Data; boundary=----form", payload: '------form\r\nContent-Disposition: form-data; name="code"\r\n\r\nR1\r\n------form--\r\n' },
+  { name: "an empty text/plain form", contentType: "text/plain", payload: "" },
+  { name: "a filled text/plain form", contentType: "text/plain;charset=UTF-8", payload: "code=R1" },
+];
+// the route table's POST rows, a path parameter filled → every POST route the monitor serves
+const POST_ROUTES = REVIEWED_ROUTES.filter((row) => row.route.startsWith("POST ")).map((row) => row.route.slice("POST ".length));
+
+describe("a form content type on a mutation", () => {
+  let routeApp: FastifyInstance;
+  const handled: string[] = [];
+
+  before(async () => {
+    routeApp = Fastify({ logger: false });
+    registerRequestGuards(routeApp);
+    for (const url of POST_ROUTES) {
+      routeApp.route({ method: ["POST", "PUT", "PATCH", "DELETE"], url, handler: async (request) => {
+        handled.push(`${request.method} ${url}`);
+        return { ok: true };
+      } });
+    }
+    await routeApp.ready();
+  });
+
+  after(async () => {
+    await routeApp.close();
+  });
+
+  for (const row of FORM_REQUESTS) {
+    test(`${row.name} is refused with 415 before the handler on every POST route of the route table and on PUT, PATCH and DELETE`, async () => {
+      handled.length = 0;
+      const sent = [...POST_ROUTES.map((url) => ({ method: "POST" as const, url })), ...(["PUT", "PATCH", "DELETE"] as const).map((method) => ({ method, url: POST_ROUTES[0] ?? "" }))];
+      for (const request of sent) {
+        const url = request.url.replace(/:id\b/, "1");
+        const res = await routeApp.inject({ method: request.method, url, headers: { "content-type": row.contentType, "sec-fetch-site": "same-origin" }, payload: row.payload });
+        assert.deepEqual([res.statusCode, res.json()], [415, { error: "form_content_type" }], `${request.method} ${url}`);
+      }
+      assert.deepEqual([sent.length > POST_ROUTES.length, handled], [true, []]);
+    });
+  }
+
+  test("a JSON call and a body-less call with no content type still reach every POST route's handler", async () => {
+    handled.length = 0;
+    for (const url of POST_ROUTES.map((route) => route.replace(/:id\b/, "1"))) {
+      const json = await routeApp.inject({ method: "POST", url, headers: { "content-type": "application/json", "sec-fetch-site": "same-origin" }, payload: "{}" });
+      const bare = await routeApp.inject({ method: "POST", url, headers: { "sec-fetch-site": "same-origin" } });
+      assert.deepEqual([json.statusCode, bare.statusCode], [200, 200], url);
+    }
+    assert.equal(handled.length, POST_ROUTES.length * 2);
+  });
 });
 
 test("gate: same-origin UI click → passes", async () => {

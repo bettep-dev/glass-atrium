@@ -57,14 +57,19 @@ turn_on_config() {
 
 # --- installer opt-in ---------------------------------------------------------------------------------
 
-@test "the installer keeps the monitor loopback-only unless the owner answers yes on a terminal" {
+# The screen spec's install lines: X-1 after a yes, X-2 after a no → no command, path or fingerprint.
+# Asserted as the output's end: a captured run has no terminal echo of the answer to end the prompt's line.
+ON_LINE='Remote access is on. To connect a device, open the monitor and choose Remote access.'
+OFF_LINE='Remote access is off. To turn it on later, open the monitor and choose Remote access.'
+
+@test "the installer keeps the monitor loopback-only unless the owner answers yes on a terminal, and ends on the off line" {
   local rows=('no terminal|false|y' 'empty answer|true|' 'no|true|n' 'anything else|true|yes please')
   local row name answer config_before
   config_before="$(file_sum "${SANDBOX}/config.toml")"
   for row in "${rows[@]}"; do
     IFS='|' read -r name IS_TERMINAL answer <<<"${row}"
     run ga_remote_install_opt_in <<<"${answer}"
-    [[ "${status}" -eq 0 && "${output}" == *"loopback-only"* ]] || {
+    [[ "${status}" -eq 0 && "${output}" == *"${OFF_LINE}" && "${output}" != *"glass-atrium"* ]] || {
       echo "${name}: ${status} ${output}"
       return 1
     }
@@ -79,23 +84,32 @@ turn_on_config() {
   done
 }
 
-@test "a yes at install creates the keys, turns access on, trusts the Wi-Fi and prints the CA fingerprint, without a restart" {
+@test "a yes at install creates the keys and turns access on without a restart, trusts the Wi-Fi only on the typed word, and ends on the on line" {
+  local rows=('trust typed|trust|192.168.0.1@00:1b:2c:0d:4e:5f' 'trust declined|no|')
+  local row name word want_list fingerprint
   IS_TERMINAL=true
-  run ga_remote_install_opt_in <<<$'y\ntrust'
-  [[ "${status}" -eq 0 ]] || {
-    echo "${output}"
-    return 1
-  }
-  [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 1
-  [[ "$(atrium_toml_get "[remote_access]" "port")" == "16146" ]] || return 1
-  [[ "$(atrium_toml_get "[remote_access]" "trusted_networks")" == "192.168.0.1@00:1b:2c:0d:4e:5f" ]] || return 1
-  [[ -z "$(ga_remote_get_loose_modes "${KEY_DIR}")" ]] || return 1
-  local fingerprint
-  fingerprint="$(/usr/bin/openssl x509 -fingerprint -sha256 -noout -in "${KEY_DIR}/ca.pem")"
-  [[ "${output}" == *"${fingerprint#*=}"* && "${output}" == *"https://test-mac.local:16146"* ]] || {
-    echo "${output}"
-    return 1
-  }
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name word want_list <<<"${row}"
+    printf '[ports]\nmonitor = 16145\n' >"${SANDBOX}/config.toml"
+    run ga_remote_install_opt_in <<<"y"$'\n'"${word}"
+    [[ "${status}" -eq 0 && "${output}" == *"${ON_LINE}" ]] || {
+      echo "${name}: ${status} ${output}"
+      return 1
+    }
+    [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 1
+    [[ "$(atrium_toml_get "[remote_access]" "port")" == "16146" ]] || return 1
+    [[ "$(atrium_toml_get "[remote_access]" "trusted_networks")" == "${want_list}" ]] || {
+      echo "${name}: trusted list"
+      return 1
+    }
+    [[ -z "$(ga_remote_get_loose_modes "${KEY_DIR}")" ]] || return 1
+    fingerprint="$(/usr/bin/openssl x509 -fingerprint -sha256 -noout -in "${KEY_DIR}/ca.pem")"
+    [[ "${output}" != *"${fingerprint#*=}"* && "${output}" != *"${KEY_DIR}"* && "${output}" != *"ca.pem"* &&
+      "${output}" != *"glass-atrium"* && "${output}" != *"https://"* ]] || {
+      echo "${name}: printed a fingerprint, path or command: ${output}"
+      return 1
+    }
+  done
   ! grep -q apply "${CALLS}" || {
     echo "restarted during install"
     return 1
@@ -109,7 +123,7 @@ turn_on_config() {
   local config_before
   config_before="$(file_sum "${SANDBOX}/config.toml")"
   run ga_remote_install_opt_in </dev/null
-  [[ "${status}" -eq 0 && "${output}" == *"already on"* && "${output}" != *"[y/N]"* ]] || {
+  [[ "${status}" -eq 0 && "${output}" == *"${ON_LINE}" && "${output}" != *"[y/N]"* && "${output}" != *"glass-atrium"* ]] || {
     echo "${output}"
     return 1
   }
@@ -119,12 +133,12 @@ turn_on_config() {
 # The TUI's install steps read no terminal (stdin pinned to EOF), so the TUI asks after its install
 # panel instead: lift the panel and the gate out of the dispatch lib and run them with stub chrome.
 run_tui_install_panel() {
-  local plan_rc="$1" enabled="$2" answer="$3" body="${SANDBOX}/panel.sh"
+  local plan_rc="$1" enabled="$2" answer="$3" apply_rc="${4:-0}" body="${SANDBOX}/panel.sh"
   awk '/^(dispatch_action_install_panel|tui_remote_opt_in_gate|_tui_remote_ask|_run_cooked)\(\) \{/ { f = 1 } f { print } f && /^}/ { f = 0 }' \
     "${GA}/lib/ga-tui-dispatch.sh" >"${body}"
   printf '%s\n' "${answer}" >"${SANDBOX}/tty"
   printf '%s\n' "${enabled}" >"${SANDBOX}/enabled"
-  PLAN_RC="${plan_rc}" STATE="${SANDBOX}" TTY="${SANDBOX}/tty" bash -c '
+  PLAN_RC="${plan_rc}" APPLY_RC="${apply_rc}" STATE="${SANDBOX}" TTY="${SANDBOX}/tty" bash -c '
     apply_plate_geometry() { :; }
     enter_run_state() { :; }
     start_idle_spinner() { :; }
@@ -141,7 +155,7 @@ run_tui_install_panel() {
       printf "asked\n" >>"${STATE}/calls.log"
       [[ "${reply}" != "y" ]] || printf "true\n" >"${STATE}/enabled"
     }
-    ga_remote_apply_config() { printf "applied\n" >>"${STATE}/calls.log"; }
+    ga_remote_apply_config() { printf "applied\n" >>"${STATE}/calls.log"; return "${APPLY_RC}"; }
     source "$1"
     rc=0
     dispatch_action_install_panel || rc=$?
@@ -174,6 +188,19 @@ run_tui_install_panel() {
       return 1
     }
   done
+}
+
+@test "the TUI points to the monitor page, not a command, when the restart after a yes fails" {
+  local got_rc
+  got_rc="$(run_tui_install_panel 0 false y 1)" || {
+    echo "panel did not run"
+    return 1
+  }
+  [[ "${got_rc}" == "0" ]] || return 1
+  grep -q 'open the monitor and choose Remote access' "${SANDBOX}/tty" && ! grep -q 'glass-atrium remote' "${SANDBOX}/tty" || {
+    cat "${SANDBOX}/tty"
+    return 1
+  }
 }
 
 # --- uninstall ----------------------------------------------------------------------------------------

@@ -2332,6 +2332,93 @@ async function getErrorBody(res) {
   }
 }
 
+/**
+ * The saved-file name a download's Content-Disposition names: RFC 5987 `filename*` first, the plain `filename` as fallback.
+ * @returns null when the header names no file
+ */
+function getAttachmentName(headerValue) {
+  if (!headerValue) return null;
+  const star = headerValue.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ''));
+    } catch (_err) {
+      // malformed percent-encoding → the plain filename below
+    }
+  }
+  const plain = headerValue.match(/filename="?([^";]+)"?/i);
+  return plain ? plain[1].trim() : null;
+}
+
+/**
+ * DOMPurify config for agent- or session-written markup a viewer renders as HTML; anything outside it is dropped.
+ * Form controls + formaction/ping → no same-origin request from one click (markdown bodies reach the client unsanitized).
+ * ALLOW_UNKNOWN_PROTOCOLS false → no javascript:/data: URLs · KEEP_CONTENT → a dropped tag's text stays.
+ * WHOLE_DOCUMENT → <html>/<body> kept, so the document viewer can lift the body's class.
+ */
+const SANITIZE_CONFIG = {
+  FORBID_TAGS: [
+    'script',
+    'iframe',
+    'object',
+    'embed',
+    'base',
+    'meta',
+    'link',
+    'form',
+    'input',
+    'button',
+    'select',
+    'textarea',
+  ],
+  FORBID_ATTR: [
+    'onerror',
+    'onload',
+    'onclick',
+    'onmouseover',
+    'onfocus',
+    'onblur',
+    'onchange',
+    'oninput',
+    'onsubmit',
+    'onreset',
+    'onselect',
+    'onkeydown',
+    'onkeyup',
+    'onkeypress',
+    'onabort',
+    'oncanplay',
+    'oncanplaythrough',
+    'ondurationchange',
+    'onemptied',
+    'onended',
+    'onloadeddata',
+    'onloadedmetadata',
+    'onloadstart',
+    'onpause',
+    'onplay',
+    'onplaying',
+    'onprogress',
+    'onratechange',
+    'onseeked',
+    'onseeking',
+    'onstalled',
+    'onsuspend',
+    'ontimeupdate',
+    'onvolumechange',
+    'onwaiting',
+    'onanimationstart',
+    'onanimationend',
+    'onanimationiteration',
+    'ontransitionend',
+    'formaction',
+    'ping',
+  ],
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+  KEEP_CONTENT: true,
+  WHOLE_DOCUMENT: true,
+};
+
 const FETCH_ERROR_NEXT_STEP = {
   network: 'The monitor server did not answer. Check that it is running, then retry.',
   database: "The monitor's database is unavailable. Retry in a moment.",
@@ -3038,7 +3125,7 @@ window.UI = {
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
   REMOTE_PAGE, isRemotePage, installRemoteFetch, readRemoteSession,
-  getFetchError, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getAttachmentName, SANITIZE_CONFIG, ErrorDetails, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,

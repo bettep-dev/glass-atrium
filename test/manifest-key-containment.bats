@@ -63,6 +63,7 @@ run_engine() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$1/test/lib/remote-run-stub.bash"
       ga_init_env "$2"
       DRY_RUN=false
       eval "$3"

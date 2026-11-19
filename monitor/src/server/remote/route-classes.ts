@@ -37,6 +37,12 @@ const DEVICES_RESIGN_CID = "2026-11-16T2200_lan-close_2f8b";
 const PENDING_COUNT_CID = "2026-11-16T2025_deploy65-prep_a9e3";
 // seven queue-owner rows' reasons re-signed in place (owner-rows-verdict.md): route, class and order kept → same digest
 const OWNER_ROWS_CID = "2026-11-16T2215_owner-rows-verdict_e6b0";
+// rows 110-115 appended (route-rows-verdict.md) → the 109-row digest still verifies as its prefix
+const ONBOARDING_CID = "2026-11-17T0850_onboarding-build_3f9a";
+// the access, setup and certificate reasons re-signed in place (route-rows-resign-verdict.md): route, class and order kept → same digest
+const CLOSE_CID = "2026-11-19T0700_onboarding-close_8e2d";
+// the on, trust, network-read and single html-export reasons re-signed in place (route-rows-sign-last-verdict.md): route, class and order kept → same digest
+const SIGN_LAST_CID = "2026-11-19T0945_onboarding-close2_5b7c";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -143,6 +149,95 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 109,
     sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a",
+    supersededBy: ONBOARDING_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S4",
+    // every row of the entry before it carried unchanged; the Mac page's access, setup and certificate rows 110-115 appended;
+    // the registration and devices GET reasons re-signed, the devices DELETE and revoke-all rows re-signed byte-identical
+    // its conditions C1-C8 → stated as they now stand on the entry after it
+    cids: [
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 115,
+    sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351",
+    supersededBy: CLOSE_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S7",
+    // every row of the entry before it carried unchanged; the on, off, trust, setup and certificate reasons re-signed,
+    // the network read and devices GET reasons re-signed byte-identical
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // C1 met: scripts/remote-access-set.sh → main (on and off the act alone, trust the three identity fields), set_trust (trusted list only); lib/ga-remote.sh → ga_remote_create_ca (an existing CA kept), ga_remote_set_config (temp file then rename), ga_remote_main (no dispatch or help entry); controller.ts → turnOff; network.ts → isTrustedNetwork, getNetworkIdentity, getNetworkLink; gate.ts → admitDevice, recordEvent, getRoutePayload; app.ts → Host hook, registerRequestGuards, one registerRemoteAdminRoutes call
+    // C2 open: the page's confirm (focus on Cancel, router address shown) unread; the page to call the network read only when a confirm opens
+    // C3 open: remote-access.jsx → PAGE_HEADERS_RA on its one fetch helper; every Mac page call going through that helper unconfirmed
+    // C4 open: sign-in rows 106-108 re-read when their files change: sign-in.html (meta CSP byte-identical, links only /sign-in.css and /sign-in.js, no new URL-carrying element, inline script or handler, words naming no feature, device, count or Mac name), sign-in.js (the form's script only, no new request target, server text set as text, no query or fragment read, no stored code), sign-in.css when changed (no url() or @import), the fixed three-file list; a failure needs a new line
+    // C5 met: admin-routes.ts → getWithin bounds the off's request row, revoke and close; a persist that did not write → start.ts → setDeviceOff; residual: RemoteAccessSwitch.#apply awaits the old listener's close and the open unbounded inside the act queue → an off queued behind a widening act waits on them
+    // C6 met: admin-routes.ts → getCertificate refuses anything but exactly one CA certificate and serves it re-encoded (PEM_CERTIFICATE)
+    // C7 met: set_trust takes the shown network in fixed argv positions, format-checked (is_network_identity), exits 10 writing nothing on a differing read → start.ts → runAccessStep, ACCESS_STEP_OUTCOME
+    // C8 met for the on's request row and a thrown act's error outcome row (admin-routes.ts → WIDENING_REQUEST_PAYLOAD, widenAccess); open: the page's words for a timed-out on (write_failed) to say the state is unknown until restart
+    cids: [
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 115,
+    sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351",
+    supersededBy: SIGN_LAST_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S7",
+    // every row of the entry before it carried unchanged; the on, trust, network read and single html-export reasons re-signed
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // C1 met: start.ts → runAccessStep fixed binary, fixed argv, no request value; scripts/remote-access-set.sh carried from the entry before
+    // C2 met: remote-access.jsx → onWiden the one caller of readConfirmNetworkRA (a confirm opening); a first read lands only on a page with no confirm, a re-read only in its own act's; Turn off and Remove all held while a read runs; ConfirmRA focuses Cancel at mount, WidenConfirmRA keyed on the confirm value → a re-read's network remounts it; the opener guard and the key not yet read by the reviewer
+    // C3 met: remote-access.jsx → requestRA the one fetch, PAGE_HEADERS_RA, no body; every Mac page call through it, the certificate a blob, never a plain link
+    // C4 met for content: sign-in.html meta policy (default-src none; script, style, connect, form-action self; base-uri none), no inline script or style, no-referrer; sign-in.js one same-origin JSON POST to /api/remote/register, text through textContent only, fixed redirect to /; sign-in.css no url() or import; rows 106-108 signed for these facts only; open: frame-deny headers reaching the page (response-headers.ts → FRAME_DENY_HEADERS use unread)
+    // C5 met: start.ts → RemoteAccessSwitch.#apply bounds the old listener's close and the new one's open through getWithin (5 s), #openWithin closes a late listener
+    // C6 met: admin-routes.ts → getCertificate refuses anything but exactly one CA certificate, serves it re-encoded
+    // C7 met: set_trust takes the shown network in fixed argv positions, format-checked, writes nothing on a differing read
+    // C8 met: admin-routes.ts → widenAccess request row and a thrown act's error outcome row; page words (remote-access.jsx → getWidenErrorTextRA): act_failed, write_failed, env_not_rendered → state unknown, start_failed → applies at the next restart; after either the confirm closes and the page rereads, the words kept until a later act completes; not yet read by the reviewer
+    // confirm binding: start.ts → getConfirmFacts one-use value over 16 random bytes, #takeShown deletes before the freshness test; admin-routes.ts → runWideningAct one string header only
+    // access marker: lib/ga-remote.sh → ga_remote_enable writes config first, then _ga_remote_set_access_on by temp file and rename
+    cids: [
+      SIGN_LAST_CID,
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 115,
+    sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351",
   },
 ];
 
@@ -191,7 +286,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/clauded-docs/html-export", cls: "page", reason: "page calls it; handler read: at most 50 integer ids, bound query, stored path checked against the docs root, sequential Chromium render into a zip" },
   { route: "GET /api/clauded-docs", cls: "page", reason: "page calls it (hooks too, over loopback); handler read: read-only listing, filters bound and clamped; rows carry the absolute body path" },
   { route: "POST /api/clauded-docs", cls: "agent", reason: "no page call site — only local agent sessions create documents; handler read: writes a body file and a row, HTML sanitized first" },
-  { route: "GET /api/clauded-docs/:id/html-export", cls: "page", reason: "page calls it; handler read: integer id, stored path checked against the docs root, ETag before the Chromium render" },
+  { route: "GET /api/clauded-docs/:id/html-export", cls: "page", reason: "page calls it; handler read: the document sandbox policy set before anything else, so every answer carries it, not-modified and refusals included; id parsed, a refused id → 400; stored path checked against the docs root; ETag before the Chromium render; answered as an attachment with nosniff, the saved name built from the title's slug (a-z, 0-9, hyphen, Hangul, CJK only) through the shared attachment builder" },
   { route: "GET /api/clauded-docs/:id", cls: "page", reason: "page calls it (hooks too, over loopback); handler read: stored path checked against the docs root, agent-authored body returned inside a JSON envelope with a sandbox CSP header" },
   { route: "PUT /api/clauded-docs/:id", cls: "page", reason: "page function (local agents call it too, over loopback); handler read: body validated before any write, expected_hash compare-and-set, HTML sanitized, body path is the stored one or a server-built slug of the stored title, checked against the docs root; own body limit, see notes" },
   { route: "DELETE /api/clauded-docs/:id", cls: "page", reason: "page function, high-impact (hard delete of the row and its body file, not recoverable) kept page by owner decision; handler read: integer id, one bound delete, stored path checked against the docs root before the unlink" },
@@ -241,8 +336,8 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/queue/owner/items/:id/later", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
   { route: "POST /api/queue/owner/items/:id/seen", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
   { route: "POST /api/queue/owner/items/:id/resend", cls: "page", reason: "page function, high-impact kept page by owner decision: re-queues one delivery and, for an ended session, lets the sweep start a local claude process again; handler read: empty body, only an unacked or expired item or a resume-pending one whose attempt is used, refused while the session's earlier resume has not registered; no caller text" },
-  { route: "POST /api/remote/registration", cls: "remote-admin", reason: "loopback only; Sec-Fetch-Site exactly same-origin, empty body, open-rate limit; audit row before the code, no row → no code; code in this response body only, no-store" },
-  { route: "GET /api/remote/devices", cls: "remote-admin", reason: "loopback only; same Sec-Fetch-Site rule although a GET; devices: id, label, created, last seen only; access: whether the feature is on in this process, and each trusted network's gateway address and gateway hardware address, nothing else (cli-channel C17); no-store" },
+  { route: "POST /api/remote/registration", cls: "remote-admin", reason: "loopback only; Sec-Fetch-Site exactly same-origin, the fixed page header only the page's own script sets, empty body, open-rate limit; audit row before the code, no row → no code; code in this response body only, no-store" },
+  { route: "GET /api/remote/devices", cls: "remote-admin", reason: "loopback only; same Sec-Fetch-Site and page-header rule although a GET; devices: id, label, created, last seen only, nothing else; no-store" },
   { route: "DELETE /api/remote/devices/:id", cls: "remote-admin", reason: "loopback only; same rule, decimal id, no body; remote.revoke after the revoke, audit failure never blocks it; one device_not_found" },
   { route: "POST /api/remote/devices/revoke-all", cls: "remote-admin", reason: "loopback only; same rule, empty body; remote.revoke with the count only" },
   { route: "POST /api/remote/register", cls: "remote-pre-auth", reason: "remote only; remote Host, pre-auth limit, page-origin signal, 3/min/address and 10/min total before body parse, 1 KiB strict schema; one opaque refusal" },
@@ -256,6 +351,12 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /sign-in.js", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; the sign-in form's script, names no feature" },
   { route: "GET /sign-in.css", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; self-contained, the shared stylesheets stay behind registration" },
   { route: "POST /api/queue/pending/count", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh (listen step, run by hooks/queue-listener.sh) only; handler read: strict session id and pid body, refused unless the named session is live for that pid, returns the count and first 200 ids of that session's answered items, claims nothing, marks the session waiting in memory for 10 s; no credential beyond a named session id and pid" },
+  { route: "POST /api/remote/access/on", cls: "remote-admin", reason: "loopback only; Mac page gate: root Host allowlist, Sec-Fetch-Site exactly same-origin, the fixed page header only the page's own script sets, empty body; 5/min shared with trust, refused 409 while any access act runs; remote.access_requested row before any step, naming that a trust of the network shown may follow, no row → no step; refused unless the confirm value in the x-glass-atrium-confirm header names a read no more than 120 s old, unused, that showed the network read at the act; one read per act; fixed-argv write step, no request value, then this process reopens the listener from the settings the step rendered, the old listener's close and the new one's open each waiting at most 5 s, a failed or timed-out apply answers start_failed and reopens nothing until restart; trusts only the network shown, only when not yet trusted, re-matched before that step; the trust step takes the shown network in fixed argv positions, format-checked, reads the network itself and writes nothing when it differs; outcome rows carry outcome and trusted count only, an act that throws still gets its error outcome row; page-origin stamp recorded, not a check" },
+  { route: "POST /api/remote/access/off", cls: "remote-admin", reason: "loopback only; same Mac page gate, empty body; reduce-only, its own path, never the device's POST /api/remote/off; 10/min own budget, queued behind an act in flight, never refused for one; request row tried first, its failure never stops the off; persists off through the fixed-argv step, revokes every device through the shared revoke-all act (sockets closed), closes the listener, each step running when another fails or stalls: the request row, the revoke and the close each wait at most 5 s, the persist its own step timeout, a timed-out step counted as failed; a persist that did not write also writes the device-off marker, so a restart stays off; remote.access_disabled with the count and the failed steps; a failed step → 500 naming it" },
+  { route: "POST /api/remote/access/trust", cls: "remote-admin", reason: "loopback only; same Mac page gate, empty body; limit and single-flight shared with on; remote.access_requested row before any step, no row → no step; refused unless the confirm value in the x-glass-atrium-confirm header names a read no more than 120 s old, unused, that showed the network read at the act; one read per act; fixed-argv write step takes the shown network in fixed argv positions, format-checked, no request value, reads the network itself and writes nothing when it differs; changes the trusted list only, never enabled, never the access-state file; reopens the listener only when access is already on and no device off holds, its close and open each waiting at most 5 s; already trusted → 409, nothing written; remote.network_trusted with outcome and trusted count only, an act that throws still gets its error outcome row" },
+  { route: "GET /api/remote/access/network", cls: "remote-admin", reason: "loopback only; same Mac page gate although a GET, and its HEAD; 20/min; no caller input; runs the fixed network reads; returns the router address the server read, the link kind (wifi, wired, unknown), whether this network is trusted and a one-use confirm value, no hardware address, no interface; the one response that carries a gateway address, for the confirm only; keeps the identity it read under that value in process memory, an entry past 120 s never honoured and dropped at the next read → an on or trust carrying that value acts on that network or refuses; no audit row; no-store" },
+  { route: "GET /api/remote/setup", cls: "remote-admin", reason: "loopback only; same Mac page gate although a GET, and its HEAD; 60/min, overlapping reads share one run of the network commands; no caller input; field by field: on in effect (on in config and no device off), off by a device, listen reason of that effective state, router read or not, this network trusted or not, trusted count, answering or not, the .local name, the interface address, the remote port, the device limit, the CA fingerprint (SHA-256 over the encoded certificate the download serves); no gateway or hardware address, no key path; writes nothing; no-store" },
+  { route: "GET /api/remote/certificate", cls: "remote-admin", reason: "loopback only; same Mac page gate although a GET, and its HEAD; 10/min; no caller input; one constant file, the public CA certificate in the fixed data dir, no other file read; 404 when missing, holding a private key marker, or anything but exactly one CA certificate; served re-encoded from the parsed certificate, the same certificate the fingerprint covers, as an attachment with a fixed name and type; no-store" },
 ];
 
 /** `METHOD /path` keys the remote gate answers without a registered device → only rows the reviewer classed remote-pre-auth. */

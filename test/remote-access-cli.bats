@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
-# shellcheck disable=SC2154,SC2329,SC2312  # bats injects BATS_*/status/output; the stubs are called by the sourced lib
-# lib/ga-remote.sh — key material, network identity, config writes and the `glass-atrium remote` CLI.
+# shellcheck disable=SC2154,SC2329,SC2312,SC2030,SC2031  # bats injects BATS_*/status/output; the stubs are called by the sourced lib; each @test's subshell owns the stub values its helpers read
+# lib/ga-remote.sh — key material, network identity, config writes, the `glass-atrium remote` CLI and the
+# Mac page's write step (scripts/remote-access-set.sh).
 # Hermetic: a sandbox GA_ROOT, real LibreSSL in that sandbox, stubbed route/arp/scutil/ipconfig/tmutil/launchctl,
 # and a loopback stub of the monitor's three remote-cli routes. No real key folder, no real install.
 
@@ -20,6 +21,8 @@ setup() {
   ROUTE_OUT=$'   route to: default\ndestination: default\n    gateway: 192.168.0.1\n  interface: en1\n'
   ARP_OUT='? (192.168.0.1) at 0:1b:2c:d:4e:5f on en1 ifscope [ethernet]'
   WIFI_ADDRESS="192.168.0.10"
+  CONFIGD_GLOBAL=""
+  CONFIGD_SERVICE=""
   IS_TERMINAL=false
   # shellcheck source=../scripts/lib/atrium-config.sh
   source "${GA}/scripts/lib/atrium-config.sh"
@@ -33,7 +36,12 @@ setup() {
       curl) /usr/bin/curl "$@" ;;
       route) printf '%s' "${ROUTE_OUT}" ;;
       arp) printf '%s\n' "${ARP_OUT}" ;;
-      scutil) printf 'Test-Mac\n' ;;
+      scutil)
+        # no argv = a configd query on stdin → the global record or the primary service's record
+        if (($# > 0)); then printf 'Test-Mac\n'; elif [[ "$(cat)" == *Global* ]]; then
+          printf '%s\n' "${CONFIGD_GLOBAL}"
+        else printf '%s\n' "${CONFIGD_SERVICE}"; fi
+        ;;
       ipconfig) printf '%s\n' "${WIFI_ADDRESS}" ;;
       tmutil | launchctl) printf '%s %s\n' "${tool}" "$*" >>"${CALLS}" ;;
       *) return 127 ;;
@@ -162,11 +170,23 @@ file_sum() { cksum <"$1"; }
 
 # --- network identity -------------------------------------------------------------------------------
 
+# configd's records as macOS prints them, shared with monitor/test/remote-network.unit.test.ts → one capture, one row set
+CONFIGD_FIXTURES="${GA}/monitor/test/fixtures/configd"
+
+# The captured service record (`scutil` → show State:/Network/Service/<id>/IPv4) with this interface and signature.
+configd_service_for() {
+  INTERFACE="$1" SIGNATURE="$2" awk '
+    $1 == "InterfaceName" { sub(/: .*/, ": " ENVIRON["INTERFACE"]) }
+    $1 == "NetworkSignature" { sub(/: .*/, ": " ENVIRON["SIGNATURE"]) }
+    { print }
+  ' "${CONFIGD_FIXTURES}/service-ipv4.txt"
+}
+
 @test "network identity is the gateway and its ARP entry on the route's interface, else unreadable" {
   local good_arp="${ARP_OUT}"
   local rows=(
     "matching entry|${good_arp}|192.168.0.1|en1 192.168.0.1 00:1b:2c:0d:4e:5f"
-    "no ARP entry||192.168.0.1|"
+    "no ARP entry, no configd record||192.168.0.1|"
     "entry on another interface|? (192.168.0.1) at 0:1b:2c:d:4e:5f on en0 ifscope [ethernet]|192.168.0.1|"
     "incomplete entry|? (192.168.0.1) at (incomplete) on en1 ifscope [ethernet]|192.168.0.1|"
     "public gateway|? (8.8.8.8) at 0:1b:2c:d:4e:5f on en1 ifscope [ethernet]|8.8.8.8|"
@@ -180,15 +200,33 @@ file_sum() { cksum <"$1"; }
   done
 }
 
+@test "with no ARP entry, network identity is configd's record of the same router on the route's interface" {
+  ARP_OUT='192.168.45.1 (192.168.45.1) -- no entry'
+  ROUTE_OUT=$'    gateway: 192.168.45.1\n  interface: en1\n'
+  CONFIGD_GLOBAL="$(<"${CONFIGD_FIXTURES}/global-ipv4.txt")"
+  local name network_interface signature address expected actual count=0
+  while IFS='|' read -r name network_interface signature address; do
+    CONFIGD_SERVICE="$(configd_service_for "${network_interface}" "${signature}")"
+    expected="en1 192.168.45.1 ${address}"
+    [[ "${address}" != "-" ]] || expected=""
+    actual="$(ga_remote_get_network_identity)" || actual=""
+    [[ "${actual}" == "${expected}" ]] || { echo "${name}: '${actual}'"; return 1; }
+    count=$((count + 1))
+  done <"${CONFIGD_FIXTURES}/router-rows.txt"
+  ((count > 0)) || { echo "no router rows read"; return 1; }
+}
+
 # --- on / trust (interactive, typed confirmation, no skip flag) -----------------------------------
 
 @test "on and trust refuse without a terminal or the typed word, and write nothing" {
-  local rows=("on|no terminal|false|on" "on|wrong word|true|yes" "trust|no terminal|false|trust" "trust|wrong word|true|y")
+  local rows=("on|no terminal|false|on" "on|wrong word|true|yes" "trust|no terminal|false|trust" "trust|wrong word|true|y"
+    "on --yes|a skip flag, no terminal|false|" "trust --force|a skip flag, no terminal|false|")
   local row sub name answer config_before
   config_before="$(file_sum "${SANDBOX}/config.toml")"
   for row in "${rows[@]}"; do
     IFS='|' read -r sub name IS_TERMINAL answer <<<"${row}"
-    run ga_remote_main "${sub}" <<<"${answer}"
+    # shellcheck disable=SC2086  # a row's subcommand and its flag are two argv words
+    run ga_remote_main ${sub} <<<"${answer}"
     [[ "${status}" -eq 4 ]] || { echo "${sub} ${name}: ${status} ${output}"; return 1; }
   done
   [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" ]] || return 1
@@ -221,6 +259,31 @@ file_sum() { cksum <"$1"; }
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "$(cat "${KEY_DIR}/access-state")" == "on" ]] || return 1
   [[ "$(ga_remote_get_mode "${KEY_DIR}/access-state")" == "600" ]] || return 1
+}
+
+@test "an on whose config write fails leaves a device's off in place" {
+  mkdir -p "${KEY_DIR}" "${SANDBOX}/locked"
+  printf 'off\n' >"${KEY_DIR}/access-state"
+  export ATRIUM_CONFIG_TOML="${SANDBOX}/locked/config.toml"
+  cp "${SANDBOX}/config.toml" "${ATRIUM_CONFIG_TOML}"
+  chmod 500 "${SANDBOX}/locked"
+  run ga_remote_enable
+  chmod 700 "${SANDBOX}/locked"
+  [[ "${status}" -ne 0 ]] || { echo "a failed config write reported success: ${output}"; return 1; }
+  [[ "${output}" == *"config.toml could not be written"* ]] || { echo "${output}"; return 1; }
+  [[ "$(cat "${KEY_DIR}/access-state")" == "off" ]] || { echo "the device's off was replaced"; return 1; }
+}
+
+@test "on renames a complete access state into place, never rewriting the device's off file" {
+  mkdir -p "${KEY_DIR}"
+  printf 'off\n' >"${KEY_DIR}/access-state"
+  local inode_before
+  inode_before="$(ls -i "${KEY_DIR}/access-state")"
+  run ga_remote_enable
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(cat "${KEY_DIR}/access-state")" == "on" ]] || return 1
+  [[ "$(ls -i "${KEY_DIR}/access-state")" != "${inode_before}" ]] || { echo "rewritten in place"; return 1; }
+  [[ -z "$(find "${KEY_DIR}" -maxdepth 1 -name '.access-state.*')" ]] || { echo "temp file left"; return 1; }
 }
 
 @test "trust shows the identity and the accident-guard notice, then appends it once" {
@@ -318,7 +381,175 @@ file_sum() { cksum <"$1"; }
   done
 }
 
-@test "glass-atrium routes remote to the remote CLI" {
+@test "glass-atrium routes remote to the remote CLI, whose usage and help never name the page's write step" {
   run bash "${GA}/glass-atrium" remote register
-  [[ "${status}" -eq 2 && "${output}" == *"usage: glass-atrium remote"* ]] || { echo "${output}"; return 1; }
+  [[ "${status}" -eq 2 && "${output}" == *"usage: glass-atrium remote"* && "${output}" != *"remote-access-set"* ]] \
+    || { echo "${output}"; return 1; }
+  run bash "${GA}/glass-atrium" --help
+  [[ "${status}" -eq 0 && "${output}" == *"glass-atrium remote <sub>"* && "${output}" != *"remote-access-set"* ]] \
+    || { echo "${output}"; return 1; }
+  # the step's own argv through the public entry reaches the terminal acts, which refuse without a terminal
+  local config_before argv
+  config_before="$(file_sum "${SANDBOX}/config.toml")"
+  for argv in 'on' 'trust en1 192.168.0.1 00:1b:2c:0d:4e:5f'; do
+    # shellcheck disable=SC2086  # a row's argv is split into its words
+    run bash "${GA}/glass-atrium" remote ${argv} </dev/null
+    [[ "${status}" -eq 4 ]] || { echo "remote ${argv}: ${status} ${output}"; return 1; }
+  done
+  [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${KEY_DIR}" ]] || return 1
+}
+
+# --- the Mac page's write step (scripts/remote-access-set.sh: no terminal, no restart, no monitor call) --
+
+# config.toml with the tables the env renderer reads
+write_render_config() {
+  mkdir -p "${SANDBOX}/monitor/data/documents"
+  printf '[ports]\nmonitor = 16145\n\n[paths]\nmonitor_docs_html_root = "%s"\n' "${SANDBOX}/monitor/data/documents" \
+    >"${SANDBOX}/config.toml"
+  printf '\n[daemon.autoagent-cycle]\ntime = "04:30"\n\n[daemon.wiki-compile]\ntime = "04:50"\n' >>"${SANDBOX}/config.toml"
+}
+
+# The page step in its own process with this file's tool stubs and no terminal (stdin closed, output captured).
+run_page_step() {
+  declare -f ga_remote_run >"${SANDBOX}/stubs.sh"
+  ROUTE_OUT="${ROUTE_OUT}" ARP_OUT="${ARP_OUT}" WIFI_ADDRESS="${WIFI_ADDRESS}" CALLS="${CALLS}" \
+    CONFIGD_GLOBAL="${CONFIGD_GLOBAL}" CONFIGD_SERVICE="${CONFIGD_SERVICE}" \
+    run bash -c 'source "$1" && source "$2" && shift 2 && main "$@"' _ \
+    "${GA}/scripts/remote-access-set.sh" "${SANDBOX}/stubs.sh" "$@" </dev/null
+}
+
+rendered_access() { grep -E '^ATRIUM_REMOTE_ACCESS=' "${SANDBOX}/monitor/.env"; }
+
+@test "the page's on writes the keys, the on state, enabled and the default port, and renders the env without a restart" {
+  write_render_config
+  mkdir -p "${KEY_DIR}" && printf 'off\n' >"${KEY_DIR}/access-state"
+  run_page_step on
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 1
+  [[ "$(atrium_toml_get "[remote_access]" "port")" == "16146" ]] || return 1
+  [[ -f "${KEY_DIR}/ca.key" && -f "${KEY_DIR}/leaf.pem" && -z "$(ga_remote_get_loose_modes "${KEY_DIR}")" ]] || return 1
+  [[ "$(cat "${KEY_DIR}/access-state")" == "on" ]] || return 1
+  [[ "$(rendered_access)" == "ATRIUM_REMOTE_ACCESS=on" ]] || { rendered_access; return 1; }
+  ! grep -q launchctl "${CALLS}" || { echo "restarted"; return 1; }
+}
+
+@test "the page's on again keeps the CA key and certificate the first on made" {
+  write_render_config
+  run_page_step on
+  local ca_before
+  ca_before="$(file_sum "${KEY_DIR}/ca.key")$(file_sum "${KEY_DIR}/ca.pem")"
+  run_page_step on
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(file_sum "${KEY_DIR}/ca.key")$(file_sum "${KEY_DIR}/ca.pem")" == "${ca_before}" ]] || return 1
+}
+
+# A config write either replaces config.toml whole by a rename, or leaves it byte-identical; no temp file stays.
+@test "a config write renames a complete file into place, and a failed write leaves config.toml as it was" {
+  printf '\n[remote_access]\nenabled = false\n' >>"${SANDBOX}/config.toml"
+  local inode_before sum_before
+  inode_before="$(ls -i "${SANDBOX}/config.toml")"
+  ga_remote_set_config enabled true
+  [[ "$(ls -i "${SANDBOX}/config.toml")" != "${inode_before}" ]] || { echo "rewritten in place"; return 1; }
+  [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 1
+  sum_before="$(file_sum "${SANDBOX}/config.toml")"
+  awk() { printf '[remote_access]\n'; return 1; }
+  ! ga_remote_set_config enabled false || { echo "a failed write reported success"; return 1; }
+  unset -f awk
+  [[ "$(file_sum "${SANDBOX}/config.toml")" == "${sum_before}" ]] || { echo "partial write reached config.toml"; return 1; }
+  [[ -z "$(find "${SANDBOX}" -maxdepth 1 -name '.config.toml.*')" ]] || { echo "temp file left"; return 1; }
+}
+
+# The network the stubs read, as the monitor hands the confirm's identity to the step: interface, gateway, address.
+SHOWN=(en1 192.168.0.1 00:1b:2c:0d:4e:5f)
+
+@test "the page's trust writes the network it reads itself when it is the one shown, needs no terminal, and writes it once" {
+  write_render_config
+  printf '\n[remote_access]\nenabled = true\nport = 16146\n' >>"${SANDBOX}/config.toml"
+  local rows=('new network|0|192.168.0.1@00:1b:2c:0d:4e:5f' 'already trusted|9|192.168.0.1@00:1b:2c:0d:4e:5f')
+  local row name want_status want_list others_before
+  others_before="$(grep -v '^trusted_networks' "${SANDBOX}/config.toml")"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name want_status want_list <<<"${row}"
+    run_page_step trust "${SHOWN[@]}"
+    [[ "${status}" -eq "${want_status}" ]] || { echo "${name}: ${status} ${output}"; return 1; }
+    [[ "$(atrium_toml_get "[remote_access]" "trusted_networks")" == "${want_list}" ]] || { echo "${name}: list"; return 1; }
+  done
+  grep -q '^ATRIUM_REMOTE_TRUSTED_NETWORKS=192.168.0.1@00:1b:2c:0d:4e:5f$' "${SANDBOX}/monitor/.env" || return 1
+  [[ "$(grep -v '^trusted_networks' "${SANDBOX}/config.toml")" == "${others_before}" ]] \
+    || { echo "a line other than the trusted list changed"; return 1; }
+  [[ ! -e "${KEY_DIR}" ]] || { echo "trust touched the key dir"; return 1; }
+  ! grep -q launchctl "${CALLS}" || { echo "restarted"; return 1; }
+}
+
+@test "the page's trust exits 10 and writes nothing when the network it reads is not the one shown" {
+  write_render_config
+  printf '\n[remote_access]\nenabled = true\nport = 16146\n' >>"${SANDBOX}/config.toml"
+  local rows=('another router|en1 192.168.0.254 00:1b:2c:0d:4e:5f' 'another router hardware address|en1 192.168.0.1 00:1b:2c:0d:4e:60'
+    'another link to the same router|en0 192.168.0.1 00:1b:2c:0d:4e:5f')
+  local row name shown config_before
+  config_before="$(file_sum "${SANDBOX}/config.toml")"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name shown <<<"${row}"
+    # shellcheck disable=SC2086  # a row's network is three argv words
+    run_page_step trust ${shown}
+    [[ "${status}" -eq 10 ]] || { echo "${name}: ${status} ${output}"; return 1; }
+  done
+  [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${SANDBOX}/monitor/.env" ]] || return 1
+}
+
+@test "the page's trust writes nothing and exits apart for an unreadable network and a malformed trusted list" {
+  local rows=("unreadable network||${GA_REMOTE_NETWORK_UNREADABLE}|network identity unreadable"
+    "malformed trusted list|8.8.8.8@00:1b:2c:0d:4e:5f|${GA_REMOTE_CONFIG_MALFORMED}|trusted_networks is malformed")
+  local row name trusted want_status want_text config_before
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name trusted want_status want_text <<<"${row}"
+    write_render_config
+    if [[ -n "${trusted}" ]]; then
+      printf '\n[remote_access]\ntrusted_networks = "%s"\n' "${trusted}" >>"${SANDBOX}/config.toml"
+      ARP_OUT='? (192.168.0.1) at 0:1b:2c:d:4e:5f on en1 ifscope [ethernet]'
+    else
+      ARP_OUT=""
+    fi
+    config_before="$(file_sum "${SANDBOX}/config.toml")"
+    run_page_step trust "${SHOWN[@]}"
+    [[ -n "${want_status}" && "${status}" -eq "${want_status}" && "${output}" == *"${want_text}"* ]] \
+      || { echo "${name}: ${status} ${output}"; return 1; }
+    [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${SANDBOX}/monitor/.env" ]] \
+      || { echo "${name}: written"; return 1; }
+  done
+}
+
+@test "the page's off writes enabled false and renders the env, with no monitor call and no restart" {
+  write_render_config
+  printf '\n[remote_access]\nenabled = true\nport = 16146\n' >>"${SANDBOX}/config.toml"
+  start_monitor_stub
+  run_page_step off
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "false" ]] || return 1
+  [[ "$(rendered_access)" == "ATRIUM_REMOTE_ACCESS=off" ]] || { rendered_access; return 1; }
+  [[ ! -s "${REQUESTS}" ]] || { cat "${REQUESTS}"; return 1; }
+  ! grep -q launchctl "${CALLS}" || { echo "restarted"; return 1; }
+}
+
+@test "the page's write step reports a written config whose env render failed apart from a refusal" {
+  printf '[ports]\nmonitor = 16145\n\n[remote_access]\nenabled = true\n' >"${SANDBOX}/config.toml"
+  run_page_step off
+  [[ "${status}" -eq 8 ]] || { echo "${status} ${output}"; return 1; }
+  [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "false" ]] || return 1
+}
+
+@test "the page's write step, run by absolute path, takes on or off alone or trust with a well-formed network, and writes nothing otherwise" {
+  local rows=('no act|' 'an unknown act|reissue' 'a second word|on extra' 'a flag|--yes' 'trust with no network|trust'
+    'on with a network|on en1 192.168.0.1 00:1b:2c:0d:4e:5f' 'trust with a public gateway|trust en1 8.8.8.8 00:1b:2c:0d:4e:5f'
+    'trust with an unpadded hardware address|trust en1 192.168.0.1 0:1b:2c:d:4e:5f' 'trust with an interface that is no name|trust en/1 192.168.0.1 00:1b:2c:0d:4e:5f'
+    'trust with a fourth network word|trust en1 192.168.0.1 00:1b:2c:0d:4e:5f extra')
+  local row name argv config_before
+  config_before="$(file_sum "${SANDBOX}/config.toml")"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name argv <<<"${row}"
+    # shellcheck disable=SC2086  # a row's argv is split into its words
+    run "${GA}/scripts/remote-access-set.sh" ${argv} </dev/null
+    [[ "${status}" -eq 2 ]] || { echo "${name}: ${status} ${output}"; return 1; }
+  done
+  [[ "$(file_sum "${SANDBOX}/config.toml")" == "${config_before}" && ! -e "${KEY_DIR}" ]] || return 1
 }

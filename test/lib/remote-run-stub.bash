@@ -38,3 +38,15 @@ make_remote_stub_lib() {
   printf '# shellcheck shell=bash\nsource %q && source %q\n' "${repo}/lib/ga-remote.sh" \
     "${repo}/test/lib/remote-run-stub.bash" >"${root}/lib/ga-remote.sh"
 }
+
+# Doctor-process GA root: the entry point COPIED (resolve_self follows a symlinked one back to the checkout),
+# lib/ from make_remote_stub_lib, every other top-level entry linked — .git included, so the source-dev routing holds.
+# Args: $1 = GA root being built (an existing directory) · $2 = the repo root it mirrors.
+make_remote_stub_root() {
+  local root="$1" repo="$2" entry
+  cp "${repo}/glass-atrium" "${root}/glass-atrium"
+  make_remote_stub_lib "${root}" "${repo}"
+  for entry in "${repo}"/* "${repo}"/.[!.]*; do
+    [[ -e "${root}/${entry##*/}" ]] || ln -s "${entry}" "${root}/${entry##*/}"
+  done
+}

@@ -2,6 +2,8 @@
 
 import type { Server, Socket } from "node:net";
 
+import type { FastifyReply, FastifyRequest } from "fastify";
+
 export interface WindowLimit {
   readonly limit: number;
   readonly windowMs: number;
@@ -67,6 +69,11 @@ export class WindowLimiter {
       if (now - window.start >= this.config.windowMs && window.blockedUntil <= now) this.#windows.delete(key);
     }
   }
+}
+
+/** A route hook answering 429 past the limiter's one window for every caller → a route's preHandler, or an onRequest hook. */
+export function buildWindowLimitHook(limiter: WindowLimiter): (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply | undefined> {
+  return async (_request, reply) => (limiter.hit("all") ? undefined : reply.code(429).send({ error: "too_many_requests" }));
 }
 
 /** Closes any connection past the total or per-address cap as soon as it is accepted. */

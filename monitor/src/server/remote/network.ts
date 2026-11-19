@@ -23,6 +23,9 @@ export interface TrustedNetwork {
   readonly hardwareAddress: string;
 }
 
+/** What the Mac's link to the router is, as the confirm words name it; unknown → words that name no link. */
+export type NetworkLink = "wifi" | "wired" | "unknown";
+
 export type ListenReason = "trusted" | "disabled" | "identity_unreadable" | "untrusted" | "address_not_private";
 
 export interface ListenDecision {
@@ -77,6 +80,28 @@ export async function getLocalHostName(run: CommandRunner = runCommand): Promise
   }
 }
 
+/**
+ * configd's setup record of the primary service's port: `Hardware : AirPort` → Wi-Fi, `Ethernet` → wired.
+ * - `Type` reads Ethernet for Wi-Fi too → never the signal
+ * - Match required: the port's device is the route's interface
+ */
+export async function getNetworkLink(networkInterface: string, run: CommandRunner = runCommand): Promise<NetworkLink> {
+  try {
+    const serviceId = await getPrimaryServiceId(run);
+    if (serviceId === null) return "unknown";
+    const port = await run(COMMAND.SCUTIL, [], `show Setup:/Network/Service/${serviceId}/Interface\nquit\n`);
+    if (/^\s*DeviceName : (\S+)\s*$/m.exec(port)?.[1] !== networkInterface) return "unknown";
+    return LINK_BY_HARDWARE.get(/^\s*Hardware : (\S+)\s*$/m.exec(port)?.[1] ?? "") ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const LINK_BY_HARDWARE: ReadonlyMap<string, NetworkLink> = new Map([
+  ["AirPort", "wifi"],
+  ["Ethernet", "wired"],
+]);
+
 export function getListenDecision(input: {
   readonly enabled: boolean;
   readonly identity: NetworkIdentity | null;
@@ -85,13 +110,15 @@ export function getListenDecision(input: {
 }): ListenDecision {
   if (!input.enabled) return { open: false, reason: "disabled" };
   if (input.identity === null) return { open: false, reason: "identity_unreadable" };
-  const { gateway, hardwareAddress } = input.identity;
-  const isTrusted = input.trusted.some(
-    (network) => network.gateway === gateway && getNormalizedHardwareAddress(network.hardwareAddress) === hardwareAddress,
-  );
-  if (!isTrusted) return { open: false, reason: "untrusted" };
+  if (!isTrustedNetwork(input.trusted, input.identity)) return { open: false, reason: "untrusted" };
   if (input.address === null || !isPrivateIPv4(input.address)) return { open: false, reason: "address_not_private" };
   return { open: true, reason: "trusted" };
+}
+
+export function isTrustedNetwork(trusted: readonly TrustedNetwork[], identity: NetworkIdentity): boolean {
+  return trusted.some(
+    (network) => network.gateway === identity.gateway && getNormalizedHardwareAddress(network.hardwareAddress) === identity.hardwareAddress,
+  );
 }
 
 /** RFC 1918 only: 10/8, 172.16/12, 192.168/16. */
@@ -122,13 +149,18 @@ function getArpHardwareAddress(output: string, gateway: string, networkInterface
  * - Match required: this gateway on this interface
  */
 async function getConfigdHardwareAddress(run: CommandRunner, gateway: string, networkInterface: string): Promise<string | null> {
-  const global = await run(COMMAND.SCUTIL, [], "show State:/Network/Global/IPv4\nquit\n");
-  const serviceId = /^\s*PrimaryService : ([0-9A-Fa-f-]{1,64})\s*$/m.exec(global)?.[1];
-  if (serviceId === undefined) return null;
+  const serviceId = await getPrimaryServiceId(run);
+  if (serviceId === null) return null;
   const service = await run(COMMAND.SCUTIL, [], `show State:/Network/Service/${serviceId}/IPv4\nquit\n`);
   if (/^\s*InterfaceName : (\S+)\s*$/m.exec(service)?.[1] !== networkInterface) return null;
   const signature = /IPv4\.Router=([^;\s]+);IPv4\.RouterHardwareAddress=([0-9A-Fa-f:]+)/.exec(service);
   return signature?.[1] === gateway ? getNormalizedHardwareAddress(signature[2] ?? "") : null;
+}
+
+// an id only → the value is spliced into the next scutil script
+async function getPrimaryServiceId(run: CommandRunner): Promise<string | null> {
+  const global = await run(COMMAND.SCUTIL, [], "show State:/Network/Global/IPv4\nquit\n");
+  return /^\s*PrimaryService : ([0-9A-Fa-f-]{1,64})\s*$/m.exec(global)?.[1] ?? null;
 }
 
 /** Lower-case, each octet zero-padded; null unless six hex octets. */

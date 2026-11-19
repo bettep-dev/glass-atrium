@@ -1,6 +1,7 @@
 // Trusted network guard: the remote listener opens only on a trusted, readable network with a private address, and
 // an unreadable identity (missing route, no usable ARP entry and no matching configd record, failed command) means closed.
 
+import { readFileSync } from "node:fs";
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 
@@ -11,6 +12,7 @@ import {
   getListenDecision,
   getLocalHostName,
   getNetworkIdentity,
+  getNetworkLink,
   isPrivateIPv4,
   runCommand,
 } from "../src/server/remote/network.js";
@@ -62,20 +64,27 @@ const HOME: NetworkIdentity = { gateway: "192.168.45.1", hardwareAddress: "50:0e
 
 const NO_ARP_ENTRY = new Error("Command failed: /usr/sbin/arp -n 192.168.45.1\n192.168.45.1 (192.168.45.1) -- no entry");
 
-const SERVICE_ID = "6F1C2B0A-3D4E-4F50-8A61-72B3C4D5E6F7";
+// configd's records as macOS prints them, shared with test/remote-access-cli.bats → one capture, one row set
+const CONFIGD_FIXTURES = new URL("./fixtures/configd/", import.meta.url);
 
-const CONFIGD_GLOBAL = `<dictionary> {\n  PrimaryInterface : en1\n  PrimaryService : ${SERVICE_ID}\n  Router : 192.168.45.1\n}\n`;
+const CONFIGD_GLOBAL = readFileSync(new URL("global-ipv4.txt", CONFIGD_FIXTURES), "utf8");
 
-function getConfigdService(input: { interface?: string; signature?: string } = {}): string {
-  return [
-    "<dictionary> {",
-    "  ARPResolvedHardwareAddress : 50:e:a5:7:1c:f2",
-    "  ARPResolvedIPAddress : 192.168.45.1",
-    `  InterfaceName : ${input.interface ?? "en1"}`,
-    `  NetworkSignature : ${input.signature ?? "IPv4.Router=192.168.45.1;IPv4.RouterHardwareAddress=50:e:a5:7:1c:f2"}`,
-    "  Router : 192.168.45.1",
-    "}",
-  ].join("\n");
+const SERVICE_ID = /PrimaryService : (\S+)/.exec(CONFIGD_GLOBAL)?.[1] ?? "";
+
+const CONFIGD_SERVICE = readFileSync(new URL("service-ipv4.txt", CONFIGD_FIXTURES), "utf8");
+
+/** Each row: name | the service's InterfaceName | its NetworkSignature | the normalized hardware address, or - for unreadable. */
+const CONFIGD_ROUTER_ROWS = readFileSync(new URL("router-rows.txt", CONFIGD_FIXTURES), "utf8")
+  .split("\n")
+  .filter((line) => line !== "")
+  .map((line) => {
+    const [name = "", networkInterface = "", signature = "", address = ""] = line.split("|");
+    return { name, service: getConfigdService({ interface: networkInterface, signature }), address: address === "-" ? null : address };
+  });
+
+/** The captured service record with this interface and signature. */
+function getConfigdService(input: { interface: string; signature: string }): string {
+  return CONFIGD_SERVICE.replace(/^(\s*InterfaceName : ).*$/m, `$1${input.interface}`).replace(/^(\s*NetworkSignature : ).*$/m, `$1${input.signature}`);
 }
 
 interface RunnerOutputs {
@@ -120,27 +129,59 @@ test("an unreadable identity is null", async () => {
     { name: "ARP entry on another interface", outputs: { route: ROUTE_OUTPUT, arp: "? (192.168.45.1) at 50:e:a5:7:1c:f2 on en0 ifscope [ethernet]\n" } },
     { name: "arp command fails", outputs: { route: ROUTE_OUTPUT, arp: new Error("timeout") } },
     ...[
-      { name: "configd names another router", configd: { global: CONFIGD_GLOBAL, service: getConfigdService({ signature: "IPv4.Router=192.168.45.7;IPv4.RouterHardwareAddress=50:e:a5:7:1c:f2" }) } },
-      { name: "configd primary service on another interface", configd: { global: CONFIGD_GLOBAL, service: getConfigdService({ interface: "en0" }) } },
-      { name: "configd signature without a hardware address", configd: { global: CONFIGD_GLOBAL, service: getConfigdService({ signature: "IPv4.Router=192.168.45.1" }) } },
-      { name: "configd has no primary service", configd: { global: "<dictionary> {\n  Router : 192.168.45.1\n}\n", service: getConfigdService() } },
-      { name: "configd service id that is not an id", configd: { global: "  PrimaryService : x\nshow Setup:/\n", service: getConfigdService() } },
-      { name: "scutil fails", configd: { global: new Error("timeout"), service: getConfigdService() } },
+      { name: "configd has no primary service", configd: { global: "<dictionary> {\n  Router : 192.168.45.1\n}\n", service: CONFIGD_SERVICE } },
+      { name: "configd service id that is not an id", configd: { global: "  PrimaryService : x\nshow Setup:/\n", service: CONFIGD_SERVICE } },
+      { name: "scutil fails", configd: { global: new Error("timeout"), service: CONFIGD_SERVICE } },
     ].map((row) => ({ name: `no ARP entry and ${row.name}`, outputs: { route: ROUTE_OUTPUT, arp: NO_ARP_ENTRY, configd: row.configd } })),
   ];
   for (const row of rows) assert.equal(await getNetworkIdentity(createRunner(row.outputs).run), null, row.name);
 });
 
-test("a gateway arp cannot see is read from configd's record of the same gateway on the same interface", async () => {
-  const { run, calls } = createRunner({
-    route: ROUTE_OUTPUT,
-    arp: NO_ARP_ENTRY,
-    configd: { global: CONFIGD_GLOBAL, service: getConfigdService() },
-  });
+test("a gateway arp cannot see is read from configd's record of the same gateway on the same interface, else unreadable", async () => {
+  assert.ok(CONFIGD_ROUTER_ROWS.length > 0, "no router rows read");
+  for (const row of CONFIGD_ROUTER_ROWS) {
+    const { run } = createRunner({ route: ROUTE_OUTPUT, arp: NO_ARP_ENTRY, configd: { global: CONFIGD_GLOBAL, service: row.service } });
+    const expected = row.address === null ? null : { ...HOME, hardwareAddress: row.address };
+    assert.deepEqual(await getNetworkIdentity(run), expected, row.name);
+  }
+});
+
+test("configd's records are read with the absolute scutil, the primary service's id spliced from the global record", async () => {
+  const { run, calls } = createRunner({ route: ROUTE_OUTPUT, arp: NO_ARP_ENTRY, configd: { global: CONFIGD_GLOBAL, service: CONFIGD_SERVICE } });
   assert.deepEqual(await getNetworkIdentity(run), HOME);
   assert.deepEqual(calls.slice(2), [
     ["/usr/sbin/scutil", "show State:/Network/Global/IPv4\nquit\n"],
     ["/usr/sbin/scutil", `show State:/Network/Service/${SERVICE_ID}/IPv4\nquit\n`],
+  ]);
+});
+
+/** configd's setup record of a service's port, as `show Setup:/Network/Service/<id>/Interface` prints it. */
+function getConfigdPort(input: { device: string; hardware: string }): string {
+  return `<dictionary> {\n  DeviceName : ${input.device}\n  Hardware : ${input.hardware}\n  Type : Ethernet\n  UserDefinedName : Port\n}\n`;
+}
+
+function createLinkRunner(outputs: { global: string | Error; port: string | Error }): { run: CommandRunner; calls: string[][] } {
+  return createRunner({ configd: { global: outputs.global, service: outputs.port } });
+}
+
+test("the link kind is Wi-Fi or wired only when configd's primary service port is on the route's interface", async () => {
+  const rows: { name: string; global: string | Error; port: string | Error; expected: string }[] = [
+    { name: "an AirPort port", global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en1", hardware: "AirPort" }), expected: "wifi" },
+    { name: "an Ethernet port", global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en1", hardware: "Ethernet" }), expected: "wired" },
+    { name: "a port of another kind", global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en1", hardware: "Modem" }), expected: "unknown" },
+    { name: "a Wi-Fi port on another interface", global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en0", hardware: "AirPort" }), expected: "unknown" },
+    { name: "no primary service", global: "<dictionary> {\n  Router : 192.168.45.1\n}\n", port: getConfigdPort({ device: "en1", hardware: "AirPort" }), expected: "unknown" },
+    { name: "a failed read", global: CONFIGD_GLOBAL, port: new Error("timeout"), expected: "unknown" },
+  ];
+  for (const row of rows) assert.equal(await getNetworkLink("en1", createLinkRunner(row).run), row.expected, row.name);
+});
+
+test("the link kind is read from configd alone, the primary service's port record", async () => {
+  const { run, calls } = createLinkRunner({ global: CONFIGD_GLOBAL, port: getConfigdPort({ device: "en1", hardware: "AirPort" }) });
+  await getNetworkLink("en1", run);
+  assert.deepEqual(calls, [
+    ["/usr/sbin/scutil", "show State:/Network/Global/IPv4\nquit\n"],
+    ["/usr/sbin/scutil", `show Setup:/Network/Service/${SERVICE_ID}/Interface\nquit\n`],
   ]);
 });
 

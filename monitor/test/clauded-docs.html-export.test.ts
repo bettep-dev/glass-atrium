@@ -28,7 +28,7 @@
 //     boundary. resetBrowserForTests in after(). Run `npx playwright install
 //     chromium` first.
 
-import test, { after, before } from "node:test";
+import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -328,6 +328,39 @@ test("GET /:id/html-export: ETag round-trip — second request with If-None-Matc
   assert.strictEqual(second.headers["etag"], etag, "304 echoes the ETag");
 });
 
+describe("every answer of the single export carries the sandbox policy", () => {
+  const rows: { name: string; getRequest: () => Promise<{ url: string; headers?: Record<string, string> }>; status: number }[] = [
+    { name: "the exported page", getRequest: async () => ({ url: `/api/clauded-docs/${(await seedPlainDoc("csp-ok")).id}/html-export` }), status: 200 },
+    {
+      name: "the not-modified answer",
+      getRequest: async () => {
+        const url = `/api/clauded-docs/${(await seedPlainDoc("csp-304")).id}/html-export`;
+        const first = await app.inject({ method: "GET", url });
+        return { url, headers: { "if-none-match": String(first.headers["etag"]) } };
+      },
+      status: 304,
+    },
+    { name: "an unknown document", getRequest: async () => ({ url: "/api/clauded-docs/999999999/html-export" }), status: 404 },
+    { name: "an id that does not parse", getRequest: async () => ({ url: "/api/clauded-docs/0/html-export" }), status: 400 },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const request = await row.getRequest();
+      const res = await app.inject({ method: "GET", ...request });
+      assert.deepEqual([res.statusCode, res.headers["content-security-policy"]], [row.status, "sandbox; frame-ancestors 'self'"]);
+    });
+  }
+});
+
+test("GET /:id/html-export: a stored title's CR, LF, quotes and backslash never reach the saved name, the rest kept in filename*", async () => {
+  const { id } = await postHtmlDoc(`${SUITE_MARKER}-"인용" \\ \r\nnext-${randomUUID()}`, makePreOnlyMermaidBody("quoted", MERMAID_V11_SRC));
+  const disposition = String((await app.inject({ method: "GET", url: `/api/clauded-docs/${id}/html-export` })).headers["content-disposition"]);
+  const asciiName = /^attachment; filename="([^"]*)"; filename\*=UTF-8''([^\s";\\]+)$/.exec(disposition);
+  assert.ok(asciiName !== null, `one quoted ASCII name, one encoded name: ${disposition}`);
+  const saved = decodeURIComponent(asciiName[2] ?? "");
+  assert.deepEqual([/[\r\n"\\]/.test(`${asciiName[1]}${saved}`), saved.includes("인용"), saved.endsWith(".html")], [false, true, true]);
+});
+
 test("export renders run one at a time across callers, in call order, and a failed render frees the slot", async () => {
   let inFlight = 0;
   let maxInFlight = 0;
@@ -488,6 +521,7 @@ test("GET /:id/html-export: Korean title — attachment Content-Disposition dual
   assert.ok(typeof disposition === "string", "Content-Disposition present");
   assert.ok(disposition.startsWith("attachment; filename="), `attachment disposition, got: ${disposition}`);
   assert.strictEqual(res.headers["x-content-type-options"], "nosniff", "the download is never sniffed into a page");
+  assert.strictEqual(res.headers["content-security-policy"], "sandbox; frame-ancestors 'self'", "rendered as a page anyway, the body runs sandboxed like every other document body");
   for (let i = 0; i < disposition.length; i += 1) {
     assert.ok(disposition.charCodeAt(i) <= 0x7f, `non-ASCII at ${i}: ${disposition}`);
   }

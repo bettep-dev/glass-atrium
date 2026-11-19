@@ -36,8 +36,9 @@
 # Requires: bats, jq, bash 3.2+
 #
 # Hermetic: GA_TARGET_HOME + GA_DATA_ROOT point the target + runtime-data roots at throwaway temp
-# dirs, and the doctor-hook-bindings seam set (nonexistent manifest-gen, echo-OK claude stub, empty
-# daemon-reports dir) skips §8 SHA hashing + neutralizes the post-§10 headless-auth advisory's live
+# dirs, the doctor runs from a GA root whose lib/ga-remote.sh carries the listener shadow
+# (make_remote_stub_root) so no real listener reaches its verdict, and the doctor-hook-bindings seam
+# set (nonexistent manifest-gen, echo-OK claude stub, empty daemon-reports dir) skips §8 SHA hashing + neutralizes the post-§10 headless-auth advisory's live
 # `claude -p` probe. Every producer run sandboxes each scope source to /nonexistent. No ~/.claude or
 # ~/.glass-atrium state is read or written.
 #
@@ -57,11 +58,14 @@ source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   load 'lib/bats-db-seal'
+  load 'lib/remote-run-stub'
   ga_bats_db_seal
   command -v jq >/dev/null 2>&1 || skip "jq required"
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   [[ -x "${HOOK_SH}" ]] || skip "producer hook not executable: ${HOOK_SH}"
   TARGET="$(mktemp -d -t ga-doctor-drop-target.XXXXXX)"
+  GA_SANDBOX="$(mktemp -d -t ga-doctor-drop-root.XXXXXX)"
+  make_remote_stub_root "${GA_SANDBOX}" "${GA}"
   DATA_ROOT="$(mktemp -d -t ga-doctor-drop-data.XXXXXX)"
   mkdir -p "${TARGET}/bin" "${TARGET}/empty-reports" "${DATA_ROOT}/logs"
   DROPLOG="${DATA_ROOT}/logs/inject-scope-rules.diag.log"
@@ -91,12 +95,13 @@ SH
 
 teardown() {
   if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
+  if ga_guard_path "${GA_SANDBOX:-}"; then rm -rf -- "${GA_SANDBOX:?}"; fi
   if ga_guard_path "${DATA_ROOT:-}"; then rm -rf -- "${DATA_ROOT:?}"; fi
 }
 
 # Drive the REAL doctor with the target + data-root seams redirected at the sandbox.
-# GA_ROOT stays the checkout this suite runs from, and any doctor FAIL suppresses the PASS-only warn
-# rollup the `<n> inject-drop` assertions read → two FAIL sources outside §10 are sandboxed:
+# GA_ROOT is the linked checkout from make_remote_stub_root, and any doctor FAIL suppresses the
+# PASS-only warn rollup the `<n> inject-drop` assertions read → two FAIL sources outside §10 are sandboxed:
 #   GA_MANIFEST (empty files[]) — §4 FAILs on any manifest source missing from the checkout
 #   AUTOAGENT_BACKUP_DIR — §15 derives the merge-decline record from GA_ROOT's sibling
 # `run` records the exit in $status; run_doctor returns 1 on any §1-12 FAIL, so we assert
@@ -104,7 +109,7 @@ teardown() {
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
     GA_MANIFEST="${TARGET}/empty-manifest.json" AUTOAGENT_BACKUP_DIR="${TARGET}/agents-bak" \
-    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${REAL_GA}" doctor
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${GA_SANDBOX}/glass-atrium" doctor
 }
 
 # Drive the REAL producer's SubagentStart injection path so the shed rows under test are

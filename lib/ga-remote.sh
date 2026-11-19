@@ -5,6 +5,16 @@
 
 GA_REMOTE_PORT_DEFAULT=16146 # config.toml.example → [remote_access].port
 
+# Write-step exit codes, shared with scripts/remote-access-set.sh; the monitor maps each (start.ts → ACCESS_STEP_OUTCOME)
+GA_REMOTE_NETWORK_UNREADABLE=6
+GA_REMOTE_KEYS_NOT_CREATED=7
+# shellcheck disable=SC2034  # read by scripts/remote-access-set.sh after sourcing
+GA_REMOTE_ENV_NOT_RENDERED=8
+GA_REMOTE_ALREADY_TRUSTED=9 # nothing written
+# shellcheck disable=SC2034  # read by scripts/remote-access-set.sh after sourcing
+GA_REMOTE_NETWORK_NOT_SHOWN=10 # nothing written
+GA_REMOTE_CONFIG_MALFORMED=11  # config.toml's trusted list; nothing written
+
 # --- value rules (one owner: the renderer and every CLI write validate through these) -------------
 
 # Remote port: 1024-65535 and never the monitor's own port (monitor/src/server/remote/settings.ts → getPort).
@@ -80,8 +90,7 @@ ga_remote_run() {
   esac
 }
 
-# --- network facts (arp only; the monitor's network.ts → getNetworkIdentity adds a configd fallback) ------
-# callers (trust, install opt-in, doctor) run from Terminal or a /bin/bash job — arp "no entry" measured from node only
+# --- network facts ------------------------------------------------------------------------------------
 
 # `route -n get default` → "<gateway> <interface>"; returns 1 when either is unreadable.
 ga_remote_get_default_route() {
@@ -93,18 +102,35 @@ ga_remote_get_default_route() {
   printf '%s %s\n' "${gateway}" "${network_interface}"
 }
 
-# Network identity "<interface> <gateway> <hardware address>" — the ARP entry must name this gateway on this
-# interface; a missing entry or a public gateway is unreadable (returns 1), so nothing is trusted.
+# Network identity "<interface> <gateway> <hardware address>" — the ARP entry, else configd's record, must name
+# this gateway on this interface; neither, or a public gateway, is unreadable (returns 1), so nothing is trusted.
 ga_remote_get_network_identity() {
   local route gateway network_interface arp hardware
   route="$(ga_remote_get_default_route)" || return 1
   gateway="${route% *}" network_interface="${route#* }"
   ga_remote_is_private_ipv4 "${gateway}" || return 1
-  arp="$(ga_remote_run arp -n "${gateway}")" || return 1
+  arp="$(ga_remote_run arp -n "${gateway}")" || arp=""
   hardware="$(printf '%s\n' "${arp}" | awk -v gw="(${gateway})" -v nif="${network_interface}" \
     '$2 == gw && $3 == "at" && $5 == "on" && $6 == nif { print $4; exit }')"
+  [[ -n "${hardware}" ]] || hardware="$(_ga_remote_get_configd_hardware_address "${gateway}" "${network_interface}")"
   hardware="$(ga_remote_get_hardware_address "${hardware}")" || return 1
   printf '%s %s %s\n' "${network_interface}" "${gateway}" "${hardware}"
+}
+
+# configd's record of the primary service's router; prints nothing unless it names this gateway on this interface.
+# A child of the monitor's node gets arp "no entry" for the gateway (measured); configd answers over IPC.
+_ga_remote_get_configd_hardware_address() {
+  local gateway="$1" network_interface="$2" record service_id service_interface signature
+  local pattern='IPv4\.Router=([^;[:space:]]+);IPv4\.RouterHardwareAddress=([0-9A-Fa-f:]+)'
+  record="$(ga_remote_run scutil <<<$'show State:/Network/Global/IPv4\nquit' 2>/dev/null)" || return 0
+  service_id="$(awk '$1 == "PrimaryService" && $2 == ":" { print $3; exit }' <<<"${record}")"
+  [[ "${service_id}" =~ ^[0-9A-Fa-f-]{1,64}$ ]] || return 0
+  record="$(ga_remote_run scutil <<<"show State:/Network/Service/${service_id}/IPv4"$'\nquit' 2>/dev/null)" || return 0
+  service_interface="$(awk '$1 == "InterfaceName" { print $3; exit }' <<<"${record}")"
+  [[ "${service_interface}" == "${network_interface}" ]] || return 0
+  signature="$(awk '$1 == "NetworkSignature" { print $3; exit }' <<<"${record}")"
+  [[ "${signature}" =~ ${pattern} && "${BASH_REMATCH[1]}" == "${gateway}" ]] || return 0
+  printf '%s\n' "${BASH_REMATCH[2]}"
 }
 
 # The names the leaf must carry: "<LocalHostName lower-case>.local <private Wi-Fi IPv4>".
@@ -249,9 +275,14 @@ ga_remote_set_config() {
   fi
 }
 
-# Re-render monitor/.env (its output holds env values → discarded) and restart the monitor to pick it up.
+# Re-render monitor/.env from config.toml (its output holds env values → discarded); no restart.
+ga_remote_render_env() {
+  bash "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/render-monitor-env.sh" >/dev/null
+}
+
+# The terminal channel's apply: render, then restart the monitor to pick it up.
 ga_remote_apply_config() {
-  bash "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/render-monitor-env.sh" >/dev/null || return 1
+  ga_remote_render_env || return 1
   ga_remote_run launchctl kickstart -k "gui/${UID}/com.glass-atrium.monitor" >/dev/null
 }
 
@@ -397,12 +428,7 @@ ga_remote_enable() {
   dir="$(ga_remote_get_key_dir)"
   if ! ga_remote_create_ca "${dir}" || { ga_remote_is_leaf_due "${dir}" && ! ga_remote_issue_leaf "${dir}"; }; then
     printf 'remote: the certificates could not be created — nothing changed\n' >&2
-    return 7
-  fi
-  # a device's off outlives monitor restarts until this on replaces it
-  if ! (umask 077 && printf 'on\n' >"${dir}/access-state" && chmod 600 "${dir}/access-state"); then
-    printf 'remote: the access state could not be written — access stays off\n' >&2
-    return 1
+    return "${GA_REMOTE_KEYS_NOT_CREATED}"
   fi
   port="$(atrium_toml_get "[remote_access]" "port")"
   if { [[ -z "${port}" ]] && ! ga_remote_set_config port "${GA_REMOTE_PORT_DEFAULT}"; } \
@@ -410,11 +436,28 @@ ga_remote_enable() {
     printf 'remote: config.toml could not be written — access stays off\n' >&2
     return 1
   fi
+  # last: a device's off outlives monitor restarts and holds over enabled = true until this on replaces it
+  if ! _ga_remote_set_access_on "${dir}"; then
+    printf 'remote: the access state could not be written — access stays off\n' >&2
+    return 1
+  fi
+}
+
+# access-state = on, owner-only, by temp file and rename in the same dir → a reader never sees a partial file.
+_ga_remote_set_access_on() {
+  local tmp
+  tmp="$(umask 077 && mktemp "$1/.access-state.XXXXXX")" || return 1
+  if (printf 'on\n' >"${tmp}"); then
+    mv -f -- "${tmp}" "$1/access-state"
+  else
+    _ga_remote_drop_work_dir "${tmp}"
+    return 1
+  fi
 }
 
 ga_remote_cmd_trust() {
   local rc=0
-  ga_remote_trust_network || rc=$?
+  _ga_remote_trust_on_terminal || rc=$?
   ((rc == GA_REMOTE_ALREADY_TRUSTED)) && return 0
   ((rc == 0)) || return "${rc}"
   if ! ga_remote_apply_config; then
@@ -424,25 +467,41 @@ ga_remote_cmd_trust() {
   printf 'remote: network trusted\n'
 }
 
-GA_REMOTE_ALREADY_TRUSTED=9
+# The current network's identity; unreadable → the refusal is printed and GA_REMOTE_NETWORK_UNREADABLE returned.
+ga_remote_get_trust_identity() {
+  # shellcheck disable=SC2310  # verdict branched on — unreadable is a refusal, never an abort
+  if ga_remote_get_network_identity; then return 0; fi
+  printf 'remote: network identity unreadable (no default gateway, a public gateway, or no gateway hardware address) — nothing written\n' >&2
+  return "${GA_REMOTE_NETWORK_UNREADABLE}"
+}
 
-# Show the current network's identity, confirm by the typed word, append it to the trusted list; no restart.
-# Returns GA_REMOTE_ALREADY_TRUSTED when the list already holds it (nothing written).
-ga_remote_trust_network() {
-  local identity entry current list
-  if ! identity="$(ga_remote_get_network_identity)"; then
-    printf 'remote: network identity unreadable (no default gateway, a public gateway, or no ARP entry) — nothing written\n' >&2
-    return 6
-  fi
-  entry="${identity#* }"
-  entry="${entry% *}@${identity##* }"
-  printf 'interface: %s\ngateway: %s\ngateway hardware address: %s\n' "${identity%% *}" "${entry%@*}" "${entry#*@}"
+# Terminal trust (CLI and install): the identity and what trusting it means, the typed word, then the write step.
+_ga_remote_trust_on_terminal() {
+  local identity gateway
+  identity="$(ga_remote_get_trust_identity)" || return
+  gateway="${identity#* }"
+  gateway="${gateway% *}"
+  printf 'interface: %s\ngateway: %s\ngateway hardware address: %s\n' "${identity%% *}" "${gateway}" "${identity##* }"
   printf '%s\n' 'This is an accident guard against opening on another Wi-Fi, not authentication.'
   ga_remote_require_confirmation trust "Trust this network? Type 'trust' to confirm: " || return 4
+  ga_remote_trust_network "${identity}"
+}
+
+# Write step shared by the terminal and the Mac page: append the network an identity read names to the trusted
+# list; no confirmation, no restart (the callers own both). Returns GA_REMOTE_ALREADY_TRUSTED when the list
+# already holds it (nothing written).
+ga_remote_trust_network() {
+  local identity="$1" entry current list
+  entry="${identity#* }"
+  entry="${entry% *}@${identity##* }"
+  if ! ga_remote_is_trusted_entry "${entry}"; then
+    printf 'remote: not a network identity — nothing written\n' >&2
+    return "${GA_REMOTE_NETWORK_UNREADABLE}"
+  fi
   current="$(atrium_toml_get "[remote_access]" "trusted_networks")"
   if ! list="$(ga_remote_get_trusted_list "${current}")"; then
-    printf 'remote: [remote_access].trusted_networks is malformed — nothing written\n' >&2
-    return 6
+    printf 'remote: config.toml [remote_access].trusted_networks is malformed — nothing written\n' >&2
+    return "${GA_REMOTE_CONFIG_MALFORMED}"
   fi
   if [[ ",${list}," == *",${entry},"* ]]; then
     printf 'remote: this network is already trusted\n'
@@ -459,24 +518,28 @@ ga_remote_cmd_reissue() {
   dir="$(ga_remote_get_key_dir)"
   if [[ ! -f "${dir}/ca.key" ]]; then
     printf "remote: no local CA — run 'glass-atrium remote on' first\n" >&2
-    return 7
+    return "${GA_REMOTE_KEYS_NOT_CREATED}"
   fi
   if ! ga_remote_issue_leaf "${dir}"; then
     printf 'remote: the leaf was not reissued — the current leaf stays\n' >&2
-    return 7
+    return "${GA_REMOTE_KEYS_NOT_CREATED}"
   fi
   printf 'remote: leaf reissued; the monitor serves it from its next network check\n'
 }
 
 # --- install lifecycle (lib/ga-core.sh → run_install · run_uninstall · lib/ga-doctor.sh → run_doctor) ---
 
-# Installer opt-in, default No: only a yes typed on a terminal turns access on; no restart here (the
-# install's own later steps render the env and start the monitor).
+# The screen spec's install lines (X-1 on, X-2 off): they point to the monitor page and name no command or path.
+GA_REMOTE_INSTALL_ON_LINE='Remote access is on. To connect a device, open the monitor and choose Remote access.'
+GA_REMOTE_INSTALL_OFF_LINE='Remote access is off. To turn it on later, open the monitor and choose Remote access.'
+
+# Installer opt-in, default No: only a yes typed on a terminal turns access on, and trust takes its own typed
+# word; no restart here (the install's own later steps render the env and start the monitor).
 ga_remote_install_opt_in() {
-  local reply="" rc=0 enabled
+  local reply="" enabled
   enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
   if [[ "${enabled}" == "true" ]]; then
-    printf 'remote access: already on — kept (glass-atrium remote off turns it off)\n' >&2
+    printf '%s\n' "${GA_REMOTE_INSTALL_ON_LINE}" >&2
     return 0
   fi
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
@@ -485,30 +548,14 @@ ga_remote_install_opt_in() {
     IFS= read -r reply || reply=""
   fi
   if [[ "${reply}" != "y" && "${reply}" != "Y" ]]; then
-    printf "remote access: off — the monitor stays loopback-only (later: 'glass-atrium remote on')\n" >&2
+    printf '%s\n' "${GA_REMOTE_INSTALL_OFF_LINE}" >&2
     return 0
   fi
   ga_remote_enable || return
-  ga_remote_trust_network || rc=$?
-  ((rc == 0 || rc == GA_REMOTE_ALREADY_TRUSTED)) \
-    || printf "remote access: no trusted network yet — run 'glass-atrium remote trust' on the Wi-Fi\n" >&2
-  ga_remote_print_device_steps
-}
-
-# Per-device steps: carry the CA certificate over, compare the fingerprint, trust it once, open the address.
-ga_remote_print_device_steps() {
-  local dir fingerprint names port
-  dir="$(ga_remote_get_key_dir)"
-  fingerprint="$(ga_remote_run openssl x509 -fingerprint -sha256 -noout -in "${dir}/ca.pem")" || fingerprint=""
-  names="$(ga_remote_get_leaf_names)" || names="<this-mac>.local -"
-  port="$(atrium_toml_get "[remote_access]" "port")"
-  printf '%s\n' 'Each device, once:' \
-    "  1. Send ${dir}/ca.pem to the device (AirDrop, or a cable) — the certificate only, never a .key file." \
-    "  2. Check that the device shows this SHA-256 fingerprint: ${fingerprint#*=}" \
-    '  3. iPhone/iPad: Settings → General → VPN & Device Management → install the profile, then' \
-    '     Settings → General → About → Certificate Trust Settings → turn on Glass Atrium Local CA.' \
-    '     Android: Settings → Security → Encryption & credentials → Install a certificate → CA certificate.' \
-    "  4. Open https://${names% *}:${port:-${GA_REMOTE_PORT_DEFAULT}} and enter the code the Mac's monitor page shows." >&2
+  # a refused or declined trust prints its own line; the page shows the network as not trusted and offers it
+  # shellcheck disable=SC2310  # verdict ignored — access stays on, untrusted, either way
+  _ga_remote_trust_on_terminal >&2 || true
+  printf '%s\n' "${GA_REMOTE_INSTALL_ON_LINE}" >&2
 }
 
 # Uninstall: the device rows (before the pre-drop backup copies them), the key dir, access off, and the

@@ -16,14 +16,14 @@
 <main class="sign-in-main">
   <header class="sign-in-head">
     <h1 class="sign-in-title">Register this device</h1>
-    <p class="sign-in-lead">Enter the code shown on the Mac under Remote access → Open registration. This device then stays registered until it is revoked on the Mac.</p>
+    <p class="sign-in-lead">Open a code on the Mac at step 5, then enter it here. This device stays registered until it is removed on the Mac.</p>
   </header>
 
   <form id="sign-in-form" class="sign-in-form" novalidate>
     <div class="sign-in-field">
       <label class="field-label" for="sign-in-code">Code</label>
       <input class="field field--mono" id="sign-in-code" name="code" required maxlength="32" autocomplete="one-time-code" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-describedby="sign-in-code-hint" />
-      <span class="sign-in-hint" id="sign-in-code-hint">Single use · a new code on the Mac replaces it</span>
+      <span class="sign-in-hint" id="sign-in-code-hint">One use · a new code on the Mac replaces it</span>
     </div>
     <div class="sign-in-field">
       <label class="field-label" for="sign-in-label">Device name</label>
@@ -35,15 +35,8 @@
   </form>
 
   <section class="sign-in-trust" aria-labelledby="sign-in-trust-title">
-    <h2 class="section-label" id="sign-in-trust-title">Certificate</h2>
-    <p>If this browser warned that the connection is not private, stop: do not enter the code. Trust the Mac's certificate first, once per device.</p>
-    <ol class="sign-in-steps">
-      <li>On the Mac, send the certificate by AirDrop — its path is on the Mac's Remote access screen.</li>
-      <li>iPhone or iPad: Settings → General → VPN &amp; Device Management → install it, then Settings → General → About → Certificate Trust Settings → turn it on.</li>
-      <li>Android: Settings → search “CA certificate” → install the received file.</li>
-      <li>Before trusting it, compare its SHA-256 fingerprint with the one the Mac prints.</li>
-      <li>Reopen this page.</li>
-    </ol>
+    <h2 class="section-label" id="sign-in-trust-title">Connection warning</h2>
+    <p>If this browser said the connection is not private, stop and do not enter the code. On the Mac, finish steps 1 to 3, then reopen this page.</p>
   </section>
 </main>
 </body>

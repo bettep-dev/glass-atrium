@@ -1,5 +1,5 @@
 // Request-level guards for every mutation route: a Sec-Fetch/Origin gate (CSRF defence), a
-// content-type restriction, and an explicit body limit. Registered once from buildApp before the
+// form content-type refusal, and an explicit body limit. Registered once from buildApp before the
 // routes, so a route added later is covered without touching it.
 //
 // The gate evaluates the Sec-Fetch rules BEFORE the Origin rules, and that order is load-bearing:
@@ -30,6 +30,9 @@ const ALLOWED_FETCH_SITES = new Set(["same-origin", "none"]);
 /** Fastify 5 default, restated so the ceiling is a stated decision rather than an inherited one. */
 export const BODY_LIMIT_BYTES = 1024 * 1024;
 
+// the only types a document's form can send → a same-origin form, field-less included, never reaches a handler
+const FORM_MEDIA_TYPES: ReadonlySet<string> = new Set(["application/x-www-form-urlencoded", "multipart/form-data", "text/plain"]);
+
 const HTTP_FORBIDDEN = 403;
 const HTTP_UNSUPPORTED_MEDIA_TYPE = 415;
 
@@ -54,9 +57,16 @@ export function registerRequestGuards(app: FastifyInstance): void {
     await reply.code(HTTP_FORBIDDEN).send({ error: "cross_origin_blocked" });
   });
 
-  // Fastify 5 ships both a JSON and a text/plain parser. Dropping text/plain makes it an
-  // unregistered media type (415) — which is what strips CORS simple-request status from a
-  // cross-origin POST — while the hardened built-in JSON parser stays untouched.
+  // after the gate → a cross-site form keeps its 403; runs before routing, so no handler and no parser sees the body
+  app.addHook("onRequest", async (request, reply) => {
+    if (!MUTATION_METHODS.has(request.method.toUpperCase()) || !isFormContentType(request.headers)) {
+      return;
+    }
+    request.log.warn({ route: request.routeOptions?.url ?? request.url, method: request.method }, "form content type refused by the request guard");
+    await reply.code(HTTP_UNSUPPORTED_MEDIA_TYPE).send({ error: "form_content_type" });
+  });
+
+  // Fastify 5 ships a text/plain parser → dropped, so a method the guards do not judge never gets a CORS-simple body parsed
   app.removeContentTypeParser("text/plain");
 
   app.addHook("onRoute", (routeOptions) => {
@@ -94,6 +104,12 @@ export function isAllowedRequest(method: string, headers: IncomingHttpHeaders): 
     return true;
   }
   return isLoopbackOrigin(origin);
+}
+
+/** Media type only: parameters and case never let a form type through. */
+function isFormContentType(headers: IncomingHttpHeaders): boolean {
+  const mediaType = getHeader(headers, "content-type")?.split(";")[0]?.trim().toLowerCase();
+  return mediaType !== undefined && FORM_MEDIA_TYPES.has(mediaType);
 }
 
 /** Which page-origin signal admitted an owner mutation; the answer record stores it. */

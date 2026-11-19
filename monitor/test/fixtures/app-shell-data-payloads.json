@@ -372,5 +372,22 @@
     "folder_id": null,
     "display_order": null,
     "body": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Shell trust boundary — diagram</title></head><body class=\"bg-zinc-950\"><h1>Shell trust boundary</h1><p>Every script below runs with the owner session cookie.</p><pre class=\"mermaid doc-diagram-body\" data-probe=\"trust-boundary\" data-diagram-type=\"flowchart\">flowchart TD\n  Cdn[Pinned CDN scripts] --> Shell[App shell origin]\n  Vendor[Vendored Tailwind runtime] --> Shell\n  Shell --> Owner[Owner routes]</pre></body></html>"
+  },
+  "/api/remote/setup": {
+    "enabled": false,
+    "isOffByDevice": false,
+    "listenReason": "disabled",
+    "hasRouter": true,
+    "isNetworkTrusted": false,
+    "trustedCount": 0,
+    "isAnswering": false,
+    "hostName": "studio-mac.local",
+    "address": "192.168.0.12",
+    "port": 16146,
+    "deviceLimit": 10,
+    "fingerprint": null
+  },
+  "/api/remote/devices": {
+    "devices": []
   }
 }

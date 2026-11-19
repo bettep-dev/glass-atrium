@@ -7,7 +7,7 @@ import { isLoopbackHost } from "../host-guard.js";
 import { setNoStoreHeader } from "../response-headers.js";
 import { DEVICE_PARAMS_SCHEMA, type DeviceActDeps, type DeviceParams, getDeviceList, revokeAll, revokeOne } from "./admin-routes.js";
 import { recordEvent } from "./gate.js";
-import { WindowLimiter } from "./limits.js";
+import { WindowLimiter, buildWindowLimitHook } from "./limits.js";
 import { EMPTY_BODY_LIMIT_BYTES, hasBody } from "./request-body.js";
 
 export const REMOTE_CLI_PATH = {
@@ -36,8 +36,10 @@ const BROWSER_HEADERS = ["sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "
 /** The loopback Host allowlist runs at the root; this scope adds the CLI header, the browser-header ban and the loopback socket. */
 export async function registerRemoteCliRoutes(app: FastifyInstance, deps: RemoteCliDeps): Promise<void> {
   await app.register(async (scope) => {
-    const limiter = new WindowLimiter(REMOTE_CLI_LIMITS.REQUESTS, deps.now ?? Date.now);
-    scope.addHook("onRequest", (request, reply) => refuseUnlessCli(request, reply, limiter));
+    // in this order → the 403s, then the limit, then the body check; a hook that answers ends the chain
+    scope.addHook("onRequest", refuseUnlessCli);
+    scope.addHook("onRequest", buildWindowLimitHook(new WindowLimiter(REMOTE_CLI_LIMITS.REQUESTS, deps.now ?? Date.now)));
+    scope.addHook("onRequest", refuseBody);
     scope.addHook("onSend", setNoStoreHeader);
     const act = { deps, actor: REMOTE_CLI_ACTOR };
     const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
@@ -49,13 +51,15 @@ export async function registerRemoteCliRoutes(app: FastifyInstance, deps: Remote
   });
 }
 
-async function refuseUnlessCli(request: FastifyRequest, reply: FastifyReply, limiter: WindowLimiter): Promise<FastifyReply | undefined> {
+async function refuseUnlessCli(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> {
   if (BROWSER_HEADERS.some((name) => request.headers[name] !== undefined)) return reply.code(403).send({ error: "not_cli" });
   if (request.headers[REMOTE_CLI_HEADER.NAME] !== REMOTE_CLI_HEADER.VALUE) return reply.code(403).send({ error: "not_cli" });
   if (!isLoopbackHost(request.socket.remoteAddress ?? "")) return reply.code(403).send({ error: "not_loopback" });
-  if (!limiter.hit("all")) return reply.code(429).send({ error: "too_many_requests" });
-  if (hasBody(request)) return reply.code(400).send({ error: "body_not_allowed" });
   return undefined;
+}
+
+async function refuseBody(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | undefined> {
+  return hasBody(request) ? reply.code(400).send({ error: "body_not_allowed" }) : undefined;
 }
 
 async function listDevices(request: FastifyRequest, deps: RemoteCliDeps): Promise<{ devices: Record<string, string>[] }> {

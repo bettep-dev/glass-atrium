@@ -52,6 +52,62 @@ export function createReactStub(): Record<string, unknown> {
   };
 }
 
+type Effect = () => unknown;
+type Deps = unknown[] | undefined;
+
+/** Hook slots keyed by call order, reset per render (resetCursor) — state, refs and effects persist across renders as React keeps them. */
+export function createStatefulReact() {
+  const base = createReactStub();
+  const slots: unknown[] = [];
+  let cursor = 0;
+  let pending: Effect[] = [];
+  const claim = (init: () => unknown): number => {
+    const index = cursor++;
+    if (!(index in slots)) slots[index] = init();
+    return index;
+  };
+
+  // createReactStub is typed as a loose record; its createElement is the variadic factory
+  const createElement = base.createElement as (type: unknown, props: unknown, ...children: unknown[]) => unknown;
+  const react = {
+    ...base,
+    createElement,
+    useState: (initial: unknown) => {
+      const index = claim(() => (typeof initial === "function" ? (initial as () => unknown)() : initial));
+      const setter = (next: unknown) => {
+        slots[index] = typeof next === "function" ? (next as (p: unknown) => unknown)(slots[index]) : next;
+      };
+      return [slots[index], setter];
+    },
+    useRef: (initial: unknown) => slots[claim(() => ({ current: initial }))],
+    // memoized by deps like React → a stable callback keeps its effect from re-running every render
+    useCallback: (fn: unknown, deps: Deps) => {
+      const index = claim(() => ({ fn, deps }));
+      const memo = slots[index] as { fn: unknown; deps: Deps };
+      const changed = !deps || !memo.deps || deps.some((dep, i) => dep !== memo.deps?.[i]);
+      if (changed) slots[index] = { fn, deps };
+      return (slots[index] as { fn: unknown }).fn;
+    },
+    useEffect: (effect: Effect, deps: Deps) => {
+      const index = claim(() => undefined);
+      const prev = slots[index] as Deps;
+      const changed = !deps || !prev || deps.some((dep, i) => dep !== prev[i]);
+      if (!changed) return;
+      slots[index] = deps;
+      pending.push(effect);
+    },
+  };
+  const flushEffects = () => {
+    const run = pending;
+    pending = [];
+    for (const effect of run) effect();
+  };
+  const resetCursor = () => {
+    cursor = 0;
+  };
+  return { react, flushEffects, resetCursor };
+}
+
 type EffectCallback = () => void | (() => void);
 type RefAttach = (element: ElementNode) => unknown;
 
