@@ -2547,6 +2547,22 @@ function normalizeMermaidSource(src) {
 	return rebuilt.join(eol);
 }
 
+/**
+ * Mermaid's SVG for a document diagram, through the viewer's sanitize config with the svg profile.
+ * Mermaid's own pass (DOMPurify defaults) keeps a label's form controls, which the viewer config drops.
+ */
+function getDiagramMarkupCD(svg) {
+	return window.DOMPurify.sanitize(svg, {
+		...window.UI.SANITIZE_CONFIG,
+		WHOLE_DOCUMENT: false,
+		USE_PROFILES: { html: true, svg: true, svgFilters: true },
+		// mermaid.core → DOMPURIFY_TAGS / DOMPURIFY_ATTR: html labels sit in a foreignObject
+		ADD_TAGS: ["foreignobject"],
+		ADD_ATTR: ["dominant-baseline"],
+		HTML_INTEGRATION_POINTS: { foreignobject: true },
+	});
+}
+
 function ViewerBodyCD({ state }) {
 	// Mermaid post-render hook — htmlToReactCD 가 React 트리를 호스트 DOM 에 commit 한 직후 <pre class="mermaid"> 텍스트를 SVG 로 변환.
 	//   · 사유: htmlToReactCD 가 className 만 통과시킴 → <pre> 본문은 텍스트로 마운트 → JS 변환 필요
@@ -2580,8 +2596,8 @@ function ViewerBodyCD({ state }) {
 				.then(() => window.mermaid.render(id, source))
 				.then(({ svg, bindFunctions }) => {
 					if (cancelled) return;
-					// SECURITY: mermaid 산출 SVG 는 trusted — 입력 source 는 server DOMPurify + client htmlToReactCD 이중 sanitize 통과한 본문 textContent (XSS surface 없음). architecture.jsx 의 mermaid.render 동일 신뢰 모델.
-					n.innerHTML = svg;
+					// SECURITY: the source is agent-written text → mermaid's SVG passes the viewer's sanitize config before it mounts
+					n.innerHTML = getDiagramMarkupCD(svg);
 					if (typeof bindFunctions === "function") bindFunctions(n);
 				})
 				.catch((err) => {
