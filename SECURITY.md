@@ -106,8 +106,9 @@ appreciated).
     list, any other subagent by instruction text alone.
   - A project or local MCP server named `atrium-queue` takes the install's
     server's place in a session. The session start reports it in one
-    line, and that session is told to use the queue CLI only; nothing
-    stops a call to the shadowing server.
+    line, and that session is told to use the queue CLI only, at its
+    start and in every turn-end record ask, where only the CLI's record
+    counts; nothing stops a call to the shadowing server.
   - That line reads only the start directory's project MCP file and the
     profile's local entry for that directory. An ancestor directory's
     project file, a local entry keyed by another directory, and the

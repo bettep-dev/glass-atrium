@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # queue-turn-end-check.sh — Stop hook, at most one block per turn end, carrying either line or both, never an item's
 # text: (1) an interactive or background main-session turn that called a tool is asked once per turn for its queue
-# record unless its last tool call is a record call (the server's record tool or the CLI's record subcommand) and the
-# session's record was written at or after the turn's start entry; (2) while an item this session posted awaits the
+# record unless its last tool call is a record call (the CLI's record subcommand, or the server's record tool unless
+# the session's start found that server shadowed: queue_set_shadow_mark) and the session's record was written at or
+# after the turn's start entry; a shadowed session's ask names the CLI alone; (2) while an item this session posted awaits the
 # owner and nothing polls the monitor for this Claude process (queue_get_poller), the wait command — a fallback for
 # processes no listener serves. Each turn end also sends the transcript's title as the session's name once it changed
 # (queue_put_session_name).
@@ -27,6 +28,11 @@ readonly RECORD_ASK_TEMPLATE="Queue record (harness): this turn called a tool, a
 record made in this turn. Judge the turn against the must-not-miss kinds, post what is owed, then call the \
 %s server's \`record\` tool alone, last — form nothing, or posted with every item id the turn \
 posted; a session without the server runs \`%s record nothing\` or \`%s record posted <id>...\` instead."
+# shellcheck disable=SC2016  # the backticks are the reason's literal markdown; %s → the server name, the CLI, the CLI
+readonly SHADOWED_RECORD_ASK_TEMPLATE="Queue record (harness): this turn called a tool, and its last tool call is no \
+queue record made in this turn. Judge the turn against the must-not-miss kinds, post what is owed, then run the queue \
+CLI alone, last — a project or local MCP server named %s shadows the Atrium queue server in this session, so never \
+call its tools: \`%s record nothing\`, or \`%s record posted <id>...\` with every item id the turn posted."
 readonly WAIT_REASON_LEAD="[ATRIUM-QUEUE] harness: an item of this session awaits the owner and no wait runs — start it \
 now as a background command:"
 
@@ -46,6 +52,8 @@ readonly TURN_READER="${self%/*}/lib/reply_language.py"
 poller=""
 record_reason=""
 wait_reason=""
+# set by set_record_reason: the session's start found the queue server shadowed (queue_is_shadow_marked)
+is_shadowed=false
 # set by set_tool_turn: a tool-using turn's start-entry id and time, and whether its last tool call is a record call
 tool_turn=""
 turn_started=""
@@ -93,7 +101,12 @@ warn() {
 # <session id> <transcript path> → record_reason: the ask, or empty when the turn called no tool, was asked already,
 # ends on a record call made at or after its start, or cannot be decided
 set_record_reason() {
-  local stamp recorded cli
+  local stamp recorded cli template="${RECORD_ASK_TEMPLATE}"
+  # shellcheck disable=SC2310  # a pure read; no readable mark counts as unshadowed
+  if queue_is_shadow_marked "$1"; then
+    is_shadowed=true
+    template="${SHADOWED_RECORD_ASK_TEMPLATE}"
+  fi
   set_tool_turn "$2"
   [[ -n "${tool_turn}" ]] || return 0
   recorded="$(queue_get_record_time "$1")"
@@ -106,14 +119,15 @@ set_record_reason() {
     return 0
   fi
   cli="$(queue_get_cli_path)"
-  # shellcheck disable=SC2059  # the format is this file's own constant; the names go in as arguments
-  printf -v record_reason "${RECORD_ASK_TEMPLATE}" "${QUEUE_MCP_SERVER_NAME}" "${cli}" "${cli}"
+  # shellcheck disable=SC2059  # the format is one of this file's own constants; the names go in as arguments
+  printf -v record_reason "${template}" "${QUEUE_MCP_SERVER_NAME}" "${cli}" "${cli}"
 }
 
 # <transcript path> → tool_turn, turn_started and is_record_last for a turn that called a tool; all left unset when it
-# called none, and after one warning when the turn or its start time cannot be read
+# called none, and after one warning when the turn or its start time cannot be read. In a shadowed session the
+# server's record tool is the shadowing server's, so only the CLI's record counts.
 set_tool_turn() {
-  local found="" status="" turn="" started="" tools="" is_record="" cli pattern
+  local found="" status="" turn="" started="" tools="" is_record="" cli pattern tool=""
   if [[ -z "$1" ]]; then
     warn "the Stop payload names no transcript"
     return 0
@@ -122,11 +136,12 @@ set_tool_turn() {
   cli="${cli##*/}"
   # a Bash command running the CLI's record subcommand, the CLI named by its file name
   pattern="(^|[[:space:]/\"'])${cli//./\\.}[\"']?[[:space:]]+record([[:space:]]|$)"
+  if [[ "${is_shadowed}" == false ]]; then tool="mcp__${QUEUE_MCP_SERVER_NAME}__record"; fi
   found="$(python3 -I "${TURN_READER}" turn "$1" 2>/dev/null \
-    | jq -r --arg tool "mcp__${QUEUE_MCP_SERVER_NAME}__record" --arg pattern "${pattern}" \
+    | jq -r --arg tool "${tool}" --arg pattern "${pattern}" \
       '[.status, (.turn | strings // ""), (.started | strings // ""), (.tools == true | tostring),
-        (.last_tool.name == $tool or (.last_tool.name == "Bash" and (.last_tool.command // "" | test($pattern)))
-          | tostring)] | join("\u001f")' 2>/dev/null)" || found=""
+        (($tool != "" and .last_tool.name == $tool)
+          or (.last_tool.name == "Bash" and (.last_tool.command // "" | test($pattern))) | tostring)] | join("\u001f")' 2>/dev/null)" || found=""
   IFS=$'\x1f' read -r status turn started tools is_record <<<"${found}" || true
   if [[ "${status}" != found || -z "${turn}" || ! "${started}" =~ ${QUEUE_RECORD_TIME_SHAPE} ]]; then
     warn "the transcript's current turn could not be read"

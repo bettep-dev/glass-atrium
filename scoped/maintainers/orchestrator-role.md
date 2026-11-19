@@ -302,9 +302,9 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound` · `### On a wait's exit`;
   - the two refusals behind `wait` exit 2: `monitor/src/server/queue/delivery.ts` → `lockOwnSession` (`unknown_session`) · `assertLiveFor` (`session_not_live`);
   - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
-  - the record call and its two forms: `hooks/queue-turn-end-check.sh` → `RECORD_ASK_TEMPLATE` · `scripts/atrium-queue.sh` → `print_usage` (its `record` line) · the section's **Turn record** bullet · the core's trigger line · the server instructions;
+  - the record call and its two forms: `hooks/queue-turn-end-check.sh` → `RECORD_ASK_TEMPLATE` · `SHADOWED_RECORD_ASK_TEMPLATE` · `scripts/atrium-queue.sh` → `print_usage` (its `record` line) · the section's **Turn record** bullet · the core's trigger line · the server instructions;
   - the server name and its tool names: `scripts/lib/queue-session.sh` → `QUEUE_MCP_SERVER_NAME` · `### Which route` and its tool-to-CLI table;
-  - the shadowing line and its CLI-only rule: `hooks/queue-session-register.sh` (its shadowing line) · `scripts/lib/queue-session.sh` → `queue_is_server_shadowed` · `### Which route` · the server instructions · `SECURITY.md` → **Session relays**;
+  - the shadowing line and its CLI-only rule: `hooks/queue-session-register.sh` (its shadowing line) · `scripts/lib/queue-session.sh` → `queue_is_server_shadowed` · `hooks/queue-turn-end-check.sh` → `SHADOWED_RECORD_ASK_TEMPLATE` · `### Which route` · the server instructions · `SECURITY.md` → **Session relays**;
   - the relay reading — a peer session's information, no owner instruction and no approval, first included:
     - `scripts/lib/queue-ops.sh` → `queue_get_relay_provenance` · `scripts/lib/queue-session.sh` → `queue_get_count_line`;
     - `scripts/atrium-queue.sh` → `print_first` · `print_claims` (its peer rows) · `print_usage` (its `relay` line);
@@ -335,7 +335,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - What the section's lines rest on:
   - one library behind both routes: `scripts/lib/queue-ops.sh`, sourced by `scripts/atrium-queue.sh` and by the MCP adapter `scripts/atrium-queue-mcp.sh`;
   - the session id read per call: `scripts/lib/queue-session.sh` → `queue_get_session_id`, through the owner record each SessionStart register writes (`queue_put_owner_record`);
-  - the shadowing detection: `scripts/lib/queue-session.sh` → `queue_is_server_shadowed`, called by `hooks/queue-session-register.sh`;
+  - the shadowing detection: `scripts/lib/queue-session.sh` → `queue_is_server_shadowed`, called by `hooks/queue-session-register.sh`, which carries the finding to the turn-end check through `queue_set_shadow_mark`;
   - a headless run listing no tool: `hooks/lib/session-entrypoint.sh` → `is_owner_facing_session`, the adapter's entrypoint gate;
   - the typed agents' freeze: every `agents/*.md` frontmatter `tools:` list names no `mcp__` tool and no wildcard — an agent body that gains one voids the enforced line of `### Main session only`;
   - no agent identity at the server, and a project or local server of the same name winning: `scoped/shared-hook-capability-contract.md` → `### MCP stdio server — measured record`;

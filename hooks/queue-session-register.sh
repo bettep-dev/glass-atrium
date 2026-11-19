@@ -40,6 +40,8 @@ if queue_is_server_shadowed "${shown_dir}"; then
   (printf "[ATRIUM-QUEUE] harness: a project or local MCP server named %s shadows the Atrium queue server in this \
 session — use only the queue CLI, %s, never that server's tools\n" "${QUEUE_MCP_SERVER_NAME}" "$(queue_get_cli_path)") || true
 fi
+# shellcheck disable=SC2310  # a mark not set leaves the turn-end record ask naming the server too, never a failed start
+queue_set_shadow_mark "$(queue_get_session_id "${session_id}")" "${shown_dir}" || true
 # shellcheck disable=SC2310  # a failed register is the fail-open exit, never an errexit
 counts="$(queue_register_session "${hint}" "" "${start_dir}" "${session_id}" "" "${transcript}" 2>/dev/null)" || exit 0
 IFS=' ' read -r owner_count relay_count <<<"${counts}"

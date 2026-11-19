@@ -279,6 +279,32 @@ queue_is_server_shadowed() {
   jq -e --arg name "${name}" --arg dir "$1" '.projects[$dir].mcpServers | objects | has($name)' "${config}" >/dev/null 2>&1
 }
 
+# <session id> → the path of its shadow mark: its start found the queue server shadowed (queue_is_server_shadowed), so
+# every later turn end of the session names the CLI alone, after a compaction too
+queue_get_shadow_mark_path() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  printf '%s/.shadowed\n' "${dir}"
+}
+
+# <session id> <start dir> → the shadow mark standing exactly while that start dir shows the queue server shadowed
+queue_set_shadow_mark() {
+  local mark
+  mark="$(queue_get_shadow_mark_path "$1")" || return 1
+  if queue_is_server_shadowed "$2"; then
+    { mkdir -p -- "${mark%/*}" && : >"${mark}"; } 2>/dev/null
+  elif ga_guard_path "${mark}"; then
+    rm -f -- "${mark:?}"
+  fi
+}
+
+# <session id> → 0 when its start found the queue server shadowed
+queue_is_shadow_marked() {
+  local mark
+  mark="$(queue_get_shadow_mark_path "$1")" || return 1
+  [[ -f "${mark}" ]]
+}
+
 # <transcript path> [session id from a hook payload] → the derived name (queue_get_derived_name) sent as a name-only
 # register once it differs from the last one sent for this session; nothing sent with no name, pid or session id.
 # Non-zero only when an update was due and the monitor did not accept it → the next turn end sends it again.

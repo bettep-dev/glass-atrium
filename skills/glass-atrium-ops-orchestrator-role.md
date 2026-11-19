@@ -693,7 +693,7 @@ Claim first: `claim` on the tool route; on the CLI, `wait` or `pending` → `get
 - A session lists no queue tool when it started before the server was registered, when the server failed to connect, or when it is a headless `claude -p` run.
 - The shadowing line says a project or local MCP server named `atrium-queue` shadows the queue server.
   - Why CLI only: a project or local server of that name takes the install's server's place in that session, so tools under that name are not the queue's.
-  - It outranks a harness line that names the server's tool: on the turn-end check's `Queue record (harness):` ask, a shadowed session runs the CLI's `record`.
+  - The start's finding holds for the whole session: the turn-end check's `Queue record (harness):` ask names the CLI alone there, and only the CLI's `record` counts as the turn's record.
   - Honest backing: the SessionStart hook reads the start directory's project MCP file and the profile's local entry for that directory, once, at the session's start; nothing stops a call to the shadowing server.
     - Not read: a project file in an ancestor directory, a local entry keyed by any other directory (the repository root included), and the managed and per-run server scopes, which also outrank the install's server.
     - Whether the host takes a project or local server from those places is unmeasured: a same-name server there shadows the queue server with no line.

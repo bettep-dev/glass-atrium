@@ -203,6 +203,25 @@ assert_record_ask() {
   assert_no_item_text "$1"
 }
 
+# <row name> → one record ask naming only the CLI's record forms and the shadowing, never the server's record tool
+assert_cli_record_ask() {
+  local reason cli="${GA_ROOT}/scripts/atrium-queue.sh"
+  reason="$(get_block_reason)" || reason=""
+  [[ "${status}" -eq 0 && "${output}" != *$'\n'* && "${reason}" == "Queue record (harness): "* &&
+    "${reason}" != *'`record` tool'* && "${reason}" == *"shadows"* && "${reason}" == *"\`${cli} record nothing\`"* &&
+    "${reason}" == *"\`${cli} record posted <id>...\`"* ]] || {
+    echo "$1: status=${status} stdout=${output} stderr=${stderr}"
+    return 1
+  }
+}
+
+# <start dir> → this session's start run through the SessionStart hook, its monitor refusing → only local state lands
+register_start() {
+  jq -nc --arg id "${SESSION_ID}" --arg cwd "$1" \
+    '{hook_event_name: "SessionStart", source: "startup", session_id: $id, cwd: $cwd}' \
+    | ATRIUM_MONITOR_PORT=1 "${GA}/hooks/queue-session-register.sh" >/dev/null 2>&1
+}
+
 assert_silent_turn_end() {
   [[ "${status}" -eq 0 && -z "${output}" && -z "${stderr}" ]] || {
     echo "$1: status=${status} stdout=${output} stderr=${stderr}"
@@ -565,6 +584,42 @@ assert_silent_turn_end() {
       echo "row ${name}: $(requested_paths)"
       return 1
     }
+  done
+}
+
+@test "in a session whose start found a server shadowing the queue server's name, the record ask names only the CLI and that server's record tool never counts as the record" {
+  start_stub
+  local project="${BATS_TEST_TMPDIR}/project" row name starts start tokens expect
+  local -a start_list
+  export CLAUDE_CONFIG_DIR="${BATS_TEST_TMPDIR}/profile"
+  mkdir -p "${project}" "${CLAUDE_CONFIG_DIR}"
+  printf '{}\n' >"${CLAUDE_CONFIG_DIR}/.claude.json"
+  # Row shape: name|starts in order (shadowed: the start dir's project file names the server, plain: it names
+  # none)|tokens|cli-ask or silent; every row's record is written after its turn's start
+  for row in \
+    'shadowed, no record call|shadowed|start:t-1 tool result text|cli-ask' \
+    'shadowed, server record tool last|shadowed|start:t-1 tool result record result|cli-ask' \
+    'shadowed, CLI record last|shadowed|start:t-1 tool result clirecord result|silent' \
+    'resumed with the shadowing gone, server record tool last|shadowed plain|start:t-1 tool result record result|silent'; do
+    IFS='|' read -r name starts tokens expect <<<"${row}"
+    IFS=' ' read -r -a tokens <<<"${tokens}"
+    IFS=' ' read -r -a start_list <<<"${starts}"
+    new_root
+    for start in "${start_list[@]}"; do
+      printf '{"mcpServers":{}}\n' >"${project}/.mcp.json"
+      if [[ "${start}" == shadowed ]]; then
+        printf '{"mcpServers":{"atrium-queue":{"command":"x"}}}\n' >"${project}/.mcp.json"
+      fi
+      register_start "${project}"
+    done
+    TURN_STARTED_AT="$(get_utc_ms -60)" && put_record
+    write_turn_transcript "${TRANSCRIPT}" "${tokens[@]}"
+    run_hook
+    if [[ "${expect}" == silent ]]; then
+      assert_silent_turn_end "row ${name}" || return 1
+    else
+      assert_cli_record_ask "row ${name}" || return 1
+    fi
   done
 }
 
