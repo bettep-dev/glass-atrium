@@ -1602,6 +1602,113 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	white-space: nowrap;
 }
 
+/* Remote access (remote-access.jsx) — the connect card's procedure: the rail of steps beside the open step's pane */
+.ra-procedure {
+	container-type: inline-size;
+	border-block-start: 1px solid rgb(var(--line));
+}
+/* a container query sizes the container's children, never the container → the grid is its child */
+.ra-procedure-grid {
+	--ra-rail-w: 20rem;
+	display: grid;
+	grid-template-columns: var(--ra-rail-w) minmax(0, 1fr);
+}
+.ra-rail {
+	padding: var(--card-pad);
+	border-inline-end: 1px solid rgb(var(--line));
+}
+/* on the markers' column */
+.ra-rail-head {
+	margin-block-end: var(--gap-label);
+	padding-inline: var(--space-2);
+}
+/* 40 tall → a done row's target passes WCAG 2.5.8 without the .inline-target box; a long title wraps and grows the row */
+.ra-step {
+	display: grid;
+	grid-template-columns: 1.5rem minmax(0, 1fr);
+	column-gap: var(--space-2);
+	align-items: center;
+	width: 100%;
+	min-height: var(--row-h);
+	padding-inline: var(--space-2);
+	border-radius: var(--radius-control);
+	font-size: var(--fs-control);
+	line-height: var(--lh-row);
+	color: rgb(var(--ink));
+	text-align: start;
+}
+button.ra-step {
+	cursor: pointer;
+}
+button.ra-step:hover {
+	background: rgb(var(--sunken));
+}
+.ra-step-mark {
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+/* the open row is a fill, not a bar */
+.ra-step.is-open {
+	background: var(--tint-select);
+}
+.ra-step.is-open > .ra-step-mark {
+	font-weight: 600;
+}
+.ra-step.is-open > .ra-step-title {
+	font-weight: 500;
+}
+.ra-step.is-ahead {
+	color: rgb(var(--faint));
+}
+/* at least as tall as the rail (the grid row stretches) */
+.ra-pane {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+.ra-pane-body {
+	padding: var(--card-pad);
+}
+.ra-pane-body > * {
+	max-width: var(--measure-prose);
+}
+/* on the pane's bottom edge → Next keeps one place on the rail-high steps */
+.ra-pane-foot {
+	margin-block-start: auto;
+	justify-content: space-between;
+	border-block-start: 1px solid rgb(var(--line));
+}
+/* Next alone on step 1 still stands at the end */
+.ra-pane-next {
+	margin-inline-start: auto;
+}
+.ra-path-label {
+	white-space: nowrap;
+	font-weight: 500;
+	color: rgb(var(--ink));
+}
+/* 1ch in the mono face is its one space → the groups stand --space-3 apart while a copy keeps a single space */
+.ra-fingerprint-group {
+	margin-inline-start: calc(var(--space-3) - 1ch);
+}
+/* the QR field is its own scan margin: no frame, no fill around it */
+.ra-code {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	column-gap: var(--gap-control-group);
+	align-items: start;
+}
+/* a narrow card stacks the rail over the pane; the rail's end rule becomes its bottom rule */
+@container (max-width: 44rem) {
+	.ra-procedure-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.ra-rail {
+		border-inline-end: 0;
+		border-block-end: 1px solid rgb(var(--line));
+	}
+}
+
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
    발산하던 idiom(드로어 hairline · DetailMetric ring 타일 · i-card-shadow)을 단일 수렴점으로.
    ring 은 box-shadow 로 표현(box model 무영향) — .card 와 달리 1px line 만, 그림자 없음(z-depth 하위). */

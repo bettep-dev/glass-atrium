@@ -1,6 +1,6 @@
 // E2E chromium harness for the Remote access screen (screens/remote-access.jsx): painted facts a node render cannot hold —
-// where focus lands in a widening confirm, the step list's own numerals, the page fitting 1440 with no sideways scroll, and the
-// device table on the card's inline column.
+// where focus lands in a widening confirm, the connect card's rail and pane at each supported width (spec 44105 → Layout),
+// every open step fitting the owner's window, and the device table on the card's inline column.
 //
 // Runner: npx tsx --test test/remote-access.render-structure.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
@@ -157,7 +157,96 @@ describe("remote access on over an untrusted network at 1440px, a trust whose an
   });
 });
 
-describe("remote access on at 1440px, the connect steps", () => {
+// spec 44105 → Layout → Page: viewport → the content width the page column takes
+const WIDTHS = [
+  { viewport: 1280, content: 1012 },
+  { viewport: 1440, content: 1172 },
+  { viewport: 1568, content: 1300 },
+];
+// spec 44105 → Layout → Connect a device: --ra-rail-w 20rem · the pane body and foot inset by --card-pad
+const RAIL_PX = 320;
+const CARD_PAD_PX = 16;
+// the owner's window (spec 44105 → Layout → Page)
+const OWNER_WINDOW = { width: 1568, height: 759 };
+
+/** The Connect card's procedure as painted: card, rail, pane, the pane's foot controls and the fingerprint lines. */
+async function readProcedure(page: Page) {
+  // anonymous callbacks only: the test transform names a const-bound function with a helper the page lacks
+  return page.evaluate(() => {
+    const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
+    const pane = card?.querySelector(".ra-pane");
+    const foot = pane?.querySelector(".ra-pane-foot");
+    const lines = [...(pane?.querySelectorAll(".ra-fingerprint .machine > span") ?? [])];
+    const [cardBox, rail, paneBox, footBox, footStart, footEnd] = [card, card?.querySelector(".ra-rail"), pane, foot, foot?.firstElementChild, foot?.lastElementChild].map((el) => {
+      const rect = el?.getBoundingClientRect();
+      return rect ? { left: Math.round(rect.left), right: Math.round(rect.right), top: Math.round(rect.top), bottom: Math.round(rect.bottom), width: Math.round(rect.width) } : null;
+    });
+    return {
+      card: cardBox,
+      rail,
+      pane: paneBox,
+      foot: footBox,
+      footStart,
+      footEnd,
+      fingerprint: { count: lines.length, size: lines[0] ? getComputedStyle(lines[0]).fontSize : null, groups: lines.map((line) => line.children.length) },
+      scroll: { width: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, top: document.scrollingElement?.scrollTop },
+    };
+  });
+}
+
+describe("remote access on, the connect card's procedure at each supported width, step 2 open", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON);
+    await ctx.page.getByRole("button", { name: "Next" }).click();
+    await ctx.page.getByRole("heading", { name: "Match the fingerprint before installing", level: 3 }).waitFor({ timeout: WAIT_TIMEOUT_MS });
+  });
+  after(async () => closeRenderContext(ctx));
+
+  for (const row of WIDTHS) {
+    test(`at ${row.viewport}px the card spans the ${row.content}px column, the 320px rail beside the pane, Back and Next on the pane's foot`, async () => {
+      await ctx.page.setViewportSize({ width: row.viewport, height: 900 });
+
+      const at = await readProcedure(ctx.page);
+
+      assert.ok(at.card && at.rail && at.pane && at.foot && at.footStart && at.footEnd, JSON.stringify(at));
+      assert.deepEqual(
+        {
+          card: at.card.width,
+          rail: at.rail.width,
+          railStart: at.rail.left - at.card.left <= 1,
+          paneStart: at.pane.left - at.rail.right,
+          paneEnd: at.card.right - at.pane.right <= 1,
+          sameTop: at.pane.top === at.rail.top,
+          footOnPaneBottom: at.foot.bottom === at.pane.bottom,
+          back: at.footStart.left - at.pane.left,
+          next: at.pane.right - at.footEnd.right,
+          sideways: at.scroll.width - at.scroll.client,
+        },
+        { card: row.content, rail: RAIL_PX, railStart: true, paneStart: 0, paneEnd: true, sameTop: true, footOnPaneBottom: true, back: CARD_PAD_PX, next: CARD_PAD_PX, sideways: 0 },
+      );
+    });
+  }
+
+  test("the fingerprint reads at 16px, each of its four lines in two groups of four pairs", async () => {
+    await ctx.page.setViewportSize({ width: 1440, height: 900 });
+
+    const { fingerprint } = await readProcedure(ctx.page);
+
+    assert.deepEqual(fingerprint, { count: 4, size: "16px", groups: [2, 2, 2, 2] });
+  });
+
+  test("a card narrower than 44rem stacks the rail over the pane", async () => {
+    await ctx.page.setViewportSize({ width: 760, height: 900 });
+
+    const at = await readProcedure(ctx.page);
+
+    assert.ok(at.rail && at.pane, JSON.stringify(at));
+    assert.deepEqual({ below: at.pane.top >= at.rail.bottom, sameWidth: at.pane.width === at.rail.width }, { below: true, sameWidth: true });
+  });
+});
+
+describe("remote access on at 1440px, moving through the steps", () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON);
@@ -165,45 +254,70 @@ describe("remote access on at 1440px, the connect steps", () => {
   });
   after(async () => closeRenderContext(ctx));
 
-  test("Next moves focus to the title of the step it opens", async () => {
-    await ctx.page.getByRole("button", { name: "Next" }).click();
+  test("Next stands at one place on steps 1, 3 and 4 and moves focus to the heading of the step it opens", async () => {
+    const readNext = () => ctx.page.getByRole("button", { name: "Next", exact: true }).evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return `${Math.round(rect.left)},${Math.round(rect.top)}`;
+    });
+    const places = [await readNext()];
+    await ctx.page.getByRole("button", { name: "Next", exact: true }).click();
+    const focused = await ctx.page.evaluate(() => ({ tag: document.activeElement?.tagName, text: document.activeElement?.textContent?.trim() }));
+    await ctx.page.getByRole("button", { name: "Next", exact: true }).click();
+    places.push(await readNext());
+    await ctx.page.getByRole("button", { name: "Next", exact: true }).click();
+    places.push(await readNext());
 
-    const focused = await ctx.page.evaluate(() => document.activeElement?.getAttribute("aria-current"));
-    assert.equal(focused, "step");
+    assert.deepEqual(focused, { tag: "H3", text: "Match the fingerprint before installing" });
+    assert.deepEqual(places, [places[0], places[0], places[0]], "steps 1, 3 and 4");
   });
 
-  test("a done step's check sits in the number column, so its title stays where it stood", async () => {
+  test("every rail row's title starts on one column, whether the row is done, open or ahead", async () => {
     const starts = await ctx.page.evaluate(() =>
-      [...document.querySelectorAll("ol > li")].map((row) => {
-        const range = document.createRange();
-        range.selectNodeContents(row.querySelector("button, p, span") ?? row);
-        return Math.round(range.getBoundingClientRect().left);
-      }),
+      [...document.querySelectorAll(".ra-rail ol > li")].map((row) => Math.round(row.querySelector(".ra-step-title")?.getBoundingClientRect().left ?? Number.NaN)),
     );
 
     assert.equal(starts.length, 5);
-    assert.deepEqual(starts, starts.map(() => starts[0]), "done, open and later rows start on one column");
-  });
-
-  test("the card with a step and its fold open fits a 900px window without scrolling", async () => {
-    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
-
-    const fit = await ctx.page.evaluate(() => {
-      const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
-      return { bottom: Math.ceil(card?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY), window: window.innerHeight, scrollTop: document.scrollingElement?.scrollTop };
-    });
-
-    assert.ok(fit.bottom <= fit.window && fit.scrollTop === 0, JSON.stringify(fit));
-  });
-
-  test("the page fits the window with no sideways scroll", async () => {
-    const width = await ctx.page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
-
-    assert.equal(width.scroll, width.client);
+    assert.deepEqual(starts, starts.map(() => starts[0]));
   });
 });
 
-describe("remote access on at 1440px, the scan step, the tallest step", () => {
+describe("remote access on in the owner's 1568 x 759 window, every open step is whole on the first screen", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON, [], { acts: [{ status: 200, body: { code: "K7QM4XZP" } }] });
+    await ctx.page.setViewportSize(OWNER_WINDOW);
+    await ctx.page.getByText("Step 1 of 5").waitFor({ timeout: WAIT_TIMEOUT_MS });
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("steps 1 to 4, step 2 with its fold open and step 5 with a code and its fold open end above the window's bottom", async () => {
+    const bottoms: Record<string, number> = {};
+    const measure = async (state: string) => {
+      const { card, scroll } = await readProcedure(ctx.page);
+      bottoms[state] = scroll.top === 0 ? card?.bottom ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
+    };
+    const next = () => ctx.page.getByRole("button", { name: "Next", exact: true }).click();
+    await measure("step 1");
+    await next();
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+    await measure("step 2, fold open");
+    await next();
+    await measure("step 3");
+    await next();
+    await measure("step 4");
+    await next();
+    await ctx.page.getByRole("button", { name: "Show QR code" }).click();
+    await ctx.page.getByText("K7QM 4XZP").waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+    await measure("step 5, code and fold open");
+
+    const over = Object.entries(bottoms).filter(([, bottom]) => bottom > OWNER_WINDOW.height);
+    assert.equal(Object.keys(bottoms).length, 5);
+    assert.deepEqual(over, [], JSON.stringify(bottoms));
+  });
+});
+
+describe("remote access on at 1440px, the scan step with a code open", () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON, [], { acts: [{ status: 200, body: { code: "K7QM4XZP" } }] });
@@ -215,23 +329,14 @@ describe("remote access on at 1440px, the scan step, the tallest step", () => {
   });
   after(async () => closeRenderContext(ctx));
 
-  test("the shell's encoder draws the open code's QR code at full size under its fixed name, and the card with a code and its fold open fits a 900px window", async () => {
-    const fit = await ctx.page.evaluate(() => {
-      const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
-      const qr = card?.querySelector('svg[role="img"]');
-      return {
-        label: qr?.getAttribute("aria-label"),
-        side: qr?.getBoundingClientRect().width,
-        drawn: Number(qr?.getAttribute("width")),
-        bottom: Math.ceil(card?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY),
-        window: window.innerHeight,
-        scrollTop: document.scrollingElement?.scrollTop,
-      };
+  test("the shell's encoder draws the open code's QR code at full size under its fixed name", async () => {
+    const qr = await ctx.page.evaluate(() => {
+      const svg = document.querySelector('.ra-pane svg[role="img"]');
+      return { label: svg?.getAttribute("aria-label"), side: svg?.getBoundingClientRect().width, drawn: Number(svg?.getAttribute("width")) };
     });
 
-    assert.equal(fit.label, "QR code for the sign-in page with this code");
-    assert.equal(fit.side, fit.drawn, "the layout never scales the modules off their 4 px");
-    assert.ok(fit.bottom <= fit.window && fit.scrollTop === 0, JSON.stringify(fit));
+    assert.equal(qr.label, "QR code for the sign-in page with this code");
+    assert.equal(qr.side, qr.drawn, "the layout never scales the modules off their 4 px");
   });
 
   test("the code and its new-code button stand at the QR code's right, top-aligned", async () => {

@@ -60,7 +60,10 @@ const STEPS_RA = [
 ];
 // the step bodies' own words beside the step table → the card's word caps count them too · {time} → the code's expiry
 const STEP_TEXT_RA = {
-	fingerprintMissing: "Fingerprint not shown; refresh this page before installing.",
+	// label → the field name the phone shows over the same value
+	fingerprint: { label: "SHA-256", missing: "Fingerprint not shown; refresh this page before installing." },
+	// read beside a glyph → a mark never rests on its shape or colour alone
+	mark: { done: "Done:", warn: "Warning:" },
 	certificate: { share: "Share certificate…", download: "Download certificate", failed: "The certificate was not sent; try again." },
 	code: {
 		label: "Code",
@@ -470,103 +473,159 @@ function ActErrorRA({ error }) {
 function ConnectCardRA({ setup, devices, progress, onAct, onDevicesRead }) {
 	const { Disclosure } = window.UI;
 	return (
-		<Disclosure kind={devices.length === 0 ? "status" : "detail"} title="Connect a device">
+		<Disclosure kind={devices.length === 0 ? "status" : "detail"} title="Connect a device" isFlush={!isAtLimitRA(setup, devices, progress)}>
 			<ConnectBodyRA setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />
 		</Disclosure>
 	);
 }
 
 // a finished card stays as it is at the limit → the device the person just connected is not hidden under the limit line
+function isAtLimitRA(setup, devices, progress) {
+	return progress?.open !== null && devices.length >= setup.deviceLimit;
+}
+
 function ConnectBodyRA({ setup, devices, progress, onAct, onDevicesRead }) {
-	const isFinished = progress?.open === null;
-	if (!isFinished && devices.length >= setup.deviceLimit) {
-		return <p className="fs-body text-dim">{`${devices.length} of ${setup.deviceLimit} devices registered; remove one to connect another.`}</p>;
+	const { EmptyState } = window.UI;
+	if (isAtLimitRA(setup, devices, progress)) {
+		return <EmptyState message={`${devices.length} of ${setup.deviceLimit} devices registered; remove one to connect another.`} />;
 	}
 	return <ProcedureRA setup={setup} devices={devices} progress={progress ?? START_PROGRESS_RA} onAct={onAct} onDevicesRead={onDevicesRead} />;
 }
 
+// the rail shows where the person is, the pane what to do now · the grid sits inside the container its query sizes
 function ProcedureRA({ setup, devices, progress, onAct, onDevicesRead }) {
-	const { Stack, TONE_GLYPH } = window.UI;
+	return (
+		<div className="ra-procedure">
+			<div className="ra-procedure-grid">
+				<RailRA progress={progress} onAct={onAct} />
+				<PaneRA setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />
+			</div>
+		</div>
+	);
+}
+
+function RailRA({ progress, onAct }) {
 	const isFinished = progress.open === null;
 	return (
-		<Stack gap="block">
-			<p className="fs-meta text-dim">{isFinished ? `All ${STEPS_RA.length} steps done · ${DEVICE_RA.name}` : `Step ${progress.open + 1} of ${STEPS_RA.length} · ${DEVICE_RA.name}`}</p>
-			<StepListRA setup={setup} devices={devices} progress={progress} onAct={onAct} onDevicesRead={onDevicesRead} />
-			{isFinished && (
-				<Stack gap="stack" className="items-start">
-					<p className="fs-body text-ink"><span className="text-ok">{TONE_GLYPH.ok}</span> {`“${progress.label}” is connected.`}</p>
-					<button type="button" className="btn" onClick={() => onAct({ type: "restart" })}>Connect another device</button>
-				</Stack>
-			)}
-		</Stack>
+		<div className="ra-rail">
+			<p className="ra-rail-head fs-meta text-dim">{isFinished ? `All ${STEPS_RA.length} steps done · ${DEVICE_RA.name}` : `Step ${progress.open + 1} of ${STEPS_RA.length} · ${DEVICE_RA.name}`}</p>
+			<ol>
+				{STEPS_RA.map((step, i) => (
+					<li key={step.title} aria-current={i === progress.open ? "step" : undefined}>
+						<RailRowRA title={step.title} index={i} position={getPositionRA(progress, i)} onAct={onAct} />
+					</li>
+				))}
+			</ol>
+		</div>
 	);
 }
 
-function StepListRA({ setup, devices, progress, onAct, onDevicesRead }) {
+function getPositionRA(progress, index) {
+	if (index === progress.open) return "open";
+	return progress.done[index] ? "done" : "ahead";
+}
+
+// three cues per position (glyph or numeral, ink step, the one filled row) · only a done row is a control; the open one's focus is the pane's heading
+function RailRowRA({ title, index, position, onAct }) {
 	const { TONE_GLYPH } = window.UI;
-	const titleRef = useRRA(null);
-	// a step opened by a press or by finishing → focus follows to its title
-	useERA(() => titleRef.current?.focus(), [progress.open]);
+	if (position === "done") {
+		return (
+			<button type="button" className="ra-step" onClick={() => onAct({ type: "reopen", index })}>
+				<span className="ra-step-mark text-ok"><span aria-hidden="true">{TONE_GLYPH.ok}</span><span className="sr-only">{STEP_TEXT_RA.mark.done}</span></span>
+				<span className="ra-step-title">{title}</span>
+			</button>
+		);
+	}
 	return (
-		<ol className="flex flex-col gap-list">
-			{STEPS_RA.map((step, i) => (
-				<li key={step.title}>
-					{i === progress.open
-						? <OpenStepRA step={step} index={i} setup={setup} devices={devices} progress={progress} titleRef={titleRef} onAct={onAct} onDevicesRead={onDevicesRead} />
-						: progress.done[i]
-							// no button inset → the check takes the number's place and the title stays on its column
-							? <button type="button" className="inline-target link fs-body" onClick={() => onAct({ type: "reopen", index: i })}><span className="text-ok">{TONE_GLYPH.ok}</span>&nbsp;{step.title}</button>
-							: <span className="fs-body text-faint">{i + 1} {step.title}</span>}
-				</li>
-			))}
-		</ol>
+		<span className={`ra-step is-${position}`}>
+			<span className="ra-step-mark">{index + 1}</span>
+			<span className="ra-step-title">{title}</span>
+		</span>
 	);
 }
 
-function OpenStepRA({ step, index, setup, devices, progress, titleRef, onAct, onDevicesRead }) {
-	const { Stack, Cluster, QuietButton } = window.UI;
+function PaneRA({ setup, devices, progress, onAct, onDevicesRead }) {
+	const { Stack } = window.UI;
+	const titleRef = useRRA(null);
+	// a step opened by a press or by finishing → focus follows to its heading
+	useERA(() => titleRef.current?.focus(), [progress.open]);
+	if (progress.open === null) return <FinishedPaneRA label={progress.label} titleRef={titleRef} onAct={onAct} />;
+	const step = STEPS_RA[progress.open];
 	const values = getAddressesRA(setup, DEVICE_RA.hosts);
 	// extra → values only the step itself knows (the open code), filling their Trouble? slots
 	const trouble = (extra) => <TroubleRA rows={step.trouble} values={{ ...values, ...extra }} isOpen={progress.isTroubleOpen} scanStep={STEPS_RA.length} onAct={onAct} />;
 	return (
-		<Stack gap="stack">
-			<p ref={titleRef} tabIndex={-1} aria-current="step" className="fs-body font-medium text-ink">{index + 1} {step.title}</p>
-			<Stack gap="block">
-				<Stack gap="label" className="items-start">
-					<StepBodyRA step={step} setup={setup} devices={devices} address={values.address} trouble={trouble} onAct={onAct} onDevicesRead={onDevicesRead} />
-					{step.kind !== "scan" && trouble({})}
+		<div className="ra-pane">
+			<Stack className="ra-pane-body">
+				<Stack gap="stack">
+					<h3 ref={titleRef} tabIndex={-1} className="fs-title font-semibold text-ink">{step.title}</h3>
+					<StepLineRA step={step} onAct={onAct} />
 				</Stack>
-				<Cluster>
-					{index > 0 && <QuietButton onClick={() => onAct({ type: "back" })}>Back</QuietButton>}
-					{step.kind !== "scan" && <button type="button" className="btn" disabled={step.kind === "fingerprint" && !setup.fingerprint} onClick={() => onAct({ type: "next" })}>Next</button>}
-				</Cluster>
+				<StepValueRA step={step} setup={setup} devices={devices} address={values.address} trouble={trouble} onAct={onAct} onDevicesRead={onDevicesRead} />
+				{step.kind !== "scan" && trouble({})}
 			</Stack>
+			<PaneFootRA step={step} index={progress.open} hasFingerprint={Boolean(setup.fingerprint)} onAct={onAct} />
+		</div>
+	);
+}
+
+function FinishedPaneRA({ label, titleRef, onAct }) {
+	const { Stack, TONE_GLYPH } = window.UI;
+	return (
+		<div className="ra-pane">
+			<Stack gap="label" className="ra-pane-body items-start">
+				<h3 ref={titleRef} tabIndex={-1} className="fs-title font-semibold text-ink"><span className="text-ok">{TONE_GLYPH.ok}</span> {`“${label}” is connected.`}</h3>
+				<button type="button" className="btn" onClick={() => onAct({ type: "restart" })}>Connect another device</button>
+			</Stack>
+		</div>
+	);
+}
+
+// step 1's line carries its certificate button, the pane's one primary
+function StepLineRA({ step, onAct }) {
+	if (step.kind === "send") return <CertificateStepRA line={step.line} onSent={() => onAct({ type: "sent" })} />;
+	return step.path ? <PathRA path={step.path} /> : <p className="fs-body text-dim">{step.line}</p>;
+}
+
+function StepValueRA({ step, setup, devices, address, trouble, onAct, onDevicesRead }) {
+	if (step.kind === "fingerprint") return <FingerprintRA fingerprint={setup.fingerprint} stop={step.stop} />;
+	if (step.kind !== "scan") return null;
+	return <CodeStepRA address={address} devices={devices} trouble={trouble} onConnected={(label) => onAct({ type: "connected", label })} onDevicesRead={onDevicesRead} />;
+}
+
+// Back at the start, Next at the end · step 1's Next stays secondary beside its certificate button · the scan step moves on by itself
+function PaneFootRA({ step, index, hasFingerprint, onAct }) {
+	const { QuietButton } = window.UI;
+	const nextClass = step.kind === "send" ? "btn ra-pane-next" : "btn primary ra-pane-next";
+	return (
+		<div className="control-row ra-pane-foot">
+			{index > 0 && <QuietButton onClick={() => onAct({ type: "back" })}>Back</QuietButton>}
+			{step.kind !== "scan" && <button type="button" className={nextClass} disabled={step.kind === "fingerprint" && !hasFingerprint} onClick={() => onAct({ type: "next" })}>Next</button>}
+		</div>
+	);
+}
+
+// 16px, not the 13 floor: 64 characters matched pair by pair against a phone held beside the screen · the stop line is never folded
+function FingerprintRA({ fingerprint, stop }) {
+	const { Stack, MachineString, TONE_GLYPH } = window.UI;
+	return (
+		<Stack gap="label">
+			{fingerprint
+				? (
+					<ValueRA label={STEP_TEXT_RA.fingerprint.label} className="ra-fingerprint">
+						<MachineString className="fs-title text-ink">{formatFingerprintRA(fingerprint).map((line) => <FingerprintLineRA key={line} line={line} />)}</MachineString>
+					</ValueRA>
+				)
+				: <ActErrorRA error={{ text: STEP_TEXT_RA.fingerprint.missing }} />}
+			<p className="fs-body font-medium text-ink"><span className="text-warn" aria-hidden="true">{TONE_GLYPH.warn}</span><span className="sr-only">{STEP_TEXT_RA.mark.warn}</span> {stop}</p>
 		</Stack>
 	);
 }
 
-function StepBodyRA({ step, setup, devices, address, trouble, onAct, onDevicesRead }) {
-	const { MachineString } = window.UI;
-	if (step.kind === "send") return <CertificateStepRA line={step.line} onSent={() => onAct({ type: "sent" })} />;
-	const lead = step.path ? <PathRA path={step.path} /> : <p className="fs-body text-dim">{step.line}</p>;
-	if (step.kind === "fingerprint") {
-		return (
-			<>
-				{lead}
-				{setup.fingerprint
-					? <MachineString className="block fs-meta text-ink">{formatFingerprintRA(setup.fingerprint).map((line) => <span key={line} className="block">{line}</span>)}</MachineString>
-					: <ActErrorRA error={{ text: STEP_TEXT_RA.fingerprintMissing }} />}
-				<p className="fs-body text-ink">{step.stop}</p>
-			</>
-		);
-	}
-	if (step.kind !== "scan") return lead;
-	return (
-		<>
-			{lead}
-			<CodeStepRA address={address} devices={devices} trouble={trouble} onConnected={(label) => onAct({ type: "connected", label })} onDevicesRead={onDevicesRead} />
-		</>
-	);
+// two groups of four pairs, one space between → a copy reads as the phone writes it
+function FingerprintLineRA({ line }) {
+	const pairs = line.split(" ");
+	return <span className="block"><span>{pairs.slice(0, 4).join(" ")}</span> <span className="ra-fingerprint-group">{pairs.slice(4).join(" ")}</span></span>;
 }
 
 /** A QR code drawn in the page; no encoder on the page → the text itself. */
@@ -595,24 +654,24 @@ function getQrPathRA(qr) {
 	return squares.join("");
 }
 
-// a Settings path: the labels in the mono face, the separators in dim
+// a Settings path in the phone's own words, matched by eye → sans labels, wrapping between labels, never inside one
 function PathRA({ path }) {
-	const { MachineString } = window.UI;
 	return (
-		<MachineString className="fs-body text-ink">
+		<p className="fs-body">
 			{path.split(PATH_SEPARATOR_RA).map((label, i) => (
-				<React.Fragment key={label}>{i > 0 && <span className="text-dim">{PATH_SEPARATOR_RA}</span>}{label}</React.Fragment>
+				<React.Fragment key={label}>{i > 0 && <span className="text-dim">{PATH_SEPARATOR_RA}</span>}<span className="ra-path-label">{label}</span></React.Fragment>
 			))}
-		</MachineString>
+		</p>
 	);
 }
 
-function ValueRA({ label, children }) {
+function ValueRA({ label, className = "", children }) {
+	const { Stack } = window.UI;
 	return (
-		<div className="flex flex-col">
+		<Stack gap="stack" className={className}>
 			<span className="fs-meta text-dim">{label}</span>
 			{children}
-		</div>
+		</Stack>
 	);
 }
 
@@ -621,12 +680,12 @@ function TroubleRA({ rows, values, isOpen, scanStep, onAct }) {
 	const lines = rows.filter((row) => row.text.split(SLOT_RA).every((part) => !SLOT_RA.test(part) || values[part.slice(1, -1)]));
 	if (lines.length === 0) return null;
 	return (
-		<Stack gap="label">
+		<Stack gap="stack" className="items-start">
 			<DisclosureButton isOpen={isOpen} onToggle={() => onAct({ type: "trouble" })} label="Trouble?" />
 			{isOpen && lines.map((row) => (
 				<p key={row.text} className="fs-meta text-dim">
 					<TroubleTextRA text={row.text} values={values} />
-					{row.isJump && <> <QuietButton onClick={() => onAct({ type: "jump" })}>{`Go to step ${scanStep}`}</QuietButton></>}
+					{row.isJump && <> <QuietButton className="sm" onClick={() => onAct({ type: "jump" })}>{`Go to step ${scanStep}`}</QuietButton></>}
 				</p>
 			))}
 		</Stack>
@@ -639,6 +698,7 @@ function TroubleTextRA({ text, values }) {
 }
 
 function CertificateStepRA({ line, onSent }) {
+	const { Stack } = window.UI;
 	const [cert, setCert] = useSRA({ file: null, isSending: false, error: null });
 	const isShare = canShareFileRA(cert.file);
 	// read ahead → the share sheet opens inside the click, which a browser requires
@@ -658,11 +718,11 @@ function CertificateStepRA({ line, onSent }) {
 		);
 	};
 	return (
-		<>
+		<Stack gap="label" className="items-start">
 			<p className="fs-body text-dim">{isShare ? line.share : line.download}</p>
-			<button type="button" className="btn" aria-busy={cert.isSending || undefined} onClick={onSend}>{isShare ? STEP_TEXT_RA.certificate.share : STEP_TEXT_RA.certificate.download}</button>
+			<button type="button" className="btn primary" aria-busy={cert.isSending || undefined} onClick={onSend}>{isShare ? STEP_TEXT_RA.certificate.share : STEP_TEXT_RA.certificate.download}</button>
 			{cert.error && <ActErrorRA error={cert.error} />}
-		</>
+		</Stack>
 	);
 }
 
@@ -700,29 +760,29 @@ function CodeStepRA({ address, devices, trouble, onConnected, onDevicesRead }) {
 	);
 }
 
-// spec 44105 → The QR code: drawn only while a code is open, the code and C-53 at its right, top-aligned
+// drawn only while a code is open, the code and its renewal at its right, top-aligned · opening a code is the step's one primary
 function CodeViewRA({ state, address, onOpen }) {
-	const { Cluster, Stack, MachineString, formatKstTime } = window.UI;
+	const { Stack, MachineString, formatKstTime } = window.UI;
 	if (state.status === "open") {
 		return (
-			<Cluster gap="control-group" className="items-start">
+			<div className="ra-code">
 				{address && <QrCodeRA text={`${address}${SIGN_IN_RA.PATH}${SIGN_IN_RA.FRAGMENT}${state.code}`} />}
-				<Stack gap="label" className="items-start">
+				<Stack gap="block" className="items-start">
 					<ValueRA label={STEP_TEXT_RA.code.label}>
 						<MachineString className="fs-stat font-semibold text-ink">{formatCodeRA(state.code)}</MachineString>
-						<span className="fs-meta text-dim">{STEP_TEXT_RA.code.validUntil.replace("{time}", formatKstTime(state.expiresAt))}</span>
+						<span className="fs-meta text-dim tabular-nums">{STEP_TEXT_RA.code.validUntil.replace("{time}", formatKstTime(state.expiresAt))}</span>
 					</ValueRA>
 					<button type="button" className="btn" onClick={onOpen}>{STEP_TEXT_RA.code.renew}</button>
 				</Stack>
-			</Cluster>
+			</div>
 		);
 	}
 	return (
-		<>
+		<Stack gap="label" className="items-start">
 			{state.status === "expired" && <p className="fs-body text-dim">{STEP_TEXT_RA.code.expired}</p>}
-			<button type="button" className="btn" aria-busy={state.status === "opening" || undefined} onClick={onOpen}>{state.status === "opening" ? STEP_TEXT_RA.code.opening : STEP_TEXT_RA.code.open}</button>
+			<button type="button" className="btn primary" aria-busy={state.status === "opening" || undefined} onClick={onOpen}>{state.status === "opening" ? STEP_TEXT_RA.code.opening : STEP_TEXT_RA.code.open}</button>
 			{state.error && <ActErrorRA error={state.error} />}
-		</>
+		</Stack>
 	);
 }
 

@@ -213,6 +213,9 @@ describe("each state shows its own words, and the on/off act sits on the title l
 
 });
 
+// a done row reads its ✓ glyph and the screen reader's "Done:", then its title
+const DONE_MARK = /^✓\s*Done:\s*/;
+
 // the connect card driven through its own buttons: each press runs the screen's progress step over the card's last progress
 async function driveConnect(over: Record<string, unknown> = {}) {
   const { mod } = await loadScreen();
@@ -222,15 +225,16 @@ async function driveConnect(over: Record<string, unknown> = {}) {
     setup: SETUP_ON, devices: [], onDevicesRead: () => undefined, ...over, progress, onAct: (act: unknown) => { progress = putProgress(progress, act); },
   });
   const getButtons = () => findNodes(view(), (node) => node.type === "button");
-  // a done step's button reads its ✓ glyph, then its title
   const press = (name: string) => {
-    const button = getButtons().find((node) => collectText(node).replace("✓", "").trim() === name);
+    const button = getButtons().find((node) => collectText(node).replace(DONE_MARK, "").trim() === name);
     assert.ok(button, `a button named "${name}"`);
     (button.props.onClick as () => void)();
   };
   const text = () => collectText(view()).replace(/\s+/g, " ");
-  const doneTitles = () => getButtons().map((node) => collectText(node)).filter((name) => name.includes("✓")).map((name) => name.replace("✓", "").trim());
-  return { view, press, text, doneTitles };
+  const doneTitles = () => getButtons().map((node) => collectText(node)).filter((name) => DONE_MARK.test(name)).map((name) => name.replace(DONE_MARK, "").trim());
+  const primaries = () => getButtons().filter((node) => String(node.props.className).split(/\s+/).includes("primary")).map((node) => collectText(node).trim());
+  const heading = () => findNodes(view(), (node) => node.type === "h3" && node.props.tabIndex === -1).map((node) => collectText(node).replace(/\s+/g, " ").trim());
+  return { view, press, text, doneTitles, primaries, heading };
 }
 
 describe("the connect card is a procedure: one device, one open step, done steps checked", () => {
@@ -246,7 +250,7 @@ describe("the connect card is a procedure: one device, one open step, done steps
     assert.ok(!getButtonNames(tree).includes("Back"), "no Back on step 1");
     assert.equal(findNodes(tree, (node) => node.type === "ol").length, 1);
     assert.equal(findNodes(tree, (node) => node.type === "li").length, 5);
-    assert.deepEqual(findNodes(tree, (node) => node.props["aria-current"] === "step").map((node) => collectText(node).replace(/\s+/g, " ").trim()), [`1 ${IPHONE_TITLES[0]}`]);
+    assert.deepEqual(findNodes(tree, (node) => node.props["aria-current"] === "step").map((node) => ({ type: node.type, text: collectText(node).replace(/\s+/g, " ").trim() })), [{ type: "li", text: `1 ${IPHONE_TITLES[0]}` }]);
     assert.deepEqual(getButtonNames(tree).filter((name) => IPHONE_TITLES.some((title) => name.includes(title))), []);
   });
 
@@ -262,6 +266,34 @@ describe("the connect card is a procedure: one device, one open step, done steps
     card.press("Next");
     assert.ok(card.text().includes("Step 2 of 5"), "Next from a reopened step opens the step after it");
     assert.deepEqual(card.doneTitles(), [IPHONE_TITLES[0]]);
+  });
+
+  describe("each open step's pane names its step in the heading that takes focus and offers one primary, the spec's own", () => {
+    const rows = [
+      { name: "step 1 sends the certificate; Next stays secondary", nexts: 0, heading: IPHONE_TITLES[0], primaries: ["Download certificate"] },
+      { name: "step 2 moves on by Next", nexts: 1, heading: IPHONE_TITLES[1], primaries: ["Next"] },
+      { name: "step 3 moves on by Next", nexts: 2, heading: IPHONE_TITLES[2], primaries: ["Next"] },
+      { name: "step 4 moves on by Next", nexts: 3, heading: IPHONE_TITLES[3], primaries: ["Next"] },
+      { name: "step 5 opens a code", nexts: 4, heading: IPHONE_TITLES[4], primaries: ["Show QR code"] },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const card = await driveConnect();
+        for (let i = 0; i < row.nexts; i++) card.press("Next");
+
+        assert.deepEqual({ heading: card.heading(), primaries: card.primaries() }, { heading: [row.heading], primaries: row.primaries });
+      });
+    }
+
+    test("a finished card heads its pane with the connected line and offers no primary", async () => {
+      const card = await driveConnect();
+      card.press("Trouble?");
+      card.press("Go to step 5");
+
+      (findNodes(card.view(), (node) => node.type === "CodeStepRA")[0].props.onConnected as (label: string) => void)("Minji's iPhone");
+
+      assert.deepEqual({ heading: card.heading(), primaries: card.primaries() }, { heading: ["✓ “Minji's iPhone” is connected."], primaries: [] });
+    });
   });
 
   test("Back opens the step before", async () => {
@@ -282,7 +314,7 @@ describe("the connect card is a procedure: one device, one open step, done steps
     const opened = card.text();
     card.press("Next");
 
-    for (const word of ["Settings › Profile Downloaded › More Details › Glass Atrium Local CA", "9A 3F 1C 07 5E B2 44 D0", "If lines differ, remove the profile and never turn on full trust."]) {
+    for (const word of ["Settings › Profile Downloaded › More Details › Glass Atrium Local CA", "SHA-256 9A 3F 1C 07 5E B2 44 D0", "⚠ Warning: If lines differ, remove the profile and never turn on full trust."]) {
       assert.ok(closed.includes(word), `shows "${word}" without a press: ${closed}`);
     }
     assert.ok(!closed.includes("No lines before installing?"), "closed by default");
@@ -532,13 +564,13 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
   });
 });
 
-describe("the scan step shows one code at a time and what became of it", () => {
+describe("the scan step shows one code at a time and what became of it, opening a code as its primary", () => {
   const base = { onOpen: () => undefined };
   const rows = [
-    { name: "at rest it offers the QR code alone", state: { status: "idle" }, present: ["Show QR code"], absent: ["One use", "Code", "Show a new code"], qr: [] },
-    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show QR code", "Show a new code"], qr: [] },
-    { name: "an open code draws a QR code of the sign-in page with the code in its fragment, beside the code in two groups of four, its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired", "Show QR code"], qr: ["https://studio-mac.local:16146/sign-in.html#code=K7QM4XZP"] },
-    { name: "an expired code gives way to the expired line and the QR code goes", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show QR code"], absent: ["K7QM", "Show a new code"], qr: [] },
+    { name: "at rest it offers the QR code alone", state: { status: "idle" }, present: ["Show QR code"], absent: ["One use", "Code", "Show a new code"], qr: [], primaries: ["Show QR code"] },
+    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show QR code", "Show a new code"], qr: [], primaries: ["Opening…"] },
+    { name: "an open code draws a QR code of the sign-in page with the code in its fragment, beside the code in two groups of four, its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired", "Show QR code"], qr: ["https://studio-mac.local:16146/sign-in.html#code=K7QM4XZP"], primaries: [] },
+    { name: "an expired code gives way to the expired line and the QR code goes", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show QR code"], absent: ["K7QM", "Show a new code"], qr: [], primaries: ["Show QR code"] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -550,6 +582,8 @@ describe("the scan step shows one code at a time and what became of it", () => {
       for (const word of row.present) assert.ok(text.includes(word), `${row.name}: "${word}"`);
       for (const word of row.absent) assert.ok(!text.includes(word), `${row.name}: never "${word}"`);
       assert.deepEqual(findNodes(tree, (node) => node.type === "QrCodeRA").map((node) => node.props.text), row.qr, `${row.name}: QR code`);
+      const primaries = findNodes(tree, (node) => node.type === "button" && String(node.props.className).split(/\s+/).includes("primary")).map((node) => collectText(node).trim());
+      assert.deepEqual(primaries, row.primaries, `${row.name}: the one primary, none beside an open code`);
     });
   }
 
