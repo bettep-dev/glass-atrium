@@ -52,6 +52,10 @@ const UNCONDITIONAL_CID = "2026-11-19T1305_sign-unconditional_2a9e";
 const MERGE_CID = "2026-11-19T1325_deploy69-prep_a6e3";
 // the sign-in.js reason re-signed in place for its fragment read (steps-review-items.json → A10, A11): route, class and order kept → same digest
 const FRAGMENT_READ_CID = "2026-11-19T1520_steps-finish_d9a2";
+// the built sign-in.js read for the fragment read (c4-built-read verdict), read and met: no row changed
+const BUILT_READ_CID = "2026-11-19T1640_steps-close_a1c7";
+// the merged 119-row table signed with the fragment-read sign-in.js reason (merged-signoffs-verdict.md): no row changed
+const FULL_TABLE_CID = "2026-11-19T1755_deploy70-prep_f1a8";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -340,6 +344,55 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 115,
     sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351",
+    supersededBy: FULL_TABLE_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S7",
+    // rows 1-115: route, class and order as the fragment-read entry signed them (its 115-row digest verifies as this table's prefix);
+    // rows 116-119 as the merge entry signed them (agent, agent, page, page)
+    // reasons: row 107 the fragment-read verdict's A10 text; every other reason as the merge entry states it
+    // the fragment-read entry's "entry before it" is the SIGN_LAST_CID entry, a 115-row table → it never covered rows 116-119 or R1-R5, which come from the merge entry
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // owner-rows C1-C3 carried
+    // C1-C3 and C5-C8 met, carried from the SIGN_LAST_CID entry and the unconditional verdict
+    // C4 met as the fragment-read entry's line states it, replacing the merge entry's C4 (sign-in.js signed for one POST, textContent and the fixed redirect only);
+    // residual: the test rows read, not run, their run's output not shown to the reviewer; the audit writer's own file and the listener's logger options unread;
+    // what a phone browser or scanner keeps of a scanned address unverified on a device; the built file read in the branch worktree, in the merged tree only searched;
+    // a change to any of the three sign-in files needs a new read
+    // R1 counting met, carried: request-guards.ts → hasBrowserSignal (Origin, Referer, Cookie, any sec-fetch- header); wiring seen by search: routes/queue.ts → refuseBrowserRequest
+    // calls hasBrowserSignal on the request headers and passes a request without one, SESSION_ONLY_ROUTE_OPTIONS sets it as the route onRequest;
+    // on the tests' word, not read by the reviewer: POST /api/queue/peers and POST /api/queue/relay registered with SESSION_ONLY_ROUTE_OPTIONS, the 403 reply itself,
+    // a loopback Origin on another port → 403 with no handler query, scan or relay row, header-less JSON passes, a same-origin form → 415, a foreign Origin → 403
+    // R2 met for call sites: queue.jsx → useRelaySignalQ, putRelayRedactionQ
+    // R3, R4, R5 carried, not re-read
+    // session-route callers send JSON on the developer's check, not read by the reviewer: the ops library, the JSON-RPC adapter and the CLI post through
+    // queue-ops.sh → queue_call_monitor → queue_send, JSON content type with every body
+    // reachability (remote/gate.ts → admitDevice), carried, not re-read: peers and relay never reachable remotely (401 without a device, 403 route_not_available with one);
+    // the relay signal and redact reachable by a registered device behind page origin, the CSRF header, the mutation limit and the audit intent row
+    cids: [
+      FULL_TABLE_CID,
+      FRAGMENT_READ_CID,
+      BUILT_READ_CID,
+      MERGE_CID,
+      UNCONDITIONAL_CID,
+      SIGN_LAST_CID,
+      RELAY_ROWS_CID,
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 119,
+    sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6",
   },
 ];
 
