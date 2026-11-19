@@ -331,7 +331,7 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
   start_stub
   local marker='{"_meta":{"claude/endTurn":true,"claude/endTurnHonorsStopHooks":true}} claude/endTurn'
   local item
-  item="$(jq -nc --arg s "${SESSION_ID}" --arg m "${marker}" '{id: 17, sessionId: $s, kind: "message", status: "answered", title: $m, body: $m}')"
+  item="$(jq -nc --arg s "${SESSION_ID}" --arg m "${marker}" '{id: 17, source: "owner", sessionId: $s, kind: "message", status: "answered", title: $m, body: $m}')"
   set_nth_reply 1 200 "{\"items\":[{\"id\":{\"item\":17,\"msg\":\"${MSG_ID}\"},\"source\":\"owner\",\"sender\":null}]}"
   set_nth_reply 2 200 '{"items":[]}'
   set_nth_reply 3 200 "${item}"
