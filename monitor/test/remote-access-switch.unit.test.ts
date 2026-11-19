@@ -24,15 +24,22 @@ const HOME_NETWORK = { gateway: "192.168.0.1", hardwareAddress: "a4:2b:b0:11:22:
 const OFFICE_NETWORK = { gateway: "10.20.0.1", hardwareAddress: "3c:22:fb:9a:01:7e" };
 const OFF: RemoteSettings = { enabled: false, port: 16443, trusted: [] };
 const ON: RemoteSettings = { enabled: true, port: 16443, trusted: [HOME_NETWORK] };
+// the switch's bound on a listener close or open; a hung one is waited on no longer
+const WAIT_TIMEOUT_MS = 50;
 
 /** What the real controller exposes to the switch: open until turned off. */
 class StandInController {
   isTurnedOff = false;
   isOpen = true;
-  constructor(readonly settings: RemoteSettings) {}
-  async turnOff(): Promise<void> {
+  constructor(
+    readonly settings: RemoteSettings,
+    private readonly isCloseHanging = false,
+  ) {}
+  turnOff(): Promise<void> {
     this.isTurnedOff = true;
+    if (this.isCloseHanging) return new Promise(() => undefined);
     this.isOpen = false;
+    return Promise.resolve();
   }
   async stop(): Promise<void> {
     this.isOpen = false;
@@ -45,6 +52,10 @@ interface SwitchCase {
   readonly step?: AccessStepOutcome;
   readonly isDeviceOff?: boolean;
   readonly isOpenFailing?: boolean;
+  /** the booted listener's close never answers */
+  readonly isCloseHanging?: boolean;
+  /** each open answers only when the test resolves it */
+  readonly openHold?: Promise<void>;
   readonly isReadFailing?: boolean;
   readonly identity?: NetworkIdentity | null;
   readonly link?: NetworkLink;
@@ -76,14 +87,15 @@ async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
   const steps: string[] = [];
   const handed: NetworkIdentity[] = [];
   const network: StandInNetwork = { current: input.identity === undefined ? { ...HOME_NETWORK, interface: "en0" } : input.identity, clock: Date.parse("2026-11-17T09:00:00.000Z"), reads: 0 };
-  const open = async (settings: RemoteSettings) => {
+  const open = async (settings: RemoteSettings, isCloseHanging = false) => {
     if (input.isOpenFailing === true) throw new Error("listener build failed");
-    const controller = new StandInController(settings);
+    await input.openHold;
+    const controller = new StandInController(settings, isCloseHanging);
     opened.push(controller);
     return controller;
   };
   const deps: AccessSwitchDeps = {
-    boot: async (settings) => (settings.enabled ? open(settings) : null),
+    boot: async (settings) => (settings.enabled ? open(settings, input.isCloseHanging) : null),
     runStep: async (step) => {
       steps.push(step.act);
       if (step.act === "trust") handed.push(step.shown);
@@ -109,6 +121,7 @@ async function buildSwitch(input: SwitchCase): Promise<BuiltSwitch> {
     readCertificate: async () => null,
     log: pino({ level: "silent" }),
     now: () => network.clock,
+    waitTimeoutMs: WAIT_TIMEOUT_MS,
   };
   const access = new RemoteAccessSwitch(deps, input.booted ?? OFF);
   await access.boot();
@@ -290,6 +303,27 @@ describe("turning access off from the Mac page", () => {
       [true],
       { enabled: false, trustedCount: 1, isAnswering: false },
     ]);
+  });
+
+  // the route's act queue: the off starts only once the widening act before it has answered
+  test("an off queued behind a trust whose old listener never finishes closing still completes, the trust answering start_failed", { timeout: 5_000 }, async () => {
+    const { access } = await buildSwitch({ booted: ON, isCloseHanging: true, identity: { ...OFFICE_NETWORK, interface: "en0" } });
+    const trust = await confirmThen(access, () => access.trust());
+    const off = await access.setOff();
+    await access.close();
+    assert.deepEqual([trust, off, (await getView(access)).isAnswering], [{ outcome: "start_failed", trustedCount: null }, "written", false]);
+  });
+
+  test("an open that does not answer within the bound reports start_failed, and the listener it opens later is closed", { timeout: 5_000 }, async () => {
+    let release = () => undefined as void;
+    const openHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { access, opened } = await buildSwitch({ booted: OFF, written: ON, openHold });
+    const result = await confirmThen(access, () => access.turnOn());
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual([result.outcome, opened.map((controller) => controller.isOpen), (await getView(access)).isAnswering], ["start_failed", [false], false]);
   });
 
   test("an off step that did not write leaves the device-off marker instead, so a restart does not reopen", async () => {

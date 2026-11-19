@@ -16,13 +16,14 @@ import { buildRemoteApp } from "../app.js";
 import { getPrisma } from "../db.js";
 import { buildRemoteAuditWriter } from "../middleware/audit-log.js";
 import type { QueueRouteOptions } from "../routes/queue.js";
-import type {
-  AccessApplyResult,
-  AccessStepOutcome,
-  ConfirmFacts,
-  RemoteAccessActs,
-  SetupFacts,
-  TurnOnResult,
+import {
+  type AccessApplyResult,
+  type AccessStepOutcome,
+  type ConfirmFacts,
+  type RemoteAccessActs,
+  type SetupFacts,
+  type TurnOnResult,
+  getWithin,
 } from "./admin-routes.js";
 import type { DeviceConnections } from "./connections.js";
 import { type RemoteListenerOpener, RemoteListenerController, getInterfaceAddress } from "./controller.js";
@@ -188,6 +189,8 @@ export interface AccessSwitchDeps {
   readonly readCertificate: () => Promise<Buffer | null>;
   readonly log: Pick<FastifyBaseLogger, "error">;
   readonly now: () => number;
+  /** bound on the old listener's close and the new one's open inside an act; tests pass a short one */
+  readonly waitTimeoutMs?: number;
 }
 
 /** One write step: on and off alone; trust names the network the confirm showed → the step refuses any other it reads. */
@@ -314,18 +317,30 @@ export class RemoteAccessSwitch implements RemoteAccessActs {
     return outcome === "written" ? this.#apply(step.act) : { outcome, trustedCount: null };
   }
 
+  // close and open each bounded → an off queued behind this act never waits on a stalled listener
   async #apply(act: "on" | "trust"): Promise<AccessApplyResult> {
     try {
-      await this.close();
+      await getWithin(this.close(), this.deps);
       const settings = await this.deps.readSettings();
       this.#settings = settings;
       if (act === "on" && !settings.enabled) throw new Error("remote access settings still off after the on step");
-      if ((await getEffectiveSettings(settings, this.deps.isDeviceOff)).enabled) this.#controller = await this.deps.open(settings);
+      if ((await getEffectiveSettings(settings, this.deps.isDeviceOff)).enabled) this.#controller = await this.#openWithin(settings);
       return { outcome: "written", trustedCount: settings.trusted.length };
     } catch (error) {
       this.deps.log.error({ err: error, act }, "remote access written but not applied: the listener stays closed until the next restart");
-      await this.close();
+      await getWithin(this.close(), this.deps).catch(() => undefined);
       return { outcome: "start_failed", trustedCount: null };
+    }
+  }
+
+  // an open past the bound → the listener it opens later is closed at once, never left unowned
+  async #openWithin(settings: RemoteSettings): Promise<SwitchedController> {
+    const opening = this.deps.open(settings);
+    try {
+      return await getWithin(opening, this.deps);
+    } catch (error) {
+      opening.then((late) => late.turnOff(), () => undefined).catch((lateError: unknown) => this.deps.log.error({ err: lateError }, "remote access: a listener opened past its bound did not close"));
+      throw error;
     }
   }
 }

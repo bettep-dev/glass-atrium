@@ -48,7 +48,7 @@ export const REMOTE_ADMIN_LIMITS = {
   CONFIRM_READ: { limit: 20, windowMs: 60_000 },
 } as const;
 
-/** How long the off and a widening act wait on a store call or the listener close → a stalled call counts as failed. */
+/** How long the off and a widening act wait on a store call, the listener close or its reopen → a stalled call counts as failed. */
 const WAIT_TIMEOUT_MS = 5_000;
 
 // the whole file one certificate block → the download carries nothing outside the fingerprint shown
@@ -366,7 +366,7 @@ async function putAccessOff(request: FastifyRequest, deps: RemoteAdminDeps): Pro
 }
 
 /** @returns the work's value; rejects once the wait bound passes, the work left running */
-async function getWithin<T>(work: Promise<T>, deps: Pick<RemoteAdminDeps, "waitTimeoutMs">): Promise<T> {
+export async function getWithin<T>(work: Promise<T>, deps: Pick<RemoteAdminDeps, "waitTimeoutMs">): Promise<T> {
   const timeoutMs = deps.waitTimeoutMs ?? WAIT_TIMEOUT_MS;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
