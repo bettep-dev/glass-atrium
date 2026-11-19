@@ -34,5 +34,5 @@
       "note": "mermaid.core \u2014 arrives inside the plugin's lazily-imported render chunk; version read from the bundle, never installed as a global"
     }
   ],
-  "note": "IIFE re-package of an ESM-only plugin: the live install never runs npm install and the export page aborts every host but cdn.tailwindcss.com, so both surfaces read this one vendored file. Size is above the plan's 1.6MB estimate because an IIFE cannot code-split \u2014 esbuild inlines the plugin's lazily-imported render chunk and the mermaid copy that chunk carries."
+  "note": "IIFE re-package of an ESM-only plugin: the browser loads only what the monitor serves from public/, node_modules is never served, and the export page aborts every host but cdn.tailwindcss.com, so both surfaces read this one vendored file. Size is above the plan's 1.6MB estimate because an IIFE cannot code-split \u2014 esbuild inlines the plugin's lazily-imported render chunk and the mermaid copy that chunk carries."
 }
