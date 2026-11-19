@@ -352,7 +352,7 @@ const HISTORY_THREADS = {
   },
   // CHECK queue_items_closed_check → closed_at set on every row this matches
   item: {
-    items: Prisma.sql`i."kind" IN ('decision', 'report') AND i."status" <> 'open' AND ${NOT_PROBE_ITEM_FILTER}`,
+    items: Prisma.sql`i."kind" IN ('decision', 'report') AND i."status" <> 'open'`,
     time: Prisma.sql`i."closed_at"`,
     unsentKey: Prisma.sql`concat('i:', i."id")`,
   },
@@ -378,7 +378,7 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
       SELECT i."id", i."session_id", i."from_session_id", t."at", COALESCE(i."send_id"::text, ${thread.unsentKey}) AS "order_key"
       FROM "monitor"."queue_items" i
       CROSS JOIN LATERAL (SELECT ${getEpochMicrosSql(thread.time)} AS "at") t
-      WHERE ${thread.items} AND ${profileFilter}
+      WHERE ${thread.items} AND ${NOT_PROBE_ITEM_FILTER} AND ${profileFilter}
     ),
     orders AS (
       SELECT c."order_key", max(c."at") AS "at", min(c."id") AS "first_id" FROM copies c GROUP BY c."order_key" HAVING ${sessionFilter}

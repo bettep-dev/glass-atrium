@@ -915,6 +915,23 @@ describe("order history", () => {
     assert.deepEqual(pages, [[...expected[0]!, ...expected[1]!], [...expected[2]!, ...expected[3]!], [...expected[4]!, ...expected[5]!]]);
   });
 
+  test("leaves out the orders, replied reports and relays of a session that registered again as a probe", async () => {
+    const [kept, probe] = [await seedSession(), await seedSession()];
+    const sendId = randomUUID();
+    const keptCopy = await seedMessage(kept, minutesAgo(30), { sendId });
+    await seedMessage(probe, minutesAgo(30), { sendId });
+    await seedReply(probe, minutesAgo(20), "delivered");
+    const relay = { kind: "relay" as const, fromSessionId: kept, relayHop: 0, sendId: randomUUID(), isFreeTextAllowed: false, status: "answered" as const };
+    await seedItem(probe, relay);
+    await getPrisma().queueSession.update({ where: { sessionId: probe }, data: { isProbe: true } });
+
+    const orders = await getOrders(`sessionIds=${kept},${probe}`);
+    const relays = await getOrders(`kind=relay&sessionIds=${kept},${probe}`);
+
+    assert.deepEqual(orders.json().items.map((item: { id: number }) => item.id), [Number(keptCopy)], "order thread");
+    assert.deepEqual(relays.json().items, [], "relay thread");
+  });
+
   test("refuses a malformed session list, limit or cursor", async () => {
     const rows = [
       { name: "a session id that is no uuid", query: "sessionIds=not-a-uuid" },
