@@ -665,6 +665,47 @@ describe("the Galaxy procedure installs, then compares, and only then shows the 
   });
 });
 
+// the progress steps themselves, whatever control the markup offers or withholds
+describe("the progress steps hold the compare step's rules, not only its markup", () => {
+  type Progress = { open: number | null; done: boolean[] };
+  const getActs = async () => {
+    const { mod } = await loadScreen();
+    const put = mod.putProgressRA as (current: unknown, act: unknown) => Progress;
+    // the device's compare step, opened by Next presses through every step before it
+    const openCompare = (device: string) => {
+      const steps = (vm.runInContext("DEVICE_RA", mod) as Record<string, { steps: Array<{ kind: string }> }>)[device].steps;
+      const compare = steps.findIndex((step) => step.kind === "fingerprint");
+      let progress = put(null, { type: "choose", device });
+      for (let i = 0; i < compare; i++) progress = put(progress, { type: "next", hasFingerprint: true });
+      return { progress, compare };
+    };
+    return { put, openCompare };
+  };
+
+  for (const device of ["iphone", "galaxy"]) {
+    test(`${device}: Next from the compare step leaves progress as it was without a fingerprint and opens the next step with one`, async () => {
+      const { put, openCompare } = await getActs();
+      const { progress, compare } = openCompare(device);
+
+      const held = put(progress, { type: "next", hasFingerprint: false });
+      const moved = put(progress, { type: "next", hasFingerprint: true });
+
+      assert.equal(progress.open, compare);
+      assert.equal(held, progress, "the same progress, nothing marked");
+      assert.deepEqual({ open: moved.open, isCompareDone: moved.done[compare] }, { open: compare + 1, isCompareDone: true });
+    });
+  }
+
+  test("galaxy: the locked last step reopens only once the compare step is done", async () => {
+    const { put, openCompare } = await getActs();
+    const { progress, compare } = openCompare("galaxy");
+    const early = put(put(progress, { type: "back" }), { type: "reopen", index: compare + 1 });
+    const matched = put(put(put(progress, { type: "next", hasFingerprint: true }), { type: "back" }), { type: "reopen", index: compare + 1 });
+
+    assert.deepEqual({ early: early.open, matched: matched.open }, { early: compare - 1, matched: compare + 1 });
+  });
+});
+
 describe("the Galaxy's last step shows the address and the code typed first, the QR code beside them", () => {
   const ADDRESS = "https://192.168.0.12:16146";
   const OPEN = { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" };

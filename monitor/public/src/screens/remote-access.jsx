@@ -157,11 +157,19 @@ const PROGRESS_ACTS_RA = {
 	choose: (_, act) => ({ device: act.device, open: 0, done: DEVICE_RA[act.device].steps.map(() => false), isTroubleOpen: false, label: null }),
 	// Change device and Connect another device → every mark dropped, so one device's progress never opens another's step
 	restart: () => CHOICE_PROGRESS_RA,
-	next: (progress) => putOpenStepRA(progress, progress.open + 1, progress.done.map((isDone, i) => isDone || i === progress.open)),
+	// hasFingerprint → the compare step moves on only with a fingerprint on screen (ruling B5)
+	next: (progress, act) => {
+		if (!act.hasFingerprint && getCompareStepRA(progress) === progress.open) return progress;
+		return putOpenStepRA(progress, progress.open + 1, progress.done.map((isDone, i) => isDone || i === progress.open));
+	},
 	// the share sheet completes after the person may have moved on → only step 1 still open moves
-	sent: (progress) => (progress.open === 0 ? PROGRESS_ACTS_RA.next(progress) : progress),
+	sent: (progress, act) => (progress.open === 0 ? PROGRESS_ACTS_RA.next(progress, act) : progress),
 	back: (progress) => putOpenStepRA(progress, progress.open - 1),
-	reopen: (progress, act) => putOpenStepRA(progress, act.index),
+	// the locked step → only once the compare step is done, so no way round the match opens it
+	reopen: (progress, act) => {
+		const isLocked = act.index === DEVICE_RA[progress.device].lockedStep && !progress.done[getCompareStepRA(progress)];
+		return isLocked ? progress : putOpenStepRA(progress, act.index);
+	},
 	// a phone that already holds the certificate → the device's own jump step, every step before it done
 	jump: (progress) => {
 		const { jump } = DEVICE_RA[progress.device];
@@ -298,6 +306,10 @@ function putProgressRA(progress, act) {
 
 function putOpenStepRA(progress, open, done = progress.done) {
 	return { ...progress, open, done, isTroubleOpen: false };
+}
+
+function getCompareStepRA(progress) {
+	return DEVICE_RA[progress.device].steps.findIndex((step) => step.kind === "fingerprint");
 }
 
 function getWidenErrorTextRA(act, error) {
@@ -711,7 +723,7 @@ function PaneFootRA({ step, index, forward, hasFingerprint, onAct }) {
 	return (
 		<div className="control-row ra-pane-foot">
 			{index > 0 && <QuietButton onClick={() => onAct({ type: "back" })}>Back</QuietButton>}
-			{step.kind !== "scan" && <button type="button" className={nextClass} disabled={step.kind === "fingerprint" && !hasFingerprint} onClick={() => onAct({ type: "next" })}>{forward}</button>}
+			{step.kind !== "scan" && <button type="button" className={nextClass} disabled={step.kind === "fingerprint" && !hasFingerprint} onClick={() => onAct({ type: "next", hasFingerprint })}>{forward}</button>}
 		</div>
 	);
 }
