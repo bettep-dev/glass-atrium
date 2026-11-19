@@ -1,7 +1,7 @@
 // Cross-file lock for GET /api/queue/count, which counts every open and deviation item database-wide: node:test runs
 // files in parallel, so a neighbour's commit between the count test's two reads would skew its delta.
 // Suites committing queue items hold it shared for their whole run (seed through cleanup); a test needing no neighbour's
-// commit (the count test, the machine-wide relay breaker) takes it exclusive on the same connection.
+// commit (the count test, a relay test that seeds enough copies to need room under the machine-wide breaker) takes it exclusive on the same connection.
 // Own pg connection: a session-scoped advisory lock taken on a pooled Prisma session cannot be released on another.
 import "dotenv/config";
 

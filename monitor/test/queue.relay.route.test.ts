@@ -252,60 +252,62 @@ describe("relay copies", () => {
 
 describe("relay hop", () => {
   test("hop is one more than the highest relay the sender claimed or fetched in its window since its last owner item acked first", async () => {
-    const rows = [
-      { name: "nothing received", arrange: async () => null, hop: 0 },
-      { name: "a hop-2 relay sent but never claimed nor fetched", arrange: async (from: string, to: string) => { await seedRelay(from, to, { relayHop: 2 }); return null; }, hop: 0 },
-      {
-        name: "a hop-0 relay claimed",
-        arrange: async (from: string, to: string) => { const id = await seedRelay(from, to); await seedClaim(id, ago(60_000)); return id; },
-        hop: 1,
-      },
-      { name: "a hop-1 relay fetched with no claim", arrange: (from: string, to: string) => seedRelay(from, to, { relayHop: 1, relayFetchedAt: ago(60_000) }), hop: 2 },
-      {
-        name: "a hop-2 relay claimed 31 minutes ago and never acked",
-        arrange: async (from: string, to: string) => { const id = await seedRelay(from, to, { relayHop: 2 }); await seedClaim(id, ago(31 * 60_000)); return id; },
-        hop: 3,
-      },
-      {
-        name: "a hop-2 relay claimed 25 hours ago",
-        arrange: async (from: string, to: string) => { await seedClaim(await seedRelay(from, to, { relayHop: 2 }), ago(25 * HOUR_MS)); return null; },
-        hop: 0,
-      },
-      {
-        name: "a hop-2 relay claimed, then an owner message acked first",
-        arrange: async (from: string, to: string) => {
-          await seedClaim(await seedRelay(from, to, { relayHop: 2 }), ago(10 * 60_000));
-          await seedOwnerMessageAckedFirst(to, ago(5 * 60_000));
-          return null;
+    await withQueueRowsExclusive(async () => {
+      const rows = [
+        { name: "nothing received", arrange: async () => null, hop: 0 },
+        { name: "a hop-2 relay sent but never claimed nor fetched", arrange: async (from: string, to: string) => { await seedRelay(from, to, { relayHop: 2 }); return null; }, hop: 0 },
+        {
+          name: "a hop-0 relay claimed",
+          arrange: async (from: string, to: string) => { const id = await seedRelay(from, to); await seedClaim(id, ago(60_000)); return id; },
+          hop: 1,
         },
-        hop: 0,
-      },
-      {
-        name: "an owner message acked first, then a hop-1 relay claimed",
-        arrange: async (from: string, to: string) => {
-          await seedOwnerMessageAckedFirst(to, ago(10 * 60_000));
-          const id = await seedRelay(from, to, { relayHop: 1 });
-          await seedClaim(id, ago(5 * 60_000));
-          return id;
+        { name: "a hop-1 relay fetched with no claim", arrange: (from: string, to: string) => seedRelay(from, to, { relayHop: 1, relayFetchedAt: ago(60_000) }), hop: 2 },
+        {
+          name: "a hop-2 relay claimed 31 minutes ago and never acked",
+          arrange: async (from: string, to: string) => { const id = await seedRelay(from, to, { relayHop: 2 }); await seedClaim(id, ago(31 * 60_000)); return id; },
+          hop: 3,
         },
-        hop: 2,
-      },
-    ];
-    for (const row of rows) {
-      const [peer, sender, recipient] = [await seedSession(), await seedSession(), await seedSession()];
-      const parent = await row.arrange(peer, sender);
+        {
+          name: "a hop-2 relay claimed 25 hours ago",
+          arrange: async (from: string, to: string) => { await seedClaim(await seedRelay(from, to, { relayHop: 2 }), ago(25 * HOUR_MS)); return null; },
+          hop: 0,
+        },
+        {
+          name: "a hop-2 relay claimed, then an owner message acked first",
+          arrange: async (from: string, to: string) => {
+            await seedClaim(await seedRelay(from, to, { relayHop: 2 }), ago(10 * 60_000));
+            await seedOwnerMessageAckedFirst(to, ago(5 * 60_000));
+            return null;
+          },
+          hop: 0,
+        },
+        {
+          name: "an owner message acked first, then a hop-1 relay claimed",
+          arrange: async (from: string, to: string) => {
+            await seedOwnerMessageAckedFirst(to, ago(10 * 60_000));
+            const id = await seedRelay(from, to, { relayHop: 1 });
+            await seedClaim(id, ago(5 * 60_000));
+            return id;
+          },
+          hop: 2,
+        },
+      ];
+      for (const row of rows) {
+        const [peer, sender, recipient] = [await seedSession(), await seedSession(), await seedSession()];
+        const parent = await row.arrange(peer, sender);
 
-      const response = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." });
+        const response = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." });
 
-      if (row.hop === 3) {
-        assert.deepEqual([response.statusCode, response.json().error], [409, "relay_hop"], row.name);
-        assert.equal((await findRelaysFrom(sender)).length, 0, row.name);
-        continue;
+        if (row.hop === 3) {
+          assert.deepEqual([response.statusCode, response.json().error], [409, "relay_hop"], row.name);
+          assert.equal((await findRelaysFrom(sender)).length, 0, row.name);
+          continue;
+        }
+        assert.equal(response.statusCode, 201, `${row.name}: ${response.body}`);
+        const [copy] = await findRelaysFrom(sender);
+        assert.deepEqual([response.json().hop, copy?.relayHop, copy?.relayParentId ?? null], [row.hop, row.hop, parent], row.name);
       }
-      assert.equal(response.statusCode, 201, `${row.name}: ${response.body}`);
-      const [copy] = await findRelaysFrom(sender);
-      assert.deepEqual([response.json().hop, copy?.relayHop, copy?.relayParentId ?? null], [row.hop, row.hop, parent], row.name);
-    }
+    });
   });
 
   test("a hop-2 relay claimed through pending and fetched without an ack still sets the hop", async () => {
@@ -324,18 +326,20 @@ describe("relay hop", () => {
 
 describe("relay caps", () => {
   test("a call is refused when its copies would pass the sender's 10 per rolling hour; older copies do not count", async () => {
-    const sender = await seedSession();
-    const earlier = [await seedSession(), await seedSession(), await seedSession(), await seedSession()];
-    for (const [index, to] of [...earlier, ...earlier].entries()) await seedRelay(sender, to, { askedAt: ago(30 * 60_000 + index) });
-    for (const to of earlier.slice(0, 3)) await seedRelay(sender, to, { askedAt: ago(61 * 60_000) });
-    const fresh = [await seedSession(), await seedSession(), await seedSession()];
+    await withQueueRowsExclusive(async () => {
+      const sender = await seedSession();
+      const earlier = [await seedSession(), await seedSession(), await seedSession(), await seedSession()];
+      for (const [index, to] of [...earlier, ...earlier].entries()) await seedRelay(sender, to, { askedAt: ago(30 * 60_000 + index) });
+      for (const to of earlier.slice(0, 3)) await seedRelay(sender, to, { askedAt: ago(61 * 60_000) });
+      const fresh = [await seedSession(), await seedSession(), await seedSession()];
 
-    const over = await relay({ sessionId: sender, recipients: fresh.map(prefixOf), text: "Lint is green." });
-    const atCap = await relay({ sessionId: sender, recipients: fresh.slice(0, 2).map(prefixOf), text: "Lint is green." });
+      const over = await relay({ sessionId: sender, recipients: fresh.map(prefixOf), text: "Lint is green." });
+      const atCap = await relay({ sessionId: sender, recipients: fresh.slice(0, 2).map(prefixOf), text: "Lint is green." });
 
-    assert.deepEqual([over.statusCode, over.json().error], [429, "relay_sender_cap"]);
-    assert.equal(atCap.statusCode, 201, atCap.body);
-    assert.equal((await findRelaysFrom(sender)).filter((row) => fresh.includes(row.sessionId)).length, 2);
+      assert.deepEqual([over.statusCode, over.json().error], [429, "relay_sender_cap"]);
+      assert.equal(atCap.statusCode, 201, atCap.body);
+      assert.equal((await findRelaysFrom(sender)).filter((row) => fresh.includes(row.sessionId)).length, 2);
+    });
   });
 
   test("a call a cap refuses never reaches the secret scan", async () => {
@@ -357,18 +361,20 @@ describe("relay caps", () => {
   });
 
   test("a sender reaches one recipient at most 5 times per rolling hour; another recipient still takes its copy", async () => {
-    const sender = await seedSession();
-    const [recipient, other] = [await seedSession(), await seedSession()];
-    for (let index = 0; index < 4; index += 1) await seedRelay(sender, recipient, { askedAt: ago(20 * 60_000 + index) });
-    await seedRelay(sender, recipient, { askedAt: ago(61 * 60_000) });
+    await withQueueRowsExclusive(async () => {
+      const sender = await seedSession();
+      const [recipient, other] = [await seedSession(), await seedSession()];
+      for (let index = 0; index < 4; index += 1) await seedRelay(sender, recipient, { askedAt: ago(20 * 60_000 + index) });
+      await seedRelay(sender, recipient, { askedAt: ago(61 * 60_000) });
 
-    const fifth = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." });
-    const sixth = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." });
-    const elsewhere = await relay({ sessionId: sender, recipients: [prefixOf(other)], text: "Lint is green." });
+      const fifth = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." });
+      const sixth = await relay({ sessionId: sender, recipients: [prefixOf(recipient)], text: "Lint is green." });
+      const elsewhere = await relay({ sessionId: sender, recipients: [prefixOf(other)], text: "Lint is green." });
 
-    assert.equal(fifth.statusCode, 201, fifth.body);
-    assert.deepEqual([sixth.statusCode, sixth.json().error], [429, "relay_pair_cap"]);
-    assert.equal(elsewhere.statusCode, 201, elsewhere.body);
+      assert.equal(fifth.statusCode, 201, fifth.body);
+      assert.deepEqual([sixth.statusCode, sixth.json().error], [429, "relay_pair_cap"]);
+      assert.equal(elsewhere.statusCode, 201, elsewhere.body);
+    });
   });
 
   test("the machine-wide breaker takes copy 30 in a rolling hour and refuses copy 31, spread over 6 senders each under its own caps", async () => {
