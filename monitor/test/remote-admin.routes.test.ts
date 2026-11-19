@@ -6,8 +6,11 @@ import test, { after, before, beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import net from "node:net";
+import path from "node:path";
 import { Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import "dotenv/config";
@@ -701,6 +704,20 @@ describe("the confirm read", () => {
 });
 
 describe("the certificate download", () => {
+  // the person finds the certificate on the device by the CN the shell writes → the screen and the file name must say the same
+  const MONITOR_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const CA_CN_LINE = /^\s*'CN = ([^']+)'/m;
+  // the screen's lines that send the person to the certificate by name
+  const STEP_ANCHORS = ["Certificate Trust Settings", "AirDrop", "Profile Downloaded, then More Details", "Device Management →"];
+
+  test("the download's file name and every screen step naming the certificate carry the CN the shell writes into the CA", async () => {
+    const shell = await readFile(path.join(MONITOR_DIR, "..", "lib", "ga-remote.sh"), "utf8");
+    const screenLines = (await readFile(path.join(MONITOR_DIR, "public", "src", "screens", "remote-access.jsx"), "utf8")).split("\n");
+    const cn = CA_CN_LINE.exec(shell)?.[1] ?? "no CN line in the CA config";
+    const unnamed = STEP_ANCHORS.filter((anchor) => !screenLines.some((line) => line.includes(anchor) && line.includes(cn)));
+    assert.deepEqual([CA_DOWNLOAD.FILE_NAME, unnamed], [`${cn}.pem`, []]);
+  });
+
   test("serves the one CA file as an attachment with a fixed name and type, its bytes hashing to the fingerprint the setup read shows", async () => {
     const response = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE });
     const setup = JSON.parse((await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.SETUP })).body) as { fingerprint: string };
