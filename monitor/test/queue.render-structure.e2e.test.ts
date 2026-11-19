@@ -828,10 +828,10 @@ async function focusByKeyboard(page: Page, target: Locator): Promise<void> {
 /**
  * Desk column widths per viewport (spec 44063 §3.2): main = viewport − 268, two gaps of 16; the rail per step;
  * the middle pane the page — 66ch of the desk's text + two 32 gutters, measured in the page — or, below a 1505 window,
- * what Orders' 320 leaves; Orders the rest.
+ * what Orders' minimum leaves: 272 under the 1440 step, which gives the 1280 rail and list row 16 and 32 more, else 320; Orders the rest.
  */
 const DESK_WIDTHS = [
-  { viewport: { width: 1280, height: 800 }, rail: 208, middle: 452 },
+  { viewport: { width: 1280, height: 800 }, rail: 224, middle: 484 },
   { viewport: VIEWPORTS[0], rail: 232, middle: 588 },
   { viewport: { width: 1568, height: 759 }, rail: 232, middle: "page" },
   { viewport: VIEWPORTS[1], rail: 248, middle: "page" },
@@ -840,7 +840,7 @@ const DESK_WIDTHS = [
   { viewport: { width: 2560, height: 1440 }, rail: 280, middle: "page" },
 ] as const;
 const SHELL_INLINE = 268;
-const ORDERS = { MIN: 320, COLUMN_MAX: 720 };
+const ORDERS = { MIN: { BELOW_1440: 272, FROM_1440: 320 }, COLUMN_MAX: 720 };
 
 interface DeskFacts {
   isScrolled: boolean;
@@ -1191,6 +1191,7 @@ function getRailColumnFacts() {
     starts: new Set(lines.map((line) => getColumns(line).map((column) => Math.round(column.left)).join(","))).size,
     tracks: [...new Set(lines.map((line) => getComputedStyle(line).gridTemplateColumns))].map((tracks) => tracks.split(" ").map((track) => Math.round(parseFloat(track)))),
     misplaced, slots, rows: getHeights(".queue-rail-row"), bands: getHeights(".queue-rail-band"),
+    isAllWhole: [...document.querySelectorAll(".queue-rail-all")].every((label) => label.scrollWidth <= label.clientWidth),
   };
 }
 
@@ -1397,7 +1398,7 @@ describe("queue page on the mockup fixtures", () => {
       const size = `${row.viewport.width}x${row.viewport.height}`;
       const middle = row.middle === "page" ? rest.page : row.middle;
       const orders = row.viewport.width - SHELL_INLINE - row.rail - middle - 32;
-      assert.ok(orders >= ORDERS.MIN, `${size}: Orders ${orders} keeps its minimum`);
+      assert.ok(orders >= (row.viewport.width < 1440 ? ORDERS.MIN.BELOW_1440 : ORDERS.MIN.FROM_1440), `${size}: Orders ${orders} keeps its minimum`);
       assert.deepEqual([rest.isScrolled, rest.rail?.[1], rest.list?.[1], rest.sheet, rest.orders?.[1]], [false, row.rail, middle, null, orders], `${size} at rest`);
       assert.deepEqual(opened, { ...rest, list: null, sheet: rest.list }, `${size} with a row opened`);
     }
@@ -1612,7 +1613,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §9.1, §14.3: a department reads left to right on one set of columns — box · state mark · name · tag · count — both bands on them too
-  test("every rail row and both bands share the box, mark, name, tag and count columns at 1280, 1440 and 1568, each slot inside its column, rows one 44 line and bands 32", async (t) => {
+  test("every rail row and both bands share the box, mark, name, tag and count columns at 1280, 1440 and 1568, each slot inside its column, All sessions whole, rows one 44 line and bands 32", async (t) => {
     harness.fixture = getRailFixture();
     const shown = [];
     for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
@@ -1627,8 +1628,8 @@ describe("queue page on the mockup fixtures", () => {
     for (const at of shown) {
       // the name column takes the rest of the rail (spec §9.1) → its width is the step's, never under the 1280 step's
       assert.deepEqual(
-        { starts: at.starts, tracks: at.tracks.map(([box, mark, , tag, count]) => [box, mark, tag, count]), misplaced: at.misplaced, rows: at.rows, bands: at.bands },
-        { starts: 1, tracks: [[24, 8, 16, 36]], misplaced: [], rows: [44], bands: [32] },
+        { starts: at.starts, tracks: at.tracks.map(([box, mark, , tag, count]) => [box, mark, tag, count]), misplaced: at.misplaced, isAllWhole: at.isAllWhole, rows: at.rows, bands: at.bands },
+        { starts: 1, tracks: [[24, 8, 16, 36]], misplaced: [], isAllWhole: true, rows: [44], bands: [32] },
         `at ${at.width}`,
       );
       assert.ok((at.tracks[0]?.[2] ?? 0) >= 56, `at ${at.width}: name column ${at.tracks[0]?.[2]}`);
@@ -2892,17 +2893,18 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 44, isCut: true, isInsideRail: true });
     });
 
-    // spec §4.2, §14.3: one 44 line on fixed columns — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
-    // either side of the title; an empty tag or fact cell keeps its width; under 160 of title (1280, names shown) the fact column is left out.
+    // spec §4.2, §14.3: one 44 line on fixed columns — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
+    // either side of the title; an empty tag or fact cell keeps its width; under 160 of title (1280, names shown) the fact column is left out,
+    // and the 1280 title still holds about 12 Hangul.
     // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it;
     // the done list (spec §4.6) and relays on their way (spec §9.9) draw their rows on the same columns
-    test("with nothing ticked every list row, open, done or a relay on its way, is one 44 line on the same columns at 1280, 1440 and 1568, empty cells keeping their width, the fact column left out at 1280, a 100-character name cut inside its 104", async () => {
+    test("with nothing ticked every list row, open, done or a relay on its way, is one 44 line on the same columns at 1280, 1440 and 1568, empty cells keeping their width, the fact column left out at 1280 with 200 of title, a 100-character name cut inside its 80", async () => {
       // each cell's x from the row's start and its width; a cell drawn nowhere → `-`
       const getLayout = (width: number, isFactShown: boolean) => {
         const fixed = [80, isFactShown ? 64 : 0, 32, 16];
-        const title = width - 32 - 104 - fixed.reduce((sum, one) => sum + one) - 8 * (isFactShown ? 5 : 4) - 8;
+        const title = width - 32 - 80 - fixed.reduce((sum, one) => sum + one) - 8 * (isFactShown ? 5 : 4) - 8;
         let x = 16;
-        return [[104, 12], [title, 12], ...fixed.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
+        return [[80, 12], [title, 12], ...fixed.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
           const at = cell === 0 ? "-" : `${x}+${cell}`;
           x += cell! + after!;
           return at;
@@ -2941,7 +2943,9 @@ describe("queue page on the mockup fixtures", () => {
         shown.map(({ width, rowWidths, layouts, heights, isLongCut }) => ({ width, layouts, heights, isLongCut, pane: rowWidths[0] })),
         shown.map(({ width, rowWidths }) => ({ width, layouts: [getLayout(rowWidths[0]!, width !== 1280)], heights: [44], isLongCut: true, pane: rowWidths[0] })),
       );
-      assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [450, 450, 450, 450, 586, 586, 586, 586], "the panes of spec §4.2, less the card's two 1 px borders");
+      assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [482, 482, 482, 482, 586, 586, 586, 586], "the panes of DESK_WIDTHS, less the card's two 1 px borders");
+      const titles1280 = shown.filter((one) => one.width === 1280).map((one) => Number(one.layouts[0]?.split(" ")[1]?.split("+")[1]));
+      assert.ok(titles1280.every((title) => title >= 200), `the 1280 title holds 200: ${titles1280}`);
     });
 
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it

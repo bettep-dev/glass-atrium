@@ -450,11 +450,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-height: 608px;
 }
 /* three fixed-role columns at every width (spec §3.2): the rail steps with the viewport; the middle pane is the 66ch page and its two
-   32 gutters, yielding only where Orders would drop under its minimum; Orders takes the rest. The ch resolves on the desk's 15px text */
+   32 gutters, yielding only where Orders would drop under its minimum; Orders takes the rest. The ch resolves on the desk's 15px text.
+   Under 1440 Orders yields 48 → the rail keeps "All sessions" whole and a list title holds about 12 Hangul */
 .queue-desk {
-	--queue-rail-w: 208px;
+	--queue-rail-w: 224px;
 	--queue-page-max: calc(var(--measure-prose) + 2 * var(--space-8));
-	--queue-orders-min: 320px;
+	--queue-orders-min: 272px;
 	--queue-thread-w: 720px;
 	flex: 1 1 auto;
 	min-height: 560px;
@@ -469,7 +470,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-size: var(--fs-body);
 }
 @media (min-width: 1440px) {
-	.queue-desk { --queue-rail-w: 232px; }
+	.queue-desk { --queue-rail-w: 232px; --queue-orders-min: 320px; }
 }
 @media (min-width: 1728px) {
 	.queue-desk { --queue-rail-w: 248px; }
@@ -1045,10 +1046,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	top: 0;
 	z-index: 1;
 }
-/* a row (spec §4.2): one 20 line between 12 paddings → 44, on fixed columns — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16;
-   8 between columns, the title's 4 margins making its 12 on either side; every cell drawn → an empty one keeps its width */
+/* a row (spec §4.2): one 20 line between 12 paddings → 44, on fixed columns — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16;
+   8 between columns, the title's 4 margins making its 12 on either side; every cell drawn → an empty one keeps its width.
+   80 holds "12 sessions" whole */
 .queue-row {
-	--queue-row-cols: 104px minmax(0, 1fr) 80px 64px 32px 16px;
+	--queue-row-cols: 80px minmax(0, 1fr) 80px 64px 32px 16px;
 	display: grid;
 	grid-template-columns: var(--queue-row-cols);
 	column-gap: var(--space-2);
@@ -1063,9 +1065,9 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	--queue-row-cols: minmax(0, 1fr) 80px 64px 32px 16px;
 }
 /* under 160 of title the fact column is left out — the 1280 list with names shown; the fact stays in the row's title and name */
-@container queue-list (width < 536px) {
+@container queue-list (width < 512px) {
 	.queue-row:has(> .queue-row-who) {
-		--queue-row-cols: 104px minmax(0, 1fr) 80px 32px 16px;
+		--queue-row-cols: 80px minmax(0, 1fr) 80px 32px 16px;
 	}
 	.queue-row:has(> .queue-row-who) > .queue-row-fact {
 		display: none;
