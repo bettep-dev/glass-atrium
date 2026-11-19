@@ -33,6 +33,12 @@ readonly QUEUE_SOURCE_SHAPE='^(owner|peer)$'
 # the fields a session sets per kind; the session id and the kind come from the environment and the dispatch
 readonly QUEUE_ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
   "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
+# the adapter's tool descriptions the CLI's usage text shares, by tool name
+# shellcheck disable=SC2034  # read by both front ends
+readonly QUEUE_TOOL_DESCRIPTIONS='{
+  "claim":"Fetch and acknowledge what was delivered to this session: everything, or one item by its item id and msg id. A delivered item whose fetch or ack failed is listed under unclaimed with its item id, msg id and failing step: claim it again by those ids.",
+  "sessions":"List the peer sessions a relay may reach.",
+  "relay":"Relay a text to peer sessions, each named by a name or id prefix that sessions lists."}'
 
 # JSON on stdin → one compact document per value, every C1 control, U+2028 / U+2029 and the tag brackets as \u escapes;
 # jq escapes C0 → no string can begin a visual line or carry a raw tag, and the values decode unchanged

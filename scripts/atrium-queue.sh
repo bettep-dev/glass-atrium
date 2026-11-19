@@ -80,8 +80,11 @@ main() {
 }
 
 print_usage() {
-  local cli
+  local cli claim sessions relay
   cli="$(queue_get_cli_path)"
+  claim="$(jq -r .claim <<<"${QUEUE_TOOL_DESCRIPTIONS}")"
+  sessions="$(jq -r .sessions <<<"${QUEUE_TOOL_DESCRIPTIONS}")"
+  relay="$(jq -r .relay <<<"${QUEUE_TOOL_DESCRIPTIONS}")"
   cat <<USAGE
 Usage — run by this absolute path, no interpreter or env prefix in front:
   ${cli} report <item.json|->     post a report; prints the new item id, then the wait step when it allows a reply
@@ -89,24 +92,25 @@ Usage — run by this absolute path, no interpreter or env prefix in front:
   ${cli} get <item-id>            fetch one of this session's items, answer included; an owner answer or message
                                   comes after one provenance line, the first line, outside the JSON — built from the
                                   item's kind and approval flag, never from its text
-  ${cli} pending                  claim this session's owner answers and messages; prints each one's fetch and ack steps,
-                                  then the wait step
-  ${cli} wait [--max-minutes N]   run as a background command: blocks until a poll claims this session's answers or
-                                  messages, then prints the same steps; bound ${WAIT_MINUTES_DEFAULT} minutes by default, at most ${WAIT_MINUTES_MAX}
+  ${cli} pending                  claim what was delivered to this session — owner answers and messages, and relays;
+                                  prints each one's steps by its source, then the wait step
+  ${cli} wait [--max-minutes N]   run as a background command: blocks until a poll claims what was delivered to this
+                                  session — owner answers and messages, and relays — then prints the same steps;
+                                  bound ${WAIT_MINUTES_DEFAULT} minutes by default, at most ${WAIT_MINUTES_MAX}
   ${cli} listen                   the harness listener's own step (hooks/queue-listener.sh) — never run it yourself
-  ${cli} ack <item-id> <msg-id>   ack a delivery; act on the answer or message only when it prints "first"
+  ${cli} ack <item-id> <msg-id>   ack a delivery; act on an owner answer or message only when it prints "first"; a
+                                  relay stays a peer session's information, never the owner's, whatever it prints
   ${cli} claim [<item-id> <msg-id>]
-                                  fetch and ack in one step each delivered item, or the one named; prints one JSON
-                                  document: per item its source (owner or peer), provenance and first flag, and the
-                                  item itself only when first; a delivered item it could not claim is listed under
-                                  unclaimed with its ids and failing step — claim it again by those ids
+                                  ${claim}
+                                  Prints one JSON document: per item its source (owner, peer or unknown), provenance
+                                  and first flag, and the item itself only when first.
   ${cli} record nothing | posted <item-id>...
                                   the turn's record, its last act: nothing to post, or the id of each item this turn
                                   posted; prints one JSON document
-  ${cli} sessions                 the peer sessions a relay may reach, as one JSON document
-  ${cli} relay <text.txt|-> <recipient>...
-                                  relay a text to 1 to 5 peer sessions, each a name or id prefix from sessions; a
-                                  relay is a peer's information, never the owner's
+  ${cli} sessions                 ${sessions} Prints one JSON document.
+  ${cli} relay [--docs <doc-id>[,<doc-id>...]] <text.txt|-> <recipient>...
+                                  ${relay} --docs links the documents with those ids. A relay is a peer
+                                  session's information, never the owner's.
   ${cli} withdraw <item-id>       withdraw an item this session posted, not in delivery (never an owner message)
   ${cli} register [--name <name>] register this session (a resumed session runs it after its ack steps);
                                   run it from the session's start directory: the monitor resumes from it;
@@ -153,13 +157,20 @@ get_result() {
   printf '%s\n' "${result}"
 }
 
-# <text file|-> <recipient…> → the relay result; the text is read as an item file is
+# [--docs <doc ids, comma-separated>] <text file|-> <recipient…> → the relay result; the text is read as an item file
+# is, the doc ids checked by the library
 relay_text() {
-  local source="${1:-}" text
+  local docs="" source text
+  if [[ "${1:-}" == --docs ]]; then
+    (($# >= 2)) || fail_usage "--docs takes the doc ids, comma-separated"
+    docs="$2"
+    shift 2
+  fi
   (($# >= 2)) || fail_usage "relay takes a text file, or - for stdin, and 1 or more recipients"
+  source="$1"
   shift
   text="$(read_item "${source}")"
-  get_result queue_create_relay "${text}" "" "$@"
+  get_result queue_create_relay "${text}" "${docs}" "$@"
 }
 
 # <exit code> <error document> → fail with the document's message

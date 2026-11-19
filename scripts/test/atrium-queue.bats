@@ -1332,6 +1332,33 @@ mark_awaiting() {
   }
 }
 
+@test "help describes claim, sessions and relay in the adapter's own tool words, and names relays among what pending, wait and ack handle" {
+  local tools cli_path="${GA_ROOT}/scripts/atrium-queue.sh" name description block
+  tools="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+    | CLAUDE_CODE_ENTRYPOINT=cli "${GA}/scripts/atrium-queue-mcp.sh" 2>/dev/null)"
+  run_cli help
+  [[ "${status}" -eq 0 ]] || {
+    echo "status=${status} ${stderr}"
+    return 1
+  }
+  for name in claim sessions relay; do
+    description="$(jq -r --arg n "${name}" '.result.tools[] | select(.name == $n) | .description' <<<"${tools}")"
+    [[ -n "${description}" && "${output}" == *"${description}"* ]] || {
+      echo "tool ${name}: ${description:-no description} — ${output}"
+      return 1
+    }
+  done
+  for name in pending wait ack; do
+    # the command's usage line and its continuation lines, up to the next command
+    block="$(awk -v head="  ${cli_path} ${name}" 'index($0, head) == 1 { on = 1; print; next }
+      on && /^  [^ ]/ { exit } on { print }' <<<"${output}")"
+    [[ "${block}" == *relay* ]] || {
+      echo "command ${name}: ${block:-no usage line}"
+      return 1
+    }
+  done
+}
+
 @test "an unknown command or no command prints usage and exits 64" {
   local row
   for row in "unknown|frobnicate" "none|"; do
@@ -1597,6 +1624,24 @@ mark_awaiting() {
     cat "${BATS_TEST_TMPDIR}/requests.log"
     return 1
   }
+}
+
+@test "relay links the doc ids --docs lists, as the relay tool does, and refuses a malformed list before the monitor" {
+  start_stub
+  set_reply 201 '{"sendId":"7d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a","hop":0,"copies":[{"id":30,"sessionIdPrefix":"0a1b2c3d"}]}'
+  local row label docs want expected_status args sent
+  for row in "two ids|43944,43951|[43944,43951]|0" "no list||null|0" "a non-number|43944,x||64" "a zero|0||64"; do
+    IFS='|' read -r label docs want expected_status <<<"${row}"
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    args=()
+    [[ -z "${docs}" ]] || args=(--docs "${docs}")
+    run --separate-stderr "${CLI}" relay ${args[@]+"${args[@]}"} - 0a1b2c3d <<<"The suite is green."
+    sent="$(request_body /api/queue/relay | jq -c '.linkedDocIds')"
+    [[ "${status}" -eq "${expected_status}" && "${sent}" == "${want}" ]] || {
+      echo "row ${label}: status=${status} sent=${sent} ${output}${stderr}"
+      return 1
+    }
+  done
 }
 
 # this session's turn record file, as the record operation writes it
