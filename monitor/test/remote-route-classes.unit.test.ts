@@ -76,6 +76,8 @@ const SIGNED_ACCESS_LINES = [
 ];
 // the access, setup and certificate reasons re-signed in place: route, class and order kept, so the 115-row digest stays
 const CLOSE_CID = "2026-11-19T0700_onboarding-close_8e2d";
+// the on, trust, network-read and single html-export reasons re-signed in place: route, class and order kept, so the 115-row digest stays
+const SIGN_LAST_CID = "2026-11-19T0945_onboarding-close2_5b7c";
 // the 108-row table of the re-sign and the devices re-sign
 const SIGN_IN_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
 // the 109-row table the access rows extend → its digest still verifies over the live table's leading rows
@@ -170,13 +172,13 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer, the close re-sign, the onboarding verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
+  test("the latest sign-off names the reviewer, the last re-sign, the close re-sign, the onboarding verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
     assert.deepEqual(
       { reviewer: latest?.reviewer, cids: latest?.cids },
       {
         reviewer: "glass-atrium-sec-guard",
-        cids: [CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS],
+        cids: [SIGN_LAST_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS],
       },
     );
   });
@@ -197,6 +199,7 @@ describe("reviewer sign-offs", () => {
         [[PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, OWNER_ROWS_CID],
         [[OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, ONBOARDING_CID],
         [[ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, CLOSE_CID],
+        [[CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, SIGN_LAST_CID],
       ],
     );
   });
