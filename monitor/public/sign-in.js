@@ -7,9 +7,9 @@
 	const BUTTON_LABEL = { idle: "Register device", busy: "Registering…" };
 	// server error → message + the field it marks; registration_refused = one answer for a wrong, expired, used or unopened code
 	const REFUSALS = {
-		registration_refused: { text: "Code not accepted — open a new code on the Mac (step 5) and enter it", field: "code" },
-		label_invalid: { text: "Device name not accepted — use letters, numbers, spaces, . _ - (the code is still valid)", field: "label" },
-		device_limit_reached: { text: "Device limit reached — remove a device on the Mac, then open a new code", field: null },
+		registration_refused: { text: "Code not accepted — show a new code on the Mac and use it", field: "code" },
+		label_invalid: { text: "Device name not accepted — use letters, numbers, spaces, . _ -", field: "label" },
+		device_limit_reached: { text: "Device limit reached — remove a device on the Mac, then show a new code", field: null },
 		too_many_requests: { text: "Too many tries — wait a minute, then try again", field: null },
 	};
 	const MISSING = {

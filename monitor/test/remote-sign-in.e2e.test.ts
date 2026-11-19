@@ -21,9 +21,9 @@ const SIGN_IN_FILES = ["/sign-in.html", "/sign-in.js", "/sign-in.css"];
 const WAIT_TIMEOUT_MS = 15_000;
 
 const REFUSALS = [
-  { name: "a refused code shows the one opaque refusal and marks the code field", answer: { status: 400, error: "registration_refused" }, message: /Code not accepted — open a new code on the Mac \(step 5\) and enter it/, invalidField: "Code" },
-  { name: "a refused device name marks the name field and keeps the code valid", answer: { status: 400, error: "label_invalid" }, message: /Device name not accepted.*code is still valid/, invalidField: "Device name" },
-  { name: "the device limit says to remove a device on the Mac", answer: { status: 409, error: "device_limit_reached" }, message: /Device limit reached — remove a device on the Mac, then open a new code/, invalidField: null },
+  { name: "a refused code shows the one opaque refusal and marks the code field", answer: { status: 400, error: "registration_refused" }, message: /Code not accepted — show a new code on the Mac and use it/, invalidField: "Code" },
+  { name: "a refused device name marks the name field", answer: { status: 400, error: "label_invalid" }, message: /^Device name not accepted — use letters, numbers, spaces, \. _ -$/, invalidField: "Device name" },
+  { name: "the device limit says to remove a device on the Mac", answer: { status: 409, error: "device_limit_reached" }, message: /Device limit reached — remove a device on the Mac, then show a new code/, invalidField: null },
   { name: "too many tries says to wait before the next one", answer: { status: 429, error: "too_many_requests" }, message: /Too many tries — wait a minute/, invalidField: null },
   { name: "any other refusal names its HTTP status", answer: { status: 503, error: "audit_unavailable" }, message: /Not registered \(HTTP 503\)/, invalidField: null },
   { name: "a request that never reaches the Mac says to check the network", answer: null, message: /Not sent — check this device is on the Mac's network, then try again/, invalidField: null },
@@ -71,16 +71,17 @@ describe("sign-in page load", () => {
     });
   });
 
-  test("the page says to open a code at the Mac's step 5 and warns before a connection that is not private, with no certificate steps", async () => {
+  test("the page says to check the code and name the device, and warns before a connection that is not private, with no certificate steps", async () => {
     await withPage(async (page) => {
       await openSignIn(page);
 
       const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
 
-      assert.match(text, /Open a code on the Mac at step 5, then enter it here\. This device stays registered until it is removed on the Mac\./);
+      assert.match(text, /Check the code, name this device, then tap Register device\./);
       assert.match(text, /One use · a new code on the Mac replaces it/);
       assert.equal(await page.getByRole("heading", { name: "Connection warning" }).count(), 1);
-      assert.match(text, /said the connection is not private, stop and do not enter the code\. On the Mac, finish steps 1 to 3, then reopen this page\./);
+      assert.match(text, /If the browser warned this connection is not private, close this page\./);
+      assert.doesNotMatch(text, /step \d/i, "the steps differ by device, so the page names no step number");
       assert.doesNotMatch(text, /Remote access|Connect a device|Registered devices/, "a page shown before sign-in names no Mac screen or feature");
       assert.equal(await page.getByRole("heading", { name: "Certificate" }).count(), 0, "the certificate steps live on the Mac screen only");
       assert.doesNotMatch(text, /fingerprint|SHA-256|AirDrop|~\/|\.pem|revoke|Open registration|Android/i);
@@ -109,6 +110,19 @@ describe("sign-in page load", () => {
 });
 
 describe("registering the device", () => {
+  test("a submit before the script binds posts the entry, so the code never lands in an address", async () => {
+    await withPage(async (page) => {
+      await page.route("**/sign-in.js", (route) => route.abort());
+      await openSignIn(page);
+
+      const navigation = page.waitForRequest((request) => request.isNavigationRequest(), { timeout: WAIT_TIMEOUT_MS });
+      await submit(page, { code: "ABCDEFGH", label: "Pixel 9" });
+      const request = await navigation;
+
+      assert.deepEqual({ method: request.method(), hasCode: request.url().includes("ABCDEFGH") }, { method: "POST", hasCode: false });
+    });
+  });
+
   test("sends the code as the Mac shows it and the trimmed name, then opens the monitor", async () => {
     await withPage(async (page) => {
       const sent: { body: unknown; contentType: string | undefined }[] = [];
