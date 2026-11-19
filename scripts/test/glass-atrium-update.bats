@@ -523,6 +523,56 @@ STUB
   [[ ! -e "${WORK}/.claude.json" && "${settings}" == '{"hooks":{}}' ]]
 }
 
+@test "post-apply: the update's last line names the queue-mcp command while any profile, a new one included, lacks the registration" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  mkdir -p "${INSTALL}/scripts" "${WORK}/target"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/hooks" "${INSTALL}/hooks"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  ln -s "${GA}/scripts/atrium-queue-mcp.sh" "${INSTALL}/scripts/atrium-queue-mcp.sh"
+  # registered in the one existing profile, its five allow lines present
+  jq -n --arg a "${INSTALL}/scripts/atrium-queue-mcp.sh" \
+    '{mcpServers: {"atrium-queue": {type: "stdio", command: "/bin/bash", args: [$a], env: {}}}}' >"${WORK}/.claude.json"
+  jq -n '{hooks: {}, permissions: {allow: ["post", "claim", "record", "sessions", "relay"] | map("mcp__atrium-queue__" + .)}}' \
+    >"${WORK}/target/settings.json"
+  local row name new_profile want last
+  local rows=('every profile registered||none' 'a profile created after the registration|.claude-work|line')
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name new_profile want <<<"${row}"
+    if [[ -n "${new_profile}" ]]; then
+      mkdir -p "${WORK}/${new_profile}"
+      printf '{}\n' >"${WORK}/${new_profile}/.claude.json"
+    fi
+    run --separate-stderr bash -c '
+      '"$(declare -f load_skill)"'
+      INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+      export GA_TARGET_HOME="'"${WORK}"'/target"
+      load_skill
+      update_report_queue_mcp_post_apply
+      update_log "update complete"
+      update_report_queue_mcp_summary
+    '
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output} ${stderr}"
+      return 1
+    }
+    last="${stderr##*$'\n'}"
+    if [[ "${want}" == none ]]; then
+      [[ "${last}" == *"update complete" ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    else
+      [[ "${last}" == *"'${INSTALL}/glass-atrium queue-mcp'"* && -z "$(jq -c '.mcpServers // empty' "${WORK}/${new_profile}/.claude.json")" ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    fi
+  done
+}
+
 # roster-migration gate (T20 / gate G8)
 
 # Seed a minimal agent-registry.json at $1 listing the agent keys $2.. so the

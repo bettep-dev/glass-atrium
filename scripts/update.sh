@@ -2894,21 +2894,32 @@ update_wire_hooks_post_apply() {
   update_log "settings.json hook bindings reconciled to the applied release"
 }
 
+# the update's last line while any profile lacks the queue MCP registration (update_report_queue_mcp_summary)
+_UPDATE_QUEUE_MCP_SUMMARY=""
+
 # Post-apply report of the queue MCP registration, never a write: the launcher's queue-mcp step on a dry run prints
-# each profile entry and allow line the applied release still needs, with the command the owner approves them by.
-# Profile writes need the owner's approval, which a headless update cannot carry. A failed report WARNs and never
-# fails the applied update; the doctor reports the same gaps.
+# each profile entry and allow line the applied release still needs — every profile present now, one created after
+# the last registration included. Profile writes need the owner's answer, which a headless update cannot carry. A
+# failed report WARNs and never fails the applied update; the doctor reports the same gaps.
 update_report_queue_mcp_post_apply() {
-  local launcher rc=0
+  local launcher report rc=0
   launcher="$(update_ga_root)/glass-atrium"
   if [[ ! -x "${launcher}" ]]; then
     update_log "WARN: launcher missing or not executable (${launcher}) — the queue MCP registration was not checked"
     return 0
   fi
-  "${launcher}" queue-mcp --dry-run || rc=$?
+  report="$("${launcher}" queue-mcp --dry-run 2>&1)" || rc=$?
+  printf '%s\n' "${report}" >&2
   if [[ "${rc}" -ne 0 ]]; then
     update_log "WARN: the queue MCP registration check failed (rc=${rc}) — '${launcher} queue-mcp --dry-run' repeats it"
+  elif [[ "${report}" == *"queue MCP registration: nothing written"* ]]; then
+    _UPDATE_QUEUE_MCP_SUMMARY="queue MCP: not registered in every profile — '${launcher} queue-mcp' at a terminal shows each write and asks before any"
   fi
+}
+
+# The summary line the post-apply report left, as the update's last line; never a write
+update_report_queue_mcp_summary() {
+  [[ -z "${_UPDATE_QUEUE_MCP_SUMMARY}" ]] || update_log "${_UPDATE_QUEUE_MCP_SUMMARY}"
 }
 
 # Post-apply `npm ci` / `prisma generate` on an apply-set trigger or a self-heal need
@@ -4918,6 +4929,7 @@ update_run() {
   # changed monitor and re-renders the env and plists, with no restart.
   update_finalize_success 1
   update_log "update complete"
+  update_report_queue_mcp_summary
 }
 
 # Usage checks for the operator reset flags, once every argument is read (flag order is
