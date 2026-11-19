@@ -5,7 +5,7 @@ import { getPrisma } from "../db.js";
 import type { PullClaim } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type SessionImageView, getSessionImageViews } from "./images.js";
-import { DEVIATION_STATUSES, type RelaySender, type RelaySenderRow, SENDER_ARGS, toRelaySender } from "./owner-views.js";
+import { DEVIATION_STATUSES, NOT_PROBE_ITEM_FILTER, type RelaySender, type RelaySenderRow, SENDER_ARGS, toRelaySender } from "./owner-views.js";
 import { lockSession } from "./registry.js";
 import type { PostItemBody } from "./schemas.js";
 
@@ -95,7 +95,7 @@ export async function getCount(): Promise<QueueCount> {
       floor(extract(epoch FROM now() - min("asked_at") FILTER (WHERE "status" = 'open')))::int AS "oldest_age_seconds"
     FROM "monitor"."queue_items" i
     WHERE "status" NOT IN ('delivered', 'seen', 'withdrawn') AND "kind"::text <> 'relay'
-      AND NOT EXISTS (SELECT 1 FROM "monitor"."queue_sessions" s WHERE s."session_id" = i."session_id" AND s."is_probe")`;
+      AND ${NOT_PROBE_ITEM_FILTER}`;
   return { awaiting: Number(row?.awaiting ?? 0), deviations: Number(row?.deviations ?? 0), oldestAgeSeconds: row?.oldest_age_seconds ?? null };
 }
 

@@ -30,6 +30,8 @@ const RELAY_SIGNAL_WINDOW_MS = 24 * 3_600_000;
 const REFUSAL_PAGE_MAX = 100;
 // The relay refusals the relay module decided: only those audit rows carry a reason
 export const RELAY_REFUSAL_FILTER = Prisma.sql`a."target_table" = 'queue-relay' AND a."result_code" = 'blocked' AND a."payload" -> 'change' ->> 'reason' IS NOT NULL`;
+// Item rows `i` whose session is no probe → a probe session's item reaches no owner surface
+export const NOT_PROBE_ITEM_FILTER = Prisma.sql`NOT EXISTS (SELECT 1 FROM "monitor"."queue_sessions" s WHERE s."session_id" = i."session_id" AND s."is_probe")`;
 
 export type Deviation = (typeof DEVIATION_STATUSES)[number];
 
@@ -157,6 +159,8 @@ export interface OwnerItemView {
   askedAt: string;
   answeredAt: string | null;
   deliveredAt: string | null;
+  /** When the owner's wait ended; null while open, and on every message and relay. */
+  closedAt: string | null;
   /** Shared by every copy of one owner send; null → not a send, or a message sent before send ids existed. */
   sendId: string | null;
   /** The owner's images on this order or report reply, in the order sent. */
@@ -248,8 +252,8 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
 
 /**
  * A history thread, newest first, paged by order: the owner's orders (message items and reports carrying an owner reply)
- * or relays, in every status. Every copy of a paged order is on that page, the copies to sessions the filter
- * leaves out included. Items come order by order, the copies of one order in id order.
+ * or relays, in every status, or decisions and reports no longer open. Every copy of a paged order is on that page,
+ * the copies to sessions the filter leaves out included. Items come order by order, the copies of one order in id order.
  */
 export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<OwnerOrdersPage> {
   const rows = await getOrderCopyRows(query);
@@ -260,7 +264,7 @@ export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<OwnerOrde
   const itemById = new Map(found.map((item) => [item.id, item]));
   const items = await buildViews(pageRows.flatMap((row) => itemById.get(row.id) ?? []));
   const nextCursor = cursors.length > query.limit ? (cursors[query.limit - 1] ?? null) : null;
-  if (query.kind === "order") return { items, nextCursor };
+  if (query.kind !== "relay") return { items, nextCursor };
   return { items, nextCursor, ...(await getRefusalPage(query, nextCursor)) };
 }
 
@@ -345,15 +349,23 @@ const HISTORY_THREADS = {
     time: Prisma.sql`i."asked_at"`,
     unsentKey: Prisma.sql`concat('i:', i."id")`,
   },
+  // CHECK queue_items_closed_check → closed_at set on every row this matches
+  item: {
+    items: Prisma.sql`i."kind" IN ('decision', 'report') AND i."status" <> 'open' AND ${NOT_PROBE_ITEM_FILTER}`,
+    time: Prisma.sql`i."closed_at"`,
+    unsentKey: Prisma.sql`concat('i:', i."id")`,
+  },
 } as const satisfies Record<OwnerOrdersQuery["kind"], Record<"items" | "time" | "unsentKey", Prisma.Sql>>;
 
 /**
  * Copies of the page's orders plus one order past it, newest order first.
  * Fold key: the send id, else the thread's key for an unsent item. Order time = its newest copy's thread time; ties
  * broken by its lowest copy id. The session filter matches either end: recipient, or a relay's sender.
+ * The profile filter (item thread only) matches the item's session.
  */
 async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]> {
   const thread = HISTORY_THREADS[query.kind];
+  const profileFilter = getProfileFilterSql(query.profile);
   const sessionFilter =
     query.sessionIds === undefined
       ? Prisma.sql`TRUE`
@@ -365,7 +377,7 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
       SELECT i."id", i."session_id", i."from_session_id", t."at", COALESCE(i."send_id"::text, ${thread.unsentKey}) AS "order_key"
       FROM "monitor"."queue_items" i
       CROSS JOIN LATERAL (SELECT ${getEpochMicrosSql(thread.time)} AS "at") t
-      WHERE ${thread.items}
+      WHERE ${thread.items} AND ${profileFilter}
     ),
     orders AS (
       SELECT c."order_key", max(c."at") AS "at", min(c."id") AS "first_id" FROM copies c GROUP BY c."order_key" HAVING ${sessionFilter}
@@ -376,6 +388,11 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
     SELECT c."id", concat(p."at", ':', p."first_id") AS "cursor"
     FROM page p JOIN copies c ON c."order_key" = p."order_key"
     ORDER BY p."at" DESC, p."first_id" DESC, c."id"`;
+}
+
+function getProfileFilterSql(profile: string | undefined): Prisma.Sql {
+  if (profile === undefined) return Prisma.sql`TRUE`;
+  return Prisma.sql`EXISTS (SELECT 1 FROM "monitor"."queue_sessions" s WHERE s."session_id" = i."session_id" AND s."profile_label" = ${profile})`;
 }
 
 // The history cursor's time unit → one expression for order times and refusal times alike
@@ -442,6 +459,7 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     askedAt: item.askedAt.toISOString(),
     answeredAt: item.answeredAt?.toISOString() ?? null,
     deliveredAt: item.deliveredAt?.toISOString() ?? null,
+    closedAt: item.closedAt?.toISOString() ?? null,
     sendId: item.sendId,
     attachments: getImageViews(item.images),
     ...getAnswerRecordView(item),

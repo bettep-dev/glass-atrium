@@ -173,17 +173,21 @@ const orderCursor = z
     return { at: BigInt(at), id: BigInt(id) };
   });
 
-// The thread a history read pages: the owner's orders, or relays
-export const ownerOrdersQuerySchema = z.strictObject({
-  kind: z.enum(["order", "relay"]).default("order"),
-  sessionIds: z
-    .string()
-    .transform((value) => value.split(","))
-    .pipe(z.array(sessionId).min(1).max(SESSION_LIST_LIMIT))
-    .optional(),
-  before: orderCursor.optional(),
-  limit: z.coerce.number().int().min(1).max(ORDER_PAGE_LIMIT.MAX).default(ORDER_PAGE_LIMIT.DEFAULT),
-});
+// The thread a history read pages: the owner's orders, relays, or decisions and reports no longer open
+export const ownerOrdersQuerySchema = z
+  .strictObject({
+    kind: z.enum(["order", "relay", "item"]).default("order"),
+    sessionIds: z
+      .string()
+      .transform((value) => value.split(","))
+      .pipe(z.array(sessionId).min(1).max(SESSION_LIST_LIMIT))
+      .optional(),
+    profile: profileLabel.optional(),
+    before: orderCursor.optional(),
+    limit: z.coerce.number().int().min(1).max(ORDER_PAGE_LIMIT.MAX).default(ORDER_PAGE_LIMIT.DEFAULT),
+  })
+  // an order or relay folds copies across sessions → a per-copy account filter would split an order
+  .refine((query) => query.profile === undefined || query.kind === "item", { message: "profile filters the item thread only", path: ["profile"] });
 
 export const recentResumesQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(RECENT_RESUME_LIMIT.MAX).default(RECENT_RESUME_LIMIT.DEFAULT),

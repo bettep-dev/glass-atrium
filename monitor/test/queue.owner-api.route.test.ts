@@ -907,6 +907,8 @@ describe("order history", () => {
       { name: "a cursor of another shape", query: "before=12" },
       { name: "an unknown key", query: "status=delivered" },
       { name: "an item kind with no history", query: "kind=decision" },
+      { name: "a profile filter on the order thread", query: "profile=default" },
+      { name: "a profile filter on the relay thread", query: "kind=relay&profile=default" },
     ];
     for (const row of rows) {
       const response = await getOrders(row.query);
@@ -1063,6 +1065,80 @@ describe("relay history", () => {
     assert.equal(stored.length, cap + 1);
     assert.deepEqual(page.refusals.map((refusal) => refusal.at), stored.slice(0, cap).map((row) => row.eventTs.toISOString()));
     assert.equal(page.isRefusalListCut, true);
+  });
+});
+
+describe("done items", () => {
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+  const getDone = (query: string) => send("GET", `/api/queue/owner/orders?kind=item&${query}`, undefined, { headers: {} });
+  const getIdTimes = (response: LightMyRequestResponse) =>
+    (response.json().items as Array<{ id: number; closedAt: string | null }>).map((item) => [item.id, item.closedAt]);
+
+  test("lists decisions and reports no longer open, newest close time first, with no order and no probe session's item", async () => {
+    const [mine, probe] = [await seedSession(), await seedSession({ isProbe: true })];
+    const answeredAt = { decision: minutesAgo(10), reply: minutesAgo(20) };
+    const closedAt = { withdrawn: minutesAgo(30), seen: minutesAgo(40) };
+    const ids = {
+      answeredDecision: await seedDecision(mine, { status: "answered", answerCode: "R1", answeredAt: answeredAt.decision, answerRoute: "answer", answerSignal: "fetch_metadata" }),
+      repliedReport: await seedItem(mine, { status: "delivered", answerText: "Ship it after the rebase.", answeredAt: answeredAt.reply, answerRoute: "reply", answerSignal: "fetch_metadata" }),
+      withdrawnDecision: await seedDecision(mine, { status: "withdrawn", closedAt: closedAt.withdrawn }),
+      seenReport: await seedItem(mine, { status: "seen", closedAt: closedAt.seen }),
+    };
+    await seedItem(mine);
+    await seedItem(mine, { kind: "message", title: "Rebase onto main.", body: "Rebase onto main.", isFreeTextAllowed: false, status: "delivered", answeredAt: minutesAgo(5), answerRoute: "message", answerSignal: "fetch_metadata" });
+    await seedItem(probe, { status: "seen", closedAt: minutesAgo(5) });
+
+    const response = await getDone(`sessionIds=${mine},${probe}`);
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(getIdTimes(response), [
+      [Number(ids.answeredDecision), answeredAt.decision.toISOString()],
+      [Number(ids.repliedReport), answeredAt.reply.toISOString()],
+      [Number(ids.withdrawnDecision), closedAt.withdrawn.toISOString()],
+      [Number(ids.seenReport), closedAt.seen.toISOString()],
+    ]);
+  });
+
+  test("the profile filter keeps only the items of that account's sessions", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const [work, personal] = [await seedSession({ profileLabel: `.claude-work-${suffix}` }), await seedSession({ profileLabel: `.claude-personal-${suffix}` })];
+    const workItemId = await seedItem(work, { status: "seen" });
+    await seedItem(personal, { status: "seen" });
+
+    const response = await getDone(`profile=${encodeURIComponent(`.claude-work-${suffix}`)}`);
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().items.map((item: { id: number }) => item.id), [Number(workItemId)]);
+  });
+
+  test("paging by cursor returns every item once, newest close time first, an equal time broken by the higher id", async () => {
+    const sessionId = await seedSession();
+    const tie = minutesAgo(40);
+    const seeded: Array<{ id: bigint; closedAt: Date }> = [];
+    for (const closedAt of [minutesAgo(50), tie, tie, minutesAgo(30), minutesAgo(20)]) {
+      seeded.push({ id: await seedItem(sessionId, { status: "seen", closedAt }), closedAt });
+    }
+
+    const pages: number[][] = [];
+    let query = `sessionIds=${sessionId}&limit=2`;
+    for (let round = 0; round < 10; round += 1) {
+      const page = (await getDone(query)).json() as { items: Array<{ id: number }>; nextCursor: string | null };
+      pages.push(page.items.map((item) => item.id));
+      if (page.nextCursor === null) break;
+      query = `sessionIds=${sessionId}&limit=2&before=${encodeURIComponent(page.nextCursor)}`;
+    }
+
+    const newestFirst = [...seeded].sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime() || Number(b.id - a.id)).map((item) => Number(item.id));
+    assert.deepEqual(pages, [newestFirst.slice(0, 2), newestFirst.slice(2, 4), newestFirst.slice(4)]);
+  });
+
+  test("a done page carries no relay refusal records", async () => {
+    const sessionId = await seedSession();
+    await seedItem(sessionId, { status: "seen" });
+
+    const response = await getDone(`sessionIds=${sessionId}`);
+
+    assert.deepEqual(Object.keys(response.json()).sort(), ["items", "nextCursor"]);
   });
 });
 
