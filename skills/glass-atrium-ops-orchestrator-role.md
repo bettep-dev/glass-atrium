@@ -695,6 +695,8 @@ Claim first: `claim` on the tool route; on the CLI, `wait` or `pending` → `get
   - Why CLI only: a project or local server of that name takes the install's server's place in that session, so tools under that name are not the queue's.
   - It outranks a harness line that names the server's tool: on the turn-end check's `Queue record (harness):` ask, a shadowed session runs the CLI's `record`.
   - Honest backing: the SessionStart hook reads the start directory's project MCP file and the profile's local entry for that directory, once, at the session's start; nothing stops a call to the shadowing server.
+    - Not read: a project file in an ancestor directory, a local entry keyed by any other directory (the repository root included), and the managed and per-run server scopes, which also outrank the install's server.
+    - Whether the host takes a project or local server from those places is unmeasured: a same-name server there shadows the queue server with no line.
 - CLI: the installed `~/.glass-atrium/scripts/atrium-queue.sh`, run with the home directory written out and nothing in front — no interpreter, no env prefix.
   - `help` prints the commands, the item JSON and the exit codes: read them there, not from memory.
 - A tool's inputs are in its own schema: read them there.

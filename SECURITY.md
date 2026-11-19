@@ -108,6 +108,12 @@ appreciated).
     server's place in a session. The session start reports it in one
     line, and that session is told to use the queue CLI only; nothing
     stops a call to the shadowing server.
+  - That line reads only the start directory's project MCP file and the
+    profile's local entry for that directory. An ancestor directory's
+    project file, a local entry keyed by another directory, and the
+    managed and per-run server scopes go unread; whether the host takes
+    a same-name server from them is unmeasured, and such a server
+    shadows the queue server with no line.
 - **CI least privilege** — deny-all workflow token (`permissions: {}`),
   `pull_request` (never `pull_request_target`), pinned action SHAs.
 
