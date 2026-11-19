@@ -606,6 +606,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
   - Form `nothing`: the turn owed no post.
   - Form `posted`: the id of every item the turn posted, never a relay's.
   - Tool route: write the reply before the call — a successful call ends the turn, so no message follows it.
+    - A turn whose one owed item is its last tool call may post it with `post`'s `lastAct` true instead: that post is also the record, form `posted` with its id.
   - CLI route: the turn runs on after the call — the reply is the one message that follows it.
   - An error result records nothing — an id that is no item this session posted, for one: correct the call and make it again.
   - A turn that called no tool owes no record.

@@ -55,7 +55,7 @@ def _build_parser():
         description="Print one JSON object: status (found|none), bytes_read and truncated, plus "
         "reason=unreadable when the transcript cannot be opened; transcript adds entry (user|queued_command) and "
         "prose, turn adds turn (the turn-start entry's uuid), started (its timestamp), tools (the turn called a tool) "
-        "and last_tool (the newest call's name and Bash command).",
+        "and last_tool (the newest call's name, Bash command and last-act flag).",
     )
     commands = parser.add_subparsers(dest="command")
     commands.required = True
@@ -132,11 +132,13 @@ def _get_tool_calls(entry):
 
 
 def _get_tool_call_view(call):
-    """{name, command}: command is the Bash input's command, None for any other call."""
+    """{name, command, last_act}: command is the Bash input's command, None for any other call; last_act is whether
+    the input flags the call as its turn's last act."""
     name = call.get("name") if isinstance(call.get("name"), str) else None
     tool_input = call.get("input") if isinstance(call.get("input"), dict) else {}
     command = tool_input.get("command") if name == "Bash" else None
-    return {"name": name, "command": command if isinstance(command, str) else None}
+    return {"name": name, "command": command if isinstance(command, str) else None,
+            "last_act": tool_input.get("lastAct") is True}
 
 
 def _get_turn_position_id(entry):

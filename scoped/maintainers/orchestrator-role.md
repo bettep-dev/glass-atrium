@@ -302,7 +302,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound` · `### On a wait's exit`;
   - the two refusals behind `wait` exit 2: `monitor/src/server/queue/delivery.ts` → `lockOwnSession` (`unknown_session`) · `assertLiveFor` (`session_not_live`);
   - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
-  - the record call and its two forms: `hooks/queue-turn-end-check.sh` → `RECORD_ASK_TEMPLATE` · `SHADOWED_RECORD_ASK_TEMPLATE` · `scripts/atrium-queue.sh` → `print_usage` (its `record` line) · the section's **Turn record** bullet · the core's trigger line · the server instructions;
+  - the record call and its two forms: `hooks/queue-turn-end-check.sh` → `RECORD_ASK_TEMPLATE` · `SHADOWED_RECORD_ASK_TEMPLATE` · `scripts/atrium-queue.sh` → `print_usage` (its `record` line) · `scripts/atrium-queue-mcp.sh` → the `post` tool's `lastAct` · the section's **Turn record** bullet · the core's trigger line · the server instructions;
   - the server name and its tool names: `scripts/lib/queue-session.sh` → `QUEUE_MCP_SERVER_NAME` · `### Which route` and its tool-to-CLI table;
   - the shadowing line and its CLI-only rule: `hooks/queue-session-register.sh` (its shadowing line) · `scripts/lib/queue-session.sh` → `queue_is_server_shadowed` · `hooks/queue-turn-end-check.sh` → `SHADOWED_RECORD_ASK_TEMPLATE` · `### Which route` · the server instructions · `SECURITY.md` → **Session relays**;
   - the relay reading — a peer session's information, no owner instruction and no approval, first included:

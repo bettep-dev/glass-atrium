@@ -352,3 +352,26 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
     return 1
   }
 }
+
+@test "a post flagged as the turn's last act writes the turn's record with its item id and ends the turn; a failed one does neither" {
+  start_stub
+  local record="${GA_ROOT}/data/queue/awaiting/${SESSION_ID}/.record" last_args
+  last_args="$(jq -c '. + {lastAct: true}' <<<"${REPORT_ARGS}")"
+  set_nth_reply 1 500 '{"error":"internal"}'
+  set_nth_reply 2 201 '{"id":21}'
+  run_adapter "$(get_call 1 post "${last_args}")"
+  [[ "$(get_response 1 | jq -c '[.result.isError, (.result | has("_meta"))]')" == "[true,false]" && ! -e "${record}" ]] || {
+    echo "failed post: $(get_response 1) record=$(cat "${record}" 2>/dev/null)"
+    return 1
+  }
+  run_adapter "$(get_call 2 post "${last_args}")"
+  [[ "$(get_response 2 | jq -c '[.result.isError, .result._meta]')" == "[false,${END_TURN_META}]" &&
+    "$(cut -d'|' -f2- "${record}")" == "posted|21" ]] || {
+    echo "last-act post: $(get_response 2) record=$(cat "${record}" 2>/dev/null)"
+    return 1
+  }
+  [[ "$(request_body /api/queue/items | jq -c 'has("lastAct")' | sort -u)" == false ]] || {
+    echo "the flag reached the monitor: $(request_body /api/queue/items)"
+    return 1
+  }
+}

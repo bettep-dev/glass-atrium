@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # queue-turn-end-check.sh — Stop hook, at most one block per turn end, carrying either line or both, never an item's
 # text: (1) an interactive or background main-session turn that called a tool is asked once per turn for its queue
-# record unless its last tool call is a record call (the CLI's record subcommand, or the server's record tool unless
-# the session's start found that server shadowed: queue_set_shadow_mark) and the session's record was written at or
-# after the turn's start entry; a shadowed session's ask names the CLI alone; (2) while an item this session posted awaits the
-# owner and nothing polls the monitor for this Claude process (queue_get_poller), the wait command — a fallback for
-# processes no listener serves. Each turn end also sends the transcript's title as the session's name once it changed
-# (queue_put_session_name).
+# record unless its last tool call is a record call and the session's record was written at or after the turn's start
+# entry — a record call is the CLI's record subcommand, or the server's record tool or its post tool flagged as the
+# turn's last act unless the session's start found that server shadowed (queue_set_shadow_mark), whose ask names the
+# CLI alone; (2) while an item this session posted awaits the owner and nothing polls the monitor for this Claude
+# process (queue_get_poller), the wait command — a fallback for processes no listener serves. Each turn end also sends
+# the transcript's title as the session's name once it changed (queue_put_session_name).
 # The record check confirms only that a record was made, never the judgment; the record operation checks its ids.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_poller).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
@@ -125,7 +125,7 @@ set_record_reason() {
 
 # <transcript path> → tool_turn, turn_started and is_record_last for a turn that called a tool; all left unset when it
 # called none, and after one warning when the turn or its start time cannot be read. In a shadowed session the
-# server's record tool is the shadowing server's, so only the CLI's record counts.
+# server's tools are the shadowing server's, so only the CLI's record counts.
 set_tool_turn() {
   local found="" status="" turn="" started="" tools="" is_record="" cli pattern tool=""
   if [[ -z "$1" ]]; then
@@ -136,11 +136,13 @@ set_tool_turn() {
   cli="${cli##*/}"
   # a Bash command running the CLI's record subcommand, the CLI named by its file name
   pattern="(^|[[:space:]/\"'])${cli//./\\.}[\"']?[[:space:]]+record([[:space:]]|$)"
-  if [[ "${is_shadowed}" == false ]]; then tool="mcp__${QUEUE_MCP_SERVER_NAME}__record"; fi
+  if [[ "${is_shadowed}" == false ]]; then tool="mcp__${QUEUE_MCP_SERVER_NAME}__"; fi
+  # the server's record tool, or its post tool flagged as the turn's last act
   found="$(python3 -I "${TURN_READER}" turn "$1" 2>/dev/null \
     | jq -r --arg tool "${tool}" --arg pattern "${pattern}" \
       '[.status, (.turn | strings // ""), (.started | strings // ""), (.tools == true | tostring),
-        (($tool != "" and .last_tool.name == $tool)
+        (($tool != "" and (.last_tool.name == $tool + "record"
+            or (.last_tool.name == $tool + "post" and .last_tool.last_act == true)))
           or (.last_tool.name == "Bash" and (.last_tool.command // "" | test($pattern))) | tostring)] | join("\u001f")' 2>/dev/null)" || found=""
   IFS=$'\x1f' read -r status turn started tools is_record <<<"${found}" || true
   if [[ "${status}" != found || -z "${turn}" || ! "${started}" =~ ${QUEUE_RECORD_TIME_SHAPE} ]]; then

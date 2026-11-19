@@ -113,10 +113,11 @@ queue_get_error_reason() {
     || printf 'unreadable reply\n'
 }
 
-# <kind report|decision> <item JSON> → {id, kind, isAwaiting, next}; an item awaiting an answer gets its awaiting mark,
-# and next names the wait step (queue_get_wait_step)
+# <kind report|decision> <item JSON> [is last act: true] → {id, kind, isAwaiting, next}; an item awaiting an answer gets
+# its awaiting mark, and next names the wait step (queue_get_wait_step). As the turn's last act it also writes the turn's
+# record, form posted with this id, and adds isRecorded.
 queue_create_item() {
-  local kind="$1" session_id body reply id
+  local kind="$1" session_id body reply id is_recorded=""
   [[ "${kind}" == report || "${kind}" == decision ]] || {
     queue_put_error 64 invalid "the kind must be report or decision"
     return
@@ -138,7 +139,15 @@ queue_create_item() {
     queue_put_error 1 malformed "the monitor's reply named no item id"
     return
   }
-  queue_print_post_result "${kind}" "${session_id}" "${id}" "$2"
+  if [[ "${3:-}" == true ]]; then
+    is_recorded=true
+    # shellcheck disable=SC2310  # an unwritten record → isRecorded false and the warning, never a failed post
+    queue_put_record "${session_id}" posted "${id}" || {
+      is_recorded=false
+      queue_warn "item ${id} is posted, but the turn record could not be written — make the record step"
+    }
+  fi
+  queue_print_post_result "${kind}" "${session_id}" "${id}" "$2" "${is_recorded}"
 }
 
 # <kind> <session id> <item JSON> → the request body: the kind's named fields only, session id and kind applied last;
@@ -149,7 +158,8 @@ queue_build_item_body() {
       + {kind: $kind, sessionId: $sessionId}' <<<"$3" 2>/dev/null
 }
 
-# <kind> <session id> <item id> <item JSON> → the post result; a decision, or a report allowing a reply, awaits
+# <kind> <session id> <item id> <item JSON> <is recorded: true, false or empty> → the post result; a decision, or a
+# report allowing a reply, awaits
 queue_print_post_result() {
   local is_awaiting next=""
   is_awaiting="$(jq -r --arg kind "$1" '$kind == "decision" or .isFreeTextAllowed == true' <<<"$4")"
@@ -158,7 +168,8 @@ queue_print_post_result() {
     next="$(queue_get_wait_step "$2")"
   fi
   jq -nc --argjson id "$3" --arg kind "$1" --argjson isAwaiting "${is_awaiting}" --arg next "${next}" \
-    '{$id, $kind, $isAwaiting, next: ($next | if . == "" then null else . end)}' | queue_print_json
+    --arg isRecorded "${5:-}" '{$id, $kind, $isAwaiting, next: ($next | if . == "" then null else . end)}
+      + if $isRecorded == "" then {} else {isRecorded: ($isRecorded == "true")} end' | queue_print_json
 }
 
 # <session id> <item id> → marks the item awaiting for the turn-end check; a failed mark costs only that check's

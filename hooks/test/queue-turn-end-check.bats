@@ -562,7 +562,10 @@ assert_silent_turn_end() {
     'record of an earlier turn|start:t-1 tool result record result|stale|yes|ask' \
     'a tool call after the record|start:t-1 record result tool result text|fresh|yes|ask' \
     'no final message and no record call|start:t-1 tool result|fresh|none|ask' \
-    'another CLI subcommand last|start:t-1 clirecord result clipending result|fresh|yes|ask'; do
+    'another CLI subcommand last|start:t-1 clirecord result clipending result|fresh|yes|ask' \
+    'last-act post last|start:t-1 tool result lastpost result|fresh|none|silent' \
+    'last-act post of an earlier turn|start:t-1 tool result lastpost result|stale|none|ask' \
+    'post without the last-act flag last|start:t-1 record result post result|fresh|none|ask'; do
     IFS='|' read -r name tokens record message expect <<<"${row}"
     IFS=' ' read -r -a tokens <<<"${tokens}"
     new_root
