@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser, BrowserContext, Page, Route } from "playwright";
+import type { Browser, BrowserContext, Locator, Page, Route } from "playwright";
 import { chromium } from "playwright";
 
 import { REGISTRATION_CODE } from "../src/server/remote/registration-code.js";
@@ -337,6 +337,155 @@ describe("a code in the address fragment, from the Mac's QR code", () => {
     });
   });
 });
+
+describe("the page at a phone's width", () => {
+  // a 390-wide phone → content 358 wide inside the 16 gutter; head, form and warning 32 apart
+  const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true };
+  const COLUMN = { left: 16, width: 358, groupGap: 32, headGap: 8, fieldGap: 16, stackGap: 4, warningGap: 12 };
+  const states = [
+    { name: "empty", open: (page: Page) => openSignIn(page) },
+    { name: "filled by a scan", open: (page: Page) => page.goto(`${serverUrl}${PAGE_PATH}#code=${VALID_CODE}`, { waitUntil: "load" }).then(() => undefined) },
+    {
+      name: "refused",
+      open: async (page: Page) => {
+        await page.route(`**${REGISTER_PATH}`, (route) => answerRegister(route, { status: 400, error: "registration_refused" }));
+        await page.goto(`${serverUrl}${PAGE_PATH}#code=${VALID_CODE}`, { waitUntil: "load" });
+        await page.getByLabel("Device name").fill("Minji's iPhone");
+        await page.getByRole("button", { name: "Register device" }).click();
+        await page.waitForFunction(() => (document.getElementById("sign-in-status")?.textContent ?? "") !== "", null, { timeout: WAIT_TIMEOUT_MS });
+      },
+    },
+  ];
+
+  for (const state of states) {
+    test(`${state.name}: head, form and warning fill the 358 column, each gap its role token`, async () => {
+      await withPage(async (page) => {
+        await state.open(page);
+
+        const drawn = await getPhoneLayout(page);
+
+        assert.deepEqual(
+          drawn.blocks.map((block) => ({ left: block.left, width: block.width })),
+          [COLUMN, COLUMN, COLUMN].map(({ left, width }) => ({ left, width })),
+          `${state.name}: head, form and warning fill the 358 column`,
+        );
+        assert.deepEqual(
+          {
+            groups: [drawn.blocks[1].top - drawn.blocks[0].bottom, drawn.blocks[2].top - drawn.blocks[1].bottom],
+            head: drawn.lead.top - drawn.title.bottom,
+            fields: drawn.fields.slice(1).map((field, index) => field.label.top - drawn.fields[index].hint.bottom),
+            stacks: drawn.fields.flatMap((field) => [field.input.top - field.label.bottom, field.hint.top - field.input.bottom]),
+            warning: drawn.warning.text.top - drawn.warning.label.bottom,
+          },
+          {
+            groups: [COLUMN.groupGap, COLUMN.groupGap],
+            head: COLUMN.headGap,
+            fields: [COLUMN.fieldGap],
+            stacks: [COLUMN.stackGap, COLUMN.stackGap, COLUMN.stackGap, COLUMN.stackGap],
+            warning: COLUMN.warningGap,
+          },
+          `${state.name}: every gap is the layout's role token`,
+        );
+      }, PHONE);
+    });
+  }
+});
+
+describe("the page on a wide screen, a phone driving a desktop", () => {
+  // above 640 the gutter is --gap-page 24; the column caps at --measure-prose, so a wider window only widens the margins
+  const WIDE = [
+    { width: 1280, height: 800 },
+    { width: 1920, height: 1080 },
+  ];
+  const GUTTER = 24;
+  const GROUP_GAP = 32;
+
+  for (const viewport of WIDE) {
+    test(`at ${viewport.width}: one centred column capped at the prose measure, its parts and fields the column's content width, the button start-aligned`, async () => {
+      await withPage(async (page) => {
+        await openSignIn(page);
+
+        const drawn = await getWideLayout(page);
+
+        const content = { left: GUTTER, width: drawn.main.width - 2 * GUTTER };
+        assert.deepEqual(
+          {
+            column: drawn.main.width,
+            isCentred: Math.abs(drawn.main.left - (drawn.client - drawn.main.left - drawn.main.width)) <= 1,
+            top: drawn.blocks[0].top,
+            blocks: drawn.blocks.map((block) => ({ left: block.left - drawn.main.left, width: block.width })),
+            fields: drawn.fields.map((field) => ({ left: field.left - drawn.main.left, width: field.width })),
+            submit: { left: drawn.submit.left - drawn.main.left, isNarrower: drawn.submit.width < content.width },
+            groups: [drawn.blocks[1].top - drawn.blocks[0].bottom, drawn.blocks[2].top - drawn.blocks[1].bottom],
+          },
+          {
+            column: drawn.measure,
+            isCentred: true,
+            top: GUTTER,
+            blocks: [content, content, content],
+            fields: [content, content],
+            submit: { left: GUTTER, isNarrower: true },
+            groups: [GROUP_GAP, GROUP_GAP],
+          },
+        );
+        assert.ok(drawn.measure < viewport.width, `the measure ${drawn.measure} caps the column under ${viewport.width}`);
+      }, { viewport });
+    });
+  }
+
+  test("from 1280 to 1920 nothing reflows: every part keeps its box and moves by half the added width", async () => {
+    const [narrow, wide] = WIDE;
+    await withPage(async (page) => {
+      await openSignIn(page);
+      const at1280 = await getWideLayout(page);
+      await page.setViewportSize(wide);
+
+      const at1920 = await getWideLayout(page);
+
+      const shift = (wide.width - narrow.width) / 2;
+      const moved = (box: Box) => ({ ...box, left: box.left + shift });
+      assert.deepEqual(
+        { main: at1920.main, blocks: at1920.blocks, fields: at1920.fields, submit: at1920.submit },
+        { main: moved(at1280.main), blocks: at1280.blocks.map(moved), fields: at1280.fields.map(moved), submit: moved(at1280.submit) },
+      );
+    }, { viewport: narrow });
+  });
+});
+
+type Box = Awaited<ReturnType<typeof getBox>>;
+
+/** Rounded boxes of the wide page's column, its three parts, both fields and the button, plus the column's resolved max-width and the page's client width. */
+async function getWideLayout(page: Page) {
+  const main = page.locator(".sign-in-main");
+  return {
+    main: await getBox(main),
+    measure: Math.round(await main.evaluate((el) => Number.parseFloat(getComputedStyle(el).maxWidth))),
+    client: await page.evaluate(() => document.documentElement.clientWidth),
+    blocks: [await getBox(page.locator(".sign-in-head")), await getBox(page.locator(".sign-in-form")), await getBox(page.locator(".sign-in-trust"))],
+    fields: [await getBox(page.locator(".field").nth(0)), await getBox(page.locator(".field").nth(1))],
+    submit: await getBox(page.locator(".sign-in-submit")),
+  };
+}
+
+/** Rounded boxes of the sign-in page's parts, as drawn. */
+async function getPhoneLayout(page: Page) {
+  const fieldBoxes = async (index: number) => {
+    const field = page.locator(".sign-in-field").nth(index);
+    return { label: await getBox(field.locator("label")), input: await getBox(field.locator("input")), hint: await getBox(field.locator(".sign-in-hint")) };
+  };
+  return {
+    blocks: [await getBox(page.locator(".sign-in-head")), await getBox(page.locator(".sign-in-form")), await getBox(page.locator(".sign-in-trust"))],
+    title: await getBox(page.locator(".sign-in-title")),
+    lead: await getBox(page.locator(".sign-in-lead")),
+    fields: [await fieldBoxes(0), await fieldBoxes(1)],
+    warning: { label: await getBox(page.locator(".sign-in-trust .section-label")), text: await getBox(page.locator(".sign-in-trust p")) },
+  };
+}
+
+async function getBox(locator: Locator) {
+  const box = (await locator.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+  return { left: Math.round(box.x), top: Math.round(box.y), bottom: Math.round(box.y + box.height), width: Math.round(box.width), height: Math.round(box.height) };
+}
 
 async function withPage(body: (page: Page) => Promise<void>, options: Parameters<Browser["newContext"]>[0] = {}): Promise<void> {
   const context: BrowserContext = await browser.newContext(options);

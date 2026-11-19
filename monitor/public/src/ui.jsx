@@ -571,16 +571,20 @@ function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=
 // tone = TONE_GLYPH shape + colour + a word for AT → state survives without colour. Unknown status gets its own mark, not info's.
 const STATUS_DOT_WORD = { ok: 'OK', warn: 'Warning', crit: 'Critical', info: 'Info' };
 
-function StatusDot({ status }) {
+/**
+ * @param word - the state's word for AT in place of the tone's own (a procedure's "Done:")
+ * @param isInText - set inside a line of text → the line's own size and spacing, and the line's words name the state, so no tooltip
+ */
+function StatusDot({ status, word, isInText = false }) {
   const isKnown = Object.hasOwn(STATUS_DOT_WORD, status);
   const glyph = isKnown ? TONE_GLYPH[status] : '–';
-  const word = isKnown ? STATUS_DOT_WORD[status] : 'Unknown';
+  const text = word ?? (isKnown ? STATUS_DOT_WORD[status] : 'Unknown');
   const toneClass = isKnown ? `text-${status}` : 'text-faint';
 
   return (
-    <span className={`inline-block fs-meta leading-none mr-1.5 align-middle ${toneClass}`} title={word}>
+    <span className={isInText ? toneClass : `inline-block fs-meta leading-none mr-1.5 align-middle ${toneClass}`} title={isInText ? undefined : text}>
       <span aria-hidden="true">{glyph}</span>
-      <span className="sr-only">{word}</span>
+      <span className="sr-only">{text}</span>
     </span>
   );
 }

@@ -94,6 +94,14 @@ const IPHONE_TITLES = [
   "Turn on full trust",
   "Scan, name the device, tap Register",
 ];
+// spec 44105 → Galaxy phone: install, then compare, then the typed address
+const GALAXY_TITLES = [
+  "Send the certificate to your phone",
+  "Open the certificate installer",
+  "Install it as a CA certificate",
+  "Match the fingerprint right after installing",
+  "Open the address, enter the code",
+];
 // key directory (data/remote-access/), its CA and leaf files, a home path, and the commands that make or trust them
 const NEVER_IN_BUNDLE = [/remote-access\//, /\b(?:ca|leaf)\.(?:pem|key)\b/, /~\//, /\/Users\//, /glass-atrium remote/, /openssl/, /remote-access-set\.sh/, /add-trusted-cert/, /\bsudo\b/];
 // never on the page outside the open confirm: commands, key paths, the router, a hardware address, the Mac's link named as Wi-Fi
@@ -155,10 +163,10 @@ describe("each state shows its own words, and the on/off act sits on the title l
       absent: ["Turn off", "Connect a device"],
     },
     {
-      name: "on with no device opens step 1 of the connect steps and an empty device list",
+      name: "on with no device opens the connect card on the device choice and an empty device list",
       read: ready(SETUP_ON),
-      present: ["On", "Turn off", "Connect a device", "Step 1 of 5 · iPhone or iPad", IPHONE_TITLES[0], "No device registered", "A device appears here once it registers.", "0 of 10", "Trusted networks: 1 · this Mac's network is one of them"],
-      absent: ["Remove all", "Closed on this network", "https://"],
+      present: ["On", "Turn off", "Connect a device", "Which device are you connecting?", "iPhone or iPad", "Galaxy phone", "No device registered", "A device appears here once it registers.", "0 of 10", "Trusted networks: 1 · this Mac's network is one of them"],
+      absent: ["Remove all", "Closed on this network", "https://", "Step 1 of 5", IPHONE_TITLES[0]],
     },
     {
       name: "on with devices lists them with one remove each and a remove-all",
@@ -211,42 +219,62 @@ describe("each state shows its own words, and the on/off act sits on the title l
     });
   }
 
+  test("closed on this network, Trust this network is the page's one primary, at the small control size", async () => {
+    const { mod } = await loadScreen();
+
+    const { tree } = renderPage(mod as Mod, ready({ ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false, isAnswering: false, trustedCount: 1 }, DEVICES));
+
+    const primaries = findNodes(tree, (node) => node.type === "button" && String(node.props.className).split(/\s+/).includes("primary"));
+    assert.deepEqual(primaries.map((node) => ({ name: collectText(node).trim(), isSmall: String(node.props.className).split(/\s+/).includes("sm") })), [{ name: "Trust this network", isSmall: true }]);
+  });
+
 });
 
+// a done row reads its ✓ glyph and the screen reader's "Done:", then its title
+const DONE_MARK = /^✓\s*Done:\s*/;
+
 // the connect card driven through its own buttons: each press runs the screen's progress step over the card's last progress
-async function driveConnect(over: Record<string, unknown> = {}) {
-  const { mod } = await loadScreen();
+// device → the device-choice button pressed first; null → the card left on the choice
+async function driveConnect(over: Record<string, unknown> = {}, device: string | null = "iPhone or iPad") {
+  const { mod, sent } = await loadScreen();
   let progress: unknown = null;
   const putProgress = mod.putProgressRA as (current: unknown, act: unknown) => unknown;
   const view = (): RenderedNode => render(mod as Mod, "ConnectBodyRA", {
     setup: SETUP_ON, devices: [], onDevicesRead: () => undefined, ...over, progress, onAct: (act: unknown) => { progress = putProgress(progress, act); },
   });
   const getButtons = () => findNodes(view(), (node) => node.type === "button");
-  // a done step's button reads its ✓ glyph, then its title
   const press = (name: string) => {
-    const button = getButtons().find((node) => collectText(node).replace("✓", "").trim() === name);
+    const button = getButtons().find((node) => collectText(node).replace(DONE_MARK, "").trim() === name);
     assert.ok(button, `a button named "${name}"`);
     (button.props.onClick as () => void)();
   };
   const text = () => collectText(view()).replace(/\s+/g, " ");
-  const doneTitles = () => getButtons().map((node) => collectText(node)).filter((name) => name.includes("✓")).map((name) => name.replace("✓", "").trim());
-  return { view, press, text, doneTitles };
+  const doneTitles = () => getButtons().map((node) => collectText(node)).filter((name) => DONE_MARK.test(name)).map((name) => name.replace(DONE_MARK, "").trim());
+  const primaries = () => getButtons().filter((node) => String(node.props.className).split(/\s+/).includes("primary")).map((node) => collectText(node).trim());
+  const heading = () => findNodes(view(), (node) => node.type === "h3" && node.props.tabIndex === -1).map((node) => collectText(node).replace(/\s+/g, " ").trim());
+  if (device !== null) press(device);
+  return { mod, sent, view, press, text, doneTitles, primaries, heading, getButtons };
+}
+
+// a device registering in the last step, as the code step reports it
+function connectDevice(card: { view: () => RenderedNode }, label: string) {
+  (findNodes(card.view(), (node) => node.type === "CodeStepRA")[0].props.onConnected as (label: string) => void)(label);
 }
 
 describe("the connect card is a procedure: one device, one open step, done steps checked", () => {
-  test("it opens on step 1 with the progress line and no device question, and every later title is faint text, not a control", async () => {
+  test("it opens on step 1 with the progress line, never another device's steps, and every later title is faint text, not a control", async () => {
     const card = await driveConnect();
 
     const tree = card.view();
     const text = card.text();
-    assert.doesNotMatch(text, /Which device|Change device|Android/, "one device → no choice, and no word about another");
-    for (const word of ["Step 1 of 5 · iPhone or iPad", "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone.", "Download certificate", "Next", ...IPHONE_TITLES]) {
+    assert.doesNotMatch(text, /Which device|Galaxy|Android/, "the chosen device's steps alone");
+    for (const word of ["Step 1 of 5 · iPhone or iPad", "Change device", "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone.", "Download certificate", "Next", ...IPHONE_TITLES]) {
       assert.ok(text.includes(word), `shows "${word}"`);
     }
     assert.ok(!getButtonNames(tree).includes("Back"), "no Back on step 1");
     assert.equal(findNodes(tree, (node) => node.type === "ol").length, 1);
     assert.equal(findNodes(tree, (node) => node.type === "li").length, 5);
-    assert.deepEqual(findNodes(tree, (node) => node.props["aria-current"] === "step").map((node) => collectText(node).replace(/\s+/g, " ").trim()), [`1 ${IPHONE_TITLES[0]}`]);
+    assert.deepEqual(findNodes(tree, (node) => node.props["aria-current"] === "step").map((node) => ({ type: node.type, text: collectText(node).replace(/\s+/g, " ").trim() })), [{ type: "li", text: `1 ${IPHONE_TITLES[0]}` }]);
     assert.deepEqual(getButtonNames(tree).filter((name) => IPHONE_TITLES.some((title) => name.includes(title))), []);
   });
 
@@ -262,6 +290,34 @@ describe("the connect card is a procedure: one device, one open step, done steps
     card.press("Next");
     assert.ok(card.text().includes("Step 2 of 5"), "Next from a reopened step opens the step after it");
     assert.deepEqual(card.doneTitles(), [IPHONE_TITLES[0]]);
+  });
+
+  describe("each open step's pane names its step in the heading that takes focus and offers one primary, the spec's own", () => {
+    const rows = [
+      { name: "step 1 sends the certificate; Next stays secondary", nexts: 0, heading: IPHONE_TITLES[0], primaries: ["Download certificate"] },
+      { name: "step 2 moves on by Next", nexts: 1, heading: IPHONE_TITLES[1], primaries: ["Next"] },
+      { name: "step 3 moves on by Next", nexts: 2, heading: IPHONE_TITLES[2], primaries: ["Next"] },
+      { name: "step 4 moves on by Next", nexts: 3, heading: IPHONE_TITLES[3], primaries: ["Next"] },
+      { name: "step 5 opens a code", nexts: 4, heading: IPHONE_TITLES[4], primaries: ["Show QR code"] },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const card = await driveConnect();
+        for (let i = 0; i < row.nexts; i++) card.press("Next");
+
+        assert.deepEqual({ heading: card.heading(), primaries: card.primaries() }, { heading: [row.heading], primaries: row.primaries });
+      });
+    }
+
+    test("a finished card heads its pane with the connected line and offers no primary", async () => {
+      const card = await driveConnect();
+      card.press("Trouble?");
+      card.press("Go to step 5");
+
+      connectDevice(card, "Minji's iPhone");
+
+      assert.deepEqual({ heading: card.heading(), primaries: card.primaries() }, { heading: ["✓ “Minji's iPhone” is connected."], primaries: [] });
+    });
   });
 
   test("Back opens the step before", async () => {
@@ -282,7 +338,7 @@ describe("the connect card is a procedure: one device, one open step, done steps
     const opened = card.text();
     card.press("Next");
 
-    for (const word of ["Settings › Profile Downloaded › More Details › Glass Atrium Local CA", "9A 3F 1C 07 5E B2 44 D0", "If lines differ, remove the profile and never turn on full trust."]) {
+    for (const word of ["Settings › Profile Downloaded › More Details › Glass Atrium Local CA", "SHA-256 9A 3F 1C 07 5E B2 44 D0", "⚠ Warning: If lines differ, remove the profile and never turn on full trust."]) {
       assert.ok(closed.includes(word), `shows "${word}" without a press: ${closed}`);
     }
     assert.ok(!closed.includes("No lines before installing?"), "closed by default");
@@ -377,25 +433,322 @@ describe("the connect card is a procedure: one device, one open step, done steps
     payloads.forEach(({ address, code }, i) => assert.ok(!labels[i].includes(address) && !labels[i].includes(code), labels[i]));
   });
 
-  test("a device registering in the scan step finishes the card, and Connect another device starts over", async () => {
+  test("a device registering in the scan step finishes the card with no Change device", async () => {
     const card = await driveConnect();
     card.press("Trouble?");
     card.press("Go to step 5");
 
-    (findNodes(card.view(), (node) => node.type === "CodeStepRA")[0].props.onConnected as (label: string) => void)("Minji's iPhone");
+    connectDevice(card, "Minji's iPhone");
 
     const text = card.text();
     assert.ok(text.includes("All 5 steps done · iPhone or iPad") && text.includes("“Minji's iPhone” is connected."));
+    assert.ok(!text.includes("Change device"), text);
     assert.deepEqual(card.doneTitles(), IPHONE_TITLES);
-    card.press("Connect another device");
-    assert.deepEqual({ isStepOne: card.text().includes("Step 1 of 5"), done: card.doneTitles() }, { isStepOne: true, done: [] });
   });
 
   test("at the device limit the card holds the limit line alone", async () => {
-    const card = await driveConnect({ devices: Array.from({ length: 10 }, (_, i) => ({ ...DEVICES[0], id: String(i) })) });
+    const card = await driveConnect({ devices: Array.from({ length: 10 }, (_, i) => ({ ...DEVICES[0], id: String(i) })) }, null);
 
     assert.equal(card.text().trim(), "10 of 10 devices registered; remove one to connect another.");
     assert.deepEqual(getButtonNames(card.view()), []);
+  });
+});
+
+describe("the device choice comes before any step, and every way back starts the next device at its step 1", () => {
+  test("with no device chosen the card asks one question over two equal device buttons, with no step drawn", async () => {
+    const card = await driveConnect({}, null);
+
+    const tree = card.view();
+    assert.deepEqual(card.heading(), ["Which device are you connecting?"]);
+    assert.deepEqual(getButtonNames(tree), ["iPhone or iPad", "Galaxy phone"]);
+    assert.deepEqual(card.primaries(), []);
+    assert.equal(findNodes(tree, (node) => node.type === "ol").length, 0);
+  });
+
+  const devices = [
+    { name: "iPhone or iPad", titles: IPHONE_TITLES, other: GALAXY_TITLES },
+    { name: "Galaxy phone", titles: GALAXY_TITLES, other: IPHONE_TITLES },
+  ];
+  for (const row of devices) {
+    test(`${row.name} opens its own step 1 and never the other device's steps`, async () => {
+      const card = await driveConnect({}, row.name);
+
+      const text = card.text();
+      assert.ok(text.includes(`Step 1 of 5 · ${row.name}`), text);
+      assert.deepEqual(card.heading(), [row.titles[0]]);
+      for (const title of row.titles) assert.ok(text.includes(title), `shows "${title}"`);
+      for (const title of row.other.filter((other) => !row.titles.includes(other))) assert.ok(!text.includes(title), `never "${title}"`);
+    });
+  }
+
+  const resets = [
+    {
+      name: "Change device mid-way",
+      reach: (card: Awaited<ReturnType<typeof driveConnect>>) => { card.press("Next"); card.press("Next"); },
+      back: "Change device",
+    },
+    {
+      name: "Connect another device after finishing",
+      reach: (card: Awaited<ReturnType<typeof driveConnect>>) => { card.press("Trouble?"); card.press("Go to step 5"); connectDevice(card, "Minji's iPhone"); },
+      back: "Connect another device",
+    },
+  ];
+  for (const row of resets) {
+    test(`${row.name} returns to the choice, and the Galaxy then opens on its step 1 with no mark`, async () => {
+      const card = await driveConnect();
+      row.reach(card);
+
+      card.press(row.back);
+
+      assert.deepEqual(card.heading(), ["Which device are you connecting?"]);
+      card.press("Galaxy phone");
+      assert.deepEqual({ heading: card.heading(), done: card.doneTitles(), isStepOne: card.text().includes("Step 1 of 5 · Galaxy phone") }, { heading: [GALAXY_TITLES[0]], done: [], isStepOne: true });
+    });
+  }
+
+  test("Turn off leaves the card on the device choice with no mark once access is on again", async () => {
+    const { react, flushEffects, resetCursor } = createStatefulReact();
+    const mod = await loadScreenModule(SCREEN_SRC, { React: react, UI: ui, navigator: {}, File, fetch: async () => new Response("{}", { status: 200 }) });
+    let setup: Record<string, unknown> = SETUP_ON;
+    const render = (): RenderedNode => {
+      resetCursor();
+      const props = { setup, devices: [], view: setup.enabled ? "on" : "off", check: { act: null, error: null }, onWiden: () => undefined, onChanged: () => undefined, onDevicesRead: () => undefined, onRemoveAll: () => undefined };
+      const tree = renderScreen(react.createElement(mod.BodyRA, props)) as RenderedNode;
+      flushEffects();
+      return tree;
+    };
+    const press = (name: string) => {
+      const button = findNodes(render(), (node) => node.type === "button" && collectText(node).trim() === name)[0];
+      assert.ok(button, `a button named "${name}"`);
+      (button.props.onClick as () => void)();
+    };
+    press("Galaxy phone");
+    press("Next");
+
+    setup = SETUP_OFF;
+    render();
+    setup = SETUP_ON;
+
+    const text = collectText(render());
+    assert.ok(text.includes("Which device are you connecting?"), text);
+    assert.ok(!text.includes("Step "), text);
+  });
+});
+
+describe("the Galaxy procedure installs, then compares, and only then shows the address and the code", () => {
+  const driveGalaxy = (over: Record<string, unknown> = {}) => driveConnect(over, "Galaxy phone");
+
+  describe("each open step's pane names its step and offers one primary, the spec's own", () => {
+    const rows = [
+      { name: "step 1 sends the certificate; Next stays secondary", nexts: 0, primaries: ["Download certificate"] },
+      { name: "step 2 moves on by Next", nexts: 1, primaries: ["Next"] },
+      { name: "step 3 moves on by Next", nexts: 2, primaries: ["Next"] },
+      { name: "step 4 moves on by Lines match alone", nexts: 3, primaries: ["Lines match"] },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const card = await driveGalaxy();
+        for (let i = 0; i < row.nexts; i++) card.press("Next");
+
+        assert.deepEqual({ heading: card.heading(), primaries: card.primaries() }, { heading: [GALAXY_TITLES[row.nexts]], primaries: row.primaries });
+      });
+    }
+
+    test("step 5 opens a code with Show address and code", async () => {
+      const card = await driveGalaxy();
+      for (let i = 0; i < 3; i++) card.press("Next");
+
+      card.press("Lines match");
+
+      assert.deepEqual({ heading: card.heading(), primaries: card.primaries() }, { heading: [GALAXY_TITLES[4]], primaries: ["Show address and code"] });
+    });
+  });
+
+  test("the file the Galaxy step sends is named for Android's installer and holds the same bytes as the iPhone's", async () => {
+    const pem = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUQ2xhdWRlIGxvY2FsIENBIHRlc3Qx\n-----END CERTIFICATE-----\n";
+    const { mod } = await loadScreen({ status: 200, body: pem, headers: { "content-disposition": getAttachmentDisposition(CA_DOWNLOAD.FILE_NAME) } });
+    const read = mod.readCertificateRA as (fileName?: string | null) => Promise<File>;
+    const galaxy = (vm.runInContext("DEVICE_RA", mod) as Record<string, { fileName: string | null }>).galaxy;
+
+    const [iphoneFile, galaxyFile] = await Promise.all([read(), read(galaxy.fileName)]);
+
+    assert.deepEqual([iphoneFile.name, galaxyFile.name], [CA_DOWNLOAD.FILE_NAME, "Glass Atrium Local CA.cer"]);
+    assert.deepEqual(Buffer.from(await galaxyFile.arrayBuffer()), Buffer.from(await iphoneFile.arrayBuffer()));
+    assert.equal(galaxyFile.type, iphoneFile.type);
+  });
+
+  test("Go to step 4 opens the compare step with steps 1-3 done and step 4 not, never the last step", async () => {
+    const card = await driveGalaxy();
+    card.press("Trouble?");
+
+    card.press("Go to step 4");
+
+    assert.ok(card.text().includes("Step 4 of 5 · Galaxy phone"), card.text());
+    assert.deepEqual({ heading: card.heading(), done: card.doneTitles() }, { heading: [GALAXY_TITLES[3]], done: GALAXY_TITLES.slice(0, 3) });
+  });
+
+  test("before Lines match is pressed no step draws the address, the code or its open control, and no code is requested", async () => {
+    const card = await driveGalaxy();
+    const seen: string[] = [];
+    const buttons: string[] = [];
+    for (let step = 0; step < 4; step++) {
+      card.press("Trouble?");
+      seen.push(card.text());
+      buttons.push(...card.getButtons().map((node) => collectText(node).trim()));
+      assert.equal(findNodes(card.view(), (node) => node.type === "CodeStepRA" || node.type === "QrCodeRA").length, 0, `step ${step + 1}: no code view`);
+      if (step < 3) card.press("Next");
+    }
+
+    for (const text of seen) assert.doesNotMatch(text, /https:\/\/[a-z0-9]|192\.168\.0\.12|studio-mac\.local|Show address and code|Or scan with Camera/, text);
+    assert.ok(!buttons.includes("Go to step 5"), "no jump lands on the last step");
+    assert.deepEqual(card.sent.filter((entry) => entry.method === "POST"), []);
+  });
+
+  test("the last step opens only through Lines match: no Next, no jump, and its rail row is never a button", async () => {
+    const card = await driveGalaxy();
+    for (let i = 0; i < 3; i++) card.press("Next");
+    const compareButtons = card.getButtons().map((node) => collectText(node).replace(DONE_MARK, "").trim());
+    card.press("Lines match");
+
+    connectDevice(card, "Minji's Galaxy S24");
+
+    assert.ok(!compareButtons.includes("Next") && !compareButtons.includes(GALAXY_TITLES[4]), compareButtons.join(" | "));
+    assert.ok(card.text().includes("All 5 steps done · Galaxy phone"), card.text());
+    assert.deepEqual(card.doneTitles(), GALAXY_TITLES.slice(0, 4), "the finished last step is marked, not pressable");
+  });
+
+  describe("the compare step holds Lines match without a fingerprint and keeps its stop line in the body", () => {
+    const STOP = "⚠ Warning: Lines differ or missing? Tap Remove now; do not scan or open the address.";
+    const rows = [
+      { name: "a fingerprint on screen sits under the phone's own field name and lets Lines match move on", fingerprint: FINGERPRINT, present: ["SHA-256 fingerprint 9A 3F 1C 07 5E B2 44 D0"], isHeld: false },
+      { name: "a missing fingerprint says to refresh, then compare, in its place, and holds Lines match", fingerprint: null, present: ["Fingerprint not shown; refresh this page, then compare."], isHeld: true },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const card = await driveGalaxy({ setup: { ...SETUP_ON, fingerprint: row.fingerprint } });
+        for (let i = 0; i < 3; i++) card.press("Next");
+
+        const text = card.text();
+        const forward = card.getButtons().filter((node) => /^(Next|Lines match)$/.test(collectText(node).trim()));
+        assert.ok(text.includes("Settings › Security and privacy › More security settings › Trusted credentials › User › Glass Atrium Local CA"), text);
+        for (const word of [...row.present, STOP]) assert.ok(text.includes(word), `shows "${word}" with the fold closed: ${text}`);
+        assert.ok(!text.includes("Not listed under User?"), "the fold starts closed");
+        assert.deepEqual(forward.map((node) => ({ name: collectText(node).trim(), isHeld: node.props.disabled === true })), [{ name: "Lines match", isHeld: row.isHeld }]);
+      });
+    }
+  });
+
+  test("no Galaxy text before the last step holds a value slot", async () => {
+    const { mod } = await loadScreen();
+    const galaxy = (vm.runInContext("DEVICE_RA", mod) as Record<string, { steps: Array<Record<string, unknown>> }>).galaxy;
+    const getLeaves = (value: unknown): string[] => (typeof value === "string" ? [value] : Object.values(value as object).flatMap(getLeaves));
+
+    // copied out of the screen's realm → the result compares as a plain array
+    const slotted = [...galaxy.steps.slice(0, 4)].flatMap(getLeaves).filter((text) => /\{[a-z0-9-]+\}/.test(text));
+
+    assert.equal(galaxy.steps.length, 5);
+    assert.deepEqual(slotted, []);
+  });
+
+  test("with no code open the last step names no warning in its line and its fold offers the Chrome warning line alone", async () => {
+    const card = await driveGalaxy();
+    for (let i = 0; i < 3; i++) card.press("Next");
+    card.press("Lines match");
+
+    card.press("Trouble?");
+
+    const text = card.text();
+    assert.ok(text.includes("In Chrome, type the address, https:// included."), text);
+    assert.ok(text.includes("Warning in Chrome? Close the page, then repeat step 4."), text);
+    for (const word of ["not private", "Page will not open?", "studio-mac.local", "Camera does nothing?"]) assert.ok(!text.includes(word), `never "${word}": ${text}`);
+  });
+
+  test("with a code open the last step's fold offers the .local name second, the Camera line beside the QR code and the Chrome warning line", async () => {
+    const { mod } = await loadScreen();
+    const galaxy = (vm.runInContext("DEVICE_RA", mod) as Record<string, { steps: Array<{ trouble: unknown[] }> }>).galaxy;
+    const values = { address: "https://192.168.0.12:16146", "address-2": "https://studio-mac.local:16146", code: "K7QM 4XZP" };
+
+    const text = collectText(render(mod as Mod, "TroubleRA", { rows: galaxy.steps[4].trouble, values, isQrShown: true, isOpen: true, jump: 3, onAct: () => undefined })).replace(/\s+/g, " ");
+
+    for (const word of ["Page will not open? Try: https://studio-mac.local:16146", "Camera does nothing? Type the address and the code instead.", "Warning in Chrome? Close the page, then repeat step 4."]) {
+      assert.ok(text.includes(word), `shows "${word}": ${text}`);
+    }
+  });
+});
+
+// the progress steps themselves, whatever control the markup offers or withholds
+describe("the progress steps hold the compare step's rules, not only its markup", () => {
+  type Progress = { open: number | null; done: boolean[] };
+  const getActs = async () => {
+    const { mod } = await loadScreen();
+    const put = mod.putProgressRA as (current: unknown, act: unknown) => Progress;
+    // the device's compare step, opened by Next presses through every step before it
+    const openCompare = (device: string) => {
+      const steps = (vm.runInContext("DEVICE_RA", mod) as Record<string, { steps: Array<{ kind: string }> }>)[device].steps;
+      const compare = steps.findIndex((step) => step.kind === "fingerprint");
+      let progress = put(null, { type: "choose", device });
+      for (let i = 0; i < compare; i++) progress = put(progress, { type: "next", hasFingerprint: true });
+      return { progress, compare };
+    };
+    return { put, openCompare };
+  };
+
+  for (const device of ["iphone", "galaxy"]) {
+    test(`${device}: Next from the compare step leaves progress as it was without a fingerprint and opens the next step with one`, async () => {
+      const { put, openCompare } = await getActs();
+      const { progress, compare } = openCompare(device);
+
+      const held = put(progress, { type: "next", hasFingerprint: false });
+      const moved = put(progress, { type: "next", hasFingerprint: true });
+
+      assert.equal(progress.open, compare);
+      assert.equal(held, progress, "the same progress, nothing marked");
+      assert.deepEqual({ open: moved.open, isCompareDone: moved.done[compare] }, { open: compare + 1, isCompareDone: true });
+    });
+  }
+
+  test("galaxy: the locked last step reopens only once the compare step is done", async () => {
+    const { put, openCompare } = await getActs();
+    const { progress, compare } = openCompare("galaxy");
+    const early = put(put(progress, { type: "back" }), { type: "reopen", index: compare + 1 });
+    const matched = put(put(put(progress, { type: "next", hasFingerprint: true }), { type: "back" }), { type: "reopen", index: compare + 1 });
+
+    assert.deepEqual({ early: early.open, matched: matched.open }, { early: compare - 1, matched: compare + 1 });
+  });
+});
+
+describe("the Galaxy's last step shows the address and the code typed first, the QR code beside them", () => {
+  const ADDRESS = "https://192.168.0.12:16146";
+  const OPEN = { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" };
+  const rows = [
+    { name: "at rest it offers Show address and code alone", state: { status: "idle" }, present: ["Show address and code"], absent: [ADDRESS, "Code", "Or scan with Camera"], qr: [], primaries: ["Show address and code"] },
+    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: [ADDRESS, "Show address and code"], qr: [], primaries: ["Opening…"] },
+    { name: "an open code shows the private address and the code, then the QR code under its own label", state: OPEN, present: ["Address", ADDRESS, "Code", "K7QM 4XZP", "One use · valid until", "Show a new code", "Or scan with Camera"], absent: ["Show address and code"], qr: [`${ADDRESS}/sign-in.html#code=K7QM4XZP`], primaries: [] },
+    { name: "an expired code takes the address, the code and the QR code with it", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show address and code"], absent: [ADDRESS, "K7QM"], qr: [], primaries: ["Show address and code"] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const { mod } = await loadScreen();
+
+      const tree = render(mod as Mod, "CodeViewRA", { onOpen: () => undefined, address: ADDRESS, isTyped: true, state: row.state });
+      const text = collectText(tree);
+
+      for (const word of row.present) assert.ok(text.includes(word), `${row.name}: "${word}"`);
+      for (const word of row.absent) assert.ok(!text.includes(word), `${row.name}: never "${word}"`);
+      assert.deepEqual(findNodes(tree, (node) => node.type === "QrCodeRA").map((node) => node.props.text), row.qr, `${row.name}: QR code`);
+      assert.deepEqual(findNodes(tree, (node) => node.type === "button" && String(node.props.className).split(/\s+/).includes("primary")).map((node) => collectText(node).trim()), row.primaries);
+      assert.deepEqual(findNodes(tree, (node) => node.type === "a"), [], "the address is text, never a link");
+    });
+  }
+
+  test("without the encoder the typed route stands alone", async () => {
+    const { mod } = await loadScreen();
+    vm.runInContext("qrcode = undefined", mod);
+
+    const text = collectText(render(mod as Mod, "CodeViewRA", { onOpen: () => undefined, address: ADDRESS, isTyped: true, state: OPEN }));
+
+    assert.ok(text.includes(ADDRESS) && text.includes("K7QM 4XZP"), text);
+    assert.ok(!text.includes("Or scan with Camera") && !text.includes("sign-in.html"), text);
   });
 });
 
@@ -407,7 +760,7 @@ describe("the step words keep to the card's caps", () => {
   test("every title holds at most 6 words, every line at most 14, every fold at most three lines of at most 14", async () => {
     const { mod } = await loadScreen();
     // copied out of the screen's realm → the result compares as a plain array
-    const steps = [...(vm.runInContext("STEPS_RA", mod) as StepWords[])];
+    const steps = Object.values(vm.runInContext("DEVICE_RA", mod) as Record<string, { steps: StepWords[] }>).flatMap((device) => [...device.steps]);
 
     const over = steps.flatMap((step) => {
       const lines = [step.line, step.path, step.stop].flatMap((value) => (typeof value === "object" ? Object.values(value) : value ?? []));
@@ -419,15 +772,16 @@ describe("the step words keep to the card's caps", () => {
       ];
     });
 
-    assert.ok(steps.length >= 5, "the step table was read");
+    assert.equal(steps.length, 10, "both devices' step tables were read");
     assert.deepEqual(over, []);
   });
 
   test("every string a step body or its code view shows holds at most 14 words", async () => {
     const { mod } = await loadScreen();
-    // STEP_TEXT_RA → the step bodies' own words · OPEN_ERROR_RA → the code view's refusals
+    // STEP_TEXT_RA → the step bodies' own words · OPEN_ERROR_RA → the code view's refusals · each device's compare words
     const getLeaves = (value: unknown): string[] => (typeof value === "string" ? [value] : Object.values(value as object).flatMap(getLeaves));
-    const shown = ["STEP_TEXT_RA", "OPEN_ERROR_RA"].flatMap((name) => getLeaves(vm.runInContext(name, mod)));
+    const compares = Object.values(vm.runInContext("DEVICE_RA", mod) as Record<string, { compare: unknown }>).map((device) => device.compare);
+    const shown = [...["STEP_TEXT_RA", "OPEN_ERROR_RA"].map((name) => vm.runInContext(name, mod)), ...compares].flatMap(getLeaves);
 
     const over = shown.filter((text) => countWords(text) > 14);
 
@@ -532,13 +886,13 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
   });
 });
 
-describe("the scan step shows one code at a time and what became of it", () => {
+describe("the scan step shows one code at a time and what became of it, opening a code as its primary", () => {
   const base = { onOpen: () => undefined };
   const rows = [
-    { name: "at rest it offers the QR code alone", state: { status: "idle" }, present: ["Show QR code"], absent: ["One use", "Code", "Show a new code"], qr: [] },
-    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show QR code", "Show a new code"], qr: [] },
-    { name: "an open code draws a QR code of the sign-in page with the code in its fragment, beside the code in two groups of four, its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired", "Show QR code"], qr: ["https://studio-mac.local:16146/sign-in.html#code=K7QM4XZP"] },
-    { name: "an expired code gives way to the expired line and the QR code goes", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show QR code"], absent: ["K7QM", "Show a new code"], qr: [] },
+    { name: "at rest it offers the QR code alone", state: { status: "idle" }, present: ["Show QR code"], absent: ["One use", "Code", "Show a new code"], qr: [], primaries: ["Show QR code"] },
+    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show QR code", "Show a new code"], qr: [], primaries: ["Opening…"] },
+    { name: "an open code draws a QR code of the sign-in page with the code in its fragment, beside the code in two groups of four, its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired", "Show QR code"], qr: ["https://studio-mac.local:16146/sign-in.html#code=K7QM4XZP"], primaries: [] },
+    { name: "an expired code gives way to the expired line and the QR code goes", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show QR code"], absent: ["K7QM", "Show a new code"], qr: [], primaries: ["Show QR code"] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -550,6 +904,8 @@ describe("the scan step shows one code at a time and what became of it", () => {
       for (const word of row.present) assert.ok(text.includes(word), `${row.name}: "${word}"`);
       for (const word of row.absent) assert.ok(!text.includes(word), `${row.name}: never "${word}"`);
       assert.deepEqual(findNodes(tree, (node) => node.type === "QrCodeRA").map((node) => node.props.text), row.qr, `${row.name}: QR code`);
+      const primaries = findNodes(tree, (node) => node.type === "button" && String(node.props.className).split(/\s+/).includes("primary")).map((node) => collectText(node).trim());
+      assert.deepEqual(primaries, row.primaries, `${row.name}: the one primary, none beside an open code`);
     });
   }
 
