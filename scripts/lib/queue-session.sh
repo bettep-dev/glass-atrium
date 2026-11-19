@@ -113,7 +113,22 @@ queue_put_owner_record() {
   record="$(queue_get_owner_record_path "$2")"
   started="$(queue_get_start_time "$2")"
   [[ -n "${started}" ]] || return 0
+  queue_delete_dead_owner_records "${record%/*}"
   { mkdir -p -- "${record%/*}" && printf '%s|%s\n' "${started}" "$1" >"${record}"; } 2>/dev/null || true
+}
+
+# <owners dir> → drops each pid-named record whose process is gone or runs with another start than recorded → a
+# session that never ran its deregister leaves no record behind past the next register
+queue_delete_dead_owner_records() {
+  local record recorded started
+  for record in "$1"/*; do
+    [[ "${record##*/}" =~ ^[0-9]+$ && -f "${record}" ]] || continue
+    recorded=""
+    IFS='|' read -r recorded _ <"${record}" || true
+    started="$(queue_get_start_time "${record##*/}")"
+    if [[ -n "${started}" && "${started}" == "${recorded}" ]]; then continue; fi
+    if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
+  done
 }
 
 # <session id> <pid> → the owner record goes when it names that session

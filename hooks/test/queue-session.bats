@@ -116,6 +116,35 @@ run_deregister() {
   }
 }
 
+@test "register drops each owner record whose process is gone or no longer runs with the recorded start, and keeps a live one" {
+  start_stub
+  local lib="${GA}/scripts/lib/queue-session.sh" owners gone row name pid record
+  owners="$(bash -c 'source "$1" && queue_get_root' _ "${lib}")/data/queue/owners"
+  (exit 0) &
+  gone=$!
+  wait "${gone}"
+  mkdir -p "${owners}"
+  printf '%s|%s\n' "$(bash -c 'source "$1" && queue_get_start_time "$2"' _ "${lib}" "${PPID}")" "${SESSION_ID}" >"${owners}/${PPID}"
+  printf '%s|%s\n' "Mon Jan  1 00:00:00 2001" "${SESSION_ID}" >"${owners}/1"
+  printf '%s|%s\n' "Mon Jan  1 00:00:00 2001" "${SESSION_ID}" >"${owners}/${gone}"
+  printf 'kept\n' >"${owners}/notes"
+  export CLAUDE_PID=$$
+  run_register
+  [[ "${status}" -eq 0 && -s "${owners}/$$" ]] || {
+    echo "status=${status} ${output}${stderr} $(ls "${owners}")"
+    return 1
+  }
+  # Row shape: name|record file|kept or dropped
+  for row in "live with its start|${PPID}|kept" "pid reused since|1|dropped" "process gone|${gone}|dropped" \
+    "no pid name|notes|kept"; do
+    IFS='|' read -r name pid record <<<"${row}"
+    [[ "${record}" == kept && -f "${owners}/${pid}" || "${record}" == dropped && ! -e "${owners}/${pid}" ]] || {
+      echo "row ${name}: $(ls "${owners}")"
+      return 1
+    }
+  done
+}
+
 @test "register takes the cwd and session id the hook payload names, else the process cwd and the session env" {
   start_stub
   local start_dir="${BATS_TEST_TMPDIR}/session-start-dir" other_id="9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
