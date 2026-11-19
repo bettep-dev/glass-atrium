@@ -242,6 +242,18 @@ describe("answer record", () => {
     }
   });
 
+  test("a relay, answered by its sender on insert, is never flagged as answered outside in any state", async () => {
+    const [recipient, sender] = [await seedSession(), await seedSession()];
+    for (const status of ["answered", "delivering", "unacked", "held", "expired", "delivered", "withdrawn"] as const) {
+      const relayId = await seedItem(recipient, {
+        kind: "relay", fromSessionId: sender, relayHop: 0, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: "The relay suite is green.",
+        isFreeTextAllowed: false, status, relayClosedAt: status === "withdrawn" ? new Date() : null,
+      });
+      const detail = (await send("GET", `/api/queue/owner/items/${relayId}`)).json();
+      assert.deepEqual([detail.answerRecord, detail.isAnsweredOutside], [null, false], status);
+    }
+  });
+
   test("a report closed with Seen carries no answer and is never flagged as answered outside", async () => {
     const itemId = await seedItem(await seedSession());
     await send("POST", `/api/queue/owner/items/${itemId}/seen`);
@@ -442,19 +454,23 @@ describe("list and item detail", () => {
     assert.equal((await send("GET", "/api/queue/owner/items?colour=red")).statusCode, 400);
   });
 
-  test("the list carries no relay, one on its way included, while the relay history does", async () => {
-    const [recipient, sender] = [await seedSession(), await seedSession()];
-    const orderId = await seedItem(recipient);
-    const relayId = await seedItem(recipient, {
+  test("the list carries a relay while it is on its way to its recipient, never once delivered, lapsed or redacted", async () => {
+    const [recipient, sender] = [await seedSession(), await seedSession({ name: "relay sender" })];
+    const sentAt = new Date(Date.now() - 60_000);
+    const seedRelay = (overrides: Partial<Prisma.QueueItemUncheckedCreateInput>) => seedItem(recipient, {
       kind: "relay", fromSessionId: sender, relayHop: 0, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: "The relay suite is green.",
-      isFreeTextAllowed: false, status: "answered", askedAt: new Date(Date.now() - 60_000),
+      isFreeTextAllowed: false, status: "answered", askedAt: sentAt, ...overrides,
     });
+    const orderId = await seedItem(recipient);
+    const onItsWay = { notFetched: await seedRelay({}), unackedFetched: await seedRelay({ status: "unacked", relayFetchedAt: sentAt }) };
+    await seedRelay({ status: "delivered", deliveredAt: sentAt, relayFetchedAt: sentAt });
+    await seedRelay({ status: "withdrawn", relayClosedAt: sentAt });
+    await seedRelay({ relayRedactedAt: sentAt, relayRedactedLength: 25, title: RELAY_REDACTION_MARKER, body: RELAY_REDACTION_MARKER });
 
-    const list = await send("GET", `/api/queue/owner/items?sessionId=${recipient}`);
-    const history = await send("GET", `/api/queue/owner/orders?kind=relay&sessionIds=${recipient}`, undefined, { headers: {} });
+    const items = (await send("GET", `/api/queue/owner/items?sessionId=${recipient}`)).json().items as Array<{ id: number; relay: { sender: { sessionIdPrefix: string } } | null }>;
 
-    assert.deepEqual((list.json().items as Array<{ id: number }>).map((item) => item.id), [Number(orderId)]);
-    assert.deepEqual((history.json().items as Array<{ id: number }>).map((item) => item.id), [Number(relayId)]);
+    assert.deepEqual(items.map((item) => item.id), [orderId, onItsWay.notFetched, onItsWay.unackedFetched].map(Number));
+    assert.deepEqual(items.map((item) => item.relay?.sender.sessionIdPrefix ?? null), [null, sender.slice(0, 8), sender.slice(0, 8)], "listed in the relay's own view");
   });
 
   test("paging with nextCursor returns every awaiting item exactly once, in queue order", async () => {

@@ -167,7 +167,7 @@ export interface OwnerItemView {
   attachments: ImageView[];
   /** null → never answered, or answered with no record */
   answerRecord: AnswerRecord | null;
-  /** Answered, yet no record → written outside the monitor (straight into the database). */
+  /** Answered, yet no record → written outside the monitor (straight into the database); never a relay. */
   isAnsweredOutside: boolean;
   session: OwnerSessionView;
   /** Newest first. */
@@ -233,9 +233,10 @@ export function canResend(facts: ResendFacts): boolean {
 export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: OwnerItemView[]; nextCursor: number | null }> {
   const rows = await getPrisma().queueItem.findMany({
     where: {
+      // a relay copy is inserted answered → non-terminal = on its way to its recipient, as for an owner order
       status: { notIn: TERMINAL },
-      // the list draws every row as the owner's own item → a relay, another session's message, is read in the relay history only
-      kind: { not: "relay" },
+      // the owner took a redacted relay's text out of the record → read in the relay history only
+      relayRedactedAt: null,
       ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
       session: { isProbe: false, ...(query.profile === undefined ? {} : { profileLabel: query.profile }) },
       ...(query.after === undefined ? {} : { queuePosition: { gt: BigInt(query.after) } }),
@@ -506,7 +507,8 @@ function getAnswerRecordView(item: QueueItem): Pick<OwnerItemView, "answerRecord
   if (item.answerRoute !== null && item.answerSignal !== null) {
     return { answerRecord: { route: item.answerRoute, signal: item.answerSignal }, isAnsweredOutside: false };
   }
-  return { answerRecord: null, isAnsweredOutside: ANSWERED_STATUSES.has(item.status) };
+  // a relay is inserted answered by its sender, never by the owner → no record to miss
+  return { answerRecord: null, isAnsweredOutside: item.kind !== "relay" && ANSWERED_STATUSES.has(item.status) };
 }
 
 function toSessionView(session: QueueSession, lastResumeBgId: string | null): OwnerSessionView {
