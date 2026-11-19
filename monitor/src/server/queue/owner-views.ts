@@ -337,8 +337,8 @@ function toRefusalView(row: RefusalRow): RelayRefusalView {
   return { at: row.at.toISOString(), reason: row.reason, senderIdPrefix: getSessionIdPrefix(row.senderId), recipientIdPrefixes: row.recipientIds.map(getSessionIdPrefix), unresolvedCount: row.unresolvedCount };
 }
 
-// The history threads: which items, the order time, and the fold key of an item with no send id
-const HISTORY_THREADS = {
+// The send threads: which items, the order time, and the fold key of an item with no send id
+const SEND_THREADS = {
   order: {
     items: Prisma.sql`i."answered_at" IS NOT NULL AND (i."kind" = 'message' OR (i."kind" = 'report' AND i."answer_text" IS NOT NULL))`,
     time: Prisma.sql`i."answered_at"`,
@@ -350,23 +350,16 @@ const HISTORY_THREADS = {
     time: Prisma.sql`i."asked_at"`,
     unsentKey: Prisma.sql`concat('i:', i."id")`,
   },
-  // CHECK queue_items_closed_check → closed_at set on every row this matches
-  item: {
-    items: Prisma.sql`i."kind" IN ('decision', 'report') AND i."status" <> 'open'`,
-    time: Prisma.sql`i."closed_at"`,
-    unsentKey: Prisma.sql`concat('i:', i."id")`,
-  },
-} as const satisfies Record<OwnerOrdersQuery["kind"], Record<"items" | "time" | "unsentKey", Prisma.Sql>>;
+} as const satisfies Record<Exclude<OwnerOrdersQuery["kind"], "item">, Record<"items" | "time" | "unsentKey", Prisma.Sql>>;
 
 /**
  * Copies of the page's orders plus one order past it, newest order first.
  * Fold key: the send id, else the thread's key for an unsent item. Order time = its newest copy's thread time; ties
  * broken by its lowest copy id. The session filter matches either end: recipient, or a relay's sender.
- * The profile filter (item thread only) matches the item's session.
  */
 async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]> {
-  const thread = HISTORY_THREADS[query.kind];
-  const profileFilter = getProfileFilterSql(query.profile);
+  if (query.kind === "item") return getClosedItemRows(query);
+  const thread = SEND_THREADS[query.kind];
   const sessionFilter =
     query.sessionIds === undefined
       ? Prisma.sql`TRUE`
@@ -378,7 +371,7 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
       SELECT i."id", i."session_id", i."from_session_id", t."at", COALESCE(i."send_id"::text, ${thread.unsentKey}) AS "order_key"
       FROM "monitor"."queue_items" i
       CROSS JOIN LATERAL (SELECT ${getEpochMicrosSql(thread.time)} AS "at") t
-      WHERE ${thread.items} AND ${NOT_PROBE_ITEM_FILTER} AND ${profileFilter}
+      WHERE ${thread.items} AND ${NOT_PROBE_ITEM_FILTER}
     ),
     orders AS (
       SELECT c."order_key", max(c."at") AS "at", min(c."id") AS "first_id" FROM copies c GROUP BY c."order_key" HAVING ${sessionFilter}
@@ -389,6 +382,27 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
     SELECT c."id", concat(p."at", ':', p."first_id") AS "cursor"
     FROM page p JOIN copies c ON c."order_key" = p."order_key"
     ORDER BY p."at" DESC, p."first_id" DESC, c."id"`;
+}
+
+/**
+ * The item thread's page plus one item past it, newest close time first, an equal time broken by the higher id.
+ * No decision or report write sets a send id → one item per order, read in queue_items_closed_at_idx order with no fold.
+ * The profile filter matches the item's session.
+ */
+async function getClosedItemRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]> {
+  const sessionFilter = query.sessionIds === undefined ? Prisma.sql`TRUE` : Prisma.sql`i."session_id" = ANY(${query.sessionIds}::uuid[])`;
+  // the cursor's epoch microseconds back to a timestamp, exact → the row compare stays an index condition
+  const cursorFilter =
+    query.before === undefined
+      ? Prisma.sql`TRUE`
+      : Prisma.sql`(i."closed_at", i."id") < (timestamptz 'epoch' + ${query.before.at}::bigint * interval '1 microsecond', ${query.before.id}::bigint)`;
+  // CHECK queue_items_closed_check → closed_at set ⇔ a decision or report no longer open
+  return getPrisma().$queryRaw<OrderCopyRow[]>`
+    SELECT i."id", concat(${getEpochMicrosSql(Prisma.sql`i."closed_at"`)}, ':', i."id") AS "cursor"
+    FROM "monitor"."queue_items" i
+    WHERE i."closed_at" IS NOT NULL AND ${NOT_PROBE_ITEM_FILTER} AND ${getProfileFilterSql(query.profile)} AND ${sessionFilter} AND ${cursorFilter}
+    ORDER BY i."closed_at" DESC, i."id" DESC
+    LIMIT ${query.limit + 1}`;
 }
 
 function getProfileFilterSql(profile: string | undefined): Prisma.Sql {
