@@ -204,7 +204,7 @@ describe("remote access on at 1440px, the scan step, the tallest step", () => {
   });
   after(async () => closeRenderContext(ctx));
 
-  test("the shell's encoder draws the address as a QR code at full size, and the card with a code and its fold open fits a 900px window", async () => {
+  test("the shell's encoder draws the sign-in page with the open code as a QR code at full size, and the card with a code and its fold open fits a 900px window", async () => {
     const fit = await ctx.page.evaluate(() => {
       const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
       const qr = card?.querySelector('svg[role="img"]');
@@ -218,7 +218,7 @@ describe("remote access on at 1440px, the scan step, the tallest step", () => {
       };
     });
 
-    assert.equal(fit.label, "QR code for https://studio-mac.local:16146");
+    assert.equal(fit.label, "QR code for https://studio-mac.local:16146/sign-in.html#code=K7QM4XZP");
     assert.equal(fit.side, fit.drawn, "the layout never scales the modules off their 4 px");
     assert.ok(fit.bottom <= fit.window && fit.scrollTop === 0, JSON.stringify(fit));
   });

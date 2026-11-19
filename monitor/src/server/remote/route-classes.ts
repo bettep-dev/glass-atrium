@@ -43,6 +43,8 @@ const ONBOARDING_CID = "2026-11-17T0850_onboarding-build_3f9a";
 const CLOSE_CID = "2026-11-19T0700_onboarding-close_8e2d";
 // the on, trust, network-read and single html-export reasons re-signed in place (route-rows-sign-last-verdict.md): route, class and order kept → same digest
 const SIGN_LAST_CID = "2026-11-19T0945_onboarding-close2_5b7c";
+// the sign-in.js reason re-signed in place for its fragment read (steps-review-items.json → A10, A11): route, class and order kept → same digest
+const FRAGMENT_READ_CID = "2026-11-19T1520_steps-finish_d9a2";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -238,6 +240,33 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 115,
     sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351",
+    supersededBy: FRAGMENT_READ_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S7",
+    // every row of the entry before it carried unchanged; the sign-in.js reason re-signed
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // C1-C3 and C5-C8 carried from the entry before
+    // C4 open: sign-in.js fragment read (2026-11-19T1520_steps-finish_d9a2) — one routine, at load and on a fragment change; the address replaced by the fixed page path before the value is tested, valid or not; the value kept only on an exact match of the code's length and alphabet (registration-code.ts → REGISTRATION_CODE), otherwise dropped silently; set as the code field's value only; no storage, cookie, title, log or history state; one same-origin JSON POST to /api/remote/register, sent by the form's submit alone; code field cleared on a code refusal; text through textContent only, fixed redirect to /; sign-in.html and sign-in.css byte-unchanged, their rows carried; met only once the built file is read
+    cids: [
+      FRAGMENT_READ_CID,
+      SIGN_LAST_CID,
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 115,
+    sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351",
   },
 ];
 
@@ -348,7 +377,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "DELETE /api/remote/cli/devices/:id", cls: "remote-cli", reason: "loopback only; same gate, decimal id, no body; the page's revoke act (sockets closed) audited as the CLI; one device_not_found" },
   { route: "POST /api/remote/cli/devices/revoke-all", cls: "remote-cli", reason: "loopback only; same gate, empty body; the page's revoke-all act audited as the CLI; the count only" },
   { route: "GET /sign-in.html", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; meta CSP as written, links only /sign-in.css and /sign-in.js" },
-  { route: "GET /sign-in.js", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; the sign-in form's script, names no feature" },
+  { route: "GET /sign-in.js", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; the sign-in form's script, names no feature; reads one thing from the address, the fragment's one fixed key: the fragment is removed at once by replacing the history entry, the value kept only when it is exactly the code's length and alphabet, set as the code field's value and nowhere else, never stored, logged or sent except in the register POST body the person's press sends; no query read, no auto-submit" },
   { route: "GET /sign-in.css", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; self-contained, the shared stylesheets stay behind registration" },
   { route: "POST /api/queue/pending/count", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh (listen step, run by hooks/queue-listener.sh) only; handler read: strict session id and pid body, refused unless the named session is live for that pid, returns the count and first 200 ids of that session's answered items, claims nothing, marks the session waiting in memory for 10 s; no credential beyond a named session id and pid" },
   { route: "POST /api/remote/access/on", cls: "remote-admin", reason: "loopback only; Mac page gate: root Host allowlist, Sec-Fetch-Site exactly same-origin, the fixed page header only the page's own script sets, empty body; 5/min shared with trust, refused 409 while any access act runs; remote.access_requested row before any step, naming that a trust of the network shown may follow, no row → no step; refused unless the confirm value in the x-glass-atrium-confirm header names a read no more than 120 s old, unused, that showed the network read at the act; one read per act; fixed-argv write step, no request value, then this process reopens the listener from the settings the step rendered, the old listener's close and the new one's open each waiting at most 5 s, a failed or timed-out apply answers start_failed and reopens nothing until restart; trusts only the network shown, only when not yet trusted, re-matched before that step; the trust step takes the shown network in fixed argv positions, format-checked, reads the network itself and writes nothing when it differs; outcome rows carry outcome and trusted count only, an act that throws still gets its error outcome row; page-origin stamp recorded, not a check" },

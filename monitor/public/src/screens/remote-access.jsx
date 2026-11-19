@@ -56,7 +56,7 @@ const STEPS_RA = {
 			},
 			{
 				kind: "scan",
-				title: "Scan with Camera, type the code",
+				title: "Scan, name the device, tap Register",
 				line: "Close any page that says “This Connection Is Not Private”.",
 				trouble: [{ text: "Camera does nothing? Open this in Safari: {address}" }, { text: "Then type this code: {code}" }, { text: "Still nothing? Try: {address-2}" }],
 			},
@@ -68,6 +68,8 @@ const SLOT_RA = /(\{[a-z0-9-]+\})/;
 const PATH_SEPARATOR_RA = " › ";
 // spec 44105 → C-11: the device choice while only iPhone or iPad steps are ruled (A4)
 const PENDING_DEVICE_RA = "Android is not supported yet.";
+// routes.ts → SIGN_IN_FILES serves the page itself; sign-in.js reads the one fragment key → one scan fills the code
+const SIGN_IN_RA = { PATH: "/sign-in.html", FRAGMENT: "#code=" };
 // spec 44105 → The QR drawing: 4 CSS px a module, a 4-module quiet zone, modules in elev on an ink field (16.74:1)
 const QR_RA = { MODULE_PX: 4, QUIET: 4, FIELD: { fill: "rgb(var(--ink))" }, MODULE: { fill: "rgb(var(--elev))" } };
 
@@ -580,7 +582,7 @@ function StepBodyRA({ step, setup, devices, address, trouble, onAct, onDevicesRe
 	);
 }
 
-/** The device's address as a QR code, drawn in the page; no encoder on the page → the address as text. */
+/** A QR code drawn in the page; no encoder on the page → the text itself. */
 function QrCodeRA({ text }) {
 	const { MachineString } = window.UI;
 	if (typeof window.qrcode !== "function") return <ValueRA label="Address"><MachineString className="fs-body text-ink">{text}</MachineString></ValueRA>;
@@ -717,7 +719,7 @@ function CodeViewRA({ state, address, onOpen }) {
 	if (state.status === "open") {
 		return (
 			<Cluster gap="control-group" className="items-start">
-				{address && <QrCodeRA text={address} />}
+				{address && <QrCodeRA text={`${address}${SIGN_IN_RA.PATH}${SIGN_IN_RA.FRAGMENT}${state.code}`} />}
 				<Stack gap="label" className="items-start">
 					<ValueRA label="Code">
 						<MachineString className="fs-stat font-semibold text-ink">{formatCodeRA(state.code)}</MachineString>

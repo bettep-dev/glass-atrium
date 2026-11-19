@@ -86,13 +86,13 @@ const DEVICES = [
   { id: "7", label: "<b>iPad</b>", createdAt: "2026-11-02T21:15:02.001Z", lastSeenAt: "2026-11-16T23:48:59.999Z" },
   { id: "9", label: "Living-room tablet (kitchen)", createdAt: "2026-10-28T07:03:12.500Z", lastSeenAt: null },
 ];
-// spec 44105 → iPhone or iPad, the scan step in its QR form (A8)
+// spec 44105 → iPhone or iPad, the scan step in its one-scan form
 const IPHONE_TITLES = [
   "Send the certificate to your iPhone",
   "Match the fingerprint before installing",
   "Install the certificate",
   "Turn on full trust",
-  "Scan with Camera, type the code",
+  "Scan, name the device, tap Register",
 ];
 // key directory (data/remote-access/), its CA and leaf files, a home path, and the commands that make or trust them
 const NEVER_IN_BUNDLE = [/remote-access\//, /\b(?:ca|leaf)\.(?:pem|key)\b/, /~\//, /\/Users\//, /glass-atrium remote/, /openssl/, /remote-access-set\.sh/, /add-trusted-cert/, /\bsudo\b/];
@@ -517,7 +517,7 @@ describe("the scan step shows one code at a time and what became of it", () => {
   const rows = [
     { name: "at rest it offers the QR code alone", state: { status: "idle" }, present: ["Show QR code"], absent: ["One use", "Code", "Show a new code"], qr: [] },
     { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show QR code", "Show a new code"], qr: [] },
-    { name: "an open code draws the address QR code beside the code in two groups of four, its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired", "Show QR code"], qr: ["https://studio-mac.local:16146"] },
+    { name: "an open code draws a QR code of the sign-in page with the code in its fragment, beside the code in two groups of four, its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired", "Show QR code"], qr: ["https://studio-mac.local:16146/sign-in.html#code=K7QM4XZP"] },
     { name: "an expired code gives way to the expired line and the QR code goes", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show QR code"], absent: ["K7QM", "Show a new code"], qr: [] },
   ];
   for (const row of rows) {
