@@ -7,6 +7,9 @@
 # §26 OAuth token-leak check (tmux list-sessions + show-environment -g, launchctl getenv) and
 # the monitor liveness GET; names and counts only, value never shown. Doctor's metered
 # `claude -p` self-test runs a sandbox stub through GA_AUTH_CLAUDE_BIN, never the real CLI.
+# STEP 1-5 run the launcher of a stub GA root (test/lib/remote-run-stub.bash → make_remote_stub_root): its
+# lib/ga-remote.sh also sources the shared ga_remote_run shadow, so no remote-access row reads this machine's listener,
+# Wi-Fi or launchd, and the result is the same whatever its remote access state.
 # STEP 9 alone is a fresh install: the manifest's tree under a temp HOME, its questions answered at a pty, every
 # machine-reaching tool a record-only stub — the deps preflight, monitor build, health gate and launchd load stay out.
 # assertion-tally harness idiom: ok/no always return 0, so `assert && ok || no` is an exact if-then-else (SC2015,
@@ -25,7 +28,6 @@ GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # bundle, no .git, then hands off to `glass-atrium install`, the engine this
 # test drives directly). uninstall.sh IS retired; `glass-atrium uninstall` now
 # owns its former path.
-GA_BIN="${GA}/glass-atrium"
 RENDER_ENV="${GA}/scripts/render-monitor-env.sh"
 REAL_CLAUDE="${HOME}/.claude"
 REAL_CONFIG="${GA}/config.toml"
@@ -33,6 +35,8 @@ REAL_CONFIG="${GA}/config.toml"
 source "${GA}/scripts/lib/path-guard.sh"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/tracked-paths.sh
 source "${GA}/scripts/lib/tracked-paths.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/remote-run-stub.bash
+source "${GA}/test/lib/remote-run-stub.bash"
 
 PASS=0
 FAIL=0
@@ -191,6 +195,16 @@ trap delete_sandbox EXIT
 
 printf 'SANDBOX=%s\n' "${SANDBOX}"
 
+# the stub GA root STEP 1-5 drive (header); physical, as the launcher resolves GA_ROOT and the -lname counts match it
+STUB_GA="$(cd -P -- "${SANDBOX}" && pwd)/ga-stub-root"
+# monitor/ a real dir of links, so the install's env render writes its .env here, never into the checkout's monitor/
+mkdir -p "${STUB_GA}/monitor"
+for entry in "${GA}"/monitor/* "${GA}"/monitor/.[!.]*; do
+  [[ ! -e "${entry}" || "${entry##*/}" == .env ]] || ln -s "${entry}" "${STUB_GA}/monitor/${entry##*/}"
+done
+make_remote_stub_root "${STUB_GA}" "${GA}"
+GA_BIN="${STUB_GA}/glass-atrium"
+
 # tree-matched manifest: hermetic defense — drive install/uninstall against a
 # manifest filtered to files that exist on THIS tree (via GA_MANIFEST, the
 # sandbox override), so any future manifest/tree drift surfaces in the STEP 0
@@ -332,7 +346,7 @@ FARM_EXPECT="$(
   done < <(jq -r '.files[]' "${SBX_MANIFEST}")
   printf '%s\n' "$((expect - 1))"
 )"
-GA_LINKS="$(find "${TARGET}" -type l -lname "${GA}/*" 2>/dev/null | wc -l | tr -d ' ')"
+GA_LINKS="$(find "${TARGET}" -type l -lname "${STUB_GA}/*" 2>/dev/null | wc -l | tr -d ' ')"
 printf '  GA-pointing symlinks: %s (sandbox manifest=%s, engine-derived farmed subset minus 1 collision=%s)\n' \
   "${GA_LINKS}" "${SBX_MANIFEST_COUNT}" "${FARM_EXPECT}"
 [[ "${FARM_EXPECT}" =~ ^[0-9]+$ ]] || no "farm expectation derivation failed (got '${FARM_EXPECT}')"
@@ -552,7 +566,7 @@ REAL_SETTINGS_HASH_AFTER="$(shasum "${REAL_CLAUDE}/settings.json" 2>/dev/null | 
 LEAKS=0
 for d in agents autoagent hooks rules scoped scripts skills; do
   [[ -d "${REAL_CLAUDE}/${d}" ]] || continue
-  N_NEW="$(find "${REAL_CLAUDE}/${d}" -type l -lname "${GA}/*" -newer "${START_MARKER}" 2>/dev/null | wc -l | tr -d ' ')"
+  N_NEW="$(find "${REAL_CLAUDE}/${d}" -type l \( -lname "${GA}/*" -o -lname "${STUB_GA}/*" \) -newer "${START_MARKER}" 2>/dev/null | wc -l | tr -d ' ')"
   LEAKS=$((LEAKS + N_NEW))
 done
 TOP_NEW="$(find "${REAL_CLAUDE}" -maxdepth 1 \( -name '*.ga-backup.*' -o -name '*.ga-tmp.*' -o -name '*.ga-wire.*' \) -newer "${START_MARKER}" 2>/dev/null | wc -l | tr -d ' ')"
