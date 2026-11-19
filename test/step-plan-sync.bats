@@ -170,6 +170,46 @@ tui_counts() { tui_plan_dump "$1" | sed -n 's/^CNT|//p'; }
   tui_step_fn install | grep -qxF "capture_install_baseline"
 }
 
+@test "install: the monitor env renders after the database bootstrap and before the monitor build" {
+  local order
+  order="$(tui_step_fn install | grep -xE 'setup_database|render_monitor_env|build_monitor' | tr '\n' ' ')"
+  [ "${order}" = "setup_database render_monitor_env build_monitor " ]
+}
+
+@test "install: the remote access question precedes the env render of the same run" {
+  run bash -c '
+    set -Eeuo pipefail
+    trap - ERR
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    trap - ERR
+    DRY_RUN=false
+    record() { printf "%s\n" "${FUNCNAME[1]}"; }
+    run_doctor() { record; }
+    retire_launchd_jobs_or_warn() { record; }
+    render_config() { record; }
+    ga_remote_install_opt_in() { record; }
+    render_plists() { record; }
+    run_symlink_farm() { record; }
+    wire_hooks() { record; }
+    put_queue_mcp_registration() { record; }
+    migrate_layout() { record; }
+    setup_database() { record; }
+    render_monitor_env() { record; }
+    repoint_launchd() { record; }
+    doctor_postcheck() { record; }
+    capture_install_baseline() { record; }
+    run_install
+  ' _ "${GA}"
+  [ "${status}" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+  local order
+  order="$(grep -xE 'ga_remote_install_opt_in|render_monitor_env' <<<"${output}" | tr '\n' ' ')"
+  [ "${order}" = "ga_remote_install_opt_in render_monitor_env " ]
+}
+
 # === uninstall ==============================================================
 
 @test "uninstall: TUI STEP_FN matches the live engine order (run_uninstall body)" {

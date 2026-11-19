@@ -485,7 +485,7 @@ build_step_plan() {
   STEP_SUPPRESS=()
   case "${action}" in
     install)
-      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → queue MCP → migrate → DB →
+      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → queue MCP → migrate → DB → monitor env →
       # repoint → post-check → baseline capture) then run_bootstrap's build + health gate, THEN the
       # last step that registers the active launchd roster (menu_load_launchd_jobs, opt-out
       # GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
@@ -506,6 +506,7 @@ build_step_plan() {
         "Queue MCP registration"
         "Migrate legacy layout"
         "Database bootstrap"
+        "Render monitor env"
         "launchd repoint"
         "claude liveness (advisory)"
         "Capture install baseline"
@@ -523,6 +524,7 @@ build_step_plan() {
         "Checking queue MCP registration…"
         "Migrating legacy layout…"
         "Bootstrapping database…"
+        "Rendering monitor env…"
         "Repointing launchd…"
         "Checking claude liveness…"
         "Capturing install baseline…"
@@ -540,6 +542,7 @@ build_step_plan() {
         "put_queue_mcp_registration add"
         "migrate_layout"
         "setup_database"
+        "render_monitor_env"
         "repoint_launchd"
         "doctor_postcheck"
         "capture_install_baseline"

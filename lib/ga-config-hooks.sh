@@ -229,6 +229,23 @@ get_config_bin() {
   ga_resolve_bin "${src}" 2>/dev/null || printf '%s\n' "${src}"
 }
 
+# monitor/.env ← config.toml (timezone, schedules, remote access) on every install; after the DB bootstrap
+# that creates the file, before the monitor build. The renderer accepts only an existing docs root, and the
+# monitor creates that dir on first write → created here so a fresh install renders.
+render_monitor_env() {
+  local docs_root
+  if "${DRY_RUN}"; then
+    log "dry-run: would render ${GA_ROOT}/monitor/.env from ${CONFIG_TOML}"
+    return 0
+  fi
+  docs_root="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' 'monitor_docs_html_root')"
+  if [[ "${docs_root}" == /* ]]; then mkdir -p -- "${docs_root}"; fi
+  # shellcheck disable=SC2310  # verdict branched on — a failed render aborts the install by name
+  (export GA_ROOT ATRIUM_CONFIG_TOML="${CONFIG_TOML}" && ga_remote_render_env) \
+    || die "monitor env render failed (scripts/render-monitor-env.sh) — fix config.toml, then re-run install"
+  log "monitor/.env rendered from ${CONFIG_TOML}"
+}
+
 # wire repoint primitive: migrate old-dir hook commands to the new dir.
 # WHY: an established install wired hooks under ${HOME}/.claude/hooks/<hook>; after the command-template repoint (wire_hooks now emits ${HOME}/.glass-atrium/hooks) is_hook_bound() still matches those stale bindings BY BASENAME, so the add-loop would treat them as already-wired and SKIP → silent no-op. This pass REWRITES every command under the OLD Atrium dir to the NEW one (basename + suffix preserved) before the idempotency check runs.
 # DATA-SAFETY (same "only Atrium commands" property as unwire_hooks): only a command whose tilde-normalized path startswith ${HOME}/.claude/hooks/ is rewritten — a foreign user hook at any other path is preserved byte-for-byte. MERGE (every other key flows through `.`), ATOMIC (temp + jq-revalidate + mv, RENDER_TMP trap-swept), BACKED-UP (lazy, distinct suffix so it never clobbers wire_hooks' own backup), injection-safe (--arg everywhere → no path value reaches the jq program text).

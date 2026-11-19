@@ -209,6 +209,9 @@ run_install() {
   # no-op when the DB already exists (see setup_database).
   setup_database
 
+  # after the remote access answer above, so a yes reaches the env the monitor starts with
+  render_monitor_env
+
   # launchd repoint is the only step gated by --repoint-launchd + never dry-run
   repoint_launchd
 

@@ -619,7 +619,7 @@ GRAND_TOTAL=""
 # INSTALL_PLAN_LEN — the install build_step_plan length as a STATIC literal, NOT ${#STEP_FN[@]}:
 # preflight_count_and_gate runs BEFORE build_step_plan install, so the array is still empty at count time.
 # A drift guard (test/install-step-counter-grand-total.bats) pins this to the live plan length after build_step_plan.
-INSTALL_PLAN_LEN=15
+INSTALL_PLAN_LEN=16
 STEP_LABEL_ACTIVE_CUR=""   # present-progressive label for the step currently running
 STEP_BAR_CUR=""            # ITEM 4: the prebuilt dominant progress-bar string for the running step
                            # (built ONCE per step in run_plan so the 100ms spinner tick never recomputes it)
