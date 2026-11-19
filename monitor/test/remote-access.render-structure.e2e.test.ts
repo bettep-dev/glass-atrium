@@ -456,27 +456,40 @@ describe("remote access on with a 64-character device name, the device table", (
 
     assert.deepEqual(at, { title: LONG_LABEL, isCut: true, heights: [at.heights[1], at.heights[1], at.heights[1]] });
   });
+});
+describe("the device table at the narrowest supported width, its Registered and Last seen columns", () => {
+  const rows = [
+    { name: "beside a long name, each date and header reads on one line, the columns no wider than their widest text", devices: [{ ...DEVICES[0], label: LONG_LABEL }, ...DEVICES.slice(1)] },
+    { name: "with no device seen yet, the Last seen header still reads on one line, the columns no wider than their widest text", devices: [{ ...DEVICES[0], lastSeenAt: null }] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const ctx = await openRenderContext(SETUP_ON, row.devices);
+      try {
+        await ctx.page.setViewportSize({ width: NARROWEST_VIEWPORT, height: 900 });
+        await ctx.page.getByRole("table", { name: "Registered devices" }).waitFor({ timeout: WAIT_TIMEOUT_MS });
 
-  test("at the narrowest supported width Registered and Last seen read each date on one line, their columns no wider than their widest text", async () => {
-    await ctx.page.setViewportSize({ width: NARROWEST_VIEWPORT, height: 900 });
-
-    const columns = await ctx.page.evaluate(() => {
-      const table = document.querySelector("table");
-      return [2, 3].map((nth) => {
-        const cells = [...(table?.querySelectorAll(`tr > :nth-child(${nth})`) ?? [])];
-        const texts = cells.map((cell) => {
-          const range = document.createRange();
-          range.selectNodeContents(cell);
-          const rects = [...range.getClientRects()];
-          return { width: range.getBoundingClientRect().width, lines: new Set(rects.map((rect) => Math.round(rect.top))).size };
+        const columns = await ctx.page.evaluate(() => {
+          const table = document.querySelector("table");
+          return [2, 3].map((nth) => {
+            const cells = [...(table?.querySelectorAll(`tr > :nth-child(${nth})`) ?? [])];
+            const texts = cells.map((cell) => {
+              const range = document.createRange();
+              range.selectNodeContents(cell);
+              const rects = [...range.getClientRects()];
+              return { width: range.getBoundingClientRect().width, lines: new Set(rects.map((rect) => Math.round(rect.top))).size };
+            });
+            const cell = cells[0];
+            const style = cell ? getComputedStyle(cell) : null;
+            const inner = cell && style ? cell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) : Number.NaN;
+            return { lines: texts.map((text) => text.lines), slack: Math.round(inner - Math.max(...texts.map((text) => text.width))) };
+          });
         });
-        const cell = cells[0];
-        const style = cell ? getComputedStyle(cell) : null;
-        const inner = cell && style ? cell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) : Number.NaN;
-        return { lines: texts.map((text) => text.lines), slack: Math.round(inner - Math.max(...texts.map((text) => text.width))) };
-      });
-    });
 
-    assert.deepEqual(columns, columns.map((column) => ({ lines: column.lines.map(() => 1), slack: 0 })), JSON.stringify(columns));
-  });
+        assert.deepEqual(columns, columns.map((column) => ({ lines: column.lines.map(() => 1), slack: 0 })), JSON.stringify(columns));
+      } finally {
+        await closeRenderContext(ctx);
+      }
+    });
+  }
 });

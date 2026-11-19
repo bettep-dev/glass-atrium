@@ -20,7 +20,6 @@ const CODE_WINDOW_MS_RA = 5 * 60_000;
 // while a code is open → a device that registers shows without a refresh
 const DEVICE_POLL_MS_RA = 5_000;
 // Action: isNumeric for the atom's right-end alignment (a button, no figures) · 1% → the column shrinks to its button
-const DEVICE_COLUMNS_RA = [{ key: "label", label: "Device" }, { key: "created", label: "Registered" }, { key: "seen", label: "Last seen" }, { key: "act", label: "Action", isNumeric: true }];
 // Device takes the slack; the dates and Remove hug their text (spec 44105 → Layout → Registered devices)
 const DEVICE_WIDTHS_RA = [undefined, "1%", "1%", "1%"];
 const DESTRUCTIVE_STYLE_RA = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))", background: "transparent" };
@@ -814,9 +813,11 @@ function DevicesCardRA({ devices, limit, foot, onChanged, onRemoveAll }) {
 }
 
 function DeviceTableRA({ devices, pendingId, onRemove }) {
-	const { Table, TableRow, TableCell, AbsentValue, formatKstDateTime } = window.UI;
+	const { Table, TableRow, TableCell, AbsentValue, NoWrap, formatKstDateTime } = window.UI;
+	// a 1% column under "None" alone is narrower than its header → the header never wraps
+	const columns = [{ key: "label", label: "Device" }, { key: "created", label: <NoWrap>Registered</NoWrap> }, { key: "seen", label: <NoWrap>Last seen</NoWrap> }, { key: "act", label: "Action", isNumeric: true }];
 	return (
-		<Table caption="Registered devices" columns={DEVICE_COLUMNS_RA} widths={DEVICE_WIDTHS_RA}>
+		<Table caption="Registered devices" columns={columns} widths={DEVICE_WIDTHS_RA}>
 			{devices.map((device) => (
 				<TableRow key={device.id}>
 					{/* max-w-0 → the column takes the leftover width, not the name's nowrap width */}
