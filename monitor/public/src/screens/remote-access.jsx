@@ -32,6 +32,7 @@ const SEARCH_LINE_RA = { text: "Different names on your phone? Search Settings f
  * compare → the field name the phone shows over the fingerprint, the forward control, the line in the fingerprint's place when none is read.
  * isTyped → the last step shows the address and the code first, the QR code beside them.
  * stop → a line the security ruling keeps visible beside the step's value, never behind Trouble? · isQrOnly → a fold line shown only beside a drawn QR code.
+ * isCodeOnly → a fold line shown only while a code is open (G5: the typed values in step 5, only beside an open code).
  * kind installer → a phone step whose path ends at the phone's installer, so it names no certificate.
  */
 const DEVICE_RA = {
@@ -108,7 +109,7 @@ const DEVICE_RA = {
 			{
 				kind: "fingerprint",
 				title: "Match the fingerprint right after installing",
-				path: "More security settings › Trusted credentials › User › Glass Atrium Local CA",
+				path: "Settings › Security and privacy › More security settings › Trusted credentials › User › Glass Atrium Local CA",
 				// a missing fingerprint leaves the same unproven CA as a mismatch → one visible stop for both
 				stop: "Lines differ or missing? Tap Remove now; do not scan or open the address.",
 				trouble: [SEARCH_LINE_RA, { text: "Not listed under User? Repeat step 3; never press Lines match." }, { text: "“Network may be monitored” notice? It stays while the certificate is installed." }],
@@ -116,9 +117,9 @@ const DEVICE_RA = {
 			{
 				kind: "scan",
 				title: "Open the address, enter the code",
-				line: "In Chrome, type the address with https://; close any “not private” warning.",
+				line: "In Chrome, type the address, https:// included.",
 				trouble: [
-					{ text: "Page will not open? Try: {address-2}" },
+					{ text: "Page will not open? Try: {address-2}", isCodeOnly: true },
 					{ text: "Camera does nothing? Type the address and the code instead.", isQrOnly: true },
 					{ text: "Warning in Chrome? Close the page, then repeat step 4." },
 				],
@@ -817,9 +818,9 @@ function TroubleRA({ rows, values, isQrShown, isOpen, jump, onAct }) {
 	);
 }
 
-// a line whose slot has no value, or that speaks of a QR code not drawn, is left out
+// a line whose slot has no value, or that speaks of a QR code not drawn or a code not open, is left out
 function getTroubleLinesRA(rows, values, isQrShown) {
-	return rows.filter((row) => (isQrShown || !row.isQrOnly) && row.text.split(SLOT_RA).every((part) => !SLOT_RA.test(part) || values[part.slice(1, -1)]));
+	return rows.filter((row) => (isQrShown || !row.isQrOnly) && (values.code || !row.isCodeOnly) && row.text.split(SLOT_RA).every((part) => !SLOT_RA.test(part) || values[part.slice(1, -1)]));
 }
 
 function TroubleTextRA({ text, values }) {
