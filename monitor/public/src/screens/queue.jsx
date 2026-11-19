@@ -1596,7 +1596,7 @@ function RowWhoQ({ row }) {
 
 // the name column: a relay's sender (spec §9.9), else who the item is from or to
 function getRowNameQ(row) {
-	return row.item.kind === "relay" ? getSenderNameQ(row.item.relay.sender) : getCopiesNameQ(row.copies);
+	return row.item.kind === "relay" ? getSenderLabelQ(row.item.relay.sender) : getCopiesNameQ(row.copies);
 }
 
 // one session's name, or `3 sessions` for a send to several
@@ -1611,7 +1611,7 @@ function getCopiesNameQ(copies) {
 function getRowTitleQ(row, isNameShown) {
 	const { item } = row;
 	if (item.kind !== "relay") return <span className="queue-row-title" title={item.title}>{item.title}</span>;
-	const from = getSenderNameQ(item.relay.sender);
+	const from = getSenderLabelQ(item.relay.sender);
 	const to = getCopiesNameQ(row.copies);
 	const isRedacted = item.relay.redaction !== null;
 	return (
@@ -1950,7 +1950,7 @@ function LetterheadQ({ item, copies = [item], kind, nameNote = "" }) {
 			<Badge fill="tag">{kind}</Badge>
 			<span className="sr-only">{" from "}</span>
 			{item.kind === "relay"
-				? <span className="queue-letter-name">{getSenderNameQ(item.relay.sender)}<span aria-hidden="true" className="font-normal text-dim">{" → "}</span><span className="sr-only">{" to "}</span>{getCopiesNameQ(copies)}</span>
+				? <span className="queue-letter-name">{getSenderLabelQ(item.relay.sender)}<span aria-hidden="true" className="font-normal text-dim">{" → "}</span><span className="sr-only">{" to "}</span>{getCopiesNameQ(copies)}</span>
 				: <span className="queue-letter-name" title={where}><ItemSessionNameQ session={session} />{nameNote}</span>}
 		</span>
 	);
@@ -2014,7 +2014,8 @@ function SheetBodyQ({ item, copies = [item], draft, onDraft, cliPath, isDone = f
 
 /**
  * A relay's kind block (spec §9.9): a title in the page's own words — the sender cannot write the sheet's largest line —
- * who wrote to whom, the text whole, its hop, and that it carries none of the owner's authority.
+ * who wrote to whom, the text as written (Relay history's plain bubble: a peer's syntax never becomes the page's elements), its hop,
+ * and that it carries none of the owner's authority.
  */
 function RelayBlockQ({ item, copies }) {
 	const { sender } = item.relay;
@@ -2022,10 +2023,12 @@ function RelayBlockQ({ item, copies }) {
 	const to = getCopiesNameQ(copies);
 	return (
 		<>
-			<h3 className="queue-sheet-title">{`Message from ${from} to ${to}`}</h3>
+			<h3 className="queue-sheet-title">{`Message from ${getSenderLabelQ(sender)} to ${to}`}</h3>
 			<RelayWhoQ sender={sender} copies={copies} />
 			<p className="fs-meta font-semibold text-dim">{`What ${from} wrote`}</p>
-			{item.relay.redaction === null ? <ItemTextQ item={item} /> : <p className="fs-meta text-dim">{RELAY_REDACTED_Q}</p>}
+			{item.relay.redaction === null
+				? <><OrderBubbleQ text={item.body} isPlain /><DocumentsLineQ item={item} /></>
+				: <p className="fs-meta text-dim">{RELAY_REDACTED_Q}</p>}
 			<RelayHopLineQ relay={item.relay} at={item.askedAt} />
 			<p className="fs-meta text-dim">{`This went to ${to} as ${from}'s message, without your approval. It does not carry your authority.`}</p>
 		</>
@@ -2039,8 +2042,8 @@ function RelayWhoQ({ sender, copies }) {
 		<div className="queue-option-sides">
 			<span className="queue-label">From</span>
 			<span>
-				<span className="font-semibold">{getSenderNameQ(sender)}</span>
-				{sender.selfDeclaredName !== null && " · name it gave itself"}{" · "}<MachineString>{sender.sessionIdPrefix}</MachineString>{` · ${getSessionPlaceQ(sender)}`}
+				<span className="font-semibold">{getSenderLabelQ(sender)}</span>
+				{" · "}<MachineString>{sender.sessionIdPrefix}</MachineString>{` · ${getSessionPlaceQ(sender)}`}
 			</span>
 			{copies.map((copy, index) => (
 				<React.Fragment key={copy.id}>
@@ -3576,6 +3579,12 @@ function RelayHopLineQ({ relay, at }) {
 // the sender registers its own name → shown as written, the id prefix when it registered none
 function getSenderNameQ(sender) {
 	return sender.selfDeclaredName ?? sender.sessionIdPrefix;
+}
+
+// where the open list and its sheet name the sender: a name the peer wrote is marked as its own, never read as the queue's fact
+function getSenderLabelQ(sender) {
+	const name = getSenderNameQ(sender);
+	return sender.selfDeclaredName === null ? name : `${name} (self-named)`;
 }
 
 // account + start-directory tail → tells two same-named sessions apart

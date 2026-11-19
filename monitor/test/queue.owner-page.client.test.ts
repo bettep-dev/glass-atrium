@@ -1321,6 +1321,7 @@ describe("a relay on its way", () => {
   const TITLE = "필드 이름이 바뀌었습니다.";
   const BODY = `${TITLE}\n요아이다 쪽 문서도 같은 이름으로 맞춰 주세요.`;
   const sender = { sessionIdPrefix: "aca91592", profileLabel: "work", selfDeclaredName: "aidl", cwdTail: "git/a-idl" };
+  const NAMED = "aidl (self-named)";
   // one copy per recipient under one send id, as the open list returns them: answered at the send, the title the text's first line
   const buildCopies = (recipients: Array<[string, Record<string, unknown>]>, facts: Record<string, unknown> = {}) =>
     recipients.map(([name, overrides], index) => buildItem({
@@ -1352,27 +1353,27 @@ describe("a relay on its way", () => {
   const rows = [
     {
       name: "to one session it names its sender, leads its title with the recipient and reads Relay", copies: toYoaida(), isNameShown: true,
-      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "to several it names their count and reads received of sent", copies: toThree(), isNameShown: true,
-      shape: { who: "aidl", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from aidl to 3 sessions: ${TITLE}, 1 of 3` },
+      shape: { who: NAMED, title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
     },
     {
       name: "a copy its session never acknowledged is not yet, never not received", copies: toYoaida({ status: "unacked", deviation: "unacked" }), isNameShown: true,
-      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "a copy whose session does not listen is counted in the tag column", copies: toYoaida({ session: buildSession({ name: "yoaida", state: "live", isWaiting: false }) }), isNameShown: true,
-      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}, 1 next turn` },
+      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
     },
     {
       name: "with one session ticked the name column is left out and the title names both ends", copies: toYoaida(), isNameShown: false,
-      shape: { who: null, title: `aidl → yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+      shape: { who: null, title: `${NAMED} → yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "a redacted relay reads Text redacted where its title stood", copies: toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
-      shape: { who: "aidl", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: "Relay from aidl to yoaida: Text redacted" },
+      shape: { who: NAMED, title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: Text redacted` },
     },
   ];
   for (const row of rows) {
@@ -1419,18 +1420,16 @@ describe("a relay on its way", () => {
       foot: collectText(foot as RenderedNode).replace(/\s+/g, " ").trim(),
       controls: findNodes(foot as RenderedNode, (node) => ["button", "textarea", "input"].includes(String(node.type))).length,
       body: collectText(byClass(tree, "queue-sheet-body")[0] as RenderedNode),
-      prose: findNodes(tree, (node) => node.props?.atom === "ProseText").map((node) => node.props.text),
     };
   };
 
-  test("a relay to one session opens read-only: its two ends in the head and title, the text whole, no field and no button", () => {
+  test("a relay to one session opens read-only: its two ends in the head and title, no field and no button", () => {
     const shape = getSheetShape(toYoaida());
     assert.deepEqual(
       { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
-      { head: "Relay from aidl → to yoaida", title: "Message from aidl to yoaida", foot: "Read-only. It reaches yoaida by itself and stays in Relay history.", controls: 0 },
+      { head: `Relay from ${NAMED} → to yoaida`, title: `Message from ${NAMED} to yoaida`, foot: "Read-only. It reaches yoaida by itself and stays in Relay history.", controls: 0 },
     );
     assert.match(shape.date, /^Not yet\s+Sent\s+2026-11-19 14:20 KST$/);
-    assert.deepEqual(shape.prose, [BODY]);
     for (const part of ["What aidl wrote", "This went to yoaida as aidl's message, without your approval.", "It does not carry your authority."]) assert.ok(shape.body.includes(part), part);
     assert.doesNotMatch(shape.body, /Run in that session|Answered/);
   });
@@ -1439,9 +1438,34 @@ describe("a relay on its way", () => {
     const shape = getSheetShape(toThree());
     assert.deepEqual(
       { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
-      { head: "Relay from aidl → to 3 sessions", title: "Message from aidl to 3 sessions", foot: "Read-only. It reaches each session by itself and stays in Relay history.", controls: 0 },
+      { head: `Relay from ${NAMED} → to 3 sessions`, title: `Message from ${NAMED} to 3 sessions`, foot: "Read-only. It reaches each session by itself and stays in Relay history.", controls: 0 },
     );
     assert.match(shape.date, /^1 of 3 received/);
+  });
+
+  // a peer writes its own name → wherever the queue names the sender, a written name is marked as the sender's own
+  const NAME_ROWS = [
+    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED },
+    { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592" },
+  ];
+  for (const row of NAME_ROWS) {
+    test(`the sender in the row's name column, the sheet head, the sheet title and the From line: ${row.name}`, () => {
+      const copies = toYoaida({}, { sender: row.sender });
+      const sheet = getSheetShape(copies);
+      assert.deepEqual(
+        { who: getRowShape(renderRow(copies)).who, head: sheet.head, title: sheet.title, from: sheet.body.replace(/\s+/g, " ").includes(`From ${row.shown} · aca91592 · work`) },
+        { who: row.shown, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.shown} to yoaida`, from: true },
+      );
+    });
+  }
+
+  test("a relay's text on its sheet is drawn as written: list, code and link syntax stay the same characters, never parsed", () => {
+    const body = "- 첫째 항목\n1. 둘째 항목\n`npm test` **꼭** 확인\n```\nconst limit = 30;\n```\n[인계 문서](#clauded-docs?doc=39703) https://example.com/a";
+    const queue = withList(buildQueue().queue, toYoaida({ body }));
+    const [block] = byClass(render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } }), "queue-sheet-body");
+    const bubbles = findNodes(block as RenderedNode, (node) => String(node.props?.className ?? "").startsWith("queue-bubble"));
+    assert.deepEqual(bubbles.map((bubble) => collectText(bubble)), [body]);
+    assert.equal(findNodes(block as RenderedNode, (node) => node.props?.atom === "ProseText").length, 0);
   });
 });
 
