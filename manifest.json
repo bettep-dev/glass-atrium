@@ -1683,7 +1683,7 @@
     "monitor/src/server/remote/network.ts": "56dcd75fabea41e3c9b329cfb08de6ba4e00c013261ade1cf2d11c6bad0a8575",
     "monitor/src/server/remote/registration-code.ts": "fc056f67cf1dabdc2e340655e18e264d0a790c1f5610ac96c77eca66f3d1fd3d",
     "monitor/src/server/remote/request-body.ts": "47678bf1dc5fc3160451fac19dc0a97ba1859e01b229ab8d82c1a3aa3ce562f2",
-    "monitor/src/server/remote/route-classes.ts": "4d477e2c595aa38c49f4e728fd1354b690edbee71181ec05ea99fe8f71f0639c",
+    "monitor/src/server/remote/route-classes.ts": "3442e8797edc2d524397c4be544300896a77004f0a04ddc3863edd9c331cd559",
     "monitor/src/server/remote/routes.ts": "531aa12f4eac3c67d671d149b9cd8ca0b98268c9fa74beabe6c3f4670b77e4b2",
     "monitor/src/server/remote/session.ts": "b76543a5dfc92af2a7d3f9b0250aaf30dfcfad97c3b83deeba5849f1b42c3130",
     "monitor/src/server/remote/settings.ts": "d376434ccaeec6f37a7a2d6d9b9ca734e8e979c37c6a977dde458e9c980170fb",
