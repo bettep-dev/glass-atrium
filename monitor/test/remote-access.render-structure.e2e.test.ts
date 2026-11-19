@@ -343,6 +343,35 @@ for (const compare of COMPARE_STEPS) describe(`remote access on, the ${compare.d
   });
 });
 
+describe("remote access on at 1440px, the device choice", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON);
+  });
+  after(async () => closeRenderContext(ctx));
+
+  for (const device of ["iPhone or iPad", "Galaxy phone"]) {
+    test(`a second press where ${device} stood lands on no control of the step it opens, so a double-click never presses one`, async () => {
+      const change = ctx.page.getByRole("button", { name: "Change device", exact: true });
+      if (await change.count()) await change.click();
+      const pressed = await ctx.page.getByRole("button", { name: device, exact: true }).boundingBox();
+      await chooseDevice(ctx.page, device);
+
+      const hits = await ctx.page.evaluate((box) => {
+        const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
+        const controls = [...(card?.querySelectorAll("button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? [])];
+        return controls.filter((el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.left < box.x + box.width && rect.right > box.x && rect.top < box.y + box.height && rect.bottom > box.y;
+        }).map((el) => el.textContent?.trim());
+      }, pressed ?? { x: 0, y: 0, width: 0, height: 0 });
+
+      assert.ok(pressed, `${device} was on the choice`);
+      assert.deepEqual(hits, []);
+    });
+  }
+});
+
 describe("remote access on at 1440px, moving through the steps", () => {
   let ctx: RenderContext;
   before(async () => {

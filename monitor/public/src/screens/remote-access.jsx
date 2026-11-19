@@ -592,8 +592,9 @@ function ConnectBodyRA({ setup, devices, progress, onAct, onDevicesRead }) {
 }
 
 // one question, two equal answers acting at once → no primary · nothing takes focus on first render
+// stacked at one width → no button lies where a step-1 control lands, so a double-click presses nothing there
 function DeviceChoiceRA({ isReturned, onAct }) {
-	const { Stack, Cluster } = window.UI;
+	const { Stack } = window.UI;
 	const questionRef = useRRA(null);
 	useERA(() => {
 		if (isReturned) questionRef.current?.focus();
@@ -601,11 +602,11 @@ function DeviceChoiceRA({ isReturned, onAct }) {
 	return (
 		<Stack gap="label" className="items-start">
 			<h3 ref={questionRef} tabIndex={-1} className="ra-pane-title fs-title font-semibold text-ink">Which device are you connecting?</h3>
-			<Cluster>
+			<div className="flex flex-col gap-control">
 				{Object.entries(DEVICE_RA).map(([key, device]) => (
 					<button key={key} type="button" className="btn" onClick={() => onAct({ type: "choose", device: key })}>{device.name}</button>
 				))}
-			</Cluster>
+			</div>
 		</Stack>
 	);
 }
