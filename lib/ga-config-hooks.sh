@@ -967,11 +967,8 @@ is_queue_mcp_write_confirmed() {
 
 # <mode> → 0 on a typed y or Y; an empty answer is the default No
 is_queue_mcp_answer_yes() {
-  local reply=""
   [[ "$1" == add ]] || printf 'Sessions report a failed MCP server if the Glass Atrium tree is removed while these entries stay.\n' >&2
-  printf 'Make the queue MCP writes listed above? [y/N]: ' >&2
-  IFS= read -r reply || reply=""
-  [[ "${reply}" == [yY] ]]
+  ga_remote_is_answer_yes 'Make the queue MCP writes listed above? [y/N]: '
 }
 
 # <mode> → 0 when the mode still has a profile entry or allow line to write; any failed read answers no

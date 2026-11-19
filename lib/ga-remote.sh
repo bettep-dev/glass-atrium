@@ -348,6 +348,14 @@ ga_remote_require_confirmation() {
   return 1
 }
 
+# <prompt> → 0 on a typed y or Y; an empty answer or a closed stdin is the default No (prompt on stderr)
+ga_remote_is_answer_yes() {
+  local reply=""
+  printf '%s' "$1" >&2
+  IFS= read -r reply || reply=""
+  [[ "${reply}" == [yY] ]]
+}
+
 ga_remote_cmd_list() {
   local reply
   if ! reply="$(ga_remote_call_monitor GET "${GA_REMOTE_CLI_PATH}")" || [[ "${reply##*$'\n'}" != "200" ]]; then
@@ -536,18 +544,15 @@ GA_REMOTE_INSTALL_OFF_LINE='Remote access is off. To turn it on later, open the 
 # Installer opt-in, default No: only a yes typed on a terminal turns access on, and trust takes its own typed
 # word; no restart here (the install's own later steps render the env and start the monitor).
 ga_remote_install_opt_in() {
-  local reply="" enabled
+  local enabled
   enabled="$(atrium_toml_get "[remote_access]" "enabled")" || enabled=""
   if [[ "${enabled}" == "true" ]]; then
     printf '%s\n' "${GA_REMOTE_INSTALL_ON_LINE}" >&2
     return 0
   fi
-  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-  if ga_remote_is_terminal; then
-    printf 'Open the monitor to your own registered devices on a trusted Wi-Fi (HTTPS, local CA)? [y/N]: ' >&2
-    IFS= read -r reply || reply=""
-  fi
-  if [[ "${reply}" != "y" && "${reply}" != "Y" ]]; then
+  # shellcheck disable=SC2310  # pure predicates — the typed answer is the branch
+  if ! ga_remote_is_terminal \
+    || ! ga_remote_is_answer_yes 'Open the monitor to your own registered devices on a trusted Wi-Fi (HTTPS, local CA)? [y/N]: '; then
     printf '%s\n' "${GA_REMOTE_INSTALL_OFF_LINE}" >&2
     return 0
   fi
