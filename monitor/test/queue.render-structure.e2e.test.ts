@@ -25,7 +25,7 @@ import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, ty
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
@@ -413,7 +413,12 @@ const RELAY_STATES: QueueState[] = [
   { nn: "34", name: "rail-hidden-sessions", viewports: [VIEWPORTS[0]], getFixture: getHiddenSessionsFixture },
 ];
 
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES];
+// spec §9.1: every rail state on one page, the Ended band open, at the minimum, the 1440 step and the owner's window
+const RAIL_STATES: QueueState[] = [
+  { nn: "37", name: "rail-states", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getRailFixture, setUp: (page) => openEndedBand(page) },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
@@ -1111,6 +1116,40 @@ async function getShotsDir(t: TestContext): Promise<string> {
   return named;
 }
 
+// in the page: each rail line's resolved columns from its content start, and every slot that falls outside its own column
+function getRailColumnFacts() {
+  const SLOTS = [".queue-rail-box", ".queue-rail-mark", ".queue-rail-name, .queue-rail-all, .disclosure > span:last-child", ".queue-rail-tag", ".queue-rail-count"];
+  const lines = [...document.querySelectorAll<HTMLElement>(".queue-sessions .queue-rail-band, .queue-sessions .queue-rail-row")];
+  const getColumns = (line: HTMLElement) => {
+    const style = getComputedStyle(line);
+    const gap = parseFloat(style.columnGap);
+    let x = line.getBoundingClientRect().left + parseFloat(style.paddingLeft);
+    return style.gridTemplateColumns.split(" ").map((track) => {
+      const column = { left: x, right: x + parseFloat(track) };
+      x = column.right + gap;
+      return column;
+    });
+  };
+  const slots = { tag: 0, count: 0 };
+  const misplaced = lines.flatMap((line) => {
+    const columns = getColumns(line);
+    return SLOTS.flatMap((selector, index) => [...line.querySelectorAll(`:scope > :is(${selector}), :scope > .disclosure > :is(${selector})`)].flatMap((slot) => {
+      if (index === 3) slots.tag += 1;
+      if (index === 4) slots.count += 1;
+      const box = slot.getBoundingClientRect();
+      const column = columns[index] as { left: number; right: number };
+      return box.left >= column.left - 0.5 && box.right <= column.right + 0.5 ? [] : [`${line.dataset.session ?? line.textContent}: ${selector}`];
+    }));
+  });
+  const getHeights = (selector: string) => [...new Set(lines.filter((line) => line.matches(selector)).map((line) => Math.round(line.getBoundingClientRect().height)))];
+  return {
+    lines: lines.length,
+    starts: new Set(lines.map((line) => getColumns(line).map((column) => Math.round(column.left)).join(","))).size,
+    tracks: [...new Set(lines.map((line) => getComputedStyle(line).gridTemplateColumns))].map((tracks) => tracks.split(" ").map((track) => Math.round(parseFloat(track)))),
+    misplaced, slots, rows: getHeights(".queue-rail-row"), bands: getHeights(".queue-rail-band"),
+  };
+}
+
 // PNG IHDR: width and height as big-endian words at bytes 16 and 20
 async function getPngSize(file: string): Promise<{ width: number; height: number }> {
   const bytes = await readFile(file);
@@ -1471,7 +1510,7 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual([returned.id, returned.offset], [rowIds[1], "-2px"], "Esc in Orders gives the focus back to the middle pane: the list's current row");
   });
 
-  test("rail rows are 68; Orders is rendered at rest beside the list, and an opened row hides the list alone", async () => {
+  test("rail rows are 44; Orders is rendered at rest beside the list, and an opened row hides the list alone", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await page.locator(".queue-order").first().waitFor();
@@ -1482,7 +1521,7 @@ describe("queue page on the mockup fixtures", () => {
     const opened = await shown();
     await page.close();
 
-    assert.deepEqual(railRows, [68]);
+    assert.deepEqual(railRows, [44]);
     assert.deepEqual({ rest, opened }, { rest: [true, false, true], opened: [false, true, true] });
   });
 
@@ -1515,63 +1554,74 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §9.1: one control per row — the row is its box's label
-  test("a rail row holds one interactive element, its checkbox, and no button; a press on its name ticks it and a second unticks it", async () => {
+  test("a rail row holds one interactive element, its checkbox, and no button; a press on its name ticks it and a press on its state mark unticks it", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const row = page.locator(`[data-session="${FIXTURE_SESSION_IDS.atrium}"]`);
     const controls = await row.evaluate((element) => [...element.querySelectorAll("button, input, a, [tabindex]")].map((control) => `${control.tagName}:${control.getAttribute("type")}`));
     await row.locator(".queue-rail-name").click();
     const ticked = await page.getByLabel("Select atrium").isChecked();
-    await row.locator(".queue-rail-line").click();
+    await row.locator(".queue-rail-mark").click();
     const unticked = await page.getByLabel("Select atrium").isChecked();
     await page.close();
 
     assert.deepEqual({ controls, ticked, unticked }, { controls: ["INPUT:checkbox"], ticked: true, unticked: false });
   });
 
-  // spec §9.1, §14.4: a department reads left to right — its box, whether it is live, its name, and the count that waits at the row's end
-  test("in a rail row the box stands left of the state mark, the mark left of the name and the count at the row's end; the All sessions label, the Ended label and every name start at one x; a live mark is ok, any other a faint ring, and no line 2 holds a mark", async (t) => {
-    harness.fixture = getRestFixture();
-    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
+  // spec §9.1, §14.3: a department reads left to right on one set of columns — box · state mark · name · tag · count — both bands on them too
+  test("every rail row and both bands share the box, mark, name, tag and count columns at 1280, 1440 and 1568, each slot inside its column, rows one 44 line and bands 32", async (t) => {
+    harness.fixture = getRailFixture();
+    const shown = [];
+    for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+      await openEndedBand(page);
+      shown.push({ width: viewport.width, ...(await page.evaluate(getRailColumnFacts)) });
+      await page.close();
+    }
+
+    t.diagnostic(`name column: ${shown.map((at) => `${at.width} → ${at.tracks[0]?.[2]}`).join(" | ")}`);
+    assert.deepEqual(shown.map((at) => at.width), [1280, 1440, 1568]);
+    for (const at of shown) {
+      // the name column takes the rest of the rail (spec §9.1) → its width is the step's, never under the 1280 step's
+      assert.deepEqual(
+        { starts: at.starts, tracks: at.tracks.map(([box, mark, , tag, count]) => [box, mark, tag, count]), misplaced: at.misplaced, rows: at.rows, bands: at.bands },
+        { starts: 1, tracks: [[24, 8, 16, 36]], misplaced: [], rows: [44], bands: [32] },
+        `at ${at.width}`,
+      );
+      assert.ok((at.tracks[0]?.[2] ?? 0) >= 56, `at ${at.width}: name column ${at.tracks[0]?.[2]}`);
+      assert.ok(at.slots.tag > 0 && at.slots.count > 0 && at.lines >= 6, `at ${at.width}: ${JSON.stringify(at.slots)}`);
+    }
+  });
+
+  // spec §9.1, §14.3: the state mark by shape and colour, the count spec 44084's atom, never solid; no row paints the word Live
+  test("a live rail mark is the ok dot and any other a faint ring; every rail count is the tag-fill count atom; no rail row paints Live", async () => {
+    harness.fixture = getRailFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     await openEndedBand(page);
     const paints = await Promise.all(["--ok", "--faint"].map((token) => page.evaluate(getTokenPaint, { property: "color" as const, value: `rgb(var(${token}))` })));
     const facts = await page.evaluate(([ok, faint]) => {
       const rows = [...document.querySelectorAll<HTMLElement>(".queue-rail-row")];
-      const rect = (row: Element, selector: string) => row.querySelector(selector)?.getBoundingClientRect();
-      // where each label's text is painted, not its box → a label centred inside a column-wide box is caught
-      const getTextLeft = (node: Element) => {
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        return Math.round(range.getBoundingClientRect().left);
-      };
-      const starts = [".queue-rail-all", ".queue-rail-band .disclosure > span:last-child", ".queue-rail-name-text"].flatMap((selector) => [...document.querySelectorAll(selector)].map(getTextLeft));
+      // painted text only: what a screen reader alone hears stays out
+      const getPainted = (row: Element) => [...row.querySelectorAll("*")].filter((node) => !node.closest(".sr-only") && node.children.length === 0).map((node) => node.textContent).join(" ");
       return {
-        outOfOrder: rows.filter((row) => {
-          const [box, mark, name] = [rect(row, ".queue-rail-box"), rect(row, ".queue-rail-mark"), rect(row, ".queue-rail-name-text")];
-          return !(mark && name && (!box || box.right <= mark.left) && mark.right <= name.left);
-        }).map((row) => row.dataset.session),
-        countGaps: [...new Set(rows.flatMap((row) => {
-          const count = rect(row, ".queue-rail-count");
-          return count ? [Math.round(row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight) - count.right)] : [];
-        }))],
-        starts: new Set(starts).size,
-        ringsAndDots: rows.map((row) => {
+        marks: rows.map((row) => {
           const mark = getComputedStyle(row.querySelector(".queue-rail-mark") as Element);
-          const isLive = (row.querySelector(".queue-rail-line")?.textContent ?? "").startsWith("Live");
+          const isLive = /^(Live|Not listening)/.test(row.title);
           return isLive ? mark.backgroundColor === ok : mark.borderTopColor === faint && mark.backgroundColor === "rgba(0, 0, 0, 0)";
         }),
-        lineMarks: rows.filter((row) => /[●○]/.test(row.querySelector(".queue-rail-line")?.textContent ?? "")).length,
-        kinds: new Set(rows.map((row) => (row.querySelector(".queue-rail-line")?.textContent ?? "").startsWith("Live"))).size,
-        heights: rows.map((row) => `${row.querySelector(".queue-rail-line")?.textContent}: ${Math.round(row.getBoundingClientRect().height)}`),
+        kinds: new Set(rows.map((row) => row.querySelector(".queue-rail-mark")?.classList.contains("is-live"))).size,
+        counts: [...document.querySelectorAll(".queue-sessions .queue-rail-count .pill")].map((pill) => pill.className),
+        solid: document.querySelectorAll(".queue-sessions .pill--solid").length,
+        live: rows.filter((row) => /\bLive\b/.test(getPainted(row))).map((row) => row.dataset.session),
       };
     }, paints);
     await page.close();
-    t.diagnostic(`rail row heights at 1440 with Ended open: ${facts.heights.join(" | ")}`);
 
     assert.equal(facts.kinds, 2, "live and not-live rows are both on the rail");
+    assert.ok(facts.counts.length > 0);
     assert.deepEqual(
-      { outOfOrder: facts.outOfOrder, countGaps: facts.countGaps, starts: facts.starts, marks: facts.ringsAndDots.every(Boolean), lineMarks: facts.lineMarks },
-      { outOfOrder: [], countGaps: [0], starts: 1, marks: true, lineMarks: 0 },
+      { marks: facts.marks.every(Boolean), counts: facts.counts.filter((name) => !/\bpill--tag\b/.test(name) || !/\bpill--num\b/.test(name)), solid: facts.solid, live: facts.live },
+      { marks: true, counts: [], solid: 0, live: [] },
     );
   });
 
@@ -2467,33 +2517,36 @@ describe("queue page on the mockup fixtures", () => {
       assert.equal(rows[0]?.background, rows[1]?.background, "one tag fill for both");
     });
 
-    test("a live session that does not listen paints Live and the badge on its rail line with nothing in delivery, its mark still the live dot; a listening one's line holds no badge", async () => {
+    test("a live session that does not listen draws the bare pause mark in its tag column, named Not listening, its hover line the title and the box's description by keyboard; a listening one draws no tag", async () => {
       const page = await openNotListeningPage();
-      const rows = await page.evaluate((ids) => ids.map((id) => {
-        const row = document.querySelector(`.queue-rail-row[data-session="${id}"]`) as HTMLElement;
-        const mark = row.querySelector(".queue-rail-mark") as HTMLElement;
-        return {
-          // the line is a flex row spaced by its gap → its parts read one by one
-          line: [...(row.querySelector(".queue-rail-line")?.children ?? [])].map((part) => part.textContent?.trim()),
-          badges: [...row.querySelectorAll(".queue-rail-line .pill")].map((badge) => badge.textContent),
-          isMarkOk: getComputedStyle(mark).backgroundColor === `rgb(${getComputedStyle(document.documentElement).getPropertyValue("--ok").trim().split(/\s+/).join(", ")})`,
-          box: row.querySelector("input")?.getAttribute("aria-label"),
-        };
-      }), [NOT_LISTENING_SESSION_IDS.nightly, FIXTURE_SESSION_IDS.gersona]);
+      const tagOf = (id: string) => page.locator(`.queue-rail-row[data-session="${id}"] .queue-rail-tag`);
+      const mark = await tagOf(NOT_LISTENING_SESSION_IDS.nightly).getByRole("img", { name: "Not listening" }).evaluate((node) => ({
+        glyph: node.querySelectorAll("svg rect").length, shell: getComputedStyle(node).borderTopWidth, width: Math.round(node.getBoundingClientRect().width),
+      }));
+      const listening = await tagOf(FIXTURE_SESSION_IDS.gersona).count();
+      await page.keyboard.press("Tab");
+      await page.getByLabel("Select nightly", { exact: true }).focus();
+      const focused = await page.evaluate(() => {
+        const box = document.activeElement as HTMLElement;
+        const row = box.closest(".queue-rail-row") as HTMLElement;
+        const description = (box.getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+        return { name: box.getAttribute("aria-label"), title: row.title.split("\n")[0], description, isRing: getComputedStyle(row).outlineStyle !== "none" };
+      });
       await page.close();
 
-      assert.deepEqual(rows[0], { line: ["Live", "Not listening"], badges: ["Not listening"], isMarkOk: true, box: "Select nightly, not listening" });
-      assert.deepEqual([rows[1]?.badges, rows[1]?.isMarkOk, rows[1]?.box], [[], true, "Select gersona"]);
+      const HOVER = "Not listening: orders wait for its next turn. Restart it.";
+      assert.deepEqual({ mark, listening }, { mark: { glyph: 2, shell: "0px", width: 12 }, listening: 0 });
+      assert.deepEqual([focused.name, focused.title, focused.description.startsWith(HOVER), focused.isRing], ["Select nightly", HOVER, true, true], JSON.stringify(focused));
     });
 
-    test("with a not-listening session ticked the composer's label paints the badge after its name and the note the sentence, and a send still posts the order", async () => {
+    test("with a not-listening session ticked the composer's label paints the bare pause mark after its name and the note the sentence, and a send still posts the order", async () => {
       const page = await openNotListeningPage();
       await tickOrdersTo(page, ["nightly"]);
       const posts: string[] = [];
       page.on("request", (request) => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
       const shown = await page.evaluate(() => ({
-        tagged: [...document.querySelectorAll(".queue-orders .queue-order-to")].map((to) => [to.firstChild?.textContent, to.querySelector(".pill--tag")?.textContent]),
-        note: [...document.querySelectorAll(".queue-orders .card-foot p")].map((line) => line.textContent).find((text) => text?.includes("not listening")),
+        tagged: [...document.querySelectorAll(".queue-orders .queue-order-to")].map((to) => [to.firstChild?.textContent, to.querySelector(".queue-state-mark.is-pause")?.getAttribute("title"), to.querySelectorAll(".pill").length]),
+        note: [...document.querySelectorAll(".queue-orders .card-foot p")].map((line) => line.textContent).find((text) => text?.includes("next turn")),
       }));
       await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
       // armed before the click → a reply landing before the click resolves is still seen
@@ -2502,11 +2555,11 @@ describe("queue page on the mockup fixtures", () => {
       await sent;
       await page.close();
 
-      assert.deepEqual(shown, { tagged: [["nightly", "Not listening"]], note: "nightly is not listening: it gets this at its next turn end or restart." });
+      assert.deepEqual(shown, { tagged: [["nightly", "Not listening", 0]], note: "nightly gets this at its next turn. Restart it to deliver now." });
       assert.deepEqual(posts, ["/api/queue/owner/messages/send"]);
     });
 
-    test("in the composer's label each ticked name stays on one line with its badge, and the comma between names follows the badge, at 1280 and 1440", async () => {
+    test("in the composer's label each ticked name stays on one line with its mark, and the comma between names follows the mark, at 1280 and 1440", async () => {
       const shown: Array<{ at: number; text: string; lines: number }> = [];
       for (const viewport of [MIN_WINDOW, VIEWPORTS[0]]) {
         for (const names of [["gersona", "nightly"], ["sixmon", "nightly"]]) {
@@ -2516,18 +2569,19 @@ describe("queue page on the mockup fixtures", () => {
           const tos = await page.evaluate(() => [...document.querySelectorAll(".queue-orders .queue-order-to")].map((to) => {
             const range = document.createRange();
             range.selectNodeContents(to);
-            // the badge and the name sit a few px apart on one line → a new line is a step of more than 10 in the boxes' middles
+            // the mark and the name sit a few px apart on one line → a new line is a step of more than 10 in the boxes' middles
             const middles = [...range.getClientRects()].filter((rect) => rect.width > 0).map((rect) => (rect.top + rect.bottom) / 2).sort((a, b) => a - b);
             const lines = 1 + middles.filter((middle, index) => index > 0 && middle - (middles[index - 1] ?? middle) > 10).length;
-            return { text: (to.textContent ?? "").replace(/\s+/g, " ").trim(), lines };
+            const marks = [...to.querySelectorAll("[role=img]")].map((mark) => `[${mark.getAttribute("aria-label")}]`);
+            return { text: `${to.firstChild?.textContent}${marks.map((mark) => ` ${mark}`).join("")}${to.textContent?.trim().endsWith(",") ? "," : ""}`, lines };
           }));
           await page.close();
           shown.push(...tos.map((to) => ({ at: viewport.width, ...to })));
         }
       }
 
-      assert.deepEqual(shown.filter((to) => to.lines !== 1), [], "one line per name and its badge");
-      assert.deepEqual(shown.filter((to) => to.at === MIN_WINDOW.width).map((to) => to.text).slice(2), ["sixmon, Not listening,", "nightly, Not listening"]);
+      assert.deepEqual(shown.filter((to) => to.lines !== 1), [], "one line per name and its mark");
+      assert.deepEqual(shown.filter((to) => to.at === MIN_WINDOW.width).map((to) => to.text).slice(2), ["sixmon [Not listening],", "nightly [Not listening]"]);
     });
 
     test("an order to two sessions that do not listen reads 0 of 2 received and 2 not listening; the ended session's resume copy reads Not yet; nothing of the state is amber", async () => {
@@ -2567,7 +2621,7 @@ describe("queue page on the mockup fixtures", () => {
       const listening = await sheetOf(108);
       await page.close();
 
-      const deafLine = deaf.lines.findIndex((line) => line === "sixmon is not listening: it gets this answer at its next turn end or restart.");
+      const deafLine = deaf.lines.findIndex((line) => line === "sixmon gets this answer at its next turn. Restart it to deliver now.");
       const pullLine = deaf.lines.findIndex((line) => line.startsWith("Run in that session:"));
       assert.deepEqual([deaf.receipt, deafLine >= 0, pullLine > deafLine], ["⏸ Not listening", true, true], JSON.stringify(deaf));
       assert.deepEqual([listening.receipt, listening.lines.includes("The session is listening: it picks up this answer on its own.")], ["Not yet", true], JSON.stringify(listening));
@@ -2688,7 +2742,7 @@ describe("queue page on the mockup fixtures", () => {
       assert.equal(name, `atrium · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`);
     });
 
-    test("a 100-character session name stays on one cut line, its rail row 68 high and inside the rail", async () => {
+    test("a 100-character session name stays on one cut line, its rail row 44 high and inside the rail", async () => {
       const page = await openEdgePage(harness);
       const shown = await page.evaluate((id) => {
         const row = document.querySelector(`.queue-rail-row[data-session="${id}"]`) as HTMLElement;
@@ -2703,7 +2757,7 @@ describe("queue page on the mockup fixtures", () => {
       }, EDGE_SESSION_IDS.longName);
       await page.close();
 
-      assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 68, isCut: true, isInsideRail: true });
+      assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 44, isCut: true, isInsideRail: true });
     });
 
     // spec §4.2, §14.4: the name column is 104 at every width a list stands in; the 12 gap puts every title 116 further in.

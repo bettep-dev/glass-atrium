@@ -577,6 +577,12 @@ const NOT_LISTENING_EDGE_ORDERS = [
   }),
 ];
 
+/** Every rail state of spec §9.1 on one page: the not-listening state, the hidden sessions and the approval decision in the list. */
+export function getRailFixture(): QueueFixture {
+  const base = getHiddenSessionsFixture(getNotListeningFixture());
+  return { ...base, items: [...base.items, ...EDGE_ITEMS.filter((item) => item.isApprovalClass)] };
+}
+
 /** The not-listening state plus a list row with both badges, an order to seven sessions and one to twelve. */
 export function getNotListeningEdgeFixture(): QueueFixture {
   const base = getNotListeningFixture();
@@ -686,9 +692,8 @@ export function getRelayHistoryFixture(): RelayHistoryFixture {
   };
 }
 
-/** The rest state plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
-export function getHiddenSessionsFixture(): QueueFixture {
-  const rest = getRestFixture();
+/** `rest` plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
+export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
   const hidden = [["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e91", "spare"], ["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e92", "deploy62-probe"]].map(([id, name]) => ({
     ...buildNotListeningSession(id!, name!, "live", 0).row, isWaiting: true, isHidden: true,
   }));

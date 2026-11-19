@@ -480,11 +480,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 @media (min-width: 2560px) {
 	.queue-desk { --queue-rail-w: 280px; }
 }
-/* the Sessions rail (spec §9.1): the All sessions band, a row per session (name 14/600, the solid waiting count, line 2 13/dim).
-   A row is 68 — the list row's own geometry. The bands and the rows share the box, state-mark and name columns → the box or the
-   Ended chevron in the box column, a band's label on the names' column */
+/* the Sessions rail (spec §9.1): the All sessions band, a row per session, each one 44 line on fixed columns — box · state mark ·
+   name · tag · count. The bands share every column → the box or the Ended chevron in the box column, a band's label on the names' column;
+   an empty cell keeps its width */
 .queue-sessions {
-	--queue-rail-cols: 24px 12px minmax(0, 1fr);
+	--queue-rail-cols: 24px 8px minmax(0, 1fr) 16px 36px;
 }
 /* each label on one line; two buttons wider than the rail → the second drops to its own row (spec §9.1), never a wrapped label */
 .queue-sessions > .card-foot {
@@ -513,17 +513,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: 0 0 auto;
 	contain: none;
 }
-/* the warning wraps under the label rather than clip */
 .queue-rail-all {
-	grid-column: 3;
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-1_5);
+	grid-area: 1 / 3;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 /* the band is the 32 row: the disclosure spans it, never pushes it past 32 */
 .queue-rail-band > .disclosure {
-	grid-column: 1 / -1;
+	grid-area: 1 / 1 / 2 / -1;
 	display: grid;
 	grid-template-columns: subgrid;
 	gap: inherit;
@@ -539,18 +537,17 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	text-align: start;
 }
 .queue-rail-box {
-	grid-column: 1;
+	grid-area: 1 / 1;
 	display: inline-flex;
 	justify-content: center;
 	width: 24px;
 }
-/* one control per row (spec §9.1): the row is its box's label → box · state mark · name · waiting count on line 1, line 2 under the name */
+/* one control per row (spec §9.1): the row is its box's label, one 20 line between 12 paddings → 44 */
 .queue-rail-row {
 	display: grid;
-	grid-template-columns: var(--queue-rail-cols) auto;
+	grid-template-columns: var(--queue-rail-cols);
 	column-gap: var(--space-2);
-	row-gap: var(--space-1);
-	align-items: start;
+	align-items: center;
 	padding: var(--space-3) var(--space-4);
 }
 .queue-rail-row + .queue-rail-row {
@@ -559,16 +556,13 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-rail-row:hover {
 	background: rgb(var(--sunken));
 }
-.queue-rail-row > .queue-rail-box { grid-area: 1 / 1; }
 .queue-rail-row > .queue-rail-mark { grid-area: 1 / 2; }
 .queue-rail-row > .queue-rail-name { grid-area: 1 / 3; }
-.queue-rail-row > .queue-rail-count { grid-area: 1 / 4; }
-/* 8 across, centred on line 1: live a filled --ok dot, any other state a hollow --faint ring */
+/* 8 across: live a filled --ok dot, any other state a hollow --faint ring */
 .queue-rail-mark {
 	justify-self: center;
 	width: 8px;
 	height: 8px;
-	margin-block: calc((var(--lh-row) - 8px) / 2);
 	border: 1px solid rgb(var(--faint));
 	border-radius: 50%;
 }
@@ -606,21 +600,37 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-rail-name-text > span {
 	font-size: var(--fs-meta);
 }
-/* a flex box → the 20 count badge sets the line, never the text strut around an inline badge */
-.queue-rail-count {
-	display: flex;
-	align-items: center;
-}
-.queue-rail-line {
-	grid-area: 2 / 3 / 3 / 5;
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-1);
-	font-size: var(--fs-meta);
-	line-height: var(--lh-row);
+.queue-rail-row.is-ended .queue-rail-name {
 	color: rgb(var(--dim));
 }
+/* the 12 mark centred in the 16 tag column */
+.queue-rail-tag {
+	grid-area: 1 / 4;
+	display: flex;
+	justify-content: center;
+}
+/* a flex box → the 20 count badge sets the line, never the text strut around an inline badge; on the Ended band it sits over the
+   disclosure, so a press there still opens it */
+.queue-rail-count {
+	grid-area: 1 / 5;
+	justify-self: end;
+	display: flex;
+	align-items: center;
+	pointer-events: none;
+}
+/* a bare 12 mark, no shell (spec §9.1, §9.2): the warn sign in --warn, the pause glyph in --dim, the ended ring as the rail's own */
+.queue-state-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 12px;
+	height: 12px;
+	font-size: 12px;
+	line-height: 1;
+	vertical-align: -1px;
+}
+.queue-state-mark.is-warn { color: rgb(var(--warn)); }
+.queue-state-mark.is-pause { color: rgb(var(--dim)); }
 .queue-rail-box > .inline-target {
 	min-height: var(--lh-row);
 }

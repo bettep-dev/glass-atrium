@@ -53,10 +53,11 @@ function getNotListeningFactQ(text, isSpoken = false) {
 	return isSpoken ? { ...fact, spoken: `, ${delivers}` } : fact;
 }
 
-/** `<names> is not listening: it gets <what> at its NOT_LISTENING_Q.WHEN.`, plural for several names. */
+/** `<names> gets <what> at its next turn.` — `what` unset → `<names> waits for its next turn.` — then the fix; plural for several names (spec §9.2). */
 function getNotListeningSentenceQ(names, what) {
 	const isOne = names.length === 1;
-	return `${getNameListQ(names)} ${isOne ? "is" : "are"} not listening: ${isOne ? "it gets" : "they get"} ${what} at ${isOne ? "its" : "their"} ${NOT_LISTENING_Q.WHEN}.`;
+	const verb = what ? `${isOne ? "gets" : "get"} ${what} at` : `${isOne ? "waits" : "wait"} for`;
+	return `${getNameListQ(names)} ${verb} ${isOne ? "its" : "their"} next turn. Restart ${isOne ? "it" : "them"} to deliver now.`;
 }
 
 /** A session that hears nothing until its NOT_LISTENING_Q.WHEN: live or not reachable, with no wait or listener polling. */
@@ -104,7 +105,7 @@ const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
 // one description every box of the rail shares (spec §9.1 → What says so before the first press)
 const RAIL_HINT_Q = {
 	ID: "queue-rail-hint",
-	TEXT: "Ticked sessions set whose reports and orders are shown and who receives the next order. With none ticked, every session is shown and no order can be sent.",
+	TEXT: "Ticked sessions filter the list and receive the next order. None ticked shows every session; no order can be sent.",
 };
 const EMPTY_COMPOSER_Q = Object.freeze({ text: "", isBusy: false, error: null });
 // per tab: each item's draft by id, and the order view's draft under its own key
@@ -1028,7 +1029,7 @@ function getOrderNoteQ({ ids, names }, rows = null) {
 	const notListening = (rows ?? []).filter((row) => ids.includes(row.id) && isNotListeningQ(row)).map((row) => row.name);
 	if (ids.length === 1) return notListening.length > 0 ? getNotListeningSentenceQ(notListening, "this") : `Goes to ${names[0]}.`;
 	const each = "Each ticked session gets its own copy.";
-	return notListening.length === 0 ? each : `${each} ${getNotListeningSentenceQ(notListening, "it")}`;
+	return notListening.length === 0 ? each : `${each} ${getNotListeningSentenceQ(notListening)}`;
 }
 
 function getOrderSentStatusQ(names) {
@@ -2304,7 +2305,7 @@ function SessionsBodyQ({ queue, rows }) {
 			<AllSessionsBandQ rows={rows} sessions={sessions} notReceived={[...view.notReceived.values()].reduce((sum, count) => sum + count, 0)} />
 			{live.length === 0 && <EmptyState message="No connected sessions" hint="A session appears here once it has received its first prompt." />}
 			{live.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} />)}
-			{ended.length > 0 && <EndedBandQ count={ended.length} isOpen={sessions.isEndedShown} onToggle={() => sessions.setEndedShown(!sessions.isEndedShown)} />}
+			{ended.length > 0 && <EndedBandQ rows={ended} isOpen={sessions.isEndedShown} onToggle={() => sessions.setEndedShown(!sessions.isEndedShown)} />}
 			{sessions.isEndedShown && ended.map((row) => <SessionRailRowQ key={row.id} row={row} view={view} sessions={sessions} />)}
 		</>
 	);
@@ -2312,12 +2313,11 @@ function SessionsBodyQ({ queue, rows }) {
 
 /** The head of the roster, the whole band its master box's label (spec §9.1): the box in the rows' box column, the label on their names' column; no live session that takes a message → no box. */
 function AllSessionsBandQ({ rows, sessions, notReceived }) {
-	const { Badge } = window.UI;
 	const master = getMasterTickQ(sessions.selectedIds, rows);
 	const waiting = rows.reduce((sum, row) => sum + row.count.awaiting, 0);
 	const isMasterShown = getLiveTargetIdsQ(rows).length > 0;
 	const Band = isMasterShown ? "label" : "div";
-	const warn = notReceived > 0 && <Badge fill="warn" title={getNotReceivedFactQ(notReceived).text}>{notReceived}<span className="sr-only">{" not received"}</span></Badge>;
+	const warn = getNotReceivedFactQ(notReceived).text;
 	return (
 		<Band className="queue-band queue-rail-band">
 			{isMasterShown && (
@@ -2325,18 +2325,29 @@ function AllSessionsBandQ({ rows, sessions, notReceived }) {
 					<span className="inline-target"><CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Select all live sessions" describedBy={RAIL_HINT_Q.ID} /></span>
 				</span>
 			)}
-			<span className="queue-rail-all">All sessions{waiting > 0 && <Badge role="count" fill="tag">{waiting}</Badge>}{warn}</span>
+			<span className="queue-rail-all">All sessions</span>
+			{notReceived > 0 && <span className="queue-rail-tag"><StateMarkQ tag="warn" word={warn} title={warn} /></span>}
+			<RailCountQ count={waiting} />
 		</Band>
 	);
 }
 
-function EndedBandQ({ count, isOpen, onToggle }) {
-	const { Badge, DisclosureButton } = window.UI;
+// the label counts the ended rows; the count column holds what waits in them, as on a row
+function EndedBandQ({ rows, isOpen, onToggle }) {
+	const { DisclosureButton } = window.UI;
 	return (
 		<div className="queue-band queue-rail-band">
-			<DisclosureButton isOpen={isOpen} onToggle={onToggle} label={<>Ended <Badge role="count" fill="tag">{count}</Badge></>} />
+			<DisclosureButton isOpen={isOpen} onToggle={onToggle} label={`${rows.length} ended`} />
+			<RailCountQ count={rows.reduce((sum, row) => sum + row.count.awaiting, 0)} />
 		</div>
 	);
+}
+
+// the count atom of the count column (spec §9.1); nothing at zero, the column's width kept by the grid
+function RailCountQ({ count }) {
+	const { Badge } = window.UI;
+	if (count === 0) return null;
+	return <span className="queue-rail-count"><Badge role="count" fill="tag">{count}</Badge><span className="sr-only">{" waiting"}</span></span>;
 }
 
 /** The master box: `"none"` with nothing ticked, `"all"` with every live session that takes a message ticked, else `"some"`. */
@@ -2371,37 +2382,27 @@ function getNotReceivedBySessionQ(items) {
 }
 
 /**
- * One session, one control (spec §9.1): the whole row is its box's label, so a press anywhere ticks it; a row that takes no message is no control.
- * From the start: box · state mark · name · count; a row with no box keeps its mark and name in place.
+ * One session, one control, one line (spec §9.1): the whole row is its box's label, so a press anywhere ticks it; a row that takes no message is no control.
+ * Columns: box · state mark · name · tag · count; the hover line is the row's title and the box's description.
  */
 function SessionRailRowQ({ row, view, sessions }) {
 	const where = [row.profileLabel, row.cwd, row.id].filter(Boolean).join(" · ");
+	const state = getRailStateQ(row, view.notReceived.get(row.id) ?? 0);
+	const lineId = `queue-rail-line-${row.id}`;
 	const Row = row.isSelectable ? "label" : "div";
 	return (
-		<Row className="queue-rail-row" data-session={row.id} title={where}>
+		<Row className={`queue-rail-row${row.state === "exited" ? " is-ended" : ""}`} data-session={row.id} title={`${state.hover}\n${where}`}>
 			{row.isSelectable && (
 				<span className="queue-rail-box">
-					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}${isNotListeningQ(row) ? ", not listening" : ""}`} describedBy={RAIL_HINT_Q.ID} /></span>
+					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={`${lineId} ${RAIL_HINT_Q.ID}`} /></span>
 				</span>
 			)}
-			<RailRowFaceQ row={row} view={view} where={where} />
-		</Row>
-	);
-}
-
-// the mark is live or not by shape and colour together; line 2 says the state in words → the mark is hidden from screen readers
-function RailRowFaceQ({ row, view, where }) {
-	const { Badge } = window.UI;
-	return (
-		<>
 			<span aria-hidden="true" className={`queue-rail-mark${row.state === "live" ? " is-live" : ""}`} />
-			<span className="queue-rail-name">
-				<SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} />
-			</span>
-			{row.count.awaiting > 0 && <span className="queue-rail-count"><Badge role="count" fill="solid">{row.count.awaiting}</Badge><span className="sr-only">{" waiting"}</span></span>}
-			<span className="queue-rail-line"><RowFactsQ facts={getSessionLineQ(row, view.notReceived.get(row.id) ?? 0)} /></span>
-			<span className="sr-only">{`, ${where}`}</span>
-		</>
+			<span className="queue-rail-name"><SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} /></span>
+			{state.tag && <span className="queue-rail-tag"><StateMarkQ tag={state.tag} word={state.word} /></span>}
+			<RailCountQ count={row.count.awaiting} />
+			<span id={lineId} className="sr-only">{`${state.hover} ${where}`}</span>
+		</Row>
 	);
 }
 
@@ -2418,19 +2419,28 @@ function SessionNameQ({ row, isIdShown }) {
 }
 
 /**
- * Line 2 of a rail row, the first matching condition (spec §9.1): not received · not reachable · live and not listening (with nothing
- * in delivery too) · live with orders on the way · live · a resume not yet registered · ended. Facts in the row-facts shape.
+ * A rail row's state, the first matching condition (spec §9.1): not received · not reachable · live and not listening · live · a resume
+ * not yet registered · takes no message · ended. `tag` (`warn` · `pause`) and its spoken `word` only where the row draws a tag.
  */
-function getSessionLineQ(row, notReceived) {
-	const { formatRelativeTime } = window.UI;
-	const age = { text: formatRelativeTime(row.lastActivityAt) };
-	if (notReceived > 0) return [getNotReceivedFactQ(notReceived)];
-	if (row.state === "stale") return [{ text: "Not reachable", badge: "warn" }, age];
-	const delivery = row.count.inDelivery > 0 ? [{ text: `${row.count.inDelivery} in delivery` }] : [];
-	if (row.state === "live" && !row.isWaiting) return [{ text: SESSION_STATE_LABEL_Q.live }, getNotListeningFactQ(RECEIPT_Q.notListening), ...delivery];
-	if (row.state === "live") return [{ text: SESSION_STATE_LABEL_Q.live }, ...(delivery.length > 0 ? delivery : [age])];
-	if (row.markerSetAt) return [{ text: "Resume not yet registered" }];
-	return [{ text: getSessionStateLabelQ(row), badge: "tag" }, age];
+function getRailStateQ(row, notReceived) {
+	const age = window.UI.formatRelativeTime(row.lastActivityAt);
+	if (notReceived > 0) {
+		const word = getNotReceivedFactQ(notReceived).text;
+		return { tag: "warn", word, hover: `${word}. Resend ${notReceived === 1 ? "it" : "them"} under the order.` };
+	}
+	if (row.state === "stale") return { tag: "warn", word: "Not reachable", hover: `Not reachable since ${age}. Orders wait for it.` };
+	if (row.state === "live" && !row.isWaiting) return { tag: "pause", word: RECEIPT_Q.notListening, hover: `${RECEIPT_Q.notListening}: orders wait for its next turn. Restart it.` };
+	if (row.state === "live") return { hover: [`${SESSION_STATE_LABEL_Q.live} · active ${age}`, ...(row.count.inDelivery > 0 ? [`${row.count.inDelivery} in delivery`] : [])].join(" · ") };
+	if (row.markerSetAt) return { hover: "Resume not yet registered." };
+	if (!row.isSelectable) return { hover: `${EXIT_REASON_LABEL_Q.replaced}: it takes no orders.` };
+	return { hover: getSessionStateLabelQ(row).replace(EXIT_REASON_LABEL_Q.ended, `${EXIT_REASON_LABEL_Q.ended} ${age}`) };
+}
+
+/** A bare 12 mark, no shell, named by `word` for assistive technology: `warn` the warn sign, `pause` the solid pause glyph, `ended` the hollow ring. */
+function StateMarkQ({ tag, word, title }) {
+	const { TONE_GLYPH } = window.UI;
+	const glyph = { warn: TONE_GLYPH.warn, pause: getPauseGlyphQ(), ended: <span className="queue-rail-mark" /> }[tag];
+	return <span role="img" aria-label={word} title={title} className={`queue-state-mark is-${tag}`}>{glyph}</span>;
 }
 
 // base.css → .ctl-checkbox visual: the mark drawn over the 16 box; the caller's label is the hit area; mixed → the DOM's indeterminate state
@@ -2778,9 +2788,8 @@ function useRecipientsNoteQ(targets, box, isReady) {
 	return [note, setNote];
 }
 
-// `New order to gersona, yoaida` — every name, an ended or not-listening one tagged after it, the comma after the tag; none → said in dim (spec §9.2 → Label line)
+// `New order to gersona, yoaida` — every name, an ended or not-listening one with its bare mark after it, the comma after the mark; none → said in dim (spec §9.2 → Label line)
 function OrderLabelQ({ rows }) {
-	const { Badge } = window.UI;
 	if (rows.length === 0) return <>New order · no session ticked</>;
 	return (
 		<>
@@ -2790,8 +2799,8 @@ function OrderLabelQ({ rows }) {
 					{index > 0 && " "}
 					<span className="queue-order-to">
 						{row.name}
-						{row.state === "exited" && <> <Badge fill="tag">Ended</Badge></>}
-						{isNotListeningQ(row) && <><span className="sr-only">,</span> <RowFactsQ facts={[getNotListeningFactQ(RECEIPT_Q.notListening)]} /></>}
+						{row.state === "exited" && <> <StateMarkQ tag="ended" word={EXIT_REASON_LABEL_Q.ended} title={EXIT_REASON_LABEL_Q.ended} /></>}
+						{isNotListeningQ(row) && <> <StateMarkQ tag="pause" word={RECEIPT_Q.notListening} title={RECEIPT_Q.notListening} /></>}
 						{index < rows.length - 1 && ","}
 					</span>
 				</React.Fragment>
