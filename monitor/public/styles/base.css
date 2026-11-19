@@ -619,14 +619,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	align-items: center;
 	pointer-events: none;
 }
-/* a bare 12 mark, no shell (spec §9.1, §9.2): the warn sign in --warn, the pause glyph in --dim, the ended ring as the rail's own */
+/* a bare 12 mark, no shell (spec §9.1, §9.2): the warn sign in --warn, the pause glyph in --dim, the ended ring as the rail's own;
+   the glyph at the meta floor, centred on the 12 box */
 .queue-state-mark {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	width: 12px;
 	height: 12px;
-	font-size: 12px;
+	font-size: var(--fs-meta);
 	line-height: 1;
 	vertical-align: -1px;
 }
