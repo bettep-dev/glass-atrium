@@ -779,20 +779,24 @@ describe("the certificate download", () => {
   // the person finds the certificate on the device by the CN the shell writes → the screen and the file name must say the same
   const MONITOR_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const CA_CN_LINE = /^\s*'CN = ([^']+)'/m;
-  interface StepWords { readonly line?: string | { readonly download: string }; readonly path?: string }
+  interface StepWords { readonly kind: string; readonly line?: string | { readonly download: string }; readonly path?: string }
+  interface DeviceWords { readonly fileName: string | null; readonly steps: readonly StepWords[] }
 
-  test("the download's file name, every Settings path the screen draws and its download line carry the CN the shell writes into the CA", async () => {
+  test("each device's file name, every compare step's Settings path and every download line carry the CN the shell writes into the CA", async () => {
     const shell = await readFile(path.join(MONITOR_DIR, "..", "lib", "ga-remote.sh"), "utf8");
     const screen = await loadScreenModule(path.join(MONITOR_DIR, "public", "src", "screens", "remote-access.jsx"));
-    const steps = vm.runInContext("STEPS_RA", screen) as StepWords[];
+    const devices = Object.values(vm.runInContext("DEVICE_RA", screen) as Record<string, DeviceWords>);
     const cn = CA_CN_LINE.exec(shell)?.[1] ?? "no CN line in the CA config";
 
-    const paths = steps.flatMap((step) => step.path ?? []);
+    const steps = devices.flatMap((device) => [...device.steps]);
+    const paths = steps.flatMap((step) => (step.kind === "fingerprint" && step.path ? [step.path] : []));
     const downloads = steps.flatMap((step) => (typeof step.line === "object" ? [step.line.download] : []));
     const unnamed = [...paths.filter((line) => !line.endsWith(` › ${cn}`)), ...downloads.filter((line) => !line.includes(`“${cn}”`))];
+    // null → the device saves the served name
+    const fileNames = devices.map((device) => device.fileName ?? CA_DOWNLOAD.FILE_NAME);
 
-    assert.ok(paths.length >= 2 && downloads.length >= 1, "the step table was read");
-    assert.deepEqual([CA_DOWNLOAD.FILE_NAME, unnamed], [`${cn}.pem`, []]);
+    assert.ok(paths.length === devices.length && downloads.length === devices.length, "every device's step table was read");
+    assert.deepEqual([fileNames, unnamed], [[`${cn}.pem`, `${cn}.cer`], []]);
   });
 
   test("serves the one CA file as an attachment with a fixed name and type, its bytes hashing to the fingerprint the setup read shows", async () => {
