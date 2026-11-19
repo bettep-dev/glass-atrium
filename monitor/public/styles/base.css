@@ -486,8 +486,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-sessions {
 	--queue-rail-cols: 24px 12px minmax(0, 1fr);
 }
+/* each label on one line; two buttons wider than the rail → the second drops to its own row (spec §9.1), never a wrapped label */
 .queue-sessions > .card-foot {
+	flex-wrap: wrap;
 	justify-content: space-between;
+	row-gap: var(--space-2);
+	padding-block: var(--space-1); /* one row: 4 + 32 + 4 → the foot's own 40 */
+}
+.queue-sessions > .card-foot > .btn {
+	white-space: nowrap;
 }
 .queue-rail-band {
 	display: grid;

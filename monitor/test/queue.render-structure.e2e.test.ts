@@ -1191,6 +1191,32 @@ describe("queue page on the mockup fixtures", () => {
     );
   });
 
+  test("the rail foot draws each button's label on one line inside the foot at every window width, the signal on", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    const found = [];
+    for (const viewport of [MIN_WINDOW, ...VIEWPORTS]) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+      const buttons = await page.locator(".queue-sessions > .card-foot").evaluate((foot) => {
+        const end = foot.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(foot).paddingRight);
+        return [...foot.querySelectorAll("button")].map((button) => {
+          const range = document.createRange();
+          range.selectNodeContents(button);
+          // each text box's vertical centre; a glyph and a word on one line sit within a few pixels of each other
+          const centres = [...range.getClientRects()].map((rect) => rect.top + rect.height / 2).sort((a, b) => a - b);
+          const lines = centres.filter((centre, index) => index === 0 || centre - centres[index - 1]! > 6).length;
+          return { label: button.textContent?.trim(), lines, isInside: button.getBoundingClientRect().right <= end + 0.5 };
+        });
+      });
+      await page.close();
+      found.push({ width: viewport.width, buttons });
+    }
+
+    assert.deepEqual(found, [MIN_WINDOW, ...VIEWPORTS].map(({ width }) => ({
+      width,
+      buttons: [{ label: "⚠Relay history", lines: 1, isInside: true }, { label: "Automatic resumes 2", lines: 1, isInside: true }],
+    })));
+  });
+
   test("Relay history lists its sends and refusal oldest first, relay text as text, under its foot line", async () => {
     harness.fixture = getRelayRecordFixture({ signal: true });
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
