@@ -1179,7 +1179,7 @@ describe("done items", () => {
   const doneDecision = (overrides: Record<string, unknown> = {}) =>
     buildItem({ id: 812, status: "delivered", answer: { code: "R1", text: null }, answerRecord: record("answer"), ...answered, ...overrides });
 
-  // KST days: 2026-11-18T15:30Z is Nov 19 00:30 → Today beside Nov 19 14:30; Nov 18 → Yesterday; older → its date
+  // KST days: 2026-11-18T15:30Z is Nov 19 00:30 → Today beside Nov 19 14:30; Nov 18 → Yesterday; older → its month and day
   test("each row stands in the band of its end's day, in the read's order, one item a row", () => {
     const items = [
       doneReport({ id: 5, closedAt: "2026-11-19T05:30:00.000Z" }),
@@ -1192,7 +1192,7 @@ describe("done items", () => {
     assert.deepEqual(groups.map((group) => [group.label, group.rows.map((row) => [row.id, row.copies.length, row.isDone])]), [
       ["Today", [[5, 1, true], [4, 1, true]]],
       ["Yesterday", [[3, 1, true]]],
-      ["2026-11-16", [[2, 1, true], [1, 1, true]]],
+      ["Nov 16", [[2, 1, true], [1, 1, true]]],
     ]);
   });
 
@@ -1299,9 +1299,9 @@ describe("done items", () => {
 
   // spec §4.6: a done item's sheet is read-only — its answer shown, no composer, the foot how and when it ended
   const sheets = [
-    { name: "an answered decision shows its answer, its foot the answer and its end", item: doneDecision(), kind: "Decision", foot: "Answer R1 · 2026-11-19 14:30 KST", hasAnswer: true },
-    { name: "a read report shows its text, its foot Read and its end", item: doneReport(), kind: "Report", foot: "Read · 2026-11-19 14:30 KST", hasAnswer: false },
-    { name: "a decision withdrawn before any answer shows its question, no answer, its foot Withdrawn and its end", item: doneDecision({ status: "withdrawn", answer: null, answeredAt: null, answerRecord: null }), kind: "Decision", foot: "Withdrawn · 2026-11-19 14:30 KST", hasAnswer: false },
+    { name: "an answered decision shows its answer, its foot the answer and its end", item: doneDecision(), kind: "Decision", foot: "Answer R1 · Nov 19 14:30", hasAnswer: true },
+    { name: "a read report shows its text, its foot Read and its end", item: doneReport(), kind: "Report", foot: "Read · Nov 19 14:30", hasAnswer: false },
+    { name: "a decision withdrawn before any answer shows its question, no answer, its foot Withdrawn and its end", item: doneDecision({ status: "withdrawn", answer: null, answeredAt: null, answerRecord: null }), kind: "Decision", foot: "Withdrawn · Nov 19 14:30", hasAnswer: false },
   ];
   for (const row of sheets) {
     test(`the done sheet: ${row.name}`, () => {

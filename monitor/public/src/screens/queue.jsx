@@ -390,7 +390,7 @@ function getFoldedRowsQ(items) {
  */
 function getDoneGroupsQ(items, now = new Date()) {
 	const rows = items.map((item) => ({ ...getSingleRowQ(item), isDone: true }));
-	return getDayGroupsQ(rows, now, (row) => row.item.closedAt).map((group) => ({ key: group.day, label: group.label, rows: group.entries }));
+	return getDayGroupsQ(rows, now, (row) => row.item.closedAt, getMonthDayQ).map((group) => ({ key: group.day, label: group.label, rows: group.entries }));
 }
 
 /** The row the hash's item opens on the sheet: a loaded row of the list as it stands that has a sheet; none, or an order's row → null. */
@@ -1893,10 +1893,12 @@ function getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isD
 	return <SheetFootQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
 }
 
-// `Read · 2026-11-19 14:30 KST` — one line, nothing to act on
+// `Read · Nov 19 14:30` — one line, nothing to act on; the day in the done list's band form
 function EndLineQ({ item }) {
+	const { formatKstDate, formatKstTime } = window.UI;
 	const end = getEndQ(item);
-	return <div className="queue-composer"><p className="fs-meta text-dim" title={end.title}>{`${end.text} · ${getDatedTimeQ(item.closedAt)}`}</p></div>;
+	const at = `${getMonthDayQ(formatKstDate(item.closedAt))} ${formatKstTime(item.closedAt)}`;
+	return <div className="queue-composer"><p className="fs-meta text-dim" title={end.title}>{`${end.text} · ${at}`}</p></div>;
 }
 
 // a relay's foot (spec §9.9): one line, no field and no button — nothing on it is the owner's to send
@@ -2768,22 +2770,28 @@ function getAimedEntryIdQ(entries, copyId) {
 	return entries.find((entry) => entry.copies.some((copy) => copy.id === copyId))?.id ?? null;
 }
 
-// an order's day is its send; a relay's its askedAt (getRelayAtQ)
-function getDayGroupsQ(entries, now = new Date(), getAt = (entry) => entry.item.answeredAt) {
+// an order's day is its send; a relay's its askedAt (getRelayAtQ); a day before yesterday labelled by getOlderLabel
+function getDayGroupsQ(entries, now = new Date(), getAt = (entry) => entry.item.answeredAt, getOlderLabel = (day) => day) {
 	const groups = [];
 	for (const entry of entries) {
 		const day = window.UI.formatKstDate(getAt(entry));
-		if (groups[groups.length - 1]?.day !== day) groups.push({ day, label: getDayLabelQ(day, now), entries: [] });
+		if (groups[groups.length - 1]?.day !== day) groups.push({ day, label: getDayLabelQ(day, now, getOlderLabel), entries: [] });
 		groups[groups.length - 1].entries.push(entry);
 	}
 	return groups;
 }
 
-function getDayLabelQ(day, now) {
+function getDayLabelQ(day, now, getOlderLabel) {
 	const { formatKstDate } = window.UI;
 	if (day === formatKstDate(now.toISOString())) return "Today";
 	if (day === formatKstDate(new Date(now.getTime() - ORDERS_Q.DAY_MS).toISOString())) return "Yesterday";
-	return day;
+	return getOlderLabel(day);
+}
+
+// a display-zone day `2026-11-09` → `Nov 9`
+function getMonthDayQ(day) {
+	const [year, month, date] = day.split("-").map(Number);
+	return new Date(Date.UTC(year, month - 1, date)).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 /** One order: the time line (`Re:` + the report's title for a reply), the bubble, a row per recipient with its receipt. */

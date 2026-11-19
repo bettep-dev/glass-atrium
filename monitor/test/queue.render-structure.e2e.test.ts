@@ -2568,7 +2568,7 @@ describe("queue page on the mockup fixtures", () => {
 
       assert.deepEqual(shown, {
         hash: "#queue?status=done",
-        bands: [["Today", 0], ["Yesterday", 0], ["2026-11-09", 0]],
+        bands: [["Today", 0], ["Yesterday", 0], ["Nov 9", 0]],
         rows: [
           ["queue-row-801", "Answer R1", "Decision"], ["queue-row-802", "Read", "Report"],
           ["queue-row-803", "Withdrawn", "Decision"], ["queue-row-804", "Replied", "Report"], ["queue-row-805", "Answered", "Decision"],
@@ -2606,8 +2606,8 @@ describe("queue page on the mockup fixtures", () => {
       const read = { ...(await getSheet()), hash: await page.evaluate(() => location.hash) };
       await page.close();
 
-      assert.deepEqual(answered, { kind: "Decision", foot: "Answer R1 · 2026-11-13 14:57 KST", controls: 0, hasAnswer: true, position: "1 of 5" });
-      assert.deepEqual(read, { kind: "Report", foot: "Read · 2026-11-13 14:00 KST", controls: 0, hasAnswer: false, position: "2 of 5", hash: "#queue?status=done&item=802" });
+      assert.deepEqual(answered, { kind: "Decision", foot: "Answer R1 · Nov 13 14:57", controls: 0, hasAnswer: true, position: "1 of 5" });
+      assert.deepEqual(read, { kind: "Report", foot: "Read · Nov 13 14:00", controls: 0, hasAnswer: false, position: "2 of 5", hash: "#queue?status=done&item=802" });
     });
   });
 
