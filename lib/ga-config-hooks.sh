@@ -922,8 +922,8 @@ purge_config() {
 
 # The one writer of the owner queue's MCP registration: each profile's user-scope entry, by the host's own
 # `claude mcp add|remove --scope user`, and the tools' allow lines in the shared settings.json. Prints every write,
-# file by file, before any; writes only on --approve-profile-writes outside a dry run. $1 = add | remove — a removal
-# touches only an entry that runs this install's adapter, and only the tools' own allow lines.
+# file by file, before any; outside a dry run writes on --approve-profile-writes, or on a typed yes at a terminal.
+# $1 = add | remove — a removal touches only an entry that runs this install's adapter, and only the tools' own lines.
 put_queue_mcp_registration() {
   local mode="$1" identity name entries lines
   # shellcheck disable=SC2311  # a failed read is the warning branch
@@ -941,16 +941,46 @@ put_queue_mcp_registration() {
   fi
   log "queue MCP registration (${mode}): the owner approves these writes before any is made"
   print_queue_mcp_writes "${name}" "${entries}" "${lines}" "${mode}"
-  if "${DRY_RUN}" || ! "${APPROVE_PROFILE_WRITES}"; then
-    if [[ "${mode}" == add ]]; then
-      log "queue MCP registration: nothing written — once approved, '${GA_ROOT}/glass-atrium queue-mcp --approve-profile-writes' writes exactly these"
-    else
-      log "queue MCP registration: nothing written — once approved, rerun the uninstall with --approve-profile-writes to remove exactly these"
-    fi
-    return 0
-  fi
+  # shellcheck disable=SC2310  # the question's verdict is the branch
+  is_queue_mcp_write_confirmed "${mode}" "${entries}" || return 0
   put_queue_mcp_entries "${name}" "${entries}"
   put_queue_mcp_allow_lines "${mode}" "${lines}"
+}
+
+# <mode> <entry writes> → 0 outside a dry run on --approve-profile-writes or a typed y at a terminal (default No);
+# every other answer prints the one line saying why nothing is written
+is_queue_mcp_write_confirmed() {
+  "${DRY_RUN}" || ! "${APPROVE_PROFILE_WRITES}" || return 0
+  if ! "${DRY_RUN}" && [[ -n "$2" ]] && ! command -v claude >/dev/null 2>&1; then
+    log "queue MCP registration: no claude CLI on PATH — skipped, nothing written (the host's own command writes each profile's entry)"
+    return 1
+  fi
+  # shellcheck disable=SC2310  # the typed answer is the branch
+  if ! "${DRY_RUN}" && ga_remote_is_terminal && is_queue_mcp_answer_yes "$1"; then return 0; fi
+  if [[ "$1" == add ]]; then
+    log "queue MCP registration: nothing written — '${GA_ROOT}/glass-atrium queue-mcp' at a terminal asks first; '${GA_ROOT}/glass-atrium queue-mcp --approve-profile-writes' writes exactly these unasked"
+  else
+    log "queue MCP registration: nothing written — rerun the uninstall at a terminal, or with --approve-profile-writes, to remove exactly these"
+  fi
+  return 1
+}
+
+# <mode> → 0 on a typed y or Y; an empty answer is the default No
+is_queue_mcp_answer_yes() {
+  local reply=""
+  [[ "$1" == add ]] || printf 'Sessions report a failed MCP server if the Glass Atrium tree is removed while these entries stay.\n' >&2
+  printf 'Make the queue MCP writes listed above? [y/N]: ' >&2
+  IFS= read -r reply || reply=""
+  [[ "${reply}" == [yY] ]]
+}
+
+# <mode> → 0 when the mode still has a profile entry or allow line to write; any failed read answers no
+is_queue_mcp_pending() {
+  local identity entries lines
+  identity="$(get_queue_mcp_identity)" || return 1
+  entries="$(get_queue_mcp_entry_writes "$1" "${identity%%$'\n'*}" 2>/dev/null)" || return 1
+  lines="$(get_queue_mcp_allow_writes "$1" "${identity}" 2>/dev/null)" || return 1
+  [[ -n "${entries}${lines}" ]]
 }
 
 # <mode> <server name> → "<add|replace|remove>\x1f<profile file>\x1f<config dir>" per profile the mode changes;
@@ -1008,8 +1038,10 @@ get_queue_mcp_entry_state() {
     printf 'missing\n'
     return 0
   fi
-  jq -r --arg n "$2" --arg a "${QUEUE_MCP_ADAPTER}" '(.mcpServers // {})[$n] // null
-    | if . == null then "missing" elif .command == "/bin/bash" and .args == [$a] then "ok" else "elsewhere" end' \
+  local entry
+  entry="$(get_queue_mcp_entry)"
+  jq -r --arg n "$2" --argjson e "${entry}" '(.mcpServers // {})[$n] // null
+    | if . == null then "missing" elif .command == $e.command and .args == $e.args then "ok" else "elsewhere" end' \
     -- "$1" 2>/dev/null || printf 'unreadable\n' # GA-ABSORB[handled@the unreadable verdict]: a file jq cannot read is that verdict
 }
 
@@ -1024,15 +1056,22 @@ get_queue_mcp_allow_writes() {
     | (if $mode == "add" then $missing else $want - $missing end)[]' <<<"${settings}"
 }
 
-# <server name> <entry writes> <allow writes> <mode> → one log line per write, naming its file
+# The entry `claude mcp add --scope user <name> -- <command> <args…>` leaves in a profile file: command and args are
+# this install's; type and env are the keys the host's command adds to every stdio server it writes
+get_queue_mcp_entry() {
+  jq -nc --arg a "${QUEUE_MCP_ADAPTER}" '{type: "stdio", command: "/bin/bash", args: [$a], env: {}}'
+}
+
+# <server name> <entry writes> <allow writes> <mode> → one log line per write, naming its file, then the backup
 print_queue_mcp_writes() {
-  local entry action file dir
-  entry="$(jq -nc --arg a "${QUEUE_MCP_ADAPTER}" '{command: "/bin/bash", args: [$a]}')"
+  local entry argv action file dir
+  entry="$(get_queue_mcp_entry)"
+  argv="$(jq -r '[.command] + .args | join(" ")' <<<"${entry}")"
   while IFS=$'\x1f' read -r action file dir; do
     [[ -n "${action}" ]] || continue
     case "${action}" in
       remove) log "  ${file}: mcpServers.$1 removed — by: ${dir:+CLAUDE_CONFIG_DIR=${dir} }claude mcp remove --scope user $1" ;;
-      *) log "  ${file}: mcpServers.$1 = ${entry} (${action}) — by: ${dir:+CLAUDE_CONFIG_DIR=${dir} }claude mcp add --scope user $1 -- /bin/bash ${QUEUE_MCP_ADAPTER}" ;;
+      *) log "  ${file}: mcpServers.$1 = ${entry} (${action}; type and env are the host's own keys) — by: ${dir:+CLAUDE_CONFIG_DIR=${dir} }claude mcp add --scope user $1 -- ${argv}" ;;
     esac
   done <<<"$2"
   local sign=+ line
@@ -1040,19 +1079,23 @@ print_queue_mcp_writes() {
   while IFS= read -r line; do
     [[ -z "${line}" ]] || log "  ${SETTINGS_JSON}: permissions.allow ${sign} ${line}"
   done <<<"$3"
+  [[ -z "$3" ]] || log "  ${SETTINGS_JSON}: backed up first to ${SETTINGS_JSON}.ga-backup.<YYYYmmdd-HHMMSS of the write>"
 }
 
 # <server name> <entry writes> → each through the host's command, run with that profile's config dir — the default
 # profile's with none and HOME at the target home's parent, so a sandboxed target never reaches the real home
 put_queue_mcp_entries() {
-  local claude action file dir
+  local claude entry words arg action file dir argv=()
   [[ -n "$2" ]] || return 0 # GA-ABSORB[benign]: no entry to write
   claude="$(command -v claude)" || die "queue MCP: no claude CLI on PATH — the host's own command writes each profile's entry"
+  entry="$(get_queue_mcp_entry)"
+  words="$(jq -r '.command, .args[]' <<<"${entry}")"
+  while IFS= read -r arg; do argv+=("${arg}"); done <<<"${words}"
   while IFS=$'\x1f' read -r action file dir; do
     [[ -n "${action}" ]] || continue
     if [[ "${action}" != add ]]; then run_claude_mcp "${claude}" "${dir}" remove --scope user "$1"; fi
     if [[ "${action}" != remove ]]; then
-      run_claude_mcp "${claude}" "${dir}" add --scope user "$1" -- /bin/bash "${QUEUE_MCP_ADAPTER}"
+      run_claude_mcp "${claude}" "${dir}" add --scope user "$1" -- "${argv[@]}"
     fi
     log "  written: ${file} (${action} $1)"
   done <<<"$2"
