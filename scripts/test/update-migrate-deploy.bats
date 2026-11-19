@@ -559,14 +559,12 @@ run_e2e() {
   }
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1 # the apply landed first
 
-  # Ordering, read off the shared call log: the migrate deploy is the LAST recorded step, after the
-  # facade refresh and the hook wiring — which is what puts it before the monitor restart.
-  grep -qF 'launcher wire-hooks' "${CALLS}" || {
-    echo "wire-hooks never ran: $(cat -- "${CALLS}")" >&2
-    return 1
-  }
-  [[ "$(tail -n 1 "${CALLS}")" == prisma\ migrate\ deploy* ]] || {
-    echo "migrate deploy was not the last step: $(cat -- "${CALLS}")" >&2
+  # Ordering, read off the shared call log: the migrate deploy runs after the hook wiring and before the
+  # finalize, whose first step is the config render — so the finalized monitor never runs an older schema.
+  local order
+  order="$(grep -oE '^(launcher wire-hooks|prisma migrate deploy|launcher render-config)' "${CALLS}" | tr '\n' '|')"
+  [[ "${order}" == 'launcher wire-hooks|prisma migrate deploy|launcher render-config|' ]] || {
+    echo "migrate deploy not between the wiring and the finalize: $(cat -- "${CALLS}")" >&2
     return 1
   }
 }
