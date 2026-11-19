@@ -969,12 +969,15 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .queue-relay-error {
 	min-height: var(--lh-row);
 }
-/* the relay's text in the history: the bubble's clamp without its fill or inset */
+/* the relay's text in the history: the bubble's clamp without its fill or inset; the text as written, its line breaks kept */
 .queue-bubble.is-plain {
 	max-width: var(--measure-prose);
 	padding: 0;
 	background: none;
 	border-radius: 0;
+}
+.queue-bubble.is-plain > .prose-text {
+	white-space: pre-wrap;
 }
 /* a pane: head, bar and foot fixed, the body the only scroller on its axis */
 .queue-pane > .card-body {

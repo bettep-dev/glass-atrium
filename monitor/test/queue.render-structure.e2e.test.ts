@@ -1197,14 +1197,16 @@ describe("queue page on the mockup fixtures", () => {
     await openRelayHistory(page);
     const found = await page.evaluate(() => ({
       entries: [...document.querySelectorAll(".queue-relay-log article")].map((entry) => entry.getAttribute("aria-label")?.split(",")[0]),
-      bold: document.querySelectorAll(".queue-relay-log b").length,
-      hasLiteral: (document.querySelector(".queue-relay-log") as HTMLElement | null)?.innerText.includes("<b>굵게</b>") ?? false,
+      texts: [...document.querySelectorAll<HTMLElement>(".queue-relay-log .queue-bubble")].map((bubble) => bubble.innerText),
+      converted: document.querySelectorAll(".queue-relay-log .queue-bubble :is(b, strong, a, ol, ul, li, code, pre)").length,
     }));
     await page.close();
+    // the sends still holding their text, oldest first, as the history lists them
+    const kept = [...new Map(harness.fixture.relays.items.filter((item) => item.relay?.redaction === null).map((item) => [item.sendId, item.body])).values()].reverse();
 
     assert.deepEqual(found, {
       entries: ["Relay from atrium to gersona", "Relay from aidl to yoaida and portfolio", "Refused relay from gersona to yoaida", "Relay from gersona to atrium"],
-      bold: 0, hasLiteral: true,
+      texts: kept, converted: 0,
     });
   });
 

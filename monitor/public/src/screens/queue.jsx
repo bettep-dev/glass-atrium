@@ -2580,7 +2580,10 @@ function OrderEntryQ({ entry, busy, onResend, onOpenImage }) {
 	);
 }
 
-// more than 12 written lines → clamped under `Show all N lines`; a long line that only wraps is not counted; the images stay in view under the clamp
+/**
+ * More than 12 written lines → clamped under `Show all N lines`; a long line that only wraps is not counted; the images stay in view under the clamp.
+ * @param isPlain - a relay's text, a record read as evidence → drawn verbatim (line breaks kept, nothing parsed), no fill
+ */
 function OrderBubbleQ({ text, images = [], onOpenImage, isPlain = false }) {
 	const { ProseText, DisclosureChevron } = window.UI;
 	const [isFull, setFull] = useStateQ(false);
@@ -2589,7 +2592,7 @@ function OrderBubbleQ({ text, images = [], onOpenImage, isPlain = false }) {
 	return (
 		<>
 			<div className={`queue-bubble${isPlain ? " is-plain" : ""}${isLong && !isFull ? " is-clamped" : ""}`} style={{ "--queue-clamp-lines": ORDERS_Q.CLAMP_LINES }}>
-				<ProseText text={text} isCompact />
+				{isPlain ? <p className="prose-text prose-text--compact">{text}</p> : <ProseText text={text} isCompact />}
 				{images.length > 0 && (
 					<div className="queue-bubble-images">
 						{images.map((image, index) => <BubbleImageQ key={image.id} image={image} label={`Open image ${index + 1} of ${images.length}: ${image.name}`} onOpen={() => onOpenImage(images, index)} />)}

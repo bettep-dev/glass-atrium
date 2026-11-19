@@ -636,10 +636,12 @@ describe("relay history", () => {
     assert.doesNotMatch(flat(received!), /Hop/);
   });
 
-  test("relay text reaches the page as text: the prose atom gets the raw string and nothing sets inner HTML", () => {
+  test("relay text is drawn verbatim as plain text: each kept text is the stored string whole, never prose-parsed or set as HTML", () => {
     const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
-    const texts = findNodes(tree, (node) => node.props?.atom === "ProseText").map((node) => String(node.props.text));
-    assert.ok(texts.some((text) => text.includes("<b>굵게</b>")), String(texts));
+    const bubbles = findNodes(tree, (node) => String(node.props?.className ?? "").startsWith("queue-bubble"));
+    const kept = [...new Map(fixture.items.filter((item) => item.relay?.redaction === null).map((item) => [item.sendId, item.body])).values()].reverse();
+    assert.deepEqual(bubbles.map((bubble) => collectText(bubble)), kept);
+    assert.equal(findNodes(tree, (node) => node.props?.atom === "ProseText").length, 0);
     assert.equal(findNodes(tree, (node) => node.props?.dangerouslySetInnerHTML !== undefined).length, 0);
   });
 
@@ -686,7 +688,7 @@ describe("relay history", () => {
     const partly = [kept!, { ...gone!, body: "[relay text redacted by the owner]", relay: { ...gone!.relay!, redaction: { at: "2026-11-13T05:30:00.000Z", length: 99 } } }];
     const tree = render("RelayLogQ", { history: history({ items: partly, refusals: [] }) });
     assert.equal(buttonLabelled(tree, "Redact text").length, 1);
-    assert.ok(findNodes(tree, (node) => node.props?.atom === "ProseText").some((node) => String(node.props.text).startsWith("파트너")));
+    assert.ok(findNodes(tree, (node) => String(node.props?.className ?? "").startsWith("queue-bubble")).some((node) => collectText(node).startsWith("파트너")));
   });
 
   test("the redaction posts one owner action per unredacted copy, each by its relay id, with no text", async () => {

@@ -659,7 +659,7 @@ const RECEIVED_RELAY = buildRelayCopies({
 /** The relay passed on at hop 1: one copy received, one lapsed; its parent the received relay above. */
 export const FORWARDED_RELAY = buildRelayCopies({
   firstId: 412, sendId: RELAY_SEND_IDS.forwarded, from: "aidl", minutesAgo: 240,
-  text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다. 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.\n<b>굵게</b> 표시는 글자 그대로 읽힙니다.",
+  text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다. 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.\n<b>굵게</b> 표시는 글자 그대로 읽힙니다.\n- 근거: clauded-docs/44099 의 **응답 예시** 절",
   to: [["yoaida", { deliveredAt: getAt(236) }], ["portfolio", { lapsedAt: getAt(60) }]],
   facts: { hop: 1, parent: { id: 398, sender: buildRelaySender("atrium"), sentAt: getAt(27 * 60) } },
   linkedDocIds: [44099],
