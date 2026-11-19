@@ -59,7 +59,10 @@ const FULL_TABLE_CID = "2026-11-19T1755_deploy70-prep_f1a8";
 // the orders reason re-signed in place for the item thread (history-route-verdict.md): route, class and order kept → same digest
 const ITEM_THREAD_CID = "2026-11-19T2050_queue-tidy_d81b";
 // the owner-list and orders reasons re-signed in place for the relay row (relay-row-verdict.md): route, class and order kept → same digest
+// same string as ITEM_THREAD_CID → the item-thread entry's supersededBy reads as its own first CID
 const RELAY_ROW_CID = "2026-11-19T2050_queue-tidy_d81b";
+// the changed sign-in.css re-read and the relay row's page rendering read on the merged tree (merged-signoffs-verdict.md): no row changed
+const MERGED_TREE_CID = "2026-11-20T0000_deploy71-prep_c47e";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -448,6 +451,52 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     // Q4 open, not read: the page script's open-list rendering of a relay row (peer-written text, self-declared name) against R5 (text only, never markup, name labelled self-declared)
     // carried, not re-read: the route handler and query schema (limit 1-200, the installed CLI path), remote/gate.ts (same reader for both page rows), commits f18c790e, 54c7aacf, 25bc6c2e and the builder's before-state claim
     cids: [
+      RELAY_ROW_CID,
+      ITEM_THREAD_CID,
+      FULL_TABLE_CID,
+      FRAGMENT_READ_CID,
+      BUILT_READ_CID,
+      MERGE_CID,
+      UNCONDITIONAL_CID,
+      SIGN_LAST_CID,
+      RELAY_ROWS_CID,
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 119,
+    sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6",
+    supersededBy: MERGED_TREE_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S2",
+    // every row of the entry before it carried unchanged in route, class, order and reason; its conditions carried, Q1-Q3 included
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // C4 re-read for sign-in.css as changed, read whole in the merged tree: against the live source one declaration added, `.section-label` → `margin: 0`;
+    // no url(), @import, @font-face, image or content value, fonts by family name only; display flex or inline-flex only;
+    // no visibility, position, transform, clip, overflow, order, z-index, pointer-events or text-indent rule; the one opacity 0.5 on a disabled or aria-disabled `.btn`;
+    // `.sign-in-status` a reserved line, `.is-error` changes colour only; the added declaration matches the Connection warning heading alone, below the form
+    // → the code field, the device-name field and the refusal line neither hidden nor moved;
+    // sign-in.html and sign-in.js read whole in the merged tree, as the FULL_TABLE_CID entry's C4 line states them; their byte-equality to the live source
+    // (equal blob ids at 5b6f52ea and ad902e57, merge-record.md) not shown to the reviewer; a change to any of the three sign-in files needs a new read
+    // Q4 met at integration/deploy-71, as read in monitor/public/src/screens/queue.jsx: the relay row (name column and its tooltip, title cell when the name column is left out, aria-label),
+    // the sheet head (LetterheadQ), the sheet title and the From line (RelayWhoQ) all name the sender through getSenderLabelQ:
+    // a self-given name reads `<name> (self-named)`, an unnamed sender reads its id prefix unmarked;
+    // the sheet's text is one text node through OrderBubbleQ isPlain with nothing parsed; queue.jsx contains no innerHTML or dangerouslySetInnerHTML;
+    // a redacted relay shows the redaction line and never its stored title; read-only: no test run, commits 236888b2 and a7d0925a not checked
+    // residual, not blocking: the sheet's "What <name> wrote" and "<name>'s message" sentences and RelayHopLineQ use the bare name from getSenderNameQ
+    cids: [
+      MERGED_TREE_CID,
       RELAY_ROW_CID,
       ITEM_THREAD_CID,
       FULL_TABLE_CID,
