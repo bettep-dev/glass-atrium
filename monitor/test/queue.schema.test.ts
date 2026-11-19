@@ -62,6 +62,10 @@ function buildDecision(sessionId: string): Prisma.QueueItemUncheckedCreateInput 
   };
 }
 
+function buildReport(sessionId: string): Prisma.QueueItemUncheckedCreateInput {
+  return { kind: "report", sessionId, title: "Deploy 70 finished", body: "The monitor restarted and every probe passed.", isFreeTextAllowed: true };
+}
+
 function buildDelivery(
   itemId: bigint,
   route: Prisma.QueueDeliveryUncheckedCreateInput["route"],
@@ -304,6 +308,7 @@ describe("monitor.queue_items message kind", () => {
     { name: "rejects a message stamped with the answer route", change: Prisma.sql`"answer_route" = 'answer'`, error: /queue_items_message_check/ },
     { name: "rejects a message that is open to the owner", change: Prisma.sql`"status" = 'open'`, error: /queue_items_message_check/ },
     { name: "rejects a message marked seen", change: Prisma.sql`"status" = 'seen'`, error: /queue_items_message_check/ },
+    { name: "rejects a close time on a message", change: Prisma.sql`"closed_at" = ${SENT_AT}`, error: /queue_items_closed_check/ },
   ];
 
   for (const row of rows) {
@@ -396,6 +401,11 @@ describe("monitor.queue_items relay kind", () => {
     { name: "rejects a lapsed relay with no close stamp", change: () => Prisma.sql`"status" = 'withdrawn'`, error: /queue_items_relay_closed_check/ },
     { name: "rejects a close stamp on a relay still in delivery", change: () => Prisma.sql`"relay_closed_at" = ${SENT_AT}`, error: /queue_items_relay_closed_check/ },
     {
+      name: "rejects an owner-wait close time on a lapsed relay",
+      change: () => Prisma.sql`"status" = 'withdrawn', "relay_closed_at" = ${SENT_AT}, "closed_at" = ${SENT_AT}`,
+      error: /queue_items_closed_check/,
+    },
+    {
       name: "rejects a sender with no session row",
       change: () => Prisma.sql`"from_session_id" = ${randomUUID()}::uuid`,
       error: /queue_items_from_session_id_fkey/,
@@ -427,7 +437,7 @@ describe("monitor.queue_items relay kind", () => {
 
 describe("monitor.queue_items relay columns on other kinds", () => {
   const rows: readonly { name: string; change: ((senderId: string, parentId: bigint) => Prisma.Sql) | null; error?: RegExp }[] = [
-    { name: "accepts a decision withdrawn with no close stamp", change: () => Prisma.sql`"status" = 'withdrawn'` },
+    { name: "accepts a decision withdrawn with no relay close stamp", change: () => Prisma.sql`"status" = 'withdrawn'` },
     { name: "rejects a sender on a decision", change: (senderId) => Prisma.sql`"from_session_id" = ${senderId}::uuid`, error: /queue_items_relay_check/ },
     { name: "rejects a hop on a decision", change: () => Prisma.sql`"relay_hop" = 0`, error: /queue_items_relay_check/ },
     { name: "rejects a parent relay on a decision", change: (_, parentId) => Prisma.sql`"relay_parent_id" = ${parentId}`, error: /queue_items_relay_check/ },
@@ -438,7 +448,7 @@ describe("monitor.queue_items relay columns on other kinds", () => {
       error: /queue_items_relay_check/,
     },
     {
-      name: "rejects a close stamp on a withdrawn decision",
+      name: "rejects a relay close stamp on a withdrawn decision",
       change: () => Prisma.sql`"status" = 'withdrawn', "relay_closed_at" = ${SENT_AT}`,
       error: /queue_items_relay_closed_check/,
     },
@@ -457,6 +467,58 @@ describe("monitor.queue_items relay columns on other kinds", () => {
       else await assert.rejects(work, row.error);
     });
   }
+});
+
+describe("monitor.queue_items close time", () => {
+  // Raw SQL writes → the database stamps the close, whichever client moves the item out of open
+  const ANSWER = Prisma.sql`"status" = 'answered', "answer_code" = 'R1', "answered_at" = ${SENT_AT}`;
+  const REPLY = Prisma.sql`"status" = 'answered', "answer_text" = 'Merge it after the review.', "answered_at" = ${SENT_AT}`;
+  const WITHDRAW = Prisma.sql`"status" = 'withdrawn'`;
+  const rows: readonly {
+    name: string;
+    item: (sessionId: string) => Prisma.QueueItemUncheckedCreateInput;
+    writes: Prisma.Sql[];
+    closedAt: "answer" | "write" | null;
+  }[] = [
+    { name: "an answered decision closes at its answer time", item: buildDecision, writes: [ANSWER], closedAt: "answer" },
+    { name: "a report replied to closes at its answer time", item: buildReport, writes: [REPLY], closedAt: "answer" },
+    { name: "a report marked seen closes at the time of that write", item: buildReport, writes: [Prisma.sql`"status" = 'seen'`], closedAt: "write" },
+    { name: "a decision withdrawn while open closes at the time of that write", item: buildDecision, writes: [WITHDRAW], closedAt: "write" },
+    { name: "a decision answered, then withdrawn, keeps its answer time", item: buildDecision, writes: [ANSWER, WITHDRAW], closedAt: "answer" },
+    {
+      name: "a decision stored already delivered closes at its answer time",
+      item: (sessionId) => ({ ...buildDecision(sessionId), status: "delivered", answerCode: "R1", answeredAt: SENT_AT }),
+      writes: [],
+      closedAt: "answer",
+    },
+    { name: "a report deferred within open stays unclosed", item: buildReport, writes: [Prisma.sql`"defer_count" = "defer_count" + 1`], closedAt: null },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41027), select: { sessionId: true } });
+        const { id } = await tx.queueItem.create({ data: row.item(sessionId), select: { id: true } });
+        for (const write of row.writes) await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${write} WHERE "id" = ${id}`;
+        const [stored] = await tx.$queryRaw<Array<{ closedAt: Date | null; writeAt: Date }>>`
+          SELECT "closed_at" AS "closedAt", now() AS "writeAt" FROM "monitor"."queue_items" WHERE "id" = ${id}`;
+        assert.ok(stored !== undefined, "the item row is gone");
+        const expected = { answer: SENT_AT, write: stored.writeAt, none: null }[row.closedAt ?? "none"];
+        assert.deepEqual(stored.closedAt, expected);
+      });
+      await assert.rejects(work, Rollback);
+    });
+  }
+
+  test("rejects a close time on an item still open", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const id = await createItem(tx, 41029);
+        await tx.$executeRaw`UPDATE "monitor"."queue_items" SET "closed_at" = ${SENT_AT} WHERE "id" = ${id}`;
+      }),
+      /queue_items_closed_check/,
+    );
+  });
 });
 
 describe("monitor.queue_sessions probe flag and transcript path", () => {

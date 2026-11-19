@@ -312,6 +312,27 @@ describe("answer, reply, seen", () => {
   });
 });
 
+describe("close time", () => {
+  test("an owner act that leaves open closes the item, at the answer time when it answers; one that stays open does not", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      { name: "answer", itemId: await seedDecision(sessionId), action: "answer", body: { code: "R1" }, closedAt: "answer" },
+      { name: "reply", itemId: await seedItem(sessionId), action: "reply", body: { text: "Merge it after the review." }, closedAt: "answer" },
+      { name: "Seen", itemId: await seedItem(sessionId), action: "seen", body: undefined, closedAt: "write" },
+      { name: "Later", itemId: await seedItem(sessionId), action: "later", body: undefined, closedAt: null },
+      { name: "a refused answer", itemId: await seedDecision(sessionId), action: "answer", body: { code: "R9" }, closedAt: null },
+    ] as const;
+    for (const row of rows) {
+      const sentAt = new Date();
+      await send("POST", `/api/queue/owner/items/${row.itemId}/${row.action}`, row.body);
+      const { closedAt, answeredAt } = await getItemRow(row.itemId);
+      const isAnswerTime = closedAt !== null && closedAt.getTime() === answeredAt?.getTime();
+      const isWriteTime = closedAt !== null && closedAt >= sentAt && closedAt <= new Date();
+      assert.deepEqual([isAnswerTime, isWriteTime], [row.closedAt === "answer", row.closedAt !== null], row.name);
+    }
+  });
+});
+
 describe("later", () => {
   test("Later moves an open report to the end of the queue and counts the deferral", async () => {
     const sessionId = await seedSession();

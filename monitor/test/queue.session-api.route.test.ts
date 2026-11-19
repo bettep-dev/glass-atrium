@@ -814,6 +814,24 @@ describe("withdraw", () => {
     }
   });
 
+  test("a withdraw closes an open item at that write and keeps an answered item's answer time", async () => {
+    const sessionId = await seedSession();
+    const answeredAt = new Date("2026-11-19T05:41:07.318Z");
+    const rows = [
+      { name: "open report", seed: {}, closedAt: "write" },
+      { name: "open decision", seed: decisionItem(), closedAt: "write" },
+      { name: "answered decision", seed: decisionItem({ status: "answered", answerCode: "R2", answeredAt }), closedAt: answeredAt },
+    ];
+    for (const row of rows) {
+      const itemId = await seedItem(sessionId, row.seed);
+      const sentAt = new Date();
+      await send("POST", `/api/queue/items/${itemId}/withdraw`, { sessionId });
+      const { status, closedAt } = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: itemId } });
+      const isWriteTime = closedAt !== null && closedAt >= sentAt && closedAt <= new Date();
+      assert.deepEqual([status, isWriteTime ? "write" : closedAt], ["withdrawn", row.closedAt], row.name);
+    }
+  });
+
   test("refuses an owner message or a peer's relay in every withdrawable state and leaves it in place", async () => {
     const sessionId = await seedSession();
     const peer = await seedSession();
