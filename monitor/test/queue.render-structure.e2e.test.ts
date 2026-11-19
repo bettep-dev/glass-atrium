@@ -24,7 +24,7 @@ import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
@@ -112,7 +112,7 @@ const DESK_STATES: QueueState[] = [
   },
   { nn: "20", name: "arrival-on-desk", isClockDriven: true, setUp: (page, harness) => arriveItem(page, harness) },
   // §4.4: past the visible part, the status line is the arrival's only sign → `1 new below` + Show, on the short windows where it lands there
-  { nn: "20b", name: "arrival-off-view", viewports: [VIEWPORTS[0], OWNER_WINDOW], getFixture: getEdgeFixture, isClockDriven: true, setUp: (page, harness) => arriveOffView(page, harness) },
+  { nn: "20b", name: "arrival-off-view", viewports: [VIEWPORTS[0], OWNER_WINDOW], getFixture: getOffViewFixture, isClockDriven: true, setUp: (page, harness) => arriveOffView(page, harness) },
   { nn: "21b", name: "empty-queue", getFixture: getEmptyFixture },
   { nn: "24", name: "first-load", isFirstLoad: true },
   { nn: "26", name: "not-reachable", getFixture: getUnreachableFixture },
@@ -744,7 +744,7 @@ async function arriveItem(page: Page, harness: Harness): Promise<void> {
 
 // the edge state's long list, scrolled to its top → the report arriving at the end of its band lands past the visible part
 async function arriveOffView(page: Page, harness: Harness): Promise<void> {
-  harness.fixture = getArrivalFixture(getEdgeFixture());
+  harness.fixture = getArrivalFixture(getOffViewFixture());
   await page.clock.fastForward(15_000);
   await page.locator(".queue-status-new", { hasText: "1 new below" }).waitFor({ timeout: READY_TIMEOUT_MS });
 }
@@ -1866,7 +1866,7 @@ describe("queue page on the mockup fixtures", () => {
 
   // spec §4.4: past the visible part the status line names the arrival's side, and its Show brings the row into view with the focus
   test("an arrival below the list's visible part is said as 1 new below with Show, and Show puts its row in view, focused, and ends the note", async () => {
-    harness.fixture = getEdgeFixture();
+    harness.fixture = getOffViewFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture), true);
     try {
       await arriveOffView(page, harness);

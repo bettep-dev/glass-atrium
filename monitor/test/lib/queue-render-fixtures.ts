@@ -466,6 +466,14 @@ export function getEdgeFixture(): QueueFixture {
   };
 }
 
+/** The edge state plus three older open reports → the Reports band's newest row lies below the list's visible part from 1440 × 900 down. */
+export function getOffViewFixture(): QueueFixture {
+  const edge = getEdgeFixture();
+  const titles = ["로그 보관 기간 점검 완료", "의존성 업데이트 점검 완료", "백업 복구 연습 완료"];
+  const reports = titles.map((title, index) => buildItem(151 + index, "aidl", { kind: "report", askedAt: getAt(40 + index), title, body: "- 남은 일 없음" }));
+  return { ...edge, items: [...edge.items, ...reports] };
+}
+
 /** The edge state with its first open item from the 100-character name and its second from a session that registered no name. */
 export function getNameColumnFixture(): QueueFixture {
   const edge = getEdgeFixture();
