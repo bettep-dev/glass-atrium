@@ -186,7 +186,6 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     // C6 met: admin-routes.ts → getCertificate refuses anything but exactly one CA certificate and serves it re-encoded (PEM_CERTIFICATE)
     // C7 met: set_trust takes the shown network in fixed argv positions, format-checked (is_network_identity), exits 10 writing nothing on a differing read → start.ts → runAccessStep, ACCESS_STEP_OUTCOME
     // C8 met for the on's request row and a thrown act's error outcome row (admin-routes.ts → WIDENING_REQUEST_PAYLOAD, widenAccess); open: the page's words for a timed-out on (write_failed) to say the state is unknown until restart
-    // GET /api/clauded-docs/:id/html-export not re-signed: waits on a read of routes/clauded-docs.ts, applyHtmlBodyCspHeader and response-headers.ts → getAttachmentDisposition (name from the stored title, CR, LF and quotes dropped; sandbox policy on every answer path, not-modified included)
     cids: [
       CLOSE_CID,
       ONBOARDING_CID,

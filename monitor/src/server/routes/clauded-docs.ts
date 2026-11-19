@@ -1319,6 +1319,8 @@ async function handleHtmlExportSingle(
   reply: FastifyReply,
 ): Promise<string | ClaudedDocsErrorBody> {
   const start = Date.now();
+  // first → every answer carries it, the not-modified and refusal answers included
+  applyHtmlBodyCspHeader(reply);
   const id = parseIdParam(request.params.id);
   if (id === null) {
     return reply.code(400).send({ error: "invalid_param", param: "id" });
@@ -1366,7 +1368,6 @@ async function handleHtmlExportSingle(
   reply.header("Content-Type", "text/html; charset=utf-8");
   reply.header("Content-Disposition", buildHtmlExportContentDisposition(row));
   reply.header("X-Content-Type-Options", "nosniff");
-  applyHtmlBodyCspHeader(reply);
   reply.header("ETag", etag);
   reply.header("Cache-Control", "private, max-age=0, must-revalidate");
 
@@ -1535,7 +1536,7 @@ async function handleHtmlExportMulti(
   // Set headers before finalize (headers cannot change after the stream's first byte).
   const zipName = `clauded-docs-${todayDateStamp()}.zip`;
   reply.header("Content-Type", "application/zip");
-  reply.header("Content-Disposition", `attachment; filename="${zipName}"`);
+  reply.header("Content-Disposition", getAttachmentDisposition(zipName));
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Cache-Control", "private, max-age=0, must-revalidate");
   // Partial-export signal — client toasts warn when included < requested.
