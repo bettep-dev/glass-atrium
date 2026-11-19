@@ -130,7 +130,7 @@ describe("remote access off at 1440px, a turn-on refused because the network mov
 });
 
 describe("remote access on over an untrusted network at 1440px, a trust whose answer leaves its state unknown", () => {
-  const UNKNOWN_WORDS = "This network may or may not be trusted.";
+  const UNKNOWN_WORDS = "This network may or may not be trusted; refresh to check.";
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext({ ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false }, [], { acts: [{ status: 500, body: { error: "act_failed" } }] });
@@ -161,23 +161,95 @@ describe("remote access on at 1440px, the connect steps", () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON);
-    await ctx.page.getByText("Send this Mac's certificate to the device").waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await ctx.page.getByText("Step 1 of 5").waitFor({ timeout: WAIT_TIMEOUT_MS });
   });
   after(async () => closeRenderContext(ctx));
 
-  test("the five steps paint the list's own numerals", async () => {
-    const list = await ctx.page.locator("ol").evaluate((ol) => ({
-      marker: getComputedStyle(ol).listStyleType,
-      items: [...ol.children].map((li) => getComputedStyle(li).display),
-    }));
+  test("Next moves focus to the title of the step it opens", async () => {
+    await ctx.page.getByRole("button", { name: "Next" }).click();
 
-    assert.deepEqual(list, { marker: "decimal", items: ["list-item", "list-item", "list-item", "list-item", "list-item"] });
+    const focused = await ctx.page.evaluate(() => document.activeElement?.getAttribute("aria-current"));
+    assert.equal(focused, "step");
+  });
+
+  test("a done step's check sits in the number column, so its title stays where it stood", async () => {
+    const starts = await ctx.page.evaluate(() =>
+      [...document.querySelectorAll("ol > li")].map((row) => {
+        const range = document.createRange();
+        range.selectNodeContents(row.querySelector("button, p, span") ?? row);
+        return Math.round(range.getBoundingClientRect().left);
+      }),
+    );
+
+    assert.equal(starts.length, 5);
+    assert.deepEqual(starts, starts.map(() => starts[0]), "done, open and later rows start on one column");
+  });
+
+  test("the card with a step and its fold open fits a 900px window without scrolling", async () => {
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+
+    const fit = await ctx.page.evaluate(() => {
+      const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
+      return { bottom: Math.ceil(card?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY), window: window.innerHeight, scrollTop: document.scrollingElement?.scrollTop };
+    });
+
+    assert.ok(fit.bottom <= fit.window && fit.scrollTop === 0, JSON.stringify(fit));
   });
 
   test("the page fits the window with no sideways scroll", async () => {
     const width = await ctx.page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
 
     assert.equal(width.scroll, width.client);
+  });
+});
+
+describe("remote access on at 1440px, the scan step, the tallest step", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON, [], { acts: [{ status: 200, body: { code: "K7QM4XZP" } }] });
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+    await ctx.page.getByRole("button", { name: "Go to step 5" }).click();
+    await ctx.page.getByRole("button", { name: "Show QR code" }).click();
+    await ctx.page.getByText("K7QM 4XZP").waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("the shell's encoder draws the open code's QR code at full size under its fixed name, and the card with a code and its fold open fits a 900px window", async () => {
+    const fit = await ctx.page.evaluate(() => {
+      const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
+      const qr = card?.querySelector('svg[role="img"]');
+      return {
+        label: qr?.getAttribute("aria-label"),
+        side: qr?.getBoundingClientRect().width,
+        drawn: Number(qr?.getAttribute("width")),
+        bottom: Math.ceil(card?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY),
+        window: window.innerHeight,
+        scrollTop: document.scrollingElement?.scrollTop,
+      };
+    });
+
+    assert.equal(fit.label, "QR code for the sign-in page with this code");
+    assert.equal(fit.side, fit.drawn, "the layout never scales the modules off their 4 px");
+    assert.ok(fit.bottom <= fit.window && fit.scrollTop === 0, JSON.stringify(fit));
+  });
+
+  test("the code and its new-code button stand at the QR code's right, top-aligned", async () => {
+    const place = await ctx.page.evaluate(() => {
+      const qr = document.querySelector('svg[role="img"]')?.getBoundingClientRect();
+      const code = [...document.querySelectorAll("span")].find((el) => el.textContent === "Code")?.getBoundingClientRect();
+      const button = [...document.querySelectorAll("button")].find((el) => el.textContent === "Show a new code")?.getBoundingClientRect();
+      return { qrRight: qr?.right, qrTop: qr?.top, codeLeft: code?.left, codeTop: code?.top, buttonLeft: button?.left };
+    });
+
+    assert.ok(Number(place.codeLeft) >= Number(place.qrRight) && Number(place.buttonLeft) >= Number(place.qrRight), JSON.stringify(place));
+    assert.ok(Math.abs(Number(place.codeTop) - Number(place.qrTop)) <= 1, JSON.stringify(place));
+  });
+
+  test("the open fold tells the person to type the open code", async () => {
+    const fold = await ctx.page.getByText("Then type this code:").textContent();
+
+    assert.equal(fold?.replace(/\s+/g, " ").trim(), "Then type this code: K7QM 4XZP");
   });
 });
 

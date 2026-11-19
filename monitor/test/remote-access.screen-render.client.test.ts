@@ -16,6 +16,8 @@ const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src");
 const SCREEN_SRC = resolve(SRC, "screens/remote-access.jsx");
 // the file GET /dist/screens/remote-access.js serves to every registered device (npm test → pretest builds it)
 const SCREEN_BUNDLE = resolve(SRC, "../dist/screens/remote-access.js");
+// the encoder the shell loads before the screen (index.html), run as the page runs it
+const QR_ENCODER = vm.runInNewContext(`${readFileSync(resolve(SRC, "../assets/vendor/qrcode-generator-2.0.4.js"), "utf8")}\nqrcode`, { module: undefined, define: undefined });
 
 interface SentRequest {
   readonly url: string;
@@ -36,6 +38,7 @@ async function loadScreen(answer: Answer = { status: 200, body: {} }) {
   const sent: SentRequest[] = [];
   const mod = await loadScreenModule(SCREEN_SRC, {
     UI: ui,
+    qrcode: QR_ENCODER,
     navigator: {},
     File,
     fetch: async (url: string, init: RequestInit = {}) => {
@@ -83,12 +86,13 @@ const DEVICES = [
   { id: "7", label: "<b>iPad</b>", createdAt: "2026-11-02T21:15:02.001Z", lastSeenAt: "2026-11-16T23:48:59.999Z" },
   { id: "9", label: "Living-room tablet (kitchen)", createdAt: "2026-10-28T07:03:12.500Z", lastSeenAt: null },
 ];
-const STEP_TITLES = [
-  "Send this Mac's certificate to the device",
-  "Check and install the certificate",
-  "Turn on trust for the certificate",
-  "Open this Mac's address on the device",
-  "Enter the code on the device",
+// spec 44105 → iPhone or iPad, the scan step in its one-scan form
+const IPHONE_TITLES = [
+  "Send the certificate to your iPhone",
+  "Match the fingerprint before installing",
+  "Install the certificate",
+  "Turn on full trust",
+  "Scan, name the device, tap Register",
 ];
 // key directory (data/remote-access/), its CA and leaf files, a home path, and the commands that make or trust them
 const NEVER_IN_BUNDLE = [/remote-access\//, /\b(?:ca|leaf)\.(?:pem|key)\b/, /~\//, /\/Users\//, /glass-atrium remote/, /openssl/, /remote-access-set\.sh/, /add-trusted-cert/, /\bsudo\b/];
@@ -117,8 +121,8 @@ describe("each state shows its own words, and the on/off act sits on the title l
     {
       name: "off, never turned off by a device, before any trust",
       read: ready(SETUP_OFF),
-      present: ["Off", "Turn on", "A phone or tablet on the same network can use this monitor, exactly as on this Mac.", "Turn it on to see the steps for connecting a device."],
-      absent: ["Turn off", "Connect a device", "Registered devices", "Trusted networks"],
+      present: ["Off", "Turn on", "Turn on to use this monitor from a phone on your network."],
+      absent: ["Turn it on to see the steps", "Turn off", "Connect a device", "Registered devices", "Trusted networks"],
     },
     {
       name: "off on a trusted network shows the trusted count with this network among them",
@@ -135,13 +139,13 @@ describe("each state shows its own words, and the on/off act sits on the title l
     {
       name: "off by a device says a device turned it off and every device was removed",
       read: ready(SETUP_OFF_BY_DEVICE),
-      present: ["Off", "Turn on", "A registered device turned remote access off.", "Every device was removed. Turn it on to connect them again.", "Trusted networks: 1 · this Mac's network is one of them"],
-      absent: ["Turn off", "Not answering", "Connect a device", "A phone or tablet on the same network"],
+      present: ["Off", "Turn on", "A registered device turned this off; every device was removed.", "Trusted networks: 1 · this Mac's network is one of them"],
+      absent: ["Turn off", "Not answering", "Connect a device", "Turn on to use this monitor"],
     },
     {
       name: "off with no router read offers no turn-on and says to join a network",
       read: ready({ ...SETUP_OFF, hasRouter: false, trustedCount: 1 }),
-      present: ["Off", "This Mac is not on a network.", "Connect it to the network your devices use, then turn remote access on here.", "Trusted networks: 1"],
+      present: ["Off", "Connect this Mac to your network to turn this on.", "Trusted networks: 1"],
       absent: ["Turn on", "is one of them", "is not one of them"],
     },
     {
@@ -151,10 +155,10 @@ describe("each state shows its own words, and the on/off act sits on the title l
       absent: ["Turn off", "Connect a device"],
     },
     {
-      name: "on with no device opens the five steps and an empty device list",
+      name: "on with no device opens step 1 of the connect steps and an empty device list",
       read: ready(SETUP_ON),
-      present: ["On", "Turn off", "Connect a device", "iPhone or iPad", ...STEP_TITLES, "No device registered", "A device appears here after step 5.", "0 of 10", "https://studio-mac.local:16146", "https://192.168.0.12:16146", "9A 3F 1C 07 5E B2 44 D0", "Open a code", "A device removed earlier starts at step 4.", "Trusted networks: 1 · this Mac's network is one of them"],
-      absent: ["Remove all", "Closed on this network"],
+      present: ["On", "Turn off", "Connect a device", "Step 1 of 5 · iPhone or iPad", IPHONE_TITLES[0], "No device registered", "A device appears here once it registers.", "0 of 10", "Trusted networks: 1 · this Mac's network is one of them"],
+      absent: ["Remove all", "Closed on this network", "https://"],
     },
     {
       name: "on with devices lists them with one remove each and a remove-all",
@@ -183,7 +187,7 @@ describe("each state shows its own words, and the on/off act sits on the title l
     {
       name: "on but not answering says to refresh and reconnect from step 4",
       read: ready({ ...SETUP_ON, isAnswering: false }),
-      present: ["Not answering", "Turn off", "Remote access is on, but this Mac is not answering", "Refresh in a minute. If it stays, turn remote access off and on, then connect each device again from step 4.", "Trusted networks: 1 · this Mac's network is one of them"],
+      present: ["Not answering", "Turn off", "Remote access is on, but this Mac is not answering", "Refresh in a minute; if it stays, turn off and on, then reconnect devices.", "Trusted networks: 1 · this Mac's network is one of them"],
       absent: ["Connect a device"],
     },
     {
@@ -207,23 +211,228 @@ describe("each state shows its own words, and the on/off act sits on the title l
     });
   }
 
-  test("the five steps are one ordered list in the order they are done", async () => {
-    const { mod } = await loadScreen();
+});
 
-    const { tree } = renderPage(mod as Mod, ready(SETUP_ON));
+// the connect card driven through its own buttons: each press runs the screen's progress step over the card's last progress
+async function driveConnect(over: Record<string, unknown> = {}) {
+  const { mod } = await loadScreen();
+  let progress: unknown = null;
+  const putProgress = mod.putProgressRA as (current: unknown, act: unknown) => unknown;
+  const view = (): RenderedNode => render(mod as Mod, "ConnectBodyRA", {
+    setup: SETUP_ON, devices: [], onDevicesRead: () => undefined, ...over, progress, onAct: (act: unknown) => { progress = putProgress(progress, act); },
+  });
+  const getButtons = () => findNodes(view(), (node) => node.type === "button");
+  // a done step's button reads its ✓ glyph, then its title
+  const press = (name: string) => {
+    const button = getButtons().find((node) => collectText(node).replace("✓", "").trim() === name);
+    assert.ok(button, `a button named "${name}"`);
+    (button.props.onClick as () => void)();
+  };
+  const text = () => collectText(view()).replace(/\s+/g, " ");
+  const doneTitles = () => getButtons().map((node) => collectText(node)).filter((name) => name.includes("✓")).map((name) => name.replace("✓", "").trim());
+  return { view, press, text, doneTitles };
+}
 
-    const lists = findNodes(tree, (node) => node.type === "ol");
-    assert.equal(lists.length, 1);
-    const items = findNodes(lists[0], (node) => node.type === "li").map((node) => collectText(node));
-    assert.deepEqual(items.map((text, i) => text.startsWith(STEP_TITLES[i])), [true, true, true, true, true]);
+describe("the connect card is a procedure: one device, one open step, done steps checked", () => {
+  test("it opens on step 1 with the progress line and no device question, and every later title is faint text, not a control", async () => {
+    const card = await driveConnect();
+
+    const tree = card.view();
+    const text = card.text();
+    assert.doesNotMatch(text, /Which device|Change device|Android/, "one device → no choice, and no word about another");
+    for (const word of ["Step 1 of 5 · iPhone or iPad", "In Downloads, AirDrop “Glass Atrium Local CA” to your iPhone.", "Download certificate", "Next", ...IPHONE_TITLES]) {
+      assert.ok(text.includes(word), `shows "${word}"`);
+    }
+    assert.ok(!getButtonNames(tree).includes("Back"), "no Back on step 1");
+    assert.equal(findNodes(tree, (node) => node.type === "ol").length, 1);
+    assert.equal(findNodes(tree, (node) => node.type === "li").length, 5);
+    assert.deepEqual(findNodes(tree, (node) => node.props["aria-current"] === "step").map((node) => collectText(node).replace(/\s+/g, " ").trim()), [`1 ${IPHONE_TITLES[0]}`]);
+    assert.deepEqual(getButtonNames(tree).filter((name) => IPHONE_TITLES.some((title) => name.includes(title))), []);
   });
 
-  test("a missing fingerprint says to refresh before installing, in its place", async () => {
+  test("Next marks the open step done and opens the one after it; a done title reopens its step with every mark kept", async () => {
+    const card = await driveConnect();
+    card.press("Next");
+    card.press("Next");
+
+    card.press(IPHONE_TITLES[0]);
+
+    assert.ok(card.text().includes("Step 1 of 5"));
+    assert.deepEqual(card.doneTitles(), [IPHONE_TITLES[1]]);
+    card.press("Next");
+    assert.ok(card.text().includes("Step 2 of 5"), "Next from a reopened step opens the step after it");
+    assert.deepEqual(card.doneTitles(), [IPHONE_TITLES[0]]);
+  });
+
+  test("Back opens the step before", async () => {
+    const card = await driveConnect();
+    card.press("Next");
+
+    card.press("Back");
+
+    assert.ok(card.text().includes("Step 1 of 5"));
+  });
+
+  test("the fingerprint step shows the Settings path, the four lines and the stop line, its Trouble? fold closed until pressed and closed again on the next step", async () => {
+    const card = await driveConnect();
+    card.press("Next");
+
+    const closed = card.text();
+    card.press("Trouble?");
+    const opened = card.text();
+    card.press("Next");
+
+    for (const word of ["Settings › Profile Downloaded › More Details › Glass Atrium Local CA", "9A 3F 1C 07 5E B2 44 D0", "If lines differ, remove the profile and never turn on full trust."]) {
+      assert.ok(closed.includes(word), `shows "${word}" without a press: ${closed}`);
+    }
+    assert.ok(!closed.includes("No lines before installing?"), "closed by default");
+    assert.ok(opened.includes("No lines before installing? Install, then check General › VPN & Device Management."), opened);
+    assert.ok(!card.text().includes("No “Profile Downloaded” in Settings? Repeat step 1."), "the next step's fold starts closed");
+  });
+
+  describe("Next on the fingerprint step waits for the fingerprint on screen", () => {
+    const rows = [
+      { name: "a missing fingerprint says to refresh before installing, in its place, and holds Next", fingerprint: null, isHeld: true },
+      { name: "a fingerprint on screen lets Next move on", fingerprint: FINGERPRINT, isHeld: false },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => {
+        const card = await driveConnect({ setup: { ...SETUP_ON, fingerprint: row.fingerprint } });
+        card.press("Next");
+
+        const next = findNodes(card.view(), (node) => node.type === "button" && collectText(node).trim() === "Next")[0];
+        assert.equal(card.text().includes("Fingerprint not shown; refresh this page before installing."), row.isHeld, row.name);
+        assert.equal(next?.props.disabled === true, row.isHeld, row.name);
+      });
+    }
+  });
+
+  test("Go to step 5 marks every earlier step done and opens the scan step, which moves on by itself, never by Next", async () => {
+    const card = await driveConnect();
+    card.press("Trouble?");
+
+    card.press("Go to step 5");
+
+    const text = card.text();
+    for (const word of ["Step 5 of 5", "Close any page that says “This Connection Is Not Private”.", "Show QR code", "Back"]) {
+      assert.ok(text.includes(word), `shows "${word}"`);
+    }
+    assert.deepEqual(card.doneTitles(), IPHONE_TITLES.slice(0, 4));
+    assert.ok(!getButtonNames(card.view()).includes("Next"));
+  });
+
+  test("with no code open the scan step offers Show QR code alone; the typed addresses wait behind Trouble?, with no code line", async () => {
+    const card = await driveConnect();
+    card.press("Trouble?");
+    card.press("Go to step 5");
+
+    assert.deepEqual(findNodes(card.view(), (node) => node.type === "QrCodeRA"), []);
+    assert.ok(!card.text().includes("https://"), "no typed address while the fold is closed");
+    card.press("Trouble?");
+    const fold = card.text();
+    assert.ok(fold.includes("Camera does nothing? Open this in Safari: https://studio-mac.local:16146"), fold);
+    assert.ok(fold.includes("Still nothing? Try: https://192.168.0.12:16146"), fold);
+    assert.ok(!fold.includes("Then type this code"), "no code line before a code is open");
+  });
+
+  test("without the encoder the scan step shows the address as text in the QR code's place", async () => {
     const { mod } = await loadScreen();
+    vm.runInContext("qrcode = undefined", mod);
 
-    const { text } = renderPage(mod as Mod, ready({ ...SETUP_ON, fingerprint: null }));
+    const tree = render(mod as Mod, "QrCodeRA", { text: "https://studio-mac.local:16146" });
 
-    assert.ok(text.includes("Fingerprint not shown. Refresh this page before you install."));
+    assert.equal(findNodes(tree, (node) => node.type === "svg").length, 0);
+    assert.ok(collectText(tree).includes("https://studio-mac.local:16146"));
+  });
+
+  test("the QR code draws every dark module the encoder computes, at 4 px a module inside a 4-module quiet zone", async () => {
+    const { mod } = await loadScreen();
+    const text = "https://studio-mac.local:16146";
+    const qr = QR_ENCODER(0, "M");
+    qr.addData(text);
+    qr.make();
+    const size = qr.getModuleCount();
+    const dark = Array.from({ length: size * size }, (_, i) => qr.isDark(Math.floor(i / size), i % size)).filter(Boolean).length;
+
+    const svg = findNodes(render(mod as Mod, "QrCodeRA", { text }), (node) => node.type === "svg")[0];
+
+    assert.equal(svg.props.width, (size + 8) * 4);
+    assert.equal(svg.props.viewBox, `0 0 ${size + 8} ${size + 8}`);
+    assert.equal(String(findNodes(svg, (node) => node.type === "path")[0].props.d).match(/M/g)?.length, dark);
+  });
+
+  test("the QR code is named for what it is, never by the address or the code it carries", async () => {
+    const { mod } = await loadScreen();
+    const payloads = [
+      { address: "https://studio-mac.local:16146", code: "K7QM4XZP" },
+      { address: "https://192.168.0.12:16146", code: "PZX4MQ7K" },
+    ];
+
+    const labels = payloads.map(({ address, code }) => {
+      const tree = render(mod as Mod, "QrCodeRA", { text: `${address}/sign-in.html#code=${code}` });
+      return String(findNodes(tree, (node) => node.type === "svg")[0].props["aria-label"]);
+    });
+
+    assert.deepEqual(labels, ["QR code for the sign-in page with this code", "QR code for the sign-in page with this code"]);
+    payloads.forEach(({ address, code }, i) => assert.ok(!labels[i].includes(address) && !labels[i].includes(code), labels[i]));
+  });
+
+  test("a device registering in the scan step finishes the card, and Connect another device starts over", async () => {
+    const card = await driveConnect();
+    card.press("Trouble?");
+    card.press("Go to step 5");
+
+    (findNodes(card.view(), (node) => node.type === "CodeStepRA")[0].props.onConnected as (label: string) => void)("Minji's iPhone");
+
+    const text = card.text();
+    assert.ok(text.includes("All 5 steps done · iPhone or iPad") && text.includes("“Minji's iPhone” is connected."));
+    assert.deepEqual(card.doneTitles(), IPHONE_TITLES);
+    card.press("Connect another device");
+    assert.deepEqual({ isStepOne: card.text().includes("Step 1 of 5"), done: card.doneTitles() }, { isStepOne: true, done: [] });
+  });
+
+  test("at the device limit the card holds the limit line alone", async () => {
+    const card = await driveConnect({ devices: Array.from({ length: 10 }, (_, i) => ({ ...DEVICES[0], id: String(i) })) });
+
+    assert.equal(card.text().trim(), "10 of 10 devices registered; remove one to connect another.");
+    assert.deepEqual(getButtonNames(card.view()), []);
+  });
+});
+
+describe("the step words keep to the card's caps", () => {
+  // spec 44105 → Caps: a word is a whitespace-separated token holding a letter, digit, { or &
+  const countWords = (text: string) => text.split(/\s+/).filter((token) => /[\p{L}\p{N}{&]/u.test(token)).length;
+  interface StepWords { title: string; line?: string | Record<string, string>; path?: string; stop?: string; trouble: Array<{ text: string }> }
+
+  test("every title holds at most 6 words, every line at most 14, every fold at most three lines of at most 14", async () => {
+    const { mod } = await loadScreen();
+    // copied out of the screen's realm → the result compares as a plain array
+    const steps = [...(vm.runInContext("STEPS_RA", mod) as StepWords[])];
+
+    const over = steps.flatMap((step) => {
+      const lines = [step.line, step.path, step.stop].flatMap((value) => (typeof value === "object" ? Object.values(value) : value ?? []));
+      return [
+        ...(countWords(step.title) > 6 ? [`title "${step.title}"`] : []),
+        ...lines.filter((line) => countWords(line) > 14).map((line) => `line "${line}"`),
+        ...(step.trouble.length > 3 ? [`fold of ${step.trouble.length} lines under "${step.title}"`] : []),
+        ...step.trouble.filter((row) => countWords(row.text) > 14).map((row) => `fold line "${row.text}"`),
+      ];
+    });
+
+    assert.ok(steps.length >= 5, "the step table was read");
+    assert.deepEqual(over, []);
+  });
+
+  test("every string a step body or its code view shows holds at most 14 words", async () => {
+    const { mod } = await loadScreen();
+    // STEP_TEXT_RA → the step bodies' own words · OPEN_ERROR_RA → the code view's refusals
+    const getLeaves = (value: unknown): string[] => (typeof value === "string" ? [value] : Object.values(value as object).flatMap(getLeaves));
+    const shown = ["STEP_TEXT_RA", "OPEN_ERROR_RA"].flatMap((name) => getLeaves(vm.runInContext(name, mod)));
+
+    const over = shown.filter((text) => countWords(text) > 14);
+
+    assert.ok(shown.length >= 12, `the body tables were read: ${shown.length}`);
+    assert.deepEqual(over, []);
   });
 });
 
@@ -269,9 +478,9 @@ describe("before a read lands, the page offers no act", () => {
 
 describe("the confirms name what they do, with Cancel before the commit", () => {
   const widen = [
-    { name: "turning on an untrusted network trusts it in the same act", act: "on", network: { router: ROUTER, link: "wifi", isNetworkTrusted: false }, title: "Turn on remote access?", lead: "This also trusts the network this Mac is on now.", label: "Router of this Mac's Wi-Fi", commit: "Turn on and trust" },
-    { name: "turning on a trusted network adds no trust", act: "on", network: { router: ROUTER, link: "wired", isNetworkTrusted: true }, title: "Turn on remote access?", lead: "This Mac is on a network you already trust.", label: "Router of this Mac's wired network", commit: "Turn on" },
-    { name: "trusting a network on a link the server cannot tell", act: "trust", network: { router: ROUTER, link: "unknown", isNetworkTrusted: false }, title: "Trust this network?", lead: "This trusts the network this Mac is on now.", label: "Router of this Mac's network", commit: "Trust this network" },
+    { name: "turning on an untrusted network trusts it in the same act", act: "on", network: { router: ROUTER, link: "wifi", isNetworkTrusted: false }, title: "Turn on remote access?", lead: "This also trusts this Mac's network; the trust stays after Turn off.", label: "Router of this Mac's Wi-Fi", commit: "Turn on and trust" },
+    { name: "turning on a trusted network adds no trust", act: "on", network: { router: ROUTER, link: "wired", isNetworkTrusted: true }, title: "Turn on remote access?", lead: "This Mac's network is already trusted.", label: "Router of this Mac's wired network", commit: "Turn on" },
+    { name: "trusting a network on a link the server cannot tell", act: "trust", network: { router: ROUTER, link: "unknown", isNetworkTrusted: false }, title: "Trust this network?", lead: "Registered devices can then reach this Mac here; the trust stays after Turn off.", label: "Router of this Mac's network", commit: "Trust this network" },
   ];
   for (const row of widen) {
     test(row.name, async () => {
@@ -280,7 +489,7 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
       const tree = render(mod as Mod, "WidenConfirmRA", { act: row.act, network: row.network, isBusy: false, error: null, onCommit: () => undefined, onCancel: () => undefined });
       const text = collectText(tree).replace(/\s+/g, " ");
 
-      for (const word of [row.title, row.lead, row.label, ROUTER, "If “Router” there shows a different number, this Mac is on another network: choose Cancel.", "It does not check who else is on this one, so trust only a network you control, such as your home network."]) {
+      for (const word of [row.title, row.lead, row.label, ROUTER, "Match it with “Router” in your phone's Wi-Fi details; if different, choose Cancel.", "Trust only a network you control: it does not check who else joins."]) {
         assert.ok(text.includes(word), `${row.name}: "${word}"`);
       }
       assert.deepEqual(getButtonNames(tree).filter((name) => name !== ""), ["Cancel", row.commit], row.name);
@@ -288,9 +497,9 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
   }
 
   const off = [
-    { name: "turning off with devices says how many are removed", count: 3, body: "3 registered devices are removed, and this Mac stops answering other devices." },
-    { name: "turning off with one device uses the singular", count: 1, body: "1 registered device is removed, and this Mac stops answering other devices. To use it again" },
-    { name: "turning off with no device says only that the Mac stops answering", count: 0, body: "This Mac stops answering other devices." },
+    { name: "turning off with devices says how many are removed", count: 3, body: "This removes 3 registered devices; trusted networks stay trusted." },
+    { name: "turning off with one device uses the singular", count: 1, body: "This removes 1 registered device; trusted networks stay trusted." },
+    { name: "turning off with no device says only that the Mac stops answering", count: 0, body: "This Mac stops answering other devices; trusted networks stay trusted." },
   ];
   for (const row of off) {
     test(row.name, async () => {
@@ -309,45 +518,45 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
     const tree = render(mod as Mod, "EndConfirmRA", { act: "remove-all", count: 3, isBusy: true, error: null, onCommit: () => undefined, onCancel: () => undefined });
     const text = collectText(tree);
 
-    assert.ok(text.includes("Remove all 3 devices?") && text.includes("Each device must be connected again from step 4 before it can open this monitor."));
+    assert.ok(text.includes("Remove all 3 devices?") && text.includes("Each device must scan a new code to connect again."));
     assert.deepEqual(getButtonNames(tree).filter((name) => name !== ""), ["Cancel", "Removing…"]);
   });
 
   test("a failed act shows its sentence as an alert inside the dialog", async () => {
     const { mod } = await loadScreen();
 
-    const tree = render(mod as Mod, "EndConfirmRA", { act: "off", count: 0, isBusy: false, error: { text: "Remote access is still on. Try again.", detail: "HTTP 500 x" }, onCommit: () => undefined, onCancel: () => undefined });
+    const tree = render(mod as Mod, "EndConfirmRA", { act: "off", count: 0, isBusy: false, error: { text: "Remote access is still on; try again.", detail: "HTTP 500 x" }, onCommit: () => undefined, onCancel: () => undefined });
 
     const alerts = findNodes(tree, (node) => node.props.role === "alert").map((node) => collectText(node));
-    assert.ok(alerts.some((text) => text.includes("Remote access is still on. Try again.")));
+    assert.ok(alerts.some((text) => text.includes("Remote access is still on; try again.")));
   });
 });
 
-describe("step 5 shows one code at a time and what became of it", () => {
-  const base = { count: 0, limit: 10, onOpen: () => undefined };
+describe("the scan step shows one code at a time and what became of it", () => {
+  const base = { onOpen: () => undefined };
   const rows = [
-    { name: "at rest it offers to open a code", state: { status: "idle" }, present: ["Open a code"], absent: ["One use"] },
-    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Open a code"] },
-    { name: "an open code shows in two groups of four with its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["K7QM 4XZP", "One use · valid until", "Open a new code"], absent: ["expired"] },
-    { name: "an expired code gives way to the expired line", state: { status: "expired" }, present: ["That code expired. Open a new code.", "Open a code"], absent: ["K7QM"] },
-    { name: "a registered device gives way to the connected line", state: { status: "connected", label: "Minji's iPhone" }, present: ["“Minji's iPhone” is connected.", "Open a code"], absent: ["One use"] },
-    { name: "at the device limit the button gives way to the limit line", state: { status: "idle" }, count: 10, present: ["10 of 10 devices registered. Remove one to connect another."], absent: ["Open a code"] },
+    { name: "at rest it offers the QR code alone", state: { status: "idle" }, present: ["Show QR code"], absent: ["One use", "Code", "Show a new code"], qr: [] },
+    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show QR code", "Show a new code"], qr: [] },
+    { name: "an open code draws a QR code of the sign-in page with the code in its fragment, beside the code in two groups of four, its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired", "Show QR code"], qr: ["https://studio-mac.local:16146/sign-in.html#code=K7QM4XZP"] },
+    { name: "an expired code gives way to the expired line and the QR code goes", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show QR code"], absent: ["K7QM", "Show a new code"], qr: [] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const { mod } = await loadScreen();
 
-      const text = collectText(render(mod as Mod, "CodeViewRA", { ...base, state: row.state, count: row.count ?? base.count }));
+      const tree = render(mod as Mod, "CodeViewRA", { ...base, address: "https://studio-mac.local:16146", state: row.state });
+      const text = collectText(tree);
 
       for (const word of row.present) assert.ok(text.includes(word), `${row.name}: "${word}"`);
       for (const word of row.absent) assert.ok(!text.includes(word), `${row.name}: never "${word}"`);
+      assert.deepEqual(findNodes(tree, (node) => node.type === "QrCodeRA").map((node) => node.props.text), row.qr, `${row.name}: QR code`);
     });
   }
 
   const refusals = [
-    { name: "a rate-limited open says to wait a minute", status: 429, code: "too_many_requests", text: "Too many codes opened. Wait a minute, then open a code." },
-    { name: "an open with no audit row says the monitor could not record it", status: 503, code: "audit_unavailable", text: "No code was opened: the monitor could not record it. Try again in a minute." },
-    { name: "any other refusal says no code was opened", status: 500, code: "internal", text: "No code was opened. Try again." },
+    { name: "a rate-limited open says to wait a minute", status: 429, code: "too_many_requests", text: "Too many codes opened; wait a minute, then show a new one." },
+    { name: "an open with no audit row says to try again in a minute", status: 503, code: "audit_unavailable", text: "No code was opened; try again in a minute." },
+    { name: "any other refusal says no code was opened", status: 500, code: "internal", text: "No code was opened; try again." },
   ];
   for (const row of refusals) {
     test(row.name, async () => {
@@ -362,17 +571,17 @@ describe("step 5 shows one code at a time and what became of it", () => {
 
 describe("a refused widening act names whether the network moved", () => {
   const rows = [
-    { name: "a stale confirm on turn-on says nothing was turned on", act: "on", code: "confirm_stale", text: "The network details were out of date. Nothing was turned on. Check the number again." },
-    { name: "a changed network on trust says nothing was trusted", act: "trust", code: "network_changed", text: "The network details were out of date. Nothing was trusted. Check the number again." },
-    { name: "a turn-on whose write step ended unnamed says it may or may not be on", act: "on", code: "write_failed", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a turn-on that threw says it may or may not be on", act: "on", code: "act_failed", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a trust whose write step ended unnamed says it may or may not be trusted", act: "trust", code: "write_failed", text: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
-    { name: "a trust that threw says it may or may not be trusted", act: "trust", code: "act_failed", text: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
-    { name: "a turn-on whose config was written but not its monitor settings says it may or may not be on", act: "on", code: "env_not_rendered", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a turn-on written but not applied by this process says it starts at the next restart", act: "on", code: "start_failed", text: "Remote access was turned on, but it starts only when the monitor restarts. Refresh; if you do not want it, turn it off." },
-    { name: "a trust written but not applied by this process says it applies at the next restart", act: "trust", code: "start_failed", text: "This network was trusted, but it applies only when the monitor restarts. Refresh; if you do not want it, turn remote access off." },
-    { name: "any other turn-on failure says it was not turned on", act: "on", code: "keys_not_created", text: "Remote access was not turned on. Try again." },
-    { name: "any other trust failure says it was not trusted", act: "trust", code: "network_unreadable", text: "This network was not trusted. Try again." },
+    { name: "a stale confirm on turn-on says nothing was turned on", act: "on", code: "confirm_stale", text: "Nothing was turned on: the network changed; check the number again." },
+    { name: "a changed network on trust says nothing was trusted", act: "trust", code: "network_changed", text: "Nothing was trusted: the network changed; check the number again." },
+    { name: "a turn-on whose write step ended unnamed says it may or may not be on", act: "on", code: "write_failed", text: "Remote access may or may not be on; refresh to check." },
+    { name: "a turn-on that threw says it may or may not be on", act: "on", code: "act_failed", text: "Remote access may or may not be on; refresh to check." },
+    { name: "a trust whose write step ended unnamed says it may or may not be trusted", act: "trust", code: "write_failed", text: "This network may or may not be trusted; refresh to check." },
+    { name: "a trust that threw says it may or may not be trusted", act: "trust", code: "act_failed", text: "This network may or may not be trusted; refresh to check." },
+    { name: "a turn-on whose config was written but not its monitor settings says it may or may not be on", act: "on", code: "env_not_rendered", text: "Remote access may or may not be on; refresh to check." },
+    { name: "a turn-on written but not applied by this process says it starts at the next restart", act: "on", code: "start_failed", text: "Remote access starts at the next monitor restart; Turn off cancels it." },
+    { name: "a trust written but not applied by this process says it applies at the next restart", act: "trust", code: "start_failed", text: "This network is trusted from the next monitor restart." },
+    { name: "any other turn-on failure says it was not turned on", act: "on", code: "keys_not_created", text: "Remote access was not turned on; try again." },
+    { name: "any other trust failure says it was not trusted", act: "trust", code: "network_unreadable", text: "This network was not trusted; try again." },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -389,7 +598,7 @@ test("a failed act's line folds the server's answer under Details", async () => 
   const { mod } = await loadScreen();
   const detail = "HTTP 500 Internal Server Error: act_failed";
 
-  const tree = render(mod as Mod, "ActErrorRA", { error: { text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on.", detail } });
+  const tree = render(mod as Mod, "ActErrorRA", { error: { text: "Remote access may or may not be on; refresh to check.", detail } });
 
   assert.ok(collectText(tree).includes(detail));
   assert.ok(findNodes(tree, (node) => node.type === "details").length === 1);
@@ -402,7 +611,7 @@ describe("after a refused widening act the confirm offers its commit only on a f
   const OPENED = { status: 200, body: { router: ROUTER, link: "wifi", isNetworkTrusted: false, confirm: "q3Vx0Lr8TfWm1oKcYp2bGA" } };
   const FRESH_CONFIRM = "Zt7nE4sJk9HdQa0uCw6yRg";
   const SETUP_CLOSED_TITLE = "This Mac is on a network you have not trusted";
-  const NETWORK_CHANGED_AGAIN = "This Mac's network changed and could not be read again, so nothing was done. Try again.";
+  const NETWORK_CHANGED_AGAIN = "Nothing was done: this Mac's network could not be read again.";
   const TURN_ON = { setup: SETUP_OFF, open: "Turn on", commit: "Turn on and trust", route: ROUTE.ON, refusal: { status: 409, body: { error: "confirm_stale" } } };
   const TRUST = { setup: SETUP_CLOSED, open: "Trust this network", commit: "Trust this network", route: ROUTE.TRUST, refusal: { status: 409, body: { error: "network_changed" } } };
 
@@ -474,7 +683,7 @@ describe("after a refused widening act the confirm offers its commit only on a f
     assert.ok(dialog, "the confirm stays open");
     const text = collectText(dialog);
     assert.ok(text.includes(MOVED_ROUTER) && !text.includes(ROUTER), "the fresh router replaces the earlier one");
-    assert.ok(text.includes("The network details were out of date. Nothing was turned on. Check the number again."));
+    assert.ok(text.includes("Nothing was turned on: the network changed; check the number again."));
     assert.deepEqual(getButtonNames(dialog).filter((name) => name !== ""), ["Cancel", TURN_ON.commit]);
   });
 
@@ -520,10 +729,10 @@ describe("after a refused widening act the confirm offers its commit only on a f
 
   // the confirm value is spent → a second press could only answer confirm_stale over words the first press may have made false
   const unsettled = [
-    { name: "a turn-on that threw", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "act_failed" } } }, notice: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a trust whose write step ended unnamed", flow: { ...TRUST, refusal: { status: 500, body: { error: "write_failed" } } }, notice: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
-    { name: "a turn-on written but not applied, on a page reread to on", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "start_failed" } }, reloaded: { ...SETUP_ON, isAnswering: false } }, notice: "Remote access was turned on, but it starts only when the monitor restarts. Refresh; if you do not want it, turn it off." },
-    { name: "a trust written but not applied", flow: { ...TRUST, refusal: { status: 500, body: { error: "start_failed" } } }, notice: "This network was trusted, but it applies only when the monitor restarts. Refresh; if you do not want it, turn remote access off." },
+    { name: "a turn-on that threw", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "act_failed" } } }, notice: "Remote access may or may not be on; refresh to check." },
+    { name: "a trust whose write step ended unnamed", flow: { ...TRUST, refusal: { status: 500, body: { error: "write_failed" } } }, notice: "This network may or may not be trusted; refresh to check." },
+    { name: "a turn-on written but not applied, on a page reread to on", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "start_failed" } }, reloaded: { ...SETUP_ON, isAnswering: false } }, notice: "Remote access starts at the next monitor restart; Turn off cancels it." },
+    { name: "a trust written but not applied", flow: { ...TRUST, refusal: { status: 500, body: { error: "start_failed" } } }, notice: "This network is trusted from the next monitor restart." },
   ];
   for (const row of unsettled) {
     test(`${row.name} closes its confirm, rereads the page and keeps its words there`, async () => {
@@ -586,8 +795,19 @@ describe("a network read never puts a widening confirm where another confirm was
       await new Promise((resolve) => setImmediate(resolve));
     };
     const getTitle = () => findNodes(render(), (node) => node.type === "DetailSurface")[0]?.props.title;
-    return { sent, press, getTitle, release: (answer: Answer) => release(answer) };
+    return { sent, render, press, getTitle, release: (answer: Answer) => release(answer) };
   }
+
+  test("two presses read from one render start one network read", async () => {
+    const page = await mountHeld();
+    const trust = findNodes(page.render(), (node) => node.type === "button" && collectText(node).trim() === "Trust this network")[0];
+
+    (trust.props.onClick as () => void)();
+    (trust.props.onClick as () => void)();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(page.sent, [`GET ${REMOTE_ADMIN_PATH.CONFIRM_NETWORK}`]);
+  });
 
   for (const opener of ["Turn off", "Remove all"]) {
     test(`${opener} opens nothing while a trust's network read runs`, async () => {
@@ -660,6 +880,23 @@ describe("every Mac-only call carries the page header the admin routes require",
 
     await (mod.deleteDeviceRA as (id: string) => Promise<void>)("7");
   });
+});
+
+describe("sending the certificate reports whether the share sheet completed", () => {
+  const rows = [
+    { name: "a completed share sheet counts as sent", share: async () => undefined, isSent: true },
+    { name: "a share sheet the person closed is not sent and no error", share: async () => { throw Object.assign(new Error("closed"), { name: "AbortError" }); }, isSent: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const { mod } = await loadScreen();
+      mod.navigator = { share: row.share };
+
+      const isSent = await (mod.sendCertificateRA as (file: File, isShare: boolean) => Promise<boolean>)(new File(["x"], "ca.cer"), true);
+
+      assert.equal(isSent, row.isSent, row.name);
+    });
+  }
 });
 
 test("the fingerprint reads as four lines of eight pairs that rejoin to the server's value", async () => {

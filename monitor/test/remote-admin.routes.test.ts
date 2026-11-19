@@ -12,6 +12,7 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import vm from "node:vm";
 
 import "dotenv/config";
 
@@ -42,6 +43,7 @@ import type { RemoteAuditEvent } from "../src/server/remote/gate.js";
 import { RegistrationCodes } from "../src/server/remote/registration-code.js";
 import { createStandInTls } from "./lib/remote-tls.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
+import { loadScreenModule } from "./lib/render-screen.js";
 
 const PORT = 16199;
 const MAC_PAGE: Record<string, string> = { host: `127.0.0.1:${PORT}`, "sec-fetch-site": "same-origin", [MAC_PAGE_HEADER.NAME]: MAC_PAGE_HEADER.VALUE };
@@ -777,14 +779,19 @@ describe("the certificate download", () => {
   // the person finds the certificate on the device by the CN the shell writes → the screen and the file name must say the same
   const MONITOR_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const CA_CN_LINE = /^\s*'CN = ([^']+)'/m;
-  // the screen's lines that send the person to the certificate by name
-  const STEP_ANCHORS = ["Certificate Trust Settings", "AirDrop", "Profile Downloaded, then More Details", "Device Management →"];
+  interface StepWords { readonly line?: string | { readonly download: string }; readonly path?: string }
 
-  test("the download's file name and every screen step naming the certificate carry the CN the shell writes into the CA", async () => {
+  test("the download's file name, every Settings path the screen draws and its download line carry the CN the shell writes into the CA", async () => {
     const shell = await readFile(path.join(MONITOR_DIR, "..", "lib", "ga-remote.sh"), "utf8");
-    const screenLines = (await readFile(path.join(MONITOR_DIR, "public", "src", "screens", "remote-access.jsx"), "utf8")).split("\n");
+    const screen = await loadScreenModule(path.join(MONITOR_DIR, "public", "src", "screens", "remote-access.jsx"));
+    const steps = vm.runInContext("STEPS_RA", screen) as StepWords[];
     const cn = CA_CN_LINE.exec(shell)?.[1] ?? "no CN line in the CA config";
-    const unnamed = STEP_ANCHORS.filter((anchor) => !screenLines.some((line) => line.includes(anchor) && line.includes(cn)));
+
+    const paths = steps.flatMap((step) => step.path ?? []);
+    const downloads = steps.flatMap((step) => (typeof step.line === "object" ? [step.line.download] : []));
+    const unnamed = [...paths.filter((line) => !line.endsWith(` › ${cn}`)), ...downloads.filter((line) => !line.includes(`“${cn}”`))];
+
+    assert.ok(paths.length >= 2 && downloads.length >= 1, "the step table was read");
     assert.deepEqual([CA_DOWNLOAD.FILE_NAME, unnamed], [`${cn}.pem`, []]);
   });
 

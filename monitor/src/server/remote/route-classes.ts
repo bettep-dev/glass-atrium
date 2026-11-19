@@ -50,6 +50,8 @@ const SIGN_LAST_CID = "2026-11-19T0945_onboarding-close2_5b7c";
 const UNCONDITIONAL_CID = "2026-11-19T1305_sign-unconditional_2a9e";
 // the relay rows appended after row 115, the relay-signal and redact reasons re-signed as they stand (merged-table-verdict.md)
 const MERGE_CID = "2026-11-19T1325_deploy69-prep_a6e3";
+// the sign-in.js reason re-signed in place for its fragment read (steps-review-items.json → A10, A11): route, class and order kept → same digest
+const FRAGMENT_READ_CID = "2026-11-19T1520_steps-finish_d9a2";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -246,13 +248,13 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     // every row of the entry before it carried unchanged; the on, trust, network read and single html-export reasons re-signed
     // conditions of this sign-off — a change that breaks one needs a new sign-off:
     // C1 met: start.ts → runAccessStep fixed binary, fixed argv, no request value; scripts/remote-access-set.sh carried from the entry before
-    // C2 met: remote-access.jsx → onWiden the one caller of readConfirmNetworkRA (a confirm opening); a first read lands only on a page with no confirm, a re-read only in its own act's; Turn off and Remove all held while a read runs; ConfirmRA focuses Cancel at mount, WidenConfirmRA keyed on the confirm value → a re-read's network remounts it; the opener guard and the key not yet read by the reviewer
+    // C2 met: remote-access.jsx → onWiden the one caller of readConfirmNetworkRA (a confirm opening); a first read lands only on a page with no confirm, a re-read only in its own act's; Turn off and Remove all held while a read runs; ConfirmRA focuses Cancel at mount, WidenConfirmRA keyed on the confirm value → a re-read's network remounts it; onWiden's guard while a check runs and the key read and met (2026-11-19T1305_sign-unconditional_2a9e)
     // C3 met: remote-access.jsx → requestRA the one fetch, PAGE_HEADERS_RA, no body; every Mac page call through it, the certificate a blob, never a plain link
-    // C4 met for content: sign-in.html meta policy (default-src none; script, style, connect, form-action self; base-uri none), no inline script or style, no-referrer; sign-in.js one same-origin JSON POST to /api/remote/register, text through textContent only, fixed redirect to /; sign-in.css no url() or import; rows 106-108 signed for these facts only; open: frame-deny headers reaching the page (response-headers.ts → FRAME_DENY_HEADERS use unread)
+    // C4 met: sign-in.html meta policy (default-src none; script, style, connect, form-action self; base-uri none), no inline script or style, no-referrer; sign-in.js one same-origin JSON POST to /api/remote/register, text through textContent only, fixed redirect to /; sign-in.css no url() or import; rows 106-108 signed for these facts only; frame-deny headers reach the page: response-headers.ts → FRAME_DENY_HEADERS applied in app.ts → registerSurface and remote/gate.ts → setRemoteHeaders (the remote root's onSend), the three files served by exact routes on that root (routes.ts → registerSignInFiles), read and met (2026-11-19T1305_sign-unconditional_2a9e)
     // C5 met: start.ts → RemoteAccessSwitch.#apply bounds the old listener's close and the new one's open through getWithin (5 s), #openWithin closes a late listener
     // C6 met: admin-routes.ts → getCertificate refuses anything but exactly one CA certificate, serves it re-encoded
     // C7 met: set_trust takes the shown network in fixed argv positions, format-checked, writes nothing on a differing read
-    // C8 met: admin-routes.ts → widenAccess request row and a thrown act's error outcome row; page words (remote-access.jsx → getWidenErrorTextRA): act_failed, write_failed, env_not_rendered → state unknown, start_failed → applies at the next restart; after either the confirm closes and the page rereads, the words kept until a later act completes; not yet read by the reviewer
+    // C8 met: admin-routes.ts → widenAccess request row and a thrown act's error outcome row; page words (remote-access.jsx → getWidenErrorTextRA): act_failed, write_failed, env_not_rendered → state unknown, start_failed → applies at the next restart; after either the confirm closes and the page rereads, the words kept until a later act completes; read and met (2026-11-19T1305_sign-unconditional_2a9e)
     // confirm binding: start.ts → getConfirmFacts one-use value over 16 random bytes, #takeShown deletes before the freshness test; admin-routes.ts → runWideningAct one string header only
     // access marker: lib/ga-remote.sh → ga_remote_enable writes config first, then _ga_remote_set_access_on by temp file and rename
     cids: [
@@ -311,6 +313,33 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 119,
     sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6",
+    supersededBy: FRAGMENT_READ_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S7",
+    // every row of the entry before it carried unchanged; the sign-in.js reason re-signed
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // C1-C3 and C5-C8 carried from the entry before
+    // C4 met: sign-in.js fragment read, built file read (2026-11-19T1640_steps-close_a1c7) — sign-in.js → readFragment the one address read, location.hash only, at load and on hashchange; history.replaceState(null, "", FRAGMENT.PAGE_PATH) before the value is tested, valid or not; isCode keeps exactly CODE.LENGTH symbols of CODE.ALPHABET after the fixed "#code=", no decoding (equal to registration-code.ts → REGISTRATION_CODE as read, bound by remote-sign-in.e2e), otherwise dropped silently; set as fields.code.value only; no storage, cookie, title, log, timer or history state; send the one same-origin JSON POST to REGISTER_URL, from the form's submit alone, an empty code or name stopped before it; register clears the code field on REFUSALS.registration_refused; showLead writes one of two fixed LEAD texts, every text through textContent, fixed redirect to /; remote-access.jsx → CodeViewRA gives QrCodeRA the address + SIGN_IN_RA + code only while a code is open; routes.ts → register and gate.ts → recordEvent pass actor, action kind, result, method, route and the new device's id only, no log line or audit row takes the body; sign-in.html and sign-in.css byte-unchanged (diff relayed, sign-in.html read), their rows carried; residual: the test rows read, not run by the reviewer; the audit writer's own file and the listener's logger options unread; a change to any of the three sign-in files needs a new read
+    cids: [
+      FRAGMENT_READ_CID,
+      SIGN_LAST_CID,
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 115,
+    sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351",
   },
 ];
 
@@ -421,7 +450,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "DELETE /api/remote/cli/devices/:id", cls: "remote-cli", reason: "loopback only; same gate, decimal id, no body; the page's revoke act (sockets closed) audited as the CLI; one device_not_found" },
   { route: "POST /api/remote/cli/devices/revoke-all", cls: "remote-cli", reason: "loopback only; same gate, empty body; the page's revoke-all act audited as the CLI; the count only" },
   { route: "GET /sign-in.html", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; meta CSP as written, links only /sign-in.css and /sign-in.js" },
-  { route: "GET /sign-in.js", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; the sign-in form's script, names no feature" },
+  { route: "GET /sign-in.js", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; the sign-in form's script, names no feature; reads one thing from the address, the fragment's one fixed key: the fragment is removed at once by replacing the history entry, the value kept only when it is exactly the code's length and alphabet, set as the code field's value and nowhere else, never stored, logged or sent except in the register POST body the person's press sends; no query read, no auto-submit" },
   { route: "GET /sign-in.css", cls: "remote-pre-auth", reason: "remote only; exact route from a fixed three-file list, GET and its HEAD; Host and failed-session block first, pre-auth limit on every hit; frame denial, HSTS, nosniff, no-cache; self-contained, the shared stylesheets stay behind registration" },
   { route: "POST /api/queue/pending/count", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh (listen step, run by hooks/queue-listener.sh) only; handler read: strict session id and pid body, refused unless the named session is live for that pid, returns the count and first 200 ids of that session's answered items, claims nothing, marks the session waiting in memory for 10 s; no credential beyond a named session id and pid" },
   { route: "POST /api/remote/access/on", cls: "remote-admin", reason: "loopback only; Mac page gate: root Host allowlist, Sec-Fetch-Site exactly same-origin, the fixed page header only the page's own script sets, empty body; 5/min shared with trust, refused 409 while any access act runs; remote.access_requested row before any step, naming that a trust of the network shown may follow, no row → no step; refused unless the confirm value in the x-glass-atrium-confirm header names a read no more than 120 s old, unused, that showed the network read at the act; one read per act; fixed-argv write step, no request value, then this process reopens the listener from the settings the step rendered, the old listener's close and the new one's open each waiting at most 5 s, a failed or timed-out apply answers start_failed and reopens nothing until restart; trusts only the network shown, only when not yet trusted, re-matched before that step; the trust step takes the shown network in fixed argv positions, format-checked, reads the network itself and writes nothing when it differs; outcome rows carry outcome and trusted count only, an act that throws still gets its error outcome row; page-origin stamp recorded, not a check" },

@@ -7,9 +7,9 @@
 	const BUTTON_LABEL = { idle: "Register device", busy: "Registering…" };
 	// server error → message + the field it marks; registration_refused = one answer for a wrong, expired, used or unopened code
 	const REFUSALS = {
-		registration_refused: { text: "Code not accepted — open a new code on the Mac (step 5) and enter it", field: "code" },
-		label_invalid: { text: "Device name not accepted — use letters, numbers, spaces, . _ - (the code is still valid)", field: "label" },
-		device_limit_reached: { text: "Device limit reached — remove a device on the Mac, then open a new code", field: null },
+		registration_refused: { text: "Code not accepted — show a new code on the Mac and use it", field: "code" },
+		label_invalid: { text: "Device name not accepted — use letters, numbers, spaces, . _ -", field: "label" },
+		device_limit_reached: { text: "Device limit reached — remove a device on the Mac, then show a new code", field: null },
 		too_many_requests: { text: "Too many tries — wait a minute, then try again", field: null },
 	};
 	const MISSING = {
@@ -17,9 +17,18 @@
 		label: { text: "Enter a device name", field: "label" },
 	};
 	const UNREACHED = { text: "Not sent — check this device is on the Mac's network, then try again", field: null };
+	const LEAD = {
+		empty: "Enter the code from the Mac, name this device, then tap Register device.",
+		filled: "Check the code, name this device, then tap Register device.",
+	};
+	// registration-code.ts → REGISTRATION_CODE (bound by remote-sign-in.e2e)
+	const CODE = { ALPHABET: "23456789ABCDEFGHJKLMNPQRSTUVWXYZ", LENGTH: 8 };
+	// the Mac's QR code → this page's own path + "#code=" + the open code
+	const FRAGMENT = { PAGE_PATH: "/sign-in.html", PREFIX: "#code=" };
 
 	const form = document.getElementById("sign-in-form");
 	const status = document.getElementById("sign-in-status");
+	const lead = document.querySelector(".sign-in-lead");
 	const button = form.querySelector('button[type="submit"]');
 	const fields = { code: form.elements.namedItem("code"), label: form.elements.namedItem("label") };
 
@@ -27,6 +36,36 @@
 		event.preventDefault();
 		register();
 	});
+	fields.code.addEventListener("input", showLead);
+	// a second scan into an open page changes only the fragment
+	window.addEventListener("hashchange", readFragment);
+	readFragment();
+	showLead();
+	if (fields.code.value === "") fields.code.focus();
+
+	/**
+	 * The QR code's one-use code → the code field, and nowhere else.
+	 * The address is cleaned before the value is tested, valid or not; nothing is submitted here.
+	 */
+	function readFragment() {
+		const fragment = window.location.hash;
+		if (fragment === "") return;
+		window.history.replaceState(null, "", FRAGMENT.PAGE_PATH);
+		const value = fragment.startsWith(FRAGMENT.PREFIX) ? fragment.slice(FRAGMENT.PREFIX.length) : "";
+		if (!isCode(value)) return;
+		fields.code.value = value;
+		showLead();
+		fields.label.focus();
+	}
+
+	// exact length and alphabet, upper case as the Mac shows it; no decoding
+	function isCode(value) {
+		return value.length === CODE.LENGTH && [...value].every((symbol) => CODE.ALPHABET.includes(symbol));
+	}
+
+	function showLead() {
+		lead.textContent = fields.code.value === "" ? LEAD.empty : LEAD.filled;
+	}
 
 	/** One registration try: an empty entry stops here, before it can spend one of the code's tries. */
 	async function register() {
@@ -38,6 +77,11 @@
 		const refusal = await send(entry);
 		if (refusal === null) return window.location.replace("/");
 		setBusy(false);
+		// a refused code is spent or wrong → only a new code from the Mac helps
+		if (refusal === REFUSALS.registration_refused) {
+			fields.code.value = "";
+			showLead();
+		}
 		showRefusal(refusal);
 	}
 

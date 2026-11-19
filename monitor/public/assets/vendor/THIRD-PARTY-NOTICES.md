@@ -94,3 +94,13 @@ PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIG
 HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## MIT — `qrcode-generator` (`qrcode-generator-2.0.4.js`)
+
+The QR encoder beside this file is the package's `dist/qrcode.js` byte for byte,
+pinned by `qrcode-generator.provenance.json`. Its own header carries the copyright
+line and the MIT license reference; the row below records it with the others.
+
+| Package | Version | License | Upstream |
+|---------|---------|---------|----------|
+| `qrcode-generator` | 2.0.4 | MIT | https://github.com/kazuhikoarase/qrcode-generator |
