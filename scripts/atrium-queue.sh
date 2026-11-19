@@ -144,10 +144,6 @@ end_run() {
   exit "$1"
 }
 
-warn() {
-  printf 'atrium-queue: %s\n' "$1" >&2
-}
-
 # <operation> <args…> → its result document; a failed operation ends the run with its message and exit code
 get_result() {
   local result status=0
@@ -479,7 +475,7 @@ listen_for_answers() {
   set_wait_holder "${session_id}" "${QUEUE_LISTENER_KIND}"
   take_wait_lock
   # shellcheck disable=SC2310  # an unwritten mark only leaves the turn-end check nudging a wait, its fallback
-  queue_put_listening_mark "${session_id}" "${WAIT_OWNER}" 2>/dev/null || warn "no listening mark could be written"
+  queue_put_listening_mark "${session_id}" "${WAIT_OWNER}" 2>/dev/null || queue_warn "no listening mark could be written"
   trap stop_listening EXIT
   trap 'exit 0' HUP INT TERM
   LISTEN_OUT="$(mktemp)" || fail 1 "no scratch file for the listener's polls"
