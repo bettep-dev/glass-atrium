@@ -686,6 +686,15 @@ export function getRelayHistoryFixture(): RelayHistoryFixture {
   };
 }
 
+/** The rest state plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
+export function getHiddenSessionsFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const hidden = [["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e91", "spare"], ["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e92", "deploy62-probe"]].map(([id, name]) => ({
+    ...buildNotListeningSession(id!, name!, "live", 0).row, isWaiting: true, isHidden: true,
+  }));
+  return { ...rest, sessions: [...rest.sessions, ...hidden] };
+}
+
 /** The rest state with relays on record: the history fixture's, the signal on (`signal: true`) or off (all older than 24 hours). */
 export function getRelayRecordFixture({ signal }: { signal: boolean }): QueueFixture {
   const relays = getRelayHistoryFixture();

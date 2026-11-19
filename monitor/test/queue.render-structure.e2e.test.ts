@@ -21,11 +21,11 @@ import { chromium } from "playwright";
 
 import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
 import type { OwnerItemView } from "../src/server/queue/owner-views.js";
-import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
+import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
@@ -419,7 +419,8 @@ function getLightState<T extends QueueState>(state: T): T {
   };
 }
 
-// spec §18.4 32–33 (plan 44099): the rail foot at rest and with the signal on, the history open, the redaction asked and partly done
+// spec §18.4 32–34 (plan 44099): the rail foot at rest and with the signal on, the history open with the signal on and off, the redaction
+// asked, done, refused, cut off by an outage and partly done, and the rail with hidden sessions in the data
 const RELAY_STATES: QueueState[] = [
   { nn: "32", name: "relay-foot-rest", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: false }) },
   { nn: "32b", name: "relay-foot-signal", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }) },
@@ -434,6 +435,24 @@ const RELAY_STATES: QueueState[] = [
       await page.getByText(PARTLY_REDACTED_LINE).waitFor();
     },
   },
+  { nn: "33d", name: "relay-history-signal-off", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: false }), setUp: (page) => openRelayHistory(page) },
+  {
+    nn: "33e", name: "redact-done", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    setUp: async (page) => {
+      await askRedaction(page);
+      await confirmRedaction(page);
+      await page.getByText("✓ Text redacted: aidl → yoaida and portfolio", { exact: false }).waitFor();
+    },
+  },
+  {
+    nn: "33f", name: "redact-refused", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    setUp: (page, harness) => refuseRedaction(page, harness, { status: 409, body: { error: "wrong_kind" } }, "✕ Refused: HTTP 409 wrong_kind."),
+  },
+  {
+    nn: "33g", name: "redact-outage", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    setUp: (page, harness) => refuseRedaction(page, harness, { status: 503, body: { error: "database_unavailable" } }, null),
+  },
+  { nn: "34", name: "rail-hidden-sessions", viewports: [VIEWPORTS[0]], getFixture: getHiddenSessionsFixture },
 ];
 
 const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES];
@@ -506,9 +525,11 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     const item = harness.fixture.items.find((candidate) => String(candidate.id) === request.params.id);
     return item ?? reply.code(404).send({ error: "unknown_item" });
   });
-  app.get("/api/queue/owner/sessions", async () => {
+  // the server's read: hidden rows only when asked for (owner-sessions.ts → getOwnerSessions)
+  app.get("/api/queue/owner/sessions", async (request) => {
     await harness.heldDesk;
-    return { sessions: harness.fixture.sessions, hasMore: false };
+    const { includeHidden } = ownerSessionsQuerySchema.parse(request.query);
+    return { sessions: harness.fixture.sessions.filter((row) => includeHidden || !row.isHidden), hasMore: false };
   });
   app.get("/api/queue/owner/resumes", async () => ({ resumes: harness.fixture.resumes }));
   app.get("/api/queue/owner/orders", async (request) => {
@@ -660,6 +681,15 @@ async function askRedaction(page: Page): Promise<void> {
 
 function confirmRedaction(page: Page): Promise<void> {
   return page.getByRole("dialog", { name: "Redact this relay's text?" }).getByRole("button", { name: "Redact text" }).click();
+}
+
+// every copy refused → the dialog keeps the error slot's line: the given words, or (null) whatever outage step the page draws
+async function refuseRedaction(page: Page, harness: Harness, refusal: { status: number; body: { error: string } }, line: string | null): Promise<void> {
+  harness.refusals.set("redact", refusal);
+  await askRedaction(page);
+  await confirmRedaction(page);
+  const slot = page.getByRole("dialog", { name: "Redact this relay's text?" }).locator(".queue-relay-error");
+  await (line === null ? slot.locator("span.text-crit").waitFor() : slot.getByText(line).waitFor());
 }
 
 // the hop-1 relay's lapsed copy refused → one of two copies left
