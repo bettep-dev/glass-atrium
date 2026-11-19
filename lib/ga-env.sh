@@ -308,6 +308,8 @@ ga_init_env() {
   # manifest files[] key escapes the install root (empty · absolute · `..` segment) or is unreadable —
   # refused before any manifest loop by install / agents-only / uninstall / prune.
   readonly MANIFEST_EXIT_ESCAPING_KEY=25
+  # reload-launchd: an update or an autoagent apply holds the shared .apply-lock — nothing re-rendered or reloaded.
+  readonly RELOAD_EXIT_LOCKED=26
 
   # bootstrap exit-code semantics (distinct from die's generic 1):
   #   20 = monitor build failed   21 = monitor health gate failed (no 200 in window)
@@ -324,13 +326,14 @@ ga_init_env() {
   # can call the update-system helpers:
   #   * atrium-config.sh    — atrium_toml_get (doctor §9 [release].repo read)
   #   * apply-spine.sh       — spine_set_baseline / spine_get_baseline / spine_* (T24 capture · §9 probe)
+  #   * apply-lock.sh        — apply_lock_acquire / apply_lock_release (reload-launchd's writer serialization)
   # Both are PURE (function-only, no side effects / strict-mode mutation), so sourcing here defines the
   # functions without any file-scope action. Resolved under GA_ROOT/scripts/lib (GA_LIB_DIR overrides for
   # sandbox/CI). Loud-fail (die) on an absent lib — a missing E5 lib is a broken install, never a silent
   # skip (shared-self-improve-hygiene Precondition Loud-Fail Principle).
   readonly LIB_DIR="${GA_LIB_DIR:-${GA_ROOT}/scripts/lib}"
   local _e5_lib
-  for _e5_lib in atrium-config.sh apply-spine.sh; do
+  for _e5_lib in atrium-config.sh apply-spine.sh apply-lock.sh; do
     [[ -f "${LIB_DIR}/${_e5_lib}" ]] \
       || die "E5 lib missing: ${LIB_DIR}/${_e5_lib} (broken install — scripts/lib is incomplete)"
     # shellcheck source=/dev/null

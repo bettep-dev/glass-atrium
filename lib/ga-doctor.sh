@@ -708,7 +708,7 @@ run_doctor() {
         if [[ "${launchd_drift}" -eq 0 ]]; then
           log "  ok   : ${deployed_count} deployed launchd plist(s) match the current renderer output"
         else
-          log "  ---- ${launchd_drift} stale-deployed launchd plist(s) — re-render + --load-launchd to redeploy ----"
+          log "  ---- ${launchd_drift} stale-deployed launchd plist(s) — run 'glass-atrium reload-launchd' to redeploy ----"
         fi
       else
         log "  warn : launchd deploy-drift check skipped — reference re-render failed (config missing/invalid? run 'glass-atrium render-plists')"
@@ -723,6 +723,11 @@ run_doctor() {
   # shellcheck disable=SC2311
   launchd_retired="$(launchd_retired_deployed)"
   launchd_drift=$((launchd_drift + launchd_retired))
+  local launchd_node_missing
+  # launchd_node_bin_probe logs a missing node_bin to stderr + echoes the count (stdout verdict).
+  # shellcheck disable=SC2311
+  launchd_node_missing="$(launchd_node_bin_probe)"
+  launchd_drift=$((launchd_drift + launchd_node_missing))
   local launchd_unloaded=0
   if [[ "${deployed_count}" -gt 0 ]]; then
     # shellcheck disable=SC2311
@@ -2845,7 +2850,7 @@ launchd_deploy_drift() {
     # shellcheck disable=SC2311
     twin_hash="$(_sha_hex "$@" -- "${twin}")"
     if [[ "${dep_hash}" != "${twin_hash}" ]]; then
-      log "  warn : stale-deployed launchd plist drift: ${label} — re-render + --load-launchd to redeploy"
+      log "  warn : stale-deployed launchd plist drift: ${label} — run 'glass-atrium reload-launchd' to redeploy"
       drift=$((drift + 1))
     fi
   done
@@ -2854,16 +2859,30 @@ launchd_deploy_drift() {
 
 # deployed retired-label scan — run_doctor §11 helper. Each LAUNCHD_RETIRED_JOBS label whose plist is still
 # deployed under ${LAUNCH_AGENTS} is residue the retirement has not reached: logged as a warn (stderr) with the
-# --load-launchd remedy, and the total is the stdout verdict. Read-only — no launchctl, no file change.
+# reload-launchd remedy, and the total is the stdout verdict. Read-only — no launchctl, no file change.
 launchd_retired_deployed() {
   local ld_job label retired=0
   for ld_job in "${LAUNCHD_RETIRED_JOBS[@]}"; do
     label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
     [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
-    log "  warn : retired launchd job still deployed: ${label} — run --load-launchd to retire it"
+    log "  warn : retired launchd job still deployed: ${label} — run 'glass-atrium reload-launchd' to retire it"
     retired=$((retired + 1))
   done
   printf '%d\n' "${retired}"
+}
+
+# [paths].node_bin probe — run_doctor §11 helper. Every rendered job runs node_bin, so a value naming no executable
+# file (a Homebrew upgrade deletes a versioned Cellar folder) stops them all: logged as a warn naming the path and the
+# remedy, and the count is the stdout verdict. An absent key is the renderer's own loud failure, not this row.
+launchd_node_bin_probe() {
+  local node_bin
+  node_bin="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' 'node_bin')"
+  if [[ -z "${node_bin}" || (-f "${node_bin}" && -x "${node_bin}") ]]; then
+    printf '0\n'
+    return 0
+  fi
+  log "  warn : [paths].node_bin ${node_bin} does not exist — the launchd jobs cannot start; run 'glass-atrium render-config' (resolves node from PATH), then 'glass-atrium reload-launchd'"
+  printf '1\n'
 }
 
 # launchd loaded-state probe — run_doctor §11 helper. Asks launchd about each DEPLOYED com.glass-atrium
@@ -2882,7 +2901,7 @@ launchd_unloaded_probe() {
       label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
       [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
       if ! launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
-        log "  warn : ${label} deployed but not loaded — run --load-launchd"
+        log "  warn : ${label} deployed but not loaded — run 'glass-atrium reload-launchd'"
         unloaded=$((unloaded + 1))
       fi
     done
