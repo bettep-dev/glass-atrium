@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# TUI uninstall panel — the config purge prompt is offered only after the base
-# uninstall plan succeeded; a failed plan returns its own status instead.
+# TUI uninstall panel — the queue MCP removal question, then the config purge prompt, are offered only after
+# the base uninstall plan succeeded; a failed plan returns its own status instead.
 #
 # Run via: bats test/tui-uninstall-panel.bats
 # Requires: bats (brew install bats-core), bash 3.2+
@@ -35,6 +35,7 @@ run_panel_with_plan_rc() {
   : >"${WORK}/tokens"
   PLAN_RC="$1" TOKENS="${WORK}/tokens" TTY=/dev/null bash -c '
     _confirm_pregate() { printf "%s\n" "$1" >>"${TOKENS}"; [[ "$1" == "remove" ]]; }
+    tui_queue_mcp_gate() { printf "queue-%s\n" "$1" >>"${TOKENS}"; }
     run_action_panel() { return "${PLAN_RC}"; }
     ga_resolve_backup_dir() { printf "%s\n" /nonexistent/backups; }
     enter_run_state() { :; }
@@ -46,23 +47,21 @@ run_panel_with_plan_rc() {
   ' _ "${body}"
 }
 
-@test "the purge prompt follows only a base plan that returned 0" {
-  local row name plan_rc want_purge want_rc got_rc has_purge tokens
+@test "the queue MCP question and then the purge prompt follow only a base plan that returned 0" {
+  local row name plan_rc want_tokens want_rc got_rc tokens
   local rows=(
-    "base plan returns 0|0|yes|0"
-    "base plan returns 3|3|no|3"
+    "base plan returns 0|0|remove queue-remove purge|0"
+    "base plan returns 3|3|remove|3"
   )
   for row in "${rows[@]}"; do
-    IFS='|' read -r name plan_rc want_purge want_rc <<<"${row}"
+    IFS='|' read -r name plan_rc want_tokens want_rc <<<"${row}"
     got_rc="$(run_panel_with_plan_rc "${plan_rc}")" || {
       echo "${name}: could not run the panel"
       return 1
     }
-    has_purge=no
-    grep -qx purge "${WORK}/tokens" && has_purge=yes
     tokens="$(tr '\n' ' ' <"${WORK}/tokens")"
-    [[ "${has_purge}" == "${want_purge}" ]] || {
-      echo "${name}: purge offered=${has_purge}, want ${want_purge}; tokens: ${tokens}"
+    [[ "${tokens% }" == "${want_tokens}" ]] || {
+      echo "${name}: asked '${tokens}', want '${want_tokens}'"
       return 1
     }
     [[ "${got_rc}" == "${want_rc}" ]] || {

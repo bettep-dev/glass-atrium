@@ -290,6 +290,65 @@ get_previewed_entry() {
   [[ "$(get_snapshot)" == "${before}" ]]
 }
 
+# <mode> <typed answer> → the menu's queue MCP question, lifted out of the dispatch lib, over the real engine with
+# stub chrome; ${TTY} is a file holding the answer and a key press, and receives what the question writes
+run_tui_gate() {
+  local body="${BATS_TEST_TMPDIR}/gate.sh"
+  awk '/^(tui_queue_mcp_gate|_tui_ask|_run_cooked)\(\) \{/ { f = 1 } f { print } f && /^}/ { f = 0 }' \
+    "${GA}/lib/ga-tui-dispatch.sh" >"${body}"
+  printf '%s\nk\n' "$2" >"${BATS_TEST_TMPDIR}/tty"
+  run --separate-stderr bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    tp() { :; }
+    stty() { :; }
+    reset_plate_geometry() { :; }
+    apply_plate_geometry() { :; }
+    ga_remote_is_terminal() { :; }
+    source "$2"
+    TTY="$3" TTY_SAVED="" RAW_ACTIVE=false
+    tui_queue_mcp_gate "$4"
+  ' _ "${GA}" "${body}" "${BATS_TEST_TMPDIR}/tty" "$1"
+}
+
+@test "the menu asks the queue MCP question in cooked mode after install and uninstall, writes only on y, and asks nothing when nothing is left" {
+  local before row name mode answer want
+  local rows=(
+    'install, default No|add||unregistered'
+    'install, y|add|y|registered'
+    'install again, nothing left|add|y|no question'
+    'uninstall, default No|remove||registered'
+    'uninstall, y|remove|y|unregistered'
+  )
+  before="$(get_snapshot)"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name mode answer want <<<"${row}"
+    run_tui_gate "${mode}" "${answer}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${status} ${output} ${stderr}"
+      return 1
+    }
+    case "${want}" in
+      'no question') ! grep -q '\[y/N\]' "${BATS_TEST_TMPDIR}/tty" || {
+        echo "${name}: asked"
+        return 1
+      } ;;
+      registered) grep -q '\[y/N\]' "${BATS_TEST_TMPDIR}/tty" \
+        && [[ "$(jq -r '.mcpServers["atrium-queue"].args[0]' "${HOME}/.claude-work/.claude.json")" == "${ADAPTER}" ]] || {
+        echo "${name}: not registered"
+        cat "${BATS_TEST_TMPDIR}/tty"
+        return 1
+      } ;;
+      *) grep -q '\[y/N\]' "${BATS_TEST_TMPDIR}/tty" && [[ "$(get_snapshot)" == "${before}" ]] || {
+        echo "${name}: changed or not asked"
+        cat "${BATS_TEST_TMPDIR}/tty"
+        return 1
+      } ;;
+    esac
+  done
+}
+
 @test "the doctor reports each unregistered profile, each missing allow line and the project-server switch, and writes nothing" {
   local before row
   jq '.enableAllProjectMcpServers = true' "${GA_TARGET_HOME}/settings.json" >"${BATS_TEST_TMPDIR}/s" \
