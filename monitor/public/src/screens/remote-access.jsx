@@ -32,6 +32,7 @@ const SEARCH_LINE_RA = { text: "Different names on your phone? Search Settings f
  * compare → the field name the phone shows over the fingerprint, the forward control, the line in the fingerprint's place when none is read.
  * isTyped → the last step shows the address and the code first, the QR code beside them.
  * stop → a line the security ruling keeps visible beside the step's value, never behind Trouble? · isQrOnly → a fold line shown only beside a drawn QR code.
+ * kind installer → a phone step whose path ends at the phone's installer, so it names no certificate.
  */
 const DEVICE_RA = {
 	iphone: {
@@ -89,7 +90,7 @@ const DEVICE_RA = {
 				trouble: [{ text: "Set up this phone before?", isJump: true }, { text: "Tapping it did not install? Save it only; step 3 installs it." }],
 			},
 			{
-				kind: "phone",
+				kind: "installer",
 				title: "Open the certificate installer",
 				path: "Settings › Security and privacy › More security settings › Install from device storage",
 				trouble: [SEARCH_LINE_RA, { text: "Older phone? Settings › Biometrics and security › Other security settings" }],

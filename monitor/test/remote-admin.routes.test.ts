@@ -782,20 +782,22 @@ describe("the certificate download", () => {
   interface StepWords { readonly kind: string; readonly line?: string | { readonly download: string }; readonly path?: string }
   interface DeviceWords { readonly fileName: string | null; readonly steps: readonly StepWords[] }
 
-  test("each device's file name, every compare step's Settings path and every download line carry the CN the shell writes into the CA", async () => {
+  test("each device's file name, every Settings path but the installer's and every download line carry the CN the shell writes into the CA", async () => {
     const shell = await readFile(path.join(MONITOR_DIR, "..", "lib", "ga-remote.sh"), "utf8");
     const screen = await loadScreenModule(path.join(MONITOR_DIR, "public", "src", "screens", "remote-access.jsx"));
     const devices = Object.values(vm.runInContext("DEVICE_RA", screen) as Record<string, DeviceWords>);
     const cn = CA_CN_LINE.exec(shell)?.[1] ?? "no CN line in the CA config";
 
     const steps = devices.flatMap((device) => [...device.steps]);
-    const paths = steps.flatMap((step) => (step.kind === "fingerprint" && step.path ? [step.path] : []));
+    // the installer's path ends at the phone's installer, before any certificate exists there
+    const paths = steps.flatMap((step) => (step.kind !== "installer" && step.path ? [step.path] : []));
+    const compares = steps.filter((step) => step.kind === "fingerprint" && step.path);
     const downloads = steps.flatMap((step) => (typeof step.line === "object" ? [step.line.download] : []));
     const unnamed = [...paths.filter((line) => !line.endsWith(` › ${cn}`)), ...downloads.filter((line) => !line.includes(`“${cn}”`))];
     // null → the device saves the served name
     const fileNames = devices.map((device) => device.fileName ?? CA_DOWNLOAD.FILE_NAME);
 
-    assert.ok(paths.length === devices.length && downloads.length === devices.length, "every device's step table was read");
+    assert.ok(compares.length === devices.length && downloads.length === devices.length, "every device's step table was read");
     assert.deepEqual([fileNames, unnamed], [[`${cn}.pem`, `${cn}.cer`], []]);
   });
 
