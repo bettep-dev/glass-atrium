@@ -3150,12 +3150,12 @@ async function putRelayRedactionQ(copies) {
 	return answers;
 }
 
-// 409 already_redacted → that copy is done (first wins on the server); some copies left → the count and the ask to press again
+// 409 already_redacted → that copy is done (first wins on the server); some copies left → the count and the ask to press again; the slot draws the glyph
 function getRedactionOutcomeQ(answers) {
 	const failed = answers.filter((answer) => !isOkAnswerQ(answer) && answer.data?.error !== "already_redacted");
 	if (failed.length === 0) return { error: null };
-	if (failed.length < answers.length) return { error: `✕ ${failed.length} of ${answers.length} copies ${failed.length === 1 ? "was" : "were"} not redacted. Redact text again.` };
-	return { error: getOutageStepQ(failed[0]) ?? `✕ Refused: ${getAnswerDetailQ(failed[0])}.` };
+	if (failed.length < answers.length) return { error: `${failed.length} of ${answers.length} copies ${failed.length === 1 ? "was" : "were"} not redacted. Redact text again.` };
+	return { error: getOutageStepQ(failed[0]) ?? `Refused: ${getAnswerDetailQ(failed[0])}.` };
 }
 
 // `aidl → yoaida and sixmon`
@@ -3165,7 +3165,7 @@ function getRelayPairQ(entry) {
 
 /** The confirmation over the drawer: no outside close, focus on Cancel, the commit last; the error slot holds its line. */
 function RedactConfirmQ({ redaction }) {
-	const { DetailSurface } = window.UI;
+	const { DetailSurface, TONE_GLYPH } = window.UI;
 	const { target, isBusy } = redaction;
 	const cancelRef = useRefQ(null);
 	// the surface opens on its panel → focus moved on after its mount effect, so the dialog is entered on Cancel (spec §9.9)
@@ -3180,7 +3180,9 @@ function RedactConfirmQ({ redaction }) {
 	return (
 		<DetailSurface open variant="confirm" suppressOutsideClose onClose={isBusy ? () => undefined : redaction.cancel} title="Redact this relay's text?" footer={footer}>
 			<p className="fs-body text-dim">{`The text ${getSenderNameQ(target.item.relay.sender)} sent to ${names} is replaced by a fixed marker in the record, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
-			<p role="alert" className="fs-meta queue-relay-error">{redaction.error ?? ""}</p>
+			<p role="alert" className="fs-meta queue-relay-error">
+				{redaction.error !== null && <><span aria-hidden="true" className="text-crit">{`${TONE_GLYPH.crit} `}</span>{redaction.error}</>}
+			</p>
 		</DetailSurface>
 	);
 }

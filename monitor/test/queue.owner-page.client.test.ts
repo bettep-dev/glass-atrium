@@ -706,14 +706,29 @@ describe("relay history", () => {
   const outcomes = [
     { name: "every copy taken is done", answers: [{ status: 200, data: { ok: true } }, { status: 200, data: { ok: true } }], error: null },
     { name: "a copy already redacted counts as done", answers: [{ status: 409, data: { error: "already_redacted" } }, { status: 200, data: { ok: true } }], error: null },
-    { name: "some copies left says how many and asks again", answers: [{ status: 200, data: { ok: true } }, { status: 200, data: { ok: true } }, { status: 503, data: { error: "database_unavailable" } }], error: "✕ 1 of 3 copies was not redacted. Redact text again." },
-    { name: "every copy refused names the server's reason", answers: [{ status: 409, data: { error: "wrong_kind" } }], error: "✕ Refused: HTTP 409 wrong_kind." },
+    { name: "some copies left says how many and asks again", answers: [{ status: 200, data: { ok: true } }, { status: 200, data: { ok: true } }, { status: 503, data: { error: "database_unavailable" } }], error: "1 of 3 copies was not redacted. Redact text again." },
+    { name: "every copy refused names the server's reason", answers: [{ status: 409, data: { error: "wrong_kind" } }], error: "Refused: HTTP 409 wrong_kind." },
   ];
   for (const row of outcomes) {
     test(`redaction outcome: ${row.name}`, () => {
       assert.equal(call<{ error: string | null }>("getRedactionOutcomeQ", row.answers).error, row.error);
     });
   }
+
+  test("the dialog's error slot draws its cross in the crit tone before the words, as every other cross on the relay views", () => {
+    const copies = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const slot = (error: string | null) => {
+      const redaction = { target: { id: copies[0]!.id, item: copies[0], copies }, isBusy: false, error, ask: () => undefined, cancel: () => undefined, confirm: () => undefined };
+      const [alert] = findNodes(render("RedactConfirmQ", { redaction }), (node) => node.props?.role === "alert");
+      const glyphs = findNodes(alert!, (node) => node.props?.["aria-hidden"] === "true").map((node) => [node.props.className, collectText(node)]);
+      return { glyphs, text: flat(alert!) };
+    };
+
+    assert.deepEqual([slot("1 of 2 copies was not redacted. Redact text again."), slot(null)], [
+      { glyphs: [["text-crit", "✕ "]], text: "✕ 1 of 2 copies was not redacted. Redact text again." },
+      { glyphs: [], text: "" },
+    ]);
+  });
 
   const buttons = [
     { name: "a record with any relay or refusal shows the button", hasRecord: true, count: 1 },
