@@ -1634,7 +1634,7 @@ record_file() {
   }
   stop_stub
   set_nth_reply 1 200 '{"result":"first"}'
-  set_reply 200 "$(jq -nc --arg s "${SESSION_ID}" '{id: 30, kind: "relay", sessionId: $s, status: "delivered"}')"
+  set_reply 200 "$(jq -nc --arg s "${SESSION_ID}" '{id: 30, kind: "relay", source: "peer", sessionId: $s, status: "delivered"}')"
   start_stub
   run_cli ack 30 "${MSG_ID}"
   [[ "${status}" -eq 0 && "${output}" != first && "${output}" == first*"peer"* ]] || {

@@ -413,7 +413,7 @@ queue_claim_item() {
   }
   result="$(jq -r '.result' <<<"${ack}")"
   jq -c --argjson id "$1" --arg msg "$2" --arg result "${result}" '{$id, msgId: $msg,
-    source: (if .item.kind == "relay" then "peer" else "owner" end), provenance, isFirst: ($result == "first")}
+    source: (if .item.source == "peer" then "peer" else "owner" end), provenance, isFirst: ($result == "first")}
     + if $result == "first" then {item, images, hiddenImageCount} else {status: .item.status} end' <<<"${fetched}"
 }
 
