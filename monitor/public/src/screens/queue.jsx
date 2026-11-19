@@ -1989,7 +1989,7 @@ function getDatedTimeQ(iso) {
 
 // a done item's delivery lines (receipt, pull, not received) belong to In delivery → its sheet keeps the answer record alone
 function SheetBodyQ({ item, copies = [item], draft, onDraft, cliPath, isDone = false }) {
-	const isAnsweredDecision = item.kind === "decision" && item.status !== "open";
+	const isAnsweredDecision = item.kind === "decision" && Boolean(item.answeredAt);
 	return (
 		<div className="queue-sheet-body">
 			<p className="queue-date-line">

@@ -1301,6 +1301,7 @@ describe("done items", () => {
   const sheets = [
     { name: "an answered decision shows its answer, its foot the answer and its end", item: doneDecision(), kind: "Decision", foot: "Answer R1 · 2026-11-19 14:30 KST", hasAnswer: true },
     { name: "a read report shows its text, its foot Read and its end", item: doneReport(), kind: "Report", foot: "Read · 2026-11-19 14:30 KST", hasAnswer: false },
+    { name: "a decision withdrawn before any answer shows its question, no answer, its foot Withdrawn and its end", item: doneDecision({ status: "withdrawn", answer: null, answeredAt: null, answerRecord: null }), kind: "Decision", foot: "Withdrawn · 2026-11-19 14:30 KST", hasAnswer: false },
   ];
   for (const row of sheets) {
     test(`the done sheet: ${row.name}`, () => {
