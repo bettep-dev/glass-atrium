@@ -304,22 +304,27 @@ function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
 	const { TypeScaleStyle } = window.UI;
 	const [dialog, setDialog] = useSRA(null);
 	const [check, setCheck] = useSRA({ act: null, error: null });
+	// the read in flight, on a ref → two calls before the next render still start one read, so a commit is never released early
+	const isReadingRef = useRRA(false);
 	const data = read.data;
 	const view = data ? getViewRA(data.setup) : null;
 	// isReread → the open confirm's own read after a refusal: a confirm cancelled meanwhile stays closed, one it cannot show again closes with E-16
 	const onWiden = (act, isReread = false) => {
-		if (check.act !== null) return;
+		if (isReadingRef.current) return;
+		isReadingRef.current = true;
 		setCheck({ act, error: null });
 		// a first read lands only on a page with no confirm, a re-read only in its own act's → never under a press meant for another confirm
 		const isOwnDialog = (open) => (isReread ? open?.act === act : open === null);
 		readConfirmNetworkRA().then(
 			(network) => {
+				isReadingRef.current = false;
 				const canConfirm = network.router !== null && !(act === "trust" && network.isNetworkTrusted);
 				setCheck({ act: null, error: !canConfirm && isReread ? { act, text: NETWORK_ERROR_RA.reread } : null });
 				setDialog((open) => (isOwnDialog(open) ? (canConfirm ? { act, network } : null) : open));
 				if (!canConfirm) onReload();
 			},
 			(error) => {
+				isReadingRef.current = false;
 				setDialog((open) => (isOwnDialog(open) ? null : open));
 				setCheck({ act: null, error: { act, text: NETWORK_ERROR_RA[isReread ? "reread" : "unread"], detail: error.message } });
 			},
@@ -327,7 +332,7 @@ function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
 	};
 	// held while a network read runs → its confirm never opens in their place
 	const onEnd = (act) => {
-		if (check.act === null) setDialog({ act });
+		if (!isReadingRef.current) setDialog({ act });
 	};
 	// the confirm closes on an answer that may have written → its words stay on the page over a fresh read
 	const onMaybeWritten = (error) => {

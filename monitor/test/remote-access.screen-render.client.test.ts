@@ -729,8 +729,19 @@ describe("a network read never puts a widening confirm where another confirm was
       await new Promise((resolve) => setImmediate(resolve));
     };
     const getTitle = () => findNodes(render(), (node) => node.type === "DetailSurface")[0]?.props.title;
-    return { sent, press, getTitle, release: (answer: Answer) => release(answer) };
+    return { sent, render, press, getTitle, release: (answer: Answer) => release(answer) };
   }
+
+  test("two presses read from one render start one network read", async () => {
+    const page = await mountHeld();
+    const trust = findNodes(page.render(), (node) => node.type === "button" && collectText(node).trim() === "Trust this network")[0];
+
+    (trust.props.onClick as () => void)();
+    (trust.props.onClick as () => void)();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(page.sent, [`GET ${REMOTE_ADMIN_PATH.CONFIRM_NETWORK}`]);
+  });
 
   for (const opener of ["Turn off", "Remove all"]) {
     test(`${opener} opens nothing while a trust's network read runs`, async () => {
