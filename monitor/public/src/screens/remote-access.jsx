@@ -440,8 +440,8 @@ function OffCardRA({ setup, foot, error }) {
 	const { Card, EmptyState } = window.UI;
 	return (
 		<Card foot={foot}>
-			<EmptyState message={getOffLineRA(setup)} />
-			{error && <ActErrorRA error={error} />}
+			{/* the action slot → under the off line at --gap-label, on its column */}
+			<EmptyState message={getOffLineRA(setup)} action={error && <ActErrorRA error={error} />} />
 		</Card>
 	);
 }
@@ -449,7 +449,7 @@ function OffCardRA({ setup, foot, error }) {
 function AttentionRA({ row, isChecking, error, onTrust }) {
 	const { AlertCard } = window.UI;
 	const trust = row.canTrust && (
-		<button type="button" className="btn primary" aria-busy={isChecking || undefined} onClick={onTrust}>
+		<button type="button" className="btn primary sm" aria-busy={isChecking || undefined} onClick={onTrust}>
 			{isChecking ? CHECKING_LABEL_RA : "Trust this network"}
 		</button>
 	);

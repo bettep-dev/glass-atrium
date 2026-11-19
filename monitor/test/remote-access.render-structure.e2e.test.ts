@@ -43,6 +43,8 @@ interface RenderContext {
 /** Scripted answers, each used once in order, before the defaults: network reads, then access acts. */
 interface ScriptedAnswers {
   readonly networks?: Array<Record<string, unknown>>;
+  /** every network read fails → the unread-network line */
+  readonly isNetworkUnreadable?: boolean;
   readonly acts?: Array<{ readonly status: number; readonly body: unknown }>;
 }
 
@@ -52,7 +54,9 @@ async function openRenderContext(setup: Record<string, unknown>, devices: unknow
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   app.get(REMOTE_ADMIN_PATH.SETUP, async () => setup);
   app.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ devices }));
-  app.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, async () => answers.networks?.shift() ?? { router: ROUTER, link: "wifi", isNetworkTrusted: false });
+  app.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, async (_request, reply) => (answers.isNetworkUnreadable
+    ? reply.code(500).send({ error: "internal" })
+    : answers.networks?.shift() ?? { router: ROUTER, link: "wifi", isNetworkTrusted: false }));
   app.get(REMOTE_ADMIN_PATH.CERTIFICATE, async (_request, reply) => reply.code(404).send({ error: "certificate_unavailable" }));
   app.post("/api/remote/*", async (request, reply) => {
     acts.push(request.url);
@@ -94,6 +98,36 @@ describe("remote access off at 1440px, the turn-on confirm", () => {
     assert.equal(focused, "Cancel");
     assert.equal(hasRouter, true);
     assert.deepEqual(ctx.acts, []);
+  });
+});
+
+describe("remote access off at 1440px, a turn-on whose network cannot be read", () => {
+  let ctx: RenderContext;
+  before(async () => { ctx = await openRenderContext(SETUP_OFF, [], { isNetworkUnreadable: true }); });
+  after(async () => closeRenderContext(ctx));
+
+  test("the unread-network line stands under the off line at the label gap, on the off line's column", async () => {
+    await ctx.page.getByRole("button", { name: "Turn on" }).click();
+    await ctx.page.getByRole("alert").waitFor({ timeout: WAIT_TIMEOUT_MS });
+
+    // anonymous callbacks only: the test transform names a const-bound function with a helper the page lacks
+    const at = await ctx.page.evaluate(() => {
+      const alert = document.querySelector("[role=alert]");
+      const card = alert?.closest(".card");
+      // the innermost box holding the off line
+      const line = [...(card?.querySelectorAll("div") ?? [])].filter((el) => el.textContent?.startsWith("Turn on to use this monitor")).at(-1);
+      const textBoxes = [line, alert?.querySelector("p")].map((el) => {
+        if (!el) return null;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        return range.getBoundingClientRect();
+      });
+      const gapLabel = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap-label"));
+      // gap between the two blocks' boxes, the column from their text
+      return { gap: Math.round((alert?.getBoundingClientRect().top ?? Number.NaN) - (line?.getBoundingClientRect().bottom ?? Number.NaN)), gapLabel, sameColumn: textBoxes[0]?.left === textBoxes[1]?.left };
+    });
+
+    assert.deepEqual(at, { gap: at.gapLabel, gapLabel: at.gapLabel, sameColumn: true });
   });
 });
 

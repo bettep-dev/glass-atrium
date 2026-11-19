@@ -211,6 +211,15 @@ describe("each state shows its own words, and the on/off act sits on the title l
     });
   }
 
+  test("closed on this network, Trust this network is the page's one primary, at the small control size", async () => {
+    const { mod } = await loadScreen();
+
+    const { tree } = renderPage(mod as Mod, ready({ ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false, isAnswering: false, trustedCount: 1 }, DEVICES));
+
+    const primaries = findNodes(tree, (node) => node.type === "button" && String(node.props.className).split(/\s+/).includes("primary"));
+    assert.deepEqual(primaries.map((node) => ({ name: collectText(node).trim(), isSmall: String(node.props.className).split(/\s+/).includes("sm") })), [{ name: "Trust this network", isSmall: true }]);
+  });
+
 });
 
 // a done row reads its ✓ glyph and the screen reader's "Done:", then its title
