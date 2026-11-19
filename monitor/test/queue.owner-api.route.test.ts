@@ -242,6 +242,18 @@ describe("answer record", () => {
     }
   });
 
+  test("a relay, answered by its sender on insert, is never flagged as answered outside in any state", async () => {
+    const [recipient, sender] = [await seedSession(), await seedSession()];
+    for (const status of ["answered", "delivering", "unacked", "held", "expired", "delivered", "withdrawn"] as const) {
+      const relayId = await seedItem(recipient, {
+        kind: "relay", fromSessionId: sender, relayHop: 0, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: "The relay suite is green.",
+        isFreeTextAllowed: false, status, relayClosedAt: status === "withdrawn" ? new Date() : null,
+      });
+      const detail = (await send("GET", `/api/queue/owner/items/${relayId}`)).json();
+      assert.deepEqual([detail.answerRecord, detail.isAnsweredOutside], [null, false], status);
+    }
+  });
+
   test("a report closed with Seen carries no answer and is never flagged as answered outside", async () => {
     const itemId = await seedItem(await seedSession());
     await send("POST", `/api/queue/owner/items/${itemId}/seen`);
@@ -309,6 +321,27 @@ describe("answer, reply, seen", () => {
     assert.equal((await send("POST", "/api/queue/owner/items/999999999999/seen")).statusCode, 404);
     assert.equal((await send("POST", "/api/queue/owner/items/abc/seen")).statusCode, 400);
     assert.equal((await send("GET", "/api/queue/owner/items/999999999999")).statusCode, 404);
+  });
+});
+
+describe("close time", () => {
+  test("an owner act that leaves open closes the item, at the answer time when it answers; one that stays open does not", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      { name: "answer", itemId: await seedDecision(sessionId), action: "answer", body: { code: "R1" }, closedAt: "answer" },
+      { name: "reply", itemId: await seedItem(sessionId), action: "reply", body: { text: "Merge it after the review." }, closedAt: "answer" },
+      { name: "Seen", itemId: await seedItem(sessionId), action: "seen", body: undefined, closedAt: "write" },
+      { name: "Later", itemId: await seedItem(sessionId), action: "later", body: undefined, closedAt: null },
+      { name: "a refused answer", itemId: await seedDecision(sessionId), action: "answer", body: { code: "R9" }, closedAt: null },
+    ] as const;
+    for (const row of rows) {
+      const sentAt = new Date();
+      await send("POST", `/api/queue/owner/items/${row.itemId}/${row.action}`, row.body);
+      const { closedAt, answeredAt } = await getItemRow(row.itemId);
+      const isAnswerTime = closedAt !== null && closedAt.getTime() === answeredAt?.getTime();
+      const isWriteTime = closedAt !== null && closedAt >= sentAt && closedAt <= new Date();
+      assert.deepEqual([isAnswerTime, isWriteTime], [row.closedAt === "answer", row.closedAt !== null], row.name);
+    }
   });
 });
 
@@ -421,19 +454,23 @@ describe("list and item detail", () => {
     assert.equal((await send("GET", "/api/queue/owner/items?colour=red")).statusCode, 400);
   });
 
-  test("the list carries no relay, one on its way included, while the relay history does", async () => {
-    const [recipient, sender] = [await seedSession(), await seedSession()];
-    const orderId = await seedItem(recipient);
-    const relayId = await seedItem(recipient, {
+  test("the list carries a relay while it is on its way to its recipient, never once delivered, lapsed or redacted", async () => {
+    const [recipient, sender] = [await seedSession(), await seedSession({ name: "relay sender" })];
+    const sentAt = new Date(Date.now() - 60_000);
+    const seedRelay = (overrides: Partial<Prisma.QueueItemUncheckedCreateInput>) => seedItem(recipient, {
       kind: "relay", fromSessionId: sender, relayHop: 0, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: "The relay suite is green.",
-      isFreeTextAllowed: false, status: "answered", askedAt: new Date(Date.now() - 60_000),
+      isFreeTextAllowed: false, status: "answered", askedAt: sentAt, ...overrides,
     });
+    const orderId = await seedItem(recipient);
+    const onItsWay = { notFetched: await seedRelay({}), unackedFetched: await seedRelay({ status: "unacked", relayFetchedAt: sentAt }) };
+    await seedRelay({ status: "delivered", deliveredAt: sentAt, relayFetchedAt: sentAt });
+    await seedRelay({ status: "withdrawn", relayClosedAt: sentAt });
+    await seedRelay({ relayRedactedAt: sentAt, relayRedactedLength: 25, title: RELAY_REDACTION_MARKER, body: RELAY_REDACTION_MARKER });
 
-    const list = await send("GET", `/api/queue/owner/items?sessionId=${recipient}`);
-    const history = await send("GET", `/api/queue/owner/orders?kind=relay&sessionIds=${recipient}`, undefined, { headers: {} });
+    const items = (await send("GET", `/api/queue/owner/items?sessionId=${recipient}`)).json().items as Array<{ id: number; relay: { sender: { sessionIdPrefix: string } } | null }>;
 
-    assert.deepEqual((list.json().items as Array<{ id: number }>).map((item) => item.id), [Number(orderId)]);
-    assert.deepEqual((history.json().items as Array<{ id: number }>).map((item) => item.id), [Number(relayId)]);
+    assert.deepEqual(items.map((item) => item.id), [orderId, onItsWay.notFetched, onItsWay.unackedFetched].map(Number));
+    assert.deepEqual(items.map((item) => item.relay?.sender.sessionIdPrefix ?? null), [null, sender.slice(0, 8), sender.slice(0, 8)], "listed in the relay's own view");
   });
 
   test("paging with nextCursor returns every awaiting item exactly once, in queue order", async () => {
@@ -878,6 +915,23 @@ describe("order history", () => {
     assert.deepEqual(pages, [[...expected[0]!, ...expected[1]!], [...expected[2]!, ...expected[3]!], [...expected[4]!, ...expected[5]!]]);
   });
 
+  test("leaves out the orders, replied reports and relays of a session that registered again as a probe", async () => {
+    const [kept, probe] = [await seedSession(), await seedSession()];
+    const sendId = randomUUID();
+    const keptCopy = await seedMessage(kept, minutesAgo(30), { sendId });
+    await seedMessage(probe, minutesAgo(30), { sendId });
+    await seedReply(probe, minutesAgo(20), "delivered");
+    const relay = { kind: "relay" as const, fromSessionId: kept, relayHop: 0, sendId: randomUUID(), isFreeTextAllowed: false, status: "answered" as const };
+    await seedItem(probe, relay);
+    await getPrisma().queueSession.update({ where: { sessionId: probe }, data: { isProbe: true } });
+
+    const orders = await getOrders(`sessionIds=${kept},${probe}`);
+    const relays = await getOrders(`kind=relay&sessionIds=${kept},${probe}`);
+
+    assert.deepEqual(orders.json().items.map((item: { id: number }) => item.id), [Number(keptCopy)], "order thread");
+    assert.deepEqual(relays.json().items, [], "relay thread");
+  });
+
   test("refuses a malformed session list, limit or cursor", async () => {
     const rows = [
       { name: "a session id that is no uuid", query: "sessionIds=not-a-uuid" },
@@ -886,6 +940,8 @@ describe("order history", () => {
       { name: "a cursor of another shape", query: "before=12" },
       { name: "an unknown key", query: "status=delivered" },
       { name: "an item kind with no history", query: "kind=decision" },
+      { name: "a profile filter on the order thread", query: "profile=default" },
+      { name: "a profile filter on the relay thread", query: "kind=relay&profile=default" },
     ];
     for (const row of rows) {
       const response = await getOrders(row.query);
@@ -1042,6 +1098,80 @@ describe("relay history", () => {
     assert.equal(stored.length, cap + 1);
     assert.deepEqual(page.refusals.map((refusal) => refusal.at), stored.slice(0, cap).map((row) => row.eventTs.toISOString()));
     assert.equal(page.isRefusalListCut, true);
+  });
+});
+
+describe("done items", () => {
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+  const getDone = (query: string) => send("GET", `/api/queue/owner/orders?kind=item&${query}`, undefined, { headers: {} });
+  const getIdTimes = (response: LightMyRequestResponse) =>
+    (response.json().items as Array<{ id: number; closedAt: string | null }>).map((item) => [item.id, item.closedAt]);
+
+  test("lists decisions and reports no longer open, newest close time first, with no order and no probe session's item", async () => {
+    const [mine, probe] = [await seedSession(), await seedSession({ isProbe: true })];
+    const answeredAt = { decision: minutesAgo(10), reply: minutesAgo(20) };
+    const closedAt = { withdrawn: minutesAgo(30), seen: minutesAgo(40) };
+    const ids = {
+      answeredDecision: await seedDecision(mine, { status: "answered", answerCode: "R1", answeredAt: answeredAt.decision, answerRoute: "answer", answerSignal: "fetch_metadata" }),
+      repliedReport: await seedItem(mine, { status: "delivered", answerText: "Ship it after the rebase.", answeredAt: answeredAt.reply, answerRoute: "reply", answerSignal: "fetch_metadata" }),
+      withdrawnDecision: await seedDecision(mine, { status: "withdrawn", closedAt: closedAt.withdrawn }),
+      seenReport: await seedItem(mine, { status: "seen", closedAt: closedAt.seen }),
+    };
+    await seedItem(mine);
+    await seedItem(mine, { kind: "message", title: "Rebase onto main.", body: "Rebase onto main.", isFreeTextAllowed: false, status: "delivered", answeredAt: minutesAgo(5), answerRoute: "message", answerSignal: "fetch_metadata" });
+    await seedItem(probe, { status: "seen", closedAt: minutesAgo(5) });
+
+    const response = await getDone(`sessionIds=${mine},${probe}`);
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(getIdTimes(response), [
+      [Number(ids.answeredDecision), answeredAt.decision.toISOString()],
+      [Number(ids.repliedReport), answeredAt.reply.toISOString()],
+      [Number(ids.withdrawnDecision), closedAt.withdrawn.toISOString()],
+      [Number(ids.seenReport), closedAt.seen.toISOString()],
+    ]);
+  });
+
+  test("the profile filter keeps only the items of that account's sessions", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const [work, personal] = [await seedSession({ profileLabel: `.claude-work-${suffix}` }), await seedSession({ profileLabel: `.claude-personal-${suffix}` })];
+    const workItemId = await seedItem(work, { status: "seen" });
+    await seedItem(personal, { status: "seen" });
+
+    const response = await getDone(`profile=${encodeURIComponent(`.claude-work-${suffix}`)}`);
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().items.map((item: { id: number }) => item.id), [Number(workItemId)]);
+  });
+
+  test("paging by cursor returns every item once, newest close time first, an equal time broken by the higher id", async () => {
+    const sessionId = await seedSession();
+    const tie = minutesAgo(40);
+    const seeded: Array<{ id: bigint; closedAt: Date }> = [];
+    for (const closedAt of [minutesAgo(50), tie, tie, minutesAgo(30), minutesAgo(20)]) {
+      seeded.push({ id: await seedItem(sessionId, { status: "seen", closedAt }), closedAt });
+    }
+
+    const pages: number[][] = [];
+    let query = `sessionIds=${sessionId}&limit=2`;
+    for (let round = 0; round < 10; round += 1) {
+      const page = (await getDone(query)).json() as { items: Array<{ id: number }>; nextCursor: string | null };
+      pages.push(page.items.map((item) => item.id));
+      if (page.nextCursor === null) break;
+      query = `sessionIds=${sessionId}&limit=2&before=${encodeURIComponent(page.nextCursor)}`;
+    }
+
+    const newestFirst = [...seeded].sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime() || Number(b.id - a.id)).map((item) => Number(item.id));
+    assert.deepEqual(pages, [newestFirst.slice(0, 2), newestFirst.slice(2, 4), newestFirst.slice(4)]);
+  });
+
+  test("a done page carries no relay refusal records", async () => {
+    const sessionId = await seedSession();
+    await seedItem(sessionId, { status: "seen" });
+
+    const response = await getDone(`sessionIds=${sessionId}`);
+
+    assert.deepEqual(Object.keys(response.json()).sort(), ["items", "nextCursor"]);
   });
 });
 

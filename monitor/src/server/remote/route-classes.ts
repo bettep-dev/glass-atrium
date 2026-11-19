@@ -56,6 +56,10 @@ const FRAGMENT_READ_CID = "2026-11-19T1520_steps-finish_d9a2";
 const BUILT_READ_CID = "2026-11-19T1640_steps-close_a1c7";
 // the merged 119-row table signed with the fragment-read sign-in.js reason (merged-signoffs-verdict.md): no row changed
 const FULL_TABLE_CID = "2026-11-19T1755_deploy70-prep_f1a8";
+// the orders reason re-signed in place for the item thread (history-route-verdict.md): route, class and order kept → same digest
+const ITEM_THREAD_CID = "2026-11-19T2050_queue-tidy_d81b";
+// the owner-list and orders reasons re-signed in place for the relay row (relay-row-verdict.md): route, class and order kept → same digest
+const RELAY_ROW_CID = "2026-11-19T2050_queue-tidy_d81b";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -393,6 +397,81 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     ],
     rowCount: 119,
     sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6",
+    supersededBy: ITEM_THREAD_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S2",
+    // every row of the entry before it carried unchanged, its conditions included; the GET /api/queue/owner/orders reason re-signed for the item thread
+    // the order and relay clauses carried from the earlier sign-offs, except the sender directory tail, read in owner-views.ts → toRelaySender
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // C1 the item thread keeps owner-views.ts → NOT_PROBE_ITEM_FILTER
+    // C2 schemas.ts → ORDER_PAGE_LIMIT.MAX stays at most 100; no decision or report write sets a send id (only owner-sessions.ts → createMessages and relay.ts make one)
+    // C3 the item thread returns the view built by owner-views.ts → toView, shared with the owner list → a field added for this thread only needs a new sign-off
+    // C4 the route writes nothing
+    cids: [
+      ITEM_THREAD_CID,
+      FULL_TABLE_CID,
+      FRAGMENT_READ_CID,
+      BUILT_READ_CID,
+      MERGE_CID,
+      UNCONDITIONAL_CID,
+      SIGN_LAST_CID,
+      RELAY_ROWS_CID,
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 119,
+    sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6",
+    supersededBy: RELAY_ROW_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S2",
+    // every row of the entry before it carried unchanged in route, class and order; C1-C4 of the item-thread entry carried
+    // the GET /api/queue/owner/items reason re-signed for the relay row; the GET /api/queue/owner/orders reason re-signed for the probe filter on every thread (narrowing only)
+    // read at this sign-off: owner-views.ts → getOwnerItems, toView, getRelayFacts, toRelaySender, toSessionView, getOrderCopyRows; relay.ts whole; registry.ts → TERMINAL
+    // conditions of this sign-off — a change that breaks one needs a new sign-off:
+    // Q1 getOwnerItems keeps relayRedactedAt: null and session: { isProbe: false }
+    // Q2 the list returns the view built by toView, shared with the relay thread, and that view carries no transcript path → a relay field added for the list only needs a new sign-off
+    // Q3 the orders route stays class page and its relay thread keeps returning every relay to a non-probe recipient in every state → narrowing it voids the "nothing the thread does not return" clause
+    // Q4 open, not read: the page script's open-list rendering of a relay row (peer-written text, self-declared name) against R5 (text only, never markup, name labelled self-declared)
+    // carried, not re-read: the route handler and query schema (limit 1-200, the installed CLI path), remote/gate.ts (same reader for both page rows), commits f18c790e, 54c7aacf, 25bc6c2e and the builder's before-state claim
+    cids: [
+      RELAY_ROW_CID,
+      ITEM_THREAD_CID,
+      FULL_TABLE_CID,
+      FRAGMENT_READ_CID,
+      BUILT_READ_CID,
+      MERGE_CID,
+      UNCONDITIONAL_CID,
+      SIGN_LAST_CID,
+      RELAY_ROWS_CID,
+      CLOSE_CID,
+      ONBOARDING_CID,
+      OWNER_ROWS_CID,
+      PENDING_COUNT_CID,
+      DEVICES_RESIGN_CID,
+      RESIGN_CID,
+      "2026-11-15T0215_lan-unread-writes_a2f7",
+      "2026-11-15T0216_lan-unread-reads_d90b",
+      "2026-11-15T0240_lan-unread-reads-b_3fa6",
+      "2026-11-15T0241_lan-unread-reads-c_7b29",
+      "2026-11-14T1640_lan-route-classes_a93f",
+      "2026-11-14T2145_lan-cli-channel_5f0c",
+    ],
+    rowCount: 119,
+    sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6",
   },
 ];
 
@@ -478,10 +557,10 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/queue/pending", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; work function read: claims up to 20 of the named session's answered items per call, a wait poll refused unless the session is live for its pid; a remote caller could claim another session's answered items" },
   { route: "POST /api/queue/items/:id/ack", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
   { route: "POST /api/queue/items/:id/withdraw", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
-  { route: "GET /api/queue/owner/items", cls: "page", reason: "page calls it; handler read: profile, session id, cursor and limit 1-200 validated and bound; returns each non-terminal item's title, body, options, the owner's answer text, image views and resume records, its session's full id and 8-character id prefix, absolute working and config directories and permission hint, plus the installed CLI path; an undelivered relay is listed too, with its peer-written text (the fixed marker once redacted), hop, parent relay id and send time, sender and parent-sender id prefix, profile label and self-declared name, no deviation and no Resend" },
+  { route: "GET /api/queue/owner/items", cls: "page", reason: "page calls it; handler read: profile, session id, cursor and limit 1-200 validated and bound; returns each non-terminal item of a non-probe session - title, body, options, the owner's answer text, image views and resume records, its session's full id and 8-character id prefix, absolute working and config directories and permission hint, plus the installed CLI path; a relay copy is listed while it is neither terminal nor redacted, in the same view as the relay thread of GET /api/queue/owner/orders - its peer-written text, hop, parent relay id and send time, sender and parent-sender id prefix, profile label, self-declared name and directory tail, the recipient's first fetch time and the lapse time as stored, no deviation and no Resend; a redacted relay is never listed, so no marker and no redaction fact is returned here; no relay row and no relay field the relay thread does not return" },
   { route: "GET /api/queue/owner/items/:id", cls: "agent", reason: "page call site not shown to this sign-off, so not a page function; handler read: integer id and empty query schema; returns one item's full owner view in any state — the same fields as the owner list, relay text and relay facts included; writes nothing — page only by a new sign-off that names the page call site" },
   { route: "GET /api/queue/owner/resumes", cls: "page", reason: "page calls it; handler read: limit 1-50 is the only input; returns the newest resume deliveries with attempt, result, abort reason and background id, each item's id and title, the session's profile label and directory tail" },
-  { route: "GET /api/queue/owner/orders", cls: "page", reason: "page calls it; handler read: query schema-validated and every value bound (kind order or relay, session filter, cursor, limit; schema file not opened); returns every copy of each paged send in every state as the full owner item view — title and body (an owner message, or for kind relay a peer-written relay text, the fixed marker once redacted), answer text, image views, resume records, the recipient session's full id, absolute working and config directories and permission hint; a relay adds hop, parent relay id and send time, sender and parent-sender id prefix, profile label and self-declared name, fetch, redaction and lapse times; kind relay adds at most 100 refusal records per page (time, reason code, sender and recipient id prefixes, unresolved count, no text); writes nothing" },
+  { route: "GET /api/queue/owner/orders", cls: "page", reason: "page calls it (the item thread's page call site not opened at this sign-off); handler and schema read: strict query, every value bound (kind order, relay or item; 1-200 session ids; one profile label, item thread only; cursor; limit 1-100, default 30); kind order and relay return every copy of each paged send in every state, a copy to a probe session left out and a send whose every copy went to probe sessions left out whole as the full owner item view — title and body (an owner message, or for kind relay a peer-written relay text, the fixed marker once redacted), answer text, image views, resume records, the recipient session's full id, absolute working and config directories and permission hint; a relay adds hop, parent relay id and send time, sender and parent-sender id prefix, profile label, self-declared name and directory tail, fetch, redaction and lapse times; kind relay adds at most 100 refusal records per page (time, reason code, sender and recipient id prefixes, unresolved count, no text); kind item returns each decision and report in every state but open, withdrawn ones included, of any age, in the same view — title, body, options, the owner's answer code and text, how the answer was made, image views, resume records, the close time and the same session fields — one item per row (no decision or report write sets a send id), so at most 100 a page; a probe session's items left out of every thread; no refusal records there; no field the owner list does not return, but the list stops at delivered, seen and withdrawn and this thread does not; writes nothing" },
   { route: "POST /api/queue/owner/items/:id/answer", cls: "page", reason: "page function, high-impact kept page by owner decision: the answer counts as the owner's word, approvals included, and for an ended session the sweep starts a local claude process to deliver it; handlers read: option code R1-R9 and one of the item's own, free text only where the item allows it, at most 20000 chars, bound writes only; the resumed process takes its session id, directory and config directory from the registry row and a fixed text naming item and message ids, never the answer; page-origin stamp required and recorded" },
   { route: "POST /api/queue/owner/items/:id/reply", cls: "page", reason: "page function, high-impact kept page by owner decision: the reply counts as the owner's word and for an ended session the sweep starts a local claude process to deliver it; handlers read: open report that allows a reply, text at most 20000 chars, up to 8 image ids of unused uploads from the last day, bound writes only; no value reaches the resume command, directory, environment or text; page-origin stamp required and recorded" },
   { route: "GET /api/queue/owner/sessions", cls: "page", reason: "page calls it; handler read: optional profile filter bound, at most 200 rows; returns full session ids, names, profile labels, absolute working directories, state and exit reason, waiting flag, item counts and the resume marker time" },

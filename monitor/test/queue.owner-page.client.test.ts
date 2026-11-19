@@ -53,6 +53,10 @@ const screen = (await loadScreenModule(QUEUE_SRC, {
 const getPlain = <T>(value: T): T => (value === undefined ? value : JSON.parse(JSON.stringify(value)));
 const call = <T>(name: string, ...args: unknown[]): T => getPlain((screen[name] as (...a: unknown[]) => T)(...args));
 const render = (name: string, props: unknown): RenderedNode => renderScreen(screen.React.createElement(screen[name] as Component, props)) as RenderedNode;
+// spec §12.6: a sentence the page shows holds at most 12 words — a command or id counts as one, a lone mark (`·`, `/`, `+`) as none
+const SENTENCE_WORDS_MAX = 12;
+const getLongSentences = (texts: string[]) => texts.flatMap((text) => text.split(/(?<=[.?!])\s+/)).filter((sentence) => sentence.split(/\s+/).filter((word) => /[\p{L}\p{N}<]/u.test(word)).length > SENTENCE_WORDS_MAX);
+const getNoteText = (parts: Array<string | { machine: string }>) => parts.map((part) => (typeof part === "string" ? part : "<command>")).join("");
 
 const SESSION_ID = "6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42";
 const CLI_PATH = "/Volumes/tools/atrium/scripts/atrium-queue.sh";
@@ -262,14 +266,14 @@ describe("receipt words", () => {
     { name: "an expired order is not received", item: { status: "expired", deviation: "expired", canResend: true }, word: "Not received" },
     { name: "an order whose automatic resume is used is not received", item: { status: "resume_pending", deviation: "resume_pending", canResend: true }, word: "Not received" },
     { name: "an answer to a live session that listens is not yet received", item: { status: "answered", session: buildSession({ state: "live", isWaiting: true }) }, word: "Not yet" },
-    { name: "an answer to a live session that does not listen is not listening", item: { status: "answered", session: buildSession({ state: "live", isWaiting: false }) }, word: "Not listening" },
-    { name: "an answer to a not-reachable session that does not listen is not listening", item: { status: "answered", deviation: "session_not_reachable", session: buildSession({ state: "stale", isWaiting: false }) }, word: "Not listening" },
-    { name: "a held copy whose session does not listen is not listening", item: { status: "held", deviation: "held", session: buildSession({ state: "live", isWaiting: false }) }, word: "Not listening" },
+    { name: "an answer to a live session that does not listen waits for its next turn", item: { status: "answered", session: buildSession({ state: "live", isWaiting: false }) }, word: "Next turn" },
+    { name: "an answer to a not-reachable session is not reachable", item: { status: "answered", deviation: "session_not_reachable", session: buildSession({ state: "stale", isWaiting: false }) }, word: "Not reachable" },
+    { name: "a held copy whose session does not listen waits for its next turn", item: { status: "held", deviation: "held", session: buildSession({ state: "live", isWaiting: false }) }, word: "Next turn" },
     { name: "a copy being handed over stays not yet whatever its session's last poll", item: { status: "delivering", session: buildSession({ state: "live", isWaiting: false }) }, word: "Not yet" },
     { name: "an ended session's answer, which an automatic resume will start, stays not yet", item: { status: "answered", session: buildSession({ state: "exited", isWaiting: false }) }, word: "Not yet" },
-    { name: "a failure the queue recorded outranks not listening", item: { status: "unacked", deviation: "unacked", canResend: true, session: buildSession({ state: "live", isWaiting: false }) }, word: "Not received" },
+    { name: "a failure the queue recorded outranks a next turn", item: { status: "unacked", deviation: "unacked", canResend: true, session: buildSession({ state: "live", isWaiting: false }) }, word: "Not received" },
   ];
-  const WORDS = [/\bReceived\b/, /Not yet/, /Not listening/, /Not received/];
+  const WORDS = [/\bReceived\b/, /Not yet/, /Next turn/, /Not reachable/, /Not received/];
   for (const row of rows) {
     test(row.name, () => {
       const item = buildItem({ kind: "message", answeredAt: "2026-11-12T12:26:40.118Z", ...row.item });
@@ -280,7 +284,7 @@ describe("receipt words", () => {
 
   // spec §9.4: the same tag fill as Not yet, with a pause glyph before its word and the sentence in its title, never as visible text
   test("a not-listening receipt is the tag badge led by the solid pause glyph, its sentence in its title and for screen readers only", () => {
-    const tree = render("RowFactsQ", { facts: [call("getReceiptFactQ", "notListening")] });
+    const tree = render("RowFactsQ", { facts: [call("getReceiptFactQ", "nextTurn")] });
     const [badge] = findNodes(tree, (node) => node.props?.atom === "Badge");
     const [svg] = findNodes(badge as RenderedNode, (node) => node.type === "svg");
     // two bars filled in the badge's ink, no outline
@@ -289,7 +293,7 @@ describe("receipt words", () => {
     const [spoken] = findNodes(badge as RenderedNode, (node) => node.props?.className === "sr-only");
     assert.deepEqual(
       { fill: badge?.props.fill, title: badge?.props.title, glyph: bars.length, order: (badge?.children ?? []).map((child) => (typeof child === "string" ? child : (child.props?.atom ?? child.type))), spoken: collectText(spoken as RenderedNode) },
-      { fill: "tag", title: "Not listening — delivers at its next turn end or restart", glyph: 2, order: ["svg", "Not listening", "span"], spoken: ", delivers at its next turn end or restart" },
+      { fill: "tag", title: "Next turn — delivers at its next turn end or restart", glyph: 2, order: ["svg", "Next turn", "span"], spoken: ", delivers at its next turn end or restart" },
     );
   });
 
@@ -302,13 +306,14 @@ describe("receipt words", () => {
     }
   });
 
+  // spec §4.2, §9.4: the fact column reads received of sent; the tag column counts what is not plain waiting, worst first
   const rollUps = [
-    { name: "some copies received counts them", statuses: ["delivered", "answered", "delivering"], facts: ["1 of 3 received"] },
-    { name: "every copy waiting reads not yet", statuses: ["answered", "delivering", "held"], facts: ["Not yet"] },
-    { name: "a copy not received follows the count as its own warning", statuses: ["delivered", "unacked", "answered"], facts: ["1 of 3 received", "1 not received"] },
-    { name: "two copies whose sessions do not listen count them after the count", statuses: ["answered:deaf", "answered:deaf"], facts: ["0 of 2 received", "2 not listening"] },
-    { name: "a mixed order counts only the copy whose session does not listen", statuses: ["answered:listening", "answered:deaf"], facts: ["0 of 2 received", "1 not listening"] },
-    { name: "not listening stands before a recorded failure", statuses: ["delivered", "answered:deaf", "unacked"], facts: ["1 of 3 received", "1 not listening", "1 not received"] },
+    { name: "some copies received counts them", statuses: ["delivered", "answered", "delivering"], cells: { fact: "1 of 3", tags: [] } },
+    { name: "every copy waiting reads none received and draws no tag", statuses: ["answered", "delivering", "held"], cells: { fact: "0 of 3", tags: [] } },
+    { name: "a copy not received is counted in the tag column", statuses: ["delivered", "unacked", "answered"], cells: { fact: "1 of 3", tags: ["1 not received"] } },
+    { name: "two copies whose sessions do not listen are counted in the tag column", statuses: ["answered:deaf", "answered:deaf"], cells: { fact: "0 of 2", tags: ["2 next turn"] } },
+    { name: "a mixed order counts only the copy whose session does not listen", statuses: ["answered:listening", "answered:deaf"], cells: { fact: "0 of 2", tags: ["1 next turn"] } },
+    { name: "not received stands before next turn", statuses: ["delivered", "answered:deaf", "unacked"], cells: { fact: "1 of 3", tags: ["1 not received", "1 next turn"] } },
   ];
   // `status:deaf` → a live session that does not listen · `status:listening` → one that does · bare → an ended session
   const SESSION_OF: Record<string, Record<string, unknown>> = { deaf: { state: "live", isWaiting: false }, listening: { state: "live", isWaiting: true } };
@@ -318,8 +323,8 @@ describe("receipt words", () => {
         const [status, listen] = entry.split(":");
         return buildItem({ id: 90 + index, kind: "message", status, sendId: "send-1", answeredAt: "2026-11-12T12:26:40.118Z", session: buildSession({ id: randomUUID(), ...SESSION_OF[listen ?? ""] }) });
       });
-      const facts = call<Array<{ text: string }>>("getRowFactsQ", { item: copies[0], copies }, false).map((fact) => fact.text);
-      assert.deepEqual(facts, ["Order", ...row.facts]);
+      const cells = call<{ fact: string; tags: Array<{ word: string }> }>("getRowCellsQ", { item: copies[0], copies }, false);
+      assert.deepEqual({ fact: cells.fact, tags: cells.tags.map((tag) => tag.word) }, row.cells);
     });
   }
 });
@@ -334,7 +339,7 @@ describe("sheet state lines", () => {
     { name: "an ended session is resumed, so no line shows", status: "answered", session: { state: "exited", isWaiting: false }, isWaitNamed: false, isDeafNamed: false, hasCommand: false },
     { name: "an unanswered item has nothing to pull", status: "open", session: { state: "live", isWaiting: false }, isWaitNamed: false, isDeafNamed: false, hasCommand: false },
   ];
-  const DEAF_LINE = "glass-atrium is not listening: it gets this answer at its next turn end or restart.";
+  const DEAF_LINE = "glass-atrium gets this answer at its next turn. Restart it to deliver now.";
   for (const row of pullRows) {
     test(`pull line: ${row.name}`, () => {
       const text = collectText(render("CardStateQ", { item: buildItem({ status: row.status, session: buildSession(row.session) }), cliPath: CLI_PATH }));
@@ -371,10 +376,10 @@ describe("sheet state lines", () => {
     assert.doesNotMatch(text, /Answered|Replied|Sent as/);
   });
 
-  test("an approval-class decision's note slot says an approving answer approves the stated action once, with no terminal step", () => {
+  test("an approval-class decision's note slot says approving here approves the action once, with no terminal step", () => {
     const text = (item: unknown) => collectText(render("SheetFootQ", { item, draft: {}, queue: buildQueue().queue, isBusy: false, error: null }));
     const approval = text(buildItem({ isApprovalClass: true }));
-    assert.match(approval, /Approval: an approving answer here approves the stated action, once; glass-atrium does not ask again in its terminal\./);
+    assert.match(approval, /Approval: approving here approves the action once\. glass-atrium does not ask again in its terminal\./);
     assert.doesNotMatch(approval, /confirm once more/);
     assert.doesNotMatch(text(buildItem()), /Approval:/);
   });
@@ -384,17 +389,17 @@ describe("sheet precedence notes", () => {
   const occupant = { profileLabel: "personal", cwdTail: "wt/owner-queue", sessionIdPrefix: "9b2e7c41" };
   // a note's parts: a string is prose, { machine } renders through MachineString
   const markedLine = [
-    "waiting on personal · wt/owner-queue · ",
+    "Waiting on personal · wt/owner-queue · ",
     { machine: "9b2e7c41" },
-    ", whose automatic resume has not registered: this one waits until that session registers " +
-      "or is resumed in a terminal (see its card), and resumes automatically once that session has then ended",
+    ", whose resume has not registered. This one waits until that session registers or is resumed. It resumes by itself once that session ends.",
   ];
-  const generic = ["another session is live or resuming in this worktree: this one resumes automatically once that one has ended"];
+  const generic = ["another session is live or resuming in this worktree. This one resumes once it ends."];
   const capturedIdNote = [
-    "the resumed session may still be running in the background: under profile work-dev, check it with ",
+    "It may still run under profile work-dev. Check it: ",
     { machine: "claude logs bg-7f3a" },
-    ", and resume it yourself in a terminal only after ",
+    ". Resume it in a terminal only after ",
     { machine: "claude stop bg-7f3a" },
+    ".",
   ];
   const markedSession = (bgId: string | null, configDir: string | null = null) =>
     buildSession({ marker: { setAt: "2026-11-10T06:20:11.204Z", bgId }, configDir });
@@ -411,17 +416,15 @@ describe("sheet precedence notes", () => {
     },
     { name: "the captured-id marker form names the bg id and the profile", item: pending({ kind: "marker" }, { session: markedSession("bg-7f3a") }), expected: [capturedIdNote] },
     {
-      name: "the listing marker form names the cwd and the full session id",
+      name: "the listing marker form names the cwd",
       item: pending({ kind: "marker" }, { session: markedSession(null) }),
       expected: [
         [
-          "the resumed session may still be running in the background: under profile work-dev, check ",
+          "It may still run under profile work-dev. Find it: ",
           { machine: "claude agents --json --cwd /Users/owner/Desktop/git/glass-atrium" },
-          " for the entry of session ",
-          { machine: SESSION_ID },
-          ", and resume it yourself in a terminal only once that entry is no longer listed, or after ",
+          ". Resume it in a terminal once it is gone, or after ",
           { machine: "claude stop <id>" },
-          " with that entry's id",
+          ".",
         ],
       ],
     },
@@ -635,7 +638,7 @@ describe("relay history", () => {
 
   test("a passed-on relay names its parent on the hop line; a relay at hop 0 has none", () => {
     const [received, forwarded] = entries(render("RelayLogQ", { history: history({ refusals: [] }) }));
-    assert.match(flat(forwarded!), /Hop 1 · sent after aidl received relay #398 from atrium at 2026-11-12 12:00/);
+    assert.match(flat(forwarded!), /Hop 1 · after aidl received relay #398 from atrium at 2026-11-12 12:00/);
     assert.doesNotMatch(flat(received!), /Hop/);
   });
 
@@ -652,7 +655,7 @@ describe("relay history", () => {
     const tree = render("RelayLogQ", { history: history() });
     const all = entries(tree);
     assert.equal(all[2]?.props["aria-label"], "Refused relay from gersona to yoaida, 2026-11-13 12:00");
-    assert.match(flat(all[2]!), /✕ Refused Too many to one session — gersona sent to yoaida more often than the hourly limit allows\. → yoaida fa32c7cb$/);
+    assert.match(flat(all[2]!), /✕ Refused Too many to one session — gersona hit the hourly limit for yoaida\. → yoaida fa32c7cb$/);
     assert.equal(findNodes(all[2]!, (node) => node.props?.atom === "ProseText").length, 0);
   });
 
@@ -717,6 +720,14 @@ describe("relay history", () => {
       assert.equal(call<{ error: string | null }>("getRedactionOutcomeQ", row.answers).error, row.error);
     });
   }
+
+  // one recipient → `<names>` one word, as spec §12.6 counts it
+  test("the redaction dialog's sentence runs at most twelve words", () => {
+    const [copy] = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const redaction = { target: { id: copy!.id, item: copy, copies: [copy] }, isBusy: false, error: null, ask: () => undefined, cancel: () => undefined, confirm: () => undefined };
+    const texts = findNodes(render("RedactConfirmQ", { redaction }), (node) => node.type === "p" && node.props?.className === "fs-body text-dim").map((node) => collectText(node));
+    assert.deepEqual([texts.length, getLongSentences(texts)], [1, []]);
+  });
 
   test("the dialog's error slot draws its cross in the crit tone before the words, as every other cross on the relay views", () => {
     const copies = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
@@ -790,7 +801,7 @@ describe("relay history", () => {
     const [drawer] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
     assert.equal(reads, 1);
     assert.equal(drawer?.props.title, "Relay history");
-    assert.equal(flat(renderScreen(drawer?.props.footer) as RenderedNode), "Names are what sessions call themselves, and the queue has no login: any local process can send as any session, or redact. Read this as evidence, not proof.");
+    assert.equal(flat(renderScreen(drawer?.props.footer) as RenderedNode), "Names are self-declared, and the queue has no login. Any local process can send as any session, or redact. Read this as evidence, not proof.");
   });
 });
 
@@ -1034,24 +1045,36 @@ describe("queue filter bar", () => {
     return { bar, triggers, picks };
   };
 
-  // the rail's ticks are the session scope → the bar holds the Account axis alone (spec §4.1 → Filters)
+  // the rail's ticks are the session scope → the bar holds Status, then Account while it tells items apart (spec §4.1 → Bar)
   const rows = [
-    { name: "at defaults the Account trigger reads All and the reset stays hidden", filter: { profile: "" }, account: "All", isApplied: false },
-    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal" }, account: "personal", isApplied: true },
+    { name: "at defaults Status reads Open, Account All, and the reset stays hidden", filter: { profile: "", status: "" }, status: "Open", account: "All", isApplied: false },
+    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal", status: "" }, status: "Open", account: "personal", isApplied: true },
+    { name: "Status Done names Done and shows the reset", filter: { profile: "", status: "done" }, status: "Done", account: "All", isApplied: true },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const { bar, triggers } = renderBar(row.filter);
-      assert.deepEqual(Object.keys(triggers), ["Account"]);
-      assert.equal(triggers.Account?.value, row.account);
+      assert.deepEqual(Object.keys(triggers), ["Status", "Account"]);
+      assert.deepEqual([triggers.Status?.value, triggers.Account?.value], [row.status, row.account]);
       assert.equal(bar?.props.isApplied, row.isApplied);
     });
   }
 
-  test("Reset filters returns the account to All", () => {
-    const { bar, picks } = renderBar({ profile: "personal" });
+  test("items of one account and no account filter leave the Account trigger out, Status alone", () => {
+    const tree = render("QueueFilterBarQ", { items: [items[0]], filter: { profile: "", status: "" }, onFilter: () => undefined });
+    assert.deepEqual(findNodes(tree, (node) => node.props.atom === "FilterTrigger").map((node) => node.props.axis), ["Status"]);
+  });
+
+  test("Reset filters returns Status to Open and the account to All", () => {
+    const { bar, picks } = renderBar({ profile: "personal", status: "done" });
     (bar?.props.onReset as () => void)();
-    assert.deepEqual(getPlain(picks), [{ profile: "" }]);
+    assert.deepEqual(getPlain(picks), [{ profile: "", status: "" }]);
+  });
+
+  test("picking Done keeps the account", () => {
+    const { triggers, picks } = renderBar({ profile: "personal", status: "" });
+    (triggers.Status?.onPick as (key: string) => void)("done");
+    assert.deepEqual(getPlain(picks), [{ profile: "personal", status: "done" }]);
   });
 
   test("a chosen value no loaded item carries stays an option, so its trigger still names it", () => {
@@ -1071,23 +1094,24 @@ describe("filter state in the hash", () => {
     return { module, location };
   };
   const rows = [
-    { name: "the account round-trips through the screen query", start: "#queue", filter: { profile: "work-dev" } },
-    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal", filter: { profile: "" } },
+    { name: "the account round-trips through the screen query", start: "#queue", filter: { profile: "work-dev", status: "" } },
+    { name: "Status Done round-trips as status=done", start: "#queue", filter: { profile: "", status: "done" }, hash: "#queue?status=done" },
+    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal&status=done", filter: { profile: "", status: "" }, hash: "#queue" },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const { module, location } = await load(row.start);
       (module.setFilterHashQ as (filter: unknown) => void)(row.filter);
-      assert.ok(location.hash.startsWith("#queue"), location.hash);
+      assert.ok(row.hash === undefined ? location.hash.startsWith("#queue") : location.hash === row.hash, location.hash);
       assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), row.filter);
     });
   }
 
   // one hash writer merges every key → a filter write never erases the selected item or the ticks (spec §4.3 → Selection)
   const mergeRows = [
-    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev" }, expected: { profile: "work-dev", item: "41", to: "a,b" } },
-    { name: "an item write keeps the filter and the ticks", start: "#queue?profile=personal&to=s1", patch: { item: "7" }, expected: { profile: "personal", item: "7", to: "s1" } },
-    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { profile: "personal", item: "", to: "" } },
+    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev" }, expected: { profile: "work-dev", status: "", item: "41", to: "a,b" } },
+    { name: "an item write keeps the filter and the ticks", start: "#queue?profile=personal&to=s1", patch: { item: "7" }, expected: { profile: "personal", status: "", item: "7", to: "s1" } },
+    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { profile: "personal", status: "", item: "", to: "" } },
   ];
   for (const row of mergeRows) {
     test(row.name, async () => {
@@ -1106,7 +1130,7 @@ describe("filter state in the hash", () => {
   for (const row of oldLinks) {
     test(row.name, async () => {
       const { module, location } = await load(row.start);
-      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), { profile: "" });
+      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), { profile: "", status: "" });
       (module.setHashStateQ as (patch: unknown) => void)({ item: "" });
       assert.equal(location.hash, "#queue");
     });
@@ -1143,6 +1167,282 @@ describe("list groups", () => {
     { name: "copies with no send id fold by equal time and text", items: [order(21, gersona, null), order(22, yoaida, null), order(23, yoaida, null, "2026-11-12T12:21:00.000Z")], expected: [[21, [21, 22]], [23, [23]]] },
   ];
   for (const row of foldRows) test(row.name, () => assert.deepEqual(getShape(row.items)[0]?.rows, row.expected));
+});
+
+// spec §4.6: Status Done — the history read's decisions and reports no longer open, on the list's own rows and sheet
+describe("done items", () => {
+  const atrium = buildSession({ id: "c3", name: "atrium" });
+  const record = (route: string) => ({ route, signal: "fetch_metadata" });
+  const answered = { answeredAt: "2026-11-19T05:30:00.000Z", closedAt: "2026-11-19T05:30:00.000Z" };
+  const doneReport = (overrides: Record<string, unknown> = {}) =>
+    buildItem({ id: 806, kind: "report", title: "Deploy 65 finished", options: [], status: "seen", closedAt: "2026-11-19T05:30:00.000Z", session: atrium, ...overrides });
+  const doneDecision = (overrides: Record<string, unknown> = {}) =>
+    buildItem({ id: 812, status: "delivered", answer: { code: "R1", text: null }, answerRecord: record("answer"), ...answered, ...overrides });
+
+  // KST days: 2026-11-18T15:30Z is Nov 19 00:30 → Today beside Nov 19 14:30; Nov 18 → Yesterday; older → its month and day
+  test("each row stands in the band of its end's day, in the read's order, one item a row", () => {
+    const items = [
+      doneReport({ id: 5, closedAt: "2026-11-19T05:30:00.000Z" }),
+      doneReport({ id: 4, closedAt: "2026-11-18T15:30:00.000Z" }),
+      doneReport({ id: 3, closedAt: "2026-11-18T03:00:00.000Z" }),
+      doneReport({ id: 2, closedAt: "2026-11-16T10:00:00.000Z" }),
+      doneReport({ id: 1, closedAt: "2026-11-16T09:00:00.000Z" }),
+    ];
+    const groups = call<Array<{ label: string; rows: Array<{ id: number; copies: unknown[]; isDone: boolean }> }>>("getDoneGroupsQ", items, new Date("2026-11-19T06:00:00.000Z"));
+    assert.deepEqual(groups.map((group) => [group.label, group.rows.map((row) => [row.id, row.copies.length, row.isDone])]), [
+      ["Today", [[5, 1, true], [4, 1, true]]],
+      ["Yesterday", [[3, 1, true]]],
+      ["Nov 16", [[2, 1, true], [1, 1, true]]],
+    ]);
+  });
+
+  // spec §4.6 → How it ended: an answer on the page first, whatever status followed it; the fact names the kind
+  const ends = [
+    { name: "an option picked on the page reads its code, its title the route", item: doneDecision(), tag: { text: "Answer R1", title: "Answered" }, fact: "Decision" },
+    { name: "free text alone reads Answered", item: doneDecision({ answer: { code: null, text: "R2로 가되" } }), tag: { text: "Answered", title: "Answered" }, fact: "Decision" },
+    { name: "an answer sent as a message names that route", item: doneDecision({ answer: { code: "R2", text: null }, answerRecord: record("message") }), tag: { text: "Answer R2", title: "Sent as a message" }, fact: "Decision" },
+    { name: "a decision withdrawn after its answer keeps its answer", item: doneDecision({ status: "withdrawn" }), tag: { text: "Answer R1", title: "Answered" }, fact: "Decision" },
+    { name: "an answer outside the page reads Answered with where", item: doneDecision({ status: "answered", answer: { code: null, text: null }, answerRecord: null, isAnsweredOutside: true }), tag: { text: "Answered", title: "Answered outside the Queue page." }, fact: "Decision" },
+    { name: "a report replied to reads Replied", item: doneReport({ status: "delivered", answerRecord: record("reply"), ...answered }), tag: { text: "Replied" }, fact: "Report" },
+    { name: "a report marked read reads Read", item: doneReport(), tag: { text: "Read" }, fact: "Report" },
+    { name: "a withdrawn report says the session withdrew it", item: doneReport({ status: "withdrawn" }), tag: { text: "Withdrawn", title: "The session withdrew it." }, fact: "Report" },
+  ];
+  for (const row of ends) {
+    test(`how it ended: ${row.name}`, () => {
+      assert.deepEqual(call("getRowCellsQ", { item: row.item, copies: [row.item], isDone: true }, false), { tags: [row.tag], fact: row.fact, extras: [] });
+    });
+  }
+
+  // a report out of open reads as an Order on the open list → on the done list it must still open its sheet
+  test("a done report opens its sheet and counts among the rows the sheet steps through", () => {
+    const groups = call("getDoneGroupsQ", [doneReport(), doneDecision()], new Date("2026-11-19T06:00:00.000Z"));
+    const sheet = call<{ kind: string; id: number }>("getSheetStateQ", groups, "806", null);
+    const steps = call<{ index: number; count: number }>("getStepsQ", groups, 806, -1);
+    assert.deepEqual([sheet.kind, sheet.id, steps.index, steps.count], ["item", 806, 0, 2]);
+  });
+
+  test("a done row draws how it ended as plain text and ages from its end, and its name says both", () => {
+    const item = doneReport({ status: "withdrawn", askedAt: "2026-11-10T06:12:43.518Z" });
+    const tree = render("QueueRowQ", { row: { id: item.id, item, copies: [item], isDone: true }, isSelected: false, view: { isNameShown: true, isAccountShown: false, tabStopId: item.id }, onSelect: () => undefined, onOrder: () => undefined });
+    const [row] = findNodes(tree, (node) => node.props?.role === "option");
+    const [tag] = byClass(tree, "queue-row-tag");
+    const [age] = byClass(tree, "queue-row-age");
+    const label = String(row?.props["aria-label"]);
+    assert.deepEqual(
+      [collectText(tag as RenderedNode), findNodes(tag as RenderedNode, (node) => node.props?.atom === "Badge").length, age?.props.title, label.split(",").slice(0, 2)],
+      ["Withdrawn", 0, "11-19 14:30", ["Report from atrium: Deploy 65 finished", " Withdrawn"]],
+    );
+    assert.match(label, /, ended \S+ ago$/);
+  });
+
+  test("the done read asks the history read for kind item, scoped by the ticks and the account", async () => {
+    const urls: string[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, { URLSearchParams, window: { UI: uiStub() }, fetch: async (url: string) => { urls.push(url); return { status: 200, json: async () => ({ items: [], nextCursor: null }) }; } })) as ScreenModule;
+    await (module.getThreadQ as (deps: unknown) => Promise<void>)({ ids: [SESSION_ID], before: null, setThread: () => undefined, kind: "item", profile: "personal" });
+    assert.deepEqual(Object.fromEntries(new URL(urls[0] as string, "http://monitor").searchParams), { limit: "30", kind: "item", sessionIds: SESSION_ID, profile: "personal" });
+  });
+
+  const doneQueue = (thread: Record<string, unknown>, filter = { profile: "", status: "done" }) => {
+    const { queue, calls } = buildQueue();
+    const done = { thread: { status: "ready", items: [], nextCursor: null, error: null, refusals: [], ...thread }, read: () => calls.push(["readDone"]), showEarlier: () => calls.push(["moreDone"]) };
+    const groups = call("getDoneGroupsQ", done.thread.items);
+    return { queue: { ...queue, done, filter, setFilter: (next: unknown) => calls.push(["setFilter", next]), groups, sheet: getSheet(groups, ""), selectedId: null, status: "" }, calls };
+  };
+  const bodyOf = (queue: unknown) => render("DoneBodyQ", { queue });
+
+  test("loading names done items, and a failed read is the list's in-card error with Retry reading again", () => {
+    const [placeholder] = findNodes(bodyOf(doneQueue({ status: "loading" }).queue), (node) => node.props?.atom === "LoadingPlaceholder");
+    const failed = doneQueue({ status: "error", error: { sentence: "The queue could not be read.", next: "Retry.", detail: "503" } });
+    const [failure] = findNodes(bodyOf(failed.queue), (node) => node.type === "QueueFailureQ");
+    (failure?.props.onRetry as () => void)();
+    assert.deepEqual([placeholder?.props.label, getPlain(failed.calls)], ["done items", [["readDone"]]]);
+  });
+
+  const empties = [
+    { name: "none in scope", filter: { profile: "", status: "done" }, message: "Nothing done here yet.", hasReset: false },
+    { name: "none under an account filter, with Reset filters", filter: { profile: "personal", status: "done" }, message: "No done items match these filters.", hasReset: true },
+  ];
+  for (const row of empties) {
+    test(`an empty done list says so once: ${row.name}`, () => {
+      const { queue, calls } = doneQueue({}, row.filter);
+      const tree = bodyOf(queue);
+      const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
+      const action = empty?.props.action ? (renderScreen(empty.props.action) as RenderedNode) : null;
+      const resets = buttonLabelled(action as RenderedNode, "Reset filters");
+      (resets[0]?.props.onClick as (() => void) | undefined)?.();
+      assert.deepEqual([empty?.props.message, resets.length > 0, getPlain(calls)], [row.message, row.hasReset, row.hasReset ? [["setFilter", { profile: "", status: "" }]] : []]);
+    });
+  }
+
+  test("loaded done items are the list's listbox of rows", () => {
+    const { queue } = doneQueue({ items: [doneReport(), doneDecision()] });
+    assert.deepEqual(findNodes(bodyOf(queue), (node) => node.type === "QueueRowQ").map((node) => (node.props.row as { id: number }).id), [806, 812]);
+  });
+
+  // spec §4.6: 30 a read, Show more for the next, and past 200 loaded a line in its place
+  const feet = [
+    { name: "a page with more behind it offers Show more", count: 30, nextCursor: "1:1", expected: { more: 1, line: false } },
+    { name: "the whole list loaded offers nothing", count: 30, nextCursor: null, expected: { more: 0, line: false } },
+    { name: "200 loaded with more behind them says only the newest show", count: 200, nextCursor: "1:1", expected: { more: 0, line: true } },
+  ];
+  for (const row of feet) {
+    test(`the done foot: ${row.name}`, () => {
+      const items = Array.from({ length: row.count }, (_, index) => doneReport({ id: index + 1 }));
+      const { queue } = doneQueue({ items, nextCursor: row.nextCursor });
+      const tree = render("ListFootQ", { queue });
+      const more = findNodes(tree, (node) => node.type === "ShowMoreQ");
+      const isLine = collectText(tree).includes("Showing the 200 most recent");
+      (more[0]?.props.onMore as (() => void) | undefined)?.();
+      assert.deepEqual({ more: more.length, line: isLine }, row.expected);
+    });
+  }
+
+  // spec §4.6: a done item's sheet is read-only — its answer shown, no composer, the foot how and when it ended
+  const sheets = [
+    { name: "an answered decision shows its answer, its foot the answer and its end", item: doneDecision(), kind: "Decision", foot: "Answer R1 · Nov 19 14:30", hasAnswer: true },
+    { name: "a read report shows its text, its foot Read and its end", item: doneReport(), kind: "Report", foot: "Read · Nov 19 14:30", hasAnswer: false },
+    { name: "a decision withdrawn before any answer shows its question, no answer, its foot Withdrawn and its end", item: doneDecision({ status: "withdrawn", answer: null, answeredAt: null, answerRecord: null }), kind: "Decision", foot: "Withdrawn · Nov 19 14:30", hasAnswer: false },
+  ];
+  for (const row of sheets) {
+    test(`the done sheet: ${row.name}`, () => {
+      const tree = renderSheet({ item: row.item, queue: buildQueue().queue, cliPath: CLI_PATH, isDone: true });
+      const [foot] = byClass(tree, "card-foot");
+      const [kind] = findNodes(byClass(tree, "queue-sheet-head")[0] as RenderedNode, (node) => node.props?.atom === "Badge");
+      assert.deepEqual(
+        [collectText(foot as RenderedNode), findNodes(foot as RenderedNode, (node) => node.type === "button" || node.type === "ComposerQ").length, collectText(kind as RenderedNode), collectText(tree).includes("Your answer")],
+        [row.foot, 0, row.kind, row.hasAnswer],
+      );
+    });
+  }
+});
+
+// spec §4.2, §9.9: a relay on its way — a row under In delivery on the list's own columns, and the list's sheet read-only
+describe("a relay on its way", () => {
+  const TITLE = "필드 이름이 바뀌었습니다.";
+  const BODY = `${TITLE}\n요아이다 쪽 문서도 같은 이름으로 맞춰 주세요.`;
+  const sender = { sessionIdPrefix: "aca91592", profileLabel: "work", selfDeclaredName: "aidl", cwdTail: "git/a-idl" };
+  // one copy per recipient under one send id, as the open list returns them: answered at the send, the title the text's first line
+  const buildCopies = (recipients: Array<[string, Record<string, unknown>]>, facts: Record<string, unknown> = {}) =>
+    recipients.map(([name, overrides], index) => buildItem({
+      id: 412 + index, kind: "relay", title: TITLE, body: BODY, options: [], isFreeTextAllowed: false, status: "answered",
+      askedAt: "2026-11-19T05:20:00.000Z", answeredAt: "2026-11-19T05:20:00.000Z", sendId: "relay-send-1",
+      session: buildSession({ id: `5e55a0${index}0-0000-4000-8000-000000000000`, name, state: "live", isWaiting: true }),
+      relay: { hop: 0, parent: null, sender, fetchedAt: null, redaction: null, lapsedAt: null, ...facts },
+      ...overrides,
+    }));
+  const toYoaida = (overrides: Record<string, unknown> = {}, facts: Record<string, unknown> = {}) => buildCopies([["yoaida", overrides]], facts);
+  const toThree = () => buildCopies([["yoaida", { status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" }], ["atrium", {}], ["gersona", {}]]);
+  const renderRow = (copies: Array<{ id: number }>, isNameShown = true, handlers: Record<string, unknown> = {}) =>
+    render("QueueRowQ", { row: { id: copies[0]!.id, item: copies[0], copies }, isSelected: false, view: { isNameShown, isAccountShown: false, tabStopId: copies[0]!.id }, onSelect: () => undefined, onOrder: () => undefined, ...handlers });
+  const cellText = (tree: RenderedNode, name: string) => {
+    const [cell] = byClass(tree, name);
+    return cell === undefined ? null : collectText(cell).replace(/\s+/g, " ").trim();
+  };
+  const getRowShape = (tree: RenderedNode) => {
+    const [row] = findNodes(tree, (node) => node.props?.role === "option");
+    return {
+      who: cellText(tree, "queue-row-who"),
+      title: cellText(tree, "queue-row-title"),
+      tags: findNodes(byClass(tree, "queue-row-tag")[0] as RenderedNode, (node) => node.props?.atom === "Badge").map((badge) => badge.props.title),
+      fact: cellText(tree, "queue-row-fact"),
+      label: String(row?.props["aria-label"]).split(", sent ")[0],
+    };
+  };
+
+  const rows = [
+    {
+      name: "to one session it names its sender, leads its title with the recipient and reads Relay", copies: toYoaida(), isNameShown: true,
+      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+    },
+    {
+      name: "to several it names their count and reads received of sent", copies: toThree(), isNameShown: true,
+      shape: { who: "aidl", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from aidl to 3 sessions: ${TITLE}, 1 of 3` },
+    },
+    {
+      name: "a copy its session never acknowledged is not yet, never not received", copies: toYoaida({ status: "unacked", deviation: "unacked" }), isNameShown: true,
+      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+    },
+    {
+      name: "a copy whose session does not listen is counted in the tag column", copies: toYoaida({ session: buildSession({ name: "yoaida", state: "live", isWaiting: false }) }), isNameShown: true,
+      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}, 1 next turn` },
+    },
+    {
+      name: "with one session ticked the name column is left out and the title names both ends", copies: toYoaida(), isNameShown: false,
+      shape: { who: null, title: `aidl → yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}` },
+    },
+    {
+      name: "a redacted relay reads Text redacted where its title stood", copies: toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
+      shape: { who: "aidl", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: "Relay from aidl to yoaida: Text redacted" },
+    },
+  ];
+  for (const row of rows) {
+    test(`a relay's row: ${row.name}`, () => {
+      const tree = renderRow(row.copies, row.isNameShown);
+      assert.deepEqual(getRowShape(tree), row.shape);
+      assert.match(String(findNodes(tree, (node) => node.props?.role === "option")[0]?.props["aria-label"]), /, sent \S+ ago$/);
+    });
+  }
+
+  test("a redacted relay's stored text is drawn nowhere on its row or its sheet", () => {
+    const copies = toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } });
+    const queue = withList(buildQueue().queue, copies);
+    const sheet = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } });
+    // every drawn string and every prop string, a prose atom's text and a title included
+    const props = [...findNodes(renderRow(copies), () => true), ...findNodes(sheet, () => true)].flatMap((node) => Object.values(node.props ?? {})).filter((value) => typeof value === "string");
+    const texts = [collectText(renderRow(copies)), collectText(sheet), ...props];
+    assert.deepEqual(texts.filter((text) => text.includes("필드") || text.includes("요아이다")), []);
+    assert.match(collectText(sheet), /Text redacted/);
+  });
+
+  test("a relay's row opens its sheet, never the Orders pane, and counts among the rows the sheet steps through", () => {
+    const pressed: string[] = [];
+    const copies = toThree();
+    const [row] = findNodes(renderRow(copies, true, { onSelect: () => pressed.push("sheet"), onOrder: () => pressed.push("orders") }), (node) => node.props?.role === "option");
+    (row?.props.onClick as () => void)();
+    const groups = call("getGroupsQ", [buildItem({ id: 3 }), ...copies]);
+    const sheet = call<{ kind: string; id: number }>("getSheetStateQ", groups, "412", null);
+    const steps = call<{ index: number; count: number }>("getStepsQ", groups, 412, -1);
+    assert.deepEqual([pressed, sheet.kind, sheet.id, steps.index, steps.count], [["sheet"], "item", 412, 1, 2]);
+  });
+
+  const getSheetShape = (copies: Array<{ id: number }>) => {
+    const queue = withList(buildQueue().queue, copies);
+    const tree = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } });
+    const [foot] = byClass(tree, "card-foot");
+    const [head] = findNodes(tree, (node) => node.type === "h2");
+    const [title] = findNodes(tree, (node) => node.type === "h3");
+    const [date] = byClass(tree, "queue-date-line");
+    return {
+      head: collectText(head as RenderedNode).replace(/\s+/g, " ").trim(),
+      title: collectText(title as RenderedNode),
+      date: collectText(date as RenderedNode),
+      foot: collectText(foot as RenderedNode).replace(/\s+/g, " ").trim(),
+      controls: findNodes(foot as RenderedNode, (node) => ["button", "textarea", "input"].includes(String(node.type))).length,
+      body: collectText(byClass(tree, "queue-sheet-body")[0] as RenderedNode),
+      prose: findNodes(tree, (node) => node.props?.atom === "ProseText").map((node) => node.props.text),
+    };
+  };
+
+  test("a relay to one session opens read-only: its two ends in the head and title, the text whole, no field and no button", () => {
+    const shape = getSheetShape(toYoaida());
+    assert.deepEqual(
+      { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
+      { head: "Relay from aidl → to yoaida", title: "Message from aidl to yoaida", foot: "Read-only. It reaches yoaida by itself and stays in Relay history.", controls: 0 },
+    );
+    assert.match(shape.date, /^Not yet\s+Sent\s+2026-11-19 14:20 KST$/);
+    assert.deepEqual(shape.prose, [BODY]);
+    for (const part of ["What aidl wrote", "This went to yoaida as aidl's message, without your approval.", "It does not carry your authority."]) assert.ok(shape.body.includes(part), part);
+    assert.doesNotMatch(shape.body, /Run in that session|Answered/);
+  });
+
+  test("a relay to several sessions reads received of sent on its sheet, and its foot names each session", () => {
+    const shape = getSheetShape(toThree());
+    assert.deepEqual(
+      { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
+      { head: "Relay from aidl → to 3 sessions", title: "Message from aidl to 3 sessions", foot: "Read-only. It reaches each session by itself and stays in Relay history.", controls: 0 },
+    );
+    assert.match(shape.date, /^1 of 3 received/);
+  });
 });
 
 describe("selection", () => {
@@ -1809,41 +2109,49 @@ describe("sessions rail rows", () => {
     assert.deepEqual([prefixes(SESSION_ID), prefixes(ENDED_ID), prefixes(REPLACED_ID)], [1, 1, 0]);
   });
 
-  // line 2: the first matching condition (spec §9.1 → Line 2)
-  const lines = [
-    { name: "something not received leads", row: { state: "live", count: { awaiting: 0, inDelivery: 2 } }, notReceived: 1, first: { text: "1 not received", badge: "warn" } },
-    { name: "an unreachable session says so, listening or not", row: { state: "stale", isWaiting: false }, notReceived: 0, first: { text: "Not reachable", badge: "warn" } },
-    { name: "a live session with orders on the way counts them", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, first: { text: "Live" }, second: "1 in delivery" },
-    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, first: { text: "Live" } },
-    { name: "an automatic resume not yet registered says so", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, notReceived: 0, first: { text: "Resume not yet registered" } },
-    { name: "an ended session wears its exit word", row: { state: "exited", exitReason: "dead" }, notReceived: 0, first: { text: "Ended · process gone", badge: "tag" } },
+  // spec §9.1 → per state, the first matching row: the tag in the tag column, its spoken word, and the hover line
+  const railStates = [
+    { name: "something not received leads, live or not", row: { state: "stale", isWaiting: false }, notReceived: 2, tag: "warn", word: "2 not received", hover: /^2 not received\. Resend them under the order\.$/ },
+    { name: "an unreachable session says since when, listening or not", row: { state: "stale", isWaiting: false }, notReceived: 0, tag: "warn", word: "Not reachable", hover: /^Not reachable since .+ ago\. Orders wait for it\.$/ },
+    { name: "a live session that does not listen gets the pause mark and the fix", row: { state: "live", isWaiting: false, count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, tag: "pause", word: "Next turn", hover: /^Next turn: orders reach it then\. Restart it to deliver now\.$/ },
+    { name: "a live session with orders on the way counts them after its activity", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, hover: /^Live · active .+ ago · 1 in delivery$/ },
+    { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, hover: /^Live · active .+ ago$/ },
+    { name: "an automatic resume not yet registered says so", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, notReceived: 0, hover: /^Resume not yet registered\.$/ },
+    { name: "a session that takes no message says it takes no orders", row: { state: "exited", exitReason: "replaced", isSelectable: false }, notReceived: 0, hover: /^Replaced: it takes no orders\.$/ },
+    { name: "an ended session says when, in its exit words", row: { state: "exited", exitReason: "dead" }, notReceived: 0, hover: /^Ended .+ ago · process gone$/ },
   ];
-  const deafLines = [
-    { name: "with nothing in delivery", count: { awaiting: 0, inDelivery: 0 }, texts: ["Live", "Not listening"] },
-    { name: "with orders on the way, counted after the badge", count: { awaiting: 0, inDelivery: 1 }, texts: ["Live", "Not listening", "1 in delivery"] },
-  ];
-  for (const row of deafLines) {
-    test(`line 2: a live session that does not listen says so, ranked above the plain live rows, ${row.name}`, () => {
-      const facts = call<Array<{ text: string; badge?: string; glyph?: string }>>("getSessionLineQ", buildSessionRow({ state: "live", isWaiting: false, count: row.count }), 0);
-      assert.deepEqual(facts.map((fact) => fact.text), row.texts);
-      assert.deepEqual([facts[1]?.badge, facts[1]?.glyph], ["tag", "pause"]);
+  for (const row of railStates) {
+    test(`rail state: ${row.name}`, () => {
+      const state = call<{ tag?: string; word?: string; hover: string }>("getRailStateQ", buildSessionRow(row.row), row.notReceived);
+      assert.deepEqual([state.tag, state.word], [row.tag, row.word]);
+      assert.match(state.hover, row.hover);
     });
   }
 
-  test("a rail row whose session does not listen adds not listening to its box's name", () => {
+  // spec §9.1: screen readers hear the hover line after the name → the box's description, reached with the box by keyboard
+  test("a rail row's box is named Select and its session alone, and describes the row by its hover line, then the tick hint", () => {
     const rows = [buildSessionRow({ isWaiting: false }), buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida" })];
     const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
-    const nameOf = (id: string) => findNodes(railRowOf(tree, id), (node) => node.type === "input")[0]?.props["aria-label"];
-    assert.deepEqual([nameOf(SESSION_ID), nameOf(OTHER_RAIL_ID)], ["Select nightly-docs-sweep, not listening", "Select yoaida"]);
+    const boxOf = (id: string) => findNodes(railRowOf(tree, id), (node) => node.type === "input")[0] as RenderedNode;
+    const [lineId, hintId] = String(boxOf(SESSION_ID).props["aria-describedby"]).split(" ");
+    const [line] = findNodes(tree, (node) => node.props?.id === lineId);
+    assert.deepEqual([boxOf(SESSION_ID).props["aria-label"], boxOf(OTHER_RAIL_ID).props["aria-label"], hintId], ["Select nightly-docs-sweep", "Select yoaida", "queue-rail-hint"]);
+    assert.ok(collectText(line as RenderedNode).startsWith("Next turn: orders reach it then. Restart it to deliver now."), collectText(line as RenderedNode));
+    assert.ok(String(railRowOf(tree, SESSION_ID).props.title).startsWith("Next turn: orders reach it then. Restart it to deliver now.\nwork-dev · "));
   });
 
-  for (const row of lines) {
-    test(`line 2: ${row.name}`, () => {
-      const facts = call<Array<{ text: string }>>("getSessionLineQ", buildSessionRow(row.row), row.notReceived);
-      assert.deepEqual(facts[0], row.first);
-      if (row.second) assert.equal(facts[1]?.text, row.second);
-    });
-  }
+  // spec §9.1: the tag is a bare mark, named for assistive technology by its word; a row holds no word Live and no badge but its count
+  test("a not-listening rail row draws the bare pause mark named Next turn in its tag column, and no word Live or badge besides its count", () => {
+    const rows = [buildSessionRow({ isWaiting: false, count: { awaiting: 2, inDelivery: 0 } })];
+    const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
+    const row = railRowOf(tree, SESSION_ID);
+    const [tag] = findNodes(row, (node) => String(node.props?.className ?? "").startsWith("queue-rail-tag"));
+    const [mark] = findNodes(tag as RenderedNode, (node) => node.props?.role === "img");
+    const badges = findNodes(row, (node) => node.props?.atom === "Badge").map((node) => [node.props.role, node.props.fill]);
+    assert.deepEqual([mark?.props["aria-label"], findNodes(mark as RenderedNode, (node) => node.type === "svg").length], ["Next turn", 1]);
+    assert.deepEqual(badges, [["count", "tag"]]);
+    assert.ok(!/\bLive\b/.test(collectText(row)), collectText(row));
+  });
 
   test("a row that takes no message has no checkbox, and every other row's box is named Select and its session", () => {
     const { tree } = renderRail({ isEndedShown: true });
@@ -1860,13 +2168,13 @@ describe("sessions rail rows", () => {
     assert.deepEqual([railRowOf(tree, REPLACED_ID).type, controls(REPLACED_ID)], ["div", []]);
   });
 
-  // spec §9.1: checkbox · state mark · name · count from the row's start; a row that takes no message has no box, its mark and name in place
-  test("a row reads its box, its state mark, its name and its count from the start, and a row that takes no message starts at its mark", () => {
-    const rows = [buildSessionRow({ state: "live", count: { awaiting: 2, inDelivery: 0 } }), buildSessionRow({ id: REPLACED_ID, name: "gersona", isSelectable: false, count: { awaiting: 3, inDelivery: 0 } })];
+  // spec §9.1: box · state mark · name · tag · count from the row's start; a row that takes no message has no box, the rest in place
+  test("a row reads its box, its state mark, its name, its tag and its count from the start, and a row that takes no message starts at its mark", () => {
+    const rows = [buildSessionRow({ state: "live", isWaiting: false, count: { awaiting: 2, inDelivery: 0 } }), buildSessionRow({ id: REPLACED_ID, name: "gersona", isSelectable: false, count: { awaiting: 3, inDelivery: 0 } })];
     const { tree } = renderRail({ isEndedShown: true, region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
-    const slots = (id: string) => findNodes(railRowOf(tree, id), (node) => /^queue-rail-(box|mark|name|count)(\s|$)/.test(String(node.props?.className ?? "")))
+    const slots = (id: string) => findNodes(railRowOf(tree, id), (node) => /^queue-rail-(box|mark|name|tag|count)(\s|$)/.test(String(node.props?.className ?? "")))
       .map((node) => String(node.props.className).split(" ")[0]);
-    assert.deepEqual([slots(SESSION_ID), slots(REPLACED_ID)], [["queue-rail-box", "queue-rail-mark", "queue-rail-name", "queue-rail-count"], ["queue-rail-mark", "queue-rail-name", "queue-rail-count"]]);
+    assert.deepEqual([slots(SESSION_ID), slots(REPLACED_ID)], [["queue-rail-box", "queue-rail-mark", "queue-rail-name", "queue-rail-tag", "queue-rail-count"], ["queue-rail-mark", "queue-rail-name", "queue-rail-count"]]);
   });
 
   // spec §9.1: live → the filled mark; not live (not reachable, ended, a resume not yet registered) → the hollow ring
@@ -1886,10 +2194,10 @@ describe("sessions rail rows", () => {
 
   test("every box of the rail shares one description of what a tick does", () => {
     const { tree } = renderRail({ isEndedShown: true });
-    const described = findNodes(tree, (node) => node.type === "input" && node.props.type === "checkbox").map((node) => node.props["aria-describedby"]);
-    const [hint] = findNodes(tree, (node) => node.props?.id === described[0]);
-    assert.ok(described.length === 3 && described.every((id) => id === described[0]), String(described));
-    assert.equal(collectText(hint as RenderedNode), "Ticked sessions set whose reports and orders are shown and who receives the next order. With none ticked, every session is shown and no order can be sent.");
+    const hints = findNodes(tree, (node) => node.type === "input" && node.props.type === "checkbox").map((node) => String(node.props["aria-describedby"]).split(" ").at(-1));
+    const [hint] = findNodes(tree, (node) => node.props?.id === hints[0]);
+    assert.ok(hints.length === 3 && hints.every((id) => id === hints[0]), String(hints));
+    assert.equal(collectText(hint as RenderedNode), "Ticked sessions filter the list and receive the next order. None ticked shows every session; no order can be sent.");
   });
 
   test("ticking a row calls the toggle with that row's id", () => {
@@ -1911,11 +2219,11 @@ describe("sessions rail rows", () => {
     assert.deepEqual(ids(true), [SESSION_ID, ENDED_ID, REPLACED_ID]);
   });
 
-  test("the waiting count is the row's one solid badge, and a session with nothing waiting shows none", () => {
+  test("the waiting count is the row's count atom in the tag fill, never solid, and a session with nothing waiting shows none", () => {
     const rows = [buildSessionRow({ count: { awaiting: 5, inDelivery: 0 } }), buildSessionRow({ id: ENDED_ID, name: "gersona", count: { awaiting: 0, inDelivery: 0 } })];
     const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
-    const solid = (id: string) => findNodes(railRowOf(tree, id), (node) => node.props?.atom === "Badge" && node.props.fill === "solid").map((node) => collectText(node));
-    assert.deepEqual([solid(SESSION_ID), solid(ENDED_ID)], [["5"], []]);
+    const counts = (id: string) => findNodes(railRowOf(tree, id), (node) => node.props?.atom === "Badge").map((node) => `${node.props.role} ${node.props.fill} ${collectText(node)}`);
+    assert.deepEqual([counts(SESSION_ID), counts(ENDED_ID)], [["count tag 5"], []]);
   });
 });
 
@@ -2082,9 +2390,9 @@ describe("order composer", () => {
   // spec §9.2 → Note at rest: where the owner decides whether to send, the note says what follows for a ticked session that does not listen
   const deaf = (id: string, name: string) => buildSessionRow({ id, name, isWaiting: false });
   const deafNotes = [
-    { name: "one ticked, not listening", rows: [deaf(SESSION_ID, "yoaida")], ids: [SESSION_ID], note: "yoaida is not listening: it gets this at its next turn end or restart." },
-    { name: "several ticked, one not listening", rows: [deaf(SESSION_ID, "yoaida"), buildSessionRow({ id: OTHER_RAIL_ID, name: "gersona" })], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida is not listening: it gets it at its next turn end or restart." },
-    { name: "several ticked, two not listening", rows: [deaf(SESSION_ID, "yoaida"), deaf(OTHER_RAIL_ID, "gersona")], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida and gersona are not listening: they get it at their next turn end or restart." },
+    { name: "one ticked, next turn", rows: [deaf(SESSION_ID, "yoaida")], ids: [SESSION_ID], note: "yoaida gets this at its next turn. Restart it to deliver now." },
+    { name: "several ticked, one next turn", rows: [deaf(SESSION_ID, "yoaida"), buildSessionRow({ id: OTHER_RAIL_ID, name: "gersona" })], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida waits for its next turn. Restart it to deliver now." },
+    { name: "several ticked, two next turn", rows: [deaf(SESSION_ID, "yoaida"), deaf(OTHER_RAIL_ID, "gersona")], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida and gersona wait for their next turn. Restart them to deliver now." },
     { name: "an unticked session that does not listen is not named", rows: [buildSessionRow({ name: "yoaida" }), deaf(OTHER_RAIL_ID, "gersona")], ids: [SESSION_ID], note: "Goes to yoaida." },
     { name: "an ended session is resumed, so it is not named", rows: [buildSessionRow({ name: "yoaida", state: "exited", exitReason: "ended", isWaiting: false })], ids: [SESSION_ID], note: "Goes to yoaida." },
   ];
@@ -2287,8 +2595,8 @@ describe("Orders", () => {
     const tree = render("OrderEntryQ", { entry, onResend: (id: number) => resent.push(id) });
     const rows = findNodes(tree, (node) => node.props?.className === "queue-recipient").map((node) => collectText(node));
     assert.deepEqual(
-      rows.map((row) => [["gersona", "yoaida", "atrium", "aidl"].find((name) => row.startsWith(name)), ["Received", "Not yet", "Not received", "Not listening"].find((word) => row.includes(word))]),
-      [["gersona", "Received"], ["yoaida", "Not yet"], ["atrium", "Not received"], ["aidl", "Not listening"]],
+      rows.map((row) => [["gersona", "yoaida", "atrium", "aidl"].find((name) => row.startsWith(name)), ["Received", "Not yet", "Not received", "Next turn"].find((word) => row.includes(word))]),
+      [["gersona", "Received"], ["yoaida", "Not yet"], ["atrium", "Not received"], ["aidl", "Next turn"]],
     );
     const resends = buttonLabelled(tree, "Resend");
     assert.equal(resends.length, 1);
@@ -2349,18 +2657,18 @@ describe("Orders", () => {
       received: { status: "delivered", deliveredAt: "2026-11-12T12:28:00.000Z" },
       notYet: {},
       notReceived: { status: "unacked", canResend: true },
-      notListening: { session: buildSession({ id: randomUUID(), name: `session-${index}`, state: "live", isWaiting: false }) },
+      nextTurn: { session: buildSession({ id: randomUUID(), name: `session-${index}`, state: "live", isWaiting: false }) },
     } as Record<string, object>)[receipt],
   }));
   test("a roll-up counts the recipients that do not listen as their own segment and keeps them listed under its line", () => {
-    const entry = call<unknown[]>("getThreadEntriesQ", fan(["received", "received", "received", "received", "notYet", "notListening"]))[0];
+    const entry = call<unknown[]>("getThreadEntriesQ", fan(["received", "received", "received", "received", "notYet", "nextTurn"]))[0];
     const tree = render("OrderEntryQ", { entry, onResend: () => undefined });
     const [rollUp] = findNodes(tree, (node) => node.type === "summary");
     const [details] = findNodes(tree, (node) => node.type === "details");
     const outside = findNodes(tree, (node) => node.props?.className === "queue-recipient").filter((node) => !findNodes(details as RenderedNode, (inner) => inner === node).length);
     const line = collectText(rollUp as RenderedNode).replace(/\s+/g, " ");
     assert.deepEqual(
-      [line.includes("6 sessions · 4 received · 1 not yet · 1 not listening"), outside.map((node) => collectText(node).split("Not")[0]?.trim())],
+      [line.includes("6 sessions · 4 received · 1 not yet · 1 next turn"), outside.map((node) => collectText(node).split(/Next turn|Not /)[0]?.trim())],
       [true, ["session-5"]],
       line,
     );
@@ -2374,7 +2682,7 @@ describe("Orders", () => {
     assert.ok(line.includes("1 not received"), line);
     const [details] = findNodes(tree, (node) => node.type === "details");
     const outside = findNodes(tree, (node) => node.props?.className === "queue-recipient").filter((node) => !findNodes(details as RenderedNode, (inner) => inner === node).length);
-    assert.deepEqual(outside.map((node) => collectText(node).split("Not")[0]?.trim()), ["session-6"]);
+    assert.deepEqual(outside.map((node) => collectText(node).split(/Next turn|Not /)[0]?.trim()), ["session-6"]);
     assert.equal(findNodes(details as RenderedNode, (node) => node.props?.className === "queue-recipient").length, 6, "the not received one is listed once, outside");
   });
 
@@ -2407,16 +2715,22 @@ describe("Orders", () => {
     assert.deepEqual(groups.map((group) => [group.label, group.entries.map((entry) => entry.id)]), [["2026-11-10", [1]], ["2026-11-11", [2]], ["Yesterday", [3]], ["Today", [4]]]);
   });
 
-  // spec §9.2 → Label line: every receiving session by name, an ended one tagged; none → said, all of it dim
+  // spec §9.2 → Label line: every receiving session by name, an ended, not reachable or next-turn one marked bare, its word spoken; none → said, all of it dim
   const labelLines = [
-    { name: "the ticked names, an ended one tagged", ids: [SESSION_ID, ENDED_ID], text: "New order to nightly-docs-sweep, atrium-hooks Ended" },
-    { name: "no tick says so", ids: [], text: "New order · no session ticked" },
-    { name: "a ticked session that does not listen is tagged, its name read with it", ids: [OTHER_RAIL_ID, SESSION_ID], text: "New order to nightly-docs-sweep, yoaida, Not listening", rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false })] },
+    { name: "the ticked names, an ended one tagged", ids: [SESSION_ID, ENDED_ID], text: "New order to nightly-docs-sweep, atrium-hooks", marks: ["Ended"] },
+    { name: "no tick says so", ids: [], text: "New order · no session ticked", marks: [] },
+    { name: "a ticked session that does not listen is marked, its word read with its name", ids: [OTHER_RAIL_ID, SESSION_ID], text: "New order to nightly-docs-sweep, yoaida", marks: ["Next turn"], rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false })] },
     {
-      name: "a tagged name that is not last keeps its tag before the comma",
+      name: "a marked name that is not last keeps its mark before the comma",
       ids: [ENDED_ID, OTHER_RAIL_ID, SESSION_ID],
-      text: "New order to atrium-hooks Ended, yoaida, Not listening, nightly-docs-sweep",
+      text: "New order to atrium-hooks, yoaida, nightly-docs-sweep", marks: ["Ended", "Next turn"],
       rows: [SESSION_ROWS[1], buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false }), SESSION_ROWS[0]],
+    },
+    {
+      name: "a ticked session that is not reachable takes the rail's warn mark, not the pause mark",
+      ids: [OTHER_RAIL_ID],
+      text: "New order to yoaida ⚠", marks: ["Not reachable"],
+      rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", state: "stale", isWaiting: false })],
     },
   ];
   for (const row of labelLines) {
@@ -2424,8 +2738,9 @@ describe("Orders", () => {
       const region = row.rows ? { region: { status: "ready", data: { sessions: row.rows, hasMore: false }, error: null, busy: false } } : {};
       const tree = renderOrders({}, { selectedIds: row.ids, isEndedShown: true, ...region });
       const [label] = findNodes(tree, (node) => node.type === "label" && String(node.props.className).includes("field-label"));
+      const marks = findNodes(label as RenderedNode, (node) => node.props?.role === "img").map((node) => node.props["aria-label"]);
       // collectText joins siblings with a space → a comma that follows its name in the DOM is joined back
-      assert.equal(collectText(label as RenderedNode).replace(/\s+/g, " ").replace(/ ,/g, ",").trim(), row.text);
+      assert.deepEqual([collectText(label as RenderedNode).replace(/\s+/g, " ").replace(/ ,/g, ",").trim(), marks], [row.text, row.marks]);
     });
   }
 });
@@ -3036,22 +3351,16 @@ describe("marks and counts on the desk", () => {
     assert.deepEqual([iconsOf({ isChecked: false, isMixed: true }), iconsOf({ isChecked: true }), iconsOf({ isChecked: false })], [["minus"], ["check"], []]);
   });
 
-  // spec §9.1: the mark stands before the name → line 2 says the state in words alone
-  test("a live session's line 2 starts with the word Live and holds no mark", () => {
-    const text = collectText(render("RowFactsQ", { facts: call("getSessionLineQ", buildSessionRow({ state: "live" }), 0) })).replace(/\s+/g, " ").trim();
-    assert.ok(text.startsWith("Live") && !/[●○✓]/.test(text), text);
-  });
-
-  test("the All sessions band shows no count at zero and folds a failed receipt into the compact warning", () => {
+  test("the All sessions band shows no count at zero, and a failed receipt as the warn mark in its tag column, named and titled by its count", () => {
     const bandOf = (notReceived: number, awaiting: number) => render("AllSessionsBandQ", {
       rows: [buildSessionRow({ count: { awaiting, inDelivery: 0 } })], sessions: { selectedIds: [], setSelectedIds: () => undefined },
       view: { scope: "" }, notReceived, onScope: () => undefined,
     });
     const badges = (tree: RenderedNode) => findNodes(tree, (node) => node.props?.atom === "Badge").map((node) => ({ text: collectText(node).replace(/\s+/g, " ").trim(), title: node.props.title }));
     assert.deepEqual(badges(bandOf(0, 0)), []);
-    const [warn] = findNodes(bandOf(1, 3), (node) => node.props?.atom === "Badge" && node.props.fill === "warn");
-    const spoken = findNodes(warn as RenderedNode, (node) => node.props?.className === "sr-only").map((node) => collectText(node).trim());
-    assert.deepEqual([badges(bandOf(1, 3)), spoken], [[{ text: "3", title: undefined }, { text: "1 not received", title: "1 not received" }], ["not received"]]);
+    const [tag] = findNodes(bandOf(1, 3), (node) => String(node.props?.className ?? "").startsWith("queue-rail-tag"));
+    const [mark] = findNodes(tag as RenderedNode, (node) => node.props?.role === "img");
+    assert.deepEqual([badges(bandOf(1, 3)), mark?.props["aria-label"], mark?.props.title], [[{ text: "3", title: undefined }], "1 not received", "1 not received"]);
   });
 
   test("the nav item carries no badge while nothing waits and nothing deviates", () => {
@@ -3063,31 +3372,46 @@ describe("marks and counts on the desk", () => {
 describe("In delivery rows", () => {
   const answered = (status: string, overrides: Record<string, unknown> = {}) => buildItem({ status, answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", ...overrides });
   const rows = [
-    { name: "a copy not yet received shows the route word alone", item: answered("answered"), facts: [{ text: "Answer R1" }] },
-    { name: "a copy not received adds the amber badge", item: answered("unacked", { canResend: true }), facts: [{ text: "Answer R1" }, { text: "Not received", badge: "warn" }] },
+    { name: "a copy not yet received shows the route word alone", item: answered("answered"), cells: { tags: [], fact: "Answer R1", extras: [] } },
+    { name: "a copy not received counts one in the tag column", item: answered("unacked", { canResend: true }), cells: { tags: [{ glyph: "warn", count: 1, word: "1 not received" }], fact: "Answer R1", extras: [] } },
     {
-      name: "a copy whose session does not listen adds the not-listening badge",
+      name: "a copy whose session does not listen counts one next turn in the tag column",
       item: answered("answered", { session: buildSession({ state: "live", isWaiting: false }) }),
-      facts: [{ text: "Answer R1" }, { text: "Not listening", badge: "tag", glyph: "pause", title: "Not listening — delivers at its next turn end or restart", spoken: ", delivers at its next turn end or restart" }],
+      cells: { tags: [{ glyph: "pause", count: 1, word: "1 next turn" }], fact: "Answer R1", extras: [] },
+    },
+    {
+      name: "an order's images and the account ride only the row's title and accessible name",
+      item: buildItem({ kind: "message", status: "answered", answeredAt: "2026-11-12T12:26:40.118Z", attachments: [{ id: 1 }, { id: 2 }] }),
+      isAccountShown: true,
+      cells: { tags: [], fact: "Order", extras: ["work-dev", "2 images"] },
     },
   ];
-  for (const row of rows) test(row.name, () => assert.deepEqual(call("getRowFactsQ", { item: row.item, copies: [row.item] }, false), row.facts));
+  for (const row of rows) test(row.name, () => assert.deepEqual(call("getRowCellsQ", { item: row.item, copies: [row.item] }, row.isAccountShown ?? false), row.cells));
 
-  test("an order to several sessions all still waiting says Not yet as a word, not a pill", () => {
+  test("an order to several sessions all still waiting reads none received and draws no tag", () => {
     const copies = ["answered", "delivering"].map((status, index) => buildItem({ id: 90 + index, kind: "message", status, sendId: "send-1", answeredAt: "2026-11-12T12:26:40.118Z" }));
-    assert.deepEqual(call("getRowFactsQ", { item: copies[0], copies }, false), [{ text: "Order" }, { text: "Not yet" }]);
+    assert.deepEqual(call("getRowCellsQ", { item: copies[0], copies }, false), { tags: [], fact: "0 of 2", extras: [] });
   });
 
-  // spec §4.2: who, then what — the name in its own column ahead of the title, the meta line under the title holding the facts alone
-  test("a row's session name stands in its own column before the title, and its meta line holds only its facts, ` · ` between them", () => {
-    const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
-    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
+  // spec §4.2: one line on fixed columns — every cell drawn in its place, an empty one too, so no text ends where a tag starts
+  test("a row lays its cells in column order, name, title, tag, fact, age, chevron, an empty tag and fact cell included", () => {
+    const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report", session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
     const [option] = findNodes(tree, (node) => node.props?.role === "option");
     const slots = (option?.children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [String((child as RenderedNode).props?.className ?? "")] : []));
-    const [who] = byClass(tree, "queue-row-who");
-    const [meta] = byClass(tree, "queue-row-meta");
-    assert.deepEqual([slots.slice(0, 3), collectText(who as RenderedNode)], [["queue-row-who", "queue-row-title", "queue-row-meta"], "gersona"]);
-    assert.match(collectText(meta as RenderedNode).replace(/\s+/g, " ").trim(), /^work-dev · 2 options \d/);
+    const empty = ["queue-row-tag", "queue-row-fact"].map((name) => collectText(byClass(tree, name)[0] as RenderedNode));
+    assert.deepEqual([slots, collectText(byClass(tree, "queue-row-who")[0] as RenderedNode), empty], [["queue-row-who", "queue-row-title", "queue-row-tag", "queue-row-fact", "queue-row-age", "queue-row-chevron"], "gersona", ["", ""]]);
+  });
+
+  // spec §4.2: what is off the row — the account, a name's start-directory mark — stays in the row's title and accessible name
+  test("a row's title and accessible name carry its fact, the account and a start directory's mark", () => {
+    const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
+    const item = buildItem({ isApprovalClass: true, session: buildSession({ name: "gersona", isNameRegistered: false }) });
+    const [option] = findNodes(render("QueueRowQ", { row: call("getSingleRowQ", item), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
+    assert.deepEqual(
+      [option?.props.title, String(option?.props["aria-label"]).replace(/posted .*$/, "posted")],
+      ["2 options · work-dev · start directory", `Decision from gersona: ${item.title}, Approval, 2 options, work-dev, start directory, posted`],
+    );
   });
 
   test("with exactly one session ticked a row paints no name column", () => {
@@ -3104,10 +3428,9 @@ describe("In delivery rows", () => {
     assert.deepEqual([findNodes(tree, (node) => node.props?.atom === "Badge").length, /\bNew\b/.test(String(option?.props["aria-label"]))], [0, false]);
   });
 
-  // spec §4.2: a name the session did not register is its start directory's, said under it; one name stands for one session alone
+  // spec §4.2: the name column holds one line — a start directory's mark rides the row's title; one name stands for one session alone
   const whoRows = [
-    { name: "an unregistered name of one session says start directory under it", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 1, lines: ["atrium-hooks", "start directory"] },
-    { name: "a registered name stands alone", session: { name: "gersona", isNameRegistered: true }, copies: 1, lines: ["gersona"] },
+    { name: "an unregistered name of one session stands alone on its line", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 1, lines: ["atrium-hooks"] },
     { name: "an order to several sessions names their count, never a directory", session: { name: "atrium-hooks", isNameRegistered: false }, copies: 2, lines: ["2 sessions"] },
   ];
   for (const row of whoRows) {
@@ -3115,7 +3438,7 @@ describe("In delivery rows", () => {
       const item = buildItem({ kind: "message", sendId: "send-1", session: buildSession(row.session) });
       const copies = Array.from({ length: row.copies }, (_, index) => ({ ...item, id: item.id + index }));
       const tree = render("RowWhoQ", { row: { id: item.id, item, copies } });
-      assert.deepEqual(findNodes(tree, (node) => typeof node.props?.className === "string" && /^queue-row-(name|dir)$/.test(node.props.className)).map((node) => collectText(node)), row.lines);
+      assert.deepEqual(findNodes(tree, (node) => typeof node.props?.className === "string" && node.props.className.startsWith("queue-row-")).map((node) => collectText(node)), row.lines);
     });
   }
 });
@@ -3281,3 +3604,31 @@ function renderViewer(onStep: (next: unknown) => unknown = () => undefined): Ren
   const images = IMAGE_ID.map((id, index) => ({ id, name: `shot-${index + 1}.png`, bytes: 1024 * 1024, width: 800, height: 600 }));
   return render("ImageViewerQ", { images, index: 1, onStep, onClose: () => undefined });
 }
+
+// the page's fixed sentences, as the page builds them
+describe("twelve words a sentence", () => {
+  const occupant = { profileLabel: "personal", cwdTail: "wt/owner-queue", sessionIdPrefix: "9b2e7c41" };
+  const marked = (bgId: string | null) => buildSession({ marker: { setAt: "2026-11-10T06:20:11.204Z", bgId } });
+  const noteOf = (item: unknown) => call<Array<Array<string | { machine: string }>>>("getCardNotesQ", item).map(getNoteText);
+  const strings = () => [
+    vm.runInContext("RAIL_HINT_Q.TEXT", screen) as string,
+    vm.runInContext('DESK_KEY_LIST_Q.find((row) => row.keys === "Esc").does', screen) as string,
+    ...findNodes(render("DeskKeysQ", { keys: { isOn: true, toggle: () => undefined } }), (node) => node.type === "p").map((node) => collectText(node)),
+    ...noteOf(buildItem({ session: marked("bg-7f3a") })),
+    ...noteOf(buildItem({ session: marked(null) })),
+    ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [occupant], hasUnmarkedOccupant: false } })),
+    ...findNodes(render("SheetFootQ", { item: buildItem({ isApprovalClass: true }), draft: {}, queue: buildQueue().queue, isBusy: false, error: null }), (node) => typeof node.children?.[0] === "string" && String(node.children[0]).startsWith("Approval:")).map((node) => collectText(node)),
+    call<string>("getNextTurnSentenceQ", ["yoaida"], "this"),
+    call<string>("getNextTurnSentenceQ", ["yoaida", "gersona"]),
+    ...(vm.runInContext("Object.values(RELAY_REFUSAL_Q)", screen) as Array<[string, (names: unknown) => string]>)
+      .map(([label, getSentence]) => `${label} — ${getSentence({ sender: "gersona", recipient: "yoaida" })}`),
+    ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [], hasUnmarkedOccupant: true } })),
+    collectText(render("AnswerLineQ", { item: buildItem({ status: "answered", isAnsweredOutside: true, answeredAt: "2026-11-19T05:30:00.000Z" }) })),
+    vm.runInContext("RELAY_LOG_FOOT_Q", screen) as string,
+  ];
+
+  test("every sentence the page renders is twelve words or fewer", () => {
+    const texts = strings();
+    assert.deepEqual([texts.every((text) => text.length > 0), getLongSentences(texts)], [true, []], JSON.stringify(texts));
+  });
+});

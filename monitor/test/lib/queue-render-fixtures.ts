@@ -34,6 +34,8 @@ export interface QueueFixture {
   orders: OwnerItemView[];
   resumes: RecentResume[];
   relays: RelayHistoryFixture;
+  /** The history read's kind `item` (spec §4.6): decisions and reports no longer open; unset → none. */
+  done?: OwnerItemView[];
 }
 
 const SESSION_IDS = {
@@ -105,7 +107,7 @@ function buildItem(id: number, key: SessionKey, fields: Partial<OwnerItemView>):
   return {
     id, kind: "decision", title: "", body: "", linkedDocIds: [], options: [], recommendedCode: null,
     isFreeTextAllowed: true, isApprovalClass: false, status: "open", queuePosition: id, deferCount: 0, nextAttempt: 1,
-    answer: { code: null, text: null }, askedAt: getAt(9), answeredAt: null, deliveredAt: null, sendId: null,
+    answer: { code: null, text: null }, askedAt: getAt(9), answeredAt: null, deliveredAt: null, closedAt: null, sendId: null,
     attachments: [], answerRecord: null, isAnsweredOutside: false, session: buildSessionView(key), resumes: [],
     deviation: null, skipReason: null, canResend: false, relay: null,
     ...fields,
@@ -275,6 +277,28 @@ export function getRestFixture(): QueueFixture {
     resumes: RESUMES,
     relays: { items: [], refusals: [], signal: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: false } },
   };
+}
+
+export const DONE_IDS = { answered: 801, read: 802, withdrawn: 803, replied: 804, outside: 805 } as const;
+
+const DONE_ITEMS = [
+  buildItem(DONE_IDS.answered, "gersona", {
+    ...DECISIONS[0], id: DONE_IDS.answered, status: "delivered", answer: { code: "R1", text: null }, answeredAt: getAt(3), closedAt: getAt(3), deliveredAt: getAt(2),
+    answerRecord: { route: "answer", signal: "fetch_metadata" },
+  }),
+  buildItem(DONE_IDS.read, "atrium", { kind: "report", status: "seen", askedAt: getAt(75), closedAt: getAt(60), title: "배포 65 완료: 모니터 재시작, 화면 점검 통과", body: "- 모니터를 다시 띄우고 화면 다섯 개를 점검했습니다." }),
+  buildItem(DONE_IDS.withdrawn, "yoaida", { status: "withdrawn", askedAt: getAt(27 * 60), closedAt: getAt(26 * 60), title: "마이그레이션 순서: 스키마 먼저 vs 데이터 먼저", options: [{ code: "R1", label: "스키마 먼저", pros: null, cons: null }] }),
+  buildItem(DONE_IDS.replied, "aidl", {
+    kind: "report", status: "delivered", askedAt: getAt(29 * 60), answeredAt: getAt(28 * 60), closedAt: getAt(28 * 60), deliveredAt: getAt(28 * 60),
+    answer: { code: null, text: "API 후속 수정은 다음 배포에 넣어 주세요." }, answerRecord: { route: "reply", signal: "fetch_metadata" },
+    title: "파트너 연동 안내 초안 작성 완료", body: "- 안내 초안을 API 명세 위쪽에 두었습니다.",
+  }),
+  buildItem(DONE_IDS.outside, "portfolio", { status: "answered", askedAt: getAt(4 * 24 * 60 + 30), answeredAt: getAt(4 * 24 * 60), closedAt: getAt(4 * 24 * 60), isAnsweredOutside: true, title: "포트폴리오 배포 창: 오늘 밤 vs 내일 아침" }),
+];
+
+/** The rest state plus done items over three days: an answer, a read report, a withdraw, a reply and an answer outside the page. */
+export function getDoneFixture(): QueueFixture {
+  return { ...getRestFixture(), done: DONE_ITEMS };
 }
 
 /** The rest state plus the not-received order to `yoaida`, in the owner list and the history read alike. */
@@ -466,6 +490,14 @@ export function getEdgeFixture(): QueueFixture {
   };
 }
 
+/** The edge state plus three older open reports → the Reports band's newest row lies below the list's visible part from 1440 × 900 down. */
+export function getOffViewFixture(): QueueFixture {
+  const edge = getEdgeFixture();
+  const titles = ["로그 보관 기간 점검 완료", "의존성 업데이트 점검 완료", "백업 복구 연습 완료"];
+  const reports = titles.map((title, index) => buildItem(151 + index, "aidl", { kind: "report", askedAt: getAt(40 + index), title, body: "- 남은 일 없음" }));
+  return { ...edge, items: [...edge.items, ...reports] };
+}
+
 /** The edge state with its first open item from the 100-character name and its second from a session that registered no name. */
 export function getNameColumnFixture(): QueueFixture {
   const edge = getEdgeFixture();
@@ -577,6 +609,12 @@ const NOT_LISTENING_EDGE_ORDERS = [
   }),
 ];
 
+/** Every rail state of spec §9.1 on one page: the not-listening state, the hidden sessions and the approval decision in the list. */
+export function getRailFixture(): QueueFixture {
+  const base = getHiddenSessionsFixture(getNotListeningFixture());
+  return { ...base, items: [...base.items, ...EDGE_ITEMS.filter((item) => item.isApprovalClass)] };
+}
+
 /** The not-listening state plus a list row with both badges, an order to seven sessions and one to twelve. */
 export function getNotListeningEdgeFixture(): QueueFixture {
   const base = getNotListeningFixture();
@@ -686,9 +724,27 @@ export function getRelayHistoryFixture(): RelayHistoryFixture {
   };
 }
 
-/** The rest state plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
-export function getHiddenSessionsFixture(): QueueFixture {
+export const RELAY_ROW_IDS = { one: 421, several: 424 } as const;
+
+/** The rest state plus two relays on their way under In delivery: aidl to yoaida, and gersona to three sessions with one copy received. */
+export function getRelayRowFixture(): QueueFixture {
+  const one = buildRelayCopies({
+    firstId: RELAY_ROW_IDS.one, sendId: "3a1b2c3d-0004-4e5f-8a9b-0c1d2e3f4a04", from: "aidl", minutesAgo: 2,
+    text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다.\n요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.",
+    to: [["yoaida", {}]],
+  });
+  const several = buildRelayCopies({
+    firstId: RELAY_ROW_IDS.several, sendId: "3a1b2c3d-0005-4e5f-8a9b-0c1d2e3f4a05", from: "gersona", minutesAgo: 9,
+    text: "배포 65 점검 결과를 공유합니다.\n모니터 화면 다섯 개를 점검했고 모두 통과했습니다.",
+    to: [["yoaida", { deliveredAt: getAt(5) }], ["atrium", {}], ["aidl", {}]],
+    facts: { hop: 1, parent: { id: 398, sender: buildRelaySender("atrium"), sentAt: getAt(12) } },
+  });
   const rest = getRestFixture();
+  return { ...rest, items: [...rest.items, ...one, ...several] };
+}
+
+/** `rest` plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
+export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
   const hidden = [["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e91", "spare"], ["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e92", "deploy62-probe"]].map(([id, name]) => ({
     ...buildNotListeningSession(id!, name!, "live", 0).row, isWaiting: true, isHidden: true,
   }));

@@ -98,6 +98,10 @@ const FRAGMENT_READ_CID = "2026-11-19T1520_steps-finish_d9a2";
 const BUILT_READ_CID = "2026-11-19T1640_steps-close_a1c7";
 // the merged 119-row table signed with the fragment-read sign-in.js reason: no row changed
 const FULL_TABLE_CID = "2026-11-19T1755_deploy70-prep_f1a8";
+// the orders reason re-signed in place for the item thread: route, class and order kept, so the 119-row digest stays
+const ITEM_THREAD_CID = "2026-11-19T2050_queue-tidy_d81b";
+// the owner-list and orders reasons re-signed in place for the relay row: route, class and order kept, so the 119-row digest stays
+const RELAY_ROW_CID = "2026-11-19T2050_queue-tidy_d81b";
 // the 108-row table of the re-sign and the devices re-sign
 const SIGN_IN_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
 // the 109-row table the access rows extend → its digest still verifies over the live table's leading rows
@@ -194,13 +198,15 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer, the full-table sign, the fragment-read re-sign, the built-file read, the merge, the unconditional verdict, the last re-sign, the relay verdict, the close re-sign, the onboarding verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
+  test("the latest sign-off names the reviewer, the relay-row re-sign, the item-thread re-sign, the full-table sign, the fragment-read re-sign, the built-file read, the merge, the unconditional verdict, the last re-sign, the relay verdict, the close re-sign, the onboarding verdict, the owner-rows re-sign, the pending-count verdict, the devices re-sign, the five re-sign verdicts and the two verdicts whose rows it carries", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
     assert.deepEqual(
       { reviewer: latest?.reviewer, cids: latest?.cids },
       {
         reviewer: "glass-atrium-sec-guard",
         cids: [
+          RELAY_ROW_CID,
+          ITEM_THREAD_CID,
           FULL_TABLE_CID,
           FRAGMENT_READ_CID,
           BUILT_READ_CID,
@@ -246,6 +252,8 @@ describe("reviewer sign-offs", () => {
         [[SIGN_LAST_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, MERGE_CID],
         [[MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, FRAGMENT_READ_CID],
         [[FRAGMENT_READ_CID, SIGN_LAST_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, FULL_TABLE_CID],
+        [[FULL_TABLE_CID, FRAGMENT_READ_CID, BUILT_READ_CID, MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, ITEM_THREAD_CID],
+        [[ITEM_THREAD_CID, FULL_TABLE_CID, FRAGMENT_READ_CID, BUILT_READ_CID, MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, RELAY_ROW_CID],
       ],
     );
   });

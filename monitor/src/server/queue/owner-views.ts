@@ -30,6 +30,8 @@ const RELAY_SIGNAL_WINDOW_MS = 24 * 3_600_000;
 const REFUSAL_PAGE_MAX = 100;
 // The relay refusals the relay module decided: only those audit rows carry a reason
 export const RELAY_REFUSAL_FILTER = Prisma.sql`a."target_table" = 'queue-relay' AND a."result_code" = 'blocked' AND a."payload" -> 'change' ->> 'reason' IS NOT NULL`;
+// Item rows `i` whose session is no probe → a probe session's item reaches no owner surface
+export const NOT_PROBE_ITEM_FILTER = Prisma.sql`NOT EXISTS (SELECT 1 FROM "monitor"."queue_sessions" s WHERE s."session_id" = i."session_id" AND s."is_probe")`;
 
 export type Deviation = (typeof DEVIATION_STATUSES)[number];
 
@@ -157,13 +159,15 @@ export interface OwnerItemView {
   askedAt: string;
   answeredAt: string | null;
   deliveredAt: string | null;
+  /** When the owner's wait ended; null while open, and on every message and relay. */
+  closedAt: string | null;
   /** Shared by every copy of one owner send; null → not a send, or a message sent before send ids existed. */
   sendId: string | null;
   /** The owner's images on this order or report reply, in the order sent. */
   attachments: ImageView[];
   /** null → never answered, or answered with no record */
   answerRecord: AnswerRecord | null;
-  /** Answered, yet no record → written outside the monitor (straight into the database). */
+  /** Answered, yet no record → written outside the monitor (straight into the database); never a relay. */
   isAnsweredOutside: boolean;
   session: OwnerSessionView;
   /** Newest first. */
@@ -229,9 +233,10 @@ export function canResend(facts: ResendFacts): boolean {
 export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: OwnerItemView[]; nextCursor: number | null }> {
   const rows = await getPrisma().queueItem.findMany({
     where: {
+      // a relay copy is inserted answered → non-terminal = on its way to its recipient, as for an owner order
       status: { notIn: TERMINAL },
-      // the list draws every row as the owner's own item → a relay, another session's message, is read in the relay history only
-      kind: { not: "relay" },
+      // the owner took a redacted relay's text out of the record → read in the relay history only
+      relayRedactedAt: null,
       ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
       session: { isProbe: false, ...(query.profile === undefined ? {} : { profileLabel: query.profile }) },
       ...(query.after === undefined ? {} : { queuePosition: { gt: BigInt(query.after) } }),
@@ -248,8 +253,9 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
 
 /**
  * A history thread, newest first, paged by order: the owner's orders (message items and reports carrying an owner reply)
- * or relays, in every status. Every copy of a paged order is on that page, the copies to sessions the filter
- * leaves out included. Items come order by order, the copies of one order in id order.
+ * or relays, in every status, or decisions and reports no longer open. Every copy of a paged order to a non-probe session
+ * is on that page, the copies to sessions the filter leaves out included; an order sent only to probe sessions is left out.
+ * Items come order by order, the copies of one order in id order.
  */
 export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<OwnerOrdersPage> {
   const rows = await getOrderCopyRows(query);
@@ -260,7 +266,7 @@ export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<OwnerOrde
   const itemById = new Map(found.map((item) => [item.id, item]));
   const items = await buildViews(pageRows.flatMap((row) => itemById.get(row.id) ?? []));
   const nextCursor = cursors.length > query.limit ? (cursors[query.limit - 1] ?? null) : null;
-  if (query.kind === "order") return { items, nextCursor };
+  if (query.kind !== "relay") return { items, nextCursor };
   return { items, nextCursor, ...(await getRefusalPage(query, nextCursor)) };
 }
 
@@ -332,8 +338,8 @@ function toRefusalView(row: RefusalRow): RelayRefusalView {
   return { at: row.at.toISOString(), reason: row.reason, senderIdPrefix: getSessionIdPrefix(row.senderId), recipientIdPrefixes: row.recipientIds.map(getSessionIdPrefix), unresolvedCount: row.unresolvedCount };
 }
 
-// The history threads: which items, the order time, and the fold key of an item with no send id
-const HISTORY_THREADS = {
+// The send threads: which items, the order time, and the fold key of an item with no send id
+const SEND_THREADS = {
   order: {
     items: Prisma.sql`i."answered_at" IS NOT NULL AND (i."kind" = 'message' OR (i."kind" = 'report' AND i."answer_text" IS NOT NULL))`,
     time: Prisma.sql`i."answered_at"`,
@@ -345,7 +351,7 @@ const HISTORY_THREADS = {
     time: Prisma.sql`i."asked_at"`,
     unsentKey: Prisma.sql`concat('i:', i."id")`,
   },
-} as const satisfies Record<OwnerOrdersQuery["kind"], Record<"items" | "time" | "unsentKey", Prisma.Sql>>;
+} as const satisfies Record<Exclude<OwnerOrdersQuery["kind"], "item">, Record<"items" | "time" | "unsentKey", Prisma.Sql>>;
 
 /**
  * Copies of the page's orders plus one order past it, newest order first.
@@ -353,7 +359,8 @@ const HISTORY_THREADS = {
  * broken by its lowest copy id. The session filter matches either end: recipient, or a relay's sender.
  */
 async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]> {
-  const thread = HISTORY_THREADS[query.kind];
+  if (query.kind === "item") return getClosedItemRows(query);
+  const thread = SEND_THREADS[query.kind];
   const sessionFilter =
     query.sessionIds === undefined
       ? Prisma.sql`TRUE`
@@ -365,7 +372,7 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
       SELECT i."id", i."session_id", i."from_session_id", t."at", COALESCE(i."send_id"::text, ${thread.unsentKey}) AS "order_key"
       FROM "monitor"."queue_items" i
       CROSS JOIN LATERAL (SELECT ${getEpochMicrosSql(thread.time)} AS "at") t
-      WHERE ${thread.items}
+      WHERE ${thread.items} AND ${NOT_PROBE_ITEM_FILTER}
     ),
     orders AS (
       SELECT c."order_key", max(c."at") AS "at", min(c."id") AS "first_id" FROM copies c GROUP BY c."order_key" HAVING ${sessionFilter}
@@ -376,6 +383,32 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
     SELECT c."id", concat(p."at", ':', p."first_id") AS "cursor"
     FROM page p JOIN copies c ON c."order_key" = p."order_key"
     ORDER BY p."at" DESC, p."first_id" DESC, c."id"`;
+}
+
+/**
+ * The item thread's page plus one item past it, newest close time first, an equal time broken by the higher id.
+ * No decision or report write sets a send id → one item per order, read in queue_items_closed_at_idx order with no fold.
+ * The profile filter matches the item's session.
+ */
+async function getClosedItemRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]> {
+  const sessionFilter = query.sessionIds === undefined ? Prisma.sql`TRUE` : Prisma.sql`i."session_id" = ANY(${query.sessionIds}::uuid[])`;
+  // the cursor's epoch microseconds back to a timestamp, exact → the row compare stays an index condition
+  const cursorFilter =
+    query.before === undefined
+      ? Prisma.sql`TRUE`
+      : Prisma.sql`(i."closed_at", i."id") < (timestamptz 'epoch' + ${query.before.at}::bigint * interval '1 microsecond', ${query.before.id}::bigint)`;
+  // CHECK queue_items_closed_check → closed_at set ⇔ a decision or report no longer open
+  return getPrisma().$queryRaw<OrderCopyRow[]>`
+    SELECT i."id", concat(${getEpochMicrosSql(Prisma.sql`i."closed_at"`)}, ':', i."id") AS "cursor"
+    FROM "monitor"."queue_items" i
+    WHERE i."closed_at" IS NOT NULL AND ${NOT_PROBE_ITEM_FILTER} AND ${getProfileFilterSql(query.profile)} AND ${sessionFilter} AND ${cursorFilter}
+    ORDER BY i."closed_at" DESC, i."id" DESC
+    LIMIT ${query.limit + 1}`;
+}
+
+function getProfileFilterSql(profile: string | undefined): Prisma.Sql {
+  if (profile === undefined) return Prisma.sql`TRUE`;
+  return Prisma.sql`EXISTS (SELECT 1 FROM "monitor"."queue_sessions" s WHERE s."session_id" = i."session_id" AND s."profile_label" = ${profile})`;
 }
 
 // The history cursor's time unit → one expression for order times and refusal times alike
@@ -442,6 +475,7 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     askedAt: item.askedAt.toISOString(),
     answeredAt: item.answeredAt?.toISOString() ?? null,
     deliveredAt: item.deliveredAt?.toISOString() ?? null,
+    closedAt: item.closedAt?.toISOString() ?? null,
     sendId: item.sendId,
     attachments: getImageViews(item.images),
     ...getAnswerRecordView(item),
@@ -488,7 +522,8 @@ function getAnswerRecordView(item: QueueItem): Pick<OwnerItemView, "answerRecord
   if (item.answerRoute !== null && item.answerSignal !== null) {
     return { answerRecord: { route: item.answerRoute, signal: item.answerSignal }, isAnsweredOutside: false };
   }
-  return { answerRecord: null, isAnsweredOutside: ANSWERED_STATUSES.has(item.status) };
+  // a relay is inserted answered by its sender, never by the owner → no record to miss
+  return { answerRecord: null, isAnsweredOutside: item.kind !== "relay" && ANSWERED_STATUSES.has(item.status) };
 }
 
 function toSessionView(session: QueueSession, lastResumeBgId: string | null): OwnerSessionView {
