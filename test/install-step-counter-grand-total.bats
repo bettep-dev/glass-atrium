@@ -218,7 +218,7 @@ _denom() { printf '%s' "$1" | sed -n 's/^BAR\[[0-9]*\/\([0-9]*\)\]$/\1/p'; }
   [ "${status}" -eq 0 ]
   local len fn_count
   read -r len fn_count <<<"${output}"
-  [ "${len}" = "16" ]
+  [ "${len}" = "15" ]
   [ "${len}" = "${fn_count}" ]
 }
 

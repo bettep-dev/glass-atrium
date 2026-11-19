@@ -21,12 +21,14 @@
 #               → health gate → launchd load)
 #   uninstall = run_uninstall's UNCONDITIONAL engine calls
 #
-# Two DELIBERATE divergences are normalized so the guard does not false-alarm:
+# Three DELIBERATE divergences are normalized so the guard does not false-alarm:
 #   1. install's load step is menu_load_launchd_jobs (a TUI wrapper that flips
 #      LOAD_LAUNCHD=true) where the engine tail calls load_launchd_jobs — intended.
 #   2. uninstall's purge_config is intentionally EXCLUDED from the base plan (it is
 #      a separate typed-confirm step in dispatch_action). It lives inside the
 #      `if "${PURGE_CONFIG}"` block, so the top-level extractor drops it naturally.
+#   3. the engine's put_queue_mcp_registration add|remove is no plan step: a plan step
+#      reads no terminal, so the menu asks it after the plan (tui_queue_mcp_gate).
 # Plus two TUI wrapper renames for engine-INLINE boundaries (behavior-identical
 # mirrors, not semantic divergences): run_doctor "preflight" → run_doctor_preflight
 # and the inline `npm run build` phase → build_monitor.
@@ -91,13 +93,14 @@ engine_calls() {
   '
 }
 
-# Map an engine token to its TUI STEP_FN spelling. Strips arg quotes, then applies
-# the two documented wrapper renames / divergences (see file header).
+# Map an engine token to its TUI STEP_FN spelling (nothing for a token the plan drops). Strips arg quotes,
+# then applies the documented wrapper renames / divergences (see file header).
 normalize_token() {
   local tok="${1//\"/}"
   case "${tok}" in
     "run_doctor preflight") tok="run_doctor_preflight" ;;
     "load_launchd_jobs") tok="menu_load_launchd_jobs" ;;
+    "put_queue_mcp_registration add" | "put_queue_mcp_registration remove") return 0 ;;
   esac
   printf '%s\n' "${tok}"
 }
