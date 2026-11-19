@@ -87,6 +87,14 @@ run_doctor_row() {
   ' _ "${ROOT:-${GA}}"
 }
 
+# <text> → its one line naming the queue-mcp command at a terminal
+get_remedy_line() {
+  local line
+  while IFS= read -r line; do
+    [[ "${line}" != *"${GA}/glass-atrium queue-mcp' at a terminal"* ]] || printf '%s\n' "${line}"
+  done <<<"$1"
+}
+
 # → every profile file and the settings file, with their bytes, in one comparable text
 get_snapshot() {
   local file
@@ -373,7 +381,20 @@ run_tui_gate() {
     echo "${stderr}"
     return 1
   }
-  [[ "$(get_snapshot)" == "${before}" ]]
+  [[ "$(get_snapshot)" == "${before}" ]] || return 1
+  # the remedy is the asking writer at a terminal, in the words the dry run (and so the update's summary) prints
+  local doctor_line writer_line
+  doctor_line="$(get_remedy_line "${stderr}")"
+  [[ "${stderr}" != *"--approve-profile-writes"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  run_writer add --dry-run
+  writer_line="$(get_remedy_line "${stderr}")"
+  [[ -n "${writer_line}" && "${doctor_line}" == "  note : ${writer_line}" ]] || {
+    echo "doctor: '${doctor_line}' writer: '${writer_line}'"
+    return 1
+  }
 }
 
 @test "the doctor reads a registered install as registered and the switch off as no finding" {

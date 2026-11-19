@@ -971,11 +971,18 @@ is_queue_mcp_write_confirmed() {
   # shellcheck disable=SC2310  # the typed answer is the branch
   if ! "${DRY_RUN}" && ga_remote_is_terminal && is_queue_mcp_answer_yes "$1"; then return 0; fi
   if [[ "$1" == add ]]; then
-    log "queue MCP registration: nothing written — '${GA_ROOT}/glass-atrium queue-mcp' at a terminal asks first; '${GA_ROOT}/glass-atrium queue-mcp --approve-profile-writes' writes exactly these unasked"
+    log "queue MCP registration: nothing written — '${GA_ROOT}/glass-atrium queue-mcp --approve-profile-writes' writes exactly these unasked"
+    print_queue_mcp_remedy
   else
     log "queue MCP registration: nothing written — rerun the uninstall at a terminal, or with --approve-profile-writes, to remove exactly these"
   fi
   return 1
+}
+
+# [line prefix] → the one wording of the remedy for a missing registration: the doctor's note, and the line the
+# unapproved add prints, which the update replays as its summary (update_report_queue_mcp_post_apply)
+print_queue_mcp_remedy() {
+  log "${1:-}queue MCP: registration incomplete — '${GA_ROOT}/glass-atrium queue-mcp' at a terminal shows each write and asks before any"
 }
 
 # <mode> → 0 on a typed y or Y; an empty answer is the default No

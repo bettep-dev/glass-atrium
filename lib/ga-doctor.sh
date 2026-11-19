@@ -1935,7 +1935,7 @@ _doctor_report_queue_mcp() {
   done <<<"${lines}"
   _doctor_report_queue_mcp_switch "${name}"
   if [[ "${gaps}" -gt 0 ]]; then
-    log "  note : queue MCP: '${GA_ROOT}/glass-atrium queue-mcp --dry-run' prints each write; the owner approves them with --approve-profile-writes"
+    print_queue_mcp_remedy "  note : "
   else
     gaps=0
     while IFS= read -r line; do gaps=$((gaps + 1)); done <<<"${identity#*$'\n'}"

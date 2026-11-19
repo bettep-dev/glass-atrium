@@ -2891,7 +2891,7 @@ _UPDATE_QUEUE_MCP_SUMMARY=""
 # test comes from the running updater's own lib, as update_reissue_remote_leaf sources it. A failure WARNs
 # and never fails the applied update; the doctor reports the same gaps.
 update_report_queue_mcp_post_apply() {
-  local launcher report rc=0
+  local launcher report rc=0 line
   launcher="$(update_ga_root)/glass-atrium"
   if [[ ! -x "${launcher}" ]]; then
     update_log "WARN: launcher missing or not executable (${launcher}) — the queue MCP registration was not checked"
@@ -2910,8 +2910,11 @@ update_report_queue_mcp_post_apply() {
   printf '%s\n' "${report}" >&2
   if [[ "${rc}" -ne 0 ]]; then
     update_log "WARN: the queue MCP registration check failed (rc=${rc}) — '${launcher} queue-mcp --dry-run' repeats it"
-  elif [[ "${report}" == *"queue MCP registration: nothing written"* ]]; then
-    _UPDATE_QUEUE_MCP_SUMMARY="queue MCP: not registered in every profile — '${launcher} queue-mcp' at a terminal shows each write and asks before any"
+  else
+    # the launcher's own remedy line (print_queue_mcp_remedy), the doctor's words too
+    while IFS= read -r line; do
+      [[ "${line}" != "queue MCP: registration incomplete"* ]] || _UPDATE_QUEUE_MCP_SUMMARY="${line}"
+    done <<<"${report}"
   fi
 }
 

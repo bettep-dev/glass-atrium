@@ -578,7 +578,8 @@ STUB
   cat >"${INSTALL}/glass-atrium" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"${log}"
-printf 'queue MCP registration: nothing written\n' >&2
+# the dry run's remedy line, as the real launcher prints it while a write is pending
+[[ "\$*" != *--dry-run* ]] || printf '%s\n' "queue MCP: registration incomplete — '${INSTALL}/glass-atrium queue-mcp' at a terminal shows each write and asks before any" >&2
 STUB
   chmod +x "${INSTALL}/glass-atrium"
   local row name terminal headless want
