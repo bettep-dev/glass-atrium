@@ -29,9 +29,19 @@ const OPEN_ERROR_RA = {
 };
 // admin-routes.ts → ConfirmRefusal: the network moved or the confirm's read went stale
 const CONFIRM_REFUSALS_RA = new Set(["confirm_stale", "network_changed"]);
+// admin-routes.ts → AccessApplyOutcome: a throw or an unnamed step exit → what was written is unknown until the next restart
+const UNKNOWN_STATE_REFUSALS_RA = new Set(["act_failed", "write_failed"]);
 const WIDEN_ERROR_RA = {
-	on: { moved: "The network details were out of date. Nothing was turned on. Check the number again.", failed: "Remote access was not turned on. Try again." },
-	trust: { moved: "The network details were out of date. Nothing was trusted. Check the number again.", failed: "This network was not trusted. Try again." },
+	on: {
+		moved: "The network details were out of date. Nothing was turned on. Check the number again.",
+		unknown: "Remote access may or may not be on. Refresh; if wrong, turn it off and on.",
+		failed: "Remote access was not turned on. Try again.",
+	},
+	trust: {
+		moved: "The network details were out of date. Nothing was trusted. Check the number again.",
+		unknown: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on.",
+		failed: "This network was not trusted. Try again.",
+	},
 };
 const END_ERROR_RA = { off: "Remote access is still on. Try again.", "remove-all": "No device was removed. Try again." };
 
@@ -121,7 +131,9 @@ function getOpenErrorTextRA(error) {
 }
 
 function getWidenErrorTextRA(act, error) {
-	return WIDEN_ERROR_RA[act][CONFIRM_REFUSALS_RA.has(error?.code) ? "moved" : "failed"];
+	const words = WIDEN_ERROR_RA[act];
+	if (CONFIRM_REFUSALS_RA.has(error?.code)) return words.moved;
+	return UNKNOWN_STATE_REFUSALS_RA.has(error?.code) ? words.unknown : words.failed;
 }
 
 function getViewRA(setup) {

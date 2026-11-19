@@ -364,7 +364,11 @@ describe("a refused widening act names whether the network moved", () => {
   const rows = [
     { name: "a stale confirm on turn-on says nothing was turned on", act: "on", code: "confirm_stale", text: "The network details were out of date. Nothing was turned on. Check the number again." },
     { name: "a changed network on trust says nothing was trusted", act: "trust", code: "network_changed", text: "The network details were out of date. Nothing was trusted. Check the number again." },
-    { name: "any other turn-on failure says it was not turned on", act: "on", code: "write_failed", text: "Remote access was not turned on. Try again." },
+    { name: "a turn-on whose write step ended unnamed says it may or may not be on", act: "on", code: "write_failed", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
+    { name: "a turn-on that threw says it may or may not be on", act: "on", code: "act_failed", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
+    { name: "a trust whose write step ended unnamed says it may or may not be trusted", act: "trust", code: "write_failed", text: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
+    { name: "a trust that threw says it may or may not be trusted", act: "trust", code: "act_failed", text: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
+    { name: "any other turn-on failure says it was not turned on", act: "on", code: "start_failed", text: "Remote access was not turned on. Try again." },
     { name: "any other trust failure says it was not trusted", act: "trust", code: "network_unreadable", text: "This network was not trusted. Try again." },
   ];
   for (const row of rows) {
@@ -472,6 +476,22 @@ describe("after a refused widening act the confirm offers its commit only on a f
       assert.equal(getDialog(tree), undefined, `${row.name}: confirm closed`);
       assert.equal(page.reloads, row.reloads, `${row.name}: page reads`);
       if (row.notice) assert.ok(collectText(tree).includes(row.notice), `${row.name}: "${row.notice}"`);
+    });
+  }
+
+  const unknown = [
+    { name: "a turn-on that threw keeps its confirm open with the may-or-may-not words", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "act_failed" } } }, notice: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
+    { name: "a trust whose write step ended unnamed keeps its confirm open with the may-or-may-not words", flow: { ...TRUST, refusal: { status: 500, body: { error: "write_failed" } } }, notice: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
+  ];
+  for (const row of unknown) {
+    test(row.name, async () => {
+      const page = await mountRefused(row.flow);
+
+      const dialog = getDialog(page.render());
+
+      assert.ok(dialog, `${row.name}: confirm open`);
+      assert.ok(collectText(dialog).includes(row.notice), `${row.name}: "${row.notice}"`);
+      assert.deepEqual(page.sent, [ROUTE.NETWORK, row.flow.route], `${row.name}: no fresh read`);
     });
   }
 
