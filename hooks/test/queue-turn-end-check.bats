@@ -565,6 +565,9 @@ assert_silent_turn_end() {
     'another CLI subcommand last|start:t-1 clirecord result clipending result|fresh|yes|ask' \
     'last-act post last|start:t-1 tool result lastpost result|fresh|none|silent' \
     'last-act post of an earlier turn|start:t-1 tool result lastpost result|stale|none|ask' \
+    'last-act post after another post of the turn|start:t-1 post result lastpost result|fresh|none|ask' \
+    'last-act post after a post of an earlier turn|post result start:t-1 tool result lastpost result|fresh|none|silent' \
+    'last-act post sent in one message with another call|start:t-1 sibling lastpost result result|fresh|none|ask' \
     'post without the last-act flag last|start:t-1 record result post result|fresh|none|ask'; do
     IFS='|' read -r name tokens record message expect <<<"${row}"
     IFS=' ' read -r -a tokens <<<"${tokens}"

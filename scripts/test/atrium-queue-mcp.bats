@@ -90,6 +90,11 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
     echo "tools: ${tools}"
     return 1
   }
+  # the host's cap on a server's instructions: code.claude.com/docs/en/mcp → Tool search for MCP server authors
+  jq -e '.result.instructions | length <= 4096' <<<"${init}" >/dev/null || {
+    echo "the instructions run past the host's cap"
+    return 1
+  }
   for name in claim post record relay sessions; do
     jq -e --arg n "${name}" '.result.instructions | contains("- " + $n + ": ")' <<<"${init}" >/dev/null || {
       echo "the instructions name no tool ${name}"

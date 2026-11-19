@@ -15,7 +15,9 @@ TURN_QUEUE_CLI="${HOME}/.glass-atrium/scripts/atrium-queue.sh"
 # prompt, a task notification) · tool · result · text · bigtext (about 2 KB) · feedback (the isMeta Stop hook feedback
 # entry) · compact:<uuid> (a compaction summary, carrying the turn position of the turn start it follows) ·
 # nullmessage and stringmessage (an assistant entry whose message is no object) · record (the queue server's record
-# tool) · post and lastpost (its post tool, without and with the turn's last-act flag) · clirecord and clipending (Bash calls of the queue CLI's record and pending); non-zero on an unknown token
+# tool) · post and lastpost (its post tool, without and with the turn's last-act flag) · sibling (a Bash call sent in
+# one message with the lastpost written after it, the host writing one entry per call) · clirecord and clipending
+# (Bash calls of the queue CLI's record and pending); non-zero on an unknown token
 write_turn_transcript() {
   local path="$1" token big command
   shift
@@ -34,10 +36,13 @@ write_turn_transcript() {
         content: [{type: "tool_use", id: "toolu_1", name: "Bash", input: {command: "make release"}}]}}' ;;
       record) jq -cn '{type: "assistant", uuid: "a-6", message: {role: "assistant",
         content: [{type: "tool_use", id: "toolu_1", name: "mcp__atrium-queue__record", input: {form: "nothing"}}]}}' ;;
-      post | lastpost) jq -cn --argjson isLast "$([[ "${token}" == lastpost ]] && echo true || echo false)" \
-        '{type: "assistant", uuid: "a-8", message: {role: "assistant", content: [{type: "tool_use", id: "toolu_1",
-          name: "mcp__atrium-queue__post", input: ({kind: "report", title: "Build done", body: "All green."}
-            + if $isLast then {lastAct: true} else {} end)}]}}' ;;
+      post | lastpost) jq -cn --arg token "${token}" '($token == "lastpost") as $isLast
+        | {type: "assistant", uuid: "a-8", message: {id: (if $isLast then "msg-last" else "msg-post" end),
+          role: "assistant", content: [{type: "tool_use", id: "toolu_1", name: "mcp__atrium-queue__post",
+            input: ({kind: "report", title: "Build done", body: "All green."}
+              + if $isLast then {lastAct: true} else {} end)}]}}' ;;
+      sibling) jq -cn '{type: "assistant", uuid: "a-9", message: {id: "msg-last", role: "assistant",
+        content: [{type: "tool_use", id: "toolu_2", name: "Bash", input: {command: "make release"}}]}}' ;;
       clirecord | clipending)
         command="${TURN_QUEUE_CLI} ${token#cli}"
         [[ "${token}" == clipending ]] || command+=" nothing"

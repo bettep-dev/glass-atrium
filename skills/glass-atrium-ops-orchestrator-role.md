@@ -606,7 +606,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
   - Form `nothing`: the turn owed no post.
   - Form `posted`: the id of every item the turn posted, never a relay's.
   - Tool route: write the reply before the call — a successful call ends the turn, so no message follows it.
-    - A turn whose one owed item is its last tool call may post it with `post`'s `lastAct` true instead: that post is also the record, form `posted` with its id.
+    - A lone post can stand in for the call: `### Last-act post`.
   - CLI route: the turn runs on after the call — the reply is the one message that follows it.
   - An error result records nothing — an id that is no item this session posted, for one: correct the call and make it again.
   - A turn that called no tool owes no record.
@@ -622,6 +622,18 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
 - A background job session runs `register --name <its task in a few words>` before its first post.
   - The Queue page lists a session by that name; a session that left none is listed by its start-directory name.
   - Run it from the session's start directory: the monitor resumes a session from the directory it registered.
+
+### Last-act post
+
+- Tool route: `post` with `lastAct` true also writes the record — form `posted`, that item's id alone — and ends the turn.
+
+| The turn | Its record |
+|---|---|
+| posts one item, owes no other, and calls that `post` alone, as its last tool call, after the reply | `lastAct`, or `record` |
+| posts nothing, posts two or more items, or calls a tool after its post | `record`, never `lastAct` |
+| gets `isRecorded` false from a `lastAct` post | `record` with its id; no second post |
+
+- Honest backing: the turn-end check takes a `lastAct` post as the record only as the turn's one `post` call, sent alone and last; that the turn owed no other item is unchecked.
 
 ### Answers and messages
 

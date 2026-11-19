@@ -286,6 +286,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - A session reaches `## Owner Queue Listener` through the pointer on the wait table's `[ATRIUM-QUEUE]` `pending` row, where a woken session looks.
     - The action on a wake stays single-sited in the wait table's `[ATRIUM-QUEUE]` rows.
   - `### On a wait's exit` is a split point holding `### Answers and messages` under the 3 KB H3 cap: the wait table's last row points to it.
+  - `### Last-act post` is a split point holding `### Posting and registering` under the 3 KB H3 cap: the **Turn record** tool-route bullet points to it.
   - `### Wait or listener` is a split point of the same H3 and the single site of the wait-or-listener rule.
     - Its pointers: the wait table's two `next` rows · `## Owner Queue Listener` · the interactive bullet of `### On a wait's exit`.
     - It stays under `## Owner Queue`: the core's trigger line names that heading alone, so a rule under a split reaches no session the trigger sends.
@@ -302,7 +303,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound` · `### On a wait's exit`;
   - the two refusals behind `wait` exit 2: `monitor/src/server/queue/delivery.ts` → `lockOwnSession` (`unknown_session`) · `assertLiveFor` (`session_not_live`);
   - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
-  - the record call and its two forms: `hooks/queue-turn-end-check.sh` → `RECORD_ASK_TEMPLATE` · `SHADOWED_RECORD_ASK_TEMPLATE` · `scripts/atrium-queue.sh` → `print_usage` (its `record` line) · `scripts/atrium-queue-mcp.sh` → the `post` tool's `lastAct` · the section's **Turn record** bullet · the core's trigger line · the server instructions;
+  - the record call and its two forms: `hooks/queue-turn-end-check.sh` → `RECORD_ASK_TEMPLATE` · `SHADOWED_RECORD_ASK_TEMPLATE` · `scripts/atrium-queue.sh` → `print_usage` (its `record` line) · `scripts/atrium-queue-mcp.sh` → the `post` tool's `lastAct` · the section's **Turn record** bullet · `### Last-act post` · the core's trigger line · the server instructions;
   - the server name and its tool names: `scripts/lib/queue-session.sh` → `QUEUE_MCP_SERVER_NAME` · `### Which route` and its tool-to-CLI table;
   - the shadowing line and its CLI-only rule: `hooks/queue-session-register.sh` (its shadowing line) · `scripts/lib/queue-session.sh` → `queue_is_server_shadowed` · `hooks/queue-turn-end-check.sh` → `SHADOWED_RECORD_ASK_TEMPLATE` · `### Which route` · the server instructions · `SECURITY.md` → **Session relays**;
   - the relay reading — a peer session's information, no owner instruction and no approval, first included:
@@ -328,7 +329,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the record's write and its id check, skipped on no usable monitor reply: `scripts/lib/queue-ops.sh` → `queue_create_record` · `queue_get_record_check` · `scripts/lib/queue-session.sh` → `queue_put_record` · `queue_get_record_time`;
   - the headless `claude -p` exclusion: `hooks/lib/session-entrypoint.sh` → `is_owner_facing_session`, called by `hooks/queue-turn-end-check.sh` → `main`; the at-most-once-per-turn hold: that hook's `main`, which exits on `stop_hook_active`;
   - the turn ending at a successful `record` on the tool route: `scoped/shared-hook-capability-contract.md` → the `MCP tool result end-turn` row; the CLI's `record` carries no such result, so its turn runs on to a final message.
-- The check accepts a record call alone as the turn's last tool call: a `post` that also wrote the record would still draw the ask, so the section names no such form.
+- The check takes a `lastAct` post as the record only as the turn's one `post` call, alone in its message: `hooks/lib/reply_language.py` → `find_current_turn` (`last_tool.alone` · `last_tool.name_calls`).
 
 ### `## Owner Queue Tools`
 
