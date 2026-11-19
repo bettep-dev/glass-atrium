@@ -71,6 +71,9 @@ const now = () => clock;
 let db: Prisma.TransactionClient = getPrisma();
 const events: RemoteAuditEvent[] = [];
 let isAuditDown = false;
+// the device store throws an internal message carrying a path
+let isListThrowing = false;
+const INTERNAL_FAILURE = "ENOENT: no such file, open '/Users/owner/.glass-atrium/data/remote-access/devices.db'";
 let openedCodes: string[] = [];
 // the page's acts as the shell step and the in-process apply answer them; the trail orders acts against audit rows
 const access = {
@@ -100,7 +103,12 @@ function buildAdminDeps(): RemoteAdminDeps {
         return code;
       },
     },
-    devices: { list: () => listActiveDevices(db), revoke: (id) => revokeDevice(db, id), revokeAll: () => revokeAllDevices(db) },
+    devices: {
+      list: async () => {
+        if (isListThrowing) throw new Error(INTERNAL_FAILURE);
+        return listActiveDevices(db);
+      },
+      revoke: (id) => revokeDevice(db, id), revokeAll: () => revokeAllDevices(db) },
     connections,
     audit: {
       insertEvent: async (event) => {
@@ -156,6 +164,7 @@ beforeEach(() => {
   events.length = 0;
   openedCodes = [];
   isAuditDown = false;
+  isListThrowing = false;
   trail.length = 0;
   Object.assign(access, { outcome: "written", offOutcome: "written", isCloseFailing: false, isActThrowing: false, hold: Promise.resolve(), certificate: ca.cert, onTrust: null, handed: [] });
 });
@@ -701,6 +710,67 @@ describe("the confirm read", () => {
     const limited = await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CONFIRM_NETWORK });
     assert.deepEqual([limited.statusCode, trail], [429, []]);
   });
+});
+
+describe("a remote-admin answer that is not a success", () => {
+  // the page prints this body under a failed act → a fixed code (the off's fixed step names beside it), never server text
+  const rows: { name: string; arrange?: () => Promise<void>; request: Parameters<typeof callAdmin>[0]; status: number }[] = [
+    { name: "a request without the page header", request: { method: "GET", url: REMOTE_ADMIN_PATH.DEVICES, headers: getMacPageHeaders(MAC_PAGE_HEADER.NAME) }, status: 403 },
+    { name: "an act carrying a body", request: { method: "POST", url: REMOTE_ADMIN_PATH.REVOKE_ALL, headers: { ...MAC_PAGE, "content-type": "application/json" }, payload: "{}" }, status: 400 },
+    { name: "a device id that does not parse", request: { method: "DELETE", url: `${REMOTE_ADMIN_PATH.DEVICES}/not-a-number` }, status: 400 },
+    { name: "an unknown device", request: { method: "DELETE", url: `${REMOTE_ADMIN_PATH.DEVICES}/987654321987` }, status: 404 },
+    {
+      name: "a read past its rate limit",
+      arrange: async () => {
+        for (let index = 0; index < REMOTE_ADMIN_LIMITS.CERTIFICATE_READ.limit; index += 1) await callAdmin({ method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE });
+      },
+      request: { method: "GET", url: REMOTE_ADMIN_PATH.CERTIFICATE },
+      status: 429,
+    },
+    {
+      name: "an act refused before any step",
+      arrange: async () => {
+        access.outcome = "confirm_stale";
+      },
+      request: { method: "POST", url: REMOTE_ADMIN_PATH.TRUST },
+      status: 409,
+    },
+    {
+      name: "a code asked while the audit store is down",
+      arrange: async () => {
+        isAuditDown = true;
+      },
+      request: { method: "POST", url: REMOTE_ADMIN_PATH.REGISTRATION },
+      status: 503,
+    },
+    {
+      name: "an off whose close failed",
+      arrange: async () => {
+        access.isCloseFailing = true;
+      },
+      request: { method: "POST", url: REMOTE_ADMIN_PATH.ACCESS_OFF },
+      status: 500,
+    },
+    {
+      name: "a handler that throws",
+      arrange: async () => {
+        isListThrowing = true;
+      },
+      request: { method: "GET", url: REMOTE_ADMIN_PATH.DEVICES },
+      status: 500,
+    },
+  ];
+  for (const row of rows) {
+    test(`${row.name} answers a fixed error code, never an internal message, path or stack`, async () => {
+      await row.arrange?.();
+      const response = await callAdmin(row.request);
+      const body = JSON.parse(response.body) as Record<string, unknown>;
+      const extraKeys = Object.keys(body).filter((key) => !["error", "failed", "revoked"].includes(key));
+      const isFixedCode = typeof body.error === "string" && /^[a-z_]+$/.test(body.error);
+      const isLeaking = /[/\\]|Error|ENOENT|must|message|stack/.test(response.body);
+      assert.deepEqual([response.statusCode, extraKeys, isFixedCode, isLeaking], [row.status, [], true, false], response.body);
+    });
+  }
 });
 
 describe("the certificate download", () => {

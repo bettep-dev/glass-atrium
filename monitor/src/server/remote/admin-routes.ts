@@ -11,7 +11,7 @@ import { getPageOriginSignal } from "../request-guards.js";
 import { getAttachmentDisposition, setNoStoreHeader } from "../response-headers.js";
 import type { DeviceConnections } from "./connections.js";
 import type { DeviceListing } from "./devices.js";
-import { type RemoteAuditEvent, getRoutePayload, recordEvent } from "./gate.js";
+import { type RemoteAuditEvent, getRoutePayload, recordEvent, replyOpaqueError } from "./gate.js";
 import { type WindowLimit, WindowLimiter, buildWindowLimitHook } from "./limits.js";
 import type { ListenReason, NetworkLink } from "./network.js";
 import type { RegistrationCodes } from "./registration-code.js";
@@ -175,6 +175,8 @@ export async function registerRemoteAdminRoutes(app: FastifyInstance, deps: Remo
   await app.register(async (scope) => {
     scope.addHook("onRequest", refuseUnlessMacPage);
     scope.addHook("onSend", setNoStoreHeader);
+    // the page prints a failed act's body → a schema refusal or a throw answers a fixed code, never its message
+    scope.setErrorHandler(replyOpaqueError);
     const options = { bodyLimit: EMPTY_BODY_LIMIT_BYTES };
     const openOptions = { ...options, preHandler: buildLimitHook(REMOTE_ADMIN_LIMITS.REGISTRATION_OPEN, deps) };
     scope.post(REMOTE_ADMIN_PATH.REGISTRATION, openOptions, (request, reply) => openRegistration(request, reply, deps));

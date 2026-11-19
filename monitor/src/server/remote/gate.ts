@@ -110,7 +110,7 @@ const OPAQUE_CLIENT_ERROR_CODES: ReadonlyMap<number, string> = new Map([
 ]);
 
 // a thrown error's message, code and schema text never reach a remote caller → status + a fixed code
-function replyOpaqueError(error: { statusCode?: number }, request: FastifyRequest, reply: FastifyReply): FastifyReply {
+export function replyOpaqueError(error: { statusCode?: number }, request: FastifyRequest, reply: FastifyReply): FastifyReply {
   const statusCode = error.statusCode !== undefined && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
   if (statusCode === 500) request.log.error({ err: error, method: request.method, route: request.routeOptions.url }, "remote request failed");
   return refuse(reply, statusCode, statusCode === 500 ? "internal_error" : (OPAQUE_CLIENT_ERROR_CODES.get(statusCode) ?? "bad_request"));
