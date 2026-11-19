@@ -195,7 +195,7 @@ run_install() {
   # dry-run (mutation-free staging).
   wire_hooks
 
-  # the owner queue's MCP server in every profile — printed always, written only on --approve-profile-writes
+  # the owner queue's MCP server in every profile — printed always, written on --approve-profile-writes or a y typed at a terminal
   put_queue_mcp_registration add
 
   # legacy-farm migration AFTER wire_hooks — repoint-first-THEN-sweep: the
