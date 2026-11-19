@@ -28,6 +28,7 @@ setup() {
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
   # the profile config the register hook's shadowing check reads → never the running user's own
   export HOME="${BATS_TEST_TMPDIR}/home"
+  export GA_DATA_ROOT="${HOME}/.glass-atrium"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
   export CLAUDE_CODE_SESSION_ID="${SESSION_ID}"

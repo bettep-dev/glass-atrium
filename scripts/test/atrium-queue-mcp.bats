@@ -27,6 +27,7 @@ setup() {
     ATRIUM_QUEUE_PROBE ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
   export HOME="${BATS_TEST_TMPDIR}/home"
+  export GA_DATA_ROOT="${HOME}/.glass-atrium"
   mkdir -p "${GA_ROOT}" "${HOME}"
   export CLAUDE_CODE_SESSION_ID="${SESSION_ID}"
   export CLAUDE_CODE_ENTRYPOINT=cli
