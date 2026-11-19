@@ -23,7 +23,7 @@ CI_YML="${GA}/.github/workflows/ci.yml"
 # the three whose loss would follow from dropping that glob. It is a real bash-leg policy input:
 # test/licenses-audit-gate.bats reads that document as its sole input, so a licenses-only PR
 # that skipped the bash leg would retire the gate on exactly the change kind it polices.
-# python / monitor rows: hook files outside each leg's own source globs that its tests read by
+# python / monitor rows: files outside each leg's own source globs that its tests read by
 # path (test-python + test-python-pytest share the `python` output).
 # The labels.tsv bash row stands for the reviewer catch-rate corpus data, which
 # autoagent/test/reviewer-catch-rate.bats reads as its input: `autoagent/**` sits in the python
@@ -45,7 +45,8 @@ python hooks/validate-compliance-matrix.sh
 monitor hooks/lib/review-flag-reasons.sh
 monitor hooks/lib/style-ref-consts.sh
 monitor hooks/lib/styleref-roster.sh
-monitor hooks/pricing.json'
+monitor hooks/pricing.json
+monitor test/fixtures/configd/global-ipv4.txt'
 
 LEGS=(bash python monitor)
 
