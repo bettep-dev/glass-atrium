@@ -359,7 +359,22 @@ describe("the connect card is a procedure: one device, one open step, done steps
     assert.equal(svg.props.width, (size + 8) * 4);
     assert.equal(svg.props.viewBox, `0 0 ${size + 8} ${size + 8}`);
     assert.equal(String(findNodes(svg, (node) => node.type === "path")[0].props.d).match(/M/g)?.length, dark);
-    assert.ok(String(svg.props["aria-label"]).includes(text));
+  });
+
+  test("the QR code is named for what it is, never by the address or the code it carries", async () => {
+    const { mod } = await loadScreen();
+    const payloads = [
+      { address: "https://studio-mac.local:16146", code: "K7QM4XZP" },
+      { address: "https://192.168.0.12:16146", code: "PZX4MQ7K" },
+    ];
+
+    const labels = payloads.map(({ address, code }) => {
+      const tree = render(mod as Mod, "QrCodeRA", { text: `${address}/sign-in.html#code=${code}` });
+      return String(findNodes(tree, (node) => node.type === "svg")[0].props["aria-label"]);
+    });
+
+    assert.deepEqual(labels, ["QR code for the sign-in page with this code", "QR code for the sign-in page with this code"]);
+    payloads.forEach(({ address, code }, i) => assert.ok(!labels[i].includes(address) && !labels[i].includes(code), labels[i]));
   });
 
   test("a device registering in the scan step finishes the card, and Connect another device starts over", async () => {

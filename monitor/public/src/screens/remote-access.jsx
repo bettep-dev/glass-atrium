@@ -64,7 +64,8 @@ const PATH_SEPARATOR_RA = " › ";
 // routes.ts → SIGN_IN_FILES serves the page itself; sign-in.js reads the one fragment key → one scan fills the code
 const SIGN_IN_RA = { PATH: "/sign-in.html", FRAGMENT: "#code=" };
 // spec 44105 → The QR drawing: 4 CSS px a module, a 4-module quiet zone, modules in elev on an ink field (16.74:1)
-const QR_RA = { MODULE_PX: 4, QUIET: 4, FIELD: { fill: "rgb(var(--ink))" }, MODULE: { fill: "rgb(var(--elev))" } };
+// LABEL names the image, never its payload → the address and code are read only from the Trouble? fold
+const QR_RA = { MODULE_PX: 4, QUIET: 4, FIELD: { fill: "rgb(var(--ink))" }, MODULE: { fill: "rgb(var(--elev))" }, LABEL: "QR code for the sign-in page with this code" };
 
 // open null → every step done
 const START_PROGRESS_RA = { open: 0, done: STEPS_RA.map(() => false), isTroubleOpen: false, label: null };
@@ -563,7 +564,7 @@ function QrCodeRA({ text }) {
 	qr.make();
 	const size = qr.getModuleCount() + QR_RA.QUIET * 2;
 	return (
-		<svg role="img" aria-label={`QR code for ${text}`} width={size * QR_RA.MODULE_PX} height={size * QR_RA.MODULE_PX} viewBox={`0 0 ${size} ${size}`} shapeRendering="crispEdges">
+		<svg role="img" aria-label={QR_RA.LABEL} width={size * QR_RA.MODULE_PX} height={size * QR_RA.MODULE_PX} viewBox={`0 0 ${size} ${size}`} shapeRendering="crispEdges">
 			<rect width={size} height={size} style={QR_RA.FIELD} />
 			<path d={getQrPathRA(qr)} style={QR_RA.MODULE} />
 		</svg>
