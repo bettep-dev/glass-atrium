@@ -360,7 +360,7 @@ const NOT_LISTENING_PARTS: CloseUpState[] = [
 
 const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...PARTS, ...NOT_LISTENING_PARTS];
 
-// spec §18.4 35 (Not listening stream only) at 1280, 1440 and 1920: each Not listening surface in one frame with its Not yet
+// spec §18.4 35 (Next turn stream only) at 1280, 1440 and 1920: each Next turn surface in one frame with its Not yet
 // twin — the rail's two rows, the list's roll-ups, the mixed order's recipients, the composer with a listening and a not-listening tick, the two
 // answered sheets — then a list row with both badges, the five-or-more roll-up, the composer's other ticks, no session listening, the approval note
 const TWIN_VIEWPORTS = [MIN_WINDOW, VIEWPORTS[0], VIEWPORTS[2]] as const;
@@ -1649,7 +1649,7 @@ describe("queue page on the mockup fixtures", () => {
       return {
         marks: rows.map((row) => {
           const mark = getComputedStyle(row.querySelector(".queue-rail-mark") as Element);
-          const isLive = /^(Live|Not listening)/.test(row.title);
+          const isLive = /^(Live|Next turn)/.test(row.title);
           return isLive ? mark.backgroundColor === ok : mark.borderTopColor === faint && mark.backgroundColor === "rgba(0, 0, 0, 0)";
         }),
         kinds: new Set(rows.map((row) => row.querySelector(".queue-rail-mark")?.classList.contains("is-live"))).size,
@@ -2522,7 +2522,7 @@ describe("queue page on the mockup fixtures", () => {
     assert.ok(bubbles.length > 0 && bubbles.every(({ width, limit }) => width <= limit + 0.5), JSON.stringify(bubbles));
   });
 
-  // spec 44063 §9.1–§9.4 and §14.4 (Not listening stream only): Not listening and Not yet side by side on every surface
+  // spec 44063 §9.1–§9.4 and §14.4 (Next turn stream only): Next turn and Not yet side by side on every surface
   // spec §4.6, §14.3: Status Done — the history read with kind item, scoped on the server by the ticks; day bands; a read-only sheet
   describe("on the done fixtures", () => {
     const openDonePage = async (): Promise<{ page: Page; reads: URLSearchParams[] }> => {
@@ -2596,13 +2596,13 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   describe("on the not-listening fixtures", () => {
-    const SENTENCE = "Not listening — delivers at its next turn end or restart";
+    const SENTENCE = "Next turn — delivers at its next turn end or restart";
     const openNotListeningPage = (): Promise<Page> => {
       harness.fixture = getNotListeningFixture();
       return openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     };
 
-    test("under one order a listening recipient holds the tag Not yet and a not-listening one the tag Not listening: the same fill, told apart by its glyph and words, its sentence only in the title", async () => {
+    test("under one order a listening recipient holds the tag Not yet and a not-listening one the tag Next turn: the same fill, told apart by its glyph and words, its sentence only in the title", async () => {
       const page = await openNotListeningPage();
       await page.locator(`#queue-order-${NOT_LISTENING_IDS.mixedOrder}`).scrollIntoViewIfNeeded();
       const rows = await page.evaluate((id) => [...document.querySelectorAll(`#queue-order-${id} .queue-recipient`)].map((row) => {
@@ -2627,15 +2627,15 @@ describe("queue page on the mockup fixtures", () => {
 
       assert.deepEqual(rows.map(({ background: _background, ...row }) => row), [
         { name: "gersona", word: "Not yet", isGlyphDrawn: false, isGlyphSolid: false, title: null, isSentencePainted: false },
-        { name: "sixmon", word: "Not listening", isGlyphDrawn: true, isGlyphSolid: true, title: SENTENCE, isSentencePainted: false },
+        { name: "sixmon", word: "Next turn", isGlyphDrawn: true, isGlyphSolid: true, title: SENTENCE, isSentencePainted: false },
       ]);
       assert.equal(rows[0]?.background, rows[1]?.background, "one tag fill for both");
     });
 
-    test("a live session that does not listen draws the bare pause mark in its tag column, named Not listening, its hover line the title and the box's description by keyboard; a listening one draws no tag", async () => {
+    test("a live session that does not listen draws the bare pause mark in its tag column, named Next turn, its hover line the title and the box's description by keyboard; a listening one draws no tag", async () => {
       const page = await openNotListeningPage();
       const tagOf = (id: string) => page.locator(`.queue-rail-row[data-session="${id}"] .queue-rail-tag`);
-      const mark = await tagOf(NOT_LISTENING_SESSION_IDS.nightly).getByRole("img", { name: "Not listening" }).evaluate((node) => ({
+      const mark = await tagOf(NOT_LISTENING_SESSION_IDS.nightly).getByRole("img", { name: "Next turn" }).evaluate((node) => ({
         glyph: node.querySelectorAll("svg rect").length, shell: getComputedStyle(node).borderTopWidth, width: Math.round(node.getBoundingClientRect().width),
       }));
       const listening = await tagOf(FIXTURE_SESSION_IDS.gersona).count();
@@ -2649,7 +2649,7 @@ describe("queue page on the mockup fixtures", () => {
       });
       await page.close();
 
-      const HOVER = "Not listening: orders wait for its next turn. Restart it.";
+      const HOVER = "Next turn: orders reach it then. Restart it to deliver now.";
       assert.deepEqual({ mark, listening }, { mark: { glyph: 2, shell: "0px", width: 12 }, listening: 0 });
       assert.deepEqual([focused.name, focused.title, focused.description.startsWith(HOVER), focused.isRing], ["Select nightly", HOVER, true, true], JSON.stringify(focused));
     });
@@ -2670,7 +2670,7 @@ describe("queue page on the mockup fixtures", () => {
       await sent;
       await page.close();
 
-      assert.deepEqual(shown, { tagged: [["nightly", "Not listening", 0]], note: "nightly gets this at its next turn. Restart it to deliver now." });
+      assert.deepEqual(shown, { tagged: [["nightly", "Next turn", 0]], note: "nightly gets this at its next turn. Restart it to deliver now." });
       assert.deepEqual(posts, ["/api/queue/owner/messages/send"]);
     });
 
@@ -2696,7 +2696,7 @@ describe("queue page on the mockup fixtures", () => {
       }
 
       assert.deepEqual(shown.filter((to) => to.lines !== 1), [], "one line per name and its mark");
-      assert.deepEqual(shown.filter((to) => to.at === MIN_WINDOW.width).map((to) => to.text).slice(2), ["sixmon [Not listening],", "nightly [Not listening]"]);
+      assert.deepEqual(shown.filter((to) => to.at === MIN_WINDOW.width).map((to) => to.text).slice(2), ["sixmon [Next turn],", "nightly [Next turn]"]);
     });
 
     test("an order to two sessions that do not listen reads 0 of 2 and ⏸ 2 in its tag column; the ended session's resume copy reads Not yet; nothing of the state is amber", async () => {
@@ -2714,7 +2714,7 @@ describe("queue page on the mockup fixtures", () => {
       }, { mixedOrder: NOT_LISTENING_IDS.mixedOrder, deafOrder: NOT_LISTENING_IDS.deafOrder, resumeOrder: NOT_LISTENING_IDS.resumeOrder });
       await page.close();
 
-      assert.deepEqual([shown.deaf, shown.mixed], [{ fact: "0 of 2", tags: ["2 not listening"] }, { fact: "0 of 2", tags: ["1 not listening"] }]);
+      assert.deepEqual([shown.deaf, shown.mixed], [{ fact: "0 of 2", tags: ["2 next turn"] }, { fact: "0 of 2", tags: ["1 next turn"] }]);
       assert.deepEqual([shown.resume, shown.amber], ["Not yet", 0]);
     });
 
@@ -2738,7 +2738,7 @@ describe("queue page on the mockup fixtures", () => {
 
       const deafLine = deaf.lines.findIndex((line) => line === "sixmon gets this answer at its next turn. Restart it to deliver now.");
       const pullLine = deaf.lines.findIndex((line) => line.startsWith("Run in that session:"));
-      assert.deepEqual([deaf.receipt, deafLine >= 0, pullLine > deafLine], ["⏸ Not listening", true, true], JSON.stringify(deaf));
+      assert.deepEqual([deaf.receipt, deafLine >= 0, pullLine > deafLine], ["⏸ Next turn", true, true], JSON.stringify(deaf));
       assert.deepEqual([listening.receipt, listening.lines.includes("The session is listening: it picks up this answer on its own.")], ["Not yet", true], JSON.stringify(listening));
     });
   });
@@ -2997,8 +2997,8 @@ describe("queue page on the mockup fixtures", () => {
     // Counts wider than the order's column wrap between their segments, each `n word` whole, every line flush with the column's end
     const rollUps = [
       { name: "seven sessions in three segments", getFixture: getEdgeFixture, counts: "7 sessions · 5 received · 1 not yet" },
-      { name: "seven sessions in four segments", getFixture: getNotListeningEdgeFixture, counts: "7 sessions · 5 received · 1 not yet · 1 not listening" },
-      { name: "twelve sessions in four segments", getFixture: getNotListeningEdgeFixture, counts: "12 sessions · 10 received · 1 not yet · 1 not listening" },
+      { name: "seven sessions in four segments", getFixture: getNotListeningEdgeFixture, counts: "7 sessions · 5 received · 1 not yet · 1 next turn" },
+      { name: "twelve sessions in four segments", getFixture: getNotListeningEdgeFixture, counts: "12 sessions · 10 received · 1 not yet · 1 next turn" },
     ];
     for (const viewport of [MIN_WINDOW, VIEWPORTS[0]]) {
       for (const rollUp of rollUps) {
@@ -3100,7 +3100,7 @@ describe("queue page on the mockup fixtures", () => {
     });
 
     // spec §4.2, §14.3: receipts in the tag column, worst first — `⚠ n` before `⏸ n` — each a count atom, both whole inside its 80
-    test("a list row's receipt counts stand in its tag column, not received before not listening, both whole inside its 80, at 1280", async () => {
+    test("a list row's receipt counts stand in its tag column, not received before next turn, both whole inside its 80, at 1280", async () => {
       harness.fixture = getNotListeningEdgeFixture();
       const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
       const tags = await page.evaluate(() => [...document.querySelectorAll(".queue-row-tag")].filter((tag) => tag.childElementCount > 1).map((tag) => {
@@ -3116,7 +3116,7 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
 
       assert.ok(tags.length > 0, "a row counts both");
-      assert.deepEqual(tags, tags.map(() => ({ words: ["not received", "not listening"], isCountAtom: true, isWhole: true, width: 80 })));
+      assert.deepEqual(tags, tags.map(() => ({ words: ["not received", "next turn"], isCountAtom: true, isWhole: true, width: 80 })));
     });
   });
 

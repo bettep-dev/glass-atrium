@@ -266,14 +266,14 @@ describe("receipt words", () => {
     { name: "an expired order is not received", item: { status: "expired", deviation: "expired", canResend: true }, word: "Not received" },
     { name: "an order whose automatic resume is used is not received", item: { status: "resume_pending", deviation: "resume_pending", canResend: true }, word: "Not received" },
     { name: "an answer to a live session that listens is not yet received", item: { status: "answered", session: buildSession({ state: "live", isWaiting: true }) }, word: "Not yet" },
-    { name: "an answer to a live session that does not listen is not listening", item: { status: "answered", session: buildSession({ state: "live", isWaiting: false }) }, word: "Not listening" },
-    { name: "an answer to a not-reachable session that does not listen is not listening", item: { status: "answered", deviation: "session_not_reachable", session: buildSession({ state: "stale", isWaiting: false }) }, word: "Not listening" },
-    { name: "a held copy whose session does not listen is not listening", item: { status: "held", deviation: "held", session: buildSession({ state: "live", isWaiting: false }) }, word: "Not listening" },
+    { name: "an answer to a live session that does not listen waits for its next turn", item: { status: "answered", session: buildSession({ state: "live", isWaiting: false }) }, word: "Next turn" },
+    { name: "an answer to a not-reachable session is not reachable", item: { status: "answered", deviation: "session_not_reachable", session: buildSession({ state: "stale", isWaiting: false }) }, word: "Not reachable" },
+    { name: "a held copy whose session does not listen waits for its next turn", item: { status: "held", deviation: "held", session: buildSession({ state: "live", isWaiting: false }) }, word: "Next turn" },
     { name: "a copy being handed over stays not yet whatever its session's last poll", item: { status: "delivering", session: buildSession({ state: "live", isWaiting: false }) }, word: "Not yet" },
     { name: "an ended session's answer, which an automatic resume will start, stays not yet", item: { status: "answered", session: buildSession({ state: "exited", isWaiting: false }) }, word: "Not yet" },
-    { name: "a failure the queue recorded outranks not listening", item: { status: "unacked", deviation: "unacked", canResend: true, session: buildSession({ state: "live", isWaiting: false }) }, word: "Not received" },
+    { name: "a failure the queue recorded outranks a next turn", item: { status: "unacked", deviation: "unacked", canResend: true, session: buildSession({ state: "live", isWaiting: false }) }, word: "Not received" },
   ];
-  const WORDS = [/\bReceived\b/, /Not yet/, /Not listening/, /Not received/];
+  const WORDS = [/\bReceived\b/, /Not yet/, /Next turn/, /Not reachable/, /Not received/];
   for (const row of rows) {
     test(row.name, () => {
       const item = buildItem({ kind: "message", answeredAt: "2026-11-12T12:26:40.118Z", ...row.item });
@@ -284,7 +284,7 @@ describe("receipt words", () => {
 
   // spec §9.4: the same tag fill as Not yet, with a pause glyph before its word and the sentence in its title, never as visible text
   test("a not-listening receipt is the tag badge led by the solid pause glyph, its sentence in its title and for screen readers only", () => {
-    const tree = render("RowFactsQ", { facts: [call("getReceiptFactQ", "notListening")] });
+    const tree = render("RowFactsQ", { facts: [call("getReceiptFactQ", "nextTurn")] });
     const [badge] = findNodes(tree, (node) => node.props?.atom === "Badge");
     const [svg] = findNodes(badge as RenderedNode, (node) => node.type === "svg");
     // two bars filled in the badge's ink, no outline
@@ -293,7 +293,7 @@ describe("receipt words", () => {
     const [spoken] = findNodes(badge as RenderedNode, (node) => node.props?.className === "sr-only");
     assert.deepEqual(
       { fill: badge?.props.fill, title: badge?.props.title, glyph: bars.length, order: (badge?.children ?? []).map((child) => (typeof child === "string" ? child : (child.props?.atom ?? child.type))), spoken: collectText(spoken as RenderedNode) },
-      { fill: "tag", title: "Not listening — delivers at its next turn end or restart", glyph: 2, order: ["svg", "Not listening", "span"], spoken: ", delivers at its next turn end or restart" },
+      { fill: "tag", title: "Next turn — delivers at its next turn end or restart", glyph: 2, order: ["svg", "Next turn", "span"], spoken: ", delivers at its next turn end or restart" },
     );
   });
 
@@ -311,9 +311,9 @@ describe("receipt words", () => {
     { name: "some copies received counts them", statuses: ["delivered", "answered", "delivering"], cells: { fact: "1 of 3", tags: [] } },
     { name: "every copy waiting reads none received and draws no tag", statuses: ["answered", "delivering", "held"], cells: { fact: "0 of 3", tags: [] } },
     { name: "a copy not received is counted in the tag column", statuses: ["delivered", "unacked", "answered"], cells: { fact: "1 of 3", tags: ["1 not received"] } },
-    { name: "two copies whose sessions do not listen are counted in the tag column", statuses: ["answered:deaf", "answered:deaf"], cells: { fact: "0 of 2", tags: ["2 not listening"] } },
-    { name: "a mixed order counts only the copy whose session does not listen", statuses: ["answered:listening", "answered:deaf"], cells: { fact: "0 of 2", tags: ["1 not listening"] } },
-    { name: "not received stands before not listening", statuses: ["delivered", "answered:deaf", "unacked"], cells: { fact: "1 of 3", tags: ["1 not received", "1 not listening"] } },
+    { name: "two copies whose sessions do not listen are counted in the tag column", statuses: ["answered:deaf", "answered:deaf"], cells: { fact: "0 of 2", tags: ["2 next turn"] } },
+    { name: "a mixed order counts only the copy whose session does not listen", statuses: ["answered:listening", "answered:deaf"], cells: { fact: "0 of 2", tags: ["1 next turn"] } },
+    { name: "not received stands before next turn", statuses: ["delivered", "answered:deaf", "unacked"], cells: { fact: "1 of 3", tags: ["1 not received", "1 next turn"] } },
   ];
   // `status:deaf` → a live session that does not listen · `status:listening` → one that does · bare → an ended session
   const SESSION_OF: Record<string, Record<string, unknown>> = { deaf: { state: "live", isWaiting: false }, listening: { state: "live", isWaiting: true } };
@@ -1364,7 +1364,7 @@ describe("a relay on its way", () => {
     },
     {
       name: "a copy whose session does not listen is counted in the tag column", copies: toYoaida({ session: buildSession({ name: "yoaida", state: "live", isWaiting: false }) }), isNameShown: true,
-      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: ["1 not listening"], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}, 1 not listening` },
+      shape: { who: "aidl", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from aidl to yoaida: ${TITLE}, 1 next turn` },
     },
     {
       name: "with one session ticked the name column is left out and the title names both ends", copies: toYoaida(), isNameShown: false,
@@ -2113,7 +2113,7 @@ describe("sessions rail rows", () => {
   const railStates = [
     { name: "something not received leads, live or not", row: { state: "stale", isWaiting: false }, notReceived: 2, tag: "warn", word: "2 not received", hover: /^2 not received\. Resend them under the order\.$/ },
     { name: "an unreachable session says since when, listening or not", row: { state: "stale", isWaiting: false }, notReceived: 0, tag: "warn", word: "Not reachable", hover: /^Not reachable since .+ ago\. Orders wait for it\.$/ },
-    { name: "a live session that does not listen gets the pause mark and the fix", row: { state: "live", isWaiting: false, count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, tag: "pause", word: "Not listening", hover: /^Not listening: orders wait for its next turn\. Restart it\.$/ },
+    { name: "a live session that does not listen gets the pause mark and the fix", row: { state: "live", isWaiting: false, count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, tag: "pause", word: "Next turn", hover: /^Next turn: orders reach it then\. Restart it to deliver now\.$/ },
     { name: "a live session with orders on the way counts them after its activity", row: { state: "live", count: { awaiting: 0, inDelivery: 1 } }, notReceived: 0, hover: /^Live · active .+ ago · 1 in delivery$/ },
     { name: "a live session with nothing on the way gives its last activity", row: { state: "live" }, notReceived: 0, hover: /^Live · active .+ ago$/ },
     { name: "an automatic resume not yet registered says so", row: { state: "exited", exitReason: "ended", markerSetAt: "2026-11-12T12:20:11.204Z" }, notReceived: 0, hover: /^Resume not yet registered\.$/ },
@@ -2136,19 +2136,19 @@ describe("sessions rail rows", () => {
     const [lineId, hintId] = String(boxOf(SESSION_ID).props["aria-describedby"]).split(" ");
     const [line] = findNodes(tree, (node) => node.props?.id === lineId);
     assert.deepEqual([boxOf(SESSION_ID).props["aria-label"], boxOf(OTHER_RAIL_ID).props["aria-label"], hintId], ["Select nightly-docs-sweep", "Select yoaida", "queue-rail-hint"]);
-    assert.ok(collectText(line as RenderedNode).startsWith("Not listening: orders wait for its next turn. Restart it."), collectText(line as RenderedNode));
-    assert.ok(String(railRowOf(tree, SESSION_ID).props.title).startsWith("Not listening: orders wait for its next turn. Restart it.\nwork-dev · "));
+    assert.ok(collectText(line as RenderedNode).startsWith("Next turn: orders reach it then. Restart it to deliver now."), collectText(line as RenderedNode));
+    assert.ok(String(railRowOf(tree, SESSION_ID).props.title).startsWith("Next turn: orders reach it then. Restart it to deliver now.\nwork-dev · "));
   });
 
   // spec §9.1: the tag is a bare mark, named for assistive technology by its word; a row holds no word Live and no badge but its count
-  test("a not-listening rail row draws the bare pause mark named Not listening in its tag column, and no word Live or badge besides its count", () => {
+  test("a not-listening rail row draws the bare pause mark named Next turn in its tag column, and no word Live or badge besides its count", () => {
     const rows = [buildSessionRow({ isWaiting: false, count: { awaiting: 2, inDelivery: 0 } })];
     const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
     const row = railRowOf(tree, SESSION_ID);
     const [tag] = findNodes(row, (node) => String(node.props?.className ?? "").startsWith("queue-rail-tag"));
     const [mark] = findNodes(tag as RenderedNode, (node) => node.props?.role === "img");
     const badges = findNodes(row, (node) => node.props?.atom === "Badge").map((node) => [node.props.role, node.props.fill]);
-    assert.deepEqual([mark?.props["aria-label"], findNodes(mark as RenderedNode, (node) => node.type === "svg").length], ["Not listening", 1]);
+    assert.deepEqual([mark?.props["aria-label"], findNodes(mark as RenderedNode, (node) => node.type === "svg").length], ["Next turn", 1]);
     assert.deepEqual(badges, [["count", "tag"]]);
     assert.ok(!/\bLive\b/.test(collectText(row)), collectText(row));
   });
@@ -2390,9 +2390,9 @@ describe("order composer", () => {
   // spec §9.2 → Note at rest: where the owner decides whether to send, the note says what follows for a ticked session that does not listen
   const deaf = (id: string, name: string) => buildSessionRow({ id, name, isWaiting: false });
   const deafNotes = [
-    { name: "one ticked, not listening", rows: [deaf(SESSION_ID, "yoaida")], ids: [SESSION_ID], note: "yoaida gets this at its next turn. Restart it to deliver now." },
-    { name: "several ticked, one not listening", rows: [deaf(SESSION_ID, "yoaida"), buildSessionRow({ id: OTHER_RAIL_ID, name: "gersona" })], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida waits for its next turn. Restart it to deliver now." },
-    { name: "several ticked, two not listening", rows: [deaf(SESSION_ID, "yoaida"), deaf(OTHER_RAIL_ID, "gersona")], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida and gersona wait for their next turn. Restart them to deliver now." },
+    { name: "one ticked, next turn", rows: [deaf(SESSION_ID, "yoaida")], ids: [SESSION_ID], note: "yoaida gets this at its next turn. Restart it to deliver now." },
+    { name: "several ticked, one next turn", rows: [deaf(SESSION_ID, "yoaida"), buildSessionRow({ id: OTHER_RAIL_ID, name: "gersona" })], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida waits for its next turn. Restart it to deliver now." },
+    { name: "several ticked, two next turn", rows: [deaf(SESSION_ID, "yoaida"), deaf(OTHER_RAIL_ID, "gersona")], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida and gersona wait for their next turn. Restart them to deliver now." },
     { name: "an unticked session that does not listen is not named", rows: [buildSessionRow({ name: "yoaida" }), deaf(OTHER_RAIL_ID, "gersona")], ids: [SESSION_ID], note: "Goes to yoaida." },
     { name: "an ended session is resumed, so it is not named", rows: [buildSessionRow({ name: "yoaida", state: "exited", exitReason: "ended", isWaiting: false })], ids: [SESSION_ID], note: "Goes to yoaida." },
   ];
@@ -2595,8 +2595,8 @@ describe("Orders", () => {
     const tree = render("OrderEntryQ", { entry, onResend: (id: number) => resent.push(id) });
     const rows = findNodes(tree, (node) => node.props?.className === "queue-recipient").map((node) => collectText(node));
     assert.deepEqual(
-      rows.map((row) => [["gersona", "yoaida", "atrium", "aidl"].find((name) => row.startsWith(name)), ["Received", "Not yet", "Not received", "Not listening"].find((word) => row.includes(word))]),
-      [["gersona", "Received"], ["yoaida", "Not yet"], ["atrium", "Not received"], ["aidl", "Not listening"]],
+      rows.map((row) => [["gersona", "yoaida", "atrium", "aidl"].find((name) => row.startsWith(name)), ["Received", "Not yet", "Not received", "Next turn"].find((word) => row.includes(word))]),
+      [["gersona", "Received"], ["yoaida", "Not yet"], ["atrium", "Not received"], ["aidl", "Next turn"]],
     );
     const resends = buttonLabelled(tree, "Resend");
     assert.equal(resends.length, 1);
@@ -2657,18 +2657,18 @@ describe("Orders", () => {
       received: { status: "delivered", deliveredAt: "2026-11-12T12:28:00.000Z" },
       notYet: {},
       notReceived: { status: "unacked", canResend: true },
-      notListening: { session: buildSession({ id: randomUUID(), name: `session-${index}`, state: "live", isWaiting: false }) },
+      nextTurn: { session: buildSession({ id: randomUUID(), name: `session-${index}`, state: "live", isWaiting: false }) },
     } as Record<string, object>)[receipt],
   }));
   test("a roll-up counts the recipients that do not listen as their own segment and keeps them listed under its line", () => {
-    const entry = call<unknown[]>("getThreadEntriesQ", fan(["received", "received", "received", "received", "notYet", "notListening"]))[0];
+    const entry = call<unknown[]>("getThreadEntriesQ", fan(["received", "received", "received", "received", "notYet", "nextTurn"]))[0];
     const tree = render("OrderEntryQ", { entry, onResend: () => undefined });
     const [rollUp] = findNodes(tree, (node) => node.type === "summary");
     const [details] = findNodes(tree, (node) => node.type === "details");
     const outside = findNodes(tree, (node) => node.props?.className === "queue-recipient").filter((node) => !findNodes(details as RenderedNode, (inner) => inner === node).length);
     const line = collectText(rollUp as RenderedNode).replace(/\s+/g, " ");
     assert.deepEqual(
-      [line.includes("6 sessions · 4 received · 1 not yet · 1 not listening"), outside.map((node) => collectText(node).split("Not")[0]?.trim())],
+      [line.includes("6 sessions · 4 received · 1 not yet · 1 next turn"), outside.map((node) => collectText(node).split(/Next turn|Not /)[0]?.trim())],
       [true, ["session-5"]],
       line,
     );
@@ -2682,7 +2682,7 @@ describe("Orders", () => {
     assert.ok(line.includes("1 not received"), line);
     const [details] = findNodes(tree, (node) => node.type === "details");
     const outside = findNodes(tree, (node) => node.props?.className === "queue-recipient").filter((node) => !findNodes(details as RenderedNode, (inner) => inner === node).length);
-    assert.deepEqual(outside.map((node) => collectText(node).split("Not")[0]?.trim()), ["session-6"]);
+    assert.deepEqual(outside.map((node) => collectText(node).split(/Next turn|Not /)[0]?.trim()), ["session-6"]);
     assert.equal(findNodes(details as RenderedNode, (node) => node.props?.className === "queue-recipient").length, 6, "the not received one is listed once, outside");
   });
 
@@ -2715,16 +2715,22 @@ describe("Orders", () => {
     assert.deepEqual(groups.map((group) => [group.label, group.entries.map((entry) => entry.id)]), [["2026-11-10", [1]], ["2026-11-11", [2]], ["Yesterday", [3]], ["Today", [4]]]);
   });
 
-  // spec §9.2 → Label line: every receiving session by name, an ended or not-listening one marked bare, its word spoken; none → said, all of it dim
+  // spec §9.2 → Label line: every receiving session by name, an ended, not reachable or next-turn one marked bare, its word spoken; none → said, all of it dim
   const labelLines = [
     { name: "the ticked names, an ended one tagged", ids: [SESSION_ID, ENDED_ID], text: "New order to nightly-docs-sweep, atrium-hooks", marks: ["Ended"] },
     { name: "no tick says so", ids: [], text: "New order · no session ticked", marks: [] },
-    { name: "a ticked session that does not listen is marked, its word read with its name", ids: [OTHER_RAIL_ID, SESSION_ID], text: "New order to nightly-docs-sweep, yoaida", marks: ["Not listening"], rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false })] },
+    { name: "a ticked session that does not listen is marked, its word read with its name", ids: [OTHER_RAIL_ID, SESSION_ID], text: "New order to nightly-docs-sweep, yoaida", marks: ["Next turn"], rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false })] },
     {
       name: "a marked name that is not last keeps its mark before the comma",
       ids: [ENDED_ID, OTHER_RAIL_ID, SESSION_ID],
-      text: "New order to atrium-hooks, yoaida, nightly-docs-sweep", marks: ["Ended", "Not listening"],
+      text: "New order to atrium-hooks, yoaida, nightly-docs-sweep", marks: ["Ended", "Next turn"],
       rows: [SESSION_ROWS[1], buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false }), SESSION_ROWS[0]],
+    },
+    {
+      name: "a ticked session that is not reachable takes the rail's warn mark, not the pause mark",
+      ids: [OTHER_RAIL_ID],
+      text: "New order to yoaida ⚠", marks: ["Not reachable"],
+      rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", state: "stale", isWaiting: false })],
     },
   ];
   for (const row of labelLines) {
@@ -3369,9 +3375,9 @@ describe("In delivery rows", () => {
     { name: "a copy not yet received shows the route word alone", item: answered("answered"), cells: { tags: [], fact: "Answer R1", extras: [] } },
     { name: "a copy not received counts one in the tag column", item: answered("unacked", { canResend: true }), cells: { tags: [{ glyph: "warn", count: 1, word: "1 not received" }], fact: "Answer R1", extras: [] } },
     {
-      name: "a copy whose session does not listen counts one not listening in the tag column",
+      name: "a copy whose session does not listen counts one next turn in the tag column",
       item: answered("answered", { session: buildSession({ state: "live", isWaiting: false }) }),
-      cells: { tags: [{ glyph: "pause", count: 1, word: "1 not listening" }], fact: "Answer R1", extras: [] },
+      cells: { tags: [{ glyph: "pause", count: 1, word: "1 next turn" }], fact: "Answer R1", extras: [] },
     },
     {
       name: "an order's images and the account ride only the row's title and accessible name",
@@ -3612,8 +3618,8 @@ describe("twelve words a sentence", () => {
     ...noteOf(buildItem({ session: marked(null) })),
     ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [occupant], hasUnmarkedOccupant: false } })),
     ...findNodes(render("SheetFootQ", { item: buildItem({ isApprovalClass: true }), draft: {}, queue: buildQueue().queue, isBusy: false, error: null }), (node) => typeof node.children?.[0] === "string" && String(node.children[0]).startsWith("Approval:")).map((node) => collectText(node)),
-    call<string>("getNotListeningSentenceQ", ["yoaida"], "this"),
-    call<string>("getNotListeningSentenceQ", ["yoaida", "gersona"]),
+    call<string>("getNextTurnSentenceQ", ["yoaida"], "this"),
+    call<string>("getNextTurnSentenceQ", ["yoaida", "gersona"]),
     (vm.runInContext("RELAY_REFUSAL_Q.hop[1]", screen) as () => string)(),
   ];
 
