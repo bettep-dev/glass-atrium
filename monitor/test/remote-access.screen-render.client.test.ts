@@ -638,6 +638,15 @@ describe("the Galaxy procedure installs, then compares, and only then shows the 
     }
   });
 
+  test("the compare step's fold sends a phone that lists no certificate under User back to step 3, never on through Lines match", async () => {
+    const card = await driveGalaxy();
+    for (let i = 0; i < 3; i++) card.press("Next");
+
+    card.press("Trouble?");
+
+    assert.ok(card.text().includes("Not listed under User? Repeat step 3; never press Lines match."), card.text());
+  });
+
   test("no Galaxy text before the last step holds a value slot", async () => {
     const { mod } = await loadScreen();
     const galaxy = (vm.runInContext("DEVICE_RA", mod) as Record<string, { steps: Array<Record<string, unknown>> }>).galaxy;
