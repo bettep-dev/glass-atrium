@@ -368,7 +368,10 @@ describe("a refused widening act names whether the network moved", () => {
     { name: "a turn-on that threw says it may or may not be on", act: "on", code: "act_failed", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
     { name: "a trust whose write step ended unnamed says it may or may not be trusted", act: "trust", code: "write_failed", text: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
     { name: "a trust that threw says it may or may not be trusted", act: "trust", code: "act_failed", text: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
-    { name: "any other turn-on failure says it was not turned on", act: "on", code: "start_failed", text: "Remote access was not turned on. Try again." },
+    { name: "a turn-on whose config was written but not its monitor settings says it may or may not be on", act: "on", code: "env_not_rendered", text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
+    { name: "a turn-on written but not applied by this process says it starts at the next restart", act: "on", code: "start_failed", text: "Remote access was turned on, but it starts only when the monitor restarts. Refresh; if you do not want it, turn it off." },
+    { name: "a trust written but not applied by this process says it applies at the next restart", act: "trust", code: "start_failed", text: "This network was trusted, but it applies only when the monitor restarts. Refresh; if you do not want it, turn remote access off." },
+    { name: "any other turn-on failure says it was not turned on", act: "on", code: "keys_not_created", text: "Remote access was not turned on. Try again." },
     { name: "any other trust failure says it was not trusted", act: "trust", code: "network_unreadable", text: "This network was not trusted. Try again." },
   ];
   for (const row of rows) {
@@ -515,21 +518,26 @@ describe("after a refused widening act the confirm offers its commit only on a f
     assert.deepEqual(page.confirms, [OPENED.body.confirm, FRESH_CONFIRM]);
   });
 
-  const unknown = [
-    { name: "a turn-on that threw keeps its confirm open with the may-or-may-not words", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "act_failed" } } }, notice: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
-    { name: "a trust whose write step ended unnamed keeps its confirm open with the may-or-may-not words", flow: { ...TRUST, refusal: { status: 500, body: { error: "write_failed" } } }, notice: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
+  // the confirm value is spent → a second press could only answer confirm_stale over words the first press may have made false
+  const unsettled = [
+    { name: "a turn-on that threw", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "act_failed" } } }, notice: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
+    { name: "a trust whose write step ended unnamed", flow: { ...TRUST, refusal: { status: 500, body: { error: "write_failed" } } }, notice: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on." },
+    { name: "a turn-on written but not applied, on a page reread to on", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "start_failed" } }, reloaded: { ...SETUP_ON, isAnswering: false } }, notice: "Remote access was turned on, but it starts only when the monitor restarts. Refresh; if you do not want it, turn it off." },
+    { name: "a trust written but not applied", flow: { ...TRUST, refusal: { status: 500, body: { error: "start_failed" } } }, notice: "This network was trusted, but it applies only when the monitor restarts. Refresh; if you do not want it, turn remote access off." },
   ];
-  for (const row of unknown) {
-    test(row.name, async () => {
+  for (const row of unsettled) {
+    test(`${row.name} closes its confirm, rereads the page and keeps its words there`, async () => {
       const page = await mountRefused(row.flow);
 
-      const dialog = getDialog(page.render());
+      const tree = page.render();
 
-      assert.ok(dialog, `${row.name}: confirm open`);
-      assert.ok(collectText(dialog).includes(row.notice), `${row.name}: "${row.notice}"`);
-      assert.deepEqual(page.sent, [ROUTE.NETWORK, row.flow.route], `${row.name}: no fresh read`);
+      assert.equal(getDialog(tree), undefined, `${row.name}: confirm closed`);
+      assert.equal(page.reloads, 1, `${row.name}: page reread`);
+      assert.ok(collectText(tree).includes(row.notice), `${row.name}: "${row.notice}"`);
+      assert.deepEqual(page.sent, [ROUTE.NETWORK, row.flow.route], `${row.name}: no fresh network read`);
     });
   }
+
 
   test("a confirm cancelled while the fresh read is out stays closed when the read lands", async () => {
     const page = await mountRefused(TURN_ON);
@@ -539,6 +547,68 @@ describe("after a refused widening act the confirm offers its commit only on a f
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(getDialog(page.render()), undefined);
+  });
+});
+
+describe("a network read never puts a widening confirm where another confirm was pressed", () => {
+  const SETUP_CLOSED = { ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false };
+  const TRUSTING = { status: 200, body: { router: ROUTER, link: "wifi", isNetworkTrusted: false, confirm: "q3Vx0Lr8TfWm1oKcYp2bGA" } };
+
+  // access on over an untrusted network with three devices; every network read waits for release()
+  async function mountHeld() {
+    const { react, flushEffects, resetCursor } = createStatefulReact();
+    let release: (answer: Answer) => void = () => undefined;
+    const held = new Promise<Answer>((resolve) => { release = resolve; });
+    const sent: string[] = [];
+    const mod = await loadScreenModule(SCREEN_SRC, {
+      React: react,
+      UI: ui,
+      navigator: {},
+      File,
+      fetch: async (url: string, init: RequestInit = {}) => {
+        sent.push(`${init.method ?? "GET"} ${url}`);
+        const answer = await held;
+        return new Response(JSON.stringify(answer.body), { status: answer.status, statusText: "x" });
+      },
+    });
+    const render = (): RenderedNode => {
+      resetCursor();
+      const props = { read: ready(SETUP_CLOSED, DEVICES), onReload: () => undefined, onDevicesRead: () => undefined };
+      const tree = renderScreen(react.createElement(mod.RemoteAccessPageRA, props)) as RenderedNode;
+      flushEffects();
+      return tree;
+    };
+    // the page's own button of that name, as a pointer reaching the page would press it
+    const press = async (name: string) => {
+      const button = findNodes(render(), (node) => node.type === "button" && collectText(node).trim() === name)[0];
+      assert.ok(button, `a button named "${name}"`);
+      (button.props.onClick as () => void)();
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+    const getTitle = () => findNodes(render(), (node) => node.type === "DetailSurface")[0]?.props.title;
+    return { sent, press, getTitle, release: (answer: Answer) => release(answer) };
+  }
+
+  for (const opener of ["Turn off", "Remove all"]) {
+    test(`${opener} opens nothing while a trust's network read runs`, async () => {
+      const page = await mountHeld();
+      await page.press("Trust this network");
+
+      await page.press(opener);
+
+      assert.equal(page.getTitle(), undefined, `${opener}: no confirm under the pending read`);
+    });
+  }
+
+  test("a read that lands while another confirm is open leaves that confirm in place", async () => {
+    const page = await mountHeld();
+    await page.press("Turn off");
+    await page.press("Trust this network");
+
+    page.release(TRUSTING);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual({ sent: page.sent, title: page.getTitle() }, { sent: [`GET ${REMOTE_ADMIN_PATH.CONFIRM_NETWORK}`], title: "Turn off remote access?" });
   });
 });
 

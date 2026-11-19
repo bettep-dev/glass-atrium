@@ -40,17 +40,24 @@ interface RenderContext {
   acts: string[];
 }
 
-async function openRenderContext(setup: Record<string, unknown>, devices: unknown[] = []): Promise<RenderContext> {
+/** Scripted answers, each used once in order, before the defaults: network reads, then access acts. */
+interface ScriptedAnswers {
+  readonly networks?: Array<Record<string, unknown>>;
+  readonly acts?: Array<{ readonly status: number; readonly body: unknown }>;
+}
+
+async function openRenderContext(setup: Record<string, unknown>, devices: unknown[] = [], answers: ScriptedAnswers = {}): Promise<RenderContext> {
   const acts: string[] = [];
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   app.get(REMOTE_ADMIN_PATH.SETUP, async () => setup);
   app.get(REMOTE_ADMIN_PATH.DEVICES, async () => ({ devices }));
-  app.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, async () => ({ router: ROUTER, link: "wifi", isNetworkTrusted: false }));
+  app.get(REMOTE_ADMIN_PATH.CONFIRM_NETWORK, async () => answers.networks?.shift() ?? { router: ROUTER, link: "wifi", isNetworkTrusted: false });
   app.get(REMOTE_ADMIN_PATH.CERTIFICATE, async (_request, reply) => reply.code(404).send({ error: "certificate_unavailable" }));
-  app.post("/api/remote/*", async (request) => {
+  app.post("/api/remote/*", async (request, reply) => {
     acts.push(request.url);
-    return { outcome: "written" };
+    const scripted = answers.acts?.shift();
+    return scripted ? reply.code(scripted.status).send(scripted.body) : { outcome: "written" };
   });
   app.get("/api/*", async () => ({ rows: [] }));
 
@@ -87,6 +94,66 @@ describe("remote access off at 1440px, the turn-on confirm", () => {
     assert.equal(focused, "Cancel");
     assert.equal(hasRouter, true);
     assert.deepEqual(ctx.acts, []);
+  });
+});
+
+describe("remote access off at 1440px, a turn-on refused because the network moved", () => {
+  const MOVED_ROUTER = "10.0.0.1";
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_OFF, [], {
+      networks: [
+        { router: ROUTER, link: "wifi", isNetworkTrusted: false, confirm: "q3Vx0Lr8TfWm1oKcYp2bGA" },
+        { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: false, confirm: "Zt7nE4sJk9HdQa0uCw6yRg" },
+      ],
+      acts: [{ status: 409, body: { error: "confirm_stale" } }],
+    });
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("the moved network's confirm puts focus back on Cancel, so a second Enter turns nothing on", async () => {
+    await ctx.page.getByRole("button", { name: "Turn on" }).click();
+    const dialog = ctx.page.getByRole("dialog", { name: "Turn on remote access?" });
+    await dialog.waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await dialog.getByRole("button", { name: "Turn on and trust" }).focus();
+    await ctx.page.keyboard.press("Enter");
+    await dialog.getByText(MOVED_ROUTER).waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await dialog.getByRole("button", { name: "Turn on and trust" }).waitFor({ timeout: WAIT_TIMEOUT_MS });
+
+    const focused = await ctx.page.evaluate(() => document.activeElement?.textContent?.trim());
+    await ctx.page.keyboard.press("Enter");
+    await dialog.waitFor({ state: "detached", timeout: WAIT_TIMEOUT_MS });
+
+    assert.equal(focused, "Cancel");
+    assert.deepEqual(ctx.acts, [REMOTE_ADMIN_PATH.ACCESS_ON]);
+  });
+});
+
+describe("remote access on over an untrusted network at 1440px, a trust whose answer leaves its state unknown", () => {
+  const UNKNOWN_WORDS = "This network may or may not be trusted.";
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext({ ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false }, [], { acts: [{ status: 500, body: { error: "act_failed" } }] });
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("its words stay on the page after the confirm closes, until a later act completes", async () => {
+    const commit = async (opener: string, title: string, label: string): Promise<void> => {
+      await ctx.page.getByRole("button", { name: opener, exact: true }).first().click();
+      const dialog = ctx.page.getByRole("dialog", { name: title });
+      await dialog.getByRole("button", { name: label, exact: true }).click();
+      await dialog.waitFor({ state: "detached", timeout: WAIT_TIMEOUT_MS });
+    };
+
+    await commit("Trust this network", "Trust this network?", "Trust this network");
+    const isShownAfterUnknown = await ctx.page.getByText(UNKNOWN_WORDS).isVisible();
+    await commit("Turn off", "Turn off remote access?", "Turn off");
+    const isShownAfterDone = await ctx.page.getByText(UNKNOWN_WORDS).isVisible();
+
+    assert.deepEqual(
+      { isShownAfterUnknown, isShownAfterDone, acts: ctx.acts },
+      { isShownAfterUnknown: true, isShownAfterDone: false, acts: [REMOTE_ADMIN_PATH.TRUST, REMOTE_ADMIN_PATH.ACCESS_OFF] },
+    );
   });
 });
 

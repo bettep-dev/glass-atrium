@@ -31,17 +31,21 @@ const OPEN_ERROR_RA = {
 };
 // admin-routes.ts → ConfirmRefusal: the network moved or the confirm's read went stale
 const CONFIRM_REFUSALS_RA = new Set(["confirm_stale", "network_changed"]);
-// admin-routes.ts → AccessApplyOutcome: a throw or an unnamed step exit → what was written is unknown until the next restart
-const UNKNOWN_STATE_REFUSALS_RA = new Set(["act_failed", "write_failed"]);
+// admin-routes.ts → AccessApplyOutcome: a throw, an unnamed step exit, or config.toml written without the monitor/.env a restart reads → state unknown
+const UNKNOWN_STATE_REFUSALS_RA = new Set(["act_failed", "write_failed", "env_not_rendered"]);
+// admin-routes.ts → AccessApplyOutcome: the step wrote, this process could not apply it → the next restart does
+const RESTART_PENDING_REFUSAL_RA = "start_failed";
 const WIDEN_ERROR_RA = {
 	on: {
 		moved: "The network details were out of date. Nothing was turned on. Check the number again.",
 		unknown: "Remote access may or may not be on. Refresh; if wrong, turn it off and on.",
+		pending: "Remote access was turned on, but it starts only when the monitor restarts. Refresh; if you do not want it, turn it off.",
 		failed: "Remote access was not turned on. Try again.",
 	},
 	trust: {
 		moved: "The network details were out of date. Nothing was trusted. Check the number again.",
 		unknown: "This network may or may not be trusted. Refresh; if wrong, turn remote access off and on.",
+		pending: "This network was trusted, but it applies only when the monitor restarts. Refresh; if you do not want it, turn remote access off.",
 		failed: "This network was not trusted. Try again.",
 	},
 };
@@ -141,7 +145,13 @@ function getOpenErrorTextRA(error) {
 function getWidenErrorTextRA(act, error) {
 	const words = WIDEN_ERROR_RA[act];
 	if (CONFIRM_REFUSALS_RA.has(error?.code)) return words.moved;
+	if (error?.code === RESTART_PENDING_REFUSAL_RA) return words.pending;
 	return UNKNOWN_STATE_REFUSALS_RA.has(error?.code) ? words.unknown : words.failed;
+}
+
+/** A widening answer after which something may stand written → its confirm value is spent, so a second press could only contradict it. */
+function isMaybeWrittenRA(error) {
+	return error?.code === RESTART_PENDING_REFUSAL_RA || UNKNOWN_STATE_REFUSALS_RA.has(error?.code);
 }
 
 function getViewRA(setup) {
@@ -233,32 +243,44 @@ function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
 	const onWiden = (act, isReread = false) => {
 		if (check.act !== null) return;
 		setCheck({ act, error: null });
+		// a first read lands only on a page with no confirm, a re-read only in its own act's → never under a press meant for another confirm
+		const isOwnDialog = (open) => (isReread ? open?.act === act : open === null);
 		readConfirmNetworkRA().then(
 			(network) => {
 				const canConfirm = network.router !== null && !(act === "trust" && network.isNetworkTrusted);
 				setCheck({ act: null, error: !canConfirm && isReread ? { act, text: NETWORK_ERROR_RA.reread } : null });
-				if (canConfirm) {
-					setDialog((open) => (isReread && open === null ? null : { act, network }));
-					return;
-				}
-				setDialog(null);
-				onReload();
+				setDialog((open) => (isOwnDialog(open) ? (canConfirm ? { act, network } : null) : open));
+				if (!canConfirm) onReload();
 			},
 			(error) => {
-				setDialog(null);
+				setDialog((open) => (isOwnDialog(open) ? null : open));
 				setCheck({ act: null, error: { act, text: NETWORK_ERROR_RA[isReread ? "reread" : "unread"], detail: error.message } });
 			},
 		);
 	};
+	// held while a network read runs → its confirm never opens in their place
+	const onEnd = (act) => {
+		if (check.act === null) setDialog({ act });
+	};
+	// the confirm closes on an answer that may have written → its words stay on the page over a fresh read
+	const onMaybeWritten = (error) => {
+		setDialog(null);
+		setCheck({ act: null, error });
+		onReload();
+	};
+	const onDone = () => {
+		setCheck((prev) => ({ ...prev, error: null }));
+		onReload();
+	};
 	return (
 		<div className="flex flex-col gap-section">
 			<TypeScaleStyle />
-			<HeaderRA read={read} view={view} checkingAct={check.act} onReload={onReload} onWiden={onWiden} onOff={() => setDialog({ act: "off" })} />
+			<HeaderRA read={read} view={view} checkingAct={check.act} onReload={onReload} onWiden={onWiden} onOff={() => onEnd("off")} />
 			{data === null
 				? <FirstReadRA read={read} onRetry={onReload} />
-				: <BodyRA setup={data.setup} devices={data.devices} view={view} check={check} onWiden={onWiden} onChanged={onReload} onDevicesRead={onDevicesRead} onRemoveAll={() => setDialog({ act: "remove-all" })} />}
+				: <BodyRA setup={data.setup} devices={data.devices} view={view} check={check} onWiden={onWiden} onChanged={onReload} onDevicesRead={onDevicesRead} onRemoveAll={() => onEnd("remove-all")} />}
 			{dialog && <AccessDialogRA dialog={dialog} count={data?.devices.length ?? 0} isChecking={check.act !== null}
-				onRecheck={() => onWiden(dialog.act, true)} onClose={() => setDialog(null)} onDone={onReload} />}
+				onRecheck={() => onWiden(dialog.act, true)} onClose={() => setDialog(null)} onDone={onDone} onMaybeWritten={onMaybeWritten} />}
 		</div>
 	);
 }
@@ -302,6 +324,7 @@ function BodyRA({ setup, devices, view, check, onWiden, onChanged, onDevicesRead
 	return (
 		<>
 			{!setup.enabled && <OffCardRA setup={setup} foot={hasDevicesCard ? null : foot} error={checkError("on")} />}
+			{setup.enabled && checkError("on") && <ActErrorRA error={checkError("on")} />}
 			{view === "on" && <ConnectCardRA key={emptyKey} setup={setup} devices={devices} onDevicesRead={onDevicesRead} />}
 			{ATTENTION_RA[view]
 				? <AttentionRA row={ATTENTION_RA[view]} isChecking={check.act === "trust"} error={checkError("trust")} onTrust={() => onWiden("trust")} />
@@ -543,7 +566,7 @@ function DeviceTableRA({ devices, pendingId, onRemove }) {
 }
 
 /** The open confirm's act: a widening act whose network moved stays open, its commit held until the page's fresh read is on screen. */
-function AccessDialogRA({ dialog, count, isChecking, onRecheck, onClose, onDone }) {
+function AccessDialogRA({ dialog, count, isChecking, onRecheck, onClose, onDone, onMaybeWritten }) {
 	const [act, setAct] = useSRA({ isBusy: false, error: null });
 	const isWiden = dialog.act === "on" || dialog.act === "trust";
 	const onCommit = () => {
@@ -556,13 +579,19 @@ function AccessDialogRA({ dialog, count, isChecking, onRecheck, onClose, onDone 
 				onDone();
 			},
 			(error) => {
-				setAct({ isBusy: false, error: { text: isWiden ? getWidenErrorTextRA(dialog.act, error) : END_ERROR_RA[dialog.act], detail: error.message } });
+				const text = isWiden ? getWidenErrorTextRA(dialog.act, error) : END_ERROR_RA[dialog.act];
+				if (isWiden && isMaybeWrittenRA(error)) {
+					onMaybeWritten({ act: dialog.act, text, detail: error.message });
+					return;
+				}
+				setAct({ isBusy: false, error: { text, detail: error.message } });
 				if (isWiden && CONFIRM_REFUSALS_RA.has(error.code)) onRecheck();
 			},
 		);
 	};
 	const props = { isBusy: act.isBusy, error: act.error, onCommit, onCancel: onClose };
-	return isWiden ? <WidenConfirmRA act={dialog.act} network={dialog.network} isChecking={isChecking} {...props} /> : <EndConfirmRA act={dialog.act} count={count} {...props} />;
+	// keyed on the confirm value → a re-read's network mounts a fresh confirm, focus back on Cancel
+	return isWiden ? <WidenConfirmRA key={dialog.network.confirm} act={dialog.act} network={dialog.network} isChecking={isChecking} {...props} /> : <EndConfirmRA act={dialog.act} count={count} {...props} />;
 }
 
 function WidenConfirmRA({ act, network, isChecking, isBusy, error, onCommit, onCancel }) {
