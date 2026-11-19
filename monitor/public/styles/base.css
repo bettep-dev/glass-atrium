@@ -1701,6 +1701,13 @@ button.ra-step:hover {
 	column-gap: var(--gap-control-group);
 	align-items: start;
 }
+/* typed route first, the QR code second · two routes, not one value and its label → the wider gap; a narrow pane wraps the QR code under */
+.ra-code.is-typed {
+	display: flex;
+	flex-wrap: wrap;
+	column-gap: var(--gap-group-above);
+	row-gap: var(--gap-block);
+}
 /* a narrow card stacks the rail over the pane; the rail's end rule becomes its bottom rule */
 @container (max-width: 44rem) {
 	.ra-procedure-grid {

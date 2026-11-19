@@ -209,6 +209,18 @@ const GLYPH_BEARING_PX = 2;
 // the owner's window (spec 44105 → Layout → Page)
 const OWNER_WINDOW = { width: 1568, height: 759 };
 
+/** Opens the named device's steps from the connect card's device choice. */
+async function chooseDevice(page: Page, device: string): Promise<void> {
+  await page.getByRole("button", { name: device, exact: true }).click();
+  await page.getByText(`Step 1 of 5 · ${device}`).waitFor({ timeout: WAIT_TIMEOUT_MS });
+}
+
+// each device's compare step: reached by its own forward presses, its rail titles one line each where the spec measured it
+const COMPARE_STEPS = [
+  { device: "iPhone or iPad", forward: ["Next"], title: "Match the fingerprint before installing", isRailOneLine: true },
+  { device: "Galaxy phone", forward: ["Next", "Next", "Next"], title: "Match the fingerprint right after installing", isRailOneLine: false },
+];
+
 /** The Connect card's procedure as painted: card, rail, pane, the pane's foot controls and the fingerprint lines. */
 async function readProcedure(page: Page) {
   // anonymous callbacks only: the test transform names a const-bound function with a helper the page lacks
@@ -244,17 +256,18 @@ async function readProcedure(page: Page) {
   });
 }
 
-describe("remote access on, the connect card's procedure at each supported width, step 2 open", () => {
+for (const compare of COMPARE_STEPS) describe(`remote access on, the ${compare.device} procedure at each supported width, its compare step open`, () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON);
-    await ctx.page.getByRole("button", { name: "Next" }).click();
-    await ctx.page.getByRole("heading", { name: "Match the fingerprint before installing", level: 3 }).waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await chooseDevice(ctx.page, compare.device);
+    for (const name of compare.forward) await ctx.page.getByRole("button", { name, exact: true }).click();
+    await ctx.page.getByRole("heading", { name: compare.title, level: 3 }).waitFor({ timeout: WAIT_TIMEOUT_MS });
   });
   after(async () => closeRenderContext(ctx));
 
   for (const row of WIDTHS) {
-    test(`at ${row.viewport}px the card spans the ${row.content}px column, the 320px rail beside the pane, Back and Next on the pane's foot`, async () => {
+    test(`at ${row.viewport}px the card spans the ${row.content}px column, the 320px rail beside the pane, Back and the forward control on the pane's foot`, async () => {
       await ctx.page.setViewportSize({ width: row.viewport, height: 900 });
 
       const at = await readProcedure(ctx.page);
@@ -288,7 +301,7 @@ describe("remote access on, the connect card's procedure at each supported width
     assert.deepEqual(fingerprint, { count: 4, size: "16px", groups: [2, 2, 2, 2], groupStep: [SPACE_3_PX, SPACE_3_PX, SPACE_3_PX, SPACE_3_PX], text });
   });
 
-  test("every rail title stays on one line at each supported width, the open one included", async () => {
+  if (compare.isRailOneLine) test("every rail title stays on one line at each supported width, the open one included", async () => {
     const lines: Record<number, number[]> = {};
     for (const row of WIDTHS) {
       await ctx.page.setViewportSize({ width: row.viewport, height: 900 });
@@ -334,7 +347,7 @@ describe("remote access on at 1440px, moving through the steps", () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON);
-    await ctx.page.getByText("Step 1 of 5").waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await chooseDevice(ctx.page, "iPhone or iPad");
   });
   after(async () => closeRenderContext(ctx));
 
@@ -378,32 +391,36 @@ describe("remote access on at 1440px, moving through the steps", () => {
   });
 });
 
-describe("remote access on in the owner's 1568 x 759 window, every open step is whole on the first screen", () => {
+// each device's way through its five steps: the forward control per step, the step whose fold opens, the last step's open control
+const WHOLE_STEP_PATHS = [
+  { device: "iPhone or iPad", forward: ["Next", "Next", "Next", "Next"], foldStep: 2, open: "Show QR code" },
+  { device: "Galaxy phone", forward: ["Next", "Next", "Next", "Lines match"], foldStep: 4, open: "Show address and code" },
+];
+
+for (const path of WHOLE_STEP_PATHS) describe(`remote access on in the owner's 1568 x 759 window, every open ${path.device} step is whole on the first screen`, () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON, [], { acts: [{ status: 200, body: { code: "K7QM4XZP" } }] });
     await ctx.page.setViewportSize(OWNER_WINDOW);
-    await ctx.page.getByText("Step 1 of 5").waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await chooseDevice(ctx.page, path.device);
   });
   after(async () => closeRenderContext(ctx));
 
-  test("steps 1 to 4, step 2 with its fold open and step 5 with a code and its fold open end above the window's bottom", async () => {
+  test(`steps 1 to 4, step ${path.foldStep} with its fold open and step 5 with a code and its fold open end above the window's bottom`, async () => {
     const bottoms: Record<string, number> = {};
     const measure = async (state: string) => {
       const { card, scroll } = await readProcedure(ctx.page);
       bottoms[state] = scroll.top === 0 ? card?.bottom ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
     };
-    const next = () => ctx.page.getByRole("button", { name: "Next", exact: true }).click();
     await measure("step 1");
-    await next();
-    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
-    await measure("step 2, fold open");
-    await next();
-    await measure("step 3");
-    await next();
-    await measure("step 4");
-    await next();
-    await ctx.page.getByRole("button", { name: "Show QR code" }).click();
+    for (const [i, name] of path.forward.slice(0, 3).entries()) {
+      await ctx.page.getByRole("button", { name, exact: true }).click();
+      const step = i + 2;
+      if (step === path.foldStep) await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+      await measure(step === path.foldStep ? `step ${step}, fold open` : `step ${step}`);
+    }
+    await ctx.page.getByRole("button", { name: path.forward[3], exact: true }).click();
+    await ctx.page.getByRole("button", { name: path.open }).click();
     await ctx.page.getByText("K7QM 4XZP").waitFor({ timeout: WAIT_TIMEOUT_MS });
     await ctx.page.getByRole("button", { name: "Trouble?" }).click();
     await measure("step 5, code and fold open");
@@ -418,6 +435,7 @@ describe("remote access on at 1440px, the scan step with a code open", () => {
   let ctx: RenderContext;
   before(async () => {
     ctx = await openRenderContext(SETUP_ON, [], { acts: [{ status: 200, body: { code: "K7QM4XZP" } }] });
+    await chooseDevice(ctx.page, "iPhone or iPad");
     await ctx.page.getByRole("button", { name: "Trouble?" }).click();
     await ctx.page.getByRole("button", { name: "Go to step 5" }).click();
     await ctx.page.getByRole("button", { name: "Show QR code" }).click();
@@ -452,6 +470,41 @@ describe("remote access on at 1440px, the scan step with a code open", () => {
     const fold = await ctx.page.getByText("Then type this code:").textContent();
 
     assert.equal(fold?.replace(/\s+/g, " ").trim(), "Then type this code: K7QM 4XZP");
+  });
+});
+
+describe("remote access on at 1440px, the Galaxy's last step with a code open", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON, [], { acts: [{ status: 200, body: { code: "K7QM4XZP" } }] });
+    await chooseDevice(ctx.page, "Galaxy phone");
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+    await ctx.page.getByRole("button", { name: "Go to step 4" }).click();
+    await ctx.page.getByRole("button", { name: "Lines match" }).click();
+    await ctx.page.getByRole("button", { name: "Show address and code" }).click();
+    await ctx.page.getByText("K7QM 4XZP").waitFor({ timeout: WAIT_TIMEOUT_MS });
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("the address and the code stand first, the QR code at their right under its own label, top-aligned", async () => {
+    // anonymous callbacks only: the test transform names a const-bound function with a helper the page lacks
+    const place = await ctx.page.evaluate(() => {
+      const [address, code, scan] = ["Address", "Code", "Or scan with Camera"].map((text) => [...document.querySelectorAll(".ra-pane span")].find((el) => el.textContent === text)?.getBoundingClientRect());
+      return { address, code, scan, qr: document.querySelector('.ra-pane svg[role="img"]')?.getBoundingClientRect() };
+    });
+
+    assert.ok(place.address && place.code && place.scan && place.qr, JSON.stringify(place));
+    assert.ok(place.code.top > place.address.top && place.qr.left >= place.address.right && place.qr.top > place.scan.top, JSON.stringify(place));
+    assert.ok(Math.abs(place.scan.top - place.address.top) <= 1, JSON.stringify(place));
+  });
+
+  test("the address is the private address on one line, as text, never a link", async () => {
+    const address = await ctx.page.getByText("https://192.168.0.12:16146", { exact: true }).evaluate((el) => ({
+      lines: Math.round(el.getBoundingClientRect().height / Number.parseFloat(getComputedStyle(el).lineHeight)),
+      links: el.closest("a") === null ? 0 : 1,
+    }));
+
+    assert.deepEqual(address, { lines: 1, links: 0 });
   });
 });
 
