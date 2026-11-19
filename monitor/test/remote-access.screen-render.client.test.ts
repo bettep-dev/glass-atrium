@@ -92,7 +92,7 @@ const IPHONE_TITLES = [
   "Match the fingerprint before installing",
   "Install the certificate",
   "Turn on full trust",
-  "Scan with Camera, then register",
+  "Scan with Camera, type the code",
 ];
 // key directory (data/remote-access/), its CA and leaf files, a home path, and the commands that make or trust them
 const NEVER_IN_BUNDLE = [/remote-access\//, /\b(?:ca|leaf)\.(?:pem|key)\b/, /~\//, /\/Users\//, /glass-atrium remote/, /openssl/, /remote-access-set\.sh/, /add-trusted-cert/, /\bsudo\b/];
@@ -239,6 +239,7 @@ describe("the connect card is a procedure: one device, one open step, done steps
 
     assert.ok(card.text().includes("Which device are you connecting?"));
     assert.deepEqual(findNodes(card.view(), (node) => node.type === "button").map((node) => collectText(node).trim()), ["iPhone or iPad"]);
+    assert.ok(card.text().includes("Android is not supported yet."), "an Android owner is told why there is no Android button");
   });
 
   test("choosing a device opens its step 1 with the progress line, and every later title is faint text, not a control", async () => {
@@ -284,7 +285,7 @@ describe("the connect card is a procedure: one device, one open step, done steps
     assert.ok(card.text().includes("Which device are you connecting?"));
   });
 
-  test("the fingerprint step shows the Settings path and the four lines, its Trouble? fold closed until pressed and closed again on the next step", async () => {
+  test("the fingerprint step shows the Settings path, the four lines and the stop line, its Trouble? fold closed until pressed and closed again on the next step", async () => {
     const card = await driveConnect();
     card.press("iPhone or iPad");
     card.press("Next");
@@ -294,11 +295,11 @@ describe("the connect card is a procedure: one device, one open step, done steps
     const opened = card.text();
     card.press("Next");
 
-    for (const word of ["Settings › Profile Downloaded › More Details › Glass Atrium Local CA", "9A 3F 1C 07 5E B2 44 D0"]) assert.ok(closed.includes(word), `shows "${word}": ${closed}`);
-    assert.ok(!closed.includes("Lines differ?"), "closed by default");
-    for (const word of ["No lines before installing? Install, then check General › VPN & Device Management.", "Lines differ? Tap Remove Downloaded Profile and stop here."]) {
-      assert.ok(opened.includes(word), `the open fold shows "${word}": ${opened}`);
+    for (const word of ["Settings › Profile Downloaded › More Details › Glass Atrium Local CA", "9A 3F 1C 07 5E B2 44 D0", "If lines differ, remove the profile and never turn on full trust."]) {
+      assert.ok(closed.includes(word), `shows "${word}" without a press: ${closed}`);
     }
+    assert.ok(!closed.includes("No lines before installing?"), "closed by default");
+    assert.ok(opened.includes("No lines before installing? Install, then check General › VPN & Device Management."), opened);
     assert.ok(!card.text().includes("No “Profile Downloaded” in Settings? Repeat step 1."), "the next step's fold starts closed");
   });
 
@@ -318,26 +319,26 @@ describe("the connect card is a procedure: one device, one open step, done steps
     card.press("Go to step 5");
 
     const text = card.text();
-    for (const word of ["Step 5 of 5", "Do this after step 4; close any page saying “This Connection Is Not Private”.", "Show a new code", "Back"]) {
+    for (const word of ["Step 5 of 5", "Close any page that says “This Connection Is Not Private”.", "Show QR code", "Back"]) {
       assert.ok(text.includes(word), `shows "${word}"`);
     }
     assert.deepEqual(card.doneTitles(), IPHONE_TITLES.slice(0, 4));
     assert.ok(!getButtonNames(card.view()).includes("Next"));
   });
 
-  test("the scan step's QR code holds the first address alone; the typed addresses wait behind Trouble?", async () => {
+  test("with no code open the scan step offers Show QR code alone; the typed addresses wait behind Trouble?, with no code line", async () => {
     const card = await driveConnect();
     card.press("iPhone or iPad");
     card.press("Trouble?");
     card.press("Go to step 5");
 
-    const drawn = findNodes(card.view(), (node) => node.type === "QrCodeRA").map((node) => node.props.text);
-    assert.deepEqual(drawn, ["https://studio-mac.local:16146"]);
+    assert.deepEqual(findNodes(card.view(), (node) => node.type === "QrCodeRA"), []);
     assert.ok(!card.text().includes("https://"), "no typed address while the fold is closed");
     card.press("Trouble?");
     const fold = card.text();
     assert.ok(fold.includes("Camera does nothing? Open this in Safari: https://studio-mac.local:16146"), fold);
     assert.ok(fold.includes("Still nothing? Try: https://192.168.0.12:16146"), fold);
+    assert.ok(!fold.includes("Then type this code"), "no code line before a code is open");
   });
 
   test("without the encoder the scan step shows the address as text in the QR code's place", async () => {
@@ -394,14 +395,14 @@ describe("the connect card is a procedure: one device, one open step, done steps
 describe("the step words keep to the card's caps", () => {
   // spec 44105 → Caps: a word is a whitespace-separated token holding a letter, digit, { or &
   const countWords = (text: string) => text.split(/\s+/).filter((token) => /[\p{L}\p{N}{&]/u.test(token)).length;
-  interface StepWords { title: string; line?: string | Record<string, string>; path?: string; trouble: Array<{ text: string }> }
+  interface StepWords { title: string; line?: string | Record<string, string>; path?: string; stop?: string; trouble: Array<{ text: string }> }
 
   test("every title holds at most 6 words, every line at most 14, every fold at most three lines of at most 14", async () => {
     const { mod } = await loadScreen();
     const steps = Object.values(vm.runInContext("STEPS_RA", mod) as Record<string, { steps: StepWords[] }>).flatMap((device) => device.steps);
 
     const over = steps.flatMap((step) => {
-      const lines = [step.line, step.path].flatMap((value) => (typeof value === "object" ? Object.values(value) : value ?? []));
+      const lines = [step.line, step.path, step.stop].flatMap((value) => (typeof value === "object" ? Object.values(value) : value ?? []));
       return [
         ...(countWords(step.title) > 6 ? [`title "${step.title}"`] : []),
         ...lines.filter((line) => countWords(line) > 14).map((line) => `line "${line}"`),
@@ -514,19 +515,21 @@ describe("the confirms name what they do, with Cancel before the commit", () => 
 describe("the scan step shows one code at a time and what became of it", () => {
   const base = { onOpen: () => undefined };
   const rows = [
-    { name: "at rest it offers a code", state: { status: "idle" }, present: ["Show a new code"], absent: ["One use", "Code"] },
-    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show a new code"] },
-    { name: "an open code shows in two groups of four with its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired"] },
-    { name: "an expired code gives way to the expired line", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show a new code"], absent: ["K7QM"] },
+    { name: "at rest it offers the QR code alone", state: { status: "idle" }, present: ["Show QR code"], absent: ["One use", "Code", "Show a new code"], qr: [] },
+    { name: "while opening the button says so", state: { status: "opening" }, present: ["Opening…"], absent: ["Show QR code", "Show a new code"], qr: [] },
+    { name: "an open code draws the address QR code beside the code in two groups of four, its time and a new-code button", state: { status: "open", code: "K7QM4XZP", expiresAt: "2026-11-17T05:07:00.000Z" }, present: ["Code", "K7QM 4XZP", "One use · valid until", "Show a new code"], absent: ["expired", "Show QR code"], qr: ["https://studio-mac.local:16146"] },
+    { name: "an expired code gives way to the expired line and the QR code goes", state: { status: "expired" }, present: ["That code expired; show a new one.", "Show QR code"], absent: ["K7QM", "Show a new code"], qr: [] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const { mod } = await loadScreen();
 
-      const text = collectText(render(mod as Mod, "CodeViewRA", { ...base, state: row.state }));
+      const tree = render(mod as Mod, "CodeViewRA", { ...base, address: "https://studio-mac.local:16146", state: row.state });
+      const text = collectText(tree);
 
       for (const word of row.present) assert.ok(text.includes(word), `${row.name}: "${word}"`);
       for (const word of row.absent) assert.ok(!text.includes(word), `${row.name}: never "${word}"`);
+      assert.deepEqual(findNodes(tree, (node) => node.type === "QrCodeRA").map((node) => node.props.text), row.qr, `${row.name}: QR code`);
     });
   }
 

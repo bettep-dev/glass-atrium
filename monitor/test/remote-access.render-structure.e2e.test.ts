@@ -198,7 +198,7 @@ describe("remote access on at 1440px, the scan step, the tallest step", () => {
     await ctx.page.getByRole("button", { name: "iPhone or iPad" }).click();
     await ctx.page.getByRole("button", { name: "Trouble?" }).click();
     await ctx.page.getByRole("button", { name: "Go to step 5" }).click();
-    await ctx.page.getByRole("button", { name: "Show a new code" }).click();
+    await ctx.page.getByRole("button", { name: "Show QR code" }).click();
     await ctx.page.getByText("K7QM 4XZP").waitFor({ timeout: WAIT_TIMEOUT_MS });
     await ctx.page.getByRole("button", { name: "Trouble?" }).click();
   });
@@ -221,6 +221,24 @@ describe("remote access on at 1440px, the scan step, the tallest step", () => {
     assert.equal(fit.label, "QR code for https://studio-mac.local:16146");
     assert.equal(fit.side, fit.drawn, "the layout never scales the modules off their 4 px");
     assert.ok(fit.bottom <= fit.window && fit.scrollTop === 0, JSON.stringify(fit));
+  });
+
+  test("the code and its new-code button stand at the QR code's right, top-aligned", async () => {
+    const place = await ctx.page.evaluate(() => {
+      const qr = document.querySelector('svg[role="img"]')?.getBoundingClientRect();
+      const code = [...document.querySelectorAll("span")].find((el) => el.textContent === "Code")?.getBoundingClientRect();
+      const button = [...document.querySelectorAll("button")].find((el) => el.textContent === "Show a new code")?.getBoundingClientRect();
+      return { qrRight: qr?.right, qrTop: qr?.top, codeLeft: code?.left, codeTop: code?.top, buttonLeft: button?.left };
+    });
+
+    assert.ok(Number(place.codeLeft) >= Number(place.qrRight) && Number(place.buttonLeft) >= Number(place.qrRight), JSON.stringify(place));
+    assert.ok(Math.abs(Number(place.codeTop) - Number(place.qrTop)) <= 1, JSON.stringify(place));
+  });
+
+  test("the open fold tells the person to type the open code", async () => {
+    const fold = await ctx.page.getByText("Then type this code:").textContent();
+
+    assert.equal(fold?.replace(/\s+/g, " ").trim(), "Then type this code: K7QM 4XZP");
   });
 });
 

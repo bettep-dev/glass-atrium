@@ -26,6 +26,7 @@ const DESTRUCTIVE_STYLE_RA = { color: "rgb(var(--crit))", borderColor: "rgb(var(
 
 /**
  * The connect procedure per device (spec 44105 → Connect a device): a title, one line or one Settings path, at most three Trouble? lines.
+ * stop → a line the security ruling keeps visible beside the step's value, never behind Trouble?.
  * hosts → the setup facts that make the address, first shown, second in the fold · a device joins only once its steps are ruled (Android: A4).
  */
 const STEPS_RA = {
@@ -43,7 +44,8 @@ const STEPS_RA = {
 				kind: "fingerprint",
 				title: "Match the fingerprint before installing",
 				path: "Settings › Profile Downloaded › More Details › Glass Atrium Local CA",
-				trouble: [{ text: "No lines before installing? Install, then check General › VPN & Device Management." }, { text: "Lines differ? Tap Remove Downloaded Profile and stop here." }],
+				stop: "If lines differ, remove the profile and never turn on full trust.",
+				trouble: [{ text: "No lines before installing? Install, then check General › VPN & Device Management." }],
 			},
 			{ kind: "phone", title: "Install the certificate", line: "Go back, tap Install, enter your passcode, tap Install twice, then Done.", trouble: [{ text: "No “Profile Downloaded” in Settings? Repeat step 1." }] },
 			{
@@ -54,9 +56,9 @@ const STEPS_RA = {
 			},
 			{
 				kind: "scan",
-				title: "Scan with Camera, then register",
-				line: "Do this after step 4; close any page saying “This Connection Is Not Private”.",
-				trouble: [{ text: "Camera does nothing? Open this in Safari: {address}" }, { text: "Still nothing? Try: {address-2}" }],
+				title: "Scan with Camera, type the code",
+				line: "Close any page that says “This Connection Is Not Private”.",
+				trouble: [{ text: "Camera does nothing? Open this in Safari: {address}" }, { text: "Then type this code: {code}" }, { text: "Still nothing? Try: {address-2}" }],
 			},
 		],
 	},
@@ -64,6 +66,8 @@ const STEPS_RA = {
 // a Trouble? line's value slot → its value; a line whose value is missing is left out
 const SLOT_RA = /(\{[a-z0-9-]+\})/;
 const PATH_SEPARATOR_RA = " › ";
+// spec 44105 → C-11: the device choice while only iPhone or iPad steps are ruled (A4)
+const PENDING_DEVICE_RA = "Android is not supported yet.";
 // spec 44105 → The QR drawing: 4 CSS px a module, a 4-module quiet zone, modules in elev on an ink field (16.74:1)
 const QR_RA = { MODULE_PX: 4, QUIET: 4, FIELD: { fill: "rgb(var(--ink))" }, MODULE: { fill: "rgb(var(--elev))" } };
 
@@ -482,6 +486,7 @@ function DeviceChoiceRA({ onAct }) {
 					<button key={device} type="button" className="btn" onClick={() => onAct({ type: "choose", device })}>{name}</button>
 				))}
 			</Cluster>
+			<p className="fs-meta text-dim">{PENDING_DEVICE_RA}</p>
 		</Stack>
 	);
 }
@@ -532,13 +537,15 @@ function OpenStepRA({ step, index, setup, devices, progress, titleRef, onAct, on
 	const { Stack, Cluster, QuietButton } = window.UI;
 	const { hosts, steps } = STEPS_RA[progress.device];
 	const values = getAddressesRA(setup, hosts);
+	// extra → values only the step itself knows (the open code), filling their Trouble? slots
+	const trouble = (extra) => <TroubleRA rows={step.trouble} values={{ ...values, ...extra }} isOpen={progress.isTroubleOpen} scanStep={steps.length} onAct={onAct} />;
 	return (
 		<Stack gap="stack">
 			<p ref={titleRef} tabIndex={-1} aria-current="step" className="fs-body font-medium text-ink">{index + 1} {step.title}</p>
 			<Stack gap="block">
 				<Stack gap="label" className="items-start">
-					<StepBodyRA step={step} setup={setup} devices={devices} address={values.address} onAct={onAct} onDevicesRead={onDevicesRead} />
-					<TroubleRA rows={step.trouble} values={values} isOpen={progress.isTroubleOpen} scanStep={steps.length} onAct={onAct} />
+					<StepBodyRA step={step} setup={setup} devices={devices} address={values.address} trouble={trouble} onAct={onAct} onDevicesRead={onDevicesRead} />
+					{step.kind !== "scan" && trouble({})}
 				</Stack>
 				<Cluster>
 					{index > 0 && <QuietButton onClick={() => onAct({ type: "back" })}>Back</QuietButton>}
@@ -549,7 +556,7 @@ function OpenStepRA({ step, index, setup, devices, progress, titleRef, onAct, on
 	);
 }
 
-function StepBodyRA({ step, setup, devices, address, onAct, onDevicesRead }) {
+function StepBodyRA({ step, setup, devices, address, trouble, onAct, onDevicesRead }) {
 	const { MachineString } = window.UI;
 	if (step.kind === "send") return <CertificateStepRA line={step.line} onSent={() => onAct({ type: "sent" })} />;
 	const lead = step.path ? <PathRA path={step.path} /> : <p className="fs-body text-dim">{step.line}</p>;
@@ -560,6 +567,7 @@ function StepBodyRA({ step, setup, devices, address, onAct, onDevicesRead }) {
 				{setup.fingerprint
 					? <MachineString className="block fs-meta text-ink">{formatFingerprintRA(setup.fingerprint).map((line) => <span key={line} className="block">{line}</span>)}</MachineString>
 					: <ActErrorRA error={{ text: "Fingerprint not shown; refresh this page before installing." }} />}
+				<p className="fs-body text-ink">{step.stop}</p>
 			</>
 		);
 	}
@@ -567,8 +575,7 @@ function StepBodyRA({ step, setup, devices, address, onAct, onDevicesRead }) {
 	return (
 		<>
 			{lead}
-			{address && <QrCodeRA text={address} />}
-			<CodeStepRA devices={devices} onConnected={(label) => onAct({ type: "connected", label })} onDevicesRead={onDevicesRead} />
+			<CodeStepRA address={address} devices={devices} trouble={trouble} onConnected={(label) => onAct({ type: "connected", label })} onDevicesRead={onDevicesRead} />
 		</>
 	);
 }
@@ -670,7 +677,7 @@ function CertificateStepRA({ line, onSent }) {
 	);
 }
 
-function CodeStepRA({ devices, onConnected, onDevicesRead }) {
+function CodeStepRA({ address, devices, trouble, onConnected, onDevicesRead }) {
 	const [state, setState] = useSRA({ status: "idle" });
 	const knownRef = useRRA(new Set());
 	useERA(() => {
@@ -696,22 +703,35 @@ function CodeStepRA({ devices, onConnected, onDevicesRead }) {
 			(error) => setState({ status: "idle", error: { text: getOpenErrorTextRA(error), detail: error.message } }),
 		);
 	};
-	return <CodeViewRA state={state} onOpen={onOpen} />;
-}
-
-function CodeViewRA({ state, onOpen }) {
-	const { MachineString, formatKstTime } = window.UI;
-	const isOpen = state.status === "open";
 	return (
 		<>
-			{isOpen && (
-				<ValueRA label="Code">
-					<MachineString className="fs-stat font-semibold text-ink">{formatCodeRA(state.code)}</MachineString>
-					<span className="fs-meta text-dim">{`One use · valid until ${formatKstTime(state.expiresAt)}`}</span>
-				</ValueRA>
-			)}
+			<CodeViewRA state={state} address={address} onOpen={onOpen} />
+			{trouble(state.status === "open" ? { code: formatCodeRA(state.code) } : {})}
+		</>
+	);
+}
+
+// spec 44105 → The QR code: drawn only while a code is open, the code and C-53 at its right, top-aligned
+function CodeViewRA({ state, address, onOpen }) {
+	const { Cluster, Stack, MachineString, formatKstTime } = window.UI;
+	if (state.status === "open") {
+		return (
+			<Cluster gap="control-group" className="items-start">
+				{address && <QrCodeRA text={address} />}
+				<Stack gap="label" className="items-start">
+					<ValueRA label="Code">
+						<MachineString className="fs-stat font-semibold text-ink">{formatCodeRA(state.code)}</MachineString>
+						<span className="fs-meta text-dim">{`One use · valid until ${formatKstTime(state.expiresAt)}`}</span>
+					</ValueRA>
+					<button type="button" className="btn" onClick={onOpen}>Show a new code</button>
+				</Stack>
+			</Cluster>
+		);
+	}
+	return (
+		<>
 			{state.status === "expired" && <p className="fs-body text-dim">That code expired; show a new one.</p>}
-			<button type="button" className="btn" aria-busy={state.status === "opening" || undefined} onClick={onOpen}>{state.status === "opening" ? "Opening…" : "Show a new code"}</button>
+			<button type="button" className="btn" aria-busy={state.status === "opening" || undefined} onClick={onOpen}>{state.status === "opening" ? "Opening…" : "Show QR code"}</button>
 			{state.error && <ActErrorRA error={state.error} />}
 		</>
 	);
