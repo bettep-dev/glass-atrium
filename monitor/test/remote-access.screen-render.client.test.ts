@@ -16,6 +16,8 @@ const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src");
 const SCREEN_SRC = resolve(SRC, "screens/remote-access.jsx");
 // the file GET /dist/screens/remote-access.js serves to every registered device (npm test → pretest builds it)
 const SCREEN_BUNDLE = resolve(SRC, "../dist/screens/remote-access.js");
+// the encoder the shell loads before the screen (index.html), run as the page runs it
+const QR_ENCODER = vm.runInNewContext(`${readFileSync(resolve(SRC, "../assets/vendor/qrcode-generator-2.0.4.js"), "utf8")}\nqrcode`, { module: undefined, define: undefined });
 
 interface SentRequest {
   readonly url: string;
@@ -36,6 +38,7 @@ async function loadScreen(answer: Answer = { status: 200, body: {} }) {
   const sent: SentRequest[] = [];
   const mod = await loadScreenModule(SCREEN_SRC, {
     UI: ui,
+    qrcode: QR_ENCODER,
     navigator: {},
     File,
     fetch: async (url: string, init: RequestInit = {}) => {
@@ -83,13 +86,13 @@ const DEVICES = [
   { id: "7", label: "<b>iPad</b>", createdAt: "2026-11-02T21:15:02.001Z", lastSeenAt: "2026-11-16T23:48:59.999Z" },
   { id: "9", label: "Living-room tablet (kitchen)", createdAt: "2026-10-28T07:03:12.500Z", lastSeenAt: null },
 ];
-// spec 44105 → iPhone or iPad, the scan step in its typed form (A8)
+// spec 44105 → iPhone or iPad, the scan step in its QR form (A8)
 const IPHONE_TITLES = [
   "Send the certificate to your iPhone",
   "Match the fingerprint before installing",
   "Install the certificate",
   "Turn on full trust",
-  "Open the address, type the code",
+  "Scan with Camera, then register",
 ];
 // key directory (data/remote-access/), its CA and leaf files, a home path, and the commands that make or trust them
 const NEVER_IN_BUNDLE = [/remote-access\//, /\b(?:ca|leaf)\.(?:pem|key)\b/, /~\//, /\/Users\//, /glass-atrium remote/, /openssl/, /remote-access-set\.sh/, /add-trusted-cert/, /\bsudo\b/];
@@ -315,13 +318,53 @@ describe("the connect card is a procedure: one device, one open step, done steps
     card.press("Go to step 5");
 
     const text = card.text();
-    for (const word of ["Step 5 of 5", "Do this after step 4; close any page saying “This Connection Is Not Private”.", "Address", "https://studio-mac.local:16146", "Show a new code", "Back"]) {
+    for (const word of ["Step 5 of 5", "Do this after step 4; close any page saying “This Connection Is Not Private”.", "Show a new code", "Back"]) {
       assert.ok(text.includes(word), `shows "${word}"`);
     }
     assert.deepEqual(card.doneTitles(), IPHONE_TITLES.slice(0, 4));
     assert.ok(!getButtonNames(card.view()).includes("Next"));
+  });
+
+  test("the scan step's QR code holds the first address alone; the typed addresses wait behind Trouble?", async () => {
+    const card = await driveConnect();
+    card.press("iPhone or iPad");
     card.press("Trouble?");
-    assert.ok(card.text().includes("Still nothing? Try: https://192.168.0.12:16146"), card.text());
+    card.press("Go to step 5");
+
+    const drawn = findNodes(card.view(), (node) => node.type === "QrCodeRA").map((node) => node.props.text);
+    assert.deepEqual(drawn, ["https://studio-mac.local:16146"]);
+    assert.ok(!card.text().includes("https://"), "no typed address while the fold is closed");
+    card.press("Trouble?");
+    const fold = card.text();
+    assert.ok(fold.includes("Camera does nothing? Open this in Safari: https://studio-mac.local:16146"), fold);
+    assert.ok(fold.includes("Still nothing? Try: https://192.168.0.12:16146"), fold);
+  });
+
+  test("without the encoder the scan step shows the address as text in the QR code's place", async () => {
+    const { mod } = await loadScreen();
+    vm.runInContext("qrcode = undefined", mod);
+
+    const tree = render(mod as Mod, "QrCodeRA", { text: "https://studio-mac.local:16146" });
+
+    assert.equal(findNodes(tree, (node) => node.type === "svg").length, 0);
+    assert.ok(collectText(tree).includes("https://studio-mac.local:16146"));
+  });
+
+  test("the QR code draws every dark module the encoder computes, at 4 px a module inside a 4-module quiet zone", async () => {
+    const { mod } = await loadScreen();
+    const text = "https://studio-mac.local:16146";
+    const qr = QR_ENCODER(0, "M");
+    qr.addData(text);
+    qr.make();
+    const size = qr.getModuleCount();
+    const dark = Array.from({ length: size * size }, (_, i) => qr.isDark(Math.floor(i / size), i % size)).filter(Boolean).length;
+
+    const svg = findNodes(render(mod as Mod, "QrCodeRA", { text }), (node) => node.type === "svg")[0];
+
+    assert.equal(svg.props.width, (size + 8) * 4);
+    assert.equal(svg.props.viewBox, `0 0 ${size + 8} ${size + 8}`);
+    assert.equal(String(findNodes(svg, (node) => node.type === "path")[0].props.d).match(/M/g)?.length, dark);
+    assert.ok(String(svg.props["aria-label"]).includes(text));
   });
 
   test("a device registering in the scan step finishes the card, and Connect another device starts over", async () => {

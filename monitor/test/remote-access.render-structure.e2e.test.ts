@@ -191,6 +191,39 @@ describe("remote access on at 1440px, the connect steps", () => {
   });
 });
 
+describe("remote access on at 1440px, the scan step, the tallest step", () => {
+  let ctx: RenderContext;
+  before(async () => {
+    ctx = await openRenderContext(SETUP_ON, [], { acts: [{ status: 200, body: { code: "K7QM4XZP" } }] });
+    await ctx.page.getByRole("button", { name: "iPhone or iPad" }).click();
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+    await ctx.page.getByRole("button", { name: "Go to step 5" }).click();
+    await ctx.page.getByRole("button", { name: "Show a new code" }).click();
+    await ctx.page.getByText("K7QM 4XZP").waitFor({ timeout: WAIT_TIMEOUT_MS });
+    await ctx.page.getByRole("button", { name: "Trouble?" }).click();
+  });
+  after(async () => closeRenderContext(ctx));
+
+  test("the shell's encoder draws the address as a QR code at full size, and the card with a code and its fold open fits a 900px window", async () => {
+    const fit = await ctx.page.evaluate(() => {
+      const card = [...document.querySelectorAll(".card")].find((el) => el.textContent?.includes("Connect a device"));
+      const qr = card?.querySelector('svg[role="img"]');
+      return {
+        label: qr?.getAttribute("aria-label"),
+        side: qr?.getBoundingClientRect().width,
+        drawn: Number(qr?.getAttribute("width")),
+        bottom: Math.ceil(card?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY),
+        window: window.innerHeight,
+        scrollTop: document.scrollingElement?.scrollTop,
+      };
+    });
+
+    assert.equal(fit.label, "QR code for https://studio-mac.local:16146");
+    assert.equal(fit.side, fit.drawn, "the layout never scales the modules off their 4 px");
+    assert.ok(fit.bottom <= fit.window && fit.scrollTop === 0, JSON.stringify(fit));
+  });
+});
+
 describe("remote access on with devices at 1440px, the registered devices card", () => {
   let ctx: RenderContext;
   before(async () => {

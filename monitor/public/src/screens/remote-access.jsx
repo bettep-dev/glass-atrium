@@ -52,13 +52,20 @@ const STEPS_RA = {
 				path: "Settings › General › About › Certificate Trust Settings › Glass Atrium Local CA",
 				trouble: [{ text: "No switch there? Repeat step 3." }, { text: "Asked to confirm? Tap Continue." }],
 			},
-			{ kind: "scan", title: "Open the address, type the code", line: "Do this after step 4; close any page saying “This Connection Is Not Private”.", trouble: [{ text: "Still nothing? Try: {address-2}" }] },
+			{
+				kind: "scan",
+				title: "Scan with Camera, then register",
+				line: "Do this after step 4; close any page saying “This Connection Is Not Private”.",
+				trouble: [{ text: "Camera does nothing? Open this in Safari: {address}" }, { text: "Still nothing? Try: {address-2}" }],
+			},
 		],
 	},
 };
 // a Trouble? line's value slot → its value; a line whose value is missing is left out
 const SLOT_RA = /(\{[a-z0-9-]+\})/;
 const PATH_SEPARATOR_RA = " › ";
+// spec 44105 → The QR drawing: 4 CSS px a module, a 4-module quiet zone, modules in elev on an ink field (16.74:1)
+const QR_RA = { MODULE_PX: 4, QUIET: 4, FIELD: { fill: "rgb(var(--ink))" }, MODULE: { fill: "rgb(var(--elev))" } };
 
 // progress null → the device choice · open null → every step done
 const PROGRESS_ACTS_RA = {
@@ -560,10 +567,36 @@ function StepBodyRA({ step, setup, devices, address, onAct, onDevicesRead }) {
 	return (
 		<>
 			{lead}
-			{address && <ValueRA label="Address"><MachineString className="fs-body text-ink">{address}</MachineString></ValueRA>}
+			{address && <QrCodeRA text={address} />}
 			<CodeStepRA devices={devices} onConnected={(label) => onAct({ type: "connected", label })} onDevicesRead={onDevicesRead} />
 		</>
 	);
+}
+
+/** The device's address as a QR code, drawn in the page; no encoder on the page → the address as text. */
+function QrCodeRA({ text }) {
+	const { MachineString } = window.UI;
+	if (typeof window.qrcode !== "function") return <ValueRA label="Address"><MachineString className="fs-body text-ink">{text}</MachineString></ValueRA>;
+	const qr = window.qrcode(0, "M");
+	qr.addData(text);
+	qr.make();
+	const size = qr.getModuleCount() + QR_RA.QUIET * 2;
+	return (
+		<svg role="img" aria-label={`QR code for ${text}`} width={size * QR_RA.MODULE_PX} height={size * QR_RA.MODULE_PX} viewBox={`0 0 ${size} ${size}`} shapeRendering="crispEdges">
+			<rect width={size} height={size} style={QR_RA.FIELD} />
+			<path d={getQrPathRA(qr)} style={QR_RA.MODULE} />
+		</svg>
+	);
+}
+
+// one unit square per dark module, offset by the quiet zone
+function getQrPathRA(qr) {
+	const count = qr.getModuleCount();
+	const squares = [];
+	for (let row = 0; row < count; row++) {
+		for (let col = 0; col < count; col++) if (qr.isDark(row, col)) squares.push(`M${col + QR_RA.QUIET} ${row + QR_RA.QUIET}h1v1h-1z`);
+	}
+	return squares.join("");
 }
 
 // a Settings path: the labels in the mono face, the separators in dim
