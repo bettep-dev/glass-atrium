@@ -382,6 +382,16 @@ describe("a refused widening act names whether the network moved", () => {
   }
 });
 
+test("a failed act's line folds the server's answer under Details", async () => {
+  const { mod } = await loadScreen();
+  const detail = "HTTP 500 Internal Server Error: act_failed";
+
+  const tree = render(mod as Mod, "ActErrorRA", { error: { text: "Remote access may or may not be on. Refresh; if wrong, turn it off and on.", detail } });
+
+  assert.ok(collectText(tree).includes(detail));
+  assert.ok(findNodes(tree, (node) => node.type === "details").length === 1);
+});
+
 describe("after a refused widening act the confirm offers its commit only on a fresh network read", () => {
   const MOVED_ROUTER = "10.0.0.1";
   const SETUP_CLOSED = { ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false };

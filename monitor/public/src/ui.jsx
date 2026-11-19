@@ -3125,7 +3125,7 @@ window.UI = {
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
   REMOTE_PAGE, isRemotePage, installRemoteFetch, readRemoteSession,
-  getFetchError, getAttachmentName, SANITIZE_CONFIG, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getAttachmentName, SANITIZE_CONFIG, ErrorDetails, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
