@@ -72,6 +72,8 @@ async function openRenderContext(setup: Record<string, unknown>, devices: unknow
   await page.goto(`${serverUrl}/#remote-access`, { waitUntil: "load" });
   await page.getByRole("heading", { name: "Remote access", level: 1 }).waitFor({ timeout: WAIT_TIMEOUT_MS });
   await page.locator(".pill").first().waitFor({ timeout: WAIT_TIMEOUT_MS });
+  // every measure in the page's own faces, never the fallback painted before they arrive
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
   return { app, browser, page, acts };
 }
 
@@ -288,8 +290,6 @@ describe("remote access on, the connect card's procedure at each supported width
 
   test("every rail title stays on one line at each supported width, the open one included", async () => {
     const lines: Record<number, number[]> = {};
-    // the page's own face, not the fallback it paints before the font arrives
-    await ctx.page.evaluate(() => document.fonts.ready.then(() => undefined));
     for (const row of WIDTHS) {
       await ctx.page.setViewportSize({ width: row.viewport, height: 900 });
       // two lines still fit the 40px row → count the title's own lines

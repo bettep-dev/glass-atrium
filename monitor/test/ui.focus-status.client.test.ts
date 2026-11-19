@@ -64,6 +64,27 @@ test("every status dot tone carries a distinct glyph and a word, so state surviv
   assert.ok(![...glyphs, ...words].includes(""), "no empty glyph or word");
 });
 
+test("a status dot given its own word names its state in that word, under its tone's glyph", async () => {
+  const ui = await loadScreenModule(resolve(SRC, "ui.jsx"));
+  const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
+
+  const dot = renderScreen(React.createElement(ui.StatusDot as Component, { status: "ok", word: "Done:" }));
+
+  const glyph = findNodes(dot, (n: RenderedNode) => n.props["aria-hidden"] === "true");
+  const word = findNodes(dot, (n: RenderedNode) => String(n.props.className ?? "").includes("sr-only"));
+  assert.deepEqual({ glyph: glyph.map(collectText), word: word.map(collectText) }, { glyph: ["✓"], word: ["Done:"] });
+});
+
+test("a status dot set in a line of text takes the line's own type and spacing, and leaves the naming to the line", async () => {
+  const ui = await loadScreenModule(resolve(SRC, "ui.jsx"));
+  const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
+
+  const dot = renderScreen(React.createElement(ui.StatusDot as Component, { status: "warn", isInText: true }));
+
+  const [outer] = findNodes(dot, (n: RenderedNode) => n.type === "span");
+  assert.deepEqual({ className: outer?.props.className, title: outer?.props.title }, { className: "text-warn", title: undefined });
+});
+
 test("the document root declares the UI copy language, English", () => {
   const html = readFileSync(resolve(PUBLIC, "index.html"), "utf8");
   assert.match(html, /<html[^>]*\blang="en"/);

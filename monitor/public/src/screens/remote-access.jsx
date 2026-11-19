@@ -19,7 +19,6 @@ const CONFIRM_HEADER_RA = "x-glass-atrium-confirm";
 const CODE_WINDOW_MS_RA = 5 * 60_000;
 // while a code is open → a device that registers shows without a refresh
 const DEVICE_POLL_MS_RA = 5_000;
-// Action: isNumeric for the atom's right-end alignment (a button, no figures) · 1% → the column shrinks to its button
 // Device takes the slack; the dates and Remove hug their text (spec 44105 → Layout → Registered devices)
 const DEVICE_WIDTHS_RA = [undefined, "1%", "1%", "1%"];
 const DESTRUCTIVE_STYLE_RA = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))", background: "transparent" };
@@ -527,11 +526,11 @@ function getPositionRA(progress, index) {
 
 // three cues per position (glyph or numeral, ink step, the one filled row) · only a done row is a control; the open one's focus is the pane's heading
 function RailRowRA({ title, index, position, onAct }) {
-	const { TONE_GLYPH } = window.UI;
+	const { StatusDot } = window.UI;
 	if (position === "done") {
 		return (
 			<button type="button" className="ra-step" onClick={() => onAct({ type: "reopen", index })}>
-				<span className="ra-step-mark text-ok"><span aria-hidden="true">{TONE_GLYPH.ok}</span><span className="sr-only">{STEP_TEXT_RA.mark.done}</span></span>
+				<span className="ra-step-mark"><StatusDot status="ok" word={STEP_TEXT_RA.mark.done} isInText /></span>
 				<span className="ra-step-title">{title}</span>
 			</button>
 		);
@@ -607,7 +606,7 @@ function PaneFootRA({ step, index, hasFingerprint, onAct }) {
 
 // 16px, not the 13 floor: 64 characters matched pair by pair against a phone held beside the screen · the stop line is never folded
 function FingerprintRA({ fingerprint, stop }) {
-	const { Stack, MachineString, TONE_GLYPH } = window.UI;
+	const { Stack, MachineString, StatusDot } = window.UI;
 	return (
 		<Stack gap="label">
 			{fingerprint
@@ -617,7 +616,7 @@ function FingerprintRA({ fingerprint, stop }) {
 					</ValueRA>
 				)
 				: <ActErrorRA error={{ text: STEP_TEXT_RA.fingerprint.missing }} />}
-			<p className="fs-body font-medium text-ink"><span className="text-warn" aria-hidden="true">{TONE_GLYPH.warn}</span><span className="sr-only">{STEP_TEXT_RA.mark.warn}</span> {stop}</p>
+			<p className="fs-body font-medium text-ink"><StatusDot status="warn" word={STEP_TEXT_RA.mark.warn} isInText /> {stop}</p>
 		</Stack>
 	);
 }
