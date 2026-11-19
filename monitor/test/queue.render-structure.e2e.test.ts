@@ -2542,6 +2542,22 @@ describe("queue page on the mockup fixtures", () => {
       rows: [...document.querySelectorAll(".queue-row")].map((row) => [row.id, row.querySelector(".queue-row-tag")?.textContent, row.querySelector(".queue-row-fact")?.textContent]),
     }));
 
+    test("Status Done's Reset filters is quiet: no edge at rest, a faint fill on hover", async () => {
+      const { page } = await openDonePage();
+      const reset = page.locator(".filter-bar-reset");
+      // the button's colour transition settled first → the look read is the state's, not a frame of the fade
+      const getLook = () => reset.evaluate(async (node) => {
+        await Promise.all(node.getAnimations().map((animation) => animation.finished));
+        return { edge: getComputedStyle(node).borderTopColor, fill: getComputedStyle(node).backgroundColor };
+      });
+      const rest = await getLook();
+      await reset.hover();
+      const hovered = await getLook();
+      await page.close();
+      const CLEAR = "rgba(0, 0, 0, 0)";
+      assert.deepEqual([rest, hovered.edge, hovered.fill !== CLEAR], [{ edge: CLEAR, fill: CLEAR }, CLEAR, true]);
+    });
+
     test("Status Done lists the done items newest end first in day bands with no count, each row how it ended and its kind, status=done in the hash; Reset filters returns to Open", async () => {
       const { page, reads } = await openDonePage();
       const shown = await getDoneRows(page);

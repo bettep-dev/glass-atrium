@@ -1418,13 +1418,13 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	flex: none;
 	white-space: nowrap;
 }
-/* §12.5 — on the Queue screen a word button carries a 1px edge at rest; a glyph button (.icon) is the glyph alone in its 32 square.
+/* §12.5 — on the Queue screen a word button carries a 1px edge at rest, the bar's quiet Reset filters (§4.1) excepted; a glyph button (.icon) is the glyph alone in its 32 square.
    Word ranks: three, six states, colours only (no size, no shadow); the edge walks control edge → faint → ink as the pointer commits,
    the primary's fill ink → dim → faint. The drawer's own close button (.detail-head) stays the system's. */
-.queue-screen .btn.ghost:not(.detail-head .btn, .icon) {
+.queue-screen .btn.ghost:not(.detail-head .btn, .icon, .filter-bar-reset) {
 	border-color: rgb(var(--control-edge));
 }
-.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .icon):hover {
+.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .icon, .filter-bar-reset):hover {
 	border-color: rgb(var(--faint));
 }
 .queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):hover {
