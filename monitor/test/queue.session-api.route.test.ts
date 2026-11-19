@@ -30,6 +30,7 @@ const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
 const HOST = `127.0.0.1:${PORT}`;
 const ACK_DEADLINE_MS = 120_000;
 const QUEUE_CLI_SOURCE = fileURLToPath(new URL("../../scripts/atrium-queue.sh", import.meta.url));
+const QUEUE_OPS_SOURCE = fileURLToPath(new URL("../../scripts/lib/queue-ops.sh", import.meta.url));
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-api-"));
 const dir = { home: path.join(fixtureRoot, "home") };
@@ -712,7 +713,7 @@ describe("pending count (listener read)", () => {
   });
 
   test("the answered-ids bound is what one queue CLI pull drains: its pull rounds times the claim batch", () => {
-    const rounds = Number(/^readonly PULL_ROUNDS_MAX=(\d+)$/m.exec(readFileSync(QUEUE_CLI_SOURCE, "utf8"))?.[1]);
+    const rounds = Number(/^readonly QUEUE_PULL_ROUNDS_MAX=(\d+)$/m.exec(readFileSync(QUEUE_OPS_SOURCE, "utf8"))?.[1]);
 
     assert.equal(ANSWERED_IDS_LIMIT, rounds * PULL.BATCH_LIMIT);
   });
