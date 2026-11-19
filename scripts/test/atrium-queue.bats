@@ -1465,6 +1465,36 @@ mark_awaiting() {
   done
 }
 
+@test "a pulled claim that fails part-way keeps every item it claimed and lists each one it could not claim with its ids and failing step" {
+  local row step fail_at after item claims
+  item="$(jq -nc --arg s "${SESSION_ID}" '{id: 17, sessionId: $s, kind: "message", status: "answered", title: "Ship it", body: "Ship it"}')"
+  claims="$(jq -nc --arg msg "${MSG_ID}" '{items: [17, 18, 19] | map({id: {item: ., $msg}, source: "owner", sender: null})}')"
+  # Row shape: failing step|the failing request's number|the number of the next item's fetch
+  for row in "fetch|5|6" "ack|6|7"; do
+    IFS='|' read -r step fail_at after <<<"${row}"
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    set_nth_reply 1 200 "${claims}"
+    set_nth_reply 2 200 '{"items":[]}'
+    set_nth_reply 3 200 "${item}"
+    set_nth_reply 4 200 '{"result":"first"}'
+    set_nth_reply 5 200 "${item}"
+    set_nth_reply "${fail_at}" 500 '{}'
+    set_nth_reply "${after}" 200 "${item}"
+    set_nth_reply $((after + 1)) 200 '{"result":"first"}'
+    start_stub
+    run_ops queue_claim_items
+    [[ "${status}" -eq 0 && "$(jq -c '[.claims[] | [.id, .isFirst, has("item")]]' <<<"${output}")" == '[[17,true,true],[19,true,true]]' ]] || {
+      echo "row ${step}: status=${status} ${output}${stderr}"
+      return 1
+    }
+    [[ "$(jq -c --arg msg "${MSG_ID}" '[.unclaimed[] | [.id, .msgId == $msg, .step, (.error | type)]]' <<<"${output}")" == "[[18,true,\"${step}\",\"string\"]]" ]] || {
+      echo "row ${step}: ${output}"
+      return 1
+    }
+    stop_stub
+  done
+}
+
 @test "get prints for a relay a peer provenance line that alone denies owner authority and approval, whatever the sender's name" {
   start_stub
   local name line="" first

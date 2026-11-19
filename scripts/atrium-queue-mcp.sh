@@ -77,7 +77,7 @@ IFS= read -r -d '' TOOLS <<'JSON' || true # GA-ABSORB[benign]: status 1 at the t
   "recommendedCode":{"type":"string","description":"a decision's recommended option code"},
   "isApprovalClass":{"type":"boolean","description":"true for a decision that asks the owner to approve one action"},
   "lastAct":{"type":"boolean","description":"true only on the one post of a turn that owes no other, called alone as the turn's last tool call: it also records the turn, form posted with this item's id"}}}},
-{"name":"claim","description":"Fetch and acknowledge what was delivered to this session: everything, or one item by its item id and msg id.",
+{"name":"claim","description":"Fetch and acknowledge what was delivered to this session: everything, or one item by its item id and msg id. A delivered item whose fetch or ack failed is listed under unclaimed with its item id, msg id and failing step: claim it again by those ids.",
  "inputSchema":{"type":"object","additionalProperties":false,"properties":{
   "itemId":{"type":"integer"},"msgId":{"type":"string"}}}},
 {"name":"record","description":"Record this turn's queue judgment: nothing to post, or posted with the id of every item this turn posted. Call it alone, as the turn's last tool call.",

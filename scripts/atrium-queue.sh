@@ -98,7 +98,8 @@ Usage — run by this absolute path, no interpreter or env prefix in front:
   ${cli} claim [<item-id> <msg-id>]
                                   fetch and ack in one step each delivered item, or the one named; prints one JSON
                                   document: per item its source (owner or peer), provenance and first flag, and the
-                                  item itself only when first
+                                  item itself only when first; a delivered item it could not claim is listed under
+                                  unclaimed with its ids and failing step — claim it again by those ids
   ${cli} record nothing | posted <item-id>...
                                   the turn's record, its last act: nothing to post, or the id of each item this turn
                                   posted; prints one JSON document

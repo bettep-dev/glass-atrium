@@ -378,11 +378,12 @@ queue_get_claims() {
     | if all(.[]; (.item | test($item)) and (.msg | test($msg))) then map(.item |= tonumber) else error end' <<<"$1" 2>/dev/null
 }
 
-# [<item id> <msg id>] → {claims: [...]}: each delivered item fetched, then acked; per item its id, msg id, source,
-# provenance and first flag, with the item itself only when the ack answers first; without arguments every item the
-# pull rounds claim
+# [<item id> <msg id>] → {claims: [...], unclaimed?: [...]}: each delivered item fetched, then acked; per item its id,
+# msg id, source, provenance and first flag, with the item itself only when the ack answers first; without arguments
+# every item the pull rounds claim. A named item's failure is the result; a pulled item's goes to unclaimed
+# (queue_claim_each)
 queue_claim_items() {
-  local session_id claims claim out='[]' entry
+  local session_id claims
   if (($# > 0)); then
     queue_check_item_id "$1" || return
     [[ "${2:-}" =~ ${QUEUE_UUID_SHAPE} && $# -eq 2 ]] || {
@@ -400,26 +401,42 @@ queue_claim_items() {
       return
     }
   fi
-  while IFS=$'\t' read -r claim; do
-    [[ -n "${claim}" ]] || continue
-    entry="$(queue_claim_item "${claim%%,*}" "${claim#*,}")" || {
-      queue_put_back "$?" "${entry}"
-      return
-    }
-    out="$(jq -nc --argjson out "${out}" --argjson entry "${entry}" '$out + [$entry]')"
-  done <<<"$(jq -r '.[] | "\(.item),\(.msg)"' <<<"${claims}")"
-  jq -c '{claims: .}' <<<"${out}" | queue_print_json
+  queue_claim_each "${claims}" "$#"
 }
 
-# <item id> <msg id> → one claim entry (queue_claim_items)
+# <claims JSON array> <argument count> → the claim result (queue_claim_items). A pulled item whose fetch or ack fails
+# is never dropped: it is listed under unclaimed with its ids, the failing step and the error, and the items after it
+# are still claimed → the session sees every pulled item and can claim a listed one again by its ids
+queue_claim_each() {
+  local claim out='[]' unclaimed='[]' entry status
+  while IFS=$'\t' read -r claim; do
+    [[ -n "${claim}" ]] || continue
+    status=0
+    entry="$(queue_claim_item "${claim%%,*}" "${claim#*,}")" || status=$?
+    if ((status == 0)); then
+      out="$(jq -nc --argjson out "${out}" --argjson entry "${entry}" '$out + [$entry]')"
+    elif (($2 > 0)); then
+      queue_put_back "${status}" "${entry}"
+      return
+    else
+      unclaimed="$(jq -nc --argjson all "${unclaimed}" --argjson id "${claim%%,*}" --arg msg "${claim#*,}" \
+        --argjson entry "${entry}" '$all + [{$id, msgId: $msg} + ($entry | {step, error, message})]')"
+    fi
+  done <<<"$(jq -r '.[] | "\(.item),\(.msg)"' <<<"$1")"
+  jq -c --argjson unclaimed "${unclaimed}" '{claims: .} + if $unclaimed == [] then {} else {$unclaimed} end' \
+    <<<"${out}" | queue_print_json
+}
+
+# <item id> <msg id> → one claim entry (queue_claim_items); else the failed step's error document with its step,
+# fetch or ack
 queue_claim_item() {
   local fetched ack result
   fetched="$(queue_get_item "$1")" || {
-    queue_put_back "$?" "${fetched}"
+    queue_put_back "$?" "$(jq -c '. + {step: "fetch"}' <<<"${fetched}")"
     return
   }
   ack="$(queue_create_ack "$1" "$2")" || {
-    queue_put_back "$?" "${ack}"
+    queue_put_back "$?" "$(jq -c '. + {step: "ack"}' <<<"${ack}")"
     return
   }
   result="$(jq -r '.result' <<<"${ack}")"
