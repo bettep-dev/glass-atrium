@@ -430,15 +430,27 @@ ga_remote_enable() {
     printf 'remote: the certificates could not be created — nothing changed\n' >&2
     return "${GA_REMOTE_KEYS_NOT_CREATED}"
   fi
-  # a device's off outlives monitor restarts until this on replaces it
-  if ! (umask 077 && printf 'on\n' >"${dir}/access-state" && chmod 600 "${dir}/access-state"); then
-    printf 'remote: the access state could not be written — access stays off\n' >&2
-    return 1
-  fi
   port="$(atrium_toml_get "[remote_access]" "port")"
   if { [[ -z "${port}" ]] && ! ga_remote_set_config port "${GA_REMOTE_PORT_DEFAULT}"; } \
     || ! ga_remote_set_config enabled true; then
     printf 'remote: config.toml could not be written — access stays off\n' >&2
+    return 1
+  fi
+  # last: a device's off outlives monitor restarts and holds over enabled = true until this on replaces it
+  if ! _ga_remote_set_access_on "${dir}"; then
+    printf 'remote: the access state could not be written — access stays off\n' >&2
+    return 1
+  fi
+}
+
+# access-state = on, owner-only, by temp file and rename in the same dir → a reader never sees a partial file.
+_ga_remote_set_access_on() {
+  local tmp
+  tmp="$(umask 077 && mktemp "$1/.access-state.XXXXXX")" || return 1
+  if (printf 'on\n' >"${tmp}"); then
+    mv -f -- "${tmp}" "$1/access-state"
+  else
+    _ga_remote_drop_work_dir "${tmp}"
     return 1
   fi
 }

@@ -261,6 +261,31 @@ configd_service_for() {
   [[ "$(ga_remote_get_mode "${KEY_DIR}/access-state")" == "600" ]] || return 1
 }
 
+@test "an on whose config write fails leaves a device's off in place" {
+  mkdir -p "${KEY_DIR}" "${SANDBOX}/locked"
+  printf 'off\n' >"${KEY_DIR}/access-state"
+  export ATRIUM_CONFIG_TOML="${SANDBOX}/locked/config.toml"
+  cp "${SANDBOX}/config.toml" "${ATRIUM_CONFIG_TOML}"
+  chmod 500 "${SANDBOX}/locked"
+  run ga_remote_enable
+  chmod 700 "${SANDBOX}/locked"
+  [[ "${status}" -ne 0 ]] || { echo "a failed config write reported success: ${output}"; return 1; }
+  [[ "${output}" == *"config.toml could not be written"* ]] || { echo "${output}"; return 1; }
+  [[ "$(cat "${KEY_DIR}/access-state")" == "off" ]] || { echo "the device's off was replaced"; return 1; }
+}
+
+@test "on renames a complete access state into place, never rewriting the device's off file" {
+  mkdir -p "${KEY_DIR}"
+  printf 'off\n' >"${KEY_DIR}/access-state"
+  local inode_before
+  inode_before="$(ls -i "${KEY_DIR}/access-state")"
+  run ga_remote_enable
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ "$(cat "${KEY_DIR}/access-state")" == "on" ]] || return 1
+  [[ "$(ls -i "${KEY_DIR}/access-state")" != "${inode_before}" ]] || { echo "rewritten in place"; return 1; }
+  [[ -z "$(find "${KEY_DIR}" -maxdepth 1 -name '.access-state.*')" ]] || { echo "temp file left"; return 1; }
+}
+
 @test "trust shows the identity and the accident-guard notice, then appends it once" {
   IS_TERMINAL=true
   run ga_remote_main trust <<<"trust"
