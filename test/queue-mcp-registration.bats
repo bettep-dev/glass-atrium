@@ -13,7 +13,8 @@
 
 bats_require_minimum_version 1.5.0
 
-GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
+# physical path, as the launcher resolves its own root → an install under a symlinked directory names the same adapter
+GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd -P)"
 ADAPTER="${GA}/scripts/atrium-queue-mcp.sh"
 TOOLS=(post claim record sessions relay)
 
