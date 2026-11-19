@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser, BrowserContext, Page, Route } from "playwright";
+import type { Browser, BrowserContext, Locator, Page, Route } from "playwright";
 import { chromium } from "playwright";
 
 import { REGISTRATION_CODE } from "../src/server/remote/registration-code.js";
@@ -337,6 +337,130 @@ describe("a code in the address fragment, from the Mac's QR code", () => {
     });
   });
 });
+
+describe("the page at a phone's width", () => {
+  // a 390-wide phone → content 358 wide inside the 16 gutter; head, form and warning 32 apart
+  const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true };
+  const COLUMN = { left: 16, width: 358, groupGap: 32, headGap: 8, fieldGap: 16, stackGap: 4, warningGap: 12, controlHeight: 32 };
+  const CRIT = "rgb(248, 113, 113)";
+  const states = [
+    { name: "empty: the typed path asks for the code, focus on Code", open: (page: Page) => openSignIn(page), lead: LEAD.empty, code: "", focused: "sign-in-code", invalid: [] as string[], status: "" },
+    {
+      name: "filled by a scan: the code shows mono, focus on Device name",
+      open: (page: Page) => page.goto(`${serverUrl}${PAGE_PATH}#code=${VALID_CODE}`, { waitUntil: "load" }).then(() => undefined),
+      lead: LEAD.filled,
+      code: VALID_CODE,
+      focused: "sign-in-label",
+      invalid: [] as string[],
+      status: "",
+    },
+    {
+      name: "refused: the code refusal clears and marks Code in crit, focus on Code",
+      open: async (page: Page) => {
+        await page.route(`**${REGISTER_PATH}`, (route) => answerRegister(route, { status: 400, error: "registration_refused" }));
+        await page.goto(`${serverUrl}${PAGE_PATH}#code=${VALID_CODE}`, { waitUntil: "load" });
+        await page.getByLabel("Device name").fill("Minji's iPhone");
+        await page.getByRole("button", { name: "Register device" }).click();
+        await page.waitForFunction(() => (document.getElementById("sign-in-status")?.textContent ?? "") !== "", null, { timeout: WAIT_TIMEOUT_MS });
+      },
+      lead: LEAD.empty,
+      code: "",
+      focused: "sign-in-code",
+      invalid: ["sign-in-code"],
+      status: "Code not accepted — show a new code on the Mac and use it",
+    },
+  ];
+
+  for (const state of states) {
+    test(state.name, async () => {
+      await withPage(async (page) => {
+        await state.open(page);
+
+        const drawn = await getPhoneLayout(page);
+
+        assert.deepEqual(
+          { lead: drawn.lead, code: drawn.code, focused: drawn.focused, invalid: drawn.invalid, status: drawn.status.text },
+          { lead: state.lead, code: state.code, focused: state.focused, invalid: state.invalid, status: state.status },
+          state.name,
+        );
+        assert.deepEqual(
+          drawn.blocks.map((block) => ({ left: block.left, width: block.width })),
+          [COLUMN, COLUMN, COLUMN].map(({ left, width }) => ({ left, width })),
+          `${state.name}: head, form and warning fill the 358 column`,
+        );
+        assert.deepEqual(
+          {
+            groups: [drawn.blocks[1].top - drawn.blocks[0].bottom, drawn.blocks[2].top - drawn.blocks[1].bottom],
+            head: drawn.leadBox.top - drawn.title.bottom,
+            fields: drawn.fields.slice(1).map((field, index) => field.label.top - drawn.fields[index].hint.bottom),
+            stacks: drawn.fields.flatMap((field) => [field.input.top - field.label.bottom, field.hint.top - field.input.bottom]),
+            warning: drawn.warning.text.top - drawn.warning.label.bottom,
+          },
+          {
+            groups: [COLUMN.groupGap, COLUMN.groupGap],
+            head: COLUMN.headGap,
+            fields: [COLUMN.fieldGap],
+            stacks: [COLUMN.stackGap, COLUMN.stackGap, COLUMN.stackGap, COLUMN.stackGap],
+            warning: COLUMN.warningGap,
+          },
+          `${state.name}: every gap is the layout's role token`,
+        );
+        assert.deepEqual(
+          drawn.fields.map((field) => ({ left: field.input.left, width: field.input.width, height: field.input.height })),
+          [0, 1].map(() => ({ left: COLUMN.left, width: COLUMN.width, height: COLUMN.controlHeight })),
+          `${state.name}: each field full width and 32 tall`,
+        );
+        assert.deepEqual(
+          { isCodeMono: drawn.isCodeMono, buttonLeft: drawn.button.left, isButtonNarrow: drawn.button.width < COLUMN.width, isButtonTall: drawn.button.height >= COLUMN.controlHeight },
+          { isCodeMono: true, buttonLeft: COLUMN.left, isButtonNarrow: true, isButtonTall: true },
+          `${state.name}: mono code, a start-aligned primary`,
+        );
+        assert.deepEqual(
+          // the code hint = one line in the status line's own size
+          {
+            gap: drawn.status.top - drawn.button.bottom,
+            isLineReserved: drawn.status.height >= drawn.fields[0].hint.height,
+            isEmptyOneLine: drawn.status.text !== "" || drawn.status.height === drawn.fields[0].hint.height,
+            isCrit: drawn.status.text === "" || drawn.status.color === CRIT,
+          },
+          { gap: COLUMN.fieldGap, isLineReserved: true, isEmptyOneLine: true, isCrit: true },
+          `${state.name}: the status line holds one reserved line, a message in crit`,
+        );
+      }, PHONE);
+    });
+  }
+});
+
+/** Rounded boxes and state of the sign-in page's parts, as drawn. */
+async function getPhoneLayout(page: Page) {
+  const fieldBoxes = async (index: number) => {
+    const field = page.locator(".sign-in-field").nth(index);
+    return { label: await getBox(field.locator("label")), input: await getBox(field.locator("input")), hint: await getBox(field.locator(".sign-in-hint")) };
+  };
+  const status = page.locator("#sign-in-status");
+  return {
+    blocks: [await getBox(page.locator(".sign-in-head")), await getBox(page.locator(".sign-in-form")), await getBox(page.locator(".sign-in-trust"))],
+    title: await getBox(page.locator(".sign-in-title")),
+    lead: (await page.locator(".sign-in-lead").textContent()) ?? "",
+    leadBox: await getBox(page.locator(".sign-in-lead")),
+    fields: [await fieldBoxes(0), await fieldBoxes(1)],
+    button: await getBox(page.locator(".sign-in-submit")),
+    status: {
+      ...(await getBox(status)),
+      ...(await status.evaluate((element) => ({ color: getComputedStyle(element).color, text: element.textContent ?? "" }))),
+    },
+    warning: { label: await getBox(page.locator(".sign-in-trust .section-label")), text: await getBox(page.locator(".sign-in-trust p")) },
+    code: await page.locator("#sign-in-code").inputValue(),
+    isCodeMono: await page.locator("#sign-in-code").evaluate((element) => /mono/i.test(getComputedStyle(element).fontFamily)),
+    focused: await page.evaluate(() => document.activeElement?.id ?? null),
+    invalid: await page.locator('input[aria-invalid="true"].is-error').evaluateAll((inputs) => inputs.map((input) => input.id)),
+  };
+}
+
+async function getBox(locator: Locator) {
+  const box = (await locator.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 };
+  return { left: Math.round(box.x), top: Math.round(box.y), bottom: Math.round(box.y + box.height), width: Math.round(box.width), height: Math.round(box.height) };
+}
 
 async function withPage(body: (page: Page) => Promise<void>, options: Parameters<Browser["newContext"]>[0] = {}): Promise<void> {
   const context: BrowserContext = await browser.newContext(options);
