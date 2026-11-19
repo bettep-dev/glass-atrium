@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # queue-turn-end-check.sh — Stop hook, at most one block per turn end, carrying either line or both, never an item's
-# text: (1) an interactive or background main-session turn that called a tool and whose final message's last
-# non-blank line is no [QUEUE-VERDICT] form, or names an id that is not an item of this session, is asked for its
-# verdict once per turn; (2) while an item this session posted awaits the owner and nothing polls the monitor for this
-# Claude process (queue_get_poller), the wait command — a fallback for processes no listener serves.
-# The verdict check confirms only that a verdict is stated and its ids are this session's items, never the judgment.
+# text: (1) an interactive or background main-session turn that called a tool is asked once per turn for its queue
+# record unless its last tool call is a record call and the session's record was written at or after the turn's start
+# entry — a record call is the CLI's record subcommand, or the server's record tool or its post tool flagged as the
+# turn's last act, the turn's one post and alone in its message, unless the session's start found that server shadowed
+# (queue_set_shadow_mark), whose ask names the CLI alone; (2) while an item this session posted awaits the owner and nothing polls the monitor for this Claude
+# process (queue_get_poller), the wait command — a fallback for processes no listener serves. Each turn end also sends
+# the transcript's title as the session's name once it changed (queue_put_session_name).
+# The record check confirms only that a record was made, never the judgment; the record operation checks its ids.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_poller).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
 # shared-hook-capability-contract.md → Stop row). Fail-open: whatever it cannot decide ends the turn normally, exit 0;
@@ -20,14 +23,16 @@ readonly CHECK_BUDGET_S=3
 readonly CHECK_FETCH_MAX_S=1
 # the nudge stamp's process key when the hook env holds no pid
 readonly NUDGE_NO_PID_KEY=no-pid
-# the verdict line's keyword and forms; the rule text that teaches them: glass-atrium-ops-orchestrator-role.md →
-# Queue verdict line (queue-turn-end-check.bats feeds each form it teaches through this check)
-readonly VERDICT_KEYWORD='[QUEUE-VERDICT]'
-# shellcheck disable=SC2016  # the backticks are the reason's literal markdown
-readonly VERDICT_FORMS='`[QUEUE-VERDICT] posted #<item-id>` (every item the turn posted, on the one line) or `[QUEUE-VERDICT] nothing to post`'
-# %s → the wait sentence (get_verdict_wait_sentence)
-readonly VERDICT_ASK_TEMPLATE="Judge the turn against the must-not-miss kinds, post what is owed, then end the message with \
-one last line: ${VERDICT_FORMS}. %s"
+# shellcheck disable=SC2016  # the backticks are the reason's literal markdown; %s → the server name, the CLI, the CLI
+readonly RECORD_ASK_TEMPLATE="Queue record (harness): this turn called a tool, and its last tool call is no queue \
+record made in this turn. Judge the turn against the must-not-miss kinds, post what is owed, then call the \
+%s server's \`record\` tool alone, last — form nothing, or posted with every item id the turn \
+posted; a session without the server runs \`%s record nothing\` or \`%s record posted <id>...\` instead."
+# shellcheck disable=SC2016  # the backticks are the reason's literal markdown; %s → the server name, the CLI, the CLI
+readonly SHADOWED_RECORD_ASK_TEMPLATE="Queue record (harness): this turn called a tool, and its last tool call is no \
+queue record made in this turn. Judge the turn against the must-not-miss kinds, post what is owed, then run the queue \
+CLI alone, last — a project or local MCP server named %s shadows the Atrium queue server in this session, so never \
+call its tools: \`%s record nothing\`, or \`%s record posted <id>...\` with every item id the turn posted."
 readonly WAIT_REASON_LEAD="[ATRIUM-QUEUE] harness: an item of this session awaits the owner and no wait runs — start it \
 now as a background command:"
 
@@ -45,45 +50,46 @@ readonly TURN_READER="${self%/*}/lib/reply_language.py"
 
 # set by the checks main runs, read by print_block
 poller=""
-verdict_reason=""
+record_reason=""
 wait_reason=""
+# set by set_record_reason: the session's start found the queue server shadowed (queue_is_shadow_marked)
+is_shadowed=false
+# set by set_tool_turn: a tool-using turn's start-entry id and time, and whether its last tool call is a record call
 tool_turn=""
-foreign_ids=""
-# a fetch failed or the budget ran out → no later fetch this pass, so the turn end leaves one stderr line at most
-is_check_spent=false
+turn_started=""
+is_record_last=false
 check_deadline=0
 
 main() {
-  local fields="" is_subagent is_continued payload_session transcript has_message last_line session_id
+  local fields="" is_subagent is_continued payload_session transcript session_id
   # shellcheck disable=SC2310  # no fields → the malformed-payload branch below
   if [[ ! -t 0 ]]; then fields="$(get_payload_fields)" || fields=""; fi
   if [[ -z "${fields}" ]]; then
     warn "the Stop payload is not a JSON object"
     exit 0
   fi
-  IFS=$'\x1f' read -r is_subagent is_continued payload_session transcript has_message last_line <<<"${fields}"
+  IFS=$'\x1f' read -r is_subagent is_continued payload_session transcript <<<"${fields}"
   [[ "${is_subagent}" == false && "${is_continued}" == false ]] || exit 0
   session_id="$(queue_get_session_id "${payload_session}")"
   [[ -n "${session_id}" ]] || exit 0
   check_deadline=$((SECONDS + CHECK_BUDGET_S))
   poller="$(queue_get_poller "${session_id}")"
-  # a `claude -p` run is never asked for a verdict
+  # a `claude -p` run is never asked for a record
   # shellcheck disable=SC2310  # a single [[ ]] test, so the errexit suspension changes nothing
-  if is_owner_facing_session; then
-    set_verdict_reason "${session_id}" "${transcript}" "${has_message}" "${last_line}"
-  fi
-  if [[ "${is_check_spent}" == false ]]; then set_wait_reason "${session_id}"; fi
-  [[ -n "${verdict_reason}${wait_reason}" ]] || exit 0
+  if is_owner_facing_session; then set_record_reason "${session_id}" "${transcript}"; fi
+  set_wait_reason "${session_id}"
+  # shellcheck disable=SC2310  # a refused update is sent again at the next turn end
+  queue_put_session_name "${transcript}" "${session_id}" || true
+  [[ -n "${record_reason}${wait_reason}" ]] || exit 0
   print_block
 }
 
-# stdin payload → "<has agent_id>␟<stop_hook_active>␟<session_id>␟<transcript_path>␟<has a final message>␟<its last
-# non-blank line, trailing whitespace trimmed>"; nothing for anything but a JSON object
+# stdin payload → "<has agent_id>␟<stop_hook_active>␟<session_id>␟<transcript_path>"; nothing for anything but a JSON
+# object
 get_payload_fields() {
   jq -r 'if type == "object" then
       [(has("agent_id") | tostring), (.stop_hook_active == true | tostring), (.session_id | strings // ""),
-        (.transcript_path | strings // ""), (.last_assistant_message | type == "string" | tostring),
-        ([.last_assistant_message | strings | splits("\n") | sub("\\s+$"; "") | select(length > 0)] | last // "")]
+        (.transcript_path | strings // "")]
       | join("\u001f")
     else empty end' 2>/dev/null
 }
@@ -92,104 +98,61 @@ warn() {
   (printf 'queue-turn-end-check: %s — the turn ends without the owner-queue check\n' "$1") >&2 || true
 }
 
-# <session id> <transcript path> <has a final message> <its last line> → verdict_reason: the ask, or empty when the
-# turn called no tool, was asked already, carries a verdict this check accepts, or cannot be decided
-set_verdict_reason() {
-  local stamp
+# <session id> <transcript path> → record_reason: the ask, or empty when the turn called no tool, was asked already,
+# ends on a record call made at or after its start, or cannot be decided
+set_record_reason() {
+  local stamp recorded cli template="${RECORD_ASK_TEMPLATE}"
+  # shellcheck disable=SC2310  # a pure read; no readable mark counts as unshadowed
+  if queue_is_shadow_marked "$1"; then
+    is_shadowed=true
+    template="${SHADOWED_RECORD_ASK_TEMPLATE}"
+  fi
   set_tool_turn "$2"
   [[ -n "${tool_turn}" ]] || return 0
-  if [[ "$3" != true ]]; then
-    warn "the Stop payload carries no final message"
-    return 0
-  fi
-  stamp="$(queue_get_awaiting_dir "$1")/.verdict-asked"
+  recorded="$(queue_get_record_time "$1")"
+  if [[ "${is_record_last}" == true && -n "${recorded}" && ! "${recorded}" < "${turn_started}" ]]; then return 0; fi
+  stamp="$(queue_get_awaiting_dir "$1")/.record-asked"
   if [[ -f "${stamp}" && "$(<"${stamp}")" == "${tool_turn}" ]]; then return 0; fi
-  set_verdict_problem "$1" "$4"
-  [[ -n "${verdict_reason}" ]] || return 0
   # the stamp lands before the ask → a later fire of this turn, its continuation included, is never asked again
   if ! (mkdir -p -- "${stamp%/*}" && printf '%s\n' "${tool_turn}" >"${stamp}") 2>/dev/null; then
-    warn "no verdict stamp could be written at ${stamp}"
-    verdict_reason=""
+    warn "no record-ask stamp could be written at ${stamp}"
+    return 0
   fi
+  cli="$(queue_get_cli_path)"
+  # shellcheck disable=SC2059  # the format is one of this file's own constants; the names go in as arguments
+  printf -v record_reason "${template}" "${QUEUE_MCP_SERVER_NAME}" "${cli}" "${cli}"
 }
 
-# <transcript path> → tool_turn: the current turn's start-entry id when the turn called a tool, else empty — after one
-# warning when the turn cannot be read
+# <transcript path> → tool_turn, turn_started and is_record_last for a turn that called a tool; all left unset when it
+# called none, and after one warning when the turn or its start time cannot be read. In a shadowed session the
+# server's tools are the shadowing server's, so only the CLI's record counts.
 set_tool_turn() {
-  local found="" status="" turn="" tools=""
+  local found="" status="" turn="" started="" tools="" is_record="" cli pattern tool=""
   if [[ -z "$1" ]]; then
     warn "the Stop payload names no transcript"
     return 0
   fi
+  cli="$(queue_get_cli_path)"
+  cli="${cli##*/}"
+  # a Bash command running the CLI's record subcommand, the CLI named by its file name
+  pattern="(^|[[:space:]/\"'])${cli//./\\.}[\"']?[[:space:]]+record([[:space:]]|$)"
+  if [[ "${is_shadowed}" == false ]]; then tool="mcp__${QUEUE_MCP_SERVER_NAME}__"; fi
+  # the server's record tool, or its post tool flagged as the turn's last act: the turn's one post, sent alone
   found="$(python3 -I "${TURN_READER}" turn "$1" 2>/dev/null \
-    | jq -r '[.status, (.turn | strings // ""), (.tools == true | tostring)] | join("\u001f")' 2>/dev/null)" || found=""
-  IFS=$'\x1f' read -r status turn tools <<<"${found}" || true
-  if [[ "${status}" != found || -z "${turn}" ]]; then
+    | jq -r --arg tool "${tool}" --arg pattern "${pattern}" \
+      '[.status, (.turn | strings // ""), (.started | strings // ""), (.tools == true | tostring),
+        (($tool != "" and (.last_tool.name == $tool + "record"
+            or (.last_tool.name == $tool + "post" and .last_tool.last_act == true and .last_tool.alone == true
+              and .last_tool.name_calls == 1)))
+          or (.last_tool.name == "Bash" and (.last_tool.command // "" | test($pattern))) | tostring)] | join("\u001f")' 2>/dev/null)" || found=""
+  IFS=$'\x1f' read -r status turn started tools is_record <<<"${found}" || true
+  if [[ "${status}" != found || -z "${turn}" || ! "${started}" =~ ${QUEUE_RECORD_TIME_SHAPE} ]]; then
     warn "the transcript's current turn could not be read"
   elif [[ "${tools}" == true ]]; then
     tool_turn="${turn}"
+    turn_started="${started}"
+    is_record_last="${is_record}"
   fi
-}
-
-# <session id> <last line> → verdict_reason: empty for an accepted verdict, else the ask naming the forms and, for ids
-# the monitor does not know for this session, those ids alone
-set_verdict_problem() {
-  local lead sentence steps ids=()
-  [[ "$2" != "${VERDICT_KEYWORD} nothing to post" ]] || return 0
-  if [[ "$2" == "${VERDICT_KEYWORD} posted "* ]]; then
-    IFS=' ' read -r -a ids <<<"${2#"${VERDICT_KEYWORD} posted "}" || true
-  fi
-  # shellcheck disable=SC2310  # a pure test, so the errexit suspension changes nothing
-  if ((${#ids[@]} > 0)) && is_item_id_list "${ids[@]}"; then
-    set_foreign_ids "$1" "${ids[@]}"
-    [[ -n "${foreign_ids}" ]] || return 0
-    lead="${foreign_ids} is not an item of this session: post it from this session or correct the verdict line"
-  elif [[ "$2" == "${VERDICT_KEYWORD}"* ]]; then
-    lead="this turn called a tool, and its final message's last line is not a queue verdict form"
-  else
-    lead="this turn called a tool, and its final message ends without a queue verdict line"
-  fi
-  sentence="$(get_verdict_wait_sentence)"
-  # shellcheck disable=SC2059  # the format is this file's own constant; the sentence goes in as an argument
-  printf -v steps "${VERDICT_ASK_TEMPLATE}" "${sentence}"
-  verdict_reason="Queue verdict (harness): ${lead}. ${steps}"
-}
-
-# → the ask's closing sentence on a decision posted now, by what polls for this session: a wait only where none does
-get_verdict_wait_sentence() {
-  local cli
-  case "${poller}" in
-    wait) printf '%s\n' "A decision posted now needs no new wait: the wait this session runs claims the owner's answer." ;;
-    listener) printf '%s\n' "A decision posted now needs no wait: this session's listener announces the owner's answer." ;;
-    *)
-      cli="$(queue_get_cli_path)"
-      # shellcheck disable=SC2016  # the backticks are the reason's literal markdown
-      printf 'A decision posted now needs `%s wait` started as a background command.\n' "${cli}"
-      ;;
-  esac
-}
-
-# <word>... → 0 when every word is #<item id>
-is_item_id_list() {
-  local id
-  for id in "$@"; do
-    [[ "${id}" == "#"* && "${id#\#}" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 1
-  done
-}
-
-# <session id> <#id>... → foreign_ids: "#N #M" for each id the monitor does not know for this session; a failed fetch
-# or a spent budget stops the pass with one warning, and the ids left unasked pass
-set_foreign_ids() {
-  local session_id="$1" id status
-  shift
-  for id in "$@"; do
-    # shellcheck disable=SC2310  # a spent budget or an unusable reply already printed its warning
-    if ! status="$(get_budgeted_item_status "${session_id}" "${id#\#}")"; then
-      is_check_spent=true
-      return 0
-    fi
-    if [[ "${status}" == gone ]]; then foreign_ids+="${foreign_ids:+ }${id}"; fi
-  done
 }
 
 # <session id> → wait_reason: the wait command while an item of this session awaits the owner, nothing polls the
@@ -250,41 +213,27 @@ get_wait_resolved_item() {
   done
 }
 
-# <session id> <item id> → get_item_status while CHECK_BUDGET_S lasts; non-zero, after one warning, once it has run out
+# <session id> <item id> → queue_get_item_status while CHECK_BUDGET_S lasts; non-zero, after one warning, once it has run
+# out, on no reply or on an unusable one
 get_budgeted_item_status() {
+  local code=0
   if ((SECONDS >= check_deadline)); then
     warn "the ${CHECK_BUDGET_S} s check budget ran out before item $2"
     return 1
   fi
-  get_item_status "$1" "$2"
+  # shellcheck disable=SC2310  # its status picks the warning below
+  queue_get_item_status "$1" "$2" "${CHECK_FETCH_MAX_S}" || code=$?
+  case "${code}" in
+    0) return 0 ;;
+    1) warn "the monitor gave no reply within ${CHECK_FETCH_MAX_S} s" ;;
+    *) warn "the monitor's item reply was unusable" ;;
+  esac
+  return 1
 }
 
-# <session id> <item id> → its status, "gone" when the monitor knows no such item of this session; non-zero, after the
-# warning, on no reply or an unusable one
-get_item_status() {
-  local reply code body status
-  # shellcheck disable=SC2310  # no reply → the warning below
-  if ! reply="$(queue_send GET "/api/queue/items/$2?sessionId=$1" "" "${CHECK_FETCH_MAX_S}")"; then
-    warn "the monitor gave no reply within ${CHECK_FETCH_MAX_S} s"
-    return 1
-  fi
-  code="$(queue_get_reply_code "${reply}")"
-  if [[ "${code}" == 404 ]]; then
-    printf 'gone\n'
-    return 0
-  fi
-  body="$(queue_get_reply_body "${reply}")"
-  status="$(jq -r '.status | strings' <<<"${body}" 2>/dev/null)" || status=""
-  if [[ "${code}" != 2?? || ! "${status}" =~ ^[a-z_]+$ ]]; then
-    warn "the monitor's item reply was unusable (HTTP ${code})"
-    return 1
-  fi
-  printf '%s\n' "${status}"
-}
-
-# one block for both checks: the verdict ask, then the wait command, one per line
+# one block for both checks: the record ask, then the wait command, one per line
 print_block() {
-  local reason="${verdict_reason}" block nl=$'\n'
+  local reason="${record_reason}" block nl=$'\n'
   if [[ -n "${wait_reason}" ]]; then reason="${reason:+${reason}${nl}}${wait_reason}"; fi
   block="$(jq -nc --arg reason "${reason}" '{decision: "block", reason: $reason}')"
   # subshell write → no interrupt from an un-waited child reaches it; the exit stays 0 either way

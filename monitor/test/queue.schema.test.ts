@@ -11,7 +11,7 @@ import "dotenv/config";
 
 import { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { registerBodySchema } from "../src/server/queue/schemas.js";
+import { RELAY_TEXT_MAX, registerBodySchema } from "../src/server/queue/schemas.js";
 
 /** Thrown last inside a case's transaction → the transaction rolls back and nothing persists. */
 class Rollback extends Error {}
@@ -318,6 +318,172 @@ describe("monitor.queue_items message kind", () => {
           RETURNING "id"`;
         assert.ok(message !== undefined, "insert returned no row");
         if (row.change !== null) await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change} WHERE "id" = ${message.id}`;
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+});
+
+interface RelayIds {
+  senderId: string;
+  recipientId: string;
+  parentId: bigint;
+  relayId: bigint;
+}
+
+/** Raw insert → the 'relay' enum value and the relay CHECKs reach Postgres, not the typed client's own checks. */
+async function insertRelay(tx: Prisma.TransactionClient, senderId: string, recipientId: string, hop: number, parentId: bigint | null): Promise<bigint> {
+  const [relay] = await tx.$queryRaw<Array<{ id: bigint }>>`
+    INSERT INTO "monitor"."queue_items"
+      ("kind", "session_id", "from_session_id", "relay_hop", "relay_parent_id", "title", "body", "free_text_allowed", "status")
+    VALUES ('relay', ${recipientId}::uuid, ${senderId}::uuid, ${hop}, ${parentId}, 'Schema review is done',
+            ${"Schema review is done\nthe relay CHECKs are in the migration"}, false, 'answered')
+    RETURNING "id"`;
+  assert.ok(relay !== undefined, "insert returned no row");
+  return relay.id;
+}
+
+/** Sender and recipient rows, a hop-0 parent relay between them, and the hop-1 relay a row then changes. */
+async function createRelay(tx: Prisma.TransactionClient, pid: number): Promise<RelayIds> {
+  const { sessionId: senderId } = await tx.queueSession.create({ data: buildSession(pid), select: { sessionId: true } });
+  const { sessionId: recipientId } = await tx.queueSession.create({ data: buildSession(pid + 1), select: { sessionId: true } });
+  const parentId = await insertRelay(tx, senderId, recipientId, 0, null);
+  const relayId = await insertRelay(tx, senderId, recipientId, 1, parentId);
+  return { senderId, recipientId, parentId, relayId };
+}
+
+describe("monitor.queue_items relay kind", () => {
+  const rows: readonly { name: string; change: ((ids: RelayIds) => Prisma.Sql) | null; error?: RegExp }[] = [
+    { name: "accepts a relay from another session naming the relay that set its hop", change: null },
+    { name: "accepts a relay at hop 2", change: () => Prisma.sql`"relay_hop" = 2` },
+    { name: "accepts a relay at hop 0 with no parent", change: () => Prisma.sql`"relay_hop" = 0, "relay_parent_id" = NULL` },
+    {
+      name: "accepts a relay fetched, then delivered",
+      change: () => Prisma.sql`"relay_fetched_at" = ${SENT_AT}, "status" = 'delivered', "delivered_at" = ${ACK_DEADLINE_AT}`,
+    },
+    { name: "accepts a redacted relay carrying its original length", change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}, "relay_redacted_length" = 4000` },
+    { name: "accepts a lapsed relay closed at its lapse", change: () => Prisma.sql`"status" = 'withdrawn', "relay_closed_at" = ${SENT_AT}` },
+    { name: "accepts a relay body at the route's text cap", change: () => Prisma.sql`"body" = ${"b".repeat(RELAY_TEXT_MAX)}` },
+    { name: "rejects a relay with no sender", change: () => Prisma.sql`"from_session_id" = NULL`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay with no hop", change: () => Prisma.sql`"relay_hop" = NULL`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay to its own sender", change: (ids) => Prisma.sql`"session_id" = ${ids.senderId}::uuid`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay at hop 3", change: () => Prisma.sql`"relay_hop" = 3`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay at a negative hop", change: () => Prisma.sql`"relay_hop" = -1`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay open to the owner", change: () => Prisma.sql`"status" = 'open'`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay marked seen", change: () => Prisma.sql`"status" = 'seen'`, error: /queue_items_relay_check/ },
+    {
+      name: "rejects a relay carrying an answer record",
+      change: () => Prisma.sql`"answer_route" = 'reply', "answer_signal" = 'origin'`,
+      error: /queue_items_relay_check/,
+    },
+    { name: "rejects a relay carrying answer text", change: () => Prisma.sql`"answer_text" = 'approved'`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay carrying an answer code", change: () => Prisma.sql`"answer_code" = 'R1'`, error: /queue_items_answer_code_check/ },
+    {
+      name: "rejects a relay carrying options",
+      change: () => Prisma.sql`"options" = ${JSON.stringify(buildOptions(2))}::jsonb, "recommended_code" = 'R1'`,
+      error: /queue_items_decision_options_check/,
+    },
+    { name: "rejects a relay in the approval class", change: () => Prisma.sql`"approval_class" = true`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay body past the route's text cap", change: () => Prisma.sql`"body" = ${"b".repeat(RELAY_TEXT_MAX + 1)}`, error: /queue_items_relay_check/ },
+    { name: "rejects a redaction stamp with no original length", change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}`, error: /queue_items_relay_check/ },
+    { name: "rejects an original length with no redaction stamp", change: () => Prisma.sql`"relay_redacted_length" = 12`, error: /queue_items_relay_check/ },
+    {
+      name: "rejects a redacted relay recording an empty original",
+      change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}, "relay_redacted_length" = 0`,
+      error: /queue_items_relay_check/,
+    },
+    { name: "rejects a lapsed relay with no close stamp", change: () => Prisma.sql`"status" = 'withdrawn'`, error: /queue_items_relay_closed_check/ },
+    { name: "rejects a close stamp on a relay still in delivery", change: () => Prisma.sql`"relay_closed_at" = ${SENT_AT}`, error: /queue_items_relay_closed_check/ },
+    {
+      name: "rejects a sender with no session row",
+      change: () => Prisma.sql`"from_session_id" = ${randomUUID()}::uuid`,
+      error: /queue_items_from_session_id_fkey/,
+    },
+    { name: "rejects a parent naming no item", change: (ids) => Prisma.sql`"relay_parent_id" = ${ids.relayId + 1000000n}`, error: /queue_items_relay_parent_id_fkey/ },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const ids = await createRelay(tx, 41021);
+        if (row.change !== null) await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change(ids)} WHERE "id" = ${ids.relayId}`;
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+
+  test("a sender's session row that still sends a relay cannot be deleted", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const ids = await createRelay(tx, 41023);
+        await tx.$executeRaw`DELETE FROM "monitor"."queue_sessions" WHERE "session_id" = ${ids.senderId}::uuid`;
+      }),
+      /queue_items_from_session_id_fkey/,
+    );
+  });
+});
+
+describe("monitor.queue_items relay columns on other kinds", () => {
+  const rows: readonly { name: string; change: ((senderId: string, parentId: bigint) => Prisma.Sql) | null; error?: RegExp }[] = [
+    { name: "accepts a decision withdrawn with no close stamp", change: () => Prisma.sql`"status" = 'withdrawn'` },
+    { name: "rejects a sender on a decision", change: (senderId) => Prisma.sql`"from_session_id" = ${senderId}::uuid`, error: /queue_items_relay_check/ },
+    { name: "rejects a hop on a decision", change: () => Prisma.sql`"relay_hop" = 0`, error: /queue_items_relay_check/ },
+    { name: "rejects a parent relay on a decision", change: (_, parentId) => Prisma.sql`"relay_parent_id" = ${parentId}`, error: /queue_items_relay_check/ },
+    { name: "rejects a fetch stamp on a decision", change: () => Prisma.sql`"relay_fetched_at" = ${SENT_AT}`, error: /queue_items_relay_check/ },
+    {
+      name: "rejects a redaction stamp on a decision",
+      change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}, "relay_redacted_length" = 12`,
+      error: /queue_items_relay_check/,
+    },
+    {
+      name: "rejects a close stamp on a withdrawn decision",
+      change: () => Prisma.sql`"status" = 'withdrawn', "relay_closed_at" = ${SENT_AT}`,
+      error: /queue_items_relay_closed_check/,
+    },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const ids = await createRelay(tx, 41025);
+        const { id: decisionId } = await tx.queueItem.create({ data: buildDecision(ids.recipientId), select: { id: true } });
+        if (row.change !== null) {
+          await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change(ids.senderId, ids.parentId)} WHERE "id" = ${decisionId}`;
+        }
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+});
+
+describe("monitor.queue_sessions probe flag and transcript path", () => {
+  test("a session registers as no probe unless it declares one", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41027), select: { sessionId: true } });
+        const [row] = await tx.$queryRaw<Array<{ is_probe: boolean }>>`
+          SELECT "is_probe" FROM "monitor"."queue_sessions" WHERE "session_id" = ${sessionId}::uuid`;
+        assert.equal(row?.is_probe, false);
+      }),
+      Rollback,
+    );
+  });
+
+  const transcriptRows: readonly { name: string; value: string | null; error?: RegExp }[] = [
+    { name: "accepts a session with no transcript path", value: null },
+    { name: "accepts an absolute transcript path ending .jsonl", value: "/Users/owner/.claude-work/projects/-Users-owner/2f0c.jsonl" },
+    { name: "rejects a relative transcript path", value: "projects/-Users-owner/2f0c.jsonl", error: /queue_sessions_transcript_path_check/ },
+    { name: "rejects a transcript path not ending .jsonl", value: "/Users/owner/.claude-work/projects/-Users-owner/2f0c.json", error: /queue_sessions_transcript_path_check/ },
+  ];
+
+  for (const row of transcriptRows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41028), select: { sessionId: true } });
+        await tx.$executeRaw`UPDATE "monitor"."queue_sessions" SET "transcript_path" = ${row.value} WHERE "session_id" = ${sessionId}::uuid`;
       });
       if (row.error === undefined) await assert.rejects(work, Rollback);
       else await assert.rejects(work, row.error);

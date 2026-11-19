@@ -107,7 +107,7 @@ Role-file heading → when:
 - `### Failure Recovery Loop` — `fail`/`blocked`; a defect traced to an earlier fix, any result
 - `## Document-Driven Workflow` — plan to deploy
 - `## Harness Path Protection`, `### Progress-file exclusion` — harness paths
-- `## Owner Queue` — must-not-miss items go to the owner queue · each tool-using turn ends with a `[QUEUE-VERDICT]` line · background job · `[ATRIUM-QUEUE]`
+- `## Owner Queue` — must-not-miss items go to the owner queue · each tool-using turn ends with a queue `record` call · background job · `[ATRIUM-QUEUE]` · relay
 
 The skill:
 

@@ -415,10 +415,12 @@ STUB
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] # apply happened first
   [[ -f "${WORK}/launcher-calls.log" ]]
   # wire-hooks was invoked, and it ran AFTER the farm's agents-only (install
-  # ordering: run_symlink_farm -> wire_hooks). The LAST recorded call is wire-hooks.
+  # ordering: run_symlink_farm -> wire_hooks): no agents-only call follows the first wire-hooks.
   [[ "$(grep -c '^wire-hooks$' "${WORK}/launcher-calls.log")" -ge 1 ]]
   [[ "$(grep -c '^agents-only$' "${WORK}/launcher-calls.log")" -ge 1 ]]
-  [[ "$(tail -n 1 "${WORK}/launcher-calls.log")" == "wire-hooks" ]]
+  local after_wire
+  after_wire="$(sed -n '/^wire-hooks$/,$p' "${WORK}/launcher-calls.log")"
+  [[ "${after_wire}" != *agents-only* ]]
 }
 
 @test "post-apply: a FAILING wire-hooks loud-fails exit 12 and does NOT roll back the applied files" {
@@ -485,6 +487,40 @@ STUB
     "${WORK}/target/settings.json"
   [ "$status" -eq 0 ]
   [[ "$output" -ge 1 ]]
+}
+
+@test "post-apply: the queue MCP report prints each profile write with the approval command and writes nothing (real launcher)" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  # the applied tree the launcher and the adapter source from beside themselves
+  mkdir -p "${INSTALL}/scripts" "${WORK}/target"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/hooks" "${INSTALL}/hooks"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  ln -s "${GA}/scripts/atrium-queue-mcp.sh" "${INSTALL}/scripts/atrium-queue-mcp.sh"
+  printf '%s\n' '{ "hooks": {} }' >"${WORK}/target/settings.json"
+
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    export GA_TARGET_HOME="'"${WORK}"'/target"
+    load_skill
+    update_report_queue_mcp_post_apply
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *"${WORK}/.claude.json: mcpServers.atrium-queue"* &&
+    "${stderr}" == *"${WORK}/target/settings.json: permissions.allow + mcp__atrium-queue__claim"* &&
+    "${stderr}" == *"queue-mcp --approve-profile-writes"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  local settings
+  settings="$(jq -c . "${WORK}/target/settings.json")"
+  [[ ! -e "${WORK}/.claude.json" && "${settings}" == '{"hooks":{}}' ]]
 }
 
 # roster-migration gate (T20 / gate G8)

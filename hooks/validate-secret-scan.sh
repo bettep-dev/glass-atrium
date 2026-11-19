@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse(Write|Edit|Bash) — block on secret-pattern detection.
-#   Write|Edit channel: scan tool_input.content + tool_input.new_string.
+#   Write|Edit channel: scan tool_input.content + tool_input.new_string through scripts/lib/secret-scan.sh.
 #   Bash channel: scan tool_input.command for a HIGH-SIGNAL credential value
 #     redirected/heredoc'd into a dotenv/secrets file (a secret can otherwise be
 #     written via `echo KEY=... > .env`, fully bypassing the Write|Edit channel).
@@ -36,59 +36,38 @@ export -n INPUT CMD CONTENT input blob cmd
 INPUT=$(hook_read_input)
 TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
 
-# Structured + format secret patterns (Write|Edit content channel).
-# High-signal patterns: structured-token shapes + generic credential
-# assignments (non-trivial value only, to avoid FP on empty/placeholder) +
-# PEM private-key headers + cloud service-account JSON markers.
-# NOTE: a literal-dash-leading pattern (PEM "-----BEGIN") MUST be matched with
-# `grep -E --` so BSD grep does not parse it as an option flag.
-PATTERNS=(
-  'AKIA[0-9A-Z]{16}'
-  'ghp_[a-zA-Z0-9]{36}'
-  'sk-[a-zA-Z0-9]{20,}'
-  'eyJ[a-zA-Z0-9_-]*\.eyJ'
-  'postgres://[^ ]*@'
-  'mongodb(\+srv)?://[^ ]*@'
-  'AIza[0-9A-Za-z_-]{35}'
-  'xox[bpoa]-[0-9a-zA-Z-]+'
-  '(password|passwd|api[_-]?key|secret|token|access[_-]?key|aws_secret_access_key)["'"'"' ]*[:=][ ]*["'"'"']?[^[:space:]"'"'"']{8,}'
-  '-----BEGIN [A-Z ]*PRIVATE KEY-----'
-  '"private_key"[ ]*:[ ]*"-----BEGIN'
-  '"type"[ ]*:[ ]*"service_account"'
-)
-CODES=(SEC-001 SEC-002 SEC-003 SEC-004 SEC-005 SEC-006 SEC-007 SEC-008 SEC-013 SEC-014 SEC-015 SEC-015)
-NAMES_EN=(
-  "AWS Access Key"
-  "GitHub Token"
-  "API Key (sk-)"
-  "JWT Token"
-  "DB connection string"
-  "MongoDB connection string"
-  "Google API Key"
-  "Slack Token"
-  "Generic credential assignment"
-  "PEM private key"
-  "Service-account private key"
-  "Service-account JSON marker"
-)
+# The content patterns and their scan live in the shared scanner, found through this file's real path — a symlinked
+# copy has no scripts/ beside it; exit contract: the scanner's header.
+self="${BASH_SOURCE[0]}"
+if [[ -L "${self}" ]]; then self="$(readlink -f -- "${self}")" || self=""; fi
+readonly SCANNER="${self%/*}/../scripts/lib/secret-scan.sh"
+readonly SCAN_CLEAN=0
+readonly SCAN_MATCH=3
 
-# Scan a blob against every PATTERNS entry; exit 2 on the first match.
+# Scan a blob through the shared scanner; exit 2 on a match and on any outcome but clean (fail-closed).
 # Args: $1=blob to scan
 scan_content() {
-  local blob="${1}" i
+  local blob="${1}" reply="" rc=0
   [[ -z "${blob}" ]] && return 0
-  for i in "${!PATTERNS[@]}"; do
-    # `-i` for case-insensitive credential keys · `--` so a dash-leading PEM
-    # pattern is not parsed as a grep option flag.
-    # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-    if printf '%s\n' "${blob}" | drain_after grep -qiE -- "${PATTERNS[${i}]}"; then
-      emit_error "${CODES[${i}]}" "block" \
-        "Secret pattern detected: ${NAMES_EN[${i}]}" \
-        "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \
-        "{\"pattern\":\"${CODES[${i}]}\"}"
-      exit 2
-    fi
-  done
+  [[ -f "${SCANNER}" ]] || block_scan_unavailable
+  reply="$("${BASH}" "${SCANNER}" <<<"${blob}")" || rc=$?
+  [[ "${rc}" -eq "${SCAN_CLEAN}" ]] && return 0
+  if [[ "${rc}" -ne "${SCAN_MATCH}" || ! "${reply}" =~ ^(SEC-[0-9]{3})$'\t'(.+)$ ]]; then
+    block_scan_unavailable
+  fi
+  emit_error "${BASH_REMATCH[1]}" "block" \
+    "Secret pattern detected: ${BASH_REMATCH[2]}" \
+    "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \
+    "{\"pattern\":\"${BASH_REMATCH[1]}\"}"
+  exit 2
+}
+
+block_scan_unavailable() {
+  emit_error "SEC-017" "block" \
+    "Secret scan unavailable: the shared scanner is missing or failed" \
+    "Restore scripts/lib/secret-scan.sh (glass-atrium update) and retry" \
+    "{\"missing\":\"secret-scan\"}"
+  exit 2
 }
 
 # Bash channel (HIGH SIGNAL ONLY).

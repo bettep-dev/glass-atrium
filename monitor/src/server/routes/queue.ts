@@ -5,22 +5,28 @@
 import os from "node:os";
 import path from "node:path";
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { insertAudit, setAuditRecorded, setAuditTarget } from "../middleware/audit-log.js";
 import { getMonitorPort } from "../monitor-port.js";
 import { ackItem, claimPendingItems, getPendingCount, withdrawItem } from "../queue/delivery.js";
 import { getQueueCliPath } from "../queue/envelope.js";
 import { getQueueImageDir } from "../queue/images.js";
-import { createItem, getCount, getItemOrThrow } from "../queue/items.js";
-import { deregisterSession, registerSession } from "../queue/registry.js";
+import { createItem, getClaimViews, getCount, getItemOrThrow } from "../queue/items.js";
+import { getPeerSessions } from "../queue/owner-sessions.js";
+import { type RelayRefusal, createRelay, getRefusalResponse } from "../queue/relay.js";
+import { getSecretScannerPath } from "../queue/relay-scan.js";
+import { deregisterSession, putSessionName, registerSession } from "../queue/registry.js";
 import { buildHostAllowlistHook } from "../queue/request-gate.js";
+import { hasBrowserSignal } from "../request-guards.js";
 import {
   ackBodySchema,
   deregisterBodySchema,
   pendingBodySchema,
   pendingCountBodySchema,
   postItemBodySchema,
-  registerBodySchema,
+  registerRouteBodySchema,
+  relayBodySchema,
   sessionBodySchema,
 } from "../queue/schemas.js";
 import { ownerRoutesPlugin } from "./queue-owner.js";
@@ -28,6 +34,7 @@ import { type IdParams, handleItemRequest, handleParsed, handleQueueRequest } fr
 
 /** Title 200 + body 20000 + options 20000 chars at up to 4 UTF-8 bytes each, plus JSON framing. */
 const POST_ROUTE_OPTIONS = { bodyLimit: 192 * 1024 } as const;
+const SESSION_ONLY_ROUTE_OPTIONS = { ...POST_ROUTE_OPTIONS, onRequest: refuseBrowserRequest } as const;
 
 export interface QueueRouteOptions {
   /** Port the Host allowlist and the page-origin leg pin (`127.0.0.1:<port>` · `localhost:<port>` · `[::1]:<port>`). */
@@ -38,6 +45,8 @@ export interface QueueRouteOptions {
   cliPath: string;
   /** Owner image folder: uploads land here, the serve route and the session-side read name files in it. */
   imageDir: string;
+  /** The install's secret scanner the relay route runs, fixed here so no request can name another. */
+  scannerPath: string;
 }
 
 /** Defaults resolved at registration time (never import time) → a GA_ROOT set after import still wins. */
@@ -48,6 +57,7 @@ export function resolveQueueRouteOptions(): QueueRouteOptions {
     homeDir: os.homedir(),
     cliPath: getQueueCliPath(gaRoot),
     imageDir: getQueueImageDir(gaRoot),
+    scannerPath: getSecretScannerPath(gaRoot),
   };
 }
 
@@ -65,6 +75,8 @@ async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Pr
   registerDeliveryRoutes(app);
   registerPendingCountRoute(app);
   registerWithdrawRoute(app);
+  registerPeerRoute(app);
+  registerRelayRoute(app, options.scannerPath);
   await app.register(ownerRoutesPlugin, options);
 }
 
@@ -72,9 +84,9 @@ function registerSessionRoutes(app: FastifyInstance, homeDir: string): void {
   app.post("/api/queue/sessions/register", POST_ROUTE_OPTIONS, async (request, reply) =>
     handleParsed(request, reply, {
       route: "/api/queue/sessions/register",
-      schema: registerBodySchema,
+      schema: registerRouteBodySchema,
       input: request.body,
-      work: (body) => registerSession(body, homeDir),
+      work: (body): Promise<object> => ("cwd" in body ? registerSession(body, homeDir) : putSessionName(body).then(() => ({ ok: true }))),
     }),
   );
   app.post("/api/queue/sessions/deregister", POST_ROUTE_OPTIONS, async (request, reply) =>
@@ -113,7 +125,7 @@ function registerDeliveryRoutes(app: FastifyInstance): void {
       route: "/api/queue/pending",
       schema: pendingBodySchema,
       input: request.body,
-      work: async (body) => ({ items: await claimPendingItems(body.sessionId, body.pid === undefined ? undefined : { pid: body.pid }) }),
+      work: async (body) => ({ items: await getClaimViews(await claimPendingItems(body.sessionId, body.pid === undefined ? undefined : { pid: body.pid })) }),
     }),
   );
   app.post<{ Params: IdParams }>("/api/queue/items/:id/ack", POST_ROUTE_OPTIONS, async (request, reply) =>
@@ -146,4 +158,53 @@ function registerWithdrawRoute(app: FastifyInstance): void {
       work: (id, body) => withdrawItem(id, body.sessionId).then(() => ({ ok: true })),
     }),
   );
+}
+
+function registerPeerRoute(app: FastifyInstance): void {
+  app.post("/api/queue/peers", SESSION_ONLY_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/peers",
+      schema: sessionBodySchema,
+      input: request.body,
+      work: (body) => getPeerSessions(body.sessionId),
+    }),
+  );
+}
+
+function registerRelayRoute(app: FastifyInstance, scannerPath: string): void {
+  app.post("/api/queue/relay", SESSION_ONLY_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/relay",
+      schema: relayBodySchema,
+      input: request.body,
+      work: async (body) => {
+        const outcome = await createRelay(body, scannerPath);
+        if ("relay" in outcome) {
+          reply.code(201);
+          return outcome.relay;
+        }
+        const refusal = getRefusalResponse(body.sessionId, outcome.refusal);
+        await recordRelayRefusal(request, outcome.refusal, refusal);
+        reply.code(refusal.statusCode);
+        return refusal.body;
+      },
+    }),
+  );
+}
+
+async function recordRelayRefusal(request: FastifyRequest, outcome: RelayRefusal, refusal: ReturnType<typeof getRefusalResponse>): Promise<void> {
+  if (outcome.isRecorded === false) {
+    setAuditRecorded(request);
+    return;
+  }
+  setAuditTarget(request, refusal.record);
+  await insertAudit(request, { statusCode: refusal.statusCode, resultCode: "blocked" }).catch((error: unknown) => {
+    request.log.error({ err: error, route: "/api/queue/relay", reason: outcome.reason }, "relay refusal audit row not written — the refusal is still returned");
+  });
+}
+
+async function refuseBrowserRequest(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!hasBrowserSignal(request.headers)) return;
+  request.log.warn({ route: request.routeOptions.url, method: request.method }, "browser request refused on a session-only queue route");
+  await reply.code(403).send({ error: "browser_request_refused" });
 }

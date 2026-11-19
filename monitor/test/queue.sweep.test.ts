@@ -13,7 +13,7 @@ import path from "node:path";
 
 import "dotenv/config";
 
-import type { QueueDelivery, QueueDeliveryRoute, QueueItemStatus, QueueSessionState } from "../src/generated/prisma/client.js";
+import type { QueueDelivery, QueueDeliveryRoute, QueueItemStatus, QueueSessionExitReason, QueueSessionState } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { buildClaudeChildEnv } from "../src/server/queue/child-env.js";
 import { UNUSED_IMAGE_TTL_MS, createImage } from "../src/server/queue/images.js";
@@ -90,6 +90,8 @@ interface SessionSeed {
   pid?: number;
   startTime?: string;
   socketPath?: string;
+  exitReason?: QueueSessionExitReason;
+  lastSeenAt?: Date;
 }
 
 async function seedSession(seed: SessionSeed = {}): Promise<string> {
@@ -107,8 +109,8 @@ async function seedSession(seed: SessionSeed = {}): Promise<string> {
       processStartTime: seed.startTime ?? livePid.startTime,
       socketPath: seed.socketPath ?? null,
       state,
-      exitReason: state === "exited" ? "ended" : null,
-      lastSeenAt: new Date(),
+      exitReason: state === "exited" ? (seed.exitReason ?? "ended") : null,
+      lastSeenAt: seed.lastSeenAt ?? new Date(),
     },
   });
   return sessionId;
@@ -250,6 +252,33 @@ describe("sweep moves of delivering and deviating items", () => {
       await runSweepPass(buildDeps([sessionId]));
 
       assert.equal(await getStatus(itemId), row.expected, row.name);
+    });
+  }
+});
+
+describe("relay settlement", () => {
+  const DAY_MS = 24 * 60 * MINUTE_MS;
+  const rows: Array<{ name: string; recipient: SessionSeed; status: QueueItemStatus; route?: QueueDeliveryRoute; expected: QueueItemStatus }> = [
+    { name: "an undelivered relay on a row that died stays answered and never turns resume-pending", recipient: { state: "exited", exitReason: "dead" }, status: "answered", expected: "answered" },
+    { name: "a relay claim past its deadline on an exited row turns unacked, never resume-pending", recipient: { state: "exited", exitReason: "dead" }, status: "delivering", route: "pull", expected: "unacked" },
+    { name: "a relay on a replaced row lapses at the next pass", recipient: { state: "exited", exitReason: "replaced" }, status: "answered", expected: "withdrawn" },
+    { name: "an unacked relay on a row ended past the lapse bound lapses", recipient: { state: "exited", exitReason: "ended", lastSeenAt: new Date(Date.now() - 3 * DAY_MS - MINUTE_MS) }, status: "unacked", expected: "withdrawn" },
+    { name: "a relay on a row ended inside the lapse bound stays", recipient: { state: "exited", exitReason: "ended", lastSeenAt: new Date(Date.now() - 3 * DAY_MS + 60 * MINUTE_MS) }, status: "answered", expected: "answered" },
+    { name: "a relay on a live row unseen past the lapse bound stays", recipient: { state: "live", lastSeenAt: new Date(Date.now() - 4 * DAY_MS) }, status: "answered", expected: "answered" },
+    { name: "a delivered relay on a replaced row stays delivered", recipient: { state: "exited", exitReason: "replaced" }, status: "delivered", expected: "delivered" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const [senderId, recipientId] = [await seedSession(), await seedSession(row.recipient)];
+      const { id: itemId } = await getPrisma().queueItem.create({
+        data: { kind: "relay", sessionId: recipientId, fromSessionId: senderId, relayHop: 0, title: "Lint is green", body: "Lint is green on feature/queue-mcp.", isFreeTextAllowed: false, status: row.status },
+      });
+      if (row.route !== undefined) await seedDelivery(itemId, row.route, -MINUTE_MS);
+
+      await runSweepPass(buildDeps([senderId, recipientId]));
+
+      const settled = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: itemId }, select: { status: true, relayClosedAt: true } });
+      assert.deepEqual([settled.status, settled.relayClosedAt !== null], [row.expected, row.expected === "withdrawn"], row.name);
     });
   }
 });

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # queue-session-register.sh — SessionStart hook (startup · resume · fork · clear): registers this session
 # with the Atrium owner queue, writes back the awaiting marks the reply lists (queue_register_session) and, when owner
-# answers or messages wait for it, prints one context line naming the count and the CLI pending command — never their
-# text.
+# answers or messages or peer relays wait for it, prints one context line naming each count and the CLI pending
+# command — never their text; a project or local MCP server shadowing the queue server's name adds one line.
 # Disposition noop: fail-open, always exit 0 with nothing printed on any failure (monitor down, slow or
 # refusing). No block channel (SessionStart cannot block).
 
@@ -33,11 +33,21 @@ start_dir="$(get_payload_field cwd)"
 session_id="$(get_payload_field session_id)"
 transcript="$(get_payload_field transcript_path)"
 
-# shellcheck disable=SC2310  # a failed register is the fail-open exit, never an errexit
-count="$(queue_register_session "${hint}" "" "${start_dir}" "${session_id}" "" "${transcript}" 2>/dev/null)" || exit 0
-if ((count > 0)); then
-  cli_path="$(queue_get_cli_path)"
+shown_dir="$(queue_get_cwd "${start_dir}")"
+# shellcheck disable=SC2310  # a pure read; an unreadable config counts as no shadowing
+if queue_is_server_shadowed "${shown_dir}"; then
   # subshell write → no interrupt from an un-waited child reaches it; the exit stays 0 either way
-  (printf '[ATRIUM-QUEUE] %s owner queue answer(s) or message(s) wait for this session — fetch them with: %s pending\n' "${count}" "${cli_path}") || true
+  (printf "[ATRIUM-QUEUE] harness: a project or local MCP server named %s shadows the Atrium queue server in this \
+session — use only the queue CLI, %s, never that server's tools\n" "${QUEUE_MCP_SERVER_NAME}" "$(queue_get_cli_path)") || true
+fi
+# shellcheck disable=SC2310  # a mark not set leaves the turn-end record ask naming the server too, never a failed start
+queue_set_shadow_mark "$(queue_get_session_id "${session_id}")" "${shown_dir}" || true
+# shellcheck disable=SC2310  # a failed register is the fail-open exit, never an errexit
+counts="$(queue_register_session "${hint}" "" "${start_dir}" "${session_id}" "" "${transcript}" 2>/dev/null)" || exit 0
+IFS=' ' read -r owner_count relay_count <<<"${counts}"
+line="$(queue_get_count_line "${owner_count}" "${relay_count}")"
+if [[ -n "${line}" ]]; then
+  # subshell write → no interrupt from an un-waited child reaches it; the exit stays 0 either way
+  (printf '[ATRIUM-QUEUE] %s\n' "${line}") || true
 fi
 exit 0

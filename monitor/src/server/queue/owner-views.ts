@@ -8,6 +8,7 @@ import {
   type QueueAnswerSignal,
   type QueueDelivery,
   type QueueItem,
+  type QueueItemKind,
   type QueueItemStatus,
   type QueueSession,
 } from "../../generated/prisma/client.js";
@@ -24,6 +25,11 @@ export const DEVIATION_STATUSES = ["unacked", "held", "expired", "resume_pending
 // Every state an answer leads to; open, seen and withdrawn carry no answer → never "answered outside"
 const ANSWERED_STATUSES = new Set<QueueItemStatus>([...ACKABLE, "delivered"]);
 export const SESSION_ID_PREFIX_LENGTH = 8;
+const RELAY_SIGNAL_WINDOW_MS = 24 * 3_600_000;
+// ponytail: refusals past this cap in one page's time span are cut (isRefusalListCut) → upgrade: their own cursor
+const REFUSAL_PAGE_MAX = 100;
+// The relay refusals the relay module decided: only those audit rows carry a reason
+export const RELAY_REFUSAL_FILTER = Prisma.sql`a."target_table" = 'queue-relay' AND a."result_code" = 'blocked' AND a."payload" -> 'change' ->> 'reason' IS NOT NULL`;
 
 export type Deviation = (typeof DEVIATION_STATUSES)[number];
 
@@ -49,6 +55,7 @@ export interface SessionName {
 
 export interface OwnerSessionView extends SessionName {
   id: string;
+  sessionIdPrefix: string;
   profileLabel: string;
   cwd: string;
   cwdTail: string;
@@ -74,6 +81,56 @@ export interface ResumeRecord {
 export interface RecentResume extends ResumeRecord {
   item: { id: number; title: string };
   session: { profileLabel: string; cwdTail: string };
+}
+
+/** A relay's sender: provenance facts plus the sender-controlled name kept apart from them. */
+export interface RelaySender {
+  sessionIdPrefix: string;
+  profileLabel: string;
+  /** The name the sender registered; null when it registered none. */
+  selfDeclaredName: string | null;
+  /** Tells two same-named senders apart by where they ran. */
+  cwdTail: string;
+}
+
+export type RelaySenderRow = Pick<QueueSession, "sessionId" | "profileLabel" | "name" | "cwd">;
+
+export const SENDER_ARGS = { select: { sessionId: true, profileLabel: true, name: true, cwd: true } } as const satisfies Prisma.QueueSessionDefaultArgs;
+
+/** The relay that set a hop-1 or hop-2 relay's hop. */
+export interface RelayParent {
+  id: number;
+  sender: RelaySender;
+  sentAt: string;
+}
+
+/** What a relay entry adds to the owner item view. */
+export interface RelayFacts {
+  hop: number;
+  parent: RelayParent | null;
+  sender: RelaySender;
+  /** The recipient's first fetch; null → never fetched. */
+  fetchedAt: string | null;
+  redaction: { at: string; length: number } | null;
+  /** Set by the sweep's lapse (sweep.ts → isRelayLapsed). */
+  lapsedAt: string | null;
+}
+
+/** One relay refusal record: who sent, whom it resolved to, why — the record holds no text. */
+export interface RelayRefusalView {
+  at: string;
+  reason: string;
+  senderIdPrefix: string;
+  recipientIdPrefixes: string[];
+  /** Recipient names that resolved to no single peer; null on a reason that resolves none. */
+  unresolvedCount: number | null;
+}
+
+export interface RelaySignal {
+  /** The last 24 hours: refusals, relays sent at hop 1 or 2, redactions. */
+  count: { refused: number; forwarded: number; redacted: number };
+  /** Any relay or relay refusal on record, of any age. */
+  hasRecord: boolean;
 }
 
 /** How the owner's answer was made; its time is the item's `answeredAt`. */
@@ -114,10 +171,21 @@ export interface OwnerItemView {
   deviation: Deviation | null;
   skipReason: SkipReason | null;
   canResend: boolean;
+  /** null on every kind but a relay. */
+  relay: RelayFacts | null;
+}
+
+/** A history page; the relay thread adds the refusal records of the page's time span. */
+export interface OwnerOrdersPage {
+  items: OwnerItemView[];
+  nextCursor: string | null;
+  refusals?: RelayRefusalView[];
+  isRefusalListCut?: boolean;
 }
 
 /** Inputs of the Resend rule, shared by the views and the resend transition so page and server agree. */
 export interface ResendFacts {
+  kind: QueueItemKind;
   status: QueueItemStatus;
   nextAttempt: number;
   isSessionMarked: boolean;
@@ -132,6 +200,14 @@ interface OrderCopyRow {
   cursor: string;
 }
 
+interface RefusalRow {
+  at: Date;
+  reason: string;
+  senderId: string;
+  recipientIds: string[];
+  unresolvedCount: number | null;
+}
+
 interface SessionFacts {
   sessionId: string;
   worktreeRoot: string | null;
@@ -143,9 +219,9 @@ interface SessionFacts {
   lastResumeBgId: string | null;
 }
 
-/** Resend: unacked · expired, or resume-pending once its attempt's automatic resume is used; never while marked. */
+/** Resend: unacked · expired, or resume-pending once its attempt's automatic resume is used; never while marked, never a relay. */
 export function canResend(facts: ResendFacts): boolean {
-  if (facts.isSessionMarked) return false;
+  if (facts.isSessionMarked || facts.kind === "relay") return false;
   if (facts.status === "unacked" || facts.status === "expired") return true;
   return facts.status === "resume_pending" && facts.resumeAttempts.includes(facts.nextAttempt);
 }
@@ -154,8 +230,10 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
   const rows = await getPrisma().queueItem.findMany({
     where: {
       status: { notIn: TERMINAL },
+      // the list draws every row as the owner's own item → a relay, another session's message, is read in the relay history only
+      kind: { not: "relay" },
       ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
-      ...(query.profile === undefined ? {} : { session: { profileLabel: query.profile } }),
+      session: { isProbe: false, ...(query.profile === undefined ? {} : { profileLabel: query.profile }) },
       ...(query.after === undefined ? {} : { queuePosition: { gt: BigInt(query.after) } }),
     },
     orderBy: { queuePosition: "asc" },
@@ -169,11 +247,11 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
 }
 
 /**
- * The owner's orders — message items and reports carrying an owner reply — in every status, newest first, paged by order:
- * every copy of a paged order is on that page, the copies to sessions the filter leaves out included.
- * Items come order by order, the copies of one order in id order.
+ * A history thread, newest first, paged by order: the owner's orders (message items and reports carrying an owner reply)
+ * or relays, in every status. Every copy of a paged order is on that page, the copies to sessions the filter
+ * leaves out included. Items come order by order, the copies of one order in id order.
  */
-export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<{ items: OwnerItemView[]; nextCursor: string | null }> {
+export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<OwnerOrdersPage> {
   const rows = await getOrderCopyRows(query);
   const cursors = [...new Set(rows.map((row) => row.cursor))];
   const paged = new Set(cursors.slice(0, query.limit));
@@ -181,7 +259,9 @@ export async function getOwnerOrders(query: OwnerOrdersQuery): Promise<{ items: 
   const found = await getPrisma().queueItem.findMany({ where: { id: { in: pageRows.map((row) => row.id) } }, include: ITEM_RELATIONS });
   const itemById = new Map(found.map((item) => [item.id, item]));
   const items = await buildViews(pageRows.flatMap((row) => itemById.get(row.id) ?? []));
-  return { items, nextCursor: cursors.length > query.limit ? (cursors[query.limit - 1] ?? null) : null };
+  const nextCursor = cursors.length > query.limit ? (cursors[query.limit - 1] ?? null) : null;
+  if (query.kind === "order") return { items, nextCursor };
+  return { items, nextCursor, ...(await getRefusalPage(query, nextCursor)) };
 }
 
 /**
@@ -204,6 +284,22 @@ export async function getRecentResumes(query: RecentResumesQuery): Promise<{ res
   };
 }
 
+/**
+ * The relay signal the page raises: the last 24 hours' relay refusals the relay module decided (only those rows carry a
+ * reason), relays sent at hop 1 or more, and redactions, each counted; plus whether any relay or refusal is on record.
+ */
+export async function getRelaySignal(): Promise<RelaySignal> {
+  const since = new Date(Date.now() - RELAY_SIGNAL_WINDOW_MS);
+  const [row] = await getPrisma().$queryRaw<Array<RelaySignal["count"] & { hasRecord: boolean }>>`
+    SELECT
+      (SELECT count(*)::int FROM "monitor"."audit_log" a WHERE ${RELAY_REFUSAL_FILTER} AND a."event_ts" >= ${since}) AS "refused",
+      (SELECT count(*)::int FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay' AND i."relay_hop" >= 1 AND i."asked_at" >= ${since}) AS "forwarded",
+      (SELECT count(*)::int FROM "monitor"."queue_items" i WHERE i."relay_redacted_at" >= ${since}) AS "redacted",
+      (EXISTS (SELECT 1 FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay')
+        OR EXISTS (SELECT 1 FROM "monitor"."audit_log" a WHERE ${RELAY_REFUSAL_FILTER})) AS "hasRecord"`;
+  return { count: { refused: row?.refused ?? 0, forwarded: row?.forwarded ?? 0, redacted: row?.redacted ?? 0 }, hasRecord: row?.hasRecord ?? false };
+}
+
 export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {
   const item = await getPrisma().queueItem.findUnique({ where: { id: BigInt(id) }, include: ITEM_RELATIONS });
   if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found");
@@ -213,21 +309,63 @@ export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {
 }
 
 /**
+ * The refusal records of a relay history page's time span: before the page's cursor, and from its last order's time
+ * on unless it is the last page → each record lands on exactly one page. Either end in the session filter.
+ */
+async function getRefusalPage(query: OwnerOrdersQuery, nextCursor: string | null): Promise<Pick<OwnerOrdersPage, "refusals" | "isRefusalListCut">> {
+  const at = getEpochMicrosSql(Prisma.sql`a."event_ts"`);
+  const sinceAt = nextCursor === null ? null : BigInt(nextCursor.split(":")[0] ?? "");
+  const rows = await getPrisma().$queryRaw<RefusalRow[]>`
+    SELECT a."event_ts" AS "at", c ->> 'reason' AS "reason", c ->> 'senderId' AS "senderId",
+      ARRAY(SELECT jsonb_array_elements_text(c -> 'recipientIds')) AS "recipientIds", (c ->> 'unresolvedCount')::int AS "unresolvedCount"
+    FROM "monitor"."audit_log" a CROSS JOIN LATERAL (SELECT a."payload" -> 'change' AS c) change
+    WHERE ${RELAY_REFUSAL_FILTER}
+      AND ${query.before === undefined ? Prisma.sql`TRUE` : Prisma.sql`${at} < ${query.before.at}::bigint`}
+      AND ${sinceAt === null ? Prisma.sql`TRUE` : Prisma.sql`${at} >= ${sinceAt}::bigint`}
+      AND ${query.sessionIds === undefined ? Prisma.sql`TRUE` : Prisma.sql`(c ->> 'senderId' = ANY(${query.sessionIds}::text[])
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(c -> 'recipientIds') r WHERE r = ANY(${query.sessionIds}::text[])))`}
+    ORDER BY a."event_ts" DESC, a."id" DESC LIMIT ${REFUSAL_PAGE_MAX + 1}`;
+  return { refusals: rows.slice(0, REFUSAL_PAGE_MAX).map(toRefusalView), isRefusalListCut: rows.length > REFUSAL_PAGE_MAX };
+}
+
+function toRefusalView(row: RefusalRow): RelayRefusalView {
+  return { at: row.at.toISOString(), reason: row.reason, senderIdPrefix: getSessionIdPrefix(row.senderId), recipientIdPrefixes: row.recipientIds.map(getSessionIdPrefix), unresolvedCount: row.unresolvedCount };
+}
+
+// The history threads: which items, the order time, and the fold key of an item with no send id
+const HISTORY_THREADS = {
+  order: {
+    items: Prisma.sql`i."answered_at" IS NOT NULL AND (i."kind" = 'message' OR (i."kind" = 'report' AND i."answer_text" IS NOT NULL))`,
+    time: Prisma.sql`i."answered_at"`,
+    // a message sent before send ids: one transaction stamped its copies' answered_at and body alike
+    unsentKey: Prisma.sql`CASE WHEN i."kind" = 'message' THEN concat('m:', t."at", ':', md5(i."body")) ELSE concat('i:', i."id") END`,
+  },
+  relay: {
+    items: Prisma.sql`i."kind" = 'relay'`,
+    time: Prisma.sql`i."asked_at"`,
+    unsentKey: Prisma.sql`concat('i:', i."id")`,
+  },
+} as const satisfies Record<OwnerOrdersQuery["kind"], Record<"items" | "time" | "unsentKey", Prisma.Sql>>;
+
+/**
  * Copies of the page's orders plus one order past it, newest order first.
- * Fold key: the send id, else equal answered_at and body (a message sent before send ids: one transaction stamped both),
- * else the replied report itself. Order time = its newest copy's answered_at; ties broken by its lowest copy id.
+ * Fold key: the send id, else the thread's key for an unsent item. Order time = its newest copy's thread time; ties
+ * broken by its lowest copy id. The session filter matches either end: recipient, or a relay's sender.
  */
 async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]> {
-  const sessionFilter = query.sessionIds === undefined ? Prisma.sql`TRUE` : Prisma.sql`bool_or(c."session_id" = ANY(${query.sessionIds}::uuid[]))`;
+  const thread = HISTORY_THREADS[query.kind];
+  const sessionFilter =
+    query.sessionIds === undefined
+      ? Prisma.sql`TRUE`
+      : Prisma.sql`bool_or(c."session_id" = ANY(${query.sessionIds}::uuid[]) OR c."from_session_id" = ANY(${query.sessionIds}::uuid[]))`;
   const cursorFilter =
     query.before === undefined ? Prisma.sql`TRUE` : Prisma.sql`(o."at", o."first_id") < (${query.before.at}::bigint, ${query.before.id}::bigint)`;
   return getPrisma().$queryRaw<OrderCopyRow[]>`
     WITH copies AS (
-      SELECT i."id", i."session_id", t."at",
-        COALESCE(i."send_id"::text, CASE WHEN i."kind" = 'message' THEN concat('m:', t."at", ':', md5(i."body")) ELSE concat('i:', i."id") END) AS "order_key"
+      SELECT i."id", i."session_id", i."from_session_id", t."at", COALESCE(i."send_id"::text, ${thread.unsentKey}) AS "order_key"
       FROM "monitor"."queue_items" i
-      CROSS JOIN LATERAL (SELECT (extract(epoch FROM i."answered_at") * 1000000)::bigint AS "at") t
-      WHERE i."answered_at" IS NOT NULL AND (i."kind" = 'message' OR (i."kind" = 'report' AND i."answer_text" IS NOT NULL))
+      CROSS JOIN LATERAL (SELECT ${getEpochMicrosSql(thread.time)} AS "at") t
+      WHERE ${thread.items}
     ),
     orders AS (
       SELECT c."order_key", max(c."at") AS "at", min(c."id") AS "first_id" FROM copies c GROUP BY c."order_key" HAVING ${sessionFilter}
@@ -240,10 +378,17 @@ async function getOrderCopyRows(query: OwnerOrdersQuery): Promise<OrderCopyRow[]
     ORDER BY p."at" DESC, p."first_id" DESC, c."id"`;
 }
 
+// The history cursor's time unit → one expression for order times and refusal times alike
+function getEpochMicrosSql(column: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(extract(epoch FROM ${column}) * 1000000)::bigint`;
+}
+
 const ITEM_RELATIONS = {
   session: true,
   deliveries: { where: { route: "resume" }, orderBy: { id: "desc" } },
   images: ITEM_IMAGES_ARGS,
+  fromSession: SENDER_ARGS,
+  relayParent: { select: { id: true, askedAt: true, fromSession: SENDER_ARGS } },
 } as const satisfies Prisma.QueueItemInclude;
 
 async function buildViews(items: ItemWithRelations[]): Promise<OwnerItemView[]> {
@@ -302,9 +447,39 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     ...getAnswerRecordView(item),
     session: toSessionView(item.session, factsById.get(item.sessionId)?.lastResumeBgId ?? null),
     resumes,
-    deviation: getDeviation(item.status),
+    deviation: item.kind === "relay" ? null : getDeviation(item.status),
     skipReason: item.status === "resume_pending" ? getSkipReason(item, factsById) : null,
-    canResend: canResend({ status: item.status, nextAttempt: item.nextAttempt, isSessionMarked, resumeAttempts: resumes.map((resume) => resume.attempt) }),
+    canResend: canResend({ kind: item.kind, status: item.status, nextAttempt: item.nextAttempt, isSessionMarked, resumeAttempts: resumes.map((resume) => resume.attempt) }),
+    relay: getRelayFacts(item),
+  };
+}
+
+// CHECK queue_items_relay_check: sender ⇔ hop ⇔ kind relay → either null means not a relay
+function getRelayFacts(item: ItemWithRelations): RelayFacts | null {
+  if (item.fromSession === null || item.relayHop === null) return null;
+  const { relayRedactedAt: redactedAt, relayRedactedLength: redactedLength } = item;
+  return {
+    hop: item.relayHop,
+    parent: getRelayParent(item.relayParent),
+    sender: toRelaySender(item.fromSession),
+    fetchedAt: item.relayFetchedAt?.toISOString() ?? null,
+    redaction: redactedAt === null || redactedLength === null ? null : { at: redactedAt.toISOString(), length: redactedLength },
+    lapsedAt: item.relayClosedAt?.toISOString() ?? null,
+  };
+}
+
+// A parent is itself a relay → its sender is set (queue_items_relay_check)
+function getRelayParent(parent: ItemWithRelations["relayParent"]): RelayParent | null {
+  if (parent?.fromSession == null) return null;
+  return { id: Number(parent.id), sender: toRelaySender(parent.fromSession), sentAt: parent.askedAt.toISOString() };
+}
+
+export function toRelaySender(session: RelaySenderRow): RelaySender {
+  return {
+    sessionIdPrefix: getSessionIdPrefix(session.sessionId),
+    profileLabel: session.profileLabel,
+    selfDeclaredName: session.name,
+    cwdTail: getCwdTail(session.cwd),
   };
 }
 
@@ -320,6 +495,7 @@ function toSessionView(session: QueueSession, lastResumeBgId: string | null): Ow
   const markedAt = session.resumeAwaitingRegisterAt;
   return {
     id: session.sessionId,
+    sessionIdPrefix: getSessionIdPrefix(session.sessionId),
     ...getSessionName(session),
     profileLabel: session.profileLabel,
     cwd: session.cwd,
@@ -373,11 +549,16 @@ function getOccupants(session: QueueSession, factsById: Map<string, SessionFacts
 }
 
 function toMarkedOccupant(facts: SessionFacts): MarkedOccupant {
-  return { profileLabel: facts.profileLabel, cwdTail: getCwdTail(facts.cwd), sessionIdPrefix: facts.sessionId.slice(0, SESSION_ID_PREFIX_LENGTH) };
+  return { profileLabel: facts.profileLabel, cwdTail: getCwdTail(facts.cwd), sessionIdPrefix: getSessionIdPrefix(facts.sessionId) };
 }
 
 export function getSessionName(session: { name: string | null; cwd: string }): SessionName {
   return { name: session.name ?? getCwdBasename(session.cwd), isNameRegistered: session.name !== null };
+}
+
+/** The short id every surface shows in place of a session's full id. */
+export function getSessionIdPrefix(sessionId: string): string {
+  return sessionId.slice(0, SESSION_ID_PREFIX_LENGTH);
 }
 
 export function getCwdTail(cwd: string): string {

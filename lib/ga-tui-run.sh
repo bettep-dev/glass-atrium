@@ -485,9 +485,9 @@ build_step_plan() {
   STEP_SUPPRESS=()
   case "${action}" in
     install)
-      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → migrate → DB →
+      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → queue MCP → migrate → DB →
       # repoint → post-check → baseline capture) then run_bootstrap's build + health gate, THEN the
-      # 14th step that registers the active launchd roster (menu_load_launchd_jobs, opt-out
+      # last step that registers the active launchd roster (menu_load_launchd_jobs, opt-out
       # GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
       # The load step runs LAST — post-health-gate by position, so a loaded job always tracks
       # a verified build. baseline capture is run_install's final body step (capture_install_
@@ -495,7 +495,7 @@ build_step_plan() {
       # TUI plan must include it or a menu install never anchors its first editable_merge.
       # dry-run/repoint/etc. honour the lib flag vars (load + baseline capture are dry-run
       # reports under --dry-run). The three arrays are a PARALLEL-array contract — they MUST
-      # stay equal-length (14 each) and in this order; run_plan iterates [0, #STEP_FN).
+      # stay equal-length (INSTALL_PLAN_LEN each) and in this order; run_plan iterates [0, #STEP_FN).
       STEP_LABEL=(
         "Doctor preflight"
         "Retire stale daemon jobs"
@@ -503,6 +503,7 @@ build_step_plan() {
         "Render launchd plists"
         "Symlink farm"
         "Wire hooks (settings.json)"
+        "Queue MCP registration"
         "Migrate legacy layout"
         "Database bootstrap"
         "launchd repoint"
@@ -519,6 +520,7 @@ build_step_plan() {
         "Rendering launchd plists…"
         "Farming symlinks…"
         "Wiring hooks…"
+        "Checking queue MCP registration…"
         "Migrating legacy layout…"
         "Bootstrapping database…"
         "Repointing launchd…"
@@ -535,6 +537,7 @@ build_step_plan() {
         "render_plists"
         "run_symlink_farm install"
         "wire_hooks"
+        "put_queue_mcp_registration add"
         "migrate_layout"
         "setup_database"
         "repoint_launchd"
@@ -549,7 +552,7 @@ build_step_plan() {
       # run_uninstall body: manifest containment gate → launchd teardown → detached-daemon stop →
       # remote access keys + device rows → DB drop →
       # node_modules removal → manifest-link removal → orphan sweep → empty-dir
-      # cleanup → update-state teardown → hook un-wire → shell-rc PATH-line removal.
+      # cleanup → update-state teardown → hook un-wire → queue MCP unregistration → shell-rc PATH-line removal.
       # launchd teardown runs FIRST, then the detached-daemon stop reaches the tmux
       # daemon sessions launchctl bootout does NOT, so all connections drain before
       # the DB is dropped and before their symlinked files are removed. The DB drop is BACKUP-BEFORE-DROP,
@@ -573,6 +576,7 @@ build_step_plan() {
         "Remove empty directories"
         "Tear down update state"
         "Un-wire hooks (settings.json)"
+        "Queue MCP unregistration"
         "Remove shell rc PATH lines"
       )
       STEP_LABEL_ACTIVE=(
@@ -587,6 +591,7 @@ build_step_plan() {
         "Removing empty directories…"
         "Tearing down update state…"
         "Un-wiring hooks…"
+        "Checking queue MCP unregistration…"
         "Removing shell rc PATH lines…"
       )
       STEP_FN=(
@@ -601,6 +606,7 @@ build_step_plan() {
         "remove_empty_dirs"
         "teardown_update_state"
         "unwire_hooks"
+        "put_queue_mcp_registration remove"
         "remove_rc_lines"
       )
       ;;

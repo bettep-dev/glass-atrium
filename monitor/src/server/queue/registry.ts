@@ -7,11 +7,13 @@ import path from "node:path";
 import type { Prisma, QueueItemStatus, QueuePermissionHint } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { errnoCode } from "../errno.js";
+import { hasEnvelopeToken } from "./envelope.js";
 import { QueueEnvironmentError, QueueRequestError } from "./errors.js";
 import { getProcessStartTime } from "./process-start-time.js";
-import type { DeregisterBody, PERMISSION_HINTS, RegisterBody } from "./schemas.js";
+import type { DeregisterBody, NameUpdateBody, PERMISSION_HINTS, RegisterBody } from "./schemas.js";
 
 const DEFAULT_PROFILE_LABEL = "default";
+const DEFAULT_CONFIG_DIR_NAME = ".claude";
 // $HOME/.claude or $HOME/.claude-<name>; the label column is varchar(64)
 const CONFIG_DIR_NAME = /^\.claude(-[A-Za-z0-9._-]{1,56})?$/;
 const CONFINED_SOCKET_PATH = /^(?:\/private)?\/tmp\/cc-socks\/([1-9][0-9]{0,9})\.sock$/;
@@ -38,7 +40,9 @@ export interface LockedSession {
 
 export interface LockedSessionRow {
   sessionId: string;
+  state: string;
   exitReason: string | null;
+  isProbe: boolean;
 }
 
 interface SessionFacts {
@@ -46,6 +50,8 @@ interface SessionFacts {
   worktreeRoot: string | null;
   configDir: string | null;
   processStartTime: string;
+  /** undefined → the register sent none, so the stored path stays */
+  transcriptPath?: string | null;
 }
 
 /** pid + `ps` start time: together they name one process across pid reuse. */
@@ -69,9 +75,13 @@ export async function findWorktreeRoot(cwd: string): Promise<string | null> {
   }
 }
 
-export interface RegisterResult {
-  /** answered items now waiting for this session (the SessionStart pointer line) */
+/** Items in status answered waiting for one session's pull: every kind, and the peers' relays among them. */
+export interface AnsweredCount {
   answeredWaiting: number;
+  relayWaiting: number;
+}
+
+export interface RegisterResult extends AnsweredCount {
   /** this session's non-terminal items that expect an owner answer, newest first → the lib re-derives its awaiting marks */
   awaitingItemIds: number[];
 }
@@ -89,8 +99,35 @@ export async function registerSession(body: RegisterBody, homeDir: string): Prom
     await putLiveSession(tx, body, facts);
     await markReplaced(tx, replacedIds, identity);
     await tx.queueItem.updateMany({ where: { sessionId: body.sessionId, status: "resume_pending" }, data: { status: "answered" } });
-    const answeredWaiting = await tx.queueItem.count({ where: { sessionId: body.sessionId, status: "answered" } });
-    return { answeredWaiting, awaitingItemIds: await findAwaitingItemIds(tx, body.sessionId) };
+    return { ...(await getAnsweredCount(tx, body.sessionId)), awaitingItemIds: await findAwaitingItemIds(tx, body.sessionId) };
+  });
+}
+
+/** The register pointer line and the listener poll read this one count → both name relays apart from owner items. */
+export async function getAnsweredCount(tx: Prisma.TransactionClient, sessionId: string): Promise<AnsweredCount> {
+  const where = { sessionId, status: "answered" } as const;
+  const [answeredWaiting, relayWaiting] = await Promise.all([tx.queueItem.count({ where }), tx.queueItem.count({ where: { ...where, kind: "relay" } })]);
+  return { answeredWaiting, relayWaiting };
+}
+
+/**
+ * Name-only update from the row's own process: the derived name under the register's name rules, no other column touched
+ * → none of a full register's side effects (marker clear, cwd, permission hint, replaced rows).
+ * @throws QueueRequestError 404 unknown_session · 409 not_session_process when the row is not live for this pid and start time
+ */
+export async function putSessionName(body: NameUpdateBody): Promise<void> {
+  const startTime = await getProcessStartTime(body.pid);
+  await getPrisma().$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<LockedSession & { processStartTime: string }>>`
+      SELECT "pid", "state"::text AS "state", "process_start_time" AS "processStartTime"
+      FROM "monitor"."queue_sessions" WHERE "session_id" = ${body.sessionId}::uuid FOR UPDATE`;
+    const row = rows[0];
+    if (row === undefined) throw new QueueRequestError(404, "unknown_session", "session not registered");
+    if (row.state !== "live" || row.pid !== body.pid || row.processStartTime !== startTime) {
+      throw new QueueRequestError(409, "not_session_process", "only the session's own live process may update its name");
+    }
+    const nameUpdate = await getNameUpdate(tx, body);
+    if (nameUpdate.name !== undefined) await tx.queueSession.update({ where: { sessionId: body.sessionId }, data: nameUpdate });
   });
 }
 
@@ -141,7 +178,30 @@ async function getSessionFactsOrThrow(body: RegisterBody, homeDir: string): Prom
     getProcessStartTime(body.pid),
   ]);
   if (processStartTime === null) throw new QueueRequestError(400, "invalid_pid", "pid names no running process");
-  return { cwd, worktreeRoot, configDir, processStartTime };
+  if (body.transcriptPath === undefined) return { cwd, worktreeRoot, configDir, processStartTime };
+  const profileDir = configDir ?? path.join(await getRealHomeOrThrow(homeDir), DEFAULT_CONFIG_DIR_NAME);
+  return { cwd, worktreeRoot, configDir, processStartTime, transcriptPath: await getTranscriptPath(body.transcriptPath, body.sessionId, profileDir) };
+}
+
+/** Kept only as `<config dir>/projects/<one folder>/<session id>.jsonl`, symlinks resolved; anything else → null, never a refusal. */
+async function getTranscriptPath(transcriptPath: string, sessionId: string, profileDir: string): Promise<string | null> {
+  const candidate = path.resolve(transcriptPath);
+  if (path.basename(candidate) !== `${sessionId}.jsonl`) return null;
+  const [projectsDir, expectedDir] = await Promise.all([
+    getRealPathOrNull(path.dirname(path.dirname(candidate))),
+    getRealPathOrNull(path.join(profileDir, "projects")),
+  ]);
+  if (projectsDir === null || projectsDir !== expectedDir) return null;
+  return path.join(projectsDir, path.basename(path.dirname(candidate)), path.basename(candidate));
+}
+
+async function getRealPathOrNull(candidate: string): Promise<string | null> {
+  try {
+    return await realpath(candidate);
+  } catch (error) {
+    if (isMissingPath(error)) return null;
+    throw new QueueEnvironmentError("transcript path resolve failed", { cause: error });
+  }
 }
 
 async function getConfigDirOrThrow(configDir: string, homeDir: string): Promise<string> {
@@ -196,7 +256,8 @@ async function findReplacedSessionIds(tx: Prisma.TransactionClient, sessionId: s
 /** Locks the registry rows in ascending session id (the shared lock order); unknown ids are simply absent. */
 export async function lockSessions(tx: Prisma.TransactionClient, sessionIds: string[]): Promise<LockedSessionRow[]> {
   return tx.$queryRaw<LockedSessionRow[]>`
-    SELECT "session_id"::text AS "sessionId", "exit_reason"::text AS "exitReason" FROM "monitor"."queue_sessions"
+    SELECT "session_id"::text AS "sessionId", "state"::text AS "state", "exit_reason"::text AS "exitReason", "is_probe" AS "isProbe"
+    FROM "monitor"."queue_sessions"
     WHERE "session_id" = ANY(${sessionIds}::uuid[]) ORDER BY "session_id" FOR UPDATE`;
 }
 
@@ -216,6 +277,8 @@ async function putLiveSession(tx: Prisma.TransactionClient, body: RegisterBody, 
     exitReason: null,
     lastSeenAt: new Date(),
     resumeAwaitingRegisterAt: null,
+    isProbe: body.isProbe === true,
+    ...(facts.transcriptPath === undefined ? {} : { transcriptPath: facts.transcriptPath }),
   };
   const nameUpdate = await getNameUpdate(tx, body);
   await tx.queueSession.upsert({ where: { sessionId: body.sessionId }, create: { sessionId: body.sessionId, ...row, ...nameUpdate }, update: { ...row, ...nameUpdate } });
@@ -224,11 +287,17 @@ async function putLiveSession(tx: Prisma.TransactionClient, body: RegisterBody, 
 /**
  * Name precedence, read under the registry row lock: an explicit name (`register --name`) always wins and is flagged;
  * a derived name (job state, transcript title — re-sent at every SessionStart) replaces only a derived or absent one;
- * neither → the stored name stays.
+ * neither → the stored name stays. An envelope token refuses an explicit name and drops a derived one (a resumed
+ * session's title may quote its own envelope, and a refused register would leave it unregistered).
+ * @throws QueueRequestError 400 envelope_token
  */
-async function getNameUpdate(tx: Prisma.TransactionClient, body: RegisterBody): Promise<{ name?: string; isNameExplicit?: boolean }> {
+async function getNameUpdate(
+  tx: Prisma.TransactionClient,
+  body: Pick<RegisterBody, "sessionId" | "name" | "derivedName">,
+): Promise<{ name?: string; isNameExplicit?: boolean }> {
+  if (body.name !== undefined && hasEnvelopeToken(body.name)) throw new QueueRequestError(400, "envelope_token", "a session name may not carry an envelope token");
   if (body.name !== undefined) return { name: body.name, isNameExplicit: true };
-  if (body.derivedName === undefined) return {};
+  if (body.derivedName === undefined || hasEnvelopeToken(body.derivedName)) return {};
   const stored = await tx.queueSession.findUnique({ where: { sessionId: body.sessionId }, select: { isNameExplicit: true } });
   return stored?.isNameExplicit === true ? {} : { name: body.derivedName, isNameExplicit: false };
 }

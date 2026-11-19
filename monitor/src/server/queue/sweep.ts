@@ -1,18 +1,19 @@
 // Database-driven sweep pass: the worktree root refresh, the stale / exited rule on live and stale rows, the automatic
-// resume of exited sessions, then overdue and exited-row item moves. An answered item waits for its session's pull.
+// resume of exited sessions, then overdue and exited-row item moves and the relay lapse. An answered item waits for its session's pull.
 // No delivery window lives in a process timer → a restart loses nothing.
 // Every transaction touching items locks the registry row first (registry.ts lock order).
 
 import { readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import type { Prisma, QueueImageType, QueueItemStatus, QueueSessionState } from "../../generated/prisma/client.js";
+import type { Prisma, QueueImageType, QueueItemKind, QueueItemStatus, QueueSessionExitReason, QueueSessionState } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { errnoCode } from "../errno.js";
 import { logger } from "../logger.js";
 import { buildResumePayload } from "./envelope.js";
 import { deleteImageFile, getImagePath, getStoredImageId, getUnusedCutoff } from "./images.js";
 import { lockSession } from "./registry.js";
+import { RELAY } from "./relay.js";
 import { type ResumeClaim, claimResume, findClaimableSessionIds, getRereadOutcome, putSpawnAborted, putSpawnFailed, putWorktreeRoots } from "./resume-claim.js";
 import { type ResumeDeps, SESSION_ID_SHAPE, startResumeSpawn } from "./resume-spawn.js";
 
@@ -43,8 +44,15 @@ interface SessionProbeRow {
   state: QueueSessionState;
 }
 
+interface SettleSession {
+  state: QueueSessionState;
+  exitReason: QueueSessionExitReason | null;
+  lastSeenAt: Date;
+}
+
 interface SettleItem {
   id: bigint;
+  kind: QueueItemKind;
   status: QueueItemStatus;
   deliveries: Array<{ route: string; ackDeadlineAt: Date }>;
 }
@@ -148,17 +156,33 @@ async function settleItems(deps: SweepDeps): Promise<void> {
 
 async function settleSessionItems(sessionId: string, now: Date): Promise<void> {
   await getPrisma().$transaction(async (tx) => {
-    const session = await lockSession(tx, sessionId);
-    if (session === null) return;
+    if ((await lockSession(tx, sessionId)) === null) return;
+    const session = await tx.queueSession.findUniqueOrThrow({ where: { sessionId }, select: { state: true, exitReason: true, lastSeenAt: true } });
     const items: SettleItem[] = await tx.queueItem.findMany({
       where: { sessionId, status: { in: ["delivering", ...EXITED_MOVABLE] } },
-      select: { id: true, status: true, deliveries: { orderBy: { id: "desc" }, take: 1, select: { route: true, ackDeadlineAt: true } } },
+      select: { id: true, kind: true, status: true, deliveries: { orderBy: { id: "desc" }, take: 1, select: { route: true, ackDeadlineAt: true } } },
     });
     for (const item of items) {
-      const target = getSettledStatus(item, session.state === "exited", now);
-      if (target !== null) await tx.queueItem.updateMany({ where: { id: item.id, status: item.status }, data: { status: target } });
+      const data = item.kind === "relay" ? getRelaySettlement(item, session, now) : toStatusData(getSettledStatus(item, session.state === "exited", now));
+      if (data !== null) await tx.queueItem.updateMany({ where: { id: item.id, status: item.status }, data });
     }
   });
+}
+
+function toStatusData(status: QueueItemStatus | null): Prisma.QueueItemUpdateManyMutationInput | null {
+  return status === null ? null : { status };
+}
+
+/** A relay never moves toward a resume: it lapses (withdrawn, close stamp) or settles as on a live row. */
+function getRelaySettlement(item: SettleItem, session: SettleSession, now: Date): Prisma.QueueItemUpdateManyMutationInput | null {
+  if (isRelayLapsed(session, now)) return { status: "withdrawn", relayClosedAt: now };
+  return toStatusData(getSettledStatus(item, false, now));
+}
+
+// A replaced id never returns; an ended or dead row gets the lapse bound to come back under its own id
+function isRelayLapsed(session: SettleSession, now: Date): boolean {
+  if (session.state !== "exited") return false;
+  return session.exitReason === "replaced" || now.getTime() - session.lastSeenAt.getTime() >= RELAY.LAPSE_MS;
 }
 
 /**

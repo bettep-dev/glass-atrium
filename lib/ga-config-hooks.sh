@@ -879,3 +879,176 @@ purge_config() {
   mv -f -- "${CONFIG_TOML}" "${dest}"
   log "purge_config: moved ${CONFIG_TOML} -> ${dest} (Trash; never rm'd)"
 }
+
+# The one writer of the owner queue's MCP registration: each profile's user-scope entry, by the host's own
+# `claude mcp add|remove --scope user`, and the tools' allow lines in the shared settings.json. Prints every write,
+# file by file, before any; writes only on --approve-profile-writes outside a dry run. $1 = add | remove — a removal
+# touches only an entry that runs this install's adapter, and only the tools' own allow lines.
+put_queue_mcp_registration() {
+  local mode="$1" identity name entries lines
+  # shellcheck disable=SC2311  # a failed read is the warning branch
+  if ! identity="$(get_queue_mcp_identity)"; then
+    log "queue MCP registration (${mode}): warn: skipped — ${QUEUE_MCP_ADAPTER} answered no server name and tool list; nothing written, the doctor reports the gap"
+    return 0
+  fi
+  name="${identity%%$'\n'*}"
+  entries="$(get_queue_mcp_entry_writes "${mode}" "${name}")"
+  lines="$(get_queue_mcp_allow_writes "${mode}" "${identity}")" \
+    || die "queue MCP: ${SETTINGS_JSON} is not valid JSON — refusing to edit it (fix or restore it first)"
+  if [[ -z "${entries}${lines}" ]]; then
+    log "queue MCP registration (${mode}): nothing to write — every profile and ${SETTINGS_JSON} already match"
+    return 0
+  fi
+  log "queue MCP registration (${mode}): the owner approves these writes before any is made"
+  print_queue_mcp_writes "${name}" "${entries}" "${lines}" "${mode}"
+  if "${DRY_RUN}" || ! "${APPROVE_PROFILE_WRITES}"; then
+    if [[ "${mode}" == add ]]; then
+      log "queue MCP registration: nothing written — once approved, '${GA_ROOT}/glass-atrium queue-mcp --approve-profile-writes' writes exactly these"
+    else
+      log "queue MCP registration: nothing written — once approved, rerun the uninstall with --approve-profile-writes to remove exactly these"
+    fi
+    return 0
+  fi
+  put_queue_mcp_entries "${name}" "${entries}"
+  put_queue_mcp_allow_lines "${mode}" "${lines}"
+}
+
+# <mode> <server name> → "<add|replace|remove>\x1f<profile file>\x1f<config dir>" per profile the mode changes;
+# dies on a profile file that is not JSON
+get_queue_mcp_entry_writes() {
+  local profiles file dir state
+  # shellcheck disable=SC2311  # a failed read is the die
+  profiles="$(get_profile_config_files)" || die "queue MCP: the profile set is unreadable (needs hooks/lib/claude-config-dirs.sh)"
+  while IFS=$'\x1f' read -r file dir; do
+    [[ -n "${file}" ]] || continue
+    state="$(get_queue_mcp_entry_state "${file}" "$2")"
+    case "$1:${state}" in
+      add:missing) printf 'add\x1f%s\x1f%s\n' "${file}" "${dir}" ;;
+      add:elsewhere) printf 'replace\x1f%s\x1f%s\n' "${file}" "${dir}" ;;
+      remove:ok) printf 'remove\x1f%s\x1f%s\n' "${file}" "${dir}" ;;
+      *:unreadable) die "queue MCP: ${file} is not valid JSON — refusing to register (fix or restore it first)" ;;
+      *) ;;
+    esac
+  done <<<"${profiles}"
+}
+
+# Every profile's own config file, where its user-scope MCP entries live → "<file>\x1f<config dir>": the target
+# home's beside it with no config dir (the host's default), then each branch's. Non-zero without the grammar.
+get_profile_config_files() {
+  local grammar="${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh" branches branch
+  [[ -r "${grammar}" ]] || return 1
+  # shellcheck disable=SC2311  # the -r guard above keeps its grammar source from failing
+  branches="$(get_profile_branches "${grammar}")"
+  printf '%s\x1f\n' "${TARGET_HOME%/*}/.claude.json"
+  while IFS= read -r branch; do
+    [[ -z "${branch}" ]] || printf '%s\x1f%s\n' "${branch}/.claude.json" "${branch}"
+  done <<<"${branches}"
+}
+
+# Branches: target-home siblings matching the shared config-root grammar.
+# Only dirs holding a .claude.json → never-launched and backup dirs skipped.
+# The target home matches the same grammar → excluded by identity.
+# $1 = the grammar file (hooks/lib/claude-config-dirs.sh).
+get_profile_branches() {
+  # shellcheck source=SCRIPTDIR/../hooks/lib/claude-config-dirs.sh
+  source "${1}"
+  local candidate
+  for candidate in "${TARGET_HOME%/*}"/.claude*; do
+    [[ "${candidate##*/}/" =~ ^${CLAUDE_CONFIG_ROOT_RE}$ ]] || continue
+    [[ -d "${candidate}" && -f "${candidate}/.claude.json" ]] || continue
+    [[ ! "${candidate}" -ef "${TARGET_HOME}" ]] || continue
+    printf '%s\n' "${candidate}"
+  done
+}
+
+# <profile file> <server name> → ok (runs this install's adapter) · missing · elsewhere · unreadable; reads only
+# that one mcpServers key
+get_queue_mcp_entry_state() {
+  if [[ ! -f "$1" ]]; then
+    printf 'missing\n'
+    return 0
+  fi
+  jq -r --arg n "$2" --arg a "${QUEUE_MCP_ADAPTER}" '(.mcpServers // {})[$n] // null
+    | if . == null then "missing" elif .command == "/bin/bash" and .args == [$a] then "ok" else "elsewhere" end' \
+    -- "$1" 2>/dev/null || printf 'unreadable\n' # GA-ABSORB[handled@the unreadable verdict]: a file jq cannot read is that verdict
+}
+
+# <mode> <identity> → the allow lines the mode changes, one per line: add → the tools' lines missing from
+# SETTINGS_JSON, remove → those present; non-zero on a settings file that is not JSON
+get_queue_mcp_allow_writes() {
+  local settings='{}'
+  if [[ -f "${SETTINGS_JSON}" ]]; then settings="$(jq -c . -- "${SETTINGS_JSON}")" || return 1; fi
+  jq -r --arg mode "$1" --arg identity "$2" '($identity | split("\n") | map(select(length > 0))) as $id
+    | [$id[1:][] | "mcp__" + $id[0] + "__" + .] as $want
+    | ($want - (.permissions.allow // [])) as $missing
+    | (if $mode == "add" then $missing else $want - $missing end)[]' <<<"${settings}"
+}
+
+# <server name> <entry writes> <allow writes> <mode> → one log line per write, naming its file
+print_queue_mcp_writes() {
+  local entry action file dir
+  entry="$(jq -nc --arg a "${QUEUE_MCP_ADAPTER}" '{command: "/bin/bash", args: [$a]}')"
+  while IFS=$'\x1f' read -r action file dir; do
+    [[ -n "${action}" ]] || continue
+    case "${action}" in
+      remove) log "  ${file}: mcpServers.$1 removed — by: ${dir:+CLAUDE_CONFIG_DIR=${dir} }claude mcp remove --scope user $1" ;;
+      *) log "  ${file}: mcpServers.$1 = ${entry} (${action}) — by: ${dir:+CLAUDE_CONFIG_DIR=${dir} }claude mcp add --scope user $1 -- /bin/bash ${QUEUE_MCP_ADAPTER}" ;;
+    esac
+  done <<<"$2"
+  local sign=+ line
+  [[ "$4" == add ]] || sign=-
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || log "  ${SETTINGS_JSON}: permissions.allow ${sign} ${line}"
+  done <<<"$3"
+}
+
+# <server name> <entry writes> → each through the host's command, run with that profile's config dir — the default
+# profile's with none and HOME at the target home's parent, so a sandboxed target never reaches the real home
+put_queue_mcp_entries() {
+  local claude action file dir
+  [[ -n "$2" ]] || return 0 # GA-ABSORB[benign]: no entry to write
+  claude="$(command -v claude)" || die "queue MCP: no claude CLI on PATH — the host's own command writes each profile's entry"
+  while IFS=$'\x1f' read -r action file dir; do
+    [[ -n "${action}" ]] || continue
+    if [[ "${action}" != add ]]; then run_claude_mcp "${claude}" "${dir}" remove --scope user "$1"; fi
+    if [[ "${action}" != remove ]]; then
+      run_claude_mcp "${claude}" "${dir}" add --scope user "$1" -- /bin/bash "${QUEUE_MCP_ADAPTER}"
+    fi
+    log "  written: ${file} (${action} $1)"
+  done <<<"$2"
+}
+
+# <claude> <config dir or empty> <mcp args…>
+run_claude_mcp() {
+  local claude="$1" dir="$2"
+  shift 2
+  if [[ -n "${dir}" ]]; then
+    CLAUDE_CONFIG_DIR="${dir}" "${claude}" mcp "$@" >&2
+  else
+    env -u CLAUDE_CONFIG_DIR HOME="${TARGET_HOME%/*}" "${claude}" mcp "$@" >&2
+  fi
+}
+
+# <mode> <allow lines> → SETTINGS_JSON gains (add) or loses (remove) exactly those lines; a removal that empties the
+# list drops the keys an add created. Backed up, then a validated temp swapped in, as wire_hooks writes
+put_queue_mcp_allow_lines() {
+  local backup
+  [[ -n "$2" ]] || return 0 # GA-ABSORB[benign]: no allow line to write
+  if [[ ! -f "${SETTINGS_JSON}" ]]; then printf '{}\n' >"${SETTINGS_JSON}"; fi
+  backup="${SETTINGS_JSON}.ga-backup.$(date +%Y%m%d-%H%M%S)"
+  cp -p -- "${SETTINGS_JSON}" "${backup}"
+  RENDER_TMP="${SETTINGS_JSON}.ga-allow.$$"
+  jq --arg mode "$1" --arg lines "$2" '($lines | split("\n") | map(select(length > 0))) as $l
+    | if $mode == "add" then .permissions.allow = ((.permissions.allow // []) + $l)
+      else .permissions.allow -= $l
+        | if .permissions.allow == [] then del(.permissions.allow) else . end
+        | if .permissions == {} then del(.permissions) else . end end' -- "${SETTINGS_JSON}" >"${RENDER_TMP}"
+  if ! jq -e . -- "${RENDER_TMP}" >/dev/null 2>&1; then
+    delete_temp_file "${RENDER_TMP}"
+    RENDER_TMP=""
+    die "queue MCP: the allow-line edit produced invalid JSON — ${SETTINGS_JSON} unchanged (backup: ${backup})"
+  fi
+  mv -f -- "${RENDER_TMP}" "${SETTINGS_JSON}"
+  RENDER_TMP=""
+  log "  written: ${SETTINGS_JSON} (allow lines, ${1}; backup: ${backup})"
+}

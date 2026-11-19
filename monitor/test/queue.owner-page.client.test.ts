@@ -14,6 +14,7 @@ import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, repl
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRelayHistoryFixture } from "./lib/queue-render-fixtures.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const QUEUE_SRC = resolve(__dirname, "../public/src/screens/queue.jsx");
@@ -114,6 +115,8 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       busy: { id: null, error: null },
       resumes: READY_RESUMES,
       readResumes: record("readResumes"),
+      relaySignal: { status: "ready", data: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: false }, error: null, busy: false },
+      relayHistory: { thread: { status: "loading", items: [], refusals: [], nextCursor: null, error: null }, read: record("readRelayHistory"), showEarlier: record("showEarlierRelays") },
       drafts: {},
       setDraft: record("setDraft"),
       later: record("later"),
@@ -551,18 +554,19 @@ describe("recent automatic resumes", () => {
   });
 
   // spec §4.4: the foot button's count and ⚠ follow the page's own tick, as the list does
-  test("the page's tick reads the resume record beside the list, the sessions, the count and the thread", async () => {
+  test("the page's tick reads the resume record and the relay signal beside the list, the sessions, the count and the thread", async () => {
     const reads: string[] = [];
     const read = (name: string, answer: unknown = undefined) => async () => { reads.push(name); return answer; };
     const isGood = await (screen.getPageReadQ as (deps: unknown) => Promise<boolean>)({
       readList: read("list", { isGood: true, arrived: [], turned: [] }),
       readResumes: read("resumes"),
+      readRelaySignal: read("relay signal"),
       sessions: { read: read("sessions") },
       orders: { reread: read("thread") },
       onReadQueueCount: read("count"),
       setStatus: () => undefined,
     });
-    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "list", "resumes", "sessions", "thread"]]);
+    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "list", "relay signal", "resumes", "sessions", "thread"]]);
   });
 
   test("the record is read from the resume route, whatever the owner list holds", async () => {
@@ -579,6 +583,214 @@ describe("recent automatic resumes", () => {
     await (module.getResumesQ as (deps: unknown) => Promise<void>)({ setResumes });
     assert.deepEqual(urls, ["/api/queue/owner/resumes"]);
     assert.deepEqual((getPlain(region) as { data: Array<{ item: { id: number } }> }).data.map((resume) => resume.item.id), [9]);
+  });
+});
+
+// a limit is the server's → no sentence holds one, as a digit or as a count word
+const LIMIT_FIGURE = /\d|\b(?:once|twice|thrice|one|two|three|four|five|six|seven|eight|nine|ten|single|double|triple)\b/i;
+
+describe("relay history", () => {
+  const fixture = getRelayHistoryFixture();
+  const READY_SIGNAL = { status: "ready", data: fixture.signal, error: null, busy: false };
+  const history = (thread: Record<string, unknown> = {}) => ({
+    thread: { status: "ready", items: fixture.items, refusals: fixture.refusals, nextCursor: null, error: null, ...thread },
+    read: () => undefined,
+    showEarlier: () => undefined,
+  });
+  const flat = (node: RenderedNode | string) => collectText(node).replace(/\s+/g, " ").trim();
+  const entries = (tree: RenderedNode) => findNodes(tree, (node) => node.type === "article");
+
+  test("the history read asks the server's relay thread, unscoped by the ticks", async () => {
+    const urls: string[] = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      URLSearchParams,
+      window: { UI: realUi },
+      fetch: async (url: string) => { urls.push(url); return { status: 200, json: async () => ({ items: [], nextCursor: null, refusals: [] }) }; },
+    })) as ScreenModule;
+    await (module.getThreadQ as (deps: unknown) => Promise<void>)({ ids: [], before: null, setThread: () => undefined, kind: "relay" });
+    const [path, query] = (urls[0] ?? "").split("?");
+    assert.equal(path, "/api/queue/owner/orders");
+    assert.deepEqual(ownerOrdersQuerySchema.parse(Object.fromEntries(new URLSearchParams(query))), { kind: "relay", limit: 30 });
+  });
+
+  test("entries run oldest first, one per send, each named by its sender, its recipients and its send time", () => {
+    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
+    assert.deepEqual(entries(tree).map((node) => node.props["aria-label"]), [
+      "Relay from atrium to gersona, sent 2026-11-12 12:00",
+      "Relay from aidl to yoaida and portfolio, sent 2026-11-13 11:00",
+      "Relay from gersona to atrium, sent 2026-11-13 13:00",
+    ]);
+  });
+
+  test("each copy reads its relay id and one outcome: received, lapsed or not yet", () => {
+    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
+    const rows = findNodes(tree, (node) => node.type === "li" && node.props.className === "queue-relay-copy").map(flat);
+    assert.deepEqual(rows, [
+      "→ gersona 25a65a54 #398 ✓ Received 12:01",
+      "→ yoaida fa32c7cb #412 ✓ Received 11:04",
+      "→ portfolio 5d0e77a1 #413 ⚠ Lapsed 14:00",
+      "→ atrium e8923338 #415 Not yet",
+    ]);
+  });
+
+  test("a passed-on relay names its parent on the hop line; a relay at hop 0 has none", () => {
+    const [received, forwarded] = entries(render("RelayLogQ", { history: history({ refusals: [] }) }));
+    assert.match(flat(forwarded!), /Hop 1 · sent after aidl received relay #398 from atrium at 2026-11-12 12:00/);
+    assert.doesNotMatch(flat(received!), /Hop/);
+  });
+
+  test("relay text is drawn verbatim as plain text: each kept text is the stored string whole, never prose-parsed or set as HTML", () => {
+    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
+    const bubbles = findNodes(tree, (node) => String(node.props?.className ?? "").startsWith("queue-bubble"));
+    const kept = [...new Map(fixture.items.filter((item) => item.relay?.redaction === null).map((item) => [item.sendId, item.body])).values()].reverse();
+    assert.deepEqual(bubbles.map((bubble) => collectText(bubble)), kept);
+    assert.equal(findNodes(tree, (node) => node.props?.atom === "ProseText").length, 0);
+    assert.equal(findNodes(tree, (node) => node.props?.dangerouslySetInnerHTML !== undefined).length, 0);
+  });
+
+  test("a refusal stands between the sends by its time, with its reason and its resolved recipient, and holds no text", () => {
+    const tree = render("RelayLogQ", { history: history() });
+    const all = entries(tree);
+    assert.equal(all[2]?.props["aria-label"], "Refused relay from gersona to yoaida, 2026-11-13 12:00");
+    assert.match(flat(all[2]!), /✕ Refused Too many to one session — gersona sent to yoaida more often than the hourly limit allows\. → yoaida fa32c7cb$/);
+    assert.equal(findNodes(all[2]!, (node) => node.props?.atom === "ProseText").length, 0);
+  });
+
+  test("every reason the page knows has a name and a sentence with no limit figure, in digits or in words; an unknown one names its code", () => {
+    const codes = ["hop", "pair_cap", "sender_cap", "machine_cap", "token", "secret", "scan_unavailable", "sender_probe", "sender_not_live", "self", "recipient"];
+    const lines = codes.map((reason) => call<{ name: string; sentence: string }>("getRelayRefusalLineQ", reason, { sender: "gersona", recipient: "yoaida" }));
+    assert.equal(new Set(lines.map((line) => line.name)).size, codes.length);
+    assert.deepEqual(lines.filter((line) => LIMIT_FIGURE.test(line.sentence) || line.name === "Refused"), []);
+    assert.deepEqual(call("getRelayRefusalLineQ", "recipient_ambiguous", { sender: "gersona", recipient: "yoaida" }), { name: "Refused", sentence: "The queue gave the reason", code: "recipient_ambiguous" });
+  });
+
+  test("a recipient that matched no session is a count, never a string", () => {
+    const refusal = { at: "2026-11-13T03:00:00.000Z", reason: "recipient", senderIdPrefix: "25a65a54", recipientIdPrefixes: [], unresolvedCount: 1 };
+    const tree = render("RelayLogQ", { history: history({ items: [], refusals: [refusal] }) });
+    assert.match(flat(entries(tree)[0]!), /→ 1 recipient that matched no session$/);
+  });
+
+  test("an earlier page's refusals join the loaded ones; a first page replaces them", () => {
+    const prev = { items: [], nextCursor: "c1", refusals: [{ at: "b" }] };
+    const page = { items: [], nextCursor: null, refusals: [{ at: "a" }] };
+    assert.deepEqual(call<{ refusals: unknown[] }>("getReadThreadQ", prev, page, "c1", false).refusals, [{ at: "a" }, { at: "b" }]);
+    assert.deepEqual(call<{ refusals: unknown[] }>("getReadThreadQ", prev, page, null, false).refusals, [{ at: "a" }]);
+  });
+
+  test("a redacted send paints the page's own line from the stored time and length, never the stored text, and offers no control", () => {
+    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
+    const redacted = entries(tree)[2]!;
+    assert.match(flat(redacted), /Redacted Text redacted 2026-11-13 14:30 KST · it was 1,284 characters long/);
+    assert.doesNotMatch(flat(redacted), /relay text redacted by the owner/);
+    assert.equal(findNodes(redacted, (node) => node.props?.atom === "ProseText").length, 0);
+    assert.deepEqual(entries(tree).map((entry) => buttonLabelled(entry, "Redact text").length), [1, 1, 0]);
+  });
+
+  test("a send with one copy still holding its text keeps the text and its Redact text", () => {
+    const [kept, gone] = getRelayHistoryFixture().items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const partly = [kept!, { ...gone!, body: "[relay text redacted by the owner]", relay: { ...gone!.relay!, redaction: { at: "2026-11-13T05:30:00.000Z", length: 99 } } }];
+    const tree = render("RelayLogQ", { history: history({ items: partly, refusals: [] }) });
+    assert.equal(buttonLabelled(tree, "Redact text").length, 1);
+    assert.ok(findNodes(tree, (node) => String(node.props?.className ?? "").startsWith("queue-bubble")).some((node) => collectText(node).startsWith("파트너")));
+  });
+
+  test("the redaction posts one owner action per unredacted copy, each by its relay id, with no text", async () => {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      window: { UI: realUi },
+      fetch: async (url: string, init: { body?: string }) => { posts.push({ url, body: init.body }); return { status: 200, json: async () => ({ ok: true }) }; },
+    })) as ScreenModule;
+    const [kept, gone] = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const copies = [kept, { ...gone, relay: { ...gone!.relay, redaction: { at: "2026-11-13T05:30:00.000Z", length: 99 } } }];
+    await (module.putRelayRedactionQ as (copies: unknown) => Promise<unknown>)(copies);
+    assert.deepEqual(posts, [{ url: `/api/queue/owner/items/${kept!.id}/redact`, body: "{}" }]);
+  });
+
+  const outcomes = [
+    { name: "every copy taken is done", answers: [{ status: 200, data: { ok: true } }, { status: 200, data: { ok: true } }], error: null },
+    { name: "a copy already redacted counts as done", answers: [{ status: 409, data: { error: "already_redacted" } }, { status: 200, data: { ok: true } }], error: null },
+    { name: "some copies left says how many and asks again", answers: [{ status: 200, data: { ok: true } }, { status: 200, data: { ok: true } }, { status: 503, data: { error: "database_unavailable" } }], error: "1 of 3 copies was not redacted. Redact text again." },
+    { name: "every copy refused names the server's reason", answers: [{ status: 409, data: { error: "wrong_kind" } }], error: "Refused: HTTP 409 wrong_kind." },
+  ];
+  for (const row of outcomes) {
+    test(`redaction outcome: ${row.name}`, () => {
+      assert.equal(call<{ error: string | null }>("getRedactionOutcomeQ", row.answers).error, row.error);
+    });
+  }
+
+  test("the dialog's error slot draws its cross in the crit tone before the words, as every other cross on the relay views", () => {
+    const copies = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const slot = (error: string | null) => {
+      const redaction = { target: { id: copies[0]!.id, item: copies[0], copies }, isBusy: false, error, ask: () => undefined, cancel: () => undefined, confirm: () => undefined };
+      const [alert] = findNodes(render("RedactConfirmQ", { redaction }), (node) => node.props?.role === "alert");
+      const glyphs = findNodes(alert!, (node) => node.props?.["aria-hidden"] === "true").map((node) => [node.props.className, collectText(node)]);
+      return { glyphs, text: flat(alert!) };
+    };
+
+    assert.deepEqual([slot("1 of 2 copies was not redacted. Redact text again."), slot(null)], [
+      { glyphs: [["text-crit", "✕ "]], text: "✕ 1 of 2 copies was not redacted. Redact text again." },
+      { glyphs: [], text: "" },
+    ]);
+  });
+
+  const buttons = [
+    { name: "a record with any relay or refusal shows the button", hasRecord: true, count: 1 },
+    { name: "an empty record shows no button", hasRecord: false, count: 0 },
+  ];
+  for (const row of buttons) {
+    test(row.name, () => {
+      const signal = { ...READY_SIGNAL, data: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: row.hasRecord } };
+      const tree = render("RelayHistoryQ", { signal, history: history() });
+      assert.equal(buttonLabelled(tree, "Relay history").length, row.count);
+    });
+  }
+
+  const signals = [
+    { name: "a refusal, a passed-on relay and a redaction put the glyph before the label and name each count", count: { refused: 1, forwarded: 1, redacted: 1 }, text: "⚠ Relay history", label: "Relay history — 1 refused, 1 passed on, 1 redacted in the last 24 hours", sub: "⚠ Last 24 hours: 1 refused · 1 passed on · 1 redacted" },
+    { name: "a count at zero is left out of the name and the drawer's sub line", count: { refused: 2, forwarded: 0, redacted: 0 }, text: "⚠ Relay history", label: "Relay history — 2 refused in the last 24 hours", sub: "⚠ Last 24 hours: 2 refused" },
+    { name: "nothing in the last 24 hours leaves the bare label and no sub line", count: { refused: 0, forwarded: 0, redacted: 0 }, text: "Relay history", label: undefined, sub: undefined },
+  ];
+  for (const row of signals) {
+    test(`the signal: ${row.name}`, () => {
+      const signal = { ...READY_SIGNAL, data: { count: row.count, hasRecord: true } };
+      const tree = render("RelayHistoryQ", { signal, history: history() });
+      const [button] = findNodes(tree, (node) => node.type === "button" && /Relay history$/.test(collectText(node).trim()));
+      const [drawer] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
+      assert.deepEqual(
+        { text: collectText(button!).trim(), label: button?.props["aria-label"], title: button?.props.title, sub: drawer?.props.sub === undefined ? undefined : flat(renderScreen(drawer.props.sub) as RenderedNode) },
+        { text: row.text, label: row.label, title: row.label, sub: row.sub },
+      );
+    });
+  }
+
+  test("a breaker trip changes only the Relay history button: the list, its status line and the rest of the rail stay as they were", () => {
+    const desk = (refused: number) => {
+      const relaySignal = { ...READY_SIGNAL, data: { count: { refused, forwarded: 0, redacted: 0 }, hasRecord: true } };
+      return { ...withList(buildQueue({ relaySignal }).queue, [buildItem({ id: 1 })]), status: "1 new report" };
+    };
+    const isRelayButton = (node: RenderedNode) => node.type === "button" && /Relay history$/.test(collectText(node).trim());
+    // what is drawn outside the Relay history control, without the inputs handed down (the trip is in them)
+    const drawn = (tree: RenderedNode) => JSON.parse(JSON.stringify(tree, (key, value) => {
+      if (key === "queue" || key === "signal") return undefined;
+      return value?.type === "RelayHistoryQ" ? "relay-history" : value;
+    }));
+    const [atRest, tripped] = [desk(0), desk(1)];
+    const rails = [atRest, tripped].map((queue) => renderCard("SessionsRegionQ", { queue }));
+    assert.deepEqual(rails.map((rail) => findNodes(rail, isRelayButton).map((node) => collectText(node).trim())), [["Relay history"], ["⚠ Relay history"]]);
+    assert.deepEqual(drawn(rails[1]!), drawn(rails[0]!));
+    assert.deepEqual(drawn(renderCard("QueueListQ", { queue: tripped })), drawn(renderCard("QueueListQ", { queue: atRest })));
+    assert.equal(findNodes(rails[1]!, (node) => node.props?.atom === "DetailSurface" && node.props.open === true).length, 0);
+  });
+
+  test("opening the drawer reads the record again; its foot says the names are self-declared", () => {
+    let reads = 0;
+    const tree = render("RelayHistoryQ", { signal: READY_SIGNAL, history: { ...history(), read: () => { reads += 1; } } });
+    const [button] = findNodes(tree, (node) => node.type === "button" && /Relay history$/.test(collectText(node).trim()));
+    (button?.props.onClick as () => void)();
+    const [drawer] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
+    assert.equal(reads, 1);
+    assert.equal(drawer?.props.title, "Relay history");
+    assert.equal(flat(renderScreen(drawer?.props.footer) as RenderedNode), "Names are what sessions call themselves, and the queue has no login: any local process can send as any session, or redact. Read this as evidence, not proof.");
   });
 });
 
@@ -2572,6 +2784,12 @@ describe("sessions region", () => {
     const tree = render("QueueDeskQ", { queue: withList(buildQueue().queue, [buildItem({ id: 1 })]) });
     const order = findNodes(tree, (node) => ["SessionsRegionQ", "RecentResumesQ", "QueueListQ", "QueueSheetQ", "OrdersViewQ"].includes(node.type)).map((node) => node.type);
     assert.deepEqual(order, ["SessionsRegionQ", "QueueListQ", "QueueSheetQ", "OrdersViewQ"]);
+  });
+
+  test("an empty rail says a session joins it at its first prompt", () => {
+    const { tree } = renderRail({ region: { status: "ready", data: { sessions: [], hasMore: false }, error: null, busy: false } });
+    const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
+    assert.deepEqual({ message: empty?.props.message, hint: empty?.props.hint }, { message: "No connected sessions", hint: "A session appears here once it has received its first prompt." });
   });
 
   test("the Sessions head holds no New order", () => assert.equal(buttonLabelled(renderRail().tree, "New order").length, 0));

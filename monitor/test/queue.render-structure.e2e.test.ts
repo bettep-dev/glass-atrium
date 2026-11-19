@@ -19,13 +19,14 @@ import fastifyStatic from "@fastify/static";
 import type { Browser, Locator, Page } from "playwright";
 import { chromium } from "playwright";
 
+import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
 import type { OwnerItemView } from "../src/server/queue/owner-views.js";
-import { messageBodySchema, ownerOrdersQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
+import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
-  NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRelayRecordFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  FORWARDED_RELAY, NOT_LISTENING_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
 
@@ -375,18 +376,57 @@ const TWIN_STATES: QueueState[] = [
   { nn: "35i", name: "none-listening", viewports: TWIN_VIEWPORTS, getFixture: getNoneListeningFixture, setUp: (page) => showNotListeningDesk(page) },
   { nn: "36", name: "approval-note", viewports: TWIN_VIEWPORTS, getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.approval) },
 ];
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES];
+
+// spec §18.4 32–34 (plan 44099): the rail foot at rest and with the signal on, the history open with the signal on and off, the redaction
+// asked, done, refused, cut off by an outage and partly done, and the rail with hidden sessions in the data
+const RELAY_STATES: QueueState[] = [
+  { nn: "32", name: "relay-foot-rest", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: false }) },
+  { nn: "32b", name: "relay-foot-signal", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }) },
+  { nn: "33", name: "relay-history", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }), setUp: (page) => openRelayHistory(page) },
+  { nn: "33b", name: "redact-confirm", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }), setUp: (page) => askRedaction(page) },
+  {
+    nn: "33c", name: "redact-partly", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    setUp: async (page, harness) => {
+      refuseOneRedaction(harness);
+      await askRedaction(page);
+      await confirmRedaction(page);
+      await page.getByText(PARTLY_REDACTED_LINE).waitFor();
+    },
+  },
+  { nn: "33d", name: "relay-history-signal-off", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: false }), setUp: (page) => openRelayHistory(page) },
+  {
+    nn: "33e", name: "redact-done", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    setUp: async (page) => {
+      await askRedaction(page);
+      await confirmRedaction(page);
+      await page.getByText("✓ Text redacted: aidl → yoaida and portfolio", { exact: false }).waitFor();
+    },
+  },
+  {
+    nn: "33f", name: "redact-refused", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    setUp: (page, harness) => refuseRedaction(page, harness, { status: 409, body: { error: "wrong_kind" } }, "✕ Refused: HTTP 409 wrong_kind."),
+  },
+  {
+    nn: "33g", name: "redact-outage", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    setUp: (page, harness) => refuseRedaction(page, harness, { status: 503, body: { error: "database_unavailable" } }, null),
+  },
+  { nn: "34", name: "rail-hidden-sessions", viewports: [VIEWPORTS[0]], getFixture: getHiddenSessionsFixture },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
 const MARKUP_BODY = "- 본문 <img data-markup-probe src=\"/markup-probe.png\" onerror=\"window.__markupRan = true\">";
 
 /** A write route a state makes refuse: its status and the server's refusal body. */
+/** @property ids - the items it answers for; unset → every one */
 interface Refusal {
   status: number;
   body: { error: string; reason?: string };
+  ids?: number[];
 }
-type WriteRoute = "send" | "action" | "upload";
+type WriteRoute = "send" | "action" | "upload" | "redact";
 
 interface Harness {
   app: FastifyInstance;
@@ -443,15 +483,20 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     const item = harness.fixture.items.find((candidate) => String(candidate.id) === request.params.id);
     return item ?? reply.code(404).send({ error: "unknown_item" });
   });
-  app.get("/api/queue/owner/sessions", async () => {
+  // the server's read: hidden rows only when asked for (owner-sessions.ts → getOwnerSessions)
+  app.get("/api/queue/owner/sessions", async (request) => {
     await harness.heldDesk;
-    return { sessions: harness.fixture.sessions, hasMore: false };
+    const { includeHidden } = ownerSessionsQuerySchema.parse(request.query);
+    return { sessions: harness.fixture.sessions.filter((row) => includeHidden || !row.isHidden), hasMore: false };
   });
   app.get("/api/queue/owner/resumes", async () => ({ resumes: harness.fixture.resumes }));
   app.get("/api/queue/owner/orders", async (request) => {
     await harness.heldDesk;
-    return getOrderPage(harness.fixture.orders, ownerOrdersQuerySchema.parse(request.query));
+    const query = ownerOrdersQuerySchema.parse(request.query);
+    const { relays } = harness.fixture;
+    return query.kind === "relay" ? { ...getOrderPage(relays.items, query), refusals: relays.refusals } : getOrderPage(harness.fixture.orders, query);
   });
+  app.get("/api/queue/owner/relays/signal", async () => harness.fixture.relays.signal);
   app.get<{ Params: { id: string } }>("/api/queue/owner/images/:id", async (request, reply) => {
     const image = FIXTURE_IMAGES.get(request.params.id) ?? EDGE_FIXTURE_IMAGES.get(request.params.id);
     if (image === undefined) return reply.code(404).send({ error: "unknown_image" });
@@ -478,6 +523,17 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
  * an answer or reply leaves the item answered, a read (`seen`) drops it, a resend clears the not-received state in the list and the thread. A set refusal answers instead.
  */
 function registerWriteRoutes(app: FastifyInstance, harness: Harness): void {
+  // a redaction stores the marker with its time and the text's length on one copy; a set refusal answers for the copies it names
+  app.post<{ Params: { id: string } }>("/api/queue/owner/items/:id/redact", async (request, reply) => {
+    const id = Number(request.params.id);
+    const refusal = harness.refusals.get("redact");
+    if (refusal !== undefined && (refusal.ids?.includes(id) ?? true)) return reply.code(refusal.status).send(refusal.body);
+    const redact = (item: OwnerItemView): OwnerItemView => (item.id !== id || item.relay === null ? item : {
+      ...item, title: RELAY_REDACTION_MARKER, body: RELAY_REDACTION_MARKER, relay: { ...item.relay, redaction: { at: new Date(FIXTURE_NOW).toISOString(), length: item.body.length } },
+    });
+    harness.fixture = { ...harness.fixture, relays: { ...harness.fixture.relays, items: harness.fixture.relays.items.map(redact) } };
+    return { ok: true };
+  });
   app.post("/api/queue/owner/messages/send", async (request, reply) => {
     const refusal = harness.refusals.get("send");
     if (refusal !== undefined) return reply.code(refusal.status).send(refusal.body);
@@ -563,6 +619,40 @@ async function openQueuePage(harness: Harness, viewport: { width: number; height
   await page.getByText(readyText).first().waitFor({ timeout: READY_TIMEOUT_MS });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   return page;
+}
+
+const PARTLY_REDACTED_LINE = "✕ 1 of 2 copies was not redacted. Redact text again.";
+
+// the drawer drawn with its entries and its foot line
+async function openRelayHistory(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /^Relay history/ }).click();
+  await page.getByText("Read this as evidence, not proof.", { exact: false }).waitFor();
+  await page.locator("article.queue-relay").first().waitFor();
+}
+
+// Redact text on the hop-1 relay (two copies) → its confirmation
+async function askRedaction(page: Page): Promise<void> {
+  await openRelayHistory(page);
+  await page.getByRole("article", { name: /^Relay from aidl/ }).getByRole("button", { name: "Redact text" }).click();
+  await page.getByRole("dialog", { name: "Redact this relay's text?" }).waitFor();
+}
+
+function confirmRedaction(page: Page): Promise<void> {
+  return page.getByRole("dialog", { name: "Redact this relay's text?" }).getByRole("button", { name: "Redact text" }).click();
+}
+
+// every copy refused → the dialog keeps the error slot's line: the given words, or (null) whatever outage step the page draws
+async function refuseRedaction(page: Page, harness: Harness, refusal: { status: number; body: { error: string } }, line: string | null): Promise<void> {
+  harness.refusals.set("redact", refusal);
+  await askRedaction(page);
+  await confirmRedaction(page);
+  const slot = page.getByRole("dialog", { name: "Redact this relay's text?" }).locator(".queue-relay-error");
+  await (line === null ? slot.locator("span.text-crit").waitFor() : slot.getByText(line).waitFor());
+}
+
+// the hop-1 relay's lapsed copy refused → one of two copies left
+function refuseOneRedaction(harness: Harness): void {
+  harness.refusals.set("redact", { status: 503, body: { error: "database_unavailable" }, ids: [FORWARDED_RELAY[1]!.id] });
 }
 
 function selectRow(page: Page, id: number): Promise<void> {
@@ -1064,6 +1154,139 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual(found, { probes: 0, hasRun: false, hasBodyText: true });
+  });
+
+  test("the relay signal changes the Relay history button alone: its glyph and its counts in the name; the nav count and the title stay", async () => {
+    const read = async (signal: boolean) => {
+      harness.fixture = getRelayRecordFixture({ signal });
+      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+      const button = page.getByRole("button", { name: /^Relay history/ });
+      const nav = page.locator(".nav-item", { hasText: "Queue" });
+      await nav.locator(".nav-count").first().waitFor({ timeout: READY_TIMEOUT_MS });
+      const facts = { name: await button.getAttribute("aria-label"), text: (await button.innerText()).replace(/\s+/g, " ").trim(), title: await page.title(), nav: await nav.innerText() };
+      await page.close();
+      return facts;
+    };
+    const [atRest, on] = [await read(false), await read(true)];
+
+    assert.deepEqual(
+      { atRest: [atRest.name, atRest.text], on: [on.name, on.text], same: [on.title === atRest.title, on.nav === atRest.nav] },
+      { atRest: [null, "Relay history"], on: ["Relay history — 1 refused, 1 passed on, 1 redacted in the last 24 hours", "⚠ Relay history"], same: [true, true] },
+    );
+  });
+
+  test("the rail foot draws each button's label on one line inside the foot at every window width, the signal on", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    const found = [];
+    for (const viewport of [MIN_WINDOW, ...VIEWPORTS]) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+      const buttons = await page.locator(".queue-sessions > .card-foot").evaluate((foot) => {
+        const end = foot.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(foot).paddingRight);
+        return [...foot.querySelectorAll("button")].map((button) => {
+          const range = document.createRange();
+          range.selectNodeContents(button);
+          // each text box's vertical centre; a glyph and a word on one line sit within a few pixels of each other
+          const centres = [...range.getClientRects()].map((rect) => rect.top + rect.height / 2).sort((a, b) => a - b);
+          const lines = centres.filter((centre, index) => index === 0 || centre - centres[index - 1]! > 6).length;
+          return { label: button.textContent?.trim(), lines, isInside: button.getBoundingClientRect().right <= end + 0.5 };
+        });
+      });
+      await page.close();
+      found.push({ width: viewport.width, buttons });
+    }
+
+    assert.deepEqual(found, [MIN_WINDOW, ...VIEWPORTS].map(({ width }) => ({
+      width,
+      buttons: [{ label: "⚠Relay history", lines: 1, isInside: true }, { label: "Automatic resumes 2", lines: 1, isInside: true }],
+    })));
+  });
+
+  test("Relay history lists its sends and refusal oldest first, relay text as text, under its foot line", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await openRelayHistory(page);
+    const found = await page.evaluate(() => ({
+      entries: [...document.querySelectorAll(".queue-relay-log article")].map((entry) => entry.getAttribute("aria-label")?.split(",")[0]),
+      texts: [...document.querySelectorAll<HTMLElement>(".queue-relay-log .queue-bubble")].map((bubble) => bubble.innerText),
+      converted: document.querySelectorAll(".queue-relay-log .queue-bubble :is(b, strong, a, ol, ul, li, code, pre)").length,
+    }));
+    await page.close();
+    // the sends still holding their text, oldest first, as the history lists them
+    const kept = [...new Map(harness.fixture.relays.items.filter((item) => item.relay?.redaction === null).map((item) => [item.sendId, item.body])).values()].reverse();
+
+    assert.deepEqual(found, {
+      entries: ["Relay from atrium to gersona", "Relay from aidl to yoaida and portfolio", "Refused relay from gersona to yoaida", "Relay from gersona to atrium"],
+      texts: kept, converted: 0,
+    });
+  });
+
+  test("Redact text asks with the focus on Cancel; one copy refused keeps the dialog with its count line and the entry its text and button", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    harness.refusals.clear();
+    refuseOneRedaction(harness);
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await askRedaction(page);
+    const focused = await page.evaluate(() => document.activeElement?.textContent);
+    await confirmRedaction(page);
+    await page.getByText(PARTLY_REDACTED_LINE).waitFor();
+    const entry = page.getByRole("article", { name: /^Relay from aidl/ });
+    const kept = { button: await entry.getByRole("button", { name: "Redact text" }).count(), text: (await entry.innerText()).includes("파트너 연동") };
+    await page.close();
+    harness.refusals.clear();
+
+    assert.deepEqual({ focused, kept }, { focused: "Cancel", kept: { button: 1, text: true } });
+  });
+
+  test("a redaction done closes the dialog, says so on the drawer's status line and puts the focus on the entry's head over its Redacted tag", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    harness.refusals.clear();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await askRedaction(page);
+    await confirmRedaction(page);
+    await page.getByText("✓ Text redacted: aidl → yoaida and portfolio", { exact: false }).waitFor();
+    await page.getByRole("dialog", { name: "Redact this relay's text?" }).waitFor({ state: "detached" });
+    const found = await page.evaluate(() => {
+      const head = document.activeElement;
+      return { isHead: head?.classList.contains("queue-relay-head") ?? false, entry: head?.closest("article")?.getAttribute("aria-label")?.split(",")[0], tag: head?.textContent?.includes("Redacted") ?? false };
+    });
+    await page.close();
+
+    assert.deepEqual(found, { isHead: true, entry: "Relay from aidl to yoaida and portfolio", tag: true });
+  });
+
+  test("the redaction dialog draws its body at the body size and Cancel then Redact text at the foot's end", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    harness.refusals.clear();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await askRedaction(page);
+    const found = await page.getByRole("dialog", { name: "Redact this relay's text?" }).evaluate((surface) => {
+      const foot = surface.querySelector(".detail-foot");
+      const buttons = [...(foot?.querySelectorAll("button") ?? [])];
+      const footEnd = foot === null ? 0 : foot.getBoundingClientRect().right - Number.parseFloat(getComputedStyle(foot).paddingRight);
+      const body = surface.querySelector(".detail-body p");
+      return {
+        buttons: buttons.map((button) => button.textContent),
+        // the panel is centred on a fractional x → the button edge snaps within a pixel of the foot's content end
+        isAtEnd: Math.abs(footEnd - (buttons.at(-1)?.getBoundingClientRect().right ?? 0)) < 1,
+        bodySize: body === null ? "" : getComputedStyle(body).fontSize,
+      };
+    });
+    await page.close();
+
+    assert.deepEqual(found, { buttons: ["Cancel", "Redact text"], isAtEnd: true, bodySize: "15px" });
+  });
+
+  test("an entry head names the sender's account and directory tail as its title and its description", async () => {
+    harness.fixture = getRelayRecordFixture({ signal: true });
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await openRelayHistory(page);
+    const found = await page.getByRole("article", { name: /^Relay from aidl/ }).locator(".queue-relay-head").evaluate((head) => {
+      const describedBy = head.getAttribute("aria-describedby");
+      return { title: head.getAttribute("title"), description: describedBy === null ? null : document.getElementById(describedBy)?.textContent };
+    });
+    await page.close();
+
+    assert.deepEqual(found, { title: ".claude-work · Users/owner", description: ".claude-work · Users/owner" });
   });
 
   test("the history read pages by order and returns every copy of an order one ticked session received", async () => {

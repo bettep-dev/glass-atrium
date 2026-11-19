@@ -195,6 +195,9 @@ run_install() {
   # dry-run (mutation-free staging).
   wire_hooks
 
+  # the owner queue's MCP server in every profile — printed always, written only on --approve-profile-writes
+  put_queue_mcp_registration add
+
   # legacy-farm migration AFTER wire_hooks — repoint-first-THEN-sweep: the
   # settings.json bindings above already point at the in-place hooks dir, so
   # dropping the legacy bare-name-farm symlinks opens no hook-blackout window.
@@ -675,6 +678,7 @@ run_uninstall() {
   # parity with install's additive wiring: un-wire ONLY the Atrium hook
   # bindings (matcher + Atrium-path scoped, backed up, additive-safe).
   unwire_hooks
+  put_queue_mcp_registration remove
 
   # inverse of install's preflight_persist_rc_line: strip the ` # glass-atrium`-marked
   # PATH-export lines from ~/.zshrc + ~/.bash_profile (marker-scoped, backed up first,

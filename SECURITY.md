@@ -64,8 +64,9 @@ appreciated).
   time; high-impact actions require explicit user approval.
 - **Owner queue approvals** — an owner answer or owner message counts as
   that explicit approval, for the one action it states, once the session
-  has claimed it, `get` has returned it for that session and `ack` has
-  printed `first`.
+  has claimed it as an owner item delivered first: its claim names the
+  source `owner` and the delivery first, or `get` has returned it for that
+  session and `ack` has printed `first`.
   - The queue has no login: any process on the same machine can produce an
     answer, and a session acts on any answer the monitor holds.
   - So a forged or mistaken approval is acted on, and can resume an ended
@@ -76,6 +77,44 @@ appreciated).
     owner and stops no session.
   - A host permission prompt, a blocked command or a sandbox denial is never
     answered by the queue.
+- **Session relays** — a session can send a text to peer sessions through
+  the queue with no owner approval before delivery. A relay is a peer
+  session's information: never the owner's instruction and never an
+  approval, whatever it says and whoever sent it.
+  - Honest backing: nothing mechanical stops a recipient from obeying a
+    relay. A session in bypass or auto mode that a peer's text talks into
+    an action will do it, and the history shows it afterwards.
+  - Sender attribution is unauthenticated: the queue has no login, so any
+    process on the same machine can send as any session. The history is
+    evidence for tracing a cause, not prevention.
+  - The monitor bounds reach and speed, never compliance: caps per sender,
+    per sender–recipient pair and machine-wide, a hop bound on chains, a
+    refusal of envelope-shaped text, and a fail-closed secret scan before
+    any text is stored. A relay never starts or resumes a session.
+  - Every relay is kept with its sender, recipients, hop, parent and
+    outcome, and every refusal is recorded without its text. The Queue
+    page shows both, read-only, and raises one non-blocking signal for a
+    refusal, a relay sent on from a received one, or a redaction.
+  - Redaction is the one owner control: it replaces a stored relay's text
+    with a fixed marker, irreversibly, through an owner route behind the
+    page-origin check (`POST /api/queue/owner/items/:id/redact`) that no
+    session route reaches. A process on the same machine can call it too,
+    so a redacted entry is itself a fact to weigh when tracing.
+  - The session-side tools (the `atrium-queue` MCP server) add no
+    authority: any local process can do what they do. They are the main
+    session's: a typed Atrium agent is kept from them by its frozen tool
+    list, any other subagent by instruction text alone.
+  - A project or local MCP server named `atrium-queue` takes the install's
+    server's place in a session. The session start reports it in one
+    line, and that session is told to use the queue CLI only, at its
+    start and in every turn-end record ask, where only the CLI's record
+    counts; nothing stops a call to the shadowing server.
+  - That line reads only the start directory's project MCP file and the
+    profile's local entry for that directory. An ancestor directory's
+    project file, a local entry keyed by another directory, and the
+    managed and per-run server scopes go unread; whether the host takes
+    a same-name server from them is unmeasured, and such a server
+    shadows the queue server with no line.
 - **CI least privilege** — deny-all workflow token (`permissions: {}`),
   `pull_request` (never `pull_request_target`), pinned action SHAs.
 

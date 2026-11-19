@@ -9,6 +9,8 @@
     "  deny is evaluated first, then ask, then allow — first match wins (deny → ask → allow).",
     "APPLY: merge ONLY the \"permissions\" object into your existing ~/.claude/settings.json (never wipe",
     "  other keys). wire_hooks (lib/ga-config-hooks.sh) never touches permissions, so this stays manual.",
+    "  One exception, outside wire_hooks: put_queue_mcp_registration (same file) adds and removes only the",
+    "  owner queue tools' own allow lines, one per tool, after printing them and only on --approve-profile-writes.",
     "LIVE-VERIFY (see the \"live_verify\" key): confirm rm is blocked at the PERMISSION layer, not merely",
     "  by the dangerous-command hook.",
     "HOOKS: the \"hooks\" block below documents the edit-time syntax gate (validate-edit-syntax.sh), a",

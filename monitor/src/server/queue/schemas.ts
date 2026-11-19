@@ -9,6 +9,9 @@ const MAX_LINKED_DOCS = 20;
 const OPTION_TEXT = { label: 200, pros: 800, cons: 800 } as const;
 
 const MAX_TEXT = 20_000;
+/** queue_items_relay_check → char_length("body") <= 4000; queue.schema.test.ts binds the two */
+export const RELAY_TEXT_MAX = 4_000;
+const RELAY_LIMIT = { RECIPIENTS: 5, LINKED_DOCS: 5 } as const;
 // queue_items.title VARCHAR(200) → Postgres counts code points
 export const ITEM_TITLE_MAX = 200;
 // code points, as Zod's max and the VARCHAR(100) column both count → queue.schema.test.ts binds this schema to the column
@@ -39,6 +42,12 @@ const sessionName = oneLineText(SESSION_NAME_MAX);
 // Postgres uuid ignores letter case → compare lower-cased
 const uniqueIds = (ids: string[]) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length;
 const attachmentIds = z.array(z.uuid()).max(MAX_ATTACHMENTS).refine(uniqueIds, "image ids must be unique").default([]);
+const linkedDocIds = (max: number) =>
+  z
+    .array(z.int().min(1).max(Number.MAX_SAFE_INTEGER))
+    .max(max)
+    .refine((ids) => new Set(ids).size === ids.length, "linked doc ids must be unique")
+    .default([]);
 
 export const PERMISSION_HINTS = ["default", "acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"] as const;
 
@@ -50,7 +59,16 @@ export const registerBodySchema = z.strictObject({
   permissionHint: z.enum(PERMISSION_HINTS).optional(),
   name: sessionName.optional(),
   derivedName: sessionName.optional(),
+  // The SessionStart payload's own path → kept only under the row's config dir (registry.ts → getTranscriptPath)
+  transcriptPath: absolutePath.optional(),
+  // Absent → not a probe: the flag comes from each register's own declaration
+  isProbe: z.boolean().optional(),
 });
+
+// A register with no cwd: the name-only update a turn-end hook sends once the transcript has a title (registry.ts → putSessionName)
+export const nameUpdateBodySchema = z.strictObject({ sessionId, pid, derivedName: sessionName });
+
+export const registerRouteBodySchema = z.union([registerBodySchema, nameUpdateBodySchema]);
 
 export const deregisterBodySchema = z.strictObject({
   sessionId,
@@ -81,11 +99,7 @@ const itemFields = {
   sessionId,
   title: requiredText(ITEM_TITLE_MAX),
   body: requiredText(MAX_TEXT),
-  linkedDocIds: z
-    .array(z.int().min(1).max(Number.MAX_SAFE_INTEGER))
-    .max(MAX_LINKED_DOCS)
-    .refine((ids) => new Set(ids).size === ids.length, "linked doc ids must be unique")
-    .default([]),
+  linkedDocIds: linkedDocIds(MAX_LINKED_DOCS),
   isFreeTextAllowed: z.boolean(),
 };
 
@@ -126,7 +140,7 @@ export const ownerListQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(MAX_LIST_LIMIT).default(100),
 });
 
-export const ownerSessionsQuerySchema = z.strictObject({ profile: profileLabel.optional() });
+export const ownerSessionsQuerySchema = z.strictObject({ profile: profileLabel.optional(), includeHidden: z.stringbool().default(false) });
 
 export const messageBodySchema = z.strictObject({
   sessionIds: z
@@ -138,11 +152,19 @@ export const messageBodySchema = z.strictObject({
   attachmentIds,
 });
 
+// A recipient is named by an id prefix or its shown name (owner-sessions.ts → getPeerRows); no image, no caller-chosen kind
+export const relayBodySchema = z.strictObject({
+  sessionId,
+  recipients: z.array(sessionName).min(1).max(RELAY_LIMIT.RECIPIENTS),
+  text: requiredText(RELAY_TEXT_MAX),
+  linkedDocIds: linkedDocIds(RELAY_LIMIT.LINKED_DOCS),
+});
+
 export const imageUploadQuerySchema = z.strictObject({ name: oneLineText(IMAGE_NAME_MAX) });
 
 export const imageParamsSchema = z.strictObject({ id: z.uuid() });
 
-// "<answered-at epoch µs>:<first copy id>" from the previous page → 18 digits each stay inside int8
+// "<order time epoch µs>:<first copy id>" from the previous page → 18 digits each stay inside int8
 const orderCursor = z
   .string()
   .regex(/^\d{1,18}:\d{1,18}$/, "must be a cursor the history read returned")
@@ -151,7 +173,9 @@ const orderCursor = z
     return { at: BigInt(at), id: BigInt(id) };
   });
 
+// The thread a history read pages: the owner's orders, or relays
 export const ownerOrdersQuerySchema = z.strictObject({
+  kind: z.enum(["order", "relay"]).default("order"),
   sessionIds: z
     .string()
     .transform((value) => value.split(","))
@@ -166,6 +190,7 @@ export const recentResumesQuerySchema = z.strictObject({
 });
 
 export type RegisterBody = z.infer<typeof registerBodySchema>;
+export type NameUpdateBody = z.infer<typeof nameUpdateBodySchema>;
 export type DeregisterBody = z.infer<typeof deregisterBodySchema>;
 export type PostItemBody = z.infer<typeof postItemBodySchema>;
 export type AckBody = z.infer<typeof ackBodySchema>;
@@ -176,3 +201,4 @@ export type OwnerOrdersQuery = z.infer<typeof ownerOrdersQuerySchema>;
 export type RecentResumesQuery = z.infer<typeof recentResumesQuerySchema>;
 export type OwnerSessionsQuery = z.infer<typeof ownerSessionsQuerySchema>;
 export type MessageBody = z.infer<typeof messageBodySchema>;
+export type RelayBody = z.infer<typeof relayBodySchema>;

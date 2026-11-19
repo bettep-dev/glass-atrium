@@ -192,6 +192,8 @@ ga_init_env() {
   # installer deploys the hook FILES; the user wires them via these bindings. The doctor check (run_doctor
   # §6) reads settings.json read-only + WARNS per missing binding (a deployed-but-unwired hook is dormant).
   readonly SETTINGS_JSON="${TARGET_HOME}/settings.json"
+  # the owner queue's MCP adapter as installed; every profile's user-scope entry runs it (put_queue_mcp_registration)
+  readonly QUEUE_MCP_ADAPTER="${GA_ROOT}/scripts/atrium-queue-mcp.sh"
   # latest harness integrity verdict (lib/ga-doctor.sh → set_integrity_verdict); hooks/inject-session-context.sh
   # reads the same path, pinned by hooks/test/inject-session-context.bats
   readonly INTEGRITY_VERDICT="${GA_DATA_ROOT}/data/integrity/last-verdict"
@@ -371,6 +373,9 @@ ga_init_env() {
   SCAN_ONLY=false
   # shellcheck disable=SC2034
   PURGE_CONFIG=false
+  # the owner's explicit approval of the profile-level writes (put_queue_mcp_registration)
+  # shellcheck disable=SC2034
+  APPROVE_PROFILE_WRITES=false
   # shellcheck disable=SC2034
   VERIFY_CLEAN=false
   # shellcheck disable=SC2034  # consumed by the uninstall full-removal CLI gate (glass-atrium)
@@ -388,6 +393,27 @@ ga_init_env() {
 # Write in a childless subshell → no SIGCHLD can interrupt it (bash 3.2 EINTR).
 # Write status ignored → the caller's code path, never the write, decides the exit.
 log() { (printf '%s\n' "$*") >&2 || true; }
+
+# The queue MCP server as its adapter announces it → line 1 the server name, then one tool name per line; the single
+# source the installer, updater and doctor read — the name's owner is scripts/lib/queue-session.sh, the tools' the
+# adapter. Non-zero when the adapter answers no name or no tool. Call it only inside `$( )`: bash 3.2 fires an
+# inherited ERR trap in a substitution even under `if !`, so the trap cleared here must be that subshell's.
+get_queue_mcp_identity() {
+  local identity
+  trap - ERR
+  [[ -r "${GA_ROOT}/hooks/lib/session-entrypoint.sh" && -r "${QUEUE_MCP_ADAPTER}" ]] || return 1
+  identity="$(
+    # shellcheck source=hooks/lib/session-entrypoint.sh
+    source "${GA_ROOT}/hooks/lib/session-entrypoint.sh"
+    # shellcheck disable=SC2312  # pipefail carries the adapter status to the || below
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+      '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+      | CLAUDE_CODE_ENTRYPOINT="${OWNER_FACING_ENTRYPOINT}" /bin/bash "${QUEUE_MCP_ADAPTER}" \
+      | jq -rs '(.[] | select(.id == 1) | .result.serverInfo.name), (.[] | select(.id == 2) | .result.tools[].name)'
+  )" || return 1
+  [[ "${identity}" == *$'\n'* ]] || return 1
+  printf '%s\n' "${identity}"
+}
 
 die() {
   (printf 'FATAL: %s\n' "$*") >&2 || true

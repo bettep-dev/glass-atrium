@@ -88,7 +88,7 @@ before(async () => {
     },
     registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
     device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
-    queue: { port: 16145, homeDir: path.join(fixtureRoot, "home"), cliPath: "/opt/atrium-test/scripts/atrium-queue.sh", imageDir: path.join(fixtureRoot, "images") },
+    queue: { port: 16145, homeDir: path.join(fixtureRoot, "home"), cliPath: "/opt/atrium-test/scripts/atrium-queue.sh", imageDir: path.join(fixtureRoot, "images"), scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" },
   });
   await remote.ready();
   // documents are created by local agents only (POST /api/clauded-docs is agent class) → seeded over a loopback-style app

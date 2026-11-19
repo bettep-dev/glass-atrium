@@ -17,9 +17,12 @@ SOCKET_AUTH="tok-81f3c2e9d0b7a6f5"
 
 setup() {
   # the ambient session's own CLAUDE_* values must never reach a hook under test
-  unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET \
+  unset CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CONFIG_DIR CLAUDE_CODE_MESSAGING_SOCKET ATRIUM_QUEUE_PROBE \
     CLAUDE_CODE_MESSAGING_TOKEN ATRIUM_MONITOR_PORT CLAUDE_JOB_DIR
   export GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
+  # the profile config the shadowing check reads → never the running user's own
+  export HOME="${BATS_TEST_TMPDIR}/home"
+  export GA_DATA_ROOT="${HOME}/.glass-atrium"
   # no secrets dir: a session needs nothing provisioned
   mkdir -p "${BATS_TEST_TMPDIR}/bin"
   export CLAUDE_CODE_SESSION_ID="${SESSION_ID}"
@@ -111,6 +114,35 @@ run_deregister() {
     echo "${body}"
     return 1
   }
+}
+
+@test "register drops each owner record whose process is gone or no longer runs with the recorded start, and keeps a live one" {
+  start_stub
+  local lib="${GA}/scripts/lib/queue-session.sh" owners gone row name pid record
+  owners="$(bash -c 'source "$1" && queue_get_root' _ "${lib}")/data/queue/owners"
+  (exit 0) &
+  gone=$!
+  wait "${gone}"
+  mkdir -p "${owners}"
+  printf '%s|%s\n' "$(bash -c 'source "$1" && queue_get_start_time "$2"' _ "${lib}" "${PPID}")" "${SESSION_ID}" >"${owners}/${PPID}"
+  printf '%s|%s\n' "Mon Jan  1 00:00:00 2001" "${SESSION_ID}" >"${owners}/1"
+  printf '%s|%s\n' "Mon Jan  1 00:00:00 2001" "${SESSION_ID}" >"${owners}/${gone}"
+  printf 'kept\n' >"${owners}/notes"
+  export CLAUDE_PID=$$
+  run_register
+  [[ "${status}" -eq 0 && -s "${owners}/$$" ]] || {
+    echo "status=${status} ${output}${stderr} $(ls "${owners}")"
+    return 1
+  }
+  # Row shape: name|record file|kept or dropped
+  for row in "live with its start|${PPID}|kept" "pid reused since|1|dropped" "process gone|${gone}|dropped" \
+    "no pid name|notes|kept"; do
+    IFS='|' read -r name pid record <<<"${row}"
+    [[ "${record}" == kept && -f "${owners}/${pid}" || "${record}" == dropped && ! -e "${owners}/${pid}" ]] || {
+      echo "row ${name}: $(ls "${owners}")"
+      return 1
+    }
+  done
 }
 
 @test "register takes the cwd and session id the hook payload names, else the process cwd and the session env" {
@@ -395,6 +427,173 @@ run_deregister() {
   run_deregister
   [[ "$(jq -r '.path' "${BATS_TEST_TMPDIR}/requests.log")" == $'/api/queue/sessions/register\n/api/queue/sessions/deregister' ]] || {
     cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
+}
+
+@test "after a register names a new session id for this Claude process, the session id resolves to it, not to the session env" {
+  start_stub
+  local new_id="9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d" row label pid expected got
+  sleep 300 3>&- &
+  local owner=$!
+  sleep 300 3>&- &
+  local other=$!
+  export CLAUDE_PID="${owner}"
+  run_register "$(jq -nc --arg id "${new_id}" '{hook_event_name: "SessionStart", source: "clear", session_id: $id}')"
+  for row in "same process|${owner}|${new_id}" "another process|${other}|${SESSION_ID}"; do
+    IFS='|' read -r label pid expected <<<"${row}"
+    got="$(CLAUDE_PID="${pid}" bash -c 'source "$1"; queue_get_session_id' _ "${GA}/scripts/lib/queue-session.sh")"
+    [[ "${got}" == "${expected}" ]] || {
+      echo "row ${label}: ${got}"
+      kill "${owner}" "${other}"
+      return 1
+    }
+  done
+  kill "${owner}" "${other}"
+}
+
+# <function> <args…> → one queue-session.sh function, run in a strict shell as its sourcing hooks run it
+run_lib() {
+  # shellcheck disable=SC2016  # the inner script expands its own arguments
+  run --separate-stderr bash -c 'set -Eeuo pipefail; source "$1"; shift; "$@"' _ "${GA}/scripts/lib/queue-session.sh" "$@"
+}
+
+@test "register sends the SessionStart payload's transcript path, and declares a probe only when the probe variable is 1" {
+  start_stub
+  local transcript="${BATS_TEST_TMPDIR}/projects/p/${SESSION_ID}.jsonl" row label value expected sent
+  for row in "unset||false" "set to 1|1|true" "set to another value|yes|false"; do
+    IFS='|' read -r label value expected <<<"${row}"
+    if [[ -n "${value}" ]]; then export ATRIUM_QUEUE_PROBE="${value}"; else unset ATRIUM_QUEUE_PROBE; fi
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    run_register "$(jq -nc --arg t "${transcript}" '{hook_event_name: "SessionStart", source: "startup", transcript_path: $t}')"
+    sent="$(request_body /api/queue/sessions/register | jq -c '[.transcriptPath, .isProbe]')"
+    [[ "${sent}" == "[\"${transcript}\",${expected}]" ]] || {
+      echo "row ${label}: ${sent}"
+      return 1
+    }
+  done
+}
+
+@test "the item status read names a posted item's status, gone for one the session did not post, and fails apart on no reply and an unusable one" {
+  local row label code body expected_status expected_out
+  local own="{\"id\":41,\"kind\":\"decision\",\"sessionId\":\"${SESSION_ID}\",\"status\":\"answered\"}"
+  for row in "posted item|200|${own}|0|answered" "unknown item|404|{\"error\":\"unknown_item\"}|0|gone" \
+    "another session's item|200|${own/${SESSION_ID}/0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d}|0|gone" \
+    "an owner message|200|${own/decision/message}|0|gone" "a relay|200|${own/decision/relay}|0|gone" \
+    "a failing monitor|500|{\"error\":\"internal\"}|2|" "a garbled reply|200|not json|2|" "a down monitor|down||1|"; do
+    IFS='|' read -r label code body expected_status expected_out <<<"${row}"
+    stop_stub
+    if [[ "${code}" == down ]]; then
+      export ATRIUM_MONITOR_PORT=1
+    else
+      set_reply "${code}" "${body}"
+      start_stub
+    fi
+    run_lib queue_get_item_status "${SESSION_ID}" 41
+    [[ "${status}" -eq "${expected_status}" && "${output}" == "${expected_out}" ]] || {
+      echo "row ${label}: status=${status} output=${output} stderr=${stderr}"
+      return 1
+    }
+  done
+  [[ "$(jq -r '.path' "${BATS_TEST_TMPDIR}/requests.log")" == "/api/queue/items/41?sessionId=${SESSION_ID}" ]] || {
+    cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
+}
+
+@test "the turn record lands in this session's set with a write time no earlier than the call, and a non-UUID id names no record file" {
+  local before written
+  before="$(perl -MTime::HiRes=time -MPOSIX=strftime -e '$t = time; printf "%s.%03dZ\n", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000')"
+  run_lib queue_put_record "${SESSION_ID}" posted 41 42
+  [[ "${status}" -eq 0 ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  written="$(bash -c 'source "$1"; queue_get_record_time "$2"' _ "${GA}/scripts/lib/queue-session.sh" "${SESSION_ID}")"
+  [[ "${written}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$ && ! "${written}" < "${before}" ]] || {
+    echo "written=${written} before=${before}"
+    return 1
+  }
+  local id
+  for id in "../../escape" "not-a-uuid" ""; do
+    run_lib queue_put_record "${id}" nothing
+    [[ "${status}" -ne 0 && -z "$(find "${GA_ROOT}/.." -name '*record*' -not -path "*/awaiting/${SESSION_ID}/*" 2>/dev/null)" ]] || {
+      echo "id [${id}]: status=${status} $(find "${GA_ROOT}/.." -name '*record*')"
+      return 1
+    }
+  done
+}
+
+@test "a turn end sends the transcript's title as a name-only update, once per title, and nothing while no title exists" {
+  start_stub
+  local transcript="${BATS_TEST_TMPDIR}/transcript.jsonl" row label title sent
+  : >"${transcript}"
+  for row in "no title|" "a first title|Fix the flaky sweep test" "the same title again|" "a renamed session|queue sessions"; do
+    IFS='|' read -r label title <<<"${row}"
+    case "${label}" in
+      "a first title") printf '{"type":"ai-title","aiTitle":"Fix the flaky sweep test","sessionId":"%s"}\n' "${SESSION_ID}" >>"${transcript}" ;;
+      "a renamed session") printf '{"type":"custom-title","customTitle":"queue sessions","sessionId":"%s"}\n' "${SESSION_ID}" >>"${transcript}" ;;
+    esac
+    : >"${BATS_TEST_TMPDIR}/requests.log"
+    run_lib queue_put_session_name "${transcript}" "${SESSION_ID}"
+    sent="$(request_body /api/queue/sessions/register)"
+    if [[ -z "${title}" ]]; then
+      [[ "${status}" -eq 0 && -z "${sent}" ]] || {
+        echo "row ${label}: status=${status} sent=${sent}"
+        return 1
+      }
+    else
+      [[ "${status}" -eq 0 && "$(jq -c . <<<"${sent}")" == "{\"sessionId\":\"${SESSION_ID}\",\"pid\":4242,\"derivedName\":\"${title}\"}" ]] || {
+        echo "row ${label}: status=${status} sent=${sent}"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "the pointer line names peer relays apart from owner answers or messages, and a relay alone never as the owner's" {
+  start_stub
+  local row label reply want lacks
+  for row in "owner only|{\"answeredWaiting\":2,\"relayWaiting\":0}|2 owner queue answer(s) or message(s) wait|peer relay" \
+    "relay only|{\"answeredWaiting\":1,\"relayWaiting\":1}|1 peer relay(s)|owner queue answer(s) or message(s)" \
+    "both|{\"answeredWaiting\":3,\"relayWaiting\":1}|2 owner queue answer(s) or message(s) and 1 peer relay(s) wait|[ATRIUM-QUEUE] 3 "; do
+    IFS='|' read -r label reply want lacks <<<"${row}"
+    set_reply 200 "${reply}"
+    run_register
+    [[ "${status}" -eq 0 && "${#lines[@]}" -eq 1 && "${output}" == *"${want}"* && "${output}" != *"${lacks}"* ]] || {
+      echo "row ${label}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a start directory whose project or local MCP config names a server atrium-queue prints one shadowing line, and no other config does" {
+  start_stub
+  local dir="${BATS_TEST_TMPDIR}/project" row label lines_want
+  export CLAUDE_CONFIG_DIR="${BATS_TEST_TMPDIR}/profile"
+  for row in "project file naming it|1" "local config naming it|1" "project file naming another server|0" "no config|0"; do
+    IFS='|' read -r label lines_want <<<"${row}"
+    mkdir -p "${dir}" "${CLAUDE_CONFIG_DIR}"
+    printf '{}\n' >"${CLAUDE_CONFIG_DIR}/.claude.json"
+    printf '{"mcpServers":{}}\n' >"${dir}/.mcp.json"
+    case "${label}" in
+      "project file naming it") printf '{"mcpServers":{"atrium-queue":{"command":"x"}}}\n' >"${dir}/.mcp.json" ;;
+      "local config naming it") jq -nc --arg d "${dir}" '{projects: {($d): {mcpServers: {"atrium-queue": {command: "x"}}}}}' \
+        >"${CLAUDE_CONFIG_DIR}/.claude.json" ;;
+      "project file naming another server") printf '{"mcpServers":{"atrium-queue-dev":{"command":"x"}}}\n' >"${dir}/.mcp.json" ;;
+    esac
+    run_register "$(jq -nc --arg cwd "${dir}" '{hook_event_name: "SessionStart", source: "startup", cwd: $cwd}')"
+    [[ "${status}" -eq 0 && "$(grep -c 'shadows' <<<"${output}")" == "${lines_want}" ]] || {
+      echo "row ${label}: status=${status} ${output}"
+      return 1
+    }
+  done
+  printf '{"mcpServers":{"atrium-queue":{"command":"x"}}}\n' >"${dir}/.mcp.json"
+  stop_stub
+  export ATRIUM_MONITOR_PORT=1
+  run_register "$(jq -nc --arg cwd "${dir}" '{hook_event_name: "SessionStart", source: "startup", cwd: $cwd}')"
+  [[ "${status}" -eq 0 && "${output}" == "[ATRIUM-QUEUE] harness:"*"shadows"*"${GA_ROOT}/scripts/atrium-queue.sh"* ]] || {
+    echo "monitor down: ${output}"
     return 1
   }
 }

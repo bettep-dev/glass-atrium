@@ -1,10 +1,11 @@
-// Queue items, session side: post, get by id (owning session only), and the count-only badge numbers.
+// Queue items, session side: post, get by id (owning session only), the source facts of a pull claim, and the count-only badge numbers.
 
-import { Prisma, type QueueItem } from "../../generated/prisma/client.js";
+import { Prisma, type QueueItem, type QueueItemKind } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import type { PullClaim } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type SessionImageView, getSessionImageViews } from "./images.js";
-import { DEVIATION_STATUSES } from "./owner-views.js";
+import { DEVIATION_STATUSES, type RelaySender, type RelaySenderRow, SENDER_ARGS, toRelaySender } from "./owner-views.js";
 import { lockSession } from "./registry.js";
 import type { PostItemBody } from "./schemas.js";
 
@@ -28,7 +29,13 @@ export interface QueueItemView {
   deliveredAt: string | null;
   /** The owner's images on this order or reply, each a local file the session reads. */
   attachments: SessionImageView[];
+  /** From the stored kind: a relay is a peer session's text, every other item carries the owner's answer or message. */
+  source: "owner" | "peer";
+  /** A relay's sender: provenance facts plus the sender-controlled name kept apart from them; null on every other kind. */
+  sender: RelaySender | null;
 }
+
+type SourceFacts = Pick<QueueItemView, "source" | "sender">;
 
 /** Badge numbers only: awaiting-owner items, deviations, and the oldest awaiting item's age. */
 export interface QueueCount {
@@ -48,11 +55,35 @@ export async function createItem(body: PostItemBody): Promise<{ id: number }> {
   });
 }
 
+/** A relay's first fetch is stamped → a relay read without a claim still counts toward its reader's hop. */
 export async function getItemOrThrow(id: number, sessionId: string, imageDir: string): Promise<QueueItemView> {
-  const item = await getPrisma().queueItem.findFirst({ where: { id: BigInt(id), sessionId }, include: { images: ITEM_IMAGES_ARGS } });
+  const item = await getPrisma().queueItem.findFirst({
+    where: { id: BigInt(id), sessionId },
+    include: { images: ITEM_IMAGES_ARGS, fromSession: SENDER_ARGS },
+  });
   // another session's item answers the same as a missing one → no existence leak
   if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found for this session");
-  return { ...toItemView(item), attachments: getSessionImageViews(imageDir, item.images) };
+  if (item.kind === "relay" && item.relayFetchedAt === null) {
+    await getPrisma().queueItem.updateMany({ where: { id: item.id, relayFetchedAt: null }, data: { relayFetchedAt: new Date() } });
+  }
+  return { ...toItemView(item), attachments: getSessionImageViews(imageDir, item.images), ...getSourceFacts(item) };
+}
+
+/** A pull claim with the facts that tell a peer's relay from an owner item before the session fetches it. */
+export type ClaimView = PullClaim & SourceFacts;
+
+export async function getClaimViews(claims: PullClaim[]): Promise<ClaimView[]> {
+  const items = await getPrisma().queueItem.findMany({
+    where: { id: { in: claims.map((claim) => BigInt(claim.id.item)) } },
+    select: { id: true, kind: true, fromSession: SENDER_ARGS },
+  });
+  const byId = new Map(items.map((item) => [Number(item.id), item]));
+  return claims.map((claim) => {
+    const item = byId.get(claim.id.item);
+    // claimed rows are never deleted → a miss is a broken invariant, not a caller error
+    if (item === undefined) throw new Error(`claimed queue item ${claim.id.item} not found`);
+    return { ...claim, ...getSourceFacts(item) };
+  });
 }
 
 /** An answered item waits for its session's pull → never a deviation. */
@@ -62,12 +93,13 @@ export async function getCount(): Promise<QueueCount> {
       count(*) FILTER (WHERE "status" = 'open') AS "awaiting",
       count(*) FILTER (WHERE "status"::text IN (${Prisma.join(DEVIATION_STATUSES)})) AS "deviations",
       floor(extract(epoch FROM now() - min("asked_at") FILTER (WHERE "status" = 'open')))::int AS "oldest_age_seconds"
-    FROM "monitor"."queue_items"
-    WHERE "status" NOT IN ('delivered', 'seen', 'withdrawn')`;
+    FROM "monitor"."queue_items" i
+    WHERE "status" NOT IN ('delivered', 'seen', 'withdrawn') AND "kind"::text <> 'relay'
+      AND NOT EXISTS (SELECT 1 FROM "monitor"."queue_sessions" s WHERE s."session_id" = i."session_id" AND s."is_probe")`;
   return { awaiting: Number(row?.awaiting ?? 0), deviations: Number(row?.deviations ?? 0), oldestAgeSeconds: row?.oldest_age_seconds ?? null };
 }
 
-async function assertLinkedDocsExist(tx: Prisma.TransactionClient, linkedDocIds: number[]): Promise<void> {
+export async function assertLinkedDocsExist(tx: Prisma.TransactionClient, linkedDocIds: number[]): Promise<void> {
   if (linkedDocIds.length === 0) return;
   const [row] = await tx.$queryRaw<Array<{ found: number }>>`
     SELECT count(*)::int AS "found" FROM "monitor"."documents" WHERE "id" = ANY(${linkedDocIds.map(BigInt)}::bigint[])`;
@@ -87,7 +119,11 @@ function buildItemRow(body: PostItemBody): Prisma.QueueItemUncheckedCreateInput 
   return { ...shared, options: body.options, recommendedCode: body.recommendedCode, isApprovalClass: body.isApprovalClass };
 }
 
-function toItemView(item: QueueItem): Omit<QueueItemView, "attachments"> {
+function getSourceFacts(item: { kind: QueueItemKind; fromSession: RelaySenderRow | null }): SourceFacts {
+  return { source: item.kind === "relay" ? "peer" : "owner", sender: item.fromSession === null ? null : toRelaySender(item.fromSession) };
+}
+
+function toItemView(item: QueueItem): Omit<QueueItemView, "attachments" | "source" | "sender"> {
   return {
     id: Number(item.id),
     kind: item.kind,

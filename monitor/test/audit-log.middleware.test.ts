@@ -4,6 +4,7 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import "dotenv/config";
 
@@ -333,6 +334,8 @@ const NON_AUDITED_MUTATIONS: ReadonlySet<string> = new Set([
   "/api/queue/items/:id/withdraw",
   // the harness listener's count read, every 5 s per idle session: it changes no row, only the in-memory waiting fact
   "/api/queue/pending/count",
+  // the relay recipients read: a POST only to carry the session id in a body, it writes no row
+  "/api/queue/peers",
   // an upload decides nothing on an item; the send or reply that claims it is audited
   "/api/queue/owner/images",
 ]);
@@ -399,6 +402,16 @@ test("coverage-drift guard: ROUTE_RESOURCE is a superset of all registered mutat
       registered.has(auditedKey),
       `ROUTE_RESOURCE key '${auditedKey}' no longer matches any registered mutating route (stale)`,
     );
+  }
+});
+
+// The rotation keeps relay records by their resource label → a relay route audited under another label would be archived away
+test("each relay route is audited under the resource the archive rotation keeps in audit_log", () => {
+  const rotation = readFileSync(new URL("../../scripts/_pg_archive_rotate.py", import.meta.url), "utf8");
+  const kept = /^RELAY_RESOURCE = "([^"]+)"$/m.exec(rotation)?.[1];
+  assert.ok(kept !== undefined, "the rotation declares RELAY_RESOURCE");
+  for (const route of ["/api/queue/relay", "/api/queue/owner/items/:id/redact"]) {
+    assert.equal(ROUTE_RESOURCE.get(route), kept, route);
   }
 });
 

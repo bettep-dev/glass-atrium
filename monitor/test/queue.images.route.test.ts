@@ -48,7 +48,7 @@ before(async () => {
   app = Fastify({ logger: false });
   // the app's own guard order (app.ts → buildApp): text/plain gone before any route → the upload sees production parsers
   registerRequestGuards(app);
-  await registerQueueRoutes(app, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: "/opt/atrium-test/scripts/atrium-queue.sh", imageDir });
+  await registerQueueRoutes(app, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: "/opt/atrium-test/scripts/atrium-queue.sh", imageDir, scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
   await app.ready();
 });
 

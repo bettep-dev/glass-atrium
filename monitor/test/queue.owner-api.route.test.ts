@@ -4,9 +4,10 @@
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import "dotenv/config";
 
@@ -14,6 +15,8 @@ import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fast
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
+import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
 import { registerQueueRoutes, resolveQueueRouteOptions } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
@@ -26,6 +29,7 @@ const ACK_DEADLINE_MS = 120_000;
 
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-owner-api-"));
 const trackedSessionIds: string[] = [];
+const suiteStart = new Date();
 let app: FastifyInstance;
 
 before(async () => {
@@ -39,14 +43,16 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await prisma.auditLog.deleteMany({ where: { actionKind: { in: ["queue-relay.relay", "queue-relay.redact"] }, eventTs: { gte: suiteStart } } });
   await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
 });
 
-async function buildApp(): Promise<FastifyInstance> {
+async function buildApp(isAudited = false): Promise<FastifyInstance> {
   const instance = Fastify({ logger: false });
-  await registerQueueRoutes(instance, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images") });
+  await registerQueueRoutes(instance, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images"), scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
+  if (isAudited) registerAuditLogHook(instance);
   await instance.ready();
   return instance;
 }
@@ -391,6 +397,7 @@ describe("list and item detail", () => {
     assert.deepEqual(items.map((item) => item.id), [Number(first), Number(second)], "non-terminal items only, queue order");
     assert.deepEqual(items[0]?.session, {
       id: sessionId,
+      sessionIdPrefix: sessionId.slice(0, 8),
       name: "monitor",
       isNameRegistered: false,
       profileLabel,
@@ -412,6 +419,21 @@ describe("list and item detail", () => {
     const response = await send("GET", `/api/queue/owner/items?sessionId=${mine}`);
     assert.deepEqual((response.json().items as Array<{ id: number }>).map((item) => item.id), [Number(itemId)]);
     assert.equal((await send("GET", "/api/queue/owner/items?colour=red")).statusCode, 400);
+  });
+
+  test("the list carries no relay, one on its way included, while the relay history does", async () => {
+    const [recipient, sender] = [await seedSession(), await seedSession()];
+    const orderId = await seedItem(recipient);
+    const relayId = await seedItem(recipient, {
+      kind: "relay", fromSessionId: sender, relayHop: 0, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: "The relay suite is green.",
+      isFreeTextAllowed: false, status: "answered", askedAt: new Date(Date.now() - 60_000),
+    });
+
+    const list = await send("GET", `/api/queue/owner/items?sessionId=${recipient}`);
+    const history = await send("GET", `/api/queue/owner/orders?kind=relay&sessionIds=${recipient}`, undefined, { headers: {} });
+
+    assert.deepEqual((list.json().items as Array<{ id: number }>).map((item) => item.id), [Number(orderId)]);
+    assert.deepEqual((history.json().items as Array<{ id: number }>).map((item) => item.id), [Number(relayId)]);
   });
 
   test("paging with nextCursor returns every awaiting item exactly once, in queue order", async () => {
@@ -513,13 +535,14 @@ describe("list and item detail", () => {
     assert.equal((await send("GET", "/api/queue/owner/items?limit=1")).json().cliPath, CLI_PATH);
   });
 
-  test("the CLI path and the image folder follow GA_ROOT, so a non-default install uses its own", () => {
+  test("the CLI path, the image folder and the secret scanner follow GA_ROOT, so a non-default install uses its own", () => {
     const saved = process.env.GA_ROOT;
     process.env.GA_ROOT = "/Volumes/tools/atrium";
     try {
       const options = resolveQueueRouteOptions();
       assert.equal(options.cliPath, "/Volumes/tools/atrium/scripts/atrium-queue.sh");
       assert.equal(options.imageDir, "/Volumes/tools/atrium/data/queue/images");
+      assert.equal(options.scannerPath, "/Volumes/tools/atrium/scripts/lib/secret-scan.sh");
     } finally {
       if (saved === undefined) delete process.env.GA_ROOT;
       else process.env.GA_ROOT = saved;
@@ -534,6 +557,19 @@ describe("list and item detail", () => {
     const detail = (await send("GET", `/api/queue/owner/items/${unacked}`)).json();
     assert.equal(detail.session.marker.bgId, "abc123");
     assert.equal(detail.canResend, false, "no Resend while the marker is set");
+  });
+});
+
+describe("probe sessions in the item list", () => {
+  test("a probe session's items are left out of the owner item list", async () => {
+    const profileLabel = `.claude-probe-${randomUUID().slice(0, 8)}`;
+    const id = { probe: await seedSession({ profileLabel, isProbe: true }), plain: await seedSession({ profileLabel }) };
+    await seedItem(id.probe);
+    const plainItemId = await seedItem(id.plain);
+
+    const response = await send("GET", `/api/queue/owner/items?profile=${encodeURIComponent(profileLabel)}`);
+
+    assert.deepEqual(response.json().items.map((item: { id: number }) => item.id), [Number(plainItemId)]);
   });
 });
 
@@ -613,6 +649,35 @@ describe("session list", () => {
     assert.deepEqual([replaced.exitReason, replaced.isSelectable], ["replaced", false]);
   });
 
+  test("hides probe rows and item-less rows whose transcript file is missing; the include-hidden option lists them flagged", async () => {
+    const profileLabel = `.claude-hidden-${randomUUID().slice(0, 8)}`;
+    const transcript = { missing: path.join(fixtureRoot, `${randomUUID()}.jsonl`), present: path.join(fixtureRoot, `${randomUUID()}.jsonl`) };
+    writeFileSync(transcript.present, "{}\n");
+    const id = {
+      probe: await seedSession({ profileLabel, isProbe: true }),
+      probeWithItem: await seedSession({ profileLabel, isProbe: true }),
+      unused: await seedSession({ profileLabel, transcriptPath: transcript.missing }),
+      unusedWithItem: await seedSession({ profileLabel, transcriptPath: transcript.missing }),
+      started: await seedSession({ profileLabel, transcriptPath: transcript.present }),
+      noPath: await seedSession({ profileLabel }),
+    };
+    await seedItem(id.probeWithItem);
+    await seedItem(id.unusedWithItem);
+
+    const read = async (query: string) => {
+      const response = await send("GET", `/api/queue/owner/sessions?profile=${profileLabel}${query}`, undefined, { headers: {} });
+      assert.equal(response.statusCode, 200, response.body);
+      return new Map((response.json().sessions as Array<{ id: string; isHidden: boolean }>).map((row) => [row.id, row.isHidden]));
+    };
+    const [listed, all] = [await read(""), await read("&includeHidden=true")];
+
+    assert.deepEqual([...listed.keys()].sort(), [id.unusedWithItem, id.started, id.noPath].sort());
+    assert.deepEqual(
+      Object.entries(id).map(([name, sessionId]) => [name, all.get(sessionId)]),
+      [["probe", true], ["probeWithItem", true], ["unused", true], ["unusedWithItem", false], ["started", false], ["noPath", false]],
+    );
+  });
+
   test("rejects an unknown query key", async () => {
     const response = await send("GET", "/api/queue/owner/sessions?state=live");
     assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"]);
@@ -688,18 +753,20 @@ describe("owner message send", () => {
     assert.equal((await getMessages([target])).length, 0);
   });
 
-  test("one unknown or replaced target refuses the whole send", async () => {
+  test("one unknown, replaced or probe target refuses the whole send", async () => {
     const live = await seedSession();
     const replaced = await seedSession({ state: "exited", exitReason: "replaced" });
+    const probe = await seedSession({ isProbe: true });
     const rows = [
       { name: "an unknown session id", sessionIds: [live, randomUUID()], status: 404, error: "unknown_session" },
       { name: "a replaced session", sessionIds: [live, replaced], status: 409, error: "session_replaced" },
+      { name: "a probe session", sessionIds: [live, probe], status: 409, error: "session_probe" },
     ];
     for (const row of rows) {
       const response = await send("POST", "/api/queue/owner/messages/send", { sessionIds: row.sessionIds, text: "Rebase onto main." });
       assert.deepEqual([response.statusCode, response.json().error], [row.status, row.error], row.name);
     }
-    assert.equal((await getMessages([live, replaced])).length, 0);
+    assert.equal((await getMessages([live, replaced, probe])).length, 0);
   });
 
   test("a send without the monitor page's origin is refused and creates nothing", async () => {
@@ -818,10 +885,281 @@ describe("order history", () => {
       { name: "a limit past the page cap", query: "limit=101" },
       { name: "a cursor of another shape", query: "before=12" },
       { name: "an unknown key", query: "status=delivered" },
+      { name: "an item kind with no history", query: "kind=decision" },
     ];
     for (const row of rows) {
       const response = await getOrders(row.query);
       assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"], row.name);
+    }
+  });
+});
+
+describe("relay history", () => {
+  const text = "Rebased feature/queue-mcp onto main; the relay suite is green.";
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+  const getHistory = (query: string) => send("GET", `/api/queue/owner/orders?kind=relay&${query}`, undefined, { headers: {} });
+  const getOrders = (query: string) => send("GET", `/api/queue/owner/orders?${query}`, undefined, { headers: {} });
+  // refusal rows placed in the past fall before suiteStart → removed here by id
+  const placedRefusalIds: bigint[] = [];
+
+  after(async () => {
+    await getPrisma().auditLog.deleteMany({ where: { id: { in: placedRefusalIds } } });
+  });
+
+  function seedRelay(from: string, to: string, askedAt: Date, overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Promise<bigint> {
+    return seedItem(to, {
+      kind: "relay", fromSessionId: from, relayHop: 0, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: text,
+      isFreeTextAllowed: false, status: "delivered", askedAt, deliveredAt: askedAt, relayFetchedAt: askedAt, ...overrides,
+    });
+  }
+
+  // The relay route writes the refusal record, then the row is placed at the given time
+  async function seedRefusal(sender: string, recipients: string[], eventTs: Date): Promise<string> {
+    const response = await send("POST", "/api/queue/relay", { sessionId: sender, recipients: recipients.map((id) => id.slice(0, 8)), text }, { headers: {} });
+    assert.match(response.json().error, /^relay_/, response.body);
+    const row = await getPrisma().auditLog.findFirstOrThrow({
+      where: { targetTable: "queue-relay", resultCode: "blocked", payload: { path: ["change", "senderId"], equals: sender } },
+      orderBy: { id: "desc" },
+    });
+    await getPrisma().auditLog.update({ where: { id: row.id }, data: { eventTs } });
+    placedRefusalIds.push(row.id);
+    return eventTs.toISOString();
+  }
+
+  test("lists every relay in every state with either end in the filter, newest send first, each send whole, and leaves them out of the orders thread", async () => {
+    const [sender, left, right, stranger] = [await seedSession(), await seedSession(), await seedSession(), await seedSession()];
+    const sendId = randomUUID();
+    const ids = {
+      toBoth: [await seedRelay(sender, left, minutesAgo(40), { sendId }), await seedRelay(sender, right, minutesAgo(40), { sendId })],
+      lapsedToSender: await seedRelay(right, sender, minutesAgo(30), { status: "withdrawn", deliveredAt: null, relayFetchedAt: null, relayClosedAt: minutesAgo(1) }),
+      unackedFetched: await seedRelay(sender, right, minutesAgo(25), { status: "unacked", deliveredAt: null }),
+      onItsWay: await seedRelay(sender, left, minutesAgo(20), { status: "answered", deliveredAt: null, relayFetchedAt: null }),
+    };
+    await seedRelay(stranger, left, minutesAgo(10));
+
+    const history = await getHistory(`sessionIds=${sender}`);
+    const orders = await getOrders(`sessionIds=${sender},${left},${right}`);
+
+    assert.equal(history.statusCode, 200, history.body);
+    assert.deepEqual(history.json().items.map((item: { id: number }) => item.id), [ids.onItsWay, ids.unackedFetched, ids.lapsedToSender, ...ids.toBoth].map(Number));
+    assert.deepEqual(orders.json().items, [], "a relay is no order");
+  });
+
+  test("an entry carries hop, parent, sender, fetch, redaction and lapse facts; an owner order carries none", async () => {
+    const [sender, recipient] = [await seedSession({ name: "relay sender" }), await seedSession({ name: "parent sender" })];
+    const parentSentAt = minutesAgo(30);
+    const parentId = await seedRelay(recipient, sender, parentSentAt);
+    const childId = await seedRelay(sender, recipient, minutesAgo(20), { relayHop: 1, relayParentId: parentId });
+    const lapsedAt = minutesAgo(1);
+    const lapsedId = await seedRelay(sender, recipient, minutesAgo(10), { status: "withdrawn", deliveredAt: null, relayFetchedAt: null, relayClosedAt: lapsedAt });
+    assert.equal((await send("POST", `/api/queue/owner/items/${childId}/redact`)).statusCode, 200);
+    const redacted = await getItemRow(childId);
+    await send("POST", "/api/queue/owner/messages/send", { sessionIds: [recipient], text: "Rebase onto main." });
+
+    const items = (await getHistory(`sessionIds=${sender}`)).json().items as Array<{ id: number; relay: unknown }>;
+    const order = (await getOrders(`sessionIds=${recipient}`)).json().items[0];
+
+    assert.deepEqual(items.find((item) => item.id === Number(childId))?.relay, {
+      hop: 1,
+      parent: { id: Number(parentId), sender: { sessionIdPrefix: recipient.slice(0, 8), profileLabel: "default", selfDeclaredName: "parent sender", cwdTail: "glass-atrium/monitor" }, sentAt: parentSentAt.toISOString() },
+      sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender", cwdTail: "glass-atrium/monitor" },
+      fetchedAt: redacted.relayFetchedAt?.toISOString(),
+      redaction: { at: redacted.relayRedactedAt?.toISOString(), length: text.length },
+      lapsedAt: null,
+    });
+    assert.deepEqual(items.find((item) => item.id === Number(lapsedId))?.relay, {
+      hop: 0, parent: null, sender: { sessionIdPrefix: sender.slice(0, 8), profileLabel: "default", selfDeclaredName: "relay sender", cwdTail: "glass-atrium/monitor" },
+      fetchedAt: null, redaction: null, lapsedAt: lapsedAt.toISOString(),
+    });
+    assert.equal(order.relay, null);
+  });
+
+  test("an entry names its recipient by the 8-character id prefix beside its sender's", async () => {
+    const [sender, recipient] = [await seedSession(), await seedSession()];
+    const relayId = await seedRelay(sender, recipient, minutesAgo(5));
+
+    const entry = (await getHistory(`sessionIds=${recipient}`)).json().items.find((item: { id: number }) => item.id === Number(relayId));
+
+    assert.deepEqual([entry.session.sessionIdPrefix, entry.relay.sender.sessionIdPrefix], [recipient.slice(0, 8), sender.slice(0, 8)]);
+  });
+
+  test("a relay carries no deviation and no Resend in any state, and Resend refuses it", async () => {
+    const [sender, recipient] = [await seedSession(), await seedSession()];
+    const states = ["answered", "delivering", "unacked", "held", "expired", "delivered", "withdrawn"] as const;
+    for (const status of states) {
+      const relayId = await seedRelay(sender, recipient, minutesAgo(5), { status, deliveredAt: status === "delivered" ? minutesAgo(4) : null, relayClosedAt: status === "withdrawn" ? minutesAgo(1) : null });
+      const view = (await send("GET", `/api/queue/owner/items/${relayId}`, undefined, { headers: {} })).json();
+      const before = await getItemRow(relayId);
+
+      const resend = await send("POST", `/api/queue/owner/items/${relayId}/resend`);
+
+      assert.deepEqual([view.deviation, view.canResend, resend.statusCode], [null, false, 409], status);
+      assert.deepEqual(await getItemRow(relayId), before, status);
+    }
+  });
+
+  test("each page carries the refusal records of its own time span, either end in the filter, once across pages, with no text", async () => {
+    const [sender, recipient, stranger] = [await seedSession(), await seedSession(), await seedSession()];
+    await seedRelay(sender, recipient, minutesAgo(50));
+    const olderRefusal = await seedRefusal(sender, [sender], minutesAgo(45));
+    await seedRelay(recipient, sender, minutesAgo(40));
+    const middleRefusal = await seedRefusal(sender, [sender], minutesAgo(35));
+    await seedRelay(sender, recipient, minutesAgo(30));
+    // the filtered session as a resolved recipient, beside a prefix no session has
+    const newestRefusal = await seedRefusal(recipient, [sender, randomUUID()], minutesAgo(25));
+    await seedRefusal(stranger, [stranger], minutesAgo(36));
+
+    const pages: Array<Array<{ at: string; reason: string; senderIdPrefix: string; recipientIdPrefixes: string[]; unresolvedCount: number | null }>> = [];
+    let query = `sessionIds=${sender}&limit=1`;
+    for (let round = 0; round < 10; round += 1) {
+      const page = (await getHistory(query)).json() as { refusals: (typeof pages)[number]; nextCursor: string | null };
+      pages.push(page.refusals);
+      if (page.nextCursor === null) break;
+      query = `sessionIds=${sender}&limit=1&before=${encodeURIComponent(page.nextCursor)}`;
+    }
+
+    const selfRefusal = (at: string) => ({ at, reason: "self", senderIdPrefix: sender.slice(0, 8), recipientIdPrefixes: [sender.slice(0, 8)], unresolvedCount: null });
+    const unresolvedRefusal = { at: newestRefusal, reason: "recipient", senderIdPrefix: recipient.slice(0, 8), recipientIdPrefixes: [sender.slice(0, 8)], unresolvedCount: 1 };
+    assert.deepEqual(pages, [[unresolvedRefusal], [selfRefusal(middleRefusal)], [selfRefusal(olderRefusal)]]);
+  });
+
+  test("a page's refusal records stop at the cap, newest kept, and say they were cut", async () => {
+    // spread over senders that each stay under the per-sender refusal bound
+    const senders = await Promise.all(Array.from({ length: 6 }, () => seedSession()));
+    await seedRelay(await seedSession(), senders[0] ?? "", minutesAgo(10));
+    const cap = 100;
+    for (let index = 0; index <= cap; index += 1) {
+      const sender = senders[index % senders.length] ?? "";
+      await send("POST", "/api/queue/relay", { sessionId: sender, recipients: [sender.slice(0, 8)], text }, { headers: {} });
+    }
+    const stored = await getPrisma().auditLog.findMany({
+      where: { targetTable: "queue-relay", OR: senders.map((sender) => ({ payload: { path: ["change", "senderId"], equals: sender } })) },
+      orderBy: [{ eventTs: "desc" }, { id: "desc" }],
+    });
+
+    const page = (await getHistory(`sessionIds=${senders.join(",")}`)).json() as { refusals: Array<{ at: string }>; isRefusalListCut: boolean };
+
+    assert.equal(stored.length, cap + 1);
+    assert.deepEqual(page.refusals.map((refusal) => refusal.at), stored.slice(0, cap).map((row) => row.eventTs.toISOString()));
+    assert.equal(page.isRefusalListCut, true);
+  });
+});
+
+describe("relay redaction", () => {
+  const text ="Rebased feature/queue-mcp onto main; the relay suite is green.";
+
+  async function seedRelay(overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Promise<bigint> {
+    const [sender, recipient] = [await seedSession(), await seedSession()];
+    const deliveredAt = new Date(Date.now() - 60_000);
+    return seedItem(recipient, {
+      kind: "relay", fromSessionId: sender, relayHop: 1, sendId: randomUUID(), title: "Rebased feature/queue-mcp onto main", body: text,
+      isFreeTextAllowed: false, status: "delivered", deliveredAt, relayFetchedAt: deliveredAt, askedAt: new Date(Date.now() - 120_000), ...overrides,
+    });
+  }
+
+  function redact(itemId: bigint, body?: object, options: SendOptions = {}): Promise<LightMyRequestResponse> {
+    return send("POST", `/api/queue/owner/items/${itemId}/redact`, body, options);
+  }
+
+  // Every field but the text, its two redaction stamps and the row's own update time
+  async function getKeptFields(itemId: bigint) {
+    const { title, body, relayRedactedAt, relayRedactedLength, updatedAt, ...kept } = await getItemRow(itemId);
+    return kept;
+  }
+
+  test("replaces the relay's text with the fixed marker, keeps every other field and adds the redaction time and the original length", async () => {
+    const itemId = await seedRelay();
+    const kept = await getKeptFields(itemId);
+    const start = new Date();
+
+    const response = await redact(itemId);
+
+    assert.equal(response.statusCode, 200, response.body);
+    const row = await getItemRow(itemId);
+    assert.deepEqual([row.title, row.body, row.relayRedactedLength], [RELAY_REDACTION_MARKER, RELAY_REDACTION_MARKER, text.length]);
+    assert.ok(row.relayRedactedAt !== null && row.relayRedactedAt >= start, "redaction time set");
+    assert.deepEqual(await getKeptFields(itemId), kept);
+  });
+
+  test("leaves no line of the text in any stored column, audit row or read, the title included", async () => {
+    const lines = ["Rebased feature/queue-mcp onto main", "the relay suite is green, merge when ready"];
+    const recipient = await seedSession();
+    const itemId = await seedRelay({ sessionId: recipient, title: lines[0], body: lines.join("\n"), status: "answered", deliveredAt: null, relayFetchedAt: null });
+    assert.equal((await redact(itemId)).statusCode, 200);
+    const asJson = (value: unknown) => JSON.stringify(value, (_key, field: unknown) => (typeof field === "bigint" ? field.toString() : field));
+
+    const sources = {
+      "stored row": asJson(await getItemRow(itemId)),
+      "audit rows": asJson(await getPrisma().auditLog.findMany({ where: { targetId: itemId } })),
+      "owner item": (await send("GET", `/api/queue/owner/items/${itemId}`, undefined, { headers: {} })).body,
+      "relay history": (await send("GET", `/api/queue/owner/orders?kind=relay&sessionIds=${recipient}`, undefined, { headers: {} })).body,
+      "session get": (await send("GET", `/api/queue/items/${itemId}?sessionId=${recipient}`, undefined, { headers: {} })).body,
+      "session claim": (await send("POST", "/api/queue/pending", { sessionId: recipient }, { headers: {} })).body,
+    };
+
+    for (const [name, source] of Object.entries(sources)) {
+      assert.ok(source.includes(String(itemId)), `${name} reads the relay`);
+      for (const line of lines) assert.ok(!source.includes(line), `${name} holds "${line}"`);
+    }
+  });
+
+  test("is first-wins: a second redaction changes nothing, its stamp included", async () => {
+    const itemId = await seedRelay();
+    assert.equal((await redact(itemId)).statusCode, 200);
+    const first = await getItemRow(itemId);
+
+    const second = await redact(itemId);
+
+    assert.deepEqual([second.statusCode, second.json().error], [409, "already_redacted"]);
+    assert.deepEqual(await getItemRow(itemId), first);
+  });
+
+  test("writes its audit row before it answers, naming the relay and the page-origin signal that admitted it", async () => {
+    const itemId = await seedRelay();
+
+    const response = await redact(itemId, undefined, { headers: { origin: `http://127.0.0.1:${PORT}` } });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const rows = await getPrisma().auditLog.findMany({ where: { actionKind: "queue-relay.redact", targetId: itemId } });
+    assert.deepEqual(rows.map((row) => [row.resultCode, row.targetTable, (row.payload as { change?: unknown } | null)?.change]), [["success", "queue-relay", { signal: "origin" }]]);
+  });
+
+  test("a redaction whose transaction rolls back after its audit row is written changes nothing and leaves the response's own error row", async () => {
+    const itemId = await seedRelay();
+    const before = await getItemRow(itemId);
+    const prisma = getPrisma();
+    const originalTransaction = prisma.$transaction.bind(prisma);
+    (prisma as { $transaction: unknown }).$transaction = ((work: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+      originalTransaction(async (tx) => { await work(tx); throw new Error("forced rollback after the audit row"); })) as unknown as typeof prisma.$transaction;
+    const audited = await buildApp(true);
+    let response: LightMyRequestResponse;
+    try {
+      response = await audited.inject({ method: "POST", url: `/api/queue/owner/items/${itemId}/redact`, headers: { host: HOST, ...SAME_ORIGIN } });
+      await delay(150);
+    } finally {
+      (prisma as { $transaction: unknown }).$transaction = originalTransaction;
+      await audited.close();
+    }
+
+    assert.equal(response.statusCode, 503, response.body);
+    assert.deepEqual(await getItemRow(itemId), before);
+    const rows = await prisma.auditLog.findMany({ where: { actionKind: "queue-relay.redact", targetId: itemId } });
+    assert.deepEqual(rows.map((row) => row.resultCode), ["error"]);
+  });
+
+  test("refuses replacement text, an owner message, a report, a request without the page-origin signal and any session route", async () => {
+    const rows = [
+      { name: "replacement text in the body", itemId: await seedRelay(), call: (id: bigint) => redact(id, { text: "nothing happened" }), status: 400 },
+      { name: "an owner message", itemId: await seedItem(await seedSession(), { kind: "message", isFreeTextAllowed: false, status: "delivered", answeredAt: new Date(), answerRoute: "message", answerSignal: "fetch_metadata" }), call: (id: bigint) => redact(id), status: 409 },
+      { name: "a report", itemId: await seedItem(await seedSession()), call: (id: bigint) => redact(id), status: 409 },
+      { name: "no page-origin header", itemId: await seedRelay(), call: (id: bigint) => redact(id, undefined, { headers: {} }), status: 403 },
+      { name: "a session route", itemId: await seedRelay(), call: (id: bigint) => send("POST", `/api/queue/items/${id}/redact`, { sessionId: randomUUID() }, { headers: {} }), status: 404 },
+    ];
+    for (const row of rows) {
+      const before = await getItemRow(row.itemId);
+      const response = await row.call(row.itemId);
+      assert.equal(response.statusCode, row.status, `${row.name}: ${response.body}`);
+      assert.deepEqual(await getItemRow(row.itemId), before, row.name);
     }
   });
 });

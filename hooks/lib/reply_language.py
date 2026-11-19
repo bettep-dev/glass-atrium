@@ -4,7 +4,7 @@
 `transcript`: the user's newest own message, for the reply-language hooks, which quote its start so the model
 judges the reply language; nothing here reads or names a language. Only origin kind `human` is the user's
 message, and an entry left whitespace-empty once wrappers, pastes and code are removed has no prose of its own.
-`turn`: the current turn's start entry and whether the turn called a tool, for the queue turn-end check.
+`turn`: the current turn's start entry, its time, and the turn's tool calls, for the queue turn-end check.
 Contract: `--help`.
 """
 
@@ -54,7 +54,9 @@ def _build_parser():
         prog="reply_language.py",
         description="Print one JSON object: status (found|none), bytes_read and truncated, plus "
         "reason=unreadable when the transcript cannot be opened; transcript adds entry (user|queued_command) and "
-        "prose, turn adds turn (the turn-start entry's uuid) and tools (the turn called a tool).",
+        "prose, turn adds turn (the turn-start entry's uuid), started (its timestamp), tools (the turn called a tool) "
+        "and last_tool (the newest call's name, Bash command and last-act flag, whether its message held no other "
+        "call, and how many calls of its name the turn made).",
     )
     commands = parser.add_subparsers(dest="command")
     commands.required = True
@@ -82,24 +84,37 @@ def find_current_turn(path, window, cap):
     A compaction summary is passed over, so tool calls before a mid-turn compaction stay the turn's and the turn keeps
     one id; a transcript that opens on summaries, its turn start left in an earlier file, starts at the oldest."""
     oldest_summary = None
+    # (name, message key) per call, newest first; the host writes each call of one message as its own entry
+    turn_calls = []
 
     def visit(line, result):
         nonlocal oldest_summary
-        if MARKER.TOOL_USE in line and _has_tool_use(_get_json_object(line)):
-            result["tools"] = True
+        call_entry = _get_json_object(line) if MARKER.TOOL_USE in line else {}
+        calls = _get_tool_calls(call_entry)
+        message_key = _get_message_id(call_entry) or object()
+        turn_calls.extend((call.get("name"), message_key) for call in reversed(calls))
+        if calls and not result["tools"]:
+            result.update(tools=True, last_tool=_get_tool_call_view(calls[-1]))
         entry = _get_json_object(line) if MARKER.TURN in line else {}
         turn = _get_turn_position_id(entry)
         if turn and entry.get("isCompactSummary") is True:
-            oldest_summary, turn = turn, None
+            oldest_summary, turn = (turn, entry.get("timestamp")), None
         if turn:
-            result.update(status="found", turn=turn)
+            result.update(status="found", turn=turn, started=entry.get("timestamp"))
         return bool(turn)
 
-    result = _scan_backward(path, window, cap, {"status": "none", "turn": None, "tools": False}, visit)
+    initial = {"status": "none", "turn": None, "started": None, "tools": False, "last_tool": None}
+    result = _scan_backward(path, window, cap, dict(initial), visit)
     if result["status"] == "none" and oldest_summary and not result["truncated"]:
-        result.update(status="found", turn=oldest_summary)
+        result.update(status="found", turn=oldest_summary[0], started=oldest_summary[1])
     if result["status"] == "none":
-        result["tools"] = False
+        result.update(tools=False, last_tool=None)
+    elif result["tools"]:
+        name, message_key = turn_calls[0]
+        result["last_tool"].update(alone=sum(key == message_key for _, key in turn_calls) == 1,
+                                   name_calls=sum(other == name for other, _ in turn_calls))
+    if not isinstance(result["started"], str):
+        result["started"] = None
     return result
 
 
@@ -119,9 +134,27 @@ def _scan_backward(path, window, cap, result, visit):
     return result
 
 
-def _has_tool_use(entry):
+def _get_tool_calls(entry):
     content = _get_message_content(entry) if entry.get("type") == "assistant" else None
-    return isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_use" for b in content)
+    if not isinstance(content, list):
+        return []
+    return [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+
+
+def _get_tool_call_view(call):
+    """{name, command, last_act}: command is the Bash input's command, None for any other call; last_act is whether
+    the input flags the call as its turn's last act."""
+    name = call.get("name") if isinstance(call.get("name"), str) else None
+    tool_input = call.get("input") if isinstance(call.get("input"), dict) else {}
+    command = tool_input.get("command") if name == "Bash" else None
+    return {"name": name, "command": command if isinstance(command, str) else None,
+            "last_act": tool_input.get("lastAct") is True}
+
+
+def _get_message_id(entry):
+    message = entry.get("message")
+    message_id = message.get("id") if isinstance(message, dict) else None
+    return message_id if isinstance(message_id, str) and message_id else None
 
 
 def _get_turn_position_id(entry):
