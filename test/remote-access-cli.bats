@@ -170,8 +170,8 @@ file_sum() { cksum <"$1"; }
 
 # --- network identity -------------------------------------------------------------------------------
 
-# configd's records as macOS prints them, shared with monitor/test/remote-network.unit.test.ts → one capture, one row set
-CONFIGD_FIXTURES="${GA}/monitor/test/fixtures/configd"
+# configd's records as macOS prints them, shared with monitor/test/remote-network.unit.test.ts (repo checkout only) → one capture, one row set
+CONFIGD_FIXTURES="${GA}/test/fixtures/configd"
 
 # The captured service record (`scutil` → show State:/Network/Service/<id>/IPv4) with this interface and signature.
 configd_service_for() {

@@ -301,6 +301,10 @@ jobs:
               - 'hooks/lib/style-ref-consts.sh'
               - 'hooks/lib/styleref-roster.sh'
               - 'hooks/pricing.json'
+              # configd records shared with test/remote-access-cli.bats, read by
+              # monitor/test/remote-network.unit.test.ts. Pinned by
+              # scripts/test/ci-change-filter-coverage.bats.
+              - 'test/fixtures/configd/**'
             # Catch-all: its file list feeds the unclaimed-path check below.
             all:
               - '**'

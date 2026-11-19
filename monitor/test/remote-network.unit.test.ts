@@ -65,7 +65,7 @@ const HOME: NetworkIdentity = { gateway: "192.168.45.1", hardwareAddress: "50:0e
 const NO_ARP_ENTRY = new Error("Command failed: /usr/sbin/arp -n 192.168.45.1\n192.168.45.1 (192.168.45.1) -- no entry");
 
 // configd's records as macOS prints them, shared with test/remote-access-cli.bats → one capture, one row set
-const CONFIGD_FIXTURES = new URL("./fixtures/configd/", import.meta.url);
+const CONFIGD_FIXTURES = new URL("../../test/fixtures/configd/", import.meta.url);
 
 const CONFIGD_GLOBAL = readFileSync(new URL("global-ipv4.txt", CONFIGD_FIXTURES), "utf8");
 
