@@ -1888,7 +1888,7 @@ _doctor_report_profile_links() {
     return 0
   fi
   # shellcheck disable=SC2311  # the -r guard above keeps its grammar source from failing; the rest is a glob loop
-  branches="$(_get_profile_link_branches "${grammar}")"
+  branches="$(get_profile_branches "${grammar}")"
   [[ -n "${branches}" ]] || return 0 # GA-ABSORB[benign]: no profile branch is the nothing-to-report state
   if ! command -v jq >/dev/null 2>&1 || ! jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
     log "  note : profile branch link check skipped — needs jq and a readable manifest (${MANIFEST})"
@@ -1944,35 +1944,6 @@ _doctor_report_queue_mcp_switch() {
   if jq -e '.enableAllProjectMcpServers == true' -- "${SETTINGS_JSON}" >/dev/null; then
     log "  note : queue MCP: ${SETTINGS_JSON} sets enableAllProjectMcpServers — every project's .mcp.json server starts unasked, so a project server named $1 shadows this one and that session must use the queue CLI"
   fi
-}
-
-# Branches: target-home siblings matching the shared config-root grammar.
-# Only dirs holding a .claude.json → never-launched and backup dirs skipped.
-# The target home matches the same grammar → excluded by identity.
-# $1 = the grammar file (hooks/lib/claude-config-dirs.sh).
-_get_profile_link_branches() {
-  # shellcheck source=SCRIPTDIR/../hooks/lib/claude-config-dirs.sh
-  source "${1}"
-  local candidate
-  for candidate in "${TARGET_HOME%/*}"/.claude*; do
-    [[ "${candidate##*/}/" =~ ^${CLAUDE_CONFIG_ROOT_RE}$ ]] || continue
-    [[ -d "${candidate}" && -f "${candidate}/.claude.json" ]] || continue
-    [[ ! "${candidate}" -ef "${TARGET_HOME}" ]] || continue
-    printf '%s\n' "${candidate}"
-  done
-}
-
-# Every profile's own config file, where its user-scope MCP entries live → "<file>\x1f<config dir>": the target
-# home's beside it with no config dir (the host's default), then each branch's. Non-zero without the grammar.
-get_profile_config_files() {
-  local grammar="${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh" branches branch
-  [[ -r "${grammar}" ]] || return 1
-  # shellcheck disable=SC2311  # the -r guard above keeps its grammar source from failing
-  branches="$(_get_profile_link_branches "${grammar}")"
-  printf '%s\x1f\n' "${TARGET_HOME%/*}/.claude.json"
-  while IFS= read -r branch; do
-    [[ -z "${branch}" ]] || printf '%s\x1f%s\n' "${branch}/.claude.json" "${branch}"
-  done <<<"${branches}"
 }
 
 # Required items: every top-level manifest component the farm deploys into the target home.
@@ -2785,7 +2756,7 @@ get_profile_settings_drift() {
     return 0
   fi
   # shellcheck disable=SC2311
-  branches="$(_get_profile_link_branches "${grammar}")"
+  branches="$(get_profile_branches "${grammar}")"
   while IFS= read -r branch; do
     [[ -n "${branch}" ]] || continue
     # shellcheck disable=SC2311
