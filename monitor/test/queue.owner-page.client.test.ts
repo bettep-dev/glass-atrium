@@ -393,7 +393,7 @@ describe("sheet precedence notes", () => {
     { machine: "9b2e7c41" },
     ", whose resume has not registered. This one waits until that session registers or is resumed. It resumes by itself once that session ends.",
   ];
-  const generic = ["another session is live or resuming in this worktree: this one resumes automatically once that one has ended"];
+  const generic = ["another session is live or resuming in this worktree. This one resumes once it ends."];
   const capturedIdNote = [
     "It may still run under profile work-dev. Check it: ",
     { machine: "claude logs bg-7f3a" },
@@ -801,7 +801,7 @@ describe("relay history", () => {
     const [drawer] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
     assert.equal(reads, 1);
     assert.equal(drawer?.props.title, "Relay history");
-    assert.equal(flat(renderScreen(drawer?.props.footer) as RenderedNode), "Names are what sessions call themselves, and the queue has no login: any local process can send as any session, or redact. Read this as evidence, not proof.");
+    assert.equal(flat(renderScreen(drawer?.props.footer) as RenderedNode), "Names are self-declared, and the queue has no login. Any local process can send as any session, or redact. Read this as evidence, not proof.");
   });
 });
 
@@ -3605,7 +3605,7 @@ function renderViewer(onStep: (next: unknown) => unknown = () => undefined): Ren
   return render("ImageViewerQ", { images, index: 1, onStep, onClose: () => undefined });
 }
 
-// spec §12.6: every string its table rewrote, as the page builds it
+// the page's fixed sentences, as the page builds them
 describe("twelve words a sentence", () => {
   const occupant = { profileLabel: "personal", cwdTail: "wt/owner-queue", sessionIdPrefix: "9b2e7c41" };
   const marked = (bgId: string | null) => buildSession({ marker: { setAt: "2026-11-10T06:20:11.204Z", bgId } });
@@ -3621,9 +3621,12 @@ describe("twelve words a sentence", () => {
     call<string>("getNextTurnSentenceQ", ["yoaida"], "this"),
     call<string>("getNextTurnSentenceQ", ["yoaida", "gersona"]),
     (vm.runInContext("RELAY_REFUSAL_Q.hop[1]", screen) as () => string)(),
+    ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [], hasUnmarkedOccupant: true } })),
+    collectText(render("AnswerLineQ", { item: buildItem({ status: "answered", isAnsweredOutside: true, answeredAt: "2026-11-19T05:30:00.000Z" }) })),
+    vm.runInContext("RELAY_LOG_FOOT_Q", screen) as string,
   ];
 
-  test("no sentence of the strings spec §12.6 rewrote runs past twelve words", () => {
+  test("every sentence the page renders is twelve words or fewer", () => {
     const texts = strings();
     assert.deepEqual([texts.every((text) => text.length > 0), getLongSentences(texts)], [true, []], JSON.stringify(texts));
   });

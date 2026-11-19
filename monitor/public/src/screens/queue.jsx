@@ -90,7 +90,7 @@ const ABORT_REASON_LABEL_Q = {
 
 const SKIP_TEXT_Q = {
 	resume_used: "automatic resume used — Resend to try again",
-	shared_worktree: "another session is live or resuming in this worktree: this one resumes automatically once that one has ended",
+	shared_worktree: "another session is live or resuming in this worktree. This one resumes once it ends.",
 };
 // outage words come from the shared copy owner (ui.jsx → getErrorCopy) → one outage reads one way across card, region and actions
 const OUTAGE_KINDS_Q = new Set(["network", "database", "server"]);
@@ -103,7 +103,7 @@ const ANSWER_SIGNAL_LABEL_Q = {
 	origin: "through the monitor (same-origin by its Origin header)",
 	before_record: "before answers were recorded",
 };
-const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page: the monitor holds no record of this answer";
+const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page. The monitor has no record of it.";
 
 // targets per send: the send route refuses more (schemas.ts → messageBodySchema; the page test binds the two)
 const MESSAGE_Q = { MAX_TARGETS: 20 };
@@ -3305,7 +3305,7 @@ const RELAY_HEAD_ID_PREFIX_Q = "queue-relay-head-";
 const RELAY_REDACTED_Q = "Text redacted";
 
 // spec §9.9 → the drawer's foot: what a person tracing a cause must hold about every entry, said once
-const RELAY_LOG_FOOT_Q = "Names are what sessions call themselves, and the queue has no login: any local process can send as any session, or redact. Read this as evidence, not proof.";
+const RELAY_LOG_FOOT_Q = "Names are self-declared, and the queue has no login. Any local process can send as any session, or redact. Read this as evidence, not proof.";
 
 /**
  * `Relay history` in the rail foot (spec §9.9): drawn while the record holds any relay or refusal; each opening reads it again.
