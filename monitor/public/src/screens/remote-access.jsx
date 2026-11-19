@@ -13,6 +13,8 @@ const URL_RA = {
 const ACCESS_URL_RA = { on: "/api/remote/access/on", trust: "/api/remote/access/trust", off: "/api/remote/access/off" };
 // admin-routes.ts → MAC_PAGE_HEADER (bound by remote-access.screen-render) — a document's markup can never send it
 const PAGE_HEADERS_RA = { "x-glass-atrium-page": "remote-access" };
+// admin-routes.ts → CONFIRM_HEADER (bound by remote-access.screen-render): an on or trust acts only on the read it names
+const CONFIRM_HEADER_RA = "x-glass-atrium-confirm";
 // registration-code.ts → REGISTRATION_CODE.WINDOW_MS (bound by remote-access.screen-render)
 const CODE_WINDOW_MS_RA = 5 * 60_000;
 // while a code is open → a device that registers shows without a refresh
@@ -61,6 +63,11 @@ const ATTENTION_RA = {
 // the attention row above already says whether this network is trusted
 const COUNT_ONLY_VIEWS_RA = new Set(["closed", "no-network", "off-no-network"]);
 const CHECKING_LABEL_RA = "Checking network…";
+const NETWORK_ERROR_RA = {
+	unread: "This Mac's network could not be read. Try again.",
+	// the re-read after a confirm refusal → the confirm closes, nothing was done
+	reread: "This Mac's network changed and could not be read again, so nothing was done. Try again.",
+};
 const ROUTER_LABEL_RA = { wifi: "Router of this Mac's Wi-Fi", wired: "Router of this Mac's wired network", unknown: "Router of this Mac's network" };
 const WIDEN_WORDS_RA = {
 	on: { title: "Turn on remote access?", lead: "This also trusts the network this Mac is on now. A device you connect with a code from this screen can then open this monitor whenever this Mac is on that network.", commit: { label: "Turn on and trust", busy: "Turning on…" } },
@@ -69,8 +76,8 @@ const WIDEN_WORDS_RA = {
 };
 
 /** Every Mac-only call: the page header and no body; a refusal rejects with its status and the server's error code. */
-async function requestRA(url, method = "GET") {
-	const res = await fetch(url, { method, headers: PAGE_HEADERS_RA });
+async function requestRA(url, method = "GET", headers = {}) {
+	const res = await fetch(url, { method, headers: { ...PAGE_HEADERS_RA, ...headers } });
 	if (res.ok) return res;
 	const error = await window.UI.getFetchError(res.clone());
 	error.status = res.status;
@@ -86,7 +93,7 @@ async function readDevicesRA() {
 	return (await requestRA(URL_RA.DEVICES)).json();
 }
 
-/** The router a turn-on or trust confirm shows; the act then refuses any other network. */
+/** The router a turn-on or trust confirm shows, with the one-use confirm value its act carries back. */
 async function readConfirmNetworkRA() {
 	return (await requestRA(URL_RA.CONFIRM_NETWORK)).json();
 }
@@ -122,8 +129,9 @@ async function deleteAllDevicesRA() {
 	await requestRA(URL_RA.REVOKE_ALL, "POST");
 }
 
-async function postAccessRA(act) {
-	await requestRA(ACCESS_URL_RA[act], "POST");
+/** confirm → the value of the network read the open confirm shows; an off carries none. */
+async function postAccessRA(act, confirm = null) {
+	await requestRA(ACCESS_URL_RA[act], "POST", confirm === null ? {} : { [CONFIRM_HEADER_RA]: confirm });
 }
 
 function getOpenErrorTextRA(error) {
@@ -221,14 +229,15 @@ function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
 	const [check, setCheck] = useSRA({ act: null, error: null });
 	const data = read.data;
 	const view = data ? getViewRA(data.setup) : null;
-	// isReread → the open confirm's own read: a confirm cancelled meanwhile stays closed
+	// isReread → the open confirm's own read after a refusal: a confirm cancelled meanwhile stays closed, one it cannot show again closes with E-16
 	const onWiden = (act, isReread = false) => {
 		if (check.act !== null) return;
 		setCheck({ act, error: null });
 		readConfirmNetworkRA().then(
 			(network) => {
-				setCheck({ act: null, error: null });
-				if (network.router !== null && !(act === "trust" && network.isNetworkTrusted)) {
+				const canConfirm = network.router !== null && !(act === "trust" && network.isNetworkTrusted);
+				setCheck({ act: null, error: !canConfirm && isReread ? { act, text: NETWORK_ERROR_RA.reread } : null });
+				if (canConfirm) {
 					setDialog((open) => (isReread && open === null ? null : { act, network }));
 					return;
 				}
@@ -237,7 +246,7 @@ function RemoteAccessPageRA({ read, onReload, onDevicesRead }) {
 			},
 			(error) => {
 				setDialog(null);
-				setCheck({ act: null, error: { act, text: "This Mac's network could not be read. Try again.", detail: error.message } });
+				setCheck({ act: null, error: { act, text: NETWORK_ERROR_RA[isReread ? "reread" : "unread"], detail: error.message } });
 			},
 		);
 	};
@@ -294,7 +303,9 @@ function BodyRA({ setup, devices, view, check, onWiden, onChanged, onDevicesRead
 		<>
 			{!setup.enabled && <OffCardRA setup={setup} foot={hasDevicesCard ? null : foot} error={checkError("on")} />}
 			{view === "on" && <ConnectCardRA key={emptyKey} setup={setup} devices={devices} onDevicesRead={onDevicesRead} />}
-			{ATTENTION_RA[view] && <AttentionRA row={ATTENTION_RA[view]} isChecking={check.act === "trust"} error={checkError("trust")} onTrust={() => onWiden("trust")} />}
+			{ATTENTION_RA[view]
+				? <AttentionRA row={ATTENTION_RA[view]} isChecking={check.act === "trust"} error={checkError("trust")} onTrust={() => onWiden("trust")} />
+				: checkError("trust") && <ActErrorRA error={checkError("trust")} />}
 			{hasDevicesCard && <DevicesCardRA devices={devices} limit={setup.deviceLimit} foot={foot} onChanged={onChanged} onRemoveAll={onRemoveAll} />}
 		</>
 	);
@@ -538,7 +549,7 @@ function AccessDialogRA({ dialog, count, isChecking, onRecheck, onClose, onDone 
 	const onCommit = () => {
 		if (act.isBusy || isChecking) return;
 		setAct({ isBusy: true, error: null });
-		const run = dialog.act === "remove-all" ? deleteAllDevicesRA() : postAccessRA(dialog.act);
+		const run = dialog.act === "remove-all" ? deleteAllDevicesRA() : postAccessRA(dialog.act, isWiden ? dialog.network.confirm : null);
 		run.then(
 			() => {
 				onClose();

@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { CA_DOWNLOAD, MAC_PAGE_HEADER, REMOTE_ADMIN_PATH } from "../src/server/remote/admin-routes.js";
+import { CA_DOWNLOAD, CONFIRM_HEADER, MAC_PAGE_HEADER, REMOTE_ADMIN_PATH } from "../src/server/remote/admin-routes.js";
 import { getAttachmentDisposition } from "../src/server/response-headers.js";
 import { REGISTRATION_CODE } from "../src/server/remote/registration-code.js";
 import { collectText, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
@@ -386,20 +386,24 @@ describe("after a refused widening act the confirm offers its commit only on a f
   const MOVED_ROUTER = "10.0.0.1";
   const SETUP_CLOSED = { ...SETUP_ON, listenReason: "untrusted", isNetworkTrusted: false };
   const ROUTE = { NETWORK: `GET ${REMOTE_ADMIN_PATH.CONFIRM_NETWORK}`, ON: `POST ${REMOTE_ADMIN_PATH.ACCESS_ON}`, TRUST: `POST ${REMOTE_ADMIN_PATH.TRUST}` };
-  const OPENED = { status: 200, body: { router: ROUTER, link: "wifi", isNetworkTrusted: false } };
+  const OPENED = { status: 200, body: { router: ROUTER, link: "wifi", isNetworkTrusted: false, confirm: "q3Vx0Lr8TfWm1oKcYp2bGA" } };
+  const FRESH_CONFIRM = "Zt7nE4sJk9HdQa0uCw6yRg";
+  const SETUP_CLOSED_TITLE = "This Mac is on a network you have not trusted";
+  const NETWORK_CHANGED_AGAIN = "This Mac's network changed and could not be read again, so nothing was done. Try again.";
   const TURN_ON = { setup: SETUP_OFF, open: "Turn on", commit: "Turn on and trust", route: ROUTE.ON, refusal: { status: 409, body: { error: "confirm_stale" } } };
   const TRUST = { setup: SETUP_CLOSED, open: "Trust this network", commit: "Trust this network", route: ROUTE.TRUST, refusal: { status: 409, body: { error: "network_changed" } } };
 
   // the page with live hook state over scripted replies; the second network read waits for release()
-  async function mountRefused(flow: typeof TURN_ON) {
+  async function mountRefused(flow: typeof TURN_ON & { reloaded?: typeof SETUP_ON }) {
     const { react, flushEffects, resetCursor } = createStatefulReact();
     let release: (answer: Answer) => void = () => undefined;
     const replies: Record<string, Array<Answer | Promise<Answer>>> = {
       [ROUTE.NETWORK]: [OPENED, new Promise<Answer>((resolve) => { release = resolve; })],
-      [flow.route]: [flow.refusal],
+      [flow.route]: [flow.refusal, { status: 200, body: { outcome: "written" } }],
     };
     const sent: string[] = [];
-    const page = { sent, reloads: 0, release: (answer: Answer) => release(answer) };
+    const confirms: Array<string | null> = [];
+    const page = { sent, confirms, reloads: 0, release: (answer: Answer) => release(answer) };
     const mod = await loadScreenModule(SCREEN_SRC, {
       React: react,
       UI: ui,
@@ -408,6 +412,7 @@ describe("after a refused widening act the confirm offers its commit only on a f
       fetch: async (url: string, init: RequestInit = {}) => {
         const route = `${init.method ?? "GET"} ${url}`;
         sent.push(route);
+        if (init.method === "POST") confirms.push(new Headers(init.headers).get(CONFIRM_HEADER));
         const answer = await replies[route].shift();
         assert.ok(answer, `an unscripted call: ${route}`);
         return new Response(JSON.stringify(answer.body), { status: answer.status, statusText: "x" });
@@ -415,7 +420,7 @@ describe("after a refused widening act the confirm offers its commit only on a f
     });
     const render = (): RenderedNode => {
       resetCursor();
-      const props = { read: ready(flow.setup), onReload: () => { page.reloads += 1; }, onDevicesRead: () => undefined };
+      const props = { read: ready(page.reloads > 0 && flow.reloaded ? flow.reloaded : flow.setup), onReload: () => { page.reloads += 1; }, onDevicesRead: () => undefined };
       const tree = renderScreen(react.createElement(mod.RemoteAccessPageRA, props)) as RenderedNode;
       flushEffects();
       return tree;
@@ -449,7 +454,7 @@ describe("after a refused widening act the confirm offers its commit only on a f
   test("a fresh read with a router puts that router on screen and offers the commit again", async () => {
     const page = await mountRefused(TURN_ON);
 
-    page.release({ status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: false } });
+    page.release({ status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: false, confirm: FRESH_CONFIRM } });
     await new Promise((resolve) => setImmediate(resolve));
     const dialog = getDialog(page.render());
 
@@ -461,9 +466,9 @@ describe("after a refused widening act the confirm offers its commit only on a f
   });
 
   const closing = [
-    { name: "a fresh read that fails closes the confirm and says the network could not be read", flow: TURN_ON, reread: { status: 500, body: { error: "internal" } }, reloads: 0, notice: "This Mac's network could not be read. Try again." },
-    { name: "a fresh read with no router closes the confirm and rereads the page", flow: TURN_ON, reread: { status: 200, body: { router: null, link: "unknown", isNetworkTrusted: false } }, reloads: 1, notice: null },
-    { name: "a trust confirm whose fresh read finds the network trusted closes and rereads the page", flow: TRUST, reread: { status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: true } }, reloads: 1, notice: null },
+    { name: "a fresh read that fails closes the confirm and says nothing was done", flow: TURN_ON, reread: { status: 500, body: { error: "internal" } }, reloads: 0 },
+    { name: "a fresh read with no router closes the confirm, says nothing was done and rereads the page", flow: TURN_ON, reread: { status: 200, body: { router: null, link: "unknown", isNetworkTrusted: false, confirm: null } }, reloads: 1 },
+    { name: "a trust confirm whose fresh read finds the network trusted closes, says nothing was done and rereads the page", flow: TRUST, reread: { status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: true, confirm: FRESH_CONFIRM } }, reloads: 1 },
   ];
   for (const row of closing) {
     test(row.name, async () => {
@@ -475,9 +480,30 @@ describe("after a refused widening act the confirm offers its commit only on a f
 
       assert.equal(getDialog(tree), undefined, `${row.name}: confirm closed`);
       assert.equal(page.reloads, row.reloads, `${row.name}: page reads`);
-      if (row.notice) assert.ok(collectText(tree).includes(row.notice), `${row.name}: "${row.notice}"`);
+      assert.ok(collectText(tree).includes(NETWORK_CHANGED_AGAIN), `${row.name}: "${NETWORK_CHANGED_AGAIN}"`);
     });
   }
+
+  test("a trust confirm closed by a fresh read keeps its words on a page that reread to a state with no attention row", async () => {
+    const page = await mountRefused({ ...TRUST, reloaded: SETUP_ON });
+
+    page.release({ status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: true, confirm: FRESH_CONFIRM } });
+    await new Promise((resolve) => setImmediate(resolve));
+    const text = collectText(page.render());
+
+    assert.ok(!text.includes(SETUP_CLOSED_TITLE), "the page shows the reread state");
+    assert.ok(text.includes(NETWORK_CHANGED_AGAIN));
+  });
+
+  test("each commit carries the confirm value of the network read on screen at the press", async () => {
+    const page = await mountRefused(TURN_ON);
+
+    page.release({ status: 200, body: { router: MOVED_ROUTER, link: "wifi", isNetworkTrusted: false, confirm: FRESH_CONFIRM } });
+    await new Promise((resolve) => setImmediate(resolve));
+    await page.press(TURN_ON.commit);
+
+    assert.deepEqual(page.confirms, [OPENED.body.confirm, FRESH_CONFIRM]);
+  });
 
   const unknown = [
     { name: "a turn-on that threw keeps its confirm open with the may-or-may-not words", flow: { ...TURN_ON, refusal: { status: 500, body: { error: "act_failed" } } }, notice: "Remote access may or may not be on. Refresh; if wrong, turn it off and on." },
