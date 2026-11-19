@@ -1667,7 +1667,7 @@
     "monitor/src/server/queue/items.ts": "41a7c9eebb61a5a0427cadeaa41dbfd7a21da0f6b65af31b80514c8d005ccfc5",
     "monitor/src/server/queue/owner-items.ts": "c16e06c8042e6514ff1cadc1457dee9fb86c3de91d19eb6f9c9f8c75aea8ad1d",
     "monitor/src/server/queue/owner-sessions.ts": "14e298de2c785216886fcf496161e82bd3d1f03d1a624ab8bb35f3dae9ad0465",
-    "monitor/src/server/queue/owner-views.ts": "432a9e14d77c078ef5632469f009fc633e12c54b2550d841bfdf6567bc0c667f",
+    "monitor/src/server/queue/owner-views.ts": "b959b50029342e27eaa18bdcd8c9a038c0d10248009fef22b4a7b4db5f76683e",
     "monitor/src/server/queue/process-start-time.ts": "a004466ab7e69922b3d86af99237fae15852c976a2c9b9d549a263ee86d29b55",
     "monitor/src/server/queue/registry.ts": "e9c6314627994b55bb52ed713de08f66981dfdfd75471feea663f80010baad2f",
     "monitor/src/server/queue/relay-scan.ts": "2a5a0726a4639fd27238802959d9a200b4dd60f17969e0b6c42687114a367f05",
