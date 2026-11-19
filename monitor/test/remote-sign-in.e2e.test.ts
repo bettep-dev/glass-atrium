@@ -391,6 +391,82 @@ describe("the page at a phone's width", () => {
   }
 });
 
+describe("the page on a wide screen, a phone driving a desktop", () => {
+  // above 640 the gutter is --gap-page 24; the column caps at --measure-prose, so a wider window only widens the margins
+  const WIDE = [
+    { width: 1280, height: 800 },
+    { width: 1920, height: 1080 },
+  ];
+  const GUTTER = 24;
+  const GROUP_GAP = 32;
+
+  for (const viewport of WIDE) {
+    test(`at ${viewport.width}: one centred column capped at the prose measure, its parts and fields the column's content width, the button start-aligned`, async () => {
+      await withPage(async (page) => {
+        await openSignIn(page);
+
+        const drawn = await getWideLayout(page);
+
+        const content = { left: GUTTER, width: drawn.main.width - 2 * GUTTER };
+        assert.deepEqual(
+          {
+            column: drawn.main.width,
+            isCentred: Math.abs(drawn.main.left - (drawn.client - drawn.main.left - drawn.main.width)) <= 1,
+            top: drawn.blocks[0].top,
+            blocks: drawn.blocks.map((block) => ({ left: block.left - drawn.main.left, width: block.width })),
+            fields: drawn.fields.map((field) => ({ left: field.left - drawn.main.left, width: field.width })),
+            submit: { left: drawn.submit.left - drawn.main.left, isNarrower: drawn.submit.width < content.width },
+            groups: [drawn.blocks[1].top - drawn.blocks[0].bottom, drawn.blocks[2].top - drawn.blocks[1].bottom],
+          },
+          {
+            column: drawn.measure,
+            isCentred: true,
+            top: GUTTER,
+            blocks: [content, content, content],
+            fields: [content, content],
+            submit: { left: GUTTER, isNarrower: true },
+            groups: [GROUP_GAP, GROUP_GAP],
+          },
+        );
+        assert.ok(drawn.measure < viewport.width, `the measure ${drawn.measure} caps the column under ${viewport.width}`);
+      }, { viewport });
+    });
+  }
+
+  test("from 1280 to 1920 nothing reflows: every part keeps its box and moves by half the added width", async () => {
+    const [narrow, wide] = WIDE;
+    await withPage(async (page) => {
+      await openSignIn(page);
+      const at1280 = await getWideLayout(page);
+      await page.setViewportSize(wide);
+
+      const at1920 = await getWideLayout(page);
+
+      const shift = (wide.width - narrow.width) / 2;
+      const moved = (box: Box) => ({ ...box, left: box.left + shift });
+      assert.deepEqual(
+        { main: at1920.main, blocks: at1920.blocks, fields: at1920.fields, submit: at1920.submit },
+        { main: moved(at1280.main), blocks: at1280.blocks.map(moved), fields: at1280.fields.map(moved), submit: moved(at1280.submit) },
+      );
+    }, { viewport: narrow });
+  });
+});
+
+type Box = Awaited<ReturnType<typeof getBox>>;
+
+/** Rounded boxes of the wide page's column, its three parts, both fields and the button, plus the column's resolved max-width and the page's client width. */
+async function getWideLayout(page: Page) {
+  const main = page.locator(".sign-in-main");
+  return {
+    main: await getBox(main),
+    measure: Math.round(await main.evaluate((el) => Number.parseFloat(getComputedStyle(el).maxWidth))),
+    client: await page.evaluate(() => document.documentElement.clientWidth),
+    blocks: [await getBox(page.locator(".sign-in-head")), await getBox(page.locator(".sign-in-form")), await getBox(page.locator(".sign-in-trust"))],
+    fields: [await getBox(page.locator(".field").nth(0)), await getBox(page.locator(".field").nth(1))],
+    submit: await getBox(page.locator(".sign-in-submit")),
+  };
+}
+
 /** Rounded boxes of the sign-in page's parts, as drawn. */
 async function getPhoneLayout(page: Page) {
   const fieldBoxes = async (index: number) => {
