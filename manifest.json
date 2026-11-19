@@ -1899,7 +1899,7 @@
     "scripts/test/apply-spine.bats": "f3b12f214b5f465be714cf62144c5249afdcbf561a56c3e10db63be68e8b56e6",
     "scripts/test/atrium-config.bats": "007c6eac6d60bc9a11b8e4ee1b19cbe0c7cf295d4e65df5f1dd53d3cd3ec862a",
     "scripts/test/atrium-queue-mcp.bats": "8d911ab75cfdf531cbdf27ebd0d8062f1d4de5a4f61e9ac23f9a627525fbad20",
-    "scripts/test/atrium-queue.bats": "9dd3bb43c6fac07d06848823fa6eb051cc96ef3a4790351d2334a0d0478543a7",
+    "scripts/test/atrium-queue.bats": "88b5af59e32365252e7910dc257636a541620b70d49b957375c14b97afc2d4b9",
     "scripts/test/audit-absorption.bats": "6fece1547f1e37fe1ea39f50f32340499c4c897b463a0f387871c75f3e3bb4f3",
     "scripts/test/audit-cli.bats": "ee394050945cb82a62d4f1af3fc71b1c7f0e0d02a827af465af42b43eb4d6a9d",
     "scripts/test/audit-inert-assert.bats": "ec2eea51e8e63a383040853dda4226a9237ff0684445779955502821ba855a2d",

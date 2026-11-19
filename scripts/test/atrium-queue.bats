@@ -670,13 +670,15 @@ ${foreign/\%s/6}" \
 @test "a wait takes over a lock whose waiter is gone or whose owner is another Claude process" {
   start_stub
   set_reply 200 '{"items":[]}'
-  local row name
+  local row name requests_before
   for row in waiter-killed owner-replaced; do
     name="${row}"
     start_owner
     use_fast_wait 30
+    # an earlier row's requests already meet a bare count → await this waiter's own first poll, made once it holds the lock
+    requests_before="$(wc -l <"${BATS_TEST_TMPDIR}/requests.log")"
     start_waiter
-    await_requests 1
+    await_requests "$((requests_before + 1))"
     if [[ "${name}" == waiter-killed ]]; then
       kill -KILL "${WAITER_PID}"
       wait "${WAITER_PID}" 2>/dev/null || true
