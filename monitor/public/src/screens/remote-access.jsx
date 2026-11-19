@@ -58,6 +58,20 @@ const STEPS_RA = [
 		trouble: [{ text: "Camera does nothing? Open this in Safari: {address}" }, { text: "Then type this code: {code}" }, { text: "Still nothing? Try: {address-2}" }],
 	},
 ];
+// the step bodies' own words beside the step table → the card's word caps count them too · {time} → the code's expiry
+const STEP_TEXT_RA = {
+	fingerprintMissing: "Fingerprint not shown; refresh this page before installing.",
+	certificate: { share: "Share certificate…", download: "Download certificate", failed: "The certificate was not sent; try again." },
+	code: {
+		label: "Code",
+		validUntil: "One use · valid until {time}",
+		renew: "Show a new code",
+		expired: "That code expired; show a new one.",
+		opening: "Opening…",
+		open: "Show QR code",
+		openFailed: "No code was opened; try again.",
+	},
+};
 // a Trouble? line's value slot → its value; a line whose value is missing is left out
 const SLOT_RA = /(\{[a-z0-9-]+\})/;
 const PATH_SEPARATOR_RA = " › ";
@@ -196,7 +210,7 @@ async function postAccessRA(act, confirm = null) {
 }
 
 function getOpenErrorTextRA(error) {
-	return OPEN_ERROR_RA[error?.status] ?? "No code was opened; try again.";
+	return OPEN_ERROR_RA[error?.status] ?? STEP_TEXT_RA.code.openFailed;
 }
 
 /** The connect card's progress after one act; null → not started. */
@@ -541,7 +555,7 @@ function StepBodyRA({ step, setup, devices, address, trouble, onAct, onDevicesRe
 				{lead}
 				{setup.fingerprint
 					? <MachineString className="block fs-meta text-ink">{formatFingerprintRA(setup.fingerprint).map((line) => <span key={line} className="block">{line}</span>)}</MachineString>
-					: <ActErrorRA error={{ text: "Fingerprint not shown; refresh this page before installing." }} />}
+					: <ActErrorRA error={{ text: STEP_TEXT_RA.fingerprintMissing }} />}
 				<p className="fs-body text-ink">{step.stop}</p>
 			</>
 		);
@@ -640,13 +654,13 @@ function CertificateStepRA({ line, onSent }) {
 				setCert((prev) => ({ ...prev, isSending: false }));
 				if (isSent) onSent();
 			},
-			(error) => setCert((prev) => ({ ...prev, isSending: false, error: { text: "The certificate was not sent; try again.", detail: error.message } })),
+			(error) => setCert((prev) => ({ ...prev, isSending: false, error: { text: STEP_TEXT_RA.certificate.failed, detail: error.message } })),
 		);
 	};
 	return (
 		<>
 			<p className="fs-body text-dim">{isShare ? line.share : line.download}</p>
-			<button type="button" className="btn" aria-busy={cert.isSending || undefined} onClick={onSend}>{isShare ? "Share certificate…" : "Download certificate"}</button>
+			<button type="button" className="btn" aria-busy={cert.isSending || undefined} onClick={onSend}>{isShare ? STEP_TEXT_RA.certificate.share : STEP_TEXT_RA.certificate.download}</button>
 			{cert.error && <ActErrorRA error={cert.error} />}
 		</>
 	);
@@ -694,19 +708,19 @@ function CodeViewRA({ state, address, onOpen }) {
 			<Cluster gap="control-group" className="items-start">
 				{address && <QrCodeRA text={`${address}${SIGN_IN_RA.PATH}${SIGN_IN_RA.FRAGMENT}${state.code}`} />}
 				<Stack gap="label" className="items-start">
-					<ValueRA label="Code">
+					<ValueRA label={STEP_TEXT_RA.code.label}>
 						<MachineString className="fs-stat font-semibold text-ink">{formatCodeRA(state.code)}</MachineString>
-						<span className="fs-meta text-dim">{`One use · valid until ${formatKstTime(state.expiresAt)}`}</span>
+						<span className="fs-meta text-dim">{STEP_TEXT_RA.code.validUntil.replace("{time}", formatKstTime(state.expiresAt))}</span>
 					</ValueRA>
-					<button type="button" className="btn" onClick={onOpen}>Show a new code</button>
+					<button type="button" className="btn" onClick={onOpen}>{STEP_TEXT_RA.code.renew}</button>
 				</Stack>
 			</Cluster>
 		);
 	}
 	return (
 		<>
-			{state.status === "expired" && <p className="fs-body text-dim">That code expired; show a new one.</p>}
-			<button type="button" className="btn" aria-busy={state.status === "opening" || undefined} onClick={onOpen}>{state.status === "opening" ? "Opening…" : "Show QR code"}</button>
+			{state.status === "expired" && <p className="fs-body text-dim">{STEP_TEXT_RA.code.expired}</p>}
+			<button type="button" className="btn" aria-busy={state.status === "opening" || undefined} onClick={onOpen}>{state.status === "opening" ? STEP_TEXT_RA.code.opening : STEP_TEXT_RA.code.open}</button>
 			{state.error && <ActErrorRA error={state.error} />}
 		</>
 	);

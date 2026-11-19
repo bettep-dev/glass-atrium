@@ -422,6 +422,18 @@ describe("the step words keep to the card's caps", () => {
     assert.ok(steps.length >= 5, "the step table was read");
     assert.deepEqual(over, []);
   });
+
+  test("every string a step body or its code view shows holds at most 14 words", async () => {
+    const { mod } = await loadScreen();
+    // STEP_TEXT_RA → the step bodies' own words · OPEN_ERROR_RA → the code view's refusals
+    const getLeaves = (value: unknown): string[] => (typeof value === "string" ? [value] : Object.values(value as object).flatMap(getLeaves));
+    const shown = ["STEP_TEXT_RA", "OPEN_ERROR_RA"].flatMap((name) => getLeaves(vm.runInContext(name, mod)));
+
+    const over = shown.filter((text) => countWords(text) > 14);
+
+    assert.ok(shown.length >= 12, `the body tables were read: ${shown.length}`);
+    assert.deepEqual(over, []);
+  });
 });
 
 describe("the page mounts the type scale its own text classes take", () => {
