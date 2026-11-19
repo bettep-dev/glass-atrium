@@ -392,11 +392,28 @@ remote_env_line() {
   done
 }
 
-@test "the rendered .env is owner-only" {
+# stub_env_mode_probe — a grep shadow logging the .env mode at each key lookup, the read right before each key's write.
+stub_env_mode_probe() {
+  local real_grep
+  real_grep="$(command -v grep)"
+  cat >"${STUB_BIN}/grep" <<STUB
+#!/usr/bin/env bash
+if [[ "\${!#}" == "${SANDBOX}/monitor/.env" ]]; then
+  perl -e 'printf "%o\n", (stat \$ARGV[0])[2] & 07777' -- "\${!#}" >>"${SANDBOX}/env-modes.log"
+fi
+exec "${real_grep}" "\$@"
+STUB
+  chmod +x "${STUB_BIN}/grep"
+}
+
+@test "every key lands in a pre-existing 644 .env only while it is owner-only" {
   printf 'DATABASE_URL=postgresql:///x?host=/tmp\n' >"${SANDBOX}/monitor/.env"
   chmod 644 "${SANDBOX}/monitor/.env"
+  stub_env_mode_probe
   run_render
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  [[ -s "${SANDBOX}/env-modes.log" ]] || { echo "no key write observed"; return 1; }
+  [[ "$(sort -u "${SANDBOX}/env-modes.log")" == "600" ]] || { cat "${SANDBOX}/env-modes.log"; return 1; }
   [[ "$(perl -e 'printf "%o", (stat $ARGV[0])[2] & 07777' -- "${SANDBOX}/monitor/.env")" == "600" ]]
 }
 

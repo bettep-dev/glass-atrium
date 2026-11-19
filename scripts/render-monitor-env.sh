@@ -55,7 +55,6 @@ readonly CONFIG_TOML
 # Args: $1 = key · $2 = value.
 upsert_env() {
   local env_key="$1" env_val="$2"
-  touch "${ENV_FILE}"
   if grep -qE "^${env_key}=" "${ENV_FILE}"; then
     # Rewrite the matching line via awk, passing the value through ENVIRON (process
     # environment) not sed's replacement string. WHY: sed's replacement interprets
@@ -188,7 +187,9 @@ if [[ "${REMOTE_ENABLED}" == "true" && -n "${REMOTE_PORT}" ]]; then
   REMOTE_ACCESS="on"
 fi
 
-# render all keys
+# umask covers only a new file → an existing wider .env is narrowed before its first key lands
+touch "${ENV_FILE}"
+chmod 600 "${ENV_FILE}"
 upsert_env "ATRIUM_MONITOR_PORT" "${PORT}"
 upsert_env "CLAUDED_DOCS_HTML_ROOT" "${DOCS_HTML_ROOT}"
 upsert_env "ATRIUM_TIMEZONE" "${TZ_VALUE}"
@@ -197,4 +198,3 @@ upsert_env "ATRIUM_SCHEDULE_WIKI" "${SCHED_WIKI}"
 upsert_env "ATRIUM_REMOTE_ACCESS" "${REMOTE_ACCESS}"
 upsert_env "ATRIUM_REMOTE_PORT" "${REMOTE_PORT}"
 upsert_env "ATRIUM_REMOTE_TRUSTED_NETWORKS" "${REMOTE_TRUSTED}"
-chmod 600 "${ENV_FILE}"
