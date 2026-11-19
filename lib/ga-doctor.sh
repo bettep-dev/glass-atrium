@@ -2881,7 +2881,7 @@ launchd_node_bin_probe() {
     printf '0\n'
     return 0
   fi
-  log "  warn : [paths].node_bin ${node_bin} does not exist — the launchd jobs cannot start; run 'glass-atrium render-config' (resolves node from PATH), then 'glass-atrium reload-launchd'"
+  log "  warn : [paths].node_bin ${node_bin} does not exist — the launchd jobs cannot start; run 'glass-atrium repair-config-binaries' (resolves node from PATH), then 'glass-atrium reload-launchd'"
   printf '1\n'
 }
 

@@ -65,12 +65,8 @@ render_config() {
     [[ -z "${unexpanded}" ]] && unexpanded=0
     if [[ "${unexpanded}" -eq 0 ]]; then
       log "render_config: ${CONFIG_TOML} already fully expanded — skip \${HOME} expansion (use --re-render to force)"
-      # E1: binary-path resolution MUST run on this early-return too, else a re-render leaves node_bin/claude_bin at the template default; this path bypasses the DRY_RUN check below, so DRY_RUN is guarded explicitly here.
-      if "${DRY_RUN}"; then
-        log "dry-run: would resolve absolute node_bin/claude_bin in ${CONFIG_TOML}"
-      else
-        resolve_config_binaries existing
-      fi
+      # E1: binary-path resolution MUST run on this early-return too, else a re-render leaves node_bin/claude_bin at the template default
+      repair_config_binaries
       return 0
     fi
     log "render_config: ${CONFIG_TOML} has ${unexpanded} unexpanded \${HOME} line(s) — re-rendering"
@@ -126,6 +122,17 @@ render_config() {
   resolve_config_binaries
 }
 
+# repair_config_binaries — the [paths] binary repair of an existing config and nothing else: the `repair-config-binaries`
+# entry (the update's and the doctor's) and render_config's expanded-config branch; it never reaches the template render.
+# Honours DRY_RUN, which resolve_config_binaries does not read.
+repair_config_binaries() {
+  if "${DRY_RUN}"; then
+    log "dry-run: would resolve absolute node_bin/claude_bin in ${CONFIG_TOML}"
+    return 0
+  fi
+  resolve_config_binaries existing
+}
+
 # E1 binary-path resolver helpers (Stepdown: callees of render_config).
 # ga_resolve_bin — echo a binary's absolute path in its upgrade-surviving form, macOS-portable (no GNU realpath / readlink -f); the basename is never dereferenced.
 # The containing dir is canonicalized physically (an fnm per-shell symlink dir dies with its shell, its target does not) — unless that lands in a Homebrew Cellar: then the given version-free dir is kept and a Cellar path moves to its opt twin (atrium_get_stable_bin). Returns 1 when the dir is absent.
@@ -146,7 +153,9 @@ resolve_config_binaries() {
   local mode="${1:-template}"
   [[ -f "${CONFIG_TOML}" ]] || return 0
 
-  local node_src claude_src node_bin claude_bin
+  local node_src claude_src node_bin claude_bin node_was claude_was
+  node_was="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' node_bin)"
+  claude_was="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' claude_bin)"
   node_src="$(command -v node 2>/dev/null || true)"
   claude_src="$(command -v claude 2>/dev/null || true)"
   # native-installer location when claude is not yet on PATH (~/.local/bin/claude).
@@ -208,7 +217,11 @@ resolve_config_binaries() {
 
   mv -f -- "${RENDER_TMP}" "${CONFIG_TOML}"
   RENDER_TMP=""
-  log "resolve_config_binaries: node_bin=${node_bin:-<unchanged>} claude_bin=${claude_bin}"
+  # one line per key that moved, read back from the written file, old value to new — the update log carries these
+  node_bin="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' node_bin)"
+  claude_bin="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' claude_bin)"
+  [[ "${node_bin}" == "${node_was}" ]] || log "resolve_config_binaries: node_bin ${node_was:-<absent>} -> ${node_bin}"
+  [[ "${claude_bin}" == "${claude_was}" ]] || log "resolve_config_binaries: claude_bin ${claude_was:-<absent>} -> ${claude_bin}"
 }
 
 # get_config_bin <key> <path source> <mode> — the value resolve_config_binaries writes for one [paths] key:

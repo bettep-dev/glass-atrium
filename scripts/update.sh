@@ -3638,12 +3638,17 @@ update_build_monitor() {
 # never request-derived — SECURITY), then (re)render the decoupled one-shot plist.
 # Each render is best-effort + loud (a failure warns, never aborts the applied update).
 update_render_parity() {
-  local launcher render_launchd render_monitor_env
-  # [paths] binaries first, so the plists below render from them: render-config keeps a working value and moves a
-  # Homebrew Cellar one to its version-free twin (the repair for an install whose node path breaks on an upgrade)
+  local launcher render_launchd render_monitor_env report rc=0 line
+  # [paths] binaries first, so the plists below render from them: the repair keeps a working value and moves a
+  # Homebrew Cellar one to its version-free twin (the fix for an install whose node path breaks on an upgrade);
+  # never the template render, so every other config byte stays. Its lines (a moved key, the backup) reach the log.
   launcher="$(update_ga_root)/glass-atrium"
   if [[ -x "${launcher}" ]]; then
-    "${launcher}" render-config >/dev/null 2>&1 || update_log "WARN: render-config failed — config.toml [paths] binaries not re-resolved; run '${launcher} render-config'"
+    report="$("${launcher}" repair-config-binaries 2>&1 >/dev/null)" || rc=$?
+    while IFS= read -r line; do
+      [[ -z "${line}" ]] || update_log "${line}"
+    done <<<"${report}"
+    [[ "${rc}" -eq 0 ]] || update_log "WARN: config binary repair failed (rc=${rc}) — config.toml [paths] binaries not re-resolved; run '${launcher} repair-config-binaries'"
   else
     update_log "WARN: launcher missing or not executable (${launcher}) — config.toml [paths] binaries not re-resolved"
   fi

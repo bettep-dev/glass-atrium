@@ -2198,16 +2198,78 @@ read_calls() {
     printf '#!/usr/bin/env bash\nprintf "render-%s\\n" >>"%s"\n' "${render}" "${WORK}/renders.log" >"${WORK}/render-${render}.sh"
     chmod +x "${WORK}/render-${render}.sh"
   done
-  # the applied install's launcher; only its render-config call belongs to this ordering
-  printf '#!/usr/bin/env bash\n[[ "$1" != render-config ]] || printf "render-config\\n" >>"%s"\n' "${WORK}/renders.log" >"${INSTALL}/glass-atrium"
+  # the applied install's launcher; only its repair-config-binaries call belongs to this ordering
+  printf '#!/usr/bin/env bash\n[[ "$1" != repair-config-binaries ]] || printf "repair-config-binaries\\n" >>"%s"\n' "${WORK}/renders.log" >"${INSTALL}/glass-atrium"
   chmod +x "${INSTALL}/glass-atrium"
   export ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/render-env.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/render-launchd.sh"
   export ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist"
   run_cli_apply "scripts/tool.sh"
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
-  [[ "$(<"${WORK}/renders.log")" == $'render-config\nrender-launchd\nrender-env' ]] || { echo "${output}"; cat "${WORK}/renders.log"; return 1; }
+  [[ "$(<"${WORK}/renders.log")" == $'repair-config-binaries\nrender-launchd\nrender-env' ]] || { echo "${output}"; cat "${WORK}/renders.log"; return 1; }
   [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
+}
+
+@test "the update moves only a Cellar binary path of an existing config, names the move in its log, and WARNs on a failed repair" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  mkdir -p "${INSTALL}/scripts"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/hooks" "${INSTALL}/hooks"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  # the template a re-render would copy over the hand-tuned values below
+  ln -s "${GA}/config.toml.example" "${INSTALL}/config.toml.example"
+  local cellar="${WORK}/brew/Cellar/node@22/22.11.0/bin/node" opt="${WORK}/brew/opt/node@22/bin/node" claude="${WORK}/bin/claude"
+  mkdir -p "$(dirname -- "${cellar}")" "${WORK}/brew/opt" "${WORK}/bin"
+  printf '#!/bin/sh\n' | tee "${cellar}" >"${claude}"
+  chmod +x "${cellar}" "${claude}"
+  ln -s ../Cellar/node@22/22.11.0 "${WORK}/brew/opt/node@22"
+  printf '#!/usr/bin/env bash\n' >"${WORK}/render-noop.sh"
+  chmod +x "${WORK}/render-noop.sh"
+  # a ${HOME} token in a comment, and values no template carries
+  # shellcheck disable=SC2016
+  local before
+  before="$(printf '# hand note: the old tree lived under ${HOME}/old-atrium\n[paths]\nnode_bin = "%s"\nclaude_bin = "%s"\nmonitor_docs_html_root = "%s/docs"\n\n[remote_access]\nenabled = true\nport = 17001\n' \
+    "${cellar}" "${claude}" "${WORK}")"
+  printf '%s\n' "${before}" >"${INSTALL}/config.toml"
+
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export HOME="'"${WORK}"'" PATH="'"${WORK}"'/bin:/usr/bin:/bin"
+    export ATRIUM_UPDATE_RENDER_MONITOR_ENV="'"${WORK}"'/render-noop.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="'"${WORK}"'/render-noop.sh"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    update_render_parity
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  local want="${before//"${cellar}"/${opt}}"
+  [[ "$(<"${INSTALL}/config.toml")" == "${want}" ]] || {
+    diff <(printf '%s\n' "${want}") "${INSTALL}/config.toml"
+    return 1
+  }
+  [[ "${stderr}" == *"node_bin ${cellar} -> ${opt}"* && "${stderr}" != *"claude_bin "*" -> "* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+
+  printf '#!/usr/bin/env bash\nprintf "FATAL: config unreadable\\n" >&2\nexit 1\n' >"${INSTALL}/glass-atrium"
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_RENDER_MONITOR_ENV="'"${WORK}"'/render-noop.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="'"${WORK}"'/render-noop.sh"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    update_render_parity
+  '
+  [[ "${status}" -eq 0 && "${stderr}" == *"FATAL: config unreadable"*"WARN: "*"[paths] binaries not re-resolved"* ]] || {
+    echo "status ${status}: ${stderr}"
+    return 1
+  }
 }
 
 @test "CLI apply reissues a due remote leaf only while remote access is on" {

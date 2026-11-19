@@ -560,10 +560,10 @@ run_e2e() {
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1 # the apply landed first
 
   # Ordering, read off the shared call log: the migrate deploy runs after the hook wiring and before the
-  # finalize, whose first step is the config render — so the finalized monitor never runs an older schema.
+  # finalize, whose first step is the config binary repair — so the finalized monitor never runs an older schema.
   local order
-  order="$(grep -oE '^(launcher wire-hooks|prisma migrate deploy|launcher render-config)' "${CALLS}" | tr '\n' '|')"
-  [[ "${order}" == 'launcher wire-hooks|prisma migrate deploy|launcher render-config|' ]] || {
+  order="$(grep -oE '^(launcher wire-hooks|prisma migrate deploy|launcher repair-config-binaries)' "${CALLS}" | tr '\n' '|')"
+  [[ "${order}" == 'launcher wire-hooks|prisma migrate deploy|launcher repair-config-binaries|' ]] || {
     echo "migrate deploy not between the wiring and the finalize: $(cat -- "${CALLS}")" >&2
     return 1
   }

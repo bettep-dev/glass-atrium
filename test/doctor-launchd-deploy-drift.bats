@@ -409,7 +409,7 @@ pass_warning_total() {
       return 1
     }
     if [[ "${want}" == 1 ]]; then
-      [[ "${stderr}" == *"[paths].node_bin ${node_bin} does not exist"*"glass-atrium render-config"*"glass-atrium reload-launchd"* ]] \
+      [[ "${stderr}" == *"[paths].node_bin ${node_bin} does not exist"*"glass-atrium repair-config-binaries"*"glass-atrium reload-launchd"* ]] \
         || {
           echo "${name}: ${stderr}"
           return 1
