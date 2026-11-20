@@ -313,7 +313,7 @@ for (const width of [960, 768, 640]) {
               const leaf = [...row.querySelectorAll("*")].find((el) => el.children.length === 0 && el.textContent?.trim() === text);
               if (!leaf) return [];
               const rect = leaf.getBoundingClientRect();
-              return [{ text, left: rect.left, top: rect.top, lineOneBottom, isInName: name.contains(leaf), cellTop: leaf.closest("td")!.getBoundingClientRect().top, size: getComputedStyle(leaf).fontSize, color: getComputedStyle(leaf).color }];
+              return [{ text, left: rect.left, top: rect.top, lineOneBottom, isInName: name.contains(leaf), cellTop: leaf.closest("td")!.getBoundingClientRect().top, cellRight: leaf.closest("td")!.getBoundingClientRect().right, isModelOneLine: model.children.length === 1, size: getComputedStyle(leaf).fontSize, color: getComputedStyle(leaf).color }];
             }),
           };
         });
@@ -335,6 +335,9 @@ for (const width of [960, 768, 640]) {
         assert.ok(line.top >= line.lineOneBottom - 0.5, `${width}px: '${line.text}' sits under the whole first line`);
         assert.strictEqual(line.size, "13px", `${width}px: '${line.text}' is the 13 meta size`);
         assert.ok(line.isInName || Math.abs(line.cellTop - line.nameBottom) <= 1, `${width}px: '${line.text}' at ${line.cellTop} sits directly under the name (${line.nameBottom}), whatever the model's height`);
+      }
+      for (const line of lines.filter((entry) => !entry.isInName && entry.isModelOneLine)) {
+        assert.ok(Math.abs(line.cellRight - read.modelRight) <= 1, `${width}px: '${line.text}' runs to ${line.cellRight}, the row end is ${read.modelRight}`);
       }
       assert.ok(read.isSubWhole, `${width}px: the card head's sub shows whole`);
       assert.strictEqual(lines.find((line) => line.text === "None")!.color, read.faint, "an absent role is faint");

@@ -3056,19 +3056,23 @@ a.prose-link:hover {
 	align-items: center;
 	height: var(--lh-row);
 }
-/* third cell = the model (or Not loaded): end-aligned, both lines tall → a price note wraps under the id, never pushing line two
-   (the 1fr second row takes the model's extra height, so the first row stays the name's height) */
+/* third cell = the model (or Not loaded), end-aligned; line two (the role, None, the file's reason, a failure reason) runs from
+   the name's x to the row end */
 .tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:nth-child(3) {
-	grid-area: 1 / 3 / span 2;
+	grid-area: 1 / 3;
 	justify-self: end;
 	text-align: end;
 }
-/* line two: the role (or None, the file's reason) under the name; a failure reason row's line spans to the row end */
-.tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:nth-child(4) {
-	grid-column: 2;
-}
 .tbl.tbl--stacked.agent-table .agent-row-sub {
 	grid-column: 2 / -1;
+}
+/* a model with a price note is both lines tall → the note wraps under the id and line two keeps the name column, never pushed
+   below the note (the 1fr second row takes the model's extra height, so the first row stays the name's height) */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:nth-child(3):has(> :nth-child(2)) {
+	grid-row: 1 / span 2;
+}
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row:has(> td:nth-child(3) > :nth-child(2)) > td:nth-child(4) {
+	grid-column: 2;
 }
 /* head: master box · Agent over the name · Model over the model; the role has no column when it is line two */
 .tbl.tbl--stacked.agent-table > thead > tr {
