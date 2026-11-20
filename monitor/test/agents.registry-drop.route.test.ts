@@ -80,7 +80,7 @@ const FIXTURE_DUAL_MATCH_COLLISION_REGISTRY = {
 };
 
 const ATRIUM_DEV_NODE_MD = `---
-description: Node.js ESM CLI and MCP server implementation specialist. Use when building Node tooling.
+description: Node.js ESM CLI and MCP server specialist. Use when building Node tooling.
 ---
 
 # glass-atrium-dev-node
@@ -202,7 +202,7 @@ test("agents-dir 기본 경로: description 은 ~/.glass-atrium/agents/<name>.md
   // toRoleLine 첫 문장 절삭 규칙 반영.
   assert.strictEqual(
     devNode.description,
-    "Node.js ESM CLI and MCP server implementation specialist.",
+    "Node.js ESM CLI and MCP server specialist.",
   );
 });
 
