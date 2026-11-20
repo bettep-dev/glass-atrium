@@ -17,8 +17,8 @@ const TOAST_DURATION_MS_MC = 2000;
 // 검증 상수 — 서버 SoT(routes/model-config.ts consts 모듈) 의 클라이언트 미러. 변경 시 동기화 필수.
 // known-model 목록은 상수 미러가 아니라 GET known_models(서버가 pricing.json SoT 에서 파생)를
 // 그대로 소비 — 하드코딩 미러 + bare alias(opus/sonnet/haiku) 옵션 제거 (P7).
-// free-text escape hatch — 소문자 alnum + dot/hyphen/bracket ≤128 (PUT 검증 계약).
-const FREE_TEXT_MODEL_RE_MC = /^[a-z0-9.\-[\]]{1,128}$/;
+// free-text escape hatch — 소문자 alnum 선두 + alnum/dot/hyphen/bracket ≤128 (PUT 검증 계약).
+const FREE_TEXT_MODEL_RE_MC = /^[a-z0-9][a-z0-9.\-[\]]{0,127}$/;
 // per-call 예산 = 정확히 2-decimal 문자열 — daemon_config.py 가 --max-budget-usd 로 verbatim 전달,
 // JSON number 0.5 는 trailing-zero 가 사라져 CLI 캡을 깨뜨림 (서버 BUDGET_VALUE_PATTERN 미러).
 const BUDGET_RE_MC = /^\d+\.\d{2}$/;

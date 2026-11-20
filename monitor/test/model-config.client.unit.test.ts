@@ -147,13 +147,21 @@ test("client model-format regex mirror matches server FREE_TEXT_MODEL_PATTERN (v
   // The client validate path uses FREE_TEXT_MODEL_RE_MC for free-text ids; assert the client
   // verdict agrees with the server FREE_TEXT_MODEL_PATTERN on a discriminating sample set.
   // (None of the samples sits in the injected roster → the free-text branch decides.)
-  const cases = ["claude-fable-5[1m]", "valid-custom.id", "Bad-Upper", "white space", "ok123"];
-  for (const value of cases) {
+  const rows = [
+    { name: "a bracketed variant suffix", value: "claude-fable-5[1m]" },
+    { name: "a dotted custom id", value: "valid-custom.id" },
+    { name: "an upper-case letter", value: "Bad-Upper" },
+    { name: "a space", value: "white space" },
+    { name: "letters and digits only", value: "ok123" },
+    { name: "a leading hyphen", value: "-x" },
+    { name: "a leading bracket", value: "[1m]" },
+  ];
+  for (const row of rows) {
     const clientErr = !!sameRealm(
-      mc.validateFormMC({ models: { "model.daemon_cycle_worker": value }, budgets: {} }, KNOWN_MODELS_FIXTURE),
+      mc.validateFormMC({ models: { "model.daemon_cycle_worker": row.value }, budgets: {} }, KNOWN_MODELS_FIXTURE),
     )["model.daemon_cycle_worker"];
-    const serverOk = FREE_TEXT_MODEL_PATTERN.test(value);
-    assert.strictEqual(clientErr, !serverOk, `client/server agree on '${value}'`);
+    const serverOk = FREE_TEXT_MODEL_PATTERN.test(row.value);
+    assert.strictEqual(clientErr, !serverOk, `client/server agree on ${row.name} '${row.value}'`);
   }
 });
 
