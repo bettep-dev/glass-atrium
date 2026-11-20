@@ -9,7 +9,7 @@ import path from "node:path";
 import type { ConnectionError, FastifyError, FastifyInstance, FastifyReply } from "fastify";
 
 import { logger } from "../logger.js";
-import { REMOTE_LIMITS, attachConnectionCaps } from "./limits.js";
+import { REMOTE_LIMITS, type RefusalLog, attachConnectionCaps } from "./limits.js";
 
 export interface RemoteTls {
   readonly key: Buffer;
@@ -34,13 +34,14 @@ const FRAMEWORK_REFUSAL_BODY = JSON.stringify({ error: "bad_request" });
 /**
  * Fastify server options for the remote instance: TLS 1.3 only → a plain-HTTP request fails at the handshake.
  * A request the parser or the router rejects never reaches the gate → it gets the fixed refusal body.
+ * A TLS or parser error reaches `logRefusal`, the instance's one refusal log.
  */
-export function getRemoteServerOptions(tls: RemoteTls) {
+export function getRemoteServerOptions(tls: RemoteTls, logRefusal: RefusalLog) {
   return {
     https: { key: tls.key, cert: tls.cert, minVersion: "TLSv1.3" as const },
     keepAliveTimeout: REMOTE_TIMEOUTS.KEEP_ALIVE_MS,
     frameworkErrors: refuseUnroutable,
-    clientErrorHandler: refuseUnparsed,
+    clientErrorHandler: (error: ConnectionError, socket: Socket) => refuseUnparsed(error, socket, logRefusal),
   };
 }
 
@@ -50,11 +51,13 @@ function refuseUnroutable(error: FastifyError, _request: unknown, reply: Fastify
   void reply.code(400).type("application/json").send(FRAMEWORK_REFUSAL_BODY);
 }
 
-// HTTP parser rejection → there is no request object; the raw socket is answered, then closed
-function refuseUnparsed(error: ConnectionError, socket: Socket): void {
-  if (error.code === "ECONNRESET" || socket.destroyed) return;
+// TLS or HTTP parser rejection → there is no request object; the raw socket is answered, then closed
+function refuseUnparsed(error: ConnectionError, socket: Socket, logRefusal: RefusalLog): void {
+  if (error.code === "ECONNRESET") return;
   // code only → the error object carries the client's raw bytes
-  logger.debug({ code: error.code }, "remote request refused by the HTTP parser");
+  logRefusal({ reason: "client_error", code: error.code, address: socket.remoteAddress ?? "" });
+  // a TLS error arrives on a socket Node has already destroyed → logged, nothing left to answer
+  if (socket.destroyed) return;
   if (socket.writable) {
     socket.write(
       `HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(FRAMEWORK_REFUSAL_BODY)}\r\nConnection: close\r\n\r\n${FRAMEWORK_REFUSAL_BODY}`,
@@ -64,9 +67,9 @@ function refuseUnparsed(error: ConnectionError, socket: Socket): void {
 }
 
 /** Header timeout and connection caps on the instance's own server; call once, before listen. */
-export function setRemoteSocketLimits(app: FastifyInstance): void {
+export function setRemoteSocketLimits(app: FastifyInstance, logRefusal: RefusalLog): void {
   app.server.headersTimeout = REMOTE_TIMEOUTS.HEADERS_MS;
-  attachConnectionCaps(app.server, REMOTE_LIMITS.CONNECTIONS);
+  attachConnectionCaps(app.server, REMOTE_LIMITS.CONNECTIONS, logRefusal);
 }
 
 export async function readRemoteTls(directory: string): Promise<RemoteTls> {

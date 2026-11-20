@@ -1,12 +1,12 @@
 // Remote listener transport: HTTPS only on the address it is given, and a silent leaf reissue on the open listener.
 // Binds only 127.0.0.1 on an ephemeral port — the stand-in for the Wi-Fi address.
 
-import test, { after } from "node:test";
+import test, { after, mock } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { X509Certificate, randomBytes } from "node:crypto";
 import http from "node:http";
-import { createServer } from "node:net";
+import { connect as connectTcp, createServer } from "node:net";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import type { Socket } from "node:net";
@@ -19,6 +19,7 @@ import type { FastifyInstance } from "fastify";
 
 import { buildRemoteApp } from "../src/server/app.js";
 import { disconnectPrisma } from "../src/server/db.js";
+import { logger } from "../src/server/logger.js";
 import { DeviceConnections } from "../src/server/remote/connections.js";
 import type { DeviceSummary } from "../src/server/remote/devices.js";
 import { LEAF_REISSUE_AHEAD_MS, type RemoteTls, isLeafDue, setRemoteCertificate } from "../src/server/remote/listener.js";
@@ -144,6 +145,35 @@ test("a request the framework rejects before any route is answered with the one 
   } finally {
     await app.close();
   }
+});
+
+/** Plain bytes to the TLS port → resolves once the server closes the connection. */
+function sendPlainBytes(port: number, bytes: string): Promise<void> {
+  return new Promise((resolve) => {
+    const socket = connectTcp(port, STAND_IN, () => socket.write(bytes));
+    socket.on("error", () => undefined);
+    socket.on("close", () => resolve());
+    socket.resume();
+  });
+}
+
+test("a TLS client error leaves one info line with its code and the peer address, and none of the client's bytes", async () => {
+  const { app, port } = await openStandIn(await getTls());
+  const marker = "galaxy-probe-7f3a";
+  const info = mock.method(logger, "info", () => undefined);
+  try {
+    await sendPlainBytes(port, `GET /${marker} HTTP/1.1\r\nHost: ${STAND_IN}:${port}\r\nX-Probe: ${marker}\r\n\r\n`);
+  } finally {
+    info.mock.restore();
+    await app.close();
+  }
+  const refusals = info.mock.calls
+    .map((call) => call.arguments)
+    .filter(([fields]) => typeof fields === "object" && fields !== null && "reason" in fields);
+  assert.equal(refusals.length, 1);
+  const [fields] = refusals[0] ?? [];
+  assert.match(JSON.stringify(fields), /^\{"reason":"client_error","code":"ERR_SSL_[A-Z0-9_]+","address":"127\.0\.0\.1"\}$/);
+  assert.ok(!JSON.stringify(refusals).includes(marker), "no request bytes in the line");
 });
 
 /** One keep-alive request as a registered device → the socket it leaves open, still pooled by its agent. */

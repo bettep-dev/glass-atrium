@@ -4,6 +4,8 @@ import type { Server, Socket } from "node:net";
 
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { logger } from "../logger.js";
+
 export interface WindowLimit {
   readonly limit: number;
   readonly windowMs: number;
@@ -19,7 +21,17 @@ export const REMOTE_LIMITS = {
   DEVICE_REQUESTS: { limit: 600, windowMs: 60_000 },
   DEVICE_MUTATIONS: { limit: 60, windowMs: 60_000 },
   CONNECTIONS: { total: 32, perAddress: 8 },
+  REFUSAL_LOG: { limit: 10, windowMs: 60_000 },
 } as const;
+
+/** A connection refused before any request: a TLS or HTTP-parser error by its code, or the connection cap. */
+export interface ConnectionRefusal {
+  readonly reason: "client_error" | "connection_cap";
+  readonly code?: string;
+  readonly address: string;
+}
+
+export type RefusalLog = (refusal: ConnectionRefusal) => void;
 
 // keys are LAN addresses and device ids → small sets; past this, expired entries are swept on the next hit
 const SWEEP_THRESHOLD = 1_024;
@@ -76,8 +88,19 @@ export function buildWindowLimitHook(limiter: WindowLimiter): (request: FastifyR
   return async (_request, reply) => (limiter.hit("all") ? undefined : reply.code(429).send({ error: "too_many_requests" }));
 }
 
+/**
+ * One info line per refused connection, at most REMOTE_LIMITS.REFUSAL_LOG per peer address per window → a flood cannot fill the log.
+ * Fields only: never the error object, a header or the client's bytes.
+ */
+export function buildRefusalLog(now: () => number = Date.now): RefusalLog {
+  const limiter = new WindowLimiter(REMOTE_LIMITS.REFUSAL_LOG, now);
+  return (refusal) => {
+    if (limiter.hit(refusal.address)) logger.info(refusal, "remote connection refused before a request");
+  };
+}
+
 /** Closes any connection past the total or per-address cap as soon as it is accepted. */
-export function attachConnectionCaps(server: Server, caps: { readonly total: number; readonly perAddress: number }): void {
+export function attachConnectionCaps(server: Server, caps: { readonly total: number; readonly perAddress: number }, logRefusal: RefusalLog): void {
   const perAddress = new Map<string, number>();
   let total = 0;
   // prepended → runs before the server's own handler (TLS handshake, HTTP parser) sees the socket
@@ -85,6 +108,7 @@ export function attachConnectionCaps(server: Server, caps: { readonly total: num
     const address = socket.remoteAddress ?? "";
     const addressCount = perAddress.get(address) ?? 0;
     if (total >= caps.total || addressCount >= caps.perAddress) {
+      logRefusal({ reason: "connection_cap", address });
       socket.destroy();
       return;
     }

@@ -18,6 +18,7 @@ import { type ListenerContext, buildHostAllowlistHook, setListenerContext } from
 import { type RemoteAdminDeps, registerRemoteAdminRoutes } from "./remote/admin-routes.js";
 import { registerRemoteCliRoutes } from "./remote/cli-routes.js";
 import { type RemoteGateDeps, registerRemoteGate } from "./remote/gate.js";
+import { buildRefusalLog } from "./remote/limits.js";
 import { type RemoteTls, getRemoteServerOptions, setRemoteSocketLimits } from "./remote/listener.js";
 import { type RemoteDeviceDeps, type RemoteRegistrationDeps, registerRemoteDeviceRoutes } from "./remote/routes.js";
 import type { QueueRouteOptions } from "./routes/queue.js";
@@ -87,8 +88,9 @@ export interface RemoteAppOptions {
  * Owns no shared resource → no browser shutdown hook, no queue scheduler; closing it leaves the loopback app untouched.
  */
 export async function buildRemoteApp(options: RemoteAppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ loggerInstance: logger, bodyLimit: REMOTE_BODY_LIMIT_BYTES, ...getRemoteServerOptions(options.tls) });
-  setRemoteSocketLimits(app);
+  const logRefusal = buildRefusalLog();
+  const app = Fastify({ loggerInstance: logger, bodyLimit: REMOTE_BODY_LIMIT_BYTES, ...getRemoteServerOptions(options.tls, logRefusal) });
+  setRemoteSocketLimits(app, logRefusal);
   setListenerContext(app, options.listener);
   await registerRemoteGate(app, options.gate);
   // same parser set as loopback → a cross-origin text/plain simple request gets 415
