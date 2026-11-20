@@ -1041,6 +1041,38 @@ test("PUT agents: a file holding two model lines is refused, never rewritten", a
   assert.strictEqual(readFileSync(researcherPath, "utf8"), twoLines);
 });
 
+test("PUT agents: a write that would not read back, through the list's own reader, as only the frontmatter model changed is refused and never written", async () => {
+  const name = "glass-atrium-zz-hand-added";
+  const foldedPin = ["---", `name: ${name}`, "model: >-", "  claude-sonnet-5", "tools: [Read]", "---", "", "Body.", ""].join("\n");
+  const rows = [
+    {
+      name: "a closing fence with trailing space and a rule later in the body",
+      text: ["---", `name: ${name}`, "tools: [Read]", "--- ", "", "Body.", "", "---", "", "More body.", ""].join("\n"),
+      expectedPin: null,
+      model: "claude-opus-4-8",
+      reason: "The write would change the body",
+    },
+    { name: "a folded model value set", text: foldedPin, expectedPin: "claude-sonnet-5", model: "claude-opus-4-8", reason: "The written model would not read back as the chosen model" },
+    { name: "a folded model value removed", text: foldedPin, expectedPin: "claude-sonnet-5", model: "inherit", reason: "The write would change another frontmatter key" },
+    {
+      name: "a model key the line pattern misses",
+      text: ["---", `name: ${name}`, "model : claude-sonnet-5", "tools: [Read]", "---", "", "Body.", ""].join("\n"),
+      expectedPin: "claude-sonnet-5",
+      model: "claude-opus-4-8",
+      reason: "The written file would not read back as an agent file",
+    },
+  ] as const;
+  for (const row of rows) {
+    writeAgentFixtures();
+    writeFileSync(path.join(agentsDir, `${name}.md`), row.text, "utf8");
+    const before = readAgentFolder();
+    const res = await putAgents({ model: row.model, agents: [{ name, expected_pin: row.expectedPin }] });
+    assert.strictEqual(res.statusCode, 200, `${row.name}: ${res.body}`);
+    assert.deepStrictEqual((res.json() as AgentPinPutResponse).results, [{ name, status: "refused", reason: row.reason }], row.name);
+    assert.deepStrictEqual(readAgentFolder(), before, `${row.name}: no file written`);
+  }
+});
+
 test("PUT agents: a pin that moved since the page loaded answers changed_since_load and is left as it stands", async () => {
   writeAgentFixtures();
   const res = await putAgents({ model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: null }] });

@@ -362,13 +362,19 @@ async function readAgentFile(dir: string, realDir: string, file: string): Promis
   return { name, file, role: toRoleLine(read.fields.description), frontmatter: read.fields };
 }
 
-/** One agent file's frontmatter fields as listAgentFiles reads them; null when the block is absent or unparseable. */
-export function getAgentFrontmatter(raw: string): Record<string, unknown> | null {
-  const read = parseFrontmatterFields(raw);
-  return "fields" in read ? read.fields : null;
+/** One agent file as listAgentFiles reads it: the frontmatter fields and the text after the closing fence. */
+export interface AgentFileParts {
+  fields: Record<string, unknown>;
+  body: string;
 }
 
-function parseFrontmatterFields(raw: string): { fields: Record<string, unknown> } | { reason: string } {
+/** null when the frontmatter block is absent or unparseable. */
+export function getAgentFileParts(raw: string): AgentFileParts | null {
+  const read = parseFrontmatterFields(raw);
+  return "reason" in read ? null : read;
+}
+
+function parseFrontmatterFields(raw: string): AgentFileParts | { reason: string } {
   const frontmatter = extractFrontmatter(raw);
   if (frontmatter === null) {
     return { reason: "No frontmatter block" };
@@ -377,27 +383,27 @@ function parseFrontmatterFields(raw: string): { fields: Record<string, unknown> 
   try {
     // FAILSAFE_SCHEMA — constructs only plain strings/maps/lists, never typed
     // objects via tags (defense-in-depth; treats the `.md` as untrusted input).
-    parsed = yaml.load(frontmatter, { schema: yaml.FAILSAFE_SCHEMA });
+    parsed = yaml.load(frontmatter.block, { schema: yaml.FAILSAFE_SCHEMA });
   } catch {
     return { reason: "Frontmatter could not be parsed" };
   }
-  return isPlainObject(parsed) ? { fields: parsed } : { reason: "Frontmatter could not be parsed" };
+  return isPlainObject(parsed) ? { fields: parsed, body: frontmatter.body } : { reason: "Frontmatter could not be parsed" };
 }
 
-// Pull the YAML block between the leading `---` fence and the next `---`; null when no opening fence.
-function extractFrontmatter(raw: string): string | null {
-  const lines = raw.split(/\r?\n/);
+// The YAML block between the leading `---` fence and the next `---` line, plus the text after that closing fence; null when either fence is missing.
+function extractFrontmatter(raw: string): { block: string; body: string } | null {
+  const lines = raw.split(/(?<=\n)/);
   if (lines[0]?.trim() !== "---") {
     return null;
   }
-  const body: string[] = [];
+  let offset = lines[0].length;
   for (let i = 1; i < lines.length; i++) {
-    if (lines[i]?.trim() === "---") {
-      return body.join("\n");
+    const line = lines[i] ?? "";
+    offset += line.length;
+    if (line.trim() === "---") {
+      return { block: lines.slice(1, i).map((blockLine) => blockLine.replace(/\r?\n$/, "")).join("\n"), body: raw.slice(offset) };
     }
-    body.push(lines[i] ?? "");
   }
-  // No closing fence — treat as malformed, no frontmatter.
   return null;
 }
 

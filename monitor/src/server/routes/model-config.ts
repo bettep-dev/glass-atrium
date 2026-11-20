@@ -5,11 +5,12 @@
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
-import { type AgentFileList, getAgentFrontmatter, listAgentFiles, loadAgentRegistry } from "../agents/registry.js";
+import { type AgentFileList, type AgentFileParts, getAgentFileParts, listAgentFiles, loadAgentRegistry } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { type AuditChangeCarrier, setAuditTarget } from "../middleware/audit-log.js";
@@ -557,7 +558,7 @@ async function putAgentPin(list: AgentFileList, target: AgentPinTarget, desired:
 /**
  * Set or remove ONLY the `model:` line of one agent file; 'inherit' removes it.
  * - The realpath must sit directly in the agents folder; the file must hold at most one model line and the pin the page showed.
- * - Whole text minus the model line must stay byte-identical, and the file is re-read just before the rename.
+ * - The new text must read back through the list's own reader with only the model changed, and the file is re-read just before the rename.
  * - A file already holding the value is never rewritten.
  */
 async function writeFrontmatterModel(linkPath: string, target: AgentPinTarget, desired: string): Promise<AgentPinWrite> {
@@ -576,8 +577,9 @@ async function writeFrontmatterModel(linkPath: string, target: AgentPinTarget, d
   if (newText === source.text) {
     return done("unchanged");
   }
-  if (getTextWithoutModel(newText) !== getTextWithoutModel(source.text)) {
-    return done("refused", "The write would change more than the model line");
+  const readBackRefusal = getReadBackRefusal(source.read, newText, desired);
+  if (readBackRefusal !== null) {
+    return done("refused", readBackRefusal);
   }
   const status = await putAgentText(source, newText);
   return status === "refused" ? done(status, "The file could not be written") : done(status);
@@ -595,7 +597,27 @@ async function putAgentText(source: AgentPinSource, newText: string): Promise<"a
 interface AgentPinSource {
   resolved: string;
   text: string;
+  read: AgentFileParts;
   pin: string | null;
+}
+
+/** The writer and the list disagree on an odd frontmatter → the new text is judged as the list will read it (A08). */
+function getReadBackRefusal(old: AgentFileParts, newText: string, desired: string): string | null {
+  const read = getAgentFileParts(newText);
+  if (read === null) {
+    return "The written file would not read back as an agent file";
+  }
+  if (read.body !== old.body) {
+    return "The write would change the body";
+  }
+  if (read.fields.model !== (desired === INHERIT_VALUE ? undefined : desired)) {
+    return "The written model would not read back as the chosen model";
+  }
+  return isDeepStrictEqual(getFieldsWithoutModel(read.fields), getFieldsWithoutModel(old.fields)) ? null : "The write would change another frontmatter key";
+}
+
+function getFieldsWithoutModel(fields: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(fields).filter(([key]) => key !== "model"));
 }
 
 async function readAgentPinSource(linkPath: string, target: AgentPinTarget): Promise<AgentPinSource | AgentPinWrite> {
@@ -615,12 +637,12 @@ async function readAgentPinSource(linkPath: string, target: AgentPinTarget): Pro
   if (getModelLineIndexes(text.slice(fm.start, fm.end).split("\n")).length > 1) {
     return refused("More than one model line");
   }
-  const frontmatter = getAgentFrontmatter(text);
-  if (frontmatter === null) {
+  const parts = getAgentFileParts(text);
+  if (parts === null) {
     return refused("Frontmatter could not be parsed");
   }
-  const pin = getAgentPin(frontmatter);
-  return pin === undefined ? refused("Model line is not a model id") : { resolved, text, pin };
+  const pin = getAgentPin(parts.fields);
+  return pin === undefined ? refused("Model line is not a model id") : { resolved, text, read: parts, pin };
 }
 
 // C1 at write time: the realpath is re-checked, so a link swapped in after the listing never leads out of the folder
@@ -650,15 +672,6 @@ function getTextWithModel(text: string, desired: string): string {
   } else {
     lines.push(`model: ${desired}`);
   }
-  return text.slice(0, fm.start) + lines.join("\n") + text.slice(fm.end);
-}
-
-function getTextWithoutModel(text: string): string {
-  const fm = locateFrontmatter(text);
-  if (fm === null) {
-    return text;
-  }
-  const lines = text.slice(fm.start, fm.end).split("\n").filter((line) => !MODEL_LINE.test(line));
   return text.slice(0, fm.start) + lines.join("\n") + text.slice(fm.end);
 }
 
