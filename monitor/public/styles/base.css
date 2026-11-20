@@ -45,8 +45,8 @@ details[open] > summary.disclosure > .disclosure-chevron {
    An input carries no pseudo-element in every engine → the check / minus glyph is a .ctl-checkbox-mark overlay. A toggle is discrete → no transition */
 .ctl-checkbox {
 	appearance: none;
-	width: 16px;
-	height: 16px;
+	width: var(--ctl-checkbox-size);
+	height: var(--ctl-checkbox-size);
 	margin: 0;
 	border: 1.5px solid rgb(var(--faint));
 	border-radius: var(--radius-inline);
@@ -3016,20 +3016,38 @@ a.prose-link:hover {
 	}
 }
 
-/* agent table, stacked (model-config) — one body grid, each row a subgrid → the box column holds one width
-   in every row, so the name and each second line (role, file reason, failure reason) share one x */
-.tbl--stacked.agent-table > tbody {
-	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
-	column-gap: var(--gap-control-group);
+/* agent card head (model-config): title + sub share a line while they fit, then the sub wraps under the title — never cut;
+   the head's controls keep their own line */
+.agent-card > .card-head > .card-head-text {
+	flex: 1 1 0;
+	flex-wrap: wrap;
+	row-gap: 0;
 }
-.tbl--stacked.agent-table > tbody > tr {
-	grid-column: 1 / -1;
+.agent-card > .card-head > .card-head-text > .card-sub {
+	flex: 0 1 auto;
+	contain: none;
+	white-space: normal;
+	overflow: visible;
 }
-/* line one top-aligned: box, name and the model's first line on one row; a model note continues below in its column */
+
+/* agent table, wide: a refused agent's reason row is its agent row's second line — the agent row drops its bottom pad and the
+   40 step, the reason row pads 0 above and 8 below → the reason sits one meta line under the main line */
+.tbl.agent-table:not(.tbl--stacked) > tbody > tr.is-grouped > td {
+	height: auto;
+	padding-block-end: 0;
+}
+.tbl.agent-table:not(.tbl--stacked) > tbody > tr.agent-row-detail > td {
+	height: auto;
+	padding-block: 0 var(--space-2);
+}
+
+/* agent table, stacked — each row its own grid. The box column is the box's width in every row (an unreadable row has no box),
+   so the name and each second line (role, file reason, failure reason) share one x. The model column is only as wide as this
+   row's model, capped at half → the name takes the rest and is cut only where the two meet */
 .tbl.tbl--stacked.agent-table > tbody > tr.agent-row {
 	display: grid;
-	grid-template-columns: subgrid;
+	grid-template-columns: var(--ctl-checkbox-size) minmax(0, 1fr) fit-content(50%);
+	grid-template-rows: auto 1fr;
 	align-items: start;
 }
 /* the box cell is one name line tall → the 16 box centres on that line, its 24 hit area overhanging */
@@ -3038,9 +3056,16 @@ a.prose-link:hover {
 	align-items: center;
 	height: var(--lh-row);
 }
-/* third cell = the model (or Not loaded) → end-aligned */
+/* third cell = the model (or Not loaded): end-aligned, both lines tall → a price note wraps under the id, never pushing line two
+   (the 1fr second row takes the model's extra height, so the first row stays the name's height) */
 .tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:nth-child(3) {
+	grid-area: 1 / 3 / span 2;
 	justify-self: end;
+	text-align: end;
+}
+/* line two: the role (or None, the file's reason) under the name; a failure reason row's line spans to the row end */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:nth-child(4) {
+	grid-column: 2;
 }
 .tbl.tbl--stacked.agent-table .agent-row-sub {
 	grid-column: 2 / -1;
@@ -3048,7 +3073,7 @@ a.prose-link:hover {
 /* head: master box · Agent over the name · Model over the model; the role has no column when it is line two */
 .tbl.tbl--stacked.agent-table > thead > tr {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
+	grid-template-columns: var(--ctl-checkbox-size) minmax(0, 1fr) auto;
 }
 .tbl.tbl--stacked.agent-table > thead th:has(> .agent-head-role) {
 	display: none;

@@ -686,7 +686,7 @@ const AGENT_READ_BACK_RE_MC = /^The writ(?:e|ten) /;
  * Apply is its own immediate PUT, apart from the buffered daemon Save; nothing on it is optimistic.
  */
 function AgentModelsSectionMC({ state, agents, unreadable, knownModels, onAgentsRead, showToast }) {
-	const { Card, Link } = window.UI;
+	const { Card, Cluster, Link } = window.UI;
 	const cardRef = useRefMC(null);
 	const apply = useAgentApplyMC({ agents, onAgentsRead, showToast, cardRef });
 	const items = getAgentListMC(agents || [], unreadable || []);
@@ -697,17 +697,18 @@ function AgentModelsSectionMC({ state, agents, unreadable, knownModels, onAgents
 		<div id={MODELS_SECTION_ID_MC} ref={cardRef}>
 			<Card
 				size="L"
+				className="agent-card"
 				title="Agent models"
 				sub={AGENT_TIMING_MC.sub}
 				info={<AgentInfoMC />}
 				infoLabel={SETTINGS_INFO_LABEL_MC}
 				right={
-					<span className="flex items-center gap-control">
+					<Cluster gap="control-group">
 						{state === "ready" && unreadable?.length > 0 && <HeadMarkMC text={`${unreadable.length} ${unreadable.length === 1 ? "file" : "files"} not readable`} />}
 						<Link href="#cost" className="fs-meta inline-target">
 							Cost & usage
 						</Link>
-					</span>
+					</Cluster>
 				}
 				bar={isListed ? <AgentBarMC {...apply.bar} knownModels={knownModels} /> : null}
 				foot={isEmpty ? null : AGENT_FOOT_MC}
@@ -864,7 +865,7 @@ function getAgentColumnsMC(master) {
 
 /**
  * One agent file: a pointer press anywhere in the row toggles its box; the name is the box's label.
- * A failure reason rides a detail row under it, after the tick and agent columns.
+ * A failure reason rides a detail row under it, after the tick and agent columns, on the row's own fill.
  */
 function AgentRowMC({ view, item, isTicked = false, isApplying = false, reason, knownModels, focusProps, onToggle }) {
 	const { TableCell, TableRow } = window.UI;
@@ -885,7 +886,7 @@ function AgentRowMC({ view, item, isTicked = false, isApplying = false, reason, 
 				)}
 			</TableRow>
 			{reason && (
-				<TableRow view={view} className="agent-row">
+				<TableRow view={view} className="agent-row agent-row-detail" style={isTicked ? TICKED_ROW_STYLE_MC : undefined}>
 					<TableCell view={view} textRole="label" />
 					{!view?.isStacked && <TableCell view={view} textRole="label" />}
 					<TableCell view={view} kind="span" start={2} className={view?.isStacked ? "agent-row-sub" : undefined}>
