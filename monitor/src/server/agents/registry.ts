@@ -362,6 +362,12 @@ async function readAgentFile(dir: string, realDir: string, file: string): Promis
   return { name, file, role: toRoleLine(read.fields.description), frontmatter: read.fields };
 }
 
+/** One agent file's frontmatter fields as listAgentFiles reads them; null when the block is absent or unparseable. */
+export function getAgentFrontmatter(raw: string): Record<string, unknown> | null {
+  const read = parseFrontmatterFields(raw);
+  return "fields" in read ? read.fields : null;
+}
+
 function parseFrontmatterFields(raw: string): { fields: Record<string, unknown> } | { reason: string } {
   const frontmatter = extractFrontmatter(raw);
   if (frontmatter === null) {

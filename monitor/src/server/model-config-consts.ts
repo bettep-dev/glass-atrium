@@ -5,13 +5,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type {
-  ApplyMode,
-  BudgetDomainKey,
-  FrontmatterSurface,
-  ModelDomainKey,
-  TierDomainKey,
-} from "./types/model-config.js";
+import type { ApplyMode, BudgetDomainKey, ModelDomainKey, TierDomainKey } from "./types/model-config.js";
 
 // SoT-derived known-model roster (pricing.json, D3)
 
@@ -57,8 +51,8 @@ export const REJECTED_ALIAS_VALUES: ReadonlySet<string> = new Set(["sonnet", "ha
 // 'inherit' = no explicit model on the surface (frontmatter/REPL key removed → settings.json model governs).
 export const INHERIT_VALUE = "inherit";
 
-// Free-text escape hatch — lowercase alnum + dot/hyphen/bracket, ≤128 (covers variant suffixes like 'claude-fable-5[1m]').
-export const FREE_TEXT_MODEL_PATTERN = /^[a-z0-9.\-[\]]{1,128}$/;
+// Free-text escape hatch — a lowercase alnum lead, then alnum + dot/hyphen/bracket, ≤128 (covers variant suffixes like 'claude-fable-5[1m]').
+export const FREE_TEXT_MODEL_PATTERN = /^[a-z0-9][a-z0-9.\-[\]]{0,127}$/;
 
 // Same pattern, end anchor dropped → matches the longest leading id-shaped run.
 const MODEL_ID_PREFIX_PATTERN = new RegExp(FREE_TEXT_MODEL_PATTERN.source.replace(/\$$/, ""));
@@ -96,67 +90,17 @@ export interface ModelDomainDef {
   applyMode: ApplyMode;
   // false = no enforced write surface.
   editable: boolean;
-  surface: FrontmatterSurface | "daemon-config";
-  // daemon-config.json key this domain renders to (write-through target), null otherwise.
-  daemonConfigKey: string | null;
+  // daemon-config.json key this domain renders to (write-through target)
+  daemonConfigKey: string;
   allowInherit: boolean;
 }
 
-// D3 domain→consumable matrix. Order = GET response render order.
+// Model domains the daemon reads from daemon-config.json; an agent's model is its own file's model line, never a domain.
 export const MODEL_DOMAINS: ReadonlyArray<ModelDomainDef> = [
-  {
-    key: "model.dev",
-    applyMode: "next-spawn",
-    editable: true,
-    surface: "frontmatter-dev",
-    daemonConfigKey: null,
-    allowInherit: true,
-  },
-  {
-    key: "model.research",
-    applyMode: "next-spawn",
-    editable: true,
-    surface: "frontmatter-research",
-    daemonConfigKey: null,
-    allowInherit: true,
-  },
-  {
-    key: "model.meta",
-    applyMode: "next-spawn",
-    editable: true,
-    surface: "frontmatter-meta",
-    daemonConfigKey: null,
-    allowInherit: true,
-  },
-  {
-    key: "model.wiki",
-    applyMode: "next-spawn",
-    editable: true,
-    surface: "frontmatter-wiki",
-    daemonConfigKey: null,
-    allowInherit: true,
-  },
-  {
-    key: "model.review",
-    applyMode: "next-spawn",
-    editable: true,
-    surface: "frontmatter-review",
-    daemonConfigKey: null,
-    allowInherit: true,
-  },
-  {
-    key: "model.docs",
-    applyMode: "next-spawn",
-    editable: true,
-    surface: "frontmatter-docs",
-    daemonConfigKey: null,
-    allowInherit: true,
-  },
   {
     key: "model.daemon_cycle_worker",
     applyMode: "next-cycle",
     editable: true,
-    surface: "daemon-config",
     daemonConfigKey: "worker_model",
     allowInherit: false,
   },
@@ -452,12 +396,30 @@ export function validateModelValue(def: ModelDomainDef, value: unknown): string 
   if (value === INHERIT_VALUE) {
     return def.allowInherit ? null : `'${INHERIT_VALUE}' is not valid for this domain`;
   }
+  return validateModelId(value);
+}
+
+/**
+ * Validation reason for an agent pin, or null when valid: the no-pin value, or a pricing-roster id.
+ * Roster-bound, unlike validateModelValue → a hand-typed id never reaches an agent file; the id pattern stays a second check.
+ */
+export function validateAgentPinValue(value: string, knownModelIds: ReadonlySet<string>): string | null {
+  if (value === INHERIT_VALUE) {
+    return null;
+  }
+  if (!knownModelIds.has(value)) {
+    return "must be a model id the pricing roster lists, or 'inherit'";
+  }
+  return validateModelId(value);
+}
+
+function validateModelId(value: string): string | null {
   // D2: checked BEFORE the free-text pattern — the bare words would otherwise match it.
   if (REJECTED_ALIAS_VALUES.has(value)) {
     return "bare aliases removed — use a concrete id, e.g. claude-sonnet-5";
   }
   if (!FREE_TEXT_MODEL_PATTERN.test(value)) {
-    return "must be a concrete model id — lowercase alnum/dot/hyphen/bracket (max 128)";
+    return "must be a concrete model id — a lowercase letter or digit, then lowercase alnum/dot/hyphen/bracket (max 128)";
   }
   return null;
 }

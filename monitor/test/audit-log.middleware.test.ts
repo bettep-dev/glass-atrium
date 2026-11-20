@@ -18,7 +18,7 @@ import Fastify, {
 import { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { buildApp } from "../src/server/app.js";
-import { ROUTE_RESOURCE, registerAuditLogHook } from "../src/server/middleware/audit-log.js";
+import { ROUTE_RESOURCE, registerAuditLogHook, setAuditTarget } from "../src/server/middleware/audit-log.js";
 import { registerRoutes } from "../src/server/routes/index.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
@@ -295,6 +295,70 @@ test("audit INSERT failure does NOT propagate to the handler (response still suc
     } catch {
       // best-effort
     }
+  }
+});
+
+// An awaited-intent route's row exists before its handler runs → a file write never goes unrecorded
+const INTENT_ROUTE = "/api/model-config/agents";
+
+async function buildIntentApp(handlerRuns: { count: number }): Promise<FastifyInstance> {
+  const instance = Fastify({ logger: false });
+  registerAuditLogHook(instance);
+  instance.put(INTENT_ROUTE, async (request, reply) => {
+    handlerRuns.count += 1;
+    const open = await getPrisma().$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*)::bigint AS count FROM monitor.audit_log
+      WHERE action_kind = 'model-config.agents' AND result_code = 'error' AND payload->>'route' = ${INTENT_ROUTE}
+        AND event_ts >= NOW() - INTERVAL '2 minutes'
+    `;
+    setAuditTarget(request, { marker: SUITE_MARKER, openIntentRows: Number(open[0].count) });
+    return reply.code(200).send({ ok: true });
+  });
+  await instance.ready();
+  return instance;
+}
+
+test("an awaited-intent route writes its row before the handler and closes that same row with the result and target", async () => {
+  const intentApp = await buildIntentApp({ count: 0 });
+  try {
+    const res = await intentApp.inject({ method: "PUT", url: INTENT_ROUTE, payload: {} });
+    assert.strictEqual(res.statusCode, 200);
+    type Row = { result_code: string; payload: { status_code?: number; change?: { openIntentRows?: number } } };
+    let rows: Row[] = [];
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      rows = await getPrisma().$queryRaw<Row[]>`
+        SELECT result_code::text AS result_code, payload FROM monitor.audit_log
+        WHERE payload->'change'->>'marker' = ${SUITE_MARKER} AND event_ts >= NOW() - INTERVAL '2 minutes'
+      `;
+      if (rows[0]?.result_code === "success") break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.strictEqual(rows.length, 1, "one row per request: the intent row is closed, never joined by a second");
+    assert.ok((rows[0].payload.change?.openIntentRows ?? 0) >= 1, "the handler saw its own open intent row");
+    assert.strictEqual(rows[0].result_code, "success");
+    assert.strictEqual(rows[0].payload.status_code, 200);
+  } finally {
+    await getPrisma().$executeRaw`DELETE FROM monitor.audit_log WHERE payload->>'route' = ${INTENT_ROUTE} AND event_ts >= NOW() - INTERVAL '10 minutes'`;
+    await intentApp.close();
+  }
+});
+
+test("an awaited-intent route whose row cannot be written answers 503 and its handler never runs", async () => {
+  const handlerRuns = { count: 0 };
+  const intentApp = await buildIntentApp(handlerRuns);
+  const prisma = getPrisma();
+  const originalQueryRaw = prisma.$queryRaw.bind(prisma);
+  (prisma as { $queryRaw: unknown }).$queryRaw = (() => Promise.reject(new Error("forced intent insert failure"))) as unknown as typeof prisma.$queryRaw;
+  try {
+    const res = await intentApp.inject({ method: "PUT", url: INTENT_ROUTE, payload: {} });
+    assert.strictEqual(res.statusCode, 503);
+    assert.deepStrictEqual(res.json(), { error: "audit_unavailable" });
+    assert.strictEqual(handlerRuns.count, 0, "no row, no write");
+  } finally {
+    (prisma as { $queryRaw: unknown }).$queryRaw = originalQueryRaw;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await prisma.$executeRaw`DELETE FROM monitor.audit_log WHERE payload->>'route' = ${INTENT_ROUTE} AND event_ts >= NOW() - INTERVAL '10 minutes'`;
+    await intentApp.close();
   }
 });
 

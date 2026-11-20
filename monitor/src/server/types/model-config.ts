@@ -9,14 +9,7 @@ export type ApplyMode =
   | "tmux-restart"
   | "immediate";
 
-export type ModelDomainKey =
-  | "model.dev"
-  | "model.research"
-  | "model.meta"
-  | "model.wiki"
-  | "model.review"
-  | "model.docs"
-  | "model.daemon_cycle_worker";
+export type ModelDomainKey = "model.daemon_cycle_worker";
 
 export type BudgetDomainKey = "budget.worker_max_usd" | "budget.pre_verify_max_usd";
 
@@ -33,25 +26,16 @@ export type TierDomainKey =
 // 'file-invalid': the file holds a tier-knob value the daemon loader rejects → every cycle stops, whatever the DB holds.
 export type DaemonConfigSyncState = "ok" | "drift" | "file-missing" | "pending-migration" | "file-invalid";
 
-export interface DomainFileModel {
-  file: string;
-  // null = no `model:` frontmatter line (harness inherits settings.json at spawn).
-  model: string | null;
-}
-
 export interface DomainStatus {
   domain: ModelDomainKey;
   desired: string | null;
-  // 'mixed' (multi-file domain, per-file detail in `files`) and the 'inherit (settings.json)'
-  // label (absent daemon-config key) are display values, not raw surface bytes.
+  // the 'inherit (settings.json)' label (absent daemon-config key) is a display value, not raw file bytes
   actual: string | null;
   // Compared after variant-suffix normalization ('claude-fable-5[1m]' == 'claude-fable-5').
   drift: boolean;
   apply_mode: ApplyMode;
   editable: boolean;
   pricing_known: boolean;
-  // Multi-file domains only (dev, review, docs) — per-file actuals so 'mixed' stays diagnosable.
-  files?: DomainFileModel[];
 }
 
 // Per-call hard-cap budgets — the values passed to `claude -p --max-budget-usd`. desired =
@@ -105,25 +89,10 @@ export interface AgentModel {
   registered: boolean;
 }
 
-export interface SurfaceFileResult {
-  file: string;
-  status: "ok" | "skipped" | "failed";
-  reason?: string;
-}
-
-export type FrontmatterSurface =
-  | "frontmatter-dev"
-  | "frontmatter-research"
-  | "frontmatter-meta"
-  | "frontmatter-wiki"
-  | "frontmatter-review"
-  | "frontmatter-docs";
-
 export interface SurfaceResult {
-  surface: "daemon-config.json" | FrontmatterSurface;
+  surface: "daemon-config.json";
   status: "ok" | "skipped" | "failed";
   reason?: string;
-  files?: SurfaceFileResult[];
 }
 
 export interface ModelConfigPutResponse extends ModelConfigGetResponse {
@@ -136,7 +105,26 @@ export interface ModelConfigPutBody {
   tiers?: Partial<Record<TierDomainKey, string>>;
 }
 
+/** PUT /api/model-config/agents: one model for every named agent, each with the pin the page last showed. */
+export interface AgentPinPutBody {
+  // a known_models id, or 'inherit' → no model line
+  model: string;
+  agents: Array<{ name: string; expected_pin: string | null }>;
+}
+
+/** One named agent's outcome; `reason` only on `refused`. */
+export interface AgentPinResult {
+  name: string;
+  status: "applied" | "unchanged" | "changed_since_load" | "refused" | "gone";
+  reason?: string;
+}
+
+export interface AgentPinPutResponse extends Pick<ModelConfigGetResponse, "agents" | "unreadable"> {
+  results: AgentPinResult[];
+}
+
 export type ModelConfigErrorBody =
   | { error: "invalid_body"; field: string; reason: string }
-  // daemon-apply stash window guard (D4 amended: filesystem .apply-lock dir, fail-open when absent).
-  | { error: "daemon_apply_in_progress"; reason: string };
+  // daemon-apply stash window guard: the filesystem .apply-lock dir; absent → no apply running
+  | { error: "daemon_apply_in_progress"; reason: string }
+  | { error: "apply_in_progress" | "model_roster_unavailable" | "agent_list_unavailable"; reason: string };

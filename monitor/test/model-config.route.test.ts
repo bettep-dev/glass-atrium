@@ -16,11 +16,13 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import {
-  lstatSync,
+  chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -34,8 +36,9 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
-import { registerModelConfigRoutes } from "../src/server/routes/model-config.js";
+import { AGENT_PIN_WRITE_LIMIT, registerModelConfigRoutes } from "../src/server/routes/model-config.js";
 import type {
+  AgentPinPutResponse,
   BudgetDomainStatus,
   DomainStatus,
   ModelConfigGetResponse,
@@ -44,18 +47,8 @@ import type {
   TierDomainStatus,
 } from "../src/server/types/model-config.js";
 
-// Suite baseline — every test starts from (or restores toward) this state. Mirrors the
-// migration seed's shipped defaults exactly: model.research seeds the concrete id
-// 'claude-sonnet-5' (the legacy 'sonnet' alias is rejected on current code, D2), so no
-// per-key workaround is needed here; the legacy-alias display path keeps its own scoped
-// fixture in the tolerance test below.
+// Suite baseline — every test starts from (or restores toward) this state; mirrors the migration seed's shipped defaults.
 const BASELINE: ReadonlyArray<[string, string]> = [
-  ["model.dev", "inherit"],
-  ["model.research", "claude-sonnet-5"],
-  ["model.meta", "claude-sonnet-5"],
-  ["model.wiki", "claude-sonnet-5"],
-  ["model.review", "inherit"],
-  ["model.docs", "inherit"],
   ["model.daemon_cycle_worker", "claude-haiku-4-5"],
   ["budget.worker_max_usd", "10.00"],
   ["budget.pre_verify_max_usd", "10.00"],
@@ -91,11 +84,11 @@ let daemonConfigPath: string;
 let agentsDir: string;
 let realAgentsDir: string;
 let applyLockPath: string;
+let researcherPath: string;
 let registryPath: string;
 let pricingSotPath: string;
 
-// Registry fixture — the on-disk dev agents that ARE registered. glass-atrium-dev-ghost.md is
-// deliberately omitted so the T12 intersection excludes it (de-registered/archived).
+// Registry fixture — glass-atrium-zz-hand-added.md is on disk only, an agent file added by hand.
 const REGISTRY_FIXTURE = {
   $schema: "agent-registry",
   version: "1.1",
@@ -104,8 +97,24 @@ const REGISTRY_FIXTURE = {
     "glass-atrium-dev-beta": { domains: ["test"], phase: "implementation", dual_phase: false },
     "glass-atrium-dev-broken": { domains: ["test"], phase: "implementation", dual_phase: false },
     "glass-atrium-design-designer": { domains: ["test"], phase: "implementation", dual_phase: false },
+    "glass-atrium-intel-researcher": { domains: ["test"], phase: "research", dual_phase: false },
   },
 };
+
+// A pinned agent with other keys, a quoted value and a body line shaped like a model line → a write may change one line only.
+const RESEARCHER_TEXT = [
+  "---",
+  "name: glass-atrium-intel-researcher",
+  'description: "Web research with cited sources. Use for evidence gathering."',
+  "tools: [Read, WebSearch]",
+  "model: claude-sonnet-5",
+  "scope: INTEL",
+  "---",
+  "",
+  "model: this body line is prose, never the pin",
+  "Research body.",
+  "",
+].join("\n");
 
 interface SavedConfigRow {
   config_key: string;
@@ -115,15 +124,47 @@ interface SavedConfigRow {
 }
 let savedRows: SavedConfigRow[] = [];
 
-const REVIEW_AGENT_FILES = ["glass-atrium-qa-code-reviewer.md", "glass-atrium-qa-debugger.md"];
-const DOCS_AGENT_FILES = ["glass-atrium-intel-planner.md", "glass-atrium-intel-reporter.md"];
-const PAIR_DOMAINS = [
-  { key: "model.review", surface: "frontmatter-review", files: REVIEW_AGENT_FILES },
-  { key: "model.docs", surface: "frontmatter-docs", files: DOCS_AGENT_FILES },
-] as const;
-
 function agentMarkdown(name: string, extraFrontmatterLines: string[] = []): string {
   return ["---", `name: ${name}`, ...extraFrontmatterLines, "tools: [Read]", "---", "", `${name} body.`, ""].join("\n");
+}
+
+/** Every agent fixture rewritten to its starting bytes and mode → each write test starts from the same folder. */
+function writeAgentFixtures(): void {
+  researcherPath = path.join(agentsDir, "glass-atrium-intel-researcher.md");
+  for (const entry of readdirSync(agentsDir)) {
+    rmSync(path.join(agentsDir, entry), { force: true });
+  }
+  // glass-atrium-dev-alpha is reached through a symlink to a file outside the folder.
+  writeFileSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), agentMarkdown("glass-atrium-dev-alpha"), "utf8");
+  symlinkSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), path.join(agentsDir, "glass-atrium-dev-alpha.md"));
+  writeFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), agentMarkdown("glass-atrium-dev-beta"), "utf8");
+  writeFileSync(path.join(agentsDir, "glass-atrium-dev-broken.md"), "no frontmatter here\njust text\n", "utf8");
+  writeFileSync(researcherPath, RESEARCHER_TEXT, { encoding: "utf8", mode: 0o644 });
+  chmodSync(researcherPath, 0o644);
+  // The owner's hand pin, quoted with a trailing note → shown cut, never rewritten unless written to.
+  writeFileSync(
+    path.join(agentsDir, "glass-atrium-design-designer.md"),
+    agentMarkdown("glass-atrium-design-designer", [
+      "description: Visual design and theme work. Use when styling a screen.",
+      'model: "claude-opus-5-5 <b>hand note</b>"',
+    ]),
+    "utf8",
+  );
+  writeFileSync(path.join(agentsDir, "glass-atrium-zz-hand-added.md"), agentMarkdown("glass-atrium-zz-hand-added"), "utf8");
+  writeFileSync(
+    path.join(agentsDir, "glass-atrium-zz-odd-pin.md"),
+    agentMarkdown("glass-atrium-zz-odd-pin", ['model: "<b>opus</b>"']),
+    "utf8",
+  );
+}
+
+/** Every agents-folder entry's bytes by name, the symlink target included. */
+function readAgentFolder(): Record<string, string> {
+  const files: Record<string, string> = { "real:glass-atrium-dev-alpha.md": readFileSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), "utf8") };
+  for (const entry of readdirSync(agentsDir).sort()) {
+    files[entry] = readFileSync(path.join(agentsDir, entry), "utf8");
+  }
+  return files;
 }
 
 function writeDaemonConfigFixture(): void {
@@ -182,55 +223,9 @@ before(async () => {
 
   writeDaemonConfigFixture();
 
-  // glass-atrium-dev-alpha is reached through a symlink — mirrors the live ~/.claude/agents layout.
-  writeFileSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), agentMarkdown("glass-atrium-dev-alpha"), "utf8");
-  symlinkSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), path.join(agentsDir, "glass-atrium-dev-alpha.md"));
-  writeFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), agentMarkdown("glass-atrium-dev-beta"), "utf8");
-  writeFileSync(path.join(agentsDir, "glass-atrium-dev-broken.md"), "no frontmatter here\njust text\n", "utf8");
-  // glass-atrium-dev-ghost.md is present on disk but absent from the registry fixture — T12 must exclude it.
-  writeFileSync(path.join(agentsDir, "glass-atrium-dev-ghost.md"), agentMarkdown("glass-atrium-dev-ghost"), "utf8");
-  writeFileSync(
-    path.join(agentsDir, "glass-atrium-intel-researcher.md"),
-    agentMarkdown("glass-atrium-intel-researcher", ["model: claude-sonnet-5"]),
-    "utf8",
-  );
-  // Single-agent frontmatter surfaces for the new meta/wiki domains — seeded with the
-  // baseline model line so both read back drift-free (mirrors the research fixture).
-  writeFileSync(
-    path.join(agentsDir, "glass-atrium-meta-agent.md"),
-    agentMarkdown("glass-atrium-meta-agent", ["model: claude-sonnet-5"]),
-    "utf8",
-  );
-  writeFileSync(
-    path.join(agentsDir, "glass-atrium-wiki-curator.md"),
-    agentMarkdown("glass-atrium-wiki-curator", ["model: claude-sonnet-5"]),
-    "utf8",
-  );
+  writeAgentFixtures();
 
-  // Two-file review/docs surfaces — no `model:` key, matching the seeded `inherit` rows.
-  for (const name of [...REVIEW_AGENT_FILES, ...DOCS_AGENT_FILES]) {
-    writeFileSync(path.join(agentsDir, name), agentMarkdown(name.replace(/\.md$/, "")), "utf8");
-  }
-
-  // Per-agent list rows — names outside every group's file set, so no group surface reads them.
-  writeFileSync(
-    path.join(agentsDir, "glass-atrium-design-designer.md"),
-    agentMarkdown("glass-atrium-design-designer", [
-      "description: Visual design and theme work. Use when styling a screen.",
-      'model: "claude-opus-5-5 <b>hand note</b>"',
-    ]),
-    "utf8",
-  );
-  writeFileSync(path.join(agentsDir, "glass-atrium-zz-hand-added.md"), agentMarkdown("glass-atrium-zz-hand-added"), "utf8");
-  writeFileSync(
-    path.join(agentsDir, "glass-atrium-zz-odd-pin.md"),
-    agentMarkdown("glass-atrium-zz-odd-pin", ['model: "<b>opus</b>"']),
-    "utf8",
-  );
-
-  // T12: registry fixture co-located with the agents dir (loadAgentRegistry derives the
-  // .md dir from dirname(AGENT_REGISTRY_PATH)/agents). Only glass-atrium-dev-alpha/beta/broken are
-  // registered → the on-disk glass-atrium-dev-ghost.md is filtered out of every dev-file surface.
+  // Registry fixture co-located with the agents dir (loadAgentRegistry derives the .md dir from dirname(AGENT_REGISTRY_PATH)/agents).
   writeFileSync(registryPath, JSON.stringify(REGISTRY_FIXTURE), "utf8");
   process.env.AGENT_REGISTRY_PATH = registryPath;
   resetAgentRegistryCache();
@@ -292,7 +287,7 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(res.statusCode, 200);
   const body = res.json() as ModelConfigGetResponse;
 
-  assert.strictEqual(body.domains.length, 7);
+  assert.deepStrictEqual(body.domains.map((d) => d.domain), ["model.daemon_cycle_worker"], "the daemon cycle helper is the one model domain");
   assert.strictEqual(typeof body.fetched_at, "string");
 
   // known_models = the SoT fixture's `models` key set (order-agnostic set equality).
@@ -302,41 +297,6 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
     Object.keys(PRICING_SOT_FIXTURE.models).sort(),
     "known_models derives from the pricing SoT",
   );
-
-  const dev = domainOf(body, "model.dev");
-  assert.strictEqual(dev.apply_mode, "next-spawn");
-  assert.strictEqual(dev.actual, "inherit");
-  assert.strictEqual(dev.drift, false);
-  assert.deepStrictEqual(
-    dev.files?.map((f) => f.file),
-    ["glass-atrium-dev-alpha.md", "glass-atrium-dev-beta.md", "glass-atrium-dev-broken.md"],
-  );
-
-  const research = domainOf(body, "model.research");
-  assert.strictEqual(research.actual, "claude-sonnet-5");
-  assert.strictEqual(research.drift, false);
-
-  const meta = domainOf(body, "model.meta");
-  assert.strictEqual(meta.apply_mode, "next-spawn");
-  assert.strictEqual(meta.desired, "claude-sonnet-5");
-  assert.strictEqual(meta.actual, "claude-sonnet-5");
-  assert.strictEqual(meta.drift, false);
-
-  const wiki = domainOf(body, "model.wiki");
-  assert.strictEqual(wiki.apply_mode, "next-spawn");
-  assert.strictEqual(wiki.desired, "claude-sonnet-5");
-  assert.strictEqual(wiki.actual, "claude-sonnet-5");
-  assert.strictEqual(wiki.drift, false);
-
-  // Key-less pair files read back as the seeded `inherit`, per file, with no drift.
-  for (const pair of PAIR_DOMAINS) {
-    const status = domainOf(body, pair.key);
-    assert.strictEqual(status.apply_mode, "next-spawn");
-    assert.strictEqual(status.desired, "inherit");
-    assert.strictEqual(status.actual, "inherit");
-    assert.strictEqual(status.drift, false);
-    assert.deepStrictEqual(status.files, pair.files.map((file) => ({ file, model: null })));
-  }
 
   const haiku = domainOf(body, "model.daemon_cycle_worker");
   assert.strictEqual(haiku.apply_mode, "next-cycle");
@@ -387,66 +347,35 @@ test("GET: agents carries every agent file by name with its role line, pin cut t
   assert.ok(!res.body.includes(fixtureDir), "no filesystem path in the response");
 });
 
-test("T12: de-registered on-disk dev-*.md (glass-atrium-dev-ghost) excluded from the model table", async () => {
-  const res = await app.inject({ method: "GET", url: "/api/model-config" });
-  assert.strictEqual(res.statusCode, 200);
-  const body = res.json() as ModelConfigGetResponse;
-
-  const dev = domainOf(body, "model.dev");
-  const files = dev.files?.map((f) => f.file) ?? [];
-  // glass-atrium-dev-ghost.md exists on disk but is absent from the registry → intersection drops it.
-  assert.ok(!files.includes("glass-atrium-dev-ghost.md"), "unregistered glass-atrium-dev-ghost.md must be excluded");
-  // The registered dev agents survive the intersection (registry-scoped, not blanked).
-  assert.deepStrictEqual(files, ["glass-atrium-dev-alpha.md", "glass-atrium-dev-beta.md", "glass-atrium-dev-broken.md"]);
-});
-
-test("D5: drift compare is variant-suffix-normalized ('claude-sonnet-5[1m]' == 'claude-sonnet-5')", async () => {
-  // Anchored on the research frontmatter surface: the fixture pins 'claude-sonnet-5',
-  // so a bracket-variant desired must compare equal after normalization.
+test("D5: drift compare is variant-suffix-normalized ('claude-haiku-4-5[1m]' == 'claude-haiku-4-5')", async () => {
+  // The daemon-config fixture renders 'claude-haiku-4-5' → a bracket-variant desired compares equal after normalization.
   const prisma = getPrisma();
-  await prisma.modelConfig.update({
-    where: { configKey: "model.research" },
-    data: { configValue: "claude-sonnet-5[1m]" },
-  });
+  await prisma.modelConfig.update({ where: { configKey: "model.daemon_cycle_worker" }, data: { configValue: "claude-haiku-4-5[1m]" } });
   try {
     const res = await app.inject({ method: "GET", url: "/api/model-config" });
     const body = res.json() as ModelConfigGetResponse;
-    assert.strictEqual(domainOf(body, "model.research").drift, false);
+    assert.strictEqual(domainOf(body, "model.daemon_cycle_worker").drift, false);
   } finally {
-    await prisma.modelConfig.update({
-      where: { configKey: "model.research" },
-      data: { configValue: "claude-sonnet-5" },
-    });
+    await prisma.modelConfig.update({ where: { configKey: "model.daemon_cycle_worker" }, data: { configValue: "claude-haiku-4-5" } });
   }
 });
 
-test("GET tolerates a legacy alias on DB/frontmatter surfaces — display only, never validated", async () => {
-  // Scoped fixture: an alias PUT 400s (D2), so the legacy state a live install may still
-  // carry is installed out-of-band (direct prisma + frontmatter rewrite) and restored in
-  // finally — GET must render it verbatim, not 500/blank it.
+test("GET tolerates a legacy alias on the DB and file surfaces — display only, never validated", async () => {
+  // An alias PUT 400s (D2) → the legacy state is installed out-of-band and restored in finally; GET renders it verbatim.
   const prisma = getPrisma();
-  const researchFile = path.join(agentsDir, "glass-atrium-intel-researcher.md");
-  await prisma.modelConfig.update({
-    where: { configKey: "model.research" },
-    data: { configValue: "sonnet" },
-  });
-  writeFileSync(researchFile, agentMarkdown("glass-atrium-intel-researcher", ["model: sonnet"]), "utf8");
+  await prisma.modelConfig.update({ where: { configKey: "model.daemon_cycle_worker" }, data: { configValue: "sonnet" } });
+  writeFileSync(daemonConfigPath, `${JSON.stringify({ ...DAEMON_CONFIG_FIXTURE, worker_model: "sonnet" }, null, 2)}\n`, "utf8");
   try {
     const res = await app.inject({ method: "GET", url: "/api/model-config" });
     assert.strictEqual(res.statusCode, 200);
-    const body = res.json() as ModelConfigGetResponse;
-    const research = domainOf(body, "model.research");
-    assert.strictEqual(research.desired, "sonnet");
-    assert.strictEqual(research.actual, "sonnet");
-    assert.strictEqual(research.drift, false);
-    // Alias resolution branch removed — a bare alias is no longer pricing-known.
-    assert.strictEqual(research.pricing_known, false);
+    const worker = domainOf(res.json() as ModelConfigGetResponse, "model.daemon_cycle_worker");
+    assert.strictEqual(worker.desired, "sonnet");
+    assert.strictEqual(worker.actual, "sonnet");
+    assert.strictEqual(worker.drift, false);
+    assert.strictEqual(worker.pricing_known, false);
   } finally {
-    await prisma.modelConfig.update({
-      where: { configKey: "model.research" },
-      data: { configValue: "claude-sonnet-5" },
-    });
-    writeFileSync(researchFile, agentMarkdown("glass-atrium-intel-researcher", ["model: claude-sonnet-5"]), "utf8");
+    await prisma.modelConfig.update({ where: { configKey: "model.daemon_cycle_worker" }, data: { configValue: "claude-haiku-4-5" } });
+    writeDaemonConfigFixture();
   }
 });
 
@@ -459,10 +388,8 @@ test("D3 fail-open: missing pricing SoT → GET 200 with known_models [] — nex
     assert.strictEqual(res.statusCode, 200, "unreadable SoT must degrade, never 500");
     const body = res.json() as ModelConfigGetResponse;
     assert.deepStrictEqual(body.known_models, [], "roster degrades to []");
-    // A concrete SoT id is unknown against the empty roster…
-    assert.strictEqual(domainOf(body, "model.research").pricing_known, false);
-    // …while 'inherit' stays pricing-known (roster-independent branch).
-    assert.strictEqual(domainOf(body, "model.dev").pricing_known, true);
+    // A concrete SoT id is unknown against the empty roster.
+    assert.strictEqual(domainOf(body, "model.daemon_cycle_worker").pricing_known, false);
   } finally {
     process.env.PRICING_SOT_PATH = pricingSotPath;
   }
@@ -480,48 +407,32 @@ test("D3 fail-open: missing pricing SoT → GET 200 with known_models [] — nex
 
 // ----- PUT validation (AC-2 / AC-3) -------------------------------------------------
 
-test("AC-2: invalid model value → 400 field-level error + zero writes", async () => {
+test("AC-2: a model value outside the id pattern → 400 field-level error + zero writes", async () => {
+  const rows = [
+    { name: "upper case", value: "Claude-Opus" },
+    { name: "a leading hyphen", value: "-claude-opus-4-8" },
+    { name: "a leading bracket", value: "[1m]" },
+  ] as const;
   const daemonConfigBefore = readFileSync(daemonConfigPath, "utf8");
-  const betaBefore = readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8");
-
-  const res = await app.inject({
-    method: "PUT",
-    url: "/api/model-config",
-    payload: { models: { "model.dev": "Claude-Opus" } },
-  });
-  assert.strictEqual(res.statusCode, 400);
-  const body = res.json() as { error: string; field: string };
-  assert.strictEqual(body.error, "invalid_body");
-  assert.strictEqual(body.field, "models.model.dev");
-
-  assert.strictEqual(await getDbValue("model.dev"), "inherit", "DB row unchanged");
+  for (const row of rows) {
+    const res = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { "model.daemon_cycle_worker": row.value } } });
+    assert.strictEqual(res.statusCode, 400, row.name);
+    assert.strictEqual((res.json() as { field: string }).field, "models.model.daemon_cycle_worker", row.name);
+  }
+  assert.strictEqual(await getDbValue("model.daemon_cycle_worker"), "claude-haiku-4-5", "DB row unchanged");
   assert.strictEqual(readFileSync(daemonConfigPath, "utf8"), daemonConfigBefore, "daemon-config untouched");
-  assert.strictEqual(readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8"), betaBefore, "frontmatter untouched");
 });
 
-test("D2: bare alias PUT → 400 with remediation message on EVERY domain (dev/research too)", async () => {
-  // The words still match FREE_TEXT_MODEL_PATTERN — only the explicit reject-list
-  // stands between a bare alias and a silent free-text 200.
-  for (const [domain, value] of [
-    ["model.dev", "sonnet"],
-    ["model.dev", "opus"],
-    ["model.research", "haiku"],
-    ["model.research", "sonnet"],
-    ["model.daemon_cycle_worker", "sonnet"],
-  ] as const) {
-    const res = await app.inject({
-      method: "PUT",
-      url: "/api/model-config",
-      payload: { models: { [domain]: value } },
-    });
-    assert.strictEqual(res.statusCode, 400, `${domain}=${value} must 400`);
+test("D2: bare alias PUT → 400 with remediation message", async () => {
+  // The words still match FREE_TEXT_MODEL_PATTERN — only the explicit reject-list stands between a bare alias and a silent 200.
+  for (const value of ["sonnet", "opus", "haiku"]) {
+    const res = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { "model.daemon_cycle_worker": value } } });
+    assert.strictEqual(res.statusCode, 400, `${value} must 400`);
     const body = res.json() as { error: string; field: string; reason: string };
-    assert.strictEqual(body.error, "invalid_body");
-    assert.strictEqual(body.field, `models.${domain}`);
+    assert.strictEqual(body.field, "models.model.daemon_cycle_worker");
     assert.ok(body.reason.includes("use a concrete id"), "remediation message present");
   }
-  assert.strictEqual(await getDbValue("model.dev"), "inherit", "DB unchanged after rejects");
-  assert.strictEqual(await getDbValue("model.research"), "claude-sonnet-5", "DB unchanged after rejects");
+  assert.strictEqual(await getDbValue("model.daemon_cycle_worker"), "claude-haiku-4-5", "DB unchanged after rejects");
 });
 
 test("PUT: a key only another group knows → 400 naming the group-qualified field with that group's reason", async () => {
@@ -540,8 +451,8 @@ test("PUT: a key only another group knows → 400 naming the group-qualified fie
     },
     {
       name: "a model key under tiers",
-      payload: { tiers: { "model.dev": "claude-haiku-4-5" } },
-      field: "tiers.model.dev",
+      payload: { tiers: { "model.daemon_cycle_worker": "claude-haiku-4-5" } },
+      field: "tiers.model.daemon_cycle_worker",
       reason: "unknown tier key",
     },
   ];
@@ -656,169 +567,31 @@ test("AC-4: daemon-key change rewrites daemon-config.json — unknown keys + bud
   assert.ok(!("wiki_repl_model" in rendered), "removed domain key absent from render");
 });
 
-// ----- PUT render: agent frontmatter (AC-5) -----------------------------------------
-
-test("AC-5: dev pin upserts only the model line, resolves symlinks, surfaces unparseable", async () => {
+test("PUT: caps, knobs and the daemon model write daemon-config.json and their rows only — every agent file stays byte-identical", async () => {
+  const before = readAgentFolder();
+  const prior = { worker: await getDbValue("model.daemon_cycle_worker"), cap: await getDbValue("budget.worker_max_usd") };
   const res = await app.inject({
     method: "PUT",
     url: "/api/model-config",
-    payload: { models: { "model.dev": "claude-opus-4-8" } },
+    payload: { models: { "model.daemon_cycle_worker": "claude-sonnet-5" }, budgets: { "budget.worker_max_usd": "2.00" }, tiers: { "tier.worker_effort": "high" } },
   });
-  assert.strictEqual(res.statusCode, 200);
-  const body = res.json() as ModelConfigPutResponse;
+  assert.strictEqual(res.statusCode, 200, res.body);
+  assert.deepStrictEqual((res.json() as ModelConfigPutResponse).surfaces.map((surface) => surface.surface), ["daemon-config.json"]);
+  assert.deepStrictEqual(readAgentFolder(), before);
 
-  const surface = surfaceOf(body, "frontmatter-dev");
-  assert.strictEqual(surface.status, "skipped", "aggregate surfaces the unparseable skip");
-  const byFile = new Map(surface.files?.map((f) => [f.file, f]) ?? []);
-  assert.strictEqual(byFile.get("glass-atrium-dev-alpha.md")?.status, "ok");
-  assert.strictEqual(byFile.get("glass-atrium-dev-beta.md")?.status, "ok");
-  assert.strictEqual(byFile.get("glass-atrium-dev-broken.md")?.status, "skipped");
-
-  // Symlink hazard (D4): the agents-dir entry stays a symlink; the RESOLVED file got the line.
-  assert.ok(lstatSync(path.join(agentsDir, "glass-atrium-dev-alpha.md")).isSymbolicLink(), "symlink preserved");
-  const alphaReal = readFileSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), "utf8");
-  assert.ok(alphaReal.includes("\nmodel: claude-opus-4-8\n"), "resolved target updated");
-  assert.ok(readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8").includes("\nmodel: claude-opus-4-8\n"));
-  assert.strictEqual(
-    readFileSync(path.join(agentsDir, "glass-atrium-dev-broken.md"), "utf8"),
-    "no frontmatter here\njust text\n",
-    "unparseable file untouched",
-  );
-  assert.ok(
-    readFileSync(path.join(agentsDir, "glass-atrium-intel-researcher.md"), "utf8").includes("\nmodel: claude-sonnet-5\n"),
-    "research file untouched by a dev pin",
-  );
-
-  // Pinned + unparseable mix is honestly 'mixed' (broken file cannot carry the pin).
-  const dev = domainOf(body, "model.dev");
-  assert.strictEqual(dev.actual, "mixed");
-  assert.strictEqual(dev.drift, true);
-
-  // 'inherit' removes the model line everywhere.
-  const res2 = await app.inject({
-    method: "PUT",
-    url: "/api/model-config",
-    payload: { models: { "model.dev": "inherit" } },
-  });
-  assert.strictEqual(res2.statusCode, 200);
-  const body2 = res2.json() as ModelConfigPutResponse;
-  assert.strictEqual(domainOf(body2, "model.dev").actual, "inherit");
-  assert.ok(!readFileSync(path.join(realAgentsDir, "glass-atrium-dev-alpha.md"), "utf8").includes("model:"));
-  assert.ok(!readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8").includes("model:"));
+  await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { "model.daemon_cycle_worker": prior.worker }, budgets: { "budget.worker_max_usd": prior.cap }, tiers: { "tier.worker_effort": "inherit" } } });
 });
-
-// ----- daemon-apply concurrency guard ------------------------------------------------
-
-test("409 while .apply-lock exists — frontmatter writes only; budget-only PUT passes", async () => {
-  mkdirSync(applyLockPath, { recursive: true });
-  try {
-    const betaBefore = readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8");
-    // Concrete id — an alias value would 400 at validation before reaching the lock path.
-    const res = await app.inject({
-      method: "PUT",
-      url: "/api/model-config",
-      payload: { models: { "model.dev": "claude-opus-4-8" } },
-    });
-    assert.strictEqual(res.statusCode, 409);
-    assert.strictEqual((res.json() as { error: string }).error, "daemon_apply_in_progress");
-    assert.strictEqual(await getDbValue("model.dev"), "inherit", "DB unchanged on 409");
-    assert.strictEqual(readFileSync(path.join(agentsDir, "glass-atrium-dev-beta.md"), "utf8"), betaBefore);
-
-    // The guard protects only the agents/ stash window — daemon-config (budget) updates pass.
-    const res2 = await app.inject({
-      method: "PUT",
-      url: "/api/model-config",
-      payload: { budgets: { "budget.worker_max_usd": "0.75" } },
-    });
-    assert.strictEqual(res2.statusCode, 200);
-  } finally {
-    rmSync(applyLockPath, { recursive: true, force: true });
-  }
-});
-
-for (const pair of PAIR_DOMAINS) {
-  test(`${pair.key}: a concrete id renders into both files, inherit removes it from both`, async () => {
-    const pin = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { [pair.key]: "claude-opus-4-8" } } });
-    assert.strictEqual(pin.statusCode, 200);
-    const pinned = pin.json() as ModelConfigPutResponse;
-    assert.deepStrictEqual(surfaceOf(pinned, pair.surface).files?.map((f) => [f.file, f.status]), pair.files.map((f) => [f, "ok"]));
-    for (const file of pair.files) {
-      assert.match(readFileSync(path.join(agentsDir, file), "utf8"), /^model: claude-opus-4-8$/m, `${file} pinned`);
-    }
-    assert.strictEqual(domainOf(pinned, pair.key).actual, "claude-opus-4-8");
-    assert.strictEqual(domainOf(pinned, pair.key).drift, false);
-
-    const unpin = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { [pair.key]: "inherit" } } });
-    assert.strictEqual(unpin.statusCode, 200);
-    for (const file of pair.files) {
-      assert.doesNotMatch(readFileSync(path.join(agentsDir, file), "utf8"), /^model:/m, `${file} unpinned`);
-    }
-    assert.strictEqual(domainOf(unpin.json() as ModelConfigGetResponse, pair.key).actual, "inherit");
-    assert.strictEqual(await getDbValue(pair.key), "inherit");
-  });
-
-  test(`${pair.key}: a two-file disagreement reports mixed with per-file detail`, async () => {
-    const [first, second] = pair.files;
-    const firstPath = path.join(agentsDir, first);
-    const original = readFileSync(firstPath, "utf8");
-    writeFileSync(firstPath, agentMarkdown(first.replace(/\.md$/, ""), ["model: claude-sonnet-5"]), "utf8");
-    try {
-      const res = await app.inject({ method: "GET", url: "/api/model-config" });
-      const status = domainOf(res.json() as ModelConfigGetResponse, pair.key);
-      assert.strictEqual(status.actual, "mixed");
-      assert.strictEqual(status.drift, true);
-      assert.deepStrictEqual(status.files, [
-        { file: first, model: "claude-sonnet-5" },
-        { file: second, model: null },
-      ]);
-    } finally {
-      writeFileSync(firstPath, original, "utf8");
-    }
-  });
-
-  test(`${pair.key}: a missing listed file reads as unknown, never inherit-with-no-drift`, async () => {
-    const missingPath = path.join(agentsDir, pair.files[0]);
-    const original = readFileSync(missingPath, "utf8");
-    rmSync(missingPath);
-    try {
-      const res = await app.inject({ method: "GET", url: "/api/model-config" });
-      const status = domainOf(res.json() as ModelConfigGetResponse, pair.key);
-      // Seeded desired is inherit → a never-loaded file shown as inherit would read as a match.
-      assert.notStrictEqual(status.actual, "inherit");
-      assert.strictEqual(status.actual, null);
-    } finally {
-      writeFileSync(missingPath, original, "utf8");
-    }
-  });
-
-  test(`${pair.key}: 409 while .apply-lock exists, no file written`, async () => {
-    mkdirSync(applyLockPath, { recursive: true });
-    try {
-      const before = pair.files.map((f) => readFileSync(path.join(agentsDir, f), "utf8"));
-      const res = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { [pair.key]: "claude-opus-4-8" } } });
-      assert.strictEqual(res.statusCode, 409);
-      assert.deepStrictEqual(pair.files.map((f) => readFileSync(path.join(agentsDir, f), "utf8")), before);
-    } finally {
-      rmSync(applyLockPath, { recursive: true, force: true });
-    }
-  });
-}
 
 // ----- audit single-writer (AC-9) ----------------------------------------------------
 
 test("AC-9: successful PUT → exactly 1 audit row (middleware-written) with old→new payload", async () => {
-  // Baseline model.research is now the concrete id 'claude-sonnet-5', so the mutation MUST target
-  // a different concrete id (an equal-value PUT is a no-op → no audit row → poll timeout).
+  // The mutation targets a concrete id other than the baseline's (an equal-value PUT writes no row → poll timeout).
   const res = await app.inject({
     method: "PUT",
     url: "/api/model-config",
-    payload: { models: { "model.research": "claude-sonnet-4-6" } },
+    payload: { models: { "model.daemon_cycle_worker": "claude-opus-4-8" } },
   });
   assert.strictEqual(res.statusCode, 200);
-  assert.ok(
-    readFileSync(path.join(agentsDir, "glass-atrium-intel-researcher.md"), "utf8").includes("\nmodel: claude-sonnet-4-6\n"),
-    "research frontmatter line replaced",
-  );
 
   // Fire-and-forget INSERT — poll for the row carrying THIS PUT's diff key (immune to
   // late-landing rows from earlier tests). Exactly 1 matching row = single-writer proof:
@@ -834,7 +607,7 @@ test("AC-9: successful PUT → exactly 1 audit row (middleware-written) with old
       SELECT action_kind, payload
       FROM monitor.audit_log
       WHERE target_table = 'model-config'
-        AND payload->'change'->'changes' ? 'model.research'
+        AND payload->'change'->'changes'->'model.daemon_cycle_worker'->>'new' = 'claude-opus-4-8'
         AND event_ts >= NOW() - INTERVAL '2 minutes'
     `;
     if (rows.length === 0) {
@@ -844,17 +617,15 @@ test("AC-9: successful PUT → exactly 1 audit row (middleware-written) with old
   assert.strictEqual(rows.length, 1, "exactly 1 audit row for this PUT");
   assert.strictEqual(rows[0].action_kind, "model-config.update");
   // `old` anchors to the suite BASELINE (concrete id — see the BASELINE note).
-  assert.deepStrictEqual(rows[0].payload.change?.changes?.["model.research"], {
-    old: "claude-sonnet-5",
-    new: "claude-sonnet-4-6",
+  assert.deepStrictEqual(rows[0].payload.change?.changes?.["model.daemon_cycle_worker"], {
+    old: "claude-sonnet-4-6",
+    new: "claude-opus-4-8",
   });
 
-  // Restore round-trips through the route — DB row + research frontmatter both return
-  // to the suite baseline under the invariants the route enforces.
   const restore = await app.inject({
     method: "PUT",
     url: "/api/model-config",
-    payload: { models: { "model.research": "claude-sonnet-5" } },
+    payload: { models: { "model.daemon_cycle_worker": "claude-sonnet-4-6" } },
   });
   assert.strictEqual(restore.statusCode, 200);
 });
@@ -1166,5 +937,216 @@ test("un-migrated DB: a models-only Save preserves the cap and ends that domain'
     await clearLegacyRows();
     await resetDbBaseline();
     writeDaemonConfigFixture();
+  }
+});
+
+// ----- PUT /api/model-config/agents: per-agent pins ------------------------------------
+
+const AGENTS_URL = "/api/model-config/agents";
+const PAGE_HEADERS = { "sec-fetch-site": "same-origin" } as const;
+
+function putAgents(payload: unknown, target: FastifyInstance = app) {
+  return target.inject({ method: "PUT", url: AGENTS_URL, headers: PAGE_HEADERS, payload: payload as object });
+}
+
+test("PUT agents: one model for several agents rewrites only each file's model line — every other byte and every other file stays", async () => {
+  writeAgentFixtures();
+  const before = readAgentFolder();
+  const res = await putAgents({
+    model: "claude-opus-4-8",
+    agents: [
+      { name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" },
+      { name: "glass-atrium-zz-hand-added", expected_pin: null },
+    ],
+  });
+  assert.strictEqual(res.statusCode, 200, res.body);
+  const body = res.json() as AgentPinPutResponse;
+  assert.deepStrictEqual(body.results, [
+    { name: "glass-atrium-intel-researcher", status: "applied" },
+    { name: "glass-atrium-zz-hand-added", status: "applied" },
+  ]);
+  assert.deepStrictEqual(readAgentFolder(), {
+    ...before,
+    "glass-atrium-intel-researcher.md": RESEARCHER_TEXT.replace("model: claude-sonnet-5\n", "model: claude-opus-4-8\n"),
+    "glass-atrium-zz-hand-added.md": before["glass-atrium-zz-hand-added.md"].replace("tools: [Read]\n---", "tools: [Read]\nmodel: claude-opus-4-8\n---"),
+  });
+  assert.strictEqual(body.agents.find((agent) => agent.name === "glass-atrium-zz-hand-added")?.pin, "claude-opus-4-8", "the fresh list carries the new pin");
+});
+
+test("PUT agents: the no-pin value removes the model line and nothing else; a pin already in place answers unchanged with no write", async () => {
+  writeAgentFixtures();
+  const unchanged = await putAgents({ model: "claude-sonnet-5", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] });
+  assert.deepStrictEqual((unchanged.json() as AgentPinPutResponse).results, [{ name: "glass-atrium-intel-researcher", status: "unchanged" }]);
+  assert.strictEqual(readFileSync(researcherPath, "utf8"), RESEARCHER_TEXT);
+
+  const res = await putAgents({ model: "inherit", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] });
+  assert.deepStrictEqual((res.json() as AgentPinPutResponse).results, [{ name: "glass-atrium-intel-researcher", status: "applied" }]);
+  assert.strictEqual(readFileSync(researcherPath, "utf8"), RESEARCHER_TEXT.replace("model: claude-sonnet-5\n", ""));
+});
+
+test("PUT agents: a rewritten file keeps its file mode", async () => {
+  writeAgentFixtures();
+  chmodSync(researcherPath, 0o600);
+  const res = await putAgents({ model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] });
+  assert.strictEqual(res.statusCode, 200, res.body);
+  assert.strictEqual(statSync(researcherPath).mode & 0o777, 0o600);
+});
+
+test("PUT agents: a name the server's own list does not hold as a readable agent in the folder is never written", async () => {
+  const rows = [
+    { name: "a link to a file outside the folder", agent: "glass-atrium-dev-alpha", expected: { status: "refused", reason: "File is outside the agents folder" } },
+    { name: "a file with no frontmatter", agent: "glass-atrium-dev-broken", expected: { status: "refused", reason: "No frontmatter block" } },
+    { name: "a path in the name", agent: "../agents-real/glass-atrium-dev-alpha", expected: { status: "gone" } },
+    { name: "a name with no file", agent: "glass-atrium-zz-removed", expected: { status: "gone" } },
+  ] as const;
+  for (const row of rows) {
+    writeAgentFixtures();
+    const before = readAgentFolder();
+    const res = await putAgents({ model: "claude-opus-4-8", agents: [{ name: row.agent, expected_pin: null }] });
+    assert.strictEqual(res.statusCode, 200, `${row.name}: ${res.body}`);
+    assert.deepStrictEqual((res.json() as AgentPinPutResponse).results, [{ name: row.agent, ...row.expected }], row.name);
+    assert.deepStrictEqual(readAgentFolder(), before, `${row.name}: no file written`);
+  }
+});
+
+test("PUT agents: a body other than an agent-name list with the page's pins and one model → 400, nothing written", async () => {
+  const researcher = { name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" };
+  const rows = [
+    { name: "an unknown top-level key", payload: { model: "claude-opus-4-8", agents: [researcher], scope: "all" } },
+    { name: "an unknown key in an entry", payload: { model: "claude-opus-4-8", agents: [{ ...researcher, path: "/tmp/x.md" }] } },
+    { name: "a model per entry", payload: { agents: [{ ...researcher, model: "claude-opus-4-8" }] } },
+    { name: "no agents", payload: { model: "claude-opus-4-8", agents: [] } },
+    { name: "an entry with no page pin", payload: { model: "claude-opus-4-8", agents: [{ name: researcher.name }] } },
+    { name: "a name twice", payload: { model: "claude-opus-4-8", agents: [researcher, researcher] } },
+    { name: "more names than the folder holds", payload: { model: "claude-opus-4-8", agents: Array.from({ length: 8 }, (_, index) => ({ name: `glass-atrium-zz-${index}`, expected_pin: null })) } },
+    { name: "a model outside the roster", payload: { model: "claude-unknown-9", agents: [researcher] } },
+    { name: "a bare alias", payload: { model: "opus", agents: [researcher] } },
+  ] as const;
+  writeAgentFixtures();
+  const before = readAgentFolder();
+  for (const row of rows) {
+    const res = await putAgents(row.payload);
+    assert.strictEqual(res.statusCode, 400, `${row.name}: ${res.body}`);
+    assert.strictEqual((res.json() as { error: string }).error, "invalid_body", row.name);
+  }
+  assert.deepStrictEqual(readAgentFolder(), before);
+});
+
+test("PUT agents: a file holding two model lines is refused, never rewritten", async () => {
+  writeAgentFixtures();
+  const twoLines = RESEARCHER_TEXT.replace("scope: INTEL\n", "scope: INTEL\nmodel: claude-haiku-4-5\n");
+  writeFileSync(researcherPath, twoLines, "utf8");
+  const res = await putAgents({ model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] });
+  assert.deepStrictEqual((res.json() as AgentPinPutResponse).results.map((result) => result.status), ["refused"]);
+  assert.strictEqual(readFileSync(researcherPath, "utf8"), twoLines);
+});
+
+test("PUT agents: a pin that moved since the page loaded answers changed_since_load and is left as it stands", async () => {
+  writeAgentFixtures();
+  const res = await putAgents({ model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: null }] });
+  assert.deepStrictEqual((res.json() as AgentPinPutResponse).results, [{ name: "glass-atrium-intel-researcher", status: "changed_since_load" }]);
+  assert.strictEqual(readFileSync(researcherPath, "utf8"), RESEARCHER_TEXT);
+});
+
+test("PUT agents: refused with nothing written when the roster, the folder list or the daemon apply cannot vouch for the write", async () => {
+  const researcher = { name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" };
+  const rows = [
+    { name: "an empty model roster", status: 503, error: "model_roster_unavailable", set: () => { process.env.PRICING_SOT_PATH = path.join(fixtureDir, "missing-pricing.json"); } },
+    { name: "an agents folder that cannot be listed", status: 503, error: "agent_list_unavailable", set: () => { process.env.MODEL_CONFIG_AGENTS_DIR = daemonConfigPath; } },
+    { name: "a daemon apply in progress", status: 409, error: "daemon_apply_in_progress", set: () => { mkdirSync(applyLockPath, { recursive: true }); } },
+  ] as const;
+  for (const row of rows) {
+    writeAgentFixtures();
+    row.set();
+    try {
+      const res = await putAgents({ model: "claude-opus-4-8", agents: [researcher] });
+      assert.strictEqual(res.statusCode, row.status, `${row.name}: ${res.body}`);
+      assert.strictEqual((res.json() as { error: string }).error, row.error, row.name);
+    } finally {
+      process.env.PRICING_SOT_PATH = pricingSotPath;
+      process.env.MODEL_CONFIG_AGENTS_DIR = agentsDir;
+      rmSync(applyLockPath, { recursive: true, force: true });
+    }
+    assert.strictEqual(readFileSync(researcherPath, "utf8"), RESEARCHER_TEXT, `${row.name}: no write`);
+  }
+});
+
+test("PUT agents: a request with no monitor-page origin signal is refused before any read or write", async () => {
+  const rows = [
+    { name: "no browser header", headers: {} },
+    { name: "a cross-site fetch", headers: { "sec-fetch-site": "cross-site" } },
+    { name: "a foreign origin", headers: { origin: "http://evil.example" } },
+  ] as const;
+  writeAgentFixtures();
+  for (const row of rows) {
+    const res = await app.inject({
+      method: "PUT",
+      url: AGENTS_URL,
+      headers: row.headers,
+      payload: { model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] },
+    });
+    assert.strictEqual(res.statusCode, 403, row.name);
+    assert.deepStrictEqual(res.json(), { error: "not_page_origin" }, row.name);
+  }
+  assert.strictEqual(readFileSync(researcherPath, "utf8"), RESEARCHER_TEXT);
+});
+
+test("PUT agents: one row per apply names each agent with its old and new pin, the result and the page signal — never the body", async () => {
+  writeAgentFixtures();
+  const res = await putAgents({
+    model: "claude-opus-4-8",
+    agents: [
+      { name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" },
+      { name: "glass-atrium-zz-removed", expected_pin: null },
+    ],
+  });
+  assert.strictEqual(res.statusCode, 200);
+  type Row = { action_kind: string; result_code: string; payload: Record<string, unknown> };
+  let rows: Row[] = [];
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    rows = await getPrisma().$queryRaw<Row[]>`
+      SELECT action_kind, result_code::text AS result_code, payload FROM monitor.audit_log
+      WHERE payload->>'route' = ${AGENTS_URL} AND payload->'change'->'agents' @> '[{"name": "glass-atrium-zz-removed"}, {"name": "glass-atrium-intel-researcher", "status": "applied"}]'::jsonb
+        AND event_ts >= NOW() - INTERVAL '2 minutes'
+    `;
+    if (rows[0]?.result_code === "success") break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].action_kind, "model-config.agents");
+  assert.strictEqual(rows[0].result_code, "success");
+  assert.deepStrictEqual(rows[0].payload.change, {
+    signal: "fetch_metadata",
+    agents: [
+      { name: "glass-atrium-intel-researcher", old: "claude-sonnet-5", new: "claude-opus-4-8", status: "applied" },
+      { name: "glass-atrium-zz-removed", old: null, new: "claude-opus-4-8", status: "gone" },
+    ],
+  });
+});
+
+test("PUT agents: a second apply while one is in flight answers 409 and writes nothing", async () => {
+  writeAgentFixtures();
+  const payload = { model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] };
+  const responses = await Promise.all([putAgents(payload), putAgents(payload)]);
+  assert.deepStrictEqual(responses.map((res) => res.statusCode).sort(), [200, 409]);
+  assert.strictEqual((responses.find((res) => res.statusCode === 409)?.json() as { error: string }).error, "apply_in_progress");
+  assert.deepStrictEqual((responses.find((res) => res.statusCode === 200)?.json() as AgentPinPutResponse).results, [
+    { name: "glass-atrium-intel-researcher", status: "applied" },
+  ]);
+});
+
+test("PUT agents: past the per-route window every request answers 429 until the window ends", async () => {
+  const limited = Fastify({ logger: false });
+  await registerModelConfigRoutes(limited);
+  await limited.ready();
+  try {
+    const statuses: number[] = [];
+    for (let hit = 0; hit < AGENT_PIN_WRITE_LIMIT.limit + 1; hit += 1) {
+      statuses.push((await putAgents({}, limited)).statusCode);
+    }
+    assert.deepStrictEqual(statuses.slice(0, -1), Array(AGENT_PIN_WRITE_LIMIT.limit).fill(400));
+    assert.strictEqual(statuses.at(-1), 429);
+  } finally {
+    await limited.close();
   }
 });
