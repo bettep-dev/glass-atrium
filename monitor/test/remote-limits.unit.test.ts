@@ -1,11 +1,12 @@
 // Remote listener limits: per-key request windows, the failed-session block, and the connection caps.
 
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { once } from "node:events";
 
-import { REMOTE_LIMITS, WindowLimiter, attachConnectionCaps } from "../src/server/remote/limits.js";
+import { logger } from "../src/server/logger.js";
+import { REMOTE_LIMITS, WindowLimiter, attachConnectionCaps, buildRefusalLog } from "../src/server/remote/limits.js";
 
 const START = Date.parse("2026-11-14T14:20:00.123Z");
 
@@ -78,7 +79,7 @@ test("isBlocked does not count a hit", () => {
 
 async function startCappedServer(caps: { total: number; perAddress: number }): Promise<Server> {
   const server = createServer((socket) => socket.write("ok"));
-  attachConnectionCaps(server, caps);
+  attachConnectionCaps(server, caps, buildRefusalLog());
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return server;
@@ -119,4 +120,39 @@ test("a connection past the per-address or the total cap is closed, and a freed 
       server.close();
     }
   }
+});
+
+/** Fields of every info line that records a refused connection. */
+function getRefusals(calls: ReadonlyArray<{ arguments: unknown[] }>): Record<string, unknown>[] {
+  return calls
+    .map((call) => call.arguments[0])
+    .filter((fields): fields is Record<string, unknown> => typeof fields === "object" && fields !== null && "reason" in fields);
+}
+
+test("a connection refused at the cap leaves one info line with the cap reason and the peer address", async () => {
+  const server = await startCappedServer({ total: 10, perAddress: 1 });
+  const sockets: Socket[] = [];
+  const info = mock.method(logger, "info", () => undefined);
+  try {
+    assert.equal(await isConnectionKept(server, sockets), true);
+    assert.equal(await isConnectionKept(server, sockets), false);
+  } finally {
+    info.mock.restore();
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+  assert.deepEqual(getRefusals(info.mock.calls), [{ reason: "connection_cap", address: "127.0.0.1" }]);
+});
+
+test("a burst of refusals from one address logs at most the per-address bound in a window, and another address still logs", () => {
+  const logRefusal = buildRefusalLog(() => START);
+  const info = mock.method(logger, "info", () => undefined);
+  try {
+    for (let index = 0; index < REMOTE_LIMITS.REFUSAL_LOG.limit + 5; index += 1) logRefusal({ reason: "connection_cap", address: "192.168.1.20" });
+    logRefusal({ reason: "client_error", code: "ERR_SSL_HTTP_REQUEST", address: "192.168.1.21" });
+  } finally {
+    info.mock.restore();
+  }
+  const addresses = getRefusals(info.mock.calls).map((fields) => fields.address);
+  assert.deepEqual(addresses, [...Array<string>(REMOTE_LIMITS.REFUSAL_LOG.limit).fill("192.168.1.20"), "192.168.1.21"]);
 });

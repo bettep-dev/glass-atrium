@@ -31,7 +31,7 @@ const SEARCH_LINE_RA = { text: "Different names on your phone? Search Settings f
  * jump → the step a phone already set up opens on · lockedStep → opens only through the compare step's forward control.
  * compare → the field name the phone shows over the fingerprint, the forward control, the line in the fingerprint's place when none is read.
  * isTyped → the last step shows the address and the code first, the QR code beside them.
- * stop → a line the security ruling keeps visible beside the step's value, never behind Trouble? · isQrOnly → a fold line shown only beside a drawn QR code.
+ * stop → a line the security ruling keeps visible beside the step's value, never behind Trouble?
  * isCodeOnly → a fold line shown only while a code is open (G5: the typed values in step 5, only beside an open code).
  * kind installer → a phone step whose path ends at the phone's installer, so it names no certificate.
  */
@@ -118,11 +118,11 @@ const DEVICE_RA = {
 			{
 				kind: "scan",
 				title: "Open the address, enter the code",
-				line: "In Chrome, type the address, https:// included.",
+				line: "In Samsung Internet, type the address, https:// included.",
 				trouble: [
 					{ text: "Page will not open? Try: {address-2}", isCodeOnly: true },
-					{ text: "Camera does nothing? Type the address and the code instead.", isQrOnly: true },
-					{ text: "Warning in Chrome? Close the page, then repeat step 4." },
+					{ text: "Chrome cannot reach the page? Type the address in Samsung Internet." },
+					{ text: "Warning in the browser? Close the page, then repeat step 4." },
 				],
 			},
 		],
@@ -688,8 +688,8 @@ function PaneRA({ device, setup, devices, progress, onAct, onDevicesRead }) {
 	const step = device.steps[progress.open];
 	const values = getAddressesRA(setup, device.hosts);
 	// extra → values only the step itself knows (the open code), filling their Trouble? slots
-	const trouble = (extra, isQrShown = false) => (
-		<TroubleRA rows={step.trouble} values={{ ...values, ...extra }} isQrShown={isQrShown} isOpen={progress.isTroubleOpen} jump={device.jump} onAct={onAct} />
+	const trouble = (extra) => (
+		<TroubleRA rows={step.trouble} values={{ ...values, ...extra }} isOpen={progress.isTroubleOpen} jump={device.jump} onAct={onAct} />
 	);
 	const forward = step.kind === "fingerprint" ? device.compare.next : "Next";
 	return (
@@ -814,9 +814,9 @@ function ValueRA({ label, className = "", children }) {
 }
 
 // jump → the device's own jump step, never read from the step count
-function TroubleRA({ rows, values, isQrShown, isOpen, jump, onAct }) {
+function TroubleRA({ rows, values, isOpen, jump, onAct }) {
 	const { Stack, DisclosureButton, QuietButton } = window.UI;
-	const lines = getTroubleLinesRA(rows, values, isQrShown);
+	const lines = getTroubleLinesRA(rows, values);
 	if (lines.length === 0) return null;
 	return (
 		<Stack gap="stack" className="items-start">
@@ -831,9 +831,9 @@ function TroubleRA({ rows, values, isQrShown, isOpen, jump, onAct }) {
 	);
 }
 
-// a line whose slot has no value, or that speaks of a QR code not drawn or a code not open, is left out
-function getTroubleLinesRA(rows, values, isQrShown) {
-	return rows.filter((row) => (isQrShown || !row.isQrOnly) && (values.code || !row.isCodeOnly) && row.text.split(SLOT_RA).every((part) => !SLOT_RA.test(part) || values[part.slice(1, -1)]));
+// a line whose slot has no value, or that speaks of a code not open, is left out
+function getTroubleLinesRA(rows, values) {
+	return rows.filter((row) => (values.code || !row.isCodeOnly) && row.text.split(SLOT_RA).every((part) => !SLOT_RA.test(part) || values[part.slice(1, -1)]));
 }
 
 function TroubleTextRA({ text, values }) {
@@ -902,7 +902,7 @@ function CodeStepRA({ address, isTyped, devices, trouble, onConnected, onDevices
 	return (
 		<>
 			<CodeViewRA state={state} address={address} isTyped={isTyped} onOpen={onOpen} />
-			{trouble(isOpen ? { code: formatCodeRA(state.code) } : {}, isQrDrawnRA(state, address))}
+			{trouble(isOpen ? { code: formatCodeRA(state.code) } : {})}
 		</>
 	);
 }

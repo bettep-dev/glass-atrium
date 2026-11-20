@@ -659,7 +659,7 @@ describe("the Galaxy procedure installs, then compares, and only then shows the 
     assert.deepEqual(slotted, []);
   });
 
-  test("with no code open the last step names no warning in its line and its fold offers the Chrome warning line alone", async () => {
+  test("with no code open the last step names the browser that needs no permission and its fold offers the Chrome fallback and the warning stop", async () => {
     const card = await driveGalaxy();
     for (let i = 0; i < 3; i++) card.press("Next");
     card.press("Lines match");
@@ -667,21 +667,22 @@ describe("the Galaxy procedure installs, then compares, and only then shows the 
     card.press("Trouble?");
 
     const text = card.text();
-    assert.ok(text.includes("In Chrome, type the address, https:// included."), text);
-    assert.ok(text.includes("Warning in Chrome? Close the page, then repeat step 4."), text);
-    for (const word of ["not private", "Page will not open?", "studio-mac.local", "Camera does nothing?"]) assert.ok(!text.includes(word), `never "${word}": ${text}`);
+    for (const word of ["In Samsung Internet, type the address, https:// included.", "Chrome cannot reach the page? Type the address in Samsung Internet.", "Warning in the browser? Close the page, then repeat step 4."]) {
+      assert.ok(text.includes(word), `shows "${word}": ${text}`);
+    }
+    // A17 → no permission label on the screen; a warning is a stop, never named as passable
+    for (const word of ["not private", "Page will not open?", "studio-mac.local", "permission", "earby"]) assert.ok(!text.includes(word), `never "${word}": ${text}`);
   });
 
-  test("with a code open the last step's fold offers the .local name second, the Camera line beside the QR code and the Chrome warning line", async () => {
+  test("with a code open the last step's fold offers the .local name, then the Samsung Internet fallback, then the warning stop", async () => {
     const { mod } = await loadScreen();
     const galaxy = (vm.runInContext("DEVICE_RA", mod) as Record<string, { steps: Array<{ trouble: unknown[] }> }>).galaxy;
     const values = { address: "https://192.168.0.12:16146", "address-2": "https://studio-mac.local:16146", code: "K7QM 4XZP" };
 
-    const text = collectText(render(mod as Mod, "TroubleRA", { rows: galaxy.steps[4].trouble, values, isQrShown: true, isOpen: true, jump: 3, onAct: () => undefined })).replace(/\s+/g, " ");
+    const text = collectText(render(mod as Mod, "TroubleRA", { rows: galaxy.steps[4].trouble, values, isOpen: true, jump: 3, onAct: () => undefined })).replace(/\s+/g, " ");
 
-    for (const word of ["Page will not open? Try: https://studio-mac.local:16146", "Camera does nothing? Type the address and the code instead.", "Warning in Chrome? Close the page, then repeat step 4."]) {
-      assert.ok(text.includes(word), `shows "${word}": ${text}`);
-    }
+    const at = ["Page will not open? Try: https://studio-mac.local:16146", "Chrome cannot reach the page? Type the address in Samsung Internet.", "Warning in the browser? Close the page, then repeat step 4."].map((word) => text.indexOf(word));
+    assert.ok(at.every((index, i) => index >= 0 && (i === 0 || index > at[i - 1])), `three lines in order ${at}: ${text}`);
   });
 });
 
