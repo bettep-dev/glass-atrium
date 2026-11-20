@@ -30,6 +30,7 @@ import {
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import "dotenv/config";
 
@@ -38,9 +39,11 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
+import { loadScreenModule } from "./lib/render-screen.js";
 import { AGENT_PIN_WRITE_LIMIT, registerModelConfigRoutes, resetAgentPinWriteState } from "../src/server/routes/model-config.js";
 import type {
   AgentPinPutResponse,
+  AgentPinResult,
   BudgetDomainStatus,
   DomainStatus,
   ModelConfigGetResponse,
@@ -1156,6 +1159,50 @@ test("PUT agents: one row per apply names each agent with its old and new pin, t
       { name: "glass-atrium-zz-removed", old: null, new: "claude-opus-4-8", status: "gone" },
     ],
   });
+});
+
+const SCREEN_SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../public/src");
+
+/** The Models screen's own reading of a per-file result → a reworded server reason fails here, never silently on the page. */
+async function loadScreenReason(): Promise<(result: AgentPinResult) => string> {
+  const ui = (await loadScreenModule(path.join(SCREEN_SRC, "ui.jsx"))).UI;
+  return (await loadScreenModule(path.join(SCREEN_SRC, "screens/model-config.jsx"), { window: { UI: ui } })).getAgentReasonMC as (result: AgentPinResult) => string;
+}
+
+test("PUT agents: each refusal the route gives reads as the screen's own words, never its lowercased server text", async () => {
+  const getScreenReason = await loadScreenReason();
+  const handAdded = "glass-atrium-zz-hand-added";
+  const writeHandAdded = (lines: string[]) => writeFileSync(path.join(agentsDir, `${handAdded}.md`), lines.join("\n"), "utf8");
+  const researcher = { name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" };
+  const rows = [
+    { name: "a link to a file outside the folder", arrange: () => undefined, agent: { name: "glass-atrium-dev-alpha", expected_pin: null }, words: "Not changed — the file is outside the agents folder" },
+    { name: "a folder that refuses the write", arrange: () => chmodSync(agentsDir, 0o500), agent: researcher, words: "Not changed — the file could not be written" },
+    {
+      name: "a write that would change the body",
+      arrange: () => writeHandAdded(["---", `name: ${handAdded}`, "tools: [Read]", "--- ", "", "Body.", "", "---", "", "More body.", ""]),
+      agent: { name: handAdded, expected_pin: null },
+      words: "Not changed — only the model line may change, and more would have",
+    },
+    {
+      name: "a written model that would not read back",
+      arrange: () => writeHandAdded(["---", `name: ${handAdded}`, "model: >-", "  claude-sonnet-5", "tools: [Read]", "---", "", "Body.", ""]),
+      agent: { name: handAdded, expected_pin: "claude-sonnet-5" },
+      words: "Not changed — only the model line may change, and more would have",
+    },
+  ];
+  const folderMode = statSync(agentsDir).mode & 0o777;
+  for (const row of rows) {
+    writeAgentFixtures();
+    row.arrange();
+    try {
+      const res = await putAgents({ model: "claude-opus-4-8", agents: [row.agent] });
+      const [result] = (res.json() as AgentPinPutResponse).results;
+      assert.strictEqual(result?.status, "refused", `${row.name}: ${res.body}`);
+      assert.strictEqual(getScreenReason(result), row.words, row.name);
+    } finally {
+      chmodSync(agentsDir, folderMode);
+    }
+  }
 });
 
 /** A second server instance the route registers on, as the remote listener does beside the loopback one. */

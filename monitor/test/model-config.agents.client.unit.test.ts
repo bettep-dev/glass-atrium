@@ -100,10 +100,6 @@ describe("a 200 answer becomes a toast when every ticked file took the model, el
 describe("each per-file failure reads as the spec's words on its row", () => {
   const rows = [
     { name: "a pin moved since the page loaded", result: { status: "changed_since_load" }, words: "Not changed — the file changed after this page loaded" },
-    { name: "a write that would change more than the model line", result: { status: "refused", reason: "The write would change another frontmatter key" }, words: "Not changed — only the model line may change, and more would have" },
-    { name: "a body change on read-back", result: { status: "refused", reason: "The write would change the body" }, words: "Not changed — only the model line may change, and more would have" },
-    { name: "a file outside the agents folder", result: { status: "refused", reason: "File is outside the agents folder" }, words: "Not changed — the file is outside the agents folder" },
-    { name: "a failed write", result: { status: "refused", reason: "The file could not be written" }, words: "Not changed — the file could not be written" },
     { name: "a refusal the screen has no words for keeps the server's reason", result: { status: "refused", reason: "More than one model line" }, words: "Not changed — more than one model line" },
   ];
   for (const row of rows) {
