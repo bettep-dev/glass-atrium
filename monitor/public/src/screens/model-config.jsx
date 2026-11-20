@@ -54,7 +54,7 @@ const MODEL_CAP_MC = {
 const DOMAIN_META_MC = {
 	"model.daemon_cycle_worker": {
 		label: "Daemon cycle helper",
-		hint: "Background daemon housekeeping steps",
+		hint: "Self-improve drafts, pre-verify and wiki compile",
 		desc: "Drafts self-improve proposals, runs pre-verify and summarizes wiki notes",
 		source: "daemon-config.json",
 		editable: true,
@@ -352,6 +352,11 @@ function ScreenModelConfig() {
 	};
 
 	const triggerRefresh = () => setRefreshTick((t) => t + 1);
+	// an agent apply answers with the fresh agent list only → the daemon form buffer is never rebuilt by it
+	const putAgentsRead = useCallbackMC(
+		(read) => setConfigState((s) => (s.data ? { ...s, data: { ...s.data, agents: read.agents, unreadable: read.unreadable } } : s)),
+		[],
+	);
 
 	const ready = configState.status === "ready" && form !== null;
 	const data = configState.data;
@@ -454,18 +459,30 @@ function ScreenModelConfig() {
 				</div>
 			)}
 
-			{/* 1:1 over 2:1 — a third-width column overflows the cap and tier fields at 1280 */}
-			<SplitRow ratio="1:1" layout="equal">
-				<DomainsSectionMC
+			{/* full width → the role column holds a whole role line from 1280 up */}
+			<div className="mb-section">
+				<AgentModelsSectionMC
 					state={sectionState}
-					domains={data?.domains}
+					agents={data?.agents}
+					unreadable={data?.unreadable}
 					knownModels={knownModels}
-					form={form}
-					baseline={baseline}
-					errors={errors}
-					onModelChange={setModel}
+					onAgentsRead={putAgentsRead}
+					showToast={showToast}
 				/>
+			</div>
+
+			{/* 1:1 over 2:1 — a third-width column overflows the cap and tier fields at 1280; three rows left vs four right */}
+			<SplitRow ratio="1:1" layout="content">
 				<SplitColumn>
+					<DomainsSectionMC
+						state={sectionState}
+						domains={data?.domains}
+						knownModels={knownModels}
+						form={form}
+						baseline={baseline}
+						errors={errors}
+						onModelChange={setModel}
+					/>
 					<BudgetsSectionMC
 						state={sectionState}
 						budgets={data?.budgets}
@@ -474,16 +491,16 @@ function ScreenModelConfig() {
 						errors={errors}
 						onBudgetChange={setBudget}
 					/>
-					<TiersSectionMC
-						state={sectionState}
-						tiers={data?.tiers}
-						isFileRead={data?.daemon_config_sync !== "file-missing"}
-						form={form}
-						baseline={baseline}
-						errors={errors}
-						onTierChange={setTier}
-					/>
 				</SplitColumn>
+				<TiersSectionMC
+					state={sectionState}
+					tiers={data?.tiers}
+					isFileRead={data?.daemon_config_sync !== "file-missing"}
+					form={form}
+					baseline={baseline}
+					errors={errors}
+					onTierChange={setTier}
+				/>
 			</SplitRow>
 
 			{ready && isDirty && (
@@ -622,6 +639,537 @@ function SettingsInfoMC({ caveat, lead, title, rows }) {
 	);
 }
 
+const AGENT_PIN_URL_MC = "/api/model-config/agents";
+// the PUT's no-pin value (server INHERIT_VALUE) → the model line is removed
+const AGENT_NO_PIN_VALUE_MC = "inherit";
+const AGENT_NO_PIN_LABEL_MC = "No pin — session model";
+const AGENT_SELECT_ID_MC = "mc-agent-model";
+const AGENT_BAR_IDLE_MC = "Select agents to set one model for all of them";
+const AGENT_MISSING_MODEL_MC = "Choose a model first";
+const AGENT_FOOT_MC = "Fable and Opus reason deepest and cost the most per token; Haiku is fastest and cheapest";
+const NOT_REGISTERED_TITLE_MC = "No entry in agent-registry.json — the lifecycle CLI does not track this file";
+// unverified whether the agent-file watcher sees a write through the agents-folder link → the restart wording, never "next spawn"
+const AGENT_TIMING_MC = {
+	sub: "Applies after a session restart",
+	caveat: "Saved to the agent file at once — a session already running is sure to use it only after a restart",
+};
+const AGENT_SPAWN_ORDER_MC = [
+	{ label: "1 · The spawn's own model", desc: "A model the spawn names for itself comes first" },
+	{ label: "2 · The agent's pin", desc: "The model line of the agent's file" },
+	{ label: "3 · No pin", desc: "The model of the conversation that starts it, unless CLAUDE_CODE_SUBAGENT_MODEL is set" },
+];
+const AGENT_PIN_HOME_MC = [
+	{ label: "Model line", desc: "The model line of each file in ~/.glass-atrium/agents. Updates keep it." },
+	{ label: "Not registered", desc: NOT_REGISTERED_TITLE_MC },
+];
+// tick 52 (16 edge + 24 target + 12) · agent · role takes the rest · model
+const AGENT_COL_WIDTHS_MC = ["52px", "24%", "auto", "22%"];
+// narrowest wrapper that still holds a 52-character role line in its column
+const AGENT_STACK_BELOW_PX_MC = 900;
+const AGENT_ROW_HEIGHT_MC = 40;
+const AGENT_SKELETON_ROWS_MC = 12;
+// one selection state (design.md §12.4) → the sunken fill, held under hover by the inline style
+const TICKED_ROW_STYLE_MC = { background: "rgb(var(--sunken))" };
+const TWIN_CELL_STYLE_MC = { gridArea: "1 / 1" };
+const TWIN_HIDDEN_STYLE_MC = { ...TWIN_CELL_STYLE_MC, visibility: "hidden" };
+const AGENT_DONE_STATUSES_MC = ["applied", "unchanged"];
+const AGENT_REASON_WORDS_MC = {
+	"File is outside the agents folder": "the file is outside the agents folder",
+	"The file could not be written": "the file could not be written",
+};
+const AGENT_LINE_ONLY_WORDS_MC = "only the model line may change, and more would have";
+// the read-back refusals: the write would change more than the model line, or would not read back as written
+const AGENT_READ_BACK_RE_MC = /^The writ(?:e|ten) /;
+
+/**
+ * Agent models card — one model line per agent file, set for every ticked agent at once.
+ * Apply is its own immediate PUT, apart from the buffered daemon Save; nothing on it is optimistic.
+ */
+function AgentModelsSectionMC({ state, agents, unreadable, knownModels, onAgentsRead, showToast }) {
+	const { Card, Link } = window.UI;
+	const cardRef = useRefMC(null);
+	const apply = useAgentApplyMC({ agents, onAgentsRead, showToast, cardRef });
+	const items = getAgentListMC(agents || [], unreadable || []);
+	const isEmpty = state === "ready" && items.length === 0;
+	const isListed = state !== "unavailable" && !isEmpty;
+
+	return (
+		<div id={MODELS_SECTION_ID_MC} ref={cardRef}>
+			<Card
+				size="L"
+				title="Agent models"
+				sub={AGENT_TIMING_MC.sub}
+				info={<AgentInfoMC />}
+				infoLabel={SETTINGS_INFO_LABEL_MC}
+				right={
+					<span className="flex items-center gap-control">
+						{state === "ready" && unreadable?.length > 0 && <HeadMarkMC text={`${unreadable.length} ${unreadable.length === 1 ? "file" : "files"} not readable`} />}
+						<Link href="#cost" className="fs-meta inline-target">
+							Cost & usage
+						</Link>
+					</span>
+				}
+				bar={isListed ? <AgentBarMC {...apply.bar} knownModels={knownModels} /> : null}
+				foot={isEmpty ? null : AGENT_FOOT_MC}
+				isFlush={isListed}>
+				<AgentBodyMC state={state} items={items} isEmpty={isEmpty} knownModels={knownModels} apply={apply} />
+			</Card>
+		</div>
+	);
+}
+
+/** Selection, model choice and the apply round trip of the agent card; `bar` = AgentBarMC props. */
+function useAgentApplyMC({ agents, onAgentsRead, showToast, cardRef }) {
+	const [ticked, setTicked] = useStateMC(() => new Set());
+	const [model, setModel] = useStateMC("");
+	const [isModelMissing, setIsModelMissing] = useStateMC(false);
+	const [isApplying, setIsApplying] = useStateMC(false);
+	const [outcome, setOutcome] = useStateMC(null);
+
+	useEffectMC(() => {
+		if (agents) setTicked((t) => getTicksAfterReadMC(t, agents));
+	}, [agents]);
+
+	const setTicks = (next) => {
+		setTicked(next);
+		setOutcome((o) => (o && o.alarm.tone === "warn" && !o.retry.some((name) => next.has(name)) ? null : o));
+	};
+	const toggle = (name) => {
+		const next = new Set(ticked);
+		if (!next.delete(name)) next.add(name);
+		setTicks(next);
+	};
+	const clear = () => {
+		setTicks(new Set());
+		setModel("");
+		setIsModelMissing(false);
+		setOutcome(null);
+		focusRovingRowMC(cardRef.current);
+	};
+	const send = () => putAgentApplyMC({ model, agents, ticked, setIsApplying, setOutcome, setTicked, onAgentsRead, showToast, clear });
+	const submit = () => {
+		if (isApplying || ticked.size === 0) return;
+		if (model !== "") return send();
+		setIsModelMissing(true);
+		document.getElementById(AGENT_SELECT_ID_MC)?.focus();
+	};
+	const choose = (value) => {
+		setModel(value);
+		setIsModelMissing(false);
+	};
+
+	return {
+		ticked,
+		isApplying,
+		outcome,
+		toggle,
+		setTicks,
+		bar: { count: ticked.size, model, isModelMissing, isApplying, onModel: choose, onApply: submit, onClear: clear },
+	};
+}
+
+// One PUT for every ticked agent; a clean answer ends in the toast, a failure keeps what can be retried ticked.
+async function putAgentApplyMC({ model, agents, ticked, setIsApplying, setOutcome, setTicked, onAgentsRead, showToast, clear }) {
+	setIsApplying(true);
+	const answer = await putAgentPinsMC(getAgentApplyBodyMC(model, agents, ticked));
+	setIsApplying(false);
+	if (answer.status !== 200) {
+		setOutcome({ alarm: getAgentApplyFailureMC(answer), retry: [], reasons: {} });
+		return;
+	}
+	onAgentsRead(answer.data);
+	const result = getAgentApplyOutcomeMC(answer.data.results, model);
+	if (result.toast) {
+		showToast("ok", result.toast);
+		clear();
+		return;
+	}
+	setOutcome(result);
+	setTicked(new Set(result.retry));
+}
+
+function AgentBodyMC({ state, items, isEmpty, knownModels, apply }) {
+	const { AlarmRow, EmptyState, MachineString } = window.UI;
+	if (state === "unavailable") return <SectionUnavailableMC message="Not available — the agent list could not be read." />;
+	if (isEmpty) {
+		return (
+			<EmptyState
+				kind="first-use"
+				message={<>No agent files in <MachineString>~/.glass-atrium/agents</MachineString></>}
+				hint="An agent appears here once its file is in that folder — then press Refresh."
+			/>
+		);
+	}
+	const alarm = apply.outcome?.alarm;
+	return (
+		<>
+			{alarm && <AlarmRow tone={alarm.tone} role={alarm.tone === "crit" ? "alert" : "status"} title={alarm.title} detail={alarm.detail} />}
+			<AgentTableMC state={state} items={items} knownModels={knownModels} apply={apply} />
+		</>
+	);
+}
+
+function AgentTableMC({ state, items, knownModels, apply }) {
+	const { Checkbox, SkeletonRows, Table, getRowFocusProps } = window.UI;
+	const [activeIndex, setActiveIndex] = useStateMC(0);
+	const names = items.filter((item) => item.agent).map((item) => item.agent.name);
+	const tickedCount = names.filter((name) => apply.ticked.has(name)).length;
+	const isAllTicked = names.length > 0 && tickedCount === names.length;
+	const master = (
+		<Checkbox
+			isChecked={isAllTicked}
+			isMixed={tickedCount > 0 && !isAllTicked}
+			isDisabled={state !== "ready" || apply.isApplying || names.length === 0}
+			onChange={() => apply.setTicks(new Set(isAllTicked ? [] : names))}
+			ariaLabel="Select all agents"
+		/>
+	);
+	const getFocusProps = (index) =>
+		getRowFocusProps({ index, activeIndex, count: items.length, onActiveChange: setActiveIndex, onActivate: (i) => items[i].agent && !apply.isApplying && apply.toggle(items[i].agent.name) });
+
+	return (
+		<Table
+			caption="Agent models. Up and Down move between rows, Right reaches a row's checkbox, Enter ticks the focused row."
+			columns={getAgentColumnsMC(master)}
+			widths={AGENT_COL_WIDTHS_MC}
+			stackBelowPx={AGENT_STACK_BELOW_PX_MC}
+			className={LEDGER_TABLE_CLASS_MC}
+			bodies={[{ key: "agents", isBusy: state === "loading" || apply.isApplying, rows: state === "loading"
+				? <SkeletonRows rows={items.length || AGENT_SKELETON_ROWS_MC} columns={AGENT_COL_WIDTHS_MC.length} rowHeight={AGENT_ROW_HEIGHT_MC} />
+				: (view) => items.map((item, index) => (
+					<AgentRowMC
+						key={item.file}
+						view={view}
+						item={item}
+						isTicked={Boolean(item.agent) && apply.ticked.has(item.agent.name)}
+						isApplying={apply.isApplying}
+						reason={item.agent && apply.outcome?.reasons[item.agent.name]}
+						knownModels={knownModels}
+						focusProps={getFocusProps(index)}
+						onToggle={apply.toggle}
+					/>
+				)) }]}
+		/>
+	);
+}
+
+function getAgentColumnsMC(master) {
+	return [
+		{ key: "tick", label: master },
+		{ key: "agent", label: "Agent" },
+		{ key: "role", label: "Role" },
+		{ key: "model", label: <span title="Read from each agent file's model line">Model</span> },
+	];
+}
+
+/**
+ * One agent file: a pointer press anywhere in the row toggles its box; the name is the box's label.
+ * A failure reason rides a detail row under it, after the tick and agent columns.
+ */
+function AgentRowMC({ view, item, isTicked = false, isApplying = false, reason, knownModels, focusProps, onToggle }) {
+	const { TableCell, TableRow } = window.UI;
+	const isPressable = Boolean(item.agent) && !isApplying;
+
+	return (
+		<>
+			<TableRow
+				view={view}
+				{...focusProps}
+				className={reason ? "is-grouped is-top-aligned" : "is-top-aligned"}
+				style={isTicked ? TICKED_ROW_STYLE_MC : undefined}
+				onClick={isPressable ? () => onToggle(item.agent.name) : undefined}>
+				{item.agent ? (
+					<AgentCellsMC view={view} agent={item.agent} isTicked={isTicked} isApplying={isApplying} knownModels={knownModels} onToggle={onToggle} />
+				) : (
+					<UnreadableCellsMC view={view} file={item.unreadable} />
+				)}
+			</TableRow>
+			{reason && (
+				<TableRow view={view}>
+					<TableCell view={view} textRole="label" />
+					<TableCell view={view} textRole="label" />
+					<TableCell view={view} kind="span" start={2}>
+						<div className="fs-meta text-dim">
+							<span className="text-crit" aria-hidden="true">✕ </span>
+							{reason}
+						</div>
+					</TableCell>
+				</TableRow>
+			)}
+		</>
+	);
+}
+
+// the box and the name label own their press → the row's own toggle never runs twice
+function stopRowPressMC(event) {
+	event.stopPropagation();
+}
+
+function AgentCellsMC({ view, agent, isTicked, isApplying, knownModels, onToggle }) {
+	const { AgentName, Checkbox, TableCell } = window.UI;
+	const id = `mc-agent-${agent.name}`;
+	const role = <AgentRoleCellMC view={view} role={agent.role} />;
+
+	return (
+		<>
+			<TableCell view={view} textRole="label" onClick={stopRowPressMC}>
+				<Checkbox id={id} isRowControl isChecked={isTicked} isDisabled={isApplying} onChange={() => onToggle(agent.name)} />
+			</TableCell>
+			<TableCell view={view} textRole="label" className={view?.isStacked ? "flex-1 min-w-0" : undefined}>
+				<label htmlFor={id} className="block truncate fs-body font-medium text-ink tbl-first-line" onClick={stopRowPressMC}>
+					<AgentName name={agent.name} />
+				</label>
+				{!agent.registered && (
+					<div className="fs-meta text-dim" title={NOT_REGISTERED_TITLE_MC}>
+						Not registered
+					</div>
+				)}
+			</TableCell>
+			{!view?.isStacked && role}
+			<TableCell view={view} textRole="label" className={view?.isStacked ? "text-right" : undefined}>
+				<AgentModelCellMC pin={agent.pin} knownModels={knownModels} />
+			</TableCell>
+			{view?.isStacked && role}
+		</>
+	);
+}
+
+// stacked → the role is the row's second line, full width
+function AgentRoleCellMC({ view, role }) {
+	const { EMPTY_VALUE_TEXT, TableCell } = window.UI;
+	return (
+		<TableCell view={view} textRole="label" className={view?.isStacked ? "basis-full min-w-0" : "min-w-0"}>
+			{role ? (
+				<span className={`block truncate text-dim ${view?.isStacked ? "fs-meta" : "fs-body tbl-first-line"}`} title={role}>
+					{role}
+				</span>
+			) : (
+				<span className="fs-body text-faint tbl-first-line">{EMPTY_VALUE_TEXT}</span>
+			)}
+		</TableCell>
+	);
+}
+
+// pinned vs default is told by words: a model name, or "No pin"; a pin outside the roster shows its id and the fallback-rate note
+function AgentModelCellMC({ pin, knownModels }) {
+	const { MachineString } = window.UI;
+	if (pin === null) return <span className="fs-body text-dim tbl-first-line">{AGENT_NO_PIN_LABEL_MC}</span>;
+	if (knownModels.includes(pin)) {
+		return (
+			<span className="fs-body text-ink tbl-first-line" title={pin}>
+				{getModelOptionLabelMC(pin)}
+			</span>
+		);
+	}
+	return (
+		<>
+			<span className="block truncate tbl-first-line" title={pin}>
+				<MachineString>{pin}</MachineString>
+			</span>
+			<PricingNoteMC pricingKnown={false} />
+		</>
+	);
+}
+
+// a .md the list could not read: shown, never hidden — no box, the reason in the role column
+function UnreadableCellsMC({ view, file }) {
+	const { MachineString, NOT_LOADED_TEXT, TableCell } = window.UI;
+	return (
+		<>
+			<TableCell view={view} textRole="label" />
+			<TableCell view={view} textRole="label" className={view?.isStacked ? "flex-1 min-w-0" : "min-w-0"}>
+				<span className="block truncate tbl-first-line" title={file.file}>
+					<MachineString>{file.file}</MachineString>
+				</span>
+			</TableCell>
+			<TableCell view={view} textRole="label" className={view?.isStacked ? "basis-full" : undefined}>
+				<span className="fs-body text-dim tbl-first-line">{file.reason}</span>
+			</TableCell>
+			<TableCell view={view} textRole="label">
+				<span className="fs-body text-faint tbl-first-line">{NOT_LOADED_TEXT}</span>
+			</TableCell>
+		</>
+	);
+}
+
+/** The card's selection bar: always laid out; its controls appear only while a row is ticked. */
+function AgentBarMC({ count, model, knownModels, isModelMissing, isApplying, onModel, onApply, onClear }) {
+	const { QuietButton, Select } = window.UI;
+	if (count === 0) {
+		return (
+			<div className="agent-bar">
+				<span className="fs-meta text-dim">{AGENT_BAR_IDLE_MC}</span>
+			</div>
+		);
+	}
+
+	return (
+		<div className="agent-bar">
+			<AgentCountCellMC count={count} isModelMissing={isModelMissing} />
+			<div className="flex items-center gap-control">
+				<Select
+					id={AGENT_SELECT_ID_MC}
+					label="Model for the selected agents"
+					isLabelHidden
+					isError={isModelMissing}
+					value={model}
+					options={getAgentModelOptionsMC(knownModels)}
+					onChange={onModel}
+					disabled={isApplying}
+					title={knownModels.includes(model) ? model : undefined}
+				/>
+				<button type="button" className="btn primary sm" onClick={onApply} disabled={isApplying}>
+					{isApplying ? "Applying…" : `Apply to ${getAgentCountTextMC(count)}`}
+				</button>
+			</div>
+			<QuietButton className="ms-auto" onClick={onClear} disabled={isApplying}>
+				Clear selection
+			</QuietButton>
+		</div>
+	);
+}
+
+// hidden twin: the count and the missing-model alert share one cell sized to the wider → the bar never shifts
+function AgentCountCellMC({ count, isModelMissing }) {
+	return (
+		<span className="grid">
+			<span className="fs-body font-medium text-ink tabular-nums" style={isModelMissing ? TWIN_HIDDEN_STYLE_MC : TWIN_CELL_STYLE_MC} aria-hidden={isModelMissing ? "true" : undefined}>
+				{`${count} selected`}
+			</span>
+			<span role="alert" className="fs-meta text-crit" style={isModelMissing ? TWIN_CELL_STYLE_MC : TWIN_HIDDEN_STYLE_MC}>
+				{isModelMissing ? (
+					<>
+						<span aria-hidden="true">✕ </span>
+						{AGENT_MISSING_MODEL_MC}
+					</>
+				) : (
+					<span aria-hidden="true">{`✕ ${AGENT_MISSING_MODEL_MC}`}</span>
+				)}
+			</span>
+		</span>
+	);
+}
+
+function getAgentModelOptionsMC(knownModels) {
+	return [
+		{ key: "", label: "Choose a model" },
+		...knownModels.map((id) => ({ key: id, label: getModelOptionLabelMC(id), title: getModelOptionTitleMC(id) })),
+		{ key: AGENT_NO_PIN_VALUE_MC, label: AGENT_NO_PIN_LABEL_MC },
+	];
+}
+
+function AgentInfoMC() {
+	const { Stack } = window.UI;
+	return (
+		<Stack gap="block" className="fs-body">
+			<p>{AGENT_TIMING_MC.caveat}</p>
+			<TierNotesMC title="How a spawn picks its model" rows={AGENT_SPAWN_ORDER_MC} />
+			<TierNotesMC title="Where a pin lives" rows={AGENT_PIN_HOME_MC} />
+		</Stack>
+	);
+}
+
+// focus returns to the table's one roving stop once the bar's controls leave
+function focusRovingRowMC(root) {
+	root?.querySelector('[data-roving-row][tabindex="0"]')?.focus();
+}
+
+// Agents and unreadable files in one list, by file name → a file added a minute ago takes its alphabetical place.
+function getAgentListMC(agents, unreadable) {
+	return [
+		...agents.map((agent) => ({ file: agent.file, agent })),
+		...unreadable.map((file) => ({ file: file.file, unreadable: file })),
+	].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
+
+// One model for every ticked agent, each carrying the pin this page last showed for it.
+function getAgentApplyBodyMC(model, agents, ticked) {
+	return {
+		model,
+		agents: agents.filter((agent) => ticked.has(agent.name)).map((agent) => ({ name: agent.name, expected_pin: agent.pin })),
+	};
+}
+
+// A fresh list keeps every tick whose agent is still listed.
+function getTicksAfterReadMC(ticked, agents) {
+	return new Set(agents.map((agent) => agent.name).filter((name) => ticked.has(name)));
+}
+
+/** A 200 answer: every file applied or unchanged → the toast; else the warn alarm, the files to retry and their row reasons. */
+function getAgentApplyOutcomeMC(results, model) {
+	const failed = results.filter((result) => !AGENT_DONE_STATUSES_MC.includes(result.status));
+	if (failed.length === 0) return { toast: getAgentToastMC(results, model), alarm: null, retry: [], reasons: {} };
+
+	const retry = failed.filter((result) => result.status !== "gone");
+	const gone = failed.filter((result) => result.status === "gone");
+	return {
+		toast: null,
+		alarm: {
+			tone: "warn",
+			title: `${failed.length} of ${results.length} ${results.length === 1 ? "agent" : "agents"} ${failed.length === 1 ? "was" : "were"} not changed`,
+			detail: getAgentFailedDetailMC(retry, gone),
+		},
+		retry: retry.map((result) => result.name),
+		reasons: Object.fromEntries(retry.map((result) => [result.name, getAgentReasonMC(result)])),
+	};
+}
+
+function getAgentFailedDetailMC(retry, gone) {
+	const namesOf = (results) => results.map((result) => window.UI.getAgentDisplayName(result.name)).join(", ");
+	return [
+		retry.length > 0 && `${namesOf(retry)} — reasons on their rows`,
+		gone.length > 0 && `${namesOf(gone)} — ${gone.length === 1 ? "its file is" : "their files are"} no longer in the folder`,
+	]
+		.filter(Boolean)
+		.join(" · ");
+}
+
+function getAgentToastMC(results, model) {
+	const agents = getAgentCountTextMC(results.length);
+	const isNoPin = model === AGENT_NO_PIN_VALUE_MC;
+	if (results.every((result) => result.status === "unchanged")) {
+		return isNoPin ? `${agents} had no pin already` : `${agents} ${results.length === 1 ? "was" : "were"} already on ${getModelOptionLabelMC(model)}`;
+	}
+	return isNoPin ? `Pin removed from ${agents}` : `${getModelOptionLabelMC(model)} set on ${agents}`;
+}
+
+function getAgentCountTextMC(count) {
+	return `${count} ${count === 1 ? "agent" : "agents"}`;
+}
+
+// A failed file's row line; a refusal the screen has no words for keeps the server's reason.
+function getAgentReasonMC({ status, reason }) {
+	if (status === "changed_since_load") return "Not changed — the file changed after this page loaded";
+	const text = AGENT_REASON_WORDS_MC[reason] ?? (AGENT_READ_BACK_RE_MC.test(reason ?? "") ? AGENT_LINE_ONLY_WORDS_MC : null);
+	if (text) return `Not changed — ${text}`;
+	return reason ? `Not changed — ${reason.charAt(0).toLowerCase()}${reason.slice(1)}` : "Not changed";
+}
+
+/** An answer that wrote nothing (400 / 409 / 403 / 429 / 503 / no answer) → one crit alarm naming the next step. */
+function getAgentApplyFailureMC({ status, data }) {
+	const detail =
+		status === null
+			? "The monitor did not answer. Apply again."
+			: status === 409
+				? "Another process is writing agent files. Apply again when it finishes."
+				: data?.reason ?? `The monitor answered HTTP ${status}. Apply again.`;
+	return { tone: "crit", title: "No agent was changed", detail };
+}
+
+// status null = no answer; any answered status comes back with its body for the alarm
+async function putAgentPinsMC(body) {
+	try {
+		const res = await fetch(AGENT_PIN_URL_MC, {
+			method: "PUT",
+			headers: { "content-type": "application/json", Accept: "application/json" },
+			body: JSON.stringify(body),
+		});
+		return { status: res.status, data: await res.json().catch(() => null) };
+	} catch (_err) {
+		return { status: null, data: null }; // the network failure itself is the alarm the caller raises
+	}
+}
+
 // One column grid for both ledgers — content-sized cells let the Live columns drift apart.
 // The control column is the widest, so a model select holds its longest friendly name from the 1280 side-by-side row up.
 const LEDGER_COL_WIDTHS_MC = ["32%", "36%", "32%"];
@@ -655,40 +1203,31 @@ function DomainsSectionMC({
 	errors,
 	onModelChange,
 }) {
-	const { Card, Link, SkeletonRows, Table } = window.UI;
+	const { Card, SkeletonRows, Table } = window.UI;
 	const rows = sortDomainsMC(domains || []);
 	const timing = getApplyTimingMC(rows);
 
 	return (
-		<div id={MODELS_SECTION_ID_MC}>
 			<Card
-				size="L"
-				title="Model assignment"
+				size="M"
+				title="Daemon model"
 				sub={timing.meta}
 				info={
 					<SettingsInfoMC
 						caveat={timing.caveat}
-						title="Who each tier covers"
+						title="What the helper runs"
 						rows={rows.map((d) => DOMAIN_META_MC[d.domain] && { ...DOMAIN_META_MC[d.domain], savedId: d.desired })}
 					/>
 				}
 				infoLabel={SETTINGS_INFO_LABEL_MC}
-				right={
-					<span className="flex items-center gap-control">
-						{state === "ready" && <UnreadMarkMC rows={rows} metaOf={DOMAIN_META_MC} />}
-						<Link href="#cost" className="fs-meta inline-target">
-							Cost & usage
-						</Link>
-					</span>
-				}
-				foot={<SourceFootMC source={DAEMON_CONFIG_FILE_MC} />}
+				right={state === "ready" ? <UnreadMarkMC rows={rows} metaOf={DOMAIN_META_MC} /> : null}
 				isFlush={state !== "unavailable"}>
 				{state === "unavailable" ? (
 					<SectionUnavailableMC />
 				) : (
 					<Table
-						caption="Model assignment per agent tier"
-						columns={getLedgerColumnsMC("Agent tier", "Model", IN_EFFECT_TITLE_MC.models)}
+						caption="Daemon model per background call"
+						columns={getLedgerColumnsMC("Background call", "Model", IN_EFFECT_TITLE_MC.models)}
 						widths={LEDGER_COL_WIDTHS_MC}
 						className={LEDGER_TABLE_CLASS_MC}
 						bodies={[{ key: "domains", isBusy: state === "loading", rows: (
@@ -721,7 +1260,6 @@ function DomainsSectionMC({
 					/>
 				)}
 			</Card>
-		</div>
 	);
 }
 
@@ -1231,11 +1769,9 @@ function TiersSectionMC({
 	const rows = tiers || [];
 	const timing = getApplyTimingMC(rows);
 
-	// last card of the stretched caps column → takes the slack so the column ends with the model card
 	return (
 		<Card
 			size="M"
-			className="flex-auto"
 			title="Daemon call tiers"
 			foot={<SourceFootMC source={DAEMON_CONFIG_FILE_MC} />}
 			sub={timing.meta}
@@ -1570,25 +2106,24 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 
 // Card-head count of unread rows that name no source → such a row renders nothing; a sourced row says it itself.
 function UnreadMarkMC({ rows, metaOf }) {
-	const { Icon } = window.UI;
 	const count = rows.filter((row) => !row.drift && row.actual == null && !metaOf[row.domain]?.source).length;
-	if (count === 0) return null;
+	return count === 0 ? null : <HeadMarkMC text={`${count} not read`} />;
+}
 
+// One warn glyph + words in a card head — said once per card, never per row.
+function HeadMarkMC({ text }) {
+	const { Icon } = window.UI;
 	return (
 		<span className="fs-meta text-dim flex items-center gap-label-inline">
 			<Icon name="warn" size={12} className="text-warn" />
-			{`${count} not read`}
+			{text}
 		</span>
 	);
 }
 
 // Unavailable must read as 'not read', never as zero — the cause rides the alarm lane.
-function SectionUnavailableMC() {
-	return (
-		<div className="fs-meta text-faint">
-			Not available — the saved config could not be loaded.
-		</div>
-	);
+function SectionUnavailableMC({ message = "Not available — the saved config could not be loaded." }) {
+	return <div className="fs-meta text-faint">{message}</div>;
 }
 
 // 순수 helper

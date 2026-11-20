@@ -1403,7 +1403,7 @@ const THREE_TIERS_MC = ["model.daemon_cycle_worker", "model.future_a", "model.fu
 
 test("each ledger is an h2 section with a captioned table, so the outline never skips h1 to h3", () => {
   for (const [name, props, title] of [
-    ["DomainsSectionMC", domainsPropsMc(), "Model assignment"],
+    ["DomainsSectionMC", domainsPropsMc(), "Daemon model"],
     ["BudgetsSectionMC", budgetsPropsMc(), "Per-call budget caps"],
   ] as const) {
     const tree = renderComponentMc(screens[name], props);
@@ -1466,14 +1466,14 @@ test("the saved-value line keeps its slot whether or not the field differs, so a
   assert.strictEqual(slotsOf("claude-sonnet-5"), 1, "the same slot carries the saved value once it differs");
 });
 
-test("Cost & usage is linked once per ledger, and an unpriced tier says why its cost is a fallback", () => {
+test("the daemon model card leaves Cost & usage to the agent card, and an unpriced tier says why its cost is a fallback", () => {
   for (const pricingKnown of [true, false]) {
     const tree = renderComponentMc(
       screens.DomainsSectionMC,
       domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, pricing_known: pricingKnown }))),
     );
     const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
-    assert.strictEqual(links.length, 1, `pricing_known=${pricingKnown}: one section link for three tiers`);
+    assert.strictEqual(links.length, 0, `pricing_known=${pricingKnown}: the page's one Cost & usage link sits on the agent card`);
     assert.strictEqual(
       textMc(tree).includes("No price listed"),
       !pricingKnown,
@@ -1650,7 +1650,7 @@ test("a row departing from the card's timing states its own timing in its row", 
 
 describe("each card's glossary opens from its About settings drawer, never on the card face", () => {
   const rows = [
-    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), heading: "Who each tier covers" },
+    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), heading: "What the helper runs" },
     { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), heading: "When a cap trips" },
     { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), heading: "What each setting does" },
   ];
@@ -1695,21 +1695,23 @@ test("long take-effect, cap and default sentences read as short labels; their de
   assert.ok(textMc(drawersMc(tiers)[0].children).includes(precedence), "the precedence note is in the drawer");
 });
 
-test("the three ledgers share one split row, model assignment leading", () => {
+test("the agent card leads at full width, and the three daemon ledgers share one split row under it", () => {
   const tree = renderComponentMc(screens.ScreenModelConfig);
+  const cardSizesOf = (nodes: McNode[]): unknown[] =>
+    findAllMc(nodes, (n) => n.props["data-atom"] === "Card").map((c) => c.props["data-size"]);
+  assert.strictEqual(textsMc(tagsMc(tree, "h2"))[0], "Agent models", "the agent card comes first");
+  assert.strictEqual(cardSizesOf(tree)[0], "L", "the agent card is the L card");
   const [split] = findAllMc(tree, (n) => n.props["data-atom"] === "SplitRow");
   assert.ok(split, "a split row holds the ledgers");
   // 1:1 over 2:1 — at 1280 a third-width column overflows the cap and tier fields
   assert.strictEqual(split.props["data-ratio"], "1:1");
-  assert.strictEqual(split.props["data-layout"], "equal", "peer cards stretch to one end edge");
-  const [lead, column] = split.children.filter((c): c is McTag => typeof c !== "string");
-  const cardSizesOf = (node: McTag): unknown[] =>
-    findAllMc([node], (n) => n.props["data-atom"] === "Card").map((c) => c.props["data-size"]);
-  assert.deepStrictEqual(cardSizesOf(lead), ["L"], "model assignment is the L card");
-  assert.strictEqual(column.props["data-atom"], "SplitColumn", "caps and tiers stack in one column");
-  assert.deepStrictEqual(cardSizesOf(column), ["M", "M"], "caps and tiers are M cards");
+  assert.strictEqual(split.props["data-layout"], "content", "each column ends at its own content");
+  const [column, tiers] = split.children.filter((c): c is McTag => typeof c !== "string");
+  assert.strictEqual(column.props["data-atom"], "SplitColumn", "the daemon model and the caps stack in the left column");
+  assert.deepStrictEqual(cardSizesOf([column]), ["M", "M"], "daemon model and caps are M cards");
+  assert.deepStrictEqual(cardSizesOf([tiers]), ["M"], "the call tiers fill the right column");
   assert.deepStrictEqual(textsMc(tagsMc(split.children, "h2")), [
-    "Model assignment",
+    "Daemon model",
     "Per-call budget caps",
     "Daemon call tiers",
   ]);
@@ -1728,7 +1730,7 @@ test("every cap carries its own reference link to Cost & usage", () => {
 });
 
 test("the card-head Cost & usage navigation is the shared Link atom", () => {
-  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+  const tree = renderComponentMc(screens.AgentModelsSectionMC, { state: "loading", knownModels: [], onAgentsRead: () => {}, showToast: () => {} });
   const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
   assert.deepStrictEqual(links.map((a) => a.props["data-atom"]), ["Link"]);
 });
@@ -1758,8 +1760,8 @@ test("mono comes only from the machine-string atom: no element styles itself mon
       assert.ok(classes.includes("tabular-nums") && !classes.includes("field--mono"), `${name}: a number field is sans tnum, never mono`);
     }
   }
-  const machine = findAllMc(domains, (n) => n.props["data-atom"] === "MachineString").map((n) => textMc(n.children));
-  assert.ok(machine.includes("daemon-config.json"), "the card's read source is a machine string");
+  const machine = findAllMc(trees[1], (n) => n.props["data-atom"] === "MachineString").map((n) => textMc(n.children));
+  assert.ok(machine.includes("daemon-config.json"), "the column's read source, in the caps card's foot, is a machine string");
 });
 
 test("a differing model's saved line names the saved model, never its raw id", () => {
@@ -1934,7 +1936,7 @@ test("the glossary labels are headings, and their notes never repeat the agent a
     asOfAt: Date.now(),
   });
   const headings = textsMc(tagsMc(tree, "h3"));
-  assert.ok(headings.includes("Who each tier covers"), `headings: ${headings}`);
+  assert.ok(headings.includes("What the helper runs"), `headings: ${headings}`);
   assert.ok(headings.includes("When a cap trips"), `headings: ${headings}`);
 
   const notes = textsMc(tagsMc(tree, "dd")).join(" ");
@@ -1942,16 +1944,20 @@ test("the glossary labels are headings, and their notes never repeat the agent a
   assert.ok(!notes.includes("glass-atrium-"), `a note repeats an agent id the row shows: ${notes}`);
 });
 
-test("each card names its shared read source once in its foot, and a row reading it stays silent on it", () => {
-  for (const [name, tree] of [
+// the daemon model card and the caps card share one column → the caps foot names the source for both
+test("the daemon column names its shared read source once, in the caps card's foot, and a row reading it stays silent on it", () => {
+  const cards = [
     ["models", renderComponentMc(screens.DomainsSectionMC, domainsPropsMc())],
     ["budgets", renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc())],
-  ] as const) {
+  ] as const;
+  for (const [name, tree] of cards) {
     const live = textMc([liveCellMc(tree)]);
-    const foot = footMc(tree).join(" ");
-    assert.ok(!live.includes("Read from"), `${name}: a row reading the card's source stays silent (${live})`);
-    assert.strictEqual(countMc(foot, "Read from daemon-config.json"), 1, `${name}: the foot names the source once (${foot})`);
+    assert.ok(!live.includes("Read from"), `${name}: a row reading the column's source stays silent (${live})`);
   }
+  const feet = cards.map(([name, tree]) => [name, footMc(tree).join(" ")] as const);
+  const column = feet.map(([, foot]) => foot).join(" ");
+  assert.strictEqual(countMc(column, "Read from daemon-config.json"), 1, `the column names the source once (${column})`);
+  assert.ok(feet[1][1].includes("Read from daemon-config.json"), `the caps card's foot carries it (${feet[1][1]})`);
 });
 
 test("a sourced In-effect cell with no live value names the source without claiming it was read", () => {

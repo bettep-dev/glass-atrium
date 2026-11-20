@@ -1,5 +1,5 @@
 // The one focus rule read in the running app: a ring shows exactly where :focus-visible matches, so a mouse move draws none
-// and a keyboard move draws the shared ring — route headings, popovers, drawers, in-row controls and disclosures alike.
+// and a keyboard move draws the shared ring — route headings, popovers, drawers, in-row controls, disclosures and the agent table alike.
 // Runner: npx tsx --test test/app.focus-ring.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
 // App: stripped Fastify serving the model config below; every other /api read answers empty.
@@ -26,6 +26,9 @@ const CONFIG = {
   tiers: [],
   known_models: [MODEL],
   daemon_config_sync: "ok",
+  // two agent files → the agent card draws its master box and roving rows
+  agents: ["glass-atrium-dev-android", "glass-atrium-intel-researcher"].map((name) => ({ name, file: `${name}.md`, role: null, pin: MODEL, registered: true })),
+  unreadable: [],
 };
 
 interface FocusReading { tag: string; label: string; isFocusVisible: boolean; outline: string }
@@ -298,6 +301,41 @@ describe("focus after a mouse move draws no ring, after a keyboard move draws th
     assert.equal(await page.$eval("#fixture summary.disclosure", (el) => (el.parentElement as HTMLDetailsElement).open), true);
     const { tag, isFocusVisible, outline } = await readFocus(page);
     assert.deepEqual({ tag, isFocusVisible, outline }, { tag: "SUMMARY", isFocusVisible: false, outline: "none" });
+    await page.close();
+  });
+});
+
+describe("the agent table's keys ring each stop they reach", () => {
+  const MASTER = "input[aria-label='Select all agents']";
+  const readRing = (page: Page) => readFocus(page).then(({ tag, isFocusVisible, outline }) => ({ tag, isFocusVisible, outline }));
+
+  test("Tab from the master box reaches the first agent row with the ring", async () => {
+    const page = await openApp();
+    await page.focus(MASTER);
+    await page.keyboard.press("Tab");
+
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-roving-row")), "0");
+    assert.deepEqual(await readRing(page), { tag: "TR", isFocusVisible: true, outline: "solid" });
+    await page.close();
+  });
+
+  test("ArrowRight from a keyboard-focused agent row rings its checkbox", async () => {
+    const page = await openApp();
+    await page.focus(MASTER);
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("ArrowRight");
+
+    assert.deepEqual(await readRing(page), { tag: "INPUT", isFocusVisible: true, outline: "solid" });
+    await page.close();
+  });
+
+  test("Space on a row's checkbox ticks that agent and the bar counts it", async () => {
+    const page = await openApp();
+    await page.focus("[data-roving-row='0'] input[type=checkbox]");
+    await page.keyboard.press("Space");
+
+    assert.equal(await page.$eval("[data-roving-row='0'] input[type=checkbox]", (box) => (box as HTMLInputElement).checked), true);
+    assert.match((await page.textContent(".card-bar")) ?? "", /^1 selected/);
     await page.close();
   });
 });

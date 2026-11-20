@@ -1477,15 +1477,16 @@ function BarSearch({ label, value, onChange, placeholder, className = '' }) {
 
 /**
  * The one checkbox: the 16 .ctl-checkbox box, its check or minus mark over it, and its 24 hit area.
+ * @param id - the input's id → a `<label for>` elsewhere in the row names it
  * @param isMixed - the DOM's indeterminate state, a property no attribute sets → written by ref; draws the minus
  * @param isInLabel - the caller already draws the enclosing <label> (a whole row) → the hit area is a span, never a nested label
  * @param isRowControl - a control inside a roving row: out of the tab order, reached by the row's arrows
  */
-function Checkbox({ isChecked = false, isMixed = false, isInLabel = false, isRowControl = false, onChange, ariaLabel, describedBy }) {
+function Checkbox({ id, isChecked = false, isMixed = false, isDisabled = false, isInLabel = false, isRowControl = false, onChange, ariaLabel, describedBy }) {
   const Hit = isInLabel ? 'span' : 'label';
   const setMixed = (input) => { if (input) input.indeterminate = isMixed; };
   return <Hit className="inline-target ctl-checkbox-hit">
-    <input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} onChange={onChange}
+    <input ref={setMixed} id={id} type="checkbox" className="ctl-checkbox" checked={isChecked} disabled={isDisabled} onChange={onChange}
       aria-label={ariaLabel} aria-describedby={describedBy} {...(isRowControl ? ROW_CONTROL_PROPS : null)} />
     {(isChecked || isMixed) && <Icon name={isMixed ? 'minus' : 'check'} size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
   </Hit>;
@@ -3137,7 +3138,7 @@ window.UI = {
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
   Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Checkbox, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
-  getDisplayName, hasFieldValue, DetailField, ToneGlyph, HeadStatus, AbsentValue, EMPTY_VALUE_TEXT,
+  getDisplayName, hasFieldValue, DetailField, ToneGlyph, HeadStatus, AbsentValue, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,

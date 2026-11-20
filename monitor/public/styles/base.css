@@ -2987,6 +2987,15 @@ a.prose-link:hover {
 	.field, .field-affix { transition: none; }
 }
 
+/* agent selection bar (model-config) — one 32 line in the card's bar slot, which pads 8 → 48 idle or ticked; groups 12 apart */
+.agent-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2) var(--space-3);
+	min-height: var(--ctl-min-h);
+}
+
 /* ── Save banner (model-config S9) — sticky 하단 dirty-state 바.
    상시(permanent) 표면이라 불투명 --elev fill (reduced-transparency safe, blur 없음).
    상단 1px --line 경계 + 위로 향한 --shadow-overlay 로 콘텐츠 위에 떠 있음을 표현. */

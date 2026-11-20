@@ -1,5 +1,5 @@
-// E2E chromium check for the Models & budgets screen (screens/model-config.jsx): the model card and the
-// caps + tiers stack end together, which a node render cannot measure.
+// E2E chromium check for the Models & budgets screen (screens/model-config.jsx): the agent card spans the page above the
+// daemon split row, ticking an agent never moves a row, and the split row's two columns end together — none of which a node render can measure.
 //
 // Runner: npx tsx --test test/model-config.card-ends.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
@@ -49,8 +49,10 @@ const CONFIG = {
 };
 
 // side-by-side widths only — below 1280 the row stacks and has no shared end edge
-for (const width of [1440, 1920]) {
-  test(`the model card and the caps + tiers stack end within one row of each other at ${width}px`, async () => {
+// one-row bound kept for the two-card left column: the caps card's foot names the source for the whole column,
+// so the daemon model card carries no foot of its own (designer ruling, layout-ruling.md item 1)
+for (const width of [1280, 1440, 1568, 1920]) {
+  test(`the daemon model + caps column and the call-tier column end within one row of each other at ${width}px`, async () => {
     const app = Fastify({ logger: false });
     await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
     app.get("/api/model-config", async () => CONFIG);
@@ -64,19 +66,19 @@ for (const width of [1440, 1920]) {
       await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
       const ends = await page.evaluate(() => {
         const row = document.querySelector(".split-row")!;
-        const lead = row.children[0].querySelector(".card")!.getBoundingClientRect();
-        const stack = [...row.children[1].querySelectorAll(".card")].map((card) => card.getBoundingClientRect());
+        const stack = [...row.children[0].querySelectorAll(".card")].map((card) => card.getBoundingClientRect());
+        const tiers = row.children[1].getBoundingClientRect();
         return {
           rowPx: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")),
-          isSideBySide: stack.every((box) => box.left >= lead.right),
-          leadBottom: lead.bottom,
+          isSideBySide: stack.every((box) => tiers.left >= box.right),
           stackBottom: Math.max(...stack.map((box) => box.bottom)),
+          tiersBottom: tiers.bottom,
         };
       });
 
       assert.ok(ends.rowPx > 0, "the row-height token resolves");
-      assert.ok(ends.isSideBySide, `${width}px: the stack sits beside the model card`);
-      const gap = Math.abs(ends.leadBottom - ends.stackBottom);
+      assert.ok(ends.isSideBySide, `${width}px: the call tiers sit beside the daemon model + caps stack`);
+      const gap = Math.abs(ends.stackBottom - ends.tiersBottom);
       assert.ok(gap <= ends.rowPx, `${width}px: ends ${gap}px apart, more than one ${ends.rowPx}px row`);
     } finally {
       await browser.close();
@@ -217,6 +219,53 @@ for (const width of [1024, 1280, 1440, 1920]) {
         assert.strictEqual(file.lines, 1, `${width}px: daemon-config.json is one token`);
         assert.ok(file.height <= file.lineHeight + 1, `${width}px: daemon-config.json never breaks at its hyphens`);
       }
+    } finally {
+      await browser.close();
+      await app.close();
+    }
+  });
+}
+
+// a listed agent folder: a long name, a missing role, an unregistered file and an unreadable one
+const AGENTS_CONFIG = {
+  ...CONFIG,
+  agents: [
+    { name: "glass-atrium-dev-android", file: "glass-atrium-dev-android.md", role: "Android apps in Kotlin and Compose", pin: MODEL, registered: true },
+    { name: "glass-atrium-intel-researcher", file: "glass-atrium-intel-researcher.md", role: "Web and codebase research with cited sources", pin: null, registered: true },
+    { name: "glass-atrium-sec-guard", file: "glass-atrium-sec-guard.md", role: null, pin: MODEL, registered: true },
+    { name: "my-new-agent-with-a-forty-character-name", file: "my-new-agent-with-a-forty-character-name.md", role: "Drafts release notes", pin: null, registered: false },
+  ],
+  unreadable: [{ file: "glass-atrium-broken.md", reason: "No frontmatter block" }],
+};
+
+for (const width of [1280, 1568]) {
+  test(`${width}px: the agent card spans the page above the split row, and ticking an agent moves no row`, async () => {
+    const app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/model-config", async () => AGENTS_CONFIG);
+    app.get("/api/*", async () => ({ rows: [] }));
+    const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    const browser = await chromium.launch({ headless: true });
+
+    try {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
+      await page.waitForSelector("[data-roving-row] input[type=checkbox]", { timeout: 30_000 });
+      const readRows = () => page.evaluate(() => [...document.querySelectorAll("[data-roving-row]")].map((row) => row.getBoundingClientRect().top));
+      const layout = await page.evaluate(() => {
+        const agent = document.querySelector("#mc-models .card")!.getBoundingClientRect();
+        const split = document.querySelector(".split-row")!.getBoundingClientRect();
+        return { agentWidth: agent.width, splitWidth: split.width, agentBottom: agent.bottom, splitTop: split.top };
+      });
+      const before = await readRows();
+      // the role cell of the first agent with a box — the unreadable file sorts first and has none
+      await page.click("[data-roving-row]:has(input[type=checkbox]) td:nth-child(3)");
+      await page.waitForFunction(() => document.querySelector(".card-bar")?.textContent?.includes("1 selected"));
+      const after = await readRows();
+
+      assert.ok(Math.abs(layout.agentWidth - layout.splitWidth) <= 1, `${width}px: agent card ${layout.agentWidth} vs split row ${layout.splitWidth}`);
+      assert.ok(layout.agentBottom <= layout.splitTop, `${width}px: the agent card ends above the split row`);
+      assert.deepStrictEqual(after, before, `${width}px: ticking a row moved the rows`);
     } finally {
       await browser.close();
       await app.close();

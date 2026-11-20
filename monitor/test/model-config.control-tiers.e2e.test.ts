@@ -1,6 +1,6 @@
 // Models & budgets controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and type
 // scale, rendered from the shipped components: the save-results fold on the disclosure
-// atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — the Cost & usage links as 24 targets, and a
+// atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — the Cost & usage links as 24 targets, the agent selection bar at one height in every tick state, and a
 // field's inline Reset as a 24 target in a saved line that keeps its height whether the field is overridden or not.
 // Runner: npx tsx --test test/model-config.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
@@ -92,11 +92,27 @@ const RESULTS = getMarkup("SurfaceResultsCardMC", {
   onDismiss: noop,
 });
 
+const AGENTS = getMarkup("AgentModelsSectionMC", {
+  state: "ready",
+  agents: [{ name: "glass-atrium-dev-android", file: "glass-atrium-dev-android.md", role: "Android apps in Kotlin and Compose", pin: MODEL, registered: true }],
+  unreadable: [],
+  knownModels: [MODEL],
+  onAgentsRead: noop,
+  showToast: noop,
+});
+
+// the selection bar in its card slot: nothing ticked, three ticked, and Apply pressed with no model chosen
+const getBar = (count: number, isModelMissing: boolean) =>
+  `<div class="card-bar">${getMarkup("AgentBarMC", { count, model: "", knownModels: [MODEL], isModelMissing, isApplying: false, onModel: noop, onApply: noop, onClear: noop })}</div>`;
+const BAR_STATES = { idle: getBar(0, false), ticked: getBar(3, false), missing: getBar(3, true) } as const;
+
 // a field's saved line: overridden (Saved value + Reset) and back at the saved value (the empty slot)
 const getSavedLine = (overridden: boolean) => getMarkup("GhostResetMC", { overridden, defaultValue: overridden ? MODEL : null, onReset: noop });
 
 const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="models" style="width: 760px; padding: 24px;">${MODELS}</div>
+  <div id="agents" style="width: 1100px; padding: 24px;">${AGENTS}</div>
+${Object.entries(BAR_STATES).map(([state, bar]) => `  <div id="bar-${state}" style="width: 1100px; padding: 24px;">${bar}</div>`).join("\n")}
   <div id="caps" style="width: 560px; padding: 24px;">${CAPS}</div>
   <div id="results" style="width: 560px; padding: 24px;">${RESULTS}</div>
   <div id="saved-overridden" style="width: 280px; padding: 24px;">${getSavedLine(true)}</div>
@@ -151,7 +167,7 @@ const assertTextOnTargetCentre = async (selector: string) => {
 
 describe("the Cost & usage links are 24 targets", () => {
   for (const [name, selector] of [
-    ["the model card's Cost & usage link", "#models a[href='#cost']"],
+    ["the agent card's Cost & usage link", "#agents a[href='#cost']"],
     ["a cap's Recent costs link", "#caps a[href='#cost']"],
   ] as const) {
     test(`${name} is 24 tall with its text on the box's centre line`, () => assertTextOnTargetCentre(selector));
@@ -168,5 +184,18 @@ describe("a field's inline Reset is a 24 target in a slot that holds its height"
     const overridden = await readBox(SLOT("overridden"));
     const empty = await readBox(SLOT("empty"));
     assert.equal(overridden.height, empty.height, `overridden ${overridden.height} vs empty ${empty.height}`);
+  });
+});
+
+describe("the selection bar never moves a row as ticks come and go", () => {
+  test("idle, three ticked and the missing-model alert lay the bar out at one 48 height", async () => {
+    const heights = await Promise.all(Object.keys(BAR_STATES).map(async (state) => [state, (await readBox(`#bar-${state} .card-bar`)).height] as const));
+    assert.deepEqual(Object.fromEntries(heights), { idle: 48, ticked: 48, missing: 48 });
+  });
+
+  test("the count cell keeps its width when the missing-model alert takes its place", async () => {
+    const cell = (state: string) => readBox(`#bar-${state} .agent-bar > :first-child`);
+    const [count, alert] = await Promise.all([cell("ticked"), cell("missing")]);
+    assert.equal(alert.width, count.width, `count ${count.width} vs alert ${alert.width}`);
   });
 });
