@@ -55,6 +55,16 @@ export const ROLE_LINE_MAX_LENGTH = 52;
 
 const ROLE_LINE_DROPPED_MARKS = /["`“”]/g;
 
+// The role line names what the agent does, never the word "agent": a leading "Agent (for|that)", a trailing "(development) agent", one inside the phrase.
+const ROLE_LINE_AGENT = {
+  lead: /^agent(?: for| that)? /i,
+  tail: /(?: development)? agent$/i,
+  inner: / agent(?= )/gi,
+};
+
+// Words a cut can leave hanging before the ellipsis → dropped with it.
+const ROLE_LINE_DANGLING_TAIL = /(?:[\s,;:/–—-]+|\s+(?:and|or|of|for|to|into|from|by|at|as|the|with|in|on|a|an))+$/i;
+
 // Lowercase kebab name + `.md` → GLASS_ATRIUM_GLOBAL_RULES.md, references/ and templates/ never match.
 const AGENT_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*\.md$/;
 
@@ -407,24 +417,35 @@ function extractFrontmatter(raw: string): { block: string; body: string } | null
   return null;
 }
 
-// Collapse a (possibly folded) description to one line, then take the first sentence as the role line.
+// Short role phrase from the description → one plain-text line on the Agents and Models screens.
 // Identity wants a concise role, not the full "Use when / Do NOT use for" frontmatter prose.
-// Quote marks + backticks dropped, cut to ROLE_LINE_MAX_LENGTH → one plain-text line on the Agents and Models screens.
 function toRoleLine(description: unknown): string | null {
   if (typeof description !== "string") {
     return null;
   }
+  const phrase = getRolePhrase(description);
+  return phrase.length === 0 ? null : cutAtWord(phrase);
+}
+
+// One line, quote marks + backticks dropped → first sentence → its clause before an em dash, no period, no "agent".
+function getRolePhrase(description: string): string {
   const collapsed = description.replace(ROLE_LINE_DROPPED_MARKS, "").replace(/\s+/g, " ").trim();
-  if (collapsed.length === 0) {
-    return null;
-  }
-  const sentenceEnd = collapsed.indexOf(". ");
-  const sentence = sentenceEnd === -1 ? collapsed : collapsed.slice(0, sentenceEnd + 1);
-  const chars = Array.from(sentence);
+  const sentence = collapsed.split(". ")[0] ?? "";
+  const clause = (sentence.split(" — ")[0] ?? "").replace(/\.$/, "").trim();
+  const phrase = clause.replace(ROLE_LINE_AGENT.lead, "").replace(ROLE_LINE_AGENT.tail, "").replace(ROLE_LINE_AGENT.inner, "");
+  return ROLE_LINE_AGENT.lead.test(clause) ? phrase.charAt(0).toUpperCase() + phrase.slice(1) : phrase;
+}
+
+// Over the cap → cut after the last whole word that fits beside the ellipsis; one unbroken word → a hard cut.
+function cutAtWord(phrase: string): string {
+  const chars = Array.from(phrase);
   if (chars.length <= ROLE_LINE_MAX_LENGTH) {
-    return sentence;
+    return phrase;
   }
-  return `${chars.slice(0, ROLE_LINE_MAX_LENGTH - 1).join("").trimEnd()}…`;
+  const fitted = chars.slice(0, ROLE_LINE_MAX_LENGTH).join("");
+  const lastSpace = fitted.lastIndexOf(" ");
+  const kept = lastSpace > 0 ? fitted.slice(0, lastSpace) : chars.slice(0, ROLE_LINE_MAX_LENGTH - 1).join("");
+  return `${kept.replace(ROLE_LINE_DANGLING_TAIL, "")}…`;
 }
 
 // compatibility normalize — non-empty string 만 허용, 그 외 → null (미선언 + 손상값 모두 null 로 일관)

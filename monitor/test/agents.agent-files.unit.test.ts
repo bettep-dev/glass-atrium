@@ -41,9 +41,8 @@ async function writeAgentsFolder(): Promise<void> {
   await symlink(join(agentsDir, ".glass-atrium-linked-source.md"), join(agentsDir, "glass-atrium-linked.md"));
 }
 
-async function getRoleOf(description: string): Promise<string | null> {
+async function getRoleOf(description: string, line = `description: ${JSON.stringify(description)}`): Promise<string | null> {
   const dir = await mkdtemp(join(tmpRoot, "role-"));
-  const line = `description: ${JSON.stringify(description)}`;
   await writeFile(join(dir, "glass-atrium-role.md"), agentMarkdown("glass-atrium-role", [line]));
   const list = await listAgentFiles(dir);
   assert.strictEqual(list.agents.length, 1, "fixture agent is listed");
@@ -119,24 +118,43 @@ describe("listAgentFiles: which entries of the agents folder are listed", () => 
   });
 });
 
-describe("role line: the description's first sentence, one line on every screen", () => {
-  test("a long first sentence is cut to the cap and ends in an ellipsis, keeping its opening words", async () => {
-    const sentence =
-      "Swift/SwiftUI native Apple-platform app development and code-level architecture and concurrency agent.";
-    const role = await getRoleOf(`${sentence} Use when building iOS apps.`);
-    assert.ok(role !== null);
-    assert.ok([...role].length <= ROLE_LINE_MAX_LENGTH, `role "${role}" within the cap`);
-    assert.ok(role.endsWith("…"));
-    assert.ok(sentence.startsWith(role.slice(0, -1)), "the cut keeps the sentence's opening words");
+describe("role line: a short phrase from the description's first sentence, one line on every screen", () => {
+  const rows = [
+    { name: "a short first sentence loses its period and a trailing 'agent'", description: "Systematic debugging expert agent. Use when a test fails.", role: "Systematic debugging expert" },
+    { name: "a trailing 'development agent' is dropped", description: "Angular web application development agent. Use when editing components.", role: "Angular web application" },
+    { name: "a leading 'Agent for' is dropped and the phrase starts upper case", description: "Agent for requirements analysis and prioritization. Use when planning.", role: "Requirements analysis and prioritization" },
+    { name: "a leading 'Agent that' is dropped", description: "Agent that synthesizes research data into reports — request-driven format.", role: "Synthesizes research data into reports" },
+    { name: "an 'agent' inside the phrase is dropped", description: "Systematic research agent for web search. Use when citing.", role: "Systematic research for web search" },
+    { name: "only the clause before an em dash is kept", description: "Code quality and design review — project-rule-based code review agent. Use when reviewing.", role: "Code quality and design review" },
+    { name: "quote marks and backticks are dropped", description: '"Ship it" gate for `release` builds. Use when tagging.', role: "Ship it gate for release builds" },
+    { name: "a long phrase is cut after its last whole word", description: "Kotlin/Jetpack Compose Android app development and code-level layering validation agent. Use when.", role: "Kotlin/Jetpack Compose Android app development…" },
+    { name: "a cut drops a dangling conjunction and comma", description: "Python application, CLI, data-processing, and web-API development agent — pure Python runtime.", role: "Python application, CLI, data-processing…" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      assert.strictEqual(await getRoleOf(row.description), row.role);
+    });
+  }
+
+  test("a single-quoted YAML description reads without its quotes", async () => {
+    const role = await getRoleOf("", "description: 'Single owner of the wiki (`~/.glass-atrium/wiki/`). Handles all wiki writes.'");
+    assert.strictEqual(role, "Single owner of the wiki (~/.glass-atrium/wiki/)");
   });
 
-  test("a first sentence within the cap is returned whole", async () => {
-    assert.strictEqual(await getRoleOf("Systematic debugging expert agent. Use when a test fails."), "Systematic debugging expert agent.");
-  });
-
-  test("a description starting with a quote reads without quote marks or backticks", async () => {
-    const role = await getRoleOf('"Ship it" gate for `release` builds. Use when tagging.');
-    assert.strictEqual(role, "Ship it gate for release builds.");
+  test("a cut role stays within the cap and ends on a whole word of its phrase", async () => {
+    const phrases = [
+      "Swift/SwiftUI native Apple-platform app development and code-level architecture and concurrency",
+      "Shell/Bash script development for Claude Code automation infrastructure",
+      "Single owner of the Atrium-internal, LLM-only wiki and its sqlite index",
+    ];
+    for (const phrase of phrases) {
+      const role = await getRoleOf(`${phrase}. Use when building.`);
+      assert.ok(role !== null && role.endsWith("…"), `"${phrase}" is cut`);
+      const kept = role.slice(0, -1);
+      assert.ok([...role].length <= ROLE_LINE_MAX_LENGTH, `role "${role}" within the cap`);
+      assert.ok(phrase.startsWith(kept), `"${role}" keeps the phrase's opening words`);
+      assert.match(phrase.slice(kept.length), /^[^\p{L}\p{N}]/u, `"${role}" ends between words`);
+    }
   });
 
   test("an empty description gives no role line", async () => {

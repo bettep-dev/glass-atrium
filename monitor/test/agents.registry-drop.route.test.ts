@@ -202,7 +202,7 @@ test("agents-dir 기본 경로: description 은 ~/.glass-atrium/agents/<name>.md
   // toRoleLine 첫 문장 절삭 규칙 반영.
   assert.strictEqual(
     devNode.description,
-    "Node.js ESM CLI and MCP server specialist.",
+    "Node.js ESM CLI and MCP server specialist",
   );
 });
 

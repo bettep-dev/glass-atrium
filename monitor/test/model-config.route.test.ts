@@ -328,7 +328,7 @@ test("GET: agents carries every agent file by name with its role line, pin cut t
   assert.deepStrictEqual(body.agents.find((a) => a.name === "glass-atrium-design-designer"), {
     name: "glass-atrium-design-designer",
     file: "glass-atrium-design-designer.md",
-    role: "Visual design and theme work.",
+    role: "Visual design and theme work",
     pin: "claude-opus-5-5",
     registered: true,
   });
