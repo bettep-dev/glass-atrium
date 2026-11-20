@@ -9,7 +9,7 @@ import { promises as fs } from "node:fs";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import { loadAgentRegistry } from "../agents/registry.js";
+import { listAgentFiles, loadAgentRegistry, type AgentFile } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import type { AuditChangeCarrier } from "../middleware/audit-log.js";
@@ -20,6 +20,7 @@ import {
   MODEL_DOMAINS,
   RENAMED_DAEMON_CONFIG_KEYS,
   TIER_DOMAINS,
+  getModelIdPrefix,
   getTierFileValue,
   isPricingKnown,
   loadKnownModelIds,
@@ -151,7 +152,7 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
   );
   const desired = resolution.desired;
 
-  const [daemonConfig, devFiles, researchModel, metaModel, wikiModel, reviewFiles, docsFiles, knownModelIds] =
+  const [daemonConfig, devFiles, researchModel, metaModel, wikiModel, reviewFiles, docsFiles, knownModelIds, agentList] =
     await Promise.all([
       readDaemonConfig(),
       readDevAgentModels(),
@@ -161,6 +162,7 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
       readPairAgentModels("frontmatter-review"),
       readPairAgentModels("frontmatter-docs"),
       loadKnownModelIds(),
+      readAgentModels(),
     ]);
   const surfaces: ActualSurfaces = {
     daemonConfig,
@@ -192,7 +194,37 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
     budgets,
     tiers,
     daemon_config_sync: computeDaemonConfigSync(resolution, daemonConfig),
+    agents: agentList.agents,
+    unreadable: agentList.unreadable,
   };
+}
+
+/**
+ * The agents folder as the Models screen lists it; the registry only sets the `registered` mark.
+ * A model value with no id-shaped lead moves its file to `unreadable`.
+ */
+async function readAgentModels(): Promise<Pick<ModelConfigGetResponse, "agents" | "unreadable">> {
+  const [list, registry] = await Promise.all([listAgentFiles(getAgentsDir()), loadAgentRegistry()]);
+  const read: Pick<ModelConfigGetResponse, "agents" | "unreadable"> = { agents: [], unreadable: [...list.unreadable] };
+  for (const agent of list.agents) {
+    const pin = getAgentPin(agent);
+    if (pin === undefined) {
+      read.unreadable.push({ file: agent.file, reason: "Model line is not a model id" });
+    } else {
+      read.agents.push({ name: agent.name, file: agent.file, role: agent.role, pin, registered: registry.has(agent.name) });
+    }
+  }
+  read.unreadable.sort((a, b) => (a.file < b.file ? -1 : 1));
+  return read;
+}
+
+// null → no model line (no pin) · undefined → a model value with no id-shaped lead
+function getAgentPin(agent: AgentFile): string | null | undefined {
+  if (!Object.hasOwn(agent.frontmatter, "model")) {
+    return null;
+  }
+  const model = agent.frontmatter.model;
+  return typeof model === "string" ? (getModelIdPrefix(model) ?? undefined) : undefined;
 }
 
 /**

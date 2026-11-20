@@ -1,6 +1,8 @@
 // Response/request shapes for /api/model-config (spec doc 36166). The GET shape is the
 // frozen contract for the "Models & budgets" screen (T3) — field renames are breaking.
 
+import type { UnreadableAgentFile } from "../agents/registry.js";
+
 export type ApplyMode =
   | "next-spawn"
   | "next-cycle"
@@ -86,6 +88,21 @@ export interface ModelConfigGetResponse {
   budgets: BudgetDomainStatus[];
   tiers: TierDomainStatus[];
   daemon_config_sync: DaemonConfigSyncState;
+  // One row per agent file of the agents folder, sorted by name; entries failing a read check go to `unreadable`.
+  agents: AgentModel[];
+  unreadable: UnreadableAgentFile[];
+}
+
+/** One agent on the Models screen; `file` is the base name, never a path. */
+export interface AgentModel {
+  name: string;
+  file: string;
+  // registry.ts → toRoleLine; null when the description is absent or empty
+  role: string | null;
+  // `model:` value cut to the model id pattern; null = no model line (no pin)
+  pin: string | null;
+  // false → no agent-registry.json entry for the name
+  registered: boolean;
 }
 
 export interface SurfaceFileResult {

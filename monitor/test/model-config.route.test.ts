@@ -103,6 +103,7 @@ const REGISTRY_FIXTURE = {
     "glass-atrium-dev-alpha": { domains: ["test"], phase: "implementation", dual_phase: false },
     "glass-atrium-dev-beta": { domains: ["test"], phase: "implementation", dual_phase: false },
     "glass-atrium-dev-broken": { domains: ["test"], phase: "implementation", dual_phase: false },
+    "glass-atrium-design-designer": { domains: ["test"], phase: "implementation", dual_phase: false },
   },
 };
 
@@ -210,6 +211,22 @@ before(async () => {
   for (const name of [...REVIEW_AGENT_FILES, ...DOCS_AGENT_FILES]) {
     writeFileSync(path.join(agentsDir, name), agentMarkdown(name.replace(/\.md$/, "")), "utf8");
   }
+
+  // Per-agent list rows — names outside every group's file set, so no group surface reads them.
+  writeFileSync(
+    path.join(agentsDir, "glass-atrium-design-designer.md"),
+    agentMarkdown("glass-atrium-design-designer", [
+      "description: Visual design and theme work. Use when styling a screen.",
+      'model: "claude-opus-5-5 <b>hand note</b>"',
+    ]),
+    "utf8",
+  );
+  writeFileSync(path.join(agentsDir, "glass-atrium-zz-hand-added.md"), agentMarkdown("glass-atrium-zz-hand-added"), "utf8");
+  writeFileSync(
+    path.join(agentsDir, "glass-atrium-zz-odd-pin.md"),
+    agentMarkdown("glass-atrium-zz-odd-pin", ['model: "<b>opus</b>"']),
+    "utf8",
+  );
 
   // T12: registry fixture co-located with the agents dir (loadAgentRegistry derives the
   // .md dir from dirname(AGENT_REGISTRY_PATH)/agents). Only glass-atrium-dev-alpha/beta/broken are
@@ -339,6 +356,35 @@ test("GET: 200 + full matrix shape, drift-free on baseline", async () => {
   assert.strictEqual(preVerifyBudget.drift, false);
 
   assert.strictEqual(body.daemon_config_sync, "ok");
+});
+
+test("GET: agents carries every agent file by name with its role line, pin cut to the id pattern and registry mark, never a path", async () => {
+  const res = await app.inject({ method: "GET", url: "/api/model-config" });
+  assert.strictEqual(res.statusCode, 200);
+  const body = res.json() as ModelConfigGetResponse;
+
+  const names = body.agents.map((a) => a.name);
+  assert.deepStrictEqual(names, [...names].sort(), "agents sorted by name");
+  assert.deepStrictEqual(body.agents.find((a) => a.name === "glass-atrium-design-designer"), {
+    name: "glass-atrium-design-designer",
+    file: "glass-atrium-design-designer.md",
+    role: "Visual design and theme work.",
+    pin: "claude-opus-5-5",
+    registered: true,
+  });
+  assert.deepStrictEqual(body.agents.find((a) => a.name === "glass-atrium-zz-hand-added"), {
+    name: "glass-atrium-zz-hand-added",
+    file: "glass-atrium-zz-hand-added.md",
+    role: null,
+    pin: null,
+    registered: false,
+  });
+  assert.deepStrictEqual(body.unreadable, [
+    { file: "glass-atrium-dev-alpha.md", reason: "File is outside the agents folder" },
+    { file: "glass-atrium-dev-broken.md", reason: "No frontmatter block" },
+    { file: "glass-atrium-zz-odd-pin.md", reason: "Model line is not a model id" },
+  ]);
+  assert.ok(!res.body.includes(fixtureDir), "no filesystem path in the response");
 });
 
 test("T12: de-registered on-disk dev-*.md (glass-atrium-dev-ghost) excluded from the model table", async () => {

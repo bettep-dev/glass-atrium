@@ -60,6 +60,17 @@ export const INHERIT_VALUE = "inherit";
 // Free-text escape hatch — lowercase alnum + dot/hyphen/bracket, ≤128 (covers variant suffixes like 'claude-fable-5[1m]').
 export const FREE_TEXT_MODEL_PATTERN = /^[a-z0-9.\-[\]]{1,128}$/;
 
+// Same pattern, end anchor dropped → matches the longest leading id-shaped run.
+const MODEL_ID_PREFIX_PATTERN = new RegExp(FREE_TEXT_MODEL_PATTERN.source.replace(/\$$/, ""));
+
+/**
+ * A hand-edited model value cut to its leading run of id-pattern characters, so file text never reaches a response or audit row uncut.
+ * @returns null when no id-pattern character leads the value
+ */
+export function getModelIdPrefix(value: string): string | null {
+  return MODEL_ID_PREFIX_PATTERN.exec(value.trim())?.[0] ?? null;
+}
+
 // Per-call budget caps stay 2-decimal STRINGS end-to-end (daemon_config.py passes them verbatim to `claude -p --max-budget-usd`).
 // A JSON number 0.5 would drift from the validated '0.50' literal and break the CLI cap.
 export const BUDGET_VALUE_PATTERN = /^\d+\.\d{2}$/;
