@@ -378,24 +378,30 @@ function canShareFileRA(file) {
 	return file !== null && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] });
 }
 
-/**
- * Share sheet where the browser offers one, else a download; a sheet the person closes is no error.
- * @returns true only when the share sheet completed → step 1 finishes by itself; a download moves on by Next
- */
-async function sendCertificateRA(file, isShare) {
-	if (isShare) {
-		return navigator.share({ files: [file] }).then(
-			() => true,
-			(error) => {
-				if (error?.name !== "AbortError") throw error;
-				return false;
-			},
-		);
-	}
+function downloadCertificateRA(file) {
 	const url = URL.createObjectURL(file);
 	Object.assign(document.createElement("a"), { href: url, download: file.name }).click();
 	setTimeout(() => URL.revokeObjectURL(url), 0);
-	return false;
+}
+
+/**
+ * Share sheet where the browser offers one, else a download; a sheet the person closes is no error.
+ * A share the browser refuses (canShare true, share rejects, e.g. NotAllowedError for a file type it will not send) saves the same file by download.
+ * @returns isSent true only when the share sheet completed → step 1 finishes by itself; a download moves on by Next · refusal → the raw text of the share's rejection the download stood in for
+ */
+async function sendCertificateRA(file, isShare) {
+	if (!isShare) {
+		downloadCertificateRA(file);
+		return { isSent: false, refusal: null };
+	}
+	try {
+		await navigator.share({ files: [file] });
+		return { isSent: true, refusal: null };
+	} catch (error) {
+		if (error?.name === "AbortError") return { isSent: false, refusal: null };
+		downloadCertificateRA(file);
+		return { isSent: false, refusal: String(error?.message || error?.name || error) };
+	}
 }
 
 // first device → the fold stays as the person left it; back to none → a new key reopens it
@@ -835,10 +841,11 @@ function TroubleTextRA({ text, values }) {
 	return <>{text.split(SLOT_RA).map((part) => (SLOT_RA.test(part) ? <MachineString key={part} className="text-ink">{values[part.slice(1, -1)]}</MachineString> : part))}</>;
 }
 
+// refusal → the browser refused its share sheet once, so the step stays on the download it fell back to, the refusal kept under Details
 function CertificateStepRA({ line, fileName, onSent }) {
-	const { Stack } = window.UI;
-	const [cert, setCert] = useSRA({ file: null, isSending: false, error: null });
-	const isShare = canShareFileRA(cert.file);
+	const { Stack, ErrorDetails } = window.UI;
+	const [cert, setCert] = useSRA({ file: null, isSending: false, error: null, refusal: null });
+	const isShare = canShareFileRA(cert.file) && cert.refusal === null;
 	// read ahead → the share sheet opens inside the click, which a browser requires
 	useERA(() => {
 		readCertificateRA(fileName).then((file) => setCert((prev) => ({ ...prev, file })), () => undefined);
@@ -848,8 +855,8 @@ function CertificateStepRA({ line, fileName, onSent }) {
 		setCert((prev) => ({ ...prev, isSending: true, error: null }));
 		const file = cert.file ? Promise.resolve(cert.file) : readCertificateRA(fileName);
 		file.then((value) => sendCertificateRA(value, isShare)).then(
-			(isSent) => {
-				setCert((prev) => ({ ...prev, isSending: false }));
+			({ isSent, refusal }) => {
+				setCert((prev) => ({ ...prev, isSending: false, refusal: refusal ?? prev.refusal }));
 				if (isSent) onSent();
 			},
 			(error) => setCert((prev) => ({ ...prev, isSending: false, error: { text: STEP_TEXT_RA.certificate.failed, detail: error.message } })),
@@ -860,6 +867,7 @@ function CertificateStepRA({ line, fileName, onSent }) {
 			<p className="fs-body text-dim">{isShare ? line.share : line.download}</p>
 			<button type="button" className="btn primary" aria-busy={cert.isSending || undefined} onClick={onSend}>{isShare ? STEP_TEXT_RA.certificate.share : STEP_TEXT_RA.certificate.download}</button>
 			{cert.error && <ActErrorRA error={cert.error} />}
+			<ErrorDetails detail={cert.refusal} />
 		</Stack>
 	);
 }

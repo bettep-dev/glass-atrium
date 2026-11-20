@@ -1247,19 +1247,107 @@ describe("every Mac-only call carries the page header the admin routes require",
   });
 });
 
-describe("sending the certificate reports whether the share sheet completed", () => {
-  const rows = [
-    { name: "a completed share sheet counts as sent", share: async () => undefined, isSent: true },
-    { name: "a share sheet the person closed is not sent and no error", share: async () => { throw Object.assign(new Error("closed"), { name: "AbortError" }); }, isSent: false },
-  ];
-  for (const row of rows) {
-    test(row.name, async () => {
-      const { mod } = await loadScreen();
-      mod.navigator = { share: row.share };
+// Chrome's rejection for a file it will not share: a NotAllowedError whose message is "Permission denied"
+const SHARE_REFUSED = () => Object.assign(new Error("Permission denied"), { name: "NotAllowedError" });
+const SHARE_CLOSED = () => Object.assign(new Error("Share canceled"), { name: "AbortError" });
+const PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
 
-      const isSent = await (mod.sendCertificateRA as (file: File, isShare: boolean) => Promise<boolean>)(new File(["x"], "ca.cer"), true);
+// step 1 mounted with live hook state: the certificate read answers as the server does, the share sheet answers by `share`,
+// and every download the page starts is recorded with the file its object URL was made from
+async function mountCertificateStep(device: "iphone" | "galaxy", share: () => Promise<void>) {
+  const { react, flushEffects, resetCursor } = createStatefulReact();
+  const shared: File[] = [];
+  const downloads: Array<{ file: unknown; name: string }> = [];
+  const objectUrls = new Map<string, unknown>();
+  const step = { sentCount: 0, shared, downloads };
+  const mod = await loadScreenModule(SCREEN_SRC, {
+    React: react,
+    UI: ui,
+    File,
+    setTimeout,
+    navigator: {
+      canShare: () => true,
+      share: ({ files }: { files: File[] }) => { shared.push(...files); return share(); },
+    },
+    URL: {
+      createObjectURL: (file: unknown) => { const url = `blob:cert-${objectUrls.size}`; objectUrls.set(url, file); return url; },
+      revokeObjectURL: () => undefined,
+    },
+    document: {
+      createElement: () => ({ href: "", download: "", click() { downloads.push({ file: objectUrls.get(this.href), name: this.download }); } }),
+    },
+    fetch: async () => new Response(PEM, { status: 200, headers: { "content-type": CA_DOWNLOAD.CONTENT_TYPE, "content-disposition": getAttachmentDisposition(CA_DOWNLOAD.FILE_NAME) } }),
+  });
+  const entry = (vm.runInContext("DEVICE_RA", mod) as Record<string, { fileName: string | null; steps: Array<{ line: { share: string; download: string } }> }>)[device];
+  const view = (): RenderedNode => {
+    resetCursor();
+    const tree = renderScreen(react.createElement(mod.CertificateStepRA, { line: entry.steps[0].line, fileName: entry.fileName, onSent: () => { step.sentCount += 1; } })) as RenderedNode;
+    flushEffects();
+    return tree;
+  };
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const text = () => collectText(view()).replace(/\s+/g, " ");
+  const press = async (name: string) => {
+    const button = findNodes(view(), (node) => node.type === "button" && collectText(node).trim() === name)[0];
+    assert.ok(button, `a button named "${name}"`);
+    (button.props.onClick as () => void)();
+    await settle();
+    await settle();
+  };
+  view();
+  await settle();
+  await settle();
+  return Object.assign(step, { view, text, press, line: entry.steps[0].line, fileName: entry.fileName ?? CA_DOWNLOAD.FILE_NAME });
+}
 
-      assert.equal(isSent, row.isSent, row.name);
+describe("step 1 always ends with the certificate leaving the page", () => {
+  const FAILED = "The certificate was not sent; try again.";
+  for (const device of ["galaxy", "iphone"] as const) {
+    test(`${device}: a share the browser refuses saves the same file through the download and moves to the download line, the refusal under Details`, async () => {
+      const step = await mountCertificateStep(device, async () => { throw SHARE_REFUSED(); });
+
+      await step.press("Share certificate…");
+
+      assert.equal(step.shared.length, 1);
+      assert.deepEqual(step.downloads, [{ file: step.shared[0], name: step.fileName }]);
+      const text = step.text();
+      assert.ok(text.includes(step.line.download), text);
+      assert.ok(!text.includes(step.line.share), text);
+      assert.ok(!text.includes(FAILED), "no try-again dead end");
+      assert.deepEqual(getButtonNames(step.view()), ["Download certificate"]);
+      assert.equal(findNodes(step.view(), (node) => node.type === "details").length, 1);
+      assert.ok(text.includes("Permission denied"), "the raw refusal kept under Details");
+      assert.equal(step.sentCount, 0, "a download moves on by Next");
+    });
+
+    test(`${device}: after a refused share the control downloads again and never reopens the share sheet`, async () => {
+      const step = await mountCertificateStep(device, async () => { throw SHARE_REFUSED(); });
+      await step.press("Share certificate…");
+
+      await step.press("Download certificate");
+
+      assert.equal(step.shared.length, 1);
+      assert.equal(step.downloads.length, 2);
+      assert.ok(step.text().includes("Permission denied"));
+    });
+
+    test(`${device}: a share sheet the person closes is no error and no download`, async () => {
+      const step = await mountCertificateStep(device, async () => { throw SHARE_CLOSED(); });
+
+      await step.press("Share certificate…");
+
+      const text = step.text();
+      assert.deepEqual({ downloads: step.downloads.length, sent: step.sentCount, details: findNodes(step.view(), (node) => node.type === "details").length }, { downloads: 0, sent: 0, details: 0 });
+      assert.ok(text.includes(step.line.share), text);
+      assert.deepEqual(getButtonNames(step.view()), ["Share certificate…"]);
+    });
+
+    test(`${device}: a completed share sheet finishes step 1 with no download`, async () => {
+      const step = await mountCertificateStep(device, async () => undefined);
+
+      await step.press("Share certificate…");
+
+      assert.deepEqual({ shared: step.shared.map((file) => file.name), downloads: step.downloads.length, sent: step.sentCount }, { shared: [step.fileName], downloads: 0, sent: 1 });
     });
   }
 });
