@@ -15,6 +15,7 @@
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -26,6 +27,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -1164,8 +1166,15 @@ async function buildOtherListener(): Promise<FastifyInstance> {
   return other;
 }
 
+// far above one inject's run time → reached only when a second apply is held on the roster
+const ROSTER_HOLD_BOUND_MS = 10_000;
+
 test("PUT agents: a second apply while one is in flight, on either listener, answers 409 and writes nothing", async () => {
   const other = await buildOtherListener();
+  // roster read from a FIFO → the first apply stays in flight until the test writes the roster
+  const heldRosterPath = path.join(fixtureDir, "held-pricing.json");
+  execFileSync("/usr/bin/mkfifo", [heldRosterPath]);
+  process.env.PRICING_SOT_PATH = heldRosterPath;
   try {
     const rows = [
       { name: "the same listener", second: app },
@@ -1174,16 +1183,24 @@ test("PUT agents: a second apply while one is in flight, on either listener, ans
     for (const row of rows) {
       writeAgentFixtures();
       const payload = { model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] };
-      const responses = await Promise.all([putAgents(payload), putAgents(payload, row.second)]);
-      assert.deepStrictEqual(responses.map((res) => res.statusCode).sort(), [200, 409], row.name);
-      assert.strictEqual((responses.find((res) => res.statusCode === 409)?.json() as { error: string }).error, "apply_in_progress", row.name);
-      assert.deepStrictEqual(
-        (responses.find((res) => res.statusCode === 200)?.json() as AgentPinPutResponse).results,
-        [{ name: "glass-atrium-intel-researcher", status: "applied" }],
-        row.name,
-      );
+      const first = putAgents(payload);
+      // the writer's open returns only once the first apply has opened the roster, past its in-flight mark
+      const roster = await open(heldRosterPath, "w");
+      let release: Promise<void> | undefined;
+      const releaseRoster = () => (release ??= roster.writeFile(JSON.stringify(PRICING_SOT_FIXTURE)).then(() => roster.close()));
+      // a second apply that passed the in-flight check would block on the roster too → released after the bound so the test fails, never hangs
+      const bound = setTimeout(releaseRoster, ROSTER_HOLD_BOUND_MS);
+      const secondRes = await putAgents(payload, row.second);
+      clearTimeout(bound);
+      await releaseRoster();
+      const firstRes = await first;
+      assert.deepStrictEqual([firstRes.statusCode, secondRes.statusCode], [200, 409], row.name);
+      assert.strictEqual((secondRes.json() as { error: string }).error, "apply_in_progress", row.name);
+      assert.deepStrictEqual((firstRes.json() as AgentPinPutResponse).results, [{ name: "glass-atrium-intel-researcher", status: "applied" }], row.name);
     }
   } finally {
+    process.env.PRICING_SOT_PATH = pricingSotPath;
+    rmSync(heldRosterPath);
     await other.close();
   }
 });
