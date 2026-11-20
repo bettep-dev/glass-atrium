@@ -926,56 +926,38 @@ test("the drift banner carries exactly one remedy, matched to its cause", () => 
   assert.ok(!rejected.includes("db-setup"), "the migration remedy does not leak into a rejected value");
 });
 
-test("save results surface only when a surface did not write cleanly", () => {
-  const extract = sandboxFnMc<(d: unknown) => unknown[] | null>("extractSurfaceResultsMC");
-  const okOnly = [{ surface: "daemon-config.json", status: "ok" }];
-  assert.strictEqual(extract({ surfaces: okOnly }), null, "an all-ok save raises no card");
-  assert.strictEqual(extract({ surfaces: [] }), null, "no surfaces → no card");
+test("a save raises the result card only when daemon-config.json did not write cleanly", () => {
+  const getProblem = sandboxFnMc<(d: unknown) => unknown>("getSurfaceProblemMC");
+  const written = { surface: "daemon-config.json", status: "ok" };
+  const failed = { surface: "daemon-config.json", status: "failed", reason: "write failed" };
+  assert.strictEqual(getProblem({ surfaces: [written] }), null, "a clean write raises no card");
+  assert.strictEqual(getProblem({ surfaces: [] }), null, "a save with no config change raises no card");
+  assert.deepStrictEqual(sameRealm(getProblem({ surfaces: [failed] })), failed, "the failed write is the card's result");
 
-  const mixed = [
-    { surface: "daemon-config.json", status: "ok" },
-    { surface: "frontmatter-dev", status: "failed", reason: "permission denied" },
-  ];
-  const kept = extract({ surfaces: mixed });
-  assert.deepStrictEqual(sameRealm(kept), mixed, "the whole population is kept, not just failures");
-
-  const card = renderComponentMc(screens.SurfaceResultsCardMC, {
-    results: mixed,
-    onDismiss: () => {},
-  });
-  const disclosures = tagsMc(card, "details");
-  assert.strictEqual(disclosures.length, 1, "ok rows sit behind one closed disclosure");
-  assert.ok(!("open" in disclosures[0].props), "the disclosure ships closed");
-  assert.ok(textMc(card).includes("frontmatter-dev"), "the failed surface is shown unfolded");
-  assert.ok(textMc(disclosures[0].children).includes("daemon-config.json"), "ok row still listed");
+  const card = renderComponentMc(screens.SurfaceResultCardMC, { result: failed, onDismiss: () => {} });
+  assert.deepStrictEqual(tagsMc(card, "details"), [], "one result, nothing folded");
+  assert.ok(textMc(card).includes("write failed"), "the failed write's reason is shown");
 });
 
 describe("a save-result row reads as words: status in plain words, mono only on the surface id", () => {
   const rows = [
     { name: "a written surface", result: { surface: "daemon-config.json", status: "ok" }, word: "Written", reason: null },
-    { name: "a skipped surface", result: { surface: "tmux", status: "skipped", reason: "session not running" }, word: "Skipped", reason: "session not running" },
-    { name: "a failed surface", result: { file: "frontmatter-dev", status: "failed", reason: "permission denied" }, word: "Failed", reason: "permission denied" },
+    { name: "a skipped surface", result: { surface: "daemon-config.json", status: "skipped", reason: "not written" }, word: "Skipped", reason: "not written" },
+    { name: "a failed surface", result: { surface: "daemon-config.json", status: "failed", reason: "unreadable/unparseable — not overwritten" }, word: "Failed", reason: "unreadable/unparseable — not overwritten" },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: row.result });
       const text = textMc(tree);
-      const surface = row.result.surface ?? row.result.file;
       const mono = findAllMc(tree, (n) => n.props["data-atom"] === "MachineString");
 
       assert.ok(text.includes(row.word), `status reads "${row.word}"`);
       assert.ok(!text.includes(row.result.status), "the raw status token is not shown");
-      assert.deepStrictEqual(mono.map((n) => textMc(n.children)), [surface], "mono covers the surface id alone");
+      assert.deepStrictEqual(mono.map((n) => textMc(n.children)), [row.result.surface], "mono covers the surface id alone");
       const reasons = findAllMc(tree, (n) => String(n.props.className ?? "").includes("text-faint")).map((n) => textMc(n.children));
       assert.deepStrictEqual(reasons, row.reason === null ? [] : [row.reason], "the reason shows exactly when the row carries one");
     });
   }
-
-  test("a result missing its surface and status renders no placeholder", () => {
-    const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: { reason: "no target resolved" } });
-    assert.ok(!textMc(tree).includes("—"), "no dash stands in for an empty field");
-    assert.ok(textMc(tree).includes("no target resolved"), "the reason still shows");
-  });
 });
 
 test("a read-only model row with no saved value renders no placeholder badge", () => {
@@ -1751,7 +1733,7 @@ test("mono comes only from the machine-string atom: no element styles itself mon
   const trees = [
     domains,
     renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc()),
-    renderComponentMc(screens.SurfaceResultRowMC, { result: { file: "frontmatter-dev", status: "failed", reason: "denied" } }),
+    renderComponentMc(screens.SurfaceResultRowMC, { result: { surface: "daemon-config.json", status: "failed", reason: "write failed" } }),
   ];
   for (const tree of trees) {
     const selfMono = findAllMc(tree, (n) => /\bfont-mono\b/.test(String(n.props.className ?? "")));

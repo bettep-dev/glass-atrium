@@ -84,13 +84,6 @@ const CAPS = getMarkup("BudgetsSectionMC", {
   isStale: false,
   onBudgetChange: noop,
 });
-const RESULTS = getMarkup("SurfaceResultsCardMC", {
-  results: [
-    { status: "skipped", surface: "agents/glass-atrium-dev-front.md", reason: "file is read-only" },
-    { status: "ok", surface: "agents/glass-atrium-dev-react.md" },
-  ],
-  onDismiss: noop,
-});
 
 const AGENTS = getMarkup("AgentModelsSectionMC", {
   state: "ready",
@@ -117,18 +110,14 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
 ${Object.entries(BAR_STATES).map(([state, bar]) => `  <div id="bar-${state}" style="width: 1100px; padding: 24px;">${bar}</div>`).join("\n")}
 ${Object.entries(NARROW_BARS).map(([state, bar]) => `  <div id="bar-narrow-${state}">${bar}</div>`).join("\n")}
   <div id="caps" style="width: 560px; padding: 24px;">${CAPS}</div>
-  <div id="results" style="width: 560px; padding: 24px;">${RESULTS}</div>
   <div id="saved-overridden" style="width: 280px; padding: 24px;">${getSavedLine(true)}</div>
   <div id="saved-empty" style="width: 280px; padding: 24px;">${getSavedLine(false)}</div>
 </body></html>`;
 
-const RESULTS_FOLD = "#results details";
-const RESULTS_SUMMARY = `${RESULTS_FOLD} > summary`;
-
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, readStyle, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
+const { readBox, readStyle } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -145,12 +134,6 @@ before(async () => {
 
 after(async () => {
   await browser?.close();
-});
-
-describe("the save-results fold opens on the disclosure atom", () => {
-  test("its summary is a 32 disclosure whose chevron alone marks it open", () => assertFoldOnOneBox(RESULTS_FOLD, RESULTS_SUMMARY));
-
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(RESULTS_SUMMARY));
 });
 
 // engine floors the half-leading → only a whole-pixel line box keeps any face within 0.5; the line-height check is face-independent

@@ -212,7 +212,7 @@ function ScreenModelConfig() {
 	const [form, setForm] = useStateMC(null);
 	const [saving, setSaving] = useStateMC(false);
 	const [saveError, setSaveError] = useStateMC(null);
-	const [surfaceResults, setSurfaceResults] = useStateMC(null);
+	const [surfaceProblem, setSurfaceProblem] = useStateMC(null);
 	const [refreshTick, setRefreshTick] = useStateMC(0);
 	const [asOfAt, setAsOfAt] = useStateMC(null);
 	const [toast, setToast] = useStateMC(null); // { tone, message }
@@ -318,7 +318,7 @@ function ScreenModelConfig() {
 		if (!body || hasErrors || saving) return;
 		setSaving(true);
 		setSaveError(null);
-		setSurfaceResults(null);
+		setSurfaceProblem(null);
 		// the PUT answer supersedes an in-flight read → that read must not land over it
 		abortRef.current?.abort();
 		try {
@@ -327,10 +327,10 @@ function ScreenModelConfig() {
 			setConfigState((s) => putRegionData(putRegionRequest(s, "save", body), body, data));
 			setForm(buildFormMC(data));
 			setAsOfAt(Date.now());
-			const problems = extractSurfaceResultsMC(data);
-			setSurfaceResults(problems);
-			// Only a clean save ends in a toast — a failed or skipped surface gets the card instead.
-			if (!problems) showToast("ok", "Changes saved");
+			const problem = getSurfaceProblemMC(data);
+			setSurfaceProblem(problem);
+			// Only a clean save ends in a toast — a failed or skipped write gets the card instead.
+			if (!problem) showToast("ok", "Changes saved");
 		} catch (err) {
 			setSaveError(err && err.message ? err.message : String(err));
 		} finally {
@@ -367,7 +367,7 @@ function ScreenModelConfig() {
 	// the form buffer, so the sticky Save bar is absent exactly then.
 	const resyncPayload = ready ? resyncPayloadMC(data, payload) : null;
 	const hasAlarm = Boolean(
-		configState.error || saveError || showDrift || surfaceResults,
+		configState.error || saveError || showDrift || surfaceProblem,
 	);
 	// state prop per section rather than a lifted header — both keep the headers in every state
 	// → the smaller diff wins (plan Open Question: implementer's call).
@@ -450,10 +450,10 @@ function ScreenModelConfig() {
 							saving={saving}
 						/>
 					)}
-					{surfaceResults && (
-						<SurfaceResultsCardMC
-							results={surfaceResults}
-							onDismiss={() => setSurfaceResults(null)}
+					{surfaceProblem && (
+						<SurfaceResultCardMC
+							result={surfaceProblem}
+							onDismiss={() => setSurfaceProblem(null)}
 						/>
 					)}
 				</div>
@@ -1925,20 +1925,13 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 	);
 }
 
-// Save 의 per-surface 결과 공시 — 문제 행(failed/skipped)만 펼쳐 두고 ok 행은 접힌 disclosure 뒤로
-// (silent skip 금지, AC-5 — 접어도 목록에는 남는다).
-function SurfaceResultsCardMC({ results, onDismiss }) {
-	const { Card, DisclosureChevron, Icon, Stack } = window.UI;
-
-	const rows = Array.isArray(results) ? results : [];
-	if (rows.length === 0) return null;
-
-	const problems = rows.filter((r) => r.status !== "ok");
-	const okRows = rows.filter((r) => r.status === "ok");
+// Save 의 daemon-config.json 결과 공시 — 깨끗이 쓰이지 않은 저장만 (silent skip 금지).
+function SurfaceResultCardMC({ result, onDismiss }) {
+	const { Card, Icon } = window.UI;
 
 	return (
 		<Card
-			title={`Save touched ${rows.length} surface${rows.length === 1 ? "" : "s"}`}
+			title="Save touched 1 surface"
 			right={
 				<button
 					className="btn ghost sm"
@@ -1947,24 +1940,7 @@ function SurfaceResultsCardMC({ results, onDismiss }) {
 					<Icon name="x" size={14} />
 				</button>
 			}>
-			<Stack gap="list">
-				{problems.map((r, i) => (
-					<SurfaceResultRowMC key={i} result={r} />
-				))}
-				{okRows.length > 0 && (
-					<details className="fs-meta text-faint">
-						<summary className="group disclosure">
-							<DisclosureChevron />
-							<span>{okRows.length} surfaces written without error</span>
-						</summary>
-						<Stack gap="list" className="mt-stack">
-							{okRows.map((r, i) => (
-								<SurfaceResultRowMC key={i} result={r} />
-							))}
-						</Stack>
-					</details>
-				)}
-			</Stack>
+			<SurfaceResultRowMC result={result} />
 		</Card>
 	);
 }
@@ -1975,24 +1951,19 @@ const SURFACE_STATUS_MC = {
 	failed: { word: "Failed", tone: "crit" },
 };
 
-// Words for the status, mono for the surface id alone — an empty field is left out, never dashed.
+// Words for the status, mono for the surface id alone — a missing reason is left out, never dashed.
 function SurfaceResultRowMC({ result: r }) {
 	const { Badge, MachineString } = window.UI;
-	const status = r.status ? SURFACE_STATUS_MC[r.status] ?? { word: r.status, tone: "crit" } : null;
-	const surface = r.surface ?? r.target ?? r.file ?? r.domain;
+	const status = SURFACE_STATUS_MC[r.status];
 
 	return (
 		<div className="flex items-center gap-control fs-meta">
-			{status && (
-				<Badge role="status" tone={status.tone} icon={true}>
-					{status.word}
-				</Badge>
-			)}
-			{surface && (
-				<span className="text-dim truncate min-w-0">
-					<MachineString>{surface}</MachineString>
-				</span>
-			)}
+			<Badge role="status" tone={status.tone} icon={true}>
+				{status.word}
+			</Badge>
+			<span className="text-dim truncate min-w-0">
+				<MachineString>{r.surface}</MachineString>
+			</span>
 			{r.reason && <span className="text-faint truncate">{r.reason}</span>}
 		</div>
 	);
@@ -2267,11 +2238,9 @@ function hasRowDriftMC(data) {
 	return Object.values(FORM_GROUP_ROWS_MC).some((rowsKey) => (data?.[rowsKey] || []).some((r) => r.drift));
 }
 
-function extractSurfaceResultsMC(data) {
-	const results = data.results ?? data.surfaces ?? null;
-	if (!Array.isArray(results) || results.length === 0) return null;
-	// All ok → no card: a clean save is announced by the toast alone.
-	return results.some((r) => r.status !== "ok") ? results : null;
+// A clean write → null: a clean save is announced by the toast alone.
+function getSurfaceProblemMC(data) {
+	return data.surfaces.find((r) => r.status !== "ok") ?? null;
 }
 
 // Unsaved count = fields in the partial PUT payload, so the wording matches what is sent.
