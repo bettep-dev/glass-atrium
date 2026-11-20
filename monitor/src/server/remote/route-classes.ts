@@ -65,6 +65,8 @@ const RELAY_ROW_CID = "2026-11-19T2050_queue-tidy_d81b";
 const MERGED_TREE_CID = "2026-11-20T0000_deploy71-prep_c47e";
 // the model-config GET and PUT reasons re-signed in place and PUT /api/model-config/agents appended as row 120 (route-sign-verdict.md) → the 119-row digest still verifies as its prefix
 const MODELS_SERVER_CID = "2026-11-20T1030_models-server_9c2e";
+// PUT /api/model-config/agents re-classed agent → page in place, its reason re-signed, once the Models screen calls it (route-page-sign-verdict.md): route and order kept
+const MODELS_SCREEN_CID = "2026-11-20T1255_models-screen2_7e41";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -543,6 +545,24 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     cids: [MODELS_SERVER_CID],
     rowCount: 120,
     sha256: "38fd87db9eea6512dbedfc059638dfa49224b5632aa0fd6214b77b8a18a7547f",
+    supersededBy: MODELS_SCREEN_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S4",
+    // every earlier row carried unchanged in route, class and order, so the 119-row digest still verifies as a prefix;
+    // row 120 PUT /api/model-config/agents re-classed agent → page with its reason re-signed, on the page call site read in public/src/screens/model-config.jsx
+    // (putAgentPinsMC, getAgentApplyBodyMC, Apply press only); the call goes through the remote page's fetch wrapper (ui.jsx → installRemoteFetch), which sets the CSRF header on every same-origin mutation, as for the Save PUT
+    // 'kept page by owner decision' carried by reference to the signed 'PUT /api/model-config' and 'POST /api/improvement/:id/approve' rows — the owner's words not read by the reviewer
+    // M1-M8 of the entry before it carried unchanged; added conditions — a later change that breaks one needs a new sign-off:
+    // M9 the page sends the Apply only on an explicit press, with exactly model plus agents[name, expected_pin], never from a load, an effect or a timer
+    // M10 the screen renders file names, role lines, pins and reasons from the GET and the PUT answer as text only
+    // M11 the limit and the in-flight refusal stay shared by both listeners
+    // accepted residuals: R1 the daemon-apply lock is tested once as the apply starts, not per file;
+    // R2 each agent's old and new pin reaches the audit row only on the close, which is best-effort, so a failed close leaves an intent row naming no file
+    cids: [MODELS_SCREEN_CID],
+    rowCount: 120,
+    sha256: "d1fd15c26c6a43165056170d9c596c7bd6ec930f1b2b60340bdd484469829db4",
   },
 ];
 
@@ -666,7 +686,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/queue/relay", cls: "agent", reason: "session route, never a page function: any request carrying a browser signal is refused 403 before the body is parsed (guard function not opened); called by the session ops library (relay tool and CLI); handler read: sender must be a registered, live, non-probe session; recipients resolved by id prefix or shown name against the live listed peers only; envelope-token check, then the install's secret scanner on raw and normalized text before any lock; one transaction under a machine-wide lock: 10 copies per sender, 5 per pair and 30 per machine in a rolling hour, hop bound 3 over 24 hours, linked docs must exist, one relay item per recipient or none; each refusal recorded (awaited) with sender, resolved recipients, reason code and unresolved count, never text; replies with item ids and id prefixes only; body schema not opened; no credential beyond a named session id — a remote caller could put text before any live session as any session with no owner act" },
   { route: "GET /api/queue/owner/relays/signal", cls: "page", reason: "Queue page function (relay history button state); handler read: no caller input (empty query schema), four fixed aggregates — relay refusal records, relays at hop 1 or more and redactions of the last 24 hours, and whether any relay or refusal is on record; returns three counts and one flag, no id, name or text; writes nothing" },
   { route: "POST /api/queue/owner/items/:id/redact", cls: "page", reason: "page function, high-impact (irreversible) kept page by owner decision: redaction is an owner route, never a session one; handler read: integer id and an empty body schema, so no request supplies replacement text; one bound update replaces a relay's title and body with the fixed server marker and stamps the time and the original body length; first wins (409 on a second call, nothing changed), every other kind refused 409; sender, recipient, send id, hop, parent, linked docs and delivery state untouched; the audit row carrying the page-origin signal is written in the same transaction, so no redaction stands without its record; page-origin stamp required" },
-  { route: "PUT /api/model-config/agents", cls: "agent", reason: "no call site in public/ yet, so not a page function although the owner asked for per-agent model setting on the Models screen — re-sign as page when that screen calls it; high-impact (writes the model line of agent files in the live install); handler read: strict body of agent names, the pin the page showed for each, and one model; a name selects an entry of the server's own folder list (top-level files of one name pattern, a file with no registry row included) and no request text reaches a path; a target resolving outside the agents folder refused; model is 'inherit' or a pricing-roster id, an empty roster refused; only the frontmatter model line set or removed, never another key or the body, checked on the re-read text and the file re-read before the rename, two model lines refused, a moved pin left as it stands; refused while the daemon-apply lock is present; names capped at the folder's count, 60 requests a minute and one apply in flight; audit intent row before the handler, closed with each agent's old and new pin; page-origin stamp required and recorded" },
+  { route: "PUT /api/model-config/agents", cls: "page", reason: "page function (Models screen, Apply to the ticked agents, sent on that press only), high-impact (writes the model line of agent files in the live install) kept page by owner decision; page call site read: one PUT whose body is the ticked agents' names, the pin the list showed for each, and one model from the roster or 'inherit'; file names, role lines, pins and refusal reasons rendered as text; handler read: strict body of agent names, the pin the page showed for each, and one model; a name selects an entry of the server's own folder list (top-level files of one name pattern, a file with no registry row included) and no request text reaches a path; a target resolving outside the agents folder refused; model is 'inherit' or a pricing-roster id, an empty roster refused; only the frontmatter model line set or removed, never another key or the body, checked on the re-read text and the file re-read before the rename, two model lines refused, a moved pin left as it stands; refused when the daemon-apply lock is present as the apply starts (tested once, not per file); names capped at the folder's count, 60 requests a minute and one apply in flight, both shared by the two listeners; audit intent row awaited before the handler, each agent's old and new pin recorded on the close (best-effort); page-origin stamp required and recorded" },
 ];
 
 /** `METHOD /path` keys the remote gate answers without a registered device → only rows the reviewer classed remote-pre-auth. */
