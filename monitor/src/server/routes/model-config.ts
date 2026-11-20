@@ -123,12 +123,16 @@ export function getApplyLockPath(): string {
 export async function registerModelConfigRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/model-config", handleGet);
   app.put("/api/model-config", handlePut);
-  const apply: ApplyState = { isInFlight: false };
   app.put(
     AGENT_PIN_ROUTE,
-    { onRequest: [buildWindowLimitHook(new WindowLimiter(AGENT_PIN_WRITE_LIMIT)), buildPageOriginHook(getPageOrigins(getMonitorPort()))] },
-    (request, reply) => handlePutAgents(request, reply, apply),
+    { onRequest: [(request, reply) => agentPinWrite.limitHook(request, reply), buildPageOriginHook(getPageOrigins(getMonitorPort()))] },
+    (request, reply) => handlePutAgents(request, reply, agentPinWrite.apply),
   );
+}
+
+/** Test seam → a fresh rate window and no apply in flight. */
+export function resetAgentPinWriteState(): void {
+  agentPinWrite = buildAgentPinWriteState();
 }
 
 // GET
@@ -441,6 +445,18 @@ async function handlePut(
 
 interface ApplyState {
   isInFlight: boolean;
+}
+
+interface AgentPinWriteState {
+  apply: ApplyState;
+  limitHook: ReturnType<typeof buildWindowLimitHook>;
+}
+
+// Module scope, not per registration → the loopback and remote listeners share one apply in flight and one rate window (LLM10)
+let agentPinWrite = buildAgentPinWriteState();
+
+function buildAgentPinWriteState(): AgentPinWriteState {
+  return { apply: { isInFlight: false }, limitHook: buildWindowLimitHook(new WindowLimiter(AGENT_PIN_WRITE_LIMIT)) };
 }
 
 // Exactly a name list with the pins the page showed, and one model → no key can steer a write elsewhere (C3)

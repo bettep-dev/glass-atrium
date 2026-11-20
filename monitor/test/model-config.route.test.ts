@@ -36,7 +36,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
-import { AGENT_PIN_WRITE_LIMIT, registerModelConfigRoutes } from "../src/server/routes/model-config.js";
+import { AGENT_PIN_WRITE_LIMIT, registerModelConfigRoutes, resetAgentPinWriteState } from "../src/server/routes/model-config.js";
 import type {
   AgentPinPutResponse,
   BudgetDomainStatus,
@@ -1156,29 +1156,50 @@ test("PUT agents: one row per apply names each agent with its old and new pin, t
   });
 });
 
-test("PUT agents: a second apply while one is in flight answers 409 and writes nothing", async () => {
-  writeAgentFixtures();
-  const payload = { model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] };
-  const responses = await Promise.all([putAgents(payload), putAgents(payload)]);
-  assert.deepStrictEqual(responses.map((res) => res.statusCode).sort(), [200, 409]);
-  assert.strictEqual((responses.find((res) => res.statusCode === 409)?.json() as { error: string }).error, "apply_in_progress");
-  assert.deepStrictEqual((responses.find((res) => res.statusCode === 200)?.json() as AgentPinPutResponse).results, [
-    { name: "glass-atrium-intel-researcher", status: "applied" },
-  ]);
+/** A second server instance the route registers on, as the remote listener does beside the loopback one. */
+async function buildOtherListener(): Promise<FastifyInstance> {
+  const other = Fastify({ logger: false });
+  await registerModelConfigRoutes(other);
+  await other.ready();
+  return other;
+}
+
+test("PUT agents: a second apply while one is in flight, on either listener, answers 409 and writes nothing", async () => {
+  const other = await buildOtherListener();
+  try {
+    const rows = [
+      { name: "the same listener", second: app },
+      { name: "the other listener", second: other },
+    ];
+    for (const row of rows) {
+      writeAgentFixtures();
+      const payload = { model: "claude-opus-4-8", agents: [{ name: "glass-atrium-intel-researcher", expected_pin: "claude-sonnet-5" }] };
+      const responses = await Promise.all([putAgents(payload), putAgents(payload, row.second)]);
+      assert.deepStrictEqual(responses.map((res) => res.statusCode).sort(), [200, 409], row.name);
+      assert.strictEqual((responses.find((res) => res.statusCode === 409)?.json() as { error: string }).error, "apply_in_progress", row.name);
+      assert.deepStrictEqual(
+        (responses.find((res) => res.statusCode === 200)?.json() as AgentPinPutResponse).results,
+        [{ name: "glass-atrium-intel-researcher", status: "applied" }],
+        row.name,
+      );
+    }
+  } finally {
+    await other.close();
+  }
 });
 
-test("PUT agents: past the per-route window every request answers 429 until the window ends", async () => {
-  const limited = Fastify({ logger: false });
-  await registerModelConfigRoutes(limited);
-  await limited.ready();
+test("PUT agents: past the per-route window every request on either listener answers 429 until the window ends", async () => {
+  const [first, second] = [await buildOtherListener(), await buildOtherListener()];
+  resetAgentPinWriteState();
   try {
     const statuses: number[] = [];
-    for (let hit = 0; hit < AGENT_PIN_WRITE_LIMIT.limit + 1; hit += 1) {
-      statuses.push((await putAgents({}, limited)).statusCode);
+    for (let hit = 0; hit < AGENT_PIN_WRITE_LIMIT.limit; hit += 1) {
+      statuses.push((await putAgents({}, first)).statusCode);
     }
-    assert.deepStrictEqual(statuses.slice(0, -1), Array(AGENT_PIN_WRITE_LIMIT.limit).fill(400));
-    assert.strictEqual(statuses.at(-1), 429);
+    assert.deepStrictEqual(statuses, Array(AGENT_PIN_WRITE_LIMIT.limit).fill(400));
+    assert.deepStrictEqual([(await putAgents({}, second)).statusCode, (await putAgents({}, first)).statusCode], [429, 429]);
   } finally {
-    await limited.close();
+    resetAgentPinWriteState();
+    await Promise.all([first.close(), second.close()]);
   }
 });
