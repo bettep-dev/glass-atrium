@@ -833,7 +833,7 @@ function AgentTableMC({ state, items, knownModels, apply }) {
 			columns={getAgentColumnsMC(master)}
 			widths={AGENT_COL_WIDTHS_MC}
 			stackBelowPx={AGENT_STACK_BELOW_PX_MC}
-			className={LEDGER_TABLE_CLASS_MC}
+			className={`${LEDGER_TABLE_CLASS_MC} agent-table`}
 			bodies={[{ key: "agents", isBusy: state === "loading" || apply.isApplying, rows: state === "loading"
 				? <SkeletonRows rows={items.length || AGENT_SKELETON_ROWS_MC} columns={AGENT_COL_WIDTHS_MC.length} rowHeight={AGENT_ROW_HEIGHT_MC} />
 				: (view) => items.map((item, index) => (
@@ -857,7 +857,7 @@ function getAgentColumnsMC(master) {
 	return [
 		{ key: "tick", label: master },
 		{ key: "agent", label: "Agent" },
-		{ key: "role", label: "Role" },
+		{ key: "role", label: <span className="agent-head-role">Role</span> },
 		{ key: "model", label: <span title="Read from each agent file's model line">Model</span> },
 	];
 }
@@ -875,7 +875,7 @@ function AgentRowMC({ view, item, isTicked = false, isApplying = false, reason, 
 			<TableRow
 				view={view}
 				{...focusProps}
-				className={reason ? "is-grouped is-top-aligned" : "is-top-aligned"}
+				className={reason ? "agent-row is-grouped is-top-aligned" : "agent-row is-top-aligned"}
 				style={isTicked ? TICKED_ROW_STYLE_MC : undefined}
 				onClick={isPressable ? () => onToggle(item.agent.name) : undefined}>
 				{item.agent ? (
@@ -885,10 +885,10 @@ function AgentRowMC({ view, item, isTicked = false, isApplying = false, reason, 
 				)}
 			</TableRow>
 			{reason && (
-				<TableRow view={view}>
+				<TableRow view={view} className="agent-row">
 					<TableCell view={view} textRole="label" />
-					<TableCell view={view} textRole="label" />
-					<TableCell view={view} kind="span" start={2}>
+					{!view?.isStacked && <TableCell view={view} textRole="label" />}
+					<TableCell view={view} kind="span" start={2} className={view?.isStacked ? "agent-row-sub" : undefined}>
 						<div className="fs-meta text-dim">
 							<span className="text-crit" aria-hidden="true">✕ </span>
 							{reason}
@@ -915,7 +915,7 @@ function AgentCellsMC({ view, agent, isTicked, isApplying, knownModels, onToggle
 			<TableCell view={view} textRole="label" onClick={stopRowPressMC}>
 				<Checkbox id={id} isRowControl isChecked={isTicked} isDisabled={isApplying} onChange={() => onToggle(agent.name)} />
 			</TableCell>
-			<TableCell view={view} textRole="label" className={view?.isStacked ? "flex-1 min-w-0" : undefined}>
+			<TableCell view={view} textRole="label" className={view?.isStacked ? "min-w-0" : undefined}>
 				<label htmlFor={id} className="block truncate fs-body font-medium text-ink tbl-first-line" onClick={stopRowPressMC}>
 					<AgentName name={agent.name} />
 				</label>
@@ -926,7 +926,7 @@ function AgentCellsMC({ view, agent, isTicked, isApplying, knownModels, onToggle
 				)}
 			</TableCell>
 			{!view?.isStacked && role}
-			<TableCell view={view} textRole="label" className={view?.isStacked ? "text-right" : undefined}>
+			<TableCell view={view} textRole="label">
 				<AgentModelCellMC pin={agent.pin} knownModels={knownModels} />
 			</TableCell>
 			{view?.isStacked && role}
@@ -934,17 +934,18 @@ function AgentCellsMC({ view, agent, isTicked, isApplying, knownModels, onToggle
 	);
 }
 
-// stacked → the role is the row's second line, full width
+// stacked → the role is the row's second line, from the name's x to the row end
 function AgentRoleCellMC({ view, role }) {
 	const { EMPTY_VALUE_TEXT, TableCell } = window.UI;
+	const size = view?.isStacked ? "fs-meta" : "fs-body tbl-first-line";
 	return (
-		<TableCell view={view} textRole="label" className={view?.isStacked ? "basis-full min-w-0" : "min-w-0"}>
+		<TableCell view={view} textRole="label" className={view?.isStacked ? "agent-row-sub min-w-0" : "min-w-0"}>
 			{role ? (
-				<span className={`block truncate text-dim ${view?.isStacked ? "fs-meta" : "fs-body tbl-first-line"}`} title={role}>
+				<span className={`block truncate text-dim ${size}`} title={role}>
 					{role}
 				</span>
 			) : (
-				<span className="fs-body text-faint tbl-first-line">{EMPTY_VALUE_TEXT}</span>
+				<span className={`text-faint ${size}`}>{EMPTY_VALUE_TEXT}</span>
 			)}
 		</TableCell>
 	);
@@ -974,20 +975,24 @@ function AgentModelCellMC({ pin, knownModels }) {
 // a .md the list could not read: shown, never hidden — no box, the reason in the role column
 function UnreadableCellsMC({ view, file }) {
 	const { MachineString, NOT_LOADED_TEXT, TableCell } = window.UI;
+	const reason = (
+		<TableCell view={view} textRole="label" className={view?.isStacked ? "agent-row-sub" : undefined}>
+			<span className={`text-dim ${view?.isStacked ? "fs-meta" : "fs-body tbl-first-line"}`}>{file.reason}</span>
+		</TableCell>
+	);
 	return (
 		<>
 			<TableCell view={view} textRole="label" />
-			<TableCell view={view} textRole="label" className={view?.isStacked ? "flex-1 min-w-0" : "min-w-0"}>
+			<TableCell view={view} textRole="label" className="min-w-0">
 				<span className="block truncate tbl-first-line" title={file.file}>
 					<MachineString>{file.file}</MachineString>
 				</span>
 			</TableCell>
-			<TableCell view={view} textRole="label" className={view?.isStacked ? "basis-full" : undefined}>
-				<span className="fs-body text-dim tbl-first-line">{file.reason}</span>
-			</TableCell>
+			{!view?.isStacked && reason}
 			<TableCell view={view} textRole="label">
 				<span className="fs-body text-faint tbl-first-line">{NOT_LOADED_TEXT}</span>
 			</TableCell>
+			{view?.isStacked && reason}
 		</>
 	);
 }

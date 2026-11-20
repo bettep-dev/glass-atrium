@@ -232,7 +232,7 @@ const AGENTS_CONFIG = {
   agents: [
     { name: "glass-atrium-dev-android", file: "glass-atrium-dev-android.md", role: "Android apps in Kotlin and Compose", pin: MODEL, registered: true },
     { name: "glass-atrium-intel-researcher", file: "glass-atrium-intel-researcher.md", role: "Web and codebase research with cited sources", pin: null, registered: true },
-    { name: "glass-atrium-sec-guard", file: "glass-atrium-sec-guard.md", role: null, pin: MODEL, registered: true },
+    { name: "glass-atrium-sec-guard", file: "glass-atrium-sec-guard.md", role: null, pin: "claude-3-retired-alias", registered: true },
     { name: "my-new-agent-with-a-forty-character-name", file: "my-new-agent-with-a-forty-character-name.md", role: "Drafts release notes", pin: null, registered: false },
   ],
   unreadable: [{ file: "glass-atrium-broken.md", reason: "No frontmatter block" }],
@@ -266,6 +266,114 @@ for (const width of [1280, 1568]) {
       assert.ok(Math.abs(layout.agentWidth - layout.splitWidth) <= 1, `${width}px: agent card ${layout.agentWidth} vs split row ${layout.splitWidth}`);
       assert.ok(layout.agentBottom <= layout.splitTop, `${width}px: the agent card ends above the split row`);
       assert.deepStrictEqual(after, before, `${width}px: ticking a row moved the rows`);
+    } finally {
+      await browser.close();
+      await app.close();
+    }
+  });
+}
+
+// stacked: one line per row for box, name and model, then the role (or None, Not registered, the file's reason) at the name's x
+const AGENT_LINE_TWO = ["Android apps in Kotlin and Compose", "Web and codebase research with cited sources", "None", "Not registered", "Drafts release notes", "No frontmatter block"];
+
+for (const width of [960, 768]) {
+  test(`${width}px stacked: every second line starts at the name's x, line one shares its top, and the head names Agent and Model`, async () => {
+    const app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/model-config", async () => AGENTS_CONFIG);
+    app.get("/api/*", async () => ({ rows: [] }));
+    const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    const browser = await chromium.launch({ headless: true });
+
+    try {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
+      await page.waitForSelector("#mc-models table.tbl--stacked [data-roving-row]", { timeout: 30_000 });
+      // anonymous callbacks only: tsx wraps a named const in a __name() helper the page lacks
+      const read = await page.evaluate((lineTwo) => {
+        const rows = [...document.querySelectorAll("#mc-models tbody [data-roving-row]")].map((row) => {
+          const [tick, name, model] = [...row.children].slice(0, 3);
+          const firstLine = [name.firstElementChild!, model.firstElementChild!].map((el) => el.getBoundingClientRect());
+          const lineOneBottom = Math.max(tick.getBoundingClientRect().bottom, ...firstLine.map((rect) => rect.bottom));
+          const input = row.querySelector("input[type=checkbox]")?.getBoundingClientRect();
+          return {
+            nameLeft: name.getBoundingClientRect().left,
+            tops: firstLine.map((rect) => rect.top),
+            boxCentre: input ? (input.top + input.bottom) / 2 : null,
+            nameCentre: (firstLine[0].top + firstLine[0].bottom) / 2,
+            lineTwo: lineTwo.flatMap((text) => {
+              const leaf = [...row.querySelectorAll("*")].find((el) => el.children.length === 0 && el.textContent?.trim() === text);
+              if (!leaf) return [];
+              const rect = leaf.getBoundingClientRect();
+              return [{ text, left: rect.left, top: rect.top, lineOneBottom, size: getComputedStyle(leaf).fontSize, color: getComputedStyle(leaf).color }];
+            }),
+          };
+        });
+        const heads = [...document.querySelectorAll("#mc-models thead th")].filter((th) => th.getBoundingClientRect().width > 0);
+        const faint = getComputedStyle(document.documentElement).getPropertyValue("--faint").trim().split(/\s+/).join(", ");
+        return {
+          rows,
+          faint: `rgb(${faint})`,
+          heads: heads.map((th) => ({ text: th.textContent?.trim(), left: th.getBoundingClientRect().left, right: (th.firstElementChild ?? th).getBoundingClientRect().right })),
+          modelRight: document.querySelector("#mc-models tbody [data-roving-row]:has(input) > :nth-child(3)")!.getBoundingClientRect().right,
+        };
+      }, AGENT_LINE_TWO);
+
+      const lines = read.rows.flatMap((row) => row.lineTwo.map((line) => ({ ...line, nameLeft: row.nameLeft })));
+      assert.deepStrictEqual(lines.map((line) => line.text).sort(), [...AGENT_LINE_TWO].sort(), "every second line is drawn once");
+      for (const line of lines) {
+        assert.ok(Math.abs(line.left - line.nameLeft) <= 1, `${width}px: '${line.text}' starts at ${line.left}, the name at ${line.nameLeft}`);
+        assert.ok(line.top >= line.lineOneBottom - 0.5, `${width}px: '${line.text}' sits under the whole first line`);
+        assert.strictEqual(line.size, "13px", `${width}px: '${line.text}' is the 13 meta size`);
+      }
+      assert.strictEqual(lines.find((line) => line.text === "None")!.color, read.faint, "an absent role is faint");
+      for (const row of read.rows) {
+        assert.ok(Math.abs(row.tops[0] - row.tops[1]) <= 1, `${width}px: name top ${row.tops[0]} vs model top ${row.tops[1]}`);
+      }
+      const boxed = read.rows.filter((row) => row.boxCentre !== null);
+      assert.strictEqual(boxed.length, AGENTS_CONFIG.agents.length, "every agent row has its box");
+      for (const row of boxed) {
+        assert.ok(Math.abs(row.boxCentre! - row.nameCentre) <= 1, `${width}px: the box centre ${row.boxCentre} sits on the name line ${row.nameCentre}`);
+      }
+      assert.deepStrictEqual(read.heads.map((head) => head.text), ["", "Agent", "Model"], "the stacked head drops Role");
+      assert.ok(Math.abs(read.heads[1].left - read.rows[0].nameLeft) <= 1, `${width}px: Agent heads the name x`);
+      assert.ok(Math.abs(read.heads[2].right - read.modelRight) <= 1, `${width}px: Model ends over the model cell`);
+    } finally {
+      await browser.close();
+      await app.close();
+    }
+  });
+}
+
+for (const width of [960, 768]) {
+  test(`${width}px stacked: a refused agent's reason line starts at its name's x`, async () => {
+    const app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/model-config", async () => AGENTS_CONFIG);
+    app.put("/api/model-config/agents", async () => ({
+      results: [{ name: "glass-atrium-sec-guard", status: "refused", reason: "File is outside the agents folder" }],
+      agents: AGENTS_CONFIG.agents,
+      unreadable: AGENTS_CONFIG.unreadable,
+    }));
+    app.get("/api/*", async () => ({ rows: [] }));
+    const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    const browser = await chromium.launch({ headless: true });
+
+    try {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
+      await page.waitForSelector("#mc-models table.tbl--stacked [data-roving-row]", { timeout: 30_000 });
+      await page.click("label[for='mc-agent-glass-atrium-sec-guard']");
+      await page.selectOption("#mc-agent-model", MODEL);
+      await page.click(".card-bar .btn.primary");
+      await page.waitForSelector("text=Not changed — the file is outside the agents folder", { timeout: 10_000 });
+      const lefts = await page.evaluate(() => {
+        const row = document.querySelector("label[for='mc-agent-glass-atrium-sec-guard']")!.closest("tr")!;
+        const reason = [...row.nextElementSibling!.querySelectorAll("div")].find((el) => el.textContent?.includes("Not changed"))!;
+        return { name: row.children[1].getBoundingClientRect().left, reason: reason.getBoundingClientRect().left };
+      });
+
+      assert.ok(Math.abs(lefts.reason - lefts.name) <= 1, `${width}px: the reason starts at ${lefts.reason}, the name at ${lefts.name}`);
     } finally {
       await browser.close();
       await app.close();

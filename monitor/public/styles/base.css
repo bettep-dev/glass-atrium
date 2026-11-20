@@ -2996,6 +2996,47 @@ a.prose-link:hover {
 	min-height: var(--ctl-min-h);
 }
 
+/* agent table, stacked (model-config) — one body grid, each row a subgrid → the box column holds one width
+   in every row, so the name and each second line (role, file reason, failure reason) share one x */
+.tbl--stacked.agent-table > tbody {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	column-gap: var(--gap-control-group);
+}
+.tbl--stacked.agent-table > tbody > tr {
+	grid-column: 1 / -1;
+}
+/* line one top-aligned: box, name and the model's first line on one row; a model note continues below in its column */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row {
+	display: grid;
+	grid-template-columns: subgrid;
+	align-items: start;
+}
+/* the box cell is one name line tall → the 16 box centres on that line, its 24 hit area overhanging */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:first-child {
+	display: flex;
+	align-items: center;
+	height: var(--lh-row);
+}
+/* third cell = the model (or Not loaded) → end-aligned */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:nth-child(3) {
+	justify-self: end;
+}
+.tbl.tbl--stacked.agent-table .agent-row-sub {
+	grid-column: 2 / -1;
+}
+/* head: master box · Agent over the name · Model over the model; the role has no column when it is line two */
+.tbl.tbl--stacked.agent-table > thead > tr {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.tbl.tbl--stacked.agent-table > thead th:has(> .agent-head-role) {
+	display: none;
+}
+.tbl.tbl--stacked.agent-table > thead th:last-child {
+	justify-self: end;
+}
+
 /* ── Save banner (model-config S9) — sticky 하단 dirty-state 바.
    상시(permanent) 표면이라 불투명 --elev fill (reduced-transparency safe, blur 없음).
    상단 1px --line 경계 + 위로 향한 --shadow-overlay 로 콘텐츠 위에 떠 있음을 표현. */

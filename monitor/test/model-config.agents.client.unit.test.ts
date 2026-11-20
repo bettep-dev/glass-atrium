@@ -169,7 +169,7 @@ describe("each row's cells read as the spec words", () => {
   });
   test("a failure reason is a detail line under its row, after the tick and agent columns", () => {
     const html = rowHtml(agentItem("glass-atrium-dev-shell"), { reason: "Not changed — the file changed after this page loaded" });
-    assert.match(html, /<tr class="is-grouped[^"]*"/);
+    assert.match(html, /<tr class="[^"]*\bis-grouped\b[^"]*"/);
     assert.match(html, /<td colSpan="2"[^>]*>.*Not changed — the file changed after this page loaded/);
   });
 });
