@@ -2,7 +2,8 @@
 # check-pricing-roster.bats — the updater's pricing-roster verdict over the model ids an install ran.
 #
 # psql is a stub that replays canned rows and records its environment and SQL, so neither the live
-# database nor any network is reached; the pricing file is a copy of the shipped hooks/pricing.json.
+# database nor any network is reached; the pricing file is a copy of the shipped hooks/pricing.json,
+# and the agents folder is a temp folder, so no live agent file is read.
 
 bats_require_minimum_version 1.5.0
 
@@ -29,6 +30,8 @@ cat "${STUB_ROWS}"
 STUB
   chmod +x "${STUB_DIR}/psql"
   export ATRIUM_UPDATE_PSQL="${STUB_DIR}/psql"
+  export PRICING_ROSTER_AGENTS_DIR="${BATS_TEST_TMPDIR}/agents"
+  mkdir -p "${PRICING_ROSTER_AGENTS_DIR}"
 }
 
 # One `<source>\t<model>` line per argument, the shape the roster query returns.
@@ -63,6 +66,34 @@ seed_rows() {
     [[ -z "${want_out}" || "${output}" == *"${want_out}"* ]] || {
       echo "${name}: id not listed"
       echo "${output}"
+      return 1
+    }
+  done
+}
+
+@test "an agent file's frontmatter pin needs a row like a config value, and the file is only read" {
+  local rows=(
+    "pinned priced id|0||---\nname: a\nmodel: claude-opus-4-8\n---\nbody\n"
+    "pinned unpriced id|3|claude-sonnet-9-9|---\nname: a\nmodel: claude-sonnet-9-9\n---\nbody\n"
+    "quoted unpriced pin|3|claude-sonnet-9-9|---\nmodel: \"claude-sonnet-9-9\"\n---\n"
+    "pin inherit|0||---\nmodel: inherit\n---\n"
+    "model line in the body|0||---\nname: a\n---\nmodel: claude-sonnet-9-9\n"
+    "indented model key in the frontmatter|0||---\nhooks:\n  model: claude-sonnet-9-9\n---\n"
+    "no frontmatter|0||model: claude-sonnet-9-9\n"
+  )
+  local row name want_rc want_out content agent="${PRICING_ROSTER_AGENTS_DIR}/glass-atrium-dev-a.md"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name want_rc want_out content <<<"${row}"
+    printf '%b' "${content}" >"${agent}"
+    cp "${agent}" "${BATS_TEST_TMPDIR}/seeded.md"
+    run "${SCRIPT}" "${PRICING}"
+    [[ "${status}" -eq "${want_rc}" && "${output}" == *"${want_out}"* ]] || {
+      echo "${name}: status ${status}"
+      echo "${output}"
+      return 1
+    }
+    cmp -s "${agent}" "${BATS_TEST_TMPDIR}/seeded.md" || {
+      echo "${name}: agent file changed"
       return 1
     }
   done
@@ -137,6 +168,19 @@ for model in json.load(open(sys.argv[1]))[sys.argv[2]]:
       return 1
     }
   done
+}
+
+@test "an agent file that cannot be read gives no verdict, never a pass" {
+  local agent="${PRICING_ROSTER_AGENTS_DIR}/glass-atrium-dev-a.md"
+  printf -- '---\nmodel: claude-sonnet-9-9\n---\n' >"${agent}"
+  chmod 000 "${agent}"
+  run "${SCRIPT}" "${PRICING}"
+  chmod 600 "${agent}"
+  [[ "${status}" -eq 4 ]] || {
+    echo "status ${status}"
+    echo "${output}"
+    return 1
+  }
 }
 
 @test "the query runs read-only, bounded by a connect and a statement timeout, without the user's psqlrc" {

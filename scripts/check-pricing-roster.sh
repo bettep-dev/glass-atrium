@@ -5,24 +5,27 @@
 # update_check_pricing_roster): a release whose file lacks a row for an id the install runs would
 # have the cost hook price that id at a family or fallback guess.
 #
-# Ids read (read-only, one query): distinct core.cost_events.model over the last 30 days, plus the
-# monitor.model_config values under the model.* keys. Skipped ids — never priced by the cost hook:
+# Ids read (read-only): distinct core.cost_events.model over the last 30 days, the
+# monitor.model_config values under the model.* keys, and each agent file's frontmatter model line —
+# the install's own pins, which no release ships and an update keeps. Skipped ids — never priced:
 #   NULL, empty and '<synthetic>' (hooks/cost-tracker.sh → calc_cost returns $0 before resolving a rate)
-#   a config value of 'inherit' or '' (the agent follows the session model)
+#   a config value or pin of 'inherit' or '' (the agent follows the session model)
 # The zero-cost skips are pinned to calc_cost by hooks/test/fixtures/model-id-pricing-parity.json.
 # Membership is the loader's own (hooks/lib/pricing_loader.py → is_known), so dated and [1m]
 # variants resolve to their base row.
 #
 # Usage: check-pricing-roster.sh <pricing.json>
 # Env: ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) · PRICING_LIB_DIR (loader
-#      directory, default ../hooks/lib beside this script) · PRICING_ROSTER_CONNECT_TIMEOUT (seconds) ·
+#      directory, default ../hooks/lib beside this script) · PRICING_ROSTER_AGENTS_DIR (default
+#      ../agents beside this script) · PRICING_ROSTER_CONNECT_TIMEOUT (seconds) ·
 #      PRICING_ROSTER_STATEMENT_TIMEOUT_MS
 #
 # Exit codes:
 #   0 = every id has a row
 #   2 = usage error, or the pricing file is missing or rejected by the loader
 #   3 = ids without a row — printed one per line, sorted, on stdout
-#   4 = database unavailable (connect failure, timeout, query error, psql absent) — no verdict
+#   4 = ids unreadable — database unavailable (connect failure, timeout, query error, psql absent)
+#       or an agent file unreadable — no verdict
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -39,7 +42,7 @@ main() {
     printf 'usage: %s <pricing.json>\n' "${SCRIPT_NAME}" >&2
     exit 2
   }
-  local pricing="${1}" rows rc=0
+  local pricing="${1}" rows pins rc=0
   [[ -r "${pricing}" ]] || {
     printf '[%s] pricing file not readable: %s\n' "${SCRIPT_NAME}" "${pricing}" >&2
     exit 2
@@ -51,8 +54,13 @@ main() {
     printf '[%s] database unavailable (psql rc=%s) — no verdict on the pricing roster\n' "${SCRIPT_NAME}" "${rc}" >&2
     exit 4
   fi
+  # shellcheck disable=SC2310  # the status is branched on below, never left to errexit
+  pins="$(get_agent_pin_rows)" || {
+    printf '[%s] agent file unreadable — no verdict on the pricing roster\n' "${SCRIPT_NAME}" >&2
+    exit 4
+  }
   # shellcheck disable=SC2310  # its exit code is the verdict, propagated as is
-  find_unpriced_ids "${pricing}" <<<"${rows}" || exit "$?"
+  find_unpriced_ids "${pricing}" <<<"${rows}${pins:+$'\n'}${pins}" || exit "$?"
 }
 
 # Prints `<cost|config>\t<model>` rows. The session itself is read-only and time-bounded, so no
@@ -66,6 +74,27 @@ SELECT 'cost', coalesce(model, '') FROM core.cost_events WHERE event_date >= cur
 UNION
 SELECT 'config', config_value FROM monitor.model_config WHERE config_key LIKE 'model.%';
 PSQL
+}
+
+# Prints `config\t<model>` per agent file whose frontmatter has a top-level model line — the parse
+# hooks/test/test_cost_pricing.py → _find_agent_model_pins applies to the shipped tree.
+get_agent_pin_rows() {
+  local files=()
+  shopt -s nullglob
+  files=("${PRICING_ROSTER_AGENTS_DIR:-${SELF_DIR}/../agents}"/*.md)
+  shopt -u nullglob
+  ((${#files[@]} > 0)) || return 0
+  awk '
+    FNR == 1 { if ($0 != "---") nextfile; next }
+    $0 == "---" { nextfile }
+    /^model:/ {
+      value = $0
+      sub(/^model:[ \t]*["\047]?/, "", value)
+      sub(/["\047 \t].*$/, "", value)
+      printf "config\t%s\n", value
+      nextfile
+    }
+  ' "${files[@]}"
 }
 
 # stdin: the rows above. Prints each unpriced id once and exits 3; exits 2 on a rejected file.
