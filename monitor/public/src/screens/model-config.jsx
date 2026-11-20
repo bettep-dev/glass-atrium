@@ -1003,33 +1003,37 @@ function AgentBarMC({ count, model, knownModels, isModelMissing, isApplying, onM
 	if (count === 0) {
 		return (
 			<div className="agent-bar">
-				<span className="fs-meta text-dim">{AGENT_BAR_IDLE_MC}</span>
+				<div className="agent-bar-line">
+					<span className="fs-meta text-dim">{AGENT_BAR_IDLE_MC}</span>
+				</div>
 			</div>
 		);
 	}
 
 	return (
 		<div className="agent-bar">
-			<AgentCountCellMC count={count} isModelMissing={isModelMissing} />
-			<div className="flex items-center gap-control">
-				<Select
-					id={AGENT_SELECT_ID_MC}
-					label="Model for the selected agents"
-					isLabelHidden
-					isError={isModelMissing}
-					value={model}
-					options={getAgentModelOptionsMC(knownModels)}
-					onChange={onModel}
-					disabled={isApplying}
-					title={knownModels.includes(model) ? model : undefined}
-				/>
-				<button type="button" className="btn primary sm" onClick={onApply} disabled={isApplying}>
-					{isApplying ? "Applying…" : `Apply to ${getAgentCountTextMC(count)}`}
-				</button>
+			<div className="agent-bar-line">
+				<AgentCountCellMC count={count} isModelMissing={isModelMissing} />
+				<div className="flex items-center gap-control">
+					<Select
+						id={AGENT_SELECT_ID_MC}
+						label="Model for the selected agents"
+						isLabelHidden
+						isError={isModelMissing}
+						value={model}
+						options={getAgentModelOptionsMC(knownModels)}
+						onChange={onModel}
+						disabled={isApplying}
+						title={knownModels.includes(model) ? model : undefined}
+					/>
+					<button type="button" className="btn primary sm" onClick={onApply} disabled={isApplying}>
+						{isApplying ? "Applying…" : `Apply to ${getAgentCountTextMC(count)}`}
+					</button>
+				</div>
+				<QuietButton className="ms-auto" onClick={onClear} disabled={isApplying}>
+					Clear selection
+				</QuietButton>
 			</div>
-			<QuietButton className="ms-auto" onClick={onClear} disabled={isApplying}>
-				Clear selection
-			</QuietButton>
 		</div>
 	);
 }
@@ -1109,24 +1113,22 @@ function getAgentApplyOutcomeMC(results, model) {
 	const gone = failed.filter((result) => result.status === "gone");
 	return {
 		toast: null,
-		alarm: {
-			tone: "warn",
-			title: `${failed.length} of ${results.length} ${results.length === 1 ? "agent" : "agents"} ${failed.length === 1 ? "was" : "were"} not changed`,
-			detail: getAgentFailedDetailMC(retry, gone),
-		},
+		alarm: { tone: "warn", title: getAgentFailedLineMC(failed.length, results.length, retry, gone) },
 		retry: retry.map((result) => result.name),
 		reasons: Object.fromEntries(retry.map((result) => [result.name, getAgentReasonMC(result)])),
 	};
 }
 
-function getAgentFailedDetailMC(retry, gone) {
+// one line: the count agrees in number; a retried file's row names its cause, a gone file has no row → named here
+function getAgentFailedLineMC(failedCount, total, retry, gone) {
 	const namesOf = (results) => results.map((result) => window.UI.getAgentDisplayName(result.name)).join(", ");
-	return [
-		retry.length > 0 && `${namesOf(retry)} — reasons on their rows`,
+	const causes = [
+		retry.length > 0 && (retry.length === 1 ? "reason on its row" : "reasons on their rows"),
 		gone.length > 0 && `${namesOf(gone)} — ${gone.length === 1 ? "its file is" : "their files are"} no longer in the folder`,
 	]
 		.filter(Boolean)
 		.join(" · ");
+	return `${failedCount} of ${total} ${total === 1 ? "agent" : "agents"} not changed — ${causes}`;
 }
 
 function getAgentToastMC(results, model) {

@@ -2987,13 +2987,33 @@ a.prose-link:hover {
 	.field, .field-affix { transition: none; }
 }
 
-/* agent selection bar (model-config) — one 32 line in the card's bar slot, which pads 8 → 48 idle or ticked; groups 12 apart */
+/* agent selection bar (model-config) — its own inline size picks its form, never the viewport (drawer sheet, narrow rail) */
 .agent-bar {
+	container: agent-bar / inline-size;
+}
+/* one 32 line in the card's bar slot, which pads 8 → 48 idle or ticked; groups 12 apart */
+.agent-bar-line {
 	display: flex;
-	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--space-2) var(--space-3);
 	min-height: var(--ctl-min-h);
+}
+/* break = the widest one-line content: count cell 134 + 12 + select 189 + 8 + `Apply to 99 agents` 131 + 12 + Clear selection 122 ≈ 608.
+   Under it: line 1 count (or the idle line) + Clear end-aligned, line 2 select + Apply; both lines held in every state → no row moves */
+@container agent-bar (width < 608px) {
+	.agent-bar-line {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-rows: repeat(2, minmax(var(--ctl-min-h), auto));
+		grid-template-areas: "count clear" "controls controls";
+	}
+	.agent-bar-line > :nth-child(2) {
+		grid-area: controls;
+	}
+	.agent-bar-line > :nth-child(3) {
+		grid-area: clear;
+		justify-self: end;
+	}
 }
 
 /* agent table, stacked (model-config) — one body grid, each row a subgrid → the box column holds one width

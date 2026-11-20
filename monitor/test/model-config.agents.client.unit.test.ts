@@ -64,29 +64,37 @@ describe("a 200 answer becomes a toast when every ticked file took the model, el
     });
   }
 
-  test("a partial failure names the failed agents, keeps only the files that can be retried, and raises no toast", () => {
-    const results = [
-      ok("glass-atrium-dev-android"),
-      { name: "glass-atrium-dev-shell", status: "changed_since_load" },
-      { name: "glass-atrium-sec-guard", status: "refused", reason: "File is outside the agents folder" },
-      ok("glass-atrium-intel-researcher", "unchanged"),
-      { name: "glass-atrium-old-agent", status: "gone" },
-    ];
-    const outcome = sameRealm(fn("getAgentApplyOutcomeMC")(results, SONNET)) as Record<string, unknown>;
-    assert.deepStrictEqual(outcome, {
-      toast: null,
-      alarm: {
-        tone: "warn",
-        title: "3 of 5 agents were not changed",
-        detail: "dev-shell, sec-guard — reasons on their rows · old-agent — its file is no longer in the folder",
-      },
+  // one line: the count agrees in number, a row's own reason line names the cause, a gone file has no row so the line names it
+  const failures = [
+    {
+      name: "one refused of three → one line, singular",
+      results: [ok("glass-atrium-dev-android"), { name: "glass-atrium-dev-react", status: "refused", reason: "File is outside the agents folder" }, ok("glass-atrium-intel-researcher", "unchanged")],
+      title: "1 of 3 agents not changed — reason on its row",
+      retry: ["glass-atrium-dev-react"],
+    },
+    {
+      name: "two to retry and one gone of five → one line, plural, the gone file named",
+      results: [
+        ok("glass-atrium-dev-android"),
+        { name: "glass-atrium-dev-shell", status: "changed_since_load" },
+        { name: "glass-atrium-sec-guard", status: "refused", reason: "File is outside the agents folder" },
+        ok("glass-atrium-intel-researcher", "unchanged"),
+        { name: "glass-atrium-old-agent", status: "gone" },
+      ],
+      title: "3 of 5 agents not changed — reasons on their rows · old-agent — its file is no longer in the folder",
       retry: ["glass-atrium-dev-shell", "glass-atrium-sec-guard"],
-      reasons: {
-        "glass-atrium-dev-shell": "Not changed — the file changed after this page loaded",
-        "glass-atrium-sec-guard": "Not changed — the file is outside the agents folder",
-      },
+    },
+  ];
+  for (const row of failures) {
+    test(`a partial failure is one warn line and keeps only the files that can be retried: ${row.name}`, () => {
+      const outcome = sameRealm(fn("getAgentApplyOutcomeMC")(row.results, SONNET)) as { toast: unknown; alarm: unknown; retry: unknown; reasons: Record<string, string> };
+      assert.strictEqual(outcome.toast, null);
+      assert.deepStrictEqual(outcome.alarm, { tone: "warn", title: row.title });
+      assert.deepStrictEqual(outcome.retry, row.retry);
+      const words = row.results.filter((result) => row.retry.includes(result.name)).map((result) => [result.name, fn("getAgentReasonMC")(result)]);
+      assert.deepStrictEqual(outcome.reasons, Object.fromEntries(words));
     });
-  });
+  }
 });
 
 describe("each per-file failure reads as the spec's words on its row", () => {

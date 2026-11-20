@@ -105,6 +105,8 @@ const AGENTS = getMarkup("AgentModelsSectionMC", {
 const getBar = (count: number, isModelMissing: boolean) =>
   `<div class="card-bar">${getMarkup("AgentBarMC", { count, model: "", knownModels: [MODEL], isModelMissing, isApplying: false, onModel: noop, onApply: noop, onClear: noop })}</div>`;
 const BAR_STATES = { idle: getBar(0, false), ticked: getBar(3, false), missing: getBar(3, true) } as const;
+// the widest one-line content (99 ticked → `Apply to 99 agents`), and the three states again for the narrow form; widths set per test
+const NARROW_BARS = { fit: getBar(99, false), idle: getBar(0, false), ticked: getBar(99, false), missing: getBar(99, true) } as const;
 
 // a field's saved line: overridden (Saved value + Reset) and back at the saved value (the empty slot)
 const getSavedLine = (overridden: boolean) => getMarkup("GhostResetMC", { overridden, defaultValue: overridden ? MODEL : null, onReset: noop });
@@ -113,6 +115,7 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
   <div id="models" style="width: 760px; padding: 24px;">${MODELS}</div>
   <div id="agents" style="width: 1100px; padding: 24px;">${AGENTS}</div>
 ${Object.entries(BAR_STATES).map(([state, bar]) => `  <div id="bar-${state}" style="width: 1100px; padding: 24px;">${bar}</div>`).join("\n")}
+${Object.entries(NARROW_BARS).map(([state, bar]) => `  <div id="bar-narrow-${state}">${bar}</div>`).join("\n")}
   <div id="caps" style="width: 560px; padding: 24px;">${CAPS}</div>
   <div id="results" style="width: 560px; padding: 24px;">${RESULTS}</div>
   <div id="saved-overridden" style="width: 280px; padding: 24px;">${getSavedLine(true)}</div>
@@ -194,8 +197,59 @@ describe("the selection bar never moves a row as ticks come and go", () => {
   });
 
   test("the count cell keeps its width when the missing-model alert takes its place", async () => {
-    const cell = (state: string) => readBox(`#bar-${state} .agent-bar > :first-child`);
+    const cell = (state: string) => readBox(`#bar-${state} .agent-bar-line > :first-child`);
     const [count, alert] = await Promise.all([cell("ticked"), cell("missing")]);
     assert.equal(alert.width, count.width, `count ${count.width} vs alert ${alert.width}`);
+  });
+});
+
+// the bar's break width, read from the shipped @container rule → the hosts are sized against it, card padding added
+async function setNarrowHosts(offsetPx: number): Promise<number> {
+  return page.evaluate((offset) => {
+    const rule = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).find((r) => r instanceof CSSContainerRule && r.containerName === "agent-bar") as CSSContainerRule | undefined;
+    const breakPx = Number(/(\d+(?:\.\d+)?)px/.exec(rule?.containerQuery ?? "")?.[1]);
+    const pad = parseFloat(getComputedStyle(document.querySelector("#bar-narrow-fit .card-bar")!).paddingLeft);
+    for (const host of document.querySelectorAll<HTMLElement>("[id^=bar-narrow-]")) host.style.width = `${breakPx + offset + 2 * pad}px`;
+    return breakPx;
+  }, offsetPx);
+}
+
+async function readBarParts(host: string) {
+  return page.evaluate((id) => {
+    const root = document.getElementById(id)!;
+    const box = root.querySelector(".agent-bar")!.getBoundingClientRect();
+    const parts = ["select", ".btn.primary", ".agent-bar-line > :last-child", ".agent-bar-line > :first-child"].map((sel) => root.querySelector(sel)!.getBoundingClientRect());
+    const [select, apply, clear, count] = parts.map((r) => ({ top: r.top, bottom: r.bottom, left: r.left, right: r.right, mid: (r.top + r.bottom) / 2 }));
+    return { select, apply, clear, count, right: box.right, left: box.left };
+  }, host);
+}
+
+describe("the selection bar keeps one line while its content fits, and two arranged lines below that", () => {
+  test("at the break width the widest ticked bar is one line inside the card", async () => {
+    const breakPx = await setNarrowHosts(0);
+    const bar = await readBarParts("bar-narrow-fit");
+
+    assert.ok(breakPx > 0, "the bar's @container break is shipped");
+    for (const part of [bar.select, bar.apply, bar.clear]) assert.ok(Math.abs(part.mid - bar.count.mid) <= 1, `one line: ${part.mid} vs ${bar.count.mid}`);
+    assert.ok(bar.clear.right <= bar.right + 0.5, `Clear ends at ${bar.clear.right}, inside the bar's ${bar.right}`);
+  });
+
+  test("one px under the break, the count and Clear lead and the select and Apply follow on a second line", async () => {
+    await setNarrowHosts(-1);
+    const bar = await readBarParts("bar-narrow-ticked");
+
+    assert.ok(Math.abs(bar.clear.mid - bar.count.mid) <= 1, `line 1 holds count and Clear: ${bar.clear.mid} vs ${bar.count.mid}`);
+    assert.ok(Math.abs(bar.clear.right - bar.right) <= 1, `Clear ends at the bar's end: ${bar.clear.right} vs ${bar.right}`);
+    assert.ok(bar.select.top >= Math.max(bar.count.bottom, bar.clear.bottom), "the select sits under line 1");
+    assert.ok(Math.abs(bar.apply.mid - bar.select.mid) <= 1, "Apply shares the select's line");
+    assert.ok(Math.abs(bar.select.left - bar.left) <= 1, `line 2 starts at the bar's start: ${bar.select.left} vs ${bar.left}`);
+  });
+
+  test("under the break, idle, ticked and the missing-model alert hold one bar height", async () => {
+    await setNarrowHosts(-1);
+    const heights = await Promise.all(["idle", "ticked", "missing"].map(async (state) => (await readBox(`#bar-narrow-${state} .card-bar`)).height));
+
+    assert.ok(heights[1] > 48, `the ticked bar takes two lines (${heights[1]})`);
+    assert.deepEqual(heights, [heights[1], heights[1], heights[1]], `idle / ticked / missing: ${heights}`);
   });
 });
