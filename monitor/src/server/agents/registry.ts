@@ -2,13 +2,15 @@
 // SoT: `~/.glass-atrium/agent-registry.json` (env `AGENT_REGISTRY_PATH` override).
 // singleton 이유: static 파일이라 per-request fs read + JSON.parse 회피 → /api/agents/summary p95 budget 보호.
 
-import { readFile, stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import yaml from "js-yaml";
 
 import { Prisma } from "../../generated/prisma/client.js";
+import { errnoCode } from "../errno.js";
 
 /**
  * Single agent's registry entry — only metadata surfaceable in monitor responses.
@@ -27,6 +29,44 @@ export interface AgentRegistryEntry {
   // Provenance — "user" (created via ADD) or "shipped" (baseline); the delete affordance gates on origin === "user". null when undeclared.
   origin: string | null;
 }
+
+/** One agent file whose frontmatter `name` equals its base name; `file` is the base name, never a path. */
+export interface AgentFile {
+  name: string;
+  file: string;
+  role: string | null;
+  frontmatter: Record<string, unknown>;
+}
+
+/** A matching agents-folder entry that is not readable as an agent, with the reason shown for it. */
+export interface UnreadableAgentFile {
+  file: string;
+  reason: string;
+}
+
+/** Both lists sorted by file name. */
+export interface AgentFileList {
+  agents: AgentFile[];
+  unreadable: UnreadableAgentFile[];
+}
+
+// Role line cap in characters, ellipsis included → one line in the Role column at a 1280 viewport.
+export const ROLE_LINE_MAX_LENGTH = 52;
+
+const ROLE_LINE_DROPPED_MARKS = /["`“”]/g;
+
+// The role line names what the agent does, never the word "agent": a leading "Agent (for|that)", a trailing "(development) agent", one inside the phrase.
+const ROLE_LINE_AGENT = {
+  lead: /^agent(?: for| that)? /i,
+  tail: /(?: development)? agent$/i,
+  inner: / agent(?= )/gi,
+};
+
+// Words a cut can leave hanging before the ellipsis → dropped with it.
+const ROLE_LINE_DANGLING_TAIL = /(?:[\s,;:/–—-]+|\s+(?:and|or|of|for|to|into|from|by|at|as|the|with|in|on|a|an))+$/i;
+
+// Lowercase kebab name + `.md` → GLASS_ATRIUM_GLOBAL_RULES.md, references/ and templates/ never match.
+const AGENT_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*\.md$/;
 
 // Raw JSON shape — unknown before validation.
 interface RawRegistryRoot {
@@ -265,54 +305,147 @@ async function readAgentDescription(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+  const read = parseFrontmatterFields(raw);
+  return "fields" in read ? toRoleLine(read.fields.description) : null;
+}
+
+/**
+ * Agent files of one agents folder — the list the Models screen reads.
+ * - Top-level entries matching `AGENT_FILE_NAME_PATTERN` only; a link is read only when it resolves to a file directly in the folder.
+ * - A matching entry that fails a frontmatter check lands in `unreadable` with its reason, never dropped.
+ * - Missing folder → empty lists; any other folder read failure rejects.
+ */
+export async function listAgentFiles(dir: string): Promise<AgentFileList> {
+  const files = await getAgentFileNames(dir);
+  const list: AgentFileList = { agents: [], unreadable: [] };
+  if (files.length === 0) {
+    return list;
+  }
+  const realDir = await realpath(dir);
+  const reads = await Promise.all(files.map((file) => readAgentFile(dir, realDir, file)));
+  for (const read of reads) {
+    if ("reason" in read) {
+      list.unreadable.push(read);
+    } else {
+      list.agents.push(read);
+    }
+  }
+  return list;
+}
+
+// Sorted matching entry names; regular files and links only, so subfolders never count.
+async function getAgentFileNames(dir: string): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") {
+      return [];
+    }
+    throw new Error(`agents folder read failed (${dir})`, { cause: error });
+  }
+  return entries
+    .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && AGENT_FILE_NAME_PATTERN.test(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+async function readAgentFile(dir: string, realDir: string, file: string): Promise<AgentFile | UnreadableAgentFile> {
+  let raw: string;
+  try {
+    const resolved = await realpath(join(dir, file));
+    if (dirname(resolved) !== realDir) {
+      return { file, reason: "File is outside the agents folder" };
+    }
+    raw = await readFile(resolved, "utf8");
+  } catch {
+    return { file, reason: "File could not be read" };
+  }
+  const read = parseFrontmatterFields(raw);
+  if ("reason" in read) {
+    return { file, reason: read.reason };
+  }
+  const name = file.slice(0, -".md".length);
+  if (read.fields.name !== name) {
+    return { file, reason: "Frontmatter name differs from the file name" };
+  }
+  return { name, file, role: toRoleLine(read.fields.description), frontmatter: read.fields };
+}
+
+/** One agent file as listAgentFiles reads it: the frontmatter fields and the text after the closing fence. */
+export interface AgentFileParts {
+  fields: Record<string, unknown>;
+  body: string;
+}
+
+/** null when the frontmatter block is absent or unparseable. */
+export function getAgentFileParts(raw: string): AgentFileParts | null {
+  const read = parseFrontmatterFields(raw);
+  return "reason" in read ? null : read;
+}
+
+function parseFrontmatterFields(raw: string): AgentFileParts | { reason: string } {
   const frontmatter = extractFrontmatter(raw);
   if (frontmatter === null) {
-    return null;
+    return { reason: "No frontmatter block" };
   }
   let parsed: unknown;
   try {
     // FAILSAFE_SCHEMA — constructs only plain strings/maps/lists, never typed
     // objects via tags (defense-in-depth; treats the `.md` as untrusted input).
-    parsed = yaml.load(frontmatter, { schema: yaml.FAILSAFE_SCHEMA });
+    parsed = yaml.load(frontmatter.block, { schema: yaml.FAILSAFE_SCHEMA });
   } catch {
-    return null;
+    return { reason: "Frontmatter could not be parsed" };
   }
-  if (!isPlainObject(parsed)) {
-    return null;
-  }
-  const description = (parsed as Record<string, unknown>).description;
-  if (typeof description !== "string") {
-    return null;
-  }
-  return toRoleLine(description);
+  return isPlainObject(parsed) ? { fields: parsed, body: frontmatter.body } : { reason: "Frontmatter could not be parsed" };
 }
 
-// Pull the YAML block between the leading `---` fence and the next `---`; null when no opening fence.
-function extractFrontmatter(raw: string): string | null {
-  const lines = raw.split(/\r?\n/);
+// The YAML block between the leading `---` fence and the next `---` line, plus the text after that closing fence; null when either fence is missing.
+function extractFrontmatter(raw: string): { block: string; body: string } | null {
+  const lines = raw.split(/(?<=\n)/);
   if (lines[0]?.trim() !== "---") {
     return null;
   }
-  const body: string[] = [];
+  let offset = lines[0].length;
   for (let i = 1; i < lines.length; i++) {
-    if (lines[i]?.trim() === "---") {
-      return body.join("\n");
+    const line = lines[i] ?? "";
+    offset += line.length;
+    if (line.trim() === "---") {
+      return { block: lines.slice(1, i).map((blockLine) => blockLine.replace(/\r?\n$/, "")).join("\n"), body: raw.slice(offset) };
     }
-    body.push(lines[i] ?? "");
   }
-  // No closing fence — treat as malformed, no frontmatter.
   return null;
 }
 
-// Collapse a (possibly folded) description to one line, then take the first sentence as the role line.
+// Short role phrase from the description → one plain-text line on the Agents and Models screens.
 // Identity wants a concise role, not the full "Use when / Do NOT use for" frontmatter prose.
-function toRoleLine(description: string): string | null {
-  const collapsed = description.replace(/\s+/g, " ").trim();
-  if (collapsed.length === 0) {
+function toRoleLine(description: unknown): string | null {
+  if (typeof description !== "string") {
     return null;
   }
-  const sentenceEnd = collapsed.indexOf(". ");
-  return sentenceEnd === -1 ? collapsed : collapsed.slice(0, sentenceEnd + 1);
+  const phrase = getRolePhrase(description);
+  return phrase.length === 0 ? null : cutAtWord(phrase);
+}
+
+// One line, quote marks + backticks dropped → first sentence → its clause before an em dash, no period, no "agent".
+function getRolePhrase(description: string): string {
+  const collapsed = description.replace(ROLE_LINE_DROPPED_MARKS, "").replace(/\s+/g, " ").trim();
+  const sentence = collapsed.split(". ")[0] ?? "";
+  const clause = (sentence.split(" — ")[0] ?? "").replace(/\.$/, "").trim();
+  const phrase = clause.replace(ROLE_LINE_AGENT.lead, "").replace(ROLE_LINE_AGENT.tail, "").replace(ROLE_LINE_AGENT.inner, "");
+  return ROLE_LINE_AGENT.lead.test(clause) ? phrase.charAt(0).toUpperCase() + phrase.slice(1) : phrase;
+}
+
+// Over the cap → cut after the last whole word that fits beside the ellipsis; one unbroken word → a hard cut.
+function cutAtWord(phrase: string): string {
+  const chars = Array.from(phrase);
+  if (chars.length <= ROLE_LINE_MAX_LENGTH) {
+    return phrase;
+  }
+  const fitted = chars.slice(0, ROLE_LINE_MAX_LENGTH).join("");
+  const lastSpace = fitted.lastIndexOf(" ");
+  const kept = lastSpace > 0 ? fitted.slice(0, lastSpace) : chars.slice(0, ROLE_LINE_MAX_LENGTH - 1).join("");
+  return `${kept.replace(ROLE_LINE_DANGLING_TAIL, "")}…`;
 }
 
 // compatibility normalize — non-empty string 만 허용, 그 외 → null (미선언 + 손상값 모두 null 로 일관)

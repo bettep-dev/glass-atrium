@@ -76,7 +76,7 @@ const BASELINE: Record<string, BaselineRow[]> = {
   ],
   "clauded-docs": [
     { rule: "retired-property", count: 4, owner: "B6" },
-    { rule: "style-spacing-type", count: 47, owner: "B6" },
+    { rule: "style-spacing-type", count: 45, owner: "B6" },
     { rule: "raw-colour", count: 14, owner: "B6" },
   ],
   cost: [

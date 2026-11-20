@@ -79,6 +79,7 @@
 
   /* minimum hit height for every interactive atom */
   --ctl-min-h: 32px;
+  --ctl-checkbox-size: 16px; /* the Checkbox box; its label hit area overhangs it */
   /* the 40 tier — a pane's composer box and its buttons only; every other control stays 32 */
   --ctl-h-lg: 40px;
   /* its line box, as --lh-ctl: 8px padding-block and 1px borders around it land a large button, and the composer text in its box, on 40 */

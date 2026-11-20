@@ -1472,7 +1472,7 @@ function DeskKeysQ({ keys }) {
 	return (
 		<div className="flex flex-col gap-2">
 			<label className="inline-flex items-center gap-2 font-medium">
-				<span className="inline-target"><CheckboxBoxQ isChecked={keys.isOn} onChange={keys.toggle} ariaLabel="Single-key shortcuts" /></span>
+				<window.UI.Checkbox isInLabel isChecked={keys.isOn} onChange={keys.toggle} ariaLabel="Single-key shortcuts" />
 				Single-key shortcuts
 			</label>
 			<p className="fs-meta text-dim">Letters and digits work outside text fields. Enter, Esc and Cmd / Ctrl + Enter work anywhere.</p>
@@ -2539,7 +2539,7 @@ function AllSessionsBandQ({ rows, sessions, notReceived }) {
 		<Band className="queue-band queue-rail-band">
 			{isMasterShown && (
 				<span className="queue-rail-box">
-					<span className="inline-target"><CheckboxBoxQ isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Select all live sessions" describedBy={RAIL_HINT_Q.ID} /></span>
+					<window.UI.Checkbox isInLabel isChecked={master === "all"} isMixed={master === "some"} onChange={() => sessions.setSelectedIds((ids) => putMasterTickQ(ids, rows))} ariaLabel="Select all live sessions" describedBy={RAIL_HINT_Q.ID} />
 				</span>
 			)}
 			<span className="queue-rail-all">All sessions</span>
@@ -2611,7 +2611,7 @@ function SessionRailRowQ({ row, view, sessions }) {
 		<Row className={`queue-rail-row${row.state === "exited" ? " is-ended" : ""}`} data-session={row.id} title={`${state.hover}\n${where}`}>
 			{row.isSelectable && (
 				<span className="queue-rail-box">
-					<span className="inline-target"><CheckboxBoxQ isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={`${lineId} ${RAIL_HINT_Q.ID}`} /></span>
+					<window.UI.Checkbox isInLabel isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={`${lineId} ${RAIL_HINT_Q.ID}`} />
 				</span>
 			)}
 			<span aria-hidden="true" className={`queue-rail-mark${row.state === "live" ? " is-live" : ""}`} />
@@ -2658,18 +2658,6 @@ function StateMarkQ({ tag, word, title }) {
 	const { TONE_GLYPH } = window.UI;
 	const glyph = { warn: TONE_GLYPH.warn, pause: getPauseGlyphQ(), ended: <span className="queue-rail-mark" /> }[tag];
 	return <span role="img" aria-label={word} title={title} className={`queue-state-mark is-${tag}`}>{glyph}</span>;
-}
-
-// base.css → .ctl-checkbox visual: the mark drawn over the 16 box; the caller's label is the hit area; mixed → the DOM's indeterminate state
-function CheckboxBoxQ({ isChecked, isMixed = false, onChange, ariaLabel, describedBy }) {
-	const { Icon } = window.UI;
-	const setMixed = (input) => { if (input) input.indeterminate = isMixed; };
-	return (
-		<span className="relative inline-flex items-center justify-center">
-			<input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} onChange={onChange} aria-label={ariaLabel} aria-describedby={describedBy} />
-			{(isChecked || isMixed) && <Icon name={isChecked ? "check" : "minus"} size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
-		</span>
-	);
 }
 
 /** Orders (spec §9.2), always open: head Orders + whose orders the thread holds, the thread of the owner's orders, the composer in its order use. */

@@ -5,24 +5,27 @@
 # update_check_pricing_roster): a release whose file lacks a row for an id the install runs would
 # have the cost hook price that id at a family or fallback guess.
 #
-# Ids read (read-only, one query): distinct core.cost_events.model over the last 30 days, plus the
-# monitor.model_config values under the model.* keys. Skipped ids — never priced by the cost hook:
+# Ids read (read-only): distinct core.cost_events.model over the last 30 days, the
+# monitor.model_config values under the model.* keys, and each agent file's frontmatter model line —
+# the install's own pins, which no release ships and an update keeps. Skipped ids — never priced:
 #   NULL, empty and '<synthetic>' (hooks/cost-tracker.sh → calc_cost returns $0 before resolving a rate)
-#   a config value of 'inherit' or '' (the agent follows the session model)
+#   a config value or pin of 'inherit' or '' (the agent follows the session model)
 # The zero-cost skips are pinned to calc_cost by hooks/test/fixtures/model-id-pricing-parity.json.
 # Membership is the loader's own (hooks/lib/pricing_loader.py → is_known), so dated and [1m]
 # variants resolve to their base row.
 #
 # Usage: check-pricing-roster.sh <pricing.json>
 # Env: ATRIUM_UPDATE_PSQL (psql) · ATRIUM_UPDATE_DB_NAME (glass_atrium) · PRICING_LIB_DIR (loader
-#      directory, default ../hooks/lib beside this script) · PRICING_ROSTER_CONNECT_TIMEOUT (seconds) ·
+#      directory, default ../hooks/lib beside this script) · PRICING_ROSTER_AGENTS_DIR (default
+#      ../agents beside this script) · PRICING_ROSTER_CONNECT_TIMEOUT (seconds) ·
 #      PRICING_ROSTER_STATEMENT_TIMEOUT_MS
 #
 # Exit codes:
 #   0 = every id has a row
 #   2 = usage error, or the pricing file is missing or rejected by the loader
 #   3 = ids without a row — printed one per line, sorted, on stdout
-#   4 = database unavailable (connect failure, timeout, query error, psql absent) — no verdict
+#   4 = ids unreadable — database unavailable (connect failure, timeout, query error, psql absent)
+#       or an agent file unreadable — no verdict
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -68,7 +71,8 @@ SELECT 'config', config_value FROM monitor.model_config WHERE config_key LIKE 'm
 PSQL
 }
 
-# stdin: the rows above. Prints each unpriced id once and exits 3; exits 2 on a rejected file.
+# stdin: the rows above; the agent pins come from hooks/lib/agent_pins.py. Prints each unpriced id
+# once and exits 3; exits 2 on a rejected file, 4 on an unreadable agent file.
 find_unpriced_ids() {
   local py_src
   py_src="$(
@@ -76,6 +80,7 @@ find_unpriced_ids() {
 import sys
 
 sys.path.insert(0, sys.argv[2])
+import agent_pins
 import pricing_loader
 
 sot, name = sys.argv[1], sys.argv[3]
@@ -93,6 +98,12 @@ for line in sys.stdin.read().splitlines():
         continue
     if not pricing_loader.is_known(model, sot_path=sot):
         unpriced.add(model)
+try:
+    pins = agent_pins.get_agent_pins(sys.argv[4])
+except (OSError, UnicodeDecodeError):
+    sys.stderr.write("[%s] agent file unreadable — no verdict on the pricing roster\n" % name)
+    sys.exit(4)
+unpriced.update(pin for pin in pins if not pricing_loader.is_known(pin, sot_path=sot))
 for model in sorted(unpriced):
     print(model)
 if unpriced:
@@ -103,7 +114,8 @@ if unpriced:
     sys.exit(3)
 PY
   )"
-  PRICING_REMOTE_DISABLE=1 python3 -I -c "${py_src}" "${1}" "${PRICING_LIB_DIR:-${SELF_DIR}/../hooks/lib}" "${SCRIPT_NAME}"
+  PRICING_REMOTE_DISABLE=1 python3 -I -c "${py_src}" "${1}" "${PRICING_LIB_DIR:-${SELF_DIR}/../hooks/lib}" "${SCRIPT_NAME}" \
+    "${PRICING_ROSTER_AGENTS_DIR:-${SELF_DIR}/../agents}"
 }
 
 main "$@"
