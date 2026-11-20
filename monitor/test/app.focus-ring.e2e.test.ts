@@ -17,11 +17,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const MODEL = "claude-opus-5-5";
 
-// one model tier carrying agent files → the screen draws its files disclosure
+// one model tier → the screen draws its in-row select
 const CONFIG = {
   domains: [{
-    domain: "model.dev", desired: MODEL, actual: MODEL, drift: false, apply_mode: "next-spawn", editable: true, pricing_known: true,
-    files: ["glass-atrium-dev-front.md", "glass-atrium-dev-react.md"].map((file) => ({ file, model: MODEL })),
+    domain: "model.daemon_cycle_worker", desired: MODEL, actual: MODEL, drift: false, apply_mode: "next-cycle", editable: true, pricing_known: true,
   }],
   budgets: [],
   tiers: [],
@@ -52,7 +51,7 @@ after(async () => {
 async function openApp(): Promise<Page> {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
-  await page.waitForSelector("summary.disclosure", { timeout: 30_000 });
+  await page.waitForSelector("tbody select", { timeout: 30_000 });
   return page;
 }
 
@@ -100,13 +99,14 @@ const MOUNT_FIXTURE = `(fixture) => {
     'fullscreen-on-trigger': () => h(OnTrigger, { variant: 'fullscreen' }),
     'confirm-on-trigger': () => h(OnTrigger, { variant: 'confirm' }),
     rows: () => h(Rows),
+    details: () => h(UI.ErrorDetails, { detail: 'HTTP 500 Internal Server Error' }),
   };
   const host = document.body.appendChild(document.createElement('div'));
   host.id = 'fixture';
   ReactDOM.createRoot(host).render(fixtures[fixture]());
 }`;
 
-type FixtureKind = "popover" | "popover-in-view" | "drawer" | "drawer-on-trigger" | "fullscreen-on-trigger" | "confirm-on-trigger" | "rows";
+type FixtureKind = "popover" | "popover-in-view" | "drawer" | "drawer-on-trigger" | "fullscreen-on-trigger" | "confirm-on-trigger" | "rows" | "details";
 
 async function mountFixture(page: Page, kind: FixtureKind): Promise<void> {
   await page.evaluate(`(${MOUNT_FIXTURE})(${JSON.stringify(kind)})`);
@@ -290,11 +290,12 @@ describe("focus after a mouse move draws no ring, after a keyboard move draws th
     await page.close();
   });
 
-  test("a mouse click on the model files disclosure opens it and draws no ring", async () => {
+  test("a mouse click on a details disclosure opens it and draws no ring", async () => {
     const page = await openApp();
-    await page.click("summary.disclosure");
+    await mountFixture(page, "details");
+    await page.click("#fixture summary.disclosure");
 
-    assert.equal(await page.$eval("summary.disclosure", (el) => (el.parentElement as HTMLDetailsElement).open), true);
+    assert.equal(await page.$eval("#fixture summary.disclosure", (el) => (el.parentElement as HTMLDetailsElement).open), true);
     const { tag, isFocusVisible, outline } = await readFocus(page);
     assert.deepEqual({ tag, isFocusVisible, outline }, { tag: "SUMMARY", isFocusVisible: false, outline: "none" });
     await page.close();

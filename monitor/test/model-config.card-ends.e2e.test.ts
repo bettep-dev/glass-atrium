@@ -18,29 +18,18 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 const MODEL = "claude-opus-5-5";
 
-function getModelRow(domain: string, files?: string[]) {
-  return {
-    domain,
-    desired: MODEL,
-    actual: MODEL,
-    drift: false,
-    apply_mode: domain === "model.daemon_cycle_worker" ? "next-cycle" : "next-spawn",
-    editable: true,
-    pricing_known: true,
-    ...(files ? { files: files.map((file) => ({ file, model: MODEL })) } : {}),
-  };
-}
-
-// the shipped roster: seven model tiers, two caps, four call tiers, one saved cap among them
+// the shipped roster: one model tier, two caps, four call tiers, one saved cap among them
 const CONFIG = {
   domains: [
-    getModelRow("model.dev", ["glass-atrium-dev-front.md", "glass-atrium-dev-react.md"]),
-    getModelRow("model.research"),
-    getModelRow("model.meta"),
-    getModelRow("model.wiki"),
-    getModelRow("model.review", ["glass-atrium-qa-code-reviewer.md", "glass-atrium-qa-debugger.md"]),
-    getModelRow("model.docs", ["glass-atrium-intel-reporter.md", "glass-atrium-intel-planner.md"]),
-    getModelRow("model.daemon_cycle_worker"),
+    {
+      domain: "model.daemon_cycle_worker",
+      desired: MODEL,
+      actual: MODEL,
+      drift: false,
+      apply_mode: "next-cycle",
+      editable: true,
+      pricing_known: true,
+    },
   ],
   budgets: ["budget.worker_max_usd", "budget.pre_verify_max_usd"].map((domain) => ({
     domain,
@@ -138,7 +127,7 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
     assert.strictEqual(tables.length, 3, "model, cap and call-tier tables render");
     for (const table of tables) {
       assert.strictEqual(table.header.transform, "none", `${table.caption}: headers keep sentence case`);
-      assert.ok(table.cells.length >= 6, `${table.caption}: rows render`);
+      assert.ok(table.cells.length >= 3, `${table.caption}: rows render`);
       for (const cell of table.cells) {
         const [top, bottom] = cell.isControl ? [3.5, 3.5] : [3.5 + (32 - 20) / 2, 7.5];
         assert.deepStrictEqual([cell.top, cell.bottom], [top, bottom], `${table.caption}: ${cell.isControl ? "control" : "text"} cell block padding`);
@@ -206,7 +195,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
             longest: Math.max(...labels.map((label) => canvas.measureText(label).width)),
           };
         });
-        const files = [...document.querySelectorAll<HTMLElement>("tbody td span[title='daemon-config.json']")].map((token) => ({
+        const files = [...document.querySelectorAll<HTMLElement>(".card-foot code.machine")].map((token) => ({
           lines: token.getClientRects().length,
           height: token.getBoundingClientRect().height,
           lineHeight: parseFloat(getComputedStyle(token).lineHeight),
@@ -214,7 +203,8 @@ for (const width of [1024, 1280, 1440, 1920]) {
         return { offsets, selects, files };
       });
 
-      assert.ok(geometry.offsets.length >= 13, `${width}px: every row has a text cell beside its control`);
+      const rowCount = CONFIG.domains.length + CONFIG.budgets.length + CONFIG.tiers.length;
+      assert.ok(geometry.offsets.length >= rowCount, `${width}px: every row has a text cell beside its control`);
       for (const { row, offset } of geometry.offsets) {
         assert.ok(Math.abs(offset) <= 0.5, `${width}px ${row}: first text line ${offset}px off the control center`);
       }
@@ -222,7 +212,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
       for (const { name, room, longest } of geometry.selects) {
         assert.ok(longest <= room, `${width}px ${name}: longest label ${longest}px in ${room}px`);
       }
-      assert.ok(geometry.files.length > 0, `${width}px: the cap and tier rows name their file`);
+      assert.ok(geometry.files.length > 0, `${width}px: the card feet name their file`);
       for (const file of geometry.files) {
         assert.strictEqual(file.lines, 1, `${width}px: daemon-config.json is one token`);
         assert.ok(file.height <= file.lineHeight + 1, `${width}px: daemon-config.json never breaks at its hyphens`);

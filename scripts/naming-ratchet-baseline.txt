@@ -784,7 +784,6 @@ ID_TITLE test daily-at America/New_York: EST(겨울, UTC-5) offset 적용
 ID_TITLE test each stage group opens with a level-2 heading under the page H1, and the ledger holds no other heading
 ID_TITLE test every ledger row reads the fleet P95 cut, and only a p95 above it takes the warn glyph
 ID_TITLE test hook failures: unretried 24h failure → crit; retried-only → warn (F08)
-ID_TITLE test modelOptionsMC: empty known_models (SoT fail-open, D3) → inherit-only where allowed
 ID_TITLE test parseIdParam: unsafe-integer 거부 (M1 overflow + M3 float-round)
 ID_TITLE test rowToSummaryItem: invocations ↔ invocations_30d alias 동치 (F25 deprecated alias)
 ID_TITLE test rowToSummaryItem: matrix 분모 — needs_context 제외 + 별도 카운트 노출 (F21)

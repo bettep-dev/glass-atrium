@@ -1,5 +1,5 @@
 // Models & budgets controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and type
-// scale, rendered from the shipped components: the file-count fold and the save-results fold on the ghost disclosure
+// scale, rendered from the shipped components: the save-results fold on the disclosure
 // atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — the Cost & usage links as 24 targets, and a
 // field's inline Reset as a 24 target in a saved line that keeps its height whether the field is overridden or not.
 // Runner: npx tsx --test test/model-config.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -55,14 +55,13 @@ const noop = () => undefined;
 const MODEL = "claude-opus-5-5";
 const DOMAINS = [
   {
-    domain: "model.dev",
+    domain: "model.daemon_cycle_worker",
     desired: MODEL,
     actual: MODEL,
     drift: false,
-    apply_mode: "next-spawn",
+    apply_mode: "next-cycle",
     editable: true,
     pricing_known: true,
-    files: ["agents/glass-atrium-dev-front.md", "agents/glass-atrium-dev-react.md"].map((file) => ({ file, model: MODEL })),
   },
 ];
 const BUDGETS = [{ domain: "budget.worker_max_usd", desired: "10.00", actual: "10.00", drift: false, apply_mode: "next-cycle" }];
@@ -70,8 +69,8 @@ const MODELS = getMarkup("DomainsSectionMC", {
   state: "ready",
   domains: DOMAINS,
   knownModels: [MODEL],
-  form: { models: { "model.dev": MODEL } },
-  baseline: { models: { "model.dev": MODEL } },
+  form: { models: { "model.daemon_cycle_worker": MODEL } },
+  baseline: { models: { "model.daemon_cycle_worker": MODEL } },
   errors: {},
   isStale: false,
   onModelChange: noop,
@@ -104,8 +103,6 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
   <div id="saved-empty" style="width: 280px; padding: 24px;">${getSavedLine(false)}</div>
 </body></html>`;
 
-const FILES = "#models td details";
-const FILES_SUMMARY = `${FILES} > summary`;
 const RESULTS_FOLD = "#results details";
 const RESULTS_SUMMARY = `${RESULTS_FOLD} > summary`;
 
@@ -129,26 +126,6 @@ before(async () => {
 
 after(async () => {
   await browser?.close();
-});
-
-describe("the In effect file-count fold opens on the ghost disclosure atom", () => {
-  test("its summary is a 32 disclosure whose chevron alone marks it open", () => assertFoldOnOneBox(FILES, FILES_SUMMARY));
-
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(FILES_SUMMARY));
-
-  test("it draws no pill edge", async () => {
-    assert.equal(await readStyle(FILES_SUMMARY, "border-top-width"), "0px");
-  });
-
-  // a steady row puts nothing above the fold → the summary itself is the cell's control line
-  test("the fold summary centres on the Model select in its row", async () => {
-    const offset = await page.$eval("#models tbody tr", (tr) => {
-      const select = tr.querySelector("select")!.getBoundingClientRect();
-      const summary = tr.querySelector("td details > summary")!.getBoundingClientRect();
-      return summary.top + summary.height / 2 - (select.top + select.height / 2);
-    });
-    assert.ok(Math.abs(offset) <= 0.5, `fold summary ${offset}px off the select centre`);
-  });
 });
 
 describe("the save-results fold opens on the disclosure atom", () => {

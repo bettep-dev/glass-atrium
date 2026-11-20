@@ -48,76 +48,21 @@ const MODEL_CAP_MC = {
 	"claude-sonnet-5": "Prior Sonnet — balanced speed/cost, superseded by 5.5",
 	"claude-sonnet-4-6": "Balanced — fast turnaround on mid-complexity work",
 	"claude-haiku-4-5": "Fastest / cheapest — simple, repetitive file ops",
-	inherit: "Follows the session model — the agent file carries no model line",
 };
-// 도메인 표시 메타 — 라벨/1줄 힌트/전문 설명/옵션 구성
+// 도메인 표시 메타 — 라벨/1줄 힌트/전문 설명
 // (GET 응답에 없는 파생 표시값이라 UI 상수로 유지).
 const DOMAIN_META_MC = {
-	"model.dev": {
-		label: "Dev agents",
-		hint: "Code implementation across the dev fleet",
-		desc: "Every dev agent file — React, NestJS, Python, DB, shell and the rest of the fleet",
-		editable: true,
-		inherit: true,
-	},
-	"model.research": {
-		label: "Research agent",
-		hint: "Web and codebase research",
-		desc: "Source collection, verification and synthesis",
-		source: "glass-atrium-intel-researcher",
-		editable: true,
-		inherit: true,
-	},
-	"model.meta": {
-		label: "Meta agent",
-		hint: "Rewrites agent instructions",
-		desc: "The self-improvement loop's rewriter, so its model shapes how well every agent evolves",
-		source: "glass-atrium-meta-agent",
-		editable: true,
-		inherit: true,
-	},
-	"model.wiki": {
-		label: "Wiki curator",
-		hint: "Wiki compilation and index writes",
-		desc: "The sole wiki writer, also running health checks and raw-ingestion validation",
-		source: "glass-atrium-wiki-curator",
-		editable: true,
-		inherit: true,
-	},
-	"model.review": {
-		label: "Review",
-		hint: "Code review and bug diagnosis",
-		desc: "Also plan direction review — one save writes both agent files",
-		editable: true,
-		inherit: true,
-	},
-	"model.docs": {
-		label: "Documents",
-		hint: "Reports and plans",
-		desc: "One save writes both agent files",
-		editable: true,
-		inherit: true,
-	},
 	"model.daemon_cycle_worker": {
 		label: "Daemon cycle helper",
 		hint: "Background daemon housekeeping steps",
 		desc: "Drafts self-improve proposals, runs pre-verify and summarizes wiki notes",
 		source: "daemon-config.json",
 		editable: true,
-		inherit: false,
 	},
 };
 
 // 테이블 행 순서 — 미지의 도메인(서버가 먼저 확장된 경우)은 뒤에 그대로 덧붙임 (silent drop 금지).
-const DOMAIN_ORDER_MC = [
-	"model.dev",
-	"model.research",
-	"model.meta",
-	"model.wiki",
-	"model.review",
-	"model.docs",
-	"model.daemon_cycle_worker",
-];
+const DOMAIN_ORDER_MC = ["model.daemon_cycle_worker"];
 
 // Take-effect timing — GET apply_mode → "Applies <when>" header meta; desc = the caveat the drawer carries.
 const APPLY_MODE_META_MC = {
@@ -234,11 +179,9 @@ const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 // Ledger anchors — a failed read's Retry hands focus to the model ledger.
 const MODELS_SECTION_ID_MC = "mc-models";
 
-const MODEL_FAMILY_RE_MC = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$/;
-
 // What the "In effect" column reads back — the targets a saved value is written to.
 const IN_EFFECT_TITLE_MC = {
-	models: "Read back from the agent files and daemon-config.json",
+	models: "Read back from daemon-config.json",
 	budgets: "Read back from daemon-config.json",
 	tiers: "Read back from daemon-config.json",
 };
@@ -323,7 +266,7 @@ function ScreenModelConfig() {
 	);
 
 	// GET known_models = 드롭다운/검증 옵션 SoT — 서버가 pricing.json 에서 파생 (P7).
-	// SoT unreadable fail-open 시 [] (D3) — 옵션은 inherit/custom 만 남고 free-text 로 입력 가능.
+	// SoT unreadable fail-open 시 [] (D3) — 옵션은 custom 만 남고 free-text 로 입력 가능.
 	const knownModels = useMemoMC(
 		() => configState.data?.known_models ?? [],
 		[configState],
@@ -714,7 +657,6 @@ function DomainsSectionMC({
 }) {
 	const { Card, Link, SkeletonRows, Table } = window.UI;
 	const rows = sortDomainsMC(domains || []);
-	const mix = form ? getModelMixMC(rows.map((d) => form.models[d.domain] || d.desired)) : "";
 	const timing = getApplyTimingMC(rows);
 
 	return (
@@ -727,10 +669,7 @@ function DomainsSectionMC({
 					<SettingsInfoMC
 						caveat={timing.caveat}
 						title="Who each tier covers"
-						rows={rows.map(
-							// inherit = sentinel, no id → the select already words it "Session model"
-							(d) => DOMAIN_META_MC[d.domain] && { ...DOMAIN_META_MC[d.domain], savedId: d.desired === "inherit" ? null : d.desired },
-						)}
+						rows={rows.map((d) => DOMAIN_META_MC[d.domain] && { ...DOMAIN_META_MC[d.domain], savedId: d.desired })}
 					/>
 				}
 				infoLabel={SETTINGS_INFO_LABEL_MC}
@@ -742,7 +681,7 @@ function DomainsSectionMC({
 						</Link>
 					</span>
 				}
-				foot={mix ? <span className="truncate min-w-0" title={mix}>{mix}</span> : null}
+				foot={<SourceFootMC source={DAEMON_CONFIG_FILE_MC} />}
 				isFlush={state !== "unavailable"}>
 				{state === "unavailable" ? (
 					<SectionUnavailableMC />
@@ -828,24 +767,13 @@ function TierNotesMC({ title, rows }) {
 	);
 }
 
-// payload carries no resolved session model → name the source an inherit value follows
+// payload carries no resolved settings.json model → name the source an inherit value follows
 const INHERIT_LIVE_LABEL_MC = {
-	inherit: "session model (inherit)",
 	"inherit (settings.json)": "settings.json model (inherit)",
 };
 
 function liveLabelMC(value) {
 	return INHERIT_LIVE_LABEL_MC[value] ?? value;
-}
-
-// [model label, files[]] in first-seen order — the model is the parity proof, so it is shown whole once.
-function groupFilesByModelMC(fileRows) {
-	const groups = new Map();
-	for (const f of fileRows) {
-		const model = liveLabelMC(f.model ?? "inherit");
-		groups.set(model, [...(groups.get(model) ?? []), f.file]);
-	}
-	return [...groups];
 }
 
 // An ID or file name is one unbreakable token, never broken at its hyphens; it ellipsizes with a title only when its own line is too narrow.
@@ -857,12 +785,7 @@ function IdTokenMC({ title, children }) {
 	);
 }
 
-// A spaced inherit phrase wraps at its spaces and holds no hyphen; a bare id holds hyphens, so it stays whole on one line.
-function isSpacedLabelMC(label) {
-	return /\s/.test(label);
-}
-
-// A files disclosure or drift mark makes the In effect cell a control cell (block padding --tbl-ctl-pad-block) → the first line takes the control height to centre on the row's control.
+// A drift mark makes the In effect cell a control cell (block padding --tbl-ctl-pad-block) → the first line takes the control height to centre on the row's control.
 const CONTROL_LINE_STYLE_MC = { minHeight: "var(--ctl-min-h)" };
 
 const DAEMON_CONFIG_FILE_MC = "daemon-config.json";
@@ -877,36 +800,21 @@ function SourceFootMC({ source }) {
 	);
 }
 
-// source = an agent name or a config file name — kept a flat string so the meta tables stay one level deep.
-function isConfigFileMC(source) {
-	return /\.json$/.test(source);
-}
-
-// Agent file ("agents/glass-atrium-dev-react.md") → its agent name, for the shared name atom.
-function getFileAgentNameMC(file) {
-	const base = String(file ?? "").split("/").pop();
-	return base.replace(/\.md$/, "");
-}
-
 /**
  * In effect = measured at the consumption point.
  * Matching the saved target → silence · differing → the value + one warn glyph and word · absent → nothing.
- * No file list → names the source, or that it yielded no value; a source the card foot names stays silent on a read.
+ * Names the source, or that it yielded no value; a source the card foot names stays silent on a read.
  */
-function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, isNumeric = false, driftTitle }) {
-	const { AgentName, DisclosureChevron, Icon, MachineString, Stack } = window.UI;
-	const fileRows = Array.isArray(files) ? files : [];
+function LiveValueMC({ value, drift, source, isSourceInFoot = false, isNumeric = false, driftTitle }) {
+	const { Icon, MachineString, Stack } = window.UI;
 	const isSteady = !drift && value != null;
 	const isValueShown = !isSteady && value != null;
 	const label = liveLabelMC(value);
-	const fileGroups = groupFilesByModelMC(fileRows);
-	// files lagging the saved model or disagreeing among themselves → the fold opens itself
-	const isFoldAlerting = drift || fileGroups.length > 1;
 
 	return (
 		<Stack gap="stack" className="min-w-0">
 			{(isValueShown || drift) && (
-				<div className={`flex items-center gap-control min-w-0${isNumeric ? " justify-end" : ""}`} style={fileRows.length > 0 || drift ? CONTROL_LINE_STYLE_MC : undefined}>
+				<div className={`flex items-center gap-control min-w-0${isNumeric ? " justify-end" : ""}`} style={drift ? CONTROL_LINE_STYLE_MC : undefined}>
 					{isValueShown && (
 						<span className={`fs-meta truncate text-ink tbl-first-line${isNumeric ? " tabular-nums" : ""}`} title={label}>
 							{label}
@@ -920,40 +828,12 @@ function LiveValueMC({ value, drift, files, source, isSourceInFoot = false, isNu
 					)}
 				</div>
 			)}
-			{fileRows.length > 0 && (
-				<details className="fs-meta" open={isFoldAlerting || undefined}>
-					<summary className="group disclosure">
-						<DisclosureChevron />
-						{isFoldAlerting && <Icon name="warn" size={12} className="text-warn" />}
-						<span>{`${fileRows.length} ${fileRows.length === 1 ? "file" : "files"}`}</span>
-					</summary>
-					<div
-						className="text-faint flex flex-col gap-stack mt-stack"
-						role="region"
-						aria-label={`${fileRows.length} agent files`}>
-						{fileGroups.map(([model, files]) => (
-							<div key={model}>
-								{isSpacedLabelMC(model) ? (
-									<div className="text-dim">{model}</div>
-								) : (
-									<div className="text-dim whitespace-nowrap"><MachineString>{model}</MachineString></div>
-								)}
-								<div className="flex flex-wrap gap-x-list ml-label">
-									{files.map((file) => (
-										<AgentName key={file} name={getFileAgentNameMC(file)} className="whitespace-nowrap" />
-									))}
-								</div>
-							</div>
-						))}
-					</div>
-				</details>
-			)}
-			{fileRows.length === 0 && source && (value == null || !isSourceInFoot) && (
+			{source && (value == null || !isSourceInFoot) && (
 				<div className={`fs-meta text-faint flex flex-wrap items-baseline gap-x-label-inline${isValueShown || drift ? "" : " tbl-first-line"}`}>
 					{/* null live value = source unreadable or key missing → never claim a read */}
 					<span>{value != null ? "Read from" : "No value read from"}</span>
 					<IdTokenMC title={source}>
-						{isConfigFileMC(source) ? <MachineString>{source}</MachineString> : <AgentName name={source} />}
+						<MachineString>{source}</MachineString>
 					</IdTokenMC>
 				</div>
 			)}
@@ -1046,8 +926,8 @@ function DomainRowMC({
 				<LiveValueMC
 					value={d.actual}
 					drift={d.drift}
-					files={d.files}
 					source={meta.source}
+					isSourceInFoot={meta.source === DAEMON_CONFIG_FILE_MC}
 					driftTitle="Live value differs from the saved target — press Save again"
 				/>
 			</td>
@@ -1055,7 +935,7 @@ function DomainRowMC({
 	);
 }
 
-// Model pick = the house Select (one-row combo: the options are known_models + inherit) + a custom-id entry slot.
+// Model pick = the house Select (one-row combo: the options are known_models) + a custom-id entry slot.
 // A value outside the list (empty included) = custom mode, shown as CUSTOM_OPTION_MC.
 // An edit away from the saved baseline → ghost label + revert link.
 function ModelSelectMC({
@@ -1066,8 +946,7 @@ function ModelSelectMC({
 	error,
 	onChange,
 }) {
-	const options = modelOptionsMC(domain, knownModels);
-	const isListed = options.includes(value);
+	const isListed = knownModels.includes(value);
 	const isCustom = !isListed;
 	const meta = DOMAIN_META_MC[domain];
 	const label = meta ? meta.label : domain;
@@ -1086,7 +965,7 @@ function ModelSelectMC({
 	const { Select } = window.UI;
 	const id = `mc-model-${domain}`;
 	const selectOptions = [
-		...options.map((opt) => ({ key: opt, label: getModelOptionLabelMC(opt), title: getModelOptionTitleMC(opt) })),
+		...knownModels.map((opt) => ({ key: opt, label: getModelOptionLabelMC(opt), title: getModelOptionTitleMC(opt) })),
 		{ key: CUSTOM_OPTION_MC, label: "custom…" },
 	];
 
@@ -1101,7 +980,7 @@ function ModelSelectMC({
 				value={isCustom ? CUSTOM_OPTION_MC : value}
 				options={selectOptions}
 				onChange={handleSelect}
-				title={isListed && value !== "inherit" ? value : undefined}
+				title={isListed ? value : undefined}
 				aria-describedby={error && !isCustom ? `${id}-error` : undefined}
 			>
 				{isCustom && (
@@ -1134,7 +1013,7 @@ function ModelSelectMC({
 
 // The select shows the friendly name, so its column never clips an id mid-word; an id outside the naming pattern shows itself.
 function getModelOptionLabelMC(model) {
-	return getModelFamilyMC(model) ?? model;
+	return window.UI.getDisplayName("model", model) ?? model;
 }
 
 // The full id leads the option tooltip, then the capability line.
@@ -1689,11 +1568,10 @@ function ErrorBannerMC({ title, detail, onRetry }) {
 	);
 }
 
-// Card-head count of unread rows that name no source and list no files → such a row renders nothing; a sourced row says it itself.
+// Card-head count of unread rows that name no source → such a row renders nothing; a sourced row says it itself.
 function UnreadMarkMC({ rows, metaOf }) {
 	const { Icon } = window.UI;
-	const isSilent = (row) => !metaOf[row.domain]?.source && !(Array.isArray(row.files) && row.files.length > 0);
-	const count = rows.filter((row) => !row.drift && row.actual == null && isSilent(row)).length;
+	const count = rows.filter((row) => !row.drift && row.actual == null && !metaOf[row.domain]?.source).length;
 	if (count === 0) return null;
 
 	return (
@@ -1745,7 +1623,7 @@ function validateFormMC(form, knownModels) {
 	const errors = {};
 
 	for (const [domain, value] of Object.entries(form.models)) {
-		if (modelOptionsMC(domain, knownModels).includes(value)) continue;
+		if (knownModels.includes(value)) continue;
 		if (value === "") {
 			errors[domain] = "Enter a model id";
 		} else if (!FREE_TEXT_MODEL_RE_MC.test(value)) {
@@ -1780,15 +1658,6 @@ function validateFormMC(form, knownModels) {
 	}
 
 	return errors;
-}
-
-// 옵션 = GET known_models 그대로 (+ inherit 허용 도메인만) — bare alias 옵션 없음 (P7 AC).
-function modelOptionsMC(domain, knownModels) {
-	const meta = DOMAIN_META_MC[domain] || {};
-	const opts = [];
-	if (meta.inherit) opts.push("inherit");
-	opts.push(...(knownModels || []));
-	return opts;
 }
 
 function sortDomainsMC(domains) {
@@ -1839,26 +1708,6 @@ function resyncPayloadMC(data, edits) {
 		if (Object.keys(targets).length > 0) payload[group] = targets;
 	}
 	return Object.keys(payload).length > 0 ? payload : null;
-}
-
-// Family + version from the id ("claude-opus-5-5" → "Opus 5.5"); an id outside the pattern has none.
-function getModelFamilyMC(model) {
-	if (model === "inherit") return "Session model";
-	const match = MODEL_FAMILY_RE_MC.exec(model ?? "");
-	if (!match) return null;
-
-	const [, family, major, minor] = match;
-	return `${family[0].toUpperCase()}${family.slice(1)} ${minor ? `${major}.${minor}` : major}`;
-}
-
-// "Opus 5.5 ×3 · Sonnet 5 ×4" in first-seen order — the mix without counting selects by eye.
-function getModelMixMC(models) {
-	const counts = new Map();
-	for (const model of models) {
-		const family = getModelFamilyMC(model) ?? "Custom";
-		counts.set(family, (counts.get(family) ?? 0) + 1);
-	}
-	return [...counts].map(([family, n]) => `${family} ×${n}`).join(" · ");
 }
 
 // Header token = file sync ∪ any row drift — the same trigger as the banner, so the two never disagree.
