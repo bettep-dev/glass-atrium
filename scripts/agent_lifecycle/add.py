@@ -28,7 +28,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import gate_roster_sync
-from .db_utils import resolve_model_for_scope
 from .gate import GateVerdict, evaluate_gate
 from .lock import mutation_lock
 from .paths import StorePaths, trash_path
@@ -130,16 +129,11 @@ def _run_add_locked(
         raise AddRefused(str(exc)) from exc
 
     rel_md = f"agents/{req.name}.md"
-    # Auto-resolve the frontmatter `model:` from the monitor DB SAVED TARGET for
-    # this scope (DEV -> model.dev, RESEARCH -> model.research; others -> None).
-    # Fail-soft: None (DB unreachable / no row / 'inherit') omits the model line.
-    model_value = resolve_model_for_scope(req.scope)
     md_text = render_agent_md(
         name=req.name,
         domains=req.domains,
         description=req.description,
         body=req.body_md,
-        model=model_value,
     )
     # `scope` reaches the body nowhere: it decides the DEV stanza step and the
     # registry `rules` defaults, which is where per-agent rule membership lives.
