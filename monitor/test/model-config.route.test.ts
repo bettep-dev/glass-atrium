@@ -409,7 +409,7 @@ test("D3 fail-open: missing pricing SoT → GET 200 with known_models [] — nex
 
 // ----- PUT validation (AC-2 / AC-3) -------------------------------------------------
 
-test("AC-2: a model value outside the id pattern → 400 field-level error + zero writes", async () => {
+test("a model value outside the id pattern → 400 field-level error + zero writes", async () => {
   const rows = [
     { name: "upper case", value: "Claude-Opus" },
     { name: "a leading hyphen", value: "-claude-opus-4-8" },
