@@ -42,7 +42,7 @@ main() {
     printf 'usage: %s <pricing.json>\n' "${SCRIPT_NAME}" >&2
     exit 2
   }
-  local pricing="${1}" rows pins rc=0
+  local pricing="${1}" rows rc=0
   [[ -r "${pricing}" ]] || {
     printf '[%s] pricing file not readable: %s\n' "${SCRIPT_NAME}" "${pricing}" >&2
     exit 2
@@ -54,13 +54,8 @@ main() {
     printf '[%s] database unavailable (psql rc=%s) — no verdict on the pricing roster\n' "${SCRIPT_NAME}" "${rc}" >&2
     exit 4
   fi
-  # shellcheck disable=SC2310  # the status is branched on below, never left to errexit
-  pins="$(get_agent_pin_rows)" || {
-    printf '[%s] agent file unreadable — no verdict on the pricing roster\n' "${SCRIPT_NAME}" >&2
-    exit 4
-  }
   # shellcheck disable=SC2310  # its exit code is the verdict, propagated as is
-  find_unpriced_ids "${pricing}" <<<"${rows}${pins:+$'\n'}${pins}" || exit "$?"
+  find_unpriced_ids "${pricing}" <<<"${rows}" || exit "$?"
 }
 
 # Prints `<cost|config>\t<model>` rows. The session itself is read-only and time-bounded, so no
@@ -76,28 +71,8 @@ SELECT 'config', config_value FROM monitor.model_config WHERE config_key LIKE 'm
 PSQL
 }
 
-# Prints `config\t<model>` per agent file whose frontmatter has a top-level model line — the parse
-# hooks/test/test_cost_pricing.py → _find_agent_model_pins applies to the shipped tree.
-get_agent_pin_rows() {
-  local files=()
-  shopt -s nullglob
-  files=("${PRICING_ROSTER_AGENTS_DIR:-${SELF_DIR}/../agents}"/*.md)
-  shopt -u nullglob
-  ((${#files[@]} > 0)) || return 0
-  awk '
-    FNR == 1 { if ($0 != "---") nextfile; next }
-    $0 == "---" { nextfile }
-    /^model:/ {
-      value = $0
-      sub(/^model:[ \t]*["\047]?/, "", value)
-      sub(/["\047 \t].*$/, "", value)
-      printf "config\t%s\n", value
-      nextfile
-    }
-  ' "${files[@]}"
-}
-
-# stdin: the rows above. Prints each unpriced id once and exits 3; exits 2 on a rejected file.
+# stdin: the rows above; the agent pins come from hooks/lib/agent_pins.py. Prints each unpriced id
+# once and exits 3; exits 2 on a rejected file, 4 on an unreadable agent file.
 find_unpriced_ids() {
   local py_src
   py_src="$(
@@ -105,6 +80,7 @@ find_unpriced_ids() {
 import sys
 
 sys.path.insert(0, sys.argv[2])
+import agent_pins
 import pricing_loader
 
 sot, name = sys.argv[1], sys.argv[3]
@@ -122,6 +98,12 @@ for line in sys.stdin.read().splitlines():
         continue
     if not pricing_loader.is_known(model, sot_path=sot):
         unpriced.add(model)
+try:
+    pins = agent_pins.get_agent_pins(sys.argv[4])
+except (OSError, UnicodeDecodeError):
+    sys.stderr.write("[%s] agent file unreadable — no verdict on the pricing roster\n" % name)
+    sys.exit(4)
+unpriced.update(pin for pin in pins if not pricing_loader.is_known(pin, sot_path=sot))
 for model in sorted(unpriced):
     print(model)
 if unpriced:
@@ -132,7 +114,8 @@ if unpriced:
     sys.exit(3)
 PY
   )"
-  PRICING_REMOTE_DISABLE=1 python3 -I -c "${py_src}" "${1}" "${PRICING_LIB_DIR:-${SELF_DIR}/../hooks/lib}" "${SCRIPT_NAME}"
+  PRICING_REMOTE_DISABLE=1 python3 -I -c "${py_src}" "${1}" "${PRICING_LIB_DIR:-${SELF_DIR}/../hooks/lib}" "${SCRIPT_NAME}" \
+    "${PRICING_ROSTER_AGENTS_DIR:-${SELF_DIR}/../agents}"
 }
 
 main "$@"

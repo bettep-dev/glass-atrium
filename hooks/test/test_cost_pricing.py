@@ -86,6 +86,7 @@ _PARITY = json.loads(_PARITY_PATH.read_text(encoding="utf-8"))
 if str(_LIB_DIR) not in sys.path:
     sys.path.insert(0, str(_LIB_DIR))
 
+import agent_pins  # noqa: E402 — sys.path insert immediately above
 import pricing_loader  # noqa: E402 — sys.path insert immediately above
 
 # Observing the backfill batch posture (its PRICING_REMOTE_DISABLE setdefault
@@ -615,16 +616,6 @@ def _read_repo_text(rel_path):
     return (_REPO_ROOT / rel_path).read_text(encoding="utf-8")
 
 
-def _find_agent_model_pins():
-    """Frontmatter `model:` values across agents/*.md — none ship today, a future pin is caught."""
-    ids = set()
-    for body in sorted((_REPO_ROOT / "agents").glob("*.md")):
-        head = re.match(r"---\n(.*?)\n---", body.read_text(encoding="utf-8"), re.S)
-        if head:
-            ids.update(re.findall(r"^model:\s*[\"']?([^\"'\s]+)", head.group(1), re.M))
-    return ids - {"inherit"}
-
-
 def _find_worker_default_pins():
     text = _read_repo_text("scripts/lib/atrium-config.sh")
     body = text.split("atrium_resolve_worker_model() {", 1)[1].split("\n}", 1)[0]
@@ -652,7 +643,7 @@ class PinnedModelIdPricingTest(unittest.TestCase):
 
     # (source, extractor, may the source pin nothing)
     SOURCES = (
-        ("agents/*.md frontmatter", _find_agent_model_pins, True),
+        ("agents/*.md frontmatter", lambda: agent_pins.get_agent_pins(_REPO_ROOT / "agents"), True),
         ("atrium-config.sh worker default", _find_worker_default_pins, False),
         ("RETIRED_WORKER_MODEL_REPLACEMENT", _find_retired_worker_replacement_pins, False),
         ("model-config.jsx MODEL_CAP_MC", _find_model_config_catalog_pins, False),
