@@ -411,8 +411,8 @@ describe("the Status floor holds the stage glyph, word and row menu on one line"
 });
 
 describe("the select column and the stage section heads sit on the ledger's grid", () => {
-  // the shipped DocCheckboxCD; its wrapper lays out on Tailwind utilities, which the app loads from its CDN → their rules ride the page
-  const checkbox = getHtml(renderScreen((docsScreen.DocCheckboxCD as (props: unknown) => unknown)({ checked: false, onChange: () => {}, ariaLabel: "Select Plan" })) as RenderedNode);
+  // the shipped Checkbox atom; its mark lays out on Tailwind utilities, which the app loads from its CDN → their rules ride the page
+  const checkbox = getHtml(renderScreen((ui.Checkbox as (props: unknown) => unknown)({ isChecked: false, onChange: () => {}, ariaLabel: "Select Plan" })) as RenderedNode);
   // the app's preflight sizes boxes border-box → the select floor is the cell's whole width, as it renders
   const gridPage = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card"><table class="tbl" style="width: 600px;">

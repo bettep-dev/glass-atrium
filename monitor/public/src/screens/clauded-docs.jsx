@@ -1001,7 +1001,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* the edge cell's 16 + 12 split evenly (the same 28) → the checkbox sits on the cell centre */
         .tbl tr > :is(th, td).doc-checkbox-cell, .tbl.doc-ledger thead th:first-child { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
         /* C24 hit area (§7.15) — padding out to 24, the equal negative margin keeps the 16 layout box → the select floor holds */
-        .doc-checkbox-hit { padding: var(--space-1); margin: calc(-1 * var(--space-1)); cursor: pointer; }
         /* header floors by position (getLedgerColumnsCD order) — width alone gives way to min-content once the table overflows; Author and Created count from the end, past an absent Tags */
         .doc-ledger:not(.tbl--stacked) thead th:nth-child(2) { width: ${LEDGER_CD.FLOOR.status}px; min-width: ${LEDGER_CD.FLOOR.status}px; }
         .doc-ledger:not(.tbl--stacked) thead th:nth-child(3) { width: ${LEDGER_CD.FLOOR.id}px; min-width: ${LEDGER_CD.FLOOR.id}px; }
@@ -1466,9 +1465,9 @@ function DocListCardCD({
 							hasTagsColumn,
 							selectAll: (
 								/* select-all 3-state cycle: unchecked → checked → indeterminate → checked */
-								<DocCheckboxCD
-									checked={isAllSelected}
-									indeterminate={isPartialSelected}
+								<window.UI.Checkbox
+									isChecked={isAllSelected}
+									isMixed={isPartialSelected}
 									onChange={() => {
 										if (isAllSelected) onClearSelection();
 										else onSelectAll(allRowIds);
@@ -1544,9 +1543,9 @@ function DocListCardCD({
 												className="doc-checkbox-cell"
 												onClick={(e) => e.stopPropagation()}
 											>
-												<DocCheckboxCD
+												<window.UI.Checkbox
 													isRowControl
-													checked={isSelectedMulti}
+													isChecked={isSelectedMulti}
 													onChange={() => onToggleSelection(row.id)}
 													ariaLabel={`Select ${row.title}`}
 												/>
@@ -2124,9 +2123,9 @@ function GroupMembersRowsCD({
 				aria-busy={isPending ? "true" : undefined}
 			>
 				<TableCell view={view} textRole="label" className="doc-checkbox-cell" onClick={(e) => e.stopPropagation()}>
-					<DocCheckboxCD
+					<window.UI.Checkbox
 						isRowControl
-						checked={isSelectedMulti}
+						isChecked={isSelectedMulti}
 						onChange={() => onToggleSelection(member.id)}
 						ariaLabel={`Select ${member.title}`}
 					/>
@@ -2866,64 +2865,6 @@ const MODEL_CONTEXT_TAG_CD = /\[[^\]]*\]$/;
 // and reads as such; a model id renders through its display name. An unknown actor renders nowhere.
 function formatActorCD(model) {
 	return model === OPERATOR_ACTOR_CD ? "operator" : window.UI.getDisplayName("model", String(model).replace(MODEL_CONTEXT_TAG_CD, ""));
-}
-
-// DocCheckboxCD — the shared 16 .ctl-checkbox box (base.css, theme tokens, single selected state) in its ledger cell
-//   · focus-visible — global :focus-visible outline (base.css)
-//
-// Implementation 결정 (glass-atrium-design-designer 자문 4-Axis 16/20 정합):
-//   · native <input type=checkbox> 보존 — screen reader / keyboard / form submit 호환
-//   · appearance-none 으로 OS default 제거 → 시각 영역만 재구성
-//   · indeterminate 는 HTML attribute 아닌 JS property — React ref + useEffect 로 양방향 동기화
-//   · check/minus SVG inline overlay (절대 위치 + peer state 의존하지 않음 — React conditional render)
-//     ※ peer-checked 미사용 사유 — native checkbox 자체에 ::after / pseudo-element 불가 (browser 제한)
-//     → wrapper span 으로 SVG overlay 배치, checked/indeterminate 분기 React 측에서 처리
-function DocCheckboxCD({
-	checked,
-	indeterminate,
-	onChange,
-	ariaLabel,
-	onClick,
-	isRowControl = false,
-}) {
-	const { Icon, ROW_CONTROL_PROPS } = window.UI;
-	const inputRef = useRefCD(null);
-
-	// indeterminate 는 HTML attribute 가 아닌 DOM property — ref + useEffect 로 React state 동기화.
-	useEffectCD(() => {
-		if (inputRef.current) {
-			inputRef.current.indeterminate = !!indeterminate;
-		}
-	}, [indeterminate]);
-
-	return (
-		<span
-			className="relative flex items-center justify-center mx-auto"
-			style={{ width: 16, height: 16, cursor: "pointer" }}
-		>
-			{/* the label is the 24 hit area around the 16 box — a click on its padding toggles the input */}
-			<label className="inline-target doc-checkbox-hit">
-				<input
-					ref={inputRef}
-					type="checkbox"
-					checked={!!checked}
-					onChange={onChange}
-					onClick={onClick}
-					aria-label={ariaLabel}
-					{...(isRowControl ? ROW_CONTROL_PROPS : null)}
-					className="ctl-checkbox"
-				/>
-			</label>
-			{/* check SVG — checked 단독 시 표시 (indeterminate 우선) */}
-			{checked && !indeterminate && (
-				<Icon name="check" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />
-			)}
-			{/* minus SVG — indeterminate 시 표시 (체크박스 자체는 checked attribute 무시) */}
-			{indeterminate && (
-				<Icon name="minus" size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />
-			)}
-		</span>
-	);
 }
 
 // version-history (supersede chain) 섹션 — collapsible <details> default-collapsed (T-DOC-3).

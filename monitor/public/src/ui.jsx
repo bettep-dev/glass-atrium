@@ -1476,6 +1476,22 @@ function BarSearch({ label, value, onChange, placeholder, className = '' }) {
 }
 
 /**
+ * The one checkbox: the 16 .ctl-checkbox box, its check or minus mark over it, and its 24 hit area.
+ * @param isMixed - the DOM's indeterminate state, a property no attribute sets → written by ref; draws the minus
+ * @param isInLabel - the caller already draws the enclosing <label> (a whole row) → the hit area is a span, never a nested label
+ * @param isRowControl - a control inside a roving row: out of the tab order, reached by the row's arrows
+ */
+function Checkbox({ isChecked = false, isMixed = false, isInLabel = false, isRowControl = false, onChange, ariaLabel, describedBy }) {
+  const Hit = isInLabel ? 'span' : 'label';
+  const setMixed = (input) => { if (input) input.indeterminate = isMixed; };
+  return <Hit className="inline-target ctl-checkbox-hit">
+    <input ref={setMixed} type="checkbox" className="ctl-checkbox" checked={isChecked} onChange={onChange}
+      aria-label={ariaLabel} aria-describedby={describedBy} {...(isRowControl ? ROW_CONTROL_PROPS : null)} />
+    {(isChecked || isMixed) && <Icon name={isMixed ? 'minus' : 'check'} size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
+  </Hit>;
+}
+
+/**
  * Form select with its label above it; extra props (title, aria-describedby) land on the <select>.
  * @param options - { key, label, title? } — `title` = that option's tooltip
  * @param isLabelHidden - a row header already names the field on screen → the label stays for assistive tech only, on no line of its own
@@ -3120,7 +3136,7 @@ window.UI = {
   SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone, SEVERITY_RANK,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
-  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
+  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Checkbox, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
   getDisplayName, hasFieldValue, DetailField, ToneGlyph, HeadStatus, AbsentValue, EMPTY_VALUE_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,

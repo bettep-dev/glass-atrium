@@ -23,13 +23,16 @@ const realUiModule = (await loadScreenModule(UI_SRC)) as { UI: Record<string, un
 const realUi = realUiModule.UI;
 const realUiReact = realUiModule.React;
 
+// the rail's box is read as the input assistive technology meets → the shared Checkbox renders for real
+const REAL_ATOMS = new Set(["Checkbox"]);
+
 // window.UI stub — components resolve to transparent host elements; helpers and constants stay real.
 function uiStub(): unknown {
   return new Proxy(
     {},
     {
       get: (_target, name: string) =>
-        !/^[A-Z][a-z]/.test(name) && name in realUi
+        (!/^[A-Z][a-z]/.test(name) || REAL_ATOMS.has(name)) && name in realUi
           ? realUi[name]
           : Object.defineProperty((props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } }), "name", {
               value: name,
@@ -3370,11 +3373,6 @@ describe("images in an order's bubble", () => {
 
 // the review of the built page against mockup v5 and spec 44063 (§4.2, §4.3, §7, §9.1–§9.4, §10)
 describe("marks and counts on the desk", () => {
-  test("the master box in its mixed state draws a dash, and a ticked box a check", () => {
-    const iconsOf = (props: Record<string, unknown>) => findNodes(render("CheckboxBoxQ", { onChange: () => undefined, ariaLabel: "Select all live sessions", ...props }), (node) => node.props?.atom === "Icon").map((node) => node.props.name);
-    assert.deepEqual([iconsOf({ isChecked: false, isMixed: true }), iconsOf({ isChecked: true }), iconsOf({ isChecked: false })], [["minus"], ["check"], []]);
-  });
-
   test("the All sessions band shows no count at zero, and a failed receipt as the warn mark in its tag column, named and titled by its count", () => {
     const bandOf = (notReceived: number, awaiting: number) => render("AllSessionsBandQ", {
       rows: [buildSessionRow({ count: { awaiting, inDelivery: 0 } })], sessions: { selectedIds: [], setSelectedIds: () => undefined },

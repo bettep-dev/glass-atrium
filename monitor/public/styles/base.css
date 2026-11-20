@@ -64,6 +64,17 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .ctl-checkbox-mark {
 	color: rgb(var(--selected-ink));
 }
+/* the Checkbox atom's hit area → the mark centres over the box */
+.ctl-checkbox-hit {
+	position: relative;
+	justify-content: center;
+}
+/* the label form → the press area grows 4 each side, the layout box unmoved */
+label.ctl-checkbox-hit {
+	padding: var(--space-1);
+	margin: calc(-1 * var(--space-1));
+	cursor: pointer;
+}
 /* the one radio visual (C24 inline target, §7.15) — the checkbox's box drawn round, in rules of its own.
    Checked = the selected fill; an inset ring of the box's own --elev draws the dot (a drawing, not depth) */
 .ctl-radio {
