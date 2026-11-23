@@ -327,35 +327,33 @@ test("a page Retry also re-reads the harness, so a recovered harness reaches the
 });
 
 describe("the Queue nav item", () => {
-  const QUEUE_SLOT = { badge: "128", badgeTone: "warn", glyph: "⚠", source: "queue", title: "128 awaiting you, 1 deviation", description: "128 awaiting you, 1 deviation" };
+  // the slot's two facts, plain listed first → the worst-first order is what draws the warn count first
+  const QUEUE_COUNTS = {
+    awaiting: { badge: "128", source: "queue", title: "128 queue items awaiting you", description: "128 queue items awaiting you" },
+    deviations: { badge: "1", badgeTone: "warn", glyph: "⚠", source: "queue", title: "1 deviation open", description: "1 deviation open" },
+  };
   // the queue slot from its own read, beside a toned Agents numeral on the same merged nav map
-  async function renderNav(): Promise<RenderedNode> {
-    const getQueueNavBadge = () => ({ queue: { badges: [QUEUE_SLOT] }, agents: { badge: "3", badgeTone: "crit" } });
+  async function renderQueueCounts(): Promise<RenderedNode[]> {
+    const getQueueNavBadge = () => ({ queue: { badges: [QUEUE_COUNTS.awaiting, QUEUE_COUNTS.deviations] }, agents: { badge: "3", badgeTone: "crit" } });
     const { render } = await mountShell({ screens: () => ({ QueueNav: { getQueueNavBadge } }) });
-    return render();
+    const [item] = findNodes(render(), (n) => n.type === "button" && n.props.title === "Queue");
+    assert.ok(item, "the nav renders Queue");
+    return findNodes(item, (n) => classOf(n).split(" ").includes("pill"));
   }
   const classOf = (n: RenderedNode) => String(n.props.className ?? "");
-  function getNavBadge(tree: RenderedNode, label: string): RenderedNode {
-    const [item] = findNodes(tree, (n) => n.type === "button" && n.props.title === label);
-    assert.ok(item, `the nav renders ${label}`);
-    const [badge] = findNodes(item, (n) => classOf(n).split(" ").includes("pill"));
-    assert.ok(badge, `${label} carries a badge`);
-    return badge;
-  }
 
-  test("carries its count as the same tag round count atom as every other item, capped at 99+", async () => {
-    const queue = getNavBadge(await renderNav(), "Queue");
-    assert.deepEqual(classOf(queue).split(" ").sort(), ["nav-count", "pill", "pill--num", "pill--tag"]);
-    assert.match(collectText(queue), /99\+/);
+  test("carries each count as the same tag round count atom as every other item, the awaiting count capped at 99+", async () => {
+    const counts = await renderQueueCounts();
+    assert.deepEqual(counts.map((n) => classOf(n).split(" ").sort()), counts.map(() => ["nav-count", "pill", "pill--num", "pill--tag"]));
+    assert.match(collectText(counts[1]), /^99\+/);
   });
 
-  test("the deviation glyph leads its count inside the badge in the warn colour, and assistive tech hears the full description", async () => {
-    const queue = getNavBadge(await renderNav(), "Queue");
-    const [glyph] = findNodes(queue, (n) => n.type === "span" && collectText(n) === "⚠ ");
-    const [description] = findNodes(queue, (n) => classOf(n) === "sr-only");
-    assert.ok(glyph, "the glyph renders inside the badge");
-    assert.deepEqual([glyph.props["aria-hidden"], classOf(glyph)], ["true", "text-warn"]);
-    assert.equal(collectText(description), `, ${QUEUE_SLOT.description}`);
+  test("the deviation count leads with the warn glyph in its colour, the awaiting count draws none, and assistive tech hears each description", async () => {
+    const counts = await renderQueueCounts();
+    const glyphs = counts.map((count) => findNodes(count, (n) => n.props["aria-hidden"] === "true" && collectText(n) === "⚠ ").map((n) => classOf(n)));
+    const descriptions = counts.map((count) => collectText(findNodes(count, (n) => classOf(n) === "sr-only")[0]));
+    assert.deepEqual(glyphs, [["text-warn"], []]);
+    assert.deepEqual(descriptions, [`, ${QUEUE_COUNTS.deviations.description}`, `, ${QUEUE_COUNTS.awaiting.description}`]);
   });
 });
 

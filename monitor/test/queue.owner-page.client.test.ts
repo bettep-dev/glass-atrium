@@ -175,7 +175,8 @@ describe("queue nav slot", () => {
     { name: "a count never read gives no slot, so no zero that was not loaded", countState: { status: "loading" }, expected: undefined },
     { name: "an unread count shows a question mark rather than a blank badge", countState: { status: "error" }, expected: ["?"] },
     { name: "nothing awaiting and nothing deviating gives no slot", countState: ready(0, 0), expected: undefined },
-    { name: "a count with deviations shows the awaiting numeral alone", countState: ready(2, 1), expected: ["2"] },
+    { name: "deviations and items awaiting draw two counts, the deviations first", countState: ready(2, 1), expected: ["1", "2"] },
+    { name: "deviations with nothing awaiting draw the deviation count alone", countState: ready(0, 3), expected: ["3"] },
     { name: "a count answer without numbers reads as unread", countState: { status: "ready", data: { rows: [] } }, expected: ["?"] },
   ];
   for (const row of rows) {
@@ -185,13 +186,21 @@ describe("queue nav slot", () => {
     });
   }
 
-  test("the deviation glyph rides the count only while a deviation is open", () => {
-    const glyphOf = (deviations: number) =>
-      call<{ queue: { badges: Array<{ glyph?: string; description: string }> } }>("getQueueNavBadge", ready(4, deviations)).queue.badges[0];
-    assert.equal(glyphOf(0)?.glyph, undefined);
-    assert.equal(glyphOf(2)?.glyph, (realUi.TONE_GLYPH as Record<string, string>).warn);
-    assert.equal(glyphOf(2)?.description, "4 awaiting you, 2 deviations");
-  });
+  // one glyph names one number: only the deviation count is toned; each count's title is its spoken description
+  const WARN_GLYPH = (realUi.TONE_GLYPH as Record<string, string>).warn;
+  const factRows = [
+    { name: "one of each", countState: ready(1, 1), expected: [["warn", WARN_GLYPH, "1 deviation open"], [undefined, undefined, "1 queue item awaiting you"]] },
+    { name: "many of each", countState: ready(4, 2), expected: [["warn", WARN_GLYPH, "2 deviations open"], [undefined, undefined, "4 queue items awaiting you"]] },
+    { name: "a failed read", countState: { status: "error" }, expected: [[undefined, undefined, "Queue count unavailable"]] },
+  ];
+  for (const row of factRows) {
+    test(`each queue nav count names its own fact: ${row.name}`, () => {
+      type Count = { badgeTone?: string; glyph?: string; title: string; description: string };
+      const { badges } = call<{ queue: { badges: Count[] } }>("getQueueNavBadge", row.countState).queue;
+      assert.deepEqual(badges.map((b) => [b.badgeTone, b.glyph, b.description]), row.expected);
+      assert.deepEqual(badges.map((b) => b.title), badges.map((b) => b.description));
+    });
+  }
 
   // a background tab shows what waits; a count of nothing, or one not read, adds nothing to the title
   const titleRows = [

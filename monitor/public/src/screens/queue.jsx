@@ -167,13 +167,13 @@ const PNG_SIGNATURE_Q = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const UPLOADS_Q = new Map();
 
 /**
- * Queue nav slot: awaiting count plus a deviation glyph when any deviation is open.
- * Never read → no key (no zero that was not loaded) · read failed → "?" so the badge never goes blank.
+ * Queue nav slot: one count per fact — deviations open (warn) and items awaiting you (plain), each only above zero.
+ * Never read, or nothing to count → no key (no zero that was not loaded) · read failed → "?" so the badge never goes blank.
  * @param countState - shell store of /api/queue/count
  */
 function getQueueNavBadge(countState) {
-	const count = getCountBadgeQ(countState);
-	return count === null ? {} : { queue: { badges: [count] } };
+	const badges = getCountBadgesQ(countState);
+	return badges?.length ? { queue: { badges } } : {};
 }
 
 /**
@@ -187,18 +187,19 @@ function getQueueTitle(countState, appTitle) {
 	return Number.isInteger(awaiting) && awaiting > 0 ? `(${awaiting}) ${title}` : title;
 }
 
-// count slot alone: never read, or nothing awaiting and nothing deviating → null · failed or numberless read → "?"
-function getCountBadgeQ(countState) {
+// the slot's counts alone: never read → null · failed or numberless read → one plain "?" · otherwise each count above zero
+function getCountBadgesQ(countState) {
 	if (countState?.status !== "ready" && countState?.status !== "error") return null;
 	const { awaiting, deviations } = countState.data ?? {};
 	if (countState.status === "error" || !Number.isInteger(awaiting) || !Number.isInteger(deviations)) {
-		return { badge: "?", title: "Queue count unavailable", description: "queue count unavailable" };
+		return [{ badge: "?", source: "queue", title: "Queue count unavailable", description: "Queue count unavailable" }];
 	}
-	if (awaiting === 0 && deviations === 0) return null;
-	const parts = [`${awaiting} awaiting you`, deviations > 0 && `${deviations} ${deviations === 1 ? "deviation" : "deviations"}`];
-	const title = parts.filter(Boolean).join(", ");
-	const glyph = deviations > 0 ? window.UI.TONE_GLYPH.warn : undefined;
-	return { badge: String(awaiting), badgeTone: "warn", glyph, source: "queue", title, description: title };
+	const counts = [
+		deviations > 0 && { badge: String(deviations), badgeTone: "warn", glyph: window.UI.TONE_GLYPH.warn, description: `${deviations} ${deviations === 1 ? "deviation" : "deviations"} open` },
+		awaiting > 0 && { badge: String(awaiting), description: `${awaiting} ${awaiting === 1 ? "queue item" : "queue items"} awaiting you` },
+	];
+	// title = description → hover and assistive tech read the same words
+	return counts.filter(Boolean).map((count) => ({ ...count, source: "queue", title: count.description }));
 }
 
 /**
