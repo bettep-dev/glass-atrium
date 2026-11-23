@@ -1,4 +1,4 @@
-// Display atoms: the two empty states, the machine string's two forms, the page header's one-line slots, the pagination bar, the stat row, the card head Status, the low-sample mark and whole day tokens.
+// Display atoms: the two empty states, the machine string's two forms, the page header's one-line slots, the pagination bar, the stat row, the stat notes, the card head Status, the low-sample mark and whole day tokens.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -195,6 +195,23 @@ describe("stat row", () => {
       assert.equal(collectText(getValues(tree)[0]).trim(), row.text);
     });
   }
+});
+
+describe("stat notes", () => {
+  test("each stat's note is one paragraph led by its label in ink, in the caller's order", () => {
+    const tree = render("StatNotes", { stats: [
+      { key: "compiled", label: "Compiled last cycle", info: "13 saved originals are waiting and the last cycle compiled none." },
+      { label: "Library notes", info: "The library snapshot is from 20 Nov." },
+    ] });
+    const notes = findNodes(tree, (n) => n.type === "p");
+    const leads = notes.map((n) => n.children[0] as RenderedNode);
+    assert.deepEqual(leads.map((n) => collectText(n)), ["Compiled last cycle", "Library notes"]);
+    assert.ok(leads.every((n) => /\btext-ink\b/.test(String(n.props.className))), "the label is in ink");
+    assert.deepEqual(notes.map((n) => collectText(n).replace(/\s+/g, " ")), [
+      "Compiled last cycle — 13 saved originals are waiting and the last cycle compiled none.",
+      "Library notes — The library snapshot is from 20 Nov.",
+    ]);
+  });
 });
 
 describe("machine string", () => {

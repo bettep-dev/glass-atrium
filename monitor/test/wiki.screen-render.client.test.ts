@@ -907,7 +907,7 @@ test("stat context lines wrap instead of cutting the figure's words, and each ke
   }
 });
 
-test("detail moved off the stat captions opens from the card's one info trigger, each note led by its stat label", async () => {
+test("detail moved off the stat captions opens from the card's one info trigger as the shared stat notes, one per stat with detail", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const band = renderScreen(
@@ -920,10 +920,11 @@ test("detail moved off the stat captions opens from the card's one info trigger,
   );
   assert.deepEqual(findNodes(band, (n) => n.props.atom === "CardInfo"), [], "no per-stat trigger");
   const [card] = findNodes(band, (n) => n.props.atom === "Card");
-  const notes = findNodes(renderScreen(card.props.info), (n) => n.type === "p");
-  assert.equal(notes.length, 2);
-  assert.deepEqual(notes.map((n) => collectText(n.children[0] ?? null)), ["Compiled last cycle", "Library notes"]);
-  assert.match(collectText(notes[0]), /13 saved originals are waiting and the last cycle compiled none/);
+  const [notes] = findNodes(renderScreen(card.props.info), (n) => n.props.atom === "StatNotes");
+  assert.ok(notes, "the shared stat-notes body");
+  const stats = notes.props.stats as Array<{ label: string; info: string }>;
+  assert.deepEqual(Array.from(stats, (stat) => stat.label), ["Compiled last cycle", "Library notes"]);
+  assert.match(stats[0].info, /13 saved originals are waiting and the last cycle compiled none/);
 });
 
 test("a steady band carries no info trigger, since no stat has detail past its caption", async () => {

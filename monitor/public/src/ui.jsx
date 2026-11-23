@@ -652,6 +652,19 @@ function StatRow({ stats, className = '' }) {
 }
 
 /**
+ * A stat card's one ⓘ drawer body: the detail past each stat's context line, each note led by its stat label in ink.
+ * @param stats - each { label, info, key? }, only the stats that carry a note
+ */
+function StatNotes({ stats }) {
+  return <>
+    {stats.map((stat) => <p key={stat.key ?? stat.label}>
+      <strong className="font-medium text-ink">{stat.label}</strong>
+      {` — ${stat.info}`}
+    </p>)}
+  </>;
+}
+
+/**
  * The alarm-size tone mark: the alarm row's glyph in a one-line box, hidden from assistive tech, its word read before what follows.
  * @param label - the word a screen reader hears first; defaults to the tone's severity word
  * @param title - hover text on the glyph
@@ -3308,7 +3321,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, StatRow, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
+  Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, StatRow, StatNotes, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone, SEVERITY_RANK,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,

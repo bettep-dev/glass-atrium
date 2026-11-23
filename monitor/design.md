@@ -180,7 +180,7 @@
 | 공개 | `Disclosure` · `DisclosureButton` | `.disclosure` (also on a `summary`) · `.card.is-collapsed` |
 | 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
-| 수치 | `StatRow` · `ToneGlyph` · `HeadStatus` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` · `.tone-glyph` · `.one-line-box` |
+| 수치 | `StatRow` · `StatNotes` · `ToneGlyph` · `HeadStatus` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` · `.tone-glyph` · `.one-line-box` |
 | 표 | `Table` · `TableHead` | `.tbl` |
 | 페이지 | `PageHeader` · `SectionLabel` · `EmptyState` | `.section-label` · `.placeholder` (deprecated, §12.5) |
 | 신선도 | `FreshnessStamp` · `RefreshButton` | `.fs-meta` sans tnum `--faint` (§12.2) · `.btn.ghost.sm` |
@@ -1111,6 +1111,7 @@
   - A label holding its counting rule's ⓘ (`CardInfo`) stays one line tall: the trigger sits in a box one label line tall, its 24 target a hit area that adds no height, so every label's text shares one top.
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
   - A stat that opens a drill-down is a Link-styled value, not a button tile.
+  - Detail past a stat's context line goes to the card's one ⓘ, its body `StatNotes({ stats })`: one paragraph per stat with a note, its label in ink, then the note. Callers: Wiki Health (`wiki.jsx` → `WikiTileBand`).
 - **`ToneGlyph({ tone, label, title })`** (`ui.jsx`): the alarm-size tone mark with its screen-reader word — the alarm row's glyph in `.one-line-box.tone-glyph`, a box one text line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Callers: a firing stat's value (`dashboard.jsx` → `StatValue` · `cost.jsx` → `SpendStatValueC`) · `HeadStatus` · Learning's reject-rate headline and candidate rows (`improvement.jsx` → `RejectRateHeadlineI` · `CandidateRowI`); only on the value line (`.stat-value`) does it carry a trailing `--gap-label-inline`.
 - **`HeadStatus({ tone, className, children })`** (`ui.jsx`): a card head's own Status in the head's sub slot — `ToneGlyph` then the words, `--fs-meta` dim, `data-role="head-status"`; `className` sets the glyph-to-words flex gap (default `gap-label-inline`). Consumers: System map Part health (`architecture.jsx` → `PartHealthBlockAR`, the row status atom's gap) · Learning board heads (`improvement.jsx` → `HeadStatusI`, inside its mounted live region).
 - Rules:

@@ -481,7 +481,7 @@ function describeSnapshotAgeW(runDate) {
 // Steady state carries no tint (the last-run context still names the outcome); only an actionable state marks its value.
 
 function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, shared, onRetry }) {
-	const { Card, StatRow } = window.UI;
+	const { Card, StatRow, StatNotes } = window.UI;
 	const tiles = useMemoW(
 		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at),
 		[summaryState, indexState, backlogState, cyclesState, at],
@@ -505,7 +505,7 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 					onRetry={onRetry}
 				/>
 			)}
-			<Card title="Health" info={details.length > 0 && <WikiStatDetailsW tiles={details} />} infoLabel="How these figures are read">
+			<Card title="Health" info={details.length > 0 && <StatNotes stats={details} />} infoLabel="How these figures are read">
 				<div aria-busy={tiles.some((tile) => tile.state === "loading") ? "true" : undefined}>
 					<StatRow stats={tiles.map(buildStatW)} />
 				</div>
@@ -520,20 +520,6 @@ function readTileBandFailuresW(summaryState, indexState) {
 		{ state: summaryState, feeder: WIKI_FEEDERS.summary, label: "daily cycle summary" },
 		{ state: indexState, feeder: WIKI_FEEDERS.notesByType, label: "search index" },
 	].filter((f) => window.UI.getRegionView(f.state) === "error");
-}
-
-// detail past the 40-char context cap → the card's one ⓘ, each note led by its stat label
-function WikiStatDetailsW({ tiles }) {
-	return (
-		<>
-			{tiles.map((tile) => (
-				<p key={tile.key}>
-					<strong className="font-medium text-ink">{tile.label}</strong>
-					{` — ${tile.info}`}
-				</p>
-			))}
-		</>
-	);
 }
 
 // tile model → one StatRow stat; the full context line rides its title when the caption is cut short
