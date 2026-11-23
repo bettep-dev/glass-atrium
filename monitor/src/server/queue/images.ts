@@ -10,7 +10,7 @@ import { assertPathInsideRoot } from "../clauded-docs/storage.js";
 import { getPrisma } from "../db.js";
 import { errnoCode } from "../errno.js";
 import { QueueRequestError } from "./errors.js";
-import { getImageFacts } from "./image-format.js";
+import { PIXEL_MAX, getImageFacts, isWithinPixelMax } from "./image-format.js";
 
 export const IMAGE_BYTES_MAX = 10 * 1024 * 1024;
 /** An upload no send, reply or answer claimed within this window: refused by a send, deleted by the sweep. */
@@ -67,11 +67,15 @@ export function getQueueImageDir(gaRoot: string): string {
  * Stores one upload: type and pixel size from its bytes, file `<random id>.<extension>` (owner-only), then its row.
  * Room check + write + row under one transaction lock → concurrent uploads cannot both pass the unclaimed cap.
  * @throws QueueRequestError 415 when the bytes hold none of the four image types
+ * @throws QueueRequestError 422 when the header declares a canvas past PIXEL_MAX
  * @throws QueueRequestError 429 when the upload would pass UNCLAIMED_IMAGES_MAX
  */
 export async function createImage(imageDir: string, bytes: Buffer, name: string): Promise<ImageView> {
   const facts = getImageFacts(bytes);
   if (facts === null) throw new QueueRequestError(415, "unsupported_image", "only PNG, JPEG, WebP or GIF images are taken");
+  if (!isWithinPixelMax(facts)) {
+    throw new QueueRequestError(422, "image_too_large", `an image may be at most ${PIXEL_MAX.side} pixels a side and ${PIXEL_MAX.area / 1_000_000} megapixels`);
+  }
   const id = randomUUID();
   const filePath = getImagePath(imageDir, id, facts.type);
   await mkdir(imageDir, { recursive: true, mode: 0o700 });

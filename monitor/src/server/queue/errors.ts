@@ -1,6 +1,6 @@
 // Queue failures the route layer maps onto an HTTP status itself; any other error is treated as a DB failure.
 
-export type QueueRequestStatus = 400 | 403 | 404 | 409 | 415 | 429;
+export type QueueRequestStatus = 400 | 403 | 404 | 409 | 415 | 422 | 429;
 
 export class QueueRequestError extends Error {
   constructor(

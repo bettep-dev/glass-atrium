@@ -1,4 +1,4 @@
-// Owner images on orders, report replies and decision answers: upload (type by content, size, page origin), serve
+// Owner images on orders, report replies and decision answers: upload (type by content, byte size, pixel bounds, page origin), serve
 // (image-only headers), the link from a send, reply or answer to its images (count, reuse, age), the views that return them, the session-side paths.
 // Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/queue.images.route.test.ts
 
@@ -182,6 +182,93 @@ describe("image upload", () => {
     for (const url of ["/api/queue/owner/images", `/api/queue/owner/images?name=${encodeURIComponent("a\nb.png")}`]) {
       const response = await app.inject({ method: "POST", url, headers: { host: HOST, "content-type": "image/png", ...SAME_ORIGIN }, payload: IMAGE.png });
       assert.equal(response.statusCode, 400, `${url}: ${response.body}`);
+    }
+  });
+});
+
+// Small bodies declaring a large canvas: the store reads the header alone, so no large file is needed
+describe("pixel bounds", () => {
+  function buildPng(width: number, height: number): Buffer {
+    const bytes = Buffer.from(IMAGE.png);
+    bytes.writeUInt32BE(width, 16);
+    bytes.writeUInt32BE(height, 20);
+    return bytes;
+  }
+
+  function buildJpeg(width: number, height: number): Buffer {
+    const bytes = Buffer.from(IMAGE.jpeg);
+    const frame = bytes.indexOf(Buffer.from([0xff, 0xc0]));
+    bytes.writeUInt16BE(height, frame + 5);
+    bytes.writeUInt16BE(width, frame + 7);
+    return bytes;
+  }
+
+  // GIF89a, 2-colour table, NETSCAPE2.0 loop, two 1 × 1 frames
+  function buildAnimatedGif(width: number, height: number): Buffer {
+    const screen = Buffer.alloc(13);
+    screen.write("GIF89a", 0, "latin1");
+    screen.writeUInt16LE(width, 6);
+    screen.writeUInt16LE(height, 8);
+    screen.writeUInt8(0x80, 10);
+    const loop = Buffer.concat([Buffer.from([0x21, 0xff, 0x0b]), Buffer.from("NETSCAPE2.0", "latin1"), Buffer.from([0x03, 0x01, 0x00, 0x00, 0x00])]);
+    const frame = Buffer.from([0x21, 0xf9, 0x04, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0x02, 0x02, 0x44, 0x01, 0x00]);
+    return Buffer.concat([screen, Buffer.from([0, 0, 0, 0xff, 0xff, 0xff]), loop, frame, frame, Buffer.from([0x3b])]);
+  }
+
+  // VP8X with the animation flag, ANIM, two ANMF frames each holding the 1 × 1 lossless bitstream
+  function buildAnimatedWebp(width: number, height: number): Buffer {
+    const canvas = Buffer.alloc(18);
+    canvas.write("VP8X", 0, "latin1");
+    canvas.writeUInt32LE(10, 4);
+    canvas.writeUInt8(0x02, 8);
+    canvas.writeUIntLE(width - 1, 12, 3);
+    canvas.writeUIntLE(height - 1, 15, 3);
+    const anim = Buffer.alloc(14);
+    anim.write("ANIM", 0, "latin1");
+    anim.writeUInt32LE(6, 4);
+    const bitstream = IMAGE.webp.subarray(12);
+    const frame = Buffer.alloc(24);
+    frame.write("ANMF", 0, "latin1");
+    frame.writeUInt32LE(16 + bitstream.length, 4);
+    frame.writeUIntLE(100, 20, 3);
+    const body = Buffer.concat([Buffer.from("WEBP", "latin1"), canvas, anim, frame, bitstream, frame, bitstream]);
+    const riff = Buffer.alloc(8);
+    riff.write("RIFF", 0, "latin1");
+    riff.writeUInt32LE(body.length, 4);
+    return Buffer.concat([riff, body]);
+  }
+
+  test("an upload whose header declares a side past 16,384 or an area past 50 megapixels is refused and nothing is stored", async () => {
+    const refused = [
+      { name: "a PNG one pixel wider than a side may be", bytes: buildPng(16_385, 1), declared: "image/png" },
+      { name: "a PNG one pixel taller than a side may be", bytes: buildPng(1, 16_385), declared: "image/png" },
+      { name: "a JPEG one pixel wider than a side may be", bytes: buildJpeg(16_385, 2), declared: "image/jpeg" },
+      { name: "a PNG with both sides inside whose area passes", bytes: buildPng(10_000, 5_001), declared: "image/png" },
+      { name: "a PNG wider than the int4 pixel column", bytes: buildPng(0x80000000, 1), declared: "image/png" },
+      { name: "an animated GIF whose canvas passes a side", bytes: buildAnimatedGif(16_385, 1), declared: "image/gif" },
+      { name: "an animated WebP whose canvas passes the area", bytes: buildAnimatedWebp(16_384, 16_384), declared: "image/webp" },
+    ];
+    for (const row of refused) {
+      const before = getStoredNames().length;
+      const response = await upload(row.bytes, "plan.png", row.declared);
+      assert.equal(response.statusCode, 422, `${row.name}: ${response.body}`);
+      assert.equal(response.json().error, "image_too_large", row.name);
+      assert.equal(getStoredNames().length, before, row.name);
+    }
+  });
+
+  test("an upload at the side or the area bound is stored with its header's canvas, an animation's included", async () => {
+    const taken = [
+      { name: "a PNG at the side bound", bytes: buildPng(16_384, 3_051), declared: "image/png", type: "png", width: 16_384, height: 3_051 },
+      { name: "a PNG at the area bound", bytes: buildPng(10_000, 5_000), declared: "image/png", type: "png", width: 10_000, height: 5_000 },
+      { name: "an animated GIF at the area bound", bytes: buildAnimatedGif(10_000, 5_000), declared: "image/gif", type: "gif", width: 10_000, height: 5_000 },
+      { name: "an animated WebP at the side bound", bytes: buildAnimatedWebp(16_384, 3_051), declared: "image/webp", type: "webp", width: 16_384, height: 3_051 },
+    ];
+    for (const row of taken) {
+      const response = await upload(row.bytes, "plan.png", row.declared);
+      assert.equal(response.statusCode, 201, `${row.name}: ${response.body}`);
+      const view = response.json();
+      assert.deepEqual({ type: view.type, width: view.width, height: view.height }, { type: row.type, width: row.width, height: row.height }, row.name);
     }
   });
 });

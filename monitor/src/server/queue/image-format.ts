@@ -11,8 +11,13 @@ export interface ImageFacts {
 
 type PixelSize = Pick<ImageFacts, "width" | "height">;
 
-// queue_images.width / height are int4
-const PIXEL_MAX = 0x7fffffff;
+/**
+ * Canvas an upload may declare → a phone drawing the thumbnails or the viewer, or a session reading the file, never decodes past it.
+ * Bounds the int4 queue_images.width / height too. Animated GIF and WebP pass: every frame lies on this canvas, IMAGE_BYTES_MAX bounds the frame count,
+ * and a browser decodes the frames into one canvas-sized buffer.
+ */
+export const PIXEL_MAX = { side: 16_384, area: 50_000_000 } as const;
+
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 // Start-of-frame markers carrying the frame size (C4 DHT, C8 JPG, CC DAC excluded)
 const JPEG_FRAME_MARKERS = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
@@ -24,13 +29,13 @@ const READERS: ReadonlyArray<(bytes: Buffer) => ImageFacts | null> = [readPng, r
 export function getImageFacts(bytes: Buffer): ImageFacts | null {
   for (const read of READERS) {
     const facts = read(bytes);
-    if (facts !== null) return isPixelSize(facts) ? facts : null;
+    if (facts !== null) return facts.width > 0 && facts.height > 0 ? facts : null;
   }
   return null;
 }
 
-function isPixelSize(size: PixelSize): boolean {
-  return size.width > 0 && size.height > 0 && size.width <= PIXEL_MAX && size.height <= PIXEL_MAX;
+export function isWithinPixelMax(size: PixelSize): boolean {
+  return size.width <= PIXEL_MAX.side && size.height <= PIXEL_MAX.side && size.width * size.height <= PIXEL_MAX.area;
 }
 
 function readPng(bytes: Buffer): ImageFacts | null {
