@@ -495,10 +495,13 @@
 - **anatomy** = flex column, head(고정) · body(남은 높이) · foot(하단 고정):
   - `.card`: `--elev` fill · 1px `--line` · `--radius-card` 12 · `overflow: hidden` · shadow · inset 없음.
   - `.card-head`: 한 줄 · min-height `--card-head-h` 48 · padding `4px` × `--card-pad` · gap 8×12 · 하단 1px `--line`. 컨트롤이 안 들어갈 때만 wrap.
-  - `.card-body`: padding `--card-pad` 16 · `flex: 1 1 auto` · `.flush` = padding 0. `max-height: 70vh` 내부 스크롤은 **혼자 놓인 무크기 또는 L 카드에만** — stretched row · S · M 카드는 스크롤 없이 자란다.
+  - `.card-body`: padding `--card-pad` 16 · `flex: 1 1 auto` · `.flush` = padding 0 (`.sub-card.flush` the same rule). `max-height: 70vh` 내부 스크롤은 **혼자 놓인 무크기 또는 L 카드에만** — stretched row · S · M 카드는 스크롤 없이 자란다.
+    - `.card--fill > .card-body`: the body hands its whole box to one child that sizes or pans itself (a diagram canvas) → `flex: 1` column · no `max-height` cap · no scroller of its own.
+  - `.card-bar` (`Card` `bar`): between head and body · padding 8 × `--card-pad`. `.card--bar-flush > .card-bar` = padding 0 + 1px `--line` below → a bar whose content carries its own inset (a full-width strip).
   - `.card-foot`: `margin-top: auto` · min-height `--row-h` 40 · `--fs-meta` `--dim` · 상단 1px `--line`. 내용 = `Show all N` · `Other` · footnote 1줄 중 하나.
 - **head 내용**:
   - title (`.card-title`, h2): `--fs-title` 600 · -0.005em · ellipsis.
+    - `CardHead` `isCompact` → `.card-head--compact`: a viewer's thin header, the title one step down at `--fs-control`.
   - meta (`.card-sub`): `--fs-meta` · `--dim` · Pretendard · 1줄 ellipsis · 문자열 meta 엔 `CardHead` 가 `title` 툴팁. `contain: inline-size` → 컨트롤 wrap 전에 meta 가 먼저 ellipsis · `.is-wrap` = 구조적/인터랙티브 meta 의 opt-out.
   - ⓘ (`CardInfo`): `btn ghost sm icon` 32×32 · `aria-label` = `infoLabel` (기본 "How this is counted") · `aria-describedby` = 제목 id · `aria-haspopup="dialog"` → `DetailSurface` drawer.
   - actions: 우측 정렬 (ⓘ → 컨트롤 순).
@@ -628,6 +631,7 @@
 
 - `.placeholder` (deprecated for `EmptyState`): borderless · no fill · padding `--card-pad` · `--ink` `--fs-control` · 좌측 정렬. Two empty states: §12.5.
 - `EmptyState`: message 1줄 (원인) + 선택 hint (다음 단계) + 선택 action (재시도 버튼).
+  - `.placeholder--flush-inline` (`EmptyState` `className`): padding-inline 0 → inside a section already on the card inset, the message lines up with the section's own text.
 - 가짜 SVG 일러스트 · 더미 데이터 금지. 실 자산은 사용자에게 요청.
 
 ### 7.11 레이아웃 — `SplitRow` · `SplitColumn` · 간격 그리드
