@@ -3510,6 +3510,32 @@ describe("images in an order's bubble", () => {
   for (const row of steps) test(`viewer keys: ${row.name}`, () => assert.equal(call("getSteppedIndexQ", row.index, 3, row.key), row.next));
 });
 
+// spec §7, §9.8 → On an answer → Afterwards: the images the session received, under Your answer, on the sheet in delivery and once handled
+describe("images on an answer", () => {
+  const images = [0, 1].map((index) => ({ id: IMAGE_ID[index], name: `shot-${index + 1}.png`, type: "png", bytes: 1258291, width: 2880, height: 1800 }));
+  const answered = (overrides: Record<string, unknown>) => buildItem({ status: "answered", answer: { code: "R1", text: "after the deploy" }, answeredAt: "2026-11-12T12:26:40.118Z", attachments: images, ...overrides });
+  const reference = "Reference only — not part of the approval.";
+
+  const rows = [
+    { name: "a plain decision's answer shows its thumbnails with no reference line", item: answered({}), opens: ["Open image 1 of 2: shot-1.png", "Open image 2 of 2: shot-2.png"], hasReference: false },
+    { name: "an approval's answer shows its thumbnails and the reference line", item: answered({ isApprovalClass: true }), opens: ["Open image 1 of 2: shot-1.png", "Open image 2 of 2: shot-2.png"], hasReference: true },
+    { name: "an answer with no images draws no row and no reference line", item: answered({ isApprovalClass: true, attachments: [] }), opens: [], hasReference: false },
+  ];
+  for (const row of rows) {
+    test(`under Your answer: ${row.name}`, () => {
+      const tree = render("YourAnswerQ", { item: row.item });
+      const opens = findNodes(tree, (node) => node.type === "button" && /^Open image /.test(String(node.props["aria-label"])));
+      assert.deepEqual([opens.map((node) => node.props["aria-label"]), findNodes(tree, (node) => node.type === "img").map((node) => node.props.src), collectText(tree).includes(reference)],
+        [row.opens, row.opens.map((_, index) => `/api/queue/owner/images/${IMAGE_ID[index]}`), row.hasReference]);
+    });
+  }
+
+  test("an answered decision's images ride its row's title and accessible name, its fact column unchanged", () => {
+    const item = answered({});
+    assert.deepEqual(call("getRowCellsQ", { item, copies: [item] }, false), { tags: [], fact: "Answer R1", extras: ["2 images"] });
+  });
+});
+
 // the review of the built page against mockup v5 and spec 44063 (§4.2, §4.3, §7, §9.1–§9.4, §10)
 describe("marks and counts on the desk", () => {
   test("the All sessions band shows no count at zero, and a failed receipt as the warn mark in its tag column, named and titled by its count", () => {

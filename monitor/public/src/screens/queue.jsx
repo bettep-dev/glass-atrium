@@ -102,6 +102,8 @@ const ANSWER_SIGNAL_LABEL_Q = {
 	before_record: "before answers were recorded",
 };
 const OUTSIDE_ANSWER_LABEL_Q = "Answered outside the Queue page. The monitor has no record of it.";
+// an approval's images inform, never widen, what the approval covers: the item's text and the chosen option (spec §6, §7)
+const REFERENCE_LINE_Q = "Reference only — not part of the approval.";
 
 // targets per send: the send route refuses more (schemas.ts → messageBodySchema; the page test binds the two)
 const MESSAGE_Q = { MAX_TARGETS: 20 };
@@ -1727,7 +1729,7 @@ function getPauseGlyphQ() {
 /**
  * A list row's cells (spec §4.2, §4.6): `tags` — the Approval tag, receipt counts worst first, or a done item's kind;
  * `fact` — one short fact, a done item's how it ended, or null;
- * `extras` — the account, a start directory's mark and an order's images, in the row's title and accessible name only.
+ * `extras` — the account, a start directory's mark and an order's or an answer's images, in the row's title and accessible name only.
  */
 function getRowCellsQ(row, isAccountShown) {
 	const { item, copies } = row;
@@ -1754,7 +1756,7 @@ function getEndQ(item) {
 }
 
 function getImagesWordQ(item) {
-	const images = item.kind === "decision" ? 0 : item.attachments?.length ?? 0;
+	const images = item.attachments?.length ?? 0;
 	return images > 0 && `${images} ${images === 1 ? "image" : "images"}`;
 }
 
@@ -2140,14 +2142,20 @@ function OptionRowQ({ itemId, option, isRecommended, isChecked, onPick }) {
 	);
 }
 
+// the images are the item's own links → what the session received, never the draft (spec §7)
 function YourAnswerQ({ item }) {
 	const { ProseText } = window.UI;
+	const [viewer, setViewer] = useStateQ(null);
 	const option = (item.options ?? []).find((candidate) => candidate.code === item.answer?.code);
+	const images = item.attachments ?? [];
 	return (
 		<div>
 			<p className="queue-label">Your answer</p>
 			{option && <p className="queue-answer">{`${option.code} · ${option.label}`}</p>}
 			{item.answer?.text && <ProseText text={item.answer.text} />}
+			{images.length > 0 && <ImageRowQ images={images} onOpenImage={(_, index) => setViewer({ index })} />}
+			{item.isApprovalClass && images.length > 0 && <p className="fs-meta text-dim queue-answer-reference">{REFERENCE_LINE_Q}</p>}
+			{viewer && <ImageViewerQ images={images} index={viewer.index} onStep={(index) => setViewer({ index })} onClose={() => setViewer(null)} />}
 		</div>
 	);
 }
@@ -2264,7 +2272,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 /** A decision's own foot lines `{ head, trayNote, approvalId, tray }`: the approval line on an approval, the tray line wherever the box takes images. */
 function getDecisionLinesQ(item, draft, tray, fieldId) {
 	const approvalId = item.isApprovalClass ? `queue-approval-${item.id}` : undefined;
-	const reference = item.isApprovalClass && (tray?.shots.length ?? 0) > 0 ? <span className="text-dim">Reference only — not part of the approval.</span> : null;
+	const reference = item.isApprovalClass && (tray?.shots.length ?? 0) > 0 ? <span className="text-dim">{REFERENCE_LINE_Q}</span> : null;
 	return {
 		head: approvalId ? <ApprovalLineQ id={approvalId} name={item.session.name} /> : null,
 		trayNote: tray ? <ComposerNoteQ error={draft.imageError} tray={tray} fieldId={fieldId} rest={reference} /> : null,
@@ -2872,11 +2880,7 @@ function OrderBubbleQ({ text, images = [], onOpenImage, isPlain = false }) {
 		<>
 			<div className={`queue-bubble${isPlain ? " is-plain" : ""}${isLong && !isFull ? " is-clamped" : ""}`} style={{ "--queue-clamp-lines": ORDERS_Q.CLAMP_LINES }}>
 				{isPlain ? <p className="prose-text prose-text--compact">{text}</p> : <ProseText text={text} isCompact />}
-				{images.length > 0 && (
-					<div className="queue-bubble-images">
-						{images.map((image, index) => <BubbleImageQ key={image.id} image={image} label={`Open image ${index + 1} of ${images.length}: ${image.name}`} onOpen={() => onOpenImage(images, index)} />)}
-					</div>
-				)}
+				{images.length > 0 && <ImageRowQ images={images} onOpenImage={onOpenImage} />}
 			</div>
 			{isLong && (
 				<details className="queue-order-more" onToggle={(event) => setFull(event.currentTarget.open)}>
@@ -2884,6 +2888,15 @@ function OrderBubbleQ({ text, images = [], onOpenImage, isPlain = false }) {
 				</details>
 			)}
 		</>
+	);
+}
+
+// an order's or an answer's 96 thumbnails, each opening the viewer at its place among them
+function ImageRowQ({ images, onOpenImage }) {
+	return (
+		<div className="queue-bubble-images">
+			{images.map((image, index) => <BubbleImageQ key={image.id} image={image} label={`Open image ${index + 1} of ${images.length}: ${image.name}`} onOpen={() => onOpenImage(images, index)} />)}
+		</div>
 	);
 }
 

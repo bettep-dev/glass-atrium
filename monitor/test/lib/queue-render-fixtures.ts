@@ -216,6 +216,7 @@ const ANSWERED_DECISION = buildItem(108, "aidl", {
     { code: "R2", label: "별도 문서로", pros: "명세 화면이 짧게 남는다", cons: "두 곳을 함께 고쳐야 한다" },
   ],
   answer: { code: "R1", text: null }, answerRecord: { route: "answer", signal: "fetch_metadata" },
+  attachments: IMAGES.slice(0, 2).map((image) => image.view),
 });
 
 const YESTERDAY_18_KST_MINUTES = 21 * 60;
@@ -284,7 +285,7 @@ export const DONE_IDS = { answered: 801, read: 802, withdrawn: 803, replied: 804
 const DONE_ITEMS = [
   buildItem(DONE_IDS.answered, "gersona", {
     ...DECISIONS[0], id: DONE_IDS.answered, status: "delivered", answer: { code: "R1", text: null }, answeredAt: getAt(3), closedAt: getAt(3), deliveredAt: getAt(2),
-    answerRecord: { route: "answer", signal: "fetch_metadata" },
+    answerRecord: { route: "answer", signal: "fetch_metadata" }, attachments: IMAGES.slice(1, 3).map((image) => image.view),
   }),
   buildItem(DONE_IDS.read, "atrium", { kind: "report", status: "seen", askedAt: getAt(75), closedAt: getAt(60), title: "배포 65 완료: 모니터 재시작, 화면 점검 통과", body: "- 모니터를 다시 띄우고 화면 다섯 개를 점검했습니다." }),
   buildItem(DONE_IDS.withdrawn, "yoaida", { status: "withdrawn", askedAt: getAt(27 * 60), closedAt: getAt(26 * 60), title: "마이그레이션 순서: 스키마 먼저 vs 데이터 먼저", options: [{ code: "R1", label: "스키마 먼저", pros: null, cons: null }] }),

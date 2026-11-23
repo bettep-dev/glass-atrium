@@ -293,7 +293,7 @@ const BUTTON_STATES: CloseUpState[] = [
   { nn: "29", name: "buttons-rest-foot", closeUp: SHEET_FOOT, setUp: (page) => selectRow(page, 103) },
   ...[
     { rank: "icon", closeUp: SHEET_HEAD, target: NEXT_ITEM },
-    { rank: "quiet", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.ghost` },
+    { rank: "quiet", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .queue-note > .btn.ghost` },
     { rank: "primary", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.primary` },
   ].flatMap(getRankCloseUps),
 ];
@@ -473,6 +473,16 @@ const ANSWER_STATES: QueueState[] = [
       await page.locator(".queue-sheet .card-foot", { hasText: "Read-only." }).waitFor();
     },
   },
+  { nn: "40f", name: "approval-images", viewports: LIST_WIDTHS, getFixture: getEdgeFixture, setUp: (page) => addApprovalFiles(page) },
+  {
+    nn: "40g", name: "approval-upload-failed", viewports: LIST_WIDTHS, getFixture: getEdgeFixture,
+    setUp: async (page, harness) => {
+      harness.refusals.set("upload", { status: 500, body: { error: "server" } });
+      await addApprovalFiles(page);
+      await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
+    },
+  },
+  { nn: "40h", name: "answered-images", viewports: LIST_WIDTHS, setUp: (page) => showAnswerImages(page, 108) },
 ];
 
 const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES, ...RELAY_ROW_STATES, ...ANSWER_STATES];
@@ -840,6 +850,20 @@ async function arriveOffView(page: Page, harness: Harness): Promise<void> {
   harness.fixture = getArrivalFixture(getOffViewFixture());
   await page.clock.fastForward(15_000);
   await page.locator(".queue-status-new", { hasText: "1 new below" }).waitFor({ timeout: READY_TIMEOUT_MS });
+}
+
+// two images on the approval's tray, settled → stored, or failed under an upload refusal
+async function addApprovalFiles(page: Page): Promise<void> {
+  await selectRow(page, EDGE_IDS.approval);
+  await setFiles(page, `queue-text-${EDGE_IDS.approval}`, [0, 1].map(getImageFile));
+  await page.locator(".queue-sheet .queue-thumb:not(.is-busy)").nth(1).waitFor();
+  await waitForImages(page);
+}
+
+async function showAnswerImages(page: Page, id: number): Promise<void> {
+  await selectRow(page, id);
+  await page.locator(".queue-sheet .queue-bubble-image img").nth(1).waitFor();
+  await waitForImages(page);
 }
 
 async function typeReportOrder(page: Page): Promise<void> {
@@ -1532,6 +1556,25 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(first, { hash: "#queue?item=108", position: "1 of 2", disabled: [true, false], tag: "Answer" });
     assert.deepEqual(second, { hash: "#queue?item=160", position: "2 of 2", disabled: [false, true], tag: "Answer" });
     assert.equal(back.hash, "#queue?item=108");
+  });
+
+  // spec §7, §9.8 → On an answer → Afterwards: the images the session received, the thread's 96 squares under Your answer
+  test("an answered decision's row names its images, and its sheet shows them as 96 thumbnails under Your answer that open the viewer", async () => {
+    harness.fixture = getRestFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    const row = await page.locator("#queue-row-108").getAttribute("aria-label");
+    await showAnswerImages(page, 108);
+    const thumbs = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-sheet .queue-bubble-image")].map((button) => {
+      const rect = button.getBoundingClientRect();
+      return { label: button.getAttribute("aria-label"), size: [Math.round(rect.width), Math.round(rect.height)] };
+    }));
+    await page.locator(".queue-sheet .queue-bubble-image").nth(1).click();
+    const viewer = (await page.locator(".queue-viewer").innerText()).replace(/\s+/g, " ");
+    await page.close();
+
+    assert.match(row ?? "", /2 images/);
+    assert.deepEqual(thumbs, [{ label: "Open image 1 of 2: queue-01.webp", size: [96, 96] }, { label: "Open image 2 of 2: queue-02.webp", size: [96, 96] }]);
+    assert.match(viewer, /queue-02\.webp · .* · 2 of 2/);
   });
 
   // spec §3.3 / §14.4: the list keeps its place while a report is read
