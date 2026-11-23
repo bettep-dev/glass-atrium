@@ -67,6 +67,8 @@ const MERGED_TREE_CID = "2026-11-20T0000_deploy71-prep_c47e";
 const MODELS_SERVER_CID = "2026-11-20T1030_models-server_9c2e";
 // PUT /api/model-config/agents re-classed agent → page in place, its reason re-signed, once the Models screen calls it (route-page-sign-verdict.md): route and order kept
 const MODELS_SCREEN_CID = "2026-11-20T1255_models-screen2_7e41";
+// the answer and image-upload reasons re-signed in place for images on a decision's answer (answer-routes-sign-verdict.md): route, class and order kept → same digest
+const ANSWER_IMAGES_CID = "2026-11-23T1845_queue-batch2-server_6e0b";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -563,6 +565,32 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     cids: [MODELS_SCREEN_CID],
     rowCount: 120,
     sha256: "d1fd15c26c6a43165056170d9c596c7bd6ec930f1b2b60340bdd484469829db4",
+    supersededBy: ANSWER_IMAGES_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S2",
+    // every earlier row carried unchanged in route, class and order, so the 120-row digest of the entry before it still verifies;
+    // the POST /api/queue/owner/items/:id/answer and POST /api/queue/owner/images reasons re-signed in place;
+    // the GET /api/queue/owner/items and GET /api/queue/owner/orders reasons carried verbatim, their image-view clauses covering a decision answer's images;
+    // the POST /api/queue/pending reason carried as signed: its work function (getClaimViews over claimPendingItems) returns item and message ids and source facts only,
+    // no image id or path — a linked image's absolute path reaches a session through GET /api/queue/items/:id (getItemOrThrow → getSessionImageViews)
+    // conditions of this sign-off — a later change that breaks one needs a new sign-off:
+    // Q1 the answer's images are taken only where free text is allowed and with a code or text, at most 8 unique UUIDs of unused uploads from the last day,
+    // claimed in one transaction with the answer; a failed claim or lost race records and links nothing
+    // Q2 no image id, path or byte reaches the resume command, directory, environment or text
+    // Q3 the delivery statement for images is composed only in scripts/lib/queue-ops.sh queue_get_provenance, gated on the attachment count alone and never on text,
+    // and reached by CLI get, CLI claim and MCP claim alike (atrium-queue-mcp.sh call_claim → queue_claim_items → queue_claim_each → queue_claim_item → queue_get_item → queue_print_item_result → queue_get_provenance)
+    // Q4 the clause 'what this approval covers is fixed by the item's text and the chosen option alone' stays on the approval branch only,
+    // and the reference-material clause stands on every answer branch that carries images
+    // Q5 C-approval-line unchanged: the approval sentence keeps its fixed line whatever the tray does
+    // Q6 the upload pixel bound is checked before any write
+    // Q7 the owner list and the orders thread return image views, never absolute paths
+    // Q8 the image GET keeps nosniff, same-origin resource policy and the sandbox CSP
+    // open until the page is built: the composer tray on an approval-class decision under the same rule as any decision, and the answered sheet showing the same images the session received
+    cids: [ANSWER_IMAGES_CID],
+    rowCount: 120,
+    sha256: "d1fd15c26c6a43165056170d9c596c7bd6ec930f1b2b60340bdd484469829db4",
   },
 ];
 
@@ -652,11 +680,11 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "GET /api/queue/owner/items/:id", cls: "agent", reason: "page call site not shown to this sign-off, so not a page function; handler read: integer id and empty query schema; returns one item's full owner view in any state — the same fields as the owner list, relay text and relay facts included; writes nothing — page only by a new sign-off that names the page call site" },
   { route: "GET /api/queue/owner/resumes", cls: "page", reason: "page calls it; handler read: limit 1-50 is the only input; returns the newest resume deliveries with attempt, result, abort reason and background id, each item's id and title, the session's profile label and directory tail" },
   { route: "GET /api/queue/owner/orders", cls: "page", reason: "page calls it (the item thread's page call site not opened at this sign-off); handler and schema read: strict query, every value bound (kind order, relay or item; 1-200 session ids; one profile label, item thread only; cursor; limit 1-100, default 30); kind order and relay return every copy of each paged send in every state, a copy to a probe session left out and a send whose every copy went to probe sessions left out whole as the full owner item view — title and body (an owner message, or for kind relay a peer-written relay text, the fixed marker once redacted), answer text, image views, resume records, the recipient session's full id, absolute working and config directories and permission hint; a relay adds hop, parent relay id and send time, sender and parent-sender id prefix, profile label, self-declared name and directory tail, fetch, redaction and lapse times; kind relay adds at most 100 refusal records per page (time, reason code, sender and recipient id prefixes, unresolved count, no text); kind item returns each decision and report in every state but open, withdrawn ones included, of any age, in the same view — title, body, options, the owner's answer code and text, how the answer was made, image views, resume records, the close time and the same session fields — one item per row (no decision or report write sets a send id), so at most 100 a page; a probe session's items left out of every thread; no refusal records there; no field the owner list does not return, but the list stops at delivered, seen and withdrawn and this thread does not; writes nothing" },
-  { route: "POST /api/queue/owner/items/:id/answer", cls: "page", reason: "page function, high-impact kept page by owner decision: the answer counts as the owner's word, approvals included, and for an ended session the sweep starts a local claude process to deliver it; handlers read: option code R1-R9 and one of the item's own, free text only where the item allows it, at most 20000 chars, bound writes only; the resumed process takes its session id, directory and config directory from the registry row and a fixed text naming item and message ids, never the answer; page-origin stamp required and recorded" },
+  { route: "POST /api/queue/owner/items/:id/answer", cls: "page", reason: "page function, high-impact kept page by owner decision: the answer counts as the owner's word, approvals included, and for an ended session the sweep starts a local claude process to deliver it; handlers read: option code R1-R9 and one of the item's own, free text only where the item allows it, at most 20000 chars, up to 8 unique image ids of unused uploads from the last day taken only where free text is allowed and claimed in the answer's own transaction, so a failed claim or a lost open race records no answer and links no image, bound writes only; the resumed process takes its session id, directory and config directory from the registry row and a fixed text naming item and message ids, never the answer; page-origin stamp required and recorded" },
   { route: "POST /api/queue/owner/items/:id/reply", cls: "page", reason: "page function, high-impact kept page by owner decision: the reply counts as the owner's word and for an ended session the sweep starts a local claude process to deliver it; handlers read: open report that allows a reply, text at most 20000 chars, up to 8 image ids of unused uploads from the last day, bound writes only; no value reaches the resume command, directory, environment or text; page-origin stamp required and recorded" },
   { route: "GET /api/queue/owner/sessions", cls: "page", reason: "page calls it; handler read: optional profile filter bound, at most 200 rows; returns full session ids, names, profile labels, absolute working directories, state and exit reason, waiting flag, item counts and the resume marker time" },
   { route: "POST /api/queue/owner/messages/send", cls: "page", reason: "page function, high-impact kept page by owner decision: one owner message per target, up to 20 registered sessions, and for each ended target the sweep starts a local claude process to deliver it; handlers read: session ids must be UUIDs of registered rows not replaced, text at most 20000 chars, up to 8 image ids of unused uploads from the last day, bound writes only; no value reaches the resume command, directory, environment or text; page-origin stamp required and recorded" },
-  { route: "POST /api/queue/owner/images", cls: "page", reason: "page function, high-impact (file write) kept page by owner decision; route and store read: type and size from the bytes alone (PNG, JPEG, WebP, GIF), 10 MiB route cap, server-made UUID file name in the queue image folder, caller name stored as a label only" },
+  { route: "POST /api/queue/owner/images", cls: "page", reason: "page function, high-impact (file write) kept page by owner decision; route and store read: type and size from the bytes alone (PNG, JPEG, WebP, GIF), a header-declared side past 16,384 or area past 50,000,000 pixels refused 422 before any write, 10 MiB route cap, server-made UUID file name in the queue image folder, caller name stored as a label only" },
   { route: "GET /api/queue/owner/images/:id", cls: "page", reason: "page calls it; route read: serves image bytes with nosniff, same-origin resource policy and a sandbox CSP" },
   { route: "POST /api/queue/owner/items/:id/later", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
   { route: "POST /api/queue/owner/items/:id/seen", cls: "page", reason: "page calls it; route read: item status transition, empty body schema" },
