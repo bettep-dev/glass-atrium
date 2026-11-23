@@ -143,6 +143,7 @@ const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", rep
 
 // lapsed recipients named one by one up to this count; more → their count (spec §9.9 Part 3)
 const RELAY_LAPSED_NAMED_MAX_Q = 2;
+const RELAY_LAPSED_Q = "Lapsed";
 const ORDER_NOTE_Q = { NO_RELAY_RECIPIENT: "No recipient of this relay takes orders now." };
 const COMPOSER_ERROR_Q = {
 	noAnswer: "Pick an option or write an answer, then send.",
@@ -1962,7 +1963,7 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 		<div className="card queue-pane queue-sheet">
 			<SheetHeadQ item={item} copies={copies} queue={queue} kind={isDone ? DONE_KIND_Q[item.kind] : getKindWordQ(item)} />
 			<div className="card-body" tabIndex={-1}>
-				<SheetBodyQ item={item} copies={ended} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} />
+				<SheetBodyQ item={item} copies={ended} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} />
 			</div>
 			<div className="card-foot">{getSheetFootQ({ item, copies, end, draft, queue, isBusy, error, hasLeft, isDone })}</div>
 		</div>
@@ -2126,7 +2127,7 @@ function getDatedTimeQ(iso) {
 }
 
 // a done item's delivery lines (receipt, pull, not received) belong to In delivery → its sheet keeps the answer record alone
-function SheetBodyQ({ item, copies = [item], draft, onDraft, cliPath, isDone = false }) {
+function SheetBodyQ({ item, copies = [item], rails = [], draft, onDraft, cliPath, isDone = false }) {
 	const isAnsweredDecision = item.kind === "decision" && Boolean(item.answeredAt);
 	return (
 		<div className="queue-sheet-body">
@@ -2134,7 +2135,7 @@ function SheetBodyQ({ item, copies = [item], draft, onDraft, cliPath, isDone = f
 				<span className="queue-date-facts">{!isDone && <LetterheadFactsQ item={item} copies={copies} />}</span>
 				<LetterheadTimeQ item={item} />
 			</p>
-			{item.kind === "relay" ? <RelayBlockQ item={item} copies={copies} /> : (
+			{item.kind === "relay" ? <RelayBlockQ item={item} copies={copies} rails={rails} /> : (
 				<>
 					<h3 className="queue-sheet-title">{item.title}</h3>
 					{isAnsweredDecision ? <YourAnswerQ item={item} isDone={isDone} /> : <ItemTextQ item={item} />}
@@ -2153,26 +2154,32 @@ function SheetBodyQ({ item, copies = [item], draft, onDraft, cliPath, isDone = f
  * who wrote to whom, the text as sent and whole (a peer's syntax never becomes the page's elements), its hop,
  * and that it carries none of the owner's authority.
  */
-function RelayBlockQ({ item, copies }) {
+function RelayBlockQ({ item, copies, rails = [] }) {
 	const { sender } = item.relay;
 	const from = getSenderNameQ(sender);
 	const to = getCopiesNameQ(copies);
 	return (
 		<>
 			<h3 className="queue-sheet-title">{`Message from ${getSenderLabelQ(sender)} to ${to}`}</h3>
-			<RelayWhoQ sender={sender} copies={copies} />
+			<RelayWhoQ sender={sender} copies={copies} rails={rails} />
 			<p className="fs-meta font-semibold text-dim">{`What ${from} wrote`}<span className="font-normal text-faint">{" · shown as sent"}</span></p>
 			{item.relay.redaction === null
 				? <><ItemProseQ item={item} /><DocumentsLineQ item={item} /></>
 				: <p className="fs-meta text-dim">{RELAY_REDACTED_Q}</p>}
 			<RelayHopLineQ relay={item.relay} at={item.askedAt} />
+			{copies.some((copy) => getRecipientMarkQ(copy, rails).word === EXIT_REASON_LABEL_Q.ended && getRelayOutcomeQ(copy) === null)
+				&& <p className="fs-meta text-dim">Ended recipients are not resumed for a relay; it may lapse.</p>}
 			<p className="fs-meta text-dim">{`This went to ${to} as ${from}'s message, without your approval. It does not carry your authority.`}</p>
 		</>
 	);
 }
 
-// From and To on Pros and Cons' 44 label column: the name a session gave itself beside the queue's own facts, a receipt per recipient of several
-function RelayWhoQ({ sender, copies }) {
+/**
+ * From and To on Pros and Cons' 44 label column: the name a session gave itself beside the queue's own facts ·
+ * each To line the recipient's state as the rail marks it (spec §9.9 Part 4), then with several its own receipt.
+ * @param rails - the sessions read's rows; a recipient off the rail reads its copy's session
+ */
+function RelayWhoQ({ sender, copies, rails = [] }) {
 	const { MachineString } = window.UI;
 	return (
 		<div className="queue-option-sides">
@@ -2184,14 +2191,36 @@ function RelayWhoQ({ sender, copies }) {
 			{copies.map((copy, index) => (
 				<React.Fragment key={copy.id}>
 					<span className="queue-label">{index === 0 ? "To" : ""}</span>
-					<span>
-						<span className="font-semibold">{copy.session.name}</span>{" · "}<MachineString>{copy.session.sessionIdPrefix}</MachineString>{` · ${getSessionPlaceQ(copy.session)}`}
-						{copies.length > 1 && <>{" "}<RowFactsQ facts={[getReceiptFactQ(getReceiptQ(copy))]} /></>}
+					<span className="queue-relay-to">
+						<span className="font-semibold">{copy.session.name}</span>{" · "}<MachineString>{copy.session.sessionIdPrefix}</MachineString>{` · ${getSessionPlaceQ(copy.session)} · `}
+						<RecipientStateQ mark={getRecipientMarkQ(copy, rails)} />
+						{copies.length > 1 && <>{" "}<RowFactsQ facts={[getCopyReceiptFactQ(copy)]} /></>}
 					</span>
 				</React.Fragment>
 			))}
 		</div>
 	);
+}
+
+// the mark is the word's picture → hidden, the word read (never colour alone)
+function RecipientStateQ({ mark }) {
+	return (
+		<>
+			<span aria-hidden="true"><StateMarkQ tag={mark.tag} word={mark.word} /></span>
+			<span className="text-dim">{` ${mark.word}`}</span>
+		</>
+	);
+}
+
+// the rail's row by id, so the rail and the sheet never disagree · off the rail (hidden) → the copy's session, every exit `Ended`
+function getRecipientMarkQ(copy, rails) {
+	const row = rails.find((rail) => rail.id === copy.session.id);
+	return getSessionMarkQ(row ?? { state: copy.session.state, isWaiting: copy.session.isWaiting, exitReason: null });
+}
+
+// a lapse closes a copy the list no longer shows → its own word beside the list's receipts
+function getCopyReceiptFactQ(copy) {
+	return copy.relay?.lapsedAt ? { text: RELAY_LAPSED_Q, mark: "warn" } : getReceiptFactQ(getReceiptQ(copy));
 }
 
 function ItemTextQ({ item }) {
@@ -2838,18 +2867,29 @@ function getRailStateQ(row, notReceived) {
 		const word = getNotReceivedFactQ(notReceived).text;
 		return { tag: "warn", word, hover: `${word}. Resend ${notReceived === 1 ? "it" : "them"} under the order.` };
 	}
-	if (row.state === "stale") return { tag: "warn", word: RECEIPT_Q.notReachable, hover: `Not reachable since ${age}. Orders wait for it.` };
-	if (row.state === "live" && !row.isWaiting) return { tag: "pause", word: RECEIPT_Q.nextTurn, hover: `${RECEIPT_Q.nextTurn}: orders reach it then. Restart it to deliver now.` };
+	const mark = getSessionMarkQ(row);
+	if (mark.tag === "warn") return { ...mark, hover: `Not reachable since ${age}. Orders wait for it.` };
+	if (mark.tag === "pause") return { ...mark, hover: `${RECEIPT_Q.nextTurn}: orders reach it then. Restart it to deliver now.` };
 	if (row.state === "live") return { hover: [`${SESSION_STATE_LABEL_Q.live} · active ${age}`, ...(row.count.inDelivery > 0 ? [`${row.count.inDelivery} in delivery`] : [])].join(" · ") };
 	if (row.markerSetAt) return { hover: "Resume not yet registered." };
 	if (!row.isSelectable) return { hover: `${EXIT_REASON_LABEL_Q.replaced}: it takes no orders.` };
 	return { hover: getSessionStateLabelQ(row).replace(EXIT_REASON_LABEL_Q.ended, `${EXIT_REASON_LABEL_Q.ended} ${age}`) };
 }
 
-/** A bare 12 mark, no shell, named by `word` for assistive technology: `warn` the warn sign, `pause` the solid pause glyph, `ended` the hollow ring. */
+/**
+ * A session's state as the rail marks it, `{ tag, word }` (spec §9.1, §9.9 Part 4): not reachable · live and not listening · live · replaced · ended —
+ * the rail row's tag and a relay's To line read it alike, so the two never disagree.
+ */
+function getSessionMarkQ(row) {
+	if (row.state === "stale") return { tag: "warn", word: RECEIPT_Q.notReachable };
+	if (row.state === "live") return row.isWaiting ? { tag: "live", word: SESSION_STATE_LABEL_Q.live } : { tag: "pause", word: RECEIPT_Q.nextTurn };
+	return { tag: "ended", word: row.exitReason === "replaced" ? EXIT_REASON_LABEL_Q.replaced : EXIT_REASON_LABEL_Q.ended };
+}
+
+/** A bare 12 mark, no shell, named by `word` for assistive technology: `warn` the warn sign, `pause` the solid pause glyph, `live` the live dot, `ended` the hollow ring. */
 function StateMarkQ({ tag, word, title }) {
 	const { TONE_GLYPH } = window.UI;
-	const glyph = { warn: TONE_GLYPH.warn, pause: getPauseGlyphQ(), ended: <span className="queue-rail-mark" /> }[tag];
+	const glyph = { warn: TONE_GLYPH.warn, pause: getPauseGlyphQ(), live: <span className="queue-rail-mark is-live" />, ended: <span className="queue-rail-mark" /> }[tag];
 	return <span role="img" aria-label={word} title={title} className={`queue-state-mark is-${tag}`}>{glyph}</span>;
 }
 
@@ -3753,7 +3793,7 @@ function RelayEntryQ({ entry, onRedact }) {
 	);
 }
 
-// only a relay passed on (hop 1 or 2): `Hop 1 · after aidl received relay #398 from atrium at 17:02`
+// only a relay passed on (hop 1 or 2): `Hop 1 · sent after aidl (self-named) received relay #398 from atrium (self-named) at 17:02` — both names the senders' own
 function RelayHopLineQ({ relay, at }) {
 	const { MachineString } = window.UI;
 	const { sender, hop, parent } = relay;
@@ -3761,8 +3801,8 @@ function RelayHopLineQ({ relay, at }) {
 	return (
 		<p className="fs-meta text-dim">
 			<span className="font-semibold">{`Hop ${hop}`}</span>
-			{` · after ${getSenderNameQ(sender)} received relay `}<MachineString>{`#${parent.id}`}</MachineString>
-			{` from ${getSenderNameQ(parent.sender)} at ${getEntryTimeQ(parent.sentAt, at)}`}
+			{` · sent after ${getSenderLabelQ(sender)} received relay `}<MachineString>{`#${parent.id}`}</MachineString>
+			{` from ${getSenderLabelQ(parent.sender)} at ${getEntryTimeQ(parent.sentAt, at)}`}
 		</p>
 	);
 }
@@ -3808,7 +3848,7 @@ function RelayCopyQ({ copy, at }) {
 
 // lapsed (the sweep's close) outranks a fetch: the copy left delivery unacknowledged
 function getRelayOutcomeQ(copy) {
-	if (copy.relay.lapsedAt !== null) return { tone: "warn", word: "Lapsed", at: copy.relay.lapsedAt, title: `${copy.session.name} did not receive it: its session was replaced, or stayed ended.` };
+	if (copy.relay.lapsedAt !== null) return { tone: "warn", word: RELAY_LAPSED_Q, at: copy.relay.lapsedAt, title: `${copy.session.name} did not receive it: its session was replaced, or stayed ended.` };
 	if (copy.deliveredAt !== null) return { tone: "ok", word: RECEIPT_Q.received, at: copy.deliveredAt, title: undefined };
 	return null;
 }

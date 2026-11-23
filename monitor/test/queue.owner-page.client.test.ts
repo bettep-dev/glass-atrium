@@ -657,7 +657,7 @@ describe("relay history", () => {
 
   test("a passed-on relay names its parent on the hop line; a relay at hop 0 has none", () => {
     const [received, forwarded] = entries(render("RelayLogQ", { history: history({ refusals: [] }) }));
-    assert.match(flat(forwarded!), /Hop 1 · after aidl received relay #398 from atrium at 2026-11-12 12:00/);
+    assert.match(flat(forwarded!), /Hop 1 · sent after aidl \(self-named\) received relay #398 from atrium \(self-named\) at 2026-11-12 12:00/);
     assert.doesNotMatch(flat(received!), /Hop/);
   });
 
@@ -1582,6 +1582,51 @@ describe("a relay on its way", () => {
       const copies = toThree();
       const sheet = call<{ kind: string; id: number | null; copies?: Array<{ id: number }> }>("getSheetStateQ", call("getGroupsQ", row.items), "412", { item: copies[0], copies }, row.ids);
       assert.deepEqual({ kind: sheet.kind, id: sheet.id, copies: sheet.copies?.map((copy) => copy.id) ?? null }, row.expected);
+    });
+  }
+
+  // spec §9.9 Part 4: a To line's state is the rail's, by id — a mark and a word; a recipient off the rail reads its copy's session, every exit Ended
+  const rail = (overrides: Record<string, unknown>) => ({ id: RECIPIENT_IDS[0], sessionIdPrefix: "5e55a000", name: "yoaida", state: "live", exitReason: null, isWaiting: true, isSelectable: true, ...overrides });
+  const toLines = (copies: unknown[], rails: unknown[]) => byClass(render("RelayWhoQ", { sender, copies, rails }), "queue-relay-to");
+  const stateRows = [
+    { name: "live and listening on the rail reads Live by the live dot", rails: [rail({})], session: {}, state: ["is-live", "Live"] },
+    { name: "live and not listening reads Next turn by the pause glyph", rails: [rail({ isWaiting: false })], session: {}, state: ["is-pause", "Next turn"] },
+    { name: "not reachable reads Not reachable by the warn sign", rails: [rail({ state: "stale" })], session: {}, state: ["is-warn", "Not reachable"] },
+    { name: "ended reads Ended by the hollow ring", rails: [rail({ state: "exited", exitReason: "ended" })], session: {}, state: ["is-ended", "Ended"] },
+    { name: "replaced reads Replaced by the hollow ring", rails: [rail({ state: "exited", exitReason: "replaced", isSelectable: false })], session: {}, state: ["is-ended", "Replaced"] },
+    { name: "off the rail its copy's session decides, an exit reading Ended", rails: [], session: { state: "exited", isWaiting: false }, state: ["is-ended", "Ended"] },
+    { name: "the rail outranks the copy's session as read", rails: [rail({ isWaiting: false })], session: { state: "live", isWaiting: true }, state: ["is-pause", "Next turn"] },
+  ];
+  for (const row of stateRows) {
+    test(`a To line's state: ${row.name}`, () => {
+      const [copy] = toYoaida();
+      const [line] = toLines([{ ...copy, session: { ...(copy!.session as object), ...row.session } }], row.rails);
+      const marks = findNodes(line as RenderedNode, (node) => String(node.props?.className ?? "").startsWith("queue-state-mark"));
+      const hidden = findNodes(line as RenderedNode, (node) => node.props?.["aria-hidden"] === "true" && findNodes(node, (inner) => inner === marks[0]).length > 0);
+      assert.deepEqual(
+        [marks.map((mark) => String(mark.props.className).split(" ")[1]), hidden.length > 0, collectText(line as RenderedNode).replace(/\s+/g, " ").trim().endsWith(row.state[1]!)],
+        [[row.state[0]], true, true],
+      );
+    });
+  }
+
+  test("with several recipients each To line reads its state, then its own receipt, a lapsed copy Lapsed", () => {
+    const copies = toThree().map((copy, index) => (index === 1 ? lapse(copy) : copy));
+    const lines = toLines(copies, []).map((line) => collectText(line).replace(/\s+/g, " ").trim());
+    assert.deepEqual(lines.map((line) => line.replace(/^.* · /, "")), ["Live ✓ Received", "Live ⚠ Lapsed", "Live Not yet"]);
+  });
+
+  const endedRows = [
+    { name: "an ended recipient not yet reached shows it", session: { state: "exited" }, copy: {}, isShown: true },
+    { name: "an ended recipient that received it shows none", session: { state: "exited" }, copy: { status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" }, isShown: false },
+    { name: "a live recipient not yet reached shows none", session: {}, copy: {}, isShown: false },
+  ];
+  for (const row of endedRows) {
+    test(`the Ended line: ${row.name}`, () => {
+      const [copy] = toYoaida(row.copy);
+      const copies = [{ ...copy, session: { ...(copy!.session as object), ...row.session } }];
+      const text = collectText(render("RelayBlockQ", { item: copies[0], copies, rails: [] }));
+      assert.equal(text.includes("Ended recipients are not resumed for a relay; it may lapse."), row.isShown);
     });
   }
 
