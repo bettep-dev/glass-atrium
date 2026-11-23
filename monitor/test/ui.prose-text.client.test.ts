@@ -1,6 +1,7 @@
 // Body text atom: agent-written plain text → paragraphs, lists, code, bold and document links as React elements, never HTML.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { PROBE_MARKUP_LINES, PROBE_PROPS, PROBE_TAGS } from "./lib/probe-markup.js";
@@ -8,6 +9,7 @@ import { collectText, createStatefulReact, findNodes, getHtml, loadScreenModule,
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
+const QUEUE_SRC = resolve(__dirname, "../public/src/screens/queue.jsx");
 
 type Component = (props: Record<string, unknown>) => unknown;
 interface ProseList {
@@ -37,6 +39,7 @@ function innerMarkup(text: string, linkedDocIds: number[] = []): string {
 
 const link = (id: string, digits = id) => `<a class="prose-link" href="#clauded-docs?doc=${id}">${digits}</a>`;
 const code = (text: string) => `<code class="machine">${text}</code>`;
+const getTextContent = (node: RenderedNode | string): string => (typeof node === "string" ? node : node.children.map(getTextContent).join(""));
 
 describe("source text → rendered blocks", () => {
   const rows = [
@@ -193,6 +196,76 @@ describe("output bounds", () => {
     assert.deepEqual(strongs.flatMap((strong) => findNodes(strong, (node) => node !== strong && node.type === "strong")), []);
     assert.deepEqual(findNodes(tree, (node) => (node.type === "code" || node.type === "a") && node.children.some((child) => typeof child !== "string")), []);
   });
+});
+
+describe("link and image syntax shows as text", () => {
+  const rows = [
+    { name: "a link's label stays plain text and its target shows whole after it", text: "[가이드](https://example.com/a?b=1) 참고", ids: [],
+      html: "<p>가이드 (https://example.com/a?b=1) 참고</p>" },
+    { name: "an image's mark is dropped and its target shown, never an image", text: "![logo](https://example.com/x.png)", ids: [],
+      html: "<p>logo (https://example.com/x.png)</p>" },
+    { name: "a document address in a target links its digit run alone", text: "[spec](clauded-docs/44060)", ids: [],
+      html: `<p>spec (clauded-docs/${link("44060")})</p>` },
+    { name: "a declared id in a label stays text", text: "[44060](a)", ids: [44060], html: "<p>44060 (a)</p>" },
+    { name: "an empty label shows the target alone", text: "[](t)", ids: [], html: "<p>(t)</p>" },
+    { name: "brackets with no target, or a target never closed, stay literal", text: "[a] (b) ![c](d", ids: [], html: "<p>[a] (b) ![c](d</p>" },
+    { name: "link syntax inside a code span stays literal", text: "`[a](b)`", ids: [], html: `<p>${code("[a](b)")}</p>` },
+    { name: "a bold run may hold link syntax", text: "**[a](b)**", ids: [], html: "<p><strong>a (b)</strong></p>" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(innerMarkup(row.text, row.ids), row.html);
+    });
+  }
+});
+
+describe("hostile markup renders as text nodes only", () => {
+  const rows = [
+    { name: "an img tag with an onerror attribute", text: "<img src=x onerror=alert(1)>", shown: "<img src=x onerror=alert(1)>" },
+    { name: "an anchor tag", text: '<a href="https://evil.example">setup</a>', shown: '<a href="https://evil.example">setup</a>' },
+    { name: "a javascript link", text: "[click](javascript:alert(1))", shown: "click (javascript:alert(1))" },
+    { name: "an image link to a web address", text: "![pixel](https://evil.example/p.png)", shown: "pixel (https://evil.example/p.png)" },
+    { name: "a bare web address", text: "https://evil.example/a?b=1", shown: "https://evil.example/a?b=1" },
+    { name: "an HTML entity", text: "&lt;b&gt; &amp; &#x3C;script&#x3E;", shown: "&lt;b&gt; &amp; &#x3C;script&#x3E;" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = renderProse(row.text);
+      const [paragraph] = findNodes(tree, (node) => node.type === "p");
+      assert.deepEqual(findNodes(tree, (node) => /^[a-z]/.test(node.type) && node.type !== "div" && node.type !== "p").map((node) => node.type), []);
+      assert.equal(getTextContent(paragraph), row.shown);
+    });
+  }
+
+  test("the queue page and the ui module set no HTML from a string and parse none", () => {
+    for (const src of [UI_SRC, QUEUE_SRC]) {
+      const source = readFileSync(src, "utf8");
+      for (const sink of ["dangerouslySetInnerHTML", "innerHTML", "DOMParser"]) assert.ok(!source.includes(sink), `${src}: ${sink}`);
+    }
+  });
+});
+
+describe("the only link is the document route, in every element that renders text", () => {
+  const LINE = "[guide](https://evil.example) ![pic](https://evil.example/p.png) [doc](clauded-docs/44060)";
+  const rows = [
+    { name: "a paragraph", text: LINE, element: "p", hrefs: ["#clauded-docs?doc=44060"] },
+    { name: "a level-4 heading", text: `## ${LINE}`, element: "h4", hrefs: ["#clauded-docs?doc=44060"] },
+    { name: "a level-5 heading", text: `### ${LINE}`, element: "h5", hrefs: ["#clauded-docs?doc=44060"] },
+    { name: "a level-3 list item", text: `- a\n  - b\n    - ${LINE}`, element: "li", hrefs: ["#clauded-docs?doc=44060"] },
+    { name: "a quote", text: `> ${LINE}`, element: "blockquote", hrefs: ["#clauded-docs?doc=44060"] },
+    { name: "a fenced block", text: `\`\`\`\n${LINE}\n\`\`\``, element: "pre", hrefs: [] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = renderProse(row.text);
+      const holders = findNodes(tree, (node) => node.type === row.element);
+      const links = findNodes(holders.at(-1) ?? null, (node) => node.props.href !== undefined);
+      assert.deepEqual(links.map((node) => node.props.href), row.hrefs);
+      assert.deepEqual(links.map(getTextContent), row.hrefs.map(() => "44060"));
+      assert.deepEqual(findNodes(tree, (node) => node.type === "img" || node.props.src !== undefined || node.props.srcSet !== undefined), []);
+      assert.deepEqual(findNodes(tree, (node) => node.props.href !== undefined).length, row.hrefs.length);
+    });
+  }
 });
 
 test("the parser returns exactly the declared ids its text turned into links, once each, in either form", () => {

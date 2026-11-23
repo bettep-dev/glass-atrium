@@ -1716,9 +1716,9 @@ function putProseText(state, line) {
   paragraph.lines.push(getProseInlines(line, state));
 }
 
-// code spans first (opaque), then `**` pairs over the rest, then document links inside text — an unpaired marker stays literal
+// code spans first (opaque), then link and image syntax, then `**` pairs over the rest, then document links inside text — an unpaired marker stays literal
 function getProseInlines(line, state) {
-  const tokens = getProseSpans(line).flatMap(getProseStarTokens);
+  const tokens = getProseSpans(line).flatMap(getProseMdLinkTokens).flatMap(getProseStarTokens);
   let starsLeft = tokens.filter((token) => token === PROSE_STAR).length;
   const nodes = [];
   let strong = null;
@@ -1755,14 +1755,42 @@ function getProseSpans(line) {
   return spans.filter((span) => span !== '');
 }
 
+// `[label](target)` and `![label](target)` → one token; every scan moves forward past the last match → linear
+function getProseMdLinkTokens(span) {
+  if (typeof span !== 'string') return [span];
+  const tokens = [];
+  let start = 0;
+  let open = span.indexOf('[');
+  while (open !== -1) {
+    const middle = span.indexOf('](', open + 1);
+    const close = middle === -1 ? -1 : span.indexOf(')', middle + 2);
+    if (close === -1) break;
+    const labelStart = span.lastIndexOf('[', middle);
+    const markStart = labelStart > start && span[labelStart - 1] === '!' ? labelStart - 1 : labelStart;
+    tokens.push(span.slice(start, markStart), { kind: 'mdLink', label: span.slice(labelStart + 1, middle), target: span.slice(middle + 2, close) });
+    start = close + 1;
+    open = span.indexOf('[', start);
+  }
+  tokens.push(span.slice(start));
+  return tokens.filter((token) => token !== '');
+}
+
 function getProseStarTokens(span) {
   if (typeof span !== 'string') return [span];
   return span.split('**').flatMap((piece, index) => (index === 0 ? [piece] : [PROSE_STAR, piece])).filter((token) => token !== '');
 }
 
 function putProseToken(nodes, token, state) {
-  if (typeof token !== 'string') nodes.push(token);
-  else putProseLinks(nodes, token, state);
+  if (typeof token === 'string') putProseLinks(nodes, token, state);
+  else if (token.kind === 'mdLink') putProseMdLink(nodes, token, state);
+  else nodes.push(token);
+}
+
+// `label (target)`: the label never becomes a link's words; only a document address inside the target links
+function putProseMdLink(nodes, token, state) {
+  nodes.push(token.label ? `${token.label} (` : '(');
+  putProseLinks(nodes, token.target, state);
+  nodes.push(')');
 }
 
 function putProseLinks(nodes, text, state) {
