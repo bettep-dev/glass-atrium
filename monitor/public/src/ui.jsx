@@ -653,13 +653,13 @@ function StatRow({ stats, className = '' }) {
 
 /**
  * A stat card's one ⓘ drawer body: the detail past each stat's context line, each note led by its stat label in ink.
- * @param stats - each { label, info, key? }, only the stats that carry a note
+ * @param stats - each { label, info, key? }, only the stats that carry a note; info = a string or a node (a note kept whole through `DayTokens`)
  */
 function StatNotes({ stats }) {
   return <>
     {stats.map((stat) => <p key={stat.key ?? stat.label}>
       <strong className="font-medium text-ink">{stat.label}</strong>
-      {` — ${stat.info}`}
+      {' — '}{stat.info}
     </p>)}
   </>;
 }

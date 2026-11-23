@@ -212,6 +212,13 @@ describe("stat notes", () => {
       "Library notes — The library snapshot is from 20 Nov.",
     ]);
   });
+
+  test("a note given as a node renders that node after the dash", () => {
+    const info = React.createElement(ui.DayTokens as Component, null, "Counted over the last 7 days");
+    const tree = render("StatNotes", { stats: [{ key: "spend", label: "Spend, 7d", info }] });
+    const [note] = findNodes(tree, (n) => n.type === "p");
+    assert.equal(collectText(note).replace(/\s+/g, " "), "Spend, 7d — Counted over the last 7 days");
+  });
 });
 
 describe("machine string", () => {
