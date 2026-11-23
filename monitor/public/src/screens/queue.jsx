@@ -1683,7 +1683,7 @@ function QueueRowQ({ row, isSelected, isNew = false, cols, view, onSelect, onOrd
 			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} /></span>}
 			{getRowTitleQ(row, view.isNameShown)}
 			{cols.includes("tag") && <span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>}
-			{cols.includes("fact") && <span className="queue-row-fact" title={row.isDone ? getEndQ(item).title : undefined}>{cells.fact}</span>}
+			{cols.includes("fact") && <span className="queue-row-fact">{cells.fact}</span>}
 			<span className="queue-row-age" title={formatKstDateTime(at)}>{getRowAgeQ(at)}</span>
 			<Icon name="chevR" size={16} className="queue-row-chevron" />
 		</div>
@@ -1742,7 +1742,7 @@ function RowTagsQ({ tags }) {
 	const { Badge, TONE_GLYPH } = window.UI;
 	return <>{tags.map((tag) => {
 		if (tag.badge) return <Badge key={tag.text} fill={tag.badge}>{tag.text}</Badge>;
-		if (!tag.glyph) return <span key={tag.text} className="queue-row-kind">{tag.text}</span>;
+		if (!tag.glyph) return <span key={tag.text} className="queue-row-kind" title={tag.title}>{tag.text}</span>;
 		return (
 			<Badge key={tag.word} role="count" fill="tag" title={tag.word}>
 				{tag.glyph === "warn" ? <span aria-hidden="true" className="text-warn">{TONE_GLYPH.warn}</span> : getPauseGlyphQ()}
@@ -1796,7 +1796,7 @@ function getPauseGlyphQ() {
 function getRowCellsQ(row, isAccountShown) {
 	const { item, copies } = row;
 	const extras = [isAccountShown && item.session.profileLabel, copies.length === 1 && item.session.isNameRegistered === false && "start directory", getImagesWordQ(item)].filter(Boolean);
-	if (row.isDone) return { tags: [{ text: DONE_KIND_Q[item.kind] }], fact: getEndQ(item).text, extras };
+	if (row.isDone) return { tags: [getEndQ(item)], fact: DONE_KIND_Q[item.kind], extras };
 	if (item.status === "open" && item.kind === "decision") {
 		const count = (item.options ?? []).length;
 		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [], fact: `${count} ${count === 1 ? "option" : "options"}`, extras };

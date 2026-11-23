@@ -1219,8 +1219,8 @@ describe("done items in the one list", () => {
     ]);
   });
 
-  // spec §4.6 → How it ended: an answer on the page first, whatever status followed it; the tag names the kind and the fact how it ended,
-  // so each string kind keeps the column open rows give it
+  // spec §4.6 → How it ended: an answer on the page first, whatever status followed it; the tag column says how it ended, its title
+  // where, and the fact column names the kind
   const ends = [
     { name: "an option picked on the page reads its code, its title the route", item: doneDecision(), end: { text: "Answer R1", title: "Answered" }, kind: "Decision" },
     { name: "free text alone reads Answered", item: doneDecision({ answer: { code: null, text: "R2로 가되" } }), end: { text: "Answered", title: "Answered" }, kind: "Decision" },
@@ -1235,12 +1235,12 @@ describe("done items in the one list", () => {
     test(`how it ended: ${row.name}`, () => {
       assert.deepEqual(
         [call("getEndQ", row.item), call("getRowCellsQ", { item: row.item, copies: [row.item], isDone: true }, false)],
-        [row.end, { tags: [{ text: row.kind }], fact: row.end.text, extras: [] }],
+        [row.end, { tags: [row.end], fact: row.kind, extras: [] }],
       );
     });
   }
 
-  test("a done row draws its kind as plain text and how it ended in the fact cell, ages from its end, and its name says how it ended once", () => {
+  test("a done row draws how it ended as plain text in the tag cell, titled where, its kind in the fact cell, ages from its end, and its name says how it ended once", () => {
     const item = doneReport({ status: "withdrawn", askedAt: "2026-11-10T06:12:43.518Z" });
     const tree = render("QueueRowQ", { row: { id: item.id, item, copies: [item], isDone: true }, isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false, tabStopId: item.id }, onSelect: () => undefined, onOrder: () => undefined });
     const [row] = findNodes(tree, (node) => node.props?.role === "option");
@@ -1249,8 +1249,8 @@ describe("done items in the one list", () => {
     const [age] = byClass(tree, "queue-row-age");
     const label = String(row?.props["aria-label"]);
     assert.deepEqual(
-      [collectText(tag as RenderedNode), findNodes(tag as RenderedNode, (node) => node.props?.atom === "Badge").length, collectText(fact as RenderedNode), fact?.props.title, age?.props.title],
-      ["Report", 0, "Withdrawn", "The session withdrew it.", "11-19 14:30"],
+      [collectText(tag as RenderedNode), findNodes(tag as RenderedNode, (node) => node.props?.atom === "Badge").length, byClass(tag as RenderedNode, "queue-row-kind")[0]?.props.title, collectText(fact as RenderedNode), fact?.props.title, age?.props.title],
+      ["Withdrawn", 0, "The session withdrew it.", "Report", undefined, "11-19 14:30"],
     );
     assert.match(label, /^Report from atrium: Deploy 65 finished, Withdrawn, ended \S+ ago$/);
   });

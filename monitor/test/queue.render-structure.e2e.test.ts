@@ -2796,7 +2796,7 @@ describe("queue page on the mockup fixtures", () => {
       bar: document.querySelector(".queue-list > .card-bar") !== null,
     }));
 
-    test("the one list draws the open bands, then the done items newest end first under Done day bands with no count, each row dim 400 with its kind in the tag column and how it ended in the fact column; no bar with one account", async () => {
+    test("the one list draws the open bands, then the done items newest end first under Done day bands with no count, each row dim 400 with how it ended in the tag column and its kind in the fact column; no bar with one account", async () => {
       const { page, reads } = await openDonePage();
       const shown = await getListRows(page);
       await page.close();
@@ -2811,8 +2811,8 @@ describe("queue page on the mockup fixtures", () => {
         rows: undefined,
         openBands: true,
         done: [
-          ["queue-row-801", "Decision", "Answer R1"], ["queue-row-802", "Report", "Read"],
-          ["queue-row-803", "Decision", "Withdrawn"], ["queue-row-804", "Report", "Replied"], ["queue-row-805", "Decision", "Answered"],
+          ["queue-row-801", "Answer R1", "Decision"], ["queue-row-802", "Read", "Report"],
+          ["queue-row-803", "Withdrawn", "Decision"], ["queue-row-804", "Replied", "Report"], ["queue-row-805", "Answered", "Decision"],
         ],
         looks: ["false:600:ink", "true:400:dim"],
         bar: false,
