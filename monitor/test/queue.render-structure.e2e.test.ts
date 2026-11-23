@@ -3129,6 +3129,22 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown.tones, { text: true, glyph: true }, "the sentence in ink, its glyph in info");
     });
 
+    // spec §6 → Foot lines, §9.8 → On an answer: at the 1280 minimum eight images and a several-refused line leave the options their room
+    test("at the 1280 minimum an approval with eight images and refused files keeps its thumbnails on one row, its tray line one line and both options in view", async () => {
+      const state = ANSWER_STATES.find((one) => one.nn === "40i") as QueueState;
+      const shown = await readQueueState(harness, MIN_WINDOW, state, (page) => page.evaluate(() => {
+        const sheet = document.querySelector(".queue-sheet") as HTMLElement;
+        const body = (sheet.querySelector(".card-body") as HTMLElement).getBoundingClientRect();
+        return {
+          thumbRows: new Set([...sheet.querySelectorAll(".queue-thumb")].map((thumb) => Math.round(thumb.getBoundingClientRect().top))).size,
+          trayHeight: Math.round((sheet.querySelector(".queue-tray-line") as HTMLElement).getBoundingClientRect().height),
+          optionsOutOfView: [...sheet.querySelectorAll(".queue-option")].filter((option) => option.getBoundingClientRect().bottom > body.bottom).length,
+        };
+      }));
+
+      assert.deepEqual(shown, { thumbRows: 1, trayHeight: 20, optionsOutOfView: 0 });
+    });
+
     // C-approval-line: a failed upload and a press with nothing picked land on their own lines, the approval line in view above them
     test("an approval-class decision keeps its approval line in view, one 20 line a sentence, through a failed upload on the tray line and a missing answer on the note line", async () => {
       const page = await openEdgePage(harness);

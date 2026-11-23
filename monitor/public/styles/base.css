@@ -1474,6 +1474,12 @@ label.ctl-checkbox-hit {
 	line-height: var(--lh-row);
 	color: rgb(var(--dim));
 }
+/* ponytail: a line wider than the foot ends in an ellipsis, its whole text still read (role="alert"); a hover title or a shorter §12.7 string is the upgrade */
+.queue-tray-line p {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
 .queue-tray-line + .queue-note {
 	margin-top: var(--gap-stack);
 }
@@ -1575,6 +1581,16 @@ label.ctl-checkbox-hit {
 	align-items: center;
 	gap: var(--space-2);
 	padding: var(--space-2) var(--space-2) 0;
+}
+/* on a sheet one row that scrolls sideways → the foot never grows past one row of images, the options above keep their room */
+.queue-sheet .queue-thumbs {
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+.queue-sheet .queue-thumbs-count {
+	flex: none;
+	white-space: nowrap;
 }
 .queue-thumb-list {
 	display: contents;
