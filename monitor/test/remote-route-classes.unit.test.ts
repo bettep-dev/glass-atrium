@@ -110,6 +110,8 @@ const MODELS_SERVER_CID = "2026-11-20T1030_models-server_9c2e";
 const MODELS_SCREEN_CID = "2026-11-20T1255_models-screen2_7e41";
 // the answer and image-upload reasons re-signed in place for images on a decision's answer: route, class and order kept, so the 120-row digest stays
 const ANSWER_IMAGES_CID = "2026-11-23T1845_queue-batch2-server_6e0b";
+// the session item-read reason re-signed in place for its absolute image paths: route, class and order kept, so the 120-row digest stays
+const IMAGE_PATH_ROWS_CID = "2026-11-23T2100_queue-batch2-page_4a7c";
 const SIGNED_AGENT_PIN_LINE = "PUT /api/model-config/agents page";
 // the 108-row table of the re-sign and the devices re-sign
 const SIGN_IN_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
@@ -211,9 +213,9 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer and the answer-images verdict", () => {
+  test("the latest sign-off names the reviewer and the image-path verdict", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
-    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: [ANSWER_IMAGES_CID] });
+    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: [IMAGE_PATH_ROWS_CID] });
   });
 
   test("every superseded table an append extended still verifies over the live table's leading rows, so new rows were appended, not inserted", () => {
@@ -249,6 +251,7 @@ describe("reviewer sign-offs", () => {
         [[MERGED_TREE_CID, RELAY_ROW_CID, ITEM_THREAD_CID, FULL_TABLE_CID, FRAGMENT_READ_CID, BUILT_READ_CID, MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], MERGED_TABLE.rowCount, MERGED_TABLE.sha256, MODELS_SERVER_CID],
         [[MODELS_SERVER_CID], AGENT_PIN_TABLE.rowCount, AGENT_PIN_TABLE.sha256, MODELS_SCREEN_CID],
         [[MODELS_SCREEN_CID], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, ANSWER_IMAGES_CID],
+        [[ANSWER_IMAGES_CID], SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, IMAGE_PATH_ROWS_CID],
       ],
     );
   });

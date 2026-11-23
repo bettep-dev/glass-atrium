@@ -69,6 +69,8 @@ const MODELS_SERVER_CID = "2026-11-20T1030_models-server_9c2e";
 const MODELS_SCREEN_CID = "2026-11-20T1255_models-screen2_7e41";
 // the answer and image-upload reasons re-signed in place for images on a decision's answer (answer-routes-sign-verdict.md): route, class and order kept → same digest
 const ANSWER_IMAGES_CID = "2026-11-23T1845_queue-batch2-server_6e0b";
+// the GET /api/queue/items/:id reason re-signed in place for its absolute image paths (image-path-rows-verdict.md): route, class and order kept → same digest
+const IMAGE_PATH_ROWS_CID = "2026-11-23T2100_queue-batch2-page_4a7c";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -591,6 +593,21 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     cids: [ANSWER_IMAGES_CID],
     rowCount: 120,
     sha256: "d1fd15c26c6a43165056170d9c596c7bd6ec930f1b2b60340bdd484469829db4",
+    supersededBy: IMAGE_PATH_ROWS_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S2",
+    // every earlier row carried unchanged in route, class and order, so the 120-row digest of the entry before it still verifies;
+    // the GET /api/queue/items/:id reason re-signed in place on its work function, read here (getItemOrThrow → getSessionImageViews), naming the absolute image paths, an answer's images among them;
+    // the POST /api/queue/pending reason carried as signed, since its claim view selects item id, kind and sender only
+    // Q1-Q8 of the entry before it carried unchanged; added conditions — a later change that breaks one needs a new sign-off:
+    // G1 getItemOrThrow keeps the session id in its lookup and answers another session's item the same as a missing one
+    // G2 the pending claim view carries no image id, path or byte
+    // G3 every image path is built through the one builder that checks it stays inside the image folder
+    cids: [IMAGE_PATH_ROWS_CID],
+    rowCount: 120,
+    sha256: "d1fd15c26c6a43165056170d9c596c7bd6ec930f1b2b60340bdd484469829db4",
   },
 ];
 
@@ -672,7 +689,7 @@ export const REVIEWED_ROUTES: readonly ReviewedRoute[] = [
   { route: "POST /api/queue/sessions/register", cls: "agent", reason: "no page call site; called by the session-start hook and the queue CLI (call sites as the build notes list them, not re-read); route read: the body is either a full register, which registers whatever session and config directory it names, or a name-only update sent to the name writer when it carries no cwd; no credential beyond a named session id, plus a pid on the name-only shape; body schema and both work functions not opened" },
   { route: "POST /api/queue/sessions/deregister", cls: "agent", reason: "no page call site; called by scripts/lib/queue-session.sh only; no credential, acts on whatever session id the body names; work function not opened" },
   { route: "POST /api/queue/items", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; a remote caller could post items to the owner as any session; work function not opened" },
-  { route: "GET /api/queue/items/:id", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh and hooks/queue-turn-end-check.sh; returns the owner's answer to whoever names the session id; work function not opened" },
+  { route: "GET /api/queue/items/:id", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh and hooks/queue-turn-end-check.sh; work function read (getItemOrThrow): returns one item only when it belongs to the named session, another session's item answering the same as a missing one; returns the owner's answer, option code and free text, and every image linked to the item, an answer's images among them, as an image view carrying its absolute file path inside the queue image folder; stamps a relay's first fetch; no credential beyond a named session id" },
   { route: "POST /api/queue/pending", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; work function read: claims up to 20 of the named session's answered items per call, a wait poll refused unless the session is live for its pid; a remote caller could claim another session's answered items" },
   { route: "POST /api/queue/items/:id/ack", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
   { route: "POST /api/queue/items/:id/withdraw", cls: "agent", reason: "no page call site; called by scripts/atrium-queue.sh only; no credential beyond a named session id; work function not opened" },
