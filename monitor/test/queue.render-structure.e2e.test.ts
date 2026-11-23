@@ -25,7 +25,7 @@ import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, ty
 import {
   buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
@@ -485,7 +485,21 @@ const ANSWER_STATES: QueueState[] = [
   { nn: "40h", name: "answered-images", viewports: LIST_WIDTHS, setUp: (page) => showAnswerImages(page, 108) },
 ];
 
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES, ...RELAY_ROW_STATES, ...ANSWER_STATES];
+// spec §5 → Where it renders, at the three list widths: a report in Markdown with its fence folded, an open decision's fence whole, a relay as sent
+const TEXT_STATES: QueueState[] = [
+  { nn: "41a", name: "report-markdown", viewports: LIST_WIDTHS, getFixture: getProseFixture, setUp: (page) => selectRow(page, 101) },
+  { nn: "41b", name: "report-fence-folded", viewports: LIST_WIDTHS, getFixture: getProseFixture, setUp: (page) => showSheetEnd(page, 101, ".queue-sheet .prose-fold") },
+  { nn: "41c", name: "decision-fence-whole", viewports: LIST_WIDTHS, getFixture: getProseFixture, setUp: (page) => showSheetEnd(page, 103, ".queue-sheet .prose-pre") },
+  {
+    nn: "41d", name: "relay-as-sent", viewports: LIST_WIDTHS, getFixture: getProseFixture,
+    setUp: async (page) => {
+      await selectRow(page, RELAY_ROW_IDS.one);
+      await page.locator(".queue-sheet .card-foot", { hasText: "Read-only." }).waitFor();
+    },
+  },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES, ...RELAY_ROW_STATES, ...ANSWER_STATES, ...TEXT_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
@@ -741,6 +755,18 @@ function refuseOneRedaction(harness: Harness): void {
 
 function selectRow(page: Page, id: number): Promise<void> {
   return page.locator(`#queue-row-${id}`).click();
+}
+
+// a prose fixture item's sheet, once it shows the item's title, scrolled until the end of `selector` is in view
+async function showSheetEnd(page: Page, id: number, selector: string): Promise<void> {
+  await selectProseRow(page, id);
+  await page.locator(selector).last().evaluate((node) => node.scrollIntoView({ block: "end" }));
+}
+
+async function selectProseRow(page: Page, id: number): Promise<void> {
+  const title = getProseFixture().items.find((item) => item.id === id)?.title ?? "";
+  await selectRow(page, id);
+  await page.locator(".queue-sheet-title", { hasText: title }).waitFor();
 }
 
 const ORDER_BOX_ID = "queue-order-text";
@@ -1341,6 +1367,70 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual(found, { probes: 0, hasRun: false, hasBodyText: true });
+  });
+
+  // spec §5 → Where it renders: a fence over 20 lines folds on a report, never on an open decision (C-no-fold-on-decisions)
+  test("a report's 30-line fence folds under Show all 30 lines; an open approval-class decision's shows every line", async () => {
+    harness.fixture = getProseFixture();
+    const read = async (id: number) => {
+      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+      await showSheetEnd(page, id, ".queue-sheet .prose-pre");
+      const found = await page.evaluate(() => ({
+        folds: [...document.querySelectorAll<HTMLElement>(".queue-sheet .prose-fold summary")].map((summary) => summary.innerText.trim()),
+        lines: [...document.querySelectorAll<HTMLElement>(".queue-sheet .prose-pre")].map((pre) => pre.innerText.split("\n").length),
+      }));
+      await page.close();
+      return found;
+    };
+    const report = await read(101);
+    const decision = await read(103);
+
+    assert.deepEqual({ report, decision }, { report: { folds: ["Show all 30 lines"], lines: [20] }, decision: { folds: [], lines: [30] } });
+  });
+
+  // spec §5 → As sent, §9.9: the sender's Markdown is its own characters, and the label says so before the text starts (C-relay-as-sent)
+  test("a relay holding every block form is one pre-wrap text node on its sheet, in the sheet's 15 / 24 type, under the shown-as-sent cue", async () => {
+    harness.fixture = getProseFixture();
+    const relay = harness.fixture.items.find((item) => item.id === RELAY_ROW_IDS.one);
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await selectRow(page, RELAY_ROW_IDS.one);
+    await page.locator(".queue-sheet .card-foot", { hasText: "Read-only." }).waitFor();
+    const found = await page.evaluate(() => {
+      const texts = [...document.querySelectorAll<HTMLElement>(".queue-sheet .prose-text--as-sent")];
+      const style = getComputedStyle(texts[0] as HTMLElement);
+      return {
+        count: texts.length, nodes: [...(texts[0]?.childNodes ?? [])].map((node) => node.nodeName), text: texts[0]?.textContent,
+        type: [style.whiteSpace, style.fontSize, style.lineHeight, texts[0]?.dir],
+        parsed: document.querySelectorAll(".queue-sheet-body :is(h4, h5, table, blockquote, hr, pre, ul, ol, img)").length,
+        label: [...document.querySelectorAll<HTMLElement>(".queue-sheet-body p")].find((line) => line.innerText.startsWith("What "))?.innerText,
+      };
+    });
+    await page.close();
+
+    assert.deepEqual(found, {
+      count: 1, nodes: ["#text"], text: relay?.body, type: ["pre-wrap", "15px", "24px", "auto"], parsed: 0, label: "What aidl wrote · shown as sent",
+    });
+  });
+
+  // spec §5 → One container (C-names-and-mimicry): the page's own parts never sit in, or dress as, the text a session wrote
+  test("the Options legend, the Recommended badge, the approval line and Your answer stand outside the prose container and take no prose class", async () => {
+    harness.fixture = getProseFixture();
+    const read = async (id: number, parts: string[]) => {
+      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+      await selectProseRow(page, id);
+      const found = await page.evaluate((names) => names.map((name) => {
+        const part = name === "Approval" ? document.querySelector(".queue-sheet .queue-approval-line")
+          : [...document.querySelectorAll(".queue-sheet *")].filter((node) => node.textContent?.trim() === name).at(-1);
+        const classes = part ? [part, ...part.querySelectorAll("*")].flatMap((node) => [...node.classList]) : [];
+        return { name, isFound: part !== undefined && part !== null, isInProse: part?.closest(".prose-text") != null, proseClasses: classes.filter((name) => name.startsWith("prose-")) };
+      }), parts);
+      await page.close();
+      return found;
+    };
+    const decision = await read(103, ["Options", "Recommended", "Approval"]);
+    const answered = await read(108, ["Your answer"]);
+
+    assert.deepEqual([...decision, ...answered], ["Options", "Recommended", "Approval", "Your answer"].map((name) => ({ name, isFound: true, isInProse: false, proseClasses: [] })));
   });
 
   test("the relay signal changes the Relay history button alone: its glyph and its counts in the name; the nav count and the title stay", async () => {

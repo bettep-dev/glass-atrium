@@ -2028,7 +2028,7 @@ function SheetBodyQ({ item, copies = [item], draft, onDraft, cliPath, isDone = f
 			{item.kind === "relay" ? <RelayBlockQ item={item} copies={copies} /> : (
 				<>
 					<h3 className="queue-sheet-title">{item.title}</h3>
-					{isAnsweredDecision ? <YourAnswerQ item={item} /> : <ItemTextQ item={item} />}
+					{isAnsweredDecision ? <YourAnswerQ item={item} isDone={isDone} /> : <ItemTextQ item={item} />}
 					{item.kind === "decision" && item.status === "open" && <OptionsQ item={item} draft={draft} onDraft={onDraft} />}
 					{isDone ? <AnswerLineQ item={item} /> : <CardStateQ item={item} cliPath={cliPath} />}
 					{isAnsweredDecision && <OriginalQuestionQ item={item} />}
@@ -2041,7 +2041,7 @@ function SheetBodyQ({ item, copies = [item], draft, onDraft, cliPath, isDone = f
 
 /**
  * A relay's kind block (spec §9.9): a title in the page's own words — the sender cannot write the sheet's largest line —
- * who wrote to whom, the text as written (Relay history's plain bubble: a peer's syntax never becomes the page's elements), its hop,
+ * who wrote to whom, the text as sent and whole (a peer's syntax never becomes the page's elements), its hop,
  * and that it carries none of the owner's authority.
  */
 function RelayBlockQ({ item, copies }) {
@@ -2052,9 +2052,9 @@ function RelayBlockQ({ item, copies }) {
 		<>
 			<h3 className="queue-sheet-title">{`Message from ${getSenderLabelQ(sender)} to ${to}`}</h3>
 			<RelayWhoQ sender={sender} copies={copies} />
-			<p className="fs-meta font-semibold text-dim">{`What ${from} wrote`}</p>
+			<p className="fs-meta font-semibold text-dim">{`What ${from} wrote`}<span className="font-normal text-faint">{" · shown as sent"}</span></p>
 			{item.relay.redaction === null
-				? <><OrderBubbleQ text={item.body} isPlain /><DocumentsLineQ item={item} /></>
+				? <><ItemProseQ item={item} /><DocumentsLineQ item={item} /></>
 				: <p className="fs-meta text-dim">{RELAY_REDACTED_Q}</p>}
 			<RelayHopLineQ relay={item.relay} at={item.askedAt} />
 			<p className="fs-meta text-dim">{`This went to ${to} as ${from}'s message, without your approval. It does not carry your authority.`}</p>
@@ -2086,18 +2086,38 @@ function RelayWhoQ({ sender, copies }) {
 }
 
 function ItemTextQ({ item }) {
-	const { ProseText } = window.UI;
 	return (
 		<>
-			<ProseText text={item.body} linkedDocIds={item.linkedDocIds} />
+			<ItemProseQ item={item} />
 			<DocumentsLineQ item={item} />
 		</>
 	);
 }
 
-// declared documents the text did not turn into a link; none → no line
+/**
+ * Spec §5's surface table, chosen here alone: a relay's text as sent, by its kind; a decision's text whole, open or answered
+ * (C-no-fold-on-decisions); a fence over 20 lines folds everywhere else but the owner's answer on In delivery's sheet.
+ * @param isOwnText - the owner's own words (an order, a reply, `Your answer`) → rendered, whatever the item's kind
+ * @param isInDelivery - the answered decision's sheet before its session receives it
+ * @returns "asSent" | "whole" | "folded"
+ */
+function getTextFormQ(item, { isOwnText = false, isInDelivery = false } = {}) {
+	if (isOwnText) return isInDelivery ? "whole" : "folded";
+	if (item.kind === "relay") return "asSent";
+	return item.kind === "decision" ? "whole" : "folded";
+}
+
+// one text in the form getTextFormQ picks; as sent → one text node in its own dir="auto" element, its line breaks kept
+function ItemProseQ({ item, text = item.body, isCompact = false, isOwnText = false, isInDelivery = false }) {
+	const { ProseText } = window.UI;
+	const form = getTextFormQ(item, { isOwnText, isInDelivery });
+	if (form === "asSent") return <p dir="auto" className={`prose-text prose-text--as-sent${isCompact ? " prose-text--compact" : ""}`}>{text}</p>;
+	return <ProseText text={text} linkedDocIds={isOwnText ? [] : item.linkedDocIds} isCompact={isCompact} canFoldCode={form === "folded"} />;
+}
+
+// declared documents the text did not turn into a link (a text as sent links none); none → no line
 function DocumentsLineQ({ item }) {
-	const { linkedIds } = window.UI.getProseBlocks(item.body, item.linkedDocIds);
+	const { linkedIds } = getTextFormQ(item) === "asSent" ? { linkedIds: [] } : window.UI.getProseBlocks(item.body, item.linkedDocIds);
 	const rest = item.linkedDocIds.filter((id) => !linkedIds.includes(id));
 	if (rest.length === 0) return null;
 	return (
@@ -2143,8 +2163,7 @@ function OptionRowQ({ itemId, option, isRecommended, isChecked, onPick }) {
 }
 
 // the images are the item's own links → what the session received, never the draft (spec §7)
-function YourAnswerQ({ item }) {
-	const { ProseText } = window.UI;
+function YourAnswerQ({ item, isDone = false }) {
 	const [viewer, setViewer] = useStateQ(null);
 	const option = (item.options ?? []).find((candidate) => candidate.code === item.answer?.code);
 	const images = item.attachments ?? [];
@@ -2152,7 +2171,7 @@ function YourAnswerQ({ item }) {
 		<div>
 			<p className="queue-label">Your answer</p>
 			{option && <p className="queue-answer">{`${option.code} · ${option.label}`}</p>}
-			{item.answer?.text && <ProseText text={item.answer.text} />}
+			{item.answer?.text && <ItemProseQ item={item} text={item.answer.text} isOwnText isInDelivery={!isDone} />}
 			{images.length > 0 && <ImageRowQ images={images} onOpenImage={(_, index) => setViewer({ index })} />}
 			{item.isApprovalClass && images.length > 0 && <p className="fs-meta text-dim queue-answer-reference">{REFERENCE_LINE_Q}</p>}
 			{viewer && <ImageViewerQ images={images} index={viewer.index} onStep={(index) => setViewer({ index })} onClose={() => setViewer(null)} />}
@@ -2162,12 +2181,11 @@ function YourAnswerQ({ item }) {
 
 // the decision as it was asked, as text and not as controls
 function OriginalQuestionQ({ item }) {
-	const { ProseText } = window.UI;
 	const options = item.options ?? [];
 	return (
 		<details className="queue-kind">
 			<summary className="group disclosure queue-fold"><window.UI.DisclosureChevron /><span>{`Show the question and its ${options.length} ${options.length === 1 ? "option" : "options"}`}</span></summary>
-			<ProseText text={item.body} linkedDocIds={item.linkedDocIds} />
+			<ItemProseQ item={item} />
 			<ul className="prose-text">{options.map((option) => <li key={option.code}>{`${option.code} · ${option.label}`}</li>)}</ul>
 		</details>
 	);
@@ -2861,7 +2879,7 @@ function OrderEntryQ({ entry, busy, onResend, onOpenImage }) {
 				{item.kind === "report" && <span className="queue-order-re">{`Re: ${item.title}`}</span>}
 				<time dateTime={item.answeredAt}>{formatKstTime(item.answeredAt)}</time>
 			</p>
-			<OrderBubbleQ text={getOrderTextQ(item)} images={item.attachments ?? []} onOpenImage={onOpenImage} />
+			<OrderBubbleQ item={item} text={getOrderTextQ(item)} isOwnText images={item.attachments ?? []} onOpenImage={onOpenImage} />
 			<RecipientsQ copies={copies} busy={busy} onResend={onResend} />
 		</article>
 	);
@@ -2869,17 +2887,19 @@ function OrderEntryQ({ entry, busy, onResend, onOpenImage }) {
 
 /**
  * More than 12 written lines → clamped under `Show all N lines`; a long line that only wraps is not counted; the images stay in view under the clamp.
- * @param isPlain - a relay's text, a record read as evidence → drawn verbatim (line breaks kept, nothing parsed), no fill
+ * A text as sent (Relay history's, a record read as evidence) has no fill: the filled bubble is the owner's own word.
+ * @param isOwnText - the owner's order or reply, never a relay's text
  */
-function OrderBubbleQ({ text, images = [], onOpenImage, isPlain = false }) {
-	const { ProseText, DisclosureChevron } = window.UI;
+function OrderBubbleQ({ item, text = item.body, isOwnText = false, images = [], onOpenImage }) {
+	const { DisclosureChevron } = window.UI;
 	const [isFull, setFull] = useStateQ(false);
 	const count = text.split("\n").length;
 	const isLong = count > ORDERS_Q.CLAMP_LINES;
+	const isPlain = getTextFormQ(item, { isOwnText }) === "asSent";
 	return (
 		<>
 			<div className={`queue-bubble${isPlain ? " is-plain" : ""}${isLong && !isFull ? " is-clamped" : ""}`} style={{ "--queue-clamp-lines": ORDERS_Q.CLAMP_LINES }}>
-				{isPlain ? <p className="prose-text prose-text--compact">{text}</p> : <ProseText text={text} isCompact />}
+				<ItemProseQ item={item} text={text} isOwnText={isOwnText} isCompact />
 				{images.length > 0 && <ImageRowQ images={images} onOpenImage={onOpenImage} />}
 			</div>
 			{isLong && (
@@ -3615,7 +3635,7 @@ function RelayEntryQ({ entry, onRedact }) {
 			</p>
 			{kept === undefined
 				? <p className="fs-meta text-dim">{`${RELAY_REDACTED_Q} ${getDatedTimeQ(item.relay.redaction.at)} · it was ${item.relay.redaction.length.toLocaleString("en-US")} characters long`}</p>
-				: <OrderBubbleQ text={kept.body} isPlain />}
+				: <OrderBubbleQ item={kept} />}
 			<DocumentsLineQ item={item} />
 			<ul className="queue-relay-copies" aria-label="Recipients">{copies.map((copy) => <RelayCopyQ key={copy.id} copy={copy} at={at} />)}</ul>
 			<RelayHopLineQ relay={item.relay} at={at} />

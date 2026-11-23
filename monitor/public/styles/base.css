@@ -999,15 +999,12 @@ label.ctl-checkbox-hit {
 .queue-relay-error {
 	min-height: var(--lh-row);
 }
-/* the relay's text in the history: the bubble's clamp without its fill or inset; the text as written, its line breaks kept */
+/* the relay's text in the history: the bubble's clamp without its fill or inset */
 .queue-bubble.is-plain {
 	max-width: var(--measure-prose);
 	padding: 0;
 	background: none;
 	border-radius: 0;
-}
-.queue-bubble.is-plain > .prose-text {
-	white-space: pre-wrap;
 }
 /* a pane: head, bar and foot fixed, the body the only scroller on its axis */
 .queue-pane > .card-body {
@@ -2299,6 +2296,10 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .prose-text--compact {
 	font-size: var(--fs-control);
 	line-height: 22px;
+}
+/* a text as sent (a relay's): one text node, nothing parsed → its line breaks are the only structure it keeps */
+.prose-text--as-sent {
+	white-space: pre-wrap;
 }
 .prose-text > * + * {
 	margin-top: var(--space-3);

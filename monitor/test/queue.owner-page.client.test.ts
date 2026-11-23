@@ -155,6 +155,18 @@ const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }
 const renderSheet = (props: unknown): RenderedNode => render("ItemSheetQ", props);
 const byClass = (tree: RenderedNode, name: string) => findNodes(tree, (node) => String(node.props?.className ?? "").split(" ").includes(name));
 
+// spec §5's block forms in one text: headings, three list levels, a table, a quote, a rule, a fence, a link and an image link
+const EVERY_BLOCK_FORM = [
+  "# 배포 65 결과", "### 세부", "- 첫째 **꼭**", "  - 둘째", "    - 셋째", "1. 번호", "| 항목 | 값 |", "|---|--:|", "| 테스트 | 3280 |",
+  "> 인용한 줄", "---", "```", "const limit = 30;", "```", "[인계 문서](clauded-docs/39703) ![화면](https://example.com/a.png)",
+].join("\n");
+// each as-sent element's content: one string child in a dir="auto" element, else what stands in its place
+const getAsSentTexts = (tree: RenderedNode) => byClass(tree, "prose-text--as-sent").map((node) => {
+  const [child, ...rest] = node.children ?? [];
+  if (node.props.dir !== "auto") return "no dir=auto";
+  return typeof child === "string" && rest.length === 0 ? child : `${(node.children ?? []).length} children`;
+});
+
 const buttonLabelled = (tree: RenderedNode, label: string) => findNodes(tree, (node) => node.type === "button" && collectText(node).trim() === label);
 
 describe("queue nav slot", () => {
@@ -649,11 +661,11 @@ describe("relay history", () => {
     assert.doesNotMatch(flat(received!), /Hop/);
   });
 
-  test("relay text is drawn verbatim as plain text: each kept text is the stored string whole, never prose-parsed or set as HTML", () => {
-    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
-    const bubbles = findNodes(tree, (node) => String(node.props?.className ?? "").startsWith("queue-bubble"));
-    const kept = [...new Map(fixture.items.filter((item) => item.relay?.redaction === null).map((item) => [item.sendId, item.body])).values()].reverse();
-    assert.deepEqual(bubbles.map((bubble) => collectText(bubble)), kept);
+  test("relay text is drawn as sent: each kept text is the stored string whole in one pre-wrap text node, never prose-parsed or set as HTML", () => {
+    const items = fixture.items.map((item) => ({ ...item, body: item.relay?.redaction === null ? `${item.body}\n${EVERY_BLOCK_FORM}` : item.body }));
+    const tree = render("RelayLogQ", { history: history({ items, refusals: [] }) });
+    const kept = [...new Map(items.filter((item) => item.relay?.redaction === null).map((item) => [item.sendId, item.body])).values()].reverse();
+    assert.deepEqual(getAsSentTexts(tree), kept);
     assert.equal(findNodes(tree, (node) => node.props?.atom === "ProseText").length, 0);
     assert.equal(findNodes(tree, (node) => node.props?.dangerouslySetInnerHTML !== undefined).length, 0);
   });
@@ -1542,13 +1554,19 @@ describe("a relay on its way", () => {
     });
   }
 
-  test("a relay's text on its sheet is drawn as written: list, code and link syntax stay the same characters, never parsed", () => {
-    const body = "- 첫째 항목\n1. 둘째 항목\n`npm test` **꼭** 확인\n```\nconst limit = 30;\n```\n[인계 문서](#clauded-docs?doc=39703) https://example.com/a";
-    const queue = withList(buildQueue().queue, toYoaida({ body }));
+  test("a relay's text on its sheet is one pre-wrap text node, whole and unparsed, under its label and the shown-as-sent cue", () => {
+    const queue = withList(buildQueue().queue, toYoaida({ body: EVERY_BLOCK_FORM }));
     const [block] = byClass(render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } }), "queue-sheet-body");
-    const bubbles = findNodes(block as RenderedNode, (node) => String(node.props?.className ?? "").startsWith("queue-bubble"));
-    assert.deepEqual(bubbles.map((bubble) => collectText(bubble)), [body]);
+    assert.deepEqual(getAsSentTexts(block as RenderedNode), [EVERY_BLOCK_FORM]);
     assert.equal(findNodes(block as RenderedNode, (node) => node.props?.atom === "ProseText").length, 0);
+    assert.ok(collectText(block as RenderedNode).replace(/\s+/g, " ").includes("What aidl wrote · shown as sent"));
+  });
+
+  test("a relay whose text addresses its declared document still lists it on the Documents line: the text as sent links none", () => {
+    const queue = withList(buildQueue().queue, toYoaida({ body: "근거: clauded-docs/44099 의 응답 예시", linkedDocIds: [44099] }));
+    const [block] = byClass(render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } }), "queue-sheet-body");
+    const links = findNodes(block as RenderedNode, (node) => node.type === "a").map((node) => [collectText(node), node.props.href]);
+    assert.deepEqual(links, [["44099", "#clauded-docs?doc=44099"]]);
   });
 });
 
@@ -3533,6 +3551,34 @@ describe("images on an answer", () => {
   test("an answered decision's images ride its row's title and accessible name, its fact column unchanged", () => {
     const item = answered({});
     assert.deepEqual(call("getRowCellsQ", { item, copies: [item] }, false), { tags: [], fact: "Answer R1", extras: ["2 images"] });
+  });
+});
+
+// spec §5 → Where it renders: each surface's text through ProseText, its fence fold on only where the table folds (C-no-fold-on-decisions)
+describe("which text surfaces fold a long fence", () => {
+  const answered = { status: "answered", answer: { code: "R1", text: "after the deploy" }, answeredAt: "2026-11-12T12:26:40.118Z", attachments: [] };
+  const report = { kind: "report", body: "Shipped.", options: null, recommendedCode: null };
+  const handled = { status: "seen", closedAt: "2026-11-12T13:00:00.000Z" };
+  const order = buildItem({ ...report, status: "answered", answer: { code: null, text: "ship it" }, answeredAt: "2026-11-12T12:26:40.118Z", sendId: "s" });
+  const rows = [
+    { name: "an open decision's text stays whole", item: buildItem(), folds: [["Two orders keep the shadow DB green.", false]] },
+    { name: "an open approval-class decision's text stays whole", item: buildItem({ isApprovalClass: true }), folds: [["Two orders keep the shadow DB green.", false]] },
+    { name: "In delivery: the owner's answer and the folded question both stay whole", item: buildItem(answered), folds: [["after the deploy", false], ["Two orders keep the shadow DB green.", false]] },
+    { name: "a handled answered decision: the owner's answer folds, the question stays whole", item: buildItem({ ...answered, ...handled, status: "delivered" }), isDone: true, folds: [["after the deploy", true], ["Two orders keep the shadow DB green.", false]] },
+    { name: "a handled decision that ended unanswered keeps its question whole", item: buildItem({ ...handled, status: "withdrawn" }), isDone: true, folds: [["Two orders keep the shadow DB green.", false]] },
+    { name: "an open report's text folds", item: buildItem(report), folds: [["Shipped.", true]] },
+    { name: "a handled report's text folds", item: buildItem({ ...report, ...handled }), isDone: true, folds: [["Shipped.", true]] },
+  ];
+  const getFolds = (tree: RenderedNode) => findNodes(tree, (node) => node.props?.atom === "ProseText").map((node) => [node.props.text, node.props.canFoldCode]);
+  for (const row of rows) {
+    test(`on the sheet: ${row.name}`, () => {
+      assert.deepEqual(getFolds(renderSheet({ item: row.item, queue: buildQueue().queue, cliPath: CLI_PATH, isDone: row.isDone ?? false })), row.folds);
+    });
+  }
+
+  test("in Orders: the owner's text in its bubble folds", () => {
+    const tree = render("OrderEntryQ", { entry: { id: 81, item: order, copies: [order] }, onResend: () => undefined, onOpenImage: () => undefined });
+    assert.deepEqual(getFolds(tree), [["ship it", true]]);
   });
 });
 

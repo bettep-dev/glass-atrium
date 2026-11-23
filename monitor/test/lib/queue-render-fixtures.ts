@@ -757,6 +757,35 @@ export function getRelayRowFixture(): QueueFixture {
   return { ...rest, items: [...rest.items, ...one, ...several] };
 }
 
+const LONG_FENCE = ["```ts", ...Array.from({ length: 30 }, (_, index) => `const step${index + 1} = await runStep("migrate-${index + 1}", { dryRun: false });`), "```"];
+
+const PROSE_REPORT_BODY = [
+  "# 주문 서비스 단일 출처 — 최종 정리", "## 반영한 것",
+  "- API: 필수 수정 8건 반영 (끝 커밋 `684bac3b`)", "  - 테스트 3280건 통과", "    - 계약 테스트 412건 포함", "- 웹: 화면 3개 정리",
+  "1. dev DB 반영", "2. 병합",
+  "### 결과", "| 저장소 | 테스트 | 빌드 |", "|---|--:|:--:|", "| api | 3280 | 통과 |", "| web | 812 | 통과 |", "| admin | 240 | 통과 |",
+  "> 병합과 배포는 승인 뒤에 진행합니다.", "---", "## 마이그레이션 순서", ...LONG_FENCE,
+].join("\n");
+
+const PROSE_DECISION_BODY = ["- 아래 순서 그대로 반영할지 정해 주세요.", ...LONG_FENCE, DOC_LINE].join("\n");
+
+const PROSE_RELAY_BODY = [
+  "파트너 연동 안내의 **응답 예시**에서 필드 이름이 바뀌었습니다.", "## 요청", "- 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.", "  - 응답 예시 표도 함께",
+  "| 필드 | 이전 | 이후 |", "|---|---|---|", "| 주문 번호 | orderNo | orderId |", "> 지난 배포 기록에서 옮긴 줄", "---",
+  "```ts", "const field = \"orderId\";", "```", "[안내 문서](clauded-docs/44099) ![화면](https://example.com/a.png)",
+].join("\n");
+
+/** Spec §5's text surfaces: report 101 in Markdown with a 30-line fence, decision 103 an approval with one, relay 421 holding every block form. */
+export function getProseFixture(): QueueFixture {
+  const relays = getRelayRowFixture();
+  const bodies = new Map<number, Partial<OwnerItemView>>([
+    [101, { body: PROSE_REPORT_BODY }],
+    [103, { body: PROSE_DECISION_BODY, isApprovalClass: true }],
+    [RELAY_ROW_IDS.one, { body: PROSE_RELAY_BODY, title: PROSE_RELAY_BODY.split("\n")[0], linkedDocIds: [44099] }],
+  ]);
+  return { ...relays, items: relays.items.map((item) => ({ ...item, ...bodies.get(item.id) })) };
+}
+
 /** `rest` plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
 export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
   const hidden = [["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e91", "spare"], ["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e92", "deploy62-probe"]].map(([id, name]) => ({
