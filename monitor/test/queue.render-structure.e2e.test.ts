@@ -24,7 +24,7 @@ import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getEdgeFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
@@ -418,13 +418,23 @@ const RAIL_STATES: QueueState[] = [
   { nn: "37", name: "rail-states", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getRailFixture, setUp: (page) => openEndedBand(page) },
 ];
 
-// spec §4.6: Status Done at the three list widths — the done list, and an answered decision's read-only sheet
+// spec §4.6 (One list) at the three list widths: the open bands with the Done bands under them — at rest, scrolled to the done part,
+// after Show more, with nothing open and with a session ticked — and an answered decision's read-only sheet
 const DONE_STATES: QueueState[] = [
-  { nn: "38", name: "done-list", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getDoneFixture, setUp: (page) => openDoneView(page) },
+  { nn: "38", name: "one-list", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getDoneFixture, setUp: (page) => waitForDoneBands(page) },
+  { nn: "38c", name: "one-list-done-part", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getDoneFixture, setUp: (page) => scrollToDonePart(page) },
+  { nn: "38d", name: "one-list-more", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getManyDoneFixture, setUp: (page) => showMoreDone(page) },
+  { nn: "38e", name: "one-list-none-open", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getDoneOnlyFixture, setUp: (page) => waitForDoneBands(page) },
+  {
+    nn: "38f", name: "one-list-ticked", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getDoneFixture,
+    setUp: async (page) => {
+      await tickSessions(page, ["atrium"]);
+      await page.waitForFunction(() => document.querySelectorAll(".queue-row--done").length === 1);
+    },
+  },
   {
     nn: "38b", name: "done-sheet", viewports: [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW], getFixture: getDoneFixture,
     setUp: async (page) => {
-      await openDoneView(page);
       await selectRow(page, DONE_IDS.answered);
       await page.locator(".queue-sheet .card-foot", { hasText: "Answer R1 ·" }).waitFor();
     },
@@ -715,11 +725,28 @@ async function scrollList(page: Page): Promise<void> {
   });
 }
 
-// the list's Status trigger → Done, settled once the first day band shows
-async function openDoneView(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /^Status/ }).click();
-  await page.getByRole("menuitemradio", { name: "Done" }).click();
-  await page.locator(".queue-band", { hasText: "Today" }).waitFor();
+// the one list's done part (spec §4.6): its first Done band drawn under the open ones
+async function waitForDoneBands(page: Page): Promise<void> {
+  await page.locator(".queue-band", { hasText: "Done" }).first().waitFor();
+}
+
+// the list body scrolled so the first Done band stands at its top
+async function scrollToDonePart(page: Page): Promise<void> {
+  await waitForDoneBands(page);
+  await page.evaluate(() => {
+    const body = document.querySelector(".queue-list > .card-body") as HTMLElement;
+    const group = document.querySelector('.queue-listbox [role="group"][aria-label^="Done"]') as HTMLElement;
+    body.scrollTop = group.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+  });
+}
+
+// Show more at the list's end pressed once, settled when the next done page has joined the list
+async function showMoreDone(page: Page): Promise<void> {
+  await waitForDoneBands(page);
+  const loaded = await page.locator(".queue-row--done").count();
+  await page.getByRole("button", { name: "Show more" }).click();
+  await page.waitForFunction((count) => document.querySelectorAll(".queue-row--done").length > count, loaded);
+  await page.locator(".queue-row--done").last().scrollIntoViewIfNeeded();
 }
 
 async function tickSessions(page: Page, names: string[]): Promise<void> {
@@ -1233,7 +1260,7 @@ async function getPngSize(file: string): Promise<{ width: number; height: number
 
 // the first item's title, or the empty list's line → the list read has answered
 function getRestReadyText(fixture = getRestFixture()): string {
-  return fixture.items[0]?.title ?? "Nothing is waiting for you";
+  return fixture.items[0]?.title ?? fixture.done?.[0]?.title ?? "Nothing is waiting for you";
 }
 
 describe("queue page on the mockup fixtures", () => {
@@ -2554,27 +2581,126 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec 44063 §9.1–§9.4 and §14.4 (Next turn stream only): Next turn and Not yet side by side on every surface
-  // spec §4.6, §14.3: Status Done — the history read with kind item, scoped on the server by the ticks; day bands; a read-only sheet
+  // spec §4.6, §14.3 (One list): the history read with kind item under the open bands, scoped on the server by the ticks; Done day bands; a read-only sheet
   describe("on the done fixtures", () => {
-    const openDonePage = async (): Promise<{ page: Page; reads: URLSearchParams[] }> => {
-      harness.fixture = getDoneFixture();
+    const openDonePage = async (fixture = getDoneFixture(), hash = ""): Promise<{ page: Page; reads: URLSearchParams[] }> => {
+      harness.fixture = fixture;
       const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
       const reads: URLSearchParams[] = [];
       page.on("request", (request) => {
         const url = new URL(request.url());
         if (url.pathname === "/api/queue/owner/orders" && url.searchParams.get("kind") === "item") reads.push(url.searchParams);
       });
-      await openDoneView(page);
+      // the first reads after the listener → every done read is recorded; a hash → the page opens on it
+      if (hash !== "") await page.evaluate((next) => { location.hash = next; }, hash);
+      await page.reload({ waitUntil: "load" });
+      await waitForDoneBands(page);
       return { page, reads };
     };
-    const getDoneRows = (page: Page) => page.evaluate(() => ({
+    // every band and row in list order: a band's text and count badges, a row's part (open or done), its tag and fact, its title's weight and colour
+    const getListRows = (page: Page) => page.evaluate(() => ({
       hash: location.hash,
       bands: [...document.querySelectorAll(".queue-listbox .queue-band")].map((band) => [band.textContent, band.querySelectorAll(".pill").length]),
-      rows: [...document.querySelectorAll(".queue-row")].map((row) => [row.id, row.querySelector(".queue-row-tag")?.textContent, row.querySelector(".queue-row-fact")?.textContent]),
+      rows: [...document.querySelectorAll(".queue-listbox .queue-row")].map((row) => [row.id, row.closest('[role="group"]')?.getAttribute("aria-label")?.startsWith("Done") === true]),
+      done: [...document.querySelectorAll(".queue-row--done")].map((row) => [row.id, row.querySelector(".queue-row-tag")?.textContent, row.querySelector(".queue-row-fact")?.textContent]),
+      looks: [...new Set([...document.querySelectorAll(".queue-row")].map((row) => {
+        const title = getComputedStyle(row.querySelector(".queue-row-title") as Element);
+        const band = getComputedStyle(row.closest('[role="group"]')?.querySelector(".queue-band") as Element);
+        return `${row.classList.contains("queue-row--done")}:${title.fontWeight}:${title.color === band.color ? "dim" : "ink"}`;
+      }))],
+      bar: document.querySelector(".queue-list > .card-bar") !== null,
     }));
 
-    test("Status Done's Reset filters is quiet: no edge at rest, a faint fill on hover", async () => {
+    test("the one list draws the open bands, then the done items newest end first under Done day bands with no count, each row dim 400 with how it ended and its kind; no bar with one account", async () => {
+      const { page, reads } = await openDonePage();
+      const shown = await getListRows(page);
+      await page.close();
+
+      const firstDone = shown.rows.findIndex(([, isDone]) => isDone);
+      const firstDoneBand = shown.bands.findIndex(([text]) => String(text).startsWith("Done"));
+      assert.ok(firstDone > 0 && firstDoneBand > 0, "open rows and bands on top");
+      assert.deepEqual(shown.rows.slice(firstDone).filter(([, isDone]) => !isDone), [], "every open row above every done row");
+      assert.deepEqual({ ...shown, rows: undefined, bands: shown.bands.slice(firstDoneBand), openBands: shown.bands.slice(0, firstDoneBand).every(([, counts]) => counts === 1) }, {
+        hash: "#queue",
+        bands: [["DoneToday", 0], ["DoneYesterday", 0], ["DoneNov 9", 0]],
+        rows: undefined,
+        openBands: true,
+        done: [
+          ["queue-row-801", "Answer R1", "Decision"], ["queue-row-802", "Read", "Report"],
+          ["queue-row-803", "Withdrawn", "Decision"], ["queue-row-804", "Replied", "Report"], ["queue-row-805", "Answered", "Decision"],
+        ],
+        looks: ["false:600:ink", "true:400:dim"],
+        bar: false,
+      });
+      assert.deepEqual(reads.map((query) => Object.fromEntries(query)), [{ limit: "30", kind: "item" }]);
+    });
+
+    test("ticking a session scopes the done read on the server, and both parts hold that session alone", async () => {
+      const { page, reads } = await openDonePage();
+      await tickSessions(page, ["atrium"]);
+      await page.waitForFunction(() => document.querySelectorAll(".queue-row--done").length === 1);
+      const shown = await getListRows(page);
+      const names = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-row")].map((row) => row.getAttribute("aria-label")?.match(/ from (\S+):/)?.[1] ?? "atrium"))]);
+      await page.close();
+
+      assert.deepEqual([shown.done, names], [[["queue-row-802", "Read", "Report"]], ["atrium"]]);
+      assert.deepEqual(reads.at(-1)?.get("sessionIds"), FIXTURE_SESSION_IDS.atrium);
+    });
+
+    test("with nothing open the Done bands start at the top and the head reads 0 waiting", async () => {
+      const { page } = await openDonePage(getDoneOnlyFixture());
+      const shown = await page.evaluate(() => ({
+        first: document.querySelector(".queue-listbox .queue-band")?.textContent,
+        isWaiting: document.querySelector(".queue-list")?.textContent?.includes("0 waiting"),
+      }));
+      await page.close();
+
+      assert.deepEqual([shown.first, shown.isWaiting], ["DoneToday", true]);
+    });
+
+    test("Show more stands one 44 line after the last row inside the list's scroll, start-aligned, and reads the next done page", async () => {
+      const { page, reads } = await openDonePage(getManyDoneFixture());
+      const before = await page.evaluate(() => {
+        const end = document.querySelector(".queue-list-end") as HTMLElement;
+        const button = end.querySelector("button") as HTMLElement;
+        const listbox = document.querySelector(".queue-listbox") as HTMLElement;
+        return {
+          parent: end.parentElement?.matches(".queue-list > .card-body"),
+          height: Math.round(end.getBoundingClientRect().height),
+          afterRows: Math.round(end.getBoundingClientRect().top - listbox.getBoundingClientRect().bottom),
+          inset: Math.round(button.getBoundingClientRect().left - end.getBoundingClientRect().left),
+          rows: document.querySelectorAll(".queue-row--done").length,
+          isFootFree: document.querySelector(".queue-list > .card-foot")?.textContent?.includes("Show more") === false,
+        };
+      });
+      await showMoreDone(page);
+      const after = await page.evaluate(() => ({ rows: document.querySelectorAll(".queue-row--done").length, hasEnd: document.querySelector(".queue-list-end") !== null }));
+      await page.close();
+
+      assert.deepEqual(before, { parent: true, height: 44, afterRows: 0, inset: 16, rows: 30, isFootFree: true });
+      assert.deepEqual(after, { rows: 40, hasEnd: false });
+      assert.ok(reads.at(-1)?.has("before"), "the second read pages back by cursor");
+    });
+
+    test("Down from the last open row focuses the first done row and Up returns, one tab stop across the boundary", async () => {
       const { page } = await openDonePage();
+      const ids = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll(".queue-listbox .queue-row")];
+        const first = rows.findIndex((row) => row.classList.contains("queue-row--done"));
+        return { last: rows[first - 1]?.id, first: rows[first]?.id, stops: rows.filter((row) => row.getAttribute("tabindex") === "0").length };
+      });
+      await page.locator(`#${ids.last}`).focus();
+      await page.keyboard.press("ArrowDown");
+      const down = await page.evaluate(() => document.activeElement?.id);
+      await page.keyboard.press("ArrowUp");
+      const up = await page.evaluate(() => document.activeElement?.id);
+      await page.close();
+
+      assert.deepEqual([down, up, ids.stops], [ids.first, ids.last, 1]);
+    });
+
+    test("an applied account draws the bar, and its Reset filters is quiet: no edge at rest, a faint fill on hover", async () => {
+      const { page } = await openDonePage(getDoneFixture(), "#queue?profile=.claude-work");
       const reset = page.locator(".filter-bar-reset");
       // the button's colour transition settled first → the look read is the state's, not a frame of the fade
       const getLook = () => reset.evaluate(async (node) => {
@@ -2587,37 +2713,6 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
       const CLEAR = "rgba(0, 0, 0, 0)";
       assert.deepEqual([rest, hovered.edge, hovered.fill !== CLEAR], [{ edge: CLEAR, fill: CLEAR }, CLEAR, true]);
-    });
-
-    test("Status Done lists the done items newest end first in day bands with no count, each row how it ended and its kind, status=done in the hash; Reset filters returns to Open", async () => {
-      const { page, reads } = await openDonePage();
-      const shown = await getDoneRows(page);
-      await page.getByRole("button", { name: "Reset filters" }).click();
-      await page.locator(".queue-band", { hasText: "Decisions" }).waitFor();
-      const reset = await page.evaluate(() => location.hash);
-      await page.close();
-
-      assert.deepEqual(shown, {
-        hash: "#queue?status=done",
-        bands: [["Today", 0], ["Yesterday", 0], ["Nov 9", 0]],
-        rows: [
-          ["queue-row-801", "Answer R1", "Decision"], ["queue-row-802", "Read", "Report"],
-          ["queue-row-803", "Withdrawn", "Decision"], ["queue-row-804", "Replied", "Report"], ["queue-row-805", "Answered", "Decision"],
-        ],
-      });
-      assert.deepEqual(reads.map((query) => Object.fromEntries(query)), [{ limit: "30", kind: "item" }]);
-      assert.equal(reset, "#queue");
-    });
-
-    test("ticking a session scopes the done read on the server, and the list holds what it returns", async () => {
-      const { page, reads } = await openDonePage();
-      await tickSessions(page, ["atrium"]);
-      await page.waitForFunction(() => document.querySelectorAll(".queue-row").length === 1);
-      const shown = await getDoneRows(page);
-      await page.close();
-
-      assert.deepEqual(shown.rows, [["queue-row-802", "Read", "Report"]]);
-      assert.deepEqual(reads.at(-1)?.get("sessionIds"), FIXTURE_SESSION_IDS.atrium);
     });
 
     test("a done row opens its read-only sheet: the answer shown, no composer, its foot how and when it ended; J steps to the next done item", async () => {
@@ -2637,8 +2732,10 @@ describe("queue page on the mockup fixtures", () => {
       const read = { ...(await getSheet()), hash: await page.evaluate(() => location.hash) };
       await page.close();
 
-      assert.deepEqual(answered, { kind: "Decision", foot: "Answer R1 · Nov 13 14:57", controls: 0, hasAnswer: true, position: "1 of 5" });
-      assert.deepEqual(read, { kind: "Report", foot: "Read · Nov 13 14:00", controls: 0, hasAnswer: false, position: "2 of 5", hash: "#queue?status=done&item=802" });
+      const [at, of] = String(answered.position).split(" of ").map(Number);
+      assert.deepEqual({ ...answered, position: undefined }, { kind: "Decision", foot: "Answer R1 · Nov 13 14:57", controls: 0, hasAnswer: true, position: undefined });
+      assert.deepEqual(read, { kind: "Report", foot: "Read · Nov 13 14:00", controls: 0, hasAnswer: false, position: `${at! + 1} of ${of}`, hash: "#queue?item=802" });
+      assert.ok(at! > 1, "the done rows step on from the open ones");
     });
   });
 
@@ -2945,7 +3042,7 @@ describe("queue page on the mockup fixtures", () => {
         for (const [fixture, isDone] of [[getNameColumnFixture(), false], [getEdgeFixture(), false], [getDoneFixture(), true], [getRelayRowFixture(), false]] as const) {
           harness.fixture = fixture;
           const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
-          if (isDone) await openDoneView(page);
+          if (isDone) await waitForDoneBands(page);
           const facts = await page.evaluate((longName) => {
             const rows = [...document.querySelectorAll(".queue-row")];
             const cells = [".queue-row-who", ".queue-row-title", ".queue-row-tag", ".queue-row-fact", ".queue-row-age", ".queue-row-chevron"];

@@ -136,6 +136,7 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       reload: record("reload"),
       back: record("back"),
       list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [] },
+      done: { thread: { status: "ready", hasRead: true, items: [], nextCursor: null, error: null, refusals: [] }, read: record("readDone"), showEarlier: record("moreDone"), reread: record("rereadDone") },
       steps: { index: 0, count: 1, prevId: null, nextId: null },
       ...overrides,
     },
@@ -560,7 +561,7 @@ describe("recent automatic resumes", () => {
   });
 
   // spec §4.4: the foot button's count and ⚠ follow the page's own tick, as the list does
-  test("the page's tick reads the resume record and the relay signal beside the list, the sessions, the count and the thread", async () => {
+  test("the page's tick reads the resume record and the relay signal beside the list, the sessions, the count, the thread and the done items", async () => {
     const reads: string[] = [];
     const read = (name: string, answer: unknown = undefined) => async () => { reads.push(name); return answer; };
     const isGood = await (screen.getPageReadQ as (deps: unknown) => Promise<boolean>)({
@@ -569,10 +570,11 @@ describe("recent automatic resumes", () => {
       readRelaySignal: read("relay signal"),
       sessions: { read: read("sessions") },
       orders: { reread: read("thread") },
+      done: { reread: read("done items") },
       onReadQueueCount: read("count"),
       setStatus: () => undefined,
     });
-    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "list", "relay signal", "resumes", "sessions", "thread"]]);
+    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "done items", "list", "relay signal", "resumes", "sessions", "thread"]]);
   });
 
   test("the record is read from the resume route, whatever the owner list holds", async () => {
@@ -1048,36 +1050,40 @@ describe("queue filter bar", () => {
     return { bar, triggers, picks };
   };
 
-  // the rail's ticks are the session scope → the bar holds Status, then Account while it tells items apart (spec §4.1 → Bar)
+  // the rail's ticks are the session scope and done items follow the open ones → the bar holds the Account trigger alone (spec §4.1 → Bar, §4.6)
   const rows = [
-    { name: "at defaults Status reads Open, Account All, and the reset stays hidden", filter: { profile: "", status: "" }, status: "Open", account: "All", isApplied: false },
-    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal", status: "" }, status: "Open", account: "personal", isApplied: true },
-    { name: "Status Done names Done and shows the reset", filter: { profile: "", status: "done" }, status: "Done", account: "All", isApplied: true },
+    { name: "at defaults Account reads All and the reset stays hidden", filter: { profile: "" }, account: "All", isApplied: false },
+    { name: "a chosen account names that account and shows the reset", filter: { profile: "personal" }, account: "personal", isApplied: true },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const { bar, triggers } = renderBar(row.filter);
-      assert.deepEqual(Object.keys(triggers), ["Status", "Account"]);
-      assert.deepEqual([triggers.Status?.value, triggers.Account?.value], [row.status, row.account]);
+      assert.deepEqual(Object.keys(triggers), ["Account"]);
+      assert.equal(triggers.Account?.value, row.account);
       assert.equal(bar?.props.isApplied, row.isApplied);
     });
   }
 
-  test("items of one account and no account filter leave the Account trigger out, Status alone", () => {
-    const tree = render("QueueFilterBarQ", { items: [items[0]], filter: { profile: "", status: "" }, onFilter: () => undefined });
-    assert.deepEqual(findNodes(tree, (node) => node.props.atom === "FilterTrigger").map((node) => node.props.axis), ["Status"]);
-  });
+  // one account and no account filter → nothing to choose: no bar, the first band follows the head
+  const cardRows = [
+    { name: "open items of two accounts draw the bar", open: items, done: [], filter: { profile: "" }, hasBar: true },
+    { name: "an open and a done item of two accounts draw the bar", open: [items[0]], done: [{ ...items[1], id: 3, status: "seen", closedAt: "2026-11-10T07:00:00.000Z" }], filter: { profile: "" }, hasBar: true },
+    { name: "one account and no account filter draw no bar", open: [items[0]], done: [], filter: { profile: "" }, hasBar: false },
+    { name: "an applied account filter draws the bar whatever is loaded", open: [items[0]], done: [], filter: { profile: "personal" }, hasBar: true },
+  ];
+  for (const row of cardRows) {
+    test(`the list card: ${row.name}`, () => {
+      const { queue } = buildQueue();
+      const loaded = { ...withList(queue, row.open), filter: row.filter, done: { ...queue.done, thread: { ...queue.done.thread, items: row.done } } };
+      const [card] = findNodes(render("QueueListQ", { queue: loaded }), (node) => node.props?.atom === "Card");
+      assert.equal(Boolean(card?.props.bar), row.hasBar);
+    });
+  }
 
-  test("Reset filters returns Status to Open and the account to All", () => {
-    const { bar, picks } = renderBar({ profile: "personal", status: "done" });
+  test("Reset filters returns the account to All", () => {
+    const { bar, picks } = renderBar({ profile: "personal" });
     (bar?.props.onReset as () => void)();
-    assert.deepEqual(getPlain(picks), [{ profile: "", status: "" }]);
-  });
-
-  test("picking Done keeps the account", () => {
-    const { triggers, picks } = renderBar({ profile: "personal", status: "" });
-    (triggers.Status?.onPick as (key: string) => void)("done");
-    assert.deepEqual(getPlain(picks), [{ profile: "personal", status: "done" }]);
+    assert.deepEqual(getPlain(picks), [{ profile: "" }]);
   });
 
   test("a chosen value no loaded item carries stays an option, so its trigger still names it", () => {
@@ -1097,9 +1103,8 @@ describe("filter state in the hash", () => {
     return { module, location };
   };
   const rows = [
-    { name: "the account round-trips through the screen query", start: "#queue", filter: { profile: "work-dev", status: "" } },
-    { name: "Status Done round-trips as status=done", start: "#queue", filter: { profile: "", status: "done" }, hash: "#queue?status=done" },
-    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal&status=done", filter: { profile: "", status: "" }, hash: "#queue" },
+    { name: "the account round-trips through the screen query", start: "#queue", filter: { profile: "work-dev" }, hash: "#queue?profile=work-dev" },
+    { name: "defaults leave a bare screen hash and read back as defaults", start: "#queue?profile=personal", filter: { profile: "" }, hash: "#queue" },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -1112,9 +1117,9 @@ describe("filter state in the hash", () => {
 
   // one hash writer merges every key → a filter write never erases the selected item or the ticks (spec §4.3 → Selection)
   const mergeRows = [
-    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev" }, expected: { profile: "work-dev", status: "", item: "41", to: "a,b" } },
-    { name: "an item write keeps the filter and the ticks", start: "#queue?profile=personal&to=s1", patch: { item: "7" }, expected: { profile: "personal", status: "", item: "7", to: "s1" } },
-    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { profile: "personal", status: "", item: "", to: "" } },
+    { name: "a filter write keeps the selected item and the ticks", start: "#queue?item=41&to=a,b", patch: { profile: "work-dev" }, expected: { profile: "work-dev", item: "41", to: "a,b" } },
+    { name: "an item write keeps the filter and the ticks", start: "#queue?profile=personal&to=s1", patch: { item: "7" }, expected: { profile: "personal", item: "7", to: "s1" } },
+    { name: "an emptied key leaves the hash and the others stay", start: "#queue?item=7&profile=personal", patch: { item: "" }, expected: { profile: "personal", item: "", to: "" } },
   ];
   for (const row of mergeRows) {
     test(row.name, async () => {
@@ -1125,15 +1130,17 @@ describe("filter state in the hash", () => {
     });
   }
 
-  // Orders is always open and the ticks are the one selection (spec §9.1, §9.2) → an old link's view= or session= names no state, and the first write leaves it out
+  // Orders is always open, the ticks are the one selection and done items follow the open ones (spec §9.1, §9.2, §4.6)
+  // → an old link's view=, session= or status= names no state, and the first write leaves it out
   const oldLinks = [
     { name: "an old link's view= opens nothing and leaves the hash at the first write", start: "#queue?view=orders&item=41" },
     { name: "an old link's session= scopes nothing and leaves the hash at the first write", start: "#queue?session=s1&item=41" },
+    { name: "an old link's status= hides nothing and leaves the hash at the first write", start: "#queue?status=done&item=41" },
   ];
   for (const row of oldLinks) {
     test(row.name, async () => {
       const { module, location } = await load(row.start);
-      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), { profile: "", status: "" });
+      assert.deepEqual(getPlain((module.getFilterFromHashQ as () => unknown)()), { profile: "" });
       (module.setHashStateQ as (patch: unknown) => void)({ item: "" });
       assert.equal(location.hash, "#queue");
     });
@@ -1172,8 +1179,8 @@ describe("list groups", () => {
   for (const row of foldRows) test(row.name, () => assert.deepEqual(getShape(row.items)[0]?.rows, row.expected));
 });
 
-// spec §4.6: Status Done — the history read's decisions and reports no longer open, on the list's own rows and sheet
-describe("done items", () => {
+// spec §4.6 (One list): the history read's decisions and reports no longer open, under Done bands below the open ones, on the list's own rows and sheet
+describe("done items in the one list", () => {
   const atrium = buildSession({ id: "c3", name: "atrium" });
   const record = (route: string) => ({ route, signal: "fetch_metadata" });
   const answered = { answeredAt: "2026-11-19T05:30:00.000Z", closedAt: "2026-11-19T05:30:00.000Z" };
@@ -1216,14 +1223,6 @@ describe("done items", () => {
     });
   }
 
-  // a report out of open reads as an Order on the open list → on the done list it must still open its sheet
-  test("a done report opens its sheet and counts among the rows the sheet steps through", () => {
-    const groups = call("getDoneGroupsQ", [doneReport(), doneDecision()], new Date("2026-11-19T06:00:00.000Z"));
-    const sheet = call<{ kind: string; id: number }>("getSheetStateQ", groups, "806", null);
-    const steps = call<{ index: number; count: number }>("getStepsQ", groups, 806, -1);
-    assert.deepEqual([sheet.kind, sheet.id, steps.index, steps.count], ["item", 806, 0, 2]);
-  });
-
   test("a done row draws how it ended as plain text and ages from its end, and its name says both", () => {
     const item = doneReport({ status: "withdrawn", askedAt: "2026-11-10T06:12:43.518Z" });
     const tree = render("QueueRowQ", { row: { id: item.id, item, copies: [item], isDone: true }, isSelected: false, view: { isNameShown: true, isAccountShown: false, tabStopId: item.id }, onSelect: () => undefined, onOrder: () => undefined });
@@ -1245,60 +1244,135 @@ describe("done items", () => {
     assert.deepEqual(Object.fromEntries(new URL(urls[0] as string, "http://monitor").searchParams), { limit: "30", kind: "item", sessionIds: SESSION_ID, profile: "personal" });
   });
 
-  const doneQueue = (thread: Record<string, unknown>, filter = { profile: "", status: "done" }) => {
-    const { queue, calls } = buildQueue();
-    const done = { thread: { status: "ready", items: [], nextCursor: null, error: null, refusals: [], ...thread }, read: () => calls.push(["readDone"]), showEarlier: () => calls.push(["moreDone"]) };
-    const groups = call("getDoneGroupsQ", done.thread.items);
-    return { queue: { ...queue, done, filter, setFilter: (next: unknown) => calls.push(["setFilter", next]), groups, sheet: getSheet(groups, ""), selectedId: null, status: "" }, calls };
+  const portfolio = buildSession({ id: "d4", name: "portfolio", profileLabel: "personal" });
+  const open = (id: number, overrides: Record<string, unknown> = {}) => buildItem({ id, ...overrides });
+  const getGroups = (items: unknown[], done: unknown[], filter: Record<string, string> = { profile: "" }, ids: string[] = []) =>
+    call<Array<{ key: string; isDone?: boolean; label: string; rows: Array<{ id: number; item: { status: string } }> }>>("getListGroupsQ", items, done, filter, ids);
+
+  test("every open band stands above every Done band, and an item both reads return is drawn once, in its open band", () => {
+    const items = [open(1, { kind: "report" }), open(2), open(3, { status: "answered", ...answered })];
+    const done = [doneDecision({ id: 3 }), doneReport(), doneDecision({ closedAt: "2026-11-12T05:30:00.000Z" })];
+    const rows = getGroups(items, done).flatMap((group) => group.rows.map((row) => [group.isDone === true, row.id]));
+    assert.deepEqual(rows, [[false, 2], [false, 1], [false, 3], [true, 806], [true, 812]]);
+  });
+
+  // spec §4.6 → Ticks and the Account filter act on both parts at once
+  const scopes = [
+    { name: "nothing ticked and every account → both parts whole", filter: { profile: "" }, ids: [], expected: [1, 2, 806, 807] },
+    { name: "a tick scopes both parts to its session", filter: { profile: "" }, ids: ["d4"], expected: [2, 807] },
+    { name: "a tick with no open item leaves its done ones alone", filter: { profile: "" }, ids: ["c3"], expected: [806] },
+    { name: "an account scopes both parts to it", filter: { profile: "personal" }, ids: [], expected: [2, 807] },
+  ];
+  for (const row of scopes) {
+    test(`the list's scope: ${row.name}`, () => {
+      const groups = getGroups([open(1), open(2, { session: portfolio })], [doneReport(), doneReport({ id: 807, session: portfolio })], row.filter, row.ids);
+      assert.deepEqual(groups.flatMap((group) => group.rows.map((row) => row.id)), row.expected);
+    });
+  }
+
+  // the list order is the step order: ↓, J and the sheet's next pass from the last open row to the first done one
+  test("the list keys and the sheet's stepping cross from the last open row to the first done row and back", () => {
+    const groups = getGroups([open(1), open(2, { kind: "report" })], [doneReport(), doneDecision()]);
+    const rows = call<unknown[]>("getRowsQ", groups);
+    const steps = call<{ nextId: number; count: number }>("getStepsQ", groups, 2, -1);
+    const back = call<{ prevId: number }>("getStepsQ", groups, 806, -1);
+    assert.deepEqual([call("getKeyedRowIdQ", rows, 2, "ArrowDown"), call("getKeyedRowIdQ", rows, 806, "ArrowUp"), steps.nextId, back.prevId, steps.count], [806, 2, 806, 2, 4]);
+  });
+
+  test("after an act the next open item takes the sheet, never a done one", () => {
+    const groups = getGroups([open(1), open(2)], [doneReport(), doneDecision()]);
+    const items = call<Array<{ item: unknown }>>("getRowsQ", groups).map((row) => row.item);
+    assert.deepEqual([call("getNextAwaitingIdQ", items, 2), call("getNextAwaitingIdQ", items.filter((item) => (item as { id: number }).id !== 1), 2)], [1, null]);
+  });
+
+  // an open item on the sheet that the session ends meanwhile → its sheet says it left, never a done sheet over the open copy it holds
+  test("an open item that leaves while on the sheet keeps the left sheet when its done row arrives", () => {
+    const { queue } = buildQueue();
+    const held = open(3);
+    const groups = getGroups([], [doneDecision({ id: 3, status: "withdrawn" })]);
+    const sheet = call("getSheetStateQ", groups, "3", held);
+    const [shown] = findNodes(render("QueueSheetQ", { queue: { ...queue, groups, sheet } }), (node) => node.type === "ItemSheetQ");
+    assert.deepEqual([(sheet as { kind: string }).kind, shown?.props.hasLeft, shown?.props.isDone], ["left", true, false]);
+  });
+
+  test("a Done band reads Done and its day in the count's place, and names its group Done, Today", () => {
+    const groups = getGroups([], [doneReport({ closedAt: new Date().toISOString() })]);
+    const { queue } = buildQueue();
+    const tree = render("QueueGroupQ", { group: groups[0], queue, view: { isNameShown: true, isAccountShown: false, tabStopId: 806 } });
+    const [group] = findNodes(tree, (node) => node.props?.role === "group");
+    const [band] = byClass(tree, "queue-band");
+    assert.deepEqual(
+      [group?.props["aria-label"], collectText(band as RenderedNode), findNodes(band as RenderedNode, (node) => node.props?.atom === "Badge").length, collectText(byClass(tree, "queue-band-day")[0] as RenderedNode)],
+      ["Done, Today", "Done Today", 0, "Today"],
+    );
+  });
+
+  // the queue as useQueueStateQ hands it to the list: its open read, its done read, and the one list's bands
+  const listQueue = (items: unknown[], thread: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => {
+    const { queue, calls } = buildQueue({ loadMore: () => calls.push(["loadMore"]) });
+    const done = { ...queue.done, thread: { ...queue.done.thread, ...thread } };
+    const base = { ...withList(queue, items), done, ...extra };
+    const groups = getGroups(items, done.thread.items as unknown[]);
+    return { queue: { ...base, groups, sheet: getSheet(groups, ""), selectedId: null }, calls };
   };
-  const bodyOf = (queue: unknown) => render("DoneBodyQ", { queue });
+  const bodyOf = (queue: { list: { data: { items: unknown[] } | null } }) => render("ListBodyQ", { queue, items: queue.list.data?.items ?? [] });
+  const getBody = (tree: RenderedNode) => ({
+    rows: findNodes(tree, (node) => node.type === "QueueRowQ").map((node) => (node.props.row as { id: number }).id),
+    loading: findNodes(tree, (node) => node.props?.atom === "LoadingPlaceholder").map((node) => node.props.label),
+    empty: findNodes(tree, (node) => node.props?.atom === "EmptyState").map((node) => node.props.message),
+    failures: findNodes(tree, (node) => node.type === "QueueFailureQ").length,
+  });
+  const FAILURE = { sentence: "The queue could not be read.", next: "Retry.", detail: "503" };
 
-  test("loading names done items, and a failed read is the list's in-card error with Retry reading again", () => {
-    const [placeholder] = findNodes(bodyOf(doneQueue({ status: "loading" }).queue), (node) => node.props?.atom === "LoadingPlaceholder");
-    const failed = doneQueue({ status: "error", error: { sentence: "The queue could not be read.", next: "Retry.", detail: "503" } });
-    const [failure] = findNodes(bodyOf(failed.queue), (node) => node.type === "QueueFailureQ");
+  // spec §4.6 → States
+  const states = [
+    { name: "open and handled items → the open rows, then the done rows", items: [open(1)], thread: { items: [doneReport()] }, expected: { rows: [1, 806], loading: [], empty: [], failures: 0 } },
+    { name: "no open item, handled ones → the done rows from the top", items: [], thread: { items: [doneReport()] }, expected: { rows: [806], loading: [], empty: [], failures: 0 } },
+    { name: "open items, none handled → the open rows, nothing under them", items: [open(1)], thread: {}, expected: { rows: [1], loading: [], empty: [], failures: 0 } },
+    { name: "the first done read in flight → the queue loading, though open rows are read", items: [open(1)], thread: { status: "loading", hasRead: undefined }, expected: { rows: [], loading: ["the queue"], empty: [], failures: 0 } },
+    { name: "a later done read in flight → the rows stay", items: [open(1)], thread: { status: "loading", items: [doneReport()] }, expected: { rows: [1, 806], loading: [], empty: [], failures: 0 } },
+    { name: "nothing in either part → the empty queue", items: [], thread: {}, expected: { rows: [], loading: [], empty: ["Nothing is waiting for you"], failures: 0 } },
+    { name: "the done read failed → the open rows stay", items: [open(1)], thread: { status: "error", hasRead: undefined, error: FAILURE }, expected: { rows: [1], loading: [], empty: [], failures: 0 } },
+  ];
+  for (const row of states) {
+    test(`the one list: ${row.name}`, () => assert.deepEqual(getBody(bodyOf(listQueue(row.items, row.thread).queue)), row.expected));
+  }
+
+  test("the head counts the open items alone: 0 waiting while only done rows show", () => {
+    const [card] = findNodes(render("QueueListQ", { queue: listQueue([], { items: [doneReport()] }).queue }), (node) => node.props?.atom === "Card");
+    assert.equal(card?.props.sub, "0 waiting");
+  });
+
+  test("the open read failed with nothing loaded → the in-card error, whose Retry reads both parts", () => {
+    const { queue, calls } = listQueue([], {}, { list: { status: "error", data: null, error: FAILURE, readAt: null, newIds: [] } });
+    const [failure] = findNodes(bodyOf(queue), (node) => node.type === "QueueFailureQ");
     (failure?.props.onRetry as () => void)();
-    assert.deepEqual([placeholder?.props.label, getPlain(failed.calls)], ["done items", [["readDone"]]]);
+    assert.deepEqual(getPlain(calls), [["reload"], ["readDone"]]);
   });
 
-  const empties = [
-    { name: "none in scope", filter: { profile: "", status: "done" }, message: "Nothing done here yet.", hasReset: false },
-    { name: "none under an account filter, with Reset filters", filter: { profile: "personal", status: "done" }, message: "No done items match these filters.", hasReset: true },
+  // spec §4.6 → More handled items: one line after the last row — the open read's next page first, then the done read's 30
+  const listEnds = [
+    { name: "the open read has more → Show more reads its next page", nextCursor: 9, thread: { items: [doneReport()], nextCursor: "1:1" }, expected: { more: [["loadMore"]], text: "Show more" } },
+    { name: "the open read whole, the done read has more → Show more reads the next done page", nextCursor: null, thread: { items: [doneReport()], nextCursor: "1:1" }, expected: { more: [["moreDone"]], text: "Show more" } },
+    { name: "a done page in progress → Loading…", nextCursor: null, thread: { status: "loading", items: [doneReport()], nextCursor: "1:1" }, expected: { more: [], text: "Loading…" } },
+    { name: "200 done items loaded with more behind them → only the newest show", nextCursor: null, thread: { items: Array.from({ length: 200 }, (_, index) => doneReport({ id: index + 1 })), nextCursor: "1:1" }, expected: { more: [], text: "Showing the 200 most recent" } },
+    { name: "the done read failed → its warning and a Retry that reads it again", nextCursor: null, thread: { status: "error", error: FAILURE }, expected: { more: [["readDone"]], text: "⚠ Done items could not be read. Retry" } },
+    { name: "both reads whole → no line", nextCursor: null, thread: { items: [doneReport()] }, expected: { more: [], text: "" } },
   ];
-  for (const row of empties) {
-    test(`an empty done list says so once: ${row.name}`, () => {
-      const { queue, calls } = doneQueue({}, row.filter);
-      const tree = bodyOf(queue);
-      const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
-      const action = empty?.props.action ? (renderScreen(empty.props.action) as RenderedNode) : null;
-      const resets = buttonLabelled(action as RenderedNode, "Reset filters");
-      (resets[0]?.props.onClick as (() => void) | undefined)?.();
-      assert.deepEqual([empty?.props.message, resets.length > 0, getPlain(calls)], [row.message, row.hasReset, row.hasReset ? [["setFilter", { profile: "", status: "" }]] : []]);
+  for (const row of listEnds) {
+    test(`the list's end: ${row.name}`, () => {
+      const { queue, calls } = listQueue([open(1)], row.thread);
+      const tree = render("ListEndQ", { queue: { ...queue, list: { ...queue.list, data: { ...queue.list.data, nextCursor: row.nextCursor } } } });
+      for (const button of findNodes(tree, (node) => node.type === "button")) (button.props.onClick as (() => void) | undefined)?.();
+      assert.deepEqual({ more: getPlain(calls), text: collectText(tree).replace(/\s+/g, " ") }, row.expected);
     });
   }
 
-  test("loaded done items are the list's listbox of rows", () => {
-    const { queue } = doneQueue({ items: [doneReport(), doneDecision()] });
-    assert.deepEqual(findNodes(bodyOf(queue), (node) => node.type === "QueueRowQ").map((node) => (node.props.row as { id: number }).id), [806, 812]);
+  test("the card foot holds the status line alone, whatever is behind the list", () => {
+    const { queue } = listQueue([open(1)], { items: [doneReport()], nextCursor: "1:1" });
+    const tree = render("ListFootQ", { queue: { ...queue, list: { ...queue.list, data: { ...queue.list.data, nextCursor: 9 } } } });
+    assert.deepEqual([findNodes(tree, (node) => node.type === "ShowMoreQ" || node.type === "button").length, findNodes(tree, (node) => node.props?.role === "status").length], [0, 1]);
   });
-
-  // spec §4.6: 30 a read, Show more for the next, and past 200 loaded a line in its place
-  const feet = [
-    { name: "a page with more behind it offers Show more", count: 30, nextCursor: "1:1", expected: { more: 1, line: false } },
-    { name: "the whole list loaded offers nothing", count: 30, nextCursor: null, expected: { more: 0, line: false } },
-    { name: "200 loaded with more behind them says only the newest show", count: 200, nextCursor: "1:1", expected: { more: 0, line: true } },
-  ];
-  for (const row of feet) {
-    test(`the done foot: ${row.name}`, () => {
-      const items = Array.from({ length: row.count }, (_, index) => doneReport({ id: index + 1 }));
-      const { queue } = doneQueue({ items, nextCursor: row.nextCursor });
-      const tree = render("ListFootQ", { queue });
-      const more = findNodes(tree, (node) => node.type === "ShowMoreQ");
-      const isLine = collectText(tree).includes("Showing the 200 most recent");
-      (more[0]?.props.onMore as (() => void) | undefined)?.();
-      assert.deepEqual({ more: more.length, line: isLine }, row.expected);
-    });
-  }
 
   // spec §4.6: a done item's sheet is read-only — its answer shown, no composer, the foot how and when it ended
   const sheets = [

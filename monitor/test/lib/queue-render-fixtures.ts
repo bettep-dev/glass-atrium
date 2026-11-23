@@ -301,6 +301,19 @@ export function getDoneFixture(): QueueFixture {
   return { ...getRestFixture(), done: DONE_ITEMS };
 }
 
+/** Nothing open, the done items alone → the Done bands start at the list's top. */
+export function getDoneOnlyFixture(): QueueFixture {
+  return { ...getEmptyFixture(), done: DONE_ITEMS };
+}
+
+/** The done fixture plus 35 read reports two days back → the done read's first page of 30 leaves 10 for Show more. */
+export function getManyDoneFixture(): QueueFixture {
+  const reads = Array.from({ length: 35 }, (_, index) => buildItem(900 + index, "atrium", {
+    kind: "report", status: "seen", askedAt: getAt(2 * 24 * 60 + index * 10 + 5), closedAt: getAt(2 * 24 * 60 + index * 10), title: `야간 점검 ${index + 1}회차 완료`, body: "- 점검을 마쳤습니다.",
+  }));
+  return { ...getRestFixture(), done: [...DONE_ITEMS, ...reads] };
+}
+
 /** The rest state plus the not-received order to `yoaida`, in the owner list and the history read alike. */
 export function getNotReceivedFixture(): QueueFixture {
   const rest = getRestFixture();

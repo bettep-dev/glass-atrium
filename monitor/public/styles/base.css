@@ -1058,6 +1058,18 @@ label.ctl-checkbox-hit {
 	top: 0;
 	z-index: 1;
 }
+/* a Done band's day (spec §4.6): in the count's place, the gap after "Done", at 400 */
+.queue-band-day {
+	font-weight: 400;
+}
+/* the list's end (spec §4.6): one 44 line after the last row, in the body's scroll — 6 + the 32 button + 6, start-aligned */
+.queue-list-end {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: calc(var(--row-h-compact) + 2 * var(--space-1_5));
+	padding: var(--space-1_5) var(--card-pad);
+}
 /* a row (spec §4.2): one 20 line between 12 paddings → 44, on fixed columns — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16;
    8 between columns, the title's 4 margins making its 12 on either side; every cell drawn → an empty one keeps its width.
    80 holds "12 sessions" whole */
@@ -1127,6 +1139,12 @@ label.ctl-checkbox-hit {
 	min-width: 0;
 	font-weight: 600;
 	color: rgb(var(--ink));
+}
+/* a handled row recedes (spec §4.6): title and name dim at 400 in every state → ink rows wait, dim rows are done */
+.queue-row--done > .queue-row-title,
+.queue-row--done > .queue-row-who {
+	font-weight: 400;
+	color: rgb(var(--dim));
 }
 .queue-row-title,
 .queue-row-name,
