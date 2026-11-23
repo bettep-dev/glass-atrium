@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import ts from "typescript";
 
-import { getCssRules, getReducedMotionCss } from "./lib/css-source.js";
+import { getCssRuleLists, getCssRules, getReducedMotionCss } from "./lib/css-source.js";
 import { ROLE_PREFIXES, getRoleKeys, type RoleSection } from "./lib/role-keys.js";
 
 const SCREEN_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../public/src/screens");
@@ -38,8 +38,8 @@ const INLINE_SPACING = /^(?:padding|margin|gap|rowGap|columnGap)/;
 const RAW_TABLE_TAGS = new Set(["table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup", "col"]);
 
 interface Site { text: string; line: number }
-interface StyleDecl { selector: string; prop: string; value: string; line: number }
-interface ScreenSource { classWords: Site[]; styleText: string; styleDecls: StyleDecl[]; inlineStyles: StyleDecl[]; tags: Site[] }
+interface StyleDecl { selector: string; ruleSelectors: string[]; prop: string; value: string; line: number }
+interface ScreenSource { name: string; classWords: Site[]; styleText: string; styleDecls: StyleDecl[]; inlineStyles: StyleDecl[]; tags: Site[] }
 
 // rule name → the hits it finds in one screen; a later ruling drops or narrows a rule here, in one place
 const RULES: Record<string, (source: ScreenSource) => string[]> = {
@@ -52,9 +52,18 @@ const RULES: Record<string, (source: ScreenSource) => string[]> = {
   "case-tracking-italic": (source) => getClassHits(source, (word) => CASE_TRACKING_ITALIC.test(word)),
   "font-mono": (source) => getClassHits(source, (word) => FONT_MONO.test(word)),
   "raw-table": (source) => source.tags.filter((site) => RAW_TABLE_TAGS.has(site.text)).map(formatSite),
-  "style-spacing-type": (source) =>
-    source.styleDecls.filter((d) => STYLE_SPACING.test(d.prop) || STYLE_TYPE.test(d.prop)).map(formatDecl),
+  "style-spacing-type": (source) => source.styleDecls
+    .filter((d) => (STYLE_SPACING.test(d.prop) || STYLE_TYPE.test(d.prop)) && !isContentDecl(source.name, d))
+    .map(formatDecl),
   "raw-colour": getRawColours,
+};
+
+// a screen <style> block is the home of generated content only: markup the screen does not write as JSX, reached from its container
+// containers — the root's own box is page layout (type only); generated — markup the screen's code or renderer adds (spacing and type)
+const CONTENT_ROOTS: Record<string, { containers: string[]; generated: string[] }> = {
+  architecture: { containers: ["#arch-map-canvas", ".arch-mermaid-canvas"], generated: [] },
+  "clauded-docs": { containers: [".doc-body-isolation"], generated: [".doc-code-pre"] },
+  outcomes: { containers: [".outcome-md"], generated: [] },
 };
 
 interface BaselineRow { rule: string; count: number; owner: string }
@@ -72,11 +81,11 @@ const BASELINE: Record<string, BaselineRow[]> = {
     { rule: "inline-spacing", count: 2, owner: "C3" },
     { rule: "retired-class", count: 1, owner: "C3" },
     { rule: "font-mono", count: 13, owner: "C3" },
-    { rule: "style-spacing-type", count: 79, owner: "C3" },
+    { rule: "style-spacing-type", count: 78, owner: "C3" },
   ],
   "clauded-docs": [
     { rule: "retired-property", count: 4, owner: "B6" },
-    { rule: "style-spacing-type", count: 45, owner: "B6" },
+    { rule: "style-spacing-type", count: 30, owner: "B6" },
     { rule: "raw-colour", count: 14, owner: "B6" },
   ],
   cost: [
@@ -105,7 +114,6 @@ const BASELINE: Record<string, BaselineRow[]> = {
   outcomes: [
     { rule: "zero-reset", count: 5, owner: "B2" },
     { rule: "retired-class", count: 1, owner: "B2" },
-    { rule: "style-spacing-type", count: 38, owner: "B2" },
   ],
 };
 
@@ -131,6 +139,29 @@ describe("screen class-string hits hold at their baseline row, and a pair with n
     );
     assert.deepEqual(invalid, []);
   });
+});
+
+const BOUNDARY_ROWS = [
+  { name: "a descendant of a container root takes spacing", screen: "clauded-docs", css: ".doc-body-isolation p { margin: 0 0 8px; }", hits: 0 },
+  { name: "a generated-element class takes spacing and type", screen: "clauded-docs", css: ".doc-code-pre code { padding: 12px; font-size: 13px; }", hits: 0 },
+  { name: "a container root alone takes type", screen: "outcomes", css: ".outcome-md { font-size: 15px; line-height: 1.6; }", hits: 0 },
+  { name: "a spacing declaration on a container root alone still counts", screen: "architecture", css: ".arch-mermaid-canvas { padding: 8px; }", hits: 1 },
+  { name: "a state of a container root is the container's own box", screen: "outcomes", css: ".outcome-md:hover { margin: 4px; }", hits: 1 },
+  { name: "a sibling of a container root is page chrome", screen: "outcomes", css: ".outcome-md + p { margin: 4px; }", hits: 1 },
+  { name: "page chrome in a content screen's block stays a hit", screen: "clauded-docs", css: ".doc-ledger { gap: 8px; }", hits: 1 },
+  { name: "a rule with one selector outside the table counts on every selector", screen: "clauded-docs", css: ".doc-body-isolation p, .doc-editor p { margin: 0; }", hits: 2 },
+  { name: "a class that only shares a root's prefix is page chrome", screen: "clauded-docs", css: ".doc-body-isolation-frame p { margin: 0; }", hits: 1 },
+  { name: "a root from another screen's table is page chrome here", screen: "outcomes", css: ".doc-body-isolation p { margin: 0; }", hits: 1 },
+  { name: "a comma inside a pseudo-class keeps the selector whole", screen: "architecture", css: "#arch-map-canvas :is(text, tspan) { font-size: 12px; }", hits: 0 },
+];
+
+describe("a screen <style> block takes spacing and type for generated content only", () => {
+  for (const row of BOUNDARY_ROWS) {
+    test(row.name, () => {
+      const source: ScreenSource = { name: row.screen, classWords: [], styleText: row.css, styleDecls: getDecls(row.css, 1), inlineStyles: [], tags: [] };
+      assert.equal(RULES["style-spacing-type"](source).length, row.hits);
+    });
+  }
 });
 
 // the motion rules a screen <style> keeps until the follow-up motion item retires them
@@ -168,7 +199,7 @@ function getRatchetMessage(hits: string[], expected: number): string {
 function readScreen(name: string): ScreenSource {
   const file = ts.createSourceFile(`${name}.jsx`, readFileSync(resolve(SCREEN_DIR, `${name}.jsx`), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.JSX);
   const consts = getConstInitializers(file);
-  const source: ScreenSource = { classWords: [], styleText: "", styleDecls: [], inlineStyles: [], tags: [] };
+  const source: ScreenSource = { name, classWords: [], styleText: "", styleDecls: [], inlineStyles: [], tags: [] };
   const styleTexts: string[] = [];
   const visit = (node: ts.Node): void => {
     readNode(node, file, consts, source, styleTexts);
@@ -211,18 +242,32 @@ function getConstInitializers(file: ts.SourceFile): Map<string, ts.Expression[]>
   return found;
 }
 
-function getStrings(root: ts.Node, consts: Map<string, ts.Expression[]>, seen = new Set<ts.Node>()): Site[] {
-  if (seen.has(root)) return [];
-  seen.add(root);
-  if (ts.isStringLiteral(root) || ts.isNoSubstitutionTemplateLiteral(root) || ts.isTemplateLiteralToken(root) || ts.isJsxText(root)) {
+// every use of a const reads through it again; only a const that reaches itself stops
+function getStrings(root: ts.Node, consts: Map<string, ts.Expression[]>, resolving = new Set<ts.Node>()): Site[] {
+  if (resolving.has(root)) return [];
+  if (ts.isStringLiteral(root) || ts.isNoSubstitutionTemplateLiteral(root) || ts.isTemplateLiteralToken(root) || ts.isJsxText(root) || ts.isNumericLiteral(root)) {
     return [{ text: root.text, line: getLine(root) }];
   }
-  if (ts.isIdentifier(root)) return (consts.get(root.text) ?? []).flatMap((init) => getStrings(init, consts, seen));
-  const sites: Site[] = [];
-  ts.forEachChild(root, (child) => {
-    if (!ts.isPropertyAccessExpression(root) || child === root.expression) sites.push(...getStrings(child, consts, seen));
-  });
+  resolving.add(root);
+  const sites = getInnerStrings(root, consts, resolving);
+  resolving.delete(root);
   return sites;
+}
+
+function getInnerStrings(root: ts.Node, consts: Map<string, ts.Expression[]>, resolving: Set<ts.Node>): Site[] {
+  if (ts.isIdentifier(root)) return (consts.get(root.text) ?? []).flatMap((init) => getStrings(init, consts, resolving));
+  if (ts.isPropertyAccessExpression(root)) return getStrings(getPropertyInitializer(root, consts) ?? root.expression, consts, resolving);
+  const sites: Site[] = [];
+  ts.forEachChild(root, (child) => { sites.push(...getStrings(child, consts, resolving)); });
+  return sites;
+}
+
+// `NAME.key` → that key's initializer in NAME's object-literal initializer, so a style reads one value, not the whole object
+function getPropertyInitializer(access: ts.PropertyAccessExpression, consts: Map<string, ts.Expression[]>): ts.Expression | undefined {
+  if (!ts.isIdentifier(access.expression)) return undefined;
+  return (consts.get(access.expression.text) ?? []).filter(ts.isObjectLiteralExpression)
+    .flatMap((object) => object.properties.filter(ts.isPropertyAssignment))
+    .find((prop) => prop.name.getText() === access.name.text)?.initializer;
 }
 
 function getInlineStyle(initializer: ts.Node, consts: Map<string, ts.Expression[]>): StyleDecl[] {
@@ -231,6 +276,7 @@ function getInlineStyle(initializer: ts.Node, consts: Map<string, ts.Expression[
   if (!node || !ts.isObjectLiteralExpression(node)) return [];
   return node.properties.filter(ts.isPropertyAssignment).map((prop) => ({
     selector: "style",
+    ruleSelectors: ["style"],
     prop: prop.name.getText(),
     value: ts.isStringLiteralLike(prop.initializer) ? prop.initializer.text : prop.initializer.getText(),
     line: getLine(prop),
@@ -238,11 +284,38 @@ function getInlineStyle(initializer: ts.Node, consts: Map<string, ts.Expression[
 }
 
 function getDecls(css: string, line: number): StyleDecl[] {
-  return getCssRules(css.replace(/\/\*[\s\S]*?\*\//g, "")).flatMap(([selector, body]) =>
-    body.split(";").map((decl) => decl.split(":")).filter((parts) => parts.length > 1).map(([prop, ...value]) => ({
-      selector, prop: prop.trim().toLowerCase(), value: value.join(":").trim(), line,
-    })),
+  return getCssRuleLists(css.replace(/\/\*[\s\S]*?\*\//g, "")).flatMap(([ruleSelectors, body]) =>
+    ruleSelectors.flatMap((selector) =>
+      body.split(";").map((decl) => decl.split(":")).filter((parts) => parts.length > 1).map(([prop, ...value]) => ({
+        selector, ruleSelectors, prop: prop.trim().toLowerCase(), value: value.join(":").trim(), line,
+      })),
+    ),
   );
+}
+
+// outside the rule only when every selector of the rule reaches generated content; a container root alone takes type, never spacing
+function isContentDecl(screen: string, decl: StyleDecl): boolean {
+  const entries = CONTENT_ROOTS[screen];
+  if (!entries || !decl.ruleSelectors.every((selector) => getContentReach(selector, entries))) return false;
+  return getContentReach(decl.selector, entries) === "content" || STYLE_TYPE.test(decl.prop);
+}
+
+// "content" — a descendant of a container root or a generated-element class · "container" — the root's own box · null — page chrome
+function getContentReach(selector: string, entries: { containers: string[]; generated: string[] }): "content" | "container" | null {
+  if (entries.generated.some((entry) => getEntryTail(selector, entry) !== null)) return "content";
+  for (const root of entries.containers) {
+    const tail = getEntryTail(selector, root);
+    if (tail === null) continue;
+    const combinator = tail.replace(/^[^\s>+~]*/, "").trim();
+    if (!combinator) return "container";
+    return /^[+~]/.test(combinator) ? null : "content";
+  }
+  return null;
+}
+
+// the selector text after an entry it starts with; null when it does not start with that entry as a whole name
+function getEntryTail(selector: string, entry: string): string | null {
+  return selector.startsWith(entry) && !/^[\w-]/.test(selector.slice(entry.length)) ? selector.slice(entry.length) : null;
 }
 
 function getClassHits(source: ScreenSource, isHit: (word: string) => boolean): string[] {

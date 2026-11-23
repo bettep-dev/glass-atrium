@@ -34,7 +34,21 @@ export function getReducedMotionCss(source: string): string {
 
 /** [selector, body] for every flat rule of a stylesheet; nested @-blocks contribute their inner rules. */
 export function getCssRules(css: string): Array<[string, string]> {
-  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap((m) =>
-    m[1].split(",").map((selector) => [selector.trim(), m[2]] as [string, string]),
-  );
+  return getCssRuleLists(css).flatMap(([selectors, body]) => selectors.map((selector) => [selector, body] as [string, string]));
+}
+
+/** [selector list, body] for every flat rule — a comma inside `:is()` / `:not()` parentheses stays in its selector. */
+export function getCssRuleLists(css: string): Array<[string[], string]> {
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [getSelectorList(m[1]), m[2]]);
+}
+
+function getSelectorList(prelude: string): string[] {
+  const selectors = [""];
+  let depth = 0;
+  for (const char of prelude) {
+    depth += char === "(" ? 1 : char === ")" ? -1 : 0;
+    if (char === "," && depth === 0) selectors.push("");
+    else selectors[selectors.length - 1] += char;
+  }
+  return selectors.map((selector) => selector.trim());
 }
