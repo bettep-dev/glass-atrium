@@ -887,8 +887,8 @@ async function sendOrderWithImages(page: Page): Promise<void> {
 }
 
 // the 15 s re-read finds a report yoaida posted since the first read
-async function arriveItem(page: Page, harness: Harness): Promise<void> {
-  harness.fixture = getArrivalFixture();
+async function arriveItem(page: Page, harness: Harness, rest = getRestFixture()): Promise<void> {
+  harness.fixture = getArrivalFixture(rest);
   await page.clock.fastForward(15_000);
   await page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS });
 }
@@ -2265,15 +2265,22 @@ describe("queue page on the mockup fixtures", () => {
     })));
   });
 
+  // the page's one solid = an open sheet's arrival count → a sheet open and a report arrived; the warn = the not-received order's tag
   test("a badge is 20 high in every fill", async () => {
     harness.fixture = getNotReceivedFixture();
-    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
-    const fills = await page.evaluate(() => [...new Set([...document.querySelectorAll(".pill--solid, .pill--tag, .pill--warn")]
-      .filter((pill) => pill.getClientRects().length > 0)
-      .map((pill) => `${/pill--(solid|tag|warn)/.exec(pill.className)?.[1]} ${Math.round(pill.getBoundingClientRect().height)}`))].sort());
-    await page.close();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture), true);
+    try {
+      await selectRow(page, 101);
+      await arriveItem(page, harness, getNotReceivedFixture());
+      await page.getByRole("button", { name: "Back to the list, 1 new in the list" }).waitFor();
+      const fills = await page.evaluate(() => [...new Set([...document.querySelectorAll(".pill--solid, .pill--tag, .pill--warn")]
+        .filter((pill) => pill.getClientRects().length > 0)
+        .map((pill) => `${/pill--(solid|tag|warn)/.exec(pill.className)?.[1]} ${Math.round(pill.getBoundingClientRect().height)}`))].sort());
 
-    assert.deepEqual(fills, ["solid 20", "tag 20", "warn 20"]);
+      assert.deepEqual(fills, ["solid 20", "tag 20", "warn 20"]);
+    } finally {
+      await page.close();
+    }
   });
 
   test("the page header ends at the same x as on the Documents page, at every desk width", async () => {
