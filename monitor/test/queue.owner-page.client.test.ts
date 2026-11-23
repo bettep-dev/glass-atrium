@@ -380,12 +380,14 @@ describe("sheet state lines", () => {
     assert.doesNotMatch(text, /Answered|Replied|Sent as/);
   });
 
-  test("an approval-class decision's note slot says approving here approves the action once, with no terminal step", () => {
-    const text = (item: unknown) => collectText(render("SheetFootQ", { item, draft: {}, queue: buildQueue().queue, isBusy: false, error: null }));
-    const approval = text(buildItem({ isApprovalClass: true }));
-    assert.match(approval, /Approval: approving here approves the action once\. glass-atrium does not ask again in its terminal\./);
-    assert.doesNotMatch(approval, /confirm once more/);
-    assert.doesNotMatch(text(buildItem()), /Approval:/);
+  test("an approval-class decision's approval line says an approving answer approves the stated action once, with no terminal step, and describes Send answer", () => {
+    const foot = (item: unknown) => render("SheetFootQ", { item, draft: {}, queue: buildQueue().queue, isBusy: false, error: null });
+    const tree = foot(buildItem({ isApprovalClass: true }));
+    const [line] = byClass(tree, "queue-approval-line");
+    const [send] = buttonLabelled(tree, "Send answer");
+    assert.equal(collectText(line as RenderedNode).replace(/\s+/g, " ").trim(), "ℹ Approval: approving here approves the action once. glass-atrium does not ask again in its terminal.");
+    assert.doesNotMatch(collectText(tree), /confirm once more/);
+    assert.deepEqual([send?.props["aria-describedby"], byClass(foot(buildItem()), "queue-approval-line").length], [(line as RenderedNode).props.id, 0]);
   });
 });
 
@@ -3269,10 +3271,12 @@ describe("images in a composer", () => {
     { name: "exactly 10 MB passes", count: 0, files: [file("big.png", "png", 10 * 1024 * 1024)], added: ["big.png"], line: null },
     { name: "several refused at once are counted", count: 0, files: [file("plan.pdf", null), file("logo.svg", null), file("huge.png", "png", 11 * 1024 * 1024)], added: [], line: "3 files were not added: only PNG, JPEG, WebP or GIF images, up to 10 MB each." },
     { name: "a refused type and the cap together are counted", count: 7, files: [file("plan.pdf", null), file("a.png", "png"), file("b.png", "png")], added: ["a.png"], line: "2 files were not added: only PNG, JPEG, WebP or GIF images, up to 10 MB each and 8 per order." },
+    { name: "past eight on an answer the line names the answer", count: 7, noun: "answer", files: [file("a.png", "png"), file("b.png", "png"), file("c.png", "png")], added: ["a.png"], line: "Up to 8 images per answer: 2 were not added." },
+    { name: "a refused type and the cap together on an answer name the answer", count: 7, noun: "answer", files: [file("plan.pdf", null), file("a.png", "png"), file("b.png", "png")], added: ["a.png"], line: "2 files were not added: only PNG, JPEG, WebP or GIF images, up to 10 MB each and 8 per answer." },
   ];
   for (const row of plans) {
     test(`adding files: ${row.name}`, () => {
-      const plan = call<{ added: Array<{ name: string }>; refusal: string | null }>("getAddPlanQ", row.count, row.files);
+      const plan = call<{ added: Array<{ name: string }>; refusal: string | null }>("getAddPlanQ", row.count, row.files, row.noun ?? "order");
       assert.deepEqual([plan.added.map((one) => one.name), plan.refusal], [row.added, row.line]);
     });
   }
@@ -3356,9 +3360,66 @@ describe("images in a composer", () => {
     assert.deepEqual([input?.props.accept, input?.props.multiple], ["image/png,image/jpeg,image/webp,image/gif", true]);
   });
 
-  test("a decision's box takes no images", () => {
-    const tree = render("SheetFootQ", { item: buildItem(), draft: {}, queue: buildQueue().queue, isBusy: false, error: null });
-    assert.equal(findNodes(tree, (node) => node.props?.["aria-label"] === "Add images").length, 0);
+  // spec §6 → Foot, §9.8 → On an answer: images go only where the session asked for words, an approval-class decision included
+  const decisionBoxes = [
+    { name: "a decision with a box", item: buildItem(), count: 1 },
+    { name: "an approval-class decision with a box", item: buildItem({ isApprovalClass: true }), count: 1 },
+    { name: "a decision that takes no words", item: buildItem({ isFreeTextAllowed: false }), count: 0 },
+  ];
+  for (const row of decisionBoxes) {
+    test(`Add images on ${row.name}: ${row.count}`, () => {
+      const tree = render("SheetFootQ", { item: row.item, draft: {}, queue: buildQueue().queue, isBusy: false, error: null });
+      assert.equal(findNodes(tree, (node) => node.props?.["aria-label"] === "Add images").length, row.count);
+    });
+  }
+
+  const decision = (item: Record<string, unknown>, draft: Record<string, unknown>) => {
+    const { calls, queue } = buildQueue();
+    const tree = render("SheetFootQ", { item: buildItem(item), draft, queue, isBusy: false, error: null });
+    const lines = (name: string) => byClass(tree, name).map((node) => collectText(node).replace(/\s+/g, " ").trim());
+    return { calls, tree, lines };
+  };
+
+  // spec §9.8 → On an answer: the option or the text is what the session acts on; the images ride with it
+  const answerRows = [
+    { name: "a picked option with stored images sends their ids beside the code", draft: { code: "R1", images: [shot(1), shot(0)] }, calls: [["answerItem", 41, { code: "R1", attachmentIds: [IMAGE_ID[1], IMAGE_ID[0]] }]] },
+    { name: "images with neither an option nor a text ask for the answer", draft: { images: [shot(0)] }, calls: [["setDraft", 41, { error: "Pick an option or write an answer, then send." }]] },
+  ];
+  for (const row of answerRows) {
+    test(`a decision with images: ${row.name}`, () => {
+      const { calls, tree } = decision({}, row.draft);
+      (buttonLabelled(tree, "Send answer")[0]?.props.onClick as () => void)();
+      assert.deepEqual(getPlain(calls), row.calls);
+    });
+  }
+
+  test("a decision's image refusal goes to its tray line's field and counts per answer, the note slot's field untouched", async () => {
+    const { calls, queue } = buildQueue({ setImages: () => undefined });
+    const full = Array.from({ length: 8 }, (_, index) => shot(0, { key: `s${index}` }));
+    const tree = render("SheetFootQ", { item: buildItem(), draft: { images: full }, queue, isBusy: false, error: null });
+    const [input] = findNodes(tree, (node) => node.type === "input" && node.props.type === "file");
+    const pngs = [new File([SAMPLE_IMAGE.png], "a.png", { type: "image/png" })];
+    (input?.props.onChange as (event: unknown) => void)({ target: { files: pngs, value: "" } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(getPlain(calls).filter(([name]) => name === "setDraft"), [["setDraft", 41, { imageError: "Up to 8 images per answer: 1 was not added." }]]);
+  });
+
+  // C-approval-line: no image, upload or refusal line ever takes the approval line's place
+  const approvalRows = [
+    { name: "an upload in flight and a missing answer", draft: { images: [shot(0, { status: "uploading" })], error: "Pick an option or write an answer, then send." }, tray: "Uploading 1 image…", note: "✕ Pick an option or write an answer, then send." },
+    { name: "an image refused at the door", draft: { imageError: "plan.pdf was not added: only PNG, JPEG, WebP or GIF images." }, tray: "✕ plan.pdf was not added: only PNG, JPEG, WebP or GIF images.", note: "No option picked. Goes to glass-atrium." },
+    { name: "a stored image at rest", draft: { code: "R1", images: [shot(0)] }, tray: "Reference only — not part of the approval.", note: "R1 picked. Goes to glass-atrium." },
+  ];
+  for (const row of approvalRows) {
+    test(`an approval-class decision with ${row.name} shows the approval line, the tray line and the note line apart`, () => {
+      const { lines } = decision({ isApprovalClass: true }, row.draft);
+      assert.deepEqual([lines("queue-approval-line").length, lines("queue-tray-line"), lines("queue-note-text")], [1, [row.tray], [row.note]]);
+    });
+  }
+
+  test("a plain decision's tray line stays empty with a stored image: the reference line is the approval's alone", () => {
+    const { lines } = decision({}, { code: "R1", images: [shot(0)] });
+    assert.deepEqual(lines("queue-tray-line"), [""]);
   });
 
   // spec §8: an image counts as content for the ink and for Mark as read; an order is text, so images alone are refused

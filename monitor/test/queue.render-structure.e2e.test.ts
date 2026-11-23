@@ -453,7 +453,29 @@ const RELAY_ROW_STATES: QueueState[] = [
   },
 ];
 
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES, ...RELAY_ROW_STATES];
+// spec §6, §7, §9.8 → On an answer, at the three list widths: each sheet whose foot or answer the answer's images reach
+const LIST_WIDTHS = [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW] as const;
+const ANSWER_STATES: QueueState[] = [
+  { nn: "40a", name: "decision-sheet", viewports: LIST_WIDTHS, setUp: (page) => selectRow(page, 103) },
+  { nn: "40b", name: "approval-sheet", viewports: LIST_WIDTHS, getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.approval) },
+  { nn: "40c", name: "report-sheet", viewports: LIST_WIDTHS, setUp: (page) => selectRow(page, 101) },
+  {
+    nn: "40d", name: "handled-decision-sheet", viewports: LIST_WIDTHS, getFixture: getDoneFixture,
+    setUp: async (page) => {
+      await selectRow(page, DONE_IDS.answered);
+      await page.locator(".queue-sheet .card-foot", { hasText: "Answer R1 ·" }).waitFor();
+    },
+  },
+  {
+    nn: "40e", name: "relay-sheet", viewports: LIST_WIDTHS, getFixture: getRelayRowFixture,
+    setUp: async (page) => {
+      await selectRow(page, RELAY_ROW_IDS.several);
+      await page.locator(".queue-sheet .card-foot", { hasText: "Read-only." }).waitFor();
+    },
+  },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES, ...RELAY_ROW_STATES, ...ANSWER_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
@@ -2902,7 +2924,7 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { codes: ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"], picked: 0, hasCount: true });
     });
 
-    test("an approval-class decision carries the Approval tag on its row and its date line, and its note says in ink after an info glyph that an approving answer approves the stated action once", async () => {
+    test("an approval-class decision carries the Approval tag on its row and its date line, and its approval line says in ink after an info glyph that an approving answer approves the stated action once", async () => {
       const page = await openEdgePage(harness);
       // the space between `2 options` and the Approval tag on the date line
       const getGap = (selector: string) => page.evaluate((within) => {
@@ -2917,10 +2939,10 @@ describe("queue page on the mockup fixtures", () => {
       const dateGap = await getGap(".queue-sheet .queue-date-facts");
       const shown = await page.evaluate(() => ({
         letterhead: [...document.querySelectorAll(".queue-sheet > .card-head .pill--tag, .queue-date-line .pill--tag")].map((badge) => badge.textContent),
-        note: document.querySelector(".queue-sheet .queue-note-text")?.textContent ?? "",
+        note: document.querySelector(".queue-sheet .queue-approval-line")?.textContent ?? "",
         // the sentence's own colour against the ink and the glyph's against the info token
         tones: (() => {
-          const line = document.querySelector(".queue-sheet .queue-note-text > p") as HTMLElement;
+          const line = document.querySelector(".queue-sheet .queue-approval-line") as HTMLElement;
           const getToken = (name: string) => `rgb(${getComputedStyle(line).getPropertyValue(name).trim().split(/\s+/).join(", ")})`;
           const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
           let sentence: Node | null = walker.nextNode();
@@ -2937,6 +2959,38 @@ describe("queue page on the mockup fixtures", () => {
       assert.equal(dateGap, 6, "the date line keeps 6 between the count and the tag");
       assert.match(shown.note, /Approval: approving here approves the action once\. aidl does not ask again in its terminal\./);
       assert.deepEqual(shown.tones, { text: true, glyph: true }, "the sentence in ink, its glyph in info");
+    });
+
+    // C-approval-line: a failed upload and a press with nothing picked land on their own lines, the approval line in view above them
+    test("an approval-class decision keeps its approval line in view, one 20 line a sentence, through a failed upload on the tray line and a missing answer on the note line", async () => {
+      const page = await openEdgePage(harness);
+      harness.refusals.set("upload", { status: 500, body: { error: "server" } });
+      await selectRow(page, EDGE_IDS.approval);
+      await setFiles(page, `queue-text-${EDGE_IDS.approval}`, [getImageFile(0)]);
+      await page.locator(".queue-sheet .queue-thumb-failed").waitFor();
+      await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
+      const shown = await page.evaluate(() => {
+        const sheet = document.querySelector(".queue-sheet") as HTMLElement;
+        const line = sheet.querySelector(".queue-approval-line") as HTMLElement;
+        const rect = line.getBoundingClientRect();
+        const text = (selector: string) => (sheet.querySelector(selector)?.textContent ?? "").replace(/\s+/g, " ").trim();
+        return {
+          isInView: rect.top >= 0 && rect.bottom <= window.innerHeight,
+          height: Math.round(rect.height),
+          tray: text(".queue-tray-line"),
+          note: text(".queue-note-text"),
+          description: sheet.querySelector(`#${CSS.escape(sheet.querySelector(".btn.primary")?.getAttribute("aria-describedby") ?? "")}`) === line,
+        };
+      });
+      harness.refusals.clear();
+      await page.close();
+
+      assert.deepEqual(shown, {
+        isInView: true, height: 40,
+        tray: "✕ queue-01.webp could not be uploaded: the monitor answered 500.Try again",
+        note: "✕ Pick an option or write an answer, then send.",
+        description: true,
+      });
     });
 
     test("a 200-character title takes one cut line on its 44 row with the whole title in its tooltip, and wraps in full at 20/28 on the sheet", async () => {

@@ -1446,6 +1446,24 @@ label.ctl-checkbox-hit {
 	flex: 1 1 auto;
 	min-width: 0;
 }
+/* a decision's foot lines (spec §6 → Foot lines): the approval's two sentences one line each above the label, the image lines on a reserved line of their own */
+.queue-composer > .queue-approval-line {
+	margin-bottom: var(--gap-label);
+	line-height: var(--lh-row);
+}
+.queue-approval-line > :last-child {
+	display: block;
+}
+.queue-tray-line {
+	min-height: var(--lh-row);
+	margin-top: var(--space-2);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+.queue-tray-line + .queue-note {
+	margin-top: var(--gap-stack);
+}
 .queue-note > .btn {
 	flex: none;
 	white-space: nowrap;

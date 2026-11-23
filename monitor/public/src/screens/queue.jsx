@@ -2244,25 +2244,52 @@ function SheetFootQ({ item, draft, queue, isBusy, error }) {
 	return <ComposerQ buttons={buttons} isBusy={isBusy} note={error ? <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ> : null} />;
 }
 
+// the report's tray on the box, its lines on a tray line of their own → the note line keeps the answer's words (spec §6 → Foot lines)
 function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
-	const name = item.session.name;
-	const firstCode = (item.options ?? [])[0]?.code;
-	const onSend = () => {
-		const body = getAnswerBodyQ(draft);
-		if (body === null) return putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noAnswer, firstCode ? `queue-option-${item.id}-${firstCode}` : `queue-text-${item.id}`);
-		return queue.answerItem(item.id, body);
-	};
+	const fieldId = `queue-text-${item.id}`;
+	const box = getDraftBoxQ(queue, item.id, draft, "imageError");
+	const { zone, tray } = useTrayZoneQ(fieldId, box, "answer");
+	const lines = getDecisionLinesQ(item, draft, item.isFreeTextAllowed ? tray : null, fieldId);
 	const resend = item.canResend ? [{ label: "Resend", onPress: () => queue.send(item.id, "resend") }] : [];
-	const rest = `${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to ${name}.`;
-	// the pick is itself the approval, nobody asks again in a terminal → this one info line in ink (spec §6 → Note slot)
-	const approval = item.isApprovalClass ? <span className="text-ink">{`Approval: approving here approves the action once. ${name} does not ask again in its terminal.`}</span> : null;
+	const rest = `${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to ${item.session.name}.`;
 	return (
-		<ComposerQ field={item.isFreeTextAllowed ? { id: `queue-text-${item.id}`, label: "Your own answer or a note on this decision (optional)" } : null}
-			text={draft.text ?? ""} onText={(text) => queue.setDraft(item.id, { text, error: null })} isBusy={isBusy}
-			buttons={[...resend, { label: "Send answer", isInk: true, onPress: onSend }]}
-			note={<ComposerNoteQ error={error ?? draft.error} info={approval} rest={rest} />}
+		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: "Your own answer or a note on this decision (optional)" } : null} tray={lines.tray} zone={zone.handlers}
+			head={lines.head} trayNote={lines.trayNote} text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
+			buttons={[...resend, { label: "Send answer", isInk: true, describedBy: lines.approvalId, onPress: () => sendAnswerQ(queue, item, draft, box) }]}
+			note={<ComposerNoteQ error={error ?? draft.error} rest={rest} />}
 			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} />
 	);
+}
+
+/** A decision's own foot lines `{ head, trayNote, approvalId, tray }`: the approval line on an approval, the tray line wherever the box takes images. */
+function getDecisionLinesQ(item, draft, tray, fieldId) {
+	const approvalId = item.isApprovalClass ? `queue-approval-${item.id}` : undefined;
+	const reference = item.isApprovalClass && (tray?.shots.length ?? 0) > 0 ? <span className="text-dim">Reference only — not part of the approval.</span> : null;
+	return {
+		head: approvalId ? <ApprovalLineQ id={approvalId} name={item.session.name} /> : null,
+		trayNote: tray ? <ComposerNoteQ error={draft.imageError} tray={tray} fieldId={fieldId} rest={reference} /> : null,
+		approvalId,
+		tray,
+	};
+}
+
+// the press is the approval, nobody asks again in a terminal → a line no image or refusal line replaces (spec §6 → Foot lines)
+function ApprovalLineQ({ id, name }) {
+	return (
+		<p id={id} className="fs-meta queue-approval-line">
+			<span aria-hidden="true" className="text-info">{`${window.UI.TONE_GLYPH.info} `}</span>
+			<span className="text-ink">Approval: approving here approves the action once.</span>{" "}
+			<span className="text-ink">{`${name} does not ask again in its terminal.`}</span>
+		</p>
+	);
+}
+
+// an option or a text is what the session acts on → images alone are no answer
+function sendAnswerQ(queue, item, draft, box) {
+	const body = getAnswerBodyQ(draft);
+	const firstCode = (item.options ?? [])[0]?.code;
+	if (body === null) return putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noAnswer, firstCode ? `queue-option-${item.id}-${firstCode}` : `queue-text-${item.id}`);
+	return sendDraftQ(queue, item.id, box, (ids) => queue.answerItem(item.id, getImageBodyQ(body, ids)));
 }
 
 // Mark as read carries the ink while the box is empty, Send order once it holds text or an image; order, labels and widths never change
@@ -2274,7 +2301,7 @@ function ReportComposerQ({ item, draft, queue, isBusy, error }) {
 	const hasContent = hasText || box.shots.length > 0;
 	const { zone, tray } = useTrayZoneQ(fieldId, box);
 	const markRead = () => (hasContent ? putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.unsentOrder, fieldId) : queue.settle(item.id, "seen"));
-	const sendOrder = () => (hasText ? sendReplyQ(queue, item.id, box) : putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noOrder, fieldId));
+	const sendOrder = () => (hasText ? sendDraftQ(queue, item.id, box, (ids) => queue.settle(item.id, "reply", getImageBodyQ({ text: box.text }, ids))) : putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noOrder, fieldId));
 	const order = item.isFreeTextAllowed ? [{ label: "Send order", isInk: hasContent, onPress: sendOrder }] : [];
 	const rest = hasContent ? `Send order delivers this to ${name} and closes the report.` : `Mark as read closes this report. ${name} hears nothing.`;
 	return (
@@ -2286,17 +2313,20 @@ function ReportComposerQ({ item, draft, queue, isBusy, error }) {
 	);
 }
 
-/** A report's draft as a composer box `{ text, setText, shots, setShots, putError }`, every change written back to the draft. */
-function getDraftBoxQ(queue, id, draft) {
+/**
+ * An item's draft as a composer box `{ text, setText, shots, setShots, putError }`, every change written back to the draft.
+ * @param errorKey - the draft field an image refusal goes to: the note slot's `error`, or a decision's tray line `imageError`
+ */
+function getDraftBoxQ(queue, id, draft, errorKey = "error") {
 	return {
-		text: draft.text ?? "", setText: (text) => queue.setDraft(id, { text, error: null }),
-		shots: draft.images ?? [], setShots: (update) => queue.setImages(id, update), putError: (error) => queue.setDraft(id, { error }),
+		text: draft.text ?? "", setText: (text) => queue.setDraft(id, { text, error: null, [errorKey]: null }),
+		shots: draft.images ?? [], setShots: (update) => queue.setImages(id, update), putError: (error) => queue.setDraft(id, { [errorKey]: error }),
 	};
 }
 
-// the report's reply with the box's text and images; an upload still running → the draft waits (Sending…)
-function sendReplyQ(queue, id, box) {
-	return sendWithImagesQ(box.shots, (ids) => queue.settle(id, "reply", getImageBodyQ({ text: box.text }, ids)), (isWaiting) => queue.setDraft(id, { isWaiting }));
+// `send` takes the stored images' ids; an upload still running → the draft waits (Sending…)
+function sendDraftQ(queue, id, box, send) {
+	return sendWithImagesQ(box.shots, send, (isWaiting) => queue.setDraft(id, { isWaiting }));
 }
 
 // a press with something missing → the note slot says what and focus goes to the first missing control
@@ -2309,11 +2339,12 @@ function putInvalidQ(queue, id, message, targetId) {
  * One composer for every field the owner writes in: label, the box and its buttons on one row, the reserved note line.
  * Buttons are always enabled; while sending they read `Sending…` and carry aria-disabled. Cmd / Ctrl + Enter presses the ink button.
  * @param field - `{ id, label }` of the box; null → buttons alone
- * @param buttons - `{ label, isInk, keyName, onPress, parts }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter;
+ * @param buttons - `{ label, isInk, keyName, onPress, parts, describedBy }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter;
  *   `parts` (getSendPartsQ) → the label may be cut to its row, the whole label in the button's title
  * @param later - the quiet button at the end of the note line, `{ label, keyName, onPress }`
+ * @param head - a line above the label (a decision's approval line); `trayNote` - the image lines' own line under the field row (a decision's tray line)
  */
-function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null }) {
+function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null, head = null, trayNote = null }) {
 	const ink = buttons.find((button) => button.isInk);
 	// the send key presses the button keyed `send` where there is one, else the ink one
 	const keyed = buttons.find((button) => button.keyName === "send") ?? ink;
@@ -2324,18 +2355,20 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 	};
 	return (
 		<div className="queue-composer" {...(tray ? zone : null)}>
+			{head}
 			{field && getFieldLabelQ(field)}
 			<div className="queue-compose-row">
 				{field && <ComposeBoxQ field={field} text={text} onText={onText} onKeyDown={onKeyDown} tray={tray} />}
 				<div className="queue-compose-buttons">
 					{buttons.map((button) => (
-						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined}
+						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined} aria-describedby={button.describedBy}
 							aria-busy={(isBusy && button.isInk) || undefined} title={button.parts ? button.label : undefined} onClick={isBusy ? undefined : button.onPress}>
 							{isBusy && button.isInk ? "Sending…" : getButtonTextQ(button)}
 						</button>
 					))}
 				</div>
 			</div>
+			{trayNote && <div className="queue-tray-line">{trayNote}</div>}
 			<div className="queue-note">
 				<div className="queue-note-text">{note}</div>
 				{later && <button type="button" className="btn ghost sm" data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>}
@@ -2461,7 +2494,7 @@ function getRemoveIdQ(fieldId, key) {
 	return `${fieldId}-remove-${key}`;
 }
 
-// one line: a refusal or a missing control (crit alert), else what the images need, else the approval note (info), else the line at rest
+// one line: a refusal or a missing control (crit alert), else what the images need, else an info line, else the line at rest
 function ComposerNoteQ({ error, info = null, rest, tray = null, fieldId = "" }) {
 	if (error) return <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ>;
 	const image = tray ? getImageNoteQ(tray.shots, tray.isOver) : null;
@@ -3058,7 +3091,7 @@ function getOrderBoxQ(queue) {
  * Focus: an image added → the box · removed → the next remove button, else the box.
  * @param box - `{ shots, setShots, putError }` of the draft or order box the images belong to
  */
-function getTrayQ({ fieldId, box, isOver = false }) {
+function getTrayQ({ fieldId, box, isOver = false, noun = "order" }) {
 	const { shots, setShots, putError } = box;
 	const focus = (id) => window.document?.getElementById(id)?.focus();
 	return {
@@ -3066,7 +3099,7 @@ function getTrayQ({ fieldId, box, isOver = false }) {
 		isOver,
 		onFiles: (files, isPasted) => {
 			focus(fieldId);
-			return putFilesQ({ files, shots, setShots, putError, isPasted });
+			return putFilesQ({ files, shots, setShots, putError, isPasted, noun });
 		},
 		onRemove: (key) => {
 			const index = shots.findIndex((shot) => shot.key === key);
@@ -3078,9 +3111,9 @@ function getTrayQ({ fieldId, box, isOver = false }) {
 }
 
 /** Checks the files, adds the ones that pass with one line for the rest, then uploads each as it is added. */
-async function putFilesQ({ files, shots, setShots, putError, isPasted = false }) {
+async function putFilesQ({ files, shots, setShots, putError, isPasted = false, noun }) {
 	const candidates = await Promise.all(files.map(getCandidateQ));
-	const { added, refusal } = getAddPlanQ(shots.length, candidates);
+	const { added, refusal } = getAddPlanQ(shots.length, candidates, noun);
 	putError(refusal);
 	const fresh = added.map((candidate, index) => getShotQ(candidate, isPasted ? getPastedNameQ(shots, index, candidate.type) : candidate.name));
 	setShots((prev) => [...prev, ...fresh]);
@@ -3102,22 +3135,25 @@ function getImageTypeQ(bytes) {
 	return null;
 }
 
-/** The files that fit the type, the size and the count of one order `{ added }`, and the one line naming the rest (null when none). */
-function getAddPlanQ(count, candidates) {
+/**
+ * The files that fit the type, the size and the count of one order or answer `{ added }`, and the one line naming the rest (null when none).
+ * @param noun - what carries the images, in the count's words: `order` or `answer`
+ */
+function getAddPlanQ(count, candidates, noun = "order") {
 	const fitting = candidates.filter((candidate) => candidate.type !== null && candidate.bytes <= IMAGES_Q.BYTES_MAX);
 	const added = fitting.slice(0, Math.max(0, IMAGES_Q.MAX - count));
 	const refused = candidates.filter((candidate) => !fitting.includes(candidate));
-	return { added, refusal: getRefusalLineQ(refused, fitting.length - added.length) };
+	return { added, refusal: getRefusalLineQ(refused, fitting.length - added.length, noun) };
 }
 
-function getRefusalLineQ(refused, overflow) {
+function getRefusalLineQ(refused, overflow, noun) {
 	const megabytes = IMAGES_Q.BYTES_MAX / IMAGES_Q.MB;
-	if (refused.length === 0) return overflow === 0 ? null : `Up to ${IMAGES_Q.MAX} images per order: ${overflow} ${overflow === 1 ? "was" : "were"} not added.`;
+	if (refused.length === 0) return overflow === 0 ? null : `Up to ${IMAGES_Q.MAX} images per ${noun}: ${overflow} ${overflow === 1 ? "was" : "were"} not added.`;
 	if (refused.length === 1 && overflow === 0) {
 		const [file] = refused;
 		return `${file.name} was not added: ${file.type === null ? IMAGES_Q.TYPES_LINE : `over ${megabytes} MB`}.`;
 	}
-	const cap = overflow > 0 ? ` and ${IMAGES_Q.MAX} per order` : "";
+	const cap = overflow > 0 ? ` and ${IMAGES_Q.MAX} per ${noun}` : "";
 	return `${refused.length + overflow} files were not added: ${IMAGES_Q.TYPES_LINE}, up to ${megabytes} MB each${cap}.`;
 }
 
@@ -3233,9 +3269,9 @@ function getImageNoteQ(shots, isOver) {
 }
 
 // a composer's image tray and the drop zone feeding it: a file dropped on the zone joins the tray's box
-function useTrayZoneQ(fieldId, box) {
-	const zone = useDropZoneQ((files) => getTrayQ({ fieldId, box }).onFiles(files, false));
-	return { zone, tray: getTrayQ({ fieldId, box, isOver: zone.isOver }) };
+function useTrayZoneQ(fieldId, box, noun) {
+	const zone = useDropZoneQ((files) => getTrayQ({ fieldId, box, noun }).onFiles(files, false));
+	return { zone, tray: getTrayQ({ fieldId, box, isOver: zone.isOver, noun }) };
 }
 
 // a file over the zone → the box shows the drop state; leaving it for a child of the zone is no leave
