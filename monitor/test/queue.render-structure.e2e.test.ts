@@ -2833,7 +2833,7 @@ describe("queue page on the mockup fixtures", () => {
       const names = await page.evaluate(() => [...new Set([...document.querySelectorAll(".queue-row")].map((row) => row.getAttribute("aria-label")?.match(/ from (\S+):/)?.[1] ?? "atrium"))]);
       await page.close();
 
-      assert.deepEqual([shown.done, names], [[["queue-row-802", "Report", "Read"]], ["atrium"]]);
+      assert.deepEqual([shown.done, names], [[["queue-row-802", "Read", "Report"]], ["atrium"]]);
       assert.deepEqual(reads.at(-1)?.get("sessionIds"), FIXTURE_SESSION_IDS.atrium);
     });
 
