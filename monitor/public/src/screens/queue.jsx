@@ -158,7 +158,7 @@ const IMAGES_Q = {
 	NAME_MAX: 255,
 	MB: 1024 * 1024,
 	ACCEPT: "image/png,image/jpeg,image/webp,image/gif",
-	TYPES_LINE: "only PNG, JPEG, WebP or GIF images",
+	TYPES: "PNG, JPEG, WebP or GIF",
 	PASTED: "Pasted image",
 	EXTENSION: { png: "png", jpeg: "jpg", webp: "webp", gif: "gif" },
 };
@@ -2163,11 +2163,10 @@ function SheetBodyQ({ item, copies = [item], rails = [], draft, onDraft, cliPath
  */
 function RelayBlockQ({ item, copies, rails = [] }) {
 	const { sender } = item.relay;
-	const from = getSenderNameQ(sender);
-	const to = getCopiesNameQ(copies);
+	const from = getSenderLabelQ(sender);
 	return (
 		<>
-			<h3 className="queue-sheet-title">{`Message from ${getSenderLabelQ(sender)} to ${to}`}</h3>
+			<h3 className="queue-sheet-title">{`Message from ${from} to ${getCopiesNameQ(copies)}`}</h3>
 			<RelayWhoQ sender={sender} copies={copies} rails={rails} />
 			<p className="fs-meta font-semibold text-dim">{`What ${from} wrote`}<span className="font-normal text-faint">{" · shown as sent"}</span></p>
 			{item.relay.redaction === null
@@ -2176,7 +2175,7 @@ function RelayBlockQ({ item, copies, rails = [] }) {
 			<RelayHopLineQ relay={item.relay} at={item.askedAt} />
 			{copies.some((copy) => getRecipientMarkQ(copy, rails).word === EXIT_REASON_LABEL_Q.ended && getRelayOutcomeQ(copy) === null)
 				&& <p className="fs-meta text-dim">Ended recipients are not resumed for a relay; it may lapse.</p>}
-			<p className="fs-meta text-dim">{`This went to ${to} as ${from}'s message, without your approval. It does not carry your authority.`}</p>
+			<p className="fs-meta text-dim">{`${from} sent this as its message, not yours. It carries none of your authority.`}</p>
 		</>
 	);
 }
@@ -3340,10 +3339,11 @@ function getRefusalLineQ(refused, overflow, noun) {
 	if (refused.length === 0) return overflow === 0 ? null : `Up to ${IMAGES_Q.MAX} images per ${noun}: ${overflow} ${overflow === 1 ? "was" : "were"} not added.`;
 	if (refused.length === 1 && overflow === 0) {
 		const [file] = refused;
-		return `${file.name} was not added: ${file.type === null ? IMAGES_Q.TYPES_LINE : `over ${megabytes} MB`}.`;
+		return `${file.name} was not added: ${file.type === null ? `only ${IMAGES_Q.TYPES} images` : `over ${megabytes} MB`}.`;
 	}
-	const cap = overflow > 0 ? ` and ${IMAGES_Q.MAX} per ${noun}` : "";
-	return `${refused.length + overflow} files were not added: ${IMAGES_Q.TYPES_LINE}, up to ${megabytes} MB each${cap}.`;
+	// two sentences, each within the twelve-word cap (spec §12.7)
+	const cap = overflow > 0 ? `, ${IMAGES_Q.MAX} per ${noun}` : "";
+	return `${refused.length + overflow} files were not added. Only ${IMAGES_Q.TYPES}, ${megabytes} MB each${cap}.`;
 }
 
 function getPastedNameQ(shots, index, type) {

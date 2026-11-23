@@ -483,6 +483,7 @@ const ANSWER_STATES: QueueState[] = [
     },
   },
   { nn: "40h", name: "answered-images", viewports: LIST_WIDTHS, setUp: (page) => showAnswerImages(page, 108) },
+  { nn: "40i", name: "approval-files-refused", viewports: LIST_WIDTHS, getFixture: getEdgeFixture, setUp: (page) => addRefusedApprovalFiles(page) },
 ];
 
 // spec §5 → Where it renders, at the three list widths: a report in Markdown with its fence folded, an open decision's fence whole, a relay as sent
@@ -883,6 +884,16 @@ async function addApprovalFiles(page: Page): Promise<void> {
   await selectRow(page, EDGE_IDS.approval);
   await setFiles(page, `queue-text-${EDGE_IDS.approval}`, [0, 1].map(getImageFile));
   await page.locator(".queue-sheet .queue-thumb:not(.is-busy)").nth(1).waitFor();
+  await waitForImages(page);
+}
+
+// spec §9.8 → several at once, on an answer: two files of a refused type and a ninth image → the two-sentence refusal on the tray line
+async function addRefusedApprovalFiles(page: Page): Promise<void> {
+  const pdf = (name: string) => ({ name, mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\n1 0 obj << >> endobj\n") });
+  await selectRow(page, EDGE_IDS.approval);
+  await setFiles(page, `queue-text-${EDGE_IDS.approval}`, [...Array.from({ length: 9 }, (_, index) => getImageFile(index)), pdf("plan.pdf"), pdf("notes.pdf")]);
+  await page.locator(".queue-sheet .queue-thumb:not(.is-busy)").nth(7).waitFor();
+  await page.locator(".queue-sheet", { hasText: "3 files were not added" }).waitFor();
   await waitForImages(page);
 }
 
@@ -1408,7 +1419,7 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual(found, {
-      count: 1, nodes: ["#text"], text: relay?.body, type: ["pre-wrap", "15px", "24px", "auto"], parsed: 0, label: "What aidl wrote · shown as sent",
+      count: 1, nodes: ["#text"], text: relay?.body, type: ["pre-wrap", "15px", "24px", "auto"], parsed: 0, label: "What aidl (self-named) wrote · shown as sent",
     });
   });
 

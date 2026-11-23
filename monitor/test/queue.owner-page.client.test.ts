@@ -1546,7 +1546,7 @@ describe("a relay on its way", () => {
       { head: `Relay from ${NAMED} → to yoaida`, title: `Message from ${NAMED} to yoaida`, foot: "Read-only. It reaches yoaida by itself and stays in Relay history.", controls: 0 },
     );
     assert.match(shape.date, /^Not yet\s+Sent\s+2026-11-19 14:20 KST$/);
-    for (const part of ["What aidl wrote", "This went to yoaida as aidl's message, without your approval.", "It does not carry your authority."]) assert.ok(shape.body.includes(part), part);
+    for (const part of [`What ${NAMED} wrote`, `${NAMED} sent this as its message, not yours.`, "It carries none of your authority."]) assert.ok(shape.body.includes(part), part);
     assert.doesNotMatch(shape.body, /Run in that session|Answered/);
   });
 
@@ -1565,12 +1565,16 @@ describe("a relay on its way", () => {
     { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592" },
   ];
   for (const row of NAME_ROWS) {
-    test(`the sender in the row's name column, the sheet head, the sheet title and the From line: ${row.name}`, () => {
+    test(`the sender in the row's name column, the sheet head, the sheet title, the From line, the text's label and the standing line: ${row.name}`, () => {
       const copies = toYoaida({}, { sender: row.sender });
       const sheet = getSheetShape(copies);
+      const body = sheet.body.replace(/\s+/g, " ");
       assert.deepEqual(
-        { who: getRowShape(renderRow(copies)).who, head: sheet.head, title: sheet.title, from: sheet.body.replace(/\s+/g, " ").includes(`From ${row.shown} · aca91592 · work`) },
-        { who: row.shown, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.shown} to yoaida`, from: true },
+        {
+          who: getRowShape(renderRow(copies)).who, head: sheet.head, title: sheet.title, from: body.includes(`From ${row.shown} · aca91592 · work`),
+          label: body.includes(`What ${row.shown} wrote`), standing: body.includes(`${row.shown} sent this as its message, not yours.`),
+        },
+        { who: row.shown, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.shown} to yoaida`, from: true, label: true, standing: true },
       );
     });
   }
@@ -1580,7 +1584,7 @@ describe("a relay on its way", () => {
     const [block] = byClass(render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } }), "queue-sheet-body");
     assert.deepEqual(getAsSentTexts(block as RenderedNode), [EVERY_BLOCK_FORM]);
     assert.equal(findNodes(block as RenderedNode, (node) => node.props?.atom === "ProseText").length, 0);
-    assert.ok(collectText(block as RenderedNode).replace(/\s+/g, " ").includes("What aidl wrote · shown as sent"));
+    assert.ok(collectText(block as RenderedNode).replace(/\s+/g, " ").includes(`What ${NAMED} wrote · shown as sent`));
   });
 
   test("a relay whose text addresses its declared document still lists it on the Documents line: the text as sent links none", () => {
@@ -3515,10 +3519,10 @@ describe("images in a composer", () => {
     { name: "a PDF is named", count: 0, files: [file("plan.pdf", null), file("a.png", "png")], added: ["a.png"], line: "plan.pdf was not added: only PNG, JPEG, WebP or GIF images." },
     { name: "a file over 10 MB is named", count: 0, files: [file("shot-12.png", "png", 10 * 1024 * 1024 + 1)], added: [], line: "shot-12.png was not added: over 10 MB." },
     { name: "exactly 10 MB passes", count: 0, files: [file("big.png", "png", 10 * 1024 * 1024)], added: ["big.png"], line: null },
-    { name: "several refused at once are counted", count: 0, files: [file("plan.pdf", null), file("logo.svg", null), file("huge.png", "png", 11 * 1024 * 1024)], added: [], line: "3 files were not added: only PNG, JPEG, WebP or GIF images, up to 10 MB each." },
-    { name: "a refused type and the cap together are counted", count: 7, files: [file("plan.pdf", null), file("a.png", "png"), file("b.png", "png")], added: ["a.png"], line: "2 files were not added: only PNG, JPEG, WebP or GIF images, up to 10 MB each and 8 per order." },
+    { name: "several refused at once are counted", count: 0, files: [file("plan.pdf", null), file("logo.svg", null), file("huge.png", "png", 11 * 1024 * 1024)], added: [], line: "3 files were not added. Only PNG, JPEG, WebP or GIF, 10 MB each." },
+    { name: "a refused type and the cap together are counted", count: 7, files: [file("plan.pdf", null), file("a.png", "png"), file("b.png", "png")], added: ["a.png"], line: "2 files were not added. Only PNG, JPEG, WebP or GIF, 10 MB each, 8 per order." },
     { name: "past eight on an answer the line names the answer", count: 7, noun: "answer", files: [file("a.png", "png"), file("b.png", "png"), file("c.png", "png")], added: ["a.png"], line: "Up to 8 images per answer: 2 were not added." },
-    { name: "a refused type and the cap together on an answer name the answer", count: 7, noun: "answer", files: [file("plan.pdf", null), file("a.png", "png"), file("b.png", "png")], added: ["a.png"], line: "2 files were not added: only PNG, JPEG, WebP or GIF images, up to 10 MB each and 8 per answer." },
+    { name: "a refused type and the cap together on an answer name the answer", count: 7, noun: "answer", files: [file("plan.pdf", null), file("a.png", "png"), file("b.png", "png")], added: ["a.png"], line: "2 files were not added. Only PNG, JPEG, WebP or GIF, 10 MB each, 8 per answer." },
   ];
   for (const row of plans) {
     test(`adding files: ${row.name}`, () => {
