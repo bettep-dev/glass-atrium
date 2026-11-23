@@ -60,6 +60,10 @@ describe("split row layout variants", () => {
     assert.ok(classesOf(rowOf({})).includes(`split-row--${layouts.equal}`));
   });
 
+  test("a divided row carries its own modifier, so two in-card blocks part on a hairline", () => {
+    assert.ok(classesOf(rowOf({ layout: "divided" })).includes("split-row--divided"));
+  });
+
   test("an unknown layout falls back to equal rather than a missing modifier", () => {
     assert.ok(classesOf(rowOf({ layout: "masonry" })).includes(`split-row--${layouts.equal}`));
   });

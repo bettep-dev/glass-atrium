@@ -1180,10 +1180,11 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = fa
 // ratio preset → base.css modifier; stacked below xl, side by side at xl.
 const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '2:1': '2-1' });
 
-// layout → base.css modifier: equal = peer cards match heights · content = each column its own height (rails, non-peer rows).
-const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', equal: 'equal' });
+// layout → base.css modifier: equal = peer cards match heights · content = each column its own height (rails, non-peer rows)
+// · divided = two in-card blocks parted by one hairline.
+const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', divided: 'divided', equal: 'equal' });
 
-// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'equal' (default) | 'content'.
+// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'equal' (default) | 'content' | 'divided'.
 function SplitRow({ ratio = '1:1', layout = 'equal', children, className = '' }) {
   const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
   const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.equal;

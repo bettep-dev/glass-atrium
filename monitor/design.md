@@ -635,6 +635,7 @@
 - **`SplitRow({ ratio = '1:1', layout = 'equal' })`**:
   - ratio: `1:1` · `2:1` 만 (`SPLIT_ROW_RATIOS`), 미지 값은 1:1. 예외: `cost` 의 lg 2fr/1fr override.
   - layout: `equal`(기본, peer 높이 맞춤) · `content`(opt-in — rail 컬럼과 peer 가 아닌 행), 미지 값은 equal.
+  - `divided`: two in-card blocks (no `Card`) parted by one `--line` hairline, `--gap-section` clear of each — above the second block when stacked, between the two from xl.
   - < 1280px 세로 스택 · ≥ 1280px 나란히 · gap `--gap-section` 16.
   - wrapper 로 감싼 카드도 stretch 높이를 물려받는다. 접힌 fold(`.is-collapsed`)는 header 높이를 유지하고 늘어나지 않는다.
   - stretch 유효 조건과 해법 (a)→(b)→(c): §1 의 6) — `STRETCH_FLOOR` 0.75.

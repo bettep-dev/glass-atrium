@@ -29,7 +29,8 @@ const variantRows = `
   <div class="split-row split-row--1-1 split-row--${layouts.content}" data-variant="content"><div style="height: 400px;">tall</div><div>short</div></div>
   <div class="split-row split-row--1-1 split-row--${layouts.equal}" data-variant="equal"><div style="height: 400px;">tall</div><div>short</div></div>
   <div class="split-row split-row--2-1 split-row--${layouts.content}" data-variant="rail"><div style="height: 2000px;">main</div>
-    <div class="split-col split-col--rail" id="rail"><div style="height: 100px;">one</div><div style="height: 100px;">two</div></div></div>`;
+    <div class="split-col split-col--rail" id="rail"><div style="height: 100px;">one</div><div style="height: 100px;">two</div></div></div>
+  <div class="split-row split-row--1-1 split-row--${layouts.divided}" data-variant="divided"><div style="height: 300px;">tall</div><div>short</div></div>`;
 const LAYOUT_PAGE = `<!doctype html><html><body style="margin: 0;">
   <div style="padding: 24px;">${splitRows}
     ${variantRows}
@@ -141,6 +142,44 @@ describe("split row layout variants at real viewports", () => {
     });
     await page.evaluate(() => window.scrollTo(0, 0));
     assert.ok(Math.abs(railTop - RAIL_TOP_PX) < 1, `rail top ${railTop}`);
+  });
+
+  // stacked → the hairline crosses above the second block · from xl → it runs between the two
+  const dividedRows = [
+    { name: "below xl a divided row draws one hairline above its second block, a gap clear of each", width: 1024, edge: "top" },
+    { name: "from xl a divided row draws one hairline between its blocks, a gap clear of each", width: 1440, edge: "left" },
+  ] as const;
+  for (const row of dividedRows) {
+    test(row.name, async () => {
+      await page.setViewportSize({ width: row.width, height: 900 });
+      const line = await page.evaluate(() => {
+        const probe = document.body.appendChild(document.createElement("span"));
+        probe.style.borderColor = "rgb(var(--line))";
+        const color = getComputedStyle(probe).borderTopColor;
+        probe.remove();
+        return color;
+      });
+      const [first, second] = await page.$$eval('.split-row[data-variant="divided"] > *', (blocks) => blocks.map((block) => {
+        const style = getComputedStyle(block);
+        return { box: block.getBoundingClientRect().toJSON() as DOMRect, top: `${style.borderTopWidth} ${style.borderTopColor}`,
+          left: `${style.borderLeftWidth} ${style.borderLeftColor}`, pad: { top: style.paddingTop, left: style.paddingLeft } };
+      }));
+      const other = row.edge === "top" ? "left" : "top";
+      const clear = row.edge === "top" ? second.box.top - first.box.bottom : second.box.left - first.box.right;
+
+      assert.equal(second[row.edge], `1px ${line}`);
+      assert.match(second[other], /^0px/);
+      assert.match(first.top, /^0px/);
+      assert.match(first.left, /^0px/);
+      assert.ok(Math.abs(clear - CARD.GAP_PX) < 1, `gap before the hairline ${clear}`);
+      assert.equal(second.pad[row.edge], `${CARD.GAP_PX}px`, "gap after the hairline");
+    });
+  }
+
+  test("from xl a divided row's hairline runs the full row high beside a taller block", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const { first, second } = variantOf(await readVariants(), "divided");
+    assert.ok(Math.abs(first.height - second.height) < 1, `hairline ${second.height} vs row ${first.height}`);
   });
 
   test("below xl every variant row stacks its columns", async () => {
