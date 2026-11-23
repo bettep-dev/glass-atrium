@@ -375,13 +375,17 @@ const FOLDED_KINDS_Q = new Set(["message", "relay"]);
 function getFoldedRowsQ(items) {
 	const byKey = new Map();
 	for (const item of items) {
-		const key = FOLDED_KINDS_Q.has(item.kind) ? `send:${item.sendId ?? `${item.answeredAt}|${item.body}`}` : `item:${item.id}`;
+		const key = getFoldKeyQ(item);
 		byKey.set(key, [...(byKey.get(key) ?? []), item]);
 	}
 	return [...byKey.values()].map((copies) => {
 		const sorted = [...copies].sort((left, right) => left.id - right.id);
 		return { id: sorted[0].id, item: sorted[0], copies: sorted };
 	});
+}
+
+function getFoldKeyQ(item) {
+	return FOLDED_KINDS_Q.has(item.kind) ? `send:${item.sendId ?? `${item.answeredAt}|${item.body}`}` : `item:${item.id}`;
 }
 
 /**
@@ -449,9 +453,24 @@ function getStepsQ(groups, id, lastIndex) {
 	return { index, count: rows.length, prevId: prev?.id ?? null, nextId: next?.id ?? null };
 }
 
-/** The list's scope: the Account filter and the ticks (spec §9.1); nothing ticked → every session's items. */
+/**
+ * The list's scope: the Account filter and the ticks (spec §9.1); nothing ticked → every session's items.
+ * A relay is one send: either end in scope keeps every copy, so its row names every recipient (spec §9.9 Part 1).
+ */
 function getVisibleItemsQ(items, filter, ids = []) {
-	return items.filter((item) => (!filter.profile || item.session.profileLabel === filter.profile) && (ids.length === 0 || ids.includes(item.session.id)));
+	const isShown = (item) => (!filter.profile || isInAccountQ(item, filter.profile)) && (ids.length === 0 || isTickedQ(item, ids));
+	const relaySends = new Set(items.filter((item) => item.kind === "relay" && isShown(item)).map(getFoldKeyQ));
+	return items.filter((item) => isShown(item) || (item.kind === "relay" && relaySends.has(getFoldKeyQ(item))));
+}
+
+function isInAccountQ(item, profile) {
+	return item.session.profileLabel === profile || item.relay?.sender.profileLabel === profile;
+}
+
+// a relay's sender by its id prefix: the views carry no sender id, and every tick is a full id of the sessions read
+function isTickedQ(item, ids) {
+	if (ids.includes(item.session.id)) return true;
+	return item.kind === "relay" && ids.some((id) => id.slice(0, SESSION_PREFIX_LENGTH_Q) === item.relay.sender.sessionIdPrefix);
 }
 
 /**

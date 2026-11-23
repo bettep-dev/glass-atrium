@@ -2368,6 +2368,37 @@ describe("the ticks as the one selection", () => {
     });
   }
 
+  // spec §9.9 Part 1: a relay is in scope while either end is ticked — the sender matched by its id prefix, the page holding no sender id
+  const SENDER_ID = "9d2f4c10-6a1e-4b2d-8c3f-1e7a5b9d0c22";
+  const relayEnds = {
+    yoaida: buildSession({ id: "7be210c4-3f5a-4e8b-9d1c-6a2f0e4b8d71", name: "yoaida", profileLabel: "personal" }),
+    sixmon: buildSession({ id: "41aa0b7e-8c2d-4f6a-b3e9-5d1c7a0f2e94", name: "sixmon", profileLabel: "personal" }),
+    atrium: buildSession({ id: "5c0e91aa-2b7f-4d3e-a8c6-0f9e1d4b7a53", name: "atrium", profileLabel: "personal" }),
+  };
+  const relaySender = { sessionIdPrefix: SENDER_ID.slice(0, 8), profileLabel: "work", selfDeclaredName: "gersona", cwdTail: "git/gersona" };
+  const relayCopy = (id: number, session: unknown) => buildItem({
+    id, kind: "relay", status: "answered", options: [], sendId: "relay-send-7", session,
+    relay: { hop: 0, parent: null, sender: relaySender, fetchedAt: null, redaction: null, lapsedAt: null },
+  });
+  const relayItems = [buildItem({ id: 1, session: relayEnds.atrium }), relayCopy(412, relayEnds.yoaida), relayCopy(413, relayEnds.sixmon)];
+  const relayScopes = [
+    { name: "nothing ticked lists the relay", ids: [], filter: "", expected: [1, 412, 413] },
+    { name: "the sender ticked alone lists the relay with every copy", ids: [SENDER_ID], filter: "", expected: [412, 413] },
+    { name: "one recipient ticked lists the relay with every copy", ids: [relayEnds.sixmon.id], filter: "", expected: [412, 413] },
+    { name: "only a third session ticked leaves the relay out", ids: [relayEnds.atrium.id], filter: "", expected: [1] },
+    { name: "the sender's account lists the relay its recipients' account would", ids: [], filter: "work", expected: [412, 413] },
+  ];
+  for (const row of relayScopes) {
+    test(`a relay in the list's scope: ${row.name}`, () => {
+      assert.deepEqual(call<Array<{ id: number }>>("getVisibleItemsQ", relayItems, { profile: row.filter }, row.ids).map((item) => item.id), row.expected);
+    });
+  }
+
+  test("a relay with its sender and a recipient ticked is one row", () => {
+    const groups = call<Array<{ rows: Array<{ id: number; copies: unknown[] }> }>>("getListGroupsQ", relayItems, [], { profile: "" }, [SENDER_ID, relayEnds.yoaida.id]);
+    assert.deepEqual(groups.flatMap((group) => group.rows).map((row) => [row.id, row.copies.length]), [[412, 2]]);
+  });
+
   const rails = [buildSessionRow({ id: "a1", name: "gersona" }), buildSessionRow({ id: "b2", name: "yoaida" })];
   const titles = [
     { name: "nothing ticked reads All sessions", ids: [], title: "All sessions" },
