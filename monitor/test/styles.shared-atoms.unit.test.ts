@@ -1,7 +1,7 @@
 // Shared type, control and surface atoms in public/styles — the tokens page streams adopt.
 // Runner: npx tsx --test test/styles.shared-atoms.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -316,6 +316,31 @@ test("a block machine string wears the fenced block's face from that one rule an
   const plate = block.filter((body) => !fence.includes(body))
     .map((body) => ({ fill: getDecl(body, "background"), inset: getDecl(body, "padding"), radius: getDecl(body, "border-radius") }));
   assert.deepEqual(plate, [{ fill: "rgb(var(--sunken))", inset: "var(--space-2) var(--space-3)", radius: "var(--radius-control)" }]);
+});
+
+// a screen rule reaching into an atom's inner part becomes the atom's own variant (spec 44084 §14.2 row 3)
+describe("each atom variant a screen names sets only its own declarations, in one rule", () => {
+  const rows = [
+    { name: "a flush sub-card drops its padding", selector: ".sub-card.flush", decls: { padding: "0" } },
+    { name: "a fill card hands its whole body to one self-sizing child, with no cap and no scroller of its own", selector: ".card--fill > .card-body",
+      decls: { flex: "1", "max-height": "none", overflow: "hidden", display: "flex", "flex-direction": "column" } },
+    { name: "a compact card head sets its title at the control size", selector: ".card-head--compact .card-title", decls: { "font-size": "var(--fs-control)" } },
+    { name: "a flush card bar leaves the inset to its content and draws a hairline under it", selector: ".card--bar-flush > .card-bar",
+      decls: { padding: "0", "border-bottom": "1px solid rgb(var(--line))" } },
+    { name: "an inline-flush empty state keeps its block inset and drops its inline one", selector: ".placeholder--flush-inline", decls: { "padding-inline": "0" } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const bodies = getRuleBodies(BASE_CSS, row.selector);
+      const decls = bodies.map((body) => Object.fromEntries([...body.matchAll(/([\w-]+)\s*:\s*([^;]+)/g)].map((m) => [m[1], m[2].trim()])));
+      assert.deepEqual(decls, [row.decls]);
+    });
+  }
+});
+
+test("a flush sub-card and a flush card body share the one flush rule", () => {
+  const cardBody = getRuleBodies(BASE_CSS, ".card-body.flush");
+  assert.ok(getRuleBodies(BASE_CSS, ".sub-card.flush").some((body) => cardBody.includes(body)));
 });
 
 // a label-only body row (a ledger group-label th spanning the row) would otherwise stop at its 36px line box

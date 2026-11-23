@@ -122,6 +122,17 @@ describe("card header", () => {
     assert.equal(typeof button.props.onClick, "function", "opens on click and keyboard, not on hover");
   });
 
+  const compactRows = [
+    { name: "a compact header carries the compact modifier", isCompact: true, hasModifier: true },
+    { name: "a default header carries none", isCompact: undefined, hasModifier: false },
+  ];
+  for (const row of compactRows) {
+    test(row.name, () => {
+      const [head] = findNodes(headOf({ title: "Run log", isCompact: row.isCompact }), (n) => classesOf(n).includes("card-head"));
+      assert.equal(classesOf(head).includes("card-head--compact"), row.hasModifier);
+    });
+  }
+
   test("a header with no info renders no trigger", () => {
     assert.equal(findNodes(headOf({ title: "Spend by model" }), (n) => n.type === "button").length, 0);
   });

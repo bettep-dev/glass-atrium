@@ -193,6 +193,10 @@ label.ctl-checkbox-hit {
 	font-weight: 600;
 	letter-spacing: -0.005em;
 }
+/* a viewer's thin header → the title one step down, at the control size */
+.card-head--compact .card-title {
+	font-size: var(--fs-control);
+}
 /* 카드 캡션/설명 공용 — 읽기용 산문이라 --dim(AA-clean) + Pretendard sans.
    --faint + mono 는 timestamp/id 같은 진짜 메타데이터 전용 (이 클래스 대상 아님).
    기본 1행 클램프(nowrap+ellipsis) → 전체 내용은 native title 툴팁으로 hover 노출. */
@@ -227,13 +231,27 @@ label.ctl-checkbox-hit {
 	max-height: none;
 	overflow-y: visible;
 }
-.card-body.flush {
+.card-body.flush,
+.sub-card.flush {
 	padding: 0;
+}
+/* the body hands its whole box to one child that sizes or pans itself (a diagram canvas) → no height cap, no scroller of its own */
+.card--fill > .card-body {
+	flex: 1;
+	max-height: none;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
 }
 /* filter bar or toolbar between head and body · on the card's inline column; block 8 around a 32 control → 48 */
 .card-bar {
 	flex: none;
 	padding: var(--space-2) var(--card-pad);
+}
+/* a bar whose content carries its own inset (a full-width strip) → the hairline alone parts it from the body */
+.card--bar-flush > .card-bar {
+	padding: 0;
+	border-bottom: 1px solid rgb(var(--line));
 }
 /* pinned foot — "Show all N" / "Other" / one footnote line up across a stretched row */
 .card-foot {
@@ -3003,6 +3021,10 @@ a.prose-link:hover {
 	color: rgb(var(--ink));
 	text-align: left;
 	font-size: var(--fs-control);
+}
+/* inside a section already on the card inset → the message lines up with the section's own text */
+.placeholder--flush-inline {
+	padding-inline: 0;
 }
 .placeholder-hint {
 	margin-top: var(--space-1);

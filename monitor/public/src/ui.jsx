@@ -949,12 +949,13 @@ let cardTitleSeq = 0;
  * @param info - long explanation moved off the card; opens in the detail drawer
  * @param infoLabel - trigger name and drawer title
  * @param infoTitle - the trigger's tooltip; unset → no tooltip
+ * @param isCompact - a viewer's thin header: the title at the control size
  */
-function CardHead({ title, sub, info, infoLabel = 'How this is counted', infoTitle, right }) {
+function CardHead({ title, sub, info, infoLabel = 'How this is counted', infoTitle, right, isCompact = false }) {
   const titleIdRef = useRef(null);
   if (titleIdRef.current === null) titleIdRef.current = `card-title-${++cardTitleSeq}`;
 
-  return <div className="card-head">
+  return <div className={isCompact ? 'card-head card-head--compact' : 'card-head'}>
     <div className="card-head-text">
       <h2 id={titleIdRef.current} className="card-title">{title}</h2>
       {sub && <span className="card-sub" title={window.UI.titleOf(sub)}>{sub}</span>}
