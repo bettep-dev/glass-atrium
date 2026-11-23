@@ -2409,13 +2409,20 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .prose-text .machine {
 	font-size: var(--fs-meta);
 }
-/* set in like a list item → it stands apart from the text without a box */
-.prose-pre {
+/* one face for ProseText's fence and the block machine string; the fence is set in like a list item → it stands apart from the text without a box */
+.prose-pre,
+.machine--block {
 	padding-inline-start: var(--space-4);
 	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 	font-size: var(--fs-meta);
 	line-height: 1.5;
 	white-space: pre-wrap;
+}
+/* a patch or payload stands alone, with no list to sit in → a sunken plate instead of the fence's inset */
+.machine--block {
+	padding: var(--space-2) var(--space-3);
+	background: rgb(var(--sunken));
+	border-radius: var(--radius-control);
 }
 /* only the frame scrolls sideways, marked by its own scrollbar; the table is as wide as its content, at most the column */
 .prose-table-frame {

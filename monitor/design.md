@@ -367,7 +367,7 @@
 | 역할 | Family | 비고 |
 |------|--------|------|
 | UI 본문 · 제목 | `'Pretendard Variable'` → Pretendard → system-ui | `body` 전역 |
-| machine strings — id · hash · path · config key · CLI flag · model id | `'JetBrains Mono'` → ui-monospace | `.font-mono` · `code` · `.mono` |
+| machine strings (§12.2) | `'JetBrains Mono'` → ui-monospace | `ui.jsx` → `MachineString` (`.machine`) only |
 
 - `body`: `font-feature-settings: 'tnum' 1, 'cv11' 1`. 금융/데이터 수치(stat value · 비용 · token 수 · latency)는 tnum 필수 — sans (`body` tnum) 로 충족; a number is never mono (§12.2).
 - Inter / Roboto / Arial / Fraunces 를 1차로 두지 않는다.
@@ -988,7 +988,9 @@
 - Value:unit — the unit sits beside the value one step down in faint ink (20 ↔ 13; 15 ↔ 13).
 - **Family rule**:
   - Sans (Pretendard, `tnum` on) for all prose, labels and all numbers — counts, money, percentages, durations, dates in prose, pagination ranges.
-  - Mono (JetBrains Mono) only for machine strings: ids (`#43913`, `1a251d81`), hashes, file paths, config keys, CLI flags, model ids where shown.
+  - Mono (JetBrains Mono) only for machine strings — text a program wrote that a person copies or matches character by character: id (`#43913`) · hash (`1a251d81`) · path · config key · config pattern · command line or CLI flag · model id · version stamp.
+    - Drawn only through `ui.jsx` → `MachineString`; no screen sets `font-mono`.
+    - Block form (`isBlock`) for multi-line machine text (a patch, a payload): a `pre` in the `.prose-pre` face (one selector list), on `--sunken`, `--space-2` × `--space-3`, `--radius-control`, wrapping kept.
   - A label, a subtitle, a stat caption, a page range or a whole field grid is never mono.
 - **Case rule**: sentence case everywhere — page title, card title, section label, `th`, field label; no uppercase + letter-spacing eyebrow labels.
 - **No italics**: a low-sample rate shows `(n=12)` in faint ink; an unknown agent shows its label in dim ink. Rendered document and markdown bodies keep the author's emphasis.

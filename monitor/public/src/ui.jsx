@@ -1529,9 +1529,15 @@ function getGapClass(base, gaps, gap) {
   return `${base} ${base}--${gap}`;
 }
 
-// Id, hash, path, config key or CLI flag — the one mono use; prose, labels and numbers stay sans.
-function MachineString({ className = '', children }) {
-  return <code className={`machine ${className}`.trim()}>{children}</code>;
+/**
+ * Text a program wrote that a person copies or matches character by character — the one mono use.
+ * Kinds: id · hash · path · config key · config pattern · command line or CLI flag · model id · version stamp.
+ * Never a number, amount, date, time, count, label, status word, sentence or error line → those stay sans.
+ * @param isBlock - multi-line machine text (a patch, a payload) as its own wrapping block
+ */
+function MachineString({ isBlock = false, className = '', children }) {
+  const Tag = isBlock ? 'pre' : 'code';
+  return <Tag className={`machine${isBlock ? ' machine--block' : ''} ${className}`.trim()}>{children}</Tag>;
 }
 
 /**

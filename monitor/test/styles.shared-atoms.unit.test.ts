@@ -308,6 +308,16 @@ test("a transient shell stays neutral in every tone, and a toast's tone rides on
   assert.equal(getDecl(glyph, "color"), "rgb(var(--toast-tone))", "the glyph draws the toast's tone");
 });
 
+// the Queue draws .prose-pre on every decision text → the block form joins its rule, never restyles it
+test("a block machine string wears the fenced block's face from that one rule and adds only a sunken plate at the control radius", () => {
+  const fence = getRuleBodies(BASE_CSS, ".prose-pre");
+  const block = getRuleBodies(BASE_CSS, ".machine--block");
+  assert.ok(block.some((body) => fence.includes(body)), "the block form sits in the fence rule's selector list");
+  const plate = block.filter((body) => !fence.includes(body))
+    .map((body) => ({ fill: getDecl(body, "background"), inset: getDecl(body, "padding"), radius: getDecl(body, "border-radius") }));
+  assert.deepEqual(plate, [{ fill: "rgb(var(--sunken))", inset: "var(--space-2) var(--space-3)", radius: "var(--radius-control)" }]);
+});
+
 // a label-only body row (a ledger group-label th spanning the row) would otherwise stop at its 36px line box
 test("a body row header takes the same row step as a body cell", () => {
   const cell = getRuleBodies(BASE_CSS, ".tbl td").map((body) => getDecl(body, "height")).filter(Boolean);

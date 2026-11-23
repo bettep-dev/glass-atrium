@@ -77,7 +77,8 @@ const MOUNT_FIXTURE = `(fixture) => {
       h('p', null, 'Read the ', h(UI.Link, { href: '#outcomes' }, 'Task results')),
       h(UI.Select, { id: 'model', label: 'Model', value: model, onChange: setModel,
         options: [{ key: 'opus', label: 'Opus' }, { key: 'sonnet', label: 'Sonnet' }] }),
-      h('p', null, 'Commit ', h(UI.MachineString, null, '1a251d81')));
+      h('p', null, 'Commit ', h(UI.MachineString, null, '1a251d81')),
+      h('div', { id: 'patch' }, h(UI.MachineString, { isBlock: true }, '--- a/ui.jsx\\n+++ b/ui.jsx')));
   };
   const Selects = () => {
     const [effort, setEffort] = React.useState('high');
@@ -513,6 +514,19 @@ describe("markup-only atoms", () => {
 
     assert.match(look.font, /JetBrains Mono/);
     assert.equal(look.border, "0px");
+    await page.close();
+  });
+
+  test("a block machine string is a sunken plate, 8 by 12 inside the control radius, in the fence's wrapping mono face", async () => {
+    const page = await openFixture("atoms");
+    const look = await page.locator("#patch > *").evaluate((el) => {
+      const style = getComputedStyle(el);
+      const sunken = getComputedStyle(document.documentElement).getPropertyValue("--sunken").trim().split(/\s+/).join(", ");
+      return { tag: el.tagName, isSunken: style.backgroundColor === `rgb(${sunken})`, padding: style.padding, radius: style.borderTopLeftRadius,
+        isMono: /JetBrains Mono/.test(style.fontFamily), size: style.fontSize, wrap: style.whiteSpace };
+    });
+
+    assert.deepEqual(look, { tag: "PRE", isSunken: true, padding: "8px 12px", radius: "6px", isMono: true, size: "13px", wrap: "pre-wrap" });
     await page.close();
   });
 });

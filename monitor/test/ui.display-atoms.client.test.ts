@@ -1,4 +1,4 @@
-// Display atoms: the two empty states, the page header's one-line slots, the pagination bar, the stat row, the card head Status, the low-sample mark and whole day tokens.
+// Display atoms: the two empty states, the machine string's two forms, the page header's one-line slots, the pagination bar, the stat row, the card head Status, the low-sample mark and whole day tokens.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -193,6 +193,20 @@ describe("stat row", () => {
     test(`an absent value reads None, a present one as given: ${row.name}`, () => {
       const tree = render("StatRow", { stats: [{ label: "Runs", value: row.value }] });
       assert.equal(collectText(getValues(tree)[0]).trim(), row.text);
+    });
+  }
+});
+
+describe("machine string", () => {
+  const PATCH = "--- a/ui.jsx\n+++ b/ui.jsx";
+  const rows = [
+    { name: "an inline string is a code element in the machine face", isBlock: false, tag: "code", classes: ["machine"] },
+    { name: "multi-line machine text takes the block form, a pre carrying the block modifier", isBlock: true, tag: "pre", classes: ["machine", "machine--block"] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const [host] = findNodes(render("MachineString", { isBlock: row.isBlock, children: PATCH }), (n) => /^[a-z]/.test(n.type));
+      assert.deepEqual({ tag: host.type, classes: String(host.props.className).split(" "), text: collectText(host) }, { tag: row.tag, classes: row.classes, text: PATCH });
     });
   }
 });
