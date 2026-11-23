@@ -294,12 +294,13 @@ const BUTTON_STATES: CloseUpState[] = [
   ...[
     { rank: "icon", closeUp: SHEET_HEAD, target: NEXT_ITEM },
     { rank: "quiet", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .queue-note > .btn.ghost` },
-    { rank: "primary", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.primary` },
+    // Send answer takes the ink only once an option is picked (spec §9.8 → On an answer)
+    { rank: "primary", closeUp: SHEET_FOOT, target: `${SHEET_FOOT} .btn.primary`, isPicked: true },
   ].flatMap(getRankCloseUps),
 ];
 
 // spec §18.4 29: one rank's button hovered, held and focused (by keyboard → its ring paints) on the open decision 103
-function getRankCloseUps({ rank, closeUp, target }: { rank: string; closeUp: string; target: string }): CloseUpState[] {
+function getRankCloseUps({ rank, closeUp, target, isPicked = false }: { rank: string; closeUp: string; target: string; isPicked?: boolean }): CloseUpState[] {
   const steps: Array<[string, (page: Page) => Promise<void>]> = [
     ["hover", (page) => page.locator(target).hover()],
     ["held", async (page) => {
@@ -312,6 +313,7 @@ function getRankCloseUps({ rank, closeUp, target }: { rank: string; closeUp: str
     nn: "29", name: `buttons-${look}-${rank}`, closeUp,
     setUp: async (page) => {
       await selectRow(page, 103);
+      if (isPicked) await page.locator("#queue-option-103-R2").check();
       await act(page);
     },
   }));
@@ -3142,7 +3144,7 @@ describe("queue page on the mockup fixtures", () => {
           height: Math.round(rect.height),
           tray: text(".queue-tray-line"),
           note: text(".queue-note-text"),
-          description: sheet.querySelector(`#${CSS.escape(sheet.querySelector(".btn.primary")?.getAttribute("aria-describedby") ?? "")}`) === line,
+          description: sheet.querySelector(`#${CSS.escape(sheet.querySelector('[data-key="send"]')?.getAttribute("aria-describedby") ?? "")}`) === line,
         };
       });
       harness.refusals.clear();

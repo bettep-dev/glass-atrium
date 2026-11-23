@@ -927,17 +927,23 @@ describe("sheet composer buttons", () => {
   };
 
   const sendRows = [
-    { name: "no option and no text writes the note-slot line", draft: {}, calls: [["setDraft", 41, { error: "Pick an option or write an answer, then send." }]] },
-    { name: "whitespace-only text writes the note-slot line", draft: { text: "   " }, calls: [["setDraft", 41, { error: "Pick an option or write an answer, then send." }]] },
-    { name: "a picked option alone sends its code", draft: { code: "R1" }, calls: [["answerItem", 41, { code: "R1" }]] },
-    { name: "text alone sends the text", draft: { text: "hold until Friday" }, calls: [["answerItem", 41, { text: "hold until Friday" }]] },
-    { name: "an option and text send both", draft: { code: "R2", text: "after the deploy" }, calls: [["answerItem", 41, { code: "R2", text: "after the deploy" }]] },
+    { name: "no option and no text writes the note-slot line", draft: {}, isInk: false, calls: [["setDraft", 41, { error: "Pick an option or write an answer, then send." }]] },
+    { name: "whitespace-only text writes the note-slot line", draft: { text: "   " }, isInk: false, calls: [["setDraft", 41, { error: "Pick an option or write an answer, then send." }]] },
+    { name: "a picked option alone sends its code", draft: { code: "R1" }, isInk: true, calls: [["answerItem", 41, { code: "R1" }]] },
+    { name: "text alone sends the text", draft: { text: "hold until Friday" }, isInk: true, calls: [["answerItem", 41, { text: "hold until Friday" }]] },
+    { name: "an option and text send both", draft: { code: "R2", text: "after the deploy" }, isInk: true, calls: [["answerItem", 41, { code: "R2", text: "after the deploy" }]] },
   ];
   for (const row of sendRows) {
     test(`Send answer: ${row.name}`, () => {
       const { calls, tree } = foot(buildItem(), row.draft);
       press(tree, "Send answer");
       assert.deepEqual(getPlain(calls), row.calls);
+    });
+
+    // spec §9.8 → On an answer, at rest: enabled always, the ink fill only once there is an answer to send; the send key presses it either way
+    test(`Send answer is ink only with an answer to send, and send-keyed: ${row.name}`, () => {
+      const [button] = buttonLabelled(foot(buildItem(), row.draft).tree, "Send answer");
+      assert.deepEqual([String(button?.props.className).split(" ").includes("primary"), button?.props["data-key"]], [row.isInk, "send"]);
     });
   }
 
@@ -3180,8 +3186,8 @@ describe("desk keys", () => {
 
   test("Esc from the sheet goes back to the list", () => assert.deepEqual(press("back", 5).calls, [["back"]]));
 
-  test("Cmd+Enter presses the primary button of the pane holding the focus", () => {
-    keyRoot.elements = { ".queue-composer .btn.primary": keyElement("Send answer") };
+  test("Cmd+Enter presses the send-keyed button of the pane holding the focus, else its primary one", () => {
+    keyRoot.elements = { '.queue-composer [data-key="send"], .queue-composer .btn.primary': keyElement("Send answer") };
     assert.deepEqual(press("send", 3, { target: sheet }).acts, ["click Send answer"]);
   });
 
@@ -3202,16 +3208,19 @@ describe("desk keys", () => {
       return renderScreen((module.React as typeof screen.React).createElement(module.OrderComposerQ as Component, { queue, targets, box, tray })) as RenderedNode;
     };
     const tree = draw();
-    // the pane's querySelector, read off the rendered composer by the selector's last part (classes and one attribute)
+    // the pane's querySelector, read off the rendered composer by each listed selector's last part (classes and one attribute), the first match winning
+    const findBySelector = (selector: string) => {
+      const last = selector.trim().split(/\s+/).pop() ?? "";
+      const attr = /\[([\w-]+)="([^"]*)"\]/.exec(last);
+      const classes = last.replace(/\[.*\]/, "").split(".").filter(Boolean);
+      return findNodes(tree, (one) => {
+        const names = String(one.props?.className ?? "").split(/\s+/);
+        return (classes.length > 0 || attr !== null) && classes.every((name) => names.includes(name)) && (!attr || one.props?.[attr[1]] === attr[2]);
+      })[0];
+    };
     const pane = {
       querySelector: (selector: string) => {
-        const last = selector.trim().split(/\s+/).pop() ?? "";
-        const attr = /\[([\w-]+)="([^"]*)"\]/.exec(last);
-        const classes = last.replace(/\[.*\]/, "").split(".").filter(Boolean);
-        const [node] = findNodes(tree, (one) => {
-          const names = String(one.props?.className ?? "").split(/\s+/);
-          return (classes.length > 0 || attr !== null) && classes.every((name) => names.includes(name)) && (!attr || one.props?.[attr[1]] === attr[2]);
-        });
+        const node = selector.split(",").map(findBySelector).find(Boolean);
         return node ? { click: () => (node.props.onClick as (() => void) | undefined)?.(), focus: () => focused.push(selector) } : null;
       },
     };

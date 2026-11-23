@@ -603,10 +603,9 @@ const DESK_KEY_ACTS_Q = {
 	order: putOrderKeyQ,
 };
 
-// Cmd / Ctrl + Enter: in Orders its send button, inked or not, so a send with something missing says what as a press does · on the sheet its ink button
+// Cmd / Ctrl + Enter: the pane's send button, inked or not, so a send with something missing says what as a press does · else its ink button
 function putSendKeyQ({ target }) {
-	const selector = target?.closest?.(".queue-orders") ? '.queue-composer [data-key="send"]' : ".queue-composer .btn.primary";
-	target?.closest?.(".queue-sheet, .queue-orders")?.querySelector(selector)?.click();
+	target?.closest?.(".queue-sheet, .queue-orders")?.querySelector('.queue-composer [data-key="send"], .queue-composer .btn.primary')?.click();
 }
 
 // on a sheet → the neighbouring item's sheet; on the list → the focus to the row beside the focused one, opening nothing (spec §11)
@@ -2425,7 +2424,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	return (
 		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: "Your own answer or a note on this decision (optional)" } : null} tray={lines.tray} zone={zone.handlers}
 			head={lines.head} trayNote={lines.trayNote} text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
-			buttons={[...resend, { label: "Send answer", isInk: true, describedBy: lines.approvalId, onPress: () => sendAnswerQ(queue, item, draft, box) }]}
+			buttons={[...resend, { label: "Send answer", isInk: getAnswerBodyQ(draft) !== null, keyName: "send", describedBy: lines.approvalId, onPress: () => sendAnswerQ(queue, item, draft, box) }]}
 			note={<ComposerNoteQ error={error ?? draft.error} rest={rest} />}
 			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} />
 	);
