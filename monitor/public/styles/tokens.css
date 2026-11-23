@@ -125,6 +125,13 @@
   --heat-3: rgb(var(--ink) / 0.65);
   --heat-4: rgb(var(--ink) / 0.80);
 
+  /* document canvas — the ground a stored document is written for, cooler than the monitor's own neutrals */
+  --doc-canvas:   9   9  11;  /* the document body, its full-screen container and its scroll wrap */
+  --doc-side:    13  13  16;  /* the meta side panel */
+  --doc-code:    24  24  27;  /* a rendered code block */
+  --doc-line:    39  39  42;  /* hairline between two near-equal grounds, never the only cue; the resting scrollbar thumb */
+  --doc-ink:    228 228 231;  /* code-block text — ≥4.5:1 on --doc-code */
+
   /* ── Z-index stacking SoT — 3-tier 단일 출처 (각 tier 실제 소비) ──────────
      overlay(100) = drawer/fullscreen 오버레이 + backdrop (.detail-overlay·.modal-backdrop)
      confirm(150) = drawer/fullscreen 위로 재차 스택되는 confirm-variant 다이얼로그

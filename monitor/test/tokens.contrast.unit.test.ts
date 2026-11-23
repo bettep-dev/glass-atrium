@@ -167,6 +167,10 @@ test("the chart data colour reads as a mark on the card, the page and the sunken
   assertPairFloors({ name: "--data", fgs: ["--data"], grounds: [["--elev"], ["--surface"], ["--sunken"]], floor: UI_GLYPH });
 });
 
+test("a rendered document's code text reads on its code block at 4.5:1", () => {
+  assertPairFloors({ name: "--doc-ink", fgs: ["--doc-ink"], grounds: [["--doc-code"]], floor: AA_NORMAL });
+});
+
 const HEAT_RAMP = ["--heat-1", "--heat-2", "--heat-3", "--heat-4"] as const;
 const HEAT_STEP_MIN = 1.4;
 
