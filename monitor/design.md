@@ -668,7 +668,8 @@
   - In a `summary`, `DisclosureChevron` turns through `details[open]` instead of `isOpen`; the shared `ErrorDetails` fold (every RegionFailure and AlertCard) is one.
   - A fold whose summary is its full-width head row (label left, count at the far end — the Wiki folds) sets that `summary` to block flex screen-locally; the 32 height, the gap and the states stay the atom's.
   - A `.tbl` cell holding one takes the control-cell step, so the row stays 40.
-- **`Disclosure({ kind, title, sub, tone })`**: `.card` 위 fold. header = `DisclosureButton` — 제목 500 `--ink` + sub `--fs-meta` `--faint`. 열림 규칙: §1 의 4).
+- **`Disclosure({ kind, title, sub, tone, isInline })`**: `.card` 위 fold. header = `DisclosureButton` — 제목 500 `--ink` + sub `--fs-meta` `--faint`. 열림 규칙: §1 의 4).
+  - `isInline`: a fold nested in a card body — the trigger row and its body on the host's inset, no `.card` box; same open rule.
 - **`Popover({ label, title })`** (ⓘ and info panels only — a filter axis is a trigger on the bar, §12.3): 트리거 = `btn ghost sm` (`aria-haspopup="dialog"` · `aria-expanded`) · 패널 `role="dialog"`.
   - non-modal: inert · scroll-lock · trap 없음. Esc 또는 바깥 press 로 닫히고 포커스는 트리거로. 치수 §6.5.
 

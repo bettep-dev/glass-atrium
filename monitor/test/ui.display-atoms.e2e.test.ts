@@ -1,4 +1,4 @@
-// Display atoms measured in a real browser: the page header's line box and its gap to the content, the two empty states, a card's bars on one inline column per side, the current-page look, the stat row's hairlines, the badge chip and the drawer fact row.
+// Display atoms measured in a real browser: the page header's line box and its gap to the content, the two empty states, a card's bars on one inline column per side, the current-page look, the stat row's hairlines, the badge chip, the drawer fact row and the inline fold.
 // Runner: npx tsx --test test/ui.display-atoms.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -84,9 +84,12 @@ const empties = renderToStaticMarkup(h("div", null,
   h(UI.EmptyState, { message: "No runs yet", hint: "the wiki compiles nightly at 04:30" }),
   h(UI.EmptyState, { kind: "no-results", hint: "Widen the date range" }),
 ));
+// a fold nested in a card body (the Reporting health "Daily breakdown"), open so its body paints
+const inlineFold = renderToStaticMarkup(h("div", { style: { width: 600 } }, h(UI.Card, { title: "Reporting health" },
+  h(UI.Disclosure, { kind: "status", title: "Daily breakdown", isInline: true, className: "inline-fold" }, h("div", { id: "inline-fold-body" }, "rows")))));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -405,5 +408,19 @@ describe("a drawer fact", () => {
     assert.ok(read.label.left < read.value.left && Math.abs(read.value.right - read.row.right) < 1, "label left, value on the row's end");
     assert.equal(read.valueAlign, "right");
     assert.equal(read.scrolls, false, "the long value wraps instead of scrolling");
+  });
+});
+
+describe("an inline fold", () => {
+  test("draws no box of its own: its trigger and body start on the card body's inset", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const look = await page.$eval("#inline-fold .inline-fold", (el) => {
+      const style = getComputedStyle(el);
+      return { border: style.borderTopWidth, background: style.backgroundColor, shadow: style.boxShadow };
+    });
+    const [card, trigger, body] = await Promise.all([boxOf("#inline-fold .card"), boxOf("#inline-fold .inline-fold .disclosure"), boxOf("#inline-fold-body")]);
+    assert.deepEqual(look, { border: "0px", background: "rgba(0, 0, 0, 0)", shadow: "none" });
+    assert.equal(trigger.left - card.left, CARD_PAD_PX + 1);
+    assert.equal(body.left - card.left, CARD_PAD_PX + 1);
   });
 });

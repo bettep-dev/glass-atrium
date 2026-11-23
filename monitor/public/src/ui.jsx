@@ -1155,23 +1155,25 @@ function getDisclosureOpen(kind, tone) {
  * kind 'status' — headline state, starts open · kind 'detail' — per-row lists / history / breakdowns, starts collapsed.
  * A detail fold opens itself when `tone` escalates to warn/crit; a later recovery never force-closes it.
  * @param isFlush - unpadded body, for a table whose edge cells carry the card padding; other content insets itself
+ * @param isInline - a fold nested in a card body: trigger row + body on the host's inset, no card box of its own
  */
-function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = false, children, className = '' }) {
+function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = false, isInline = false, children, className = '' }) {
   const [isOpen, setOpen] = useState(() => getDisclosureOpen(kind, tone));
   const idRef = useRef(null);
   const isAlerting = DISCLOSURE_ALERT_TONES.has(tone);
   const Heading = `h${level}`;
+  const box = isInline ? '' : `card ${isOpen ? '' : 'is-collapsed'}`;
 
   if (idRef.current === null) idRef.current = `disclosure-${++disclosureSeq}`;
   useEffect(() => { if (isAlerting) setOpen(true); }, [isAlerting]);
 
-  return <div className={`card ${isOpen ? '' : 'is-collapsed'} ${className}`.replace(/\s+/g, ' ').trim()}>
-    <Heading className="m-0 px-4 py-1 fs-body font-normal">
+  return <div className={`${box} ${className}`.replace(/\s+/g, ' ').trim() || undefined}>
+    <Heading className={`m-0 py-1 fs-body font-normal ${isInline ? '' : 'px-4'}`.trim()}>
       <DisclosureButton isOpen={isOpen} onToggle={() => setOpen((v) => !v)} controls={isOpen ? idRef.current : undefined}
         className="w-full text-left gap-2"
         label={<><span className="font-medium text-ink">{title}</span>{sub && <span className="text-faint fs-meta ml-2">{sub}</span>}</>} />
     </Heading>
-    {isOpen && <div id={idRef.current} className={isFlush ? undefined : 'px-4 pb-4'}>{children}</div>}
+    {isOpen && <div id={idRef.current} className={isFlush || isInline ? undefined : 'px-4 pb-4'}>{children}</div>}
   </div>;
 }
 
