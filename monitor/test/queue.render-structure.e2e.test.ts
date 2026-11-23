@@ -1245,13 +1245,16 @@ const SENTENCE_WORDS_MAX = 12;
  * multi-word string of the fixture (session-written) and each command or id (`code`) folded to one word.
  */
 async function getLongSentences(page: Page, fixture: QueueFixture): Promise<string[]> {
-  const [shown, prose, codes] = await page.evaluate(() => ["body", ".prose-text", "code"].map((selector) => [...document.querySelectorAll<HTMLElement>(selector)]
+  // a code span and a <time> are one value each, whatever spaces their text holds
+  const [shown, prose, codes] = await page.evaluate(() => ["body", ".prose-text", "code, time"].map((selector) => [...document.querySelectorAll<HTMLElement>(selector)]
     .flatMap((node) => node.innerText.split("\n")).map((line) => line.trim()).filter((line) => line !== "")));
   const lines = shown!.filter((line) => !prose!.includes(line));
   const folded = [...new Set([...getFixtureStrings(fixture).filter((text) => /\s/.test(text.trim())), ...codes!])].sort((a, b) => b.length - a.length);
   return lines
     .map((line) => folded.reduce((text, one) => text.split(one).join(" ‹text› "), line))
     .flatMap((line) => line.split(/(?<=[.?!])\s+/))
+    // spec §12.7 counts a hop line's `Hop N` lead as its own part
+    .flatMap((sentence) => sentence.split(/(?<=^Hop \d+) · /))
     .filter((sentence) => sentence.split(/\s+/).filter((word) => /[\p{L}\p{N}‹]/u.test(word)).length > SENTENCE_WORDS_MAX);
 }
 
