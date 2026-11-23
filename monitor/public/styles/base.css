@@ -2282,14 +2282,67 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .prose-text > * + * {
 	margin-top: var(--space-3);
 }
-/* the preflight strips list markers → restored here */
+/* two heading steps, never the sheet's own 13 / dim label face; the space below a heading is its own margin → the next block adds none */
+.prose-text h4,
+.prose-text h5 {
+	font-weight: 600;
+	line-height: 24px;
+}
+.prose-text h4 {
+	font-size: var(--fs-title);
+	margin-bottom: var(--space-2);
+}
+.prose-text h5 {
+	font-size: var(--fs-body);
+	margin-bottom: var(--space-1);
+}
+.prose-text > h4 + *,
+.prose-text > h5 + * {
+	margin-top: 0;
+}
+.prose-text > * + h4 {
+	margin-top: var(--space-6);
+}
+.prose-text > * + h5 {
+	margin-top: var(--space-4);
+}
+/* a bubble's heading never outgrows the bubble's text */
+.prose-text--compact h4,
+.prose-text--compact h5 {
+	font-size: var(--fs-control);
+	line-height: 22px;
+}
+.prose-text--compact > * + h4,
+.prose-text--compact > * + h5 {
+	margin-top: var(--space-3);
+}
+/* the preflight strips list markers → restored here, the shape stepping by level across both list kinds */
 .prose-text ul {
 	list-style: disc;
 	padding-inline-start: var(--space-4);
 }
+.prose-text :is(ul, ol) ul {
+	list-style: circle;
+}
+.prose-text :is(ul, ol) :is(ul, ol) ul {
+	list-style: square;
+}
 .prose-text ol {
 	list-style: decimal;
 	padding-inline-start: var(--space-4);
+}
+/* no stripe and no fill → a quote never reads as a callout the page draws */
+.prose-text blockquote {
+	padding-inline-start: var(--space-4);
+	color: rgb(var(--dim));
+}
+.prose-text > hr {
+	margin-block: var(--space-4);
+	border-top: 1px solid rgb(var(--line));
+}
+/* the fold's disclosure belongs to the fence above it */
+.prose-text > .prose-fold {
+	margin-top: 0;
 }
 .prose-text li + li,
 .prose-text li > ul,
@@ -2305,11 +2358,53 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .prose-text .machine {
 	font-size: var(--fs-meta);
 }
+/* set in like a list item → it stands apart from the text without a box */
 .prose-pre {
+	padding-inline-start: var(--space-4);
 	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 	font-size: var(--fs-meta);
 	line-height: 1.5;
 	white-space: pre-wrap;
+}
+/* only the frame scrolls sideways, marked by its own scrollbar; the table is as wide as its content, at most the column */
+.prose-table-frame {
+	max-width: 100%;
+	overflow-x: auto;
+}
+/* §7.5 .tbl geometry with its own face: no fill, no vertical rule, the first and last columns on the text's edges */
+.prose-table {
+	border-collapse: collapse;
+	font-size: var(--fs-control);
+	line-height: var(--lh-row);
+}
+.prose-table th,
+.prose-table td {
+	padding: var(--space-2) var(--space-3);
+	text-align: start;
+	overflow-wrap: break-word; /* the inherited anywhere would let a column narrow below its longest word → the frame never scrolls */
+}
+.prose-table th {
+	font-weight: 600;
+	border-bottom: 1px solid rgb(var(--line));
+}
+.prose-table tr + tr td {
+	border-top: 1px solid rgb(var(--line));
+}
+.prose-table :is(th, td):first-child {
+	padding-inline-start: 0;
+}
+.prose-table :is(th, td):last-child {
+	padding-inline-end: 0;
+}
+.prose-table .prose-cell--center {
+	text-align: center;
+}
+.prose-table .prose-cell--end {
+	text-align: end;
+	font-variant-numeric: tabular-nums;
+}
+.prose-text--compact .prose-table {
+	font-size: var(--fs-meta);
 }
 
 /* inline document link — no arrow, so an underline at rest is its non-colour cue (WCAG 1.4.1); .link underlines only on hover */

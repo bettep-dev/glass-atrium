@@ -188,7 +188,7 @@
 | 오류 · region | `RegionFailure`(→ `RegionUnavailable` / `RegionCovered`) · `PageErrorBanner`(→ `AlertCard`) · `AlertCard` · `AlarmRow` · `RetryButton` | `.stack` · `.fs-meta` · `.alert-card*` · `.alarm-row*` · `.btn.sm` |
 | 기타 | `Icon` · `DetailField` | `.seg` |
 | control row · inline target | — (class only) | `.control-row` · `.inline-target` (§7.15 · §7.16) |
-| 본문 텍스트 | `ProseText` · parser `getProseBlocks` | `.prose-text` · `.prose-text--compact` · `.prose-pre` · `a.prose-link` (§7.13) |
+| 본문 텍스트 | `ProseText` · parser `getProseBlocks` | `.prose-text` · `.prose-text--compact` · `.prose-pre` · `.prose-fold` · `.prose-table-frame` · `.prose-table` · `a.prose-link` (§7.13) |
 
 - **Taxonomy** (§12.3): every interactive or informational thing takes one row's look there. The atoms it names that `ui.jsx` lacks — `Segmented`, `Tab`, filter trigger, bar search, `Select`, quiet button, `Link`, `Stack`, `Cluster`, the machine-string atom — join this table in the change that ships each.
 
@@ -682,11 +682,15 @@
 - **`.low-sample`** (`LowSampleMark`): 작은 표본 비율 옆 `--faint` `(n=N)`, no italic.
 - **`.section-label`** (`SectionLabel`): `--fs-meta` 600 sentence case `--dim`, 실제 h2/h3.
 - **`.skip-link`**: 첫 Tab stop, focus 시 화면 안으로.
-- **`.prose-text`** (`ProseText`): agent-written plain text (queue items and orders) — never the document viewer's markdown pipeline.
+- **`.prose-text`** (`ProseText`): agent-written Markdown (queue items and orders) — never the document viewer's markdown pipeline.
   - 15 / 400 / ink on a 24 line; `.prose-text--compact` 14 / 22 (order bubble) · `max-width: var(--measure-prose)` (66ch of its own size) · `word-break: keep-all` + `overflow-wrap: anywhere`.
   - Sets its own line height → its element never takes `.fs-body` (`TypeScaleStyle`'s later 1.45 wins at the same specificity).
-  - Blocks `--space-3` apart · lists disc / decimal (the author's number kept), faint markers, indent `--space-4`, items `--space-1` apart, one nested level · `# ` lines → one 600 paragraph, never a larger size.
-  - Code span → `MachineString` 13 · fenced block `.prose-pre` mono 13 / 1.5, pre-wrap, no fill or border · `**text**` 600 · addresses, tables, quotes and tags stay literal text.
+  - Blocks `--space-3` apart · headings in two steps: `#` · `##` → `h4` 16 / 600 (`--space-6` above, none when it opens the text, `--space-2` below), `###`–`######` → `h5` 15 / 600 (`--space-4` above, `--space-1` below); in a bubble both 14 / 600 on 22, `--space-3` above.
+  - Lists to three levels: markers disc · circle · square by level, decimal at every level (the author's number kept), `--faint`, indent `--space-4`, items `--space-1` apart — set by `.prose-text` over the preflight's marker reset.
+  - Quote → dim, `--space-4` inset, no stripe or fill, inline rules only · rule → `hr` 1 px `--line`, `--space-4` above and below.
+  - Table → `.prose-table` inside `.prose-table-frame` (`overflow-x: auto`, `tabindex="0"`, `role="region"`, `Table, scrolls sideways`, the global focus ring): header `th scope="col"` 14 / 600 ink, body 14 / 400 on 20 (13 in a bubble), 1 px `--line` under the header and between rows, cells `--space-2` / `--space-3` with 0 at the table's ends, alignment from the delimiter (`.prose-cell--center` · `.prose-cell--end` tnum); cells wrap at spaces but never below their longest word → only the frame scrolls, never the sheet. Over 12 columns stays text; a short row ends in empty cells.
+  - Code span → `MachineString` 13 · fenced block `.prose-pre` mono 13 / 1.5, pre-wrap, inset `--space-4`, no fill or border; a long fence folds behind `Show all N lines` (`.prose-fold`) only where the caller sets `canFoldCode` · `**text**` 600 · `[label](target)` → `label (target)`, never a link or an image · addresses and tags stay literal text.
+  - One container: every element sits inside `.prose-text` and takes `.prose-*` classes only (the machine string aside) — never the face of a part the page writes · each block and table cell `dir="auto"`.
   - React elements only, never HTML; the one generated href is `#clauded-docs?doc=` + an integer.
   - Document link (`a.prose-link`, §12.3 Inline link): a declared id (`linkedDocIds`) not touching a digit or Latin letter, or `clauded-docs/<id>` · `clauded-docs?doc=<id>`; a keyword + number (`monitor 16145`, `문서 120건`) stays text. `getProseBlocks` returns the declared ids it linked.
 
