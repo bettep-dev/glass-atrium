@@ -1067,13 +1067,13 @@ label.ctl-checkbox-hit {
 	min-height: calc(var(--row-h-compact) + 2 * var(--space-1_5));
 	padding: var(--space-1_5) var(--card-pad);
 }
-/* a row (spec §4.2): one 20 line between 12 paddings → 44, on fixed columns — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16;
-   8 between columns, the title's 4 margins making its 12 on either side; every cell drawn → an empty one keeps its width.
-   80 holds "12 sessions" whole */
+/* a row (spec §4.2): one 20 line between 12 paddings → 44 — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16;
+   8 between columns, the title's 4 margins making its 12 on either side. 80 holds "12 sessions" whole.
+   Template = the name lead + its band's tail (data-cols) → one band, one set of columns; a column a band leaves out gives the title its width */
 .queue-row {
-	--queue-row-cols: 80px minmax(0, 1fr) 80px 64px 32px 16px;
+	--queue-row-lead: 80px minmax(0, 1fr);
 	display: grid;
-	grid-template-columns: var(--queue-row-cols);
+	grid-template-columns: var(--queue-row-lead) var(--queue-row-tail);
 	column-gap: var(--space-2);
 	align-items: center;
 	padding: var(--space-3) var(--card-pad);
@@ -1083,14 +1083,27 @@ label.ctl-checkbox-hit {
 }
 /* one session ticked → the head names it, so no name column: the titles start on the bands' inset */
 .queue-row:not(:has(> .queue-row-who)) {
-	--queue-row-cols: minmax(0, 1fr) 80px 64px 32px 16px;
+	--queue-row-lead: minmax(0, 1fr);
 }
-/* under 160 of title the fact column is left out — the 1280 list with names shown; the fact stays in the row's title and name */
+[data-cols=""] > .queue-row {
+	--queue-row-tail: 32px 16px;
+}
+[data-cols="fact"] > .queue-row {
+	--queue-row-tail: 64px 32px 16px;
+}
+[data-cols="tag"] > .queue-row {
+	--queue-row-tail: 80px 32px 16px;
+}
+[data-cols="tag fact"] > .queue-row {
+	--queue-row-tail: 80px 64px 32px 16px;
+}
+/* under 160 of title the fact column is left out, its fact kept in the row's title and name — at the 1280 list only a band
+   drawing the tag beside the names; every other band keeps 160 there */
 @container queue-list (width < 512px) {
-	.queue-row:has(> .queue-row-who) {
-		--queue-row-cols: 80px minmax(0, 1fr) 80px 32px 16px;
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) {
+		--queue-row-tail: 80px 32px 16px;
 	}
-	.queue-row:has(> .queue-row-who) > .queue-row-fact {
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) > .queue-row-fact {
 		display: none;
 	}
 }

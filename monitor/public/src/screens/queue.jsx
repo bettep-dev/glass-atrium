@@ -1644,17 +1644,24 @@ function getKeyedRowIdQ(rows, fromId, key) {
 function QueueGroupQ({ group, queue, view }) {
 	const bandId = `queue-band-${group.key}`;
 	const name = group.isDone ? { "aria-label": `${DONE_Q.LABEL}, ${group.label}` } : { "aria-labelledby": bandId };
+	const cols = getBandColsQ(group.rows);
 	return (
-		<div role="group" {...name}>
+		<div role="group" data-cols={cols.join(" ")} {...name}>
 			<div id={bandId} className="queue-band">
 				{group.isDone ? DONE_Q.LABEL : group.label}
 				{group.isDone ? <span className="queue-band-day">{group.label}</span> : <BandCountQ count={group.rows.length} hasMore={queue.list.data.nextCursor !== null} />}
 			</div>
 			{group.rows.map((row) => (
-				<QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} isNew={queue.list.newIds.includes(row.id)} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} onSeen={queue.setSeen} />
+				<QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} isNew={queue.list.newIds.includes(row.id)} cols={cols} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} onSeen={queue.setSeen} />
 			))}
 		</div>
 	);
+}
+
+// the column rule (spec §4.2): a band draws the tag and the fact column while one of its loaded rows fills it → then on every row of the band
+function getBandColsQ(rows) {
+	const cells = rows.map((row) => getRowCellsQ(row, false));
+	return [cells.some((cell) => cell.tags.length > 0) && "tag", cells.some((cell) => Boolean(cell.fact)) && "fact"].filter(Boolean);
 }
 
 function BandCountQ({ count, hasMore }) {
@@ -1662,8 +1669,8 @@ function BandCountQ({ count, hasMore }) {
 }
 
 // an order's row shows its entry in Orders, the list staying (spec §9.2); every other row opens its sheet in the list's place
-// who, then what (spec §4.2): one line on fixed columns, every cell drawn so an empty one keeps its width; an arrival paints no mark (§4.4)
-function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, onSeen }) {
+// who, then what (spec §4.2): one line on its band's columns (`cols`), an empty cell of a drawn column keeping its width; an arrival paints no mark (§4.4)
+function QueueRowQ({ row, isSelected, isNew = false, cols, view, onSelect, onOrder, onSeen }) {
 	const { Icon, formatKstDateTime } = window.UI;
 	const { item } = row;
 	const cells = getRowCellsQ(row, view.isAccountShown);
@@ -1675,8 +1682,8 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, on
 			onFocus={isNew ? () => onSeen?.(row.id) : undefined} onClick={() => (getRowKindQ(row) === "Order" ? onOrder(row) : onSelect(row.id))}>
 			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} /></span>}
 			{getRowTitleQ(row, view.isNameShown)}
-			<span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>
-			<span className="queue-row-fact" title={row.isDone ? getEndQ(item).title : undefined}>{cells.fact}</span>
+			{cols.includes("tag") && <span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>}
+			{cols.includes("fact") && <span className="queue-row-fact" title={row.isDone ? getEndQ(item).title : undefined}>{cells.fact}</span>}
 			<span className="queue-row-age" title={formatKstDateTime(at)}>{getRowAgeQ(at)}</span>
 			<Icon name="chevR" size={16} className="queue-row-chevron" />
 		</div>

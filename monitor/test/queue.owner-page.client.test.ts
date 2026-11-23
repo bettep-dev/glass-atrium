@@ -1242,7 +1242,7 @@ describe("done items in the one list", () => {
 
   test("a done row draws its kind as plain text and how it ended in the fact cell, ages from its end, and its name says how it ended once", () => {
     const item = doneReport({ status: "withdrawn", askedAt: "2026-11-10T06:12:43.518Z" });
-    const tree = render("QueueRowQ", { row: { id: item.id, item, copies: [item], isDone: true }, isSelected: false, view: { isNameShown: true, isAccountShown: false, tabStopId: item.id }, onSelect: () => undefined, onOrder: () => undefined });
+    const tree = render("QueueRowQ", { row: { id: item.id, item, copies: [item], isDone: true }, isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false, tabStopId: item.id }, onSelect: () => undefined, onOrder: () => undefined });
     const [row] = findNodes(tree, (node) => node.props?.role === "option");
     const [tag] = byClass(tree, "queue-row-tag");
     const [fact] = byClass(tree, "queue-row-fact");
@@ -1312,6 +1312,27 @@ describe("done items in the one list", () => {
     const [shown] = findNodes(render("QueueSheetQ", { queue: { ...queue, groups, sheet } }), (node) => node.type === "ItemSheetQ");
     assert.deepEqual([(sheet as { kind: string }).kind, shown?.props.hasLeft, shown?.props.isDone], ["left", true, false]);
   });
+
+  // spec §4.2 → Column rule: a band draws the tag and fact columns only while one of its loaded rows fills them, and then on every row
+  const bandColumns = [
+    { name: "open reports fill neither, so their band draws neither", items: [open(1, { kind: "report" }), open(2, { kind: "report" })], done: [], cols: "" },
+    { name: "decisions with no Approval fill the fact alone", items: [open(1), open(2)], done: [], cols: "fact" },
+    { name: "one Approval draws the tag column on every decision of its band", items: [open(1, { isApprovalClass: true }), open(2)], done: [], cols: "tag fact" },
+    { name: "a Done band's rows fill both", items: [], done: [doneReport(), doneDecision()], cols: "tag fact" },
+  ];
+  for (const row of bandColumns) {
+    test(`band columns: ${row.name}`, () => {
+      const [group] = getGroups(row.items, row.done);
+      const { queue } = buildQueue();
+      const tree = render("QueueGroupQ", { group, queue, view: { isNameShown: true, isAccountShown: false, tabStopId: 1 } });
+      const [band] = findNodes(tree, (node) => node.props?.role === "group");
+      const drawn = (name: string) => (row.cols.split(" ").includes(name) ? group!.rows.length : 0);
+      assert.deepEqual(
+        [band?.props["data-cols"], byClass(tree, "queue-row-tag").length, byClass(tree, "queue-row-fact").length],
+        [row.cols, drawn("tag"), drawn("fact")],
+      );
+    });
+  }
 
   test("a Done band reads Done and its day in the count's place, and names its group Done, Today", () => {
     const groups = getGroups([], [doneReport({ closedAt: new Date().toISOString() })]);
@@ -1429,7 +1450,7 @@ describe("a relay on its way", () => {
   const toYoaida = (overrides: Record<string, unknown> = {}, facts: Record<string, unknown> = {}) => buildCopies([["yoaida", overrides]], facts);
   const toThree = () => buildCopies([["yoaida", { status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" }], ["atrium", {}], ["gersona", {}]]);
   const renderRow = (copies: Array<{ id: number }>, isNameShown = true, handlers: Record<string, unknown> = {}) =>
-    render("QueueRowQ", { row: { id: copies[0]!.id, item: copies[0], copies }, isSelected: false, view: { isNameShown, isAccountShown: false, tabStopId: copies[0]!.id }, onSelect: () => undefined, onOrder: () => undefined, ...handlers });
+    render("QueueRowQ", { row: { id: copies[0]!.id, item: copies[0], copies }, isSelected: false, cols: ["tag", "fact"], view: { isNameShown, isAccountShown: false, tabStopId: copies[0]!.id }, onSelect: () => undefined, onOrder: () => undefined, ...handlers });
   const cellText = (tree: RenderedNode, name: string) => {
     const [cell] = byClass(tree, name);
     return cell === undefined ? null : collectText(cell).replace(/\s+/g, " ").trim();
@@ -1717,7 +1738,7 @@ describe("selection", () => {
     test(`pressing a list row: ${row.name}`, () => {
       const calls: string[] = [];
       const listed = call<Array<{ rows: unknown[] }>>("getGroupsQ", [buildItem({ id: 7, ...row.item })]).flatMap((group) => group.rows)[0];
-      const tree = render("QueueRowQ", { row: listed, isSelected: false, view: { isNameShown: true, isAccountShown: false }, onSelect: () => calls.push("select"), onOrder: () => calls.push("order") });
+      const tree = render("QueueRowQ", { row: listed, isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false }, onSelect: () => calls.push("select"), onOrder: () => calls.push("order") });
       const [option] = findNodes(tree, (node) => node.props?.role === "option");
       (option?.props.onClick as () => void)();
       assert.deepEqual(calls, [row.opens ? "order" : "select"]);
@@ -3445,7 +3466,7 @@ describe("sessions region", () => {
 test("a row's age carries no verb", () => {
   const rows = call<Array<{ rows: unknown[] }>>("getGroupsQ", [buildItem({ id: 1 }), buildItem({ id: 2, kind: "message", status: "delivered", sendId: "s" })]).flatMap((group) => group.rows);
   for (const row of rows) {
-    const text = collectText(render("QueueRowQ", { row, isSelected: false, view: { isNameShown: true, isAccountShown: false }, onSelect: () => undefined }));
+    const text = collectText(render("QueueRowQ", { row, isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false }, onSelect: () => undefined }));
     assert.doesNotMatch(text, /\b(asked|sent)\b/, text);
   }
 });
@@ -3836,7 +3857,7 @@ describe("In delivery rows", () => {
   // spec §4.2: one line on fixed columns — every cell drawn in its place, an empty one too, so no text ends where a tag starts
   test("a row lays its cells in column order, name, title, tag, fact, age, chevron, an empty tag and fact cell included", () => {
     const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
-    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report", session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report", session: buildSession({ name: "gersona" }) })), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined });
     const [option] = findNodes(tree, (node) => node.props?.role === "option");
     const slots = (option?.children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [String((child as RenderedNode).props?.className ?? "")] : []));
     const empty = ["queue-row-tag", "queue-row-fact"].map((name) => collectText(byClass(tree, name)[0] as RenderedNode));
@@ -3847,7 +3868,7 @@ describe("In delivery rows", () => {
   test("a row's title and accessible name carry its fact, the account and a start directory's mark", () => {
     const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
     const item = buildItem({ isApprovalClass: true, session: buildSession({ name: "gersona", isNameRegistered: false }) });
-    const [option] = findNodes(render("QueueRowQ", { row: call("getSingleRowQ", item), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
+    const [option] = findNodes(render("QueueRowQ", { row: call("getSingleRowQ", item), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
     assert.deepEqual(
       [option?.props.title, String(option?.props["aria-label"]).replace(/posted .*$/, "posted")],
       ["2 options · work-dev · start directory", `Decision from gersona: ${item.title}, Approval, 2 options, work-dev, start directory, posted`],
@@ -3856,14 +3877,14 @@ describe("In delivery rows", () => {
 
   test("with exactly one session ticked a row paints no name column", () => {
     const view = { isNameShown: false, isAccountShown: false, tabStopId: 41 };
-    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, view, onSelect: () => undefined, onOrder: () => undefined });
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined });
     assert.deepEqual([byClass(tree, "queue-row-who").length, collectText(tree).includes("gersona")], [0, false]);
   });
 
   // spec §4.4: an arrival carries no mark of its own — no badge on its face, no New in its name
   test("an arrived row paints no badge and its name has no New", () => {
     const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
-    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report" })), isSelected: false, isNew: true, view, onSelect: () => undefined, onOrder: () => undefined, onSeen: () => undefined });
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report" })), isSelected: false, cols: ["tag", "fact"], isNew: true, view, onSelect: () => undefined, onOrder: () => undefined, onSeen: () => undefined });
     const [option] = findNodes(tree, (node) => node.props?.role === "option");
     assert.deepEqual([findNodes(tree, (node) => node.props?.atom === "Badge").length, /\bNew\b/.test(String(option?.props["aria-label"]))], [0, false]);
   });

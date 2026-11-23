@@ -3207,18 +3207,22 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 44, isCut: true, isInsideRail: true });
     });
 
-    // spec §4.2, §14.3: one 44 line on fixed columns — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
-    // either side of the title; an empty tag or fact cell keeps its width; under 160 of title (1280, names shown) the fact column is left out,
-    // and the 1280 title still holds about 12 Hangul.
+    // spec §4.2 → Column rule, §14.3: one 44 line — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
+    // either side of the title; a band draws the tag and the fact column only while one of its rows fills it, then on every row, an empty
+    // cell keeping its width; a column a band leaves out gives the title its width (tag 88, fact 72); under 160 of title (1280, names shown,
+    // tag drawn) the fact column is left out, and the 1280 title still holds about 12 Hangul.
     // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it;
-    // the done list (spec §4.6) and relays on their way (spec §9.9) draw their rows on the same columns
-    test("with nothing ticked every list row, open, done or a relay on its way, is one 44 line on the same columns at 1280, 1440 and 1568, empty cells keeping their width, the fact column left out at 1280 with 200 of title, a 100-character name cut inside its 80", async () => {
-      // each cell's x from the row's start and its width; a cell drawn nowhere → `-`
-      const getLayout = (width: number, isFactShown: boolean) => {
-        const fixed = [80, isFactShown ? 64 : 0, 32, 16];
-        const title = width - 32 - 80 - fixed.reduce((sum, one) => sum + one) - 8 * (isFactShown ? 5 : 4) - 8;
+    // the Done bands (spec §4.6) and relays on their way (spec §9.9) follow the same rule
+    test("with nothing ticked every list row, open, done or a relay on its way, is one 44 line on its band's columns at 1280, 1440 and 1568: tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 200 of it at 1280, a 100-character name cut inside its 80", async () => {
+      // each cell's x from the row's start and its width; a cell the band does not draw → `-`
+      const getLayout = (width: number, cols: string) => {
+        const isTagShown = cols.split(" ").includes("tag");
+        const isFactShown = cols.split(" ").includes("fact") && !(isTagShown && width < 512);
+        const trailing = [isTagShown ? 80 : 0, isFactShown ? 64 : 0, 32, 16];
+        const drawn = trailing.filter((cell) => cell > 0);
+        const title = width - 32 - 80 - drawn.reduce((sum, one) => sum + one) - 8 * (1 + drawn.length) - 8;
         let x = 16;
-        return [[80, 12], [title, 12], ...fixed.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
+        return [[80, 12], [title, 12], ...trailing.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
           const at = cell === 0 ? "-" : `${x}+${cell}`;
           x += cell! + after!;
           return at;
@@ -3234,16 +3238,17 @@ describe("queue page on the mockup fixtures", () => {
             const rows = [...document.querySelectorAll(".queue-row")];
             const cells = [".queue-row-who", ".queue-row-title", ".queue-row-tag", ".queue-row-fact", ".queue-row-age", ".queue-row-chevron"];
             const getCells = (row: Element) => cells.map((selector) => {
-              const box = (row.querySelector(selector) as Element).getBoundingClientRect();
-              return box.width > 0 ? `${Math.round(box.left - row.getBoundingClientRect().left)}+${Math.round(box.width)}` : "-";
+              const box = row.querySelector(selector)?.getBoundingClientRect();
+              return box !== undefined && box.width > 0 ? `${Math.round(box.left - row.getBoundingClientRect().left)}+${Math.round(box.width)}` : "-";
             }).join(" ");
             const long = [...document.querySelectorAll<HTMLElement>(".queue-row-name")].find((name) => name.title === longName);
             const longBox = long?.closest(".queue-row-who")?.getBoundingClientRect();
             return {
               rowWidths: [...new Set(rows.map((row) => Math.round(row.getBoundingClientRect().width)))],
-              layouts: [...new Set(rows.map(getCells))],
+              bands: [...document.querySelectorAll<HTMLElement>(".queue-listbox [role='group']")]
+                .map((band) => ({ cols: band.dataset.cols ?? "unset", layouts: [...new Set([...band.querySelectorAll(".queue-row")].map(getCells))] })),
               heights: [...new Set(rows.map((row) => Math.round(row.getBoundingClientRect().height)))],
-              emptyTags: rows.filter((row) => (row.querySelector(".queue-row-tag") as Element).childElementCount === 0).length,
+              emptyTags: rows.filter((row) => row.querySelector(".queue-row-tag")?.childElementCount === 0).length,
               isLongCut: long === undefined || (longBox !== undefined && getComputedStyle(long).textOverflow === "ellipsis" && long.scrollWidth > long.clientWidth && long.getBoundingClientRect().right <= longBox.right + 0.5),
             };
           }, EDGE_LONG_SESSION_NAME);
@@ -3252,13 +3257,15 @@ describe("queue page on the mockup fixtures", () => {
         }
       }
 
-      assert.ok(shown.every((one) => one.rowWidths.length === 1 && (one.isDone || one.emptyTags > 0)), "rows of one width, some open ones with an empty tag cell");
+      assert.ok(shown.every((one) => one.rowWidths.length === 1), "rows of one width");
+      assert.ok(shown.some((one) => one.emptyTags > 0), "a drawn tag column keeps an empty cell's width");
+      assert.deepEqual([...new Set(shown.flatMap((one) => one.bands.map((band) => band.cols)))].sort(), ["", "fact", "tag fact"], "bands that draw neither, the fact alone, and both");
       assert.deepEqual(
-        shown.map(({ width, rowWidths, layouts, heights, isLongCut }) => ({ width, layouts, heights, isLongCut, pane: rowWidths[0] })),
-        shown.map(({ width, rowWidths }) => ({ width, layouts: [getLayout(rowWidths[0]!, width !== 1280)], heights: [44], isLongCut: true, pane: rowWidths[0] })),
+        shown.map(({ width, rowWidths, bands, heights, isLongCut }) => ({ width, bands, heights, isLongCut, pane: rowWidths[0] })),
+        shown.map(({ width, rowWidths, bands }) => ({ width, bands: bands.map(({ cols }) => ({ cols, layouts: [getLayout(rowWidths[0]!, cols)] })), heights: [44], isLongCut: true, pane: rowWidths[0] })),
       );
       assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [482, 482, 482, 482, 586, 586, 586, 586], "the panes of DESK_WIDTHS, less the card's two 1 px borders");
-      const titles1280 = shown.filter((one) => one.width === 1280).map((one) => Number(one.layouts[0]?.split(" ")[1]?.split("+")[1]));
+      const titles1280 = shown.filter((one) => one.width === 1280).flatMap((one) => one.bands.map((band) => Number(band.layouts[0]?.split(" ")[1]?.split("+")[1])));
       assert.ok(titles1280.every((title) => title >= 200), `the 1280 title holds 200: ${titles1280}`);
     });
 
