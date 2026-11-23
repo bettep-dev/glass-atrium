@@ -119,7 +119,7 @@ const SYNC_META_MC = {
 const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
 		label: "Self-improve + wiki call cap",
-		hint: "Caps one self-improve generation or wiki compile call",
+		hint: "Caps one generation or wiki compile call",
 		desc: "Shared cap: generation + wiki compile",
 		source: "daemon-config.json",
 	},
@@ -168,8 +168,8 @@ const TIER_META_MC = {
 	},
 };
 
-// Settled ledger row height at 1440 — skeleton rows hold the table's height until the read lands.
-const LEDGER_ROW_HEIGHT_MC = 60;
+// One daemon row: control cell 3.5 + 32 control + 4 + the 24 line slot + 3.5, plus the 1 rule → skeleton rows hold it until the read lands.
+const LEDGER_ROW_HEIGHT_MC = 68;
 // PUT validation answers name the rejected field — kept longer than a GET error body for Details.
 const SAVE_ERROR_BODY_MAX_MC = 300;
 
@@ -178,13 +178,6 @@ const BUDGET_ORDER_MC = ["budget.worker_max_usd", "budget.pre_verify_max_usd"];
 
 // Ledger anchors — a failed read's Retry hands focus to the model ledger.
 const MODELS_SECTION_ID_MC = "mc-models";
-
-// What the "In effect" column reads back — the targets a saved value is written to.
-const IN_EFFECT_TITLE_MC = {
-	models: "Read back from daemon-config.json",
-	budgets: "Read back from daemon-config.json",
-	tiers: "Read back from daemon-config.json",
-};
 
 // PUT group → the GET rows carrying its saved targets; one list drives every form helper.
 const FORM_GROUP_ROWS_MC = { models: "domains", budgets: "budgets", tiers: "tiers" };
@@ -1178,9 +1171,9 @@ async function putAgentPinsMC(body) {
 	}
 }
 
-// One column grid for both ledgers — content-sized cells let the Live columns drift apart.
-// The control column is the widest, so a model select holds its longest friendly name from the 1280 side-by-side row up.
-const LEDGER_COL_WIDTHS_MC = ["32%", "36%", "32%"];
+// One grid for the three daemon tables: the label takes the rest, the control column 12 interior + 160 control + 16 edge.
+// 160 = the 32 step above the widest line the slot holds ("Saved: CLI default Reset") → every control shares both edges.
+const LEDGER_COL_WIDTHS_MC = ["auto", "calc(5 * var(--space-8) + var(--space-3) + var(--card-pad))"];
 // Skeleton columns + empty-row colSpan for both ledgers.
 const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
 // fixed layout → the widths above hold whatever a cell holds
@@ -1191,15 +1184,6 @@ const SAVED_LINE_STYLE_MC = { minHeight: "24px" };
 const LINK_CLASS_MC = "text-dim underline underline-offset-2";
 // a link beside a card's or a row's controls → the 24 target (§7.15)
 const LINK_TARGET_CLASS_MC = `inline-target ${LINK_CLASS_MC}`;
-
-// Ledger heads: what the row is · its editable control · the In effect value, its head titled with the read source.
-function getLedgerColumnsMC(subject, control, inEffectTitle) {
-	return [
-		{ key: "subject", label: subject },
-		{ key: "control", label: control },
-		{ key: "live", label: <span title={inEffectTitle}>In effect</span> },
-	];
-}
 
 // 모델 도메인 섹션 — 편집값(Model) vs 실측(Live) + 반영 시점.
 function DomainsSectionMC({
@@ -1235,7 +1219,6 @@ function DomainsSectionMC({
 				) : (
 					<Table
 						caption="Daemon model per background call"
-						columns={getLedgerColumnsMC("Background call", "Model", IN_EFFECT_TITLE_MC.models)}
 						widths={LEDGER_COL_WIDTHS_MC}
 						className={LEDGER_TABLE_CLASS_MC}
 						bodies={[{ key: "domains", isBusy: state === "loading", rows: (
@@ -1318,72 +1301,60 @@ const INHERIT_LIVE_LABEL_MC = {
 	"inherit (settings.json)": "settings.json model (inherit)",
 };
 
-function liveLabelMC(value) {
-	return INHERIT_LIVE_LABEL_MC[value] ?? value;
+function getLiveModelLabelMC(value) {
+	return INHERIT_LIVE_LABEL_MC[value] ?? getModelOptionLabelMC(value);
 }
 
-// An ID or file name is one unbreakable token, never broken at its hyphens; it ellipsizes with a title only when its own line is too narrow.
-function IdTokenMC({ title, children }) {
-	return (
-		<span className="truncate max-w-full" title={title}>
-			{children}
-		</span>
-	);
-}
-
-// A drift mark makes the In effect cell a control cell (block padding --tbl-ctl-pad-block) → the first line takes the control height to centre on the row's control.
+// A read-only value stands where a control would → it takes the control height, so the row keeps its rhythm.
 const CONTROL_LINE_STYLE_MC = { minHeight: "var(--ctl-min-h)" };
 
-const DAEMON_CONFIG_FILE_MC = "daemon-config.json";
-
-// One shared read source per card, named once in its foot → rows that read it stay silent.
-function SourceFootMC({ source }) {
-	const { MachineString } = window.UI;
+/**
+ * The line slot under a daemon control — empty at rest; its first 24 is reserved, so no state moves the row until a second line.
+ * Lines in order: invalid entry · rejected file value · a differing value in effect · no value read · the saved value + Reset.
+ * In effect = the value read back from the file; agreeing with the saved target is silence.
+ */
+function LiveValueMC({ errorId, error, fileError, value, drift, driftTitle, source, overridden, savedValue, onReset }) {
+	const isRead = value != null;
 	return (
-		<span className="truncate min-w-0">
-			Read from <MachineString>{source}</MachineString>
-		</span>
+		<div data-slot="line-slot" className="fs-meta mt-stack flex flex-col" style={SAVED_LINE_STYLE_MC}>
+			{error && <AlertLineMC id={errorId}>{error}</AlertLineMC>}
+			{fileError && <AlertLineMC detail={fileError}>File value rejected</AlertLineMC>}
+			{!fileError && drift && isRead && <InEffectLineMC value={value} title={driftTitle} />}
+			{/* null live value = source unreadable or key missing → never claim a read */}
+			{!fileError && !isRead && source && (
+				<div className="text-faint flex items-center" style={SAVED_LINE_STYLE_MC} title={`No value read from ${source}`}>
+					No value read
+				</div>
+			)}
+			<GhostResetMC overridden={overridden} defaultValue={savedValue} onReset={onReset} />
+		</div>
 	);
 }
 
-/**
- * In effect = measured at the consumption point.
- * Matching the saved target → silence · differing → the value + one warn glyph and word · absent → nothing.
- * Names the source, or that it yielded no value; a source the card foot names stays silent on a read.
- */
-function LiveValueMC({ value, drift, source, isSourceInFoot = false, isNumeric = false, driftTitle }) {
-	const { Icon, MachineString, Stack } = window.UI;
-	const isSteady = !drift && value != null;
-	const isValueShown = !isSteady && value != null;
-	const label = liveLabelMC(value);
-
+// ✕ + words in crit, announced at once; a detail (the server's reason) wraps under it in dim
+function AlertLineMC({ id, detail, children }) {
 	return (
-		<Stack gap="stack" className="min-w-0">
-			{(isValueShown || drift) && (
-				<div className={`flex items-center gap-control min-w-0${isNumeric ? " justify-end" : ""}`} style={drift ? CONTROL_LINE_STYLE_MC : undefined}>
-					{isValueShown && (
-						<span className={`fs-meta truncate text-ink tbl-first-line${isNumeric ? " tabular-nums" : ""}`} title={label}>
-							{label}
-						</span>
-					)}
-					{drift && (
-						<span className="fs-meta text-dim flex items-center gap-label-inline" title={driftTitle}>
-							<Icon name="warn" size={12} className="text-warn" />
-							drift
-						</span>
-					)}
-				</div>
-			)}
-			{source && (value == null || !isSourceInFoot) && (
-				<div className={`fs-meta text-faint flex flex-wrap items-baseline gap-x-label-inline${isValueShown || drift ? "" : " tbl-first-line"}`}>
-					{/* null live value = source unreadable or key missing → never claim a read */}
-					<span>{value != null ? "Read from" : "No value read from"}</span>
-					<IdTokenMC title={source}>
-						<MachineString>{source}</MachineString>
-					</IdTokenMC>
-				</div>
-			)}
-		</Stack>
+		<div id={id} role="alert">
+			<div className="text-crit">
+				<span aria-hidden="true">✕ </span>
+				{children}
+			</div>
+			{detail && <div className="text-dim is-wrap">{detail}</div>}
+		</div>
+	);
+}
+
+// one line: the glyph and words name the state, the value is cut with its title; the line's title says what to do
+function InEffectLineMC({ value, title }) {
+	const { Icon } = window.UI;
+	return (
+		<div className="flex items-center gap-label-inline min-w-0" style={SAVED_LINE_STYLE_MC} title={title}>
+			<Icon name="warn" size={12} className="text-warn flex-shrink-0" />
+			<span className="text-dim flex-shrink-0">In effect:</span>
+			<span className="text-ink truncate" title={value}>
+				{value}
+			</span>
+		</div>
 	);
 }
 
@@ -1440,9 +1411,10 @@ function DomainRowMC({
 	};
 	// 서버 editable=false 가 우선 — UI 메타와 어긋나면 보수적으로 read-only.
 	const editable = d.editable !== false && meta.editable !== false;
+	const id = `mc-model-${d.domain}`;
 
 	return (
-		<tr className="is-grouped is-top-aligned">
+		<tr className="is-top-aligned">
 			<td>
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
@@ -1450,14 +1422,7 @@ function DomainRowMC({
 			</td>
 			<td>
 				{editable ? (
-					<ModelSelectMC
-						domain={d.domain}
-						knownModels={knownModels}
-						value={value}
-						defaultValue={defaultValue}
-						error={error}
-						onChange={onChange}
-					/>
+					<ModelSelectMC id={id} domain={d.domain} knownModels={knownModels} value={value} error={error} onChange={onChange} />
 				) : (
 					// read-only value on the control line → the column rhythm holds without a field box
 					(value || d.desired) && (
@@ -1467,14 +1432,16 @@ function DomainRowMC({
 					)
 				)}
 				<PricingNoteMC pricingKnown={d.pricing_known} />
-			</td>
-			<td>
 				<LiveValueMC
-					value={d.actual}
+					errorId={`${id}-error`}
+					error={error}
+					value={getLiveModelLabelMC(d.actual)}
 					drift={d.drift}
 					source={meta.source}
-					isSourceInFoot={meta.source === DAEMON_CONFIG_FILE_MC}
 					driftTitle="Live value differs from the saved target — press Save again"
+					overridden={editable && defaultValue !== undefined && value !== defaultValue}
+					savedValue={defaultValue && getModelOptionLabelMC(defaultValue)}
+					onReset={() => onChange(defaultValue)}
 				/>
 			</td>
 		</tr>
@@ -1483,21 +1450,12 @@ function DomainRowMC({
 
 // Model pick = the house Select (one-row combo: the options are known_models) + a custom-id entry slot.
 // A value outside the list (empty included) = custom mode, shown as CUSTOM_OPTION_MC.
-// An edit away from the saved baseline → ghost label + revert link.
-function ModelSelectMC({
-	domain,
-	knownModels,
-	value,
-	defaultValue,
-	error,
-	onChange,
-}) {
+// Its error, saved value and reset sit in the row's line slot under it.
+function ModelSelectMC({ id, domain, knownModels, value, error, onChange }) {
 	const isListed = knownModels.includes(value);
 	const isCustom = !isListed;
 	const meta = DOMAIN_META_MC[domain];
 	const label = meta ? meta.label : domain;
-	// overridden = 편집값이 저장된 baseline 과 다름 → ghost+reset 노출 게이트 (T-MDL-6).
-	const overridden = defaultValue !== undefined && value !== defaultValue;
 
 	const handleSelect = (opt) => {
 		// '__custom__' 진입 = 빈 문자열로 custom 모드 시작 (기존 custom 버튼과 동일 동작).
@@ -1509,51 +1467,37 @@ function ModelSelectMC({
 	};
 
 	const { Select } = window.UI;
-	const id = `mc-model-${domain}`;
 	const selectOptions = [
 		...knownModels.map((opt) => ({ key: opt, label: getModelOptionLabelMC(opt), title: getModelOptionTitleMC(opt) })),
 		{ key: CUSTOM_OPTION_MC, label: "custom…" },
 	];
 
+	// custom mode → the entry field owns the crit edge, so the select drops it (one ring; the worded message serves both)
 	return (
-		<div>
-			{/* custom mode → the entry field owns the crit edge, so the select drops it (one ring; the worded message serves both) */}
-			<Select
-				id={id}
-				label={`${label} model`}
-				isLabelHidden
-				isError={Boolean(error) && !isCustom}
-				value={isCustom ? CUSTOM_OPTION_MC : value}
-				options={selectOptions}
-				onChange={handleSelect}
-				title={isListed ? value : undefined}
-				aria-describedby={error && !isCustom ? `${id}-error` : undefined}
-			>
-				{isCustom && (
-					<input
-						type="text"
-						className={`field field--mono${error ? " is-error" : ""}`}
-						value={value}
-						placeholder="model id (lowercase)"
-						onChange={(e) => onChange(e.target.value)}
-						aria-label={`${label} custom model id`}
-						aria-invalid={error ? "true" : undefined}
-						aria-describedby={error ? `${id}-error` : undefined}
-					/>
-				)}
-			</Select>
-			{error && (
-				<div id={`${id}-error`} className="fs-meta text-crit mt-stack" role="alert">
-					<span aria-hidden="true">✕ </span>
-					{error}
-				</div>
+		<Select
+			id={id}
+			label={`${label} model`}
+			isLabelHidden
+			isError={Boolean(error) && !isCustom}
+			value={isCustom ? CUSTOM_OPTION_MC : value}
+			options={selectOptions}
+			onChange={handleSelect}
+			title={isListed ? value : undefined}
+			aria-describedby={error && !isCustom ? `${id}-error` : undefined}
+		>
+			{isCustom && (
+				<input
+					type="text"
+					className={`field field--mono${error ? " is-error" : ""}`}
+					value={value}
+					placeholder="model id (lowercase)"
+					onChange={(e) => onChange(e.target.value)}
+					aria-label={`${label} custom model id`}
+					aria-invalid={error ? "true" : undefined}
+					aria-describedby={error ? `${id}-error` : undefined}
+				/>
 			)}
-			<GhostResetMC
-				overridden={overridden}
-				defaultValue={defaultValue && getModelOptionLabelMC(defaultValue)}
-				onReset={() => onChange(defaultValue)}
-			/>
-		</div>
+		</Select>
 	);
 }
 
@@ -1582,32 +1526,26 @@ function PricingNoteMC({ pricingKnown }) {
 	);
 }
 
-// Saved value + reset, model/budget 공용 — the slot renders even when empty so an edit never grows the row.
+// Saved value + reset — drawn only for an edit away from the saved value, inside the line slot's reserved 24.
 function GhostResetMC({ overridden, defaultValue, onReset }) {
+	if (!overridden) return null;
+
 	return (
-		<div
-			data-slot="saved-line"
-			className="fs-meta text-faint mt-stack flex items-center gap-label-inline flex-wrap"
-			style={SAVED_LINE_STYLE_MC}
-		>
-			{overridden && (
+		<div className="text-faint flex items-center gap-label-inline flex-wrap" style={SAVED_LINE_STYLE_MC}>
+			{defaultValue && (
 				<>
-					{defaultValue && (
-						<>
-							<span>Saved:</span>
-							<span className="text-dim">{defaultValue}</span>
-						</>
-					)}
-					<button
-						type="button"
-						className={LINK_TARGET_CLASS_MC}
-						onClick={onReset}
-						aria-label="Reset this field to the saved value"
-					>
-						Reset
-					</button>
+					<span>Saved:</span>
+					<span className="text-dim">{defaultValue}</span>
 				</>
 			)}
+			<button
+				type="button"
+				className={LINK_TARGET_CLASS_MC}
+				onClick={onReset}
+				aria-label="Reset this field to the saved value"
+			>
+				Reset
+			</button>
 		</div>
 	);
 }
@@ -1621,7 +1559,7 @@ function BudgetsSectionMC({
 	errors,
 	onBudgetChange,
 }) {
-	const { Card, SkeletonRows, Table } = window.UI;
+	const { Card, Cluster, Link, SkeletonRows, Table } = window.UI;
 	const rows = sortBudgetsMC(budgets || []);
 	const timing = getApplyTimingMC(rows);
 
@@ -1629,8 +1567,15 @@ function BudgetsSectionMC({
 		<Card
 			size="M"
 			title="Per-call budget caps"
-			right={state === "ready" ? <UnreadMarkMC rows={rows} metaOf={BUDGET_META_MC} /> : null}
-			foot={<SourceFootMC source={DAEMON_CONFIG_FILE_MC} />}
+			right={
+				<Cluster gap="control-group">
+					{state === "ready" && <UnreadMarkMC rows={rows} metaOf={BUDGET_META_MC} />}
+					{/* cost/outcome payload carries no per-call maximum → Cost & usage is the reference point */}
+					<Link href="#cost" className="fs-meta inline-target">
+						Recent costs
+					</Link>
+				</Cluster>
+			}
 			sub={timing.meta}
 			info={
 				<SettingsInfoMC
@@ -1647,7 +1592,6 @@ function BudgetsSectionMC({
 			) : (
 				<Table
 					caption="Per-call budget cap per background call"
-					columns={getLedgerColumnsMC("Background call", "Per-call cap", IN_EFFECT_TITLE_MC.budgets)}
 					widths={LEDGER_COL_WIDTHS_MC}
 					className={LEDGER_TABLE_CLASS_MC}
 					bodies={[{ key: "budgets", isBusy: state === "loading", rows: (
@@ -1689,73 +1633,48 @@ function budgetPlaceholderMC() {
 	return BUDGET_SEED_DEFAULT_MC;
 }
 
-// Tabular digits → each digit is one ch; 6ch holds the widest cap ("50.00") plus the caret, beside the affix padding.
-const BUDGET_FIELD_STYLE_MC = { width: "calc(6ch + 4px + var(--ctl-pad-x))" };
-
 /**
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
- * + 실측 + ghost default/reset (T-MDL-6).
+ * + 실측 + ghost default/reset (T-MDL-6), all three in the line slot under the field.
  */
 function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChange }) {
-	const { Cluster, Link } = window.UI;
 	const id = `mc-budget-${b.domain}`;
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
-	const overridden = defaultValue !== undefined && value !== defaultValue;
 
 	return (
-		<tr className="is-grouped is-top-aligned">
+		<tr className="is-top-aligned">
 			<td>
-				<div className="fs-body tbl-first-line">{meta.label}</div>
+				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</td>
 			<td>
-				<Cluster gap="control">
-					<span className={`field-affix flex-shrink-0${showError ? " is-error" : ""}`}>
-						<span className="field-affix__sym">$</span>
-						<input
-							type="text"
-							inputMode="decimal"
-							className="field tabular-nums text-right"
-							style={BUDGET_FIELD_STYLE_MC}
-							value={value}
-							placeholder={budgetPlaceholderMC()}
-							onChange={(e) => onChange(e.target.value)}
-							aria-label={`${meta.label} per-call cap in USD`}
-							aria-invalid={showError ? "true" : undefined}
-							aria-describedby={showError ? `${id}-error` : undefined}
-						/>
-					</span>
-					{/* cost/outcome payload carries no per-call maximum → Cost & usage is the reference point */}
-					<Link
-						href="#cost"
-						className="fs-meta inline-target"
-						aria-label={`Recent ${meta.label} costs on Cost & usage`}>
-						Recent costs
-					</Link>
-				</Cluster>
-				{showError && (
-					<div id={`${id}-error`} className="fs-meta text-crit mt-stack" role="alert">
-						<span aria-hidden="true">✕ </span>
-						{error}
-					</div>
-				)}
-				<GhostResetMC
-					overridden={overridden}
-					defaultValue={defaultValue}
-					onReset={() => onChange(defaultValue)}
-				/>
-			</td>
-			<td>
+				<span className={`field-affix${showError ? " is-error" : ""}`}>
+					<span className="field-affix__sym">$</span>
+					<input
+						type="text"
+						inputMode="decimal"
+						className="field tabular-nums text-right"
+						value={value}
+						placeholder={budgetPlaceholderMC()}
+						onChange={(e) => onChange(e.target.value)}
+						aria-label={`${meta.label} per-call cap in USD`}
+						aria-invalid={showError ? "true" : undefined}
+						aria-describedby={showError ? `${id}-error` : undefined}
+					/>
+				</span>
 				<LiveValueMC
+					errorId={`${id}-error`}
+					error={error}
 					value={b.actual ? `$${b.actual}` : null}
 					drift={b.drift}
 					source={meta.source}
-					isNumeric
-					isSourceInFoot={meta.source === DAEMON_CONFIG_FILE_MC}
 					driftTitle="daemon-config.json differs from the saved cap — press Save again"
+					overridden={defaultValue !== undefined && value !== defaultValue}
+					savedValue={defaultValue}
+					onReset={() => onChange(defaultValue)}
 				/>
 			</td>
 		</tr>
@@ -1781,7 +1700,6 @@ function TiersSectionMC({
 		<Card
 			size="M"
 			title="Daemon call tiers"
-			foot={<SourceFootMC source={DAEMON_CONFIG_FILE_MC} />}
 			sub={timing.meta}
 			info={
 				<SettingsInfoMC
@@ -1797,7 +1715,6 @@ function TiersSectionMC({
 			) : (
 				<Table
 					caption="Effort level and output-token cap per background call"
-					columns={getLedgerColumnsMC("Background call", "Setting", IN_EFFECT_TITLE_MC.tiers)}
 					widths={LEDGER_COL_WIDTHS_MC}
 					className={LEDGER_TABLE_CLASS_MC}
 					bodies={[{ key: "tiers", isBusy: state === "loading", rows: (
@@ -1833,10 +1750,6 @@ function TiersSectionMC({
 	);
 }
 
-// Tabular digits → each digit is one ch; 11ch holds the widest cap (6 digits) and the "CLI default" placeholder
-// border box: + the caret (4), both inline paddings, both 1px borders → the placeholder shows whole
-const TIER_CAP_FIELD_STYLE_MC = { width: "calc(11ch + 4px + 2 * var(--ctl-pad-x) + 2px)" };
-
 // The unset effort level: a short option label that fits the select, the whole meaning in its title.
 const EFFORT_INHERIT_TITLE_MC = `${CLI_DEFAULT_LABEL_MC} — no --effort flag`;
 const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
@@ -1850,7 +1763,6 @@ const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
 function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead, onChange }) {
 	const meta = TIER_META_MC[t.domain] || { label: t.domain, hint: "", desc: "", kind: "", source: "daemon-config.json" };
 	const showError = Boolean(error);
-	const overridden = value !== defaultValue;
 	// absent key = the unset state, not an unread one — unless the file itself was not read
 	const live = t.actual ?? (isFileRead ? CLI_DEFAULT_LABEL_MC : null);
 	const labelOf = (v) => (v === "inherit" ? CLI_DEFAULT_LABEL_MC : v);
@@ -1858,9 +1770,9 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 	const id = `mc-tier-${t.domain}`;
 
 	return (
-		<tr className="is-grouped is-top-aligned">
+		<tr className="is-top-aligned">
 			<td>
-				<div className="fs-body tbl-first-line">{meta.label}</div>
+				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</td>
@@ -1882,7 +1794,6 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 						type="text"
 						inputMode="numeric"
 						className={`field tabular-nums text-right${showError ? " is-error" : ""}`}
-						style={TIER_CAP_FIELD_STYLE_MC}
 						value={value === "inherit" ? "" : value}
 						placeholder={CLI_DEFAULT_LABEL_MC}
 						onChange={(e) => onChange(e.target.value === "" ? "inherit" : e.target.value)}
@@ -1891,35 +1802,19 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 						aria-describedby={showError ? `${id}-error` : undefined}
 					/>
 				)}
-				{showError && (
-					<div id={`${id}-error`} className="fs-meta text-crit mt-stack" role="alert">
-						<span aria-hidden="true">✕ </span>
-						{error}
-					</div>
-				)}
-				<GhostResetMC
-					overridden={overridden}
-					defaultValue={labelOf(defaultValue)}
+				{/* a rejected file value is in effect nowhere — the daemon refuses the whole cycle */}
+				<LiveValueMC
+					errorId={`${id}-error`}
+					error={error}
+					fileError={t.file_error}
+					value={labelOf(live)}
+					drift={t.drift}
+					source={meta.source}
+					driftTitle="daemon-config.json differs from the saved setting — press Save again"
+					overridden={value !== defaultValue}
+					savedValue={labelOf(defaultValue)}
 					onReset={() => onChange(defaultValue)}
 				/>
-			</td>
-			<td>
-				{/* a rejected file value is in effect nowhere — the daemon refuses the whole cycle */}
-				{t.file_error ? (
-					<div className="fs-meta text-crit tbl-first-line" role="alert">
-						<span aria-hidden="true">✕ </span>
-						{`The daemon rejects the file value: ${t.file_error}`}
-					</div>
-				) : (
-					<LiveValueMC
-						value={live}
-						drift={t.drift}
-						source={meta.source}
-						isNumeric={meta.kind !== "effort" && t.actual != null}
-						isSourceInFoot={meta.source === DAEMON_CONFIG_FILE_MC}
-						driftTitle="daemon-config.json differs from the saved setting — press Save again"
-					/>
-				)}
 			</td>
 		</tr>
 	);

@@ -2949,6 +2949,7 @@ a.prose-link:hover {
 	transition: border-color 0.12s, box-shadow 0.12s;
 	min-height: var(--ctl-h);          /* the wrapper owns the border → it, not the inner field, holds the 32px control height */
 	padding-left: var(--ctl-pad-x);    /* affix 좌측 gutter = a field's own inline padding — input 자체 좌패딩은 제거 */
+	width: 100%;                       /* the wrapper is the field's box → it fills its column as a bare .field does */
 }
 .field-affix:hover:not(:focus-within):not(.is-error) { border-color: rgb(var(--faint)); }
 .field-affix:focus-within {
@@ -2972,7 +2973,8 @@ a.prose-link:hover {
 	box-shadow: none;
 	padding-left: 4px;                 /* sym 과 값 사이 간격 */
 	min-height: 0;                     /* borderless inside the wrapper → 6 + line + 6, the wrapper borders make it 32 */
-	width: 100%;
+	flex: 1 1 auto;                    /* the rest of the wrapper after the affix */
+	min-width: 0;                      /* an input's intrinsic width never pushes past the wrapper */
 }
 .field-affix .field:focus-visible,
 .field-affix .field:focus { box-shadow: none; border: none; outline: none; }

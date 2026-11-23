@@ -537,7 +537,8 @@ async function loadMcScreens(
         { className: `tbl ${p.className ?? ""}`.trim(), "data-atom": "Table" },
         hMc("caption", { className: "sr-only" }, p.caption),
         p.widths ? hMc("colgroup", null, ...(p.widths as string[]).map((width) => hMc("col", { style: { width } }))) : null,
-        hMc("thead", null, hMc("tr", null, ...columns.map((c) => hMc("th", { "data-atom": "TableHead" }, c.label)))),
+        // the atom renders no thead when columns are omitted
+        p.columns ? hMc("thead", null, hMc("tr", null, ...columns.map((c) => hMc("th", { "data-atom": "TableHead" }, c.label)))) : null,
         ...bodies.map((b) => hMc("tbody", { "aria-busy": b.isBusy ? "true" : undefined }, b.rows)),
       );
     },
@@ -623,7 +624,7 @@ test("render harness: a screen component's emitted tree is readable as tags and 
 
   // Structure: the harness expands nested function components, so the row's controls are reachable.
   assert.ok(tagsMc(tree, "table").length === 1, "one ledger table emitted");
-  assert.ok(textsMc(tagsMc(tree, "th")).length > 0, "column headers readable");
+  assert.ok(textsMc(tagsMc(tree, "caption")).length > 0, "the table caption readable");
   assert.strictEqual(tagsMc(tree, "select").length, 1, "the editable row's select is reachable");
   // Text: row content from the fixture, not from a copy of the component.
   assert.ok(textMc(tree).includes("Daemon cycle helper"), "row label rendered from DOMAIN_META_MC");
@@ -737,7 +738,16 @@ test("clearing a cap field records the knob as unset ('inherit'), never as an em
   assert.deepStrictEqual(changes, [["tier.worker_max_output_tokens", INHERIT_VALUE]]);
 });
 
-describe("a knob with no key in the file stays silent when the file was read and names the unread source otherwise", () => {
+// a daemon row's line slot under its control — what is in effect, rejected or unread lands here, nowhere else in the row
+const lineSlotMc = (tree: McNode[], rowText: string): string => {
+  const row = tagsMc(tree, "tr").find((tr) => textMc(tr.children).includes(rowText));
+  assert.ok(row, `the '${rowText}' row is rendered`);
+  const [slot] = findAllMc(row.children, (n) => n.props["data-slot"] === "line-slot");
+  assert.ok(slot, `the '${rowText}' row has its line slot`);
+  return textMc(slot.children);
+};
+
+describe("a knob with no key in the file stays silent when the file was read and says no value was read otherwise", () => {
   const rows = [
     { name: "a read file: silence, never an unread value", isFileRead: true, isCliDefault: true },
     { name: "a missing file: an unread value, never the CLI default", isFileRead: false, isCliDefault: false },
@@ -745,62 +755,43 @@ describe("a knob with no key in the file stays silent when the file was read and
   for (const row of rows) {
     test(row.name, () => {
       const tree = renderComponentMc(screens.TiersSectionMC, { ...tiersPropsMc(), isFileRead: row.isFileRead });
-      const effortRow = tagsMc(tree, "tr").find((tr) => textMc(tr.children).includes("generation effort"));
-      assert.ok(effortRow, "the generation effort row is rendered");
-
-      const cell = tagsMc(effortRow.children, "td")[2];
-      const live = textMc(cell.children);
-      const titles = findAllMc(cell.children, (n) => typeof n.props.title === "string").map((n) => String(n.props.title));
-      assert.strictEqual(live === "", row.isCliDefault, `${live} | ${titles.join(" | ")}`);
+      const live = lineSlotMc(tree, "generation effort");
+      assert.strictEqual(live === "", row.isCliDefault, live);
       assert.strictEqual(live.includes("No value read"), !row.isCliDefault, live);
     });
   }
 });
 
-test("a knob whose file value the daemon rejects shows the rejection in its row, never a match or the CLI default", () => {
+test("a knob whose file value the daemon rejects says so under its control with the reason, never a match or the CLI default", () => {
   const rejected = { ...TIER_ROW_FIXTURE_MC[0], file_error: '"ultra" is not a valid tier (allowed: low, medium, high, xhigh, max)' };
   const tree = renderComponentMc(screens.TiersSectionMC, { ...tiersPropsMc(), tiers: [rejected, ...TIER_ROW_FIXTURE_MC.slice(1)] });
-  const effortRow = tagsMc(tree, "tr").find((tr) => textMc(tr.children).includes("generation effort"));
-  assert.ok(effortRow, "the generation effort row is rendered");
-
-  const cell = tagsMc(effortRow.children, "td")[2];
-  const live = textMc(cell.children);
-  const titles = findAllMc(cell.children, (n) => typeof n.props.title === "string").map((n) => String(n.props.title));
+  const live = lineSlotMc(tree, "generation effort");
+  assert.ok(live.includes("File value rejected"), `the rejection is worded: ${live}`);
   assert.ok(live.includes('"ultra"'), `the rejected value is named: ${live}`);
-  assert.ok(![live, ...titles].some((s) => s.includes("Matches saved") || s.includes("CLI default")), `${live} | ${titles.join(" | ")}`);
+  assert.ok(!live.includes("In effect") && !live.includes("CLI default"), live);
 });
 
 const tonedMc = (nodes: McNode[], tone: string): McTag[] =>
   findAllMc(nodes, (n) => n.props["data-tone"] === tone);
 
-test("both ledgers carry the same three columns — timing is stated once per section, not per row", () => {
+test("the three daemon tables are label and control only — no head row, no In effect column", () => {
   for (const [name, props] of [
     ["DomainsSectionMC", domainsPropsMc()],
     ["BudgetsSectionMC", budgetsPropsMc()],
+    ["TiersSectionMC", tiersPropsMc()],
   ] as const) {
-    const headers = textsMc(tagsMc(renderComponentMc(screens[name], props), "th"));
-    assert.strictEqual(headers.length, 3, `${name}: three columns`);
-    assert.deepStrictEqual(headers.slice(2), ["In effect"], `${name}: in-effect last`);
-    for (const gone of ["Sync", "Enforcement", "Actual", "Takes effect", "Live"]) {
-      assert.ok(!headers.includes(gone), `${name}: '${gone}' column removed`);
-    }
-  }
-});
-
-test("every ledger column header goes through the shared TableHead atom, so it carries scope=col", () => {
-  for (const name of ["DomainsSectionMC", "BudgetsSectionMC"] as const) {
-    const props = name === "DomainsSectionMC" ? domainsPropsMc() : budgetsPropsMc();
-    const headers = tagsMc(renderComponentMc(screens[name], props), "th");
-    assert.ok(headers.length > 0, `${name}: headers rendered`);
-    for (const th of headers) {
-      assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
-    }
+    const tree = renderComponentMc(screens[name], props);
+    assert.strictEqual(tagsMc(tree, "th").length, 0, `${name}: no head row`);
+    const rows = tagsMc(tree, "tr");
+    assert.ok(rows.length > 0, `${name}: rows render`);
+    for (const tr of rows) assert.strictEqual(tagsMc(tr.children, "td").length, 2, `${name}: '${textMc(tr.children)}' has two cells`);
+    assert.ok(!textMc(tree).includes("In effect"), `${name}: nothing in effect differs at rest`);
   }
 });
 
 const iconsMc = (nodes: McNode[], name: string): McTag[] => findAllMc(nodes, (n) => n.props["data-icon"] === name);
 
-test("a row in its steady state shows no mark; only a drifted row raises one warn glyph, outside any pill", () => {
+test("a row in its steady state shows no mark; only a drifted row raises one warn glyph and the value in effect under its control", () => {
   const steady = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
   assert.strictEqual(iconsMc(steady, "check").length, 0, "agreement is silence");
   assert.strictEqual(iconsMc(steady, "warn").length, 0, "nothing to warn about");
@@ -811,7 +802,9 @@ test("a row in its steady state shows no mark; only a drifted row raises one war
   );
   assert.strictEqual(iconsMc(drifted, "warn").length, 1, "exactly one warn glyph per drifted row");
   assert.strictEqual(tonedMc(drifted, "warn").length, 0, "the drift mark is glyph + word, not a badge");
-  assert.ok(textMc(drifted).includes("claude-sonnet-5"), "the live value is shown, not just a flag");
+  const live = lineSlotMc(drifted, "Daemon cycle helper");
+  const getDisplayName = realUiMc.getDisplayName as (kind: string, id: string) => string | null;
+  assert.ok(live.includes(`In effect: ${getDisplayName("model", "claude-sonnet-5")}`), `the value in effect is named by its display name: ${live}`);
 });
 
 test("a listed model shows its name only; its id rides the select tooltip, never a second line", () => {
@@ -836,7 +829,7 @@ test("an apply_mode the screen does not map is stated verbatim as the take-effec
 
 test("an empty roster says so; it never renders as a table with nothing in it", () => {
   const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc([]));
-  assert.strictEqual(tagsMc(tree, "tr").length, 2, "header row + the empty-state row");
+  assert.strictEqual(tagsMc(tree, "tr").length, 1, "the empty-state row alone — no head row");
   assert.ok(textMc(tree).includes("No model domains reported"), "empty is stated, not implied");
 });
 
@@ -852,12 +845,12 @@ test("section headers survive every state, and a non-ready body never reads as z
 
     const ready = renderComponentMc(screens[name], { ...props, state: "ready" });
     const loading = renderComponentMc(screens[name], { ...props, state: "loading" });
-    const columnsOf = (tree: McNode[]) => textsMc(tagsMc(tagsMc(tree, "thead"), "th"));
+    const columnsOf = (tree: McNode[]) => tagsMc(tree, "col").map((c) => JSON.stringify(c.props.style));
     assert.ok(textMc(loading).startsWith(label), `${name}: section header unchanged while loading`);
     assert.deepStrictEqual(
       columnsOf(loading),
       columnsOf(ready),
-      `${name}: the skeleton sits under the real column headers, so nothing shifts when rows land`,
+      `${name}: the skeleton sits on the real column grid, so nothing shifts when rows land`,
     );
     assert.ok(
       findAllMc(loading, (n) => n.props["aria-busy"] === "true").length === 1,
@@ -966,8 +959,9 @@ test("a read-only model row with no saved value renders no placeholder badge", (
   (props.form as { models: Record<string, string> }).models["model.daemon_cycle_worker"] = "";
   const tree = renderComponentMc(screens.DomainsSectionMC, props);
   const modelCell = tagsMc(tree, "td")[1];
+  const face = modelCell.children.filter((n) => typeof n === "string" || n.props["data-slot"] !== "line-slot");
 
-  assert.strictEqual(textMc(modelCell.children), "", "the empty model cell stays empty");
+  assert.strictEqual(textMc(face), "", "the empty model value stays empty above its line slot");
 });
 
 test("the unsaved-changes count equals the field count the partial PUT sends", () => {
@@ -1313,10 +1307,12 @@ test("an empty roster never reads as in sync, whatever the file state says", () 
   assert.strictEqual(populated, "ok", "a populated roster keeps the file's sync state");
 });
 
-// Live cell of the first body row — the third column in both ledgers.
+// The line slot of the first body row — under its control, where a differing or unread value lands.
 function liveCellMc(tree: McNode[]): McTag {
   const bodyRow = tagsMc(tagsMc(tree, "tbody")[0].children, "tr")[0];
-  return tagsMc(bodyRow.children, "td")[2];
+  const [slot] = findAllMc(bodyRow.children, (n) => n.props["data-slot"] === "line-slot");
+  assert.ok(slot, "the first row has its line slot");
+  return slot;
 }
 
 test("Live repeats nothing in the steady state and shows the value only when it differs", () => {
@@ -1329,7 +1325,7 @@ test("Live repeats nothing in the steady state and shows the value only when it 
 
     const differs = textMc([liveCellMc(renderComponentMc(screens[name], drifted))]);
     assert.ok(!differs.includes("Matches saved"), `${name}: a differing value never reads as matching`);
-    assert.ok(/claude-sonnet-5|\$12\.00/.test(differs), `${name}: the differing value is shown`);
+    assert.ok(/Sonnet 5|\$12\.00/.test(differs), `${name}: the differing value is shown: ${differs}`);
   }
 });
 
@@ -1344,14 +1340,16 @@ test("an inherit live value names what it inherits from, never a bare 'inherit'"
   assert.notStrictEqual(live.replace(/\s*drift$/, ""), actual, `${actual}: not shown raw`);
 });
 
-test("both ledgers sit on one column grid, so their Live columns line up", () => {
+test("the three daemon tables sit on one two-column grid, so their controls share both edges", () => {
   const gridOf = (tree: McNode[]): string =>
     JSON.stringify(tagsMc(tree, "col").map((c) => c.props.style ?? c.props.width));
   const domains = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
   const budgets = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
-  assert.strictEqual(tagsMc(domains, "col").length, tagsMc(domains, "th").length, "one col per ledger column");
-  assert.strictEqual(gridOf(domains), gridOf(budgets), "identical column widths in both ledgers");
-  for (const tree of [domains, budgets]) {
+  const tiers = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
+  assert.strictEqual(tagsMc(domains, "col").length, 2, "label and control columns");
+  assert.strictEqual(gridOf(domains), gridOf(budgets), "identical column widths in the model and cap tables");
+  assert.strictEqual(gridOf(domains), gridOf(tiers), "identical column widths in the model and tier tables");
+  for (const tree of [domains, budgets, tiers]) {
     const [table] = tagsMc(tree, "table");
     assert.strictEqual(table.props["data-atom"], "Table", "the ledger is the Table atom");
     assert.ok(String(table.props.className).split(/\s+/).includes("table-fixed"), "widths come from the grid, not the content");
@@ -1371,11 +1369,8 @@ test("all three tier tables take the shared .tbl geometry in the house face, wit
     const tableClasses = String(table.props.className).split(/\s+/);
     assert.strictEqual(table.props["data-atom"], "Table", `${name}: the ledger is the Table atom`);
     assert.ok(tableClasses.includes("tbl") && !tableClasses.includes("tbl--own-face"), `${name}: a house .tbl table — no own-face modifier, so the face stays`);
-    const headers = tagsMc(tree, "th");
-    assert.strictEqual(headers.length, 3, `${name}: three headers`);
-    for (const th of headers) assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
-    const cells = [...headers, ...tagsMc(tree, "td")];
-    assert.ok(tagsMc(tree, "td").length >= 3, `${name}: a ready row renders its cells`);
+    const cells = tagsMc(tree, "td");
+    assert.ok(cells.length >= 2, `${name}: a ready row renders its cells`);
     for (const cell of cells) {
       const style = (cell.props.style ?? {}) as Record<string, unknown>;
       const own = Object.keys(style).filter((key) => PADDING_KEYS_MC.test(key));
@@ -1450,7 +1445,7 @@ test("the saved-value line keeps its slot whether or not the field differs, so a
       ...domainsPropsMc(),
       baseline: { models: { "model.daemon_cycle_worker": baselineValue }, budgets: {} },
     });
-    return findAllMc(tree, (n) => n.props["data-slot"] === "saved-line").length;
+    return findAllMc(tree, (n) => n.props["data-slot"] === "line-slot").length;
   };
   assert.strictEqual(slotsOf("claude-opus-4-8"), 1, "slot reserved while the field matches");
   assert.strictEqual(slotsOf("claude-sonnet-5"), 1, "the same slot carries the saved value once it differs");
@@ -1707,16 +1702,12 @@ test("the agent card leads at full width, and the three daemon ledgers share one
   ]);
 });
 
-test("every cap carries its own reference link to Cost & usage", () => {
+test("the caps card names Recent costs once, in its head, never per cap row", () => {
   const budgets = [BUDGET_ROW_FIXTURE_MC[0], { ...BUDGET_ROW_FIXTURE_MC[0], domain: "budget.pre_verify_max_usd" }];
   const tree = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc(budgets));
-  const rows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
-  assert.strictEqual(rows.length, 2, "one row per cap");
-  for (const row of rows) {
-    const links = tagsMc(row.children, "a").filter((a) => a.props.href === "#cost");
-    assert.strictEqual(links.length, 1, "one reference link per cap row");
-    assert.strictEqual(links[0].props["data-atom"], "Link", "the cap's link is the shared Link atom");
-  }
+  const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
+  assert.deepStrictEqual(links.map((a) => [a.props["data-atom"], textMc(a.children)]), [["Link", "Recent costs"]], "one shared Link atom");
+  assert.strictEqual(tagsMc(tagsMc(tree, "tbody")[0].children, "a").length, 0, "no cap row carries a link");
 });
 
 test("the card-head Cost & usage navigation is the shared Link atom", () => {
@@ -1750,8 +1741,6 @@ test("mono comes only from the machine-string atom: no element styles itself mon
       assert.ok(classes.includes("tabular-nums") && !classes.includes("field--mono"), `${name}: a number field is sans tnum, never mono`);
     }
   }
-  const machine = findAllMc(trees[1], (n) => n.props["data-atom"] === "MachineString").map((n) => textMc(n.children));
-  assert.ok(machine.includes("daemon-config.json"), "the column's read source, in the caps card's foot, is a machine string");
 });
 
 test("a differing model's saved line names the saved model, never its raw id", () => {
@@ -1759,7 +1748,7 @@ test("a differing model's saved line names the saved model, never its raw id", (
     ...domainsPropsMc(),
     baseline: { models: { "model.daemon_cycle_worker": "claude-sonnet-5" }, budgets: {} },
   });
-  const [slot] = findAllMc(tree, (n) => n.props["data-slot"] === "saved-line");
+  const [slot] = findAllMc(tree, (n) => n.props["data-slot"] === "line-slot");
   const text = textMc(slot.children);
   assert.ok(!text.includes("claude-sonnet-5"), `no raw id: ${text}`);
   assert.ok(text.includes("Sonnet 5"), `the friendly name: ${text}`);
@@ -1829,16 +1818,6 @@ describe("a config read that failed after an earlier read shows the last good re
       assert.strictEqual(card?.props.focusTargetId, "mc-models", "focus lands on the ledger if the card leaves");
     });
   }
-});
-
-test("a cap field fits the longest valid cap and is never squeezed by its link", () => {
-  const tree = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
-  const [input] = tagsMc(tree, "input");
-  const [affix] = findAllMc(tree, (n) => String(n.props.className ?? "").includes("field-affix"));
-  const widthCh = Number(/(\d+)ch/.exec(String((input?.props.style as { width?: string })?.width))?.[1]);
-
-  assert.ok(widthCh >= BUDGET_MAX_USD.toFixed(2).length, `field width ${widthCh}ch holds ${BUDGET_MAX_USD.toFixed(2)}`);
-  assert.ok(String(affix?.props.className).includes("flex-shrink-0"), "the field keeps its width beside the link");
 });
 
 // Screen-level reads: announcements, stale rows, file lists, rail headings, In-effect sources.
@@ -1934,35 +1913,32 @@ test("the glossary labels are headings, and their notes never repeat the agent a
   assert.ok(!notes.includes("glass-atrium-"), `a note repeats an agent id the row shows: ${notes}`);
 });
 
-// the daemon model card and the caps card share one column → the caps foot names the source for both
-test("the daemon column names its shared read source once, in the caps card's foot, and a row reading it stays silent on it", () => {
-  const cards = [
+test("no daemon card has a foot, and a row at rest never names the file it reads", () => {
+  for (const [name, tree] of [
     ["models", renderComponentMc(screens.DomainsSectionMC, domainsPropsMc())],
     ["budgets", renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc())],
-  ] as const;
-  for (const [name, tree] of cards) {
-    const live = textMc([liveCellMc(tree)]);
-    assert.ok(!live.includes("Read from"), `${name}: a row reading the column's source stays silent (${live})`);
+    ["tiers", renderComponentMc(screens.TiersSectionMC, tiersPropsMc())],
+  ] as const) {
+    assert.deepStrictEqual(footMc(tree), [], `${name}: no foot`);
+    assert.ok(!textMc(tree).includes("daemon-config.json"), `${name}: the file is named only where a line needs it`);
   }
-  const feet = cards.map(([name, tree]) => [name, footMc(tree).join(" ")] as const);
-  const column = feet.map(([, foot]) => foot).join(" ");
-  assert.strictEqual(countMc(column, "Read from daemon-config.json"), 1, `the column names the source once (${column})`);
-  assert.ok(feet[1][1].includes("Read from daemon-config.json"), `the caps card's foot carries it (${feet[1][1]})`);
 });
 
-test("a sourced In-effect cell with no live value names the source without claiming it was read", () => {
-  const cells = [
-    ["model.daemon_cycle_worker", textMc([liveCellMc(renderComponentMc(
+test("a sourced row with no live value says no value was read, naming the file in the line's title", () => {
+  const trees = [
+    ["model.daemon_cycle_worker", renderComponentMc(
       screens.DomainsSectionMC,
       domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
-    ))])] as const,
-    ["budget.worker_max_usd", textMc([liveCellMc(renderComponentMc(
+    )] as const,
+    ["budget.worker_max_usd", renderComponentMc(
       screens.BudgetsSectionMC,
       budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
-    ))])] as const,
+    )] as const,
   ];
-  for (const [domain, live] of cells) {
-    assert.ok(live.startsWith("No value read from"), `${domain}: says nothing was read (${live})`);
-    assert.ok(!live.includes("Matches saved"), `${domain}: an unread value never reads as matching (${live})`);
+  for (const [domain, tree] of trees) {
+    const slot = liveCellMc(tree);
+    assert.strictEqual(textMc([slot]), "No value read", `${domain}: says nothing was read`);
+    const titles = findAllMc([slot], (n) => typeof n.props.title === "string").map((n) => n.props.title);
+    assert.deepStrictEqual(titles, ["No value read from daemon-config.json"], `${domain}: the file rides the title`);
   }
 });

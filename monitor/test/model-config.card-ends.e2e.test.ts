@@ -49,8 +49,6 @@ const CONFIG = {
 };
 
 // side-by-side widths only — below 1280 the row stacks and has no shared end edge
-// one-row bound kept for the two-card left column: the caps card's foot names the source for the whole column,
-// so the daemon model card carries no foot of its own (designer ruling, layout-ruling.md item 1)
 for (const width of [1280, 1440, 1568, 1920]) {
   test(`the daemon model + caps column and the call-tier column end within one row of each other at ${width}px`, async () => {
     const app = Fastify({ logger: false });
@@ -87,9 +85,64 @@ for (const width of [1280, 1440, 1568, 1920]) {
   });
 }
 
-// the three tier tables on the shared .tbl geometry: one padding per cell kind, edges at the card padding, the house header face kept;
+// the daemon cards as one settings form (spec 44117 §2.4): one 160 control column, so every control shares both edges;
+// each label and hint holds one line, and every row is one 68 step (32 control + 4 + the 24 line slot + 2 × 3.5 + the 1 rule, none on the last)
+for (const width of [1280, 1440, 1568]) {
+  test(`${width}px: every daemon control shares both edges at 160, each label and hint holds one line, and every row is 68`, async () => {
+    const app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/model-config", async () => CONFIG);
+    app.get("/api/*", async () => ({ rows: [] }));
+    const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    const browser = await chromium.launch({ headless: true });
+
+    try {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
+      await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
+      // anonymous callbacks only: tsx wraps a named const in a __name() helper the page lacks
+      const form = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll<HTMLTableRowElement>(".split-row tbody tr")];
+        return rows.map((tr) => {
+          const control = tr.cells[tr.cells.length - 1].querySelector("select, .field-affix, input.field")!.getBoundingClientRect();
+          // the two columns hold equal cards → an edge is read from its own card's end edge
+          const cardRight = tr.closest(".card")!.getBoundingClientRect().right;
+          const lines = [...tr.cells[0].children].map((line) => {
+            const range = document.createRange();
+            range.selectNodeContents(line);
+            return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+          });
+          return {
+            label: tr.cells[0].firstElementChild?.textContent ?? "",
+            cells: tr.cells.length,
+            left: control.left - cardRight,
+            right: control.right - cardRight,
+            lines,
+            height: tr.getBoundingClientRect().height,
+            isLast: tr === tr.parentElement!.lastElementChild,
+          };
+        });
+      });
+
+      assert.strictEqual(form.length, CONFIG.domains.length + CONFIG.budgets.length + CONFIG.tiers.length, `${width}px: one row per setting`);
+      const [first] = form;
+      for (const row of form) {
+        assert.strictEqual(row.cells, 2, `${width}px ${row.label}: label and control only`);
+        assert.ok(Math.abs(row.right - row.left - 160) <= 0.5, `${width}px ${row.label}: control ${row.right - row.left} wide`);
+        assert.ok(Math.abs(row.left - first.left) <= 0.5 && Math.abs(row.right - first.right) <= 0.5, `${width}px ${row.label}: control at ${row.left}–${row.right}, the first at ${first.left}–${first.right}`);
+        assert.deepStrictEqual(row.lines, row.lines.map(() => 1), `${width}px ${row.label}: label and hint lines ${row.lines}`);
+        assert.ok(Math.abs(row.height - (row.isLast ? 67 : 68)) <= 0.5, `${width}px ${row.label}: row ${row.height} tall`);
+      }
+    } finally {
+      await browser.close();
+      await app.close();
+    }
+  });
+}
+
+// the three tier tables on the shared .tbl geometry: one padding per cell kind, edges at the card padding, no head row;
 // the rows are top-aligned, so a text cell starts half the control-to-line difference (32 − 20) / 2 below a control cell
-test("every tier-table cell takes the shared .tbl padding, a text cell starting half the control-to-line step below a control cell, and the header keeps its face", async () => {
+test("every tier-table cell takes the shared .tbl padding, a text cell starting half the control-to-line step below a control cell, and no table has a head row", async () => {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   app.get("/api/model-config", async () => CONFIG);
@@ -105,10 +158,9 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
     const tables = await page.evaluate(() => {
       const controls = ".btn, .seg, .field, .field-affix, .disclosure";
       return [...document.querySelectorAll(".split-row table")].map((table) => {
-        const th = getComputedStyle(table.querySelector("thead th")!);
         return {
           caption: table.querySelector("caption")?.textContent ?? "",
-          header: { transform: th.textTransform, fill: th.backgroundColor },
+          heads: table.querySelectorAll("thead").length,
           cells: [...table.querySelectorAll("tbody td")].map((td) => {
             const style = getComputedStyle(td);
             const row = td.parentElement as HTMLTableRowElement;
@@ -128,8 +180,8 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
 
     assert.strictEqual(tables.length, 3, "model, cap and call-tier tables render");
     for (const table of tables) {
-      assert.strictEqual(table.header.transform, "none", `${table.caption}: headers keep sentence case`);
-      assert.ok(table.cells.length >= 3, `${table.caption}: rows render`);
+      assert.strictEqual(table.heads, 0, `${table.caption}: the card title names the control, so no head row`);
+      assert.ok(table.cells.length >= 2, `${table.caption}: rows render`);
       for (const cell of table.cells) {
         const [top, bottom] = cell.isControl ? [3.5, 3.5] : [3.5 + (32 - 20) / 2, 7.5];
         assert.deepStrictEqual([cell.top, cell.bottom], [top, bottom], `${table.caption}: ${cell.isControl ? "control" : "text"} cell block padding`);
@@ -145,10 +197,10 @@ test("every tier-table cell takes the shared .tbl padding, a text cell starting 
 });
 
 // On the shipped roster, with top-aligned rows and compact units, at every side-by-side width and the stacked one: the first text line of a cell centers on the
-// control in its row, every model select holds its longest option label, and an In effect file name never breaks at its hyphens
+// control in its row, and every model select holds its longest option label
 const LONG_ROSTER = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-fable-5-1"];
 for (const width of [1024, 1280, 1440, 1920]) {
-  test(`${width}px: top-aligned rows center their first line on the control, model selects fit, file names stay whole`, async () => {
+  test(`${width}px: top-aligned rows center their first line on the control, and model selects fit`, async () => {
     const app = Fastify({ logger: false });
     await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
     app.get("/api/model-config", async () => ({ ...CONFIG, known_models: LONG_ROSTER }));
@@ -197,12 +249,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
             longest: Math.max(...labels.map((label) => canvas.measureText(label).width)),
           };
         });
-        const files = [...document.querySelectorAll<HTMLElement>(".card-foot code.machine")].map((token) => ({
-          lines: token.getClientRects().length,
-          height: token.getBoundingClientRect().height,
-          lineHeight: parseFloat(getComputedStyle(token).lineHeight),
-        }));
-        return { offsets, selects, files };
+        return { offsets, selects };
       });
 
       const rowCount = CONFIG.domains.length + CONFIG.budgets.length + CONFIG.tiers.length;
@@ -213,11 +260,6 @@ for (const width of [1024, 1280, 1440, 1920]) {
       assert.strictEqual(geometry.selects.length, CONFIG.domains.length, `${width}px: one select per model tier`);
       for (const { name, room, longest } of geometry.selects) {
         assert.ok(longest <= room, `${width}px ${name}: longest label ${longest}px in ${room}px`);
-      }
-      assert.ok(geometry.files.length > 0, `${width}px: the card feet name their file`);
-      for (const file of geometry.files) {
-        assert.strictEqual(file.lines, 1, `${width}px: daemon-config.json is one token`);
-        assert.ok(file.height <= file.lineHeight + 1, `${width}px: daemon-config.json never breaks at its hyphens`);
       }
     } finally {
       await browser.close();

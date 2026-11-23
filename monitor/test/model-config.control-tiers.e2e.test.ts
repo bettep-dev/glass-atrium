@@ -101,8 +101,9 @@ const BAR_STATES = { idle: getBar(0, false), ticked: getBar(3, false), missing: 
 // the widest one-line content (99 ticked → `Apply to 99 agents`), and the three states again for the narrow form; widths set per test
 const NARROW_BARS = { fit: getBar(99, false), idle: getBar(0, false), ticked: getBar(99, false), missing: getBar(99, true) } as const;
 
-// a field's saved line: overridden (Saved value + Reset) and back at the saved value (the empty slot)
-const getSavedLine = (overridden: boolean) => getMarkup("GhostResetMC", { overridden, defaultValue: overridden ? MODEL : null, onReset: noop });
+// a field's line slot: overridden (Saved value + Reset) and back at the saved value (the empty slot)
+const getSavedLine = (overridden: boolean) =>
+  getMarkup("LiveValueMC", { value: MODEL, overridden, savedValue: overridden ? MODEL : null, onReset: noop });
 
 const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="models" style="width: 760px; padding: 24px;">${MODELS}</div>
@@ -154,7 +155,7 @@ const assertTextOnTargetCentre = async (selector: string) => {
 describe("the Cost & usage links are 24 targets", () => {
   for (const [name, selector] of [
     ["the agent card's Cost & usage link", "#agents a[href='#cost']"],
-    ["a cap's Recent costs link", "#caps a[href='#cost']"],
+    ["the caps card's Recent costs link", "#caps a[href='#cost']"],
   ] as const) {
     test(`${name} is 24 tall with its text on the box's centre line`, () => assertTextOnTargetCentre(selector));
   }
@@ -162,7 +163,7 @@ describe("the Cost & usage links are 24 targets", () => {
 
 describe("a field's inline Reset is a 24 target in a slot that holds its height", () => {
   const RESET = "#saved-overridden button[aria-label='Reset this field to the saved value']";
-  const SLOT = (state: "overridden" | "empty") => `#saved-${state} [data-slot='saved-line']`;
+  const SLOT = (state: "overridden" | "empty") => `#saved-${state} [data-slot='line-slot']`;
 
   test("Reset is 24 tall with its text on the box's centre line", () => assertTextOnTargetCentre(RESET));
 
