@@ -1914,7 +1914,7 @@ function getProseRef(text, index, state) {
   if (text.startsWith(PROSE_DOC_PATH, index)) return getProseAddressRef(text, index);
   if (!isProseDigit(text[index])) return null;
   const end = getProseDigitEnd(text, index);
-  const isLink = state.declared.has(text.slice(index, end)) && !isProseLatin(text[index - 1]) && !isProseLatin(text[end]);
+  const isLink = end - index <= PROSE_DOC_DIGITS_MAX && state.declared.has(text.slice(index, end)) && !isProseLatin(text[index - 1]) && !isProseLatin(text[end]);
   return { start: index, end, isLink };
 }
 

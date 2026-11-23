@@ -26,13 +26,13 @@ const UI = ui.UI as Record<string, unknown>;
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
 const getProseBlocks = UI.getProseBlocks as (text: string, linkedDocIds?: number[]) => ProseResult;
 
-function renderProse(text: string, linkedDocIds: number[] = [], isCompact = false): RenderedNode {
+function renderProse(text: string, linkedDocIds: (number | string)[] = [], isCompact = false): RenderedNode {
   return renderScreen(React.createElement(UI.ProseText as Component, { text, linkedDocIds, isCompact })) as RenderedNode;
 }
 
 // markup inside the atom's root, list keys and the per-block direction dropped — a key never reaches the DOM, and
 // "each block and each table cell isolates its direction" asserts the direction on its own
-function innerMarkup(text: string, linkedDocIds: number[] = []): string {
+function innerMarkup(text: string, linkedDocIds: (number | string)[] = []): string {
   const html = getHtml(renderProse(text, linkedDocIds)).replace(/ key="[^"]*"/g, "").replace(/ dir="auto"/g, "");
   return html.replace(/^<div class="prose-text">/, "").replace(/<\/div>$/, "");
 }
@@ -97,6 +97,10 @@ describe("document references", () => {
     { name: "a hash before a declared id leaves the digits linked", text: "#44060", ids: [44060], html: `<p>#${link("44060")}</p>` },
     { name: "a declared id touching a digit or a Latin letter stays text", text: "440601 v44060 44060b 144060", ids: [44060], html: "<p>440601 v44060 44060b 144060</p>" },
     { name: "an undeclared number stays text", text: "see 44060", ids: [], html: "<p>see 44060</p>" },
+    // a string id → a declared 22-digit run, which no number serializes to
+    { name: "a declared id links up to nine digits, a longer declared run stays text as in the addressed form",
+      text: "123456789 1234567890 1234567890123456789012", ids: [123456789, 1234567890, "1234567890123456789012"],
+      html: `<p>${link("123456789")} 1234567890 1234567890123456789012</p>` },
     { name: "the addressed forms link without a declaration, the id re-serialized as an integer",
       text: "clauded-docs/120 · clauded-docs?doc=007", ids: [], html: `<p>clauded-docs/${link("120")} · clauded-docs?doc=${link("7", "007")}</p>` },
     { name: "an addressed form after a Latin letter, with ten digits or a digit after stays text",
