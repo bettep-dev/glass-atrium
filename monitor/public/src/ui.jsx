@@ -1535,7 +1535,7 @@ function MachineString({ className = '', children }) {
 }
 
 /**
- * Agent-written Markdown → headings, paragraphs, lists, quotes, rules, code and document links, built as React elements — never set as HTML.
+ * Agent-written Markdown → headings, paragraphs, lists, tables, quotes, rules, code and document links, built as React elements — never set as HTML.
  * Unlike the document viewer's markdown pipeline: no images, no author links and no HTML, so queue text stays text.
  * @param linkedDocIds - the item's declared document ids; a digit run equal to one becomes a link
  * @param isCompact - the 14 / 22 form inside an order bubble
@@ -1547,13 +1547,28 @@ function ProseText({ text, linkedDocIds = [], isCompact = false, canFoldCode = f
   return <div className={classes}>{blocks.map((block, index) => <ProseBlock key={index} block={block} canFoldCode={canFoldCode} />)}</div>;
 }
 
+// every block and table cell takes dir="auto" → a bidi control in one block never reorders its neighbour
 function ProseBlock({ block, canFoldCode }) {
-  if (block.kind === 'code') return canFoldCode && block.lineCount > PROSE_FOLD_LINES ? <ProseFoldedCode block={block} /> : <pre className="prose-pre">{block.text}</pre>;
-  if (block.kind === 'heading') return block.level === 1 ? <h4>{block.inlines.map(renderProseInline)}</h4> : <h5>{block.inlines.map(renderProseInline)}</h5>;
+  if (block.kind === 'code') return canFoldCode && block.lineCount > PROSE_FOLD_LINES ? <ProseFoldedCode block={block} /> : <pre className="prose-pre" dir="auto">{block.text}</pre>;
+  if (block.kind === 'heading') return block.level === 1 ? <h4 dir="auto">{block.inlines.map(renderProseInline)}</h4> : <h5 dir="auto">{block.inlines.map(renderProseInline)}</h5>;
   if (block.kind === 'list') return <ProseList list={block} />;
-  if (block.kind === 'quote') return <blockquote>{renderProseLines(block.lines)}</blockquote>;
+  if (block.kind === 'table') return <ProseTable table={block} />;
+  if (block.kind === 'quote') return <blockquote dir="auto">{renderProseLines(block.lines)}</blockquote>;
   if (block.kind === 'rule') return <hr />;
-  return <p>{renderProseLines(block.lines)}</p>;
+  return <p dir="auto">{renderProseLines(block.lines)}</p>;
+}
+
+// only the frame scrolls sideways, so it is a named, focusable region under the global focus ring
+function ProseTable({ table }) {
+  const getClass = (index) => PROSE_ALIGN_CLASSES[table.aligns[index]];
+  return <div className="prose-table-frame" tabIndex={0} role="region" aria-label={PROSE_TABLE_LABEL}>
+    <table className="prose-table">
+      <thead><tr>{table.head.map((inlines, index) => <th key={index} scope="col" className={getClass(index)} dir="auto">{inlines.map(renderProseInline)}</th>)}</tr></thead>
+      <tbody>{table.rows.map((cells, rowIndex) => <tr key={rowIndex}>
+        {cells.map((inlines, index) => <td key={index} className={getClass(index)} dir="auto">{inlines.map(renderProseInline)}</td>)}
+      </tr>)}</tbody>
+    </table>
+  </div>;
 }
 
 // the thread's own `Show all N lines` control; open → every line
@@ -1561,7 +1576,7 @@ function ProseFoldedCode({ block }) {
   const [isOpen, setOpen] = useState(false);
   const text = isOpen ? block.text : block.text.split('\n', PROSE_FOLD_LINES).join('\n');
   return <>
-    <pre className="prose-pre">{text}</pre>
+    <pre className="prose-pre" dir="auto">{text}</pre>
     <details className="prose-fold" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="group disclosure fs-meta"><DisclosureChevron /><span>{`Show all ${block.lineCount} lines`}</span></summary>
     </details>
@@ -1569,11 +1584,11 @@ function ProseFoldedCode({ block }) {
 }
 
 function ProseList({ list }) {
-  const items = list.items.map((item, index) => <li key={index} value={list.isOrdered ? item.value : undefined}>
+  const items = list.items.map((item, index) => <li key={index} value={list.isOrdered ? item.value : undefined} dir="auto">
     {renderProseLines(item.lines)}
     {item.lists.map((child, childIndex) => <ProseList key={childIndex} list={child} />)}
   </li>);
-  return list.isOrdered ? <ol>{items}</ol> : <ul>{items}</ul>;
+  return list.isOrdered ? <ol dir="auto">{items}</ol> : <ul dir="auto">{items}</ul>;
 }
 
 function renderProseLines(lines) {
@@ -1597,6 +1612,10 @@ const PROSE_HEADING_TOP_MARKS = 2;
 const PROSE_QUOTE = /^>(?: (.*))?$/;
 const PROSE_RULES = Object.freeze(new Set(['---', '***', '___']));
 const PROSE_FENCE = '```';
+const PROSE_TABLE_DELIMITER = /^:?-+:?$/;
+const PROSE_TABLE_COLUMNS_MAX = 12;
+const PROSE_TABLE_LABEL = 'Table, scrolls sideways';
+const PROSE_ALIGN_CLASSES = Object.freeze({ start: undefined, center: 'prose-cell--center', end: 'prose-cell--end' });
 const PROSE_FOLD_LINES = 20;
 const PROSE_NEST_INDENT = 2;
 const PROSE_LIST_DEPTH = 3;
@@ -1618,10 +1637,12 @@ function getProseBlocks(text, linkedDocIds = []) {
   return { blocks: state.blocks, linkedIds: linkedDocIds.filter((id) => state.linked.has(String(id))) };
 }
 
-// returns the index of the last line consumed; block precedence: fence · rule · heading · quote · list item · continuation · paragraph
+// returns the index of the last line consumed; block precedence: fence · table · rule · heading · quote · list item · continuation · paragraph
 function putProseLine(state, lines, index) {
   const line = lines[index];
   if (line.trimStart().startsWith(PROSE_FENCE)) return putProseFence(state, lines, index);
+  const head = getProseTableHead(line, lines[index + 1]);
+  if (head) return putProseTable(state, lines, index, head);
   if (line.trim() === '') state.open = null;
   else if (PROSE_RULES.has(line.trim())) putProseBlock(state, { kind: 'rule' }, false);
   else putProseMarked(state, line);
@@ -1651,6 +1672,62 @@ function putProseFence(state, lines, index) {
   const content = lines.slice(index + 1, close);
   putProseBlock(state, { kind: 'code', text: content.join('\n'), lineCount: content.length }, false);
   return Math.min(close, lines.length - 1);
+}
+
+// a header line over a delimiter line of as many cells, both holding a bar, at most PROSE_TABLE_COLUMNS_MAX → over the cap stays text
+function getProseTableHead(line, next) {
+  if (!line.includes('|') || !next?.includes('|')) return null;
+  const cells = getProseCells(line);
+  const delimiters = getProseCells(next);
+  if (cells.length > PROSE_TABLE_COLUMNS_MAX || delimiters.length !== cells.length) return null;
+  if (!delimiters.every((cell) => PROSE_TABLE_DELIMITER.test(cell))) return null;
+  return { cells, aligns: delimiters.map(getProseAlign) };
+}
+
+function getProseAlign(delimiter) {
+  if (!delimiter.endsWith(':')) return 'start';
+  return delimiter.startsWith(':') ? 'center' : 'end';
+}
+
+// body lines run to a blank line or a line with no bar
+function putProseTable(state, lines, index, head) {
+  const getRow = (cells) => getProseRowCells(cells, head.cells.length).map((cell) => getProseInlines(cell, state));
+  const table = putProseBlock(state, { kind: 'table', aligns: head.aligns, head: getRow(head.cells), rows: [] }, false);
+  let last = index + 1;
+  while (last + 1 < lines.length && lines[last + 1].trim() !== '' && lines[last + 1].includes('|')) {
+    last += 1;
+    table.rows.push(getRow(getProseCells(lines[last])));
+  }
+  return last;
+}
+
+// a short row ends in empty cells; a long row's extra cells join its last one → no text dropped
+function getProseRowCells(cells, count) {
+  if (cells.length <= count) return [...cells, ...Array(count - cells.length).fill('')];
+  return [...cells.slice(0, count - 1), cells.slice(count - 1).join(' | ')];
+}
+
+// cells split on `|` outside code spans, `\|` a literal bar; a bar at either end of the line opens or closes the row
+function getProseCells(line) {
+  const row = line.trim();
+  const cells = [''];
+  for (const span of getProseSpans(row)) {
+    if (typeof span === 'string') putProseCellText(cells, span);
+    else cells[cells.length - 1] += `\`${span.text}\``;
+  }
+  if (row.startsWith('|')) cells.shift();
+  if (cells.length > 1 && cells.at(-1) === '') cells.pop();
+  return cells.map((cell) => cell.trim());
+}
+
+function putProseCellText(cells, text) {
+  text.split('\\|').forEach((piece, index) => {
+    if (index > 0) cells[cells.length - 1] += '|';
+    piece.split('|').forEach((part, partIndex) => {
+      if (partIndex > 0) cells.push('');
+      cells[cells.length - 1] += part;
+    });
+  });
 }
 
 function putProseBlock(state, block, isOpen) {

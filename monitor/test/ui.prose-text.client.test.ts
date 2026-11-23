@@ -31,14 +31,22 @@ function renderProse(text: string, linkedDocIds: number[] = [], isCompact = fals
   return renderScreen(React.createElement(UI.ProseText as Component, { text, linkedDocIds, isCompact })) as RenderedNode;
 }
 
-// markup inside the atom's root, list keys dropped — a key never reaches the DOM
+// markup inside the atom's root, list keys and the per-block direction dropped — a key never reaches the DOM, and
+// "each block and each table cell isolates its direction" asserts the direction on its own
 function innerMarkup(text: string, linkedDocIds: number[] = []): string {
-  const html = getHtml(renderProse(text, linkedDocIds)).replace(/ key="[^"]*"/g, "");
+  const html = getHtml(renderProse(text, linkedDocIds)).replace(/ key="[^"]*"/g, "").replace(/ dir="auto"/g, "");
   return html.replace(/^<div class="prose-text">/, "").replace(/<\/div>$/, "");
 }
 
 const link = (id: string, digits = id) => `<a class="prose-link" href="#clauded-docs?doc=${id}">${digits}</a>`;
 const code = (text: string) => `<code class="machine">${text}</code>`;
+const ALIGN_CLASS: Record<string, string> = { start: "", center: ' class="prose-cell--center"', end: ' class="prose-cell--end"' };
+const th = (html: string, align = "start") => `<th scope="col"${ALIGN_CLASS[align]}>${html}</th>`;
+const td = (html: string, align = "start") => `<td${ALIGN_CLASS[align]}>${html}</td>`;
+const table = (head: string, rows: string[]) => '<div class="prose-table-frame" tabIndex="0" role="region" aria-label="Table, scrolls sideways">' +
+  `<table class="prose-table"><thead><tr>${head}</tr></thead><tbody>${rows.map((row) => `<tr>${row}</tr>`).join("")}</tbody></table></div>`;
+const getTableLine = (count: number, cell: (index: number) => string) => `| ${Array.from({ length: count }, (_, index) => cell(index)).join(" | ")} |`;
+const getTableText = (count: number) => `${getTableLine(count, (index) => `c${index + 1}`)}\n${getTableLine(count, () => "---")}\n| 1 |`;
 const getTextContent = (node: RenderedNode | string): string => (typeof node === "string" ? node : node.children.map(getTextContent).join(""));
 
 describe("source text → rendered blocks", () => {
@@ -101,6 +109,61 @@ describe("document references", () => {
       assert.equal(innerMarkup(row.text, row.ids), row.html);
     });
   }
+});
+
+describe("a table — a header line with a delimiter line under it, then its body lines", () => {
+  const rows = [
+    { name: "each column takes its delimiter cell's alignment: centre, end, anything else start", ids: [],
+      text: "| a | b | c |\n|---|:--:|--:|\n| 1 | 2 | 3 |",
+      html: table(th("a") + th("b", "center") + th("c", "end"), [td("1") + td("2", "center") + td("3", "end")]) },
+    { name: "a row with fewer cells than the header ends in empty cells", ids: [], text: "| a | b | c |\n|---|---|---|\n| 1 |",
+      html: table(th("a") + th("b") + th("c"), [td("1") + td("") + td("")]) },
+    { name: "a row with more cells than the header joins its extra text into its last cell", ids: [], text: "| a | b |\n|---|---|\n| 1 | 2 | 3 | 4 |",
+      html: table(th("a") + th("b"), [td("1") + td("2 | 3 | 4")]) },
+    { name: "a cell takes the inline rules; a bar inside a code span or escaped stays in its cell", ids: [44060],
+      text: "| x | y |\n|---|---|\n| `a|b` | **c** 44060 \\| d |", html: table(th("x") + th("y"), [td(code("a|b")) + td(`<strong>c</strong> ${link("44060")} | d`)]) },
+    { name: "the outer bars are optional", ids: [], text: "a | b\n--|--\n1 | 2", html: table(th("a") + th("b"), [td("1") + td("2")]) },
+    { name: "a table starts under an open paragraph and ends at a line with no bar", ids: [], text: "before\n| a |\n|---|\n| 1 |\nafter",
+      html: `<p>before</p>${table(th("a"), [td("1")])}<p>after</p>` },
+    { name: "a blank line ends a table", ids: [], text: "| a |\n|---|\n\n| 1 |", html: `${table(th("a"), [])}<p>| 1 |</p>` },
+    { name: "a header of more than 12 cells makes no table: its lines stay paragraph text, as typed", ids: [], text: getTableText(13),
+      html: `<p>${getTableText(13).split("\n").join("<br></br>")}</p>` },
+    { name: "a delimiter line whose cell count differs from the header's makes no table", ids: [], text: "| a | b |\n|---|",
+      html: "<p>| a | b |<br></br>|---|</p>" },
+    { name: "a line of dashes with no bar under a line stays a rule", ids: [], text: "a\n---", html: "<p>a</p><hr></hr>" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(innerMarkup(row.text, row.ids), row.html);
+    });
+  }
+
+  test("a 12-column header makes a table whose short row pads to exactly 12 cells", () => {
+    const tree = renderProse(getTableText(12));
+    const [bodyRow] = findNodes(findNodes(tree, (node) => node.type === "tbody")[0] ?? null, (node) => node.type === "tr");
+    assert.equal(findNodes(tree, (node) => node.type === "th").length, 12);
+    assert.deepEqual(bodyRow.children.map((cell) => (cell as RenderedNode).type), Array(12).fill("td"));
+  });
+});
+
+describe("one container, prose classes and an isolated direction", () => {
+  const ALL_KINDS = "# h\n### h5\npara\n- a\n  1. b\n> q\n---\n```\nx\n```\n| a | b |\n|:-:|--:|\n| `c` | 44060 |";
+  const DIRECTED = ["p", "h4", "h5", "blockquote", "pre", "ul", "ol", "li", "th", "td"];
+
+  test("every element the text renders takes prose classes only, the machine string aside", () => {
+    const tree = renderProse(ALL_KINDS, [44060]);
+    const [root] = findNodes(tree, (node) => node.type === "div");
+    const words = findNodes(tree, (node) => node !== root && node.props.className !== undefined).flatMap((node) => String(node.props.className).split(" "));
+    assert.ok(words.includes("prose-table"), words.join(" "));
+    assert.deepEqual(words.filter((word) => !word.startsWith("prose-") && word !== "machine"), []);
+  });
+
+  test("each block and each table cell isolates its direction", () => {
+    const tree = renderProse(ALL_KINDS);
+    const blocks = findNodes(tree, (node) => DIRECTED.includes(node.type));
+    assert.deepEqual([...new Set(blocks.map((node) => node.type))].sort(), [...DIRECTED].sort());
+    assert.deepEqual(blocks.filter((node) => node.props.dir !== "auto").map((node) => node.type), []);
+  });
 });
 
 describe("inline precedence", () => {
@@ -181,13 +244,39 @@ describe("output bounds", () => {
   });
 
   test("a quote holds inline nodes only, whatever block syntax its lines carry", () => {
-    const lines = ["# h", "- x", "1. y", "```", "---", "> z", "| a |"];
+    const lines = ["# h", "- x", "1. y", "```", "---", "> z", "| a |", "|---|"];
     const text = lines.map((line) => `> ${line}`).join("\n");
     const [quote] = findNodes(renderProse(text), (node) => node.type === "blockquote");
     assert.deepEqual(Array.from(getProseBlocks(text).blocks, (block) => block.kind), ["quote"]);
     assert.deepEqual(findNodes(quote, (node) => node !== quote && /^[a-z]/.test(node.type) && node.type !== "br").map((node) => node.type), []);
-    assert.equal(getHtml(quote), `<blockquote>${lines.join("<br></br>")}</blockquote>`);
+    assert.equal(getHtml(quote), `<blockquote dir="auto">${lines.join("<br></br>")}</blockquote>`);
   });
+
+  // densest output: a 2-character body line `|\n` under a 12-column header → one row + 12 padded cells = 6.5 nodes a character
+  const NODES_PER_CHAR = 7;
+  const NODE_HEADROOM = 100;
+  const TEXT_MAX = 20_000;
+  const TABLE_HEAD = `${getTableLine(12, () => "a")}\n${getTableLine(12, () => "-")}\n`;
+  const WORST_CASES = [
+    { kind: "paragraph", unit: "1 " },
+    { kind: "heading", unit: "# 1\n" },
+    { kind: "list", unit: "- 1\n  - 1\n    - 1\n" },
+    { kind: "quote", unit: ">\n" },
+    { kind: "rule", unit: "---\n" },
+    { kind: "code", unit: "```\n```\n" },
+    { kind: "table", unit: "|\n", head: TABLE_HEAD },
+  ];
+  const countNodes = (node: RenderedNode | string): number =>
+    typeof node === "string" ? 1 : node.children.reduce<number>((sum, child) => sum + countNodes(child), /^[a-z]/.test(node.type) ? 1 : 0);
+
+  for (const row of WORST_CASES) {
+    test(`a ${TEXT_MAX}-character worst case of a ${row.kind} renders under the linear node bound`, () => {
+      const text = `${row.head ?? ""}${row.unit.repeat(TEXT_MAX)}`.slice(0, TEXT_MAX);
+      const kinds = new Set(Array.from(getProseBlocks(text, [1]).blocks, (block) => block.kind));
+      assert.deepEqual([...kinds], [row.kind]);
+      assert.ok(countNodes(renderProse(text, [1])) <= NODES_PER_CHAR * text.length + NODE_HEADROOM);
+    });
+  }
 
   test("inline nesting stops at bold over a code span or a link", () => {
     const tree = renderProse("**a `b` 44060 **c** `**d**` clauded-docs/7** **`e` **f****", [44060]);
@@ -253,6 +342,7 @@ describe("the only link is the document route, in every element that renders tex
     { name: "a level-5 heading", text: `### ${LINE}`, element: "h5", hrefs: ["#clauded-docs?doc=44060"] },
     { name: "a level-3 list item", text: `- a\n  - b\n    - ${LINE}`, element: "li", hrefs: ["#clauded-docs?doc=44060"] },
     { name: "a quote", text: `> ${LINE}`, element: "blockquote", hrefs: ["#clauded-docs?doc=44060"] },
+    { name: "a table cell", text: `| x |\n|---|\n| ${LINE} |`, element: "td", hrefs: ["#clauded-docs?doc=44060"] },
     { name: "a fenced block", text: `\`\`\`\n${LINE}\n\`\`\``, element: "pre", hrefs: [] },
   ];
   for (const row of rows) {
