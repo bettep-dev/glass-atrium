@@ -2656,6 +2656,10 @@ a.prose-link:hover {
 	line-height: 1.4;
 	color: rgb(var(--dim));
 }
+/* a Bar on a stat's context line → that line's height, track centred: level with a BulletBar beside it; a table cell keeps its 8-high bar band */
+.stat-context > .bar-line {
+	min-height: 1lh;
+}
 @media (max-width: 640px) {
 	.stat-row { display: flex; flex-direction: column; }
 	.stat,

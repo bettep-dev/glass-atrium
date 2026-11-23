@@ -424,3 +424,32 @@ describe("an inline fold", () => {
     assert.equal(body.left - card.left, CARD_PAD_PX + 1);
   });
 });
+
+// the bars' tracks are Tailwind utilities → their own page runs the app's vendored Tailwind runtime, which styles markup added after it starts
+describe("bars on one stat row", () => {
+  const bars = renderToStaticMarkup(h(UI.StatRow, { stats: [
+    { label: "Reported rate", value: "91.3%", context: h(UI.BulletBar, { value: 0.913, target: 0.8, zones: [{ upTo: 0.8, tone: "crit" }, { upTo: 1, tone: "ok" }], ariaLabel: "Reported rate 91%" }) },
+    { label: "Finished", value: "29.0%", context: h(UI.Bar, { value: 0.29, ariaLabel: "finished 29 of started 100" }) },
+  ] }));
+  let barPage: Page;
+
+  before(async () => {
+    barPage = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+    await barPage.setContent(`<!doctype html><html><head></head><body style="margin: 0;"><div id="bars" style="padding: 24px; width: 900px;"></div></body></html>`);
+    await barPage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await barPage.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await barPage.addScriptTag({ path: resolve(HERE, "..", "public", "assets", "vendor", "tailwindcss-play-cdn-3.4.17.min.js") });
+    await barPage.$eval("#bars", (host, markup) => { host.innerHTML = markup; }, bars);
+    await barPage.waitForFunction(() => [...document.querySelectorAll('.stat-context > [role="img"] > div')].every((track) => track.getBoundingClientRect().height > 0));
+  });
+
+  test("share one centre line under their values", async () => {
+    const centres = await barPage.$$eval('.stat-context > [role="img"] > div', (tracks) => tracks.map((track) => {
+      const box = track.getBoundingClientRect();
+      return box.top + box.height / 2;
+    }));
+
+    assert.equal(centres.length, 2);
+    assert.ok(Math.abs(centres[0] - centres[1]) < 0.5, `track centres ${centres.join(", ")}`);
+  });
+});

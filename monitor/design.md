@@ -1123,6 +1123,7 @@
   - One-row summary rails that re-group the table beside them are removed.
 - **Charts**: only a pattern one number cannot show, typed by the question (trend, comparison, composition, distribution); a sparkline draws a real series or is removed.
   - A bar (`Bar`, `BulletBar`) marks a position and draws no number: the number is the stat's own value in the stat's own form (`91.3%`), never a second `0.91` beside the bar; its `aria-label` names the value.
+  - A bar's box: `BulletBar` is one meta line tall, its track centred; `Bar` takes that box on a stat's context line (`.stat-context > .bar-line`) → two stats' bars share one centre line, while a `.tbl-bar-cell` keeps its bar band ≤ 8 (§7.5).
 - **Precision**: only the digits the decision needs (`71%`, `3.1%`) — never `0.7123`.
 
 ### 12.9 Surfaces

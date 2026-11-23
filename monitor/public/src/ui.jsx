@@ -514,7 +514,7 @@ function Bar({ value, tone='neutral', max=1, ariaLabel }) {
     ? { minWidth: '3px', width: `${pct}%`, background: `rgb(var(${toneVar}) / 0.7)` }
     : { width: '0%' };
   return (
-    <div className="flex items-center" role="img" aria-label={label}>
+    <div className="bar-line flex items-center" role="img" aria-label={label}>
       <div className="flex-1 h-1.5 bg-sunken rounded-sm overflow-hidden">
         <div className="h-full rounded-sm" style={fillStyle} />
       </div>
