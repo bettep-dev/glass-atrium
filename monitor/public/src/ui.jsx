@@ -502,8 +502,8 @@ function toneVarColor(tone) {
 }
 
 // CSS width:% 가로 막대. tone 은 CSS class 가 아닌 KEY 를 받아 내부에서 토큰으로 매핑.
-// 색은 단독 인코딩 금지 — 길이가 크기를, showValue/aria 가 수치를 전달(dual-encoding a11y).
-function Bar({ value, tone='neutral', max=1, ariaLabel, showValue=false }) {
+// 색은 단독 인코딩 금지 — 길이가 크기를, aria-label 이 수치를 전달(dual-encoding a11y). 막대는 위치만 — 눈에 보이는 수치는 stat 자신의 값.
+function Bar({ value, tone='neutral', max=1, ariaLabel }) {
   const ratio = Math.min(Math.max((value ?? 0) / (max || 1), 0), 1);
   const pct = ratio * 100;
   const toneVar = BAR_TONE_VAR[tone] || BAR_TONE_VAR.neutral;
@@ -514,11 +514,10 @@ function Bar({ value, tone='neutral', max=1, ariaLabel, showValue=false }) {
     ? { minWidth: '3px', width: `${pct}%`, background: `rgb(var(${toneVar}) / 0.7)` }
     : { width: '0%' };
   return (
-    <div className="flex items-center gap-2" role="img" aria-label={label}>
+    <div className="flex items-center" role="img" aria-label={label}>
       <div className="flex-1 h-1.5 bg-sunken rounded-sm overflow-hidden">
         <div className="h-full rounded-sm" style={fillStyle} />
       </div>
-      {showValue && <span className="tnum fs-meta text-dim shrink-0">{(value ?? 0).toFixed(2)}</span>}
     </div>
   );
 }
@@ -526,7 +525,7 @@ function Bar({ value, tone='neutral', max=1, ariaLabel, showValue=false }) {
 // Bar 합성 — 측정값 fill + 선택적 zone 밴드(배경) + 선택적 target 마커.
 // zones 는 CONFIGURABLE — 동일 atom 이 0-1 건강지수와 rate-vs-target 둘 다 담당.
 // fill tone = value 가 속한 zone(else tone prop). zone 밴드는 prev.upTo→upTo 구간을 저opacity 로.
-function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=true }) {
+function BulletBar({ value, target, zones, tone='neutral', ariaLabel }) {
   const v = Math.min(Math.max(value ?? 0, 0), 1);
   let prev = 0;
   const bands = (zones || []).map((z) => {
@@ -542,8 +541,9 @@ function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=
   const fillVar = BAR_TONE_VAR[fillTone] || BAR_TONE_VAR.neutral;
   const label = ariaLabel
     || (target != null ? `${(v*100).toFixed(0)}% (target ${(target*100).toFixed(0)}%)` : `${(v*100).toFixed(0)}%`);
+  // one meta text line tall, the bar centred on it → the block under a stat keeps its line rhythm
   return (
-    <div className="flex items-center gap-2" role="img" aria-label={label}>
+    <div className="flex items-center fs-meta" style={{ minHeight: '1lh' }} role="img" aria-label={label}>
       <div className="relative flex-1 h-2 bg-sunken rounded-sm overflow-hidden">
         {bands.map((b, i) => (
           <div
@@ -563,7 +563,6 @@ function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=
           />
         )}
       </div>
-      {showValue && <span className="tnum fs-meta text-dim shrink-0">{v.toFixed(2)}</span>}
     </div>
   );
 }

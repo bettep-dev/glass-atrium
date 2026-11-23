@@ -359,7 +359,6 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 					{hasOverall && (
 						<BulletBar
 							value={Number(overallAvg)}
-							showValue
 							zones={[
 								{ upTo: 0.4, tone: "crit" },
 								{ upTo: 0.7, tone: "warn" },
@@ -559,7 +558,6 @@ function StyleRefCardI({ state, styleRef }) {
 		<BulletBar
 			value={Number(overallEmission)}
 			target={0.5}
-			showValue
 			zones={[
 				{ upTo: 0.5, tone: "crit" },
 				{ upTo: 1, tone: "ok" },
@@ -571,7 +569,6 @@ function StyleRefCardI({ state, styleRef }) {
 		<BulletBar
 			value={Number(overallUncorroborated)}
 			target={0.1}
-			showValue
 			zones={[
 				{ upTo: 0.1, tone: "ok" },
 				{ upTo: 1, tone: "warn" },

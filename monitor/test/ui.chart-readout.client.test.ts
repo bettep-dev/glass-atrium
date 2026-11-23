@@ -332,11 +332,28 @@ describe("a series mark carries the data colour, never a tone or the accent", ()
   });
 
   test("a bullet bar asked for the data colour fills with --data", () => {
-    const tree = render("BulletBar", { value: 0.6, target: 0.5, tone: "data", showValue: false, ariaLabel: "Peak 60/day" });
+    const tree = render("BulletBar", { value: 0.6, target: 0.5, tone: "data", ariaLabel: "Peak 60/day" });
     const fills = findNodes(tree, (n) => /^rgb\(var\(--/.test(String((n.props.style as Record<string, unknown> | undefined)?.background ?? "")))
       .map((n) => String((n.props.style as Record<string, unknown>).background));
     assert.equal(fills[0], "rgb(var(--data) / 0.75)", "the value fill; the target marker after it is not a series mark");
   });
+});
+
+// a bar marks a position; its number is the stat's own value in the stat's own form, never a second 0.91 beside it
+describe("a bar is a named image that draws no number", () => {
+  const rows = [
+    { name: "a bar", atom: "Bar", props: { value: 0.86, tone: "crit", ariaLabel: "pair success rate 86%" } },
+    { name: "a bullet bar with zones and a target", atom: "BulletBar",
+      props: { value: 0.913, target: 0.5, zones: [{ upTo: 0.5, tone: "crit" }, { upTo: 1, tone: "ok" }], ariaLabel: "Reported rate 91% (graduation target 50%)" } },
+    { name: "a bullet bar with neither", atom: "BulletBar", props: { value: 0.29, ariaLabel: "finished 29 of started 100 (29%)" } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render(row.atom, row.props);
+      assert.deepEqual({ role: tree.props.role, name: tree.props["aria-label"] }, { role: "img", name: row.props.ariaLabel });
+      assert.equal(collectText(tree).trim(), "", "collectText joins sibling nodes with a space");
+    });
+  }
 });
 
 describe("the optional y-scale states the plotted extent", () => {

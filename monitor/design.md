@@ -1119,6 +1119,7 @@
   - A source repeated per row ("Read from daemon-config.json" ×6) → once in the card foot.
   - One-row summary rails that re-group the table beside them are removed.
 - **Charts**: only a pattern one number cannot show, typed by the question (trend, comparison, composition, distribution); a sparkline draws a real series or is removed.
+  - A bar (`Bar`, `BulletBar`) marks a position and draws no number: the number is the stat's own value in the stat's own form (`91.3%`), never a second `0.91` beside the bar; its `aria-label` names the value.
 - **Precision**: only the digits the decision needs (`71%`, `3.1%`) — never `0.7123`.
 
 ### 12.9 Surfaces

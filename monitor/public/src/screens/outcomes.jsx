@@ -1741,7 +1741,7 @@ function ChannelPeakBarsO({ channels, threshold }) {
             <div key={channel.attribution_source} className="grid items-center gap-label fs-meta"
               style={{ gridTemplateColumns: 'minmax(0, 11rem) minmax(0, 1fr) 4.5rem' }}>
               <span className="text-dim truncate" title={channel.attribution_source}><window.UI.MachineString>{channel.attribution_source}</window.UI.MachineString></span>
-              <BulletBar value={peak / scale} target={floor ? floor / scale : null} showValue={false} ariaLabel={label} tone="data"/>
+              <BulletBar value={peak / scale} target={floor ? floor / scale : null} ariaLabel={label} tone="data"/>
               <span className="text-ink tabular-nums text-right">{formatIntO(peak)}/day</span>
             </div>
           );

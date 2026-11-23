@@ -210,3 +210,29 @@ for (const width of [1024, 1440, 1920]) {
     }, MIXED_CARD_SUGGESTIONS);
   });
 }
+
+// a bar marks a position; the stat beside it already states the number (60.0%), so no 0.60 rides the bar
+test("each mixed instrumentation card's bars state no number of their own", async () => {
+  await withInstrumentationPage(1440, async (page) => {
+    const cards = await page.evaluate(() =>
+      ["Suggestion confidence", "Style-check rate"].map((name) => {
+        const card = [...document.querySelectorAll<HTMLElement>("#improvement-instrumentation .card-title")]
+          .find((heading) => heading.textContent === name)?.closest(".card");
+        const bars = card ? [...card.querySelectorAll('[role="img"][aria-label]')]
+          .filter((bar) => /^(Average measured confidence|Reported rate|Uncorroborated share)/.test(bar.getAttribute("aria-label") ?? "")) : [];
+        const walker = card ? document.createTreeWalker(card, NodeFilter.SHOW_TEXT) : null;
+        const barForms: string[] = [];
+        for (let node = walker?.nextNode(); node; node = walker?.nextNode()) {
+          const text = node.textContent?.trim() ?? "";
+          if (/^\d\.\d\d$/.test(text)) barForms.push(text);
+        }
+        return { name, barCount: bars.length, barForms };
+      }),
+    );
+
+    for (const { name, barCount, barForms } of cards) {
+      assert.ok(barCount > 0, `"${name}" draws its bars`);
+      assert.deepEqual(barForms, [], `"${name}" holds a bar's second number form`);
+    }
+  }, MIXED_CARD_SUGGESTIONS);
+});
