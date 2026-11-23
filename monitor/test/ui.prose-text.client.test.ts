@@ -14,7 +14,6 @@ const QUEUE_SRC = resolve(__dirname, "../public/src/screens/queue.jsx");
 type Component = (props: Record<string, unknown>) => unknown;
 interface ProseList {
   kind: "list";
-  depth: number;
   items: Array<{ lists: ProseList[] }>;
 }
 interface ProseResult {
@@ -223,8 +222,8 @@ describe("a long fenced block folds only where the caller turns the fold on", ()
   });
 });
 
-function getListDepths(lists: ProseList[], depth = 1): Array<{ field: number; nesting: number }> {
-  return lists.flatMap((list) => [{ field: list.depth, nesting: depth }, ...Array.from(list.items).flatMap((item) => getListDepths(Array.from(item.lists), depth + 1))]);
+function getListDepths(lists: ProseList[], depth = 1): number[] {
+  return lists.flatMap((list) => [depth, ...Array.from(list.items).flatMap((item) => getListDepths(Array.from(item.lists), depth + 1))]);
 }
 
 function getRenderedListDepth(node: RenderedNode | string): number {
@@ -233,13 +232,25 @@ function getRenderedListDepth(node: RenderedNode | string): number {
   return inner + (node.type === "ul" || node.type === "ol" ? 1 : 0);
 }
 
+// spec §5 → A long body: one parse per change of the string and its declared ids, shared by the text and its Documents line
+describe("parse once", () => {
+  const text = "See clauded-docs/44106 and\n\n| a | b |\n|---|---|\n| 1 | 2 |";
+
+  test("an equal text with an equal id list, a fresh array, returns the result already parsed", () => {
+    assert.equal(getProseBlocks(text, [44106, 7]), getProseBlocks(text, [44106, 7]));
+  });
+
+  test("a changed text or id list is parsed again", () => {
+    const first = getProseBlocks(text, [44106]);
+    assert.deepEqual([getProseBlocks(`${text} `, [44106]) === first, getProseBlocks(text, [7]) === first], [false, false]);
+  });
+});
+
 describe("output bounds", () => {
   test("list depth never exceeds three, in the block tree and in the render", () => {
     const text = Array.from({ length: 12 }, (_, level) => `${" ".repeat(level * 2)}${level % 2 ? "1." : "-"} level ${level + 1}`).join("\n");
-    const lists = Array.from(getProseBlocks(text).blocks).filter((block) => block.kind === "list") as unknown as ProseList[]; // list blocks carry depth and items
-    const depths = getListDepths(lists);
-    assert.deepEqual(depths.filter((depth) => depth.field !== depth.nesting), []);
-    assert.equal(Math.max(...depths.map((depth) => depth.nesting)), 3);
+    const lists = Array.from(getProseBlocks(text).blocks).filter((block) => block.kind === "list") as unknown as ProseList[]; // list blocks carry their items' nested lists
+    assert.equal(Math.max(...getListDepths(lists)), 3);
     assert.equal(getRenderedListDepth(renderProse(text)), 3);
   });
 

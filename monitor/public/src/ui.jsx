@@ -1624,13 +1624,26 @@ const PROSE_DOC_ROUTE = '#clauded-docs?doc=';
 const PROSE_DOC_PATH = 'clauded-docs';
 const PROSE_DOC_FORMS = Object.freeze(['/', '?doc=']);
 const PROSE_DOC_DIGITS_MAX = 9;
+// the texts the open sheet and its rows show → a 15 s re-read finds its texts still parsed
+const PROSE_PARSED_MAX = 32;
+const PROSE_PARSED = new Map();
 
 /**
  * Body-text parser: text → blocks, plus the declared ids the text itself turned into links.
+ * Parsed once per text and id list (spec §5 → A long body): an equal pair returns the same result, which no caller mutates.
  * @param linkedDocIds - declared ids; only these link as a bare digit run, and only these are returned
  * @returns `linkedIds` — the declared ids linked in either form, in `linkedDocIds` order → the caller lists the rest separately
  */
 function getProseBlocks(text, linkedDocIds = []) {
+  const key = `${linkedDocIds.join(',')}\n${text ?? ''}`;
+  const parsed = PROSE_PARSED.get(key) ?? buildProseBlocks(text, linkedDocIds);
+  PROSE_PARSED.delete(key);
+  PROSE_PARSED.set(key, parsed);
+  if (PROSE_PARSED.size > PROSE_PARSED_MAX) PROSE_PARSED.delete(PROSE_PARSED.keys().next().value);
+  return parsed;
+}
+
+function buildProseBlocks(text, linkedDocIds) {
   const state = { blocks: [], open: null, item: null, levels: [], declared: new Set(linkedDocIds.map(String)), linked: new Set() };
   const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
   for (let index = 0; index < lines.length; index += 1) index = putProseLine(state, lines, index);
@@ -1757,7 +1770,7 @@ function getProseItemList(state, item) {
   const top = levels.at(-1);
   if (!top) return putProseTopList(state, item);
   if (item.indent > top.indent && levels.length < PROSE_LIST_DEPTH) {
-    const list = getProseChildList(top.list.items.at(-1).lists, item.isOrdered, levels.length + 1);
+    const list = getProseChildList(top.list.items.at(-1).lists, item.isOrdered);
     levels.push({ indent: item.indent, list });
     return list;
   }
@@ -1765,20 +1778,20 @@ function getProseItemList(state, item) {
   const level = levels.at(-1);
   if (level.list.isOrdered === item.isOrdered) return level.list;
   if (levels.length === 1) return putProseTopList(state, item);
-  level.list = getProseChildList(levels.at(-2).list.items.at(-1).lists, item.isOrdered, levels.length);
+  level.list = getProseChildList(levels.at(-2).list.items.at(-1).lists, item.isOrdered);
   return level.list;
 }
 
 function putProseTopList(state, item) {
-  const list = putProseBlock(state, { kind: 'list', isOrdered: item.isOrdered, depth: 1, items: [] }, true);
+  const list = putProseBlock(state, { kind: 'list', isOrdered: item.isOrdered, items: [] }, true);
   state.levels = [{ indent: item.indent, list }];
   return list;
 }
 
-function getProseChildList(lists, isOrdered, depth) {
+function getProseChildList(lists, isOrdered) {
   const last = lists.at(-1);
   if (last?.isOrdered === isOrdered) return last;
-  const list = { kind: 'list', isOrdered, depth, items: [] };
+  const list = { kind: 'list', isOrdered, items: [] };
   lists.push(list);
   return list;
 }
