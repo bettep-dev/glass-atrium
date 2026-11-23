@@ -536,7 +536,7 @@
   - `model-config.jsx` → `DiscardConfirmMC` "Discard changes": `background: transparent` → `.detail-foot` `--sunken` 위, rest · hover 6.62.
 - 긍정 action (improvement Approve) = `.btn sm` + ✓ glyph `text-ok`, 라벨 `--ink`.
 - `.sm`: padding 6px 8px (`--space-1_5` × `--space-2`) · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
-- disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) keeps its resting fill: ink edge + ink text + a leading ✓ glyph (glyph pending S2a — `base.css` draws none yet), no `--selected-fill` inversion.
+- disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) keeps its resting fill: ink edge + ink text + a leading ✓ glyph, no `--selected-fill` inversion. Every toggle (`.btn[aria-pressed]`) holds the ✓ slot at rest, so pressing never widens it; the quiet toggle (`.btn.ghost`) pressed = ink text + ✓, no edge, no fill.
 
 ### 7.5 Table — `Table` · `TableHead` (`.tbl`)
 
@@ -559,7 +559,7 @@
 ### 7.6 Segmented — `.seg`
 
 - `.seg` (a page-wide window such as range 7d/30d/90d — never a list filter): sunken track, no outer ring · `--radius-control` · clip. Items 14/500 `--dim` in every state · min-height 32. Selected = `--surface-raised-2` thumb + inset 1px `--control-edge` + ink text.
-- **No filled selected state on toggles**: `.seg` takes the thumb; pressed `.btn` takes ink edge + ink text + ✓ (glyph pending S2a); `--selected-fill` stays the checkbox checked fill (§7.15). The selected rule sets no weight — each atom keeps its one resting weight (500), so selecting never widens the box (`test/ui.control-state.e2e.test.ts`).
+- **No filled selected state on toggles**: `.seg` takes the thumb; pressed `.btn` takes ink edge + ink text + ✓; `--selected-fill` stays the checkbox checked fill (§7.15). The selected rule sets no weight — each atom keeps its one resting weight (500), so selecting never widens the box (`test/ui.control-state.e2e.test.ts`).
   - stage menu 의 checked 항목 (screen-local) = ✓ on the chosen value, as in every menu (§12.3). A block-width menu row keeps its box with or without the mark, so it is the one exemption from the no-state-glyph rule (§7.16).
 - `.seg` focus ring 은 inset (`outline-offset` = −ring width) — `.seg` 가 자식을 clip 하므로.
 
@@ -728,7 +728,7 @@
 
 | Tier · members | Height | Padding (block / inline) | Font (size / line / weight) | Outline mechanism |
 |---|---|---|---|---|
-| C32 button · `.btn` | 32 | 6 / 12 | 14 / 18 / 500 | 1px border, width constant, color swaps only; pressed = ink edge; ghost = transparent border |
+| C32 button · `.btn` | 32 | 6 / 12 | 14 / 18 / 500 | 1px border, width constant, color swaps only; pressed = ink edge + ✓; ghost = transparent border |
 | C32 small · `.btn.sm`, pagination, drawer nav, load-more, Refresh | 32 | 6 / 8 | 13 / 18 / 500 | as C32 button |
 | C32 icon-only · `.btn.icon` (close, zoom +/−) | 32 x 32 | 0 | glyph 14 | as C32 button |
 | C32 segment · `.seg` option (page-wide range) | 32 | 6 / 8 | 14 / 18 / 500 in every state | no group ring; selected = raised thumb + inset 1px control edge; focus outline inset −2 |
@@ -760,7 +760,7 @@
   - hover and focus never unclamp truncated text (§5.3 clamp stands)
 - **O1 law** (§12.3): a bar (search, filter, toolbar, pagination) draws no border on its controls; a border belongs only to form inputs, checkbox marks and the card edge.
 - The resting edge (`--control-edge`, 3:1 or more against every surface it sits on) applies to the secondary button, the selected `.seg` thumb and the form-field family, and to nothing else:
-  - a selected toggle's non-color cue is its edge, thumb or ✓ glyph (the pressed-toggle glyph pending S2a) — never a fill inversion
+  - a selected toggle's non-color cue is its edge, thumb or ✓ glyph — never a fill inversion
   - `.field`, `.field-select` and `.field-affix` rest on it; hover lifts it to `--faint`, and focus paints it `--accent` plus the global outline
 - A control row has one tier height, every item centered on one line, and role gaps: `--gap-control` 8 between controls, `--gap-control-group` 16 between groups, `--gap-label-inline` 4 from a label to its group.
   - `.control-row` ships the card-head geometry at an 8 block inset (padding 8 / 16 · min-height 48 · gap 8 row / 12 column — the 12 is deprecated for `--gap-control-group` — no rule below): one line of 32 controls is the card-head's 48, and a wrapped row keeps 8 above its first line and below its last. Where the row is the card's head, `.card-head` is the class. Its direct children are groups.
@@ -1155,8 +1155,6 @@
 - §7.11 spacing grid → §12.1 role tokens.
 - §7.12 Popover as a filter container → §12.3 Filter bar (Popover stays for ⓘ).
 - Principle 7 and §8 `.live-dot` ambient loop + §7.7 sidebar `.live-dot` → no ambient loop.
-- Retiring, marked in place until the owning stream lands:
-  - pressed-toggle ✓ glyph (§7.4 · §7.6 · §7.16) → built with the S2a controls
 
 ### 12.12 Contrast (measured, WCAG 2.2)
 

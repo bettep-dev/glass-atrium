@@ -2134,11 +2134,24 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	box-shadow: inset 0 0 0 1px rgb(var(--control-edge));
 	color: rgb(var(--ink));
 }
-/* a pressed toggle keeps its resting fill → an ink edge marks it, never the --selected-fill inversion */
+/* a pressed toggle keeps its resting fill → an ink edge + a leading ✓ mark it, never the --selected-fill inversion */
 .btn[aria-pressed="true"],
 .btn[aria-pressed="true"]:hover {
 	border-color: rgb(var(--ink));
 	color: rgb(var(--ink));
+}
+/* the quiet toggle has no edge to mark → ink text + ✓ alone */
+.btn.ghost[aria-pressed="true"],
+.btn.ghost[aria-pressed="true"]:hover {
+	border-color: transparent;
+}
+/* slot held at rest → pressing never widens the box; empty alt text → the name stays the label */
+.btn[aria-pressed]::before {
+	content: "✓" / "";
+	visibility: hidden;
+}
+.btn[aria-pressed="true"]::before {
+	visibility: visible;
 }
 /* inset ring — .seg clips its children (overflow: hidden) */
 .seg button:focus-visible {

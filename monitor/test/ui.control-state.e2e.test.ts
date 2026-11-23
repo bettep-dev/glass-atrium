@@ -1,5 +1,6 @@
 // Control-atom state invariance read in a real browser: no state of .btn or a .seg option changes its
-// border-box, so a selected option never reads as a bigger box than its siblings; a resting toggle's edge reads against its card
+// border-box, so a selected option never reads as a bigger box than its siblings — a pressed toggle button's ✓ fills a slot held at rest;
+// a resting toggle's edge reads against its card
 // at 3:1, so its box is visible before it is selected, and a resting field rests on that same edge, 3:1 on every surface;
 // an errored field keeps its error edge under hover; the shipped control row holds them on one 48 line.
 // Runner: npx tsx --test test/ui.control-state.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -26,6 +27,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
 const ATOMS = [
   { name: "a toggle button", id: "btn", markup: `<button type="button" class="btn" data-atom="btn" aria-pressed="false">Normal range</button>` },
   { name: "a small toggle button", id: "btn-sm", markup: `<button type="button" class="btn sm" data-atom="btn-sm" aria-pressed="false">Normal range</button>` },
+  { name: "a quiet toggle button", id: "btn-ghost", markup: `<button type="button" class="btn ghost sm" data-atom="btn-ghost" aria-pressed="false">Normal range</button>` },
   { name: "a segmented option", id: "seg",
     markup: `<div class="seg" data-atom="seg-group"><button type="button" data-atom="seg" aria-pressed="false">30d</button><button type="button" data-atom="seg-thumb" aria-pressed="true">90d</button></div>` },
 ] as const;
@@ -87,6 +89,7 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
     <label class="inline-target"><input type="radio" class="ctl-radio" name="option" data-atom="radio-checked" checked aria-label="R2 · keep the live page"></label>
     <span data-probe="selected-fill" style="color: rgb(var(--selected-fill));">selected</span>
     <span data-probe="control-edge" style="color: rgb(var(--control-edge));">edge</span>
+    <span data-probe="ink" style="color: rgb(var(--ink));">ink</span>
   </div>
 </body></html>`;
 
@@ -125,17 +128,17 @@ const readBox = (id: string): Promise<Box> => probe.readBox(getAtomSelector(id))
 const forcePseudo = (id: string, classes: readonly string[]) => probe.forcePseudo(getAtomSelector(id), classes);
 const readStyle = (id: string, prop: string) => probe.readStyle(getAtomSelector(id), prop);
 
-async function readBoxInState(id: string, state: (typeof STATES)[number]): Promise<Box> {
+async function readInState<T>(id: string, state: (typeof STATES)[number], read: () => Promise<T>): Promise<T> {
   if ("pseudo" in state) {
     await forcePseudo(id, state.pseudo);
-    try { return await readBox(id); } finally { await forcePseudo(id, []); }
+    try { return await read(); } finally { await forcePseudo(id, []); }
   }
   const [attr, value] = state.attr;
   const selector = getAtomSelector(id);
   const previous = await page.$eval(selector, (el, name) => el.getAttribute(name), attr);
   await page.$eval(selector, (el, [name, next]) => el.setAttribute(name, next), [attr, value] as const);
   try {
-    return await readBox(id);
+    return await read();
   } finally {
     await page.$eval(selector, (el, [name, prior]) => (prior === null ? el.removeAttribute(name) : el.setAttribute(name, prior)),
       [attr, previous] as const);
@@ -160,13 +163,46 @@ for (const atom of ATOMS) {
     for (const state of STATES) {
       test(`${state.name} matches the resting box`, async () => {
         const rest = await readBox(atom.id);
-        const changed = await readBoxInState(atom.id, state);
+        const changed = await readInState(atom.id, state, () => readBox(atom.id));
         assert.ok(Math.abs(changed.width - rest.width) < 0.01, `${atom.id} ${state.name} width ${changed.width} vs resting ${rest.width}`);
         assert.ok(Math.abs(changed.height - rest.height) < 0.01, `${atom.id} ${state.name} height ${changed.height} vs resting ${rest.height}`);
       });
     }
   });
 }
+
+// the toggle buttons' ✓ — a .seg option's cue is its thumb, so the segmented rows draw none
+const TOGGLE_BUTTONS = ATOMS.filter((atom) => atom.id.startsWith("btn"));
+const PRESSED = STATES.find((state) => state.name === "pressed")!;
+const readGlyph = (id: string) => page.$eval(getAtomSelector(id), (el) => {
+  const style = getComputedStyle(el, "::before");
+  return { content: style.content, visibility: style.visibility, color: style.color, width: parseFloat(style.width) };
+});
+
+describe("a pressed toggle button draws a leading ✓ in a slot it holds at rest", () => {
+  for (const atom of TOGGLE_BUTTONS) {
+    test(atom.name, async () => {
+      const rest = await readGlyph(atom.id);
+      const pressed = await readInState(atom.id, PRESSED, () => readGlyph(atom.id));
+      const ink = await probe.readStyle('[data-probe="ink"]', "color");
+
+      for (const [name, glyph] of Object.entries({ rest, pressed })) {
+        assert.match(glyph.content, /^"✓"/, `${atom.id} ${name} glyph`);
+        assert.ok(glyph.width > 0, `${atom.id} ${name} glyph box ${glyph.width}px`);
+      }
+      assert.equal(rest.visibility, "hidden", `${atom.id} resting glyph is hidden`);
+      assert.deepEqual({ visibility: pressed.visibility, color: pressed.color }, { visibility: "visible", color: ink }, `${atom.id} pressed glyph`);
+    });
+  }
+});
+
+test("a pressed quiet toggle draws no edge and no fill", async () => {
+  const look = await readInState("btn-ghost", PRESSED, async () => ({
+    border: await readStyle("btn-ghost", "border-top-color"),
+    fill: await readStyle("btn-ghost", "background-color"),
+  }));
+  assert.deepEqual(look, { border: "rgba(0, 0, 0, 0)", fill: "rgba(0, 0, 0, 0)" });
+});
 
 describe("a control row is one 48 line: every item centred on it, 12 between items", () => {
   const readToolbar = () =>
@@ -319,8 +355,9 @@ describe("the 40 tier: a composer box and its buttons share one height", () => {
     const rest = await readBox("btn-lg");
     const type = await Promise.all(["font-size", "font-weight", "padding-inline-start"].map((prop) => readStyle("btn-lg", prop)));
     assert.deepEqual([rest.height, ...type], [40, "14px", "500", "16px"]);
-    for (const state of STATES) {
-      const box = await readBoxInState("btn-lg", state);
+    // a composer's action button is no toggle → aria-pressed, the toggle's mark, is never one of its states
+    for (const state of STATES.filter((each) => each !== PRESSED)) {
+      const box = await readInState("btn-lg", state, () => readBox("btn-lg"));
       assert.ok(isSameBox(box, rest), `${state.name} ${box.width}x${box.height} vs resting ${rest.width}x${rest.height}`);
     }
   });
