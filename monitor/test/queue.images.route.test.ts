@@ -1,5 +1,5 @@
-// Owner images on orders and report replies: upload (type by content, size, page origin), serve (image-only headers),
-// the link from a send or reply to its images (count, reuse, age), the views that return them, the session-side paths.
+// Owner images on orders, report replies and decision answers: upload (type by content, size, page origin), serve
+// (image-only headers), the link from a send, reply or answer to its images (count, reuse, age), the views that return them, the session-side paths.
 // Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/queue.images.route.test.ts
 
 import test, { after, before, describe } from "node:test";
@@ -318,6 +318,71 @@ describe("images on a report reply", () => {
     assert.equal(response.statusCode, 409, response.body);
     assert.equal((await getPrisma().queueImage.findUniqueOrThrow({ where: { id } })).usedAt, null);
     assert.equal(await getPrisma().queueItemImage.count({ where: { itemId: reportId } }), 0);
+  });
+});
+
+describe("images on a decision answer", () => {
+  const OPTIONS = [
+    { code: "R1", label: "Keep the index", pros: "fast reads", cons: "slower writes" },
+    { code: "R2", label: "Drop the index", pros: "fast writes", cons: "slow reads" },
+  ];
+  const seedDecision = (sessionId: string, overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}) =>
+    seedReport(sessionId, { kind: "decision", title: "Keep the index?", options: OPTIONS, recommendedCode: "R1", ...overrides });
+  const getAttachedIds = (view: { attachments: Array<{ id: string }> }) => view.attachments.map((image) => image.id);
+
+  test("an answer's images, an approval's included, reach the owner's item view, the done list and the session", async () => {
+    for (const isApprovalClass of [false, true]) {
+      const sessionId = await seedSession();
+      const decisionId = await seedDecision(sessionId, { isApprovalClass });
+      const id = await uploadPngId("marked.png");
+      const response = await send("POST", `/api/queue/owner/items/${decisionId}/answer`, { code: "R1", text: "See the red box.", attachmentIds: [id] });
+      assert.equal(response.statusCode, 200, `approval ${isApprovalClass}: ${response.body}`);
+      const ownerView = (await send("GET", `/api/queue/owner/items/${decisionId}`, undefined, {})).json();
+      const done = (await send("GET", `/api/queue/owner/orders?kind=item&sessionIds=${sessionId}`, undefined, {})).json();
+      const session = (await send("GET", `/api/queue/items/${decisionId}?sessionId=${sessionId}`, undefined, {})).json();
+      assert.deepEqual(
+        [getAttachedIds(ownerView), getAttachedIds(done.items[0]), session.attachments.map((image: { path: string }) => image.path)],
+        [[id], [id], [path.join(imageDir, `${id}.png`)]],
+        `approval ${isApprovalClass}`,
+      );
+    }
+  });
+
+  test("an answer with images is refused where the decision takes no words, and with neither a code nor a text", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      { name: "a decision that takes an option code only", seed: { isFreeTextAllowed: false }, body: { code: "R1" }, error: "free_text_not_allowed", reason: "this item takes an option code only" },
+      { name: "neither a code nor a text", seed: {}, body: {}, error: "invalid_input", reason: "an option code or free text is required" },
+    ];
+    for (const row of rows) {
+      const decisionId = await seedDecision(sessionId, row.seed);
+      const id = await uploadPngId();
+      const response = await send("POST", `/api/queue/owner/items/${decisionId}/answer`, { ...row.body, attachmentIds: [id] });
+      assert.equal(response.statusCode, 400, `${row.name}: ${response.body}`);
+      const { error, reason, issues } = response.json();
+      assert.deepEqual([error, reason ?? issues[0].message], [row.error, row.reason], row.name);
+      assert.equal((await getPrisma().queueItem.findUniqueOrThrow({ where: { id: decisionId } })).status, "open", row.name);
+      assert.equal((await getPrisma().queueImage.findUniqueOrThrow({ where: { id } })).usedAt, null, row.name);
+    }
+  });
+
+  test("an answer naming an image it cannot take records no answer", async () => {
+    const sessionId = await seedSession();
+    const decisionId = await seedDecision(sessionId);
+    const response = await send("POST", `/api/queue/owner/items/${decisionId}/answer`, { code: "R2", text: "Drop it.", attachmentIds: [randomUUID()] });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().error, "image_unavailable");
+    const item = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: decisionId } });
+    assert.deepEqual([item.status, item.answerCode, item.answerText, item.answeredAt], ["open", null, null, null]);
+  });
+
+  test("an answer that loses the open race links nothing and leaves its image free", async () => {
+    const decisionId = await seedDecision(await seedSession(), { status: "answered" });
+    const id = await uploadPngId();
+    const response = await send("POST", `/api/queue/owner/items/${decisionId}/answer`, { code: "R1", attachmentIds: [id] });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal((await getPrisma().queueImage.findUniqueOrThrow({ where: { id } })).usedAt, null);
+    assert.equal(await getPrisma().queueItemImage.count({ where: { itemId: decisionId } }), 0);
   });
 });
 

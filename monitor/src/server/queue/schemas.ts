@@ -127,7 +127,7 @@ export const postItemBodySchema = z.discriminatedUnion("kind", [reportSchema, de
 export const emptyBodySchema = z.strictObject({});
 
 export const answerBodySchema = z
-  .strictObject({ code: optionCode.optional(), text: requiredText(MAX_TEXT).optional() })
+  .strictObject({ code: optionCode.optional(), text: requiredText(MAX_TEXT).optional(), attachmentIds })
   .refine((body) => body.code !== undefined || body.text !== undefined, "an option code or free text is required");
 
 export const replyBodySchema = z.strictObject({ text: requiredText(MAX_TEXT), attachmentIds });

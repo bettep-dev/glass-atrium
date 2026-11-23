@@ -20,16 +20,18 @@ export async function putAnswer(id: number, body: AnswerBody, signal: PageOrigin
   if (body.code !== undefined && !getOptionCodes(item.options).includes(body.code)) {
     throw new QueueRequestError(400, "unknown_option", "the code is not one of this item's options");
   }
-  if (body.text !== undefined && !item.isFreeTextAllowed) {
+  // images ride on words → refused wherever free text is
+  if ((body.text !== undefined || body.attachmentIds.length > 0) && !item.isFreeTextAllowed) {
     throw new QueueRequestError(400, "free_text_not_allowed", "this item takes an option code only");
   }
-  await putOpenTransition(id, {
-    status: "answered",
-    answerCode: body.code ?? null,
-    answerText: body.text ?? null,
-    answeredAt: new Date(),
-    answerRoute: "answer",
-    answerSignal: signal,
+  // one transaction → no answer stands without its images, and a failed image claim records no answer
+  await getPrisma().$transaction(async (tx) => {
+    await putOpenTransition(
+      id,
+      { status: "answered", answerCode: body.code ?? null, answerText: body.text ?? null, answeredAt: new Date(), answerRoute: "answer", answerSignal: signal },
+      tx,
+    );
+    await putItemImages(tx, [BigInt(id)], body.attachmentIds);
   });
 }
 

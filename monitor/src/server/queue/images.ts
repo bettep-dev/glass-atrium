@@ -1,5 +1,5 @@
-// Owner images on orders and report replies: upload into the queue image folder, the file read back, the claim by
-// one send or reply, and the views. The folder is always passed in (routes/queue.ts, scheduler.ts) → no default root here.
+// Owner images on orders, report replies and decision answers: upload into the queue image folder, the file read back,
+// the claim by one send, reply or answer, and the views. The folder is always passed in (routes/queue.ts, scheduler.ts) → no default root here.
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
@@ -13,9 +13,9 @@ import { QueueRequestError } from "./errors.js";
 import { getImageFacts } from "./image-format.js";
 
 export const IMAGE_BYTES_MAX = 10 * 1024 * 1024;
-/** An upload no send or reply claimed within this window: refused by a send, deleted by the sweep. */
+/** An upload no send, reply or answer claimed within this window: refused by a send, deleted by the sweep. */
 export const UNUSED_IMAGE_TTL_MS = 24 * 60 * 60 * 1000;
-/** Uploads inside the window that no send or reply claimed yet: 50 files, 200 MiB → a device cannot fill the disk before the sweep. */
+/** Uploads inside the window that no send, reply or answer claimed yet: 50 files, 200 MiB → a device cannot fill the disk before the sweep. */
 export const UNCLAIMED_IMAGES_MAX = { count: 50, bytes: 200 * 1024 * 1024 } as const;
 
 const IMAGE_FORMATS = {
@@ -113,8 +113,8 @@ export async function getImageFileOrThrow(imageDir: string, id: string): Promise
 }
 
 /**
- * Claims every image for one send or reply, then links each to every item in order — inside the caller's transaction,
- * so a send or reply that fails claims nothing. One guarded write → two sends racing for an image cannot both take it.
+ * Claims every image for one send, reply or answer, then links each to every item in order — inside the caller's transaction,
+ * so a send, reply or answer that fails claims nothing. One guarded write → two sends racing for an image cannot both take it.
  * @throws QueueRequestError 409 when an image is unknown, already used, or past the window
  */
 export async function putItemImages(tx: Prisma.TransactionClient, itemIds: bigint[], imageIds: string[]): Promise<void> {

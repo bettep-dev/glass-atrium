@@ -27,7 +27,7 @@ export interface QueueItemView {
   askedAt: string;
   answeredAt: string | null;
   deliveredAt: string | null;
-  /** The owner's images on this order or reply, each a local file the session reads. */
+  /** The owner's images on this order, reply or answer, each a local file the session reads. */
   attachments: SessionImageView[];
   /** From the stored kind: a relay is a peer session's text, every other item carries the owner's answer or message. */
   source: "owner" | "peer";

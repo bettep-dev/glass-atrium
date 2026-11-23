@@ -163,7 +163,7 @@ export interface OwnerItemView {
   closedAt: string | null;
   /** Shared by every copy of one owner send; null → not a send, or a message sent before send ids existed. */
   sendId: string | null;
-  /** The owner's images on this order or report reply, in the order sent. */
+  /** The owner's images on this order, report reply or decision answer, in the order sent. */
   attachments: ImageView[];
   /** null → never answered, or answered with no record */
   answerRecord: AnswerRecord | null;
