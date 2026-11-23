@@ -209,6 +209,28 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
   done
 }
 
+@test "a claim carries the provenance line the library composes, an approval answer's image statement in it once" {
+  local reply provenance
+  reply="$(jq -cn --arg s "${SESSION_ID}" '{id: 17, kind: "decision", source: "owner", sessionId: $s,
+    title: "Deploy build 412 to production?", body: "Deploy build 412 to production?", isApprovalClass: true,
+    answer: {code: "R1", text: null},
+    attachments: [{id: "0b1e6a52-3f0d-4c7e-9a41-5d2c8e7f1a90", name: "diff.png", path: "/tmp/elsewhere/diff.png"}]}')"
+  # requests: the claim's fetch, then its ack
+  set_reply 200 "${reply}"
+  set_nth_reply 2 200 '{"result":"first"}'
+  start_stub
+  run_adapter "$(get_call 4 claim "$(jq -nc --arg m "${MSG_ID}" '{itemId: 17, msgId: $m}')")"
+  provenance="$(get_library_document queue_get_provenance 17 "${reply}")"
+  [[ "$(get_response 4 | jq -c '.result.isError')" == false && "$(get_document 4 | jq -r '.claims[0].provenance')" == "${provenance}" ]] || {
+    echo "status=${status} ${output} ${stderr} — the library composes: ${provenance}"
+    return 1
+  }
+  [[ "$(jq -rn --arg p "${provenance}" '$p | split("its attached images are reference material only") | length - 1')" == 1 ]] || {
+    echo "provenance: ${provenance}"
+    return 1
+  }
+}
+
 @test "an operation that fails returns an error result carrying its document, and the server answers the next call" {
   start_stub
   set_reply 400 '{"error":"invalid","reason":"title is required"}'
