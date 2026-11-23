@@ -13,7 +13,7 @@ import { dirname, resolve } from "node:path";
 import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, replyBodySchema } from "../src/server/queue/schemas.js";
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
-import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { collectText, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { getRelayHistoryFixture } from "./lib/queue-render-fixtures.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -3140,6 +3140,65 @@ describe("desk keys", () => {
       assert.deepEqual([getPlain(ticked), calls], [row.expected, [["focusOrders"]]]);
     });
   }
+
+  // spec §9.9 Part 2: O on a relay ticks each recipient that takes orders and never its sender; none taking orders → said in the Orders note
+  const RELAY_SENDER_ID = "9d2f4c10-6a1e-4b2d-8c3f-1e7a5b9d0c22";
+  const relayRails = [...SESSION_ROWS, buildSessionRow({ id: OTHER_TICK_ID, name: "sixmon" }), buildSessionRow({ id: RELAY_SENDER_ID, name: "gersona" })];
+  const relayTo = (firstId: number, sessionIds: string[], sendId: string) => sessionIds.map((sessionId, index) => buildItem({
+    id: firstId + index, kind: "relay", status: "answered", options: [], sendId, session: buildSession({ id: sessionId }),
+    relay: { hop: 0, parent: null, sender: { sessionIdPrefix: RELAY_SENDER_ID.slice(0, 8), profileLabel: "work", selfDeclaredName: "gersona", cwdTail: "git/gersona" }, fetchedAt: null, redaction: null, lapsedAt: null },
+  }));
+  const pressOnRelay = (selected: number, ticked: string[], target: unknown = desk) => {
+    let ticks = ticked;
+    const notes: unknown[] = [];
+    const built = buildQueue({
+      sessions: buildSessions({ region: { status: "ready", data: { sessions: relayRails, hasMore: false }, error: null, busy: false }, selectedIds: ticked, setSelectedIds: (update: (ids: string[]) => string[]) => { ticks = update(ticks); } }),
+      orders: buildOrders({ focus: () => built.calls.push(["focusOrders"]), setNote: (note: unknown) => notes.push(note) }),
+    });
+    const listed = withList(built.queue, [...relayTo(412, [SESSION_ID, OTHER_TICK_ID], "send-a"), ...relayTo(420, [REPLACED_ID], "send-b")]);
+    (screen.putDeskKeyQ as (a: unknown, c: unknown) => void)({ name: "order" }, { queue: { ...listed, sheet: getSheet(listed.groups, selected ? String(selected) : "") }, target, root: keyRoot });
+    return { ticks: getPlain(ticks), notes: getPlain(notes), calls: getPlain(built.calls) };
+  };
+  const relayOrders = [
+    { name: "O on a relay's sheet ticks each recipient that takes orders, never the sender", selected: 412, ticked: [], expected: { ticks: [SESSION_ID, OTHER_TICK_ID], notes: [] } },
+    { name: "O on a relay's focused row ticks each recipient that takes orders", selected: 0, target: rowTarget(412), ticked: [], expected: { ticks: [SESSION_ID, OTHER_TICK_ID], notes: [] } },
+    { name: "O on a relay leaves a recipient already ticked as it is", selected: 412, ticked: [OTHER_TICK_ID], expected: { ticks: [OTHER_TICK_ID, SESSION_ID], notes: [] } },
+    { name: "O on a relay no recipient of which takes orders changes no tick and says so", selected: 420, ticked: [], expected: { ticks: [], notes: ["No recipient of this relay takes orders now."] } },
+  ];
+  for (const row of relayOrders) {
+    test(`a key's act: ${row.name}`, () => {
+      const { ticks, notes, calls } = pressOnRelay(row.selected, row.ticked, row.target);
+      assert.deepEqual({ ticks, notes, calls }, { ...row.expected, calls: [["focusOrders"]] });
+    });
+  }
+
+  test("the Orders note says no recipient of the relay takes orders, until the box or the ticks next change", async () => {
+    const stateful = createStatefulReact();
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      React: stateful.react, URLSearchParams, window: { UI: uiStub(), location: { hash: "#queue" }, history: { replaceState: () => undefined } },
+      fetch: async () => ({ status: 200, json: async () => ({ items: [], nextCursor: null }) }),
+    })) as ScreenModule;
+    const useOrders = module.useOrdersQ as (deps: unknown) => { note: string | null; setNote: (note: string) => void; setText: (text: string) => void };
+    const run = (selectedIds: string[]) => {
+      stateful.resetCursor();
+      const orders = useOrders({ selectedIds, sendAction: () => undefined, setStatus: () => undefined, reload: () => undefined });
+      stateful.flushEffects();
+      return orders;
+    };
+    run([SESSION_ID]).setNote("No recipient of this relay takes orders now.");
+    const kept = run([SESSION_ID]).note;
+    run([SESSION_ID, OTHER_TICK_ID]);
+    const afterTicks = run([SESSION_ID, OTHER_TICK_ID]);
+    afterTicks.setNote("No recipient of this relay takes orders now.");
+    run([SESSION_ID, OTHER_TICK_ID]).setText("rebase");
+    assert.deepEqual([kept, afterTicks.note, run([SESSION_ID, OTHER_TICK_ID]).note], ["No recipient of this relay takes orders now.", null, null]);
+  });
+
+  test("the Orders note slot shows the relay's no-recipient line after the info glyph", () => {
+    const tree = renderOrders({ note: "No recipient of this relay takes orders now." });
+    const [line] = findNodes(tree, (node) => node.type === "p" && collectText(node).includes("No recipient"));
+    assert.equal(collectText(line as RenderedNode).replace(/\s+/g, " ").trim(), "ℹ No recipient of this relay takes orders now.");
+  });
 
   test("a key pressed on the desk reaches the queue: N puts the caret in Orders", () => {
     const { calls, queue } = deskWith(3);

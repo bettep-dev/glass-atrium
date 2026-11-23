@@ -141,6 +141,7 @@ const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor:
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
 
+const ORDER_NOTE_Q = { NO_RELAY_RECIPIENT: "No recipient of this relay takes orders now." };
 const COMPOSER_ERROR_Q = {
 	noAnswer: "Pick an option or write an answer, then send.",
 	noOrder: "Write the order, then send.",
@@ -627,15 +628,31 @@ function getSheetOpenItemQ(sheet) {
 	return sheet.kind === "item" && sheet.item.status === "open" ? sheet.item : null;
 }
 
-// a rail row's own session, else the focused list row's, else the open item's → added to the ticks there are, then the caret in the Orders box (spec §9.2)
+/**
+ * A rail row's own session, else the focused list row's, else the sheet's → each that takes orders added to the ticks there are,
+ * then the caret in the Orders box (spec §9.2) · a relay's every recipient, never its sender; none taking orders → said in the Orders note (spec §9.9 Part 2).
+ */
 function putOrderKeyQ({ queue, target }) {
 	const railId = target?.closest?.("[data-session]")?.getAttribute("data-session");
-	const row = getRowQ(queue.groups, getRowIdQ(target));
-	const item = row?.item ?? (queue.sheet.kind === "item" ? queue.sheet.item : null);
-	const id = railId || item?.session.id;
-	const isTakingOrders = (queue.sessions.region.data?.sessions ?? []).some((row) => row.id === id && row.isSelectable);
-	if (isTakingOrders) queue.sessions.setSelectedIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
+	const row = railId ? null : getRowQ(queue.groups, getRowIdQ(target)) ?? getSheetRowQ(queue);
+	const ids = railId ? [railId] : getOrderKeyIdsQ(row);
+	const rails = queue.sessions.region.data?.sessions ?? [];
+	const taking = ids.filter((id) => rails.some((rail) => rail.id === id && rail.isSelectable));
+	if (taking.length > 0) queue.sessions.setSelectedIds((ticks) => [...ticks, ...taking.filter((id) => !ticks.includes(id))]);
+	else if (row?.item.kind === "relay") queue.orders.setNote(ORDER_NOTE_Q.NO_RELAY_RECIPIENT);
 	queue.orders.focus();
+}
+
+// the sheet's row as the list folds it; a relay that left keeps the copies it last had
+function getSheetRowQ(queue) {
+	const { sheet } = queue;
+	if (sheet.kind === "item") return getRowQ(queue.groups, sheet.id) ?? null;
+	return sheet.kind === "left" && sheet.item.kind === "relay" ? sheet : null;
+}
+
+function getOrderKeyIdsQ(row) {
+	if (!row) return [];
+	return row.item.kind === "relay" ? row.copies.map((copy) => copy.session.id) : [row.item.session.id];
 }
 
 function putLeftOrdersQ({ queue, root }) {
@@ -1130,7 +1147,10 @@ function useOrdersQ({ selectedIds, sendAction, setStatus, reload }) {
 	const [aim, setAim] = useStateQ(null);
 	const [composer, setComposer] = useStoredStateQ(DRAFT_STORE_Q.ORDER, EMPTY_COMPOSER_Q, getKeptDraftQ);
 	const { thread, read, showEarlier, reread } = useThreadQ({ selectedIds });
-	const setText = useCallbackQ((text) => setComposer((prev) => ({ ...prev, text, error: null })), []);
+	// a key's info line in the note slot (putOrderKeyQ) → gone once the box or the ticks next change
+	const [note, setNote] = useStateQ(null);
+	useEffectQ(() => { setNote(null); }, [selectedIds.join(",")]);
+	const setText = useCallbackQ((text) => { setNote(null); setComposer((prev) => ({ ...prev, text, error: null })); }, []);
 	const putError = useCallbackQ((error) => setComposer((prev) => ({ ...prev, error })), []);
 	const setImages = useCallbackQ((update) => setComposer((prev) => ({ ...prev, images: update(prev.images ?? []) })), []);
 	const onSent = useCallbackQ(() => { reload(); read(); }, [reload, read]);
@@ -1140,7 +1160,7 @@ function useOrdersQ({ selectedIds, sendAction, setStatus, reload }) {
 	// a fresh object per press → the same order shown twice is aimed at twice
 	const aimAt = useCallbackQ((id) => setAim({ id }), []);
 	const clearAim = useCallbackQ(() => setAim(null), []);
-	return { aim, aimAt, clearAim, focus, thread, read, reread, showEarlier, composer, setText, putError, setImages, send, resend };
+	return { aim, aimAt, clearAim, focus, thread, read, reread, showEarlier, composer, setText, putError, setImages, send, resend, note, setNote };
 }
 
 // one after another → one busy state and one refusal line at a time; the thread re-reads once
@@ -3088,7 +3108,7 @@ function OrderComposerQ({ queue, targets, rows = [], box, tray, isReady = true }
 		<ComposerQ field={{ id: ORDERS_Q.BOX_ID, label: <OrderLabelQ rows={rows.filter((row) => targets.ids.includes(row.id))} /> }} tray={tray}
 			text={box.text} onText={onText} isBusy={box.isBusy}
 			buttons={[{ label: getSendLabelQ(parts), parts, isInk: box.text.trim() !== "" && targets.ids.length > 0, keyName: "send", onPress: onSend }]}
-			note={<ComposerNoteQ error={box.error} info={changed} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets, isReady ? rows : null)} />} />
+			note={<ComposerNoteQ error={box.error} info={changed ?? orders.note} tray={tray} fieldId={ORDERS_Q.BOX_ID} rest={getOrderNoteQ(targets, isReady ? rows : null)} />} />
 	);
 }
 
