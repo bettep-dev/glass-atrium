@@ -3778,11 +3778,12 @@ describe("images on an answer", () => {
   const rows = [
     { name: "a plain decision's answer shows its thumbnails with no reference line", item: answered({}), opens: ["Open image 1 of 2: shot-1.png", "Open image 2 of 2: shot-2.png"], hasReference: false },
     { name: "an approval's answer shows its thumbnails and the reference line", item: answered({ isApprovalClass: true }), opens: ["Open image 1 of 2: shot-1.png", "Open image 2 of 2: shot-2.png"], hasReference: true },
+    { name: "a handled approval's answer keeps its thumbnails and the reference line", item: answered({ isApprovalClass: true }), isDone: true, opens: ["Open image 1 of 2: shot-1.png", "Open image 2 of 2: shot-2.png"], hasReference: true },
     { name: "an answer with no images draws no row and no reference line", item: answered({ isApprovalClass: true, attachments: [] }), opens: [], hasReference: false },
   ];
   for (const row of rows) {
     test(`under Your answer: ${row.name}`, () => {
-      const tree = render("YourAnswerQ", { item: row.item });
+      const tree = render("YourAnswerQ", { item: row.item, isDone: row.isDone });
       const opens = findNodes(tree, (node) => node.type === "button" && /^Open image /.test(String(node.props["aria-label"])));
       assert.deepEqual([opens.map((node) => node.props["aria-label"]), findNodes(tree, (node) => node.type === "img").map((node) => node.props.src), collectText(tree).includes(reference)],
         [row.opens, row.opens.map((_, index) => `/api/queue/owner/images/${IMAGE_ID[index]}`), row.hasReference]);
