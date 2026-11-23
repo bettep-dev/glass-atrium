@@ -657,7 +657,7 @@ describe("relay history", () => {
 
   test("a passed-on relay names its parent on the hop line; a relay at hop 0 has none", () => {
     const [received, forwarded] = entries(render("RelayLogQ", { history: history({ refusals: [] }) }));
-    assert.match(flat(forwarded!), /Hop 1 · sent after aidl \(self-named\) received relay #398 from atrium \(self-named\) at 2026-11-12 12:00/);
+    assert.match(flat(forwarded!), /Hop 1 · aidl \(self-named\) received relay #398 from atrium \(self-named\) · 2026-11-12 12:00/);
     assert.doesNotMatch(flat(received!), /Hop/);
   });
 

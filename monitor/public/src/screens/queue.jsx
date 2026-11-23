@@ -3793,7 +3793,7 @@ function RelayEntryQ({ entry, onRedact }) {
 	);
 }
 
-// only a relay passed on (hop 1 or 2): `Hop 1 · sent after aidl (self-named) received relay #398 from atrium (self-named) at 17:02` — both names the senders' own
+// only a relay passed on (hop 1 or 2): `Hop 1 · aidl (self-named) received relay #398 from atrium (self-named) · 17:02` — time after `·` → a dated line within 12 words (§12.6)
 function RelayHopLineQ({ relay, at }) {
 	const { MachineString } = window.UI;
 	const { sender, hop, parent } = relay;
@@ -3801,8 +3801,8 @@ function RelayHopLineQ({ relay, at }) {
 	return (
 		<p className="fs-meta text-dim">
 			<span className="font-semibold">{`Hop ${hop}`}</span>
-			{` · sent after ${getSenderLabelQ(sender)} received relay `}<MachineString>{`#${parent.id}`}</MachineString>
-			{` from ${getSenderLabelQ(parent.sender)} at ${getEntryTimeQ(parent.sentAt, at)}`}
+			{` · ${getSenderLabelQ(sender)} received relay `}<MachineString>{`#${parent.id}`}</MachineString>
+			{` from ${getSenderLabelQ(parent.sender)} · ${getEntryTimeQ(parent.sentAt, at)}`}
 		</p>
 	);
 }
