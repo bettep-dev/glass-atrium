@@ -570,32 +570,20 @@ test("every toned nav badge carries its tone's glyph, whichever store raised it"
   for (const b of badges) assert.strictEqual(b.glyph, app.ui.TONE_GLYPH[b.badgeTone], `${b.source} ${b.badgeTone} badge glyph`);
 });
 
-// Quiet counts sit on --sunken → tone on the glyph only.
-// A crit count is the item's one solid disc (spec 44084 §12.2b): ink shell, its glyph in the badge's own colour.
-test("a nav count is solid exactly when it is its item's first crit count, and only a quiet count tints its glyph", async (t) => {
-  const crit = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));
-  const warn = app.getHarness(allHealthy({ kpiState: ready({ last_1h_fail_count: 3 }) }));
+// One nav count atom (spec 44084 §5): severity rides on the glyph alone, so the shell never changes with the tone.
+test("every nav count is the tag count atom whatever its tone, and its glyph alone carries the tone colour", () => {
+  const harness = app.getHarness(allHealthy({ liveState: ready(daemonPayload(1)), kpiState: ready({ last_1h_fail_count: 3 }) }));
   const agents = ready(buildBreakerSummary([buildBreakerAlarm("glass-atrium-qa-debugger", "suspended")]));
-  const rows = [
-    { name: "a down part with failures and a suspended agent", harness: crit, fills: ["solid", "solid", "quiet"] },
-    { name: "failures with no down part", harness: warn, fills: ["solid", "quiet"] },
-  ];
-  for (const row of rows) {
-    await t.test(row.name, () => {
-      const counts = findNodes(renderSidebar(row.harness, agents), (n) => getClassTokens(n).includes("nav-count"));
-      assert.deepStrictEqual(counts.map((n) => n.props?.fill ?? "quiet"), row.fills);
-      for (const count of counts) {
-        const [glyph, ...words] = count.children.filter(isRenderedNode);
-        const tone = getCountTone(count);
-        const isSolid = count.props?.fill === "solid";
-        assert.ok(tone === "warn" || tone === "crit", `a count glyph is a raised tone's shape, not "${tone}"`);
-        assert.strictEqual(isSolid, tone === "crit", `a ${tone} count is ${isSolid ? "solid" : "quiet"}`);
-        assert.deepStrictEqual(getClassTokens(glyph).filter((c) => TONE.TEXT_CLASSES.includes(c)), isSolid ? [] : [`text-${tone}`], `a ${tone} count's glyph colour`);
-        assert.deepStrictEqual(getClassTokens(count).filter((c) => TONE.NAMES.includes(c)), [], `a ${tone} count shell names no tone`);
-        assert.strictEqual(count.props?.style, undefined, `a ${tone} count paints no inline tone fill`);
-        for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE.TEXT_CLASSES.includes(c)), [], `a ${tone} count's numeral stays neutral`);
-      }
-    });
+  const counts = findNodes(renderSidebar(harness, agents), (n) => getClassTokens(n).includes("nav-count"));
+
+  assert.deepStrictEqual(counts.map(getCountTone), ["crit", "crit", "warn"], "precondition: an Agents crit count, then a System map crit and warn count");
+  for (const count of counts) {
+    const [glyph, ...words] = count.children.filter(isRenderedNode);
+    const tone = getCountTone(count);
+    assert.deepStrictEqual([count.props?.role, count.props?.fill, count.props?.className], ["count", "tag", "nav-count"], `a ${tone} count is the tag count atom`);
+    assert.deepStrictEqual(getClassTokens(glyph).filter((c) => TONE.TEXT_CLASSES.includes(c)), [`text-${tone}`], `a ${tone} count's glyph colour`);
+    assert.strictEqual(count.props?.style, undefined, `a ${tone} count paints no inline tone fill`);
+    for (const word of words) assert.deepStrictEqual(getClassTokens(word).filter((c) => TONE.TEXT_CLASSES.includes(c)), [], `a ${tone} count's numeral stays neutral`);
   }
 });
 

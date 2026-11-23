@@ -343,18 +343,18 @@ describe("the Queue nav item", () => {
     return badge;
   }
 
-  test("carries its warn count as the solid round count badge, capped at 99+", async () => {
+  test("carries its count as the same tag round count atom as every other item, capped at 99+", async () => {
     const queue = getNavBadge(await renderNav(), "Queue");
-    assert.deepEqual(["pill--solid", "pill--num", "nav-count"].map((name) => classOf(queue).split(" ").includes(name)), [true, true, true]);
+    assert.deepEqual(classOf(queue).split(" ").sort(), ["nav-count", "pill", "pill--num", "pill--tag"]);
     assert.match(collectText(queue), /99\+/);
   });
 
-  test("the deviation glyph leads the count inside the badge in the badge's own colour, and assistive tech hears the full description", async () => {
+  test("the deviation glyph leads its count inside the badge in the warn colour, and assistive tech hears the full description", async () => {
     const queue = getNavBadge(await renderNav(), "Queue");
     const [glyph] = findNodes(queue, (n) => n.type === "span" && collectText(n) === "⚠ ");
     const [description] = findNodes(queue, (n) => classOf(n) === "sr-only");
     assert.ok(glyph, "the glyph renders inside the badge");
-    assert.deepEqual([glyph.props["aria-hidden"], classOf(glyph)], ["true", ""]);
+    assert.deepEqual([glyph.props["aria-hidden"], classOf(glyph)], ["true", "text-warn"]);
     assert.equal(collectText(description), `, ${QUEUE_SLOT.description}`);
   });
 });
@@ -373,25 +373,18 @@ describe("the nav counts", () => {
     return findNodes(item, (n) => getClasses(n).includes("pill"));
   }
 
-  // spec 44084 §12.2b: crit → solid, warn → quiet, one solid disc per item
-  const rows = [
-    { name: "a lone warn count stays quiet", badges: [SLOT.warn], solid: [false] },
-    { name: "a lone crit count is solid", badges: [SLOT.crit], solid: [true] },
-    { name: "a crit count raised after a warn count is drawn first, and solid", badges: [SLOT.warn, SLOT.crit], solid: [true, false] },
-    { name: "of two crit counts only the first is solid", badges: [SLOT.crit, SLOT.crit], solid: [true, false] },
-  ];
-  for (const row of rows) {
-    test(row.name, async () => {
-      const counts = await renderAgentCounts(row.badges);
-      assert.deepEqual(counts.map((n) => getClasses(n).includes("pill--solid")), row.solid);
-      for (const count of counts) assert.deepEqual(["nav-count", "pill--num"].map((name) => getClasses(count).includes(name)), [true, true], "every nav numeral takes the round count shape");
-    });
-  }
+  // spec 44084 §5: one atom → the shell is the same for every tone and position, the glyph takes its tone's colour
+  test("every nav count draws the tag round count shell, its glyph in its own tone, worst tone first", async () => {
+    const counts = await renderAgentCounts([SLOT.warn, SLOT.crit, SLOT.crit]);
+    const glyphClasses = counts.map((count) => findNodes(count, (n) => n.props["aria-hidden"] === "true" && /^[⚠✕] $/.test(collectText(n)))[0]?.props.className);
+    assert.deepEqual(counts.map((n) => [...getClasses(n)].sort()), counts.map(() => ["nav-count", "pill", "pill--num", "pill--tag"]));
+    assert.deepEqual(glyphClasses, ["text-crit", "text-crit", "text-warn"]);
+  });
 
-  test("a quiet count above 99 reads 99+, and its title and assistive-tech description stay whole", async () => {
+  test("a count above 99 reads 99+, and its title and assistive-tech description stay whole", async () => {
     const [count] = await renderAgentCounts([SLOT.many]);
     const [description] = findNodes(count, (n) => getClasses(n).includes("sr-only"));
-    assert.deepEqual([getClasses(count).includes("pill--solid"), count.props.title], [false, SLOT.many.title]);
+    assert.equal(count.props.title, SLOT.many.title);
     assert.match(collectText(count), /^⚠\s+99\+/);
     assert.equal(collectText(description), `, ${SLOT.many.description}`);
   });

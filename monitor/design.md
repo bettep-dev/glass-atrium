@@ -520,7 +520,7 @@
   - glyph 명암 (`--sunken` shell 위): warn 10.97 · info 10.13 · ok 9.52 · crit 6.62.
 - 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes).
 - **fill** (`Badge fill`): `quiet` (default — the neutral shell above) · `solid` = `.pill--solid`, `--ink` shell + `--surface` text — waits for the owner · `tag` = `.pill--tag`, `--tint-fill` + ink — a fact worth a glance · `warn` = `.pill--warn`, `--tint-warn` + ink, led by an ink `⚠` the atom draws — did not arrive. Every fill is 13 / 600, line 1, 20 high, no border.
-  - **Count shape** (`role="count"` with a fill, and the quiet nav count): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
+  - **Count shape** (`role="count"` with a fill; every nav count takes the tag fill (§7.7)): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
   - Never two solid badges on one row; a badge always holds a word or a number. The accent never fills a badge — it is the owner's run-time choice, so text on it has no guaranteed contrast.
 - glass 위에 올리지 않는다 (AP-6).
 
@@ -570,8 +570,7 @@
 - `.nav-item`: `--fs-control` · `--dim` · padding 6px 10px · `--radius-control` · Icon 14 · current = `--tint-select` + ink + 500, `aria-current="page"`; hover = `--sunken` + ink.
 - Icons (`app.jsx` → `NAV`): Learning `repeat` · Wiki `book-open` · System map `network` · Task results `target`.
 - `.nav-count`: every nav numeral is `Badge role="count"` in the Count shape (§7.3) — sans tnum 13, fill only, no border; `99+` cap; content = tone glyph (aria-hidden) + value + sr-only description (`title` beside it).
-  - quiet (`.nav-count.pill--num`): `--sunken` shell, dim numeral, the glyph in `text-<tone>` — a warn or ok count.
-  - solid (`.pill--solid`): the item's first crit count, and every count of an entry with `badgeFill` (the Queue); `--ink` shell, `--surface` numeral at 600, the glyph in the badge's own colour. At most one solid per item.
+  - One atom: `<Badge role="count" fill="tag" className="nav-count">` → `pill pill--tag pill--num nav-count`, `--tint-fill` shell, ink numeral at 600, for every count and every severity. Severity rides on the glyph alone, always in `text-<tone>` (crit `✕` · warn `⚠` · plain none); one glyph names one number, so an item with two facts draws two counts.
 
 ### 7.8 DetailSurface — drawer · fullscreen · confirm (`.detail-*`)
 

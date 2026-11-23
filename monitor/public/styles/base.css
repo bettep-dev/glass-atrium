@@ -2688,7 +2688,7 @@ a.prose-link:hover {
 	color: rgb(var(--ink));
 	font-weight: 500;
 }
-/* every nav numeral — the Badge count shape (quiet, or solid for the Queue and a crit count), at the row end */
+/* every nav numeral: the tag count chip, at the row end */
 .nav-count {
 	margin-left: auto;
 	flex: none;
