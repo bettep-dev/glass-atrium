@@ -1535,22 +1535,37 @@ function MachineString({ className = '', children }) {
 }
 
 /**
- * Agent-written plain text → paragraphs, lists, code, bold and document links, built as React elements — never set as HTML.
- * Unlike the document viewer's markdown pipeline: no headings, tables, images or author links, so queue text stays text.
+ * Agent-written Markdown → headings, paragraphs, lists, quotes, rules, code and document links, built as React elements — never set as HTML.
+ * Unlike the document viewer's markdown pipeline: no images, no author links and no HTML, so queue text stays text.
  * @param linkedDocIds - the item's declared document ids; a digit run equal to one becomes a link
  * @param isCompact - the 14 / 22 form inside an order bubble
+ * @param canFoldCode - a fence over PROSE_FOLD_LINES shows its head under a disclosure; off → every line, as a decision's text needs
  */
-function ProseText({ text, linkedDocIds = [], isCompact = false, className = '' }) {
+function ProseText({ text, linkedDocIds = [], isCompact = false, canFoldCode = false, className = '' }) {
   const { blocks } = getProseBlocks(text, linkedDocIds);
   const classes = `prose-text${isCompact ? ' prose-text--compact' : ''} ${className}`.trim();
-  return <div className={classes}>{blocks.map((block, index) => <ProseBlock key={index} block={block} />)}</div>;
+  return <div className={classes}>{blocks.map((block, index) => <ProseBlock key={index} block={block} canFoldCode={canFoldCode} />)}</div>;
 }
 
-function ProseBlock({ block }) {
-  if (block.kind === 'code') return <pre className="prose-pre">{block.text}</pre>;
-  if (block.kind === 'heading') return <p><strong>{block.inlines.map(renderProseInline)}</strong></p>;
+function ProseBlock({ block, canFoldCode }) {
+  if (block.kind === 'code') return canFoldCode && block.lineCount > PROSE_FOLD_LINES ? <ProseFoldedCode block={block} /> : <pre className="prose-pre">{block.text}</pre>;
+  if (block.kind === 'heading') return block.level === 1 ? <h4>{block.inlines.map(renderProseInline)}</h4> : <h5>{block.inlines.map(renderProseInline)}</h5>;
   if (block.kind === 'list') return <ProseList list={block} />;
+  if (block.kind === 'quote') return <blockquote>{renderProseLines(block.lines)}</blockquote>;
+  if (block.kind === 'rule') return <hr />;
   return <p>{renderProseLines(block.lines)}</p>;
+}
+
+// the thread's own `Show all N lines` control; open → every line
+function ProseFoldedCode({ block }) {
+  const [isOpen, setOpen] = useState(false);
+  const text = isOpen ? block.text : block.text.split('\n', PROSE_FOLD_LINES).join('\n');
+  return <>
+    <pre className="prose-pre">{text}</pre>
+    <details className="prose-fold" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="group disclosure fs-meta"><DisclosureChevron /><span>{`Show all ${block.lineCount} lines`}</span></summary>
+    </details>
+  </>;
 }
 
 function ProseList({ list }) {
@@ -1577,9 +1592,14 @@ function renderProseInline(node, index) {
 // every pattern is line-anchored with no nested quantifier; inline scans only move forward → linear in the text
 const PROSE_BULLET = /^( *)[-*•] (.*)$/;
 const PROSE_NUMBER = /^( *)(\d{1,9})[.)] (.*)$/;
-const PROSE_HEADING = /^#{1,6} (.*)$/;
+const PROSE_HEADING = /^(#{1,6}) (.*)$/;
+const PROSE_HEADING_TOP_MARKS = 2;
+const PROSE_QUOTE = /^>(?: (.*))?$/;
+const PROSE_RULES = Object.freeze(new Set(['---', '***', '___']));
 const PROSE_FENCE = '```';
+const PROSE_FOLD_LINES = 20;
 const PROSE_NEST_INDENT = 2;
+const PROSE_LIST_DEPTH = 3;
 const PROSE_STAR = Object.freeze({ kind: 'star' });
 const PROSE_DOC_ROUTE = '#clauded-docs?doc=';
 const PROSE_DOC_PATH = 'clauded-docs';
@@ -1592,33 +1612,44 @@ const PROSE_DOC_DIGITS_MAX = 9;
  * @returns `linkedIds` — the declared ids linked in either form, in `linkedDocIds` order → the caller lists the rest separately
  */
 function getProseBlocks(text, linkedDocIds = []) {
-  const state = { blocks: [], open: null, item: null, declared: new Set(linkedDocIds.map(String)), linked: new Set() };
+  const state = { blocks: [], open: null, item: null, levels: [], declared: new Set(linkedDocIds.map(String)), linked: new Set() };
   const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
   for (let index = 0; index < lines.length; index += 1) index = putProseLine(state, lines, index);
   return { blocks: state.blocks, linkedIds: linkedDocIds.filter((id) => state.linked.has(String(id))) };
 }
 
-// returns the index of the last line consumed
+// returns the index of the last line consumed; block precedence: fence · rule · heading · quote · list item · continuation · paragraph
 function putProseLine(state, lines, index) {
   const line = lines[index];
   if (line.trimStart().startsWith(PROSE_FENCE)) return putProseFence(state, lines, index);
-  if (line.trim() === '') {
-    state.open = null;
-    return index;
-  }
+  if (line.trim() === '') state.open = null;
+  else if (PROSE_RULES.has(line.trim())) putProseBlock(state, { kind: 'rule' }, false);
+  else putProseMarked(state, line);
+  return index;
+}
+
+function putProseMarked(state, line) {
   const heading = PROSE_HEADING.exec(line);
-  const item = heading ? null : getProseItem(line);
-  if (heading) putProseBlock(state, { kind: 'heading', inlines: getProseInlines(heading[1], state) }, false);
+  const quote = heading ? null : PROSE_QUOTE.exec(line);
+  const item = heading || quote ? null : getProseItem(line);
+  if (heading) putProseBlock(state, { kind: 'heading', level: heading[1].length <= PROSE_HEADING_TOP_MARKS ? 1 : 2, inlines: getProseInlines(heading[2], state) }, false);
+  else if (quote) putProseQuote(state, quote[1] ?? '');
   else if (item) putProseItem(state, item);
   else putProseText(state, line);
-  return index;
+}
+
+// a quote's lines take inline rules only → a quote never holds a block
+function putProseQuote(state, line) {
+  const quote = state.open?.kind === 'quote' ? state.open : putProseBlock(state, { kind: 'quote', lines: [] }, true);
+  quote.lines.push(getProseInlines(line, state));
 }
 
 // a fence with no closing line runs to the end of the text; the opening line's info string is dropped
 function putProseFence(state, lines, index) {
   let close = index + 1;
   while (close < lines.length && !lines[close].trimStart().startsWith(PROSE_FENCE)) close += 1;
-  putProseBlock(state, { kind: 'code', text: lines.slice(index + 1, close).join('\n') }, false);
+  const content = lines.slice(index + 1, close);
+  putProseBlock(state, { kind: 'code', text: content.join('\n'), lineCount: content.length }, false);
   return Math.min(close, lines.length - 1);
 }
 
@@ -1637,23 +1668,40 @@ function getProseItem(line) {
   return null;
 }
 
-// indented under an open list → one nested level under its last top item; any deeper indent renders at that level too
 function putProseItem(state, item) {
   const entry = { value: item.value, lines: [getProseInlines(item.text, state)], lists: [] };
-  const list = state.open?.kind === 'list' ? state.open : null;
-  if (list && item.indent >= PROSE_NEST_INDENT) {
-    getProseChildList(list.items.at(-1).lists, item.isOrdered).items.push(entry);
-  } else {
-    const target = list?.isOrdered === item.isOrdered ? list : putProseBlock(state, { kind: 'list', isOrdered: item.isOrdered, items: [] }, true);
-    target.items.push(entry);
-  }
+  getProseItemList(state, item).items.push(entry);
   state.item = entry;
 }
 
-function getProseChildList(lists, isOrdered) {
+// further indented than the item above → nested under it, to PROSE_LIST_DEPTH; shallower → the level whose indent it reaches
+function getProseItemList(state, item) {
+  const levels = state.open?.kind === 'list' ? state.levels : [];
+  const top = levels.at(-1);
+  if (!top) return putProseTopList(state, item);
+  if (item.indent > top.indent && levels.length < PROSE_LIST_DEPTH) {
+    const list = getProseChildList(top.list.items.at(-1).lists, item.isOrdered, levels.length + 1);
+    levels.push({ indent: item.indent, list });
+    return list;
+  }
+  while (levels.length > 1 && levels.at(-2).indent >= item.indent) levels.pop();
+  const level = levels.at(-1);
+  if (level.list.isOrdered === item.isOrdered) return level.list;
+  if (levels.length === 1) return putProseTopList(state, item);
+  level.list = getProseChildList(levels.at(-2).list.items.at(-1).lists, item.isOrdered, levels.length);
+  return level.list;
+}
+
+function putProseTopList(state, item) {
+  const list = putProseBlock(state, { kind: 'list', isOrdered: item.isOrdered, depth: 1, items: [] }, true);
+  state.levels = [{ indent: item.indent, list }];
+  return list;
+}
+
+function getProseChildList(lists, isOrdered, depth) {
   const last = lists.at(-1);
   if (last?.isOrdered === isOrdered) return last;
-  const list = { kind: 'list', isOrdered, items: [] };
+  const list = { kind: 'list', isOrdered, depth, items: [] };
   lists.push(list);
   return list;
 }
