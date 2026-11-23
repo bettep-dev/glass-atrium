@@ -1308,7 +1308,7 @@ describe("done items in the one list", () => {
     const { queue } = buildQueue();
     const held = open(3);
     const groups = getGroups([], [doneDecision({ id: 3, status: "withdrawn" })]);
-    const sheet = call("getSheetStateQ", groups, "3", held);
+    const sheet = call("getSheetStateQ", groups, "3", { item: held, copies: [held] });
     const [shown] = findNodes(render("QueueSheetQ", { queue: { ...queue, groups, sheet } }), (node) => node.type === "ItemSheetQ");
     assert.deepEqual([(sheet as { kind: string }).kind, shown?.props.hasLeft, shown?.props.isDone], ["left", true, false]);
   });
@@ -1422,7 +1422,7 @@ describe("a relay on its way", () => {
     recipients.map(([name, overrides], index) => buildItem({
       id: 412 + index, kind: "relay", title: TITLE, body: BODY, options: [], isFreeTextAllowed: false, status: "answered",
       askedAt: "2026-11-19T05:20:00.000Z", answeredAt: "2026-11-19T05:20:00.000Z", sendId: "relay-send-1",
-      session: buildSession({ id: `5e55a0${index}0-0000-4000-8000-000000000000`, name, state: "live", isWaiting: true }),
+      session: buildSession({ id: `5e55a0${index}0-0000-4000-8000-000000000000`, sessionIdPrefix: `5e55a0${index}0`, name, state: "live", isWaiting: true }),
       relay: { hop: 0, parent: null, sender, fetchedAt: null, redaction: null, lapsedAt: null, ...facts },
       ...overrides,
     }));
@@ -1568,6 +1568,78 @@ describe("a relay on its way", () => {
     const links = findNodes(block as RenderedNode, (node) => node.type === "a").map((node) => [collectText(node), node.props.href]);
     assert.deepEqual(links, [["44099", "#clauded-docs?doc=44099"]]);
   });
+
+  // spec §9.9 Part 3: the sheet keeps a relay after its row leaves — the copies it last had, its outcome read from the relay thread
+  const RECIPIENT_IDS = [0, 1, 2].map((index) => `5e55a0${index}0-0000-4000-8000-000000000000`);
+  const leftRows = [
+    { name: "a relay whose row left keeps its sheet with every copy it last had", items: [buildItem({ id: 3 })], ids: [], expected: { kind: "left", id: 412, copies: [412, 413, 414] } },
+    { name: "a relay whose row still stands stays its row's sheet", items: toThree(), ids: [], expected: { kind: "item", id: 412, copies: null } },
+    { name: "a relay whose row left keeps its sheet while a recipient other than the first is ticked", items: [], ids: [RECIPIENT_IDS[2]], expected: { kind: "left", id: 412, copies: [412, 413, 414] } },
+    { name: "a relay whose row left gives way to the list once neither end is ticked", items: [], ids: [SESSION_ID], expected: { kind: "none", id: null, copies: null } },
+  ];
+  for (const row of leftRows) {
+    test(`the sheet's state: ${row.name}`, () => {
+      const copies = toThree();
+      const sheet = call<{ kind: string; id: number | null; copies?: Array<{ id: number }> }>("getSheetStateQ", call("getGroupsQ", row.items), "412", { item: copies[0], copies }, row.ids);
+      assert.deepEqual({ kind: sheet.kind, id: sheet.id, copies: sheet.copies?.map((copy) => copy.id) ?? null }, row.expected);
+    });
+  }
+
+  test("a relay whose row left keeps a To line for every recipient it last had", () => {
+    const copies = toThree();
+    const queue = withList(buildQueue().queue, [buildItem({ id: 3 })]);
+    const body = collectText(byClass(render("QueueSheetQ", { queue: { ...queue, sheet: { kind: "left", id: 412, item: copies[0], copies } } }), "queue-sheet-body")[0] as RenderedNode).replace(/\s+/g, " ");
+    assert.deepEqual(["yoaida", "atrium", "gersona"].map((name) => body.includes(`${name} · 5e55a0`)), [true, true, true]);
+  });
+
+  const loadWithAnswer = async (answer: { status: number; body: unknown }, urls: string[] = []) => (await loadScreenModule(QUEUE_SRC, {
+    URLSearchParams, window: { UI: uiStub() },
+    fetch: async (url: string) => { urls.push(url); return { status: answer.status, json: async () => answer.body }; },
+  })) as ScreenModule;
+  const getEnd = (module: ScreenModule) => (module.getRelayEndQ as (item: unknown, copies: unknown) => Promise<unknown>)(toThree()[0], toThree());
+
+  test("a relay whose row left reads the relay thread scoped to its recipients and finds its send by id, never the single-item read", async () => {
+    const urls: string[] = [];
+    const other = { ...toYoaida()[0], id: 500, sendId: "relay-send-2" };
+    const module = await loadWithAnswer({ status: 200, body: { items: [other, ...toThree()], nextCursor: null, refusals: [] } }, urls);
+    const found = getPlain(await getEnd(module)) as Array<{ id: number }>;
+    const [path, query] = urls[0]!.split("?");
+    assert.deepEqual(
+      [urls.length, path, ownerOrdersQuerySchema.parse(Object.fromEntries(new URLSearchParams(query))), found.map((copy) => copy.id)],
+      [1, "/api/queue/owner/orders", { kind: "relay", sessionIds: RECIPIENT_IDS, limit: 30 }, [412, 413, 414]],
+    );
+  });
+
+  const missRows = [
+    { name: "a read that does not hold the send", answer: { status: 200, body: { items: [{ ...toYoaida()[0], id: 500, sendId: "relay-send-2" }], nextCursor: null, refusals: [] } } },
+    { name: "a failed read", answer: { status: 503, body: { error: "unavailable" } } },
+  ];
+  for (const row of missRows) {
+    test(`a relay whose row left finds no outcome on ${row.name}`, async () => assert.equal(await getEnd(await loadWithAnswer(row.answer)), null));
+  }
+
+  const lapse = (copy: Record<string, unknown>) => ({ ...copy, status: "expired", relay: { ...(copy.relay as object), lapsedAt: "2026-11-22T05:20:00.000Z" } });
+  const receive = (copy: Record<string, unknown>) => ({ ...copy, status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" });
+  const ended = (lapsed: number) => toThree().map((copy, index) => (index < lapsed ? lapse(copy) : receive(copy)));
+  const footRows = [
+    { name: "while the read runs the read-only line stays", end: undefined, text: "Read-only. It reaches each session by itself and stays in Relay history.", ids: [] },
+    { name: "every copy received", end: ended(0), text: "ℹ Every session has received this relay.", ids: [] },
+    { name: "one copy lapsed names its recipient and id", end: ended(1), text: "ℹ This relay lapsed for yoaida 5e55a000.", ids: ["5e55a000"] },
+    { name: "two lapsed name both with their ids", end: ended(2), text: "ℹ This relay lapsed for yoaida 5e55a000 and atrium 5e55a010.", ids: ["5e55a000", "5e55a010"] },
+    { name: "three or more lapsed name their count", end: ended(3), text: "ℹ This relay lapsed for 3 sessions.", ids: [] },
+    { name: "a copy still on its way sends the owner to Relay history", end: [...ended(1).slice(0, 2), toThree()[2]], text: "ℹ This relay left the list. Relay history has its outcome.", ids: [] },
+    { name: "no outcome found", end: null, text: "ℹ This relay left the list. Relay history has its outcome.", ids: [] },
+  ];
+  for (const row of footRows) {
+    test(`a relay's foot after its row left: ${row.name}`, () => {
+      const tree = render("RelayFootQ", { copies: toThree(), end: row.end });
+      const [region] = findNodes(tree, (node) => node.props?.role === "status");
+      assert.deepEqual(
+        [collectText(region as RenderedNode).replace(/\s+/g, " ").replace(/ \./g, ".").trim(), findNodes(tree, (node) => node.props?.atom === "MachineString").map((node) => collectText(node))],
+        [row.text, row.ids],
+      );
+    });
+  }
 });
 
 describe("selection", () => {
@@ -1638,7 +1710,7 @@ describe("what the sheet shows", () => {
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, held, row.ids ?? []);
+      const sheet = call<{ kind: string; id: number }>("getSheetStateQ", call("getGroupsQ", row.items), row.hashId, { item: held, copies: [held] }, row.ids ?? []);
       assert.deepEqual({ kind: sheet.kind, id: sheet.id }, row.expected);
     });
   }

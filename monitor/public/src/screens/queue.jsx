@@ -141,6 +141,8 @@ const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor:
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
 
+// lapsed recipients named one by one up to this count; more → their count (spec §9.9 Part 3)
+const RELAY_LAPSED_NAMED_MAX_Q = 2;
 const ORDER_NOTE_Q = { NO_RELAY_RECIPIENT: "No recipient of this relay takes orders now." };
 const COMPOSER_ERROR_Q = {
 	noAnswer: "Pick an option or write an answer, then send.",
@@ -426,19 +428,31 @@ function getRowQ(groups, id) {
 }
 
 /**
- * What the middle pane shows, `{ kind, id, item? }`: `item` the opened row's sheet · `left` the opened open item the read no longer has open ·
- * `none` → the list (spec §4.3: nothing is opened for the owner; a session ticked out of scope takes its item's sheet with it).
- * @param held - the open item last shown on the sheet, null when none
+ * What the middle pane shows, `{ kind, id, item?, copies? }`: `item` the opened row's sheet · `left` the held item the read no longer lists
+ * (an open item no longer open, a relay whose row left), with the copies it last had · `none` → the list
+ * (spec §4.3: nothing is opened for the owner; a session ticked out of scope takes its item's sheet with it).
+ * @param held - `{ item, copies }` last shown on the sheet (getHeldRowQ), null when none
  * @param ids - the ticks; none → every session in scope
  */
 function getSheetStateQ(groups, hashItemId, held, ids = []) {
 	if (!hashItemId) return { kind: "none", id: null };
-	if (held?.session && ids.length > 0 && !ids.includes(held.session.id)) return { kind: "none", id: null };
-	if (held !== null && hashItemId === String(held.id) && getRowQ(groups, held.id)?.item.status !== "open") {
-		return { kind: "left", id: held.id, item: held };
+	if (held !== null && hashItemId === String(held.item.id) && isHeldGoneQ(held.item, getRowQ(groups, held.item.id))) {
+		const isInScope = ids.length === 0 || held.copies.some((copy) => isTickedQ(copy, ids));
+		return isInScope ? { kind: "left", id: held.item.id, item: held.item, copies: held.copies } : { kind: "none", id: null };
 	}
 	const id = getSelectedIdQ(groups, hashItemId);
 	return id === null ? { kind: "none", id: null } : { kind: "item", id, item: getRowQ(groups, id).item };
+}
+
+// a relay is never open → gone once its row is; any other held item once it is no longer open
+function isHeldGoneQ(item, row) {
+	return item.kind === "relay" ? row === undefined : row?.item.status !== "open";
+}
+
+// what the sheet keeps once the read drops it: an open item, or a relay with the copies its row last had (spec §9.9 Part 3)
+function getHeldRowQ(sheet, groups) {
+	if (sheet.kind !== "item" || (sheet.item.status !== "open" && sheet.item.kind !== "relay")) return null;
+	return { item: sheet.item, copies: getRowQ(groups, sheet.id)?.copies ?? [sheet.item] };
 }
 
 /**
@@ -951,8 +965,9 @@ function useSheetQ(groups, ids) {
 	lastKind.current = sheet.kind;
 	const steps = getStepsQ(groups, sheet.id, lastIndex.current);
 	if (steps.index >= 0) lastIndex.current = steps.index;
-	const shown = getSheetOpenItemQ(sheet);
-	useEffectQ(() => { if (shown !== null) setHeld((prev) => (prev === shown ? prev : shown)); }, [shown]);
+	const shown = getHeldRowQ(sheet, groups);
+	const shownCopyIds = shown?.copies.map((copy) => copy.id).join(",");
+	useEffectQ(() => { if (shown !== null) setHeld(shown); }, [shown?.item, shownCopyIds]);
 	const setMove = useSheetMovesQ(currentId);
 	const putOpenId = useCallbackQ((value) => { setOpenId(value); setHashStateQ({ item: value }); setHeld(null); }, []);
 	const openItem = useCallbackQ((id) => { setMove("sheet"); putOpenId(String(id)); setCurrentId(id); }, [setMove, putOpenId]);
@@ -1927,7 +1942,7 @@ function QueueSheetQ({ queue }) {
 	const { sheet } = queue;
 	if (sheet.kind !== "item" && sheet.kind !== "left") return null;
 	const row = getRowQ(queue.groups, sheet.id);
-	return <ItemSheetQ key={sheet.id} item={sheet.item} copies={row?.copies} queue={queue} cliPath={queue.list.data?.cliPath} hasLeft={sheet.kind === "left"} isDone={sheet.kind === "item" && row?.isDone === true} />;
+	return <ItemSheetQ key={sheet.id} item={sheet.item} copies={row?.copies ?? sheet.copies} queue={queue} cliPath={queue.list.data?.cliPath} hasLeft={sheet.kind === "left"} isDone={sheet.kind === "item" && row?.isDone === true} />;
 }
 
 /**
@@ -1938,6 +1953,8 @@ function QueueSheetQ({ queue }) {
  * @param isDone - a row under a Done band → read-only: no delivery lines, the foot how and when it ended (spec §4.6)
  */
 function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, isDone = false }) {
+	const end = useRelayEndQ(item, copies, hasLeft);
+	const ended = Array.isArray(end) ? end : copies;
 	const draft = queue.drafts[item.id] ?? {};
 	const isBusy = queue.busy.id === item.id;
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
@@ -1945,16 +1962,41 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 		<div className="card queue-pane queue-sheet">
 			<SheetHeadQ item={item} copies={copies} queue={queue} kind={isDone ? DONE_KIND_Q[item.kind] : getKindWordQ(item)} />
 			<div className="card-body" tabIndex={-1}>
-				<SheetBodyQ item={item} copies={copies} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} />
+				<SheetBodyQ item={item} copies={ended} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} />
 			</div>
-			<div className="card-foot">{getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone })}</div>
+			<div className="card-foot">{getSheetFootQ({ item, copies, end, draft, queue, isBusy, error, hasLeft, isDone })}</div>
 		</div>
 	);
 }
 
-function getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone }) {
+/**
+ * How a relay whose row left ended (spec §9.9 Part 3): its send in the relay thread scoped to its recipients, read once.
+ * @returns undefined while unread or still listed · the send's copies · null when the read failed or did not hold it
+ */
+function useRelayEndQ(item, copies, hasLeft) {
+	const [end, setEnd] = useStateQ(undefined);
+	const isRelayLeft = hasLeft && item.kind === "relay";
+	useEffectQ(() => {
+		if (!isRelayLeft) return undefined;
+		let isCurrent = true;
+		getRelayEndQ(item, copies).then((found) => { if (isCurrent) setEnd(found); });
+		return () => { isCurrent = false; };
+	}, [isRelayLeft]);
+	return end;
+}
+
+// the history read's relay thread, matched by send id — never the single-item read, an agent-class route
+async function getRelayEndQ(item, copies) {
+	const ids = copies.map((copy) => copy.session.id);
+	const answer = await sendOwnerRequestQ(`/orders?${getOrdersQueryQ({ ids, before: null, limit: ORDERS_Q.PAGE, kind: "relay", profile: "" })}`);
+	const items = isOkAnswerQ(answer) && Array.isArray(answer.data?.items) ? answer.data.items : [];
+	const sent = items.filter((copy) => item.sendId !== null && copy.sendId === item.sendId);
+	return sent.length > 0 ? sent : null;
+}
+
+function getSheetFootQ({ item, copies, end, draft, queue, isBusy, error, hasLeft, isDone }) {
 	if (isDone) return <EndLineQ item={item} />;
-	if (item.kind === "relay") return <RelayFootQ copies={copies} />;
+	if (item.kind === "relay") return <RelayFootQ copies={copies} end={end} />;
 	if (hasLeft) return <LeftQueueLineQ />;
 	return <SheetFootQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
 }
@@ -1967,10 +2009,38 @@ function EndLineQ({ item }) {
 	return <div className="queue-composer"><p className="fs-meta text-dim" title={end.title}>{`${end.text} · ${at}`}</p></div>;
 }
 
-// a relay's foot (spec §9.9): one line, no field and no button — nothing on it is the owner's to send
-function RelayFootQ({ copies }) {
+/**
+ * A relay's foot (spec §9.9): one line, no field and no button — nothing on it is the owner's to send.
+ * Once its row left, how its copies ended in place of the read-only line (Part 3), said once.
+ * @param end - useRelayEndQ's answer
+ */
+function RelayFootQ({ copies, end }) {
 	const to = copies.length > 1 ? "each session" : copies[0].session.name;
-	return <div className="queue-composer"><p className="fs-meta text-dim">{`Read-only. It reaches ${to} by itself and stays in Relay history.`}</p></div>;
+	return (
+		<div className="queue-composer" role="status">
+			{end === undefined
+				? <p className="fs-meta text-dim">{`Read-only. It reaches ${to} by itself and stays in Relay history.`}</p>
+				: <ToneLineQ tone="info"><span className="text-dim"><RelayEndWordsQ copies={end} /></span></ToneLineQ>}
+		</div>
+	);
+}
+
+// every copy closed → received or lapsed by name; a copy still on its way, or no send found → Relay history holds the rest
+function RelayEndWordsQ({ copies }) {
+	const { MachineString } = window.UI;
+	if (copies === null || copies.some((copy) => getRelayOutcomeQ(copy) === null)) return "This relay left the list. Relay history has its outcome.";
+	const lapsed = copies.filter((copy) => copy.relay.lapsedAt !== null);
+	if (lapsed.length === 0) return "Every session has received this relay.";
+	if (lapsed.length > RELAY_LAPSED_NAMED_MAX_Q) return `This relay lapsed for ${lapsed.length} sessions.`;
+	return (
+		<>
+			{"This relay lapsed for "}
+			{lapsed.map((copy, index) => (
+				<React.Fragment key={copy.id}>{index > 0 && " and "}{`${copy.session.name} `}<MachineString>{copy.session.sessionIdPrefix}</MachineString></React.Fragment>
+			))}
+			{"."}
+		</>
+	);
 }
 
 // the way back (its arrival count in its name, painted beside the glyph-only square) · the h2 · the position and previous / next (spec §4.3, §12.5)
