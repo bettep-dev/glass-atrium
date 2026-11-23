@@ -25,7 +25,7 @@ import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, ty
 import {
   buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
@@ -500,7 +500,21 @@ const TEXT_STATES: QueueState[] = [
   },
 ];
 
-const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES, ...RELAY_ROW_STATES, ...ANSWER_STATES, ...TEXT_STATES];
+// spec §4.2 → Column rule at the three list widths: the one list with every band kind — the tagless Reports, Decisions, In delivery with
+// relays and the answered decision's two images, the Done bands — at its top, its In delivery band and its Done part
+const COLUMN_STATES: QueueState[] = [
+  { nn: "42", name: "one-list-columns", viewports: LIST_WIDTHS, getFixture: getOneListFixture, setUp: (page) => waitForDoneBands(page) },
+  {
+    nn: "42b", name: "one-list-columns-delivery", viewports: LIST_WIDTHS, getFixture: getOneListFixture,
+    setUp: async (page) => {
+      await waitForDoneBands(page);
+      await scrollToBand(page, '[aria-labelledby="queue-band-inDelivery"]');
+    },
+  },
+  { nn: "42c", name: "one-list-columns-done", viewports: LIST_WIDTHS, getFixture: getOneListFixture, setUp: (page) => scrollToDonePart(page) },
+];
+
+const QUEUE_STATES: QueueState[] = [...DESK_STATES, ...ORDER_STATES, ...REFUSAL_STATES, ...LOOK_STATES, ...TWIN_STATES, ...RELAY_STATES, ...RAIL_STATES, ...DONE_STATES, ...RELAY_ROW_STATES, ...ANSWER_STATES, ...TEXT_STATES, ...COLUMN_STATES];
 
 // Markup written by a session: rendered as text, it shows these literals; parsed as HTML, it adds probe elements.
 const MARKUP_TITLE = "보고 <b data-markup-probe>굵게</b> 끝";
@@ -792,11 +806,16 @@ async function waitForDoneBands(page: Page): Promise<void> {
 // the list body scrolled so the first Done band stands at its top
 async function scrollToDonePart(page: Page): Promise<void> {
   await waitForDoneBands(page);
-  await page.evaluate(() => {
+  await scrollToBand(page, '[aria-label^="Done"]');
+}
+
+// the list body scrolled so the first band matching `band` (a group attribute selector) stands at its top
+async function scrollToBand(page: Page, band: string): Promise<void> {
+  await page.evaluate((selector) => {
     const body = document.querySelector(".queue-list > .card-body") as HTMLElement;
-    const group = document.querySelector('.queue-listbox [role="group"][aria-label^="Done"]') as HTMLElement;
+    const group = document.querySelector(`.queue-listbox [role="group"]${selector}`) as HTMLElement;
     body.scrollTop = group.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
-  });
+  }, band);
 }
 
 // Show more at the list's end pressed once, settled when the next done page has joined the list

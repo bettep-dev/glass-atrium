@@ -786,6 +786,15 @@ export function getProseFixture(): QueueFixture {
   return { ...relays, items: relays.items.map((item) => ({ ...item, ...bodies.get(item.id) })) };
 }
 
+/**
+ * The one list with every band kind: Decisions with one Approval (tag and fact), the tagless Reports, In delivery with relays beside
+ * the answered decision's two images (fact alone), the Done bands (tag and fact).
+ */
+export function getOneListFixture(): QueueFixture {
+  const relays = getRelayRowFixture();
+  return { ...relays, items: relays.items.map((item) => (item.id === 103 ? { ...item, isApprovalClass: true } : item)), done: DONE_ITEMS };
+}
+
 /** `rest` plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
 export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
   const hidden = [["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e91", "spare"], ["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e92", "deploy62-probe"]].map(([id, name]) => ({
