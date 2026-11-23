@@ -27,7 +27,7 @@ const DEFAULT_FILTER_Q = Object.freeze({ profile: "" });
 // the done items' loaded cap (spec §4.6); a page is the history read's own (ORDERS_Q.PAGE)
 const DONE_Q = { MAX: 200, LABEL: "Done" };
 const DONE_KIND_Q = { decision: "Decision", report: "Report" };
-// every key the page keeps in its hash → one writer merges them all; an old link's session=, view= or status= is left out at the first write
+// every key the page keeps in its hash → one writer merges them all; an old link's session= or view= is left out at the first write
 const HASH_KEYS_Q = ["profile", "item", "to"];
 const LIST_GROUPS_Q = {
 	decisions: { key: "decisions", label: "Decisions" },
@@ -1619,7 +1619,7 @@ function QueueRowQ({ row, isSelected, isNew = false, view, onSelect, onOrder, on
 			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} /></span>}
 			{getRowTitleQ(row, view.isNameShown)}
 			<span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>
-			<span className="queue-row-fact">{cells.fact}</span>
+			<span className="queue-row-fact" title={row.isDone ? getEndQ(item).title : undefined}>{cells.fact}</span>
 			<span className="queue-row-age" title={formatKstDateTime(at)}>{getRowAgeQ(at)}</span>
 			<Icon name="chevR" size={16} className="queue-row-chevron" />
 		</div>
@@ -1673,12 +1673,12 @@ function ItemSessionNameQ({ session }) {
 }
 
 // the tag column: the Approval tag, receipt counts — each the count atom led by its glyph, its words in its title (spec §4.2) —
-// or how a done item ended, plain dim text (spec §4.6)
+// or a done item's kind, plain dim text (spec §4.6)
 function RowTagsQ({ tags }) {
 	const { Badge, TONE_GLYPH } = window.UI;
 	return <>{tags.map((tag) => {
 		if (tag.badge) return <Badge key={tag.text} fill={tag.badge}>{tag.text}</Badge>;
-		if (!tag.glyph) return <span key={tag.text} className="queue-row-end" title={tag.title}>{tag.text}</span>;
+		if (!tag.glyph) return <span key={tag.text} className="queue-row-kind">{tag.text}</span>;
 		return (
 			<Badge key={tag.word} role="count" fill="tag" title={tag.word}>
 				{tag.glyph === "warn" ? <span aria-hidden="true" className="text-warn">{TONE_GLYPH.warn}</span> : getPauseGlyphQ()}
@@ -1725,13 +1725,14 @@ function getPauseGlyphQ() {
 }
 
 /**
- * A list row's cells (spec §4.2): `tags` — the Approval tag, or receipt counts worst first; `fact` — one short fact, or null;
+ * A list row's cells (spec §4.2, §4.6): `tags` — the Approval tag, receipt counts worst first, or a done item's kind;
+ * `fact` — one short fact, a done item's how it ended, or null;
  * `extras` — the account, a start directory's mark and an order's images, in the row's title and accessible name only.
  */
 function getRowCellsQ(row, isAccountShown) {
 	const { item, copies } = row;
 	const extras = [isAccountShown && item.session.profileLabel, copies.length === 1 && item.session.isNameRegistered === false && "start directory", getImagesWordQ(item)].filter(Boolean);
-	if (row.isDone) return { tags: [getEndQ(item)], fact: DONE_KIND_Q[item.kind], extras };
+	if (row.isDone) return { tags: [{ text: DONE_KIND_Q[item.kind] }], fact: getEndQ(item).text, extras };
 	if (item.status === "open" && item.kind === "decision") {
 		const count = (item.options ?? []).length;
 		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [], fact: `${count} ${count === 1 ? "option" : "options"}`, extras };
@@ -1792,7 +1793,7 @@ function getReceiptQ(item) {
 }
 
 // kind + session + title + tag + fact + extras + age → `Decision from gersona: <title>, Approval, 3 options, posted 9m ago`
-// a done row's fact is its kind, already said first → `Report from atrium: <title>, Read, ended 1h ago`
+// a done row's tag is its kind, already said first → `Report from atrium: <title>, Read, ended 1h ago`
 // a relay names both ends whatever the ticks → `Relay from aidl to yoaida: <title>, sent 2m ago` (spec §9.9)
 function getRowLabelQ(row, cells, isNameShown) {
 	const { item } = row;
@@ -1800,7 +1801,8 @@ function getRowLabelQ(row, cells, isNameShown) {
 	const tags = cells.tags.map((tag) => tag.text ?? tag.word);
 	const age = `${getAgeVerbQ(row)} ${window.UI.formatRelativeTime(getRowAtQ(row))}`;
 	const title = item.kind === "relay" ? getRelayTitleQ(item) : item.title;
-	const parts = [`${kind}${getLabelEndsQ(row, isNameShown)}: ${title}`, ...tags, cells.fact !== kind && cells.fact, ...cells.extras, age].filter(Boolean);
+	const cellWords = [...tags, cells.fact].filter((word) => word !== kind);
+	const parts = [`${kind}${getLabelEndsQ(row, isNameShown)}: ${title}`, ...cellWords, ...cells.extras, age].filter(Boolean);
 	return parts.join(", ");
 }
 

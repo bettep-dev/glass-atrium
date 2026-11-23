@@ -1130,12 +1130,11 @@ describe("filter state in the hash", () => {
     });
   }
 
-  // Orders is always open, the ticks are the one selection and done items follow the open ones (spec §9.1, §9.2, §4.6)
-  // → an old link's view=, session= or status= names no state, and the first write leaves it out
+  // Orders is always open and the ticks are the one selection (spec §9.1, §9.2)
+  // → an old link's view= or session= names no state, and the first write leaves it out
   const oldLinks = [
     { name: "an old link's view= opens nothing and leaves the hash at the first write", start: "#queue?view=orders&item=41" },
     { name: "an old link's session= scopes nothing and leaves the hash at the first write", start: "#queue?session=s1&item=41" },
-    { name: "an old link's status= hides nothing and leaves the hash at the first write", start: "#queue?status=done&item=41" },
   ];
   for (const row of oldLinks) {
     test(row.name, async () => {
@@ -1206,35 +1205,40 @@ describe("done items in the one list", () => {
     ]);
   });
 
-  // spec §4.6 → How it ended: an answer on the page first, whatever status followed it; the fact names the kind
+  // spec §4.6 → How it ended: an answer on the page first, whatever status followed it; the tag names the kind and the fact how it ended,
+  // so each string kind keeps the column open rows give it
   const ends = [
-    { name: "an option picked on the page reads its code, its title the route", item: doneDecision(), tag: { text: "Answer R1", title: "Answered" }, fact: "Decision" },
-    { name: "free text alone reads Answered", item: doneDecision({ answer: { code: null, text: "R2로 가되" } }), tag: { text: "Answered", title: "Answered" }, fact: "Decision" },
-    { name: "an answer sent as a message names that route", item: doneDecision({ answer: { code: "R2", text: null }, answerRecord: record("message") }), tag: { text: "Answer R2", title: "Sent as a message" }, fact: "Decision" },
-    { name: "a decision withdrawn after its answer keeps its answer", item: doneDecision({ status: "withdrawn" }), tag: { text: "Answer R1", title: "Answered" }, fact: "Decision" },
-    { name: "an answer outside the page reads Answered with where", item: doneDecision({ status: "answered", answer: { code: null, text: null }, answerRecord: null, isAnsweredOutside: true }), tag: { text: "Answered", title: "Answered outside the Queue page." }, fact: "Decision" },
-    { name: "a report replied to reads Replied", item: doneReport({ status: "delivered", answerRecord: record("reply"), ...answered }), tag: { text: "Replied" }, fact: "Report" },
-    { name: "a report marked read reads Read", item: doneReport(), tag: { text: "Read" }, fact: "Report" },
-    { name: "a withdrawn report says the session withdrew it", item: doneReport({ status: "withdrawn" }), tag: { text: "Withdrawn", title: "The session withdrew it." }, fact: "Report" },
+    { name: "an option picked on the page reads its code, its title the route", item: doneDecision(), end: { text: "Answer R1", title: "Answered" }, kind: "Decision" },
+    { name: "free text alone reads Answered", item: doneDecision({ answer: { code: null, text: "R2로 가되" } }), end: { text: "Answered", title: "Answered" }, kind: "Decision" },
+    { name: "an answer sent as a message names that route", item: doneDecision({ answer: { code: "R2", text: null }, answerRecord: record("message") }), end: { text: "Answer R2", title: "Sent as a message" }, kind: "Decision" },
+    { name: "a decision withdrawn after its answer keeps its answer", item: doneDecision({ status: "withdrawn" }), end: { text: "Answer R1", title: "Answered" }, kind: "Decision" },
+    { name: "an answer outside the page reads Answered with where", item: doneDecision({ status: "answered", answer: { code: null, text: null }, answerRecord: null, isAnsweredOutside: true }), end: { text: "Answered", title: "Answered outside the Queue page." }, kind: "Decision" },
+    { name: "a report replied to reads Replied", item: doneReport({ status: "delivered", answerRecord: record("reply"), ...answered }), end: { text: "Replied" }, kind: "Report" },
+    { name: "a report marked read reads Read", item: doneReport(), end: { text: "Read" }, kind: "Report" },
+    { name: "a withdrawn report says the session withdrew it", item: doneReport({ status: "withdrawn" }), end: { text: "Withdrawn", title: "The session withdrew it." }, kind: "Report" },
   ];
   for (const row of ends) {
     test(`how it ended: ${row.name}`, () => {
-      assert.deepEqual(call("getRowCellsQ", { item: row.item, copies: [row.item], isDone: true }, false), { tags: [row.tag], fact: row.fact, extras: [] });
+      assert.deepEqual(
+        [call("getEndQ", row.item), call("getRowCellsQ", { item: row.item, copies: [row.item], isDone: true }, false)],
+        [row.end, { tags: [{ text: row.kind }], fact: row.end.text, extras: [] }],
+      );
     });
   }
 
-  test("a done row draws how it ended as plain text and ages from its end, and its name says both", () => {
+  test("a done row draws its kind as plain text and how it ended in the fact cell, ages from its end, and its name says how it ended once", () => {
     const item = doneReport({ status: "withdrawn", askedAt: "2026-11-10T06:12:43.518Z" });
     const tree = render("QueueRowQ", { row: { id: item.id, item, copies: [item], isDone: true }, isSelected: false, view: { isNameShown: true, isAccountShown: false, tabStopId: item.id }, onSelect: () => undefined, onOrder: () => undefined });
     const [row] = findNodes(tree, (node) => node.props?.role === "option");
     const [tag] = byClass(tree, "queue-row-tag");
+    const [fact] = byClass(tree, "queue-row-fact");
     const [age] = byClass(tree, "queue-row-age");
     const label = String(row?.props["aria-label"]);
     assert.deepEqual(
-      [collectText(tag as RenderedNode), findNodes(tag as RenderedNode, (node) => node.props?.atom === "Badge").length, age?.props.title, label.split(",").slice(0, 2)],
-      ["Withdrawn", 0, "11-19 14:30", ["Report from atrium: Deploy 65 finished", " Withdrawn"]],
+      [collectText(tag as RenderedNode), findNodes(tag as RenderedNode, (node) => node.props?.atom === "Badge").length, collectText(fact as RenderedNode), fact?.props.title, age?.props.title],
+      ["Report", 0, "Withdrawn", "The session withdrew it.", "11-19 14:30"],
     );
-    assert.match(label, /, ended \S+ ago$/);
+    assert.match(label, /^Report from atrium: Deploy 65 finished, Withdrawn, ended \S+ ago$/);
   });
 
   test("the done read asks the history read for kind item, scoped by the ticks and the account", async () => {
