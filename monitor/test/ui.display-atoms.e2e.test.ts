@@ -46,6 +46,13 @@ const toneStats = renderToStaticMarkup(h(UI.StatRow, { stats: [
   { label: "Spend today", value: h(React.Fragment, null, h(UI.ToneGlyph, { tone: "warn", label: "Running hot" }), "$1,790") },
   { label: "Agents", value: h(React.Fragment, null, h(UI.ToneGlyph, { tone: "crit" }), "2 of 7 down"), href: "#/agents" },
 ] }));
+// the Agents status row: a plain label beside labels that carry their counting rule's ⓘ trigger
+const getInfoLabel = (label: string) => h(React.Fragment, null, h("span", null, label), h(UI.CardInfo, { label: `How ${label} is counted` }, "rule"));
+const infoStats = renderToStaticMarkup(h(UI.StatRow, { stats: [
+  { label: "Unsafe to route", value: "0" },
+  { label: getInfoLabel("Failed"), value: "3" },
+  { label: getInfoLabel("Over tool-use cap"), value: "1" },
+] }));
 const badges = renderToStaticMarkup(h("div", null,
   h(UI.Badge, { role: "metadata" }, "html"),
   h(UI.Badge, { role: "count" }, "1,284"),
@@ -79,7 +86,7 @@ const empties = renderToStaticMarkup(h("div", null,
 ));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -176,6 +183,33 @@ describe("the stat row", () => {
 
     assert.equal(offsets.length, 2);
     for (const offset of offsets) assert.ok(Math.abs(offset) < 0.5, `glyph centre ${offset}px off the value line centre`);
+  });
+
+  test("a label holding an ⓘ stays one text line: every label's text and every value share one top", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const stats = await page.$$eval("#info-stats .stat", (els) => els.map((el) => {
+      const [label, value] = [el.querySelector(".stat-label"), el.querySelector(".stat-value")];
+      const text = document.createRange();
+      const node = label && document.createTreeWalker(label, NodeFilter.SHOW_TEXT).nextNode();
+      if (node) text.selectNodeContents(node);
+      return { textTop: node ? text.getBoundingClientRect().top : Number.NaN, valueTop: value?.getBoundingClientRect().top ?? Number.NaN };
+    }));
+
+    assert.equal(stats.length, 3);
+    for (const key of ["textTop", "valueTop"] as const) {
+      assert.ok(stats.every((stat) => Math.abs(stat[key] - stats[0][key]) < 1), `${key}s ${stats.map((stat) => stat[key]).join(", ")}`);
+    }
+  });
+
+  test("the ⓘ in a label keeps a 24 target", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const reach = await page.$eval("#info-stats .stat-label button", (button) => {
+      button.scrollIntoView({ block: "center" }); // elementFromPoint reads the viewport only
+      const box = button.getBoundingClientRect();
+      const [x, y] = [box.left + box.width / 2, box.top + box.height / 2];
+      return [y - 11.5, y + 11.5].map((edge) => button.contains(document.elementFromPoint(x, edge)));
+    });
+    assert.deepEqual(reach, [true, true], "a point 11.5 above and below the centre still hits the trigger");
   });
 });
 

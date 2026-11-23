@@ -1106,6 +1106,7 @@
 - **Stat row** (`StatRow`, `ui.jsx`) — a card's top-line numbers, never a tile per stat:
   - One card, its stats divided by vertical hairlines, each = label 13/500 dim · value `--fs-stat` + unit · one context line (period or delta).
   - The stats share one label row, one value line and one context row: a label that wraps lowers the row's value line, never only its own value; a label wraps, never truncates.
+  - A label holding its counting rule's ⓘ (`CardInfo`) stays one line tall: the trigger sits in a box one label line tall, its 24 target a hit area that adds no height, so every label's text shares one top.
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
   - A stat that opens a drill-down is a Link-styled value, not a button tile.
 - **`ToneGlyph({ tone, label, title })`** (`ui.jsx`): the alarm-size tone mark with its screen-reader word — the alarm row's glyph in `.one-line-box.tone-glyph`, a box one text line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Callers: a firing stat's value (`dashboard.jsx` → `StatValue` · `cost.jsx` → `SpendStatValueC`) · `HeadStatus` · Learning's reject-rate headline and candidate rows (`improvement.jsx` → `RejectRateHeadlineI` · `CandidateRowI`); only on the value line (`.stat-value`) does it carry a trailing `--gap-label-inline`.

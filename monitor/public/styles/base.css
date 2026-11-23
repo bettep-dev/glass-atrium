@@ -2598,6 +2598,19 @@ a.prose-link:hover {
 	line-height: 1.4;
 	color: rgb(var(--dim));
 }
+/* an ⓘ trigger in a label: a box one label line tall → the label's text keeps the plain labels' top; the 24 hit area reaches past the line, adding no height */
+.stat-label > .btn.icon {
+	position: relative;
+	height: 1lh;
+	min-height: 0;
+	line-height: inherit;
+	vertical-align: top;
+}
+.stat-label > .btn.icon::after {
+	content: "";
+	position: absolute;
+	inset: calc((100% - 24px) / 2) 0;
+}
 /* margin, not row-gap → a row with no context line keeps no empty gap below its values */
 .stat-value {
 	margin: var(--gap-stack) 0 0;
