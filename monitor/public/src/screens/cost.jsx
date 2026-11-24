@@ -696,7 +696,7 @@ function TrendDeltaTextC({ delta, prior, noun }) {
  * the very series already drawn.
  */
 function CostTrendCard({ state, days, failures, onRetry }) {
-  const { Card } = window.UI;
+  const { Card, QuietButton } = window.UI;
   const [bandOn, setBandOn] = useStateC(false);
 
   const points = getTrendPoints(state);
@@ -706,9 +706,8 @@ function CostTrendCard({ state, days, failures, onRetry }) {
     <Card
         title="Cost over time"
         right={
-          <button
-            type="button"
-            className="btn sm"
+          <QuietButton
+            className="sm"
             disabled={!bandAvailable}
             aria-pressed={bandOn}
             title={bandAvailable
@@ -716,7 +715,7 @@ function CostTrendCard({ state, days, failures, onRetry }) {
               : `Needs ${ROLLING_WINDOW} days of cost to compute a rolling band`}
             onClick={() => setBandOn((v) => !v)}>
             Normal range
-          </button>
+          </QuietButton>
         }>
       <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} failures={failures}/>
     </Card>
@@ -1261,6 +1260,7 @@ function computeCategoryCostRows(modelCostRows) {
 // Row 0 of the ledger — where the money goes by token category, as one 100% bar plus its legend.
 function CategoryShareRowC({ rows }) {
   const total = rows.reduce((s, r) => s + r.cost, 0);
+  const formatCost = getMoneyColumnFormatC(rows.map((r) => r.cost));
   if (total <= 0) {
     return <div role="note" className="fs-meta text-dim">No priced token cost in this window — category split unavailable.</div>;
   }
@@ -1279,7 +1279,7 @@ function CategoryShareRowC({ rows }) {
         {rows.map((r) => (
           <span key={r.key} className="flex items-center gap-label-inline fs-meta text-dim">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
-            {r.label} {window.UI.formatPct(r.pct * 100)} · {formatUsdC(r.cost)}
+            {r.label} {window.UI.formatPct(r.pct * 100)} · {formatCost(r.cost)}
           </span>
         ))}
       </div>
@@ -1415,11 +1415,9 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
             <TableRow view={view}>
               <TableCell view={view} kind="row-header">Total</TableCell>
               <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatCost(totalCost)}</TableCell>
-              <TableCell view={view} kind="span" start={2} textRole="meta" className="text-faint">
-                {/* contain: inline-size → the sentence wraps inside the cell and never widens a column (Model names stay on one line) */}
-                <span className="block" style={{ contain: 'inline-size' }}>
-                  Sessions not summed — a session using several models counts under each
-                </span>
+              <TableCell view={view} kind="span" start={2} textRole="meta" className="text-faint"
+                title="Not summed: a session using several models counts under each.">
+                Not summed
               </TableCell>
             </TableRow>
           )}>
@@ -1830,6 +1828,7 @@ function SessionDistributionBody({ state, rows = [], days, failures, onRetry }) 
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
   }
 
+  const formatCost = getMoneyColumnFormatC(rows.map((s) => s.total_cost_usd));
   const openRow = (index) => setOpenSession(rows[index]);
   const getFocusProps = (index) => getRowFocusProps({
     index, activeIndex: activeRow, count: rows.length, onActivate: openRow, onActiveChange: setActiveRow,
@@ -1839,7 +1838,7 @@ function SessionDistributionBody({ state, rows = [], days, failures, onRetry }) 
     <>
       <Table caption={`Most expensive sessions, last ${days} days — open a row for its details`} columns={SESSION_COLUMNS}>
         {(view) => rows.map((s, i) => (
-          <SessionRowC key={s.session_id} session={s} view={view} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
+          <SessionRowC key={s.session_id} session={s} view={view} formatCost={formatCost} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
         ))}
       </Table>
       {openSession && (
@@ -1885,7 +1884,7 @@ function getSessionFactsC(session, nowMs) {
   return facts.filter(([, value]) => hasFieldValue(value));
 }
 
-function SessionRowC({ session, view, focusProps, onOpen }) {
+function SessionRowC({ session, view, formatCost, focusProps, onOpen }) {
   const { formatRelativeTime, formatKstFull, MachineString, TableRow, TableCell } = window.UI;
   const modelLabel = getModelLabelC(session.top_model);
   const shortId = getSessionShortId(session.session_id);
@@ -1896,11 +1895,11 @@ function SessionRowC({ session, view, focusProps, onOpen }) {
       view={view}
       {...focusProps}
       className="cursor-pointer"
-      aria-label={`Session ${shortId}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
+      aria-label={`Session ${shortId}, ${modelLabel}, ${formatCost(session.total_cost_usd)} — open details`}
       onClick={onOpen}>
       <TableCell view={view} title={session.session_id}><MachineString>{shortId}</MachineString></TableCell>
       <TableCell view={view} textRole="meta" label="Model">{modelLabel}</TableCell>
-      <TableCell view={view} textRole="meta" label="Cost" isNumeric className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</TableCell>
+      <TableCell view={view} textRole="meta" label="Cost" isNumeric className="text-ink font-semibold">{formatCost(session.total_cost_usd)}</TableCell>
       <TableCell view={view} textRole="meta" label="Tokens" isNumeric>{formatTokenCompactC(session.total_tokens)}</TableCell>
       <TableCell view={view} textRole="meta" label="Last seen" isNumeric title={lastSeen ? formatKstFull(lastSeen) : undefined}>
         {lastSeen ? formatRelativeTime(lastSeen) : <window.UI.AbsentValue kind="none"/>}
@@ -2287,16 +2286,16 @@ const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 // no_assistant_in_turn = tool-only(LLM 미응답) 턴 · end_turn = 실 LLM 턴.
 // 분포는 인라인 가로 막대(테이블 기반, sandbox-safe) — Recharts 미사용.
 
-// stop_reason 표시 메타 — 라벨 + 색상 토큰 + 한 줄 설명. 미정의 reason 은 폴백.
+// stop_reason → label + one-line description; an undefined reason falls back to its raw id
 const STOP_REASON_META = {
-  no_assistant_in_turn: { label: 'Tool calls only',   colorVar: '--dim',    desc: 'no model reply in the turn' },
-  end_turn:             { label: 'Model replied',     colorVar: '--accent', desc: 'ended with an assistant reply' },
-  tool_use:             { label: 'Stopped on a tool', colorVar: '--info',   desc: 'ended on a tool call' },
-  unknown:              { label: 'Not recorded',      colorVar: '--faint',  desc: 'no stop reason logged' },
+  no_assistant_in_turn: { label: 'Tool calls only',   desc: 'no model reply in the turn' },
+  end_turn:             { label: 'Model replied',     desc: 'ended with an assistant reply' },
+  tool_use:             { label: 'Stopped on a tool', desc: 'ended on a tool call' },
+  unknown:              { label: 'Not recorded',      desc: 'no stop reason logged' },
 };
 
 function turnStopReasonMeta(reason) {
-  const meta = STOP_REASON_META[reason || 'unknown'] || { label: reason, colorVar: '--faint', desc: '' };
+  const meta = STOP_REASON_META[reason || 'unknown'] || { label: reason, desc: '' };
   return { ...meta, raw: reason || '' };
 }
 
@@ -2318,8 +2317,6 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
     return <EmptyStateC message={`No turn events in the last ${days} days.`}/>;
   }
 
-  // 막대 정규화 분모 = 최대 event_count (서버가 DESC 정렬 → 첫 행). 0 분모 방어.
-  const maxEvents = stopReasons.reduce((m, r) => Math.max(m, Number(r.event_count) || 0), 0);
   const totalEvents = stopReasons.reduce((s, r) => s + (Number(r.event_count) || 0), 0);
 
   // Stacked, never split: the card is the 2fr side of a pair from lg → a table column beside the
@@ -2329,7 +2326,6 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
       {turns && <TurnAggregateRow turns={turns} sessionPopulation={sessionPopulation}/>}
       <TurnStopReasonTable
         rows={stopReasons}
-        maxEvents={maxEvents}
         totalEvents={totalEvents}
         sessionPopulation={sessionPopulation}/>
     </Stack>
@@ -2381,7 +2377,7 @@ function getStopReasonSessionShare(sessionCount, population) {
   return population > 0 ? sessionCount / population : null;
 }
 
-function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }) {
+function TurnStopReasonTable({ rows, totalEvents, sessionPopulation }) {
   const { Table, TableRow, TableCell } = window.UI;
 
   return (
@@ -2392,31 +2388,17 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
         const sessions = Number(r.session_count) || 0;
         const pct = totalEvents > 0 ? (events / totalEvents) : 0;
         const sessionShare = getStopReasonSessionShare(sessions, sessionPopulation);
-        const barPct = maxEvents > 0 ? (events / maxEvents) * 100 : 0;
         return (
           <TableRow key={r.stop_reason} view={view}>
             {/* one line → desc truncates (full text in title), so a narrow view never jumps the row height;
                 w-full + max-w-0 → the column takes the leftover width instead of the desc's nowrap width */}
             <TableCell view={view} className="w-full max-w-0">
               <div className="flex items-center gap-label min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
-                <span
-                  className="inline-block w-[3px] h-3 rounded-sm shrink-0"
-                  style={{ background: `rgb(var(${meta.colorVar}))` }}
-                />
                 <span className="shrink-0">{meta.label}</span>
                 <span className="fs-meta text-dim truncate">{meta.desc}</span>
               </div>
             </TableCell>
-            <TableCell view={view} textRole="meta" label="Events" isNumeric>
-              {/* inline bar normalised to the max row (sandbox-safe, no chart runtime) · a quantity → --data, never the reason's colour */}
-              <div className="flex items-center justify-end gap-label">
-                <span
-                  className="inline-block h-1.5 rounded-sm"
-                  style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: 'rgb(var(--data))' }}
-                />
-                <span className="tabular-nums">{formatIntC(events)}</span>
-              </div>
-            </TableCell>
+            <TableCell view={view} textRole="meta" label="Events" isNumeric>{formatIntC(events)}</TableCell>
             <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
               {formatIntC(sessions)}
               {sessionShare !== null && (

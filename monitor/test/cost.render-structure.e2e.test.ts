@@ -356,7 +356,7 @@ describe("calm fixture — nothing is running hot", () => {
     assert.ok(ledger.costs.some((text) => /^\$\d{1,2}\.\d\d$/.test(text)), `a row under $100: ${ledger.costs.join(" | ")}`);
     for (const text of [...ledger.costs, ledger.foot[1]]) assert.match(text, /\.\d\d$/, `one precision down the cost column: ${text}`);
     assert.strictEqual(ledger.foot.length, 3, "the two count columns share one cell");
-    assert.doesNotMatch(ledger.foot[2], /^(?:None|—|)$/, "the shared cell gives the reason in words");
+    assert.strictEqual(ledger.foot[2], "Not summed", "the shared cell names the rule in two words; the reason rides its title");
   });
 
   for (const width of [1440, 1920]) {

@@ -1029,7 +1029,7 @@ interface RenderModule {
 // the spend stats and the ledgers are models over shared atoms → the real stat row, loading row, Stack and table atoms render, other atoms stay stubs
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
-const REAL_ATOMS = new Set(["StatRow", "StatNotes", "AlarmRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
+const REAL_ATOMS = new Set(["StatRow", "StatNotes", "QuietButton", "AlarmRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
 
 // real ui.jsx helpers, with every rendered atom a host element carrying its props (the stat row anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
@@ -2055,19 +2055,70 @@ describe("the spend alarm rows lead the Spend card, under its head, and leave it
   }
 });
 
-test("every stop-reason Events bar is a quantity mark in the data colour, whatever its reason", async () => {
+// spec 44084 §2.1: one precision per money column, decided from its own values — the session list and the token-type set
+describe("a money set with any amount under $100 keeps cents on every amount of the set", () => {
+  test("the session list's cost column", async () => {
+    const mod = await loadCostRender();
+    const rows = [
+      { session_id: "a1b2c3d4-0000", top_model: "claude-opus-4", total_cost_usd: 16_764, total_tokens: 9e8, event_count: 900, last_event_at: null },
+      { session_id: "e5f6a7b8-0000", top_model: "claude-opus-4", total_cost_usd: 5.22, total_tokens: 1e5, event_count: 4, last_event_at: null },
+    ];
+    const text = collectText(renderIn(mod, "SessionDistributionBody", { state: ready({ rows }), rows, days: 30, onRetry: () => {} }));
+    assert.match(text, /\$16,764\.00/);
+    assert.match(text, /\$5\.22/);
+  });
+
+  test("the By token type legend", async () => {
+    const mod = await loadCostRender();
+    const rows = [
+      { key: "cache_read_tokens", label: "Cache read", colorVar: "--cat-2", cost: 112, pct: 112 / 156.61 },
+      { key: "output_tokens", label: "Output", colorVar: "--cat-4", cost: 44.61, pct: 44.61 / 156.61 },
+    ];
+    const text = collectText(renderIn(mod, "CategoryShareRowC", { rows }));
+    assert.match(text, /\$112\.00/);
+    assert.match(text, /\$44\.61/);
+  });
+});
+
+// spec 44084 §9 (R12): the Total row is one line — the reason is two words, the full sentence rides the cell's title
+test("the ledger Total row's count cell reads Not summed and keeps the reason on its title", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+    getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
   })) as RenderModule;
-  const reasons = ["end_turn", "tool_use", "no_assistant_in_turn", null];
+  const rows = [{ model: "claude-opus-4", cost_usd: 120, session_count: 3, input_tokens: 1e6, output_tokens: 1e6, cache_read_tokens: 1e7, cache_creation_tokens: 1e6 }];
+  const tree = renderIn(mod, "ModelCostBody", { state: ready({ rows }), days: 30, onRetry: () => {} });
+  const [foot] = findNodes(tree, (n) => n.type === "tfoot");
+  const cells = findNodes(foot!, (n) => n.type === "td" || n.type === "th");
+  const reason = cells[cells.length - 1]!;
+  assert.equal(collectText(reason).trim(), "Not summed");
+  assert.match(String(reason.props.title), /a session using several models counts under each/);
+});
+
+// d1 read-back finding 2: a stop reason is a word, not a colour — no stripe before the label, no bar before the count
+test("the stop-reason table paints no colour mark on any row", async () => {
+  const mod = await loadCostRender();
   const data = {
-    stop_reasons: reasons.map((stop_reason, i) => ({ stop_reason, event_count: 400 - i * 90, session_count: 120 - i * 20 })),
+    stop_reasons: [
+      { stop_reason: "end_turn", event_count: 1830, session_count: 412 },
+      { stop_reason: "tool_use", event_count: 245, session_count: 80 },
+    ],
     stop_reason_session_count: 412,
     turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
   };
   const tree = renderIn(mod, "TurnStatsBody", { state: ready(data), days: 30, onRetry: () => {} });
-  const bars = findNodes(tree, (n) => (n.props.style as { maxWidth?: unknown } | undefined)?.maxWidth === 120);
+  const [table] = findNodes(tree, (n) => n.type === "table");
+  assert.ok(table, "the stop-reason table renders");
+  assert.equal(findNodes(table, (n) => n.props.style?.background !== undefined).length, 0);
+});
 
-  assert.equal(bars.length, reasons.length, "one Events bar per stop reason");
-  assert.deepEqual([...new Set(bars.map((n) => (n.props.style as { background: string }).background))], ["rgb(var(--data))"]);
+// pre-compose A16: the band toggle is the quiet pressed toggle — ink text and the ✓ slot, no edge
+test("the Normal range toggle is the quiet toggle and reports its pressed state", async () => {
+  const mod = await loadCostRender();
+  const tree = renderIn(mod, "CostTrendCard", { state: TREND_WITH_GAP, days: 30, onRetry: () => {} });
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const [toggle] = findNodes(renderScreen(card.props.right) as RenderedNode, (n) => n.type === "button");
+  assert.ok(toggle, "the toggle is a button");
+  assert.match(String(toggle.props.className), /^btn ghost sm$/);
+  assert.equal(toggle.props["aria-pressed"], false);
 });
