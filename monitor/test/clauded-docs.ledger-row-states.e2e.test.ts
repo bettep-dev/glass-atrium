@@ -41,7 +41,7 @@ type State = keyof typeof STATES;
 const getLedgerPage = () => `<!doctype html><html><head><style>${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
-      <td class="doc-age-cell doc-col-num text-dim"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
+      <td class="doc-age-cell num text-dim"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
       <td><span class="faint" style="color: rgb(var(--faint));">—</span></td>
       <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text text-ink">Plan</span></td>
     </tr>`).join("")}
@@ -256,7 +256,7 @@ const AGE_PREFLIGHT =
   "*, ::before, ::after { box-sizing: border-box; border: 0 solid; } html { line-height: 1.5; } svg { display: block; vertical-align: middle; } table { border-collapse: collapse; }" +
   " .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }";
 const ageCellPage = (floor: number) => `<!doctype html><html><head><style>${AGE_PREFLIGHT} ${UTILITIES}</style></head><body style="margin: 0;">
-  <div style="padding: 48px; width: 600px;"><div class="card"><table class="tbl"><thead><tr><th>Title</th><th class="doc-col-num" style="width: ${floor}px; min-width: ${floor}px;">Created</th></tr></thead><tbody>
+  <div style="padding: 48px; width: 600px;"><div class="card"><table class="tbl"><thead><tr><th>Title</th><th class="num" style="width: ${floor}px; min-width: ${floor}px;">Created</th></tr></thead><tbody>
     <tr id="two-digit" class="doc-row"><td>Plan</td>${ageCellHtml("15d")}</tr>
     <tr id="three-digit" class="doc-row"><td>Plan</td>${ageCellHtml("120d")}</tr>
     <tr id="wide-face" class="doc-row" style="--fs-meta: 20px;"><td>Plan</td>${ageCellHtml("120d")}</tr>

@@ -1044,8 +1044,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         /* the clip cuts at the label's line box → a control line box, so a tight line-height never clips a descender */
         .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
-        /* numeric columns: ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
-        .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
         .doc-list-region { scroll-margin-top: 96px; border-radius: var(--radius-card); }
         /* clip trims an outside ring → the card ring drawn inset */
@@ -1552,7 +1550,7 @@ function DocListCardCD({
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
 												</TableCell>
-											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
+											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta text-dim">
 													<MachineString>#{row.id}</MachineString>
 												</TableCell>
 											<TableCell view={view} className="title-cell">
@@ -1752,7 +1750,7 @@ function DocAgeCellCD({ view, createdAt, age, isStale }) {
 			textRole="meta"
 			label="Created"
 			isNumeric
-			className="doc-age-cell fs-meta doc-col-num text-dim"
+			className="doc-age-cell fs-meta text-dim"
 			title={`Created ${formatDateCD(createdAt)}`}>
 			{/* age, then the stale glyph inline on one line, never stacked */}
 			<div className="doc-age-line flex justify-end items-center gap-label-inline">
@@ -2139,7 +2137,7 @@ function GroupMembersRowsCD({
 						</span>
 					)}
 				</TableCell>
-				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
+				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta text-dim">
 					<MachineString>#{member.id}</MachineString>
 				</TableCell>
 				<TableCell view={view} className="title-cell">
@@ -2178,7 +2176,7 @@ function GroupMembersRowsCD({
 					/>
 				)}
 				<DocAuthorCellCD view={view} author={member.author} />
-				<TableCell view={view} textRole="meta" label="Created" isNumeric className="fs-meta doc-col-num text-dim">
+				<TableCell view={view} textRole="meta" label="Created" isNumeric className="fs-meta text-dim">
 					{formatDateCD(member.created_at)}
 				</TableCell>
 			</TableRow>
