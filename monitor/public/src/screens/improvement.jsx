@@ -1418,7 +1418,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 					{title}
 				</div>
 			</button>
-			{/* 허용/거절 액션 (pending/snoozed only · dual-encoded ✓/✕). */}
+			{/* 허용/거절 액션 (pending/snoozed only). */}
 			{isActionable && onAction && (
 				<ProposalActionsI
 					row={row}
