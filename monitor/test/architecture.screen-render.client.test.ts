@@ -401,6 +401,23 @@ test("a flagged System parts row reads its status right after the name and its c
   assert.doesNotMatch(collectText(meta), /exit 1/, "the cause is not repeated in the meta line");
 });
 
+test("a System parts row names its map box only when the box label differs from the part name", async () => {
+  const mod = await loadArch();
+  const nodeIndex = new Map([
+    ["canonical.pg_db", { id: "canonical.pg_db", label: "PostgreSQL" }],
+    ["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }],
+  ]);
+  const getMeta = (name: string, nodeId: string) => {
+    const row = { id: name, name, tone: "crit", statusLabel: "Down", nodeIds: [nodeId], lastRunAt: new Date().toISOString(), nextRunAt: null, cadenceMinutes: null, cause: null };
+    const tree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row, freshness: { at: null, regions: [], now: Date.now() }, nodeIndex, onSelectNode: () => {} }));
+    const [meta] = findNodes(tree, (n) => /\barch-part-meta\b/.test(String(n.props.className)));
+    return collectText(meta);
+  };
+
+  assert.doesNotMatch(getMeta("PostgreSQL", "pg_db"), /\bin PostgreSQL\b/, "a box named like its part is not repeated");
+  assert.match(getMeta("cron-scheduler", "cron"), /\bin Scheduled background jobs\b/, "a box with its own name is still named");
+});
+
 test("the node drawer's title is a heading that ranks above its section headings", async () => {
   const mod = await loadArch();
   const nodeId = "canonical.hook_pipeline";

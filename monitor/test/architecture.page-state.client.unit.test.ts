@@ -57,7 +57,7 @@ interface PageStateSandbox {
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
   getPartHealthGroupsAR: (partRows: HealthRow[], isPending?: boolean) => { listed: HealthRow[]; healthy: HealthRow[] };
-  getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, freshness: HealthFreshness) => string;
+  getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, freshness: HealthFreshness) => string | null;
   getPartStatusAR: (row: HealthRow & { statusLabel: string }, freshness: HealthFreshness) => { tone: string | null; text: string };
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
   getPartCauseAR: (facts: Record<string, unknown>) => string | null;
@@ -247,13 +247,16 @@ describe("the System parts lead line says why nothing is flagged, and its all-cl
     { name: "an all-clear with every store freshly read is a plain all-clear", partRows: judged, busy: false, at: readAt, regions: [held, held], expected: /^No system part needs attention$/ },
     { name: "listed unverified parts are counted while none is flagged", partRows: unverified, busy: false, at: readAt, regions: [held], expected: /^2 not verified · none needs attention$/ },
     { name: "listed unverified parts under a failed re-read are counted as last known", partRows: unverified, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: 2 not verified · none needed attention$/ },
-    { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, at: null, regions: [down, down], expected: /^Couldn't read system parts$/ },
     { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, at: null, regions: [held], expected: /^System parts not read yet$/ },
   ];
   for (const row of rows)
     test(row.name, () => {
       assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, { at: row.at, regions: row.regions, now }), row.expected);
     });
+
+  test("no verdict under a failed read writes no lead, leaving the failure to the alarm row", () => {
+    assert.strictEqual(sandbox.getAttentionEmptyAR(unjudged, false, { at: null, regions: [down, down], now }), null);
+  });
 
   test("the all-clear and an ok part row agree on Last known for every settled read", () => {
     const okRow = { ...healthRow("a", "ok"), statusLabel: "Healthy" };

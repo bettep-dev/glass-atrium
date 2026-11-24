@@ -725,6 +725,11 @@ const ADVISORY_ROWS = [
     includes: ["pricing table"],
   },
   {
+    name: "a listed model is counted in the advisory head even when the served count says none",
+    state: UNPRICED_READY([{ model: "claude-haiku-5-5", event_count: 2, last_seen_at: "2026-11-13T07:00:00.000Z" }], { model_count: 0 }),
+    includes: ["Pricing advisory", "claude-haiku-5-5"],
+  },
+  {
     name: "a window where every model has a row says so",
     state: UNPRICED_READY([]),
     includes: ["has a pricing row"],

@@ -1708,7 +1708,8 @@ function PricingAdvisoryBody({ state }) {
 			</span>
 		);
 
-	const count = data?.model_count ?? 0;
+	// a listed model never sits under the all-clear
+	const count = Math.max(data?.model_count ?? 0, data?.models?.length ?? 0);
 	if (count === 0)
 		return (
 			<span className="fs-meta text-dim">
@@ -2874,7 +2875,8 @@ function getAttentionEmptyAR(partRows, isBusy, freshness) {
 		}
 		return isFresh ? "No system part needs attention" : "Last known: no system part needed attention";
 	}
-	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read system parts" : "System parts not read yet";
+	// a failed read is the alarm row's to say → no lead under it
+	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? null : "System parts not read yet";
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
@@ -3019,7 +3021,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 				</div>
 			</div>
 			<div className="card-body arch-part-body gap-group-below">
-				{!listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim">{attentionEmpty}</p>}
+				{attentionEmpty && !listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim">{attentionEmpty}</p>}
 				{listed.length > 0 && <PartHealthListAR rows={listed} {...listProps} />}
 				{healthy.length > 0 && (
 					<details className="arch-part-fold">
@@ -3052,7 +3054,7 @@ function PartHealthRowAR({ row, isFolded = false, freshness, nodeIndex, onSelect
 	// a folded row's Healthy is its fold summary's own word · a held Last known still says more, so it stays
 	const isStatusShown = !(isFolded && status.tone === "ok");
 	const schedule = getPartScheduleAR(row, formatRelativeTime);
-	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule].filter(Boolean).join(" · ");
+	const meta = [box && box.label !== row.name && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule].filter(Boolean).join(" · ");
 
 	return (
 		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row gap-x-list gap-y-stack fs-body leading-row">
