@@ -212,6 +212,49 @@ describe("DetailSurface inert background", () => {
   });
 });
 
+describe("DetailSurface inert background across stacked surfaces", async () => {
+  const effects = createEffectReact();
+  const doc = createFakeDocument();
+  const live = await loadScreenModule(UI_SRC, { React: effects.react, document: doc });
+
+  function buildStack() {
+    const overlays = [createNode("drawer-overlay"), createNode("confirm-overlay")];
+    const list = createNode("list");
+    const sidebar = createNode("sidebar");
+    createNode("body", [sidebar, createNode("main", [list, ...overlays])]);
+    const mount = (overlay: FakeNode) => {
+      const panel = { name: "panel", querySelectorAll: () => [], contains: (node: unknown) => node === panel, focus: () => { doc.activeElement = panel; } };
+      return effects.mount(
+        () => (live.DetailSurface as Component)({ open: true, onClose: () => undefined, title: "Session cost", children: "body" }),
+        (element) => (element.props.role === "dialog" ? panel : overlay),
+      );
+    };
+    return { overlays, background: [list, sidebar], mount };
+  }
+
+  const rows = [
+    { name: "the drawer closed while the confirm over it stays open", releaseOrder: [0, 1] },
+    { name: "the confirm closed before the drawer under it", releaseOrder: [1, 0] },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: the shared background stays inert until the last modal surface closes`, () => {
+      doc.reset();
+      const stack = buildStack();
+      const surfaces = stack.overlays.map((overlay) => stack.mount(overlay));
+      const [firstIndex, secondIndex] = row.releaseOrder;
+      surfaces[firstIndex].unmount();
+      const afterFirstRelease = stack.background.map((node) => node.inert);
+      surfaces[secondIndex].unmount();
+
+      assert.deepEqual(
+        { afterFirstRelease, afterRelease: stack.background.map((node) => node.inert) },
+        { afterFirstRelease: [true, true], afterRelease: [false, false] },
+      );
+    });
+  }
+});
+
 describe("DetailSurface dismissal", async () => {
   const effects = createEffectReact();
   const doc = createFakeDocument();

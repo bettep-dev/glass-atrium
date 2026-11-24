@@ -689,6 +689,8 @@ let detailTitleSeq = 0;
 const openSurfaces = [];
 // body overflow before the first modal surface opened; null while no modal surface is open
 let unlockedOverflow = null;
+// background node → how many open modal surfaces hold it inert; a node leaves inert only when its last holder closes
+const inertHolds = new Map();
 
 // the panel mounts only while open → a closed surface (a page at rest) never locks, traps or registers
 function DetailSurface({ open, ...props }) {
@@ -711,11 +713,11 @@ function DetailSurfacePanel({ onClose, variant = 'drawer', title, sub, footer, c
     panelRef.current?.focus();
 
     const inertTargets = overlayRef.current ? getInertTargets(overlayRef.current) : [];
-    for (const node of inertTargets) node.inert = true;
+    setInertHeld(inertTargets, true);
 
     return () => {
       setSurfaceOpen(panelRef, false);
-      for (const node of inertTargets) node.inert = false;
+      setInertHeld(inertTargets, false);
     };
   }, []);
 
@@ -902,17 +904,27 @@ function getTrapFocusTarget({ focusables, active, panel, shiftKey }) {
   return null;
 }
 
-// modal background = every sibling along the overlay's ancestor path up to <body>; already-inert nodes excluded → restore never revives them.
+// modal background = every sibling along the overlay's ancestor path up to <body>; a node inert by another owner excluded → restore never revives it.
 function getInertTargets(overlay) {
   const targets = [];
   let node = overlay;
   while (node.parentElement && node.tagName !== 'BODY') {
     for (const sibling of Array.from(node.parentElement.children)) {
-      if (sibling !== node && !sibling.inert) targets.push(sibling);
+      if (sibling !== node && (!sibling.inert || inertHolds.has(sibling))) targets.push(sibling);
     }
     node = node.parentElement;
   }
   return targets;
+}
+
+// one hold per open modal surface → any close order keeps the background inert until the last holder releases it
+function setInertHeld(nodes, isHeld) {
+  for (const node of nodes) {
+    const count = (inertHolds.get(node) ?? 0) + (isHeld ? 1 : -1);
+    if (count > 0) inertHolds.set(node, count);
+    else inertHolds.delete(node);
+    node.inert = count > 0;
+  }
 }
 
 /**
