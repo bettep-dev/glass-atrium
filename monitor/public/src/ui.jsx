@@ -2377,21 +2377,28 @@ function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, fai
   const { failedCount, regionCount } = getRegionSummary(settledRegions);
 
   if (settled === 'not-read') {
-    const note = getUnreadNote({ isBusy, hasFailed: failed || failedCount > 0 });
+    const note = getUnreadNote({ isBusy, failed, failedCount, regionCount });
     return { state, tone: 'neutral', label: VERDICT_TONE_LABEL.neutral, note, isBusy };
   }
   if (settled === 'fresh') return { state, tone, label: pageLabel, note: null, isBusy };
 
   const isAlarm = tone === 'warn' || tone === 'crit';
-  const ageNote = `Read ${formatRelativeTime(at, now)}`;
+  const ageNote = `Read ${getReadAge(at, now)}`;
   const note = settled === 'partial' ? `${ageNote} · ${failedCount} of ${regionCount} sources failed` : ageNote;
   return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `${LAST_KNOWN_TEXT}: ${pageLabel}` : LAST_KNOWN_TEXT, note, isBusy };
 }
 
-// a tried-and-failed first read must never read as one that was never tried
-function getUnreadNote({ isBusy, hasFailed }) {
+// a tried-and-failed first read must never read as one that was never tried; some sources failed → the failed share, no age
+function getUnreadNote({ isBusy, failed = false, failedCount = 0, regionCount = 0 }) {
   if (isBusy) return 'Checking the first read…';
-  return hasFailed ? 'The first read failed — nothing to show yet.' : 'Nothing has been read yet.';
+  if (!failed && failedCount > 0 && failedCount < regionCount) return `${failedCount} of ${regionCount} failed`;
+  return failed || failedCount > 0 ? 'First read failed' : 'Nothing has been read yet.';
+}
+
+// a read's age in a stamp or note — under a minute reads "just now", never "0s ago"
+function getReadAge(at, now = Date.now()) {
+  const ageSec = Math.round((now - new Date(at).getTime()) / 1000);
+  return ageSec >= 0 && ageSec < 60 ? 'just now' : formatRelativeTime(at, now);
 }
 
 /** Re-renders the caller every FRESHNESS_TICK_MS while enabled → age-based staleness holds on screens that never poll. */
@@ -2491,12 +2498,14 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
   const { failedCount, regionCount } = getRegionSummary(regions);
   const failedNote = settled === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
   const word = state === 'partial' ? `${meta.word}, ${failedNote}` : meta.word;
-  const text = getStampText({ settled, at, now, failedNote, hasFailed: failed || failedCount > 0 });
+  const text = getStampText({ settled, at, now, failedNote, failed, failedCount, regionCount });
+  // a first read that failed, whole or in part, warns like a held read gone stale; a never-tried one keeps its own mark
+  const tone = state === 'not-read' && (failed || failedCount > 0) ? 'warn' : meta.tone;
   const title = settled === 'not-read' ? word : `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at, now)})`;
 
   return (
     <span className="fs-meta text-faint tabular-nums whitespace-nowrap" title={title} aria-busy={state === 'loading' || state === 'refreshing' ? 'true' : undefined}>
-      <span aria-hidden="true" className={`mr-1 ${meta.tone ? `text-${meta.tone}` : 'text-faint'}`}>{meta.tone ? TONE_GLYPH[meta.tone] : '…'}</span>
+      <span aria-hidden="true" className={`mr-1 ${tone ? `text-${tone}` : 'text-faint'}`}>{tone ? TONE_GLYPH[tone] : '…'}</span>
       <span className="sr-only">{word}</span>
       {/* first read in flight → no text, the paired Refresh label already reads "Loading…" */}
       {state !== 'loading' && <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>}
@@ -2505,9 +2514,9 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
 }
 
 // visible stamp line for a settled state that is not fresh — the unread note, or "Last known" with the read's age
-function getStampText({ settled, at, now, failedNote, hasFailed }) {
-  if (settled === 'not-read') return getUnreadNote({ isBusy: false, hasFailed });
-  const readText = `${LAST_KNOWN_TEXT} · read ${formatRelativeTime(at, now)}`;
+function getStampText({ settled, at, now, failedNote, failed, failedCount, regionCount }) {
+  if (settled === 'not-read') return getUnreadNote({ isBusy: false, failed, failedCount, regionCount });
+  const readText = `${LAST_KNOWN_TEXT} · read ${getReadAge(at, now)}`;
   return failedNote ? `${readText} · ${failedNote}` : readText;
 }
 

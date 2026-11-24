@@ -104,24 +104,44 @@ test("the stamp renders exactly when the settled read is not fresh — a refresh
   for (const row of rows) assert.equal(renderStamp(row.input).children.length > 0, row.isShown, row.name);
 });
 
-test("a stale read reads as last known with its age, whatever input made it stale", () => {
-  for (const input of [{ at: isoAgo(STALE_MS + 60_000) }, { at: isoAgo(3_600_000) }, { at: isoAgo(1_000), failed: true }]) {
-    const visible = findNodes(renderStamp(input), (n) => n.props["data-stamp-text"] === "true");
-    assert.equal(visible.length, 1, JSON.stringify(input));
-    assert.equal(collectText(visible[0]).trim(), `Last known · read ${formatRelativeTime(input.at, NOW)}`, JSON.stringify(input));
-  }
-});
-
-test("a never-read stamp shows the unread note, telling a failed first read from one never tried", () => {
-  const rows: Array<{ name: string; input: FreshnessInput; note: string }> = [
-    { name: "never tried", input: { at: null }, note: "Nothing has been read yet." },
-    { name: "first read failed", input: { at: null, failed: true }, note: "The first read failed — nothing to show yet." },
-    { name: "every region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: "The first read failed — nothing to show yet." },
+test("a stale read reads as last known with its age, a read under a minute old as just now, whatever input made it stale", () => {
+  const rows = [
+    { name: "past the window", input: { at: isoAgo(STALE_MS + 60_000) }, age: "6m ago" },
+    { name: "an hour old", input: { at: isoAgo(3_600_000) }, age: "1h ago" },
+    { name: "a second old, then a failed read", input: { at: isoAgo(1_000), failed: true }, age: "just now" },
+    { name: "the same instant, then a failed read", input: { at: isoAgo(0), failed: true }, age: "just now" },
+    { name: "59 seconds old, then a failed read", input: { at: isoAgo(59_000), failed: true }, age: "just now" },
+    { name: "a minute old, then a failed read", input: { at: isoAgo(60_000), failed: true }, age: "1m ago" },
   ];
   for (const row of rows) {
     const visible = findNodes(renderStamp(row.input), (n) => n.props["data-stamp-text"] === "true");
-    assert.equal(collectText(visible[0]).trim(), row.note, row.name);
+    assert.equal(visible.length, 1, row.name);
+    assert.equal(collectText(visible[0]).trim(), `Last known · read ${row.age}`, row.name);
   }
+});
+
+test("a never-read stamp shows the unread note: never tried, a first read that failed whole, or the failed share with no age", () => {
+  const rows: Array<{ name: string; input: FreshnessInput; note: string; glyph: string }> = [
+    { name: "never tried", input: { at: null }, note: "Nothing has been read yet.", glyph: "✕" },
+    { name: "first read failed", input: { at: null, failed: true }, note: "First read failed", glyph: "⚠" },
+    { name: "every region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: "First read failed", glyph: "⚠" },
+    { name: "some regions failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }, {}, {}, {}, {}, {}] }, note: "2 of 7 failed", glyph: "⚠" },
+  ];
+  for (const row of rows) {
+    const tree = renderStamp(row.input);
+    const visible = findNodes(tree, (n) => n.props["data-stamp-text"] === "true");
+    const [glyph] = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
+    assert.equal(collectText(visible[0]).trim(), row.note, row.name);
+    assert.equal(collectText(glyph).trim(), row.glyph, row.name);
+  }
+});
+
+test("held data over a partly failed refresh reads last known, its age and the failed share", () => {
+  const tree = renderStamp({ at: isoAgo(3 * 60_000), regions: [{ error: "down" }, { error: "down" }, {}, {}, {}, {}, {}] });
+  const visible = findNodes(tree, (n) => n.props["data-stamp-text"] === "true");
+  const [glyph] = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
+  assert.equal(collectText(visible[0]).trim(), "Last known · read 3m ago · 2 of 7 failed");
+  assert.equal(collectText(glyph).trim(), "⚠");
 });
 
 test("a partial failure names how many regions failed out of how many, in text and for AT", () => {
@@ -333,12 +353,18 @@ describe("freshness-driven verdict", () => {
     assert.equal(stale.note, "Read 5m ago", "the age is measured against the injected clock, not the wall clock");
   });
 
+  test("a held read under a minute old notes its age as just now, never 0s ago", () => {
+    const verdict = getFreshnessVerdict({ at: isoAgo(0), failed: true, now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+    assert.equal(verdict.note, "Read just now");
+  });
+
   test("an unread page says whether its first read failed or was never tried", () => {
     const rows: Array<{ name: string; input: FreshnessInput; note: RegExp }> = [
       { name: "never tried", input: { at: null }, note: /^Nothing has been read yet\.$/ },
-      { name: "first read failed", input: { at: null, failed: true }, note: /first read failed/ },
-      { name: "every first-read region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: /first read failed/ },
-      { name: "one first-read region failed", input: { at: null, regions: [{ error: "down" }, {}] }, note: /first read failed/ },
+      { name: "first read failed", input: { at: null, failed: true }, note: /^First read failed$/ },
+      { name: "every first-read region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: /^First read failed$/ },
+      { name: "one first-read region failed", input: { at: null, regions: [{ error: "down" }, {}] }, note: /^1 of 2 failed$/ },
       { name: "first read in flight", input: { at: null, loading: true }, note: /^Checking the first read…$/ },
     ];
     for (const row of rows) {
