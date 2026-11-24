@@ -716,6 +716,14 @@ describe("Task results density: the columns beside a taller card carry their own
     // vm-realm array → copy into this realm before a deep compare
     assert.deepEqual(Array.from(stats ?? [], (stat) => stat.key).sort(), ["unverified", "verified_fail", "verified_pass"]);
   });
+
+  test("an empty window's verdict stats carry no context line under their zero", () => {
+    const breakdown = { verified_pass: 0, unverified: 0, verified_fail: 0, graded_total: 0 };
+    const elements = flattenO(density.GraderBreakdownBody({ state: { status: "ready", data: { overall: { grader_breakdown: breakdown } } } }));
+    const stats = elements.find((el) => Array.isArray(el.props.stats))?.props.stats as Array<{ context?: unknown }> | undefined;
+    assert.ok(stats && stats.length > 0, "the stats render");
+    assert.deepEqual(Array.from(stats, (stat) => stat.context ?? null), Array.from(stats, () => null));
+  });
 });
 
 describe("Automatic check results: where each verdict came from is the block's foot, drawn only under a drawn breakdown", () => {

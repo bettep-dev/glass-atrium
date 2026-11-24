@@ -99,7 +99,7 @@ test("a cold error shows one banner, and every region it covers is a quiet place
   assert.equal(findNodes(tree, (n) => n.type === "PageErrorBanner").length, 1);
   assert.equal(findNodes(tree, (n) => n.type === "RegionUnavailable").length, 0, "no covered region repeats the error");
   assert.equal(getRetryButtons(tree).length, 1, "the banner holds the only Retry");
-  for (const source of ["the status band", "the record ledger", "by-agent failures", "reporting health", "recording channels", "check results", "cross table"]) {
+  for (const source of ["the status band", "the record ledger", "by-agent failures", "record attribution", "recording channels", "check results", "cross table"]) {
     assert.ok(covered.includes(source), `${source} is covered by the banner`);
   }
 });
@@ -226,14 +226,21 @@ function getBlockHead(tree: RenderedNode): RenderedNode {
   return head;
 }
 
-describe("the cross-table head shows its share meta, count in the hover title, only when there are records, and always shows the mismatch status", () => {
+describe("the cross-table head shows its share meta, count in the hover title, only when there are records, and a warn status only over a counted mismatch", () => {
   const rows = [
     {
-      name: "a ready cross table with records",
+      name: "a ready cross table with mismatches",
       crosstab: { total: 12_000, polarTotal: 1_500, byCell: { "high|false": { count: 1_234 } } },
       metas: [{ text: "10.3%", title: "1,234 of 12,000 records · 10.3%" }],
+      status: "1,500 mismatches",
     },
-    { name: "a ready cross table with no records", crosstab: { total: 0, polarTotal: 0, byCell: {} }, metas: [] },
+    {
+      name: "a ready cross table with records and no mismatch",
+      crosstab: { total: 40, polarTotal: 0, byCell: { "high|true": { count: 40 } } },
+      metas: [{ text: "0%", title: "0 of 40 records · 0%" }],
+      status: null,
+    },
+    { name: "a ready cross table with no records", crosstab: { total: 0, polarTotal: 0, byCell: {} }, metas: [], status: null },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -246,8 +253,30 @@ describe("the cross-table head shows its share meta, count in the hover title, o
         .map((meta) => ({ text: collectText(meta), title: meta.props.title }));
       assert.deepEqual(metas, row.metas);
       const statuses = findNodes(head, (n) => n.type === "HeadStatus");
-      assert.equal(statuses.length, 1, "the status sits on the title line");
-      assert.match(collectText(statuses[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
+      assert.deepEqual(statuses.map((status) => [status.props.tone, collectPaintedText(status).replace(/\s+/g, " ").trim()]),
+        row.status ? [["warn", row.status]] : [], "the warn status names the mismatches, and only when one was counted");
+    });
+  }
+});
+
+describe("the Recording channels head that read no channel shows faint None or Not loaded, with no status mark", () => {
+  const failed = { status: "error", busy: false, data: null, error: SERVER_ERROR };
+  const rows = [
+    { name: "Recording channels, no channel in the window", component: "ChannelLivenessBlock", word: "None",
+      state: { status: "ready", busy: false, data: { channels: [], alerting: [], days: 7 }, error: null } },
+    { name: "Recording channels, a failed read", component: "ChannelLivenessBlock", word: "Not loaded", state: failed },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const tree = renderScreen(create(mod[row.component] as Component, { state: row.state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+      const head = getBlockHead(tree);
+
+      assert.equal(findNodes(head, (n) => n.type === "HeadStatus").length, 0, "no status mark");
+      const words = findNodes(head, (n) => n.type === "AbsentValue").map((n) => collectText(n).trim());
+      assert.deepEqual(words, [row.word]);
+      assert.doesNotMatch(collectText(head), /All recording/);
     });
   }
 });
@@ -255,7 +284,7 @@ describe("the cross-table head shows its share meta, count in the hover title, o
 describe("a block's own status is the shared head Status on its title's line", () => {
   const rows = [
     { name: "Record attribution", component: "AttributionHealthBlock", data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } } },
-    { name: "Recording channels", component: "ChannelLivenessBlock", data: { channels: [], alerting: ["stop"], days: 7 } },
+    { name: "Recording channels", component: "ChannelLivenessBlock", data: { channels: [{ attribution_source: "stop", alerting: true, eligible: true }], alerting: ["stop"], days: 7 } },
     { name: "Confident but failed", component: "CrosstabBlock", data: { crosstab: { total: 10, polarTotal: 4, byCell: {} } } },
   ];
   for (const row of rows) {
@@ -574,6 +603,21 @@ describe("the screen's own stylesheet keeps to the motion standard", async () =>
   }
 });
 
+test("the daily chart's idle hint fits the word cap, and the arrow-key note is the chart's description, not its name", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const grid = [{ day: "2026-11-23", total: 4, counts: {} }, { day: "2026-11-24", total: 6, counts: {} }];
+  const tree = renderScreen(create(mod.AttributionDailyChart as Component, { grid })) as RenderedNode;
+  const [hint] = findNodes(tree, (n) => n.props["aria-live"] === "polite");
+  const [plot] = findNodes(tree, (n) => n.props.role === "img");
+  const [note] = findNodes(tree, (n) => n.props.id !== undefined && n.props.id === plot.props["aria-describedby"]);
+
+  assert.ok(collectText(hint).trim().split(/\s+/).length <= 12, collectText(hint));
+  assert.match(collectText(note), /arrow keys/);
+  assert.match(String(note.props.className), /\bsr-only\b/);
+  assert.doesNotMatch(String(plot.props["aria-label"]), /arrow keys/);
+});
+
 test("a link in an outcome body draws in ink with a currentColor underline, never the user-picked accent", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join("\n");
@@ -600,7 +644,7 @@ test("while the first read is in flight, the ledger and Failures by agent draw s
   assert.equal(animated.length, 0, "a skeleton is still; only the shared loading status turns");
 });
 
-describe("the Record attribution head names the missing-report level with no rate or window: None only over a read window with no records, Not loaded with its cause after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
+describe("the Record attribution head names the missing-report level with no rate or window: faint None with no mark only over a read window with no records, faint Not loaded with its cause and no mark after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
   const rows = [
     { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, kinds: ["not-loaded"], text: /Not loaded/, isRead: false, title: SERVER_ERROR },
     { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, kinds: [], text: /None$/, isRead: true, isBodyEmpty: true },
@@ -625,7 +669,7 @@ describe("the Record attribution head names the missing-report level with no rat
 
   test("a payload without its window summary: the body reads Not loaded with the same cause, as the head does", async () => {
     const tree = await renderCard({ status: "ready", busy: false, data: { days_series: [] }, error: null });
-    const [head] = getHeads(tree);
+    const head = getBlockHead(tree);
     const bodyAbsent = findNodes(tree, (n) => n.type === "AbsentValue").filter((n) => !findNodes(head, (h) => h === n).length);
     assert.deepEqual(bodyAbsent.map((n) => n.props.kind), ["not-loaded"]);
     assert.ok(String(bodyAbsent[0]?.props.title).includes("no window summary"), "the body states the cause in its title");
@@ -634,20 +678,22 @@ describe("the Record attribution head names the missing-report level with no rat
   for (const row of rows) {
     test(row.name, async () => {
       const tree = await renderCard(row.state);
+      const isMarked = row.isRead && row.isBodyEmpty !== true;
       const heads = getHeads(tree);
-      assert.equal(heads.length, 1);
-      const [status] = heads;
+      assert.equal(heads.length, isMarked ? 1 : 0, "a status mark only over a read window with records");
+      const status = isMarked ? heads[0] : getBlockHead(tree);
       const absent = findNodes(status, (n) => n.type === "AbsentValue");
-      const elementChildren = status.children.filter((child) => typeof child !== "string");
-      const tone = String(status.props["data-tone"]);
-      assert.deepEqual(absent.map((n) => n.props.kind), row.kinds);
+      assert.deepEqual(absent.map((n) => n.props.kind), isMarked ? [] : [...row.kinds, ...(row.isRead ? ["none"] : [])]);
       assert.match(collectText(status).trim(), row.text);
       assert.doesNotMatch(collectText(status), /%|days/, "no rate and no window in the head");
       assert.doesNotMatch(collectText(tree), /remaining/, "no Untraceable sentence beside its stat");
       assert.doesNotMatch(collectText(status), row.isRead ? /Not loaded/ : /None/);
-      assert.equal(tone === "neutral", !row.isRead, "a tone only on a read window");
-      assert.ok(collectText(status).trimStart().startsWith(`${severityWord[tone]}: `), "the severity word is read first");
-      assert.equal(elementChildren.length, 2, "the glyph, then the sentence as one inline element");
+      if (isMarked) {
+        const tone = String(status.props["data-tone"]);
+        assert.notEqual(tone, "neutral", "a read window carries its band's tone");
+        assert.ok(collectText(status).trimStart().startsWith(`${severityWord[tone]}: `), "the severity word is read first");
+        assert.equal(status.children.filter((child) => typeof child !== "string").length, 2, "the glyph, then the sentence as one inline element");
+      }
       if (row.title) assert.ok(String(absent[0]?.props.title).includes(row.title), "the failed read's own cause is in the title");
       if (row.isBodyEmpty !== undefined) {
         const isBodyEmpty = /No attributed runs in this period/.test(collectText(tree));

@@ -88,10 +88,10 @@ interface OutcomesHelpers {
   ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
   focusLedgerSectionO: (id: string, doc: { getElementById: (id: string) => unknown }) => boolean;
   buildNeedsYouUrlO: (filter: Record<string, unknown>, sort: string, limit: number, includeAll: boolean) => string;
-  reportingHealthSummaryO: (state: PayloadState<{ alerting?: string[] }>) => string;
+  reportingHealthSummaryO: (channelState: PayloadState<unknown>, attributionState: PayloadState<unknown>) => string | null;
   selfReportSummaryO: (state: PayloadState<AnalyticsData>) => string;
   loopEventsSummaryO: (state: PayloadState<{ events?: unknown[] }>) => string;
-  getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
+  getChannelLivenessBadgeO: (state: PayloadState<unknown>) => { tone: string | null; text: unknown } | null;
   AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
   isFilterAppliedO: (filter: Record<string, unknown>, includeAll: boolean) => boolean;
   buildAgentOptionsO: (agents: string[], chosen: string) => { value: string; label: string }[];
@@ -633,32 +633,29 @@ test("buildLedgerSectionsO: a closure settled this session leaves the window Nee
 // --- disclosure summaries: a closed section answers without opening, and never fakes calm ---
 
 test("disclosure summaries: loading and failure read as distinct tokens, never as 'all clear'", () => {
-  const summaries = [helpers.reportingHealthSummaryO, helpers.selfReportSummaryO, helpers.loopEventsSummaryO];
+  const reportingHealth = (state: PayloadState<unknown>) => helpers.reportingHealthSummaryO(state, state);
+  const summaries = [reportingHealth, helpers.selfReportSummaryO, helpers.loopEventsSummaryO];
   for (const summarize of summaries) {
     const loading = summarize({ status: "loading" });
     for (const status of ["error", "unavailable"] as const) {
       const failed = summarize({ status });
       assert.notStrictEqual(failed, loading, `${summarize.name}: ${status} is not drawn as loading`);
-      assert.match(failed, /unavailable/i, `${summarize.name}: ${status} says the payload is unavailable`);
+      assert.match(String(failed), /unavailable/i, `${summarize.name}: ${status} says the payload is unavailable`);
     }
-    assert.match(loading, /loading/i, `${summarize.name}: loading says so`);
+    assert.match(String(loading), /loading/i, `${summarize.name}: loading says so`);
   }
 });
 
-test("getChannelLivenessBadgeO: only a loaded payload may claim 'All recording' or carry a tone", () => {
-  for (const status of ["loading", "error", "unavailable"] as const) {
-    const badge = helpers.getChannelLivenessBadgeO({ status });
-    assert.strictEqual(badge.tone, "neutral", `${status} carries no live tone`);
-    assert.doesNotMatch(badge.text, /all recording/i, `${status} is no all-clear`);
-  }
-  assert.notStrictEqual(
-    helpers.getChannelLivenessBadgeO({ status: "loading" }).text,
-    helpers.getChannelLivenessBadgeO({ status: "error" }).text,
-    "loading and failure read differently",
-  );
-  const live = helpers.getChannelLivenessBadgeO({ status: "ready", data: { alerting: [], days: 7 } });
-  assert.deepStrictEqual(sameRealm(live), { tone: "ok", text: "All recording · 7d" });
-  const silent = helpers.getChannelLivenessBadgeO({ status: "ready", data: { alerting: ["stop"] } });
+test("getChannelLivenessBadgeO: only a read with channels may carry a tone, and an empty list never claims 'All recording'", () => {
+  assert.strictEqual(helpers.getChannelLivenessBadgeO({ status: "loading" }), null, "loading leaves the head to the body's loading look");
+  const failed = helpers.getChannelLivenessBadgeO({ status: "error", error: "HTTP 500" });
+  assert.strictEqual(failed?.tone, null, "a failed read carries no tone");
+  const empty = helpers.getChannelLivenessBadgeO({ status: "ready", data: { channels: [], alerting: [], days: 7 } });
+  assert.strictEqual(empty?.tone, null, "no channel read carries no tone");
+  const channel = { attribution_source: "stop" };
+  const live = helpers.getChannelLivenessBadgeO({ status: "ready", data: { channels: [channel], alerting: [], days: 7 } });
+  assert.deepStrictEqual(sameRealm(live), { tone: "ok", text: "All recording" });
+  const silent = helpers.getChannelLivenessBadgeO({ status: "ready", data: { channels: [channel], alerting: ["stop"] } });
   assert.deepStrictEqual(sameRealm(silent), { tone: "crit", text: "Silent: stop" });
 });
 
@@ -701,13 +698,24 @@ test("AgentFailureBodyO: body and skeleton rows ride the shared compact atom, no
   }
 });
 
-test("reportingHealthSummaryO: a silent channel is named in the closed summary line", () => {
-  assert.strictEqual(
-    helpers.reportingHealthSummaryO({ status: "ready", data: { alerting: ["subagent_stop", "stop"] } }),
-    "Silent: subagent_stop, stop",
-  );
-  assert.strictEqual(helpers.reportingHealthSummaryO({ status: "ready", data: { alerting: [] } }), "All channels recording");
-  assert.strictEqual(helpers.reportingHealthSummaryO({ status: "ready", data: {} }), "All channels recording");
+describe("reportingHealthSummaryO: the closed line names only the fold's worst state, in one phrase", () => {
+  const ready = (data: unknown): PayloadState<unknown> => ({ status: "ready", data });
+  const channels = [{ attribution_source: "stop" }, { attribution_source: "subagent_stop" }];
+  const attribution = (rate: number | null) => ready({ window_summary: { literal_omission_rate: rate, total_attributed: 80 } });
+  const rows = [
+    { name: "a silent channel outranks a high missing share, and is counted, not named", channel: ready({ channels, alerting: ["stop"] }), attribution: attribution(0.05), text: "1 channel silent" },
+    { name: "two silent channels are counted in the plural", channel: ready({ channels, alerting: ["stop", "subagent_stop"] }), attribution: attribution(0.01), text: "2 channels silent" },
+    { name: "a critical missing share with every channel recording", channel: ready({ channels, alerting: [] }), attribution: attribution(0.2), text: "Missing reports critical" },
+    { name: "a high missing share with every channel recording", channel: ready({ channels, alerting: [] }), attribution: attribution(0.05), text: "Missing reports high" },
+    { name: "a failed attribution read with every channel recording", channel: ready({ channels, alerting: [] }), attribution: { status: "error" } as PayloadState<unknown>, text: "Unavailable" },
+    { name: "nothing wrong and everything read claims nothing", channel: ready({ channels, alerting: [] }), attribution: attribution(0.01), text: null },
+    { name: "no channel and no attributed run claims nothing", channel: ready({ channels: [], alerting: [] }), attribution: attribution(null), text: null },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(helpers.reportingHealthSummaryO(row.channel, row.attribution), row.text);
+    });
+  }
 });
 
 test("selfReportSummaryO / loopEventsSummaryO: the summary counts what the section holds", () => {

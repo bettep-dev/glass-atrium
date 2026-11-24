@@ -74,11 +74,12 @@ const CROSSTAB = getMarkup("CrosstabBlock", {
   state: { status: "ready", data: { crosstab: { polarTotal: 4, total: 40, byCell: { "high|false": { count: 3 } }, cells: [] } }, error: null },
   onRetry: noop, shared: {},
 });
-const LOADING = { status: "loading", data: null, error: null };
-// a read window → the head carries its status (a first read in flight leaves the head empty)
-const ATTRIBUTION_READ = { ...READY, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } } };
+// a read window with records → the head carries its status (an empty or unread window draws no mark)
+const ATTRIBUTION_READ = { ...READY, data: { days_series: [], window_summary: { literal_omission_rate: 0.05, total_attributed: 80 } } };
 const ATTRIBUTION = getMarkup("AttributionHealthBlock", { state: ATTRIBUTION_READ, period: 30, onRetry: noop, shared: {} });
-const CHANNELS = getMarkup("ChannelLivenessBlock", { state: LOADING, onRetry: noop, shared: {} });
+const SILENT_CHANNEL = { attribution_source: "structuredoutput-completion", alerting: true, eligible: true, peak_daily_count: 140, recent_peak_daily_count: 120, silent_hours: 31.5 };
+const CHANNELS_READ = { ...READY, data: { channels: [SILENT_CHANNEL], alerting: [SILENT_CHANNEL.attribution_source], days: 7 } };
+const CHANNELS = getMarkup("ChannelLivenessBlock", { state: CHANNELS_READ, onRetry: noop, shared: {} });
 
 const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="first-page" style="width: 1170px; padding: 24px;">${getLedger(0)}</div>

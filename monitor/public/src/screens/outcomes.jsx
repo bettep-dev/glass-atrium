@@ -638,7 +638,7 @@ function ScreenOutcomes({ onNav }) {
   // keyed by region card, not payload → one payload feeding four cards is one outage, and each covered card goes quiet
   const sharedFailure = getSharedFailure(buildRegionFailuresO({
     'the status band': analyticsState, 'the needs-you count': attentionState, 'the record ledger': searchState,
-    'needs-you records': needsYouState, 'by-agent failures': analyticsState, 'reporting health': attributionState,
+    'needs-you records': needsYouState, 'by-agent failures': analyticsState, 'record attribution': attributionState,
     'recording channels': channelLivenessState, 'check results': analyticsState, 'cross table': analyticsState,
     'run events': loopEventsState,
   }));
@@ -722,7 +722,7 @@ function ScreenOutcomes({ onNav }) {
       <div className="mt-section">
         <AgentFailureTableO state={analyticsState} {...regionRetry}/>
       </div>
-      <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)} className="mt-section">
+      <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState, attributionState)} className="mt-section">
         <window.UI.Stack>
           <window.UI.SplitRow ratio="1:1" layout="divided">
             <AttributionHealthBlock state={attributionState} period={analyticsPeriod} {...regionRetry}/>
@@ -825,10 +825,15 @@ function getUnloadedSummaryO(status) {
   return status === 'loading' ? 'Loading…' : 'Unavailable';
 }
 
-function reportingHealthSummaryO(channelLivenessState) {
-  if (channelLivenessState.status !== 'ready') return getUnloadedSummaryO(channelLivenessState.status);
-  const alerting = channelLivenessState.data?.alerting || [];
-  return alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All channels recording';
+// the fold's worst state across both blocks, never a repeat of a block's own all-clear → null when nothing is wrong
+function reportingHealthSummaryO(channelLivenessState, attributionState) {
+  const alerting = channelLivenessState.status === 'ready' ? channelLivenessState.data?.alerting || [] : [];
+  if (alerting.length > 0) return `${formatIntO(alerting.length)} ${alerting.length === 1 ? 'channel' : 'channels'} silent`;
+  const summary = attributionState.status === 'ready' ? attributionState.data?.window_summary : null;
+  const band = summary ? getAttributionOmissionBandO(summary.literal_omission_rate) : null;
+  if (band && band.colorVar !== '--ok') return `Missing reports ${band.label}`;
+  const unloaded = [channelLivenessState, attributionState].find((state) => state.status !== 'ready');
+  return unloaded ? getUnloadedSummaryO(unloaded.status) : null;
 }
 
 function selfReportSummaryO(analyticsState) {
@@ -1269,6 +1274,12 @@ function OpenCaveatCellO({ count, view }) {
 // daily stacked bar (inline SVG, no Recharts) + window summary stat row + literal-omission severity head status (glyph + word)
 // NULL attribution_source rows excluded by the backend (rows older than attribution tracking) → every ratio denominator = total_attributed.
 
+// a toned state → the shared head Status · no tone (nothing read, or nothing to count) → its faint word alone, no mark
+function BlockStatusO({ tone, children }) {
+  if (tone) return <window.UI.HeadStatus tone={tone}>{children}</window.UI.HeadStatus>;
+  return <span className="fs-meta text-dim">{children}</span>;
+}
+
 /**
  * One block of a status fold's body, with no card box of its own: a level-3 title, its status and ⓘ on the title's line.
  * @param isFlush - a table body whose edge cells carry the card padding → the head and foot take the same inset
@@ -1302,9 +1313,9 @@ function AttributionHealthBlock({ state, period, onRetry, shared }) {
       id={REGION_CARD_IDS.attribution}
       title="Record attribution"
       status={badge && (
-        <window.UI.HeadStatus tone={toneFromColorVarO(badge.colorVar)}>
+        <BlockStatusO tone={badge.colorVar && toneFromColorVarO(badge.colorVar)}>
           <span>Missing reports {badge.text}</span>
-        </window.UI.HeadStatus>
+        </BlockStatusO>
       )}>
       <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
     </FoldBlockO>
@@ -1332,10 +1343,10 @@ function getAttributionHeadBadgeO(state, period) {
 function AttributionHealthBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <window.UI.LoadingPlaceholder label="reporting health" minHeight={200}/>;
+    return <window.UI.LoadingPlaceholder label="record attribution" minHeight={200}/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="reporting health" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
+    return <RegionErrorO source="record attribution" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
   }
 
   const summary = state.data?.window_summary;
@@ -1419,6 +1430,9 @@ function StatGlyphLabelO({ meta }) {
 
 // 일별 stacked-bar — 각 일자 1막대, 4-category 비례 stack (inline SVG, 외부 라이브러리 없음).
 // bar 폭/간격은 grid 길이 기준 자동 분배. 0건 일자는 빈 트랙 표시.
+// one daily chart per screen → a fixed id for its keyboard note
+const DAILY_CHART_KEYS_ID = 'outcomes-daily-chart-keys';
+
 function AttributionDailyChart({ grid }) {
   const { activeIndex, handlers } = useStackedChartReadoutO(grid.length);
   const chartHeight = 132;
@@ -1431,7 +1445,8 @@ function AttributionDailyChart({ grid }) {
   return (
     <figure className="min-w-0 grid gap-x-label-inline" style={{ gridTemplateColumns: `${STACKED_Y_AXIS_WIDTH}px minmax(0, 1fr)` }}>
       <StackedYAxisO barAreaH={barAreaH} chartHeight={chartHeight}/>
-      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
+      <div role="img" aria-label={getStackedChartLabelO(grid)} aria-describedby={DAILY_CHART_KEYS_ID} tabIndex={0}
+        style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
       <svg
         width="100%"
         height={chartHeight}
@@ -1491,8 +1506,9 @@ function AttributionDailyChart({ grid }) {
       <div className="col-start-2">
         <StackedChartTicksO grid={grid}/>
         <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
-          {activeIndex === null ? 'Point at a day, or focus the chart and use the arrow keys, to read its counts.' : getStackedDayReadoutO(grid[activeIndex])}
+          {activeIndex === null ? 'Point at a day to read its counts.' : getStackedDayReadoutO(grid[activeIndex])}
         </div>
+        <span id={DAILY_CHART_KEYS_ID} className="sr-only">Focus the chart and use the arrow keys to read each day.</span>
       </div>
     </figure>
   );
@@ -1573,7 +1589,7 @@ function getStackedDayReadoutO(point) {
 
 function getStackedChartLabelO(grid) {
   const total = grid.reduce((sum, point) => sum + (Number(point.total) || 0), 0);
-  return `Daily reporting health, ${grid.length} days, ${total} records. Use the arrow keys to read each day.`;
+  return `Daily reporting health, ${grid.length} days, ${total} records.`;
 }
 
 const EMPTY_DAY_LABEL_NO_RECORDS = 'No records';
@@ -1625,7 +1641,7 @@ function ChannelLivenessBlock({ state, onRetry, shared }) {
     <FoldBlockO
       id={REGION_CARD_IDS.channels}
       title="Recording channels"
-      status={<window.UI.HeadStatus tone={badge.tone}>{badge.text}</window.UI.HeadStatus>}
+      status={badge && <BlockStatusO tone={badge.tone}>{badge.text}</BlockStatusO>}
       info={watchNote && <p className="fs-body">{watchNote}</p>}
       isFlush={hasTable}>
       <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
@@ -1639,15 +1655,18 @@ function getChannelWatchNoteO(threshold) {
     + `within the last ${threshold.eligibility_recency_days}d has recorded nothing for ${threshold.silence_hours}h.`;
 }
 
-// 'All recording' from an unloaded or failed payload = an unverified all-clear → neutral head Status with no claim
+// first read in flight → no head · failed → Not loaded · no channel read → None · 'All recording' only over a read channel list
 function getChannelLivenessBadgeO(state) {
-  if (state.status !== 'ready') return { tone: 'neutral', text: getUnloadedSummaryO(state.status) };
+  const { getRegionView, AbsentValue } = window.UI;
+  const view = getRegionView(state);
+  if (view === 'loading') return null;
+  if (view === 'error') return { tone: null, text: <AbsentValue kind="not-loaded"/> };
+  const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
+  if (channels.length === 0) return { tone: null, text: <AbsentValue kind="none"/> };
 
   const alerting = state.data?.alerting || [];
-  const days = state.data?.days;
   const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
-  const text = alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording';
-  return { tone: toneFromColorVarO(meta.colorVar), text: days ? `${text} · ${days}d` : text };
+  return { tone: toneFromColorVarO(meta.colorVar), text: alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording' };
 }
 
 function ChannelLivenessBody({ state, onRetry, shared }) {
@@ -1752,12 +1771,16 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
   const stats = getGraderTileKeysO(breakdown).map((key) => {
     const meta  = GRADER_BREAKDOWN_META[key];
     const count = Number(breakdown[key]) || 0;
-    // not_measured (legacy NULL) sits outside the graded_total denominator → no share
-    const pct   = key !== 'not_measured' && gradedTotal > 0 ? (count / gradedTotal * 100) : null;
-    return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatIntO(count), context: pct != null ? formatPctO(pct) : 'not in share denominator' };
+    return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatIntO(count), context: getGraderStatContextO(key, count, gradedTotal) };
   });
 
   return <window.UI.StatRow stats={stats}/>;
+}
+
+// a share of graded_total · not_measured (legacy NULL) sits outside it · an empty window → no line under its zero
+function getGraderStatContextO(key, count, gradedTotal) {
+  if (key === 'not_measured') return 'not in share denominator';
+  return gradedTotal > 0 ? formatPctO(count / gradedTotal * 100) : undefined;
 }
 
 // downgrade_origin 분포 서브라인 — grader_verdict 카드에 종속. writer_true_downgraded(작성자 pass
@@ -1890,7 +1913,9 @@ function CrosstabBlock({ state, onRetry, shared }) {
               {formatRateO(confidentFailed.share)}
             </span>
           )}
-          {state.status === 'ready' && <window.UI.HeadStatus tone="warn">{formatIntO(polarTotal)} mismatches</window.UI.HeadStatus>}
+          {state.status === 'ready' && (polarTotal > 0
+            ? <window.UI.HeadStatus tone="warn">{formatIntO(polarTotal)} mismatches</window.UI.HeadStatus>
+            : <window.UI.AbsentValue kind="none"/>)}
         </span>
       )}
       info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed.</p>}
@@ -3101,13 +3126,16 @@ function formatRateO(rate, fixedDigits) {
 }
 
 // literal-omission rate over the selected window → attribution head-status severity tone (colorVar) + copy · null → info tone None (no attributed records)
+// no rate (no attributed run) → None with no tone, never a band
 function attributionOmissionBadgeO(rate) {
-  if (rate === null || rate === undefined || Number.isNaN(Number(rate))) {
-    return { colorVar: '--info', text: window.UI.EMPTY_VALUE_TEXT };
-  }
+  const band = getAttributionOmissionBandO(rate);
+  return band ? { colorVar: band.colorVar, text: band.label } : { colorVar: null, text: <window.UI.AbsentValue kind="none"/> };
+}
+
+function getAttributionOmissionBandO(rate) {
+  if (rate === null || rate === undefined || Number.isNaN(Number(rate))) return null;
   const value = Number(rate);
-  const band = ATTRIBUTION_OMISSION_BANDS.find((b) => value < b.max) || ATTRIBUTION_OMISSION_BANDS[ATTRIBUTION_OMISSION_BANDS.length - 1];
-  return { colorVar: band.colorVar, text: band.label };
+  return ATTRIBUTION_OMISSION_BANDS.find((b) => value < b.max) || ATTRIBUTION_OMISSION_BANDS[ATTRIBUTION_OMISSION_BANDS.length - 1];
 }
 
 // 활동일만 담긴 days_series ('YYYY-MM-DD' ASC) → 최근 N 일 0-fill 그리드.
