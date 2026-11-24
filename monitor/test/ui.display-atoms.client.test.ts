@@ -174,6 +174,25 @@ describe("stat row", () => {
     }
   });
 
+  test("an unknown tone draws the dim minus mark read as Unknown, and no tone keeps an empty glyph-size slot with nothing to read", () => {
+    const [alarmGlyph] = findNodes(render("ToneGlyph", { tone: "crit" }), (n) => n.type === "svg");
+    const unknown = render("ToneGlyph", { tone: "unknown" });
+    const [unknownBox] = findNodes(unknown, (n) => n.props["aria-hidden"] === "true");
+    const [unknownGlyph] = findNodes(unknown, (n) => n.type === "svg");
+    assert.match(String(unknownBox.props.className), /\btext-dim\b/);
+    assert.equal(unknownGlyph.props.width, alarmGlyph.props.width, "the alarm glyph size");
+    assert.equal(findNodes(unknownBox, (n) => n.props.name === "minus").length, 1, "the minus icon");
+    assert.equal(collectText(unknown).trim(), "Unknown:");
+
+    const slot = render("ToneGlyph", { tone: null });
+    const boxes = findNodes(slot, (n) => n.type === "span");
+    assert.equal(boxes.length, 1, "one box, no screen-reader word");
+    assert.equal(boxes[0].props["aria-hidden"], "true");
+    assert.match(String(boxes[0].props.className), /\bone-line-box\b.*\btone-glyph\b/);
+    assert.equal(collectText(slot).trim(), "");
+    assert.equal(findNodes(slot, (n) => n.type === "svg").length, 0, "no glyph drawn");
+  });
+
   test("a card head's Status leads with the tone glyph, its severity word read before the words", () => {
     const [toneGlyph] = findNodes(render("ToneGlyph", { tone: "warn" }), (n) => n.type === "svg");
     const tree = render("HeadStatus", { tone: "warn", children: "2 awaiting" });

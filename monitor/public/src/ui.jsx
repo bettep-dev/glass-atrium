@@ -666,12 +666,14 @@ function StatNotes({ stats }) {
 
 /**
  * The alarm-size tone mark: the alarm row's glyph in a one-line box, hidden from assistive tech, its word read before what follows.
+ * @param tone - a severity tone · 'unknown' = a check that could not run (dim minus, read Unknown) · null = an empty glyph-size slot, nothing read
  * @param label - the word a screen reader hears first; defaults to the tone's severity word
  * @param title - hover text on the glyph
  */
 function ToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
+  if (tone === null) return <span className="one-line-box tone-glyph" aria-hidden="true" style={EMPTY_GLYPH_SLOT_STYLE}/>;
   return <>
-    <span className={`one-line-box tone-glyph text-${tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
+    <span className={`one-line-box tone-glyph text-${TONE_TEXT[tone] ?? tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
     <span className="sr-only">{`${label}: `}</span>
   </>;
 }
@@ -2878,10 +2880,12 @@ function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetI
   );
 }
 
-const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice' };
+const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice', unknown: 'Unknown' };
 
 // at 13 the 1.6 stroke paints under a pixel and the worst state reads faintest → every alarm mark, a firing stat's included
 const ALARM_GLYPH_SIZE = 16;
+// a ToneGlyph slot with no tone keeps the glyph's width → a lead column of glyphs holds its names on one x
+const EMPTY_GLYPH_SLOT_STYLE = Object.freeze({ width: ALARM_GLYPH_SIZE });
 
 /**
  * The one conditional-alert card, drawn as the alarm row: tone rides only on the bare glyph, the shell stays neutral.
@@ -3245,7 +3249,9 @@ function getWorstTone(tones) {
 // tone → Icon 이름 lookup (신규) — Badge/보드의 Icon 렌더 경로 전용. TONE_GLYPH(문자열 SoT)와 병존:
 // 문자열 직접 소비부는 TONE_GLYPH 를 그대로 쓰고, Icon 렌더 경로만 여기서 아이콘명을 얻는다(FIX-A 분리).
 // crit 은 DESIGN.md §4.2 severity 표준(✕)에 맞춰 'x' — ⛔(ban)이 아님(ban 은 별도 semantic).
-const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral: 'info' };
+const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral: 'info', unknown: 'minus' };
+// a tone with no colour of its own → its ink class
+const TONE_TEXT = { unknown: 'dim' };
 
 // default verdict word per tone — the glyph never stands alone.
 const VERDICT_TONE_LABEL = { ok: 'Healthy', warn: 'Needs attention', crit: 'Action needed', info: 'Info', neutral: 'No signal' };

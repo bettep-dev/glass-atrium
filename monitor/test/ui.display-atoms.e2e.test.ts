@@ -70,6 +70,10 @@ const fills = renderToStaticMarkup(h("div", null,
 const band = renderToStaticMarkup(h("div", { className: "card", style: { width: 480 } },
   h("div", { className: "queue-band", id: "band" }, h("span", { id: "band-label" }, "Decisions"), h(UI.Badge, { fill: "tag", role: "count" }, 5)),
   h("div", { id: "band-row", style: { padding: "12px 16px" } }, "row")));
+// a lead column of glyph slots: a toned row beside a held row with no tone
+const glyphSlots = renderToStaticMarkup(h("div", null,
+  h("div", { className: "fs-body" }, h(UI.ToneGlyph, { tone: "warn" }), "Hooks"),
+  h("div", { className: "fs-body" }, h(UI.ToneGlyph, { tone: null }), h("span", { id: "slot-empty-name" }, "Export via Chromium"))));
 const fact = renderToStaticMarkup(h(UI.DetailField, { label: "File path", value: "hooks/track-outcome-with-a-very-long-name-that-has-to-wrap.sh", mono: true }));
 const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", { id }, h(UI.PageHeader, {
   title,
@@ -89,7 +93,7 @@ const inlineFold = renderToStaticMarkup(h("div", { style: { width: 600 } }, h(UI
   h(UI.Disclosure, { kind: "status", title: "Daily breakdown", isInline: true, className: "inline-fold" }, h("div", { id: "inline-fold-body" }, "rows")))));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -136,6 +140,16 @@ describe("the current page", () => {
 
     assert.deepEqual({ background: look.background, color: look.color, weight: look.weight, border: look.border }, { ...expected, weight: "500", border: "0px" });
     assert.ok(look.isSquare && Math.abs(look.height - next.height) < 1, `current ${look.height}px vs Next ${next.height}px`);
+  });
+});
+
+describe("a tone glyph slot", () => {
+  test("a row with no tone keeps the glyph's box, so its name starts where the toned row's glyph ends", async () => {
+    const empty = await boxOf("#slot-empty-name");
+    const boxes = await page.$$eval("#glyph-slots .tone-glyph", (els) => els.map((el) => el.getBoundingClientRect().toJSON() as DOMRect));
+
+    assert.deepEqual([boxes[1].width, boxes[1].height], [boxes[0].width, boxes[0].height], "the empty slot is the glyph's size");
+    assert.equal(empty.left, boxes[0].right, `name at ${empty.left}, glyph ends at ${boxes[0].right}`);
   });
 });
 
