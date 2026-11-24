@@ -1148,6 +1148,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 						togglingIds={togglingIds}
 						optimisticStatusOverrides={optimisticStatusOverrides}
 						onNavigate={setSelectedId}
+						onRetry={() => loadViewerCD(selectedId)}
 						showToast={showToast}
 					/>
 				</DetailSurface>
@@ -2199,6 +2200,7 @@ function ViewerPanelCD({
 	togglingIds,
 	optimisticStatusOverrides,
 	onNavigate,
+	onRetry,
 	showToast,
 }) {
 	const { CardHead, AlertCard } = window.UI;
@@ -2207,22 +2209,14 @@ function ViewerPanelCD({
 		<div className="h-full flex flex-col min-h-0">
 			<CardHead
 				isCompact
-				title={
-					isReady
-						? state.data.title
-						: state.status === "idle"
-							? "Document viewer"
-							: "Loading…"
-				}
+				title={isReady ? state.data.title : "Document viewer"}
 				sub={null}
 				right={
-					isReady ? (
-						<ViewerActionsCD
-							doc={state.data}
-							onClose={onClose}
-							showToast={showToast}
-						/>
-					) : null
+					<ViewerActionsCD
+						doc={isReady ? state.data : null}
+						onClose={onClose}
+						showToast={showToast}
+					/>
 				}
 			/>
 			{/* superseded 배너 — successor 존재 = 구 revision 열람 중 (superseded 행은 server contract 상 done 고정, F34). */}
@@ -2263,13 +2257,35 @@ function ViewerPanelCD({
 					</aside>
 				</div>
 			) : (
-				<ViewerBodyCD state={state} />
+				<ViewerBodyCD state={state} onRetry={onRetry} />
 			)}
 		</div>
 	);
 }
 
+// 닫기는 모든 상태 · 내려받기는 문서가 준비된 상태에서만 (doc null = loading / error).
 function ViewerActionsCD({ doc, onClose, showToast }) {
+	const { Icon } = window.UI;
+	// 아이콘 전용 바 — 각 버튼은 aria-label(스크린리더) + title(마우스 툴팁) 2채널로 이름을 운반.
+	return (
+		<div className="flex items-center gap-control flex-wrap">
+			{doc && <ViewerDownloadCD doc={doc} showToast={showToast} />}
+			{onClose && (
+				<button
+					type="button"
+					className="btn ghost sm icon"
+					onClick={onClose}
+					aria-label="Close viewer"
+					title="Close viewer"
+				>
+					<Icon name="x" size={14} />
+				</button>
+			)}
+		</div>
+	);
+}
+
+function ViewerDownloadCD({ doc, showToast }) {
 	const { Icon } = window.UI;
 	const [isExporting, setIsExporting] = useStateCD(false);
 	// 단일 문서 HTML 내려받기 — headless chromium 렌더 대기 구간이 있어 fetch→blob 흐름으로 in-flight 피드백 확보.
@@ -2311,38 +2327,23 @@ function ViewerActionsCD({ doc, onClose, showToast }) {
 		}
 	}, [doc.id, doc.title, isExporting, showToast]);
 
-	// HTML 내려받기 + 닫기 (삭제는 메타 레일). 닫기 = fullscreen 종료 (selectedId 해제) = 키보드 F 단축키 동일 동작.
-	//   · 아이콘 전용 바 — 각 버튼은 aria-label(스크린리더) + title(마우스 툴팁) 2채널로 이름을 운반.
 	return (
-		<div className="flex items-center gap-control flex-wrap">
-			<button
-				type="button"
-				className="btn ghost sm icon"
-				onClick={handleHtmlExport}
-				disabled={isExporting}
-				aria-busy={isExporting ? "true" : undefined}
-				aria-label={isExporting ? "Generating HTML file…" : "Download as HTML"}
-				title={isExporting ? "Generating HTML…" : "Download HTML"}
-				style={{ cursor: isExporting ? "wait" : "pointer", opacity: isExporting ? 0.65 : 1 }}
-			>
-				<Icon
-					name={isExporting ? "loader" : "download"}
-					size={14}
-					className={isExporting ? "doc-action-spinner" : ""}
-				/>
-			</button>
-			{onClose && (
-				<button
-					type="button"
-					className="btn ghost sm icon"
-					onClick={onClose}
-					aria-label="Close viewer"
-					title="Close viewer"
-				>
-					<Icon name="x" size={14} />
-				</button>
-			)}
-		</div>
+		<button
+			type="button"
+			className="btn ghost sm icon"
+			onClick={handleHtmlExport}
+			disabled={isExporting}
+			aria-busy={isExporting ? "true" : undefined}
+			aria-label={isExporting ? "Generating HTML file…" : "Download as HTML"}
+			title={isExporting ? "Generating HTML…" : "Download HTML"}
+			style={{ cursor: isExporting ? "wait" : "pointer", opacity: isExporting ? 0.65 : 1 }}
+		>
+			<Icon
+				name={isExporting ? "loader" : "download"}
+				size={14}
+				className={isExporting ? "doc-action-spinner" : ""}
+			/>
+		</button>
 	);
 }
 
@@ -2546,7 +2547,7 @@ function getDiagramMarkupCD(svg) {
 	});
 }
 
-function ViewerBodyCD({ state }) {
+function ViewerBodyCD({ state, onRetry }) {
 	// Mermaid post-render hook — htmlToReactCD 가 React 트리를 호스트 DOM 에 commit 한 직후 <pre class="mermaid"> 텍스트를 SVG 로 변환.
 	//   · 사유: htmlToReactCD 가 className 만 통과시킴 → <pre> 본문은 텍스트로 마운트 → JS 변환 필요
 	//   · scope: bodyContainerRef.current 한정 (architecture.jsx 의 .arch-mermaid-canvas 와 충돌 차단)
@@ -2629,7 +2630,7 @@ function ViewerBodyCD({ state }) {
 		return <window.UI.LoadingPlaceholder label="the document" minHeight={260} className="p-card-pad" />;
 	}
 	if (state.status === "error") {
-		return <window.UI.RegionUnavailable source="this document" error={state.error} className="p-card-pad" />;
+		return <window.UI.RegionUnavailable source="this document" error={state.error} onRetry={onRetry} className="p-card-pad" />;
 	}
 
 	// 본문 렌더 — 분기 (MD primary + 4-format code viewer):

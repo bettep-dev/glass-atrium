@@ -1326,12 +1326,38 @@ function viewerDoc(extra: Record<string, unknown> = {}) {
   return { id: 9, title: "Doc 9", format: "txt", body: "probe", doc_status: "open", supersedes_id: null, superseded_by_id: null, ...extra };
 }
 
-function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>) {
+function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return renderScreen((screen.ViewerPanelCD as Component)({
     state, pendingDelete: null, onDelete: noop, onClose: noop, onPickStage: noop, togglingIds: new Set(),
-    optimisticStatusOverrides: new Map(), onNavigate: noop, showToast: noop,
+    optimisticStatusOverrides: new Map(), onNavigate: noop, onRetry: noop, showToast: noop, ...extra,
   }));
 }
+
+describe("the viewer head names its state, keeps its close button in every state, and offers download only on a ready document", () => {
+  const rows = [
+    { name: "loading", state: { status: "loading" }, title: "Document viewer", controls: ["Close viewer"] },
+    { name: "failed read", state: { status: "error", error: "HTTP 500" }, title: "Document viewer", controls: ["Close viewer"] },
+    { name: "ready", state: { status: "ready", data: viewerDoc() }, title: viewerDoc().title, controls: ["Download as HTML", "Close viewer"] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const [head] = findNodes(renderViewerPanel(screen, row.state), isAtom("CardHead"));
+      const right = head.props.right == null ? null : renderScreen(head.props.right);
+      const controls = right == null ? [] : findNodes(right, (n) => n.type === "button").map((n) => n.props["aria-label"]);
+      assert.deepEqual({ title: head.props.title, controls }, { title: row.title, controls: row.controls });
+    });
+  }
+});
+
+test("a failed document read offers a Retry that reads the document again", async () => {
+  const screen = await loadDocsScreen();
+  let reads = 0;
+  const tree = renderViewerPanel(screen, { status: "error", error: "HTTP 500" }, { onRetry: () => { reads += 1; } });
+  const [notice] = findNodes(tree, isAtom("RegionUnavailable"));
+  (notice.props.onRetry as () => void)();
+  assert.equal(reads, 1);
+});
 
 test("a ready viewer renders its head, the metadata rail and exactly one document body", async () => {
   const screen = await loadDocsScreen();
