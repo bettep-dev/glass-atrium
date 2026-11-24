@@ -329,9 +329,10 @@ function getSpendAlarmCopyC(hot, outsideDay) {
   return { title, detail: outsideDay !== null ? `${basis} \u00b7 the latest day is ${OUTSIDE_RANGE_C}` : basis };
 }
 
-// a trend day's band in words, "Normal range $a – $b" — the alarm detail and the chart readout read one form
+// a trend day's band in words, "Normal range $a – $b" — the alarm detail and the chart readout read one form; both bounds one precision
 function formatNormalRangeC(row) {
-  return `Normal range ${formatUsdC(row.lowerBand)} \u2013 ${formatUsdC(row.upperBand)}`;
+  const formatBound = getMoneyColumnFormatC([row.lowerBand, row.upperBand]);
+  return `Normal range ${formatBound(row.lowerBand)} \u2013 ${formatBound(row.upperBand)}`;
 }
 
 /**
@@ -522,7 +523,6 @@ function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, day
   const { getRegionView, RegionFailure, Card, Stack, StatRow, StatNotes } = window.UI;
   const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
   const notes = stats.filter((stat) => stat.info);
-  const bannerSources = failures?.banner?.sources ?? [];
 
   // flush body → the alarm rows span the card under its head; the stat row keeps the card padding
   return (
@@ -535,7 +535,7 @@ function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, day
             <RegionFailure source={KPI_SOURCE_C} error={kpiState.error} isBusy={kpiState.busy}
               focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
           )}
-          <StatRow stats={stats.map((stat) => buildStatC(stat, bannerSources))}/>
+          <StatRow stats={stats.map(buildStatC)}/>
         </Stack>
       </div>
     </Card>
@@ -554,7 +554,7 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   return [
     {
       key: 'today', label: 'Spend today', tone: getHotToneC(hot, null),
-      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
+      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState), error: kpiState.error,
       status: getStatStatus(kpiState, hot.ratio, false),
       value: formatUsdC(hot.todayCost),
       // a firing stat is value + glyph → its alarm row above already states the average
@@ -563,20 +563,20 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     },
     {
       key: 'window', label: `Cost, ${trendDays}d`,
-      source: 'cost trend', isHeld: isRegionHeldC(trendState),
+      source: 'cost trend', isHeld: isRegionHeldC(trendState), error: trendState.error,
       status: getStatStatus(trendState, windowTotal.total, windowTotal.isEmpty),
       value: formatUsdC(windowTotal.total),
       context: <TrendDeltaTextC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>,
       info: [
         WINDOW_COST_RULE_C,
-        windowTotal.total === null ? null : `This window: ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}.`,
+        windowTotal.total === null ? null : `Average ${formatUsdC(windowTotal.avgDaily)}/day · peak day ${formatUsdC(windowTotal.peakCost)}.`,
         windowTotal.prior ? getPriorCutTextC(windowTotal.prior) : null,
       ].filter(Boolean).join(' '),
       unavailableNote: 'Trend payload carries no cost figure.',
     },
     {
       key: 'per-task', label: 'Cost per finished task, 7d',
-      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
+      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState), error: kpiState.error,
       status: getStatStatus(kpiState, costPerDone, false),
       value: formatUsdC(costPerDone),
       hint: `${formatIntC(doneCount)} finished tasks`,
@@ -585,14 +585,14 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
     },
     {
       key: 'cache', label: `Cache share, ${modelDays}d`,
-      source: 'cost by model', isHeld: isRegionHeldC(modelState),
+      source: 'cost by model', isHeld: isRegionHeldC(modelState), error: modelState.error,
       status: getStatStatus(modelState, cacheShare.share, cacheShare.isEmpty),
       value: cacheShare.share === null ? null : window.UI.formatPct(cacheShare.share * 100),
       hint: cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`,
       // the window ("30 days") stays one token; the sentence wraps around it
       info: cacheShare.totalCost === null ? null : (
         <window.UI.DateRange range={getDaySpanC(modelDays)}>
-          {getCacheTotalNoteC({ listTotal: cacheShare.totalCost, recordedTotal: trendDays === modelDays ? windowTotal.total : null, days: modelDays })}
+          {getCacheTotalNoteC({ listTotal: cacheShare.totalCost, days: modelDays })}
         </window.UI.DateRange>
       ),
       unavailableNote: 'No priced model cost in this window.',
@@ -600,21 +600,16 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   ];
 }
 
-const WINDOW_COST_RULE_C = 'Recorded cost: the sum of the cost events recorded on each day of the window, today\'s partial day included. The average divides that total by the days shown; the peak is the costliest single day.';
+const WINDOW_COST_RULE_C = 'Sum of recorded cost per day, today so far included.';
 
 // a day count + its unit — one unbreakable token in the copy that names it
 function getDaySpanC(days) {
   return `${days} days`;
 }
 
-// List-price total set beside the recorded total only when both read one window → equal figures never read as a contradiction.
-function getCacheTotalNoteC({ listTotal, recordedTotal, days }) {
-  const listLabel = formatUsdC(listTotal);
-  const base = `of ${listLabel} at list token prices, last ${getDaySpanC(days)}`;
-  if (recordedTotal === null) return base;
-  return listLabel === formatUsdC(recordedTotal)
-    ? `${base} — matches the recorded total`
-    : `${base} — against ${formatUsdC(recordedTotal)} recorded`;
+// one sum, no reconciling clause → the list-price and recorded totals differ only by the window's edge-day cut (spec 44084 §9.2)
+function getCacheTotalNoteC({ listTotal, days }) {
+  return `of ${formatUsdC(listTotal)} at list token prices, last ${getDaySpanC(days)}.`;
 }
 
 /**
@@ -627,7 +622,7 @@ function getShownDays(state, requestedDays) {
 }
 
 // stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
-function buildStatC(stat, bannerSources) {
+function buildStatC(stat) {
   const { DayTokens, LAST_KNOWN_TEXT, getHeldCause } = window.UI;
   if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true };
   const value = <SpendStatValueC stat={stat}/>;
@@ -637,17 +632,25 @@ function buildStatC(stat, bannerSources) {
   }
   if (stat.status === 'ready' && stat.context) return { key: stat.key, label: stat.label, value, context: stat.context };
   // the hint or the state note, one plain string → its title carries it whole, and its day tokens stay whole
-  const note = getStatContextNoteC(stat, bannerSources);
+  const note = getStatContextNoteC(stat);
   return { key: stat.key, label: stat.label, value, context: note ? <span title={note}><DayTokens>{note}</DayTokens></span> : null };
 }
 
-// a failed read points at the notice that states it — above for the KPI payload or a banner source, else its own card below
-function getStatContextNoteC(stat, bannerSources) {
+// a failed read states its cause under Not loaded (spec 44084 §2.2) — the notice carries the next step
+function getStatContextNoteC(stat) {
   if (stat.status === 'ready') return stat.hint || null;
   if (stat.status !== 'error') return getStatNote(stat.status, stat.unavailableNote);
-  const isAbove = stat.source === KPI_SOURCE_C || bannerSources.includes(stat.source);
-  return window.UI.getNoticePointer(null, isAbove ? undefined : `the ${stat.source} notice below`);
+  return `${READ_FAILURE_CAUSE_C[window.UI.getErrorCopy(stat.error, stat.source).kind]}, not read.`;
 }
+
+// getErrorCause kind → the cause in a stat's few words
+const READ_FAILURE_CAUSE_C = Object.freeze({
+  network: 'No answer from the server',
+  database: 'Database unavailable',
+  server: 'Server error',
+  client: 'Request refused',
+  unknown: 'Read failed',
+});
 
 // Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
 function SpendStatValueC({ stat }) {
@@ -1323,7 +1326,7 @@ function ModelCostCard({ state, days, failures, onRetry }) {
       isFlush={window.UI.hasRegionRows(state, state.data?.rows ?? [])}
       info={`Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count.${fallbackNote}`}
       foot={other && (
-        <ModelCostFootC other={other} modelCount={modelRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        <ModelCostFootC modelCount={modelRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
       )}
       right={
           <div className="flex items-center gap-control">
@@ -1337,13 +1340,11 @@ function ModelCostCard({ state, days, failures, onRetry }) {
   );
 }
 
-// Rows past the M budget fold into one foot line; "Show all" opens them in the ledger itself.
-function ModelCostFootC({ other, modelCount, isShowingAll, onToggle }) {
+// Rows past the M budget fold into the ledger's Other row; "Show all" opens them in the ledger itself.
+function ModelCostFootC({ modelCount, isShowingAll, onToggle }) {
   return (
     <>
-      <span className="truncate">
-        {isShowingAll ? `All ${modelCount} models` : `Other · ${other.count} more model${other.count === 1 ? '' : 's'} · ${formatUsdC(other.cost_usd)}`}
-      </span>
+      {isShowingAll && <span className="truncate">{`All ${modelCount} models`}</span>}
       <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
         {isShowingAll ? `Show top ${getListBudgetC(CARD_SIZE.MODEL)}` : `Show all ${modelCount}`}
       </button>
@@ -1395,9 +1396,9 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
   }
 
   const modelRows = buildModelCostRows(rows);
-  const { top } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
+  const { top, other } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
-  const formatCost = getMoneyColumnFormatC([...top.map((r) => r.cost_usd), totalCost]);
+  const formatCost = getMoneyColumnFormatC([...top.map((r) => r.cost_usd), ...(other ? [other.cost_usd] : []), totalCost]);
   const formatAvg = getMoneyColumnFormatC(top.map(getAvgPerSessionC).filter((v) => v !== null));
 
   return (
@@ -1415,16 +1416,32 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
             <TableRow view={view}>
               <TableCell view={view} kind="row-header">Total</TableCell>
               <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatCost(totalCost)}</TableCell>
-              <TableCell view={view} kind="span" start={2} textRole="meta" className="text-faint"
-                title="Not summed: a session using several models counts under each.">
-                Not summed
-              </TableCell>
+              <NotSummedCellC view={view}/>
             </TableRow>
           )}>
-          {(view) => top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view} formatCost={formatCost} formatAvg={formatAvg}/>)}
+          {(view) => <>
+            {top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view} formatCost={formatCost} formatAvg={formatAvg}/>)}
+            {other && (
+              <TableRow view={view}>
+                <TableCell view={view}>{`Other · ${other.count} more model${other.count === 1 ? '' : 's'}`}</TableCell>
+                <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatCost(other.cost_usd)}</TableCell>
+                <NotSummedCellC view={view}/>
+              </TableRow>
+            )}
+          </>}
         </Table>
       </Stack>
     </Stack>
+  );
+}
+
+// Sessions + Avg / session as one right-aligned cell — a session using several models counts under each, so a folded row sums neither
+function NotSummedCellC({ view }) {
+  return (
+    <window.UI.TableCell view={view} kind="span" start={2} textRole="meta" isNumeric className="text-faint"
+      title="Not summed: a session using several models counts under each.">
+      Not summed
+    </window.UI.TableCell>
   );
 }
 
@@ -1778,7 +1795,7 @@ function SessionDistributionCard({ state, days, failures, onRetry }) {
       size={CARD_SIZE.SESSION}
       title="Most expensive sessions"
       isFlush={window.UI.hasRegionRows(state, rollup.top)}
-      sub={state.status === 'ready' ? `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}` : undefined}
+      sub={sessions.length > 0 ? `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}` : undefined}
       info={concentrationText ?? undefined}
       infoLabel="How spend concentrates"
       right={truncated
@@ -2090,7 +2107,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
           </Stack>
         </>
       ) : (
-        <EmptyStateC message={`No parse_error in the last ${days} days.`}
+        <EmptyStateC message={`No unreadable entries in ${days} days.`}
           hint={`${rows.length} days analyzed · ${formatIntC(totalEvents)} events total`}/>
       )}
     </Stack>
@@ -2333,43 +2350,32 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
 }
 
 /**
- * Headline per-session average + one phrase reconciling its session count with the population.
+ * Per-session average as the row's first stat; its hint reconciles the counted sessions with the population.
  * turn_session_count = sessions with a logged turn count, a subset of every session with a turn event.
  */
-function getTurnHeadline(turns, sessionPopulation) {
+function getSessionTurnStat(turns, sessionPopulation) {
+  const label = 'Turns per session';
   const counted = Number(turns.turn_session_count) || 0;
-  if (counted === 0) {
-    return { value: null, note: 'No session in this window logged a turn count.' };
-  }
+  if (counted === 0) return { label, value: null, context: 'No session logged a turn count.' };
   const value = window.UI.formatDecimal(Number(turns.avg_turns_per_session) || 0);
-  const note = counted >= sessionPopulation
-    ? `turns per session, across ${formatIntC(counted)} sessions`
-    : `turns per session, over the ${formatIntC(counted)} of ${formatIntC(sessionPopulation)} sessions that logged a turn count`;
-  return { value, note };
+  const context = counted >= sessionPopulation
+    ? `${formatIntC(counted)} sessions`
+    : `${formatIntC(counted)} of ${formatIntC(sessionPopulation)} sessions`;
+  return { label, value, context };
 }
 
 // 주 지표 = 세션당 턴 (SUM per session → AVG, 서버 집계) — maxTurns 예산 산정용 (F29).
 // 이벤트당 평균은 skew-sensitive 보조 지표로 격하.
 function TurnAggregateRow({ turns, sessionPopulation }) {
-  const headline = getTurnHeadline(turns, sessionPopulation);
-  const secondary = [
+  const stats = [
+    getSessionTurnStat(turns, sessionPopulation),
     { label: 'Avg turns per logged event', value: window.UI.formatDecimal(Number(turns.avg_turns) || 0) },
     { label: 'Most turns in one event', value: formatIntC(Number(turns.max_turns) || 0) },
     { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
   ];
 
-  const { Stack, StatRow } = window.UI;
-
-  return (
-    // the body is flush for the stop-reason table → the aggregates take the card padding themselves
-    <Stack gap="label" className="px-card-pad">
-      <div className="flex items-baseline gap-label flex-wrap">
-        {headline.value && <span className="fs-display font-semibold tabular-nums">{headline.value}</span>}
-        <span className="fs-meta text-dim">{headline.note}</span>
-      </div>
-      <StatRow stats={secondary}/>
-    </Stack>
-  );
+  // the body is flush for the stop-reason table → the aggregates take the card padding themselves
+  return <window.UI.StatRow stats={stats} className="px-card-pad"/>;
 }
 
 // stop_reason 분포 — 4컬럼 테이블 (분류 · 이벤트수+인라인바 · 세션수 · 비중). ≤5컬럼.

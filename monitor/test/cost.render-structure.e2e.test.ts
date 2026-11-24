@@ -114,7 +114,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
       },
     } : {}),
   }));
-  // A month's real model spread: more models than the ledger's row budget, so it rolls up an Other foot.
+  // A month's real model spread: more models than the ledger's row budget, so it rolls up an Other row.
   app.get("/api/cost/by-model", async () => ({
     rows: LEDGER_MODELS.map((model, i) => ({
       model,
@@ -350,6 +350,8 @@ describe("calm fixture — nothing is running hot", () => {
       return {
         foot: Array.from(table?.querySelectorAll("tfoot :is(th, td)") ?? []).map((cell) => (cell.textContent || "").trim()),
         costs: Array.from(table?.querySelectorAll("tbody tr > td:nth-child(2)") ?? []).map((cell) => (cell.textContent || "").trim()),
+        lastRow: (table?.querySelector("tbody tr:last-child")?.textContent || "").trim(),
+        reasonAlign: getComputedStyle(table!.querySelector("tfoot :is(th, td):last-child")!).textAlign,
       };
     });
     assert.strictEqual(ledger.foot[0], "Total");
@@ -357,6 +359,8 @@ describe("calm fixture — nothing is running hot", () => {
     for (const text of [...ledger.costs, ledger.foot[1]]) assert.match(text, /\.\d\d$/, `one precision down the cost column: ${text}`);
     assert.strictEqual(ledger.foot.length, 3, "the two count columns share one cell");
     assert.strictEqual(ledger.foot[2], "Not summed", "the shared cell names the rule in two words; the reason rides its title");
+    assert.strictEqual(ledger.reasonAlign, "right", "the reason sits on the count columns' right edge, as their cells do");
+    assert.match(ledger.lastRow, /^Other · \d+ more models?/, "the rolled-up row closes the body, so Total sums every row above it");
   });
 
   for (const width of [1440, 1920]) {

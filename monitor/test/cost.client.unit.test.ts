@@ -163,7 +163,8 @@ interface CostHelpers {
   getCacheTicks: (domain: readonly [number, number]) => number[];
   getUsdTicksC: (maxValue: number) => number[];
   getFlatCacheRate: (rows: readonly { rate_pct: number | null }[]) => number | null;
-  getCacheTotalNoteC: (input: { listTotal: number | null; recordedTotal: number | null; days: number }) => string;
+  getCacheTotalNoteC: (input: { listTotal: number; days: number }) => string;
+  formatNormalRangeC: (row: { lowerBand: number; upperBand: number }) => string;
   getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
   computeTokenShares: (
     points: readonly Record<string, number>[],
@@ -172,10 +173,10 @@ interface CostHelpers {
     shares: ReadonlyArray<{ key: string; total: number }>,
   ) => ReadonlyArray<{ key: string; total: number }>;
   getSpendAlarmCopyC: (hot: HotVerdict, outsideDay: OutsideDay | null) => { title: string; detail: string | null };
-  getTurnHeadline: (
+  getSessionTurnStat: (
     turns: { avg_turns_per_session?: number; turn_session_count?: number },
     sessionPopulation: number,
-  ) => { value: string | null; note: string };
+  ) => { label: string; value: string | null; context: string };
   getTrendReadout: (
     row: {
       fullDate: string;
@@ -1002,20 +1003,20 @@ test("the stack draws the largest category last, so the top edge carries that se
   }
 });
 
-test("the turn headline states one per-session figure and reconciles its session count with the population", () => {
+test("the turns-per-session stat reconciles its session count with the population in its hint", () => {
   const rows = [
-    { name: "fewer sessions logged a turn count", counted: 257, population: 582 },
-    { name: "every session logged a turn count", counted: 582, population: 582 },
+    { name: "fewer sessions logged a turn count", counted: 257, population: 582, context: "257 of 582 sessions" },
+    { name: "every session logged a turn count", counted: 582, population: 582, context: "582 sessions" },
+    { name: "no session logged a turn count", counted: 0, population: 40, context: "No session logged a turn count." },
   ];
-  for (const { name, counted, population } of rows) {
-    const { value, note } = cost.getTurnHeadline({ avg_turns_per_session: 91.25, turn_session_count: counted }, population);
-    assert.strictEqual(value, "91.3", name);
-    const numbers = note.match(/\d+/g) ?? [];
-    assert.deepStrictEqual([...new Set(numbers)].sort(), [...new Set([String(counted), String(population)])].sort(), `${name}: ${note}`);
-    assert.strictEqual(numbers.length, new Set(numbers).size, `${name}: each count stated once — ${note}`);
+  for (const { name, counted, population, context } of rows) {
+    const stat = cost.getSessionTurnStat({ avg_turns_per_session: 91.25, turn_session_count: counted }, population);
+    assert.deepStrictEqual(
+      { label: stat.label, value: stat.value, context: stat.context },
+      { label: "Turns per session", value: counted === 0 ? null : "91.3", context },
+      name,
+    );
   }
-  const none = cost.getTurnHeadline({ avg_turns_per_session: 0, turn_session_count: 0 }, 40);
-  assert.strictEqual(none.value, null, "no counted session has no average");
 });
 
 // --- Error cards survive their Retry, and a held read under a failure never reads current ---
@@ -1197,8 +1198,17 @@ describe("the spend alarm reads amount first, then its multiple of the 7-day ave
 
 });
 
+test("log integrity with no unreadable entry says so in plain words, never the raw column name", async () => {
+  const mod = await loadCostRender();
+  const state = ready({ rows: [{ event_date: "2026-01-09", error_count: 0, total_count: 1187 }] });
+  const tree = renderIn(mod, "ParseErrorBody", { state, days: 30, onRetry: () => {} });
+  // the message prop rides down the EmptyState atom's own nodes → one distinct message per empty state
+  const messages = new Set(findNodes(tree, (n) => typeof n.props.message === "string").map((n) => n.props.message));
+  assert.deepEqual([...messages], ["No unreadable entries in 30 days."]);
+});
+
 test("an average turn count drops a trailing .0", () => {
-  const { value } = cost.getTurnHeadline({ avg_turns_per_session: 4, turn_session_count: 10 }, 10);
+  const { value } = cost.getSessionTurnStat({ avg_turns_per_session: 4, turn_session_count: 10 }, 10);
   assert.strictEqual(value, "4");
 });
 
@@ -1230,9 +1240,9 @@ describe("an instrumentation card sets its figures in one stat row, never a tile
       data: {
         stop_reasons: [{ stop_reason: "end_turn", event_count: 1830, session_count: 412 }],
         stop_reason_session_count: 412,
-        turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
+        turns: { avg_turns_per_session: 14.4, avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
       },
-      stats: [["Avg turns per logged event", "3.3"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
+      stats: [["Turns per session", "14.4"], ["Avg turns per logged event", "3.3"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
     },
   ];
 
@@ -1404,29 +1414,21 @@ describe("the token volume total compares with the server's prior window", () =>
   }
 });
 
-// spec 44084 §2.2 + §3.2: a stat whose read is not current says so in the Dashboard's words — the pointer to its notice, or Last known
+// spec 44084 §2.2 + §3.2: a stat whose read is not current says so in the Dashboard's words — its cause, or Last known
 describe("a spend stat whose read is not current says so on its context line, as the Dashboard stats do", () => {
   const kpi = getKpiAtRatio(1, null);
   const heldKpi: PanelState = { ...ready(kpi), error: "HTTP 500 Internal Server Error" };
   const trend = getTrendPoints([1, 2, 3]);
   const rows = [
     {
-      name: "a failed kpi read points at the notice above its card",
+      name: "a failed kpi read states its cause",
       props: { kpiState: failed, hot: cost.computeHotVerdict({}), trendState: trend },
-      label: "Spend today", context: "See the notice above.", title: "See the notice above.",
+      label: "Spend today", context: "Server error, not read.", title: "Server error, not read.",
     },
     {
-      name: "a failed trend read points at its own card's notice below",
-      props: { kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: failed },
-      label: "Cost, 30d", context: "See the cost trend notice below.", title: "See the cost trend notice below.",
-    },
-    {
-      name: "a failed trend read the page banner speaks for points at the notice above",
-      props: {
-        kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: failed,
-        failures: { banner: { sources: ["cost trend"] } },
-      },
-      label: "Cost, 30d", context: "See the notice above.", title: "See the notice above.",
+      name: "a failed trend read states its own cause",
+      props: { kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: { ...failed, error: "TypeError: Failed to fetch" } },
+      label: "Cost, 30d", context: "No answer from the server, not read.", title: "No answer from the server, not read.",
     },
     {
       name: "a held kpi read says Last known and names the failed refresh on hover",
@@ -1588,7 +1590,7 @@ test("each stat with a counting rule keeps it behind the spend card's one info t
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
   const rules = [
-    { label: "Cost, 30d", rule: /recorded cost/i },
+    { label: "Cost, 30d", rule: /^Cost, 30d\s+—\s+Sum of recorded cost per day, today so far included\. Average \$2\.00\/day · peak day \$3\.00\.$/ },
     { label: "Cost per finished task, 7d", rule: /fixed 7-day window/i },
   ];
   const notes = findNodes(renderSpendNotes(tree), (n) => n.type === "p");
@@ -1723,13 +1725,23 @@ test("the spend concentration sentence prints its share through formatPct, so a 
   assert.match(getText({ share: 0.4125, count: 3 }, 40), /hold 41\.3% of the spend/);
 });
 
-test("the cache stat says the list-price total matches the recorded total when both read the same, and names the gap when not", () => {
-  const match = cost.getCacheTotalNoteC({ listTotal: 14_520.3, recordedTotal: 14_520.1, days: 30 });
-  assert.doesNotMatch(match, /not the recorded total/);
-  assert.match(match, /matches the recorded total/);
-  const differ = cost.getCacheTotalNoteC({ listTotal: 120, recordedTotal: 100, days: 30 });
-  assert.match(differ, /\$120/);
-  assert.match(differ, /\$100 recorded/);
+// spec 44084 §9.2: the two 30-day totals differ by an edge-day cut → the note states its one sum, no reconciling clause
+test("the cache stat's list-price note states one sum and its window, and closes as a sentence", () => {
+  assert.strictEqual(cost.getCacheTotalNoteC({ listTotal: 40_001.2, days: 30 }), "of $40,001 at list token prices, last 30 days.");
+});
+
+// spec 44084 §2.1: the two bounds of one range are one set → one precision for both
+describe("a normal range reads both bounds in one precision", () => {
+  const rows = [
+    { name: "a bound under $100 keeps cents on both", lowerBand: 0, upperBand: 2307, text: "Normal range $0.00 \u2013 $2,307.00" },
+    { name: "both bounds under $100 keep cents", lowerBand: 1.51, upperBand: 10.06, text: "Normal range $1.51 \u2013 $10.06" },
+    { name: "both bounds of $100 or more drop cents", lowerBand: 150.4, upperBand: 2307.2, text: "Normal range $150 \u2013 $2,307" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(cost.formatNormalRangeC(row), row.text);
+    });
+  }
 });
 
 test("the cost trend legend names the no-data days on screen, not only in the chart label", async () => {
@@ -1797,8 +1809,11 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
       assert.equal(Boolean(card.props.foot), hidden > 0, "the card carries a foot exactly when rows are rolled up");
       const foot = card.props.foot ? collectText(renderScreen(card.props.foot)) : "";
-      assert.equal(foot.includes(`Other · ${hidden} more model`), hidden > 0, foot || "no foot");
       assert.equal(foot.includes(`Show all ${count}`), hidden > 0, foot || "no foot");
+      assert.doesNotMatch(foot, /Other/, "the rolled-up line is a table row, so the Total under it closes every part");
+      const bodyRows = findNodes(card, (n) => n.type === "tbody").flatMap((body) => findNodes(body, (n) => n.type === "tr"));
+      const lastRow = bodyRows.length > 0 ? collectText(bodyRows[bodyRows.length - 1]!) : "";
+      assert.equal(lastRow.startsWith(`Other · ${hidden} more model`), hidden > 0, lastRow);
     });
   }
 
@@ -1815,7 +1830,12 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
     });
   }
 
-  const tokens = { input_tokens: 10, output_tokens: 10, cache_read_tokens: 10, cache_creation_tokens: 10 };
+  test("sessions — an empty window states no Top count in the head; the body says what is missing", async () => {
+    const card = await getCard("SessionDistributionCard", { rows: [], total_session_count: 0, truncated: false });
+    assert.equal(card.props.sub, undefined);
+  });
+
+  const tokens ={ input_tokens: 10, output_tokens: 10, cache_read_tokens: 10, cache_creation_tokens: 10 };
   const priced = { model: "claude-opus-5-5", cost_usd: 30, session_count: 4, ...tokens };
   const unattributedCases = [
     {
@@ -1848,6 +1868,7 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       const rows = Array.from({ length: count }, (_, i) => ({ session_id: `session-${i}`, total_cost_usd: 50 - i }));
       const card = await getCard("SessionDistributionCard", { rows, total_session_count: count, truncated: false });
       assert.equal(card.props.size, "L");
+      assert.equal(card.props.sub, `Top ${Math.min(count, budget)} of ${count}`);
       const shown = findNodes(card, (n) => n.type === "tr" && /^Session /.test(String(n.props["aria-label"] ?? ""))).length;
       const hidden = count - shown;
       assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
