@@ -399,7 +399,9 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
 }
 
 // a week panel's one sub-line: its span, then its count when it has one; the window itself sits in the stat labels
+// no span (a payload without window dates) → the count alone
 function SpanLine({ span, children }) {
+  if (span == null) return <p className="fs-meta text-dim">{children}</p>;
   return <p className="fs-meta text-dim"><window.UI.DayTokens>{span}</window.UI.DayTokens>{children != null && <> · {children}</>}</p>;
 }
 
@@ -562,7 +564,7 @@ function formatHourTick(hour) {
 
 function describeHourGrid(grid) {
   const { peak } = grid;
-  return `Runs by hour, ${grid.span}: busiest ${getRowLabel(peak)} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
+  return `Runs by hour${grid.span ? `, ${grid.span}` : ''}: busiest ${getRowLabel(peak)} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
 }
 
 // a plain click routes in-app; a modified or middle click is left to the browser → a new tab
@@ -1177,7 +1179,7 @@ function buildResultPanel(data) {
   const start = data?.prior_window?.period_end;
   return {
     rows, writerTotal: window.UI.getWriterTotal(data), agents: getBreakageAgents(data?.by_agent_result),
-    span: start ? `${formatDay(start)} – today` : 'Last 7 days and today',
+    span: start ? `${formatDay(start)} – today` : null,
   };
 }
 
@@ -1216,7 +1218,7 @@ function buildHourGrid(data) {
   return {
     rows, peak, max: peak.count, total: cells.reduce((sum, cell) => sum + cell.count, 0),
     folds: rows.filter((row) => row.fold), dateCount: dates?.count ?? null,
-    span: dates ? `${formatDay(dates.first)} – today` : 'Last 7 days',
+    span: dates ? `${formatDay(dates.first)} – today` : null,
   };
 }
 

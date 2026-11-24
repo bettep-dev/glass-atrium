@@ -161,12 +161,24 @@ function renderResultPanel(byResult: Array<{ result: string; count: number }>): 
 }
 
 // spec 44084 §9.1: one noun, one window form → the sub-line says task results, never outcomes
+// a payload with no window dates → the count alone; the Status card's labels hold the window
 test("the results panel counts task results on its sub-line, filled or empty", () => {
   for (const byResult of [[{ result: "done", count: 40 }, { result: "fail", count: 2 }], []]) {
     const [subLine] = findNodes(renderResultPanel(byResult), (n) => n.type === "p");
     const total = byResult.reduce((sum, row) => sum + row.count, 0);
-    assert.equal(collectText(subLine).replace(/\s+/g, " ").trim(), `Last 7 days and today · ${total} task results`);
+    assert.equal(collectText(subLine).replace(/\s+/g, " ").trim(), `${total} task results`);
   }
+});
+
+test("an hour grid with no bucket dates states its run count alone, on the sub-line and the chart label", () => {
+  const data = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
+  data[3][9] = 117;
+  const grid = (rateMod.buildHourGrid as (payload: unknown) => unknown)({ data, meta: { total_count: 117 } });
+  const tree = renderScreen(rateMod.React.createElement(rateMod.HourGrid as Component, { grid })) as RenderedNode;
+  const [subLine] = findNodes(tree, (n) => n.type === "p");
+  assert.equal(collectText(subLine).replace(/\s+/g, " ").trim(), "117 runs");
+  const [chart] = findNodes(tree, (n) => n.props.role === "img");
+  assert.match(String(chart.props["aria-label"]), /^Runs by hour: busiest /);
 });
 
 // one count edge per card → the result rows keep an empty cell where each breakage row draws its arrow
