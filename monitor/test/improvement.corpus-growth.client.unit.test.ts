@@ -299,3 +299,95 @@ describe("instrumentation cards leave their tone on the glyph, never on a word o
     });
   }
 });
+
+function getStrings(tree: RecordedElement[]): string[] {
+  return tree.flatMap((el) => [el.props.children].flat()).filter((child): child is string => typeof child === "string");
+}
+
+const STYLE_AGENT = {
+  agent: "glass-atrium-dev-node",
+  emission_count: 2,
+  emission_total: 3,
+  emission_rate: 0.66,
+  corroborated_count: 2,
+  uncorroborated_count: 1,
+  unverifiable_count: 0,
+  eligible_count: 3,
+};
+
+// the gate's verdict is a word an operator reads, one per tone: the strip and the card show the same word
+describe("the graduation gate's verdict word follows its tone", () => {
+  const WORD_BY_TONE: Record<string, string> = { "text-ok": "Pass", "text-warn": "Warn", "text-crit": "Block", "text-info": "Pending" };
+  const rows = [
+    { name: "nothing read yet", emission: null, uncorroborated: null },
+    { name: "emission below the gate", emission: 0.3, uncorroborated: 0.05 },
+    { name: "nothing adjudicated", emission: 0.6, uncorroborated: null },
+    { name: "passes the gate", emission: 0.6, uncorroborated: 0.05 },
+    { name: "too much uncorroborated", emission: 0.6, uncorroborated: 0.2 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const verdict = helpers.styleRefGradeBadgeI(row.emission, row.uncorroborated);
+
+      assert.equal(verdict.label, WORD_BY_TONE[verdict.tone]);
+    });
+  }
+});
+
+// glyph and word read together on the value line; the label stays the bare stat name
+describe("the graduation gate stat puts its glyph beside the verdict, not the label", () => {
+  const rows = [
+    { name: "a passing gate", emission: 0.6, uncorroborated: 0.05 },
+    { name: "a blocking gate", emission: 0.3, uncorroborated: 0.05 },
+    { name: "a pending gate", emission: 0.6, uncorroborated: null },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const card = (helpers.StyleRefCardI as Component)({
+        state: READY,
+        styleRef: { overall_emission_rate: row.emission, overall_uncorroborated_rate: row.uncorroborated, agents: [STYLE_AGENT] },
+      });
+      const statRow = viewTree(card).find((el) => el.type === helpers.window.UI.StatRow);
+      const gate = (statRow?.props.stats as Array<Record<string, unknown>>).find((stat) => stat.key === "gate");
+      const verdict = helpers.styleRefGradeBadgeI(row.emission, row.uncorroborated);
+      const value = viewTree(gate?.value);
+
+      assert.equal(typeof gate?.label, "string", "the label is the bare stat name");
+      assert.deepEqual(value.filter((el) => el.type === GlyphMarker).map((el) => el.props.s), [verdict.symbol]);
+      assert.ok(getStrings(value).some((text) => text.includes(verdict.label)), "the verdict word sits beside its glyph");
+    });
+  }
+});
+
+// a header is a whole word, and a stacked cell names its column by that same header
+test("the per-agent style-check table spells each header out and its stacked cells repeat it", () => {
+  const tree = viewTree((helpers.StyleRefAgentTableI as Component)({ rows: [STYLE_AGENT] }));
+  const table = tree.find((el) => el.type === helpers.window.UI.Table);
+  // spread → host-realm array; the sandbox realm fails deepStrictEqual
+  const headers = [...(table?.props.columns as Array<{ label: string; isNumeric?: boolean }>)];
+  const cellLabels = tree.filter((el) => el.type === helpers.window.UI.TableCell && el.props.label).map((el) => el.props.label);
+
+  assert.deepEqual(headers.filter((c) => c.label.endsWith(".")), [], "no abbreviated header");
+  assert.deepEqual(cellLabels, headers.filter((c) => c.isNumeric).map((c) => c.label));
+});
+
+// the agent column reads through the shared short-name atom, its full name kept for assistive tech
+describe("an instrumentation agent cell renders through the shared agent-name atom", () => {
+  const rows = [
+    { name: "style-check rate by agent", render: () => (helpers.StyleRefAgentTableI as Component)({ rows: [STYLE_AGENT] }) },
+    {
+      name: "add-only patches by agent",
+      render: () => (helpers.ProseOnlyAddCardI as Component)({
+        state: READY,
+        summary: { window_days: 30, agents: [{ agent: STYLE_AGENT.agent, count: 2 }], total: 2 },
+      }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const names = viewTree(row.render()).filter((el) => el.type === helpers.window.UI.AgentName).map((el) => el.props.name);
+
+      assert.deepEqual(names, [STYLE_AGENT.agent]);
+    });
+  }
+});

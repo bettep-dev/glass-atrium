@@ -474,7 +474,7 @@ const ADD_ONLY_COLUMNS_I = Object.freeze([
 ]);
 
 function ProseOnlyAddCardI({ state, summary }) {
-	const { Card, CARD_SLOTS, QuietButton, Table, TableRow, TableCell, getSlotRows } = window.UI;
+	const { AgentName, Card, CARD_SLOTS, QuietButton, Table, TableRow, TableCell, getSlotRows } = window.UI;
 	const [isShowingAll, setShowingAll] = React.useState(false);
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !summary) return null;
@@ -518,7 +518,7 @@ function ProseOnlyAddCardI({ state, summary }) {
 			>
 				{(view) => rows.map((r) => (
 					<TableRow key={r.agent} view={view}>
-						<TableCell view={view}>{r.agent}</TableCell>
+						<TableCell view={view}><AgentName name={r.agent} /></TableCell>
 						<TableCell view={view} textRole="meta" label="Add-only" isNumeric>
 							{formatIntI(Number(r.count ?? 0))}
 						</TableCell>
@@ -615,8 +615,8 @@ function StyleRefCardI({ state, styleRef }) {
 	const stats = [
 		{
 			key: "gate",
-			label: <><SymI s={gradeBadge.symbol} className={gradeBadge.tone} size={12} /> Graduation gate</>,
-			value: gradeBadge.label,
+			label: "Graduation gate",
+			value: <><SymI s={gradeBadge.symbol} className={gradeBadge.tone} size={12} /> {gradeBadge.label}</>,
 			context: gradeBadge.hint,
 		},
 		{ key: "reported", label: "Reported rate (overall)", value: formatRateI(overallEmission), context: emissionBar },
@@ -656,15 +656,15 @@ const STYLE_REF_COLUMNS_I = Object.freeze([
 	{ key: "agent", label: "Agent" },
 	{ key: "reported", label: "Reported", isNumeric: true },
 	{ key: "rate", label: "Rate", isNumeric: true },
-	{ key: "corroborated", label: "Corrob.", isNumeric: true },
-	{ key: "uncorroborated", label: "Uncorrob.", isNumeric: true },
+	{ key: "corroborated", label: "Corroborated", isNumeric: true },
+	{ key: "uncorroborated", label: "Uncorroborated", isNumeric: true },
 	{ key: "unverifiable", label: "Unverifiable", isNumeric: true },
 ]);
 
 function StyleRefAgentTableI({ rows }) {
 	// 행=agent (가변) / 열=6 (agent · reported · rate · corroborated · uncorroborated · unverifiable)
 	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
-	const { Table, TableRow, TableCell } = window.UI;
+	const { AgentName, Table, TableRow, TableCell } = window.UI;
 	return (
 		<Table caption="Style-check rate by agent" columns={STYLE_REF_COLUMNS_I}>
 			{(view) => rows.map((r) => {
@@ -677,17 +677,17 @@ function StyleRefAgentTableI({ rows }) {
 				const hasRate = r.emission_rate !== null && r.emission_rate !== undefined;
 				return (
 					<TableRow key={r.agent} view={view}>
-						<TableCell view={view}>{r.agent}</TableCell>
+						<TableCell view={view}><AgentName name={r.agent} /></TableCell>
 						<TableCell view={view} textRole="meta" label="Reported" isNumeric>
 							{formatIntI(emCount)} / {formatIntI(emTotal)}
 						</TableCell>
 						<TableCell view={view} textRole="meta" label="Rate" isNumeric>
 							{hasRate ? formatRateI(r.emission_rate) : <NoneCellI />}
 						</TableCell>
-						<TableCell view={view} textRole="meta" label="Corrob." isNumeric>
+						<TableCell view={view} textRole="meta" label="Corroborated" isNumeric>
 							{formatIntI(corroborated)} / {formatIntI(eligible)}
 						</TableCell>
-						<TableCell view={view} textRole="meta" label="Uncorrob." isNumeric>
+						<TableCell view={view} textRole="meta" label="Uncorroborated" isNumeric>
 							{formatIntI(uncorroborated)}
 						</TableCell>
 						<TableCell view={view} textRole="meta" label="Unverifiable" isNumeric>
@@ -733,7 +733,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "Collecting data (7 d window)",
 		};
 	}
@@ -741,7 +741,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "No outcomes in 7 d",
 		};
 	}
@@ -749,7 +749,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "✕",
 			tone: "text-crit",
-			label: "block",
+			label: "Block",
 			hint: `emission ${formatRateI(emissionRate)} < 50%`,
 		};
 	}
@@ -760,7 +760,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "Adjudicated: 0 (greenfield or unverifiable)",
 		};
 	}
@@ -768,14 +768,14 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "✓",
 			tone: "text-ok",
-			label: "pass",
+			label: "Pass",
 			hint: `emission ${formatRateI(emissionRate)} · uncorroborated ${formatRateI(uncorroboratedRate)}`,
 		};
 	}
 	return {
 		symbol: "⚠",
 		tone: "text-warn",
-		label: "warn",
+		label: "Warn",
 		hint: `uncorroborated ${formatRateI(uncorroboratedRate)} ≥ 10%`,
 	};
 }

@@ -26,7 +26,7 @@ interface RosterEntry {
 
 interface CardSandbox {
   React: { createElement: unknown; useState: unknown };
-  window: { UI: { CARD_SLOTS: Record<string, { rowCount: number }>; Table: unknown; TableRow: unknown; TableCell: unknown } };
+  window: { UI: { CARD_SLOTS: Record<string, { rowCount: number }>; Table: unknown; TableRow: unknown; TableCell: unknown; AgentName: unknown } };
   ProseOnlyAddCardI: (props: Record<string, unknown>) => unknown;
 }
 
@@ -76,7 +76,8 @@ function renderCard(agents: RosterEntry[], isShowingAll: boolean) {
   const agentRows = (table.props.children as (view: typeof WIDE_VIEW) => unknown)(WIDE_VIEW);
   const rows = findElements(agentRows, (el) => el.type === sandbox.window.UI.TableRow);
   return {
-    shownAgents: rows.map((row) => getText(findElements(row, (el) => el.type === sandbox.window.UI.TableCell)[0])),
+    // the agent cell names its agent through the shared short-name atom → read the full name it carries
+    shownAgents: rows.map((row) => findElements(row, (el) => el.type === sandbox.window.UI.AgentName)[0]?.props.name),
     foot: card.props.foot ? getText(card.props.foot) : null,
   };
 }
