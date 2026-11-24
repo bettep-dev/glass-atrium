@@ -884,22 +884,23 @@ test("the last-run age reads as words, so its space never widens into a mono gap
   assert.doesNotMatch(classOf(age[0]), /\bfont-mono\b/);
 });
 
-test("stat context lines wrap instead of cutting the figure's words, and each keeps its full detail in its title", async () => {
+test("each Health context states the one fact it owns, wraps rather than cuts, and keeps its full detail in its title", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const band = renderScreen(
     mod.React.createElement(mod.WikiTileBand as Component, {
-      summaryState: ready({ last_cycle_started_at: new Date().toISOString(), latest_compiled_count: 0, last_status: "ok" }),
-      indexState: ready({}), backlogState: READY_BACKLOG,
-      cyclesState: ready({ cycles: [{ run_date: "2026-09-01", compiled_count: 22 }, { run_date: "2026-09-29", compiled_count: 0 }] }),
+      summaryState: ready({ last_cycle_started_at: new Date().toISOString(), hours_since_last_cycle: 3, latest_compiled_count: 0, last_status: "ok", cycle_p95_ms: 550 }),
+      indexState: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: Date.now() - 3 * 3_600_000, notes_total: 40 }),
+      backlogState: ready({ backlog: { run_date: new Date().toISOString().slice(0, 10), true_backlog: 0, deadlink_dryrun: [] } }),
       onRetry: () => {},
     }),
   );
   const stats = renderStatsOf(mod, band);
-  assert.ok(collectText(stats).includes("22 in 29d"), "the window total is on the page");
   for (const node of findNodes(stats, () => true)) assert.doesNotMatch(classOf(node), /\btruncate\b/);
   const contexts = findNodes(stats, (n) => /\bstat-context\b/.test(classOf(n)));
-  assert.equal(contexts.length, 4);
+  const texts = contexts.map((context) => collectText(context));
+  assert.deepEqual(texts.map((text) => text.replace(/^Since .+/, "Since …")), ["Healthy", "Idle", "Since …", "None waiting · 0 broken links"]);
+  assert.doesNotMatch(collectText(stats), /p95|\bin \d+d\b/, "the p95 and the window total belong to Run history");
   for (const context of contexts) {
     const [line] = findNodes(context, (n) => typeof n.props.title === "string");
     assert.ok(line, `"${collectText(context)}" keeps a title`);
@@ -964,15 +965,36 @@ test("a loading open card or tile states loading once, through its placeholder, 
   assert.equal(findNodes(trees[0], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(trees[1], (n) => n.props.atom === "LoadingPlaceholder").length, 1);
   assert.equal(findNodes(trees[2], (n) => n.props["aria-busy"] === "true").length, 1, "the stat row reports busy once");
-  const stats = findNodes(renderStatsOf(mod, trees[2]), (n) => /^stat$/.test(classOf(n)));
+  const [row] = findNodes(trees[2], (n) => n.props.atom === "StatRow");
+  const stats = Array.from(row.props.stats as Array<Record<string, unknown>>);
   assert.equal(stats.length, 4, "four stats");
   for (const stat of stats) {
-    const placeholders = findNodes(stat, (n) => n.props.atom === "LoadingPlaceholder");
-    assert.equal(placeholders.length, 1, "each stat states loading once, through its placeholder");
-    const outside = (n: RenderedNode | string): string =>
-      typeof n === "string" ? n : n.props.atom === "LoadingPlaceholder" ? "" : n.children.map(outside).join(" ");
-    assert.doesNotMatch(outside(stat), /loading|…/i, "not through its count or caption");
+    assert.equal(stat.isLoading, true, `${stat.label} states loading through the shared stat row`);
+    assert.equal(stat.value ?? null, null, `${stat.label} carries no value of its own`);
+    assert.equal(stat.context ?? null, null, `${stat.label} carries no caption`);
   }
+});
+
+test("a failed or unreported stat reads Not loaded with its cause in the title, an empty one None, never a dash", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, { summaryState: ready({}), indexState: ERRORED, backlogState: READY_BACKLOG, onRetry: () => {} }),
+  );
+  const [row] = findNodes(band, (n) => n.props.atom === "StatRow");
+  const byLabel = Object.fromEntries(Array.from(row.props.stats as Array<{ label: string; value: unknown }>, (stat) => [stat.label, stat.value]));
+  const absent = (label: string) => findNodes(renderScreen(byLabel[label] as RenderedNode), (n) => n.props.atom === "AbsentValue")[0];
+
+  assert.equal(byLabel["Last run"] ?? null, null, "an empty read leaves the slot to the stat row's None");
+  for (const label of ["Compiled last cycle", "Search index", "Library notes"]) {
+    const value = absent(label);
+    assert.ok(value, `${label} reads through the shared absent word`);
+    assert.equal(value.props.kind, "not-loaded", label);
+    assert.ok(String(value.props.title ?? "").trim().length > 0, `${label} names its cause`);
+  }
+  const text = collectText(renderStatsOf(mod, band));
+  assert.match(text, /None/);
+  assert.doesNotMatch(text, /—/);
 });
 
 test("the two status cards share the S slot inside their region hosts, the coverage line pinned to the foot", async () => {

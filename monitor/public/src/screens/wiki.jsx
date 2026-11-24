@@ -136,7 +136,6 @@ function ScreenWiki() {
 					summaryState={summaryState}
 					indexState={indexState}
 					backlogState={backlogState}
-					cyclesState={cyclesState}
 					at={settledAt}
 					shared={outage}
 					onRetry={triggerRefresh}
@@ -480,11 +479,11 @@ function describeSnapshotAgeW(runDate) {
 // One stat row — last run · compiled last cycle · search index · library totals.
 // Steady state carries no tint (the last-run context still names the outcome); only an actionable state marks its value.
 
-function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, shared, onRetry }) {
+function WikiTileBand({ summaryState, indexState, backlogState, at, shared, onRetry }) {
 	const { Card, StatRow, StatNotes } = window.UI;
 	const tiles = useMemoW(
-		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at),
-		[summaryState, indexState, backlogState, cyclesState, at],
+		() => buildTileBandModel(summaryState, indexState, backlogState, at),
+		[summaryState, indexState, backlogState, at],
 	);
 	const failures = readTileBandFailuresW(summaryState, indexState);
 	// a feeder the banner does not cover keeps its own sentence and Retry
@@ -522,34 +521,22 @@ function readTileBandFailuresW(summaryState, indexState) {
 	].filter((f) => window.UI.getRegionView(f.state) === "error");
 }
 
-// tile model → one StatRow stat; the full context line rides its title when the caption is cut short
+// tile model → one StatRow stat; an empty read leaves the slot to the row's None, the full context line rides its title
 function buildStatW(tile) {
+	const { key, label } = tile;
+	if (tile.state === "loading") return { key, label, isLoading: true };
+	if (tile.state === "empty") return { key, label, value: null };
+	if (tile.state !== "ready") {
+		return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={tile.cause} /> };
+	}
 	const context = tile.sub ? <span title={tile.hint || tile.sub}>{tile.sub}</span> : null;
-	return { key: tile.key, label: tile.label, value: <WikiStatValueW tile={tile} />, context };
+	return { key, label, value: <WikiStatValueW tile={tile} />, context };
 }
 
 // Report surface → neutral chrome; a warn/crit stat carries its tone on a glyph beside the
 // figure, leaving tinted containers to the alarm lane.
 function WikiStatValueW({ tile }) {
-	const { TONE_GLYPH, LoadingPlaceholder } = window.UI;
-	// loading is stated once, through the shared placeholder — never as a "…" figure; inline-flex keeps it on the stat's start edge
-	if (tile.state === "loading") {
-		return (
-			<div className="inline-flex">
-				<LoadingPlaceholder label={tile.label.toLowerCase()} />
-			</div>
-		);
-	}
-	// the unknown dash names its cause on the context line; a failed read has none, so it is named here
-	if (tile.state !== "ready") {
-		const isFailed = tile.state === "error";
-		return (
-			<span className="text-faint">
-				<span aria-hidden={isFailed ? "true" : undefined}>{tile.value}</span>
-				{isFailed && <span className="sr-only">Not loaded</span>}
-			</span>
-		);
-	}
+	const { TONE_GLYPH } = window.UI;
 	if (tile.tone !== "warn" && tile.tone !== "crit") return tile.value;
 	return (
 		<>
@@ -560,33 +547,20 @@ function WikiStatValueW({ tile }) {
 	);
 }
 
-function buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at) {
+function buildTileBandModel(summaryState, indexState, backlogState, at) {
 	return [
 		buildLastRunTileW(summaryState, at),
-		buildCompiledTileW(summaryState, backlogState, cyclesState),
+		buildCompiledTileW(summaryState, backlogState),
 		buildIndexTileW(indexState),
 		buildLibraryTileW(indexState, summaryState, backlogState),
 	];
 }
 
-// Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
-// none of them renders as a number (a zero nobody loaded is the failure mode).
-// Loading and errored tiles carry no sub text: the shared loading placeholder and the band's single banner speak for them.
+// Non-ready tile shapes carry no value, so a zero nobody loaded never renders; the cause rides the absent word's title.
+const TILE_CAUSES_W = { error: "The read failed", unavailable: "Not reported yet" };
+
 function tilePlaceholderW(key, label, state) {
-	const SUB = {
-		loading: null,
-		error: null,
-		unavailable: "Not reported yet",
-		empty: "Nothing recorded",
-	};
-	return {
-		key,
-		label,
-		state,
-		value: "—",
-		sub: SUB[state],
-		tone: "neutral",
-	};
+	return { key, label, state, cause: TILE_CAUSES_W[state], tone: "neutral" };
 }
 
 function tileFetchStateW(state) {
@@ -615,9 +589,7 @@ function buildLastRunTileW(state, at) {
 		label,
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
-		sub: overdue
-			? `${outcome.label}${describeCycleDateW(d.last_run_date)}`
-			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
+		sub: overdue ? `${outcome.label}${describeCycleDateW(d.last_run_date)}` : outcome.label,
 		hint: d.last_run_date ? `Cycle ${d.last_run_date}` : undefined,
 		tone,
 	};
@@ -642,12 +614,8 @@ function describeCycleDateW(date) {
 	return date ? ` · cycle ${date}` : "";
 }
 
-// A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints.
-function buildCompiledTileW(
-	state,
-	backlogState = UNKNOWN_REGION_W,
-	cyclesState = UNKNOWN_REGION_W,
-) {
+// A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints; the waiting count is Library notes' fact.
+function buildCompiledTileW(state, backlogState = UNKNOWN_REGION_W) {
 	const label = "Compiled last cycle";
 	const pending = tileFetchStateW(state);
 	if (pending) return tilePlaceholderW("compiled", label, pending);
@@ -661,22 +629,14 @@ function buildCompiledTileW(
 		backlogState.status === "ready" ? backlogState.data?.backlog?.true_backlog : undefined;
 	const isStalled = count === 0 && typeof waiting === "number" && waiting > 0;
 	const cause =
-		count !== 0 || typeof waiting !== "number"
-			? null
-			: isStalled
-				? `Stalled · ${formatCountW(waiting)} waiting`
-				: "Nothing waiting";
-	// same span as Run history → the two totals read alike
-	const trend = buildThroughputModel(cyclesState);
-	const windowTotal =
-		trend.rows.length > 0 ? `${formatCountW(trend.total)} in ${trend.spanDays}d` : null;
+		count !== 0 || typeof waiting !== "number" ? null : isStalled ? "Stalled" : "Idle";
 
 	return {
 		key: "compiled",
 		label,
 		state: "ready",
 		value: formatCountW(count),
-		sub: [cause, windowTotal].filter(Boolean).join(" · ") || null,
+		sub: cause,
 		info: isStalled
 			? `${formatCountW(waiting)} saved originals are waiting and the last cycle compiled none.`
 			: undefined,
@@ -702,13 +662,10 @@ function buildIndexTileW(state) {
 	const flagMissing =
 		d.has_dirty_flag === false ||
 		(d.has_dirty_flag == null && d.dirty !== true && d.last_dirty_ms == null);
-	// No row yet → say what is unknown rather than show a bare dash.
 	if (flagMissing) {
 		return {
 			...tilePlaceholderW("index", label, "unavailable"),
-			value: "Not reported",
-			sub: "Freshness not reported",
-			hint: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
+			cause: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
 		};
 	}
 	if (d.dirty === true) {
@@ -730,7 +687,6 @@ function buildIndexTileW(state) {
 		label,
 		state: "ready",
 		value: "Clean",
-		sub: "Master index current",
 		tone: "neutral",
 	};
 }
