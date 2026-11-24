@@ -11,7 +11,7 @@ import type { Browser, CDPSession, Page } from "playwright";
 import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
-import { createControlProbe, type Box } from "./lib/control-probe.js";
+import { createControlProbe } from "./lib/control-probe.js";
 import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -84,7 +84,6 @@ after(async () => {
   await browser?.close();
 });
 
-const centreOf = (box: Box) => box.top + box.height / 2;
 const readText = (selector: string) => page.$eval(selector, (el) => el.textContent ?? "");
 
 describe("a card head's warn status is meta text, never a pill matched to the control height", () => {

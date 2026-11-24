@@ -1442,57 +1442,43 @@ test("Instrumentation is an open status fold whose head states the verdict, and 
   }
 });
 
-test("the instrumentation head names the first loaded source's lead figure within the 32-character meta cap, and warns on unfinished runs", async () => {
-  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
-  const verdict = mod.getInstrumentationVerdict as (l: unknown, r: unknown, a?: unknown) => { tone: string; sub: string };
-  const lifecycle = (start: number, done: number) => ({ status: "ready", data: { rows: [{ agent_type: "a", start_count: start, completed_count: done }] } });
-  const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] } };
-  const loading = { status: "loading" };
-  const rows = [
-    { name: "unfinished runs warn", l: lifecycle(20, 8), r: review, tone: "warn", sub: "12 runs with no record" },
-    { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no record" },
-    { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14% flagged" },
-    { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus sound" },
-    { name: "activations never lengthen a head that already has a lead", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no record" },
-    { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "2.5% activation false-positive" },
-    { name: "a window with no activations states that, never a rate over an empty denominator", l: loading, r: loading, a: ACTIVATIONS_EMPTY, tone: "neutral", sub: "no activations" },
-    { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14% flagged" },
-    { name: "widest: a 5-digit orphan total", l: lifecycle(99_999, 0), r: review, a: ACTIVATIONS_READY, tone: "warn", sub: "99,999 runs with no record" },
-    { name: "widest: a full false-positive share leads alone", l: loading, r: loading, a: ACTIVATIONS_ALL_FALSE, tone: "neutral", sub: "100% activation false-positive" },
-  ];
-  for (const row of rows) {
-    const got = verdict(row.l, row.r, row.a);
-    assert.deepEqual({ ...got }, { tone: row.tone, sub: row.sub }, row.name);
-    assert.ok(got.sub.length <= 32, `${row.name}: "${got.sub}" is ${got.sub.length} chars`);
-  }
-});
-
+// 1,765 of 12,500 events flagged over two days → the 14.1 % share the head states
+const REVIEW_FLAGS_READY = { status: "ready", data: { rows: [
+  { event_date: "2026-11-22", total_count: 6000, review_flagged_count: 900 },
+  { event_date: "2026-11-23", total_count: 6500, review_flagged_count: 865 },
+] }, error: null };
+const ACTIVATIONS_CLEAN = { status: "ready", data: { summary: { total_activations: 1200, overall_false_positive_rate: 0 } }, error: null };
 const ACTIVATIONS_READY = { status: "ready", data: { summary: { total_activations: 1200, overall_false_positive_rate: 0.025 } }, error: null };
 const ACTIVATIONS_EMPTY = { status: "ready", data: { summary: { total_activations: 0, overall_false_positive_rate: 0 } }, error: null };
 const ACTIVATIONS_FAILED = { status: "error", data: null, error: { message: "HTTP 503" } };
-const ACTIVATIONS_ALL_FALSE = { status: "ready", data: { summary: { total_activations: 9999, overall_false_positive_rate: 1 } }, error: null };
 
-test("the Instrumentation fold body carries every clause the head leaves out, and an unread source says unavailable rather than 0 %", async () => {
-  const idle = { status: "loading", data: null, error: null };
-  const lifecycle = { status: "ready", data: { rows: [{ agent_type: "a", start_count: 2000, completed_count: 127 }] }, error: null };
-  const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] }, error: null };
+test("the instrumentation head states the flagged share and the activation false-positive share, and an unread activation source says not loaded, never 0 %", async () => {
+  const mod = await loadAgentsScreen();
+  const getSub = mod.getInstrumentationSub as (r: unknown, a: unknown) => string;
+  const loading = { status: "loading", data: null, error: null };
   const rows = [
-    { name: "read", l: idle, r: idle, a: ACTIVATIONS_READY, line: /activation false-positive 2\.5% of 1,200 activations · last 30d/ },
-    { name: "every source read", l: lifecycle, r: review, a: ACTIVATIONS_READY, line: /^1,873 runs with no completion record · 14% flagged · activation false-positive 2\.5% of 1,200 activations · last 30d$/ },
-    { name: "read with no activations", l: idle, r: idle, a: ACTIVATIONS_EMPTY, line: /no activations · last 30d/ },
-    { name: "failed", l: idle, r: idle, a: ACTIVATIONS_FAILED, line: /Activation rate unavailable/ },
-    { name: "not yet read", l: idle, r: idle, a: idle, line: /Activation rate unavailable/ },
+    { name: "both sources read", r: REVIEW_FLAGS_READY, a: ACTIVATIONS_CLEAN, sub: "14.1% flagged · 0% false-positive activations" },
+    { name: "a nonzero false-positive share", r: REVIEW_FLAGS_READY, a: ACTIVATIONS_READY, sub: "14.1% flagged · 2.5% false-positive activations" },
+    { name: "a window with no activations states that, never a rate over an empty denominator", r: REVIEW_FLAGS_READY, a: ACTIVATIONS_EMPTY, sub: "14.1% flagged · no activations" },
+    { name: "a failed activation read", r: REVIEW_FLAGS_READY, a: ACTIVATIONS_FAILED, sub: "14.1% flagged · activations not loaded" },
+    { name: "an activation read in flight", r: REVIEW_FLAGS_READY, a: loading, sub: "14.1% flagged · activations not loaded" },
+    { name: "unread review flags add nothing", r: loading, a: ACTIVATIONS_READY, sub: "2.5% false-positive activations" },
   ];
-  for (const row of rows) {
-    const tree = await renderComponent("InstrumentationFold", {
-      lifecycleState: row.l, reviewState: row.r, activationState: row.a, days: 30, onRetry: () => undefined,
-    });
-    const [line] = findNodes(tree, (n) => n.type === "p" && row.line.test(collectText(n)));
-    assert.ok(line, `${row.name}: ${collectText(tree)}`);
-    if (row.a !== ACTIVATIONS_READY) assert.doesNotMatch(collectText(tree), /\b0(\.0)?\s*%/, `${row.name}: no zero rate`);
-    // only dim/faint are registered secondary-ink colors — any other text-* class falls back to full ink
-    assert.match(String(line?.props.className ?? ""), /\btext-(dim|faint)\b/, `${row.name}: secondary-ink tone`);
-  }
+  for (const row of rows) assert.equal(getSub(row.r, row.a), row.sub, row.name);
+});
+
+test("the Instrumentation fold carries no tone and its body is the review-flag chart alone, with the flagged total once and no unfinished count", async () => {
+  const tree = await renderComponent("InstrumentationFold", { reviewState: REVIEW_FLAGS_READY, activationState: ACTIVATIONS_CLEAN, onRetry: () => undefined });
+  const [fold] = findAtoms(tree, "Disclosure");
+  assert.equal(fold?.props.tone, undefined, "the head reads plain, whatever the shares");
+  assert.equal(fold?.props.sub, "14.1% flagged · 0% false-positive activations");
+  assert.deepEqual([findAtoms(fold, "Card").length, findNodes(fold, (n) => n.type === "p").length], [0, 0], "no card box and no sentence");
+  const [region] = findNodes(fold, (n) => n.props?.id === "agents-review-flags");
+  assert.equal(typeof region?.type, "string", "the region id rides a plain wrapper");
+  assert.ok(findCaption(region, "1,765 flagged"), collectText(region));
+  const text = collectText(fold);
+  assert.equal(text.match(/1,765/g)?.length, 1, text);
+  assert.doesNotMatch(text, /no record|unfinished/, "the unfinished count lives on the No completion record head alone");
 });
 
 test("the drawer's Performance section states the agent's budget crossings, peak and P95; a read in flight shows the loading look, a failed read marks Not loaded with its cause, never 0", async () => {
@@ -1610,19 +1596,6 @@ test("the drawer's name reads its parts apart and never repeats the surface's ow
   assert.equal(name?.props.name, "glass-atrium-dev-shell", "the name part is the shared agent name");
   const separators = findNodes(title, (n) => n.props?.className === "sr-only" && collectText(n).trim() === ",");
   assert.equal(separators.length, 2, "name, activity and health are read as three parts");
-});
-
-test("the review-flag total sits under a card title in every state, never as a heading-less tile", async () => {
-  const rows = [
-    { name: "loading", state: { status: "loading", data: null, error: null } },
-    { name: "ready", state: { status: "ready", data: { rows: [{ event_date: "2026-09-24", total_count: 20, review_flagged_count: 3 }] }, error: null } },
-  ];
-  for (const row of rows) {
-    const tree = await renderComponent("ReviewFlagTimelineCard", { state: row.state, days: 30, onRetry: () => undefined });
-    const cardHead = findAtoms(tree, "Card")[0];
-    assert.equal(cardHead?.props.title, "Review flags", row.name);
-    assert.match(String(cardHead?.props.sub), /30 days/, row.name);
-  }
 });
 
 // whitespace-normalized: collectText pads node boundaries, and a caption may hold an inline NoWrap token ("7 days")
@@ -1922,22 +1895,16 @@ test("the failing-pairs foot holds only the show-all toggle, so a list that fits
   assert.equal(footOf(many), "Show all 17", "a long list shows the toggle alone");
 });
 
-test("the review-flag and task-type headers keep their meta within the 32-character cap", async () => {
-  const headers = [
-    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Card"),
-    ...findAtoms(await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Disclosure"),
-  ];
-  assert.equal(headers.length, 2, "both headers render");
-  for (const header of headers) {
-    const sub = String(header.props.sub);
-    assert.ok(sub.length <= 32, `${header.props.title}: "${sub}" is ${sub.length} chars`);
-  }
+test("the task-type header keeps its meta within the 32-character cap", async () => {
+  const [header] = findAtoms(await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Disclosure");
+  const sub = String(header?.props.sub);
+  assert.ok(sub.length <= 32, `${header?.props.title}: "${sub}" is ${sub.length} chars`);
 });
 
-test("the review-flag card and the task-type fold keep their titles within the 24-character cap", async () => {
+test("the Instrumentation and task-type folds keep their titles within the 24-character cap", async () => {
   const props = { state: LOADING_STATE, days: 90, onRetry: () => undefined };
   const heads = [
-    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", props), "Card"),
+    ...findAtoms(await renderComponent("InstrumentationFold", { reviewState: LOADING_STATE, activationState: LOADING_STATE, onRetry: () => undefined }), "Disclosure"),
     ...findAtoms(await renderComponent("TaskTypeFold", { ...props, failures: undefined }), "Disclosure"),
   ];
   assert.equal(heads.length, 2, "both heads render");
@@ -2101,7 +2068,6 @@ describe("a focused Retry that succeeds leaves focus on its region's card", () =
     const rows = [
       { name: "success rates", component: "SuccessRateMatrixRegion", props: { state: retrying, days: 30, onRetry } },
       { name: "failure rates", component: "TopNFailingAgentsCard", props: { state: retrying, days: 30, onRetry, failureByAgent: new Map() } },
-      { name: "review flags", component: "ReviewFlagTimelineCard", props: { state: retrying, days: 30, onRetry } },
       { name: "lifecycle stats", component: "LifecycleStatsCard", props: { state: retrying, days: 30, onSelect: () => undefined, onRetry } },
     ];
 
@@ -2112,6 +2078,14 @@ describe("a focused Retry that succeeds leaves focus on its region's card", () =
       assert.ok(errorCard.props.focusTargetId, `${row.name}: the Retry names a focus target`);
       assert.equal(getRootHost(tree).props.id, errorCard.props.focusTargetId, `${row.name}: the target is the region's own card`);
     }
+  });
+
+  test("the Instrumentation fold hands its error card's Retry to the chart wrapper that encloses it", async () => {
+    const tree = await renderComponent("InstrumentationFold", { reviewState: retrying, activationState: retrying, onRetry });
+    const [errorCard] = findAtoms(tree, "RegionUnavailable");
+    assert.equal(errorCard?.props.isBusy, true, "the card stays up, busy, through the Retry");
+    const [target] = findNodes(tree, (n) => n.props?.id === errorCard.props.focusTargetId);
+    assert.equal(findAtoms(target, "RegionUnavailable")[0], errorCard, "the target encloses the error card");
   });
 
   test("each drawer section hands its error card's Retry to the section that encloses it", async () => {

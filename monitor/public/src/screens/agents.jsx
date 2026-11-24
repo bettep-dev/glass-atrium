@@ -434,7 +434,7 @@ function ScreenAgents() {
 
       <TaskTypeFold failures={sourceFailures} state={successState} days={days} onRetry={triggerRefresh}/>
 
-      <InstrumentationFold failures={sourceFailures} lifecycleState={lifecycleState} reviewState={reviewState} activationState={activationState} days={days} onRetry={triggerRefresh}/>
+      <InstrumentationFold failures={sourceFailures} reviewState={reviewState} activationState={activationState} onRetry={triggerRefresh}/>
       </div>
       </div>
 
@@ -467,8 +467,6 @@ function ScreenAgents() {
     </div>
   );
 }
-
-const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus sound';
 
 // Ledger-head names of the agents the rework/review health rule flags — the drawer's words; a clear or unread fleet stays silent.
 function HealthMarkAg({ revisionState, reviewByAgentState }) {
@@ -508,65 +506,30 @@ function formatAgentListAg(agents) {
   return agents.length > 3 ? `${names.join(', ')} +${agents.length - 3} more` : names.join(', ');
 }
 
-// Status fold — open by default; the head carries the lead figure, the body every clause.
-function InstrumentationFold({ failures, lifecycleState, reviewState, activationState, days, onRetry }) {
-  const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState, activationState);
-
+// Status fold — open by default; the head carries both shares, the body the chart alone.
+function InstrumentationFold({ failures, reviewState, activationState, onRetry }) {
   return (
-    <window.UI.Disclosure kind="status" title="Instrumentation" sub={sub} tone={tone}>
-      <window.UI.Stack gap="block">
-        <p className="fs-meta text-dim">{getInstrumentationDetailAg(lifecycleState, reviewState, activationState, days)}</p>
-        <ReviewFlagTimelineCard failures={failures} state={reviewState} days={days} onRetry={onRetry}/>
-      </window.UI.Stack>
+    <window.UI.Disclosure kind="status" title="Instrumentation" sub={getInstrumentationSub(reviewState, activationState)}>
+      {/* id'd wrapper → the region failure's focus target */}
+      <div id={IDS.REGION_CARD.reviewFlags} className="min-w-0">
+        <QualityHealthTimeline failures={failures} state={reviewState} onRetry={onRetry}/>
+      </div>
     </window.UI.Disclosure>
   );
 }
 
-// unread activations → a stated gap, never a 0 % that reads as a clean result
-function getInstrumentationDetailAg(lifecycleState, reviewState, activationState, days) {
-  const clauses = getInstrumentationClausesAg(lifecycleState, reviewState, activationState).map((clause) => clause.full);
-  const read = clauses.length > 0 ? `${clauses.join(' · ')} · last ${days}d` : null;
-  return getActivationClauseAg(activationState) ? read : joinSubAg([read, 'Activation rate unavailable']);
+// unread review flags add nothing · unread activations → stated, never a 0 % that reads as clean
+function getInstrumentationSub(reviewState, activationState) {
+  const { flagged, total } = reviewState.status === 'ready' ? getReviewFlagTotalsAg(readyData(reviewState)?.rows ?? []) : { total: 0 };
+  return joinSubAg([total > 0 ? `${formatPctAg((flagged / total) * 100)} flagged` : null, getActivationClauseAg(activationState)]);
 }
 
 // zero activations → no rate: a % over an empty denominator also reads as clean
 function getActivationClauseAg(activationState) {
-  const rate = getActivationRateAg(activationState);
-  if (!rate) return null;
-  return rate.total === 0 ? 'no activations' : `activation false-positive ${rate.pct} of ${formatIntAg(rate.total)} activations`;
-}
-
-function getActivationRateAg(activationState) {
   const summary = activationState?.status === 'ready' ? activationState.data?.summary : null;
-  if (!summary) return null;
-  return { total: Number(summary.total_activations) || 0, pct: formatPctAg((Number(summary.overall_false_positive_rate) || 0) * 100) };
-}
-
-// The head shows the first loaded source's lead (32-char meta cap); unfinished runs set the tone.
-function getInstrumentationVerdict(lifecycleState, reviewState, activationState) {
-  const [lead] = getInstrumentationClausesAg(lifecycleState, reviewState, activationState);
-  const tone = lifecycleState.status !== 'ready' ? 'neutral'
-    : getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []) > 0 ? 'warn' : 'ok';
-  return { tone, sub: lead?.lead ?? INSTRUMENTATION_QUESTION };
-}
-
-// One clause per loaded source — an unread source adds nothing rather than a zero.
-function getInstrumentationClausesAg(lifecycleState, reviewState, activationState) {
-  const clauses = [];
-  if (lifecycleState.status === 'ready') {
-    const orphans = formatIntAg(getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []));
-    clauses.push({ lead: `${orphans} runs with no record`, full: `${orphans} runs with no completion record` });
-  }
-  if (reviewState.status === 'ready') {
-    const { flagged, total } = getReviewFlagTotalsAg(readyData(reviewState)?.rows ?? []);
-    if (total > 0) {
-      const share = `${formatPctAg((flagged / total) * 100)} flagged`;
-      clauses.push({ lead: share, full: share });
-    }
-  }
-  const rate = getActivationRateAg(activationState);
-  if (rate) clauses.push({ lead: rate.total === 0 ? 'no activations' : `${rate.pct} activation false-positive`, full: getActivationClauseAg(activationState) });
-  return clauses;
+  if (!summary) return 'activations not loaded';
+  const total = Number(summary.total_activations) || 0;
+  return total === 0 ? 'no activations' : `${formatPctAg((Number(summary.overall_false_positive_rate) || 0) * 100)} false-positive activations`;
 }
 
 function getOrphanTotalAg(rows) {
@@ -2689,18 +2652,6 @@ const QH_TIMELINE = Object.freeze({
   TICK_STYLE: { fill: 'rgb(var(--faint))', style: { fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' } },
 });
 
-// Titled like its Lifecycle sibling → the flagged total never reads as an orphan tile.
-function ReviewFlagTimelineCard({ failures, state, days, onRetry }) {
-  // id'd wrapper → the region failure's focus target, as on the Most-failing pairs card
-  return (
-    <div id={IDS.REGION_CARD.reviewFlags} className="flex flex-col min-w-0 min-h-0">
-      <window.UI.Card className="flex-1 [&>.card-body]:flex [&>.card-body]:flex-col [&>.card-body]:overflow-hidden" title="Review flags" sub={`Flag reasons and rate · ${days} days`}>
-        <QualityHealthTimeline failures={failures} state={state} onRetry={onRetry}/>
-      </window.UI.Card>
-    </div>
-  );
-}
-
 function QualityHealthTimeline({ failures, state, onRetry }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
@@ -2713,8 +2664,6 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
   if (rows.length === 0) {
     return <window.UI.EmptyState message="No review_flag data."/>;
   }
-
-  const { flagged: totalFlagged, total: totalEvents } = getReviewFlagTotalsAg(rows);
 
   const chartRows = rows.map((r) => ({
     date: typeof r.event_date === 'string' ? r.event_date.slice(5) : '',
@@ -2730,13 +2679,7 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
 
   return (
     <>
-      <div className="flex items-baseline gap-control-group mb-label flex-wrap flex-shrink-0">
-        <div className="fs-stat font-semibold tnum">
-          {formatIntAg(totalFlagged)}
-        </div>
-        {/* 합산 발생률 (총 flag ÷ 총 event) — 일별 비율 평균 아님 → '평균' 라벨 금지 (A5). */}
-        <div className="fs-meta text-dim">Total flagged · rate {window.UI.formatPctWithDenominator(totalFlagged, totalEvents)}</div>
-      </div>
+      <div className="fs-meta text-dim tnum mb-label">{formatIntAg(getReviewFlagTotalsAg(rows).flagged)} flagged</div>
       <QualityHealthTimelineChart rows={chartRows}/>
     </>
   );
