@@ -338,7 +338,7 @@ function buildStatNote(stat) {
 function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetryHeatmap, sharedSources = NO_SHARED_SOURCES }) {
   return (
     <>
-      <window.UI.SplitRow ratio="rest:content">
+      <window.UI.SplitRow ratio={hasHourGridSlot(heatmapState) ? 'rest:content' : '1:1'}>
         <WeekPanel id="dash-week-results" title="Task results" state={outcomesState} source="task results"
           note={`${OUTCOME.COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
@@ -351,6 +351,14 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
         render={(data) => <SpendStrip strip={buildSpendStrip(data.points)}/>}/>
     </>
   );
+}
+
+// the content-width column is the grid's → a settled read with no grid (failed, or no runs) splits the row evenly
+// a read still loading keeps the grid's column, so the usual arrival of a grid shifts nothing
+function hasHourGridSlot(state) {
+  const view = getPanelView(state);
+  if (view === 'loading') return true;
+  return view !== 'error' && buildHourGrid(state.data).total > 0;
 }
 
 // a panel without onRetry shares its source with a stat → the stat speaks for the failure, the panel only points to it
@@ -389,10 +397,10 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
     const lead = view === 'held' ? "Couldn't refresh" : 'Not loaded';
     return <p className="fs-meta text-dim">{window.UI.getNoticePointer(lead, isRetryShared ? undefined : RESULTS_STAT_POINTER)}</p>;
   }
-  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} isInline={view === 'held'} focusTargetId={id}/>;
+  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} isInline focusTargetId={id}/>;
   if (view === 'held') return <AlertCard tone="neutral" surface="bare" title="Couldn't refresh." actions={retry}/>;
   const copy = getErrorCopy(state.error, source);
-  return <AlertCard tone="crit" surface="inset" title={copy.sentence} body={copy.next} details={copy.detail} actions={retry}/>;
+  return <AlertCard tone="crit" surface="bare" title={copy.sentence} body={copy.next} details={copy.detail} actions={retry}/>;
 }
 
 // a week panel's one sub-line: its span, then its count when it has one; the window itself sits in the stat labels

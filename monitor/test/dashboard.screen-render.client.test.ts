@@ -383,10 +383,10 @@ test("a failed week panel whose cause the page banner carries points up to it in
   }
 });
 
-// a held panel's head already says Last known → its failure is one bare line, never a tinted box inside the card
-describe("a week panel's own failure carries its Retry: an inset crit card when nothing loaded, a bare line with a quiet Retry over a held reading", () => {
+// a panel's failure is a bare line in its card, never a tinted box inside the card; a held head already says Last known
+describe("a week panel's own failure is a bare line with a quiet Retry: crit when nothing loaded, neutral over a held reading", () => {
   const rows = [
-    { name: "nothing loaded", state: { data: null, error: "HTTP 500", busy: false }, tone: "crit", surface: "inset", isInline: false },
+    { name: "nothing loaded", state: { data: null, error: "HTTP 500", busy: false }, tone: "crit", surface: "bare", isInline: true },
     { name: "a held reading", state: { data: {}, error: "HTTP 500", busy: false }, tone: "neutral", surface: "bare", isInline: true },
   ];
   for (const row of rows) {
@@ -513,6 +513,25 @@ describe("the week block", () => {
     assert.equal(pairs[0].props.ratio, "rest:content", "Runs by hour at its content width, the results the rest");
     assert.deepEqual(sectionIds(pairs[0]), ["dash-week-results", "dash-week-hours"], "Spend stays out of the paired row");
   });
+
+  // the content-width column is the grid's → a settled panel without a grid takes half the row, never the width of its words
+  const hourCounts = (runs: number) => Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (_, hour) => (day === 2 && hour === 9 ? runs : 0)));
+  const ratioRows = [
+    { name: "a grid of this week's runs sits at its content width", heatmapState: { data: { data: hourCounts(3) }, error: null, busy: false }, ratio: "rest:content" },
+    { name: "a held grid keeps its content width", heatmapState: { data: { data: hourCounts(3) }, error: "HTTP 500", busy: false }, ratio: "rest:content" },
+    { name: "a read still loading keeps the grid's column", heatmapState: LOADING, ratio: "rest:content" },
+    { name: "a failed read with nothing held splits the row evenly", heatmapState: { data: null, error: "HTTP 500", busy: false }, ratio: "1:1" },
+    { name: "a week with no runs splits the row evenly", heatmapState: { data: { data: hourCounts(0) }, error: null, busy: false }, ratio: "1:1" },
+  ];
+  for (const row of ratioRows) {
+    test(row.name, () => {
+      const tree = render("WeekRow", {
+        spendState: LOADING, outcomesState: LOADING, heatmapState: row.heatmapState, onRetrySpend: () => {}, onRetryHeatmap: () => {},
+      });
+      const [pair] = findNodes(tree, (n) => n.props.atom === "SplitRow");
+      assert.equal(pair.props.ratio, row.ratio);
+    });
+  }
 
   // spec 44084 §9.1: the Status card states the window → no panel title restates it
   test("titles each panel by its subject alone", () => {
