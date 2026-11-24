@@ -1775,7 +1775,7 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<h3 className="arch-drawer-heading fs-title font-semibold text-ink mb-stack">
+			<h3 className="fs-title font-semibold text-ink mb-stack">
 				Health ({rows.length + looseDaemons.length})
 			</h3>
 			<window.UI.Stack gap="block" className="arch-drawer-part-list">
@@ -1836,7 +1836,7 @@ function NodePartHealth({
 							{renderDetail && (!row.daemonName || isRunsOpen) && (
 								<div
 									id={runsId}
-									className="arch-part-detail disclosure-body flex flex-col gap-list"
+									className="disclosure-body flex flex-col gap-list"
 									data-health-detail={row.id}
 									data-daemon-detail={row.daemonName || undefined}>
 									{renderDetail(row, {
@@ -1920,10 +1920,10 @@ function DaemonRunDetail({ daemon, state }) {
 
 	const summary = getRunSummaryAR(runs);
 	return (
-		<div className="arch-run-summary flex flex-col gap-list">
+		<div className="flex flex-col gap-list">
 			<span className="fs-meta text-ink">{summary.text}</span>
 			{summary.failures.length > 0 && (
-		<ul className="arch-run-list flex flex-col gap-list">
+		<ul className="flex flex-col gap-list">
 			{summary.failures.map((run) => (
 				<li key={run.key} className="arch-run-entry gap-list">
 					<span className="fs-meta text-ink tnum">{run.runDate ? formatKstDay(run.runDate) : <AbsentValue kind="none" />}</span>
@@ -1932,7 +1932,7 @@ function DaemonRunDetail({ daemon, state }) {
 							{RUN_VERDICT_NOTE[run.verdict] || `Verdict: ${run.verdict}`}
 						</span>
 					) : (
-						<ul className="arch-run-reasons flex flex-col gap-stack min-w-0">
+						<ul className="flex flex-col gap-stack min-w-0">
 							{run.reasons.map((reason) => (
 								<li key={reason.key} className="fs-meta text-dim">
 									{reason.message ?? <AbsentValue kind="none" />}
@@ -2083,7 +2083,7 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading fs-title font-semibold text-ink mb-stack">
+			<h3 className="fs-title font-semibold text-ink mb-stack">
 				Records
 			</h3>
 			<a className="fs-body" href={`#${owner.id}`}>
@@ -2099,7 +2099,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading fs-title font-semibold text-ink mb-stack">
+			<h3 className="fs-title font-semibold text-ink mb-stack">
 				Connections ({total})
 			</h3>
 			<div className="space-y-list">
@@ -2129,7 +2129,7 @@ function FlowList({ title, items, nodeIndex, direction }) {
 	const peerWord = direction === "in" ? "from" : "to";
 	return (
 		<div>
-			<h4 className="arch-drawer-subheading fs-meta text-dim mb-stack">{title}</h4>
+			<h4 className="fs-meta text-dim mb-stack">{title}</h4>
 			<ul
 				className="fs-meta text-dim space-y-stack"
 				style={{ maxHeight: 160, overflowY: "auto" }}
@@ -3015,7 +3015,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 		<section className="card arch-part-health" id={PART_HEALTH_ID_AR} aria-labelledby={`${PART_HEALTH_ID_AR}-title`}>
 			<div className="card-head">
 				<div className="card-head-text">
-					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title fs-title font-semibold">System parts</h2>
+					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="fs-title font-semibold">System parts</h2>
 					{status && (
 						<HeadStatus tone={status.tone} className="card-sub gap-label-inline">
 							{status.text}
