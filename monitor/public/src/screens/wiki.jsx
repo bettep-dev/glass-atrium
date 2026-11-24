@@ -712,16 +712,16 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 	const tile = { key: "library", label, state: "ready", value: formatCountW(total), tone: "neutral" };
 	if (!payload) return { ...tile, sub: "Backlog not reported" };
 
-	const sub = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
+	const figures = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
 	const age = describeSnapshotAgeW(payload.run_date);
 	const info = [LIBRARY_COUNTING_NOTE_W, age && `${age}.`].filter(Boolean).join(" ");
-	if (!age) return { ...tile, sub, info };
+	if (!age) return { ...tile, sub: figures, info };
 
-	// the caption stays at the 40-char cap → the warn glyph marks the snapshot, its date rides info + tooltip
+	// a stale snapshot's context names the warn glyph's cause; the figures ride the tooltip
 	return {
 		...tile,
-		sub,
-		hint: `${sub} · ${age}`,
+		sub: payload.run_date ? `Stale snapshot ${window.UI.formatKstDay(payload.run_date)}` : figures,
+		hint: `${figures} · ${age}`,
 		info,
 		tone: "warn",
 		toneLabel: payload.run_date ? "Stale snapshot" : "Undated snapshot",

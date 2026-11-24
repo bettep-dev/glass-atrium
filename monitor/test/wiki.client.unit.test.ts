@@ -524,7 +524,7 @@ describe("every tile sub fits the 40-character KPI-hint cap at its widest", () =
     ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 9999, deadlink_dryrun: deadlinks, ...extra } });
   const index = ready({ notes_total: 9999, has_dirty_flag: true, dirty: false });
   const rows = [
-    { name: "library, stale snapshot", tile: () => libraryTile(index, backlog({ run_date: isoDaysAgo(9) })), sub: /^9,999 waiting · 9,999 broken links$/ },
+    { name: "library, stale snapshot", tile: () => libraryTile(index, backlog({ run_date: isoDaysAgo(9) })), sub: /^Stale snapshot \d{2}-\d{2}$/ },
     { name: "library, undated snapshot", tile: () => libraryTile(index, backlog({ run_date: null })), sub: /^9,999 waiting · 9,999 broken links$/ },
     { name: "library, originals unreported", tile: () => libraryTile(index, backlog({ true_backlog: undefined })), sub: /^Waiting unreported · 9,999 broken links$/ },
     { name: "library, both unreported", tile: () => libraryTile(index, backlog({ true_backlog: undefined, deadlink_dryrun: undefined })), sub: /^Waiting unreported · links unreported$/ },
@@ -545,16 +545,18 @@ function libraryTile(index: FetchState, backlog: FetchState): (GlanceTile & { hi
 test("a stale or undated library snapshot carries a visible warn cue, and its date rides the info trigger and tooltip", () => {
   const index = ready({ notes_total: 40 });
   const staleDate = isoDaysAgo(9);
+  const figures = /^13 waiting · 0 broken links$/;
   const rows = [
-    { name: "stale", run_date: staleDate, tone: "warn", cue: /^Stale snapshot$/, dated: new RegExp(`as of ${staleDate}, cycle overdue`) },
-    { name: "undated", run_date: null, tone: "warn", cue: /^Undated snapshot$/, dated: /run date not reported/i },
-    { name: "current", run_date: isoDaysAgo(0), tone: "neutral", cue: undefined, dated: undefined },
+    { name: "stale", run_date: staleDate, tone: "warn", sub: new RegExp(`^Stale snapshot ${staleDate.slice(5)}$`), cue: /^Stale snapshot$/, dated: new RegExp(`as of ${staleDate}, cycle overdue`) },
+    { name: "undated", run_date: null, tone: "warn", sub: figures, cue: /^Undated snapshot$/, dated: /run date not reported/i },
+    { name: "current", run_date: isoDaysAgo(0), tone: "neutral", sub: figures, cue: undefined, dated: undefined },
   ];
   for (const row of rows) {
     const tile = libraryTile(index, ready({ backlog: { run_date: row.run_date, true_backlog: 13, deadlink_dryrun: [] } })) as
       | (GlanceTile & { hint?: string; toneLabel?: string })
       | undefined;
     assert.equal(tile?.tone, row.tone, `${row.name}: tone`);
+    assert.match(tile?.sub ?? "", row.sub, `${row.name}: context`);
     if (!row.cue || !row.dated) {
       assert.equal(tile?.toneLabel, undefined, `${row.name}: no cue`);
       continue;
