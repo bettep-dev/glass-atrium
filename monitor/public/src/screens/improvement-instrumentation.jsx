@@ -85,25 +85,20 @@ function FlaggedReasonBarsI({ segments }) {
 	if (ranked.length === 0) return null;
 
 	return (
+		// subgrid → one label column as wide as the longest label (cap 14rem), each count right after it, the bar takes the rest
 		<ul
-			className="stack stack--list"
+			className="grid grid-cols-[fit-content(14rem)_auto_1fr] gap-x-control gap-y-list fs-meta"
 			aria-label={`Why results were flagged — ${segments.classifiedTotal} rows classified`}
 		>
 			{ranked.map((s) => (
-				<li
-					key={s.key}
-					className="grid grid-cols-[minmax(0,14rem)_1fr_3.5rem] gap-x-control items-center fs-meta"
-					title={s.title}
-				>
+				<li key={s.key} className="col-span-full grid grid-cols-subgrid items-center" title={s.title}>
 					<span className="truncate">{s.label}</span>
+					<span className="tnum text-right">{formatIntI(s.count)}</span>
 					<Bar
 						value={s.count}
 						max={ranked[0].count}
 						ariaLabel={`${s.label} ${formatIntI(s.count)}`}
 					/>
-					<span className="tnum text-right">
-						{formatIntI(s.count)}
-					</span>
 				</li>
 			))}
 		</ul>
@@ -889,15 +884,13 @@ function CorpusGrowthCardI({ state }) {
 	const deltaLabel = hasDelta
 		? `${delta > 0 ? "+" : ""}${formatIntI(delta)} words vs previous`
 		: "no baseline yet";
-	const compliance = getCorpusRateI(latest.compliance_rate);
-	const override = getCorpusRateI(latest.override_rate);
-	const verdict = getCorpusGrowthVerdictI(latest);
+	const threshold = latest.seeded_threshold;
 	const stats = [
 		{
 			key: "words",
 			label: "Corpus size",
 			value: formatIntI(Number(latest.word_count ?? 0)),
-			unit: "words",
+			unit: threshold == null ? "words" : `of ${formatIntI(Number(threshold))} words`,
 			context: <><SymI s={deltaSymbol} className={deltaTone} /> {deltaLabel}</>,
 		},
 	];
@@ -922,35 +915,36 @@ function CorpusGrowthCardI({ state }) {
 						</span>
 					)}
 				</Cluster>
-				<Cluster gap="control-group" className="fs-meta text-faint tnum">
-					<span>{formatIntI(Number(latest.file_count ?? 0))} files</span>
-					<span>~{formatIntI(Number(latest.token_estimate ?? 0))} tokens</span>
-					<span>
-						threshold {formatIntI(Number(latest.seeded_threshold ?? 0))}
-					</span>
-					{verdict.tone === "text-warn" && (
-						<span className="text-dim">
-							<SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}
-						</span>
-					)}
-				</Cluster>
-				<Cluster gap="control-group" className="fs-meta text-faint tnum">
-					<span>
-						gate{" "}
-						<span className="text-ink">
-							{formatIntI(Number(latest.gate_pass_count ?? 0))}
-						</span>{" "}
-						pass ·{" "}
-						<span className="text-ink">
-							{formatIntI(Number(latest.gate_trip_count ?? 0))}
-						</span>{" "}
-						trip / {formatIntI(Number(latest.gate_total_count ?? 0))}
-					</span>
-					<span>compliance {compliance}</span>
-					<span>override {override}</span>
-				</Cluster>
+				<CorpusFactsI latest={latest} />
 			</Stack>
 		</Card>
+	);
+}
+
+// files · tokens · gate checks · rates, and a raised alert → one fact list
+function CorpusFactsI({ latest }) {
+	const verdict = getCorpusGrowthVerdictI(latest);
+	const gate = [latest.gate_pass_count, latest.gate_trip_count, latest.gate_total_count].map((n) => formatIntI(Number(n ?? 0)));
+	const facts = [
+		["Files", formatIntI(Number(latest.file_count ?? 0))],
+		["Tokens", `~${formatIntI(Number(latest.token_estimate ?? 0))}`],
+		["Gate checks", `${gate[0]} pass · ${gate[1]} trip of ${gate[2]}`],
+		["Compliance", getCorpusRateI(latest.compliance_rate)],
+		["Override", getCorpusRateI(latest.override_rate)],
+	];
+	if (verdict.tone === "text-warn") {
+		facts.push(["Alert", <><SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}</>]);
+	}
+	return (
+		// three term-value pairs per line → two lines, the paired card's row keeps its 75% fill floor
+		<dl className="grid grid-cols-[repeat(3,auto_1fr)] gap-x-block gap-y-list fs-meta tnum">
+			{facts.map(([term, value]) => (
+				<React.Fragment key={term}>
+					<dt className="text-dim">{term}</dt>
+					<dd className="text-ink">{value}</dd>
+				</React.Fragment>
+			))}
+		</dl>
 	);
 }
 

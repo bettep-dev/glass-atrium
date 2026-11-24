@@ -391,3 +391,40 @@ describe("an instrumentation agent cell renders through the shared agent-name at
     });
   }
 });
+
+const CORPUS_READING = {
+  cycle_date: "2026-11-20", word_count: 41250, trend_delta: 120, file_count: 38, token_estimate: 53600,
+  seeded_threshold: 60000, gate_pass_count: 9, gate_trip_count: 1, gate_total_count: 10,
+  compliance_rate: 0.9, override_rate: null, trend_alert: true, absolute_alert: false,
+};
+
+// the size reads against its threshold in one phrase; the remaining readings are one term-and-value list
+test("corpus growth leads with its size of the threshold and lists the rest as term-value pairs", () => {
+  const tree = viewTree((helpers.CorpusGrowthCardI as Component)({ state: { status: "ready", data: { total_audits: 1, audits: [CORPUS_READING] } } }));
+  const statRow = tree.find((el) => el.type === helpers.window.UI.StatRow);
+  const [lead] = statRow?.props.stats as Array<{ value: string; unit: string }>;
+  const lists = tree.filter((el) => el.type === "dl");
+  const terms = tree.filter((el) => el.type === "dt");
+  const values = tree.filter((el) => el.type === "dd");
+
+  assert.equal(`${lead.value} ${lead.unit}`, "41,250 of 60,000 words");
+  assert.equal(lists.length, 1, "one fact list");
+  assert.ok(terms.length > 0 && terms.length === values.length, "every term holds one value");
+  assert.deepEqual(getStrings(tree).filter((text) => /threshold/.test(text)), [], "the threshold reads once, in the lead");
+});
+
+// a reason reads label → count → bar, so the count sits right after the words it counts
+test("each flagged reason reads its count right after its label, before its bar", () => {
+  const list = (helpers.FlaggedReasonBarsI as Component)({
+    segments: { classifiedTotal: 9, items: [{ key: "a", label: "Size overrun", count: 6 }, { key: "b", label: "Low confidence", count: 3 }] },
+  }) as RecordedElement;
+  const items = [list.props.children].flat(2).filter(isElement);
+  const getPart = (cell: RecordedElement) => {
+    if (cell.type === helpers.window.UI.Bar) return "bar";
+    return /^\d[\d,]*$/.test(getStrings([cell]).join("")) ? "count" : "label";
+  };
+  const orders = items.map((item) => [item.props.children].flat().filter(isElement).map(getPart));
+
+  assert.equal(items.length, 2);
+  for (const order of orders) assert.deepEqual(order, ["label", "count", "bar"]);
+});
