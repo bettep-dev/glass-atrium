@@ -624,7 +624,8 @@ function getShownDays(state, requestedDays) {
 // stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
 function buildStatC(stat) {
   const { DayTokens, LAST_KNOWN_TEXT, getHeldCause } = window.UI;
-  if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true };
+  // an empty source → the loader reads Loading… alone; the stat label above already names the figure
+  if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true, source: '' };
   const value = <SpendStatValueC stat={stat}/>;
   // held figures stand, the line says so in the Dashboard's word; the failed refresh rides the hover
   if (stat.status === 'ready' && stat.isHeld) {
@@ -783,10 +784,14 @@ function getTrendReadout(row, bandOn) {
   return hasBand ? `${base}, ${formatNormalRangeC(row).toLowerCase()}` : base;
 }
 
+// a day's band as a range Area value — a day with no lower bound draws no band
+function getBandRangeC(row) {
+  return Number.isFinite(row.lowerBand) && Number.isFinite(row.upperBand) ? [row.lowerBand, row.upperBand] : null;
+}
+
 /**
  * Single Y axis, faint horizontal gridlines only.
- * Band on → rolling mean + ±2σ envelope ride the same chart: upper Area over a lower Area masked
- * in the card surface, the layering Recharts 2.x needs because an array dataKey is unstable there.
+ * Band on → rolling mean + ±2σ envelope ride the same chart, the envelope one range Area.
  */
 function CostTrendChart({ rows, bandOn }) {
   const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } = window.Recharts;
@@ -844,19 +849,9 @@ function CostTrendChart({ rows, bandOn }) {
             {bandOn && (
               <Area
                 type="linear"
-                dataKey="upperBand"
+                dataKey={getBandRangeC}
                 stroke="none"
                 fill="rgb(var(--faint) / 0.18)"
-                isAnimationActive={false}
-                connectNulls={false}
-              />
-            )}
-            {bandOn && (
-              <Area
-                type="linear"
-                dataKey="lowerBand"
-                stroke="none"
-                fill="rgb(var(--elev))"
                 isAnimationActive={false}
                 connectNulls={false}
               />
@@ -1564,9 +1559,6 @@ function mergeUnattributedRowsC(modelRows) {
 // C2 결정(차트→테이블 전환 KEEP)으로 ModelCostChart / ModelCostTooltipC 제거 — 모델별 비용은
 // ModelCostBody 테이블이 담당(share 막대 스캔 가능). Recharts 는 다른 차트에서 계속 사용.
 
-// the hit rate measures cache reads → drawn in the Cache read category tone, no extra hue in the card
-const CACHE_HIT_LINE_COLOR = `rgb(var(${TOKEN_CATEGORIES.find((c) => c.key === 'cache_read_tokens').colorVar}))`;
-
 function CacheHitBody({ state, days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure, Stack } = window.UI;
 
@@ -1700,9 +1692,9 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <Line
           type="linear"
           dataKey="rate_pct"
-          stroke={CACHE_HIT_LINE_COLOR}
+          stroke="rgb(var(--data))"
           strokeWidth={2}
-          dot={{ r: 2.5, fill: CACHE_HIT_LINE_COLOR, stroke: 'none' }}
+          dot={false}
           activeDot={{ r: 4 }}
           connectNulls={false}
           isAnimationActive={false}

@@ -18,8 +18,11 @@ import fastifyStatic from "@fastify/static";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
+import { buildScreenSandbox } from "./client-sandbox.js";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
+const COST_SRC = resolve(PUBLIC_ROOT, "src", "screens", "cost.jsx");
 
 // The screen's own tier order, as the target composition states it: the Spend stat card, then the
 // three decision cards, then the three instrumentation status cards.
@@ -47,6 +50,8 @@ interface CostFixture {
   parseErrorRatio: number;
   // every cost payload route answers 503 → a cold shared outage, nothing ever loaded
   isOutage?: boolean;
+  // this one payload route answers 503, the rest load
+  failedPrefix?: string;
   // every by-model row carries tokens but no priced cost → the share bar yields to its footnote
   isLedgerUnpriced?: boolean;
 }
@@ -72,6 +77,19 @@ function getDayKey(index: number): string {
   return new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
 }
 
+// the cost-timeseries payload's points for a run of daily costs
+function getTrendRows(trendCosts: readonly number[]): Array<Record<string, number | string>> {
+  return trendCosts.map((cost, i) => ({
+    date: getDayKey(i),
+    cost_usd: cost,
+    session_count: 3,
+    input_tokens: 1000,
+    output_tokens: 500,
+    cache_read_tokens: 4000,
+    cache_creation_tokens: 800,
+  }));
+}
+
 interface RenderContext {
   app: FastifyInstance;
   browser: Browser;
@@ -85,21 +103,14 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     prefix: "/",
     index: ["index.html"],
   });
-  if (fixture.isOutage) {
+  const failedPrefixes = fixture.isOutage ? COST_PAYLOAD_PREFIXES : fixture.failedPrefix ? [fixture.failedPrefix] : [];
+  if (failedPrefixes.length > 0) {
     app.addHook("onRequest", async (request, reply) => {
-      if (COST_PAYLOAD_PREFIXES.some((prefix) => request.url.startsWith(prefix))) await reply.code(503).send({ error: "unavailable" });
+      if (failedPrefixes.some((prefix) => request.url.startsWith(prefix))) await reply.code(503).send({ error: "unavailable" });
     });
   }
 
-  const trendRows = fixture.trendCosts.map((cost, i) => ({
-    date: getDayKey(i),
-    cost_usd: cost,
-    session_count: 3,
-    input_tokens: 1000,
-    output_tokens: 500,
-    cache_read_tokens: 4000,
-    cache_creation_tokens: 800,
-  }));
+  const trendRows = getTrendRows(fixture.trendCosts);
 
   app.get("/api/cost/kpi", async () => fixture.kpi);
   app.get<{ Querystring: { prior_window?: string } }>("/api/dashboard/cost-timeseries", async (request) => ({
@@ -127,13 +138,13 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     })),
   }));
   app.get("/api/cost/cache-hit", async () => ({
-    // Alternating days reach a whole 100% → the y-axis carries its widest label.
-    rows: trendRows.map((r, i) => ({
-      event_date: r.date,
-      cache_hit_rate: i % 2 === 0 ? 1 : 0.9,
-      total_cache_read: r.cache_read_tokens,
-      total_input: r.input_tokens,
-    })),
+    // Alternating days reach a whole 100% → the y-axis carries its widest label; each rate is its own day's read share,
+    // so the pooled figure is the series' weighted mean.
+    rows: trendRows.map((r, i) => {
+      const read = 9000;
+      const input = i % 2 === 0 ? 0 : 1000;
+      return { event_date: r.date, cache_hit_rate: read / (read + input), total_cache_read: read, total_input: input };
+    }),
   }));
   app.get("/api/cost/session-distribution", async () => ({
     // A month holds hundreds of sessions → the table always shows its full top rows plus Other.
@@ -427,6 +438,41 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(strayRoots, 0, "every chart lives in a card");
   });
 
+  test("the normal range band's bottom edge sits on each banded day's lower bound", async () => {
+    const { computeAnomalyRows } = await buildScreenSandbox<{
+      computeAnomalyRows: (points: unknown[], window: number, sigma: number) => Array<{ lowerBand: number | null }>;
+    }>(COST_SRC);
+    // the screen's rolling window and σ (cost.jsx → ROLLING_WINDOW, ANOMALY_SIGMA)
+    const lowerBands = computeAnomalyRows(getTrendRows(CALM_TREND_COSTS), 7, 2)
+      .map((row) => row.lowerBand).filter((value): value is number => value !== null);
+    const toggle = ctx.page.getByRole("button", { name: "Normal range" });
+    await toggle.click();
+    try {
+      await ctx.page.waitForSelector("#cost-region-trend .recharts-area-area");
+      const drawn = await ctx.page.evaluate(() => {
+        const region = document.querySelector("#cost-region-trend")!;
+        const ticks = Array.from(region.querySelectorAll(".recharts-yAxis .recharts-cartesian-axis-tick-value")).map((tick) => ({
+          value: Number((tick.textContent || "").replace(/[$,]/g, "")),
+          y: Number(tick.getAttribute("y")),
+        }));
+        const paths = Array.from(region.querySelectorAll(".recharts-area-area")).map((path) => path.getAttribute("d") || "");
+        return { ticks, paths };
+      });
+      assert.equal(drawn.paths.length, 1, "one band area — no fill from $0 and no surface mask");
+      // the two lowest ticks set the scale — the top label is nudged inside the plot, off its value's y
+      const [low, high] = [drawn.ticks[0]!, drawn.ticks[1]!];
+      const toY = (value: number): number => low.y + ((value - low.value) * (high.y - low.y)) / (high.value - low.value);
+      const coords = (drawn.paths[0]!.match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/g) ?? []).map(Number);
+      const points = Array.from({ length: coords.length / 2 }, (_, i) => coords[i * 2 + 1]!);
+      // a range area runs its top edge forward, then its bottom edge back → the second half, reversed
+      const bottomEdge = points.slice(points.length / 2).reverse();
+      assert.equal(bottomEdge.length, lowerBands.length, "only a day with a lower bound draws band");
+      bottomEdge.forEach((y, i) => assert.ok(Math.abs(y - toY(lowerBands[i]!)) <= 1, `day ${i}: edge at ${y}, bound at ${toY(lowerBands[i]!)}`));
+    } finally {
+      await toggle.click();
+    }
+  });
+
   test("each ranged stat names its window in its label", async () => {
     const labels = await ctx.page.evaluate((row) =>
       Array.from(document.querySelectorAll(`${row} .stat-label`)).map((el) => (el.textContent || "").trim()),
@@ -557,24 +603,6 @@ describe("calm fixture — nothing is running hot", () => {
     } finally {
       await ctx.page.setViewportSize({ width: 1440, height: 900 });
     }
-  });
-
-  test("the cache-hit line draws in the tone of the cache-read category it measures", async () => {
-    const tones = await ctx.page.evaluate((selector) => {
-      const title = Array.from(document.querySelectorAll(selector))
-        .find((t) => (t.textContent || "").trim() === "Token volume");
-      const card = title?.closest(".cost-inst");
-      const line = card?.querySelector(".recharts-line-curve");
-      // the share row's entry: swatch first, then its label text
-      const swatch = Array.from(card?.querySelectorAll('span > span[style*="background"]:first-child') ?? [])
-        .find((el) => (el.parentElement?.textContent || "").trim().startsWith("Cache read"));
-      return {
-        line: line ? getComputedStyle(line).stroke : "",
-        category: swatch ? getComputedStyle(swatch).backgroundColor : "",
-      };
-    }, CARD_TITLE_SELECTOR);
-    assert.ok(tones.line && tones.category, `both marks render (line ${tones.line} · swatch ${tones.category})`);
-    assert.equal(getToneKey(tones.line), getToneKey(tones.category));
   });
 
   test("the hit-rate axis labels the 100% its clamped domain reaches", async () => {
@@ -710,6 +738,35 @@ describe("cold outage — every cost payload fails before any has loaded", () =>
     assert.ok(settled, `covered slots: ${counts.covered.join(", ")}`);
     assert.equal(counts.banners, 1);
     assert.equal(counts.retries, 1, "the banner's Retry is the only one");
+  });
+});
+
+describe("the KPI read fails alone — the Spend card speaks for it", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext({ ...getFixture(1, 0), failedPrefix: "/api/cost/kpi" });
+  });
+
+  after(async () => {
+    await closeRenderContext(ctx);
+  });
+
+  test("the failure is an alarm row on the card columns: glyph on the title's column, Retry on the right inset, a hairline before the stats", async () => {
+    const measured = await ctx.page.evaluate(() => {
+      const card = document.querySelector("#cost-region-kpis .card")!;
+      const [title, glyph, retry] = [".card-title", ".region-unavailable .alarm-row-glyph", ".region-unavailable .alarm-row-actions button"]
+        .map((selector) => card.querySelector(selector)!.getBoundingClientRect().toJSON() as DOMRect);
+      return {
+        frame: card.getBoundingClientRect().toJSON() as DOMRect, title: title!, glyph: glyph!, retry: retry!,
+        rule: getComputedStyle(card.querySelector(".region-unavailable")!).borderBottomWidth,
+        pad: parseFloat(getComputedStyle(card).getPropertyValue("--card-pad")),
+      };
+    });
+    assert.ok(Math.abs(measured.glyph.left - measured.title.left) <= 1, `glyph at ${measured.glyph.left}, title at ${measured.title.left}`);
+    assert.ok(Math.abs(measured.retry.right - (measured.frame.right - 1 - measured.pad)) <= 1,
+      `Retry ends ${measured.frame.right - measured.retry.right}px from the edge`);
+    assert.equal(measured.rule, "1px");
   });
 });
 
