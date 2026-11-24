@@ -1367,15 +1367,15 @@ function getSpokenText(node: RenderedNode | string | null): string {
   return node.children.map(getSpokenText).join(" ");
 }
 
-describe("the token volume total compares with the server's prior window, cut at this time of day", () => {
-  const span = "vs the 4 days before 01-03, cut at this time of day";
+describe("the token volume total compares with the server's prior window", () => {
+  const span = "on the previous 4 days";
   const rows = [
     { name: "more tokens than the prior window read up, whatever cost did", tokens: [100, 100, 100, 100], prior: 200, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
     { name: "fewer tokens read down", tokens: [50, 50, 50, 50], prior: 400, glyph: "\u25bc", spoken: new RegExp(`\\bdown\\s+50\\s*%\\s*${span}`) },
-    { name: "equal totals read unchanged", tokens: [100, 100, 100, 100], prior: 400, glyph: "\u2014", spoken: new RegExp(`\\bunchanged\\s+0\\s*%\\s*${span}`) },
+    { name: "equal totals read level, with no glyph", tokens: [100, 100, 100, 100], prior: 400, glyph: null, spoken: /Level with the previous 4 days/ },
     { name: "today's partial day counts toward the total it sits under", tokens: [100, 100, 100, 500], prior: 400, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
     { name: "an absent prior window reads as no comparison", tokens: [100, 100], prior: null, glyph: null, spoken: /No comparison — the prior window did not arrive/ },
-    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: null, spoken: /No comparison — the 2 days before 01-03 held no tokens\./ },
+    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: null, spoken: /No comparison — the previous 2 days held no tokens\./ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -1398,12 +1398,12 @@ describe("a spend stat whose read is not current says so on its context line, as
     {
       name: "a failed kpi read points at the notice above its card",
       props: { kpiState: failed, hot: cost.computeHotVerdict({}), trendState: trend },
-      label: "Today vs. average", context: "See the notice above.", title: "See the notice above.",
+      label: "Spend today", context: "See the notice above.", title: "See the notice above.",
     },
     {
       name: "a failed trend read points at its own card's notice below",
       props: { kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: failed },
-      label: "Cost, last 30 days", context: "See the cost trend notice below.", title: "See the cost trend notice below.",
+      label: "Cost, 30d", context: "See the cost trend notice below.", title: "See the cost trend notice below.",
     },
     {
       name: "a failed trend read the page banner speaks for points at the notice above",
@@ -1411,12 +1411,12 @@ describe("a spend stat whose read is not current says so on its context line, as
         kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: failed,
         failures: { banner: { sources: ["cost trend"] } },
       },
-      label: "Cost, last 30 days", context: "See the notice above.", title: "See the notice above.",
+      label: "Cost, 30d", context: "See the notice above.", title: "See the notice above.",
     },
     {
       name: "a held kpi read says Last known and names the failed refresh on hover",
       props: { kpiState: heldKpi, hot: cost.computeHotVerdict(kpi), trendState: trend },
-      label: "Today vs. average", context: "Last known", title: "Last known \u2014 couldn't refresh cost KPIs",
+      label: "Spend today", context: "Last known", title: "Last known \u2014 couldn't refresh cost KPIs",
     },
   ];
   for (const row of rows) {
@@ -1444,15 +1444,16 @@ test("while the spend row is up, the Today stat's line leaves the 7-day average 
       kpiState: ready(row.kpi), hot: cost.computeHotVerdict(row.kpi), trendState: getTrendPoints([1, 2, 3]),
       modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
     });
-    const today = findNodes(tree, isStat).find((n) => /Today vs\. average/.test(collectText(n)))!;
+    const today = findNodes(tree, isStat).find((n) => /Spend today/.test(collectText(n)))!;
     assert.equal(/7-day average/.test(collectText(today)), row.hasAverage, row.name);
   }
 });
 
 describe("the window stat names its prior window in words", () => {
   const rows = [
-    { name: "a measured change names the window it compares with", prior: 5, spoken: /\bup\s+100\s*%\s*vs the 4 days before 01-03, cut at this time of day/ },
-    { name: "a zero prior says the window held no cost", prior: 0, spoken: /No comparison — the 4 days before 01-03 held no cost\./ },
+    { name: "a measured change names the window it compares with", prior: 5, spoken: /^\s*up\s+100\s*%\s*on the previous 4 days\s*$/ },
+    { name: "an equal prior reads level, with no direction word", prior: 10, spoken: /^\s*Level with the previous 4 days\s*$/ },
+    { name: "a zero prior says the window held no cost", prior: 0, spoken: /^\s*No comparison — the previous 4 days held no cost\.\s*$/ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -1462,8 +1463,26 @@ describe("the window stat names its prior window in words", () => {
         kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendWithPrior([1, 2, 3, 4], getPriorBlock(row.prior)),
         modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
       });
-      assert.match(getSpokenText(tree), row.spoken);
+      const window = findNodes(tree, isStat).find((n) => collectText(findNodes(n, (c) => c.props.className === "stat-label")[0]!) === "Cost, 30d")!;
+      const [context] = findNodes(window, (n) => n.props.className === "stat-context");
+      assert.match(getSpokenText(context!), row.spoken);
     });
+  }
+});
+
+test("the window stat's ⓘ states the cut its change line compares at, and only when a prior window arrived", async () => {
+  const mod = await loadCostRender();
+  const kpi = getKpiAtRatio(1, 1);
+  const rows = [
+    { name: "a prior window", trend: getTrendWithPrior([1, 2, 3, 4], getPriorBlock(5)), hasCut: true },
+    { name: "no prior window", trend: getTrendPoints([1, 2, 3, 4]), hasCut: false },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "SpendCardC", {
+      kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: row.trend, modelState: ready({ rows: [] }), days: 4, onRetry: () => {},
+    });
+    const notes = collectText(renderSpendNotes(tree));
+    assert.equal(notes.includes("Compared with the 4 days before 01-03, cut at the same time of day."), row.hasCut, row.name);
   }
 });
 
@@ -1515,8 +1534,8 @@ test("the window delta foot hands its sentence to DayTokens, so \"30 days\" befo
   const mod = await loadCostRender();
   const prior = { days: 30, period_end: "2026-09-30" };
   const rows = [
-    { delta: 12, sentence: "12% vs the 30 days before 09-30, cut at this time of day" },
-    { delta: null, sentence: "No comparison — the 30 days before 09-30 held no cost." },
+    { delta: 12, sentence: "12% on the previous 30 days" },
+    { delta: null, sentence: "No comparison — the previous 30 days held no cost." },
   ];
   for (const row of rows) {
     const tree = renderIn(mod, "TrendDeltaC", { delta: row.delta, prior, noun: "cost" });
@@ -1539,7 +1558,7 @@ test("the spend card's 7-day sentences (today hint, per-task hint and its window
     .map((n) => String(n.props.children));
   for (const sentence of [
     "7-day average $10.00/day",
-    "7-day cost / 2,396 finished",
+    "2,396 finished tasks",
     "Fixed 7-day window — the range above does not change it.",
   ]) {
     assert.ok(sentences.includes(sentence), `"${sentence}" reaches DayTokens whole; got ${JSON.stringify(sentences)}`);
@@ -1554,8 +1573,8 @@ test("each stat with a counting rule keeps it behind the spend card's one info t
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
   const rules = [
-    { label: "Cost, last 30 days", rule: /recorded cost/i },
-    { label: "Cost per finished task", rule: /fixed 7-day window/i },
+    { label: "Cost, 30d", rule: /recorded cost/i },
+    { label: "Cost per finished task, 7d", rule: /fixed 7-day window/i },
   ];
   const notes = findNodes(renderSpendNotes(tree), (n) => n.type === "p");
   assert.equal(notes.length, rules.length, "only the stats with a counting rule carry a note");

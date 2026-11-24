@@ -553,7 +553,7 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   const modelDays = getShownDays(modelState, days);
   return [
     {
-      key: 'today', label: 'Today vs. average', tone: getHotToneC(hot, null),
+      key: 'today', label: 'Spend today', tone: getHotToneC(hot, null),
       source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
       status: getStatStatus(kpiState, hot.ratio, false),
       value: formatUsdC(hot.todayCost),
@@ -562,26 +562,29 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
       unavailableNote: 'No cost in the last 7 days — no average to compare against.',
     },
     {
-      key: 'window', label: `Cost, last ${trendDays} days`,
+      key: 'window', label: `Cost, ${trendDays}d`,
       source: 'cost trend', isHeld: isRegionHeldC(trendState),
       status: getStatStatus(trendState, windowTotal.total, windowTotal.isEmpty),
       value: formatUsdC(windowTotal.total),
       context: <TrendDeltaTextC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>,
-      info: windowTotal.total === null ? WINDOW_COST_RULE_C
-        : `${WINDOW_COST_RULE_C} This window: ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}.`,
+      info: [
+        WINDOW_COST_RULE_C,
+        windowTotal.total === null ? null : `This window: ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}.`,
+        windowTotal.prior ? getPriorCutTextC(windowTotal.prior) : null,
+      ].filter(Boolean).join(' '),
       unavailableNote: 'Trend payload carries no cost figure.',
     },
     {
-      key: 'per-task', label: 'Cost per finished task',
+      key: 'per-task', label: 'Cost per finished task, 7d',
       source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
       status: getStatStatus(kpiState, costPerDone, false),
       value: formatUsdC(costPerDone),
-      hint: `7-day cost / ${formatIntC(doneCount)} finished`,
+      hint: `${formatIntC(doneCount)} finished tasks`,
       info: <window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens>,
       unavailableNote: 'No finished task in the last 7 days.',
     },
     {
-      key: 'cache', label: `Cache share, last ${modelDays} days`,
+      key: 'cache', label: `Cache share, ${modelDays}d`,
       source: 'cost by model', isHeld: isRegionHeldC(modelState),
       status: getStatStatus(modelState, cacheShare.share, cacheShare.isEmpty),
       value: cacheShare.share === null ? null : window.UI.formatPct(cacheShare.share * 100),
@@ -656,23 +659,33 @@ function SpendStatValueC({ stat }) {
   return <><ToneGlyph tone={stat.tone} label={toneLabel} title={toneLabel}/>{stat.value}</>;
 }
 
-// Window change on its own block line — the token card's foot.
+// Window change on its own block line — the token card's foot; the cut it compares at rides the hover.
 function TrendDeltaC({ delta, prior, noun }) {
-  return <div className="fs-meta text-dim mt-stack"><TrendDeltaTextC delta={delta} prior={prior} noun={noun}/></div>;
+  return (
+    <div className="fs-meta text-dim mt-stack" title={prior ? getPriorCutTextC(prior) : undefined}>
+      <TrendDeltaTextC delta={delta} prior={prior} noun={noun}/>
+    </div>
+  );
 }
 
-// Window change — direction rides on the glyph, never on the text colour.
+// the comparison's cut, one sentence → the window stat's ⓘ and the token foot's hover
+function getPriorCutTextC(prior) {
+  return `Compared with the ${prior.days} days before ${prior.period_end.slice(5)}, cut at the same time of day.`;
+}
+
+// Window change — direction rides on the glyph, never on the text colour; an equal window reads level, with no glyph.
 function TrendDeltaTextC({ delta, prior, noun }) {
   const { DayTokens } = window.UI;
   if (!prior) return 'No comparison — the prior window did not arrive with this range.';
-  const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+  const span = `the previous ${prior.days} days`;
   if (delta === null) return <DayTokens>{`No comparison — ${span} held no ${noun}.`}</DayTokens>;
-  const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
+  if (delta === 0) return <DayTokens>{`Level with ${span}`}</DayTokens>;
+  const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : ['\u25bc', 'down'];
   return (
     <>
       <span className="mr-label-inline" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
-      <DayTokens>{`${window.UI.formatPct(Math.abs(delta))} vs ${span}, cut at this time of day`}</DayTokens>
+      <DayTokens>{`${window.UI.formatPct(Math.abs(delta))} on ${span}`}</DayTokens>
     </>
   );
 }

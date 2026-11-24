@@ -429,7 +429,7 @@ describe("calm fixture — nothing is running hot", () => {
     SPEND_STAT_ROW);
     assert.equal(labels.length, SPEND_STAT_COUNT);
     assert.equal(
-      labels.filter((label) => /, last \d+ days$/.test(label)).length,
+      labels.filter((label) => /, \d+d$/.test(label) && !/, 7d$/.test(label)).length,
       2,
       `the cost and the cache-share stats follow the range: ${labels.join(" | ")}`,
     );
@@ -439,7 +439,7 @@ describe("calm fixture — nothing is running hot", () => {
     const contexts = await ctx.page.evaluate((row) =>
       Array.from(document.querySelectorAll(`${row} .stat-context`)).map((el) => (el.textContent || "").trim()),
     SPEND_STAT_ROW);
-    assert.ok(contexts.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
+    assert.ok(contexts.some((text) => /on the previous \d+ days$|^Level with the previous \d+ days$/.test(text)), "a measured delta line renders");
     assert.ok(!contexts.some((text) => /did not arrive/.test(text)), "no stat reads the prior window as missing");
   });
 
