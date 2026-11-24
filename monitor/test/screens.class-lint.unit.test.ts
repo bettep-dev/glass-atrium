@@ -167,7 +167,6 @@ const MOTION_ROWS = [
   { screen: "clauded-docs", selector: ".doc-action-spinner", prop: "animation", keyframes: "docSpinCD", arm: ".doc-action-spinner" },
   { screen: "clauded-docs", selector: ".doc-row", prop: "transition", arm: ".doc-row" },
   { screen: "clauded-docs", selector: ".tbl.doc-ledger-busy", prop: "transition", arm: ".tbl.doc-ledger-busy" },
-  { screen: "outcomes", selector: ".skel-pulse-o", prop: "animation", keyframes: "skelPulseO", arm: ".skel-pulse-o" },
   { screen: "outcomes", selector: ".outcome-row", prop: "transition", arm: ".outcome-row" },
   { screen: "architecture", selector: " .node > ", prop: "transition", arm: ".arch-mermaid-canvas .node > *" },
 ];

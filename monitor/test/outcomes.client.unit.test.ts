@@ -580,7 +580,7 @@ interface RenderSandboxO {
   React: { createElement: unknown };
   AgentFailureRateCellO: (props: { row: Record<string, unknown>; maxRate: number }) => RecordedElementO;
   AttributionBreakdownO: (props: { state: Record<string, unknown> }) => RecordedElementO | null;
-  EmptyStateO: unknown;
+  window: { UI: { EmptyState: unknown } };
 }
 
 const rendered = await buildScreenSandbox<RenderSandboxO>(OUTCOMES_SRC);
@@ -647,7 +647,7 @@ describe("AttributionBreakdownO: only a landed window may say it has no breakdow
 
   test("a landed but empty window says so", () => {
     const empty = rendered.AttributionBreakdownO({ state: { status: "ready", data: { window_summary: { total_attributed: 0 } } } });
-    assert.equal(empty?.type, rendered.EmptyStateO);
+    assert.equal(empty?.type, rendered.window.UI.EmptyState);
     assert.match(String(empty?.props.message), /No daily breakdown/);
   });
 });

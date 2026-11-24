@@ -557,8 +557,8 @@ describe("the screen's own stylesheet keeps to the motion standard", async () =>
       .map((prop) => ({ selector, prop, value: getDecl(body, prop) ?? "" })),
   );
 
-  test("the scan finds the sheet's moving rules", () => {
-    assert.ok(moving.some((m) => m.prop === "animation") && moving.some((m) => m.prop === "transition"));
+  test("the scan finds the sheet's one moving rule, a row transition, and no loop of its own", () => {
+    assert.deepEqual(moving.map((m) => `${m.selector} ${m.prop}`), [".outcome-row transition"]);
   });
 
   for (const { selector, prop, value } of moving) {
@@ -585,13 +585,19 @@ test("a link in an outcome body draws in ink with a currentColor underline, neve
   assert.doesNotMatch(link, /--accent/);
 });
 
-test("a loading skeleton pulses through its gated class, never through an inline animation", async () => {
+test("while the first read is in flight, the ledger and Failures by agent draw still skeleton rows under their real heads, and no region pulses", async () => {
   const { tree } = await renderOutcomesScreen(0);
-  const inline = findNodes(tree, (n) => (n.props.style as Record<string, unknown> | undefined)?.animation !== undefined);
-  const pulsing = findNodes(tree, (n) => String(n.props.className ?? "").split(/\s+/).includes("skel-pulse-o"));
+  const skeletonHeads = findNodes(tree, (n) => n.type === "Table")
+    .filter((table) => findNodes(table, (n) => n.type === "SkeletonRows").length > 0)
+    .map((table) => findNodes(table, (n) => n.type === "th").map((th) => collectText(th).trim()).filter(Boolean).join(", "));
+  const animated = findNodes(tree, (n) => (n.props.style as Record<string, unknown> | undefined)?.animation !== undefined
+    || /\bskel-pulse/.test(String(n.props.className ?? "")));
 
-  assert.ok(pulsing.length > 0, "the loading screen draws pulsing skeletons");
-  assert.equal(inline.length, 0, "no element animates through its own style");
+  assert.deepEqual(skeletonHeads.sort(), [
+    "Agent, Failure rate, Failed, Blocked, Open caveats, Total records",
+    "Time, Agent, Task type, Result, Why, Summary, Actions",
+  ]);
+  assert.equal(animated.length, 0, "a skeleton is still; only the shared loading status turns");
 });
 
 describe("the Record attribution head names the missing-report level with no rate or window: None only over a read window with no records, Not loaded with its cause after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {

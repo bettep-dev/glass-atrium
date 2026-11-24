@@ -367,8 +367,6 @@ function crosstabConfidenceKeyO(confidence) {
 
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
-@keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
-.skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.6; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
 /* md 헤딩 3레벨 → title 토큰 공통 (동일 content-level) · 시각 위계는 font-weight 600 + margin 으로 보존 */
 .outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: var(--space-3) 0 var(--space-1_5); line-height: 1.3; }
@@ -387,7 +385,6 @@ const SCREEN_OUTCOMES_CSS = `
 .outcome-row { transition: background 120ms; }
 .outcome-row:hover { background: rgb(var(--accent) / 0.06); }
 @media (prefers-reduced-motion: reduce) {
-  .skel-pulse-o { animation: none; }
   .outcome-row { transition: none; }
 }
 `;
@@ -1201,30 +1198,20 @@ const AGENT_FAILURE_STACK_BELOW_PX = 560;
 // separate borders: a collapsed border would not travel with the sticky header row
 const OWN_FACE_TABLE_CLASS_O = 'tbl--own-face fs-meta border-separate border-spacing-0 [&_thead_th]:text-dim [&_thead_th]:font-medium [&_thead_th]:whitespace-nowrap';
 
-// 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
-function AgentFailureSkeletonO() {
-  const { Table, TableRow, TableCell } = window.UI;
-  const rows = (view) => [0, 1, 2].map((i) => (
-    <TableRow key={i} view={view}>
-      <TableCell view={view} kind="span">
-        <div className="skel-pulse-o" style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))' }}/>
-      </TableCell>
-    </TableRow>
-  ));
-  return <Table caption="Loading by-agent failures" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
-    bodies={[{ key: 'skeleton', rows, isBusy: true, className: 'tbl-compact' }]}/>;
-}
-
 function AgentFailureBodyO({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
-  if (view === 'loading') return <AgentFailureSkeletonO/>;
+  // the table keeps its shape while loading — an empty body would read as 'no agent failed'
+  if (view === 'loading') {
+    return <window.UI.Table caption="Loading by-agent failures" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
+      bodies={[{ key: 'skeleton', rows: <window.UI.SkeletonRows rows={3} columns={AGENT_FAILURE_COLUMNS_O.length}/>, isBusy: true, className: 'tbl-compact' }]}/>;
+  }
   if (view === 'error') {
     return <RegionErrorO source="by-agent failures" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.agentFailures} isInset/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
   if (rows.length === 0) {
-    return <EmptyStateO message="No registry agent failed or blocked in this window."/>;
+    return <window.UI.EmptyState message="No registry agent failed or blocked in this window."/>;
   }
 
   // the table's .tbl-wrap clips sideways and never scrolls → the sticky head reaches the 70vh card body, the scroller that does
@@ -1327,7 +1314,7 @@ function AttributionHealthBlock({ state, period, onRetry, shared }) {
 // a ready payload without window_summary → nothing read for the window: Not loaded in head and body, never the empty window
 const ATTRIBUTION_NO_SUMMARY_TITLE_O = 'The attribution read landed with no window summary, so the window was not read';
 
-// first read in flight → no head (the body's skeleton is the loading look) · failed or summary-less → Not loaded + its cause ·
+// first read in flight → no head (the body's loading status is the loading look) · failed or summary-less → Not loaded + its cause ·
 // read → the window's rate
 function getAttributionHeadBadgeO(state, period) {
   const { getRegionView, getErrorCopy, AbsentValue } = window.UI;
@@ -1345,7 +1332,7 @@ function getAttributionHeadBadgeO(state, period) {
 function AttributionHealthBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={200} label="reporting health"/>;
+    return <window.UI.LoadingPlaceholder label="reporting health" minHeight={200}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="reporting health" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
@@ -1359,7 +1346,7 @@ function AttributionHealthBody({ state, onRetry, shared }) {
 
   // 귀속 기록된 실행 0건 (빈 window) → 안내 indicator.
   if (totalAttributed === 0) {
-    return <EmptyStateO message="No attributed runs in this period."/>;
+    return <window.UI.EmptyState message="No attributed runs in this period."/>;
   }
 
   return (
@@ -1376,7 +1363,7 @@ function AttributionBreakdownO({ state }) {
   if (state.status !== 'ready' || !summary) return null;
 
   if (!(Number(summary.total_attributed) > 0)) {
-    return <EmptyStateO message="No daily breakdown in this period."/>;
+    return <window.UI.EmptyState message="No daily breakdown in this period."/>;
   }
 
   // backend sends active days only → 0-fill into the last ATTRIBUTION_GRID_BARS days.
@@ -1666,7 +1653,7 @@ function getChannelLivenessBadgeO(state) {
 function ChannelLivenessBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={120} label="recording channels"/>;
+    return <window.UI.LoadingPlaceholder label="recording channels" minHeight={120}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="recording channels" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.channels}/>;
@@ -1674,7 +1661,7 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
 
   const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
   if (channels.length === 0) {
-    return <EmptyStateO message="No recording channel wrote in this window."/>;
+    return <window.UI.EmptyState message="No recording channel wrote in this window."/>;
   }
 
   // 침묵한 채널을 먼저 — 조치가 필요한 행이 스크롤 아래로 밀리지 않게.
@@ -1750,7 +1737,7 @@ function getGraderTileKeysO(breakdown) {
 function GraderBreakdownBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={120} label="check results"/>;
+    return <window.UI.LoadingPlaceholder label="check results" minHeight={120}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="check results" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.checks}/>;
@@ -1758,7 +1745,7 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
 
   const breakdown = state.data?.overall?.grader_breakdown;
   if (!breakdown) {
-    return <EmptyStateO message="No check data in this period."/>;
+    return <window.UI.EmptyState message="No check data in this period."/>;
   }
 
   const gradedTotal = Number(breakdown.graded_total) || 0;
@@ -1918,7 +1905,7 @@ function CrosstabBlock({ state, onRetry, shared }) {
 function CrosstabBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={160} label="cross table"/>;
+    return <window.UI.LoadingPlaceholder label="cross table" minHeight={160}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="cross table" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.crosstab}/>;
@@ -1926,7 +1913,7 @@ function CrosstabBody({ state, onRetry, shared }) {
 
   const crosstab = state.data?.crosstab;
   if (!crosstab || crosstab.total === 0) {
-    return <EmptyStateO message="No confidence-vs-self-check records in this period."/>;
+    return <window.UI.EmptyState message="No confidence-vs-self-check records in this period."/>;
   }
 
   // the page's own-face table class: the .tbl cell geometry and the ledger's column-header face, no clickable-row hover (these rows open nothing)
@@ -2046,7 +2033,7 @@ function LoopEventsCard({ state, onRetry, shared }) {
 function LoopEventsBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={200} label="run events"/>;
+    return <window.UI.LoadingPlaceholder label="run events" minHeight={200}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="run events" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.loopEvents} isInset/>;
@@ -2059,7 +2046,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
   if (total === 0 || events.length === 0) {
     // 카드 card-body 는 padding:0(populated 테이블 소유) → empty 브랜치만 별도 패딩으로
     // the card-body default (--card-pad) 와 간격 일치. populated 테이블은 padding:0 유지.
-    return <div className="p-card-pad"><EmptyStateO message="No run events recorded yet."/></div>;
+    return <div className="p-card-pad"><window.UI.EmptyState message="No run events recorded yet."/></div>;
   }
 
   const distMap = {};
@@ -2243,7 +2230,9 @@ function ResultTableBody({
 }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={400} label="results"/>;
+    const columns = getLedgerColumnsO(sort, onSortChange);
+    return <window.UI.Table caption="Loading outcome records" columns={columns} widths={LEDGER_WIDTHS_O} isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
+      bodies={[{ key: 'skeleton', rows: <window.UI.SkeletonRows rows={NEEDS_YOU_PAGE_CAP} columns={columns.length}/>, isBusy: true }]}/>;
   }
   if (state.status === 'blocked') {
     return <PayloadUnavailableO label="Records" isInset/>;
@@ -2791,10 +2780,10 @@ function formatEvaluativeSignalO(signal) {
 
 function DetailBody({ detailState, markdown }) {
   // defensive guard + optional chaining 보존.
-  if (!detailState) return <ChartSkeletonO height={200} label="body"/>;
+  if (!detailState) return <window.UI.LoadingPlaceholder label="body" minHeight={200}/>;
 
   if (detailState?.status === 'idle' || detailState?.status === 'loading') {
-    return <ChartSkeletonO height={200} label="body"/>;
+    return <window.UI.LoadingPlaceholder label="body" minHeight={200}/>;
   }
   if (detailState?.status === 'error') {
     const { RegionUnavailable } = window.UI;
@@ -2862,11 +2851,6 @@ function MarkdownView({ markdown }) {
 
 // ----- Shared chrome --------------------------------------------------------
 
-function EmptyStateO({ message }) {
-  const { EmptyState } = window.UI;
-  return <EmptyState message={message} />;
-}
-
 /**
  * Plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it.
  * @param state - the failed region: its error is the answer, busy while a Retry re-reads it
@@ -2898,11 +2882,6 @@ function BlockedBannerO({ detail }) {
       body="Not responding. Check the service or try again shortly."
       details={detail}/>
   );
-}
-
-function ChartSkeletonO({ label, height = 220 }) {
-  const { LoadingPlaceholder } = window.UI;
-  return <LoadingPlaceholder label={label} minHeight={height}/>;
 }
 
 // ----- Pure helpers ---------------------------------------------------------
