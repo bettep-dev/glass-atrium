@@ -714,6 +714,23 @@ test("the cycle breakdown names its window in the short form the band's Applied,
   assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /^Cycles, 7d /);
 });
 
+// loop stats feed only the cycle row → a failure the page notice speaks for marks that row, not the section over three live cards
+test("a loop-stats failure the page notice covers reads Not loaded in the cycle row alone", () => {
+  const screen = sandbox as unknown as Record<string, Component>;
+  const tree = screen.LoopOutputGroupI({
+    statsState: { status: "error", data: null, error: "HTTP 503" },
+    loopEventsState: { status: "ready", data: { events: [] }, error: null },
+    listState: { status: "ready", data: { proposals: [] }, error: null },
+    failures: { banner: { sources: ["loop stats", "suggestions"], error: "HTTP 503" }, speakers: new Map() },
+    onRetry: () => {},
+  });
+  const rows = findAll(tree, (el) => el.type === screen.CycleDecompositionRowI);
+
+  assert.equal(findAll(tree, (el) => el.type === screen.ErrorBannerI).length, 0, "no section-level failure line");
+  assert.equal(rows.length, 1, "the cycle row keeps its slot");
+  assert.equal(visibleText(rows[0]).replace(/\s+/g, " ").trim(), "Cycles, 7d Not loaded");
+});
+
 describe("Learning labels read in sentence case, never letter-spaced capitals", () => {
   const screen = sandbox as unknown as Record<string, Component>;
   const rows = [

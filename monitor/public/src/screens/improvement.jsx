@@ -815,6 +815,8 @@ function LoopOutputGroupI({
 	failures,
 }) {
 	const { CardHead, Icon, getRegionView } = window.UI;
+	// the page notice speaks for loop stats → its one mark sits in the cycle row, the only part that read feeds
+	const isStatsCovered = (failures?.banner?.sources ?? []).includes("loop stats");
 	return (
 		<section className="space-y-group-below" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
@@ -831,7 +833,7 @@ function LoopOutputGroupI({
 					</button>
 				}
 			/>
-			{getRegionView(statsState) === "error" ? (
+			{getRegionView(statsState) === "error" && !isStatsCovered ? (
 				<ErrorBannerI
 					className="px-card-pad"
 					focusTargetId={ANCHOR_ID_I.loopOutput}
@@ -842,7 +844,7 @@ function LoopOutputGroupI({
 					onRetry={onRetry}
 				/>
 			) : null}
-			{statsState.status === "ready" && statsState.data ? (
+			{(statsState.status === "ready" && statsState.data) || isStatsCovered ? (
 				<CycleDecompositionRowI stats={statsState.data} />
 			) : null}
 			{/* 세 카드는 한 질문의 세 답이므로 한 행에 나란히 — 쌓으면 묶음 헤더의 기준이
@@ -863,13 +865,14 @@ function LoopOutputGroupI({
 
 // 사이클 3-분해 chip stat row — 생성+적용 / 생성-미적용 / 무생성 (≤3 카테고리 → 차트 대신 칩).
 // 세 카운트는 cycle_total_7d 를 정확히 분할 (서버 partition 보장).
+// stats null → the read failed: the row keeps its label and reads Not loaded in place of the chips
 function CycleDecompositionRowI({ stats }) {
-	const { Badge } = window.UI;
-	const chips = [
+	const { AbsentValue, Badge } = window.UI;
+	const chips = stats ? [
 		["Suggested and applied", Number(stats.cycles_generated_applied_7d ?? 0)],
 		["Suggested, not applied", Number(stats.cycles_generated_not_applied_7d ?? 0)],
 		["No suggestion", Number(stats.cycles_nothing_generated_7d ?? 0)],
-	];
+	] : [];
 
 	// no chip states a line to judge against → no tone glyph; the words name each category, the neutral Badge its count
 	return (
@@ -877,6 +880,7 @@ function CycleDecompositionRowI({ stats }) {
 			<span className="fs-meta text-dim font-medium">
 				Cycles, 7d
 			</span>
+			{!stats && <span className="fs-meta"><AbsentValue kind="not-loaded" /></span>}
 			{chips.map(([label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-label-inline">
 					<span>{label}</span>
