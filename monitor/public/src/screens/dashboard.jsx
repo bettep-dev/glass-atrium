@@ -221,7 +221,7 @@ function getPageSharedFailure(stats, panels = []) {
 function AlarmLane({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
   const isIdle = alarms.length === 0;
   return (
-    <section className={isIdle ? 'dash-lane sr-only' : 'dash-lane'} aria-label="Needs you">
+    <section className={isIdle ? 'sr-only' : undefined} aria-label="Needs you">
       <div aria-live="polite" className="flex flex-col gap-list">
         {alarms.length > 0 && (
           <div className="card dash-alarm-list">
