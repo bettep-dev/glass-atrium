@@ -108,6 +108,38 @@ test("a page-level outage hands every failed card the shared failure, so the ban
   }
 });
 
+// slot id → the title of the first card inside it; a shared Card is read, never expanded
+function getSlotTitles(node: unknown, slot: string | null = null, out = new Map<string, unknown>()): Map<string, unknown> {
+  if (Array.isArray(node)) {
+    for (const child of node) getSlotTitles(child, slot, out);
+    return out;
+  }
+  if (!isElement(node)) return out;
+  if (node.type === sandbox.window.UI.Card) {
+    if (slot && !out.has(slot)) out.set(slot, node.props.title);
+    return out;
+  }
+  if (typeof node.type === "function") return getSlotTitles((node.type as (p: unknown) => unknown)(node.props), slot, out);
+  return getSlotTitles(node.props.children, typeof node.props.id === "string" ? node.props.id : slot, out);
+}
+
+// one card, one name: a failed payload's card keeps the title its loading and data forms show
+// the suggestion list is left out → its one banner stands in for a group of four cards, so it names the group
+describe("a failed payload's card keeps its card's own title", () => {
+  for (const failed of ["statsState", "corpusAuditState", "correctionState"] as const) {
+    test(failed, () => {
+      const loading: Record<string, unknown> = { onRetry: () => {} };
+      for (const name of PAYLOADS) loading[name] = { status: "loading", data: null, error: null };
+      const withError = { ...loading, [failed]: { status: "error", data: null, error: "HTTP 500" } };
+
+      const before = getSlotTitles(sandbox.ImprovementInstrumentationViewI(loading));
+      const after = getSlotTitles(sandbox.ImprovementInstrumentationViewI(withError));
+
+      assert.deepEqual([...after], [...before]);
+    });
+  }
+});
+
 interface PageSandbox {
   React: { createElement: unknown };
   window: { UI: { RegionFailure: unknown } };

@@ -23,6 +23,13 @@ const PAYLOAD_SLOT_ID_I = Object.freeze({
 	proposalMeasurements: "improvement-proposal-measurements",
 });
 
+// one name per card → its error banner card reads the same title as its loading and data forms
+const CARD_TITLE_I = Object.freeze({
+	flaggedResults: "Flagged results (7 days)",
+	corpusGrowth: "Corpus growth",
+	correctionSignals: "Detection agreement",
+});
+
 // One banner per failed payload, in place of the group that payload owns.
 // `source` = the page's region name, so a shared outage banner naming it quiets this card
 function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTargetId }) {
@@ -45,7 +52,7 @@ function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTarge
 // 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
 function FlaggedResultsCardI({ state, reviewReasons }) {
 	const { Card, Link, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = "Flagged results (7 days)";
+	const title = CARD_TITLE_I.flaggedResults;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
@@ -142,7 +149,7 @@ function ImprovementInstrumentationViewI({
 				{getRegionView(statsState) === "error" ? (
 					<PayloadErrorCardI
 						focusTargetId={PAYLOAD_SLOT_ID_I.flaggedResults}
-						title="Flagged results"
+						title={CARD_TITLE_I.flaggedResults}
 						source="loop stats"
 						failures={failures}
 						state={statsState}
@@ -160,7 +167,7 @@ function ImprovementInstrumentationViewI({
 					{getRegionView(corpusAuditState) === "error" ? (
 						<PayloadErrorCardI
 							focusTargetId={PAYLOAD_SLOT_ID_I.corpusGrowth}
-							title="Corpus growth"
+							title={CARD_TITLE_I.corpusGrowth}
 							source="corpus audits"
 							failures={failures}
 							state={corpusAuditState}
@@ -174,7 +181,7 @@ function ImprovementInstrumentationViewI({
 					{getRegionView(correctionState) === "error" ? (
 						<PayloadErrorCardI
 							focusTargetId={PAYLOAD_SLOT_ID_I.correctionSignals}
-							title="Correction signals"
+							title={CARD_TITLE_I.correctionSignals}
 							source="correction signals"
 							failures={failures}
 							state={correctionState}
@@ -783,7 +790,7 @@ function formatRateI(rate) {
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
 	const { Card, Cluster, formatKstDate, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = "Detection agreement";
+	const title = CARD_TITLE_I.correctionSignals;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
@@ -850,7 +857,7 @@ function isCorrectionSignalsEmptyI(data) {
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
 	const { Card, Cluster, Sparkline, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = "Corpus growth";
+	const title = CARD_TITLE_I.corpusGrowth;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
