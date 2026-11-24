@@ -2289,13 +2289,16 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 	);
 }
 
+// the metric slot box, read by a loaded and a loading card alike
+const LOOP_METRIC_CLASS_I = "i-loop-metric px-card-pad mt-label gap-y-stack gap-x-block";
+
 // One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards; the foot keeps its day tokens whole.
 // visual = a plot, in a plot-height slot · no plot → no slot, the card ends at its content
 function getLoopSlotsI({ metric, visual, foot }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
 		<>
-			<div className="i-loop-metric px-card-pad mt-label gap-y-stack gap-x-block">{metric}</div>
+			<div className={LOOP_METRIC_CLASS_I}>{metric}</div>
 			{visual ? (
 				<div className="i-loop-visual px-card-pad mt-label" style={{ height: CARD_SLOTS.S.plotPx }}>
 					{visual}
@@ -2311,7 +2314,7 @@ function getLoopSlotsI({ metric, visual, foot }) {
 // a loading loop card → its line in the metric slot, so sibling cards draw it at one height
 function getLoopLoadingSlotI(label) {
 	return (
-		<div className="i-loop-metric px-card-pad mt-label gap-y-stack gap-x-block">
+		<div className={LOOP_METRIC_CLASS_I}>
 			<window.UI.LoadingPlaceholder label={label} />
 		</div>
 	);
