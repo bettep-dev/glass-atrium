@@ -329,9 +329,10 @@ function getSpendAlarmCopyC(hot, outsideDay) {
   return { title, detail: outsideDay !== null ? `${basis} \u00b7 the latest day is ${OUTSIDE_RANGE_C}` : basis };
 }
 
-// a trend day's band in words, "Normal range $a – $b" — the alarm detail and the chart readout read one form
+// a trend day's band in words, "Normal range $a – $b" — the alarm detail and the chart readout read one form; both bounds one precision
 function formatNormalRangeC(row) {
-  return `Normal range ${formatUsdC(row.lowerBand)} \u2013 ${formatUsdC(row.upperBand)}`;
+  const formatBound = getMoneyColumnFormatC([row.lowerBand, row.upperBand]);
+  return `Normal range ${formatBound(row.lowerBand)} \u2013 ${formatBound(row.upperBand)}`;
 }
 
 /**
@@ -515,30 +516,29 @@ function computeCacheShare(modelState) {
   };
 }
 
-// the payload behind the Today and per-task stats — its failure notice sits right above the Spend card
+// the read behind the Today and per-task stats — its failure notice leads the Spend card body
 const KPI_SOURCE_C = 'cost KPIs';
 
 function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, days, failures, onRetry }) {
-  const { getRegionView, RegionFailure, Card, StatRow } = window.UI;
+  const { getRegionView, RegionFailure, Card, Stack, StatRow, StatNotes } = window.UI;
   const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
   const notes = stats.filter((stat) => stat.info);
-  const bannerSources = failures?.banner?.sources ?? [];
 
+  // flush body → the alarm rows span the card under its head; the stat row keeps the card padding
   return (
-    <>
-      {/* Payload failure is reported at the owning group — the /api/cost/kpi payload feeds stats 1 and 3. */}
-      {getRegionView(kpiState) === 'error' && (
-        <RegionFailure source={KPI_SOURCE_C} error={kpiState.error} isBusy={kpiState.busy}
-          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
-      )}
-      {/* flush body → the alarm rows span the card under its head; the stat row keeps the card padding */}
-      <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read" isFlush>
-        <SpendAlarmRowsC rows={alarmRows}/>
-        <div className="p-card-pad" aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
-          <StatRow stats={stats.map((stat) => buildStatC(stat, bannerSources))}/>
-        </div>
-      </Card>
-    </>
+    <Card title="Spend" info={notes.length > 0 && <StatNotes stats={notes}/>} infoLabel="How these figures are read" isFlush>
+      <SpendAlarmRowsC rows={alarmRows}/>
+      <div className="p-card-pad" aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
+        <Stack>
+          {/* the /api/cost/kpi read feeds stats 1 and 3 → its cause leads the card it blanks */}
+          {getRegionView(kpiState) === 'error' && (
+            <RegionFailure source={KPI_SOURCE_C} error={kpiState.error} isBusy={kpiState.busy}
+              focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
+          )}
+          <StatRow stats={stats.map(buildStatC)}/>
+        </Stack>
+      </div>
+    </Card>
   );
 }
 
@@ -553,8 +553,8 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   const modelDays = getShownDays(modelState, days);
   return [
     {
-      key: 'today', label: 'Today vs. average', tone: getHotToneC(hot, null),
-      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
+      key: 'today', label: 'Spend today', tone: getHotToneC(hot, null),
+      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState), error: kpiState.error,
       status: getStatStatus(kpiState, hot.ratio, false),
       value: formatUsdC(hot.todayCost),
       // a firing stat is value + glyph → its alarm row above already states the average
@@ -562,34 +562,37 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
       unavailableNote: 'No cost in the last 7 days — no average to compare against.',
     },
     {
-      key: 'window', label: `Cost, last ${trendDays} days`,
-      source: 'cost trend', isHeld: isRegionHeldC(trendState),
+      key: 'window', label: `Cost, ${trendDays}d`,
+      source: 'cost trend', isHeld: isRegionHeldC(trendState), error: trendState.error,
       status: getStatStatus(trendState, windowTotal.total, windowTotal.isEmpty),
       value: formatUsdC(windowTotal.total),
       context: <TrendDeltaTextC delta={windowTotal.delta} prior={windowTotal.prior} noun="cost"/>,
-      info: windowTotal.total === null ? WINDOW_COST_RULE_C
-        : `${WINDOW_COST_RULE_C} This window: ${formatUsdC(windowTotal.avgDaily)}/day avg · peak ${formatUsdC(windowTotal.peakCost)}.`,
+      info: [
+        WINDOW_COST_RULE_C,
+        windowTotal.total === null ? null : `Average ${formatUsdC(windowTotal.avgDaily)}/day · peak day ${formatUsdC(windowTotal.peakCost)}.`,
+        windowTotal.prior ? getPriorCutTextC(windowTotal.prior) : null,
+      ].filter(Boolean).join(' '),
       unavailableNote: 'Trend payload carries no cost figure.',
     },
     {
-      key: 'per-task', label: 'Cost per finished task',
-      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState),
+      key: 'per-task', label: 'Cost per finished task, 7d',
+      source: KPI_SOURCE_C, isHeld: isRegionHeldC(kpiState), error: kpiState.error,
       status: getStatStatus(kpiState, costPerDone, false),
       value: formatUsdC(costPerDone),
-      hint: `7-day cost / ${formatIntC(doneCount)} finished`,
+      hint: `${formatIntC(doneCount)} finished tasks`,
       info: <window.UI.DayTokens>Fixed 7-day window — the range above does not change it.</window.UI.DayTokens>,
       unavailableNote: 'No finished task in the last 7 days.',
     },
     {
-      key: 'cache', label: `Cache share, last ${modelDays} days`,
-      source: 'cost by model', isHeld: isRegionHeldC(modelState),
+      key: 'cache', label: `Cache share, ${modelDays}d`,
+      source: 'cost by model', isHeld: isRegionHeldC(modelState), error: modelState.error,
       status: getStatStatus(modelState, cacheShare.share, cacheShare.isEmpty),
       value: cacheShare.share === null ? null : window.UI.formatPct(cacheShare.share * 100),
       hint: cacheShare.cacheCost === null ? '' : `${formatUsdC(cacheShare.cacheCost)} on cache reads + writes`,
       // the window ("30 days") stays one token; the sentence wraps around it
       info: cacheShare.totalCost === null ? null : (
         <window.UI.DateRange range={getDaySpanC(modelDays)}>
-          {getCacheTotalNoteC({ listTotal: cacheShare.totalCost, recordedTotal: trendDays === modelDays ? windowTotal.total : null, days: modelDays })}
+          {getCacheTotalNoteC({ listTotal: cacheShare.totalCost, days: modelDays })}
         </window.UI.DateRange>
       ),
       unavailableNote: 'No priced model cost in this window.',
@@ -597,21 +600,16 @@ function buildSpendStatsC({ kpiState, hot, trendState, modelState, days }) {
   ];
 }
 
-const WINDOW_COST_RULE_C = 'Recorded cost: the sum of the cost events recorded on each day of the window, today\'s partial day included. The average divides that total by the days shown; the peak is the costliest single day.';
+const WINDOW_COST_RULE_C = 'Sum of recorded cost per day, today so far included.';
 
 // a day count + its unit — one unbreakable token in the copy that names it
 function getDaySpanC(days) {
   return `${days} days`;
 }
 
-// List-price total set beside the recorded total only when both read one window → equal figures never read as a contradiction.
-function getCacheTotalNoteC({ listTotal, recordedTotal, days }) {
-  const listLabel = formatUsdC(listTotal);
-  const base = `of ${listLabel} at list token prices, last ${getDaySpanC(days)}`;
-  if (recordedTotal === null) return base;
-  return listLabel === formatUsdC(recordedTotal)
-    ? `${base} — matches the recorded total`
-    : `${base} — against ${formatUsdC(recordedTotal)} recorded`;
+// one sum, no reconciling clause → the list-price and recorded totals differ only by the window's edge-day cut (spec 44084 §9.2)
+function getCacheTotalNoteC({ listTotal, days }) {
+  return `of ${formatUsdC(listTotal)} at list token prices, last ${getDaySpanC(days)}.`;
 }
 
 /**
@@ -623,22 +621,8 @@ function getShownDays(state, requestedDays) {
   return match ? Number(match[1]) : requestedDays;
 }
 
-// counting rules and windows → the card's one ⓘ, each note led by its stat label
-function SpendStatNotesC({ stats }) {
-  return (
-    <>
-      {stats.map((stat) => (
-        <p key={stat.key} className="m-0">
-          <strong className="font-medium text-ink">{stat.label}</strong>
-          {' — '}{stat.info}
-        </p>
-      ))}
-    </>
-  );
-}
-
 // stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
-function buildStatC(stat, bannerSources) {
+function buildStatC(stat) {
   const { DayTokens, LAST_KNOWN_TEXT, getHeldCause } = window.UI;
   if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true };
   const value = <SpendStatValueC stat={stat}/>;
@@ -648,17 +632,25 @@ function buildStatC(stat, bannerSources) {
   }
   if (stat.status === 'ready' && stat.context) return { key: stat.key, label: stat.label, value, context: stat.context };
   // the hint or the state note, one plain string → its title carries it whole, and its day tokens stay whole
-  const note = getStatContextNoteC(stat, bannerSources);
+  const note = getStatContextNoteC(stat);
   return { key: stat.key, label: stat.label, value, context: note ? <span title={note}><DayTokens>{note}</DayTokens></span> : null };
 }
 
-// a failed read points at the notice that states it — above for the KPI payload or a banner source, else its own card below
-function getStatContextNoteC(stat, bannerSources) {
+// a failed read states its cause under Not loaded (spec 44084 §2.2) — the notice carries the next step
+function getStatContextNoteC(stat) {
   if (stat.status === 'ready') return stat.hint || null;
   if (stat.status !== 'error') return getStatNote(stat.status, stat.unavailableNote);
-  const isAbove = stat.source === KPI_SOURCE_C || bannerSources.includes(stat.source);
-  return window.UI.getNoticePointer(null, isAbove ? undefined : `the ${stat.source} notice below`);
+  return `${READ_FAILURE_CAUSE_C[window.UI.getErrorCopy(stat.error, stat.source).kind]}, not read.`;
 }
+
+// getErrorCause kind → the cause in a stat's few words
+const READ_FAILURE_CAUSE_C = Object.freeze({
+  network: 'No answer from the server',
+  database: 'Database unavailable',
+  server: 'Server error',
+  client: 'Request refused',
+  unknown: 'Read failed',
+});
 
 // Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
 function SpendStatValueC({ stat }) {
@@ -670,23 +662,33 @@ function SpendStatValueC({ stat }) {
   return <><ToneGlyph tone={stat.tone} label={toneLabel} title={toneLabel}/>{stat.value}</>;
 }
 
-// Window change on its own block line — the token card's foot.
+// Window change on its own block line — the token card's foot; the cut it compares at rides the hover.
 function TrendDeltaC({ delta, prior, noun }) {
-  return <div className="fs-meta text-dim mt-stack"><TrendDeltaTextC delta={delta} prior={prior} noun={noun}/></div>;
+  return (
+    <div className="fs-meta text-dim mt-stack" title={prior ? getPriorCutTextC(prior) : undefined}>
+      <TrendDeltaTextC delta={delta} prior={prior} noun={noun}/>
+    </div>
+  );
 }
 
-// Window change — direction rides on the glyph, never on the text colour.
+// the comparison's cut, one sentence → the window stat's ⓘ and the token foot's hover
+function getPriorCutTextC(prior) {
+  return `Compared with the ${prior.days} days before ${prior.period_end.slice(5)}, cut at the same time of day.`;
+}
+
+// Window change — direction rides on the glyph, never on the text colour; an equal window reads level, with no glyph.
 function TrendDeltaTextC({ delta, prior, noun }) {
   const { DayTokens } = window.UI;
   if (!prior) return 'No comparison — the prior window did not arrive with this range.';
-  const span = `the ${prior.days} days before ${prior.period_end.slice(5)}`;
+  const span = `the previous ${prior.days} days`;
   if (delta === null) return <DayTokens>{`No comparison — ${span} held no ${noun}.`}</DayTokens>;
-  const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : delta < 0 ? ['\u25bc', 'down'] : ['\u2014', 'unchanged'];
+  if (delta === 0) return <DayTokens>{`Level with ${span}`}</DayTokens>;
+  const [glyph, direction] = delta > 0 ? ['\u25b2', 'up'] : ['\u25bc', 'down'];
   return (
     <>
       <span className="mr-label-inline" aria-hidden="true">{glyph}</span>
       <span className="sr-only">{direction} </span>
-      <DayTokens>{`${window.UI.formatPct(Math.abs(delta))} vs ${span}, cut at this time of day`}</DayTokens>
+      <DayTokens>{`${window.UI.formatPct(Math.abs(delta))} on ${span}`}</DayTokens>
     </>
   );
 }
@@ -697,7 +699,7 @@ function TrendDeltaTextC({ delta, prior, noun }) {
  * the very series already drawn.
  */
 function CostTrendCard({ state, days, failures, onRetry }) {
-  const { Card } = window.UI;
+  const { Card, QuietButton } = window.UI;
   const [bandOn, setBandOn] = useStateC(false);
 
   const points = getTrendPoints(state);
@@ -707,9 +709,8 @@ function CostTrendCard({ state, days, failures, onRetry }) {
     <Card
         title="Cost over time"
         right={
-          <button
-            type="button"
-            className="btn sm"
+          <QuietButton
+            className="sm"
             disabled={!bandAvailable}
             aria-pressed={bandOn}
             title={bandAvailable
@@ -717,7 +718,7 @@ function CostTrendCard({ state, days, failures, onRetry }) {
               : `Needs ${ROLLING_WINDOW} days of cost to compute a rolling band`}
             onClick={() => setBandOn((v) => !v)}>
             Normal range
-          </button>
+          </QuietButton>
         }>
       <CostTrendBody state={state} days={days} bandOn={bandOn && bandAvailable} onRetry={onRetry} failures={failures}/>
     </Card>
@@ -819,7 +820,7 @@ function CostTrendChart({ rows, bandOn }) {
   };
 
   return (
-    <figure style={{ margin: 0, minWidth: 0 }}>
+    <figure style={{ minWidth: 0 }}>
       <div
         {...getChartImageProps(getGapNameC('Daily cost', points), points, formatUsdC)}
         style={{ width: '100%', height: 260, cursor: 'crosshair' }}
@@ -1262,6 +1263,7 @@ function computeCategoryCostRows(modelCostRows) {
 // Row 0 of the ledger — where the money goes by token category, as one 100% bar plus its legend.
 function CategoryShareRowC({ rows }) {
   const total = rows.reduce((s, r) => s + r.cost, 0);
+  const formatCost = getMoneyColumnFormatC(rows.map((r) => r.cost));
   if (total <= 0) {
     return <div role="note" className="fs-meta text-dim">No priced token cost in this window — category split unavailable.</div>;
   }
@@ -1280,7 +1282,7 @@ function CategoryShareRowC({ rows }) {
         {rows.map((r) => (
           <span key={r.key} className="flex items-center gap-label-inline fs-meta text-dim">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${r.colorVar}))` }}/>
-            {r.label} {window.UI.formatPct(r.pct * 100)} · {formatUsdC(r.cost)}
+            {r.label} {window.UI.formatPct(r.pct * 100)} · {formatCost(r.cost)}
           </span>
         ))}
       </div>
@@ -1324,7 +1326,7 @@ function ModelCostCard({ state, days, failures, onRetry }) {
       isFlush={window.UI.hasRegionRows(state, state.data?.rows ?? [])}
       info={`Cost per agent is not available — cost events carry a model, not an agent. A session using several models counts under each, so the Total row carries no session count.${fallbackNote}`}
       foot={other && (
-        <ModelCostFootC other={other} modelCount={modelRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        <ModelCostFootC modelCount={modelRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
       )}
       right={
           <div className="flex items-center gap-control">
@@ -1338,13 +1340,11 @@ function ModelCostCard({ state, days, failures, onRetry }) {
   );
 }
 
-// Rows past the M budget fold into one foot line; "Show all" opens them in the ledger itself.
-function ModelCostFootC({ other, modelCount, isShowingAll, onToggle }) {
+// Rows past the M budget fold into the ledger's Other row; "Show all" opens them in the ledger itself.
+function ModelCostFootC({ modelCount, isShowingAll, onToggle }) {
   return (
     <>
-      <span className="truncate">
-        {isShowingAll ? `All ${modelCount} models` : `Other · ${other.count} more model${other.count === 1 ? '' : 's'} · ${formatUsdC(other.cost_usd)}`}
-      </span>
+      {isShowingAll && <span className="truncate">{`All ${modelCount} models`}</span>}
       <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
         {isShowingAll ? `Show top ${getListBudgetC(CARD_SIZE.MODEL)}` : `Show all ${modelCount}`}
       </button>
@@ -1396,9 +1396,9 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
   }
 
   const modelRows = buildModelCostRows(rows);
-  const { top } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
+  const { top, other } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
-  const formatCost = getMoneyColumnFormatC([...top.map((r) => r.cost_usd), totalCost]);
+  const formatCost = getMoneyColumnFormatC([...top.map((r) => r.cost_usd), ...(other ? [other.cost_usd] : []), totalCost]);
   const formatAvg = getMoneyColumnFormatC(top.map(getAvgPerSessionC).filter((v) => v !== null));
 
   return (
@@ -1416,18 +1416,32 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
             <TableRow view={view}>
               <TableCell view={view} kind="row-header">Total</TableCell>
               <TableCell view={view} textRole="meta" label="Cost" isNumeric className="font-semibold">{formatCost(totalCost)}</TableCell>
-              <TableCell view={view} kind="span" start={2} textRole="meta" className="text-faint">
-                {/* contain: inline-size → the sentence wraps inside the cell and never widens a column (Model names stay on one line) */}
-                <span className="block" style={{ contain: 'inline-size' }}>
-                  Sessions not summed — a session using several models counts under each
-                </span>
-              </TableCell>
+              <NotSummedCellC view={view}/>
             </TableRow>
           )}>
-          {(view) => top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view} formatCost={formatCost} formatAvg={formatAvg}/>)}
+          {(view) => <>
+            {top.map((r) => <ModelCostRow key={r.fullModel} r={r} view={view} formatCost={formatCost} formatAvg={formatAvg}/>)}
+            {other && (
+              <TableRow view={view}>
+                <TableCell view={view}>{`Other · ${other.count} more model${other.count === 1 ? '' : 's'}`}</TableCell>
+                <TableCell view={view} textRole="meta" label="Cost" isNumeric>{formatCost(other.cost_usd)}</TableCell>
+                <NotSummedCellC view={view}/>
+              </TableRow>
+            )}
+          </>}
         </Table>
       </Stack>
     </Stack>
+  );
+}
+
+// Sessions + Avg / session as one right-aligned cell — a session using several models counts under each, so a folded row sums neither
+function NotSummedCellC({ view }) {
+  return (
+    <window.UI.TableCell view={view} kind="span" start={2} textRole="meta" isNumeric className="text-faint"
+      title="Not summed: a session using several models counts under each.">
+      Not summed
+    </window.UI.TableCell>
   );
 }
 
@@ -1781,7 +1795,7 @@ function SessionDistributionCard({ state, days, failures, onRetry }) {
       size={CARD_SIZE.SESSION}
       title="Most expensive sessions"
       isFlush={window.UI.hasRegionRows(state, rollup.top)}
-      sub={state.status === 'ready' ? `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}` : undefined}
+      sub={sessions.length > 0 ? `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}` : undefined}
       info={concentrationText ?? undefined}
       infoLabel="How spend concentrates"
       right={truncated
@@ -1831,6 +1845,7 @@ function SessionDistributionBody({ state, rows = [], days, failures, onRetry }) 
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
   }
 
+  const formatCost = getMoneyColumnFormatC(rows.map((s) => s.total_cost_usd));
   const openRow = (index) => setOpenSession(rows[index]);
   const getFocusProps = (index) => getRowFocusProps({
     index, activeIndex: activeRow, count: rows.length, onActivate: openRow, onActiveChange: setActiveRow,
@@ -1840,7 +1855,7 @@ function SessionDistributionBody({ state, rows = [], days, failures, onRetry }) 
     <>
       <Table caption={`Most expensive sessions, last ${days} days — open a row for its details`} columns={SESSION_COLUMNS}>
         {(view) => rows.map((s, i) => (
-          <SessionRowC key={s.session_id} session={s} view={view} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
+          <SessionRowC key={s.session_id} session={s} view={view} formatCost={formatCost} focusProps={getFocusProps(i)} onOpen={() => openRow(i)}/>
         ))}
       </Table>
       {openSession && (
@@ -1886,7 +1901,7 @@ function getSessionFactsC(session, nowMs) {
   return facts.filter(([, value]) => hasFieldValue(value));
 }
 
-function SessionRowC({ session, view, focusProps, onOpen }) {
+function SessionRowC({ session, view, formatCost, focusProps, onOpen }) {
   const { formatRelativeTime, formatKstFull, MachineString, TableRow, TableCell } = window.UI;
   const modelLabel = getModelLabelC(session.top_model);
   const shortId = getSessionShortId(session.session_id);
@@ -1897,11 +1912,11 @@ function SessionRowC({ session, view, focusProps, onOpen }) {
       view={view}
       {...focusProps}
       className="cursor-pointer"
-      aria-label={`Session ${shortId}, ${modelLabel}, ${formatUsdC(session.total_cost_usd)} — open details`}
+      aria-label={`Session ${shortId}, ${modelLabel}, ${formatCost(session.total_cost_usd)} — open details`}
       onClick={onOpen}>
       <TableCell view={view} title={session.session_id}><MachineString>{shortId}</MachineString></TableCell>
       <TableCell view={view} textRole="meta" label="Model">{modelLabel}</TableCell>
-      <TableCell view={view} textRole="meta" label="Cost" isNumeric className="text-ink font-semibold">{formatUsdC(session.total_cost_usd)}</TableCell>
+      <TableCell view={view} textRole="meta" label="Cost" isNumeric className="text-ink font-semibold">{formatCost(session.total_cost_usd)}</TableCell>
       <TableCell view={view} textRole="meta" label="Tokens" isNumeric>{formatTokenCompactC(session.total_tokens)}</TableCell>
       <TableCell view={view} textRole="meta" label="Last seen" isNumeric title={lastSeen ? formatKstFull(lastSeen) : undefined}>
         {lastSeen ? formatRelativeTime(lastSeen) : <window.UI.AbsentValue kind="none"/>}
@@ -2092,7 +2107,7 @@ function ParseErrorBody({ state, days, failures, onRetry }) {
           </Stack>
         </>
       ) : (
-        <EmptyStateC message={`No parse_error in the last ${days} days.`}
+        <EmptyStateC message={`No unreadable entries in ${days} days.`}
           hint={`${rows.length} days analyzed · ${formatIntC(totalEvents)} events total`}/>
       )}
     </Stack>
@@ -2288,16 +2303,16 @@ const anomalyAxisLineStyle = { stroke: 'rgb(var(--line))' };
 // no_assistant_in_turn = tool-only(LLM 미응답) 턴 · end_turn = 실 LLM 턴.
 // 분포는 인라인 가로 막대(테이블 기반, sandbox-safe) — Recharts 미사용.
 
-// stop_reason 표시 메타 — 라벨 + 색상 토큰 + 한 줄 설명. 미정의 reason 은 폴백.
+// stop_reason → label + one-line description; an undefined reason falls back to its raw id
 const STOP_REASON_META = {
-  no_assistant_in_turn: { label: 'Tool calls only',   colorVar: '--dim',    desc: 'no model reply in the turn' },
-  end_turn:             { label: 'Model replied',     colorVar: '--accent', desc: 'ended with an assistant reply' },
-  tool_use:             { label: 'Stopped on a tool', colorVar: '--info',   desc: 'ended on a tool call' },
-  unknown:              { label: 'Not recorded',      colorVar: '--faint',  desc: 'no stop reason logged' },
+  no_assistant_in_turn: { label: 'Tool calls only',   desc: 'no model reply in the turn' },
+  end_turn:             { label: 'Model replied',     desc: 'ended with an assistant reply' },
+  tool_use:             { label: 'Stopped on a tool', desc: 'ended on a tool call' },
+  unknown:              { label: 'Not recorded',      desc: 'no stop reason logged' },
 };
 
 function turnStopReasonMeta(reason) {
-  const meta = STOP_REASON_META[reason || 'unknown'] || { label: reason, colorVar: '--faint', desc: '' };
+  const meta = STOP_REASON_META[reason || 'unknown'] || { label: reason, desc: '' };
   return { ...meta, raw: reason || '' };
 }
 
@@ -2319,8 +2334,6 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
     return <EmptyStateC message={`No turn events in the last ${days} days.`}/>;
   }
 
-  // 막대 정규화 분모 = 최대 event_count (서버가 DESC 정렬 → 첫 행). 0 분모 방어.
-  const maxEvents = stopReasons.reduce((m, r) => Math.max(m, Number(r.event_count) || 0), 0);
   const totalEvents = stopReasons.reduce((s, r) => s + (Number(r.event_count) || 0), 0);
 
   // Stacked, never split: the card is the 2fr side of a pair from lg → a table column beside the
@@ -2330,7 +2343,6 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
       {turns && <TurnAggregateRow turns={turns} sessionPopulation={sessionPopulation}/>}
       <TurnStopReasonTable
         rows={stopReasons}
-        maxEvents={maxEvents}
         totalEvents={totalEvents}
         sessionPopulation={sessionPopulation}/>
     </Stack>
@@ -2338,43 +2350,32 @@ function TurnStatsBody({ state, days, failures, onRetry }) {
 }
 
 /**
- * Headline per-session average + one phrase reconciling its session count with the population.
+ * Per-session average as the row's first stat; its hint reconciles the counted sessions with the population.
  * turn_session_count = sessions with a logged turn count, a subset of every session with a turn event.
  */
-function getTurnHeadline(turns, sessionPopulation) {
+function getSessionTurnStat(turns, sessionPopulation) {
+  const label = 'Turns per session';
   const counted = Number(turns.turn_session_count) || 0;
-  if (counted === 0) {
-    return { value: null, note: 'No session in this window logged a turn count.' };
-  }
+  if (counted === 0) return { label, value: null, context: 'No session logged a turn count.' };
   const value = window.UI.formatDecimal(Number(turns.avg_turns_per_session) || 0);
-  const note = counted >= sessionPopulation
-    ? `turns per session, across ${formatIntC(counted)} sessions`
-    : `turns per session, over the ${formatIntC(counted)} of ${formatIntC(sessionPopulation)} sessions that logged a turn count`;
-  return { value, note };
+  const context = counted >= sessionPopulation
+    ? `${formatIntC(counted)} sessions`
+    : `${formatIntC(counted)} of ${formatIntC(sessionPopulation)} sessions`;
+  return { label, value, context };
 }
 
 // 주 지표 = 세션당 턴 (SUM per session → AVG, 서버 집계) — maxTurns 예산 산정용 (F29).
 // 이벤트당 평균은 skew-sensitive 보조 지표로 격하.
 function TurnAggregateRow({ turns, sessionPopulation }) {
-  const headline = getTurnHeadline(turns, sessionPopulation);
-  const secondary = [
+  const stats = [
+    getSessionTurnStat(turns, sessionPopulation),
     { label: 'Avg turns per logged event', value: window.UI.formatDecimal(Number(turns.avg_turns) || 0) },
     { label: 'Most turns in one event', value: formatIntC(Number(turns.max_turns) || 0) },
     { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
   ];
 
-  const { Stack, StatRow } = window.UI;
-
-  return (
-    // the body is flush for the stop-reason table → the aggregates take the card padding themselves
-    <Stack gap="label" className="px-card-pad">
-      <div className="flex items-baseline gap-label flex-wrap">
-        {headline.value && <span className="fs-display font-semibold tabular-nums">{headline.value}</span>}
-        <span className="fs-meta text-dim">{headline.note}</span>
-      </div>
-      <StatRow stats={secondary}/>
-    </Stack>
-  );
+  // the body is flush for the stop-reason table → the aggregates take the card padding themselves
+  return <window.UI.StatRow stats={stats} className="px-card-pad"/>;
 }
 
 // stop_reason 분포 — 4컬럼 테이블 (분류 · 이벤트수+인라인바 · 세션수 · 비중). ≤5컬럼.
@@ -2382,7 +2383,7 @@ function getStopReasonSessionShare(sessionCount, population) {
   return population > 0 ? sessionCount / population : null;
 }
 
-function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }) {
+function TurnStopReasonTable({ rows, totalEvents, sessionPopulation }) {
   const { Table, TableRow, TableCell } = window.UI;
 
   return (
@@ -2393,31 +2394,17 @@ function TurnStopReasonTable({ rows, maxEvents, totalEvents, sessionPopulation }
         const sessions = Number(r.session_count) || 0;
         const pct = totalEvents > 0 ? (events / totalEvents) : 0;
         const sessionShare = getStopReasonSessionShare(sessions, sessionPopulation);
-        const barPct = maxEvents > 0 ? (events / maxEvents) * 100 : 0;
         return (
           <TableRow key={r.stop_reason} view={view}>
             {/* one line → desc truncates (full text in title), so a narrow view never jumps the row height;
                 w-full + max-w-0 → the column takes the leftover width instead of the desc's nowrap width */}
             <TableCell view={view} className="w-full max-w-0">
               <div className="flex items-center gap-label min-w-0" title={[meta.label, meta.desc, meta.raw].filter(Boolean).join(' — ')}>
-                <span
-                  className="inline-block w-[3px] h-3 rounded-sm shrink-0"
-                  style={{ background: `rgb(var(${meta.colorVar}))` }}
-                />
                 <span className="shrink-0">{meta.label}</span>
                 <span className="fs-meta text-dim truncate">{meta.desc}</span>
               </div>
             </TableCell>
-            <TableCell view={view} textRole="meta" label="Events" isNumeric>
-              {/* inline bar normalised to the max row (sandbox-safe, no chart runtime) · a quantity → --data, never the reason's colour */}
-              <div className="flex items-center justify-end gap-label">
-                <span
-                  className="inline-block h-1.5 rounded-sm"
-                  style={{ width: `${Math.max(barPct, 2)}%`, maxWidth: 120, background: 'rgb(var(--data))' }}
-                />
-                <span className="tabular-nums">{formatIntC(events)}</span>
-              </div>
-            </TableCell>
+            <TableCell view={view} textRole="meta" label="Events" isNumeric>{formatIntC(events)}</TableCell>
             <TableCell view={view} textRole="meta" label="Sessions" isNumeric>
               {formatIntC(sessions)}
               {sessionShare !== null && (

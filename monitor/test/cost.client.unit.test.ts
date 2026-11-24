@@ -163,7 +163,8 @@ interface CostHelpers {
   getCacheTicks: (domain: readonly [number, number]) => number[];
   getUsdTicksC: (maxValue: number) => number[];
   getFlatCacheRate: (rows: readonly { rate_pct: number | null }[]) => number | null;
-  getCacheTotalNoteC: (input: { listTotal: number | null; recordedTotal: number | null; days: number }) => string;
+  getCacheTotalNoteC: (input: { listTotal: number; days: number }) => string;
+  formatNormalRangeC: (row: { lowerBand: number; upperBand: number }) => string;
   getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
   computeTokenShares: (
     points: readonly Record<string, number>[],
@@ -172,10 +173,10 @@ interface CostHelpers {
     shares: ReadonlyArray<{ key: string; total: number }>,
   ) => ReadonlyArray<{ key: string; total: number }>;
   getSpendAlarmCopyC: (hot: HotVerdict, outsideDay: OutsideDay | null) => { title: string; detail: string | null };
-  getTurnHeadline: (
+  getSessionTurnStat: (
     turns: { avg_turns_per_session?: number; turn_session_count?: number },
     sessionPopulation: number,
-  ) => { value: string | null; note: string };
+  ) => { label: string; value: string | null; context: string };
   getTrendReadout: (
     row: {
       fullDate: string;
@@ -1002,20 +1003,20 @@ test("the stack draws the largest category last, so the top edge carries that se
   }
 });
 
-test("the turn headline states one per-session figure and reconciles its session count with the population", () => {
+test("the turns-per-session stat reconciles its session count with the population in its hint", () => {
   const rows = [
-    { name: "fewer sessions logged a turn count", counted: 257, population: 582 },
-    { name: "every session logged a turn count", counted: 582, population: 582 },
+    { name: "fewer sessions logged a turn count", counted: 257, population: 582, context: "257 of 582 sessions" },
+    { name: "every session logged a turn count", counted: 582, population: 582, context: "582 sessions" },
+    { name: "no session logged a turn count", counted: 0, population: 40, context: "No session logged a turn count." },
   ];
-  for (const { name, counted, population } of rows) {
-    const { value, note } = cost.getTurnHeadline({ avg_turns_per_session: 91.25, turn_session_count: counted }, population);
-    assert.strictEqual(value, "91.3", name);
-    const numbers = note.match(/\d+/g) ?? [];
-    assert.deepStrictEqual([...new Set(numbers)].sort(), [...new Set([String(counted), String(population)])].sort(), `${name}: ${note}`);
-    assert.strictEqual(numbers.length, new Set(numbers).size, `${name}: each count stated once — ${note}`);
+  for (const { name, counted, population, context } of rows) {
+    const stat = cost.getSessionTurnStat({ avg_turns_per_session: 91.25, turn_session_count: counted }, population);
+    assert.deepStrictEqual(
+      { label: stat.label, value: stat.value, context: stat.context },
+      { label: "Turns per session", value: counted === 0 ? null : "91.3", context },
+      name,
+    );
   }
-  const none = cost.getTurnHeadline({ avg_turns_per_session: 0, turn_session_count: 0 }, 40);
-  assert.strictEqual(none.value, null, "no counted session has no average");
 });
 
 // --- Error cards survive their Retry, and a held read under a failure never reads current ---
@@ -1029,7 +1030,7 @@ interface RenderModule {
 // the spend stats and the ledgers are models over shared atoms → the real stat row, loading row, Stack and table atoms render, other atoms stay stubs
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
-const REAL_ATOMS = new Set(["StatRow", "AlarmRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
+const REAL_ATOMS = new Set(["StatRow", "StatNotes", "QuietButton", "AlarmRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
 
 // real ui.jsx helpers, with every rendered atom a host element carrying its props (the stat row anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
@@ -1100,6 +1101,21 @@ test("a cold-failed KPI payload retrying reads as failed on its stats, never a s
   const failedStats = findNodes(tree, isStat).filter((stat) => /Not loaded/.test(collectText(stat)));
   assert.equal(failedStats.length, 2, "the two stats the KPI payload feeds read as not loaded");
   assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 0, "no stat reads as loading beside the card");
+});
+
+test("a failed KPI read states its cause as the Spend card's first body row, above the stats it blanks, never on the page ground", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const kpiState: PanelState = { status: "error", data: null, error: "HTTP 500 Internal Server Error", busy: false };
+  const settled = ready({ points: [{ day: "2026-01-09", cost_usd: 2 }], rows: [] });
+  const tree = renderIn(mod, "SpendCardC", {
+    kpiState, hot: cost.computeHotVerdict({}), trendState: settled, modelState: settled, days: 30, onRetry: () => {},
+  });
+
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card" && n.props.title === "Spend");
+  assert.ok(card, "the Spend card renders");
+  const inCard = findNodes(card, (n) => n.props.atom === "RegionFailure" || isStat(n));
+  assert.equal(findNodes(tree, (n) => n.props.atom === "RegionFailure").length, 1, "one notice for the KPI read");
+  assert.equal(inCard[0]?.props.atom, "RegionFailure", "the notice sits inside the card, before every stat");
 });
 
 test("a spend stat that read nothing says so in faint words — Not loaded for a failed read, None for an empty one — never a dash", async () => {
@@ -1182,8 +1198,17 @@ describe("the spend alarm reads amount first, then its multiple of the 7-day ave
 
 });
 
+test("log integrity with no unreadable entry says so in plain words, never the raw column name", async () => {
+  const mod = await loadCostRender();
+  const state = ready({ rows: [{ event_date: "2026-01-09", error_count: 0, total_count: 1187 }] });
+  const tree = renderIn(mod, "ParseErrorBody", { state, days: 30, onRetry: () => {} });
+  // the message prop rides down the EmptyState atom's own nodes → one distinct message per empty state
+  const messages = new Set(findNodes(tree, (n) => typeof n.props.message === "string").map((n) => n.props.message));
+  assert.deepEqual([...messages], ["No unreadable entries in 30 days."]);
+});
+
 test("an average turn count drops a trailing .0", () => {
-  const { value } = cost.getTurnHeadline({ avg_turns_per_session: 4, turn_session_count: 10 }, 10);
+  const { value } = cost.getSessionTurnStat({ avg_turns_per_session: 4, turn_session_count: 10 }, 10);
   assert.strictEqual(value, "4");
 });
 
@@ -1215,9 +1240,9 @@ describe("an instrumentation card sets its figures in one stat row, never a tile
       data: {
         stop_reasons: [{ stop_reason: "end_turn", event_count: 1830, session_count: 412 }],
         stop_reason_session_count: 412,
-        turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
+        turns: { avg_turns_per_session: 14.4, avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
       },
-      stats: [["Avg turns per logged event", "3.3"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
+      stats: [["Turns per session", "14.4"], ["Avg turns per logged event", "3.3"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
     },
   ];
 
@@ -1367,15 +1392,15 @@ function getSpokenText(node: RenderedNode | string | null): string {
   return node.children.map(getSpokenText).join(" ");
 }
 
-describe("the token volume total compares with the server's prior window, cut at this time of day", () => {
-  const span = "vs the 4 days before 01-03, cut at this time of day";
+describe("the token volume total compares with the server's prior window", () => {
+  const span = "on the previous 4 days";
   const rows = [
     { name: "more tokens than the prior window read up, whatever cost did", tokens: [100, 100, 100, 100], prior: 200, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
     { name: "fewer tokens read down", tokens: [50, 50, 50, 50], prior: 400, glyph: "\u25bc", spoken: new RegExp(`\\bdown\\s+50\\s*%\\s*${span}`) },
-    { name: "equal totals read unchanged", tokens: [100, 100, 100, 100], prior: 400, glyph: "\u2014", spoken: new RegExp(`\\bunchanged\\s+0\\s*%\\s*${span}`) },
+    { name: "equal totals read level, with no glyph", tokens: [100, 100, 100, 100], prior: 400, glyph: null, spoken: /Level with the previous 4 days/ },
     { name: "today's partial day counts toward the total it sits under", tokens: [100, 100, 100, 500], prior: 400, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
     { name: "an absent prior window reads as no comparison", tokens: [100, 100], prior: null, glyph: null, spoken: /No comparison — the prior window did not arrive/ },
-    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: null, spoken: /No comparison — the 2 days before 01-03 held no tokens\./ },
+    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: null, spoken: /No comparison — the previous 2 days held no tokens\./ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -1389,34 +1414,26 @@ describe("the token volume total compares with the server's prior window, cut at
   }
 });
 
-// spec 44084 §2.2 + §3.2: a stat whose read is not current says so in the Dashboard's words — the pointer to its notice, or Last known
+// spec 44084 §2.2 + §3.2: a stat whose read is not current says so in the Dashboard's words — its cause, or Last known
 describe("a spend stat whose read is not current says so on its context line, as the Dashboard stats do", () => {
   const kpi = getKpiAtRatio(1, null);
   const heldKpi: PanelState = { ...ready(kpi), error: "HTTP 500 Internal Server Error" };
   const trend = getTrendPoints([1, 2, 3]);
   const rows = [
     {
-      name: "a failed kpi read points at the notice above its card",
+      name: "a failed kpi read states its cause",
       props: { kpiState: failed, hot: cost.computeHotVerdict({}), trendState: trend },
-      label: "Today vs. average", context: "See the notice above.", title: "See the notice above.",
+      label: "Spend today", context: "Server error, not read.", title: "Server error, not read.",
     },
     {
-      name: "a failed trend read points at its own card's notice below",
-      props: { kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: failed },
-      label: "Cost, last 30 days", context: "See the cost trend notice below.", title: "See the cost trend notice below.",
-    },
-    {
-      name: "a failed trend read the page banner speaks for points at the notice above",
-      props: {
-        kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: failed,
-        failures: { banner: { sources: ["cost trend"] } },
-      },
-      label: "Cost, last 30 days", context: "See the notice above.", title: "See the notice above.",
+      name: "a failed trend read states its own cause",
+      props: { kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: { ...failed, error: "TypeError: Failed to fetch" } },
+      label: "Cost, 30d", context: "No answer from the server, not read.", title: "No answer from the server, not read.",
     },
     {
       name: "a held kpi read says Last known and names the failed refresh on hover",
       props: { kpiState: heldKpi, hot: cost.computeHotVerdict(kpi), trendState: trend },
-      label: "Today vs. average", context: "Last known", title: "Last known \u2014 couldn't refresh cost KPIs",
+      label: "Spend today", context: "Last known", title: "Last known \u2014 couldn't refresh cost KPIs",
     },
   ];
   for (const row of rows) {
@@ -1444,15 +1461,16 @@ test("while the spend row is up, the Today stat's line leaves the 7-day average 
       kpiState: ready(row.kpi), hot: cost.computeHotVerdict(row.kpi), trendState: getTrendPoints([1, 2, 3]),
       modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
     });
-    const today = findNodes(tree, isStat).find((n) => /Today vs\. average/.test(collectText(n)))!;
+    const today = findNodes(tree, isStat).find((n) => /Spend today/.test(collectText(n)))!;
     assert.equal(/7-day average/.test(collectText(today)), row.hasAverage, row.name);
   }
 });
 
 describe("the window stat names its prior window in words", () => {
   const rows = [
-    { name: "a measured change names the window it compares with", prior: 5, spoken: /\bup\s+100\s*%\s*vs the 4 days before 01-03, cut at this time of day/ },
-    { name: "a zero prior says the window held no cost", prior: 0, spoken: /No comparison — the 4 days before 01-03 held no cost\./ },
+    { name: "a measured change names the window it compares with", prior: 5, spoken: /^\s*up\s+100\s*%\s*on the previous 4 days\s*$/ },
+    { name: "an equal prior reads level, with no direction word", prior: 10, spoken: /^\s*Level with the previous 4 days\s*$/ },
+    { name: "a zero prior says the window held no cost", prior: 0, spoken: /^\s*No comparison — the previous 4 days held no cost\.\s*$/ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -1462,8 +1480,26 @@ describe("the window stat names its prior window in words", () => {
         kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendWithPrior([1, 2, 3, 4], getPriorBlock(row.prior)),
         modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
       });
-      assert.match(getSpokenText(tree), row.spoken);
+      const window = findNodes(tree, isStat).find((n) => collectText(findNodes(n, (c) => c.props.className === "stat-label")[0]!) === "Cost, 30d")!;
+      const [context] = findNodes(window, (n) => n.props.className === "stat-context");
+      assert.match(getSpokenText(context!), row.spoken);
     });
+  }
+});
+
+test("the window stat's ⓘ states the cut its change line compares at, and only when a prior window arrived", async () => {
+  const mod = await loadCostRender();
+  const kpi = getKpiAtRatio(1, 1);
+  const rows = [
+    { name: "a prior window", trend: getTrendWithPrior([1, 2, 3, 4], getPriorBlock(5)), hasCut: true },
+    { name: "no prior window", trend: getTrendPoints([1, 2, 3, 4]), hasCut: false },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "SpendCardC", {
+      kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: row.trend, modelState: ready({ rows: [] }), days: 4, onRetry: () => {},
+    });
+    const notes = collectText(renderSpendNotes(tree));
+    assert.equal(notes.includes("Compared with the 4 days before 01-03, cut at the same time of day."), row.hasCut, row.name);
   }
 });
 
@@ -1515,8 +1551,8 @@ test("the window delta foot hands its sentence to DayTokens, so \"30 days\" befo
   const mod = await loadCostRender();
   const prior = { days: 30, period_end: "2026-09-30" };
   const rows = [
-    { delta: 12, sentence: "12% vs the 30 days before 09-30, cut at this time of day" },
-    { delta: null, sentence: "No comparison — the 30 days before 09-30 held no cost." },
+    { delta: 12, sentence: "12% on the previous 30 days" },
+    { delta: null, sentence: "No comparison — the previous 30 days held no cost." },
   ];
   for (const row of rows) {
     const tree = renderIn(mod, "TrendDeltaC", { delta: row.delta, prior, noun: "cost" });
@@ -1539,7 +1575,7 @@ test("the spend card's 7-day sentences (today hint, per-task hint and its window
     .map((n) => String(n.props.children));
   for (const sentence of [
     "7-day average $10.00/day",
-    "7-day cost / 2,396 finished",
+    "2,396 finished tasks",
     "Fixed 7-day window — the range above does not change it.",
   ]) {
     assert.ok(sentences.includes(sentence), `"${sentence}" reaches DayTokens whole; got ${JSON.stringify(sentences)}`);
@@ -1554,8 +1590,8 @@ test("each stat with a counting rule keeps it behind the spend card's one info t
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
   const rules = [
-    { label: "Cost, last 30 days", rule: /recorded cost/i },
-    { label: "Cost per finished task", rule: /fixed 7-day window/i },
+    { label: "Cost, 30d", rule: /^Cost, 30d\s+—\s+Sum of recorded cost per day, today so far included\. Average \$2\.00\/day · peak day \$3\.00\.$/ },
+    { label: "Cost per finished task, 7d", rule: /fixed 7-day window/i },
   ];
   const notes = findNodes(renderSpendNotes(tree), (n) => n.type === "p");
   assert.equal(notes.length, rules.length, "only the stats with a counting rule carry a note");
@@ -1689,13 +1725,23 @@ test("the spend concentration sentence prints its share through formatPct, so a 
   assert.match(getText({ share: 0.4125, count: 3 }, 40), /hold 41\.3% of the spend/);
 });
 
-test("the cache stat says the list-price total matches the recorded total when both read the same, and names the gap when not", () => {
-  const match = cost.getCacheTotalNoteC({ listTotal: 14_520.3, recordedTotal: 14_520.1, days: 30 });
-  assert.doesNotMatch(match, /not the recorded total/);
-  assert.match(match, /matches the recorded total/);
-  const differ = cost.getCacheTotalNoteC({ listTotal: 120, recordedTotal: 100, days: 30 });
-  assert.match(differ, /\$120/);
-  assert.match(differ, /\$100 recorded/);
+// spec 44084 §9.2: the two 30-day totals differ by an edge-day cut → the note states its one sum, no reconciling clause
+test("the cache stat's list-price note states one sum and its window, and closes as a sentence", () => {
+  assert.strictEqual(cost.getCacheTotalNoteC({ listTotal: 40_001.2, days: 30 }), "of $40,001 at list token prices, last 30 days.");
+});
+
+// spec 44084 §2.1: the two bounds of one range are one set → one precision for both
+describe("a normal range reads both bounds in one precision", () => {
+  const rows = [
+    { name: "a bound under $100 keeps cents on both", lowerBand: 0, upperBand: 2307, text: "Normal range $0.00 \u2013 $2,307.00" },
+    { name: "both bounds under $100 keep cents", lowerBand: 1.51, upperBand: 10.06, text: "Normal range $1.51 \u2013 $10.06" },
+    { name: "both bounds of $100 or more drop cents", lowerBand: 150.4, upperBand: 2307.2, text: "Normal range $150 \u2013 $2,307" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(cost.formatNormalRangeC(row), row.text);
+    });
+  }
 });
 
 test("the cost trend legend names the no-data days on screen, not only in the chart label", async () => {
@@ -1763,8 +1809,11 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
       assert.equal(Boolean(card.props.foot), hidden > 0, "the card carries a foot exactly when rows are rolled up");
       const foot = card.props.foot ? collectText(renderScreen(card.props.foot)) : "";
-      assert.equal(foot.includes(`Other · ${hidden} more model`), hidden > 0, foot || "no foot");
       assert.equal(foot.includes(`Show all ${count}`), hidden > 0, foot || "no foot");
+      assert.doesNotMatch(foot, /Other/, "the rolled-up line is a table row, so the Total under it closes every part");
+      const bodyRows = findNodes(card, (n) => n.type === "tbody").flatMap((body) => findNodes(body, (n) => n.type === "tr"));
+      const lastRow = bodyRows.length > 0 ? collectText(bodyRows[bodyRows.length - 1]!) : "";
+      assert.equal(lastRow.startsWith(`Other · ${hidden} more model`), hidden > 0, lastRow);
     });
   }
 
@@ -1781,7 +1830,12 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
     });
   }
 
-  const tokens = { input_tokens: 10, output_tokens: 10, cache_read_tokens: 10, cache_creation_tokens: 10 };
+  test("sessions — an empty window states no Top count in the head; the body says what is missing", async () => {
+    const card = await getCard("SessionDistributionCard", { rows: [], total_session_count: 0, truncated: false });
+    assert.equal(card.props.sub, undefined);
+  });
+
+  const tokens ={ input_tokens: 10, output_tokens: 10, cache_read_tokens: 10, cache_creation_tokens: 10 };
   const priced = { model: "claude-opus-5-5", cost_usd: 30, session_count: 4, ...tokens };
   const unattributedCases = [
     {
@@ -1814,6 +1868,7 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       const rows = Array.from({ length: count }, (_, i) => ({ session_id: `session-${i}`, total_cost_usd: 50 - i }));
       const card = await getCard("SessionDistributionCard", { rows, total_session_count: count, truncated: false });
       assert.equal(card.props.size, "L");
+      assert.equal(card.props.sub, `Top ${Math.min(count, budget)} of ${count}`);
       const shown = findNodes(card, (n) => n.type === "tr" && /^Session /.test(String(n.props["aria-label"] ?? ""))).length;
       const hidden = count - shown;
       assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
@@ -2036,19 +2091,72 @@ describe("the spend alarm rows lead the Spend card, under its head, and leave it
   }
 });
 
-test("every stop-reason Events bar is a quantity mark in the data colour, whatever its reason", async () => {
+// spec 44084 §2.1: one precision per money column, decided from its own values — the session list and the token-type set
+describe("a money set with any amount under $100 keeps cents on every amount of the set", () => {
+  test("the session list's cost column", async () => {
+    const mod = await loadCostRender();
+    const rows = [
+      { session_id: "a1b2c3d4-0000", top_model: "claude-opus-4", total_cost_usd: 16_764, total_tokens: 9e8, event_count: 900, last_event_at: null },
+      { session_id: "e5f6a7b8-0000", top_model: "claude-opus-4", total_cost_usd: 5.22, total_tokens: 1e5, event_count: 4, last_event_at: null },
+    ];
+    const text = collectText(renderIn(mod, "SessionDistributionBody", { state: ready({ rows }), rows, days: 30, onRetry: () => {} }));
+    assert.match(text, /\$16,764\.00/);
+    assert.match(text, /\$5\.22/);
+  });
+
+  test("the By token type legend", async () => {
+    const mod = await loadCostRender();
+    const rows = [
+      { key: "cache_read_tokens", label: "Cache read", colorVar: "--cat-2", cost: 112, pct: 112 / 156.61 },
+      { key: "output_tokens", label: "Output", colorVar: "--cat-4", cost: 44.61, pct: 44.61 / 156.61 },
+    ];
+    const text = collectText(renderIn(mod, "CategoryShareRowC", { rows }));
+    assert.match(text, /\$112\.00/);
+    assert.match(text, /\$44\.61/);
+  });
+});
+
+// spec 44084 §9 (R12): the Total row is one line — the reason is two words, the full sentence rides the cell's title
+test("the ledger Total row's count cell reads Not summed and keeps the reason on its title", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+    getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
   })) as RenderModule;
-  const reasons = ["end_turn", "tool_use", "no_assistant_in_turn", null];
+  const rows = [{ model: "claude-opus-4", cost_usd: 120, session_count: 3, input_tokens: 1e6, output_tokens: 1e6, cache_read_tokens: 1e7, cache_creation_tokens: 1e6 }];
+  const tree = renderIn(mod, "ModelCostBody", { state: ready({ rows }), days: 30, onRetry: () => {} });
+  const [foot] = findNodes(tree, (n) => n.type === "tfoot");
+  const cells = findNodes(foot!, (n) => n.type === "td" || n.type === "th");
+  const reason = cells[cells.length - 1]!;
+  assert.equal(collectText(reason).trim(), "Not summed");
+  assert.match(String(reason.props.title), /a session using several models counts under each/);
+});
+
+// d1 read-back finding 2: a stop reason is a word, not a colour — no stripe before the label, no bar before the count
+test("the stop-reason table paints no colour mark on any row", async () => {
+  const mod = await loadCostRender();
   const data = {
-    stop_reasons: reasons.map((stop_reason, i) => ({ stop_reason, event_count: 400 - i * 90, session_count: 120 - i * 20 })),
+    stop_reasons: [
+      { stop_reason: "end_turn", event_count: 1830, session_count: 412 },
+      { stop_reason: "tool_use", event_count: 245, session_count: 80 },
+    ],
     stop_reason_session_count: 412,
     turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
   };
   const tree = renderIn(mod, "TurnStatsBody", { state: ready(data), days: 30, onRetry: () => {} });
-  const bars = findNodes(tree, (n) => (n.props.style as { maxWidth?: unknown } | undefined)?.maxWidth === 120);
+  const [table] = findNodes(tree, (n) => n.type === "table");
+  assert.ok(table, "the stop-reason table renders");
+  // a rendered style prop is a plain object of CSS properties
+  const hasBackground = (n: RenderedNode) => (n.props.style as Record<string, unknown> | undefined)?.background !== undefined;
+  assert.equal(findNodes(table, hasBackground).length, 0);
+});
 
-  assert.equal(bars.length, reasons.length, "one Events bar per stop reason");
-  assert.deepEqual([...new Set(bars.map((n) => (n.props.style as { background: string }).background))], ["rgb(var(--data))"]);
+// pre-compose A16: the band toggle is the quiet pressed toggle — ink text and the ✓ slot, no edge
+test("the Normal range toggle is the quiet toggle and reports its pressed state", async () => {
+  const mod = await loadCostRender();
+  const tree = renderIn(mod, "CostTrendCard", { state: TREND_WITH_GAP, days: 30, onRetry: () => {} });
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const [toggle] = findNodes(renderScreen(card.props.right) as RenderedNode, (n) => n.type === "button");
+  assert.ok(toggle, "the toggle is a button");
+  assert.match(String(toggle.props.className), /^btn ghost sm$/);
+  assert.equal(toggle.props["aria-pressed"], false);
 });

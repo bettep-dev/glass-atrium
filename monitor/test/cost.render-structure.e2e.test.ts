@@ -114,7 +114,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
       },
     } : {}),
   }));
-  // A month's real model spread: more models than the ledger's row budget, so it rolls up an Other foot.
+  // A month's real model spread: more models than the ledger's row budget, so it rolls up an Other row.
   app.get("/api/cost/by-model", async () => ({
     rows: LEDGER_MODELS.map((model, i) => ({
       model,
@@ -350,13 +350,17 @@ describe("calm fixture — nothing is running hot", () => {
       return {
         foot: Array.from(table?.querySelectorAll("tfoot :is(th, td)") ?? []).map((cell) => (cell.textContent || "").trim()),
         costs: Array.from(table?.querySelectorAll("tbody tr > td:nth-child(2)") ?? []).map((cell) => (cell.textContent || "").trim()),
+        lastRow: (table?.querySelector("tbody tr:last-child")?.textContent || "").trim(),
+        reasonAlign: getComputedStyle(table!.querySelector("tfoot :is(th, td):last-child")!).textAlign,
       };
     });
     assert.strictEqual(ledger.foot[0], "Total");
     assert.ok(ledger.costs.some((text) => /^\$\d{1,2}\.\d\d$/.test(text)), `a row under $100: ${ledger.costs.join(" | ")}`);
     for (const text of [...ledger.costs, ledger.foot[1]]) assert.match(text, /\.\d\d$/, `one precision down the cost column: ${text}`);
     assert.strictEqual(ledger.foot.length, 3, "the two count columns share one cell");
-    assert.doesNotMatch(ledger.foot[2], /^(?:None|—|)$/, "the shared cell gives the reason in words");
+    assert.strictEqual(ledger.foot[2], "Not summed", "the shared cell names the rule in two words; the reason rides its title");
+    assert.strictEqual(ledger.reasonAlign, "right", "the reason sits on the count columns' right edge, as their cells do");
+    assert.match(ledger.lastRow, /^Other · \d+ more models?/, "the rolled-up row closes the body, so Total sums every row above it");
   });
 
   for (const width of [1440, 1920]) {
@@ -429,7 +433,7 @@ describe("calm fixture — nothing is running hot", () => {
     SPEND_STAT_ROW);
     assert.equal(labels.length, SPEND_STAT_COUNT);
     assert.equal(
-      labels.filter((label) => /, last \d+ days$/.test(label)).length,
+      labels.filter((label) => /, \d+d$/.test(label) && !/, 7d$/.test(label)).length,
       2,
       `the cost and the cache-share stats follow the range: ${labels.join(" | ")}`,
     );
@@ -439,7 +443,7 @@ describe("calm fixture — nothing is running hot", () => {
     const contexts = await ctx.page.evaluate((row) =>
       Array.from(document.querySelectorAll(`${row} .stat-context`)).map((el) => (el.textContent || "").trim()),
     SPEND_STAT_ROW);
-    assert.ok(contexts.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
+    assert.ok(contexts.some((text) => /on the previous \d+ days$|^Level with the previous \d+ days$/.test(text)), "a measured delta line renders");
     assert.ok(!contexts.some((text) => /did not arrive/.test(text)), "no stat reads the prior window as missing");
   });
 
