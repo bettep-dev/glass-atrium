@@ -1,7 +1,7 @@
 // Wiki folds on the DESIGN.md §7.15 disclosure tier, measured in a real browser on the shipped tokens.css, base.css and the screen's
 // own style block, rendered from the shipped components: each fold's summary is a 32 row — chevron, heading and count on one centre
 // line, the count at the row's far end — that keeps one box open, closed and in every pointer/keyboard state (§7.16).
-// The Runs table holds its columns in place whether its runs are healthy or not.
+// The Runs table holds its columns in place whether its runs are healthy or not; a fold's empty line sits on its card column.
 // Runner: npx tsx --test test/wiki.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -56,6 +56,11 @@ const READY_BACKLOG = {
 };
 const RUN_TABLE = getMarkup("WikiRunTableSection", { reportState: LOADING, days: 30, onChangeDays: noop, onRetry: noop });
 const MAINTENANCE = getMarkup("WikiMaintenanceSection", { backlogState: READY_BACKLOG, cyclesState: LOADING, onRetry: noop });
+const MAINTENANCE_EMPTY = getMarkup("WikiMaintenanceSection", {
+  backlogState: { status: "ready", error: null, data: { backlog: { run_date: "2026-10-28", dedup_proposals: { proposals: [] } } } },
+  cyclesState: LOADING,
+  onRetry: noop,
+});
 const runOf = (run_date: string, status: string) => ({ run_date, status, deadlinks_count: 1016, dedup_count: 12, started_at: `${run_date}T19:30:00Z` });
 // rest: every run healthy · alarm: the widest status words a run can show after its date
 const RUN_WINDOWS = {
@@ -68,6 +73,7 @@ const FOLD_WIDTHS = [1170, 740] as const;
 const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   ${FOLD_WIDTHS.map((w) => `<div id="runs-${w}" style="width: ${w}px; padding: 24px;">${RUN_TABLE}</div>`).join("")}
   <div id="merge" style="width: ${FOLD_WIDTHS[0]}px; padding: 24px;">${MAINTENANCE}</div>
+  <div id="merge-empty" style="width: ${FOLD_WIDTHS[0]}px; padding: 24px;">${MAINTENANCE_EMPTY}</div>
   ${Object.entries(RUN_WINDOWS).map(([name, reports]) => `<div id="run-table-${name}" style="width: ${FOLD_WIDTHS[0]}px;">${getMarkup("WikiReportsTable", { reports })}</div>`).join("")}
 </body></html>`;
 
@@ -159,4 +165,15 @@ describe("the Runs table holds its columns whether its runs are healthy or not",
     assert.equal(cells.length, expected, "every head and run cell rendered");
     assert.deepEqual(cells.filter((cell) => cell.isOverflowing).map((cell) => cell.text), []);
   });
+});
+
+test("an empty Merge proposals fold starts its empty line on the fold's card column", async () => {
+  await setOpen("merge-empty", true);
+  const column = await page.$eval(SUMMARY("merge-empty"), (el) => el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft));
+  const textLeft = await page.$eval("#merge-empty .placeholder", (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return range.getBoundingClientRect().left;
+  });
+  assert.ok(Math.abs(textLeft - column) <= 1, `empty line x ${textLeft} vs card column ${column}`);
 });

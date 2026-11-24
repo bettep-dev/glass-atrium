@@ -785,13 +785,16 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 						/>
 					</div>
 				) : !model.proposals || model.proposals.length === 0 ? (
-					<window.UI.EmptyState
-						message={
-							model.proposals
-								? "No merge proposals waiting."
-								: "The last cycle did not report merge proposals."
-						}
-					/>
+					// flush body → the empty line's host takes the card column, as the loading line's does
+					<div className="px-card-pad">
+						<window.UI.EmptyState
+							message={
+								model.proposals
+									? "No merge proposals waiting."
+									: "The last cycle did not report merge proposals."
+							}
+						/>
+					</div>
 				) : (
 					<window.UI.Stack gap="label">
 						<window.UI.Stack gap="label" className="px-card-pad">
