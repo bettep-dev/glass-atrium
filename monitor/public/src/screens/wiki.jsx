@@ -526,7 +526,8 @@ function buildStatW(tile) {
 	if (tile.state === "loading") return { key, label, isLoading: true };
 	if (tile.state === "empty") return { key, label, value: null };
 	if (tile.state !== "ready") {
-		return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={tile.cause} /> };
+		const context = tile.state === "error" ? window.UI.getReadFailureCause(tile.error) : null;
+		return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={tile.cause} />, context };
 	}
 	const context = tile.sub ? <span title={tile.hint || tile.sub}>{tile.sub}</span> : null;
 	return { key, label, value: <WikiStatValueW tile={tile} />, context };
@@ -558,8 +559,8 @@ function buildTileBandModel(summaryState, indexState, backlogState, at) {
 // Non-ready tile shapes carry no value, so a zero nobody loaded never renders; the cause rides the absent word's title.
 const TILE_CAUSES_W = { error: "The read failed", unavailable: "Not reported yet" };
 
-function tilePlaceholderW(key, label, state) {
-	return { key, label, state, cause: TILE_CAUSES_W[state], tone: "neutral" };
+function tilePlaceholderW(key, label, state, error = null) {
+	return { key, label, state, cause: TILE_CAUSES_W[state], error, tone: "neutral" };
 }
 
 function tileFetchStateW(state) {
@@ -571,7 +572,7 @@ function tileFetchStateW(state) {
 function buildLastRunTileW(state, at) {
 	const label = "Last run";
 	const pending = tileFetchStateW(state);
-	if (pending) return tilePlaceholderW("last-run", label, pending);
+	if (pending) return tilePlaceholderW("last-run", label, pending, state.error);
 
 	const d = state.data || {};
 	if (!d.last_cycle_started_at) {
@@ -617,7 +618,7 @@ function describeRunDayW(date) {
 function buildCompiledTileW(state, backlogState = UNKNOWN_REGION_W) {
 	const label = "Compiled last cycle";
 	const pending = tileFetchStateW(state);
-	if (pending) return tilePlaceholderW("compiled", label, pending);
+	if (pending) return tilePlaceholderW("compiled", label, pending, state.error);
 
 	const count = state.data?.latest_compiled_count;
 	if (typeof count !== "number") {
@@ -654,7 +655,7 @@ function sumCompiledW(cyclesState) {
 function buildIndexTileW(state) {
 	const label = "Search index";
 	const pending = tileFetchStateW(state);
-	if (pending) return tilePlaceholderW("index", label, pending);
+	if (pending) return tilePlaceholderW("index", label, pending, state.error);
 
 	const d = state.data || {};
 	// The server states row presence outright; the timestamp inference covers a payload predating it.
@@ -693,7 +694,10 @@ function buildIndexTileW(state) {
 function buildLibraryTileW(indexState, summaryState, backlogState) {
 	const label = "Library notes";
 	const pending = tileFetchStateW(indexState) || tileFetchStateW(summaryState);
-	if (pending) return tilePlaceholderW("library", label, pending);
+	if (pending) {
+		const failed = [indexState, summaryState].find((state) => tileFetchStateW(state) === "error");
+		return tilePlaceholderW("library", label, pending, failed?.error);
+	}
 
 	const total =
 		typeof indexState.data?.notes_total === "number"

@@ -46,8 +46,8 @@ UI_SCALARS.formatPct = REAL_UI.formatPct;
 UI_SCALARS.formatDecimal = REAL_UI.formatDecimal;
 // A failed read's cause rides the shipped error copy, so a Not-loaded title reads as it does on the page.
 UI_SCALARS.getErrorCopy = REAL_UI.getErrorCopy;
-// A covered region's pointer line rides the shipped pointer copy.
-UI_SCALARS.getNoticePointer = REAL_UI.getNoticePointer;
+// A failed stat's cause words ride the shipped words.
+UI_SCALARS.getReadFailureCause = REAL_UI.getReadFailureCause;
 // Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
 for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
 // The status band rides the shipped stat row → labels, values and context lines render as on the page.
@@ -1788,19 +1788,19 @@ function getBandTile(tree: RenderedNode | string | null, label: string): Rendere
     .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0] ?? null;
 }
 
-describe("a status stat another surface speaks for reads Not loaded in faint ink, its cause on hover, its context line pointing at that surface", () => {
+describe("a status stat another surface speaks for reads Not loaded in faint ink, its cause on hover and on its context line", () => {
   const ready = { status: "ready", data: [], error: null };
   const failed = { ...ERROR_STATE, busy: false };
   const rows = [
     {
       name: "the page notice covers every failed read",
       reads: { summaryState: failed, failureState: failed, overageState: failed }, success: failed,
-      labels: ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"], pointer: "See the notice above.",
+      labels: ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"], cause: "Server error, not read.",
     },
     {
       name: "a sibling stat speaks for a read that failed alone",
       reads: { summaryState: failed, failureState: ready, overageState: ready }, success: ready,
-      labels: ["Needs info"], pointer: "See the agent summary notice.",
+      labels: ["Needs info"], cause: "Server error, not read.",
     },
   ];
   for (const row of rows) {
@@ -1815,7 +1815,7 @@ describe("a status stat another surface speaks for reads Not loaded in faint ink
         assert.deepEqual([value?.props.kind, collectText(value)], ["not-loaded", "Not loaded"], `${label}: the faint Not loaded word`);
         assert.match(String(value?.props.title), /HTTP 500/, `${label}: the cause on hover`);
         const [context] = findNodes(tile, (n) => n.props?.className === "stat-context");
-        assert.equal(collectText(context).trim(), row.pointer, `${label}: the context line points at the speaker`);
+        assert.equal(collectText(context).trim(), row.cause, `${label}: the context line states the cause, never a pointer`);
         assert.equal(findAtoms(tile, "RegionCovered").length, 0, `${label}: no pointer sentence in the value`);
       }
     });
@@ -2241,7 +2241,7 @@ test("one failed read gives one error card, and every other region it feeds poin
   assert.equal(typeof cards[0].props.onRetry, "function");
   const covered = trees.flatMap((tree) => findAtoms(tree, "RegionCovered"));
   assert.equal(covered.length, 1, "the ledger points at that card");
-  assert.match(collectText(getBandTile(band, "Needs info")), /See the agent summary notice\./, "the needs-info stat points at that card");
+  assert.match(collectText(getBandTile(band, "Needs info")), /Server error, not read\./, "the needs-info stat states its cause rather than pointing");
 });
 
 test("the drawer's breakage headline names what it counts and sets the blocked part apart as a compliant halt", async () => {

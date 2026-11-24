@@ -2677,6 +2677,15 @@ const FETCH_ERROR_NEXT_STEP = {
   unknown: 'Retry in a moment, or open Details for more.',
 };
 
+// a failed stat's context line (spec 44084 §2.2) → its own cause, never a pointer; the next step stays with the notice
+const READ_FAILURE_CAUSE = {
+  server: 'Server error, not read.',
+  network: 'No answer, not read.',
+  database: 'Database down, not read.',
+  client: 'Request refused, not read.',
+  unknown: 'Unknown error, not read.',
+};
+
 const FAILURE_PATTERN = {
   // browser fetch rejections: Chromium "Failed to fetch" · Firefox "NetworkError…" · WebKit "Load failed"
   NETWORK: /failed to fetch|networkerror|load failed/i,
@@ -2699,6 +2708,10 @@ function getErrorCause(error) {
 function getErrorCopy(error, source) {
   const { kind, detail } = getErrorCause(error);
   return { sentence: `Couldn't load ${source}.`, next: FETCH_ERROR_NEXT_STEP[kind], detail, kind };
+}
+
+function getReadFailureCause(error) {
+  return READ_FAILURE_CAUSE[getErrorCause(error).kind];
 }
 
 /**
@@ -3391,7 +3404,7 @@ window.UI = {
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
   setShellBridge, getHarnessRead,
   REMOTE_PAGE, isRemotePage, installRemoteFetch, readRemoteSession,
-  getFetchError, getAttachmentName, SANITIZE_CONFIG, ErrorDetails, getErrorCopy, FETCH_ERROR_NEXT_STEP, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
+  getFetchError, getAttachmentName, SANITIZE_CONFIG, ErrorDetails, getErrorCopy, FETCH_ERROR_NEXT_STEP, getReadFailureCause, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,

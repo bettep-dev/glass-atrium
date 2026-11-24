@@ -755,29 +755,29 @@ function joinSubAg(parts) {
 
 // tile model → one StatRow stat; the counting rules ride the card head's one ⓘ
 function buildStatusStatAg({ key, label, sub, info, unavailableSub, status, failures, cardId, onRetry, ...state }) {
-  const pointer = status === 'error' ? getStatPointerAg(failures, state.feeder, label.toLowerCase()) : null;
+  const isCovered = status === 'error' && isStatCoveredAg(failures, state.feeder, label.toLowerCase());
+  const cause = isCovered ? window.UI.getReadFailureCause(state.error) : null;
   return {
     key,
     label,
-    value: <StatusStatValueAg label={label} status={status} pointer={pointer} failures={failures} cardId={cardId} onRetry={onRetry} {...state}/>,
-    context: pointer ?? (status === 'unavailable' ? (unavailableSub ?? sub) : sub),
+    value: <StatusStatValueAg label={label} status={status} isCovered={isCovered} failures={failures} cardId={cardId} onRetry={onRetry} {...state}/>,
+    context: cause ?? (status === 'unavailable' ? (unavailableSub ?? sub) : sub),
   };
 }
 
-// RegionFailure's covered test, as a context line → null when this stat is the slot that speaks
-function getStatPointerAg(failures, source, region) {
-  const { getNoticePointer } = window.UI;
-  if (failures?.banner?.sources?.includes(source)) return getNoticePointer(null);
+// RegionFailure's covered test → false when this stat is the slot that speaks
+function isStatCoveredAg(failures, source, region) {
+  if (failures?.banner?.sources?.includes(source)) return true;
   const speaker = failures?.speakers.get(source);
-  return speaker != null && speaker !== region ? getNoticePointer(null, `the ${source} notice`) : null;
+  return speaker != null && speaker !== region;
 }
 
 // Calm is silence → only a crit or warn count carries a glyph, its word for screen readers.
 // A covered failed read → the faint Not loaded word; the banner's Retry still lands on this card
-function StatusStatValueAg({ label, status, pointer, feeder, value, tone, error, busy, failures, cardId, onRetry }) {
+function StatusStatValueAg({ label, status, isCovered, feeder, value, tone, error, busy, failures, cardId, onRetry }) {
   const { Badge, Icon, TONE_ICON } = window.UI;
   if (status === 'loading') return <span className="text-faint" aria-busy="true">…</span>;
-  if (status === 'error' && pointer) {
+  if (status === 'error' && isCovered) {
     return <span data-covered-card-id={failures?.banner?.sources?.includes(feeder) ? cardId : undefined}>{getUnreadValueAg({ error }, feeder)}</span>;
   }
   if (status === 'error') {

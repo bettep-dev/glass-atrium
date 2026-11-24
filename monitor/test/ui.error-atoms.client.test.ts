@@ -18,6 +18,8 @@ const ui = await loadScreenModule(UI_SRC);
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
 const getFetchError = ui.getFetchError as (res: FakeResponse, bodyMax?: number) => Promise<Error>;
 const getErrorCopy = ui.getErrorCopy as (error: unknown, source: string) => ErrorCopy;
+// the screens reach it through window.UI
+const getReadFailureCause = (ui.UI as Record<string, unknown>).getReadFailureCause as (error: unknown) => string;
 const getSharedFailure = ui.getSharedFailure as (entries: FailureEntry[]) => { sources: string[]; error: unknown } | null;
 
 const SERVER_ERROR = "HTTP 500 Internal Server Error — relation core.outcomes does not exist at /srv/x.ts:42";
@@ -74,6 +76,22 @@ test("error copy is one plain sentence naming the source plus a next step, never
     assert.equal(copy.sentence, "Couldn't load task results.", row.name);
     assert.equal(copy.detail, raw, row.name);
     assert.doesNotMatch(`${copy.sentence} ${copy.next}`, /HTTP|\d{3}|—/, row.name);
+  }
+});
+
+// spec 44084 §2.2: a failed stat's context line states its own cause, "<cause>, not read.", one line per error kind
+describe("a failed stat's cause words follow the read's error kind", () => {
+  const rows = [
+    { name: "a server error", error: SERVER_ERROR, words: "Server error, not read." },
+    { name: "no answer from the server", error: new TypeError("Failed to fetch"), words: "No answer, not read." },
+    { name: "a database outage", error: new Error("HTTP 503 Service Unavailable — {\"error\":\"database_unavailable\"}"), words: "Database down, not read." },
+    { name: "a refused request", error: "HTTP 404 Not Found — {\"error\":\"no route\"}", words: "Request refused, not read." },
+    { name: "an unclassified failure", error: "boom", words: "Unknown error, not read." },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(getReadFailureCause(row.error), row.words);
+    });
   }
 });
 

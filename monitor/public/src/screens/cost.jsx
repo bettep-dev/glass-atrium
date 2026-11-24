@@ -640,17 +640,8 @@ function buildStatC(stat) {
 function getStatContextNoteC(stat) {
   if (stat.status === 'ready') return stat.hint || null;
   if (stat.status !== 'error') return getStatNote(stat.status, stat.unavailableNote);
-  return `${READ_FAILURE_CAUSE_C[window.UI.getErrorCopy(stat.error, stat.source).kind]}, not read.`;
+  return window.UI.getReadFailureCause(stat.error);
 }
-
-// getErrorCause kind → the cause in a stat's few words
-const READ_FAILURE_CAUSE_C = Object.freeze({
-  network: 'No answer from the server',
-  database: 'Database unavailable',
-  server: 'Server error',
-  client: 'Request refused',
-  unknown: 'Read failed',
-});
 
 // Report surface → neutral chrome; a hot day carries its tone on a glyph beside the figure, the alarm rows hold the words.
 function SpendStatValueC({ stat }) {

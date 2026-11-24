@@ -1428,7 +1428,7 @@ describe("a spend stat whose read is not current says so on its context line, as
     {
       name: "a failed trend read states its own cause",
       props: { kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: { ...failed, error: "TypeError: Failed to fetch" } },
-      label: "Cost, 30d", context: "No answer from the server, not read.", title: "No answer from the server, not read.",
+      label: "Cost, 30d", context: "No answer, not read.", title: "No answer, not read.",
     },
     {
       name: "a held kpi read says Last known and names the failed refresh on hover",

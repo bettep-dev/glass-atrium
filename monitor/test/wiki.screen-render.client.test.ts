@@ -1085,6 +1085,21 @@ test("a failed or unreported stat reads Not loaded with its cause in the title, 
   assert.doesNotMatch(text, /—/);
 });
 
+// spec 44084 §2.2: a failed read's stats state its cause on a visible context line; an unreported fact is no fetch failure
+test("a stat whose read failed states the read's cause on its context line", async () => {
+  const mod = await loadWikiScreen();
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const failed = { status: "error", data: null, error: "HTTP 500 Internal Server Error" };
+  const band = renderScreen(
+    mod.React.createElement(mod.WikiTileBand as Component, { summaryState: ready({}), indexState: failed, backlogState: READY_BACKLOG, onRetry: () => {} }),
+  );
+  const [row] = findNodes(band, (n) => n.props.atom === "StatRow");
+  const contextOf = Object.fromEntries(Array.from(row.props.stats as Array<{ label: string; context: unknown }>, (stat) => [stat.label, stat.context ?? null]));
+
+  assert.deepEqual([contextOf["Search index"], contextOf["Library notes"]], ["Server error, not read.", "Server error, not read."]);
+  assert.equal(contextOf["Compiled last cycle"], null, "an unreported count carries no read-failure words");
+});
+
 test("the two status cards share the S slot inside their region hosts", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
