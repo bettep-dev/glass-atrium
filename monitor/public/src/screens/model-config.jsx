@@ -1174,7 +1174,7 @@ async function putAgentPinsMC(body) {
 // One grid for the three daemon tables: the label takes the rest, the control column 12 interior + 160 control + 16 edge.
 // 160 = the 32 step above the widest line the slot holds ("Saved: CLI default Reset") → every control shares both edges.
 const LEDGER_COL_WIDTHS_MC = ["auto", "calc(5 * var(--space-8) + var(--space-3) + var(--card-pad))"];
-// Skeleton columns + empty-row colSpan for both ledgers.
+// Skeleton columns for the daemon ledgers.
 const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
 // fixed layout → the widths above hold whatever a cell holds
 const LEDGER_TABLE_CLASS_MC = "table-fixed";
@@ -1228,15 +1228,16 @@ function DomainsSectionMC({
 									columns={LEDGER_COL_COUNT_MC}
 									rowHeight={LEDGER_ROW_HEIGHT_MC}
 								/>
-							) : rows.length === 0 ? (
+							) : rows.length === 0 ? (view) => (
 								<EmptyRowMC
-									colSpan={LEDGER_COL_COUNT_MC}
+									view={view}
 									message="No model domains reported."
 								/>
-							) : (
+							) : (view) => (
 								rows.map((d) => (
 									<DomainRowMC
 										key={d.domain}
+										view={view}
 										domain={d}
 										departure={timing.departures.get(d.domain)}
 										knownModels={knownModels}
@@ -1255,13 +1256,14 @@ function DomainsSectionMC({
 }
 
 // Empty roster — states zero rows explicitly, so it never reads as a failed load.
-function EmptyRowMC({ colSpan, message }) {
+function EmptyRowMC({ view, message }) {
+	const { TableCell, TableRow } = window.UI;
 	return (
-		<tr>
-			<td colSpan={colSpan}>
+		<TableRow view={view}>
+			<TableCell view={view} kind="span">
 				<div className="fs-meta text-faint">{message}</div>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	);
 }
 
@@ -1395,6 +1397,7 @@ function getApplyLineMC(mode) {
 }
 
 function DomainRowMC({
+	view,
 	domain: d,
 	departure,
 	knownModels,
@@ -1412,15 +1415,16 @@ function DomainRowMC({
 	// 서버 editable=false 가 우선 — UI 메타와 어긋나면 보수적으로 read-only.
 	const editable = d.editable !== false && meta.editable !== false;
 	const id = `mc-model-${d.domain}`;
+	const { TableCell, TableRow } = window.UI;
 
 	return (
-		<tr className="is-top-aligned">
-			<td>
+		<TableRow view={view} className="is-top-aligned">
+			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
-			</td>
-			<td>
+			</TableCell>
+			<TableCell view={view} textRole="label">
 				{editable ? (
 					<ModelSelectMC id={id} domain={d.domain} knownModels={knownModels} value={value} error={error} onChange={onChange} />
 				) : (
@@ -1443,8 +1447,8 @@ function DomainRowMC({
 					savedValue={defaultValue && getModelOptionLabelMC(defaultValue)}
 					onReset={() => onChange(defaultValue)}
 				/>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	);
 }
 
@@ -1601,15 +1605,16 @@ function BudgetsSectionMC({
 								columns={LEDGER_COL_COUNT_MC}
 								rowHeight={LEDGER_ROW_HEIGHT_MC}
 							/>
-						) : rows.length === 0 ? (
+						) : rows.length === 0 ? (view) => (
 							<EmptyRowMC
-								colSpan={LEDGER_COL_COUNT_MC}
+								view={view}
 								message="No budget caps reported."
 							/>
-						) : (
+						) : (view) => (
 							rows.map((b) => (
 								<BudgetRowMC
 									key={b.domain}
+									view={view}
 									budget={b}
 									departure={timing.departures.get(b.domain)}
 									value={form.budgets[b.domain] ?? ""}
@@ -1637,20 +1642,21 @@ function budgetPlaceholderMC() {
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
  * + 실측 + ghost default/reset (T-MDL-6), all three in the line slot under the field.
  */
-function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChange }) {
+function BudgetRowMC({ view, budget: b, departure, value, defaultValue, error, onChange }) {
 	const id = `mc-budget-${b.domain}`;
+	const { TableCell, TableRow } = window.UI;
 	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
 
 	return (
-		<tr className="is-top-aligned">
-			<td>
+		<TableRow view={view} className="is-top-aligned">
+			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
-			</td>
-			<td>
+			</TableCell>
+			<TableCell view={view} textRole="label">
 				<span className={`field-affix${showError ? " is-error" : ""}`}>
 					<span className="field-affix__sym">$</span>
 					<input
@@ -1676,8 +1682,8 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 					savedValue={defaultValue}
 					onReset={() => onChange(defaultValue)}
 				/>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	);
 }
 
@@ -1724,15 +1730,16 @@ function TiersSectionMC({
 								columns={LEDGER_COL_COUNT_MC}
 								rowHeight={LEDGER_ROW_HEIGHT_MC}
 							/>
-						) : rows.length === 0 ? (
+						) : rows.length === 0 ? (view) => (
 							<EmptyRowMC
-								colSpan={LEDGER_COL_COUNT_MC}
+								view={view}
 								message="No call tiers reported."
 							/>
-						) : (
+						) : (view) => (
 							rows.map((t) => (
 								<TierRowMC
 									key={t.domain}
+									view={view}
 									tier={t}
 									departure={timing.departures.get(t.domain)}
 									value={form.tiers?.[t.domain] ?? "inherit"}
@@ -1760,23 +1767,23 @@ const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
  * One knob row — an effort select (CLI default + the five levels) or a token-count field where
  * blank = unset ('inherit'), plus In effect and the saved-value reset.
  */
-function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead, onChange }) {
+function TierRowMC({ view, tier: t, departure, value, defaultValue, error, isFileRead, onChange }) {
 	const meta = TIER_META_MC[t.domain] || { label: t.domain, hint: "", desc: "", kind: "", source: "daemon-config.json" };
 	const showError = Boolean(error);
 	// absent key = the unset state, not an unread one — unless the file itself was not read
 	const live = t.actual ?? (isFileRead ? CLI_DEFAULT_LABEL_MC : null);
 	const labelOf = (v) => (v === "inherit" ? CLI_DEFAULT_LABEL_MC : v);
-	const { Select } = window.UI;
+	const { Select, TableCell, TableRow } = window.UI;
 	const id = `mc-tier-${t.domain}`;
 
 	return (
-		<tr className="is-top-aligned">
-			<td>
+		<TableRow view={view} className="is-top-aligned">
+			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
 				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
-			</td>
-			<td>
+			</TableCell>
+			<TableCell view={view} textRole="label">
 				{meta.kind === "effort" ? (
 					<Select
 						id={id}
@@ -1815,8 +1822,8 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 					savedValue={labelOf(defaultValue)}
 					onReset={() => onChange(defaultValue)}
 				/>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	);
 }
 

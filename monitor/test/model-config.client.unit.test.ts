@@ -528,10 +528,12 @@ async function loadMcScreens(
     SkeletonRows: (p: Record<string, unknown>) =>
       Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
     TableHead: (p: Record<string, unknown>) => hMc("th", { "data-atom": "TableHead" }, p.children),
-    // the atom's wide mode: caption · colgroup from widths · thead of TableHeads from columns · one tbody per body
+    // the atom's wide mode: caption · colgroup from widths · thead of TableHeads from columns · one tbody per body,
+    // a `(view) => rows` body called with the wide view
     Table: (p: Record<string, unknown>) => {
       const columns = (p.columns ?? []) as Array<{ key: string; label: unknown }>;
       const bodies = (p.bodies ?? []) as Array<{ key: string; rows: unknown; isBusy?: boolean }>;
+      const view = { isStacked: false, columnCount: columns.length || ((p.widths ?? []) as string[]).length };
       return hMc(
         "table",
         { className: `tbl ${p.className ?? ""}`.trim(), "data-atom": "Table" },
@@ -539,9 +541,19 @@ async function loadMcScreens(
         p.widths ? hMc("colgroup", null, ...(p.widths as string[]).map((width) => hMc("col", { style: { width } }))) : null,
         // the atom renders no thead when columns are omitted
         p.columns ? hMc("thead", null, hMc("tr", null, ...columns.map((c) => hMc("th", { "data-atom": "TableHead" }, c.label)))) : null,
-        ...bodies.map((b) => hMc("tbody", { "aria-busy": b.isBusy ? "true" : undefined }, b.rows)),
+        ...bodies.map((b) =>
+          hMc("tbody", { "aria-busy": b.isBusy ? "true" : undefined }, typeof b.rows === "function" ? (b.rows as (v: unknown) => unknown)(view) : b.rows),
+        ),
       );
     },
+    TableRow: ({ view: _view, children, ...rest }: Record<string, unknown>) => hMc("tr", rest, children),
+    // a span cell covers the row from its start column, as the atom's colSpan does
+    TableCell: ({ view, kind, start = 0, children, className }: Record<string, unknown>) =>
+      hMc(
+        "td",
+        { className, colSpan: kind === "span" ? Math.max(1, Number((view as { columnCount?: number })?.columnCount ?? 0) - Number(start)) : undefined },
+        children,
+      ),
     AgentName: (p: Record<string, unknown>) =>
       hMc("span", { "data-atom": "AgentName", title: p.name }, getAgentDisplayNameMc(p.name)),
     formatKstTime: realUiMc.formatKstTime,
