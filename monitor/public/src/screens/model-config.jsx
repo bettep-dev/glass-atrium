@@ -1408,7 +1408,6 @@ function DomainRowMC({
 }) {
 	const meta = DOMAIN_META_MC[d.domain] || {
 		label: d.domain,
-		desc: "",
 		editable: d.editable !== false,
 	};
 	// 서버 editable=false 가 우선 — UI 메타와 어긋나면 보수적으로 read-only.
@@ -1643,7 +1642,7 @@ function budgetPlaceholderMC() {
 function BudgetRowMC({ view, budget: b, departure, value, defaultValue, error, onChange }) {
 	const id = `mc-budget-${b.domain}`;
 	const { TableCell, TableRow } = window.UI;
-	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, desc: "" };
+	const meta = BUDGET_META_MC[b.domain] || { label: b.domain };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
 
@@ -1765,7 +1764,7 @@ const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
  * blank = unset ('inherit'), plus In effect and the saved-value reset.
  */
 function TierRowMC({ view, tier: t, departure, value, defaultValue, error, isFileRead, onChange }) {
-	const meta = TIER_META_MC[t.domain] || { label: t.domain, desc: "", kind: "", source: "daemon-config.json" };
+	const meta = TIER_META_MC[t.domain] || { label: t.domain, kind: "", source: "daemon-config.json" };
 	const showError = Boolean(error);
 	// absent key = the unset state, not an unread one — unless the file itself was not read
 	const live = t.actual ?? (isFileRead ? CLI_DEFAULT_LABEL_MC : null);
