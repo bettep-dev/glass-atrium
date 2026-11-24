@@ -478,16 +478,17 @@ describe("healthy live fixture", () => {
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
 			})),
 		);
-		const captionChildren = await ctx.page.evaluate(() => [...document.querySelectorAll(".arch-caption > *")].map((el) => el.className));
+		const captionChildren = await ctx.page.evaluate(() => [...document.querySelectorAll(".arch-caption > *")].map((el) => el.matches("ul.arch-legend")));
 		const probe = { legend };
 
-		assert.deepStrictEqual(captionChildren, ["arch-legend fs-meta text-dim"], "nothing but the legend stands between the h1 and the first card");
+		assert.deepStrictEqual(captionChildren, [true], "nothing but the legend stands between the h1 and the first card");
 		for (const line of probe.legend) {
 			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
 			assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 		}
-		for (const word of ["needs attention", "critical", "not verified", "Orchestrator border", "Safety checks border"])
+		for (const word of ["Needs attention", "Critical", "Not verified", "Orchestrator", "Safety checks"])
 			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
+		assert.ok(probe.legend.every((line) => !/\b(Ring|border)\b/.test(line.text)), `a legend line names the mark — read: ${JSON.stringify(probe.legend)}`);
 	});
 
 	test("each legend swatch holds its mark's line inside its border", async () => {
@@ -510,7 +511,24 @@ describe("healthy live fixture", () => {
 			assert.ok(swatch.line <= swatch.inner, `"${swatch.mark}" sets a ${swatch.line}px line in a ${swatch.inner}px swatch`);
 	});
 
-	test("every text in the Part health block renders at 13px or larger, each row's meta line included", async () => {
+	// a swatch glyph is a mark, not a machine string → the body sans at 700, never the mono face
+	test("each legend swatch draws its mark in the body sans at weight 700", async () => {
+		await ctx.page.waitForSelector(".arch-legend-swatch", { timeout: 10_000 });
+		const probe = await ctx.page.evaluate(() => ({
+			body: getComputedStyle(document.body).fontFamily,
+			marks: [...document.querySelectorAll(".arch-legend-swatch")]
+				.filter((el) => (el.textContent || "").trim() !== "")
+				.map((el) => ({ mark: (el.textContent || "").trim(), face: getComputedStyle(el).fontFamily, weight: getComputedStyle(el).fontWeight })),
+		}));
+
+		assert.ok(probe.marks.length > 0, "no legend swatch carries a mark");
+		for (const mark of probe.marks) {
+			assert.equal(mark.face, probe.body, `"${mark.mark}" swatch face`);
+			assert.equal(mark.weight, "700", `"${mark.mark}" swatch weight`);
+		}
+	});
+
+	test("every text in the System parts card renders at 13px or larger, each row's meta line included", async () => {
 		await ctx.page.waitForSelector(".arch-part-health .arch-part-meta", { timeout: 10_000 });
 		const texts = await ctx.page.evaluate(() =>
 			[...document.querySelectorAll(".arch-part-health *")]
@@ -977,7 +995,7 @@ describe("fault live fixture", () => {
 		);
 	});
 	// the head Status is the row status atom at head size → same glyph gap, glyph centred on the words
-	test("the Part health head Status spaces and centres its glyph as the row status atom does", async () => {
+	test("the System parts head Status spaces and centres its glyph as the row status atom does", async () => {
 		await ctx.page.waitForSelector(".arch-part-health-status svg", { timeout: 30_000 });
 		const [head, row] = await ctx.page.evaluate(() =>
 			[".arch-part-health-status", ".arch-part-status"].map((selector) => {

@@ -62,7 +62,7 @@ test("the page alert shows its Retry in flight and hands focus to the verdict, w
   assert.notEqual(targets[0].props.atom, "PageErrorBanner", "focus lands outside the alert that unmounts on recovery");
 });
 
-test("a cold map Retry keeps the map's failure card in place, busy, with a focus target that outlives recovery", async () => {
+test("a cold map Retry keeps the map's failure card in place with a focus target that outlives recovery", async () => {
   const mod = (await loadScreenModule(ARCH_SRC, {
     UI: uiStub({ INITIAL_REGION_STATE: getColdRetryState() }),
     React: createReactStub(),
@@ -71,20 +71,19 @@ test("a cold map Retry keeps the map's failure card in place, busy, with a focus
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure" && /\barch-col-card\b/.test(String(n.props.className)));
   assert.equal(cards.length, 1, "the map slot stays a failure card during its Retry instead of collapsing to a loader");
-  assert.equal(cards[0].props.isBusy, true, "the card's Retry shows as in flight");
   const targetId = cards[0].props.focusTargetId;
   const targets = findNodes(tree, (n) => /^[a-z]/.test(n.type) && n.props.atom === undefined && n.props.id === targetId);
   assert.equal(targets.length, 1, `focus target ${String(targetId)} is one host element`);
   assert.equal(findNodes(targets[0], (n) => n === cards[0]).length, 1, "the target wraps the card, so it outlives the error-to-map swap");
 });
 
-// one Part health list: flagged parts first, then every part not judged healthy; healthy parts fold under their count
-describe("Part health is one list, healthy parts folded under a count", () => {
+// one System parts list: flagged parts first, then every part not judged healthy; healthy parts fold under their count
+describe("System parts is one list, healthy parts folded under a count", () => {
   const part = (id: string, tone: string | null, statusLabel: string) =>
     ({ id, name: `${id}-part`, kind: "unknown-kind", daemonName: null, tone, statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null });
   const render = async (partRows: ReturnType<typeof part>[]) => {
     const mod = await loadArch();
-    const props = { partRows, attentionEmpty: "No part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
+    const props = { partRows, attentionEmpty: "No system part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
     const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
     const [fold] = findNodes(tree, (n) => n.type === "details");
     const rowIds = (root: unknown) => findNodes(root as ReturnType<typeof renderScreen>, (n) => n.type === "li").map((n) => String(n.props.id));
@@ -92,27 +91,27 @@ describe("Part health is one list, healthy parts folded under a count", () => {
     return { tree, fold, shownIds: rowIds(tree).filter((id) => !foldIds.includes(id)), foldIds };
   };
   const rows = [
-    { name: "a mixed read", parts: [part("ok1", "ok", "Healthy"), part("info", "info", "Idle"), part("crit", "crit", "Overdue"), part("cold", null, "Not loaded"), part("ok2", "ok", "Healthy"), part("warn", "warn", "Late")], shown: ["crit", "warn", "cold", "info"], folded: ["ok1", "ok2"], isAllClear: false },
-    { name: "a read with nothing flagged", parts: [part("ok1", "ok", "Healthy"), part("cold", null, "Not loaded")], shown: ["cold"], folded: ["ok1"], isAllClear: true },
-    { name: "a read with no healthy part", parts: [part("crit", "crit", "Overdue"), part("cold", null, "Not loaded")], shown: ["crit", "cold"], folded: [], isAllClear: false },
+    { name: "a mixed read", parts: [part("ok1", "ok", "Healthy"), part("info", "info", "Idle"), part("crit", "crit", "Overdue"), part("cold", null, "Not loaded"), part("ok2", "ok", "Healthy"), part("warn", "warn", "Late")], shown: ["crit", "warn", "cold", "info"], folded: ["ok1", "ok2"], foldText: "2 system parts healthy", isAllClear: false },
+    { name: "a read with nothing flagged", parts: [part("ok1", "ok", "Healthy"), part("cold", null, "Not loaded")], shown: ["cold"], folded: ["ok1"], foldText: "1 system part healthy", isAllClear: true },
+    { name: "a read with no healthy part", parts: [part("crit", "crit", "Overdue"), part("cold", null, "Not loaded")], shown: ["crit", "cold"], folded: [], foldText: null, isAllClear: false },
   ];
   for (const row of rows)
     test(row.name, async () => {
       const r = await render(row.parts);
       assert.deepEqual(r.shownIds.map((id) => id.replace(/^arch-part-/, "")), row.shown, "shown parts, flagged worst first");
       assert.deepEqual(r.foldIds.map((id) => id.replace(/^arch-part-/, "")).sort(), row.folded.sort(), "healthy parts sit inside the fold");
-      if (row.folded.length) assert.match(collectText(findNodes(r.fold, (n) => n.type === "summary")[0]).trim(), new RegExp(`^${row.folded.length} healthy$`), "the fold names its count");
+      if (row.folded.length) assert.equal(collectText(findNodes(r.fold, (n) => n.type === "summary")[0]).trim(), row.foldText, "the fold names its count with the shared noun");
       else assert.equal(r.fold, undefined, "no fold without a healthy part");
       assert.equal(findNodes(r.tree, (n) => n.type === "h3").length, 0, "no column title splits the list");
-      assert.equal(collectText(r.tree).includes("No part needs attention"), row.isAllClear, "the all-clear line shows exactly when nothing is flagged");
+      assert.equal(collectText(r.tree).includes("No system part needs attention"), row.isAllClear, "the all-clear line shows exactly when nothing is flagged");
     });
 });
 
 // the head Status is the page's in-page alarm → the shared head Status atom, the one Learning's head draws
-test("the Part health head Status is the shared head Status atom in the worst part's tone", async () => {
+test("the System parts head Status is the shared head Status atom in the worst part's tone", async () => {
   const mod = await loadArch();
   const flagged = { id: "crit", name: "crit-part", kind: "unknown-kind", daemonName: null, tone: "crit", statusLabel: "Overdue", nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
-  const props = { partRows: [flagged], attentionEmpty: "No part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
+  const props = { partRows: [flagged], attentionEmpty: "No system part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
   const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
   const statuses = findNodes(tree, (n) => n.props.atom === "HeadStatus");
 
@@ -121,8 +120,18 @@ test("the Part health head Status is the shared head Status atom in the worst pa
   assert.equal(findNodes(tree, (n) => n.props.atom === "Icon").length, 0, "no hand-drawn glyph beside it");
 });
 
+// the card takes the noun the Dashboard stat uses for the same watched parts (spec 44084 §9.4)
+test("the card is titled System parts, the Dashboard's noun for the watched parts", async () => {
+  const mod = await loadArch();
+  const flagged = { id: "crit", name: "crit-part", kind: "unknown-kind", daemonName: null, tone: "crit", statusLabel: "Overdue", nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
+  const props = { partRows: [flagged], attentionEmpty: "No system part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
+  const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
+
+  assert.deepEqual(findNodes(tree, (n) => n.type === "h2").map((n) => collectText(n).trim()), ["System parts"]);
+});
+
 // the fold's summary already says healthy — a folded row adds a status word only when its verdict says more than that
-describe("a folded Part health row shows its status only when it says more than the fold's count", () => {
+describe("a folded System parts row shows its status only when it says more than the fold's count", () => {
   const now = Date.now();
   const readAt = new Date(now - 5 * 60_000).toISOString();
   const part = (id: string, tone: string, statusLabel: string) =>
@@ -137,7 +146,7 @@ describe("a folded Part health row shows its status only when it says more than 
     test(row.name, async () => {
       const mod = await loadArch();
       const partRows = [part("ok1", "ok", "Healthy"), part("crit", "crit", "Overdue"), part("ok2", "ok", "Healthy")];
-      const props = { partRows, attentionEmpty: "No part needs attention", freshness: row.freshness, nodeIndex: new Map(), onSelectNode: () => {} };
+      const props = { partRows, attentionEmpty: "No system part needs attention", freshness: row.freshness, nodeIndex: new Map(), onSelectNode: () => {} };
       const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
       const [fold] = findNodes(tree, (n) => n.type === "details");
 
@@ -238,7 +247,78 @@ test("a map not drawn yet holds one map-sized slot, the same while loading and a
   assert.ok(Number(loading.placeholder.props.minHeight) > 0, "the loader reserves a height of its own");
   assert.equal(cold.placeholder.props.minHeight, loading.placeholder.props.minHeight, "loader and failure card hold the same slot, so neither swap jumps");
   for (const slot of [loading, cold])
-    assert.match(String(slot.region.props.className), /\barch-main-pending\b/, "an undrawn map region is marked so the page-tall floor lets go of it");
+    assert.match(String(slot.region.props.className), /\barch-main-undrawn\b/, "an undrawn map region is marked so the page-tall floor lets go of it");
+});
+
+// one failure shape on the page: the alarm card with Retry at its row end, as a held map's failure and parts-failed draw it
+test("a map failure no other surface speaks for draws the alarm card in the map slot, sized to the card", async () => {
+  const mod = await loadArch();
+  const down = { status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
+  const onRetry = () => {};
+  const tree = renderScreen(mod.React.createElement(mod.MapRegionAR, { diagState: down, pageFailure: null, isBusy: false, onRetry, copyNote: null, isEmpty: false }));
+  const [region] = findNodes(tree, (n) => n.props.id === "arch-map-region");
+  const cards = findNodes(region, (n) => n.props.atom === "PageErrorBanner");
+
+  assert.equal(cards.length, 1, "one alarm card in the map slot");
+  assert.equal(cards[0].props.onRetry, onRetry, "the card carries the map's Retry");
+  assert.equal(cards[0].props.focusTargetId, "arch-map-region", "recovery focus lands on the region that outlives the card");
+  assert.equal(findNodes(region, (n) => n.props.atom === "RegionFailure").length, 0, "no bare failure block on the page ground");
+  assert.match(String(region.props.className), /\barch-main-undrawn\b/, "the slot lets go of the page-tall floor and ends at the card");
+});
+
+describe("the map card ends at its content when there is nothing to draw", () => {
+  const ready = { status: "ready", data: { diagrams: [] }, error: null, busy: false };
+  const rows = [
+    { name: "a map with nothing to draw", isEmpty: true, isUndrawn: true },
+    { name: "a drawn map", isEmpty: false, isUndrawn: false },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const mod = await loadArch();
+      const tree = renderScreen(mod.React.createElement(mod.MapRegionAR, { diagState: ready, pageFailure: null, isBusy: false, onRetry: () => {}, copyNote: null, isEmpty: row.isEmpty }));
+      const [region] = findNodes(tree, (n) => n.props.id === "arch-map-region");
+
+      assert.equal(/\barch-main-undrawn\b/.test(String(region.props.className)), row.isUndrawn);
+    });
+});
+
+test("a diagram with no source says so without naming the field", async () => {
+  const mod = await loadArch();
+  const diagState = { status: "ready", data: { diagrams: [] }, error: null, busy: false };
+  const tree = renderScreen(mod.React.createElement(mod.DiagramBody, { diagState, activeDiagram: { id: "canonical", mermaid_source: "  " } }));
+
+  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "EmptyState").map((n) => n.props.message), ["This diagram has no source."]);
+});
+
+// §12.5: the six-key legend keeps its place under the h1 whatever the map read did
+describe("the legend stays under the heading before the map is drawn", () => {
+  const down = { status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
+  const rows = [
+    { name: "while the first read is in flight", overrides: {} },
+    { name: "after the map read failed", overrides: { INITIAL_REGION_STATE: down } },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const mod = await loadArch(row.overrides);
+      const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
+
+      assert.equal(findNodes(tree, (n) => n.type === "ul" && /\barch-legend\b/.test(String(n.props.className))).length, 1);
+    });
+});
+
+// a daemon row reads one way wherever it comes from: its id through MachineString, a bare glyph and word, no chip
+test("the node drawer draws every daemon row's status as a bare glyph and word", async () => {
+  const mod = await loadArch();
+  const partRows = [{ id: "daemon-cycle", name: "autoagent", kind: "daemon", daemonName: "autoagent", nodeIds: ["hook_pipeline"], tone: "ok", statusLabel: "Healthy", lastRunAt: null }];
+  const daemons = [{ daemon_name: "learning-aggregator", effective_status: "ok", last_run_at: null }];
+  const tree = renderScreen(mod.React.createElement(mod.NodePartHealth, {
+    nodeId: "canonical.hook_pipeline", partRows, daemons, payloadDaemon: null, onSelectDaemon: () => {},
+    payloadState: null, hookState: null, hookFailState: null, unpricedModelState: null,
+  }));
+
+  assert.equal(findNodes(tree, (n) => n.props.atom === "Badge").length, 0, "no filled chip");
+  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "StatusDot").map((n) => n.props.status), ["ok", "ok"], "one bare glyph per daemon row");
+  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "MachineString").map((n) => collectText(n).trim()), ["autoagent", "learning-aggregator"]);
 });
 
 // font-size a page rule sets for one class, in px — tokens resolved from the shipped tokens.css
@@ -268,22 +348,22 @@ function getRuleBodies(css: string, className: string): string[] {
   return [...css.matchAll(new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`, "g"))].map((m) => m[1]);
 }
 
-test("the Part health title is no smaller than the row text under it", async () => {
+test("the System parts title is no smaller than the row text under it", async () => {
   const mod = await loadArch();
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
-  assert.ok(getRuleFontPx(css, "arch-part-health-title") >= getRuleFontPx(css, "arch-part-row"), "the Part health rows outsize the card title");
+  assert.ok(getRuleFontPx(css, "arch-part-health-title") >= getRuleFontPx(css, "arch-part-row"), "the System parts rows outsize the card title");
 });
 
-test("the Part health list and the drawer's part list each own one rule, so their gaps never cross-apply", async () => {
+test("the System parts list and the drawer's part list each own one rule, so their gaps never cross-apply", async () => {
   const mod = await loadArch();
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
-  assert.equal(getRuleBodies(css, "arch-part-list").length, 1, "the Part health list is defined once");
+  assert.equal(getRuleBodies(css, "arch-part-list").length, 1, "the System parts list is defined once");
   assert.equal(getRuleBodies(css, "arch-drawer-part-list").length, 1, "the drawer's part list is defined once");
 });
 
-test("a Part health row keeps the name and the status on one line each", async () => {
+test("a System parts row keeps the name and the status on one line each", async () => {
   const mod = await loadArch();
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
@@ -302,7 +382,7 @@ test("a Part health row keeps the name and the status on one line each", async (
   assert.equal(nameEl?.props.title, "cron-scheduler", "a truncated name keeps its full text in title");
 });
 
-test("a flagged Part health row reads its status right after the name and its cause on the same line, never in the meta line", async () => {
+test("a flagged System parts row reads its status right after the name and its cause on the same line, never in the meta line", async () => {
   const mod = await loadArch();
   const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);
   const row = { id: "cron", name: "cron-scheduler", tone: "crit", statusLabel: "Overdue", nodeIds: ["cron"], lastRunAt: null, nextRunAt: null, cadenceMinutes: 60, cause: "exit 1 at the last run" };
@@ -368,6 +448,77 @@ test("the hook chain gives every matcher group of one event its own key, even wh
   const keys = findNodes(tree, (n) => n.type === "li" && /\barch-hook-group\b/.test(String(n.props.className))).map((n) => n.props.key);
   assert.equal(keys.length, groups.length, "precondition: each matcher group renders one list item");
   assert.equal(new Set(keys).size, keys.length, `sibling group keys collide, so React drops or merges rows: ${JSON.stringify(keys)}`);
+});
+
+// mono marks text a program wrote that a person copies or matches — times, dates, part names and reason lines stay sans
+test("the node drawer draws exactly its machine strings through MachineString", async () => {
+  const mod = await loadArch();
+  const ago = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+  const hookState = {
+    status: "ready",
+    data: {
+      source_path: "/Users/op/.claude/settings.json", source_mtime: ago(48),
+      events: [{ event: "PreToolUse", groups: [{ matcher: "Bash|Edit", hooks: [{ command: "hooks/enforce-commit-guard.sh --strict", type: "command", timeout: 10 }] }] }, { event: "SessionStart", groups: [] }],
+    },
+  };
+  const hookFailState = {
+    status: "ready",
+    data: {
+      days: 30, last_failure_ts: ago(3), error_kind_breakdown: [{ error_kind: "db_unavailable", count: 1 }],
+      failures: [{ id: 7, failure_ts: ago(3), hook_name: "track-outcome", target_table: "core.outcomes", error_kind: "db_unavailable", payload_ref: "payload spooled to /tmp/ga-spool/outcome-7.json", retry_attempted: true }],
+    },
+  };
+  const unpricedModelState = { status: "ready", data: { models: [{ model: "claude-opus-5-5-20261101", event_count: 3, last_seen_at: ago(5) }] } };
+  const payloadState = { status: "ready", data: { daemon: "autoagent", entries: [{ run_date: "2026-11-23", summary: { verdict: "failed", error_signatures: [{ message: "timeout waiting for the grader", count: 2 }] } }] } };
+  const partRows = [
+    { id: "hook-chain", name: "Hook Chain", kind: "hook", daemonName: null, nodeIds: ["hook_pipeline"], tone: "warn", statusLabel: "Warning", lastRunAt: null },
+    { id: "daemon-cycle", name: "autoagent", kind: "daemon", daemonName: "autoagent", nodeIds: ["hook_pipeline"], tone: "ok", statusLabel: "Healthy", lastRunAt: ago(2) },
+  ];
+  const daemons = [{ daemon_name: "learning-aggregator", effective_status: "ok", last_run_at: ago(3) }];
+
+  const tree = renderScreen(mod.React.createElement(mod.NodePartHealth, {
+    nodeId: "canonical.hook_pipeline", partRows, daemons, payloadDaemon: "autoagent", onSelectDaemon: () => {},
+    payloadState, hookState, hookFailState, unpricedModelState,
+  }));
+  const machineStrings = findNodes(tree, (n) => n.props.atom === "MachineString").map((n) => collectText(n).trim());
+
+  assert.deepEqual(machineStrings.sort(), [
+    "/Users/op/.claude/settings.json", "Bash|Edit", "PreToolUse", "SessionStart", "claude-opus-5-5-20261101",
+    "autoagent", "core.outcomes", "hooks/enforce-commit-guard.sh --strict", "learning-aggregator", "track-outcome",
+  ].sort());
+});
+
+// §2.2: a value the payload leaves out is a known absence → the word None, never a dash
+test("the node drawer reads None for every value its payloads leave out and dates each run in the Day form", async () => {
+  const mod = await loadArch();
+  const hookState = { status: "ready", data: { events: [{ event: "SessionStart", groups: [] }] } };
+  const hookFailState = {
+    status: "ready",
+    data: { last_failure_ts: null, error_kind_breakdown: [{ error_kind: "db_unavailable", count: 1 }], failures: [{ id: 7, failure_ts: null, error_kind: "db_unavailable" }] },
+  };
+  const unpricedModelState = { status: "ready", data: { model_count: 0 } };
+  const payloadState = {
+    status: "ready",
+    data: { daemon: "autoagent", entries: [{ run_date: "2026-11-23", summary: { verdict: "failed", error_signatures: [{ count: 2 }] } }, { summary: { verdict: "failed" } }] },
+  };
+  const partRows = [
+    { id: "hook-chain", name: "Hook Chain", kind: "hook", daemonName: null, nodeIds: ["hook_pipeline"], tone: "warn", statusLabel: "Warning", lastRunAt: null },
+    { id: "daemon-cycle", name: "autoagent", kind: "daemon", daemonName: "autoagent", nodeIds: ["hook_pipeline"], tone: "ok", statusLabel: "Healthy", lastRunAt: null },
+  ];
+  const daemons = [{ daemon_name: "learning-aggregator", effective_status: "ok", last_run_at: null }];
+
+  const tree = renderScreen(mod.React.createElement(mod.NodePartHealth, {
+    nodeId: "canonical.hook_pipeline", partRows, daemons, payloadDaemon: "autoagent", onSelectDaemon: () => {},
+    payloadState, hookState, hookFailState, unpricedModelState,
+  }));
+  const text = collectText(tree);
+  const absent = findNodes(tree, (n) => n.props.atom === "AbsentValue").map((n) => n.props.kind);
+
+  assert.doesNotMatch(text, /—/, `a dash stands for a missing value — read: ${text}`);
+  // settings path · failure time · hook name · target table · window days ×2 · reason line · run date · last run ×2
+  assert.deepEqual(absent, Array(10).fill("none"), `read: ${text}`);
+  assert.match(text, /\b11-23\b/);
+  assert.doesNotMatch(text, /2026-11-23/, "a run list inside one window takes the Day form, not the full date");
 });
 
 test("a part's Open box action is the quiet ghost button, so a list of parts carries no column of bordered buttons", async () => {

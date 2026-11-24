@@ -72,12 +72,8 @@ interface BaselineRow { rule: string; count: number; owner: string }
 // one block per screen, so lanes lowering their own screen's rows do not collide
 const BASELINE: Record<string, BaselineRow[]> = {
   architecture: [
-    { rule: "numeric-spacing", count: 4, owner: "C3" },
-    { rule: "zero-reset", count: 2, owner: "C3" },
-    { rule: "inline-spacing", count: 2, owner: "C3" },
-    { rule: "retired-class", count: 1, owner: "C3" },
-    { rule: "font-mono", count: 13, owner: "C3" },
-    { rule: "style-spacing-type", count: 78, owner: "C3" },
+    { rule: "numeric-spacing", count: 2, owner: "C3" },
+    { rule: "style-spacing-type", count: 33, owner: "C3" },
   ],
   "clauded-docs": [
     { rule: "style-spacing-type", count: 16, owner: "B6" },

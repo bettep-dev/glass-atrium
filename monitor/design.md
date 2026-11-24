@@ -717,17 +717,24 @@
 - **spine label**: **자기 edge 의 오른쪽**, edge 와 `LABEL_PAD` 16 · 다른 edge 와 ≥ 16.
 - **크기**:
   - arrowhead 2× (`ARROW_SCALE`) · default view = contain fit 의 `DEFAULT_VIEW_SHARE` 0.9, 단 라벨 ceiling 16px (`MAP_LABEL.ceilingPx`) 를 넘지 않음 → default view 라벨 13–16px (1024 에서 13.49px · 1440 · 1920 에서 16px 측정).
-  - ceiling 이 걸리면 pane 은 그림 높이로 줄고 (contain frame) Part health 가 첫 화면에 올라옴.
-  - map pane 높이 floor 500px (`PANE.FLOOR_PX`) — 좁거나 낮은 창에서만 걸림: 첫 화면 높이가 모자라면 floor 가 이기고 Part health 는 첫 화면 아래로.
+  - ceiling 이 걸리면 pane 은 그림 높이로 줄고 (contain frame) System parts 가 첫 화면에 올라옴.
+  - map pane 높이 floor 500px (`PANE.FLOOR_PX`) — 좁거나 낮은 창에서만 걸림: 첫 화면 높이가 모자라면 floor 가 이기고 System parts 는 첫 화면 아래로.
   - zoom 컨트롤용 우측 inset ≥ 48px (`CONTROLS_MIN_INSET_PX`) — 컨트롤 아래 box 0개.
   - canvas = map card 의 body, hairline 에 flush (`card-body flush`) — 안쪽 band 없음 · canvas 자체 radius 0, 모서리는 card 가 clip (`architecture.map-fit.e2e`).
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
+  - 범례 줄 = 뜻만, mark 는 swatch 가 보여 줌 (`getMapLegendItemsAR`): `Needs attention` · `Critical` · `N parts in this box need attention` · `Not verified` · `Orchestrator` · `Safety checks`.
   - badge 는 위 테두리에 반쯤 걸침: 노드는 오른쪽 모서리, zone 은 왼쪽 모서리 — 들어오는 edge 라벨이 spine 오른쪽에서 zone 위 테두리에 끝남 (`getCornerBadgeGeometryAR`, `architecture.render-structure.e2e`).
-- **h1 아래**: 범례 한 줄뿐 — verdict 줄 · chip 없음. 상태는 Part health card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 범례의 tone 낱말 (`1 critical · 1 needs attention` — 셈한 모든 행에 참인 낱말, Down · Overdue 둘 다 critical), glyph 간격과 가운데 정렬은 행 status atom 과 같음, 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
-- **Part health 목록** (`PartHealthBlockAR`): 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
+- **h1 아래**: 범례 한 줄뿐 — verdict 줄 · chip 없음. 상태는 System parts card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 범례의 tone 낱말 (`1 critical · 1 needs attention` — 셈한 모든 행에 참인 낱말, Down · Overdue 둘 다 critical), glyph 간격과 가운데 정렬은 행 status atom 과 같음, 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
+- **지도 칸** (`MapRegionAR`): 그리지 못한 지도 (읽는 중 · 실패 · 그릴 것 없음) = 칸이 내용 높이에서 끝남 (`arch-main-undrawn`). 범례는 지도 읽기와 무관하게 h1 아래 (§12.5).
+  - 지도만 실패 = 화면의 실패 모양 하나: alarm card (`PageErrorBanner`), Retry 는 행 끝. page alert 가 지도를 이미 말하면 지도 크기 pointer 한 줄.
+  - 빈 상태 문장: `No diagrams to show.` · `This diagram has no source.`.
+  - stamp 는 지도 읽기가 답한 뒤 (실패 포함) 읽은 시각을 댐 (`getFreshnessInputAR`).
+- **드로어 Health 행**: 데몬 이름 = `MachineString`. 모든 행의 상태 = bare glyph + 낱말, chip 없음 (`DrawerStatusAR`).
+- **System parts 목록** (`PartHealthBlockAR`): 카드 이름 = Dashboard stat 의 명사 `System parts`. 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
+  - lead 줄 (`getAttentionEmptyAR`): `No system part needs attention` · 잡아 둔 읽기 `Last known: no system part needed attention` · `Checking system parts…` · `Couldn't read system parts` · `System parts not read yet`.
   - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 action "Open box" = `btn ghost sm` (quiet tier).
-  - healthy 부품은 `N healthy` fold (`details` + `summary.disclosure`) 안으로 접힘 — 접힌 기본 상태. fold 안 행은 status atom 없음 (summary 가 이미 healthy) — 잡아 둔 읽기의 `Last known` 만 행에 남음.
+  - healthy 부품은 `N system parts healthy` fold (1 이면 `1 system part healthy`) (`details` + `summary.disclosure`) 안으로 접힘 — 접힌 기본 상태. fold 안 행은 status atom 없음 (summary 가 이미 healthy) — 잡아 둔 읽기의 `Last known` 만 행에 남음.
 - **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0; 노드 테두리는 `getMapBorderRulesAR` 가 `#${ARCH_CANVAS_ID}` 범위에서 classDef stroke 를 같은 `--cat-*` 로 덮는다. 라벨도 같은 범위: box 라벨 `p` 의 `--ink` · zone 제목과 edge 라벨의 `--dim`.
 
 ### 7.15 Control size tiers

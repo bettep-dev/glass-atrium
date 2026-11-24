@@ -19,7 +19,7 @@
 //
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
-// those widths plausibly come with. The pane shares the viewport with the Part health block under
+// those widths plausibly come with. The pane shares the viewport with the System parts card under
 // the map: `.arch-main` keeps a 62vh floor and the block takes the rest, so the pane height is no
 // longer a fixed subtraction. The fill reading takes whichever axis binds, so the exact height is not
 // load-bearing.
@@ -994,7 +994,7 @@ test("a zone whose title repeats its lone member hides the title and keeps no ba
 	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 });
 
-// at any width the map keeps a pane floor that wins over the part health peek band — owned here, never read from the screen
+// at any width the map keeps a pane floor that wins over the System parts peek band — owned here, never read from the screen
 const PANE_FLOOR = { PX: 500 };
 
 // windows narrow or short enough that the first-screen band alone would leave the map under the pane floor — 1366x768 is a common laptop window
@@ -1039,12 +1039,12 @@ function isHeightBound(fit: FitReading): boolean {
 }
 
 for (const { width, height } of [...VIEWPORTS, ...FLOOR_VIEWPORTS.slice(1)]) {
-	test(`the part health block starts under the map, never over it, at ${width}x${height}`, async () => {
+	test(`the System parts card starts under the map, never over it, at ${width}x${height}`, async () => {
 		const r = await readPartHealthPlacement(width, height);
 		assert.ok(r.blockTop >= r.canvasBottom - EPS_PX, `the block (top ${r.blockTop.toFixed(0)}) overlaps the map (bottom ${r.canvasBottom.toFixed(0)})`);
 	});
 
-	test(`the part health block leaves the first screen only when the map pane sits at its ${PANE_FLOOR.PX}px floor at ${width}x${height}`, async () => {
+	test(`the System parts card leaves the first screen only when the map pane sits at its ${PANE_FLOOR.PX}px floor at ${width}x${height}`, async () => {
 		const r = await readPartHealthPlacement(width, height);
 		assert.ok(
 			r.blockTop < r.viewportHeight || r.fit.paneHeight <= PANE_FLOOR.PX + EPS_PX,
@@ -1053,7 +1053,7 @@ for (const { width, height } of [...VIEWPORTS, ...FLOOR_VIEWPORTS.slice(1)]) {
 	});
 }
 
-test(`at any width the map keeps its ${PANE_FLOOR.PX}px pane floor on either binding axis, even when the part health block leaves the first screen`, async (t) => {
+test(`at any width the map keeps its ${PANE_FLOOR.PX}px pane floor on either binding axis, even when the System parts card leaves the first screen`, async (t) => {
 	const readings = [];
 	for (const viewport of FLOOR_VIEWPORTS) readings.push({ ...viewport, ...(await readPartHealthPlacement(viewport.width, viewport.height)) });
 

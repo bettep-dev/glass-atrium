@@ -2668,9 +2668,11 @@ test("the expanded region counts the clean runs and lists only the failed run wi
 	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
 	await openDaemonHealth(BOUND_DAEMON);
 
-	const text = await waitForRegionText(BOUND_DAEMON, PAYLOAD_FAIL_DATE);
+	// a run list inside one window dates each run in the Day form MM-DD (§2.1)
+	const [failDay, okDay] = [PAYLOAD_FAIL_DATE, PAYLOAD_OK_DATE].map((date) => date.slice(5));
+	const text = await waitForRegionText(BOUND_DAEMON, failDay);
 	assert.ok(
-		text.includes(PAYLOAD_FAIL_DATE),
+		text.includes(failDay) && !text.includes(PAYLOAD_FAIL_DATE),
 		`the region must carry the failing run's date — read "${text}"`,
 	);
 	assert.ok(
@@ -2693,7 +2695,7 @@ test("the expanded region counts the clean runs and lists only the failed run wi
 		`the region must count the clean runs against every stored run — read "${text}"`,
 	);
 	assert.ok(
-		!text.includes(PAYLOAD_OK_DATE),
+		!text.includes(okDay),
 		`a clean run is counted in the summary, never listed — the list names failures only — read "${text}"`,
 	);
 });
@@ -3285,7 +3287,7 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	);
 });
 
-// 응답이 실행을 실어 준 데몬 부품 — autoagent 하나. wiki 는 실행 없이 답해 '—' 갈래를 채움.
+// 응답이 실행을 실어 준 데몬 부품 — autoagent 하나. wiki 는 실행 없이 답해 None 갈래를 채움.
 const RAN_PART_IDS = ["daemon-cycle"];
 
 // 대조 순간 — 첫 절이 실은 값과 자릿수까지 떨어뜨림. 상대시각은 버킷으로 접히므로 가까운 두 값은
@@ -3339,15 +3341,15 @@ test("B2-5 guard the last-run reading tracks the served instant and empties only
 			`a part whose response carried a run must read it as an elapsed time, but ${id} read "${served[id]}"`,
 		);
 	}
-	// 실행을 보고하지 않은 데몬 부품은 '—' 로 남아야 함(없음이 보여야 하는 사실임).
+	// 실행을 보고하지 않은 데몬 부품은 None 으로 남아야 함(없음이 보여야 하는 사실임, §2.2).
 	// 데몬이 아닌 부품은 그 칸 자체가 없음이 정답이라 빈 문자열임 — 둘을 갈라 잼.
 	for (const id of roster) {
 		if (RAN_PART_IDS.includes(id)) continue;
-		const expected = DAEMON_PART_IDS.includes(id) ? "—" : "";
+		const expected = DAEMON_PART_IDS.includes(id) ? "None" : "";
 		assert.equal(
 			served[id],
 			expected,
-			`a part with no run to report must read ${expected === "" ? "no last-run field at all" : 'an em dash'} — ${id} read "${served[id]}"`,
+			`a part with no run to report must read ${expected === "" ? "no last-run field at all" : 'the word None'} — ${id} read "${served[id]}"`,
 		);
 	}
 

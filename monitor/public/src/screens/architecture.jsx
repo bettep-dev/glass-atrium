@@ -14,7 +14,7 @@ const {
 const MAP_LABEL = {
 	// map-only label size — the shared 14px renders under the 13px floor once the map is fitted to a 1024 pane
 	fontPx: 30,
-	// default-view label ceiling (CSS px) — a wide window shrinks the overview to it, so the pane clamps to the drawing and Part health rises onto the first screen
+	// default-view label ceiling (CSS px) — a wide window shrinks the overview to it, so the pane clamps to the drawing and System parts rises onto the first screen
 	ceilingPx: 16,
 	// mermaid wrap ceiling (SVG units) — above the widest one-line map label, so mermaid never breaks one
 	wrapPx: 2000,
@@ -57,14 +57,14 @@ const MAP = {
 		// one x,y pair of a path's d attribute
 		POINT_RE: /(-?[\d.]+(?:e-?\d+)?)[ ,](-?[\d.]+(?:e-?\d+)?)/g,
 	},
-	// map pane sizing (CSS px) — at any width the fit height never drops under FLOOR_PX, so labels keep the 13px floor even when the part health block leaves the first screen
+	// map pane sizing (CSS px) — at any width the fit height never drops under FLOOR_PX, so labels keep the 13px floor even when the System parts card leaves the first screen
 	PANE: { FLOOR_PX: 500, CONTROLS_MIN_INSET_PX: 48 },
 };
 
 // default/Reset view = this share of the contain fit — the overview keeps every label at the 13px floor down to a 1024 window
 const DEFAULT_VIEW_SHARE = 0.9;
 
-// band under the map kept on the first screen (CSS px) — the part health block's title shows there, so the page reads as scrollable
+// band under the map kept on the first screen (CSS px) — the System parts card's title shows there, so the page reads as scrollable
 const PART_HEALTH = { PEEK_PX: 48 };
 
 // svg-pan-zoom min/max zoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
@@ -276,8 +276,8 @@ function getHookFailureRows(state) {
 	return (state.data?.failures || []).map((failure, index) => ({
 		key: failure?.id ?? `${failure?.failure_ts}-${index}`,
 		failureTs: failure?.failure_ts || null,
-		hookName: failure?.hook_name || "—",
-		targetTable: failure?.target_table || "—",
+		hookName: failure?.hook_name || null,
+		targetTable: failure?.target_table || null,
 		kind: getHookFailKind(failure?.error_kind),
 		reason: failure?.payload_ref || null,
 		retryAttempted: Boolean(failure?.retry_attempted),
@@ -309,11 +309,11 @@ function getDaemonRunRows(payloadState, daemonName) {
 	// 서로 섞음. 자리(index)를 붙여 응답 안에서 유일하게 만듦.
 	return (data.entries || []).map((entry, index) => ({
 		key: `${entry?.run_date}-${index}`,
-		runDate: entry?.run_date || "—",
+		runDate: entry?.run_date || null,
 		verdict: entry?.summary?.verdict || "unknown",
 		reasons: (entry?.summary?.error_signatures || []).map((signature, sigIndex) => ({
 			key: `${signature?.message}-${sigIndex}`,
-			message: signature?.message || "—",
+			message: signature?.message || null,
 			count: Number(signature?.count) || 0,
 		})),
 	}));
@@ -333,17 +333,14 @@ function ScreenArchitecture(
 	const {
 		PageHeader,
 		TypeScaleStyle,
-		Icon,
 		FreshnessStamp,
 		RefreshButton,
 		PageErrorBanner,
-		RegionFailure,
 		INITIAL_REGION_STATE,
 		putRegionRequest,
 		putRegionData,
 		putRegionFailure,
 		getRegionSummary,
-		getRegionView,
 	} = window.UI;
 
 	const [diagState, setDiagState] = useStateAR(INITIAL_REGION_STATE);
@@ -591,9 +588,9 @@ function ScreenArchitecture(
 	const pageRegions = pageReadEntries.map((entry) => entry.state);
 	const readTally = getRegionSummary(pageRegions);
 
-	const freshnessInput = getFreshnessInputAR(healthAsOf, pageRegions, diagState.data != null);
+	const freshnessInput = getFreshnessInputAR(healthAsOf, pageRegions, diagState);
 	// part rows answer to the health reads alone — a failed map read does not age a part's verdict
-	const partFreshness = getFreshnessInputAR(healthAsOf, Object.values(headlineHealthStates), true);
+	const partFreshness = { at: healthAsOf, regions: Object.values(headlineHealthStates) };
 	const mapCopyNote = getMapCopyNoteAR(diagState);
 
 	const handleSelectNode = useCallbackAR(
@@ -644,53 +641,47 @@ function ScreenArchitecture(
 			<TypeScaleStyle />
 			<style>
 				{// arch-page: h-full flex 컨텍스트 안에서 부모 100% 차지 (viewport fit).
-					".arch-page { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; gap: 8px; } " +
+					".arch-page { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; } " +
 					// 다이어그램 본체 = 단일 컬럼, 가용 폭 100% 회수. 부수 패널은 가로 스트립/접이식으로 외부 배치.
 					".arch-main { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
-					// part health takes the band the map leaves empty — a map floor keeps its fit scale, short viewports scroll
+					// System parts takes the band the map leaves empty — a map floor keeps its fit scale, short viewports scroll
 					".arch-page:has(.arch-part-health) { overflow-y: auto; } " +
 					".arch-page:has(.arch-part-health) .arch-main { min-height: 62vh; } " +
 					// a pane clamped to its drawing gives the unused height back — the fit scale the floor protects is already set
 					`.arch-page .arch-main:has(.arch-mermaid-canvas[${CANVAS.FIT_HEIGHT_ATTR}]) { flex: none; min-height: 0; } ` +
-					// an undrawn map sizes to its slot — the page-tall floor would open a void under the loader or failure card
-					".arch-page .arch-main.arch-main-pending { flex: none; min-height: 0; } " +
+					// an undrawn map sizes to its content — the page-tall floor would open a void under the loader, failure or empty line
+					".arch-page .arch-main.arch-main-undrawn { flex: none; min-height: 0; } " +
 					".arch-part-health { flex-shrink: 0; } " +
 					// the card title outranks its rows — body-size row text under a control-size title read upside down
-					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; margin: 0; } " +
+					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; } " +
 					// head Status = the row status atom at head size
 					".arch-part-health-status { display: inline-flex; align-items: center; gap: var(--space-1_5); } " +
-					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
-					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
+					".arch-drawer-heading { font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
-					// Part health list · one line per part: name, status atom and cause | quiet button, meta below — body text centred on the 32px button
-					".arch-part-body { display: flex; flex-direction: column; gap: var(--space-3); } " +
+					// System parts list · one line per part: name, status atom and cause | quiet button, meta below — body text centred on the 32px button
+					".arch-part-body { display: flex; flex-direction: column; } " +
 					".arch-part-fold > summary { list-style: none; } " +
-					".arch-part-fold > ul { margin-top: var(--space-2); } " +
-					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); } " +
-					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
+					".arch-part-list { display: flex; flex-direction: column; } " +
+					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-0_5); align-items: center; " +
 					"font-size: var(--fs-body); line-height: var(--lh-row); } " +
-					".arch-part-line { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; } " +
+					".arch-part-line { display: flex; align-items: baseline; min-width: 0; } " +
 					".arch-part-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
 					".arch-part-cause { flex: 1 1 0; min-width: 0; font-size: var(--fs-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
 					".arch-part-status { display: inline-flex; align-items: center; gap: var(--space-1_5); white-space: nowrap; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
 					// the canvas is the card body, flush to the hairline → the card clips its corners, no second rounded frame inside
-					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; } " +
-					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
-					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
-					// 죽은 여백으로만 남았음(실측 800px 뷰포트에서 카드 663.5 중 body 560 — 아래 103 이 빔).
-					".arch-col-card .card-body { flex: 1; min-height: 0; max-height: none; overflow: hidden; display: flex; flex-direction: column; } " +
+					".arch-col-card { flex: 1; overflow: hidden; } " +
 					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
-					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; } " +
 					".arch-hook-groups, .arch-hook-list { padding-left: var(--space-3); } " +
 					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
-					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
+					".arch-hook-head { display: flex; align-items: baseline; flex-wrap: wrap; min-width: 0; } " +
 					// 경보 레인 — 지도 위에 서는 단 하나의 상자. 행이 없으면 레인도 없음(빈 상태 없음).
 					".arch-alarm-lane { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
 					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
-					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 0; overflow: hidden; position: relative; padding: 0; } " +
+					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 0; overflow: hidden; position: relative; } " +
 					".arch-mermaid-canvas .arch-mermaid-host > svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
 					// 노드 라벨 — 색만 보정한다.
 					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
@@ -766,7 +757,7 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					// controls on the .btn atom · flex-end → the 32 squares and the wider Reset share the canvas-side edge
-					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; z-index: 2; } " +
+					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; align-items: flex-end; z-index: 2; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					// 상태 링과 같은 사각형 채널·같은 반경 가족이되 그 바깥 한 겹에 섬 — 상태 링의 색·두께·자리는 포커스와 무관함.
 					// 키보드가 헬스 상세로 가는 유일한 길이라(ADR-20) 포커스 자리는 아홉 노드에서 똑같이 보여야 함.
@@ -776,35 +767,32 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .node:focus-visible { outline: none; } ` +
 					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--focus-ring)) !important; } ` +
 					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
-					".arch-drawer-part-list { display: flex; flex-direction: column; gap: var(--space-3); } " +
-					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
+					".arch-drawer-part-list { display: flex; flex-direction: column; } " +
+					".arch-part-entry { display: flex; flex-direction: column; min-width: 0; } " +
 					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: var(--space-3); } " +
-					".arch-part-head { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
+					".arch-part-head { display: flex; align-items: baseline; flex-wrap: wrap; min-width: 0; } " +
 					// 로그 목록은 부품 이름 아래로 한 칸 들여씀 — 어느 부품의 로그인지 들여쓰기만으로 냄.
-					".arch-part-detail { padding-left: var(--space-3); display: flex; flex-direction: column; gap: 8px; } " +
+					".arch-part-detail { padding-left: var(--space-3); display: flex; flex-direction: column; } " +
 					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬. 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
 					// placement only — the .disclosure atom draws it; flex-start → the column never stretches its box
-					".arch-part-drill { align-self: flex-start; margin: 0 0 0 var(--space-3); } " +
+					".arch-part-drill { align-self: flex-start; } " +
 					".arch-map-copy-note { display: flex; align-items: center; gap: var(--space-1_5); padding: var(--space-2) var(--space-2) 0; } " +
-					".arch-caption { display: flex; flex-direction: column; gap: var(--space-1_5); margin: 0 0 var(--space-3); } " +
-					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-caption { display: flex; flex-direction: column; gap: var(--space-1_5); } " +
+					".arch-legend { display: flex; flex-wrap: wrap; } " +
 					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
 					// height = the meta line + both 2px borders, so the swatch's mark never spills over its ring
 					".arch-legend-swatch { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: calc(var(--fs-meta) + 4px); " +
-					'border: 2px solid rgb(var(--faint)); border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: var(--fs-meta); font-weight: 700; line-height: 1; } ' +
+					'border: 2px solid rgb(var(--faint)); border-radius: 4px; } ' +
 					".arch-legend-swatch-warn { border-color: rgb(var(--warn)); color: rgb(var(--warn)); } " +
 					".arch-legend-swatch-crit { border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-legend-swatch-dashed { border-style: dashed; } " +
 					".arch-legend-swatch-count { width: auto; padding: 0 var(--space-1); border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-run-summary { display: flex; flex-direction: column; gap: 6px; } " +
 					`#${ARCH_CANVAS_ID} .${ZONE_TITLE_REDUNDANT_CLASS} > .cluster-label { display: none; } ` +
-					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
-					".arch-run-entry { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
-					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
-					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음. Absolute, so margin 0 takes no layout space (no negative margin).
-					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; " +
-					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
+					".arch-run-list { display: flex; flex-direction: column; gap: 6px; } " +
+					".arch-run-entry { display: flex; align-items: baseline; flex-wrap: wrap; min-width: 0; } " +
+					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
 					// 모션 게이트 — 노드 transition 정지 (§8.4 계약). 줌 컨트롤은 .btn 이라 base.css 의 reduce 블록이 맡음.
 					"@media (prefers-reduced-motion: reduce) { " +
 					".arch-mermaid-canvas .node, .arch-mermaid-canvas .node > * { animation: none !important; transition: none !important; } }"}
@@ -824,10 +812,10 @@ function ScreenArchitecture(
 						/>
 					}
 				/>
-				{diagState.data != null && <MapCaptionAR />}
+				<MapCaptionAR />
 			</div>
 
-			<div className="arch-page">
+			<div className="arch-page gap-list">
 				{pageFailure && (
 					<PageErrorBanner
 						sources={pageFailure.sources}
@@ -839,47 +827,25 @@ function ScreenArchitecture(
 				)}
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
 
-				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) — 못 읽으면 빈 캔버스 대신 조용한 카드 하나 */}
-				<div className={diagState.data == null ? "arch-main arch-main-pending" : "arch-main"} id={MAP_REGION_ID_AR}>
-					{/* view, not raw status — a cold Retry flips status to 'loading' but must stay this card, busy */}
-					{getRegionView(diagState) === "error" ? (
-						<RegionFailure
-							source={DIAGRAM_SOURCE_AR}
-							error={diagState.error}
-							shared={pageFailure}
-							onRetry={triggerRefresh}
-							isBusy={isRefreshBusy}
-							focusTargetId={MAP_REGION_ID_AR}
-							minHeight={MAP_SLOT_MIN_PX}
-							className="arch-col-card"
-						/>
-					) : (
-						<div className="card arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
-							{mapCopyNote && (
-								<p className="fs-meta text-dim m-0 arch-map-copy-note">
-									<Icon name="warn" size={14} className={TONE_GLYPH_CLASS.warn} />
-									{mapCopyNote}
-								</p>
-							)}
-							<div
-								className="card-body flush"
-								style={{ opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
-							>
-								<DiagramBody
-									diagState={diagState}
-									activeDiagram={activeDiagram}
-									nodeByLabel={nodeByLabel}
-									ringToneByNodeId={ringToneByNodeId}
-									unverifiedNodeIds={unverifiedNodeIds}
-									healthPending={healthPending}
-									zoneRingPlan={zoneRingPlan}
-									attentionCountByNodeId={attentionCountByNodeId}
-									onSelectNode={handleSelectNode}
-								/>
-							</div>
-						</div>
-					)}
-				</div>
+				<MapRegionAR
+					diagState={diagState}
+					pageFailure={pageFailure}
+					isBusy={isRefreshBusy}
+					onRetry={triggerRefresh}
+					copyNote={mapCopyNote}
+					isEmpty={diagState.data != null && getMapEmptyMessageAR(activeDiagram) != null}>
+					<DiagramBody
+						diagState={diagState}
+						activeDiagram={activeDiagram}
+						nodeByLabel={nodeByLabel}
+						ringToneByNodeId={ringToneByNodeId}
+						unverifiedNodeIds={unverifiedNodeIds}
+						healthPending={healthPending}
+						zoneRingPlan={zoneRingPlan}
+						attentionCountByNodeId={attentionCountByNodeId}
+						onSelectNode={handleSelectNode}
+					/>
+				</MapRegionAR>
 
 				<PartHealthBlockAR
 					partRows={healthPartRows}
@@ -891,7 +857,7 @@ function ScreenArchitecture(
 				/>
 
 				{activeDiagram && (
-					<div id={ARCH_DESC_ID} className="arch-desc-a11y">
+					<div id={ARCH_DESC_ID} className="sr-only">
 						{activeDiagram.description || "No description available."}
 					</div>
 				)}
@@ -917,6 +883,57 @@ function ScreenArchitecture(
 				/>
 			)}
 		</div>
+	);
+}
+
+/**
+ * The map slot — the drawn map's card, or the read's state in its place.
+ * Undrawn (in flight, failed, nothing to draw) → the slot lets go of the page-tall floor and ends at its content.
+ * @param isEmpty - the read answered with nothing to draw
+ * @param children - the map body drawn inside the card
+ */
+function MapRegionAR({ diagState, pageFailure, isBusy, onRetry, copyNote, isEmpty, children }) {
+	const { Icon, getRegionView } = window.UI;
+	const view = getRegionView(diagState);
+
+	return (
+		<div className={view !== "ready" || isEmpty ? "arch-main arch-main-undrawn" : "arch-main"} id={MAP_REGION_ID_AR}>
+			{/* view, not raw status — a cold Retry flips status to 'loading' but must stay this card, busy */}
+			{view === "error" ? (
+				<MapFailureAR error={diagState.error} pageFailure={pageFailure} isBusy={isBusy} onRetry={onRetry} />
+			) : (
+				<div className="card card--fill arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
+					{copyNote && (
+						<p className="fs-meta text-dim arch-map-copy-note">
+							<Icon name="warn" size={14} className={TONE_GLYPH_CLASS.warn} />
+							{copyNote}
+						</p>
+					)}
+					<div className="card-body flush" style={{ opacity: diagState.busy && diagState.data ? 0.6 : 1 }}>
+						{children}
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
+// the page alert names the map → a quiet map-sized pointer · else the page's one failure shape, the alarm card with its Retry
+function MapFailureAR({ error, pageFailure, isBusy, onRetry }) {
+	const { PageErrorBanner, RegionFailure } = window.UI;
+	if (pageFailure?.sources?.includes(DIAGRAM_SOURCE_AR)) {
+		return (
+			<RegionFailure
+				source={DIAGRAM_SOURCE_AR}
+				shared={pageFailure}
+				focusTargetId={MAP_REGION_ID_AR}
+				minHeight={MAP_SLOT_MIN_PX}
+				className="flex flex-col arch-col-card"
+			/>
+		);
+	}
+	return (
+		<PageErrorBanner sources={[DIAGRAM_SOURCE_AR]} error={error} onRetry={onRetry} isBusy={isBusy} focusTargetId={MAP_REGION_ID_AR} />
 	);
 }
 
@@ -953,20 +970,13 @@ function DiagramBody({
 	}, [mermaidReady]);
 
 	if (diagState.status === "loading") return <MapLoadingAR />;
-	if (!activeDiagram) {
-		return <EmptyStateAR message="No diagrams to show." />;
-	}
-	const source = activeDiagram.mermaid_source;
-	if (!source || typeof source !== "string" || source.trim().length === 0) {
-		return (
-			<EmptyStateAR message="This diagram has an empty mermaid_source." />
-		);
-	}
+	const emptyMessage = getMapEmptyMessageAR(activeDiagram);
+	if (emptyMessage) return <window.UI.EmptyState message={emptyMessage} />;
 	if (!mermaidReady) return <MapLoadingAR />;
 	return (
 		<MermaidCanvas
 			diagramId={activeDiagram.id}
-			source={source}
+			source={activeDiagram.mermaid_source}
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
 			ringToneByNodeId={ringToneByNodeId}
@@ -977,6 +987,14 @@ function DiagramBody({
 			onSelectNode={onSelectNode}
 		/>
 	);
+}
+
+// the line an answered read with nothing to draw shows, or null when there is a source to draw
+function getMapEmptyMessageAR(activeDiagram) {
+	if (!activeDiagram) return "No diagrams to show.";
+	const source = activeDiagram.mermaid_source;
+	if (typeof source !== "string" || source.trim().length === 0) return "This diagram has no source.";
+	return null;
 }
 
 function MapLoadingAR() {
@@ -1408,7 +1426,7 @@ function MermaidCanvas({
 
 				{/* 줌/팬/맞춤 컨트롤 클러스터 — 우하단. 터치/마우스/키보드 동등 진입점. */}
 				<div
-					className="arch-zoom-controls"
+					className="arch-zoom-controls gap-stack"
 					role="group"
 					aria-label="Diagram zoom controls"
 				>
@@ -1517,7 +1535,7 @@ function getHealthStoreErrorsAR(states) {
  * 안 됨 (LLM01). 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function HookChainDetail({ state }) {
-	const { formatRelativeTime } = window.UI;
+	const { AbsentValue, MachineString, formatRelativeTime } = window.UI;
 	const rows = getHookChainRows(state);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1539,16 +1557,16 @@ function HookChainDetail({ state }) {
 	return (
 		<div className="arch-hook-chain">
 			{/* 어느 파일에서 읽었는지 — 훅이 안 돈다는 신고의 첫 확인 지점이 이 경로임 */}
-			<div className="arch-hook-head fs-meta text-dim">
-				<span className="font-mono text-ink">{state.data?.source_path || "—"}</span>
+			<div className="arch-hook-head gap-list fs-meta text-dim">
+				{state.data?.source_path ? <MachineString className="text-ink">{state.data.source_path}</MachineString> : <AbsentValue kind="none" />}
 				{sourceMtime && <span>edited {formatRelativeTime(sourceMtime)}</span>}
 			</div>
-			<ul className="arch-hook-events">
+			<ul className="arch-hook-events gap-stack">
 				{rows.map((row) => (
 					<li key={row.event} className="arch-hook-event">
 						{row.groups.length === 0 ? (
-							<div className="arch-hook-head">
-								<span className="fs-meta font-mono text-ink">{row.event}</span>
+							<div className="arch-hook-head gap-list">
+								<MachineString className="fs-meta text-ink">{row.event}</MachineString>
 								{/* 0 도 사실로 냄 — 이벤트는 있는데 훅이 없다는 것이 조사할 상태임 */}
 								<span className="fs-meta text-faint">0 hooks</span>
 							</div>
@@ -1558,21 +1576,21 @@ function HookChainDetail({ state }) {
 								<summary className="group disclosure">
 									<window.UI.DisclosureChevron />
 									<span>
-										<span className="fs-meta font-mono text-ink">{row.event}</span>{" "}
+										<MachineString className="fs-meta text-ink">{row.event}</MachineString>{" "}
 										<span className="fs-meta text-faint">{row.hookCount} hooks</span>
 									</span>
 								</summary>
-								<ul className="arch-hook-groups">
+								<ul className="arch-hook-groups gap-stack">
 									{/* position in the key — settings.json may repeat a matcher (or leave it empty) within one event; order is fixed settings order */}
 									{row.groups.map((group, groupIndex) => (
 										<li key={`${groupIndex}-${group.matcher}`} className="arch-hook-group">
-											<span className="fs-meta font-mono text-dim">{group.matcher}</span>
-											<ul className="arch-hook-list">
+											<MachineString className="fs-meta text-dim">{group.matcher}</MachineString>
+											<ul className="arch-hook-list gap-stack">
 												{group.hooks.map((hook, index) => (
 													<li
 														key={`${group.matcher}-${index}`}
-														className="arch-hook-head fs-meta text-dim">
-														<span className="font-mono text-ink">{hook.command}</span>
+														className="arch-hook-head gap-list fs-meta text-dim">
+														<MachineString className="text-ink">{hook.command}</MachineString>
 														{hook.type && <span className="fs-meta text-faint">{hook.type}</span>}
 														{hook.timeout !== null && hook.timeout !== undefined && (
 															<span className="fs-meta text-faint">timeout {hook.timeout}s</span>
@@ -1604,7 +1622,7 @@ function HookChainDetail({ state }) {
  * mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function HookFailureDetail({ state }) {
-	const { StatusDot, formatRelativeTime, formatKstFull } = window.UI;
+	const { AbsentValue, MachineString, StatusDot, formatRelativeTime, formatKstFull } = window.UI;
 	const rows = getHookFailureRows(state);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1624,11 +1642,11 @@ function HookFailureDetail({ state }) {
 
 	return (
 		<div className="arch-hook-fails">
-			<div className="arch-hook-head fs-meta text-dim">
+			<div className="arch-hook-head gap-list fs-meta text-dim">
 				{/* 0 도 사실로 냄 — 창이 비었다는 것 자체가 아래 최종기록과 짝을 이루는 문장임 */}
 				<span className="text-ink" data-hook-fail-total="">
 					{total} {total === 1 ? "failure" : "failures"} in the last{" "}
-					<window.UI.NoWrap>{days ?? "—"} days</window.UI.NoWrap>
+					<window.UI.NoWrap>{days ?? <AbsentValue kind="none" />} days</window.UI.NoWrap>
 				</span>
 				{rows.length < total && <span>showing newest {rows.length}</span>}
 				{lastFailure ? (
@@ -1651,15 +1669,16 @@ function HookFailureDetail({ state }) {
 						<li
 							key={row.key}
 							data-hook-fail-row=""
-							className="arch-hook-head fs-meta text-dim">
-							<time
-								className="font-mono"
-								dateTime={row.failureTs}
-								title={formatKstFull(row.failureTs)}>
-								{formatRelativeTime(row.failureTs)}
-							</time>
-							<span className="font-mono text-ink">{row.hookName}</span>
-							<span className="font-mono">{row.targetTable}</span>
+							className="arch-hook-head gap-list fs-meta text-dim">
+							{row.failureTs ? (
+								<time dateTime={row.failureTs} title={formatKstFull(row.failureTs)}>
+									{formatRelativeTime(row.failureTs)}
+								</time>
+							) : (
+								<AbsentValue kind="none" />
+							)}
+							{row.hookName ? <MachineString className="text-ink">{row.hookName}</MachineString> : <AbsentValue kind="none" />}
+							{row.targetTable ? <MachineString>{row.targetTable}</MachineString> : <AbsentValue kind="none" />}
 							{/* 라벨이 신호이고 tone 은 점이 실음 — meta 크기 글자에 심각도 색을
 							    얹으면 AA 대비에 못 미치고, 색만으로 실패 종류를 가르지도 않음 */}
 							<span className="inline-flex items-center">
@@ -1667,7 +1686,7 @@ function HookFailureDetail({ state }) {
 								{row.kind.label}
 							</span>
 							{row.reason && (
-								<span className="font-mono break-all" data-hook-fail-reason="">
+								<span className="break-all" data-hook-fail-reason="">
 									{row.reason}
 								</span>
 							)}
@@ -1689,7 +1708,7 @@ function HookFailureDetail({ state }) {
  * In flight with nothing held → no line: the advisory is no headline fact to wait on.
  */
 function PricingAdvisoryDetail({ state }) {
-	const { formatRelativeTime, formatKstFull } = window.UI;
+	const { MachineString, formatRelativeTime, formatKstFull } = window.UI;
 	if (!state || (state.status !== "ready" && state.status !== "error")) return null;
 
 	return (
@@ -1698,8 +1717,8 @@ function PricingAdvisoryDetail({ state }) {
 			{state.status === "ready" && (state.data?.models || []).length > 0 && (
 				<ul className="arch-hook-fail-list">
 					{state.data.models.map((entry) => (
-						<li key={entry.model} className="arch-hook-head fs-meta text-dim">
-							<span className="font-mono text-ink break-all">{entry.model}</span>
+						<li key={entry.model} className="arch-hook-head gap-list fs-meta text-dim">
+							<MachineString className="text-ink break-all">{entry.model}</MachineString>
 							<span>
 								{entry.event_count} cost {entry.event_count === 1 ? "event" : "events"}
 							</span>
@@ -1716,7 +1735,7 @@ function PricingAdvisoryDetail({ state }) {
 
 // advisory heading sentence — one per state the read can land in
 function PricingAdvisoryBody({ state }) {
-	const { StatusDot } = window.UI;
+	const { AbsentValue, StatusDot } = window.UI;
 	const data = state.data;
 	if (state.status === "error")
 		return (
@@ -1737,12 +1756,12 @@ function PricingAdvisoryBody({ state }) {
 	if (count === 0)
 		return (
 			<span className="fs-meta text-dim">
-				Every model run in the last {data?.days ?? "—"} days has a pricing row.
+				Every model run in the last {data?.days ?? <AbsentValue kind="none" />} days has a pricing row.
 			</span>
 		);
 
 	return (
-		<span className="arch-hook-head fs-meta text-dim">
+		<span className="arch-hook-head gap-list fs-meta text-dim">
 			<span className="inline-flex items-center text-ink">
 				<StatusDot status="warn" />
 				Pricing advisory
@@ -1773,8 +1792,7 @@ function NodePartHealth({
 	hookFailState,
 	unpricedModelState,
 }) {
-	const { Badge, StatusDot, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
-		window.UI;
+	const { AbsentValue, MachineString, formatRelativeTime, daemonStatusLabel, daemonStatusTone } = window.UI;
 	const [closedRowIds, setClosedRowIds] = useStateAR(() => new Set());
 
 	const unscoped = unscopedNodeIdAR(nodeId);
@@ -1801,10 +1819,10 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<h3 className="arch-drawer-heading">
+			<h3 className="arch-drawer-heading mb-stack">
 				Health ({rows.length + looseDaemons.length})
 			</h3>
-			<div className="arch-drawer-part-list">
+			<div className="arch-drawer-part-list gap-group-below">
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
 					// 드릴다운 응답은 한 번에 한 데몬 것임 — 다른 데몬의 실행 목록을 이 데몬의 것으로
@@ -1818,26 +1836,23 @@ function NodePartHealth({
 					return (
 						<div
 							key={row.id}
-							className="arch-part-entry"
+							className="arch-part-entry gap-stack"
 							data-health-row={row.id}
 							data-health-tone={row.tone || undefined}
 							data-daemon-row={row.daemonName || undefined}>
-							<div className="arch-part-head">
-								<span className="fs-meta font-mono text-ink">{row.name}</span>
-								{row.tone ? (
-									<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
-										<StatusDot status={row.tone} />
-										{getPartStatusTextAR(row)}
-									</span>
+							<div className="arch-part-head gap-list">
+								{/* a daemon part is named by its daemon id (§14.4) */}
+								{row.daemonName ? (
+									<MachineString className="fs-meta text-ink">{row.name}</MachineString>
 								) : (
-									<span className="fs-meta text-dim">{getPartStatusTextAR(row)}</span>
+									<span className="fs-meta text-ink">{row.name}</span>
 								)}
-								{/* 마지막 실행은 데몬 부품만 갖는 사실임 — 나머지 부품에서는 빈 값이 정답이라
-								    칸을 아예 두지 않음. 데몬인데 값이 없으면 그 없음은 보여야 하므로 '—' 로 냄. */}
+								<DrawerStatusAR tone={row.tone} text={getPartStatusTextAR(row)} />
+								{/* last run = a daemon-only fact → no field on other parts; a daemon with none shows its absence (§2.2) */}
 								{row.daemonName && (
 									<span className="fs-meta text-dim">
 										Last run{" "}
-										{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}
+										{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : <AbsentValue kind="none" />}
 									</span>
 								)}
 							</div>
@@ -1858,14 +1873,14 @@ function NodePartHealth({
 									isOpen={isRunsOpen}
 									onToggle={() => toggleRuns(row, isRunsOpen)}
 									controls={isRunsOpen ? runsId : undefined}
-									className="arch-part-drill fs-meta"
+									className="arch-part-drill ml-group-below fs-meta"
 									label={`Recent runs for ${row.daemonName}`}
 								/>
 							)}
 							{renderDetail && (!row.daemonName || isRunsOpen) && (
 								<div
 									id={runsId}
-									className="arch-part-detail"
+									className="arch-part-detail gap-list"
 									data-health-detail={row.id}
 									data-daemon-detail={row.daemonName || undefined}>
 									{renderDetail(row, {
@@ -1886,25 +1901,37 @@ function NodePartHealth({
 				{looseDaemons.map((daemon) => (
 					<div
 						key={daemon.daemon_name}
-						className="arch-part-entry"
+						className="arch-part-entry gap-stack"
 						data-live-daemon={daemon.daemon_name}
 						data-live-tone={daemonStatusTone(daemon.effective_status) || undefined}>
-						<div className="arch-part-head">
-							<span className="fs-meta font-mono text-ink">
+						<div className="arch-part-head gap-list">
+							<MachineString className="fs-meta text-ink">
 								{daemon.daemon_name}
-							</span>
-							<Badge role="status" tone={daemonStatusTone(daemon.effective_status)}>
-								{daemonStatusLabel(daemon.effective_status)}
-							</Badge>
+							</MachineString>
+							<DrawerStatusAR
+								tone={daemonStatusTone(daemon.effective_status)}
+								text={daemonStatusLabel(daemon.effective_status)}
+							/>
 							<span className="fs-meta text-dim">
 								Last run{" "}
-								{daemon.last_run_at ? formatRelativeTime(daemon.last_run_at) : "—"}
+								{daemon.last_run_at ? formatRelativeTime(daemon.last_run_at) : <AbsentValue kind="none" />}
 							</span>
 						</div>
 					</div>
 				))}
 			</div>
 		</div>
+	);
+}
+
+// one status look for every drawer row — a bare tone glyph and its word, no chip; no verdict → the word alone
+function DrawerStatusAR({ tone, text }) {
+	if (!tone) return <span className="fs-meta text-dim">{text}</span>;
+	return (
+		<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
+			<window.UI.StatusDot status={tone} />
+			{text}
+		</span>
 	);
 }
 
@@ -1915,6 +1942,7 @@ function NodePartHealth({
  * 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function DaemonRunDetail({ daemon, state }) {
+	const { AbsentValue, formatKstDay } = window.UI;
 	const runs = getDaemonRunRows(state, daemon);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1941,8 +1969,8 @@ function DaemonRunDetail({ daemon, state }) {
 			{summary.failures.length > 0 && (
 		<ul className="arch-run-list">
 			{summary.failures.map((run) => (
-				<li key={run.key} className="arch-run-entry">
-					<span className="fs-meta font-mono text-ink">{run.runDate}</span>
+				<li key={run.key} className="arch-run-entry gap-list">
+					<span className="fs-meta text-ink tnum">{run.runDate ? formatKstDay(run.runDate) : <AbsentValue kind="none" />}</span>
 					{run.reasons.length === 0 ? (
 						<span className="fs-meta text-dim">
 							{RUN_VERDICT_NOTE[run.verdict] || `Verdict: ${run.verdict}`}
@@ -1951,7 +1979,7 @@ function DaemonRunDetail({ daemon, state }) {
 						<ul className="arch-run-reasons">
 							{run.reasons.map((reason) => (
 								<li key={reason.key} className="fs-meta text-dim">
-									{reason.message}
+									{reason.message ?? <AbsentValue kind="none" />}
 									{/* 한 사이클에 반복된 서명은 횟수까지 밝힘 — 단발 장애와 반복 장애는 다른 사건임 */}
 									{reason.count > 1 && (
 										<span className="text-faint"> ×{reason.count}</span>
@@ -1993,7 +2021,7 @@ function DetailModal({
 
 	let body;
 	if (!info)
-		body = <EmptyStateAR message="No node matches this label." />;
+		body = <window.UI.EmptyState message="No node matches this label." />;
 	else
 		body = (
 			<NodeDetailBody
@@ -2020,10 +2048,10 @@ function DetailModal({
 			open
 			onClose={onClose}
 			variant="drawer"
-			title={<h2 className="arch-drawer-title">{info ? info.label || info.id : "Node"}</h2>}
+			title={<h2>{info ? info.label || info.id : "Node"}</h2>}
 			sub={info?.layer_label}
 			labelledBy="ar-node-detail-title"
-			bodyClassName="space-y-3"
+			bodyClassName="space-y-group-below"
 		>
 			{body}
 		</DetailSurface>
@@ -2099,7 +2127,7 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading">
+			<h3 className="arch-drawer-heading mb-stack">
 				Records
 			</h3>
 			<a className="fs-body" href={`#${owner.id}`}>
@@ -2115,10 +2143,10 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading">
+			<h3 className="arch-drawer-heading mb-stack">
 				Connections ({total})
 			</h3>
-			<div className="space-y-2">
+			<div className="space-y-list">
 				{inbound.length > 0 && (
 					<FlowList
 						title="Incoming"
@@ -2148,7 +2176,7 @@ function FlowList({ title, items, nodeIndex, direction }) {
 			<h4 className="arch-drawer-subheading fs-meta text-dim">{title}</h4>
 			<ul
 				className="fs-meta text-dim space-y-0.5"
-				style={{ margin: 0, padding: 0, listStyle: "none", maxHeight: 160, overflowY: "auto" }}
+				style={{ maxHeight: 160, overflowY: "auto" }}
 			>
 				{items.map((f) => (
 					<li key={f.id} className="break-words">
@@ -2194,14 +2222,6 @@ function getZoneFullTitleAR(scopedId) {
 }
 
 // Shared chrome (AR-suffixed: 다른 screen 의 helper 와 충돌 방지)
-
-function EmptyStateAR({ message }) {
-	return (
-		<div className="placeholder">
-			{message}
-		</div>
-	);
-}
 
 // tone → 글리프 색 클래스. 리터럴 표인 이유: 조립한 클래스명은 클래스 스캐너가 보지 못함.
 // 읽는 쪽은 아이콘뿐임 — 글자에 얹으면 meta/micro 크기에서 AA 대비에 못 미침 (39578 §D).
@@ -2368,7 +2388,7 @@ function applyPaneFloorAR(root) {
 	setCanvasHeightAR(root, MAP.PANE.FLOOR_PX);
 }
 
-// height the default view fits in — the first-screen height, raised to the floor, which wins over the part health peek band
+// height the default view fits in — the first-screen height, raised to the floor, which wins over the System parts peek band
 function getFitPaneHeightAR(root, paneH) {
 	const firstScreen = Math.min(paneH, getFirstScreenCanvasHeightAR(root));
 	return Math.min(paneH, Math.max(firstScreen, MAP.PANE.FLOOR_PX));
@@ -2411,7 +2431,8 @@ function buildLiveDaemonsByNodeId(daemons) {
 	return m;
 }
 
-// legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.
+// legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders;
+// each line reads the meaning, since its swatch already shows the mark
 function getMapLegendItemsAR() {
 	const rings = ["warn", "crit"].map((tone) => ({
 		key: tone,
@@ -2422,7 +2443,11 @@ function getMapLegendItemsAR() {
 	const count = { key: "count", kind: "count", mark: `${getCornerGlyphTextAR("crit", 1)}×N`, text: "N parts in this box need attention" };
 	const dashed = { key: "unverified", kind: "dashed", label: UNVERIFIED_WORD_AR };
 	const borders = MAP_BORDER_KEY_AR.map((item) => ({ ...item, kind: "border" }));
-	return [...rings, count, dashed, ...borders];
+	return [...rings, count, dashed, ...borders].map((item) => ({ ...item, text: item.text ?? getSentenceCaseAR(item.label) }));
+}
+
+function getSentenceCaseAR(words) {
+	return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 // role node borders painted with their legend swatch token
@@ -2435,17 +2460,17 @@ function getMapBorderRulesAR() {
 // the key to the canvas, the one line under the h1 (spec 44084 §3.1, §12.5)
 function MapCaptionAR() {
 	return (
-		<div className="arch-caption">
-			<ul className="arch-legend fs-meta text-dim" aria-label="Map legend">
+		<div className="arch-caption mb-group-below">
+			<ul className="arch-legend gap-y-stack gap-x-block fs-meta text-dim" aria-label="Map legend">
 				{getMapLegendItemsAR().map((item) => (
 					<li key={item.key} className="arch-legend-item">
 						<span
 							aria-hidden="true"
-							className={`arch-legend-swatch arch-legend-swatch-${item.kind === "ring" ? item.key : item.kind}`}
+							className={`arch-legend-swatch arch-legend-swatch-${item.kind === "ring" ? item.key : item.kind} font-bold leading-none`}
 							style={item.token ? { borderColor: `rgb(var(${item.token}))` } : undefined}>
 							{item.mark || ""}
 						</span>
-						{item.text || (item.kind === "border" ? `${item.label} border` : `Ring ${item.label}`)}
+						{item.text}
 					</li>
 				))}
 			</ul>
@@ -2461,7 +2486,7 @@ function getNodeAccessibleNameAR(label, tone, isUnverified) {
 	return word ? `${label}, ${word}` : label;
 }
 
-// unscoped node id → attention parts bound there — the same population the Part health head counts.
+// unscoped node id → attention parts bound there — the same population the System parts head counts.
 function buildAttentionCountByNodeIdAR(partRows) {
 	const counts = new Map();
 	for (const row of partRows || []) {
@@ -2884,8 +2909,9 @@ function getLabelWordsAR(label) {
 }
 
 // every region the page reads feeds the stamp; no read time until the map itself has been read
-function getFreshnessInputAR(healthAsOf, regions, hasMap) {
-	return { at: hasMap ? healthAsOf : null, regions };
+// the map read in flight → no read time yet · once it answers, failed or not, the stamp dates what the page holds
+function getFreshnessInputAR(healthAsOf, regions, mapState) {
+	return { at: window.UI.getRegionView(mapState) === "loading" ? null : healthAsOf, regions };
 }
 
 // a failed re-read keeps the held map on screen — the map says it is the last good copy, not the current one
@@ -2896,7 +2922,7 @@ function getMapCopyNoteAR(diagState) {
 
 // the all-clear is a verdict on the rows' own freshness — a warm-error re-read keeps status ready, so only the verdict sees it
 function getAttentionEmptyAR(partRows, isBusy, freshness) {
-	if (isBusy) return "Checking part health…";
+	if (isBusy) return "Checking system parts…";
 	if (partRows.some((row) => row.tone)) {
 		const isFresh = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" }).tone === "ok";
 		// listed "No data" rows → the lead names what the list holds, not only what it lacks
@@ -2905,9 +2931,9 @@ function getAttentionEmptyAR(partRows, isBusy, freshness) {
 			const counted = `${unverifiedCount} ${UNVERIFIED_WORD_AR}`;
 			return isFresh ? `${counted} · none needs attention` : `Last known: ${counted} · none needed attention`;
 		}
-		return isFresh ? "No part needs attention" : "Last known: no part needed attention";
+		return isFresh ? "No system part needs attention" : "Last known: no system part needed attention";
 	}
-	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read part health" : "Part health not read yet";
+	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read system parts" : "System parts not read yet";
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
@@ -3007,7 +3033,7 @@ function getFlaggedCountTextAR(tone, count) {
 	return `${count} ${HEALTH_WORD_AR[tone]}`;
 }
 
-// Part health head Status — flagged counts worst tone first; null when nothing is flagged (no all-clear line)
+// System parts head Status — flagged counts worst tone first; null when nothing is flagged (no all-clear line)
 function getPartHealthStatusAR(partRows, freshness) {
 	const attention = getPartHealthGroupsAR(partRows).listed.filter(isPartFlaggedAR);
 	if (attention.length === 0) return null;
@@ -3035,7 +3061,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 		<section className="card arch-part-health" id={PART_HEALTH_ID_AR} aria-labelledby={`${PART_HEALTH_ID_AR}-title`}>
 			<div className="card-head">
 				<div className="card-head-text">
-					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
+					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">System parts</h2>
 					{status && (
 						<HeadStatus tone={status.tone} className="card-sub arch-part-health-status">
 							{status.text}
@@ -3043,14 +3069,14 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 					)}
 				</div>
 			</div>
-			<div className="card-body arch-part-body">
-				{!listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim m-0">{attentionEmpty}</p>}
+			<div className="card-body arch-part-body gap-group-below">
+				{!listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim">{attentionEmpty}</p>}
 				{listed.length > 0 && <PartHealthListAR rows={listed} {...listProps} />}
 				{healthy.length > 0 && (
 					<details className="arch-part-fold">
 						<summary className="group disclosure">
 							<DisclosureChevron />
-							<span>{`${healthy.length} healthy`}</span>
+							<span>{`${healthy.length} ${healthy.length === 1 ? "system part" : "system parts"} healthy`}</span>
 						</summary>
 						<PartHealthListAR rows={healthy} isFolded {...listProps} />
 					</details>
@@ -3062,7 +3088,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 
 function PartHealthListAR({ rows, isFolded = false, freshness, nodeIndex, onSelectNode }) {
 	return (
-		<ul className="arch-part-list">
+		<ul className={`arch-part-list gap-list${isFolded ? " mt-list" : ""}`}>
 			{rows.map((row) => (
 				<PartHealthRowAR key={row.id} row={row} isFolded={isFolded} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
 			))}
@@ -3080,9 +3106,9 @@ function PartHealthRowAR({ row, isFolded = false, freshness, nodeIndex, onSelect
 	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule].filter(Boolean).join(" · ");
 
 	return (
-		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
+		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row gap-x-list">
 			{/* name → status → cause on one line, so the verdict reads beside the part it judges */}
-			<span className="arch-part-line">
+			<span className="arch-part-line gap-list">
 				<span className="arch-part-name" title={row.name}>
 					{row.name}
 				</span>

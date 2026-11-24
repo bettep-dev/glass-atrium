@@ -1161,7 +1161,7 @@ test("C1 a daemons store that has not answered leaves no verdict ring from the l
   }
 });
 
-test("the per-node attention counts add up to the Part health head's count", () => {
+test("the per-node attention counts add up to the System parts head's count", () => {
   const rows = [
     { tone: "crit", nodeIds: ["cron"] },
     { tone: "crit", nodeIds: ["cron"] },
@@ -1214,6 +1214,7 @@ interface LegendItem {
   mark?: string;
   token?: string;
   label: string;
+  text: string;
 }
 
 test("the legend names every mark the canvas can draw", () => {
@@ -1231,6 +1232,17 @@ test("the legend names every mark the canvas can draw", () => {
     items.some((item) => item.kind === "dashed" && item.label === "not verified"),
     `legend must explain the dashed ring — read: ${JSON.stringify(items)}`,
   );
+});
+
+// the legend line says what a mark means — the swatch already shows the mark, so no line names a ring or a border
+test("each legend line names the meaning in the words the canvas speaks, never the mark", () => {
+  const items = callInCtx<LegendItem[]>(archCtx, "getMapLegendItemsAR");
+
+  for (const item of items) {
+    assert.doesNotMatch(item.text, /\b(ring|border)\b/i, `"${item.text}" names the mark`);
+    assert.match(item.text, /^[A-Z]/, `"${item.text}" is not sentence case`);
+    if (item.label) assert.strictEqual(item.text.toLowerCase(), item.label.toLowerCase(), `${item.key} reads other words than its node name`);
+  }
 });
 
 const ROOT_TOKENS = getRootBlock(readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8"));
