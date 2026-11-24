@@ -158,6 +158,18 @@ describe("stat row", () => {
     assert.equal(findNodes(context, (n) => n.props["aria-hidden"] === "true").length, 1, "the reserved line is hidden from assistive tech");
   });
 
+  test("a loading stat names the source noun it waits for, not its label", () => {
+    const rows = [
+      { label: "Status", source: "system parts", text: "Loading system parts\u2026" },
+      { label: "Spend today", source: "today's spend", text: "Loading today's spend\u2026" },
+    ];
+    for (const row of rows) {
+      const tree = render("StatRow", { stats: [{ label: row.label, source: row.source, isLoading: true }] });
+      const [placeholder] = findNodes(getValues(tree)[0], (n) => n.props.role === "status");
+      assert.equal(collectText(placeholder).trim(), row.text, row.label);
+    }
+  });
+
   test("the tone glyph is the alarm row's glyph, hidden from assistive tech, its word read before what follows", () => {
     const [alarmGlyph] = findNodes(render("AlarmRow", { tone: "crit", title: "2 of 7 agents down" }), (n) => n.type === "svg");
     const rows = [

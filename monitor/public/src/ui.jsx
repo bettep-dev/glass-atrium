@@ -632,14 +632,14 @@ function AbsentValue({ kind, title }) {
 
 /**
  * One card's top-line numbers, a hairline between stats — never a tile per stat.
- * @param stats - each { label, value, unit?, context?, href?, isLoading?, key? }: context = the one period or delta line,
+ * @param stats - each { label, value, unit?, context?, href?, isLoading?, source?, key? }: context = the one period or delta line,
  *   href → the value is a Link to its drill-down; an absent value reads None; a 0 stays 0;
- *   isLoading → the shared loading value in place of value, unit, link and context
+ *   isLoading → the shared loading value in place of value, unit, link and context, read "Loading {source}…"
  */
 function StatRow({ stats, className = '' }) {
   return <dl className={`stat-row ${className}`.trim()}>
     {stats.map((stat) => {
-      if (stat.isLoading) return <LoadingStat key={stat.key ?? stat.label} label={stat.label}/>;
+      if (stat.isLoading) return <LoadingStat key={stat.key ?? stat.label} label={stat.label} source={stat.source}/>;
       const isAbsent = stat.value == null;
       const value = <>{isAbsent ? EMPTY_VALUE_TEXT : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
       return <div key={stat.key ?? stat.label} className="stat">
@@ -690,10 +690,11 @@ function HeadStatus({ tone, className = 'gap-label-inline', children }) {
 }
 
 // the figure's 600 is not the placeholder's → regular weight; the empty context line keeps the settled height (design.md §3.3)
-function LoadingStat({ label }) {
+// source = the noun the read fetches; a caller that passes none still reads its label
+function LoadingStat({ label, source = label.toLowerCase() }) {
   return <div className="stat">
     <dt className="stat-label">{label}</dt>
-    <dd className="stat-value"><span className="inline-flex"><LoadingPlaceholder label={label.toLowerCase()} className="font-normal"/></span></dd>
+    <dd className="stat-value"><span className="inline-flex"><LoadingPlaceholder label={source} className="font-normal"/></span></dd>
     <dd className="stat-context"><span aria-hidden="true">{'\u00a0'}</span></dd>
   </div>;
 }
