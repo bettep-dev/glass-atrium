@@ -49,6 +49,7 @@ interface ImprovementHelpers {
   styleRefGradeBadgeI: (emission: number | null, uncorroborated: number | null) => GaugeVerdict;
   getCorpusGrowthVerdictI: (latest: Record<string, unknown> | undefined) => GaugeVerdict;
   getRankedReasonsI: (segments: { items: ReasonSegment[] } | null) => ReasonSegment[];
+  getCorpusFactLinesI: (latest: Record<string, unknown>) => Array<Array<[string, unknown]>>;
   window: {
     ImprovementInstrumentationVerdicts?: Record<string, unknown>;
     ImprovementShared?: Record<string, unknown>;
@@ -411,6 +412,48 @@ test("corpus growth leads with its size of the threshold and lists the rest as t
   assert.equal(lists.length, 1, "one fact list");
   assert.ok(terms.length > 0 && terms.length === values.length, "every term holds one value");
   assert.deepEqual(getStrings(tree).filter((text) => /threshold/.test(text)), [], "the threshold reads once, in the lead");
+});
+
+// each instrumentation figure reads as its own phrase: a count with its noun, a gate trip count against its total
+describe("the corpus and agreement figures read their counts in words", () => {
+  // a fact value is a plain string or an element holding its glyph and words → its words, either way
+  const getFact = (latest: Record<string, unknown>, term: string) => {
+    const value = helpers.getCorpusFactLinesI(latest).flat().find(([t]) => t === term)?.[1];
+    return typeof value === "string" ? value : getStrings(viewTree(value)).join("").trim();
+  };
+  const getAgreementContext = (total: number, latestTs: string) => {
+    const card = (helpers.CorrectionSignalsCardI as Component)({
+      state: {
+        status: "ready",
+        data: {
+          total_signals: total,
+          latest_event_ts: latestTs,
+          agreement: { total, agreement_count: 100, both_matched: 90, stage1_only: 18, stage2_only: 10, neither_matched: 10 },
+          revision_delta_sum: 4,
+          revision_delta_max: 2,
+        },
+      },
+    });
+    const statRow = viewTree(card).find((el) => el.type === helpers.window.UI.StatRow);
+    return (statRow?.props.stats as Array<{ context: string }>)[0].context;
+  };
+  const getAuditLine = (totalAudits: number) => {
+    const tree = viewTree((helpers.CorpusGrowthCardI as Component)({ state: { status: "ready", data: { total_audits: totalAudits, audits: [CORPUS_READING] } } }));
+    return tree.filter((el) => el.type === "div").map((el) => [el.props.children].flat().join("")).find((text) => /audits/.test(text));
+  };
+  const formatKstDate = helpers.window.UI.formatKstDate as (ts: string) => string;
+  const rows = [
+    { name: "one gate trip reads singular against the check total", read: () => getFact({ ...CORPUS_READING, gate_trip_count: 1, gate_total_count: 10 }, "Gate checks"), text: "1 trip in 10" },
+    { name: "several gate trips read plural against the check total", read: () => getFact({ ...CORPUS_READING, gate_trip_count: 3, gate_total_count: 1200 }, "Gate checks"), text: "3 trips in 1,200" },
+    { name: "the Alert value names the raised kinds only", read: () => getFact({ ...CORPUS_READING, trend_alert: true, absolute_alert: true }, "Alert"), text: "trend + absolute" },
+    { name: "the agreement context counts the signals and dates the latest", read: () => getAgreementContext(128, "2026-11-22T03:00:00Z"), text: `128 signals · latest ${formatKstDate("2026-11-22T03:00:00Z")}` },
+    { name: "the corpus body line counts the audits and dates the latest cycle", read: () => getAuditLine(12), text: "12 audits · latest 2026-11-20" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(row.read(), row.text);
+    });
+  }
 });
 
 // a reason reads label → count → bar, so the count sits right after the words it counts
