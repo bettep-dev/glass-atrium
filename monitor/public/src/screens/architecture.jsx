@@ -2867,6 +2867,9 @@ function getFreshnessInputAR(healthAsOf, regions, mapState) {
 // the all-clear is a verdict on the rows' own freshness — a warm-error re-read keeps status ready, so only the verdict sees it
 function getAttentionEmptyAR(partRows, isBusy, freshness) {
 	if (isBusy) return "Checking system parts…";
+	// a failed read is the alarm row's to say → no lead under it, nor an all-clear over a Not loaded row
+	const hasFailedRead = window.UI.getRegionSummary(freshness.regions).failedCount > 0;
+	if (hasFailedRead && partRows.some((row) => !row.tone)) return null;
 	if (partRows.some((row) => row.tone)) {
 		const isFresh = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" }).tone === "ok";
 		// listed "No data" rows → the lead names what the list holds, not only what it lacks
@@ -2877,8 +2880,7 @@ function getAttentionEmptyAR(partRows, isBusy, freshness) {
 		}
 		return isFresh ? "No system part needs attention" : "Last known: no system part needed attention";
 	}
-	// a failed read is the alarm row's to say → no lead under it
-	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? null : "System parts not read yet";
+	return hasFailedRead ? null : "System parts not read yet";
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).

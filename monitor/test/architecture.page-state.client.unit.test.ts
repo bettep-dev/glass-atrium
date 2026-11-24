@@ -236,15 +236,16 @@ describe("the System parts lead line says why nothing is flagged, and its all-cl
   const warmError: RegionState = { ...held, error: "HTTP 500" };
   const down: RegionState = { status: "error", data: null, error: "HTTP 500", busy: false };
   const judged = [healthRow("a", "ok"), healthRow("b", null)];
+  const allHeld = [healthRow("a", "ok"), healthRow("b", "ok")];
   const unjudged = [healthRow("a", null)];
   // the empty-store case: two daemon parts answered "No data" — listed, so the lead names what the list is
   const unverified = [healthRow("a", "ok"), healthRow("b", "info"), healthRow("c", "info")];
   const rows = [
     { name: "a read in flight is still checking", partRows: judged, busy: true, at: readAt, regions: [down], expected: /^Checking system parts…$/ },
-    { name: "an all-clear under a warm-error re-read is last known", partRows: judged, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: no system part needed attention$/ },
-    { name: "an all-clear under a cold store failure is last known", partRows: judged, busy: false, at: readAt, regions: [down, held], expected: /^Last known: no system part needed attention$/ },
-    { name: "an all-clear older than the stale threshold is last known", partRows: judged, busy: false, at: new Date(now - 10 * 60_000).toISOString(), regions: [held], expected: /^Last known: no system part needed attention$/ },
-    { name: "an all-clear with every store freshly read is a plain all-clear", partRows: judged, busy: false, at: readAt, regions: [held, held], expected: /^No system part needs attention$/ },
+    { name: "an all-clear under a warm-error re-read is last known", partRows: allHeld, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: no system part needed attention$/ },
+    { name: "an all-clear under a cold store failure is last known", partRows: allHeld, busy: false, at: readAt, regions: [down, held], expected: /^Last known: no system part needed attention$/ },
+    { name: "an all-clear older than the stale threshold is last known", partRows: allHeld, busy: false, at: new Date(now - 10 * 60_000).toISOString(), regions: [held], expected: /^Last known: no system part needed attention$/ },
+    { name: "an all-clear with every store freshly read is a plain all-clear", partRows: allHeld, busy: false, at: readAt, regions: [held, held], expected: /^No system part needs attention$/ },
     { name: "listed unverified parts are counted while none is flagged", partRows: unverified, busy: false, at: readAt, regions: [held], expected: /^2 not verified · none needs attention$/ },
     { name: "listed unverified parts under a failed re-read are counted as last known", partRows: unverified, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: 2 not verified · none needed attention$/ },
     { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, at: null, regions: [held], expected: /^System parts not read yet$/ },
@@ -254,15 +255,22 @@ describe("the System parts lead line says why nothing is flagged, and its all-cl
       assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, { at: row.at, regions: row.regions, now }) ?? "", row.expected);
     });
 
-  test("no verdict under a failed read writes no lead, leaving the failure to the alarm row", () => {
-    assert.strictEqual(sandbox.getAttentionEmptyAR(unjudged, false, { at: null, regions: [down, down], now }), null);
-  });
+  // a Not loaded row under a failed read → an all-clear over it would be false; the alarm row speaks
+  const failedRows = [
+    { name: "no verdict at all", partRows: unjudged, regions: [down, down] },
+    { name: "a listed part Not loaded beside a cold store failure", partRows: judged, regions: [down, held] },
+    { name: "a listed part Not loaded beside a warm-error re-read", partRows: judged, regions: [warmError, held] },
+  ];
+  for (const row of failedRows)
+    test(`${row.name} under a failed read writes no lead, leaving the failure to the alarm row`, () => {
+      assert.strictEqual(sandbox.getAttentionEmptyAR(row.partRows, false, { at: readAt, regions: row.regions, now }), null);
+    });
 
   test("the all-clear and an ok part row agree on Last known for every settled read", () => {
     const okRow = { ...healthRow("a", "ok"), statusLabel: "Healthy" };
-    for (const row of rows.filter((candidate) => !candidate.busy && candidate.partRows === judged)) {
+    for (const row of rows.filter((candidate) => !candidate.busy && candidate.partRows === allHeld)) {
       const freshness = { at: row.at, regions: row.regions, now };
-      const text = sandbox.getAttentionEmptyAR(judged, false, freshness) ?? "";
+      const text = sandbox.getAttentionEmptyAR(allHeld, false, freshness) ?? "";
       const rowText = sandbox.getPartStatusAR(okRow, freshness).text;
       assert.strictEqual(text.startsWith("Last known"), rowText.startsWith("Last known"), `${row.name}: "${text}" vs "${rowText}"`);
     }
