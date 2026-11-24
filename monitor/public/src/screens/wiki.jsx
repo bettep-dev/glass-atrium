@@ -817,11 +817,9 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 
 			{/* Dead-link lists appear only once the fixer has something to report. */}
 			{model.deadLinks && model.deadLinks.length > 0 && (
-				<BacklogExplorer
-					label="Broken links"
-					count={model.deadLinks.length}
-					payload={model.deadLinks}
-				/>
+				<WikiDisclosureW label="Broken links" count={model.deadLinks.length} bodyClassName="flex flex-col">
+					<WikiBrokenLinksTable links={model.deadLinks} />
+				</WikiDisclosureW>
 			)}
 			{model.linkFixes && model.linkFixes.length > 0 && (
 				<BacklogExplorer
@@ -1334,7 +1332,7 @@ function computeStatusMix(rows) {
 	};
 }
 
-// payload JSON dump(<pre>) 원형 표시 — dead-link · link-fix 목록 전용.
+// payload JSON dump(<pre>) 원형 표시 — link-fix 목록 전용.
 function BacklogExplorer({ label, count, payload }) {
 	return (
 		<WikiDisclosureW label={label} count={count}>
@@ -1366,7 +1364,7 @@ function WikiProposalsTable({ proposals }) {
 }
 
 function MergeSuggestionItem({ proposal, view }) {
-	const { TableRow, TableCell, MachineString } = window.UI;
+	const { TableRow, TableCell } = window.UI;
 	const sources = Array.isArray(proposal.source_slugs) ? proposal.source_slugs.join(", ") : "";
 	const similarity =
 		typeof proposal.similarity_score === "number" ? `${Math.round(proposal.similarity_score * 100)}%` : null;
@@ -1374,10 +1372,10 @@ function MergeSuggestionItem({ proposal, view }) {
 	return (
 		<TableRow view={view}>
 			<TableCell view={view} kind="row-header">
-				<WikiCellValueW value={proposal.target_slug ? <MachineString>{proposal.target_slug}</MachineString> : null} />
+				<WikiMachineCellW value={proposal.target_slug} />
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Absorbs">
-				<WikiCellValueW value={sources ? <MachineString>{sources}</MachineString> : null} />
+				<WikiMachineCellW value={sources} />
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Similarity" isNumeric>
 				<WikiCellValueW value={similarity} />
@@ -1387,6 +1385,37 @@ function MergeSuggestionItem({ proposal, view }) {
 			</TableCell>
 		</TableRow>
 	);
+}
+
+const WIKI_BROKEN_LINK_COLUMNS = [
+	{ key: "source", label: "Source" },
+	{ key: "target", label: "Target" },
+];
+
+// records from scripts/wiki_deadlinks.py → DeadlinkRecord: the note holding the link, and the slug it points at
+function WikiBrokenLinksTable({ links }) {
+	const { Table, TableRow, TableCell } = window.UI;
+
+	return (
+		<Table caption="Broken links, one row per link" columns={WIKI_BROKEN_LINK_COLUMNS}>
+			{(view) => links.map((link, i) => (
+				<TableRow key={i} view={view}>
+					<TableCell view={view} kind="row-header">
+						<WikiMachineCellW value={link?.source_slug} />
+					</TableCell>
+					<TableCell view={view} textRole="meta" label="Target">
+						<WikiMachineCellW value={link?.link_target} />
+					</TableCell>
+				</TableRow>
+			))}
+		</Table>
+	);
+}
+
+// a slug or path cell: a non-empty string reads in machine type, anything else as the faint None
+function WikiMachineCellW({ value }) {
+	const text = typeof value === "string" && value ? value : null;
+	return <WikiCellValueW value={text && <window.UI.MachineString>{text}</window.UI.MachineString>} />;
 }
 
 // The cleaner tags every action DRY-RUN → the list states it once above the table.

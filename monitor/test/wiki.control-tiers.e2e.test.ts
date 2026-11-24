@@ -20,7 +20,13 @@ const STYLES = resolve(HERE, "..", "public", "styles");
 
 type Component = (props: unknown) => unknown;
 const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
-const wikiScreen = await loadScreenModule(resolve(HERE, "../public/src/screens/wiki.jsx"), { UI: ui.UI, React: createReactStub() });
+const uiAtoms = ui.UI as Record<string, unknown>;
+// React hands a lone child over as itself, the stub always as an array → the Table's row function only runs unwrapped
+const Table = (props: Record<string, unknown>) => {
+  const { children } = props;
+  return (uiAtoms.Table as Component)(Array.isArray(children) && children.length === 1 ? { ...props, children: children[0] } : props);
+};
+const wikiScreen = await loadScreenModule(resolve(HERE, "../public/src/screens/wiki.jsx"), { UI: { ...uiAtoms, Table }, React: createReactStub() });
 const getMarkup = (component: string, props: Record<string, unknown>): string =>
   getHtml(renderScreen((wikiScreen[component] as Component)(props)) as RenderedNode);
 // the screen's style block carries the .fs-* type scale too (TypeScaleStyle renders inside it)
@@ -147,8 +153,10 @@ describe("the Runs table holds its columns whether its runs are healthy or not",
   });
 
   test("no cell's content overflows its column", async () => {
-    const overflowing = await page.$$eval("[id^=run-table-] th, [id^=run-table-] td", (cells) =>
-      cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent));
-    assert.deepEqual(overflowing, []);
+    const cells = await page.$$eval("[id^=run-table-] th, [id^=run-table-] td", (nodes) =>
+      nodes.map((cell) => ({ text: cell.textContent, isOverflowing: cell.scrollWidth > cell.clientWidth })));
+    const expected = Object.values(RUN_WINDOWS).reduce((sum, runs) => sum + (runs.length + 1) * 4, 0);
+    assert.equal(cells.length, expected, "every head and run cell rendered");
+    assert.deepEqual(cells.filter((cell) => cell.isOverflowing).map((cell) => cell.text), []);
   });
 });

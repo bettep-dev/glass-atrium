@@ -672,6 +672,26 @@ test("the per-run table gives every run its own row, unchanged runs included", a
   assert.deepEqual(rows.map((row) => dates.find((d) => collectText(row).includes(d.slice(5)))), dates);
 });
 
+test("the Broken links fold is a table of each link's source and target, one row per link, never a data dump", async () => {
+  const mod = await loadWikiScreen();
+  const deadlinks = [
+    { source_slug: "agent-engineering", broken_link: "[[prompt-cache]]", link_target: "prompt-cache", fix_status: "dry-run-no-match" },
+    { source_slug: "rag-eval", broken_link: "[[bm25-tuning]]", link_target: "bm25-tuning", fix_status: "dry-run-ambiguous" },
+  ];
+  const backlogState = { status: "ready", error: null, data: { backlog: { run_date: "2026-09-24", deadlink_dryrun: deadlinks } } };
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState, onRetry: () => {} }));
+  const [fold] = findNodes(tree, (n) => n.type === "details" && findSummaryHeading(n, "Broken links") !== undefined);
+  const [table] = findNodes(fold, (n) => n.props.atom === "Table");
+  const rows = findNodes(renderTableRowsOf(mod, fold), (n) => n.props.atom === "TableRow");
+
+  assert.deepEqual(Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label), ["Source", "Target"]);
+  assert.deepEqual(rows.map((row) => findNodes(row, (n) => n.props.atom === "MachineString").map(collectText)), [
+    ["agent-engineering", "prompt-cache"],
+    ["rag-eval", "bm25-tuning"],
+  ]);
+  assert.equal(findNodes(fold, (n) => n.type === "pre").length, 0, "no raw record dump");
+});
+
 test("the maintenance section adds no broken-link line of its own", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: READY_BACKLOG, onRetry: () => {} }));
