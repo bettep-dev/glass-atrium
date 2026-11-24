@@ -553,6 +553,7 @@
 - row: cursor pointer · hover `--sunken` · 마지막 행 border 없음. **row blur 금지.**
 - **행 상태 fill** (clauded-docs ledger, stripe 없음): selector `.tbl tbody tr.doc-row` 로 공용 hover 를 이기고 hover 중에도 유지.
   - viewer 행 (`.is-selected`): `--tint-row-1` + 제목 600 + `aria-current="true"`.
+    - viewer 를 닫아도 마지막으로 연 행에 남는다 — 다른 행을 열거나 목록을 다시 읽을 때까지.
   - checked (`.is-multi-selected`): `--tint-row-2` · 비-색 cue = checkbox. viewer + checked = `--tint-row-3`.
   - 삭제 대기 (`.is-pending-delete`): 행 opacity 없음 — 제목 line-through + `aria-busy` + 제목 앞 crit glyph.
   - the row-state ladder takes no stripe, border or accent; its fills, the text and glyph pairs on each and the `--tint-row-3` ceiling: §4.1 table.
@@ -782,7 +783,7 @@
 - A control row has one tier height, every item centered on one line, and role gaps: `--gap-control` 8 between controls, `--gap-control-group` 16 between groups, `--gap-label-inline` 4 from a label to its group.
   - `.control-row` ships the card-head geometry at an 8 block inset (padding 8 / 16 · min-height 48 · gap 8 row / 12 column — the 12 is deprecated for `--gap-control-group` — no rule below): one line of 32 controls is the card-head's 48, and a wrapped row keeps 8 above its first line and below its last. Where the row is the card's head, `.card-head` is the class. Its direct children are groups.
   - A label and its group wrap as one unit; a badge never height-matches a control; a text target is 24 or taller (`.inline-target`).
-  - Trailing meta whose text follows a filter (the Documents count) takes its own right-aligned line in every state, so its length never picks its line or frees room for a growing control; it wraps inside as one right-aligned unit.
+  - Trailing meta whose text follows a filter (the Documents count) ends the control row on an auto start margin; every control before it has a fixed width, so its length never resizes a control; it wraps inside as one right-aligned unit, and a count of 0 prints nothing (the empty state says it).
   - Content a mode swaps inside a group (the Documents stage chips and the "All stages while searching" note) shares one cell, both always laid out and the idle one hidden, so the mode never resizes the group or reflows the row; the chips keep their last counts through a search response that carries none.
   - A trigger whose label gains a count (the Task results Filters trigger) lays its label over a hidden twin at the highest count in one cell, end-aligned, so a count appearing never moves the head; the count covers only the filters set inside its popover.
 - An overlay head is 48; its title's first line centers on its 32 close button within 1px (§7.8).

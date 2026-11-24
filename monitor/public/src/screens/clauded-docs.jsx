@@ -216,13 +216,14 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	// server rows consumed so far → next Load More offset (deduped loadedRows runs short of the server position)
 	const [consumedCount, setConsumedCount] = useStateCD(0);
 	const [selectedId, setSelectedId] = useStateCD(getHashDocIdCD);
+	// the row the ladder marks as opened → outlives the viewer until another row opens or the list re-queries
+	const [openedId, setOpenedId] = useStateCD(getHashDocIdCD);
+	if (selectedId != null && openedId !== selectedId) setOpenedId(selectedId);
 	const [viewerState, setViewerState] = useStateCD({
 		status: "idle",
 		data: null,
 		error: null,
 	});
-	// 편집 진입점만 유지 — 신규 작성은 agent emission (POST /api/clauded-docs) 단일 경로.
-	const [editorOpen, setEditorOpen] = useStateCD(null); // null | { seed }
 	const [pendingDelete, setPendingDelete] = useStateCD(null); // { id, expiresAt }
 	const [refreshTick, setRefreshTick] = useStateCD(0);
 	// 마지막 성공 fetch 시각 — 실패 응답은 갱신하지 않는다 (as-of 가 앞서면 거짓 최신).
@@ -299,8 +300,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			if (
 				!isEditing &&
 				(e.key === "f" || e.key === "F") &&
-				selectedId != null &&
-				!editorOpen
+				selectedId != null
 			) {
 				e.preventDefault();
 				if (isFullscreen) {
@@ -313,7 +313,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [isFullscreen, selectedId, editorOpen]);
+	}, [isFullscreen, selectedId]);
 
 	// 검색어 debounce — 250ms 후 적용. AbortController 로 in-flight 취소.
 	useEffectCD(() => {
@@ -330,6 +330,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	if (offsetListKey !== listKey) {
 		setOffsetListKey(listKey);
 		setCurrentOffset(0);
+		if (selectedId == null) setOpenedId(null);
 	}
 
 	// filter / refresh 변경 시 multi-select clear — Show 필터 변경 = "다른 목록 보기" → 이전 선택 의미 소멸.
@@ -462,40 +463,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
 		},
 		[],
-	);
-
-	// write actions — POST 는 agent emission 단일 진입 (UI create 핸들러 없음) · 사용자 진입점은 PUT (편집) 만.
-
-	const performUpdate = useCallbackCD(
-		async (id, body) => {
-			showToast("info", "Saving…");
-			try {
-				const res = await fetch(`/api/clauded-docs/${encodeURIComponent(id)}`, {
-					method: "PUT",
-					headers: {
-						"Content-Type": "application/json",
-						Accept: "application/json",
-					},
-					body: JSON.stringify(body),
-				});
-				const payload = await res.json().catch(() => null);
-				if (!res.ok) {
-					const reason = describeApiErrorCD(payload, res.status);
-					showToast("crit", `Couldn't save — ${reason}`);
-					return false;
-				}
-				showToast("ok", `Saved #${id}`);
-				setEditorOpen(null);
-				triggerRefresh();
-				// viewer 가 동일 id 면 강제 재조회.
-				if (selectedId === id) loadViewerCD(id);
-				return true;
-			} catch (err) {
-				showToast("crit", `Couldn't save — ${err?.message || err}`);
-				return false;
-			}
-		},
-		[selectedId, showToast, triggerRefresh, loadViewerCD],
 	);
 
 	const performDeleteImpl = useCallbackCD(
@@ -894,18 +861,18 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
            사유 — chevron toggle 이 group-root 행에만 있어 일반/멤버 행은 제목 시작 x 가 어긋남.
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
-        .doc-title-row { display: flex; align-items: center; gap: var(--space-1_5); }
+        .doc-title-row { display: flex; align-items: center; }
         /* spacer slot on the snippet line and the Title header → the title x without the title line's height floor */
         .doc-title-lead.is-spacer { min-height: 0; }
-        .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
+        .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: var(--lh-row); }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
            문자열 전체 폭으로 키워 그 컬럼이 제목 폭을 빼앗는다. */
-        .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
+        .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; }
         /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다.
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
-           124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
-        .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
+           상한 = Tags floor − interior padding. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
+        .doc-tags-cell > span { max-width: calc(${LEDGER_CD.FLOOR.tags}px - 2 * var(--space-3)); overflow: hidden; }
         /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
         /* ink row-state ladder (design.md §7.5) — viewer --tint-row-1 < checked -2 < both -3; floors on every step §4.1 · non-colour cues in the markup: the viewer's semibold title, the checked checkbox */
         .tbl tbody tr.doc-row.is-selected { background: var(--tint-row-1); }
@@ -917,7 +884,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* trailing title-line pills never shrink → the title text ellipsizes first */
         button.doc-lineage { flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
         .doc-revision-count { flex: none; }
-        .doc-snippet mark { background: rgb(var(--accent) / 0.2); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
+        /* highlight = a selection fill · weight is the non-colour cue (markup font-medium) */
+        .doc-snippet mark { background: var(--tint-select); color: rgb(var(--ink)); border-radius: var(--radius-inline); }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
            --doc-canvas — 문서 자체 bg-zinc-950 과 같은 cool 캔버스, warm --surface 아님 → swap 금지.
@@ -936,22 +904,17 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation .mermaid.doc-diagram-body { width: 100%; }
         .doc-body-isolation .mermaid.doc-diagram-wide { width: min(100cqi - 4rem, 1600px); margin-inline: calc(50% - min(50cqi - 2rem, 800px)); }
         .doc-body-isolation .mermaid.doc-diagram-full { width: 100cqi; margin-inline: calc(50% - 50cqi); }
-        /* 노드 모서리 — 맵 캔버스와 같은 r=8(architecture.jsx 의 .arch-mermaid-canvas 규칙).
+        /* 노드 모서리 — --radius-tile(맵 캔버스 architecture.jsx 의 .arch-mermaid-canvas 규칙과 같은 8).
            mermaid 는 채택 타입 대부분에서 rx 를 아예 찍지 않아(산출 auto) 문서 노드만 각졌음.
            CSS 기하 속성이라 표현 속성을 찍는 타입에서도 이김 — 맵이 같은 이유로 쓰는 기제. */
         .doc-body-isolation pre.mermaid svg :is(.node, .cluster) rect,
-        .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
+        .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: var(--radius-tile); ry: var(--radius-tile); }
         .doc-meta-row { grid-template-columns: 88px 1fr; }
         /* .doc-toast → shared SoT in base.css */
-        /* the HTML body box — a .field grown to an editing area */
-        .doc-editor-textarea { min-height: 320px; max-height: 60vh; resize: vertical; }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
-        /* version-history — predecessor 전용 dim 룰.
-           current=강조 / predecessor=.acked(opacity 0.5) 시각 구분. */
-        .doc-revision-predecessor.acked { opacity: 0.5; }
         /* code viewer (yaml/json/txt) — --doc-code 면 + --doc-line 테두리 + --doc-ink 글자.
            github-dark.min.css 가 .hljs span.hljs-* 토큰 색상 부여 — 본 컨테이너는 chrome (배경/테두리/패딩/폰트) 만 정의. */
-        .doc-code-pre { margin: 16px 0; padding: 16px; background: rgb(var(--doc-code)); border: 1px solid rgb(var(--doc-line)); border-radius: 6px; overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 13px; line-height: 1.6; color: rgb(var(--doc-ink)); }
+        .doc-code-pre { margin: var(--space-4) 0; padding: var(--space-4); background: rgb(var(--doc-code)); border: 1px solid rgb(var(--doc-line)); border-radius: var(--radius-control); overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: var(--fs-meta); line-height: 1.6; color: rgb(var(--doc-ink)); }
         .doc-code-pre code { background: transparent; padding: 0; font-family: inherit; font-size: inherit; line-height: inherit; display: block; white-space: pre; }
         /* 전체화면 reading 면 — DetailSurface variant='fullscreen' bare panel 로 마운트 (overlay/backdrop/focus-trap/scroll-lock/Esc 닫기/z 계약은 공용 .detail-overlay).
            .detail-fullscreen 스코프로 specificity(0,2,0) 승격 → .detail-fullscreen .detail-panel(0,2,0) 의 max-width 980 / border / fade 애니메이션을 source-order 후순위로 제압, 불투명 zinc full-bleed 면 보존.
@@ -961,10 +924,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .detail-fullscreen .doc-fs-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
         /* split grid: main(fluid) | meta(clamp 260-300). 가독성 본문 확폭 — meta col 소폭 축소(320→300)로 본문 여유 확보 + 모바일 collapse 분기. */
         .doc-fs-split { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr clamp(260px, 20vw, 300px); overflow: hidden; }
-        /* body wrap = 스크롤 컨테이너(구조 수정 핵심) — overflow:hidden → overflow-y:auto 전환 → 스크롤바가 body 셀 우측 끝(meta border 접점)에 안착("스크롤 우측 이동" 요청 충족) · grid 셀 높이 bound(상위 split flex:1+min-height:0) 가 scrollport 생성 → min-height:0 체인 유지 필수.
-           bg --doc-canvas + 좌우 padding clamp(32-72) gutter (72 = 3 × --space-6).
+        /* body wrap = 스크롤 컨테이너 — overflow-y:auto → 스크롤바가 body 셀 우측 끝(meta border 접점)에 안착 · grid 셀 높이 bound(상위 split flex:1+min-height:0) 가 scrollport 생성 → min-height:0 체인 유지 필수.
+           bg --doc-canvas · gutter = markup p-page (페이지 여백과 같은 열).
            container-type — 본문 다이어그램 breakout 이 기준으로 삼는 상자(위 크기 프리셋의 cqi). */
-        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: var(--space-6) clamp(var(--space-8), 4vw, calc(3 * var(--space-6))) var(--space-8); background: rgb(var(--doc-canvas)); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(var(--doc-line)) transparent; }
+        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; background: rgb(var(--doc-canvas)); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(var(--doc-line)) transparent; }
         /* 얇은 다크 스크롤바 — tokens.css 글로벌 *::-webkit-scrollbar(10px·--line warm)를 .doc-fs-* 스코프 한정 override(specificity 0,1,1 > 0,0,1). 8px · thumb rest --doc-line, hover --faint(전역 스크롤바 hover 와 같음). */
         .doc-fs-body-wrap::-webkit-scrollbar { width: 8px; }
         .doc-fs-body-wrap::-webkit-scrollbar-track { background: transparent; }
@@ -980,24 +943,21 @@ function ScreenClaudedDocs(/* { onNav } */) {
            line-height 1.75 · letter-spacing 0.012em(light-on-dark halation 보정) · 상속 base → 코드블록/헤딩 등 per-element 로컬 override 유지. */
         .doc-fs-body-inner > .doc-body-isolation { line-height: 1.75; letter-spacing: 0.012em; }
         /* meta sidebar — grid cell 풀높이 sticky · 불투명 --doc-side(본문 비침 없음) · border-left --doc-line. */
-        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); padding: var(--space-4) var(--space-6); }
-        /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 --doc-canvas · --doc-side 를 미디어 블록에서 재확인).
+        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); }
+        /* 모바일 <768px — meta 하단 stack + border-top · bg 통일 반복(데스크톱 룰의 --doc-canvas · --doc-side 를 미디어 블록에서 재확인).
            max-width min(90%,1280px) 는 폰에서 90% 자동 승리(1280 캡 미발동) → px floor 없음 → overflow 무발생. 스크롤은 wrap 에서 동일 동작. */
         @media (max-width: 768px) {
           .doc-fs-split { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-          .doc-fs-body-wrap { padding: var(--space-4); background: rgb(var(--doc-canvas)); }
-          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); max-height: 40vh; padding: var(--space-4); }
+          .doc-fs-body-wrap { background: rgb(var(--doc-canvas)); }
+          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); max-height: 40vh; }
         }
         /* WCAG 2.2 §2.5.8 Target Size (AA) — 24×24 px floor (본 화면 스코프 한정 · padding 보존). */
         .card button.btn.sm,
-        .modal-head button.btn.sm,
         .doc-fs-container button.btn.sm { min-height: 24px; min-width: 24px; }
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
-        /* the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
+        /* the cell takes the select floor (checkbox + edge padding) → the checkbox starts on the card-pad column */
         .doc-checkbox-cell, .doc-ledger thead th:first-child { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
-        /* the edge cell's 16 + 12 split evenly (the same 28) → the checkbox sits on the cell centre */
-        .tbl tr > :is(th, td).doc-checkbox-cell, .tbl.doc-ledger thead th:first-child { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
         /* C24 hit area (§7.15) — padding out to 24, the equal negative margin keeps the 16 layout box → the select floor holds */
         /* header floors by position (getLedgerColumnsCD order) — width alone gives way to min-content once the table overflows; Author and Created count from the end, past an absent Tags */
         .doc-ledger:not(.tbl--stacked) thead th:nth-child(2) { width: ${LEDGER_CD.FLOOR.status}px; min-width: ${LEDGER_CD.FLOOR.status}px; }
@@ -1014,32 +974,22 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* checked and both — the next two steps of the ink ladder above (design.md §7.5) */
         .tbl tbody tr.doc-row.is-multi-selected { background: var(--tint-row-2); }
         .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: var(--tint-row-3); }
-        /* group action bar — filter bar 행 아래 sticky · zinc-900 코드블록 톤.
-           height 고정 (44px min) 사유 — hint(텍스트 1줄) vs active(btn.sm 툴바) 두 모드의
-           natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing
-           border-box + 수직 center 정렬로 양 모드 픽셀 동일. flex-wrap 제거 (좁은 폭에서 2줄
-           래핑이 다시 높이 변동 유발 → 단일행 유지 + 버튼이 reserved 높이 초과 차단). */
-        .doc-group-action-bar { box-sizing: border-box; min-height: 44px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; }
-        /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
-        .doc-group-action-bar .btn.sm { max-height: 30px; }
+        /* group action bar — the card-bar block (8 + control + 8) · one line, no wrap → its height never jumps on (de)select */
+        .doc-group-action-bar { background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
         .doc-group-toggle { width: 100%; justify-content: center; cursor: pointer; background: transparent; border: none; color: rgb(var(--dim)); border-radius: var(--radius-control); }
-        .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
+        .doc-group-toggle:hover { background: rgb(var(--elev-2)); color: rgb(var(--ink)); }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
-        /* member rows — indent + 좌측 가는 가이드 선 (group 소속 시각 hint). */
-        /* one nesting step = the lead slot; --doc-member-inset = the house cell inset per table mode (wide 12 · stacked 0, row owns the padding) */
-        tr.doc-row.is-group-member td.title-cell { --doc-member-inset: var(--space-3); padding-left: calc(var(--doc-member-inset) + ${DOC_LEAD_SLOT_PX_CD}px); position: relative; }
-        .tbl--stacked tr.doc-row.is-group-member td.title-cell { --doc-member-inset: 0px; }
-        tr.doc-row.is-group-member td.title-cell::before { content: ''; position: absolute; left: calc(var(--doc-member-inset) + ${DOC_LEAD_SLOT_PX_CD / 2}px - 0.5px); top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
+        /* member rows — one nesting step = the indent slot · its guide runs the cell's full height on the slot centre (abspos static x, centred by the slot's flex) */
+        tr.doc-row.is-group-member td.title-cell { position: relative; }
+        .doc-title-lead.is-indent::before { content: ''; position: absolute; top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
         /* group divider — root row 위쪽 subtle border (dark base 정합). */
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
            drag handle ⠿ — leading slot 내 grab cursor + subtle hover. handle 만 grab (행 전체 draggable 이나 시각 hint 는 handle 한정). */
-        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-control); user-select: none; }
-        .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--line) / 0.5); }
+        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: var(--lh-row); color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-control); user-select: none; }
+        .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--elev-2)); }
         .doc-drag-handle:active { cursor: grabbing; }
-        /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
-        tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
@@ -1047,20 +997,17 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-cell { grid-template-columns: minmax(0, auto) auto; }
         /* a max-width caps the status's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
-        /* the clip cuts at the label's line box → a control line box, so a tight line-height never clips a descender */
-        .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
-        /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
-        .doc-list-region { scroll-margin-top: 96px; border-radius: var(--radius-card); }
+        .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        /* Retry's focus handoff scrolls the card up to reveal it → one page gap stays above it (no fixed top bar) */
+        .doc-list-region { scroll-margin-top: var(--gap-page); border-radius: var(--radius-card); }
         /* clip trims an outside ring → the card ring drawn inset */
         .doc-list-region:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
-        /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
-        .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
-        .doc-trigger-value { display: inline-grid; }
+        /* fixed basis + content-wide bar → a trigger value, the search note or the count never resizes the field being typed in · width = the basis → the bar's max-content counts the field at 200, so the reset never wraps */
+        .doc-bar-search { flex: 0 1 200px; width: 200px; min-width: 180px; }
+        /* slot = widest option · start-aligned → the button's centred text never opens a gap after the axis label */
+        .doc-trigger-value { display: inline-grid; justify-items: start; }
         .doc-trigger-value > * { grid-area: 1 / 1; }
         .doc-trigger-value > .is-idle { visibility: hidden; }
-        /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
-        /* a section head = a house body header (40 row, meta face, sunken fill) → only the bottom-anchored label inset and the 600 weight are its own */
-        tr.doc-stage-section > th { padding-block: var(--space-3) var(--space-1); font-weight: 600; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1080,7 +1027,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					state={listState}
 					rows={visibleRows}
 					isSearchMode={isSearchMode}
-					selectedId={selectedId}
+					selectedId={openedId}
 					pendingDelete={pendingDelete}
 					hiddenCount={hiddenCount}
 					total={total}
@@ -1159,15 +1106,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 				</DetailSurface>
 			)}
 
-			{/* 편집 모달 (작성 진입점 폐기 — agent emission 단일 경로). */}
-			{editorOpen && (
-				<EditorModalCD
-					seed={editorOpen.seed}
-					onClose={() => setEditorOpen(null)}
-					onUpdate={performUpdate}
-				/>
-			)}
-
 			{toast && <DocToastCD toast={toast} />}
 		</div>
 	);
@@ -1214,18 +1152,19 @@ function DocHeaderRefreshCD({ asOf, listState, onRefresh }) {
 
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
 function DocTagsCellCD({ view, audience, format, commonFormat, commonAudience = null }) {
-	const { Badge, TableCell } = window.UI;
+	const { AbsentValue, Badge, TableCell } = window.UI;
 	const isAudienceShown = audience === "hidden" && commonAudience !== "hidden";
 	const isFormatShown = Boolean(DOC_FORMAT_BADGE_CD[format]) && format !== commonFormat;
 	return (
-		// no chip → no label: a stacked row never prints a bare "Tags"
-		<TableCell view={view} textRole="meta" label={isAudienceShown || isFormatShown ? "Tags" : undefined} className="doc-tags-cell doc-col-tags">
+		<TableCell view={view} textRole="meta" label="Tags" className="doc-tags-cell doc-col-tags">
 			{/* nowrap — 칩이 2줄로 접히면 행 높이가 튄다. */}
 			<span className="inline-flex items-center gap-label-inline whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
 				{isAudienceShown && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill. */}
 				{isFormatShown && <Badge role="metadata">{format}</Badge>}
+				{/* no tag of its own varies by row → faint None, never a blank cell */}
+				{!isAudienceShown && !isFormatShown && <AbsentValue kind="none" />}
 			</span>
 		</TableCell>
 	);
@@ -1292,14 +1231,16 @@ function DocListCardCD({
 	// search total = uncollapsed server hits · visible/hidden = collapsed chain rows → the fraction stays in rows, hits get their own unit
 	const rowCount = visibleCount + hiddenCount;
 	const hitsLabel = isSearchMode && total !== rowCount ? ` · ${formatIntCD(total)} hits` : "";
+	const countedTotal = isSearchMode ? rowCount : total;
+	// a count of 0 repeats the empty state's words → no caption
 	const totalLabel =
-		state.status !== "ready"
+		state.status !== "ready" || countedTotal === 0
 			? null
 			: !isSearchMode && docTotal != null
-				? `${formatIntCD(total)} documents${docTotal !== total ? ` · ${formatIntCD(docTotal)} with revisions` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
+				? `${formatIntCD(total)} documents${docTotal !== total ? ` · ${formatIntCD(docTotal)} versions` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
 				: hiddenCount > 0
-					? `${formatIntCD(visibleCount)} of ${formatIntCD(isSearchMode ? rowCount : total)} shown${hitsLabel}`
-					: `${formatIntCD(isSearchMode ? rowCount : total)} matched${hitsLabel}`;
+					? `${formatIntCD(visibleCount)} of ${formatIntCD(countedTotal)} shown${hitsLabel}`
+					: `${formatIntCD(countedTotal)} matched${hitsLabel}`;
 
 	// multi-select 파생값. server contract 정합 (group ≥ 2, ungroup ≥ 1).
 	const selectionSize = selectedIds.size;
@@ -1357,11 +1298,11 @@ function DocListCardCD({
 
 	const bar = (
 		<>
-			{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta on its own right-aligned line */}
+			{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta at the row's right end */}
 			<div className="control-row">
 				<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
 				{(busyText || totalLabel) && (
-					<div className="doc-list-meta basis-full flex flex-wrap justify-end items-center gap-x-list">
+					<div className="doc-list-meta ml-auto flex flex-wrap justify-end items-center gap-x-list">
 						{busyText && (
 							<span className="doc-list-busy fs-meta text-dim" role="status">
 								{busyText}
@@ -1560,7 +1501,7 @@ function DocListCardCD({
 												</TableCell>
 											<TableCell view={view} className="title-cell">
 												<div
-													className="doc-title-row font-medium fs-body text-ink"
+													className="doc-title-row gap-label-inline font-medium fs-body text-ink"
 												>
 													{/* 고정폭 leading slot — group-root 시 chevron, 그 외 빈칸 (제목 시작 x 통일). */}
 													<span className="doc-title-lead">
@@ -1620,7 +1561,7 @@ function DocListCardCD({
 													</span>
 												</div>
 												{snippetText && (
-													<div className="doc-title-row mt-stack">
+													<div className="doc-title-row gap-label-inline mt-stack">
 														<span className="doc-title-lead is-spacer" />
 														<div className="doc-snippet fs-meta text-dim">
 															{parseSnippetCD(snippetText)}
@@ -1680,7 +1621,7 @@ function getLedgerColumnsCD({ hasTagsColumn, selectAll }) {
 		{
 			key: "title",
 			label: (
-				<span className="doc-title-row">
+				<span className="doc-title-row gap-label-inline">
 					<span className="doc-title-lead is-spacer" />
 					<span>Title</span>
 				</span>
@@ -1697,7 +1638,7 @@ function DocFilterBarCD({ isSearchMode, groupCounts, inlineFilterProps }) {
 	const { FilterBar, FilterTrigger, BarSearch } = window.UI;
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
 	return (
-		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={() => setDefaultFiltersCD(inlineFilterProps)} className="flex-auto min-w-0">
+		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={() => setDefaultFiltersCD(inlineFilterProps)} className="min-w-0">
 			<BarSearch label="Search documents" value={keyword} onChange={inlineFilterProps.onKeywordChange} placeholder="Search…" className="doc-bar-search" />
 			<FilterTrigger axis="Show" value={<DocTriggerValueCD options={DOC_STATUS_OPTIONS_CD} chosenKey={docStatusFilter} />} options={getStageOptionsCD(groupCounts)}
 				chosenKeys={[docStatusFilter]} onPick={inlineFilterProps.onDocStatusChange} />
@@ -1801,7 +1742,7 @@ function GroupActionBarCD({
 	}
 	return (
 		<div
-			className="doc-group-action-bar px-card-pad gap-control"
+			className="doc-group-action-bar card-bar gap-control"
 			role="toolbar"
 			aria-label="Bulk group actions"
 		>
@@ -2054,7 +1995,7 @@ function GroupMembersRowsCD({
 			isSelectedViewer && "is-selected",
 			isSelectedMulti && "is-multi-selected",
 			isPending && "is-pending-delete",
-			isDragging && "is-dragging",
+			isDragging && "text-faint",
 			isStale && "is-stale",
 		]
 			.filter(Boolean)
@@ -2150,8 +2091,9 @@ function GroupMembersRowsCD({
 				</TableCell>
 				<TableCell view={view} className="title-cell">
 					<div
-						className="doc-title-row font-medium fs-body text-ink"
+						className="doc-title-row gap-label-inline font-medium fs-body text-ink"
 					>
+						<span className="doc-title-lead is-spacer is-indent" />
 						{/* 멤버 행 leading slot — 재정렬 가능 시 drag handle(⠿), 아니면 빈칸 (제목 시작 x 통일). */}
 						<span className="doc-title-lead">
 							{isReorderable && (
@@ -2248,7 +2190,7 @@ function ViewerPanelCD({
 			{isReady ? (
 				<div className="doc-fs-split">
 					<ViewerBodyCD state={state} />
-					<aside className="doc-fs-meta-side" aria-label="Document metadata">
+					<aside className="doc-fs-meta-side py-card-pad px-page" aria-label="Document metadata">
 						{/* doc(=viewer cache) 를 cachedRow 로 전달 → GET 스킵 (네트워크 절감). */}
 						<DocMetaPanelCD
 							doc={state.data}
@@ -2680,7 +2622,7 @@ function ViewerBodyCD({ state, onRetry }) {
 		? `${DOC_BODY_SCOPE_CD} ${rendered.className}`
 		: DOC_BODY_SCOPE_CD;
 	return (
-		<div className="doc-fs-body-wrap">
+		<div className="doc-fs-body-wrap p-page">
 			<div className="doc-fs-body-inner mx-auto">
 				<div
 					ref={bodyContainerRef}
@@ -2928,7 +2870,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 					</div>
 				)}
 				{predState.status === "ready" && predState.data && (
-					<div className="doc-revision-predecessor acked flex flex-col gap-stack">
+					<div className="doc-revision-predecessor text-faint flex flex-col gap-stack">
 						<div className="flex items-center gap-control flex-wrap">
 							<window.UI.MachineString className="fs-meta text-dim">
 								#{predState.data.id}
@@ -2967,182 +2909,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 	);
 }
 
-// 편집 전용 모달 (작성 진입점은 폐기 — agent emission POST 단일 경로).
-//   - 작성자 = seed 고정 (편집 중 변경 불가 — server 측 immutable 필드 정합).
-//   - 본문 + content_hash 는 서버에서 강제 재조회 (목록 응답에는 본문 미포함).
-function EditorModalCD({ seed, onClose, onUpdate }) {
-	const { Icon } = window.UI;
-	// 편집 가능 필드 — title · htmlBody (server 측 mutable). doc_type 컬럼 DROP → 편집 필드 제거.
-	const [title, setTitle] = useStateCD(seed?.title || "");
-	const [htmlBody, setHtmlBody] = useStateCD("");
-	// 표시 전용 (immutable) — seed 에서 한 번 캡처 → render 만, 변경 없음.
-	const author = seed?.author || "user";
-	const [busy, setBusy] = useStateCD(false);
-	const [seedFetchState, setSeedFetchState] = useStateCD({ status: "loading" });
-
-	// 본문 + content_hash 를 동기화 위해 서버에서 한 번 더 가져옴 (목록 응답에는 본문이 없음).
-	//   · format query 생략 → 서버 default resolution (rowFormat 자동 감지).
-	useEffectCD(() => {
-		if (!seed?.id) return;
-		const ctrl = new AbortController();
-		fetchJsonCD(`/api/clauded-docs/${encodeURIComponent(seed.id)}`, ctrl.signal)
-			.then((data) => {
-				setHtmlBody(data.body);
-				setSeedFetchState({ status: "ready", expectedHash: data.content_hash });
-			})
-			.catch((err) =>
-				setSeedFetchState({
-					status: "error",
-					error: err?.message || String(err),
-				}),
-			);
-		return () => ctrl.abort();
-	}, [seed?.id]);
-
-	// ESC 닫기.
-	useEffectCD(() => {
-		const onKey = (e) => {
-			if (e.key === "Escape") onClose();
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [onClose]);
-
-	const canSubmit =
-		title.trim() !== "" &&
-		htmlBody.trim() !== "" &&
-		author.trim() !== "" &&
-		!busy &&
-		seedFetchState.status === "ready";
-
-	const handleSubmit = useCallbackCD(
-		async (e) => {
-			e.preventDefault();
-			if (!canSubmit) return;
-			setBusy(true);
-			const ok = await onUpdate(seed.id, {
-				html_body: htmlBody,
-				expected_hash: seedFetchState.expectedHash,
-				title: title.trim(),
-			});
-			if (!ok) setBusy(false);
-		},
-		[canSubmit, seed?.id, title, htmlBody, seedFetchState, onUpdate],
-	);
-
-	return (
-		<div className="modal-backdrop" onClick={onClose}>
-			<form
-				className="modal"
-				onClick={(e) => e.stopPropagation()}
-				onSubmit={handleSubmit}
-				style={{
-					width: "min(820px, 96vw)",
-					maxWidth: "min(820px, 96vw)",
-					maxHeight: "92vh",
-				}}
-			>
-				<div className="modal-head">
-					<div className="font-semibold fs-title">
-						{`Edit #${seed?.id ?? ""}`}
-					</div>
-					<button
-						type="button"
-						className="btn ghost sm"
-						onClick={onClose}
-						aria-label="Close"
-					>
-						<Icon name="x" size={14} />
-					</button>
-				</div>
-				<div className="modal-body">
-					{seedFetchState.status === "loading" && (
-						<window.UI.LoadingPlaceholder label="the current body" className="mb-block" />
-					)}
-					{seedFetchState.status === "error" && (
-						<ErrorBannerCD
-							title="Couldn't load the current body"
-							detail={seedFetchState.error}
-							className="mb-block"
-						/>
-					)}
-					<div
-						className="grid gap-block"
-						style={{ gridTemplateColumns: "1fr 140px" }}
-					>
-						<label className="flex flex-col gap-label">
-							<span
-								className="field-label"
-							>
-								Title
-							</span>
-							<input
-								type="text"
-								className="field"
-								value={title}
-								onChange={(e) => setTitle(e.target.value)}
-								required
-								maxLength={500}
-								aria-label="Document title"
-							/>
-						</label>
-						<label className="flex flex-col gap-label">
-							<span
-								className="field-label"
-							>
-								Author
-							</span>
-							{/* 편집 모드 — 작성자 immutable (감사 추적 보존). */}
-							<input
-								type="text"
-								className="field"
-								value={author}
-								disabled
-								required
-								maxLength={64}
-								aria-label="Author"
-							/>
-						</label>
-					</div>
-					<label className="flex flex-col gap-label mt-block">
-						<span
-							className="field-label"
-						>
-							HTML body
-						</span>
-						<textarea
-							className="field field--mono doc-editor-textarea"
-							value={htmlBody}
-							onChange={(e) => setHtmlBody(e.target.value)}
-							required
-							spellCheck={false}
-							aria-label="HTML body"
-						/>
-					</label>
-				</div>
-				<div className="modal-foot">
-					<button
-						type="button"
-						className="btn ghost sm"
-						onClick={onClose}
-						disabled={busy}
-					>
-						Cancel
-					</button>
-					<button
-						type="submit"
-						className="btn primary sm"
-						disabled={!canSubmit}
-					>
-						{busy ? "Saving…" : "Save"}
-					</button>
-				</div>
-			</form>
-		</div>
-	);
-}
-
-function ErrorBannerCD({ title, detail, onRetry, className }) {
+function ErrorBannerCD({ title, detail, onRetry }) {
 	const { AlertCard, Icon } = window.UI;
 	const retry = onRetry && (
 		<button type="button" className="btn sm" onClick={onRetry}>
@@ -3150,7 +2917,7 @@ function ErrorBannerCD({ title, detail, onRetry, className }) {
 			Retry
 		</button>
 	);
-	return <AlertCard tone="crit" surface="inset" className={className} title={title} body={detail} actions={retry || undefined} />;
+	return <AlertCard tone="crit" surface="inset" title={title} body={detail} actions={retry || undefined} />;
 }
 
 // asOf advances on successful list reads only · the region carries busy and failed → stamp never reads Fresh mid-read
@@ -3398,7 +3165,7 @@ function parseSnippetCD(snippet) {
 	let key = 0;
 	for (const m of matches) {
 		if (m.index > cursor) out.push(text.slice(cursor, m.index));
-		out.push(<mark key={`m${key++}`}>{m[1]}</mark>);
+		out.push(<mark key={`m${key++}`} className="font-medium">{m[1]}</mark>);
 		cursor = m.index + m[0].length;
 	}
 	if (cursor < text.length) out.push(text.slice(cursor));

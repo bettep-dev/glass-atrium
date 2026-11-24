@@ -1066,6 +1066,9 @@ test("search mode: the snippet line and the Title header label start at the titl
 
 test("search mode: entering and leaving it moves neither the focused search field nor the Show and Audience triggers", async () => {
   // a search response carries no group counts → this pins that the Show trigger keeps its width, and the note lands after the triggers
+  // one open document → list mode has a count to print
+  const title = makeTitle("modepin-listed", 0);
+  const doc = await postCreate({ title, author: "load-more-tester", html_body: makeHtmlBody(title) });
   const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page: Page = await context.newPage();
   try {
@@ -1082,8 +1085,9 @@ test("search mode: entering and leaving it moves neither the focused search fiel
     });
     const listed = await readBoxes();
 
+    // a query no document matches → 0 matched, which the caption never prints
     await clickAndWaitForListResponse(page, () => search.fill(`modepin${randomUUID().slice(0, 8)}`), (url) => url.includes("/search?"));
-    await count.filter({ hasText: /matched|shown/ }).waitFor();
+    await count.waitFor({ state: "detached" });
     const searching = await readBoxes();
 
     await clickAndWaitForListResponse(page, () => search.fill(""), (url) => url.includes("/groups?"));
@@ -1100,6 +1104,7 @@ test("search mode: entering and leaving it moves neither the focused search fiel
     }
   } finally {
     await context.close();
+    await deleteDoc(doc.id);
   }
 });
 
@@ -1137,6 +1142,57 @@ test("list rows: a row with a lineage, a stage actor or both is one row-height l
     }
   } finally {
     for (const id of seeded) await deleteDoc(id);
+  }
+});
+
+// the last-opened row stays marked once the viewer closes → "where was I" survives the full-screen viewer
+test("list rows: the row last opened keeps its viewer fill, 600 title and aria-current after the viewer closes, until another row opens", async () => {
+  const ids = await seedManyDocs(2, "opened");
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const first = await revealRowByTitle(page, `${SUITE_MARKER}-opened-000`);
+      const second = await revealRowByTitle(page, `${SUITE_MARKER}-opened-001`);
+      // the hover fill fades out → read once the row's transitions settle
+      const readMark = (row: Locator) => row.evaluate(async (tr) => {
+        await Promise.all(tr.getAnimations().map((animation) => animation.finished));
+        const title = tr.querySelector(".doc-title-text");
+        return {
+          current: tr.getAttribute("aria-current"),
+          fill: getComputedStyle(tr).backgroundColor,
+          weight: title ? getComputedStyle(title).fontWeight : "",
+        };
+      });
+      const viewerFill = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.background = "var(--tint-row-1)";
+        document.body.append(probe);
+        const fill = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return fill;
+      });
+
+      await first.locator(".doc-title-text").click();
+      await page.getByRole("button", { name: "Close viewer" }).click();
+      await page.getByRole("button", { name: "Close viewer" }).waitFor({ state: "detached" });
+      await page.mouse.move(0, 0);
+      assert.deepEqual(await readMark(first), { current: "true", fill: viewerFill, weight: "600" }, "closed: the opened row keeps its mark");
+
+      await second.locator(".doc-title-text").click();
+      // the surface's Escape listener attaches once it mounts → a key pressed sooner closes nothing
+      await page.getByRole("button", { name: "Close viewer" }).waitFor();
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Close viewer" }).waitFor({ state: "detached" });
+      await page.mouse.move(0, 0);
+      assert.equal((await readMark(first)).current, null, "another row opening moves the mark off the first row");
+      assert.equal((await readMark(second)).current, "true", "the row opened next carries the mark");
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
   }
 });
 

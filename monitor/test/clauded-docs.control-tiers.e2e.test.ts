@@ -112,17 +112,40 @@ const setCardWidth = (width: number) => page.$eval("#frame", (el, w) => { (el as
 const centreOf = (box: Box) => (box.top + box.bottom) / 2;
 
 describe("the Documents list toolbar is one control row", () => {
-  test("at a width that holds the controls on one line, they centre on the row's first 48 band and the count takes the line below", async () => {
+  test("at a width that holds the controls on one line, they and the count centre on the row's first 48 band, the count ending the row", async () => {
     await setCardWidth(1300);
     const row = await readBox(TOOLBAR);
-    const { controlCentres, metaTop } = await page.$eval(TOOLBAR, (el) => ({
+    const { controlCentres, meta, contentRight } = await page.$eval(TOOLBAR, (el) => ({
       controlCentres: [...el.querySelector(".filter-bar")!.children].map((child) => { const r = child.getBoundingClientRect(); return (r.top + r.bottom) / 2; }),
-      metaTop: el.querySelector(".doc-list-meta")!.getBoundingClientRect().top,
+      meta: el.querySelector(".doc-list-meta")!.getBoundingClientRect().toJSON() as DOMRect,
+      contentRight: el.getBoundingClientRect().right - parseFloat(getComputedStyle(el).paddingRight),
     }));
     const bandCentre = row.top + 48 / 2;
     assert.ok(controlCentres.length >= 4, `${controlCentres.length} bar items`);
-    for (const [index, centre] of controlCentres.entries()) assert.ok(Math.abs(centre - bandCentre) <= 0.5, `item ${index} centre ${centre} vs band centre ${bandCentre}`);
-    assert.equal(metaTop - row.top, 48, "the count line starts one row gap below the band's 32 line");
+    for (const [index, centre] of [...controlCentres, centreOf(meta as Box)].entries()) assert.ok(Math.abs(centre - bandCentre) <= 0.5, `item ${index} centre ${centre} vs band centre ${bandCentre}`);
+    assert.ok(Math.abs(meta.right - contentRight) <= 0.5, `the count ends at ${meta.right}, the row content at ${contentRight}`);
+  });
+
+  // the value slot reserves its widest option → the chosen value starts at the slot's start, one label gap after the axis
+  test("each filter trigger sets its value one label gap after its axis, in a slot as wide as its widest option", async () => {
+    await setCardWidth(1300);
+    const readings = await page.$$eval(`${TOOLBAR} .filter-trigger`, (triggers) => triggers.map((trigger) => {
+      const slot = trigger.querySelector(".doc-trigger-value")!;
+      const shown = [...slot.children].find((child) => !child.classList.contains("is-idle"))!;
+      const text = document.createRange();
+      text.selectNodeContents(shown);
+      return {
+        gap: text.getBoundingClientRect().left - trigger.querySelector(".filter-trigger-axis")!.getBoundingClientRect().right,
+        slotWidth: slot.getBoundingClientRect().width,
+        widestOption: Math.max(...[...slot.children].map((child) => { const range = document.createRange(); range.selectNodeContents(child); return range.getBoundingClientRect().width; })),
+      };
+    }));
+    const labelGap = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap-label-inline")));
+    assert.equal(readings.length, 2, "Show and Audience");
+    for (const [index, reading] of readings.entries()) {
+      assert.ok(Math.abs(reading.gap - labelGap) <= 0.5, `trigger ${index}: value starts ${reading.gap}px after its axis, against the ${labelGap} label gap`);
+      assert.ok(Math.abs(reading.slotWidth - reading.widestOption) <= 0.5, `trigger ${index}: slot ${reading.slotWidth} vs widest option ${reading.widestOption}`);
+    }
   });
 
   for (const width of CARD_WIDTHS) {
@@ -188,7 +211,7 @@ const FILTER_STATES = [
 // the 1440 and 1180 viewports' cards, where the audit saw the count change lines, then the band above
 const STATE_WIDTHS = [1170, 1074, ...CARD_WIDTHS] as const;
 
-describe("no Show, Audience or search state moves the Documents search, a trigger, the reset slot or the count line", () => {
+describe("no Show, Audience or search state moves the Documents search, a trigger or the reset slot", () => {
   let statePage: Page;
 
   before(async () => {
@@ -234,7 +257,6 @@ describe("no Show, Audience or search state moves the Documents search, a trigge
             const r = el.getBoundingClientRect();
             return { name, x: r.left - origin.left, y: r.top - origin.top, width: r.width, height: r.height };
           }),
-          countLine: row.querySelector("[aria-live]")!.getBoundingClientRect().top - origin.top,
         };
       }), TOOLBAR);
       const [reference, ...others] = readings;
@@ -247,7 +269,6 @@ describe("no Show, Audience or search state moves the Documents search, a trigge
             assert.ok(Math.abs(item[key] - expected) <= 0.5, `${state}: ${item.name} ${key} ${item[key]} vs ${expected}`);
           }
         }
-        assert.ok(Math.abs(reading.countLine - reference.countLine) <= 0.5, `${state}: count line at ${reading.countLine} vs ${reference.countLine}`);
       }
     });
   }

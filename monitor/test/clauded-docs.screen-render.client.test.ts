@@ -219,20 +219,33 @@ test("the Tags column states the page's majority format once and prints only exc
   assert.deepEqual(chips({ audience: "exposed", format: "md", commonFormat: null }), ["md"]);
 });
 
-// stacked rows prefix a meta cell with its column label → a Tags cell with no exception chip prints no bare "Tags"
-test("a stacked Tags cell prints its column label only when it carries a chip", async () => {
+// a Tags cell is never blank → no chip of its own prints the faint None (design.md §12.6 Cells), so the stacked label always has a value
+const TAGS_CELL_ROWS = [
+  { name: "no exception", props: { audience: "exposed", format: "md", commonFormat: "md" }, isTagged: false },
+  { name: "audience shared by every row", props: { audience: "hidden", format: "md", commonFormat: "md", commonAudience: "hidden" }, isTagged: false },
+  { name: "format exception", props: { audience: "exposed", format: "html", commonFormat: "md" }, isTagged: true },
+  { name: "audience exception", props: { audience: "hidden", format: "md", commonFormat: "md" }, isTagged: true },
+];
+
+test("a Tags cell prints the faint None exactly when it carries no chip", async () => {
+  const screen = await loadDocsScreen();
+  const DocTagsCell = screen.DocTagsCellCD as Component;
+  for (const row of TAGS_CELL_ROWS) {
+    const tree = renderScreen(DocTagsCell(row.props));
+    const chipCount = findNodes(tree, (n) => n.props.atom === "Badge").length;
+    const absentKinds = findNodes(tree, isAtom("AbsentValue")).map((n) => n.props.kind);
+    assert.deepEqual({ hasChip: chipCount > 0, absentKinds }, { hasChip: row.isTagged, absentKinds: row.isTagged ? [] : ["none"] }, row.name);
+  }
+});
+
+test("a stacked Tags cell always prints its column label beside its chips or its None", async () => {
   const screen = await loadDocsScreen();
   const DocTagsCell = screen.DocTagsCellCD as Component;
   const view = { isStacked: true, columnCount: 7 };
-  const labelsOf = (props: Record<string, unknown>) =>
-    findNodes(renderScreen(DocTagsCell({ view, ...props })), (n) => String(n.props.className).includes("tbl-cell-label")).map((n) => collectText(n));
-
-  const rows = [
-    { name: "no exception → no label", props: { audience: "exposed", format: "md", commonFormat: "md" }, labels: [] },
-    { name: "format exception → labelled", props: { audience: "exposed", format: "html", commonFormat: "md" }, labels: ["Tags"] },
-    { name: "audience exception → labelled", props: { audience: "hidden", format: "md", commonFormat: "md" }, labels: ["Tags"] },
-  ];
-  for (const row of rows) assert.deepEqual(labelsOf(row.props), row.labels, row.name);
+  for (const row of TAGS_CELL_ROWS) {
+    const labels = findNodes(renderScreen(DocTagsCell({ view, ...row.props })), (n) => String(n.props.className).includes("tbl-cell-label")).map((n) => collectText(n));
+    assert.deepEqual(labels, ["Tags"], row.name);
+  }
 });
 
 function listCardProps(onSelect: (id: number) => void): Record<string, unknown> {
@@ -647,14 +660,29 @@ test("stage and audience filters are two filter triggers on one labelled bar, ea
   assert.deepEqual(picked, ["done"]);
 });
 
-test("the Show menu counts each stage it has a count for, and the caption counts documents, naming revisions as their own unit", async () => {
+// a count of 0 repeats the empty state's own words → the caption shows only a count above 0
+test("the list caption renders exactly when its count is above 0, in list and search mode", async () => {
+  const screen = await loadDocsScreen();
+  const rows = [
+    { name: "list, 0 documents", props: { rows: [], total: 0, docTotal: 0, visibleCount: 0 }, isShown: false },
+    { name: "list, 2 documents", props: {}, isShown: true },
+    { name: "search, 0 matched", props: { rows: [], isSearchMode: true, total: 0, docTotal: null, visibleCount: 0 }, isShown: false },
+    { name: "search, 2 matched", props: { isSearchMode: true, docTotal: null }, isShown: true },
+  ];
+  for (const row of rows) {
+    const counts = findNodes(renderListCard(screen, row.props), (n) => String(n.props?.className ?? "").includes("doc-list-count"));
+    assert.equal(counts.length, row.isShown ? 1 : 0, row.name);
+  }
+});
+
+test("the Show menu counts each stage it has a count for, and the caption counts documents, naming versions as their own unit", async () => {
   const screen = await loadDocsScreen();
   const optionTexts = (tree: ReturnType<typeof renderScreen>) =>
     Array.from(findTriggers(tree)[0].props.options as Array<{ label: unknown }>, (o) => collectText(renderScreen(o.label as never)).replace(/\s+/g, " ").trim()); // Array.from → a test-realm array for strict deep-equal
 
   const counted = renderListCard(screen, { total: 3, docTotal: 5, groupCounts: { total: 3, open: 2, done: 1 } });
   assert.deepEqual(optionTexts(counted), ["Open 2", "Done 1", "All 3"]);
-  assert.match(collectText(counted), /\b3 documents · 5 with revisions\b/);
+  assert.match(collectText(counted), /\b3 documents · 5 versions\b/);
   assert.doesNotMatch(collectText(counted), /\bgroups\b/, "no internal grouping unit in the caption");
 
   assert.deepEqual(optionTexts(renderListCard(screen, {})), ["Open", "Done", "All"], "a count the payload lacks renders as nothing, never 0");
@@ -1040,12 +1068,14 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
       render: (screen: Record<string, unknown>) => renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true })),
       pick: (n: RenderedNode) => n.props.role === "toolbar",
       rule: ".doc-group-action-bar",
+      roleClass: "card-bar",
     },
     {
       name: "the whole-word search note",
       render: (screen: Record<string, unknown>) => renderListCard(screen, { isSearchMode: true, state: { status: "ready", data: { bigmEnabled: false } } }),
       pick: (n: RenderedNode) => n.props.role === "note" && /Whole-word/.test(collectText(n)),
       rule: null,
+      roleClass: "px-card-pad",
     },
   ];
   for (const row of nodes) {
@@ -1053,7 +1083,7 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
       const screen = await loadDocsScreen();
       const [container] = findNodes(row.render(screen), row.pick);
       assert.ok(container, `${row.name} renders`);
-      assert.match(String(container.props.className ?? ""), /(^|\s)px-card-pad(\s|$)/, row.name);
+      assert.match(String(container.props.className ?? ""), new RegExp(`(^|\\s)${row.roleClass}(\\s|$)`), row.name);
       const classes = findNodes(container, () => true).map((n) => String(n.props?.className ?? ""));
       assert.deepEqual(classes.filter((c) => NUMERIC_SPACING_CLASS.test(c)), [], row.name);
       if (row.rule) assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), /(^|[;\s])(padding|gap)\s*:/, row.rule);
@@ -1118,13 +1148,13 @@ describe("a ledger head count and a group toggle space their content on the labe
 describe("the filter bar and its count line take their layout and tone from utilities, not the screen style block", () => {
   const rows = [
     { name: "the count line", find: (n: RenderedNode) => hasClass(n, "doc-list-meta"), hook: ".doc-list-meta",
-      utilities: ["basis-full", "flex", "flex-wrap", "justify-end", "items-center", "gap-x-list"] },
+      utilities: ["ml-auto", "flex", "flex-wrap", "justify-end", "items-center", "gap-x-list"] },
     { name: "the document count", find: (n: RenderedNode) => hasClass(n, "doc-list-count"), hook: ".doc-list-count",
       utilities: ["whitespace-nowrap", "text-dim", "fs-meta", "tabular-nums"] },
     { name: "the search note", find: (n: RenderedNode) => hasClass(n, "doc-show-note"), hook: ".doc-show-note",
       utilities: ["text-dim", "whitespace-nowrap", "fs-meta"] },
     { name: "the filter bar", find: (n: RenderedNode) => n.props?.atom === "FilterBar", hook: ".doc-filter-bar",
-      utilities: ["flex-auto", "min-w-0"] },
+      utilities: ["min-w-0"] },
   ];
   const hasClass = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
   for (const row of rows) {
@@ -1235,14 +1265,24 @@ describe("ledger meta cells, title lines, the search snippet and the Show counts
   }
 });
 
-// a section head is a house body header → a declaration its rule restates drifts from the table the moment base.css moves
-describe("a stage section head's rule restates nothing the house table header sets", () => {
-  for (const property of ["height", "text-align", "font-size", "color", "background", "border-bottom"]) {
-    test(`it sets no ${property}`, async () => {
-      const screen = await loadDocsScreen();
-      assert.doesNotMatch(cssRuleBody(getScreenCss(screen), "tr.doc-stage-section > th"), new RegExp(`(^|[;\\s])${property}\\s*:`));
-    });
-  }
+// a section head is the shared group-header cell → its face is the table's, so the screen keeps no rule for it
+test("a stage section head is a group-header cell and the screen keeps no rule for it", async () => {
+  const screen = await loadDocsScreen();
+  const [section] = findNodes(renderListCard(screen, {}), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-stage-section"));
+  assert.ok(section, "a stage section renders");
+  assert.deepEqual(findNodes(section, (n) => n.props?.kind === "group-header").length, 1);
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-stage-section\s*>\s*th/);
+});
+
+// a title row lays out on the house inline label gap → the lead slot and the title part by one role step
+test("every ledger title row, its snippet line and the Title header part the lead slot from the title on the label-inline gap", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const rows = findNodes(renderListCard(screen, { isSearchMode: true, rows: [row] }), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-title-row"));
+  assert.equal(rows.length, 3, "header, title line and snippet line");
+  for (const node of rows) assert.match(String(node.props.className), /(^|\s)gap-label-inline(\s|$)/);
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-title-row"), /(^|[;\s])gap\s*:/);
 });
 
 // a role utility the Tailwind config has no key for emits no CSS → the node silently keeps its UA spacing
@@ -1269,6 +1309,29 @@ test("every spacing utility on the ledger names a key its Tailwind config sectio
     .filter(([, prefix, key]) => !isMarginAuto(prefix, key) && !(key in keys[sectionOf[prefix]]))
     .map(([cls]) => cls);
   assert.deepEqual([...new Set(unknown)], []);
+});
+
+// a highlight is a selection fill with weight as its non-colour cue → no accent, no inline padding
+test("a search snippet's highlight takes font-medium on the select tint, never the accent", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const marks = findNodes(renderListCard(screen, { isSearchMode: true, rows: [row] }), (n) => n.type === "mark");
+  assert.deepEqual(marks.map((n) => [collectText(n), n.props.className]), [["auth", "font-medium"]]);
+  const rule = cssRuleBody(getScreenCss(screen), ".doc-snippet mark");
+  assert.match(rule, /background:\s*var\(--tint-select\)/);
+  assert.doesNotMatch(rule, /--accent|padding/);
+});
+
+// an older revision quiets on the faint tone class, never on opacity
+test("a loaded previous revision reads in text-faint and the screen sets no opacity on it", async () => {
+  const react = stubbedStateReact({ status: "ready", data: { id: 7, title: "Plan v1", doc_status: "done", format: "md", created_at: "2026-09-01T00:00:00Z" }, error: null });
+  const screen = await loadDocsScreen(react);
+  const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
+  const [panel] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-revision-predecessor"));
+  assert.ok(panel, "the previous revision renders");
+  assert.match(String(panel.props.className), /(^|\s)text-faint(\s|$)/);
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-revision-predecessor[\s,.:{]/);
 });
 
 test("a search snippet sits under its title on the stack role, with no number in its class or its rule", async () => {
@@ -1416,17 +1479,6 @@ test("the opened row's title alone takes the heavier weight, beside its aria-cur
   assert.deepEqual(titleWeights, [{ isOpened: false, isHeavy: false }, { isOpened: true, isHeavy: true }]);
 });
 
-test("the editor's title, author and body boxes are the shared field controls", async () => {
-  const screen = await loadDocsScreen();
-  const tree = renderScreen((screen.EditorModalCD as Component)({ seed: { id: 9, title: "Doc 9", author: "user" }, onClose: noop, onUpdate: noop }));
-  const fields = findNodes(tree, (n) => n.type === "input" || n.type === "textarea").map((n) => ({ type: n.type, className: n.props.className }));
-  assert.deepEqual(fields, [
-    { type: "input", className: "field" },
-    { type: "input", className: "field" },
-    { type: "textarea", className: "field field--mono doc-editor-textarea" },
-  ]);
-});
-
 describe("a viewer with no rendered document shows its state in place of the body", () => {
   const rows = [
     { name: "idle", state: { status: "idle" }, shown: isAtom("EmptyState") },
@@ -1563,6 +1615,24 @@ describe("a tone in the Documents screen rides a leading glyph while its words s
       assert.doesNotMatch(getScreenCss(screen), /\.doc-inline-alert[\s,.:{]/, "the alert line has no screen rule");
     });
   }
+});
+
+// a member nests by one empty lead slot in its title row → the cell keeps the table's padding in both table modes
+test("a group member's title row opens on an indent slot before its lead, and no rule pads its title cell", async () => {
+  const member = { id: 21, title: "Member", doc_status: "open", format: "md", audience: "exposed", author: "a", created_at: "2026-09-01T00:00:00Z" };
+  const screen = await loadDocsScreen(stubbedStateReact({ status: "ready", data: [member, { ...member, id: 22 }], error: null }));
+  const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)({
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  })));
+  const titleRows = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-title-row"));
+  assert.equal(titleRows.length, 2);
+  for (const titleRow of titleRows) {
+    const slots = (titleRow.children as RenderedNode[]).filter((c) => typeof c === "object" && c !== null).map((c) => String(c.props?.className ?? ""));
+    assert.deepEqual(slots.slice(0, 2), ["doc-title-lead is-spacer is-indent", "doc-title-lead"]);
+  }
+  assert.doesNotMatch(getScreenCss(screen), /td\.title-cell\s*\{[^}]*padding/);
 });
 
 // table cells are atom-owned padding (plan S3 role tokens) → a member state line restates no inset and takes its colour from a class
