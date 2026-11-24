@@ -1040,12 +1040,14 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
       render: (screen: Record<string, unknown>) => renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true })),
       pick: (n: RenderedNode) => n.props.role === "toolbar",
       rule: ".doc-group-action-bar",
+      roleClass: "card-bar",
     },
     {
       name: "the whole-word search note",
       render: (screen: Record<string, unknown>) => renderListCard(screen, { isSearchMode: true, state: { status: "ready", data: { bigmEnabled: false } } }),
       pick: (n: RenderedNode) => n.props.role === "note" && /Whole-word/.test(collectText(n)),
       rule: null,
+      roleClass: "px-card-pad",
     },
   ];
   for (const row of nodes) {
@@ -1053,7 +1055,7 @@ describe("the bulk bar and the whole-word note space on role keys only", () => {
       const screen = await loadDocsScreen();
       const [container] = findNodes(row.render(screen), row.pick);
       assert.ok(container, `${row.name} renders`);
-      assert.match(String(container.props.className ?? ""), /(^|\s)px-card-pad(\s|$)/, row.name);
+      assert.match(String(container.props.className ?? ""), new RegExp(`(^|\\s)${row.roleClass}(\\s|$)`), row.name);
       const classes = findNodes(container, () => true).map((n) => String(n.props?.className ?? ""));
       assert.deepEqual(classes.filter((c) => NUMERIC_SPACING_CLASS.test(c)), [], row.name);
       if (row.rule) assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), /(^|[;\s])(padding|gap)\s*:/, row.rule);
@@ -1279,6 +1281,29 @@ test("every spacing utility on the ledger names a key its Tailwind config sectio
     .filter(([, prefix, key]) => !isMarginAuto(prefix, key) && !(key in keys[sectionOf[prefix]]))
     .map(([cls]) => cls);
   assert.deepEqual([...new Set(unknown)], []);
+});
+
+// a highlight is a selection fill with weight as its non-colour cue → no accent, no inline padding
+test("a search snippet's highlight takes font-medium on the select tint, never the accent", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const marks = findNodes(renderListCard(screen, { isSearchMode: true, rows: [row] }), (n) => n.type === "mark");
+  assert.deepEqual(marks.map((n) => [collectText(n), n.props.className]), [["auth", "font-medium"]]);
+  const rule = cssRuleBody(getScreenCss(screen), ".doc-snippet mark");
+  assert.match(rule, /background:\s*var\(--tint-select\)/);
+  assert.doesNotMatch(rule, /--accent|padding/);
+});
+
+// an older revision quiets on the faint tone class, never on opacity
+test("a loaded previous revision reads in text-faint and the screen sets no opacity on it", async () => {
+  const react = stubbedStateReact({ status: "ready", data: { id: 7, title: "Plan v1", doc_status: "done", format: "md", created_at: "2026-09-01T00:00:00Z" }, error: null });
+  const screen = await loadDocsScreen(react);
+  const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
+  const [panel] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-revision-predecessor"));
+  assert.ok(panel, "the previous revision renders");
+  assert.match(String(panel.props.className), /(^|\s)text-faint(\s|$)/);
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-revision-predecessor[\s,.:{]/);
 });
 
 test("a search snippet sits under its title on the stack role, with no number in its class or its rule", async () => {

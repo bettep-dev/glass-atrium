@@ -897,15 +897,15 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-title-row { display: flex; align-items: center; }
         /* spacer slot on the snippet line and the Title header → the title x without the title line's height floor */
         .doc-title-lead.is-spacer { min-height: 0; }
-        .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
+        .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: var(--lh-row); }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
            문자열 전체 폭으로 키워 그 컬럼이 제목 폭을 빼앗는다. */
         .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; }
         /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다.
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
-           124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
-        .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
+           상한 = Tags floor − interior padding. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
+        .doc-tags-cell > span { max-width: calc(${LEDGER_CD.FLOOR.tags}px - 2 * var(--space-3)); overflow: hidden; }
         /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
         /* ink row-state ladder (design.md §7.5) — viewer --tint-row-1 < checked -2 < both -3; floors on every step §4.1 · non-colour cues in the markup: the viewer's semibold title, the checked checkbox */
         .tbl tbody tr.doc-row.is-selected { background: var(--tint-row-1); }
@@ -917,7 +917,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* trailing title-line pills never shrink → the title text ellipsizes first */
         button.doc-lineage { flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
         .doc-revision-count { flex: none; }
-        .doc-snippet mark { background: rgb(var(--accent) / 0.2); color: rgb(var(--ink)); border-radius: 2px; }
+        /* highlight = a selection fill · weight is the non-colour cue (markup font-medium) */
+        .doc-snippet mark { background: var(--tint-select); color: rgb(var(--ink)); border-radius: var(--radius-inline); }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
            --doc-canvas — 문서 자체 bg-zinc-950 과 같은 cool 캔버스, warm --surface 아님 → swap 금지.
@@ -936,22 +937,19 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation .mermaid.doc-diagram-body { width: 100%; }
         .doc-body-isolation .mermaid.doc-diagram-wide { width: min(100cqi - 4rem, 1600px); margin-inline: calc(50% - min(50cqi - 2rem, 800px)); }
         .doc-body-isolation .mermaid.doc-diagram-full { width: 100cqi; margin-inline: calc(50% - 50cqi); }
-        /* 노드 모서리 — 맵 캔버스와 같은 r=8(architecture.jsx 의 .arch-mermaid-canvas 규칙).
+        /* 노드 모서리 — --radius-tile(맵 캔버스 architecture.jsx 의 .arch-mermaid-canvas 규칙과 같은 8).
            mermaid 는 채택 타입 대부분에서 rx 를 아예 찍지 않아(산출 auto) 문서 노드만 각졌음.
            CSS 기하 속성이라 표현 속성을 찍는 타입에서도 이김 — 맵이 같은 이유로 쓰는 기제. */
         .doc-body-isolation pre.mermaid svg :is(.node, .cluster) rect,
-        .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
+        .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: var(--radius-tile); ry: var(--radius-tile); }
         .doc-meta-row { grid-template-columns: 88px 1fr; }
         /* .doc-toast → shared SoT in base.css */
         /* the HTML body box — a .field grown to an editing area */
         .doc-editor-textarea { min-height: 320px; max-height: 60vh; resize: vertical; }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
-        /* version-history — predecessor 전용 dim 룰.
-           current=강조 / predecessor=.acked(opacity 0.5) 시각 구분. */
-        .doc-revision-predecessor.acked { opacity: 0.5; }
         /* code viewer (yaml/json/txt) — --doc-code 면 + --doc-line 테두리 + --doc-ink 글자.
            github-dark.min.css 가 .hljs span.hljs-* 토큰 색상 부여 — 본 컨테이너는 chrome (배경/테두리/패딩/폰트) 만 정의. */
-        .doc-code-pre { margin: 16px 0; padding: 16px; background: rgb(var(--doc-code)); border: 1px solid rgb(var(--doc-line)); border-radius: 6px; overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 13px; line-height: 1.6; color: rgb(var(--doc-ink)); }
+        .doc-code-pre { margin: var(--space-4) 0; padding: var(--space-4); background: rgb(var(--doc-code)); border: 1px solid rgb(var(--doc-line)); border-radius: var(--radius-control); overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: var(--fs-meta); line-height: 1.6; color: rgb(var(--doc-ink)); }
         .doc-code-pre code { background: transparent; padding: 0; font-family: inherit; font-size: inherit; line-height: inherit; display: block; white-space: pre; }
         /* 전체화면 reading 면 — DetailSurface variant='fullscreen' bare panel 로 마운트 (overlay/backdrop/focus-trap/scroll-lock/Esc 닫기/z 계약은 공용 .detail-overlay).
            .detail-fullscreen 스코프로 specificity(0,2,0) 승격 → .detail-fullscreen .detail-panel(0,2,0) 의 max-width 980 / border / fade 애니메이션을 source-order 후순위로 제압, 불투명 zinc full-bleed 면 보존.
@@ -1012,17 +1010,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* checked and both — the next two steps of the ink ladder above (design.md §7.5) */
         .tbl tbody tr.doc-row.is-multi-selected { background: var(--tint-row-2); }
         .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: var(--tint-row-3); }
-        /* group action bar — filter bar 행 아래 sticky · zinc-900 코드블록 톤.
-           height 고정 (44px min) 사유 — hint(텍스트 1줄) vs active(btn.sm 툴바) 두 모드의
-           natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing
-           border-box + 수직 center 정렬로 양 모드 픽셀 동일. flex-wrap 제거 (좁은 폭에서 2줄
-           래핑이 다시 높이 변동 유발 → 단일행 유지 + 버튼이 reserved 높이 초과 차단). */
-        .doc-group-action-bar { box-sizing: border-box; min-height: 44px; background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; }
-        /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
-        .doc-group-action-bar .btn.sm { max-height: 30px; }
+        /* group action bar — the card-bar block (8 + control + 8) · one line, no wrap → its height never jumps on (de)select */
+        .doc-group-action-bar { background: rgb(var(--sunken)); border-top: 1px solid rgb(var(--line)); display: flex; align-items: center; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
         .doc-group-toggle { width: 100%; justify-content: center; cursor: pointer; background: transparent; border: none; color: rgb(var(--dim)); border-radius: var(--radius-control); }
-        .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
+        .doc-group-toggle:hover { background: rgb(var(--elev-2)); color: rgb(var(--ink)); }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
         /* member rows — one nesting step = the indent slot · its guide runs the cell's full height on the slot centre (abspos static x, centred by the slot's flex) */
         tr.doc-row.is-group-member td.title-cell { position: relative; }
@@ -1031,11 +1023,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
            drag handle ⠿ — leading slot 내 grab cursor + subtle hover. handle 만 grab (행 전체 draggable 이나 시각 hint 는 handle 한정). */
-        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-control); user-select: none; }
-        .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--line) / 0.5); }
+        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: var(--lh-row); color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-control); user-select: none; }
+        .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--elev-2)); }
         .doc-drag-handle:active { cursor: grabbing; }
-        /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
-        tr.doc-row.is-group-member.is-dragging { opacity: 0.5; box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.5); }
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
@@ -1044,8 +1034,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* a max-width caps the status's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
-        .doc-list-region { scroll-margin-top: 96px; border-radius: var(--radius-card); }
+        /* Retry's focus handoff scrolls the card up to reveal it → one page gap stays above it (no fixed top bar) */
+        .doc-list-region { scroll-margin-top: var(--gap-page); border-radius: var(--radius-card); }
         /* clip trims an outside ring → the card ring drawn inset */
         .doc-list-region:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
         /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
@@ -1793,7 +1783,7 @@ function GroupActionBarCD({
 	}
 	return (
 		<div
-			className="doc-group-action-bar px-card-pad gap-control"
+			className="doc-group-action-bar card-bar gap-control"
 			role="toolbar"
 			aria-label="Bulk group actions"
 		>
@@ -2046,7 +2036,7 @@ function GroupMembersRowsCD({
 			isSelectedViewer && "is-selected",
 			isSelectedMulti && "is-multi-selected",
 			isPending && "is-pending-delete",
-			isDragging && "is-dragging",
+			isDragging && "text-faint",
 			isStale && "is-stale",
 		]
 			.filter(Boolean)
@@ -2921,7 +2911,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 					</div>
 				)}
 				{predState.status === "ready" && predState.data && (
-					<div className="doc-revision-predecessor acked flex flex-col gap-stack">
+					<div className="doc-revision-predecessor text-faint flex flex-col gap-stack">
 						<div className="flex items-center gap-control flex-wrap">
 							<window.UI.MachineString className="fs-meta text-dim">
 								#{predState.data.id}
@@ -3391,7 +3381,7 @@ function parseSnippetCD(snippet) {
 	let key = 0;
 	for (const m of matches) {
 		if (m.index > cursor) out.push(text.slice(cursor, m.index));
-		out.push(<mark key={`m${key++}`}>{m[1]}</mark>);
+		out.push(<mark key={`m${key++}`} className="font-medium">{m[1]}</mark>);
 		cursor = m.index + m[0].length;
 	}
 	if (cursor < text.length) out.push(text.slice(cursor));
