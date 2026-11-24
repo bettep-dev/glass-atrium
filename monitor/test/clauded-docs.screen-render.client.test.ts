@@ -1614,8 +1614,10 @@ describe("a group member row draws its title and Created in the root row's face"
       const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps)));
       const [titleRow] = findNodes(tree, hasClass("doc-title-row"));
       const [ageCell] = findNodes(tree, (n) => n.type === "DocAgeCellCD");
+      // the age prop is getDocAgeCD's result object → its label is the drawn age
+      const age = ageCell?.props.age as { label: string } | undefined;
       assert.deepEqual(
-        { face: String(titleRow.props.className).split(/\s+/).filter((c) => c.startsWith("fs-")), age: ageCell?.props.age?.label, isStale: ageCell?.props.isStale },
+        { face: String(titleRow.props.className).split(/\s+/).filter((c) => c.startsWith("fs-")), age: age?.label, isStale: ageCell?.props.isStale },
         { face: ["fs-body"], age: "12d", isStale: row.isStale },
       );
     });
