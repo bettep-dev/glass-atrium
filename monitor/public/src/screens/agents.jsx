@@ -1073,8 +1073,8 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
         ) : breakage.count > 0 ? (
           <span className="inline-flex items-baseline justify-end gap-label-inline">
             <FailShareGlyph tone={failTone} label={getFailShareLabel('failed')}/>
-            <span className={failedCount > 0 ? '' : 'text-faint'}>{formatIntAg(failedCount)}</span>
-            {blockedCount > 0 && <span className="fs-meta text-dim">{formatIntAg(blockedCount)} blocked</span>}
+            <span>{formatIntAg(breakage.count)}</span>
+            {blockedCount > 0 && <span className="fs-meta text-faint">{formatIntAg(blockedCount)} blocked</span>}
           </span>
         ) : (
           <window.UI.AbsentValue kind="none"/>

@@ -955,6 +955,24 @@ test("the breakage count takes a crit glyph only once its share of the agent's o
   }
 });
 
+describe("the Failed or blocked cell reads the fail+blocked total, any blocked part as faint meta after it, the split in its title", () => {
+  const rows = [
+    { name: "failed and blocked runs", fail_count: 12, blocked_count: 38, total: "50", meta: ["38 blocked"] },
+    { name: "failed runs alone", fail_count: 3, blocked_count: 0, total: "3", meta: [] as string[] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen();
+      const failure = { total_breakages: row.fail_count + row.blocked_count, fail_count: row.fail_count, blocked_count: row.blocked_count, breakage_rate: 0.1 };
+      const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
+      const figures = collectText(cell).match(/\d+/g) ?? [];
+      assert.equal(figures[0], row.total, "the value is the total the head names");
+      assert.deepEqual(getFaintMetaTexts(cell), row.meta, "the blocked part reads as faint meta");
+      assert.match(String(cell?.props.title), new RegExp(`fail ${row.fail_count} \\+ blocked ${row.blocked_count}`), "the split rides the title");
+    });
+  }
+});
+
 test("a lifecycle row's orphan figure stays neutral, its warn or crit share carried by a glyph alone", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
@@ -1353,19 +1371,16 @@ test("the ledger carries Runs and No record as columns instead of a per-row expa
   rows.forEach((row, i) => assert.equal(collectText(cells[i]), row.noRecord, row.name));
 });
 
-test("a ledger row leads with its failed count and keeps blocked as an untoned secondary", async () => {
+test("a ledger row's blocked runs never raise the failure tone", async () => {
   const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
   // 29 blocked of 100 outcomes: a 30% breakage rate, but a failed share of 1% or none.
   const rows = [
-    { name: "one failed run", fail: 1, lead: /^1\b/ },
-    { name: "blocked runs only — the failed count still reads as a zero", fail: 0, lead: /^0\b/ },
+    { name: "one failed run", fail: 1 },
+    { name: "blocked runs only", fail: 0 },
   ];
   for (const row of rows) {
     const failure = { total_breakages: row.fail + 29, fail_count: row.fail, blocked_count: 29, breakage_rate: 0.3 };
     const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
-    const text = collectText(cell).trim();
-    assert.match(text, row.lead, `${row.name}: the failed count leads`);
-    assert.match(text, /29\s+blocked/, `${row.name}: blocked rides as the secondary`);
     const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? "")));
     assert.equal(tonedClasses.length, 0, `${row.name}: compliant halts do not raise the failure tone`);
   }
