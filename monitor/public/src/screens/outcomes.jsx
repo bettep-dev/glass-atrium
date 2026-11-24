@@ -121,7 +121,7 @@ function GlyphO({ name, size = 12, className = '' }) {
 
 // Pagination — 테이블 응답성 보존.
 const PAGE_LIMIT_DEFAULT = 50;
-// Needs-you rows shown before 'Show all' — a full page of them buries Routine below the fold.
+// Needs-you rows shown before 'Show N more' — a full page of them buries Routine below the fold.
 const NEEDS_YOU_PAGE_CAP = 10;
 
 // Sort options — the backend allowlist's wire format (no trigger → hash → URL conversion)
@@ -624,13 +624,9 @@ function ScreenOutcomes({ onNav }) {
   useEffectO(() => {
     if (isSearchReady) setPage((held) => getClampedPageO(held, totalMatched, PAGE_LIMIT_DEFAULT));
   }, [isSearchReady, totalMatched]);
-  // 미적재·실패 → null: 섹션은 페이지 분할로 되돌아가고 헤더가 'on this page' 로 범위를 밝힌다.
+  // not read or failed → null: Needs you falls back to the page's own split
   const ledgerNeedsYou = needsYouState.status === 'ready'
-    ? {
-      rows: needsYouState.data?.rows ?? [],
-      total: Number(needsYouState.data?.total) || 0,
-      windowLabel: /^\d+$/.test(String(filter.days)) ? `${filter.days}d` : 'all time',
-    }
+    ? { rows: needsYouState.data?.rows ?? [], total: Number(needsYouState.data?.total) || 0 }
     : null;
   const needsYouCap = isNeedsYouExpanded ? null : NEEDS_YOU_PAGE_CAP;
   // drawer Prev/Next + counter walk the grouped order the ledger draws, not the search order
@@ -2267,9 +2263,6 @@ function ResultTableCard({
   const { Card, Pagination } = window.UI;
   const { keywordInput = '', distinctAgents = [], includeAll = false, ...barHandlers } = filterControls;
 
-  // the drawn set (capped Needs-you + Routine), not the page's rows → same count as the section headings and the drawer's 'k of X shown'
-  const shownCount = getLedgerDisplayRowsO(buildLedgerSectionsO(rows, closure, needsYou, needsYouCap)).length;
-
   return (
     <div id={REGION_CARD_IDS.ledger}>
       {/* lifts the shared 70vh card-body cap → the Routine rows scroll with the page, not in a nested box */}
@@ -2278,7 +2271,7 @@ function ResultTableCard({
         isFlush
         title="Results"
         sub={state.status === 'ready'
-          ? `${formatIntO(totalMatched)} matched · ${formatIntO(shownCount)} shown`
+          ? `${formatIntO(totalMatched)} matched`
           : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
         bar={<ResultFilterBarO filter={filter} sort={sort} keywordInput={keywordInput} distinctAgents={distinctAgents}
           includeAll={includeAll} {...barHandlers} onSortChange={onSortChange} onReset={onResetFilter} />}
@@ -2363,11 +2356,10 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou, needsYouCap = null)
   const needsYouRows = needsYouCap == null ? allNeedsYouRows : allNeedsYouRows.slice(0, needsYouCap);
   const hiddenCount = allNeedsYouRows.length - needsYouRows.length;
   const needsYouTotal = windowNeedsYou ? windowNeedsYou.total : allNeedsYouRows.length;
-  // one row-count word across the page → each heading ends in the rows it shows, as the Results head and the drawer do
-  const needsYouScope = `Needs you · ${formatIntO(needsYouTotal)}${windowNeedsYou ? ` in ${windowNeedsYou.windowLabel}` : ''}`;
+  // shown of total → Needs you counts its window, Routine only this page
   return [
-    { key: 'needs-you', label: 'Needs you', heading: `${needsYouScope} · ${formatIntO(needsYouRows.length)} shown`, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
-    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} shown`, rows: routine, hiddenCount: 0 },
+    { key: 'needs-you', label: 'Needs you', heading: `Needs you · ${formatIntO(needsYouRows.length)} of ${formatIntO(needsYouTotal)}`, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
+    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} of ${formatIntO(rows.length)} on this page`, rows: routine, hiddenCount: 0 },
   ];
 }
 
@@ -2447,7 +2439,7 @@ function LedgerGroupRowO({ section, view }) {
   return <TableRow view={view}><TableCell view={view} kind="group-header" id={section.anchorId}>{section.heading}</TableCell></TableRow>;
 }
 
-// Capped → 'Show all N'; expanded past the cap → 'Show first N'; nothing to toggle → no row.
+// Capped → 'Show N more' (N hidden); expanded past the cap → 'Show first N'; nothing to toggle → no row.
 function NeedsYouToggleRowO({ section, isCapped, onToggle, view }) {
   const needsYouTotal = section.rows.length + section.hiddenCount;
   const hasToggle = typeof onToggle === 'function'
@@ -2458,7 +2450,7 @@ function NeedsYouToggleRowO({ section, isCapped, onToggle, view }) {
     <TableRow view={view}>
       <TableCell view={view} kind="span">
         <button type="button" className="btn ghost sm" aria-expanded={!isCapped} onClick={onToggle}>
-          {isCapped ? `Show all ${formatIntO(needsYouTotal)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
+          {isCapped ? `Show ${formatIntO(section.hiddenCount)} more` : `Show first ${NEEDS_YOU_PAGE_CAP}`}
         </button>
       </TableCell>
     </TableRow>

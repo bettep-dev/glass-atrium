@@ -83,7 +83,7 @@ interface OutcomesHelpers {
   buildLedgerSectionsO: (
     rows: LedgerRow[],
     closure?: ClosureState,
-    needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
+    needsYou?: { rows: LedgerRow[]; total: number } | null,
   ) => { key: string; label: string; heading: string; rows: LedgerRow[]; anchorId?: string }[];
   ResultTable: (props: Record<string, unknown>) => RenderNode;
   ResultTableRow: (props: { row: LedgerRow & { agent: string; task_type: string }; onRowClick: () => void; closure?: ClosureState }) => RenderNode;
@@ -558,14 +558,13 @@ test("buildLedgerSectionsO: Needs you reads the whole window, not the page it ha
   const pageRows: LedgerRow[] = [{ id: 1, result: "done" }, { id: 2, result: "fail" }, { id: 4, result: "done" }];
   const windowRows: LedgerRow[] = [{ id: 2, result: "fail" }, { id: 9, result: "blocked" }, { id: 10, result: "fail" }];
   const [needsYou, routine] = sameRealm(helpers.buildLedgerSectionsO(pageRows, undefined, {
-    rows: windowRows, total: 1717, windowLabel: "30d",
+    rows: windowRows, total: 1717,
   }));
 
   assert.deepStrictEqual(sameRealm(needsYou.rows.map((r) => r.id)), [2, 9, 10], "rows off this page still need you");
   assert.deepStrictEqual(sameRealm(routine.rows.map((r) => r.id)), [1, 4], "routine never repeats a needs-you row");
-  assert.match(needsYou.heading, /1,717/, "the header carries the window count, not the page count");
-  assert.match(needsYou.heading, /30d/, "the header names its window");
-  assert.match(routine.heading, /^Routine · 2 shown$/);
+  assert.strictEqual(needsYou.heading, "Needs you · 3 of 1,717", "the header carries the window count, not the page count");
+  assert.strictEqual(routine.heading, "Routine · 2 of 3 on this page");
 });
 
 test("buildNeedsYouUrlO: the ledger's own filter plus the attention predicate, always from the first row", () => {
@@ -621,7 +620,7 @@ test("buildLedgerSectionsO: a closure settled this session leaves the window Nee
     closedOverrides: new Map([[7, "2026-08-10T10:00:00.000Z"], [8, "2026-08-10T10:00:00.000Z"], [5, "2026-08-10T10:00:00.000Z"]]),
   };
   const [needsYou, routine] = sameRealm(helpers.buildLedgerSectionsO(pageRows, closure, {
-    rows: windowRows, total: 40, windowLabel: "30d",
+    rows: windowRows, total: 40,
   }));
 
   const needsIds = needsYou.rows.map((r) => r.id);
@@ -629,7 +628,7 @@ test("buildLedgerSectionsO: a closure settled this session leaves the window Nee
   assert.deepStrictEqual(needsIds.filter((id) => routineIds.includes(id)), [], "no row shows in both sections");
   assert.deepStrictEqual(sameRealm(needsIds), [5, 2], "a flagged row stays needs-you after its caveat closes");
   assert.deepStrictEqual(sameRealm(routineIds), [7, 8, 1]);
-  assert.match(needsYou.heading, /Needs you · 38 in 30d/, "the total drops by the two rows the closure settled");
+  assert.strictEqual(needsYou.heading, "Needs you · 2 of 38", "the total drops by the two rows the closure settled");
 });
 
 // --- disclosure summaries: a closed section answers without opening, and never fakes calm ---
@@ -951,7 +950,7 @@ interface LedgerViewHelpers {
   buildLedgerSectionsO: (
     rows: LedgerRow[],
     closure?: ClosureState,
-    needsYou?: { rows: LedgerRow[]; total: number; windowLabel: string } | null,
+    needsYou?: { rows: LedgerRow[]; total: number } | null,
     needsYouCap?: number | null,
   ) => { key: string; heading: string; rows: LedgerRow[]; hiddenCount: number }[];
   getLedgerDisplayRowsO: (sections: { rows: LedgerRow[] }[]) => LedgerRow[];
@@ -984,9 +983,9 @@ test("buildLedgerSectionsO: a capped Needs-you shows the first N and counts the 
 
 test("buildLedgerSectionsO: the window heading counts the rows actually shown under the cap", () => {
   const [needsYou] = sameRealm(view.buildLedgerSectionsO([], undefined, {
-    rows: needsYouRows(50), total: 1718, windowLabel: "30d",
+    rows: needsYouRows(50), total: 1718,
   }, 10));
-  assert.match(needsYou.heading, /1,718 in 30d · 10 shown$/);
+  assert.strictEqual(needsYou.heading, "Needs you · 10 of 1,718");
 });
 
 test("getDetailPositionLabelO: the drawer counts position in the grouped order the ledger displays", () => {
@@ -1012,9 +1011,19 @@ test("ResultTable: no Check column, and a capped Needs-you offers one control to
   const toggle = ledgerBodyRowsO(nodes).find((n) => n.type === (helpers as unknown as Record<string, unknown>).NeedsYouToggleRowO)!;
   const buttons = flattenNodes((toggle.type as (p: unknown) => RenderNode)(toggle.props)).filter((n) => n.type === "button");
   assert.strictEqual(buttons.length, 1);
-  assert.match(collectText([buttons[0]]), /Show all 12/);
+  assert.strictEqual(collectText([buttons[0]]).trim(), "Show 2 more", "the label counts the hidden rows");
   (buttons[0].props!.onClick as () => void)();
   assert.strictEqual(toggled, 1);
+});
+
+test("ResultTable: an expanded Needs-you past the cap offers to fold back to its first rows", () => {
+  const nodes = flattenNodes(helpers.ResultTable({
+    rows: needsYouRows(12), sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
+    needsYouCap: null, onToggleNeedsYou: () => {},
+  }));
+  const toggle = ledgerBodyRowsO(nodes).find((n) => n.type === (helpers as unknown as Record<string, unknown>).NeedsYouToggleRowO)!;
+  const [button] = flattenNodes((toggle.type as (p: unknown) => RenderNode)(toggle.props)).filter((n) => n.type === "button");
+  assert.strictEqual(collectText([button]).trim(), "Show first 10");
 });
 
 // body_md as hooks/track-outcome.sh → BODY_MD writes it: a bullet only for a set field, a placeholder body for an unset section

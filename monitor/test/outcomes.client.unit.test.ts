@@ -646,67 +646,48 @@ interface WordingSandboxO {
   buildLedgerSectionsO: (
     rows: Array<Record<string, unknown>>,
     closure: { pendingIds: Set<unknown>; closedOverrides: Map<unknown, unknown> },
-    windowNeedsYou: { rows: Array<Record<string, unknown>>; total: number; windowLabel: string } | null,
+    windowNeedsYou: { rows: Array<Record<string, unknown>>; total: number } | null,
     needsYouCap: number | null,
   ) => Array<{ key: string; heading: string; rows: unknown[] }>;
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string; label: string }>;
 }
 const wording = rendered as unknown as WordingSandboxO;
 
-describe("buildLedgerSectionsO: every ledger heading counts its rows with the page's one word, 'shown'", () => {
+describe("buildLedgerSectionsO: each heading counts the rows it shows out of the rows it stands for", () => {
   const rows = [{ id: 1, result: "fail" }, { id: 2, result: "blocked" }, { id: 3, result: "done" }];
   const closure = { pendingIds: new Set(), closedOverrides: new Map() };
   const cases = [
-    { name: "a page split with no cap", windowNeedsYou: null, cap: null },
-    { name: "a page split capped below its needs-you rows", windowNeedsYou: null, cap: 1 },
+    { name: "a page split with no cap", windowNeedsYou: null, cap: null, needsYouTotal: 2 },
+    { name: "a page split capped below its needs-you rows", windowNeedsYou: null, cap: 1, needsYouTotal: 2 },
     {
       name: "a window query larger than the rows it shows",
-      windowNeedsYou: { rows: [{ id: 1, result: "fail" }, { id: 9, result: "fail" }], total: 12, windowLabel: "7d" },
+      windowNeedsYou: { rows: [{ id: 1, result: "fail" }, { id: 9, result: "fail" }], total: 2569 },
       cap: 1,
+      needsYouTotal: 2569,
     },
   ];
   for (const row of cases) {
     test(row.name, () => {
-      const sections = wording.buildLedgerSectionsO(rows, closure, row.windowNeedsYou, row.cap);
-      for (const section of sections) {
-        assert.match(section.heading, new RegExp(` · ${section.rows.length} shown$`), section.key);
-        assert.doesNotMatch(section.heading, /on this page|first \d/, section.key);
-      }
+      const [needsYou, routine] = wording.buildLedgerSectionsO(rows, closure, row.windowNeedsYou, row.cap);
+      assert.equal(needsYou.heading, `Needs you · ${needsYou.rows.length} of ${row.needsYouTotal.toLocaleString("en-US")}`);
+      assert.equal(routine.heading, `Routine · ${routine.rows.length} of ${rows.length} on this page`);
     });
   }
 });
 
-interface ShownCountSandboxO {
+interface HeadCountSandboxO {
   ResultTableCard: (props: Record<string, unknown>) => RecordedElementO;
-  getLedgerDisplayRowsO: (sections: Array<{ rows: Array<Record<string, unknown>> }>) => Array<Record<string, unknown>>;
-  getDetailPositionLabelO: (displayRows: Array<Record<string, unknown>>, row: Record<string, unknown>) => string;
 }
-const shownCount = rendered as unknown as ShownCountSandboxO;
+const headCount = rendered as unknown as HeadCountSandboxO;
 
-describe("ResultTableCard: the head's 'shown' count is the drawn set the drawer counter walks", () => {
+test("ResultTableCard: the head counts the records the filter matched, and nothing it draws", () => {
   const page = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, result: i < 15 ? "fail" : "done" }));
-  const closure = { pendingIds: new Set(), closedOverrides: new Map() };
-  const cases = [
-    { name: "a page split capped below its needs-you rows", needsYou: null, cap: 10 },
-    { name: "an uncapped page split", needsYou: null, cap: null },
-    {
-      name: "a capped window query larger than the page's needs-you rows",
-      needsYou: { rows: Array.from({ length: 30 }, (_, i) => ({ id: 100 + i, result: "fail" })), total: 30, windowLabel: "7d" },
-      cap: 10,
-    },
-  ];
-  for (const row of cases) {
-    test(row.name, () => {
-      const card = shownCount.ResultTableCard({
-        state: { status: "ready" }, rows: page, totalMatched: 120, page: 0, limit: 50, sort: "recent", filter: {},
-        closure, needsYou: row.needsYou, needsYouCap: row.cap,
-      });
-      const drawn = shownCount.getLedgerDisplayRowsO(wording.buildLedgerSectionsO(page, closure, row.needsYou, row.cap) as never);
-      const drawerTotal = shownCount.getDetailPositionLabelO(drawn, drawn[0]).match(/of (\d+) shown/)?.[1];
-      const head = flattenO(card).find((el) => typeof el.props.sub === "string");
-      assert.equal(head?.props.sub, `120 matched · ${drawerTotal} shown`);
-    });
-  }
+  const card = headCount.ResultTableCard({
+    state: { status: "ready" }, rows: page, totalMatched: 12827, page: 0, limit: 50, sort: "recent", filter: {},
+    closure: { pendingIds: new Set(), closedOverrides: new Map() }, needsYou: null, needsYouCap: 10,
+  });
+  const head = flattenO(card).find((el) => typeof el.props.sub === "string");
+  assert.equal(head?.props.sub, "12,827 matched");
 });
 
 interface DensitySandboxO {
