@@ -901,9 +901,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
         /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
-        /* ink row-state ladder (design.md §7.5) — viewer --tint-row-1 < checked -2 < both -3; floors on every step §4.1 · the heavier title is the viewer's non-colour cue, the checkbox the checked one */
+        /* ink row-state ladder (design.md §7.5) — viewer --tint-row-1 < checked -2 < both -3; floors on every step §4.1 · non-colour cues in the markup: the viewer's semibold title, the checked checkbox */
         .tbl tbody tr.doc-row.is-selected { background: var(--tint-row-1); }
-        .doc-row.is-selected .doc-title-text { font-weight: 600; }
         /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
            no row opacity — a fade drops the empty pip on a checked row below 3:1 */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
@@ -938,10 +937,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
         .doc-meta-row { grid-template-columns: 88px 1fr; }
         /* .doc-toast → shared SoT in base.css */
-        .doc-editor-input { width: 100%; padding: var(--space-1_5) var(--space-2); font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-control); color: rgb(var(--ink)); }
-        .doc-editor-input:focus { border-color: rgb(var(--accent)); }
-        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: var(--space-2); font-size: var(--fs-meta); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-control); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
-        .doc-editor-textarea:focus { border-color: rgb(var(--accent)); }
+        /* the HTML body box — a .field grown to an editing area */
+        .doc-editor-textarea { min-height: 320px; max-height: 60vh; resize: vertical; }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* version-history — predecessor 전용 dim 룰.
            current=강조 / predecessor=.acked(opacity 0.5) 시각 구분. */
@@ -985,10 +982,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
           .doc-fs-body-wrap { padding: var(--space-4); background: rgb(var(--doc-canvas)); }
           .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); max-height: 40vh; padding: var(--space-4); }
         }
-        /* Viewer thin header — the fullscreen CardHead keeps the shared .card-head geometry (4 / --card-pad, min 48);
-           only its type steps down here, so the reading area stays wide and the head reads as chrome. */
-        .doc-fs-container .card-head .card-title { font-size: var(--fs-control); }
-        .doc-fs-container .card-head .card-sub { font-size: var(--fs-meta); }
         /* WCAG 2.2 §2.5.8 Target Size (AA) — 24×24 px floor (본 화면 스코프 한정 · padding 보존). */
         .card button.btn.sm,
         .modal-head button.btn.sm,
@@ -1057,8 +1050,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-list-region { scroll-margin-top: 96px; border-radius: var(--radius-card); }
         /* clip trims an outside ring → the card ring drawn inset */
         .doc-list-region:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
-        /* the bar holds full-bleed strips (control row · whole-word note · bulk bar) that own their insets → the slot adds none, only the rule under it */
-        .doc-list-card > .card-bar { padding: 0; border-bottom: 1px solid rgb(var(--line)); }
         /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
         .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
         .doc-trigger-value { display: inline-grid; }
@@ -1435,7 +1426,7 @@ function DocListCardCD({
 		// Card takes no id → the region wrapper holds the Retry focus target
 		<div id={DOC_LIST_CARD_ID_CD} className="doc-list-region flex flex-col flex-auto min-h-0 w-full">
 			{/* the list grows with the page → the page scrolls, never this body · x-overflow belongs to the table wrapper */}
-			<Card isFlush bar={bar} foot={foot} className="doc-list-card flex-auto min-h-0 [&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible">
+			<Card isFlush bar={bar} foot={foot} className="doc-list-card card--bar-flush flex-auto min-h-0 [&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible">
 				{getRegionView(state) === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
 				{state.error != null && (
 					<div role="alert">
@@ -1593,7 +1584,7 @@ function DocListCardCD({
 													</span>
 													<span className="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap gap-label-inline">
 														{isPending && <ToneGlyphCD tone="crit" />}
-														<span className="doc-title-text" title={row.title}>
+														<span className={isSelectedViewer ? "doc-title-text font-semibold" : "doc-title-text"} title={row.title}>
 															{row.title}
 														</span>
 														{/* lineage + collapsed revisions trail the title as pills → one row line */}
@@ -2170,7 +2161,7 @@ function GroupMembersRowsCD({
 						</span>
 						<span className="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap gap-label-inline">
 							{isPending && <ToneGlyphCD tone="crit" />}
-							<span className="doc-title-text" title={member.title}>
+							<span className={isSelectedViewer ? "doc-title-text font-semibold" : "doc-title-text"} title={member.title}>
 								{member.title}
 							</span>
 						</span>
@@ -2217,6 +2208,7 @@ function ViewerPanelCD({
 	return (
 		<div className="h-full flex flex-col min-h-0">
 			<CardHead
+				isCompact
 				title={
 					isReady
 						? state.data.title
@@ -3082,7 +3074,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 							</span>
 							<input
 								type="text"
-								className="doc-editor-input"
+								className="field"
 								value={title}
 								onChange={(e) => setTitle(e.target.value)}
 								required
@@ -3099,7 +3091,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 							{/* 편집 모드 — 작성자 immutable (감사 추적 보존). */}
 							<input
 								type="text"
-								className="doc-editor-input"
+								className="field"
 								value={author}
 								disabled
 								required
@@ -3115,7 +3107,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 							HTML body
 						</span>
 						<textarea
-							className="doc-editor-textarea"
+							className="field field--mono doc-editor-textarea"
 							value={htmlBody}
 							onChange={(e) => setHtmlBody(e.target.value)}
 							required

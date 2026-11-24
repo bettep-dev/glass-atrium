@@ -1337,9 +1337,40 @@ test("a ready viewer renders its head, the metadata rail and exactly one documen
   const screen = await loadDocsScreen();
   const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc() });
 
-  assert.equal(findNodes(tree, isAtom("CardHead")).length, 1, "the viewer head");
+  const heads = findNodes(tree, isAtom("CardHead"));
+  assert.equal(heads.length, 1, "the viewer head");
+  assert.equal(heads[0].props.isCompact, true, "the viewer head is the compact head, so the reading area keeps the width");
   assert.equal(findNodes(tree, (n) => n.type === "aside" && n.props["aria-label"] === "Document metadata").length, 1, "the metadata rail");
   assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 1, "one document body");
+});
+
+test("the list card's bar adds no inset of its own, since its full-bleed strips own theirs", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const cards = findNodes(tree, (n) => n.type === "div" && hasClass("doc-list-card")(n));
+  assert.equal(cards.filter(hasClass("card--bar-flush")).length, 1);
+});
+
+test("the opened row's title alone takes the heavier weight, beside its aria-current cue", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const rows = findNodes(tree, (n) => n.type === "tr" && hasClass("doc-row")(n));
+  const titleWeights = rows.map((row) => ({
+    isOpened: row.props["aria-current"] === "true",
+    isHeavy: findNodes(row, hasClass("doc-title-text")).every(hasClass("font-semibold")),
+  }));
+  assert.deepEqual(titleWeights, [{ isOpened: false, isHeavy: false }, { isOpened: true, isHeavy: true }]);
+});
+
+test("the editor's title, author and body boxes are the shared field controls", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.EditorModalCD as Component)({ seed: { id: 9, title: "Doc 9", author: "user" }, onClose: noop, onUpdate: noop }));
+  const fields = findNodes(tree, (n) => n.type === "input" || n.type === "textarea").map((n) => ({ type: n.type, className: n.props.className }));
+  assert.deepEqual(fields, [
+    { type: "input", className: "field" },
+    { type: "input", className: "field" },
+    { type: "textarea", className: "field field--mono doc-editor-textarea" },
+  ]);
 });
 
 describe("a viewer with no rendered document shows its state in place of the body", () => {

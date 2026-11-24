@@ -56,7 +56,7 @@ interface RowReading {
   glyph: { crit: Rgba; warn: Rgba };
   opacity: number;
   boxShadow: string;
-  title: { weight: string; decoration: string };
+  title: { decoration: string };
 }
 
 type LadderState = "viewer" | "checked" | "both";
@@ -112,7 +112,7 @@ const readRowStyles = (id: string) => {
     glyph: { crit: critGlyph.color, warn: warnGlyph.color },
     opacity: Number(style.opacity),
     boxShadow: style.boxShadow,
-    title: { weight: title.fontWeight, decoration: title.textDecorationLine },
+    title: { decoration: title.textDecorationLine },
   };
 };
 
@@ -198,11 +198,9 @@ describe("ledger row fills under the shared table hover", () => {
     }
   });
 
-  test("no row state draws a stripe, and the viewer row's title carries the heavier weight", () => {
+  test("no row state draws a stripe, at rest or hovered", () => {
     const { rest, hovered } = ledger;
     for (const reading of [...Object.values(rest), ...Object.values(hovered)]) assert.equal(reading.boxShadow, "none");
-    assert.equal(rest.viewer.title.weight, "600");
-    assert.equal(hovered.viewer.title.weight, "600");
   });
 });
 
