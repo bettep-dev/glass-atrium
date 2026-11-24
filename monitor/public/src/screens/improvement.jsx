@@ -384,7 +384,7 @@ function ScreenImprovement({ onNav }) {
         /* one loop-card anatomy — metric and visual slots start at the same offsets in all three cards */
         /* subgrid rows → a metric that wraps in one card moves the visual slot of all three together */
         .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
-        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:8px var(--card-pad) 0; }
+        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; padding:8px var(--card-pad) 0; }
         .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
         .i-loop-visual:empty { padding:0; }
         /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
@@ -395,12 +395,12 @@ function ScreenImprovement({ onNav }) {
         /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
         .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
-        .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; column-gap:var(--space-2); row-gap:var(--space-1); }
+        .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; }
         .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
         /* 1px inset → the sub-card ring (an outside box-shadow) draws inside the scroll box, never clipped by it */
-        .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; padding:1px; }
+        .i-await-body { display:flex; flex-direction:column; max-height:40vh; overflow-y:auto; padding:1px; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
            헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
@@ -1012,7 +1012,7 @@ function HeadStatusI({ count, words }) {
 // Awaiting suggestions — the only lane asking for an action, so it leads the board · list scrolls past 40vh
 function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
 	return (
-		<div className="i-await-body flex-shrink-0">
+		<div className="i-await-body gap-list flex-shrink-0">
 			{rows.map((row) => (
 				<ProposalCardI
 					key={row.id}
@@ -1833,7 +1833,7 @@ function LedgerPlainRowsI({ rows }) {
 		);
 	}
 	return (
-		<ul className="mt-1.5 i-plain-rows">
+		<ul className="mt-1.5 i-plain-rows gap-x-label gap-y-stack">
 			{rows.map((r) => (
 				<li key={r.id} className="fs-body">
 					<span
@@ -1883,7 +1883,7 @@ function LedgerInertSectionI({ rows }) {
 // one line per label — row count past one · its agent, or how many · latest first-seen date
 function InertLabelRowsI({ groups }) {
 	return (
-		<ul className="mt-1.5 i-plain-rows">
+		<ul className="mt-1.5 i-plain-rows gap-x-label gap-y-stack">
 			{groups.map(({ title, entries }) => {
 				const agents = [...new Set(entries.map(({ pattern }) => pattern.agent))];
 				const latest = entries.map(({ pattern }) => String(pattern.discovered_date ?? "")).sort().at(-1);
@@ -2375,7 +2375,7 @@ function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
 		<>
-			<div className="i-loop-metric">{metric}</div>
+			<div className="i-loop-metric gap-y-stack gap-x-block">{metric}</div>
 			<div className="i-loop-visual" style={isPlotted ? { height: CARD_SLOTS.S.plotPx } : undefined}>
 				{visual}
 			</div>
@@ -2389,7 +2389,7 @@ function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 // a loading loop card → its line in the metric slot, so sibling cards draw it at one height
 function getLoopLoadingSlotI(label) {
 	return (
-		<div className="i-loop-metric">
+		<div className="i-loop-metric gap-y-stack gap-x-block">
 			<window.UI.LoadingPlaceholder label={label} />
 		</div>
 	);
