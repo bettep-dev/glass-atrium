@@ -96,11 +96,6 @@ const SYNC_META_MC = {
 		tone: "warn",
 		desc: "daemon-config.json was not found — press Save to recreate it",
 	},
-	empty: {
-		label: "Nothing to sync",
-		tone: "neutral",
-		desc: "no model domains or budget caps were reported, so there is nothing to compare",
-	},
 	// 마이그레이션 미적용 DB — 이름이 바뀐 도메인의 값을 구 키 행에서 읽어온 상태.
 	// 파일과 값이 우연히 맞아도 in sync 로 표시하지 않는다 (없는 행 위의 공허한 green 금지).
 	"pending-migration": {
@@ -120,7 +115,7 @@ const SYNC_META_MC = {
 const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
 		label: "Generation and wiki compile",
-		desc: "Shared cap: generation + wiki compile",
+		desc: "One cap for both calls",
 		source: "daemon-config.json",
 	},
 	"budget.pre_verify_max_usd": {
@@ -161,7 +156,7 @@ const TIER_META_MC = {
 		label: "Pre-verify output tokens",
 		desc: `Sets ${OUTPUT_CAP_ENV_MC} for pre-verify`,
 		machine: OUTPUT_CAP_ENV_MC,
-		note: "Blank = the model default",
+		note: `Blank = ${CLI_DEFAULT_LABEL_MC}`,
 		kind: "output-cap",
 		source: "daemon-config.json",
 	},
@@ -505,7 +500,7 @@ function ScreenModelConfig() {
 						{hasErrors && (
 							<span className="fs-meta text-crit">
 								<span aria-hidden="true">✕ </span>
-								fix the highlighted fields before saving
+								Fix the highlighted fields before saving
 							</span>
 						)}
 					</div>
@@ -563,8 +558,8 @@ function ScreenModelConfig() {
 function SyncTokenMC({ state, sync, freshness }) {
 	const { Icon, getFreshnessVerdict } = window.UI;
 
-	// the freshness stamp beside it already reads '… loading' → one ellipsis, not two · agreement is silence
-	if (state === "loading" || sync === "ok") return null;
+	// the Refresh label already reads Loading… · agreement is silence · an empty roster → its cards say so
+	if (state === "loading" || sync === "ok" || sync === "empty") return null;
 	if (state !== "ready") {
 		return <span className="fs-meta text-faint">Sync state unavailable</span>;
 	}
@@ -579,20 +574,12 @@ function SyncTokenMC({ state, sync, freshness }) {
 	const label = freshness
 		? getFreshnessVerdict({ ...freshness, tone: meta.tone, label: meta.label }).label
 		: meta.label;
-	// the freshness stamp owns the one tick → only a state needing action spends a glyph
-	const glyph = sync === "empty" ? null : "warn";
 
 	return (
 		<span
 			className="fs-meta text-dim flex items-center gap-label-inline"
 			title={meta.desc}>
-			{glyph && (
-				<Icon
-					name={glyph}
-					size={12}
-					className={glyph === "warn" ? "text-warn" : "text-dim"}
-				/>
-			)}
+			<Icon name="warn" size={12} className="text-warn" />
 			<span>{label}</span>
 		</span>
 	);
@@ -1596,7 +1583,7 @@ function BudgetsSectionMC({
 				<SettingsInfoMC
 					caveat={timing.caveat}
 					lead="A cap that trips aborts the runaway call."
-					title="When a cap trips"
+					title="What each cap covers"
 					rows={rows.map((b) => BUDGET_META_MC[b.domain])}
 				/>
 			}

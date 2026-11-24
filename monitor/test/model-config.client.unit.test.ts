@@ -917,7 +917,7 @@ test("the header sync token speaks only when the file needs action and leaves th
   // Loading and error are distinct readings — neither may look like a settled 'in sync'.
   const unavailable = textMc(renderComponentMc(screens.SyncTokenMC, { state: "error", sync: undefined }));
   assert.ok(unavailable.includes("unavailable") && !unavailable.includes("In sync"), "error never reads as in sync");
-  // the stamp beside it already reads '… loading' → the token adds no second ellipsis
+  // the Refresh label already reads Loading… → the token adds no second busy cue
   assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "loading", sync: undefined })), "");
 });
 
@@ -1331,13 +1331,13 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
   assert.strictEqual(tagsMc(pending, "button").length, 0, "saving cannot fix an un-migrated DB");
 });
 
-test("an empty roster never reads as in sync, whatever the file state says", () => {
+test("an empty roster leaves the header token silent, whatever the file state says", () => {
   const headerSync = sandboxFnMc<(data: unknown) => string>("headerSyncMC");
   for (const fileSync of ["ok", "drift", "file-missing"]) {
     const sync = headerSync({ daemon_config_sync: fileSync, domains: [], budgets: [] });
-    const token = textMc(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync }));
-    assert.ok(!token.includes("In sync"), `${fileSync}: an empty roster is not 'In sync'`);
-    assert.ok(token.includes("Nothing to sync"), `${fileSync}: the empty roster is named`);
+    assert.strictEqual(sync, "empty", `${fileSync}: an empty roster keeps its own sync value`);
+    // the three empty cards already say so → a header status adds nothing
+    assert.deepStrictEqual(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync }), [], `${fileSync}: renders nothing`);
   }
   const populated = headerSync({ daemon_config_sync: "ok", domains: DOMAIN_ROW_FIXTURE_MC, budgets: [] });
   assert.strictEqual(populated, "ok", "a populated roster keeps the file's sync state");
@@ -1680,7 +1680,7 @@ test("a row departing from the card's timing states its own timing in its row", 
 describe("each card's glossary opens from its About settings drawer, never on the card face", () => {
   const rows = [
     { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), heading: "What the helper runs" },
-    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), heading: "When a cap trips" },
+    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), heading: "What each cap covers" },
     { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), heading: "What each setting does" },
   ];
   for (const row of rows) {
@@ -1716,7 +1716,7 @@ test("long take-effect, cap and default sentences read as short labels; their de
   const [budgetMeta, tierMeta] = vm.runInContext("[BUDGET_META_MC, TIER_META_MC]", screens) as Array<
     Record<string, { desc: string; note?: string }>
   >;
-  assert.strictEqual(budgetMeta["budget.worker_max_usd"].desc, "Shared cap: generation + wiki compile");
+  assert.strictEqual(budgetMeta["budget.worker_max_usd"].desc, "One cap for both calls");
   for (const knob of ["tier.worker_effort", "tier.pre_verify_effort"]) {
     assert.strictEqual(tierMeta[knob].desc, "Default: no --effort flag", knob);
   }
@@ -1729,6 +1729,17 @@ test("long take-effect, cap and default sentences read as short labels; their de
   const tiers = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
   const precedence = "settings or model default governs the call";
   assert.ok(textMc(drawersMc(tiers)[0].children).includes(precedence), "the precedence note is in the drawer");
+});
+
+test("the tier drawer names an unset output-token field by the field's own placeholder", () => {
+  const tiers = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
+  const placeholders = new Set(tagsMc(faceMc(tiers), "input").map((input) => input.props.placeholder));
+  assert.strictEqual(placeholders.size, 1, "the output-token fields share one placeholder");
+  const unsetNames = textsMc(tagsMc(drawersMc(tiers)[0].children, "dd"))
+    .filter((note) => note.startsWith("Blank = "))
+    .map((note) => note.slice("Blank = ".length));
+  assert.ok(unsetNames.length > 0, "the drawer says what a blank field means");
+  assert.deepStrictEqual(new Set(unsetNames), placeholders);
 });
 
 test("the agent card leads at full width, and the three daemon ledgers share one split row under it", () => {
@@ -1949,6 +1960,18 @@ test("a matching row stays silent whether the read is fresh or a failed reload h
   }
 });
 
+test("an invalid edit puts a sentence-case alert in the save bar", async () => {
+  const tree = await renderSeededScreenMc({
+    config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }),
+    form: { ...SCREEN_FORM_MC, budgets: { "budget.worker_max_usd": "abc" } },
+    asOfAt: Date.now(),
+  });
+  const [bar] = findAllMc(tree, (n) => n.props["aria-label"] === "Unsaved changes");
+  assert.ok(bar, "a dirty form shows the save bar");
+  const [alert] = findAllMc(bar.children, (n) => String(n.props.className ?? "").includes("text-crit"));
+  assert.strictEqual(textMc(alert.children).replace("✕", "").trim(), "Fix the highlighted fields before saving");
+});
+
 test("the glossary labels are headings, and their notes never repeat the agent a row already names", async () => {
   const tree = await renderSeededScreenMc({
     config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }),
@@ -1957,7 +1980,7 @@ test("the glossary labels are headings, and their notes never repeat the agent a
   });
   const headings = textsMc(tagsMc(tree, "h3"));
   assert.ok(headings.includes("What the helper runs"), `headings: ${headings}`);
-  assert.ok(headings.includes("When a cap trips"), `headings: ${headings}`);
+  assert.ok(headings.includes("What each cap covers"), `headings: ${headings}`);
 
   const notes = textsMc(tagsMc(tree, "dd")).join(" ");
   assert.ok(notes.length > 0, "the notes are rendered");
