@@ -271,9 +271,9 @@ const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] })
 // each source of the lane, in tie order → its readiness label, the one alarm row it can raise and that row's builder;
 // isAnswered → a read payload that still lacks the reading its row is built on is no answer
 const ALARM_SOURCES = [
-  { key: 'harness', label: 'harness health', alarmId: 'harness', build: buildHarnessAlarm },
+  { key: 'harness', label: 'system parts', alarmId: 'harness', build: buildHarnessAlarm },
   { key: 'outcomesState', label: 'task results', alarmId: 'outcomes', build: buildOutcomeAlarm },
-  { key: 'agentsState', label: 'fleet', alarmId: 'fleet', build: buildFleetAlarm, isAnswered: (source) => getBreakerCounts(source.data) != null },
+  { key: 'agentsState', label: 'agents', alarmId: 'fleet', build: buildFleetAlarm, isAnswered: (source) => getBreakerCounts(source.data) != null },
   { key: 'costState', label: "today's spend", alarmId: 'spend', build: buildSpendAlarm },
   { key: 'updateState', label: 'install state', alarmId: 'install', build: buildInstallAlarm },
 ];
@@ -303,7 +303,7 @@ function isSourceAnswered(source, isAnswered) {
 // the card outlives every recovery → a banner or stat Retry that leaves on success hands focus here
 const DASH_STATUS_ID = 'dash-status';
 
-const RESULTS_STAT_POINTER = 'the Task results stat above';
+const RESULTS_STAT_POINTER = 'the Failed or blocked stat above';
 
 // spec 44084 §9 — one card, four stats (label, value, one context line); every counting rule and window behind one ⓘ
 function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
@@ -336,15 +336,16 @@ function getStatLabel(stat) {
 
 // the one visible line: the builder's context or a banner pointer; the stat's own Retry rides it
 function getStatContext(stat, { onRetry, isRetryShared }) {
-  const { DayTokens, RetryButton } = window.UI;
+  const { DayTokens, HeadStatus, RetryButton } = window.UI;
   const isCovered = isRetryShared && stat.error != null;
   // a banner-carried outage is stated once, above → the value reads Not loaded, the line is the pointer alone
   const text = isCovered && stat.status === 'error' ? window.UI.getNoticePointer() : stat.context;
   const hasRetry = Boolean(stat.canRetry) && !isRetryShared;
   if (!text && !hasRetry) return null;
+  const line = <DayTokens>{text}</DayTokens>;
   return (
     <>
-      {text && <span title={stat.cause ?? text}><DayTokens>{text}</DayTokens></span>}
+      {text && <span title={stat.cause ?? text}>{stat.isContextTripped ? <HeadStatus tone={stat.tone}>{line}</HeadStatus> : line}</span>}
       {hasRetry && (
         // a one-line box → the 32 control overhangs into the card padding, the card never grows
         <span className="one-line-box ml-control">
@@ -355,14 +356,14 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
   );
 }
 
-// tones a stat may show → a firing stat shows its value and tone glyph only; the alarm list owns the sentence
+// tones a stat may show → the glyph sits on the figure that tripped (the value, or the context line); the alarm list owns the sentence
 const FIRING_TONES = new Set(['warn', 'crit']);
 
 function StatValue({ stat }) {
   const { AbsentValue, ToneGlyph } = window.UI;
   if (stat.absent) return <AbsentValue kind={stat.absent}/>;
   const figure = <span className={`whitespace-nowrap${stat.isBusy ? ' opacity-70' : ''}`}>{stat.value}</span>;
-  if (!FIRING_TONES.has(stat.tone)) return figure;
+  if (!FIRING_TONES.has(stat.tone) || stat.isContextTripped) return figure;
   return <><ToneGlyph tone={stat.tone}/>{figure}</>;
 }
 
@@ -799,7 +800,7 @@ function buildHarnessAlarm({ harness }) {
   if (!harness || harness.status !== 'ready' || harness.downNames.length === 0) return null;
   return {
     tone: 'crit',
-    title: `${harness.downNames.length} harness ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
+    title: `${harness.downNames.length} system ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
     detail: joinPartNames(harness.downNames),
     isHeld: hasHeldPartRead(harness),
     target: 'architecture',
@@ -818,7 +819,7 @@ function buildOutcomeAlarm({ outcomesState }) {
   return {
     tone: rate.tone,
     title: `${share} of task results ${isCrit ? 'failed or blocked' : 'have open caveats'} in the last 7 days`,
-    detail: `${formatInt(count)} of ${formatInt(rate.writerTotal)} reported outcomes`,
+    detail: `${formatInt(count)} of ${formatInt(rate.writerTotal)} task results`,
     isHeld: outcomesState.error != null, target: 'outcomes', targetLabel: 'Task results',
   };
 }
@@ -841,7 +842,7 @@ function describeAgentCount(count, state) {
 }
 
 function describeStreak(streak) {
-  return `${formatInt(streak)} on a failing streak`;
+  return `${streak === 0 ? 'None' : formatInt(streak)} on a failing streak`;
 }
 
 function buildSpendAlarm({ costState }) {
@@ -909,7 +910,7 @@ function markHeldStat(stat, state) {
   const isAlarm = FIRING_TONES.has(stat.tone);
   const cause = getHeldCause(stat.source);
   return {
-    ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true,
+    ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true, isContextTripped: false,
     context: LAST_KNOWN_TEXT, cause, notes: [`${cause}.`, ...stat.notes],
   };
 }
@@ -918,7 +919,7 @@ function markHeldStat(stat, state) {
 // an unread part never counts as healthy
 function buildHarnessStat(harness) {
   const base = {
-    id: 'harness', label: 'Harness health', region: HARNESS_REGION, target: 'architecture', source: 'harness health', notes: [],
+    id: 'harness', label: 'System parts', region: HARNESS_REGION, target: 'architecture', source: 'system parts', notes: [],
   };
   if (harness && harness.status === 'loading') {
     return { ...base, status: 'loading', tone: 'neutral', value: null, context: null };
@@ -928,7 +929,7 @@ function buildHarnessStat(harness) {
   }
   if (!harness || harness.status !== 'ready') {
     // not a region fetch error → never joins the page banner, so the stat keeps its own Retry
-    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'Harness readings unavailable.', canRetry: true };
+    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'System parts unavailable.', canRetry: true };
   }
   return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
 }
@@ -942,10 +943,11 @@ function describeHarnessReading(harness) {
   const coverage = describeHarnessCoverage(harness, isPartlyUnread);
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
   const unreadTone = isPartlyUnread ? 'info' : 'ok';
+  // a down part trips the value → the line goes empty, its coverage behind ⓘ
   const reading = {
     tone: downCount > 0 ? 'crit' : unreadTone,
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
-    context: coverage, notes: [], canRetry: isPartlyUnread,
+    context: downCount > 0 ? null : coverage, notes: downCount > 0 ? [`${coverage}.`] : [], canRetry: isPartlyUnread,
   };
   if (!isPartlyUnread) return reading;
   const unread = describeUnread(harness, lostCount);
@@ -963,10 +965,10 @@ function describeUnread(harness, lostCount) {
 // an unpolled part never reads as one more down part
 // a failed read leaves parts unjudged too, indistinguishable in the fold → then no part is credited to the System map
 function describeHarnessCoverage(harness, isPartlyUnread) {
-  if (harness.uncheckedNames.length === 0) return `All ${formatInt(harness.partsChecked)} parts polled on every harness read`;
-  const counted = `${formatInt(harness.partsChecked)} of ${formatInt(harness.partsTotal)} parts`;
+  if (harness.uncheckedNames.length === 0) return `All ${formatInt(harness.partsChecked)} checked`;
+  const counted = `${formatInt(harness.partsChecked)} of ${formatInt(harness.partsTotal)}`;
   if (isPartlyUnread) return `${counted} read this time`;
-  return `${counted} polled here; ${joinPartNames(harness.uncheckedNames)} checked on the System map`;
+  return `${counted} checked here; ${joinPartNames(harness.uncheckedNames)} on the System map`;
 }
 
 // U+2011 non-breaking hyphen → a name like glass-atrium-wiki-curator never wraps mid-name in a narrow line
@@ -995,7 +997,7 @@ function buildFailedStat(base, error) {
 // stat 2 — task results over 7 days. verdict and alert lines come from the shared ui.jsx rule (Task results' own denominator)
 function buildOutcomeStat(outcomesState) {
   const base = {
-    id: 'outcomes', label: 'Task results', window: '7d', target: 'outcomes', region: 'outcomes', source: 'task results', notes: [],
+    id: 'outcomes', label: 'Failed or blocked', window: '7d', target: 'outcomes', region: 'outcomes', source: 'task results', notes: [],
   };
   const pending = buildPendingStat(base, outcomesState);
   if (pending) return pending;
@@ -1004,6 +1006,7 @@ function buildOutcomeStat(outcomesState) {
   return {
     ...base, status: OUTCOME.STAT_STATUS[rate.status], tone: rate.tone,
     value: describeOutcomeValue(rate), absent: isOutcomeJudgeable(rate) ? undefined : 'none', context: describeOutcomeContext(rate),
+    isContextTripped: rate.tone === 'warn',
     notes: [...describeOutcomeLines(rate), ...(trend ? [`${trend}.`] : []), OUTCOME.COUNTING_NOTE],
   };
 }
@@ -1014,10 +1017,10 @@ const OUTCOME = {
     unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
   },
   JUDGED: new Set(['ok', 'warn', 'crit']),
-  COUNTING_NOTE: 'Counts only writer-emitted outcomes — records the agent reported itself; synthesized records are left out.',
+  COUNTING_NOTE: 'Counts only writer-emitted task results — records the agent reported itself; synthesized records are left out.',
 };
 // the panel beside the stat counts every result → its ⓘ says how the stat's caveat figure differs
-const RESULTS_PANEL_NOTE = 'The Task results stat above counts the same outcomes; its caveat figure counts open caveats only.';
+const RESULTS_PANEL_NOTE = 'The Failed or blocked stat above counts the same task results; its caveat figure counts open caveats only.';
 
 // empty or no writer-reported outcome → known to hold nothing (absent 'none'), the share has no denominator
 function isOutcomeJudgeable(rate) {
@@ -1031,18 +1034,19 @@ function describeOutcomeValue(rate) {
 }
 
 function describeOutcomeContext(rate) {
-  if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
-  if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
-  if (rate.status === 'low-n') return 'outcomes, too few to judge';
-  // a tripped leg's count is its alarm row's detail → the firing stat shows value + glyph only
-  if (FIRING_TONES.has(rate.tone)) return null;
-  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed or blocked`;
+  if (rate.status === 'unavailable') return 'No task results to judge.';
+  if (rate.status === 'empty') return 'No task results recorded in the last 7 days.';
+  if (rate.status === 'low-n') return 'task results, too few to judge';
+  // the failed share tripped → the value carries the glyph, the alarm row the count; open caveats tripped → the line names them
+  if (rate.tone === 'crit') return null;
+  if (rate.tone === 'warn') return `${formatInt(rate.openCaveats)} of ${formatInt(rate.writerTotal)} with open caveats`;
+  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} task results`;
 }
 
 // the alert lines and the caveat share → behind ⓘ, beside the counting rule
 function describeOutcomeLines(rate) {
   const { LOW_N_MIN, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE } = window.UI;
-  if (rate.status === 'low-n') return [`Needs ${LOW_N_MIN} reported outcomes to judge.`];
+  if (rate.status === 'low-n') return [`Needs ${LOW_N_MIN} task results to judge.`];
   if (!OUTCOME.JUDGED.has(rate.status)) return [];
   const caveats = `Open caveats ${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)})`;
   return [
@@ -1056,7 +1060,7 @@ function describeOutcomeTrend(rate, prior) {
   if (!prior || !OUTCOME.JUDGED.has(rate.status)) return null;
   const priorRange = window.UI.formatDayRange(prior);
   const priorRate = window.UI.resolveOutcomeRate(prior);
-  if (!OUTCOME.JUDGED.has(priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
+  if (!OUTCOME.JUDGED.has(priorRate.status)) return `No comparison — too few task results in ${priorRange}`;
   const points = (rate.breakage / rate.writerTotal - priorRate.breakage / priorRate.writerTotal) * 100;
   const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${window.UI.formatDecimal(Math.abs(points))} pts`;
   return `${change} since ${formatDay(prior.period_end)} vs ${getSharePct(priorRate.breakage, priorRate.writerTotal)} in ${priorRange}`;
@@ -1079,7 +1083,7 @@ function getSharePct(numerator, denominator) {
 
 // stat 3 — fleet. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0
 function buildFleetStat(agentsState) {
-  const base = { id: 'fleet', label: 'Fleet', window: '7d', target: 'agents', region: 'agents', source: 'the fleet summary', notes: [] };
+  const base = { id: 'fleet', label: 'Agents', window: '7d', target: 'agents', region: 'agents', source: 'agents', notes: [] };
   const pending = buildPendingStat(base, agentsState);
   if (pending) return pending;
   const breaker = getBreakerCounts(agentsState.data);
@@ -1091,8 +1095,9 @@ function buildFleetStat(agentsState) {
   const meta = agentsState.data.meta;
   const notes = [describeFleetReach(Number(meta.total_agents), Number(meta.circuit_breaker.registry_agents)), describeBusiestAgent(agentsState.data.agents?.[0])];
   return {
-    // a firing fleet's streak is its alarm row's words → the line stays empty
-    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: tone === 'ok' ? describeStreak(streak) : null,
+    // a suspension trips the value → the line stays empty; a streak alone trips the line, which names it
+    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: tone === 'crit' ? null : describeStreak(streak),
+    isContextTripped: tone === 'warn',
     notes: notes.filter(Boolean),
   };
 }
@@ -1130,7 +1135,9 @@ function buildSpendStat(costState, harness) {
   const note = pace.status === 'no-basis'
     ? 'No spend in the last 7 days — no baseline to judge the pace against.'
     : `Alarms when today's spend so far, or the last 3 hours' rate held for a day, reaches ${SPEND_PACE_CUT}× the 7-day average (${formatUsdCompact(pace.basis)}/day).`;
-  return { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), context: describeSpendTrend(harness), notes: [note] };
+  // a hot day trips the value → the alarm row holds the one baseline
+  const context = tone === 'warn' ? null : describeSpendTrend(harness);
+  return { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), context, notes: [note] };
 }
 
 // day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources
@@ -1143,9 +1150,12 @@ function describeSpendTrend(harness) {
   const prior = Number(kpi.yesterday_same_time_cost_usd);
   if (kpi.today_cost_usd == null || kpi.yesterday_same_time_cost_usd == null) return 'Change on yesterday unavailable — the reading carries no spend';
   if (!(prior > 0)) return 'No spend yesterday by this time to compare against';
-  const change = ((Number(kpi.today_cost_usd) - prior) / prior) * 100;
+  const ratio = Number(kpi.today_cost_usd) / prior;
+  const change = (ratio - 1) * 100;
   const comparand = `${formatUsdCompact(prior)} yesterday by this time`;
   if (change === 0) return `Level with ${comparand}`;
+  // a rise of 100% or more is a multiple (spec 44084 §2.1) → no three-digit percentage
+  if (ratio >= 2) return `${ratio.toFixed(1)}\u00d7 yesterday by this time (${formatUsdCompact(prior)})`;
   return `${change > 0 ? 'Up' : 'Down'} ${window.UI.formatPct(Math.abs(change))} on ${comparand}`;
 }
 

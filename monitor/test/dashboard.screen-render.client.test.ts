@@ -127,18 +127,18 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
 })) as ScreenModule;
 const buildOutcomeStat = rateMod.buildOutcomeStat as (state: unknown) => { value: string | null; absent?: string; context: string | null; notes: string[] };
 
-test("the Task results stat headlines a bare failed share, its counts on the context line until its alarm row states them, its caveat share behind ⓘ", () => {
+test("the Failed or blocked stat headlines a bare failed share, its line naming the count at rest or the tripped caveat count, its caveat share behind ⓘ", () => {
+  const contexts = { ok: "7 of 40 task results", warn: "9 of 40 with open caveats", crit: null };
   for (const [status, tone] of [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const) {
     const stat = buildOutcomeStat({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
     assert.equal(stat.value, "17.5%", `${status}: the headline is the share alone, no denominator to wrap`);
-    const context = tone === "ok" ? "7 of 40 failed or blocked" : null;
-    assert.equal(stat.context, context, `${status}: a firing stat leaves the tripped count to its alarm row`);
+    assert.equal(stat.context, contexts[tone], `${status}: the line names the tripped count only when the value did not trip`);
     assert.ok(stat.notes.some((note) => /22\.5% \(9\)/.test(note)), `${status}: the caveat share and count sit behind ⓘ`);
   }
 
   const lowN = buildOutcomeStat({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
   assert.equal(lowN.value, "12", "too small a sample still shows how many there are");
-  assert.match(String(lowN.context), /too few to judge/i);
+  assert.equal(lowN.context, "task results, too few to judge");
 });
 
 test("a Task results stat with nothing to judge reads None, never a dash", () => {
@@ -416,10 +416,10 @@ describe("an empty alarm lane stays silent once its sources are read, and says i
     { name: "every source read → silent", sources: ALL_READ, status: "read", unread: [] },
     { name: "a source still loading → loading, even beside a failed one", sources: { ...ALL_READ, harness: { status: "loading" }, costState: { status: "error" } }, status: "loading", unread: [] },
     { name: "fleet still loading → loading", sources: { ...ALL_READ, agentsState: { status: "loading" } }, status: "loading", unread: [] },
-    { name: "harness fold unavailable → unknown", sources: { ...ALL_READ, harness: { status: "unavailable" } }, status: "unknown", unread: ["harness health"] },
+    { name: "harness fold unavailable → unknown", sources: { ...ALL_READ, harness: { status: "unavailable" } }, status: "unknown", unread: ["system parts"] },
     { name: "task results read failed → unknown", sources: { ...ALL_READ, outcomesState: { status: "error" } }, status: "unknown", unread: ["task results"] },
-    { name: "fleet read failed → unknown", sources: { ...ALL_READ, agentsState: { status: "error" } }, status: "unknown", unread: ["fleet"] },
-    { name: "fleet breaker unavailable → unknown", sources: { ...ALL_READ, agentsState: breakerOf("unavailable") }, status: "unknown", unread: ["fleet"] },
+    { name: "fleet read failed → unknown", sources: { ...ALL_READ, agentsState: { status: "error" } }, status: "unknown", unread: ["agents"] },
+    { name: "fleet breaker unavailable → unknown", sources: { ...ALL_READ, agentsState: breakerOf("unavailable") }, status: "unknown", unread: ["agents"] },
     { name: "spend read failed → unknown", sources: { ...ALL_READ, costState: { status: "error" } }, status: "unknown", unread: ["today's spend"] },
     { name: "install read failed → unknown", sources: { ...ALL_READ, updateState: { status: "error" } }, status: "unknown", unread: ["install state"] },
   ];
@@ -596,6 +596,14 @@ test("a firing stat shows its value and tone glyph only; a calm stat shows the v
     assert.equal(collectText(value).replace(/\s+/g, " ").trim(), "2 of 7 down", `${row.tone}: no word beside the figure but the glyph's own`);
     assert.equal(findNodes(value, (n) => hasClass(n, "whitespace-nowrap")).length, 1, `${row.tone}: the figure never wraps`);
   }
+});
+
+test("a stat whose context tripped draws its value at rest and its line as the head Status in the stat's tone", () => {
+  const { items } = renderStatusCard([{ ...READY_STAT, tone: "warn", value: "1.2%", context: "48 of 400 with open caveats", isContextTripped: true }]);
+  assert.equal(findNodes(nodeOf(items[0].value), (n) => n.props.atom === "ToneGlyph").length, 0, "no glyph on a figure under its line");
+  const [status] = findNodes(nodeOf(items[0].context), (n) => n.props.atom === "HeadStatus");
+  assert.equal(status?.props.tone, "warn", "the glyph moves to the line, in the stat's tone");
+  assert.match(collectText(status), /^\s*48 of 400 with open caveats\s*$/, "the count only");
 });
 
 test("an absent value paints its kind's word through the shared AbsentValue, and a unit rides only a real figure", () => {

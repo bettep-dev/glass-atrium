@@ -198,7 +198,7 @@ const STATUS_CARD_STATES: Array<{ name: string; open: () => Promise<Page> }> = [
       const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
       await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ status: 500, json: {} }));
       await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
-      await page.waitForFunction(() => (document.querySelector("#dash-status")?.textContent ?? "").includes("Couldn't load the fleet summary"), undefined, { timeout: 30_000 });
+      await page.waitForFunction(() => (document.querySelector("#dash-status")?.textContent ?? "").includes("Couldn't load agents."), undefined, { timeout: 30_000 });
       return page;
     },
   },
