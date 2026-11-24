@@ -520,13 +520,13 @@ function readTileBandFailuresW(summaryState, indexState) {
 	].filter((f) => window.UI.getRegionView(f.state) === "error");
 }
 
-// tile model → one StatRow stat; an empty read leaves the slot to the row's None, the full context line rides its title
+// tile model → one StatRow stat; an empty read leaves the slot to the row's None, a Not loaded stat states its cause, the long form in its title
 function buildStatW(tile) {
 	const { key, label } = tile;
 	if (tile.state === "loading") return { key, label, isLoading: true };
 	if (tile.state === "empty") return { key, label, value: null };
 	if (tile.state !== "ready") {
-		const context = tile.state === "error" ? window.UI.getReadFailureCause(tile.error) : null;
+		const context = tile.state === "error" ? window.UI.getReadFailureCause(tile.error) : tile.sub ?? null;
 		return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={tile.cause} />, context };
 	}
 	const context = tile.sub ? <span title={tile.hint || tile.sub}>{tile.sub}</span> : null;
@@ -561,6 +561,11 @@ const TILE_CAUSES_W = { error: "The read failed", unavailable: "Not reported yet
 
 function tilePlaceholderW(key, label, state, error = null) {
 	return { key, label, state, cause: TILE_CAUSES_W[state], error, tone: "neutral" };
+}
+
+// a source that never reported is no fetch failure → its own words, not the read-failure cause
+function unreportedTileW(key, label, source) {
+	return { ...tilePlaceholderW(key, label, "unavailable"), sub: `${source} not reported` };
 }
 
 function tileFetchStateW(state) {
@@ -622,7 +627,7 @@ function buildCompiledTileW(state, backlogState = UNKNOWN_REGION_W) {
 
 	const count = state.data?.latest_compiled_count;
 	if (typeof count !== "number") {
-		return tilePlaceholderW("compiled", label, "unavailable");
+		return unreportedTileW("compiled", label, "Cycle");
 	}
 
 	const waiting =
@@ -664,7 +669,7 @@ function buildIndexTileW(state) {
 		(d.has_dirty_flag == null && d.dirty !== true && d.last_dirty_ms == null);
 	if (flagMissing) {
 		return {
-			...tilePlaceholderW("index", label, "unavailable"),
+			...unreportedTileW("index", label, "Index"),
 			cause: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
 		};
 	}
@@ -704,7 +709,7 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 			? indexState.data.notes_total
 			: summaryState.data?.notes_total;
 	if (typeof total !== "number") {
-		return tilePlaceholderW("library", label, "unavailable");
+		return unreportedTileW("library", label, "Index");
 	}
 
 	const payload =

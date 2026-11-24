@@ -397,7 +397,7 @@ test("the library tile's caption carries the broken-link count, and says so when
 test("an index with no dirty flag on record is unreported, its mechanism only in the cause", () => {
   const tile = helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null })) as Tile & { cause?: string };
   assert.equal(tile.state, "unavailable");
-  assert.equal(tile.sub ?? null, null, "no visible line carries the jargon");
+  assert.equal(tile.sub, "Index not reported", "the visible line names the source, never the jargon");
   assert.match(tile.cause ?? "", /dirty flag/i);
 });
 

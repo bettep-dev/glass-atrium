@@ -1097,7 +1097,31 @@ test("a stat whose read failed states the read's cause on its context line", asy
   const contextOf = Object.fromEntries(Array.from(row.props.stats as Array<{ label: string; context: unknown }>, (stat) => [stat.label, stat.context ?? null]));
 
   assert.deepEqual([contextOf["Search index"], contextOf["Library notes"]], ["Server error, not read.", "Server error, not read."]);
-  assert.equal(contextOf["Compiled last cycle"], null, "an unreported count carries no read-failure words");
+  assert.equal(contextOf["Compiled last cycle"], "Cycle not reported", "an unreported count names its source, not read-failure words");
+});
+
+describe("a stat its source never reported reads Not loaded and names that source on its context line", () => {
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const rows = [
+    { name: "a cycle without a compiled count", label: "Compiled last cycle", summary: {}, index: { notes_total: 40, has_dirty_flag: true, dirty: false }, context: "Cycle not reported" },
+    { name: "an index without a dirty flag", label: "Search index", summary: {}, index: { notes_total: 40, has_dirty_flag: false }, context: "Index not reported" },
+    { name: "an index and cycle without a note total", label: "Library notes", summary: {}, index: { has_dirty_flag: true, dirty: false }, context: "Index not reported" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadWikiScreen();
+      const band = renderScreen(
+        mod.React.createElement(mod.WikiTileBand as Component, { summaryState: ready(row.summary), indexState: ready(row.index), backlogState: READY_BACKLOG, onRetry: () => {} }),
+      );
+      const [statRow] = findNodes(band, (n) => n.props.atom === "StatRow");
+      const stat = Array.from(statRow.props.stats as Array<{ label: string; value: unknown; context: unknown }>).find((s) => s.label === row.label);
+      const [absent] = findNodes(renderScreen(stat?.value as RenderedNode), (n) => n.props.atom === "AbsentValue");
+
+      assert.equal(absent?.props.kind, "not-loaded", "the value reads Not loaded");
+      assert.equal(stat?.context, row.context, "the context line names the source");
+      assert.notEqual(absent?.props.title, row.context, "the title keeps the long form");
+    });
+  }
 });
 
 test("the two status cards share the S slot inside their region hosts", async () => {
