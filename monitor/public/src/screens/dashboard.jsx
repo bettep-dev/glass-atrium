@@ -139,8 +139,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         @keyframes ga-spin { to { transform: rotate(360deg); } }
         .ga-spin { animation: ga-spin 0.9s linear infinite; transform-origin: center; }
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
-        /* an agent name in the results panel is a plain anchor → an underline makes its hover visible */
-        .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
         .dash-week-panel { display: flex; flex-direction: column; }
         .dash-week-panel > .card { flex: 1 1 auto; }
         .dash-strip-track { height: 4rem; position: relative; }
@@ -487,20 +485,22 @@ function ResultPanel({ panel }) {
   );
 }
 
+// the whole row is one Link (spec 44084 §9.1) → name left, count and the Link's arrow right
 function BreakageAgents({ agents }) {
+  const { Link } = window.UI;
   if (agents.length === 0) return <p className="fs-meta text-dim">No agent had a failed or blocked run.</p>;
   return (
     <>
       <h3 className="fs-meta text-dim">Most failed or blocked</h3>
       <ul className="flex flex-col gap-list">
         {agents.map((row) => (
-          <li key={row.agent} className="flex items-center justify-between gap-label-inline fs-body">
+          <li key={row.agent} className="flex fs-body">
             {/* a real href, not onNav → the query reaches the Task results filter through hashchange */}
-            <a href={getAgentOutcomesHref(row.agent)} className="dash-drill inline-target min-w-0"
+            <Link href={getAgentOutcomesHref(row.agent)} className="inline-target flex-1 min-w-0 gap-label-inline"
               aria-label={`${row.agent}: ${formatInt(row.count)} failed or blocked — open its task results`}>
-              <span className="truncate">{row.agent}</span>
-            </a>
-            <span className="tabular-nums">{formatInt(row.count)}</span>
+              <span className="flex-1 min-w-0 truncate">{row.agent}</span>
+              <span className="tabular-nums">{formatInt(row.count)}</span>
+            </Link>
           </li>
         ))}
       </ul>

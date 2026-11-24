@@ -164,6 +164,27 @@ test("the results panel counts task results on its sub-line, filled or empty", (
   }
 });
 
+// spec 44084 §9.1: Task results applies the agent query on arrival → each row is its own Link, the head keeps its words
+test("each Most failed or blocked row is one Link to that agent's task results, its name and count inside", () => {
+  const agents = [{ agent: "glass-atrium-dev-shell", count: 2 }, { agent: "glass-atrium-dev-db", count: 1 }];
+  const tree = render("BreakageAgents", { agents });
+  const [head] = findNodes(tree, (n) => n.type === "h3");
+  assert.equal(collectText(head), "Most failed or blocked");
+  const rows = findNodes(tree, (n) => n.type === "li");
+  assert.equal(rows.length, agents.length);
+  rows.forEach((row, at) => {
+    assert.equal(row.children.length, 1, "the whole row is the target");
+    const links = findNodes(row, (n) => n.props.atom === "Link");
+    assert.equal(links.length, 1, "one Link per row");
+    const [link] = links;
+    assert.equal(link.props.href, `#outcomes?agent=${agents[at].agent}&days=7`);
+    // formatInt is a stubbed atom here → the count's own cell is asserted, after the name
+    const cells = findNodes(link, (n) => n.type === "span" && n.props["aria-hidden"] !== "true");
+    assert.deepEqual(cells.map((cell) => hasClass(cell, "tabular-nums")), [false, true], "the name, then the count");
+    assert.equal(collectText(cells[0]), agents[at].agent);
+  });
+});
+
 test("spend and result bars carry the data colour; today's partial day keeps its outline in it", () => {
   const strip = (mod.buildSpendStrip as (points: unknown) => unknown)(
     ["2026-09-22", "2026-09-23", "2026-09-24"].map((date, i) => ({ date, cost_usd: 12.5 + i, session_count: 1 })),
