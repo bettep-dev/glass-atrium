@@ -1028,24 +1028,34 @@ test("the ledger heads read Agent first and Runs, 7d last, with no activity glyp
   assert.doesNotMatch(collectText(table), /[●◐○]/);
 });
 
-describe("a ledger row names its activity in a word only off the active state", () => {
+function getFaintMetaTexts(tree: RenderedNode | string | null): string[] {
+  return findNodes(tree, (n) => /\bfs-meta\b/.test(String(n.props?.className ?? "")) && /\btext-faint\b/.test(String(n.props.className)))
+    .map((n) => getVisibleText(n).trim());
+}
+
+describe("a ledger row names its activity in a visible faint word only off the active state, an error adding the table's 13px crit glyph", () => {
   const rows = [
-    { status: "active", word: null, isError: false },
-    { status: "idle", word: "Idle", isError: false },
-    { status: "inactive", word: "Inactive", isError: false },
-    { status: "error", word: "Error", isError: true },
+    { status: "active", word: null, glyphSizes: [] as number[] },
+    { status: "idle", word: "Idle", glyphSizes: [] },
+    { status: "inactive", word: "Inactive", glyphSizes: [] },
+    { status: "error", word: "Error", glyphSizes: [13] },
   ];
   for (const row of rows) {
     test(row.status, async () => {
       const mod = await loadAgentsScreen();
       const [nameCell] = findNodes(renderToneRow(mod, { status: row.status, last_run_at: "2026-09-25T00:00:00Z" }, null), (n) => n.type === "td");
-      const dots = findAtoms(nameCell, "StatusDot");
-      assert.deepEqual(dots.map((n) => [n.props.status, n.props.word]), row.isError ? [["crit", "Error"]] : [], "only an error takes the crit dot");
-      const words = findNodes(nameCell, (n) => /\bfs-meta\b/.test(String(n.props?.className ?? "")) && /\btext-faint\b/.test(String(n.props.className)))
-        .map((n) => collectText(n).trim());
-      assert.deepEqual(words, row.word && !row.isError ? [row.word] : [], "idle and inactive read as faint meta words");
+      assert.deepEqual(getFaintMetaTexts(nameCell), row.word ? [row.word] : [], "the activity word is visible faint meta");
+      const glyphs = findNodes(nameCell, (n) => n.props?.["aria-hidden"] === "true" && /\btext-crit\b/.test(String(n.props.className)));
+      assert.deepEqual(glyphs.map((n) => findAtoms(n, "Icon")[0]?.props.size), row.glyphSizes, "only an error takes the crit glyph, at the table glyph size");
+      assert.equal(findAtoms(nameCell, "StatusDot").length, 0, "no status dot");
     });
   }
+});
+
+test("an activity word and a setup need read as two meta items, a separator between them", async () => {
+  const mod = await loadAgentsScreen();
+  const [nameCell] = findNodes(renderToneRow(mod, { status: "idle", compatibility: "Requires a live daemon" }, null), (n) => n.type === "td");
+  assert.deepEqual(getFaintMetaTexts(nameCell), ["Idle", "·", "Requires setup"]);
 });
 
 test("the drawer's rework count sums revisions across runs rather than repeating the run count", async () => {

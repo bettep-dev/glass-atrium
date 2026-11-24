@@ -1064,6 +1064,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
             ? <span className="font-medium text-dim">{nonActionableLabel}</span>
             : <AgentName name={agent.agent_name} className="font-medium"/>}
           <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
+          {getActivityWordAg(agent.status) && agent.compatibility && <span className="fs-meta text-faint" aria-hidden="true">·</span>}
           <CompatibilityMark compatibility={agent.compatibility}/>
         </div>
       </TableCell>
@@ -1143,12 +1144,23 @@ function CompatibilityMark({ compatibility }) {
 // active is the calm state → no mark; any other state names itself in a word
 const ACTIVITY_WORD = { idle: 'Idle', inactive: 'Inactive', error: 'Error' };
 
-function ActivityMark({ status, lastRunAt }) {
+function getActivityWordAg(status) {
   if (status === 'active') return null;
-  const word = Object.hasOwn(ACTIVITY_WORD, status) ? ACTIVITY_WORD[status] : 'Unknown';
+  return Object.hasOwn(ACTIVITY_WORD, status) ? ACTIVITY_WORD[status] : 'Unknown';
+}
+
+// an error adds the table's 13px crit glyph before the same faint word
+function ActivityMark({ status, lastRunAt }) {
+  const { Icon, TONE_ICON } = window.UI;
+  const word = getActivityWordAg(status);
+  if (!word) return null;
   const title = lastRunAt ? `Last run ${formatRelativeTimeAg(lastRunAt)}` : undefined;
-  if (status === 'error') return <span title={title}><window.UI.StatusDot status="crit" word={word} isInText/></span>;
-  return <span className="fs-meta text-faint" title={title}>{word}</span>;
+  return (
+    <span className="inline-flex items-center gap-label-inline" title={title}>
+      {status === 'error' && <span className="text-crit" aria-hidden="true"><Icon name={TONE_ICON.crit} size={13}/></span>}
+      <span className="fs-meta text-faint">{word}</span>
+    </span>
+  );
 }
 
 // LatencyBars (col-span-full) — 단일 바에 P50(불투명)/P95(0.65)/P99(0.35) 3-레이어 absolute 포지셔닝.
