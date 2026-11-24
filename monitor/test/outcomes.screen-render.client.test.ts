@@ -177,6 +177,19 @@ describe("a status fold's body holds its two blocks and its detail fold with no 
   }
 });
 
+// a detail fold starts collapsed → render every fold open to reach its body
+function Disclosure(props: Record<string, unknown>): unknown {
+  return (ui.UI as Record<string, Component>).Disclosure({ ...props, kind: "status" });
+}
+
+test("the Learning-run events fold's flush body holds the run log with no card inside", async () => {
+  const fold = getFold((await renderOutcomesScreen(0, { Disclosure })).tree, "Learning-run events");
+
+  assert.equal(fold.props.isFlush, true, "the log's edge cells carry the card padding");
+  assert.equal(findNodes(fold, (n) => hasClass(n, "card")).length, 1, "the fold's own box is its one card");
+  assert.equal(findNodes(fold, (n) => n.props.id === "outcomes-loop-events").length, 1, "the Retry target stays in the fold");
+});
+
 test("the per-agent table spans the full width", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes("split-row"));
@@ -387,7 +400,7 @@ test("a region's error card hands a focused, successful Retry to that region's o
     { name: "recording channels", component: "ChannelLivenessBlock", props: { state: retrying, onRetry } },
     { name: "check results", component: "GraderBreakdownBlock", props: { state: retrying, onRetry } },
     { name: "cross table", component: "CrosstabBlock", props: { state: retrying, onRetry } },
-    { name: "run events", component: "LoopEventsCard", props: { state: retrying, onRetry } },
+    { name: "run events", component: "LoopEventsRegion", props: { state: retrying, onRetry } },
     {
       name: "record ledger",
       component: "ResultTableCard",

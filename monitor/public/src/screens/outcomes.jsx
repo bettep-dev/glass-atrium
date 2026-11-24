@@ -748,8 +748,8 @@ function ScreenOutcomes({ onNav }) {
       </window.UI.Disclosure>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
-      <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} className="mt-section">
-        <LoopEventsCard state={loopEventsState} {...regionRetry}/>
+      <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} isFlush className="mt-section">
+        <LoopEventsRegion state={loopEventsState} {...regionRetry}/>
       </window.UI.Disclosure>
 
       {detailRow && (
@@ -2047,17 +2047,15 @@ function getCrosstabVisibleRowsO(byCell) {
 // ----- Loop-events log (raw daemon cycle stream, relocated from Learning) -----
 // /api/improvement/loop-events — core.autoagent_loop_events per-cycle stage stream.
 // operational data, not an aggregate signal → owned by Task results
-// fixed-height scroll card + summary count row (plain tabular count) + event table (row = event · 5 columns)
+// fixed-height scroll log + summary count row (plain tabular count) + event table (row = event · 5 columns)
 // density: row labels --dim · timestamps sans tabular-nums · agent truncate + tooltip
 // eval_result → loopResultMetaO symbol (tone color) + label, no badge
 
-function LoopEventsCard({ state, onRetry, shared }) {
-  const { Card } = window.UI;
+// the fold is the log's one box → its flush body; the wrapper stays mounted in every state as the Retry focus target
+function LoopEventsRegion({ state, onRetry, shared }) {
   return (
-    <div id={REGION_CARD_IDS.loopEvents} className="mt-section">
-      <Card title="Improvement run events" isFlush>
-        <LoopEventsBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
+    <div id={REGION_CARD_IDS.loopEvents}>
+      <LoopEventsBody state={state} onRetry={onRetry} shared={shared}/>
     </div>
   );
 }
@@ -2076,8 +2074,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
   const dist     = Array.isArray(state.data?.result_distribution) ? state.data.result_distribution : [];
 
   if (total === 0 || events.length === 0) {
-    // 카드 card-body 는 padding:0(populated 테이블 소유) → empty 브랜치만 별도 패딩으로
-    // the card-body default (--card-pad) 와 간격 일치. populated 테이블은 padding:0 유지.
+    // 폴드 body 는 flush(테이블 가장자리 셀이 inset 소유) → empty 줄만 card-pad 를 직접 받음
     return <div className="p-card-pad"><window.UI.EmptyState message="No run events recorded yet."/></div>;
   }
 
