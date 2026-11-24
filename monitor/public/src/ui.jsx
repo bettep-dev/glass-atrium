@@ -2496,7 +2496,7 @@ function FreshnessStamp({ at, loading = false, failed = false, regions, staleAft
   const title = settled === 'not-read' ? word : `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at, now)})`;
 
   return (
-    <span className="fs-meta text-faint tabular-nums whitespace-nowrap" title={title} aria-busy={state === 'loading' || state === 'refreshing' ? 'true' : undefined}>
+    <span className="fs-meta text-faint tabular-nums whitespace-nowrap" title={title} aria-busy={state === 'refreshing' ? 'true' : undefined}>
       <span aria-hidden="true" className={`mr-1 text-${tone}`}>{TONE_GLYPH[tone]}</span>
       <span className="sr-only">{word}</span>
       <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>
