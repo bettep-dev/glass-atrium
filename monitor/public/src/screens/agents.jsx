@@ -993,7 +993,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', on
   const [activeIndex, setActiveIndex] = useStateAg(0);
   const [activePseudoIndex, setActivePseudoIndex] = useStateAg(0);
   const pseudoRows = Array.isArray(pseudoAgents) ? pseudoAgents : [];
-  const p95WarnSec = getP95WarnSecAg(agents);
+  const p95Scale = getP95ScaleAg(agents);
 
   // one roving set per tbody — arrow keys walk the rows of the set they start in
   const renderRow = (view, a, index, rowSet) => (
@@ -1014,7 +1014,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', on
       trend={trendByAgent ? trendByAgent.get(a.agent_id) : null}
       failure={failureByAgent ? failureByAgent.get(a.agent_id) : null}
       overage={overageByAgent ? overageByAgent.get(a.agent_id) : null}
-      p95WarnSec={p95WarnSec}
+      p95Scale={p95Scale}
       failureStatus={failureStatus}
       trendStatus={trendStatus}
     />
@@ -1045,7 +1045,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', on
   return <Table caption="Performance by agent" isHeadSticky columns={columns} bodies={bodies}/>;
 }
 
-function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT.WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
+function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95Scale = { cutSec: P95_AGENT.FLOOR_SEC, maxSec: null }, failureStatus = 'ready', trendStatus = 'ready' }) {
   const { MiniBars, Bar, LOW_N_MIN, Icon, TONE_ICON, AgentName, TableRow, TableCell } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
@@ -1061,8 +1061,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
   // invocations = window 상대 spawn 빈도 (invocations_30d 는 deprecated alias — 1 release 유지).
   const invocations = agent.invocations !== undefined ? agent.invocations : agent.invocations_30d;
   const p95Sec = agent.p95_ms == null ? null : Number(agent.p95_ms) / 1000;
-  const p95Tone = p95LatencyTone(p95Sec, p95WarnSec);
-  const p95Glyph = p95GlyphTone(p95Sec, p95WarnSec);
+  const isTooSlow = p95Sec != null && p95Sec > p95Scale.cutSec;
   // Budget crossing folds into the P95 fill-bar label — a separate pill beside a ✓ glyph read as a contradiction.
   const overageCount = overage ? Number(overage.overage_count) || 0 : 0;
   const overageNote = overageCount > 0
@@ -1144,28 +1143,20 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
       <TableCell view={view}
         isNumeric
         className="tbl-bar-cell"
-        title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${Math.round(p95WarnSec / 60)}m, fleet p75 · crit >${P95_AGENT.CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
-        {/* tier 글리프 — 초-도메인 톤(p95GlyphTone warn=fleet p75·하한 600s / crit 1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
-            종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
-            전 에이전트가 단일 티어였다 — 글리프 + 분-도메인 컷으로 230s vs 1695s 가 가시적으로 분기.
-            글리프는 옆 초 수치(스크린리더 가독)를 강화하는 장식 → aria-hidden. 측정 불가(null)면 미렌더. */}
+        title={[isTooSlow && `Over ${P95_AGENT.MEDIAN_MULTIPLE}× the fleet median (cut ${formatDurationSecAg(p95Scale.cutSec)})`, overageNote].filter(Boolean).join(' · ') || undefined}>
         <span className="inline-flex items-center justify-end gap-label-inline">
-          {p95Sec != null ? (
-            <span className="inline-flex items-center gap-label-inline">
-              <span className={p95Tone || 'text-ok'} aria-hidden="true">
-                <Icon name={TONE_ICON[p95Glyph]} size={13}/>
-              </span>
-              <span>{formatDurationSecAg(p95Sec)}</span>
-            </span>
-          ) : (
-            <window.UI.AbsentValue kind="none"/>
+          {isTooSlow && (
+            <>
+              <span className="text-crit" aria-hidden="true"><Icon name={TONE_ICON.crit} size={13}/></span>
+              <span className="sr-only">Too slow</span>
+            </>
           )}
+          {p95Sec != null ? <span>{formatDurationSecAg(p95Sec)}</span> : <window.UI.AbsentValue kind="none"/>}
         </span>
-        {/* Fill-bar against the crit cut — the response-time card's comparison, per row. */}
         {p95Sec != null && (
           <Bar
-            value={Math.min(p95Sec / P95_AGENT.CRIT_SEC, 1)}
-            tone={barToneFromClass(p95Tone)}
+            value={p95Sec / (p95Scale.maxSec || p95Sec)}
+            tone="neutral"
             ariaLabel={[`p95 ${formatDurationSecAg(p95Sec)}`, overageNote].filter(Boolean).join(' · ')}
           />
         )}
@@ -3537,37 +3528,27 @@ function FailShareGlyph({ tone, label = getFailShareLabel() }) {
   );
 }
 
-// P95 응답시간(초) → 톤 (null=faint / >20s crit / >10s warn / 무톤).
-// 서브에이전트 작업 p95 지연은 분(minute) 도메인 — 라이브 분포 58s~1695s(중앙값 ~11분).
-// 종전 10s/20s 컷은 전 에이전트를 crit 단일 티어로 뭉개 spread 가 0 이었다(웹 p95 도메인 값을 잘못 차용).
-// 작업 지연 기준으로 재조정: warn=fleet p75 컷(하한 10분·600s)·crit=20분(1200s) → 라이브에서 ok/warn/crit 3티어 실제 분포.
-const P95_AGENT = { WARN_SEC: 600, CRIT_SEC: 1200, WARN_MIN_FLEET: 4 };
+// §12.4 owner cut: a p95 over twice the fleet median (nearest rank) is too slow, never under 20 minutes.
+const P95_AGENT = { FLOOR_SEC: 1200, MEDIAN_MULTIPLE: 2, MIN_FLEET: 4 };
 
-// Warn cut = fleet p75 of per-agent p95 (nearest rank), floored at 10m → at most a quarter of the fleet warns.
-function getP95WarnSecAg(agents) {
-  const secs = (Array.isArray(agents) ? agents : [])
+function getP95SecsAg(agents) {
+  return (Array.isArray(agents) ? agents : [])
     .filter((a) => a && a.p95_ms != null && Number.isFinite(Number(a.p95_ms)))
     .map((a) => Number(a.p95_ms) / 1000)
     .sort((x, y) => x - y);
-  if (secs.length < P95_AGENT.WARN_MIN_FLEET) return P95_AGENT.WARN_SEC;
-  return Math.max(P95_AGENT.WARN_SEC, secs[Math.ceil(secs.length * 0.75) - 1]);
 }
 
-function p95LatencyTone(p95Sec, warnSec = P95_AGENT.WARN_SEC) {
-  if (p95Sec == null)            return 'text-faint';
-  if (p95Sec > P95_AGENT.CRIT_SEC) return 'text-crit';
-  if (p95Sec > warnSec) return 'text-dim'; // warn cut = fleet p75 floored at 600s → shape only, amber would bury the crit rows
-  return '';
+function getP95CutSecAg(agents) {
+  const secs = getP95SecsAg(agents);
+  if (secs.length < P95_AGENT.MIN_FLEET) return P95_AGENT.FLOOR_SEC;
+  const median = secs[Math.ceil(secs.length / 2) - 1];
+  return Math.max(P95_AGENT.MEDIAN_MULTIPLE * median, P95_AGENT.FLOOR_SEC);
 }
 
-// 동일 초-도메인 컷 → TONE_GLYPH KEY. 빠른 구간을 명시적 'ok'(✓)로 매핑한다 —
-// p95LatencyTone 의 '' 무톤은 색 노이즈 회피용이라 barToneFromClass 로는 neutral(ℹ)이 되어
-// "빠름"을 표현하지 못한다. 글리프 인디케이터는 별도로 ok/warn/crit 3키를 직접 산출.
-function p95GlyphTone(p95Sec, warnSec = P95_AGENT.WARN_SEC) {
-  if (p95Sec == null)              return 'neutral';
-  if (p95Sec > P95_AGENT.CRIT_SEC) return 'crit';
-  if (p95Sec > warnSec)            return 'warn';
-  return 'ok';
+// cut + slowest → one scale every ledger row reads, so the mark and bar follow the selected range
+function getP95ScaleAg(agents) {
+  const secs = getP95SecsAg(agents);
+  return { cutSec: getP95CutSecAg(agents), maxSec: secs.length > 0 ? secs[secs.length - 1] : null };
 }
 
 // Failed-or-blocked share → tone KEY for its glyph and bar — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).
@@ -3575,15 +3556,6 @@ function failureTone(count, rate) {
   const population = count > 0 && rate > 0 ? Math.round(count / rate) : 0;
   if (population < window.UI.LOW_N_MIN) return 'neutral';
   return getFailShareTone(count, population) === 'crit' ? 'crit' : 'neutral';
-}
-
-// CSS-class 톤('text-ok' 등 · ''=무톤) → Bar/StatusDot KEY(ok|warn|crit|neutral) 변환.
-// 텍스트 톤 helper 는 class 를 돌려주나 Bar atom 은 KEY 를 받는다 — 'text-faint'/'' 는 neutral 로.
-function barToneFromClass(cls) {
-  if (cls === 'text-ok')   return 'ok';
-  if (cls === 'text-warn') return 'warn';
-  if (cls === 'text-crit') return 'crit';
-  return 'neutral';
 }
 
 // 호출 컬럼 hover title — null vs 0 vs >0 분기 명시 (시각만으로는 ambiguous).

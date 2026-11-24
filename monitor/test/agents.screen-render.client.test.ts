@@ -1015,23 +1015,6 @@ test("the drawer breakage badge takes the same crit step as the ledger numeral",
   }
 });
 
-test("a P95 numeral stays neutral at every tier, the glyph alone carrying the tier while amber stays off the routine warn tier", async () => {
-  const mod = await loadAgentsScreen();
-  const rows = [
-    { name: "fast tier", p95_ms: 300_000, numeral: [] as string[], glyph: "text-ok" },
-    { name: "warn tier, the bulk of live agents", p95_ms: 900_000, numeral: [] as string[], glyph: "text-dim" },
-    { name: "crit tier", p95_ms: 1_500_000, numeral: [] as string[], glyph: "text-crit" },
-  ];
-  for (const row of rows) {
-    const cell = findCellByTitle(renderToneRow(mod, { p95_ms: row.p95_ms }, null), /^p95 latency tier/);
-    const glyph = findNodes(cell, (n) => n.type === "span" && n.props?.["aria-hidden"] === "true")[0];
-    assert.equal(glyph?.props.className, row.glyph, `${row.name}: glyph tier`);
-    const numeralTones = findNodes(cell, (n) => n.props?.["aria-hidden"] !== "true" && TONED_CLASS.test(String(n.props?.className ?? "")))
-      .map((n) => String(n.props.className));
-    assert.deepEqual(numeralTones, row.numeral, `${row.name}: numeral tone`);
-  }
-});
-
 test("a failing pair keeps its failure glyph at any sample beside a neutral rate, and a small sample carries the shared low-sample mark instead of grey italics", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
@@ -1799,38 +1782,61 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
   }
 });
 
-test("the P95 warn cut follows the fleet's upper quartile, so warn stays rare while the 10-minute floor holds", async () => {
-  const mod = await loadAgentsScreen();
-  const getP95WarnSec = mod.getP95WarnSecAg as (agents: unknown[]) => number;
-  const toAgents = (secs: number[]) => secs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
-  const rows = [
-    { name: "a slow fleet raises the cut to its p75", secs: [300, 700, 800, 900, 1000, 1100, 1150, 1190], cut: 1100 },
-    { name: "a fast fleet keeps the 10-minute floor", secs: [60, 120, 180, 240, 300], cut: 600 },
-    { name: "fewer than four measured agents keep the floor", secs: [900, 1000, 1100], cut: 600 },
-  ];
-  for (const row of rows) {
-    const cut = getP95WarnSec([...toAgents(row.secs), { agent_id: "unmeasured", p95_ms: null }]);
-    assert.equal(cut, row.cut, row.name);
+// §12.4 fixtures (p95 seconds) → the cut and how many rows sit strictly above it.
+const P95_CUT_FIXTURES = [
+  { name: "a spread fleet cuts at twice its nearest-rank median", secs: [2472, 2268, 1985, 1880, 1601, 1449, 1350, 1274, 1142, 1091, 1005, 903, 807, 710, 556, 484, 398, 192, 115], cut: 2182, marked: 2 },
+  { name: "a flat fleet marks no row", secs: [900, 900, 900, 900, 900, 900, 900, 900], cut: 1800, marked: 0 },
+  { name: "a fast fleet keeps the 20-minute floor", secs: [300, 320, 340, 360, 1250], cut: 1200, marked: 1 },
+  { name: "fewer than four measured agents take the floor", secs: [1500, 1500, 1500], cut: 1200, marked: 3 },
+];
+
+function toP95Agents(secs: number[]): Record<string, unknown>[] {
+  return secs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
+}
+
+function renderP95Table(mod: Record<string, unknown>, agents: Record<string, unknown>[]): RenderedNode | string | null {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(React.createElement(mod.AgentSummaryTable as Component, {
+    agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
+  }));
+}
+
+// The P95 cell is the one whose bar is named for the row's p95.
+function getP95Cells(tree: RenderedNode | string | null): RenderedNode[] {
+  return findNodes(tree, (n) => n.type === "td" && findAtoms(n, "Bar").some((bar) => /^p95 /.test(String(bar.props.ariaLabel))));
+}
+
+const isTooSlowWords = (n: RenderedNode) => /\bsr-only\b/.test(String(n.props?.className ?? "")) && collectText(n) === "Too slow";
+
+describe("the P95 too-slow cut", () => {
+  for (const row of P95_CUT_FIXTURES) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
+      const agents = [...toP95Agents(row.secs), { agent_id: "unmeasured", agent_name: "unmeasured", status: "active", runs: 40, success_pct: 100, p95_ms: null }];
+      assert.equal((mod.getP95CutSecAg as (a: unknown[]) => number)(agents), row.cut, "cut");
+      const marked = getP95Cells(renderP95Table(mod, agents)).filter((cell) => findNodes(cell, isTooSlowWords).length > 0);
+      assert.equal(marked.length, row.marked, "rows over the cut");
+    });
   }
 });
 
-test("every ledger row reads the fleet P95 cut, and only a p95 above it takes the warn glyph", async () => {
-  const mod = await loadAgentsScreen();
-  const slowFleetSecs = [300, 700, 800, 900, 1000, 1100, 1150, 1190];
-  const agents = slowFleetSecs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
-  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-  const table = renderScreen(React.createElement(mod.AgentSummaryTable as Component, {
-    agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
-  }));
-  const cuts = findNodes(table, (n) => n.type === "AgentSummaryRow").map((n) => n.props.p95WarnSec);
-  assert.deepEqual(Array.from(new Set(cuts)), [1100], "every ledger row reads the fleet cut");
-  const glyphOf = (sec: number) => {
-    const row = findNodes(table, (n) => n.type === "AgentSummaryRow" && (n.props.agent as { p95_ms: number }).p95_ms === sec * 1000)[0];
-    const cell = findCellByTitle(row, /^p95 latency tier/);
-    return findNodes(cell, (n) => n.type === "span" && n.props?.["aria-hidden"] === "true")[0]?.props.className;
-  };
-  assert.equal(glyphOf(1000), "text-ok", "under the fleet cut reads fast");
-  assert.equal(glyphOf(1150), "text-dim", "above the fleet cut takes the warn glyph");
+test("a row over the P95 cut carries the crit glyph, the Too slow words and the cut in its title, and a row under it carries no glyph", async () => {
+  const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
+  const cells = getP95Cells(renderP95Table(mod, toP95Agents(P95_CUT_FIXTURES[0].secs)));
+  const [slow, fast] = [cells[0], cells[cells.length - 1]];
+  assert.ok(findNodes(slow, (n) => n.props?.["aria-hidden"] === "true" && /\btext-crit\b/.test(String(n.props.className))).length === 1, "crit glyph");
+  assert.equal(findNodes(slow, isTooSlowWords).length, 1, "sr-only words");
+  assert.equal(slow.props.title, `Over 2× the fleet median (cut ${(REAL_UI.formatDuration as (sec: number) => string)(2182)})`);
+  assert.equal(findNodes(fast, (n) => n.props?.["aria-hidden"] === "true").length, 0, "no glyph under the cut");
+  assert.equal(findNodes(fast, isTooSlowWords).length, 0, "no words under the cut");
+});
+
+test("the P95 bar is the row's p95 over the slowest p95 in the response, neutral and uncapped", async () => {
+  const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
+  const secs = P95_CUT_FIXTURES[0].secs;
+  const bars = getP95Cells(renderP95Table(mod, toP95Agents(secs))).map((cell) => findAtoms(cell, "Bar").find((bar) => /^p95 /.test(String(bar.props.ariaLabel))));
+  assert.deepEqual(bars.map((bar) => bar?.props.value), secs.map((s) => s / 2472), "width = p95 / slowest");
+  assert.deepEqual(Array.from(new Set(bars.map((bar) => bar?.props.tone))), ["neutral"], "one neutral fill");
 });
 
 test("the success cell shows the rate alone, its fraction kept in the tooltip", async () => {
