@@ -151,6 +151,7 @@
   --gap-page: var(--space-6);  --gap-header: var(--space-4);  --gap-section: var(--space-4);  --gap-block: var(--space-4);
   --gap-group-above: var(--space-8);  --gap-group-below: var(--space-3);  --gap-label: var(--space-2);  --gap-label-inline: var(--space-1);
   --gap-stack: var(--space-1);  --gap-list: var(--space-2);  --gap-control: var(--space-2);  --gap-control-group: var(--space-4);
+  --gap-chart-cell: var(--space-0_5);
   /* line boxes — a bordered control lands on --ctl-min-h, a table row on --row-h */
   --lh-ctl: calc(var(--ctl-min-h) - 2 * var(--space-1_5) - 2px);  --lh-row: 20px;
   /* focus */
@@ -954,7 +955,7 @@
 
 ### 12.1 Spacing — role tokens only
 
-- Ladder `--space-*`, 4px base: 4 · 8 · 12 · 16 · 24 · 32. Steps 2 and 6 only inside atoms (glyph ↔ label: 4 at 13px text, 6 at 14–15px).
+- Ladder `--space-*`, 4px base: 4 · 8 · 12 · 16 · 24 · 32. Steps 2 and 6 only inside atoms (glyph ↔ label: 4 at 13px text, 6 at 14–15px); the one screen-facing 2 is the chart-cell gutter.
 - Screens consume role tokens (§3.2a) through role keys, never a ladder step:
 
 | Role token | Value | Applies to |
@@ -970,6 +971,7 @@
 | `--gap-stack` | 4 | stacked label → value (one fact) |
 | `--gap-list` | 8 | stacked fact list items; button wrap gap |
 | `--gap-control` / `--gap-control-group` | 8 / 16 | toolbars, header line, card-head right slot: inside a group / between groups |
+| `--gap-chart-cell` | 2 | between cells of a heat grid or a swatch strip; nothing else |
 
 - Role keys (`index.html` → `tailwind.config`): padding `page`, `card-pad`; gap, margin and space every other role by name (`gap-control`, `space-y-section`, `mb-label`); no key is named `card`.
 - Atom-owned padding, no inset role:

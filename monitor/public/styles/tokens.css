@@ -76,6 +76,7 @@
   --gap-list:          var(--space-2); /* stacked fact list items · button wrap */
   --gap-control:       var(--space-2); /* controls inside one group */
   --gap-control-group: var(--space-4); /* between control groups */
+  --gap-chart-cell:    var(--space-0_5); /* between cells of a heat grid or a swatch strip, nothing else */
 
   /* minimum hit height for every interactive atom */
   --ctl-min-h: 32px;

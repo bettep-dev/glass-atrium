@@ -15,7 +15,7 @@ const TOKENS_CSS = readFileSync(resolve(HERE, "../public/styles/tokens.css"), "u
 const SECTIONS: RoleSection[] = ["padding", "gap", "margin", "space"];
 const GAP_FAMILY = [
   "header", "section", "block", "group-above", "group-below", "label",
-  "label-inline", "stack", "list", "control", "control-group",
+  "label-inline", "stack", "list", "control", "control-group", "chart-cell",
 ];
 const PREFIXES: Record<RoleSection, string[]> = {
   padding: ["p", "px", "py", "pt", "pr", "pb", "pl"],

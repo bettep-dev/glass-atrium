@@ -24,6 +24,7 @@ const ROWS = [
   { name: "mb-group-below closes a group heading", cls: "mb-group-below", props: ["margin-bottom"], px: "12px" },
   { name: "my-section spaces card rows above and below", cls: "my-section", props: ["margin-top", "margin-bottom"], px: "16px" },
   { name: "ml-list spaces list items", cls: "ml-list", props: ["margin-left"], px: "8px" },
+  { name: "gap-chart-cell sets the gutter between chart cells", cls: "gap-chart-cell", props: ["row-gap", "column-gap"], px: "2px" },
 ];
 const DESKTOP = { width: 1440, height: 900 };
 

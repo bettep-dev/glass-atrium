@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=1280" />
 <!-- Shell CSP — any script in this origin can call owner routes with the session cookie → only these exact files and the two inline scripts by hash; editing an inline script means updating its hash (test/app-shell.supply-chain.static.test.ts) -->
 <meta http-equiv="Content-Security-Policy" content="script-src 'self'
-  'sha256-DJPAntmJHvjgyfs/P0AB5sEwCPdcV15mmgGa1+/1wqk='
+  'sha256-8+zF2yQhjTnixnHWSIaGRlssQc+4ls2XupM6Y2Mhg/g='
   'sha256-Vp26zPrkN0ylL9phKMPonsJppUPta8GPsCE54VR1Lko='
   https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js
   https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.2/dist/svg-pan-zoom.min.js
@@ -49,6 +49,7 @@
     "list":          "var(--gap-list)",
     "control":       "var(--gap-control)",
     "control-group": "var(--gap-control-group)",
+    "chart-cell":    "var(--gap-chart-cell)",
   };
   tailwind.config = {
     theme: {
@@ -85,7 +86,7 @@
     },
   };
 </script>
-<link rel="stylesheet" href="styles/tokens.css?v=16" />
+<link rel="stylesheet" href="styles/tokens.css?v=17" />
 <link rel="stylesheet" href="styles/base.css?v=69" />
 <!-- 스크립트 이전 첫 페인트 = 다크 기본 표면 (벤더링된 Tailwind 런타임의 bg-surface 는 런타임 생성이라 늦다) -->
 <style>html, body { background: rgb(var(--surface)); }</style>
