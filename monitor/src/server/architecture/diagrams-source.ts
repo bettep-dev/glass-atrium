@@ -427,8 +427,7 @@ export const NODE_DESCRIPTIONS: Readonly<Record<string, string>> = {
 		"The orchestrator. It plans the work and assigns it; carrying the work out is the specialist agents' job, not its own.",
 	agent_layer:
 		"The specialist agents the orchestrator assigns work to. Their tool calls are what the hook pipeline sees.",
-	hook_pipeline:
-		"Every tool call an agent makes passes through here first — the safety checks that can stop a call, and the tracking that records what happened.",
+	hook_pipeline: "Checks every agent tool call, can stop it, and records what happened.",
 	pg_db:
 		"The PostgreSQL database. Agent documents and hook records both land here, and it is the single store the export path reads from.",
 	doc_export: "Renders the stored documents for export through a headless Chromium.",
