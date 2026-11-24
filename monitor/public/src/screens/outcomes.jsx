@@ -2351,7 +2351,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
   const getRows = (view) => sections.flatMap((section, sectionIndex) => (section.rows.length === 0 ? [] : [
     <LedgerGroupRowO key={`group-${section.key}`} section={section} view={view}/>,
     ...section.rows.map((row, i) => <ResultTableRow key={row.id} row={row} view={view} onRowClick={onRowClick} closure={closure}
-      focusProps={getFocusProps(row, rowStarts[sectionIndex] + i)}/>),
+      isRoutine={section.key === 'routine'} focusProps={getFocusProps(row, rowStarts[sectionIndex] + i)}/>),
     section.key === 'needs-you' && <NeedsYouToggleRowO key={`toggle-${section.key}`} section={section} view={view}
       isCapped={needsYouCap != null} onToggle={onToggleNeedsYou}/>,
   ]));
@@ -2489,7 +2489,7 @@ function QaScoreDotsO({ qaScore }) {
 
 // revision_count 미니 flag — ≥2 (process improvement 대상, core-learning-log.md) 일 때 UI.Bar 막대 표식.
 //   숫자 + warn-tone Bar (max 5 정규화) dual-encode. <2 = 숫자만 (또는 0=dash).
-function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
+function ResultTableRow({ row, view, onRowClick, closure, isRoutine = false, focusProps }) {
   const { TableRow, TableCell } = window.UI;
   const ts      = formatTimestampO(row.record_ts);
   const summary  = row.summary || '';
@@ -2502,6 +2502,8 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
   const why = getNeedsYouReasonO(row, closedAt);
+  // the Routine heading already says "no reason" for every row → that None is spoken, never painted (design.md §12.6 Cells)
+  const isWhyBlank = !why && isRoutine;
 
   return (
     <TableRow
@@ -2533,8 +2535,8 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
           )}
         </span>
       </TableCell>
-      <TableCell view={view} textRole="meta" label="Why" className="text-ink whitespace-nowrap" title={why?.note}>
-        {why ? why.label : <window.UI.AbsentValue kind="none"/>}
+      <TableCell view={view} textRole="meta" label={isWhyBlank ? undefined : 'Why'} className="text-ink whitespace-nowrap" title={why?.note}>
+        {isWhyBlank ? <span className="sr-only">{window.UI.EMPTY_VALUE_TEXT}</span> : (why?.label ?? <window.UI.AbsentValue kind="none"/>)}
       </TableCell>
       {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card */}
       {/* stacked → the summary leads its two-line item at full width, so the wide-mode squeeze drops */}

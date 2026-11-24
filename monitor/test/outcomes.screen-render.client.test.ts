@@ -458,6 +458,7 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
     ...Array.from({ length: 11 }, (_, i) => ({ id: i + 1, agent: "glass-atrium-dev-react", task_type: "feature", result: "fail", record_ts: "2026-09-01T10:00:00.000Z", summary: "Broke" })),
     { id: 20, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: null, record_ts: "2026-09-01T10:00:00.000Z", summary: "Caveat" },
     { id: 21, agent: "glass-atrium-dev-react", task_type: "review", result: "done", record_ts: "2026-09-01T10:00:00.000Z", summary: "Routine" },
+    { id: 22, agent: "glass-atrium-dev-react", task_type: "review", result: "done", poisoned_window: true, record_ts: "2026-09-01T10:00:00.000Z", summary: "Held out" },
   ];
   const closure = { pendingIds: new Set(), closedOverrides: new Map(), onMarkClosed: () => undefined };
   const tree = renderScreen(create(mod.ResultTable as Component, {
@@ -533,6 +534,25 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
     for (const node of [...cells, ...controls]) {
       const adHoc = tokensOf(node).filter((t) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t));
       assert.deepEqual(adHoc, [], `${node.type} '${collectText(node).trim().slice(0, 24)}'`);
+    }
+  });
+
+  // the Routine heading fixes "no reason" for its rows → the cell paints nothing; a Needs you row's missing reason varies → faint None
+  test("a Why cell with no reason paints None only in Needs you, and Routine says it to assistive tech alone", () => {
+    const getWhyCell = (summary: string) => {
+      const [row] = findNodes(tree, (n) => n.type === "tr" && String(n.props["aria-label"] ?? "").endsWith(summary));
+      return findNodes(row, (n) => n.type === "td")[4];
+    };
+    const getSrText = (node: RenderedNode) => findNodes(node, (n) => tokensOf(n).includes("sr-only")).map((n) => collectText(n).trim());
+    const cases = [
+      { name: "a Needs you row with no reason", summary: "Broke", painted: "None", spoken: [] },
+      { name: "a Routine row with no reason", summary: "Routine", painted: "", spoken: ["None"] },
+      { name: "a Routine row with a reason", summary: "Held out", painted: "Quarantined", spoken: [] },
+    ];
+    for (const row of cases) {
+      const cell = getWhyCell(row.summary);
+      assert.equal(collectPaintedText(cell).trim(), row.painted, row.name);
+      assert.deepEqual(getSrText(cell), row.spoken, row.name);
     }
   });
 
