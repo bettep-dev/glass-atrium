@@ -80,7 +80,6 @@ const BASELINE: Record<string, BaselineRow[]> = {
     { rule: "zero-reset", count: 2, owner: "C3" },
     { rule: "inline-spacing", count: 2, owner: "C3" },
     { rule: "retired-class", count: 1, owner: "C3" },
-    { rule: "font-mono", count: 13, owner: "C3" },
     { rule: "style-spacing-type", count: 37, owner: "C3" },
   ],
   "clauded-docs": [

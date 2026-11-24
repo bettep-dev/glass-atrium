@@ -66,7 +66,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   svg { display: block; vertical-align: middle; }
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
   summary { display: list-item; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
+  code { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 1em; }
   .fs-meta { font-size: var(--fs-meta); line-height: 1.4; } .rotate-90 { transform: rotate(90deg); }`;
 
 // reference atoms the System map controls must match

@@ -1508,7 +1508,7 @@ function getHealthStoreErrorsAR(states) {
  * 안 됨 (LLM01). 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function HookChainDetail({ state }) {
-	const { formatRelativeTime } = window.UI;
+	const { MachineString, formatRelativeTime } = window.UI;
 	const rows = getHookChainRows(state);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1531,7 +1531,7 @@ function HookChainDetail({ state }) {
 		<div className="arch-hook-chain">
 			{/* 어느 파일에서 읽었는지 — 훅이 안 돈다는 신고의 첫 확인 지점이 이 경로임 */}
 			<div className="arch-hook-head gap-list fs-meta text-dim">
-				<span className="font-mono text-ink">{state.data?.source_path || "—"}</span>
+				<MachineString className="text-ink">{state.data?.source_path || "—"}</MachineString>
 				{sourceMtime && <span>edited {formatRelativeTime(sourceMtime)}</span>}
 			</div>
 			<ul className="arch-hook-events gap-stack">
@@ -1539,7 +1539,7 @@ function HookChainDetail({ state }) {
 					<li key={row.event} className="arch-hook-event">
 						{row.groups.length === 0 ? (
 							<div className="arch-hook-head gap-list">
-								<span className="fs-meta font-mono text-ink">{row.event}</span>
+								<MachineString className="fs-meta text-ink">{row.event}</MachineString>
 								{/* 0 도 사실로 냄 — 이벤트는 있는데 훅이 없다는 것이 조사할 상태임 */}
 								<span className="fs-meta text-faint">0 hooks</span>
 							</div>
@@ -1549,7 +1549,7 @@ function HookChainDetail({ state }) {
 								<summary className="group disclosure">
 									<window.UI.DisclosureChevron />
 									<span>
-										<span className="fs-meta font-mono text-ink">{row.event}</span>{" "}
+										<MachineString className="fs-meta text-ink">{row.event}</MachineString>{" "}
 										<span className="fs-meta text-faint">{row.hookCount} hooks</span>
 									</span>
 								</summary>
@@ -1557,13 +1557,13 @@ function HookChainDetail({ state }) {
 									{/* position in the key — settings.json may repeat a matcher (or leave it empty) within one event; order is fixed settings order */}
 									{row.groups.map((group, groupIndex) => (
 										<li key={`${groupIndex}-${group.matcher}`} className="arch-hook-group">
-											<span className="fs-meta font-mono text-dim">{group.matcher}</span>
+											<MachineString className="fs-meta text-dim">{group.matcher}</MachineString>
 											<ul className="arch-hook-list gap-stack">
 												{group.hooks.map((hook, index) => (
 													<li
 														key={`${group.matcher}-${index}`}
 														className="arch-hook-head gap-list fs-meta text-dim">
-														<span className="font-mono text-ink">{hook.command}</span>
+														<MachineString className="text-ink">{hook.command}</MachineString>
 														{hook.type && <span className="fs-meta text-faint">{hook.type}</span>}
 														{hook.timeout !== null && hook.timeout !== undefined && (
 															<span className="fs-meta text-faint">timeout {hook.timeout}s</span>
@@ -1595,7 +1595,7 @@ function HookChainDetail({ state }) {
  * mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function HookFailureDetail({ state }) {
-	const { StatusDot, formatRelativeTime, formatKstFull } = window.UI;
+	const { MachineString, StatusDot, formatRelativeTime, formatKstFull } = window.UI;
 	const rows = getHookFailureRows(state);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1644,13 +1644,12 @@ function HookFailureDetail({ state }) {
 							data-hook-fail-row=""
 							className="arch-hook-head gap-list fs-meta text-dim">
 							<time
-								className="font-mono"
 								dateTime={row.failureTs}
 								title={formatKstFull(row.failureTs)}>
 								{formatRelativeTime(row.failureTs)}
 							</time>
-							<span className="font-mono text-ink">{row.hookName}</span>
-							<span className="font-mono">{row.targetTable}</span>
+							<MachineString className="text-ink">{row.hookName}</MachineString>
+							<MachineString>{row.targetTable}</MachineString>
 							{/* 라벨이 신호이고 tone 은 점이 실음 — meta 크기 글자에 심각도 색을
 							    얹으면 AA 대비에 못 미치고, 색만으로 실패 종류를 가르지도 않음 */}
 							<span className="inline-flex items-center">
@@ -1658,7 +1657,7 @@ function HookFailureDetail({ state }) {
 								{row.kind.label}
 							</span>
 							{row.reason && (
-								<span className="font-mono break-all" data-hook-fail-reason="">
+								<span className="break-all" data-hook-fail-reason="">
 									{row.reason}
 								</span>
 							)}
@@ -1680,7 +1679,7 @@ function HookFailureDetail({ state }) {
  * In flight with nothing held → no line: the advisory is no headline fact to wait on.
  */
 function PricingAdvisoryDetail({ state }) {
-	const { formatRelativeTime, formatKstFull } = window.UI;
+	const { MachineString, formatRelativeTime, formatKstFull } = window.UI;
 	if (!state || (state.status !== "ready" && state.status !== "error")) return null;
 
 	return (
@@ -1690,7 +1689,7 @@ function PricingAdvisoryDetail({ state }) {
 				<ul className="arch-hook-fail-list">
 					{state.data.models.map((entry) => (
 						<li key={entry.model} className="arch-hook-head gap-list fs-meta text-dim">
-							<span className="font-mono text-ink break-all">{entry.model}</span>
+							<MachineString className="text-ink break-all">{entry.model}</MachineString>
 							<span>
 								{entry.event_count} cost {entry.event_count === 1 ? "event" : "events"}
 							</span>
@@ -1764,7 +1763,7 @@ function NodePartHealth({
 	hookFailState,
 	unpricedModelState,
 }) {
-	const { Badge, StatusDot, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
+	const { Badge, MachineString, StatusDot, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
 		window.UI;
 	const [closedRowIds, setClosedRowIds] = useStateAR(() => new Set());
 
@@ -1814,7 +1813,7 @@ function NodePartHealth({
 							data-health-tone={row.tone || undefined}
 							data-daemon-row={row.daemonName || undefined}>
 							<div className="arch-part-head gap-list">
-								<span className="fs-meta font-mono text-ink">{row.name}</span>
+								<span className="fs-meta text-ink">{row.name}</span>
 								{row.tone ? (
 									<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
 										<StatusDot status={row.tone} />
@@ -1881,9 +1880,9 @@ function NodePartHealth({
 						data-live-daemon={daemon.daemon_name}
 						data-live-tone={daemonStatusTone(daemon.effective_status) || undefined}>
 						<div className="arch-part-head gap-list">
-							<span className="fs-meta font-mono text-ink">
+							<MachineString className="fs-meta text-ink">
 								{daemon.daemon_name}
-							</span>
+							</MachineString>
 							<Badge role="status" tone={daemonStatusTone(daemon.effective_status)}>
 								{daemonStatusLabel(daemon.effective_status)}
 							</Badge>
@@ -1933,7 +1932,7 @@ function DaemonRunDetail({ daemon, state }) {
 		<ul className="arch-run-list">
 			{summary.failures.map((run) => (
 				<li key={run.key} className="arch-run-entry gap-list">
-					<span className="fs-meta font-mono text-ink">{run.runDate}</span>
+					<span className="fs-meta text-ink">{run.runDate}</span>
 					{run.reasons.length === 0 ? (
 						<span className="fs-meta text-dim">
 							{RUN_VERDICT_NOTE[run.verdict] || `Verdict: ${run.verdict}`}

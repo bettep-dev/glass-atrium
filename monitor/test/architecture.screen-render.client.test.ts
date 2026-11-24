@@ -370,6 +370,44 @@ test("the hook chain gives every matcher group of one event its own key, even wh
   assert.equal(new Set(keys).size, keys.length, `sibling group keys collide, so React drops or merges rows: ${JSON.stringify(keys)}`);
 });
 
+// mono marks text a program wrote that a person copies or matches — times, dates, part names and reason lines stay sans
+test("the node drawer draws exactly its machine strings through MachineString", async () => {
+  const mod = await loadArch();
+  const ago = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+  const hookState = {
+    status: "ready",
+    data: {
+      source_path: "/Users/op/.claude/settings.json", source_mtime: ago(48),
+      events: [{ event: "PreToolUse", groups: [{ matcher: "Bash|Edit", hooks: [{ command: "hooks/enforce-commit-guard.sh --strict", type: "command", timeout: 10 }] }] }, { event: "SessionStart", groups: [] }],
+    },
+  };
+  const hookFailState = {
+    status: "ready",
+    data: {
+      days: 30, last_failure_ts: ago(3), error_kind_breakdown: [{ error_kind: "db_unavailable", count: 1 }],
+      failures: [{ id: 7, failure_ts: ago(3), hook_name: "track-outcome", target_table: "core.outcomes", error_kind: "db_unavailable", payload_ref: "payload spooled to /tmp/ga-spool/outcome-7.json", retry_attempted: true }],
+    },
+  };
+  const unpricedModelState = { status: "ready", data: { models: [{ model: "claude-opus-5-5-20261101", event_count: 3, last_seen_at: ago(5) }] } };
+  const payloadState = { status: "ready", data: { daemon: "autoagent", entries: [{ run_date: "2026-11-23", summary: { verdict: "failed", error_signatures: [{ message: "timeout waiting for the grader", count: 2 }] } }] } };
+  const partRows = [
+    { id: "hook-chain", name: "Hook Chain", kind: "hook", daemonName: null, nodeIds: ["hook_pipeline"], tone: "warn", statusLabel: "Warning", lastRunAt: null },
+    { id: "daemon-cycle", name: "autoagent", kind: "daemon", daemonName: "autoagent", nodeIds: ["hook_pipeline"], tone: "ok", statusLabel: "Healthy", lastRunAt: ago(2) },
+  ];
+  const daemons = [{ daemon_name: "learning-aggregator", effective_status: "ok", last_run_at: ago(3) }];
+
+  const tree = renderScreen(mod.React.createElement(mod.NodePartHealth, {
+    nodeId: "canonical.hook_pipeline", partRows, daemons, payloadDaemon: "autoagent", onSelectDaemon: () => {},
+    payloadState, hookState, hookFailState, unpricedModelState,
+  }));
+  const machineStrings = findNodes(tree, (n) => n.props.atom === "MachineString").map((n) => collectText(n).trim());
+
+  assert.deepEqual(machineStrings.sort(), [
+    "/Users/op/.claude/settings.json", "Bash|Edit", "PreToolUse", "SessionStart", "claude-opus-5-5-20261101",
+    "core.outcomes", "hooks/enforce-commit-guard.sh --strict", "learning-aggregator", "track-outcome",
+  ].sort());
+});
+
 test("a part's Open box action is the quiet ghost button, so a list of parts carries no column of bordered buttons", async () => {
   const mod = await loadArch();
   const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);
