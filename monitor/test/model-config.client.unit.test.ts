@@ -1680,7 +1680,7 @@ test("a row departing from the card's timing states its own timing in its row", 
 describe("each card's glossary opens from its About settings drawer, never on the card face", () => {
   const rows = [
     { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), heading: "What the helper runs" },
-    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), heading: "When a cap trips" },
+    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), heading: "What each cap covers" },
     { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), heading: "What each setting does" },
   ];
   for (const row of rows) {
@@ -1716,7 +1716,7 @@ test("long take-effect, cap and default sentences read as short labels; their de
   const [budgetMeta, tierMeta] = vm.runInContext("[BUDGET_META_MC, TIER_META_MC]", screens) as Array<
     Record<string, { desc: string; note?: string }>
   >;
-  assert.strictEqual(budgetMeta["budget.worker_max_usd"].desc, "Shared cap: generation + wiki compile");
+  assert.strictEqual(budgetMeta["budget.worker_max_usd"].desc, "One cap for both calls");
   for (const knob of ["tier.worker_effort", "tier.pre_verify_effort"]) {
     assert.strictEqual(tierMeta[knob].desc, "Default: no --effort flag", knob);
   }
@@ -1957,7 +1957,7 @@ test("the glossary labels are headings, and their notes never repeat the agent a
   });
   const headings = textsMc(tagsMc(tree, "h3"));
   assert.ok(headings.includes("What the helper runs"), `headings: ${headings}`);
-  assert.ok(headings.includes("When a cap trips"), `headings: ${headings}`);
+  assert.ok(headings.includes("What each cap covers"), `headings: ${headings}`);
 
   const notes = textsMc(tagsMc(tree, "dd")).join(" ");
   assert.ok(notes.length > 0, "the notes are rendered");

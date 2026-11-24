@@ -120,7 +120,7 @@ const SYNC_META_MC = {
 const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
 		label: "Generation and wiki compile",
-		desc: "Shared cap: generation + wiki compile",
+		desc: "One cap for both calls",
 		source: "daemon-config.json",
 	},
 	"budget.pre_verify_max_usd": {
@@ -1596,7 +1596,7 @@ function BudgetsSectionMC({
 				<SettingsInfoMC
 					caveat={timing.caveat}
 					lead="A cap that trips aborts the runaway call."
-					title="When a cap trips"
+					title="What each cap covers"
 					rows={rows.map((b) => BUDGET_META_MC[b.domain])}
 				/>
 			}
