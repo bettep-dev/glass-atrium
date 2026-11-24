@@ -2860,8 +2860,8 @@ function DetailNarrative({ row, detailState, markdown }) {
     <window.UI.Stack gap="block">
       {lessonText && (
         <window.UI.Stack gap="label">
-          <h3 className="fs-title font-semibold m-0">Lesson</h3>
-          <p className="outcome-md m-0">{lessonText}</p>
+          <h3 className="fs-title font-semibold">Lesson</h3>
+          <p className="fs-body text-ink">{lessonText}</p>
         </window.UI.Stack>
       )}
       <DetailBody detailState={detailState} markdown={body}/>
@@ -2914,7 +2914,7 @@ function getRecordFactO(label, value) {
 function FileListO({ files }) {
   const paths = files.split(',').map((path) => path.trim()).filter(Boolean);
   return (
-    <ul className="list-none m-0 p-0">
+    <ul>
       {paths.map((path, i) => <li key={`${path}#${i}`}><window.UI.MachineString>{path}</window.UI.MachineString></li>)}
     </ul>
   );
@@ -2956,7 +2956,7 @@ function DetailBody({ detailState, markdown }) {
 
   if (!markdown) {
     return (
-      <p className="fs-body text-faint m-0">No body text — showing the facts only.</p>
+      <p className="fs-body text-faint">No body text — showing the facts only.</p>
     );
   }
 
