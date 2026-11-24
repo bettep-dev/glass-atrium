@@ -333,17 +333,14 @@ function ScreenArchitecture(
 	const {
 		PageHeader,
 		TypeScaleStyle,
-		Icon,
 		FreshnessStamp,
 		RefreshButton,
 		PageErrorBanner,
-		RegionFailure,
 		INITIAL_REGION_STATE,
 		putRegionRequest,
 		putRegionData,
 		putRegionFailure,
 		getRegionSummary,
-		getRegionView,
 	} = window.UI;
 
 	const [diagState, setDiagState] = useStateAR(INITIAL_REGION_STATE);
@@ -591,9 +588,9 @@ function ScreenArchitecture(
 	const pageRegions = pageReadEntries.map((entry) => entry.state);
 	const readTally = getRegionSummary(pageRegions);
 
-	const freshnessInput = getFreshnessInputAR(healthAsOf, pageRegions, diagState.data != null);
+	const freshnessInput = getFreshnessInputAR(healthAsOf, pageRegions, diagState);
 	// part rows answer to the health reads alone — a failed map read does not age a part's verdict
-	const partFreshness = getFreshnessInputAR(healthAsOf, Object.values(headlineHealthStates), true);
+	const partFreshness = { at: healthAsOf, regions: Object.values(headlineHealthStates) };
 	const mapCopyNote = getMapCopyNoteAR(diagState);
 
 	const handleSelectNode = useCallbackAR(
@@ -652,8 +649,8 @@ function ScreenArchitecture(
 					".arch-page:has(.arch-part-health) .arch-main { min-height: 62vh; } " +
 					// a pane clamped to its drawing gives the unused height back — the fit scale the floor protects is already set
 					`.arch-page .arch-main:has(.arch-mermaid-canvas[${CANVAS.FIT_HEIGHT_ATTR}]) { flex: none; min-height: 0; } ` +
-					// an undrawn map sizes to its slot — the page-tall floor would open a void under the loader or failure card
-					".arch-page .arch-main.arch-main-pending { flex: none; min-height: 0; } " +
+					// an undrawn map sizes to its content — the page-tall floor would open a void under the loader, failure or empty line
+					".arch-page .arch-main.arch-main-undrawn { flex: none; min-height: 0; } " +
 					".arch-part-health { flex-shrink: 0; } " +
 					// the card title outranks its rows — body-size row text under a control-size title read upside down
 					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; } " +
@@ -815,7 +812,7 @@ function ScreenArchitecture(
 						/>
 					}
 				/>
-				{diagState.data != null && <MapCaptionAR />}
+				<MapCaptionAR />
 			</div>
 
 			<div className="arch-page gap-list">
@@ -830,47 +827,25 @@ function ScreenArchitecture(
 				)}
 				<AlarmLaneAR rows={alarmRows} onRetry={triggerRefresh} />
 
-				{/* 본체: 단일 canonical Mermaid 캔버스 (가용 폭 100%) — 못 읽으면 빈 캔버스 대신 조용한 카드 하나 */}
-				<div className={diagState.data == null ? "arch-main arch-main-pending" : "arch-main"} id={MAP_REGION_ID_AR}>
-					{/* view, not raw status — a cold Retry flips status to 'loading' but must stay this card, busy */}
-					{getRegionView(diagState) === "error" ? (
-						<RegionFailure
-							source={DIAGRAM_SOURCE_AR}
-							error={diagState.error}
-							shared={pageFailure}
-							onRetry={triggerRefresh}
-							isBusy={isRefreshBusy}
-							focusTargetId={MAP_REGION_ID_AR}
-							minHeight={MAP_SLOT_MIN_PX}
-							className="flex flex-col arch-col-card"
-						/>
-					) : (
-						<div className="card card--fill arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
-							{mapCopyNote && (
-								<p className="fs-meta text-dim arch-map-copy-note">
-									<Icon name="warn" size={14} className={TONE_GLYPH_CLASS.warn} />
-									{mapCopyNote}
-								</p>
-							)}
-							<div
-								className="card-body flush"
-								style={{ opacity: diagState.busy && diagState.data ? 0.6 : 1 }}
-							>
-								<DiagramBody
-									diagState={diagState}
-									activeDiagram={activeDiagram}
-									nodeByLabel={nodeByLabel}
-									ringToneByNodeId={ringToneByNodeId}
-									unverifiedNodeIds={unverifiedNodeIds}
-									healthPending={healthPending}
-									zoneRingPlan={zoneRingPlan}
-									attentionCountByNodeId={attentionCountByNodeId}
-									onSelectNode={handleSelectNode}
-								/>
-							</div>
-						</div>
-					)}
-				</div>
+				<MapRegionAR
+					diagState={diagState}
+					pageFailure={pageFailure}
+					isBusy={isRefreshBusy}
+					onRetry={triggerRefresh}
+					copyNote={mapCopyNote}
+					isEmpty={diagState.data != null && getMapEmptyMessageAR(activeDiagram) != null}>
+					<DiagramBody
+						diagState={diagState}
+						activeDiagram={activeDiagram}
+						nodeByLabel={nodeByLabel}
+						ringToneByNodeId={ringToneByNodeId}
+						unverifiedNodeIds={unverifiedNodeIds}
+						healthPending={healthPending}
+						zoneRingPlan={zoneRingPlan}
+						attentionCountByNodeId={attentionCountByNodeId}
+						onSelectNode={handleSelectNode}
+					/>
+				</MapRegionAR>
 
 				<PartHealthBlockAR
 					partRows={healthPartRows}
@@ -911,6 +886,57 @@ function ScreenArchitecture(
 	);
 }
 
+/**
+ * The map slot — the drawn map's card, or the read's state in its place.
+ * Undrawn (in flight, failed, nothing to draw) → the slot lets go of the page-tall floor and ends at its content.
+ * @param isEmpty - the read answered with nothing to draw
+ * @param children - the map body drawn inside the card
+ */
+function MapRegionAR({ diagState, pageFailure, isBusy, onRetry, copyNote, isEmpty, children }) {
+	const { Icon, getRegionView } = window.UI;
+	const view = getRegionView(diagState);
+
+	return (
+		<div className={view !== "ready" || isEmpty ? "arch-main arch-main-undrawn" : "arch-main"} id={MAP_REGION_ID_AR}>
+			{/* view, not raw status — a cold Retry flips status to 'loading' but must stay this card, busy */}
+			{view === "error" ? (
+				<MapFailureAR error={diagState.error} pageFailure={pageFailure} isBusy={isBusy} onRetry={onRetry} />
+			) : (
+				<div className="card card--fill arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
+					{copyNote && (
+						<p className="fs-meta text-dim arch-map-copy-note">
+							<Icon name="warn" size={14} className={TONE_GLYPH_CLASS.warn} />
+							{copyNote}
+						</p>
+					)}
+					<div className="card-body flush" style={{ opacity: diagState.busy && diagState.data ? 0.6 : 1 }}>
+						{children}
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
+// the page alert names the map → a quiet map-sized pointer · else the page's one failure shape, the alarm card with its Retry
+function MapFailureAR({ error, pageFailure, isBusy, onRetry }) {
+	const { PageErrorBanner, RegionFailure } = window.UI;
+	if (pageFailure?.sources?.includes(DIAGRAM_SOURCE_AR)) {
+		return (
+			<RegionFailure
+				source={DIAGRAM_SOURCE_AR}
+				shared={pageFailure}
+				focusTargetId={MAP_REGION_ID_AR}
+				minHeight={MAP_SLOT_MIN_PX}
+				className="flex flex-col arch-col-card"
+			/>
+		);
+	}
+	return (
+		<PageErrorBanner sources={[DIAGRAM_SOURCE_AR]} error={error} onRetry={onRetry} isBusy={isBusy} focusTargetId={MAP_REGION_ID_AR} />
+	);
+}
+
 // Diagram canvas card (Mermaid native rendering)
 
 function DiagramBody({
@@ -944,20 +970,13 @@ function DiagramBody({
 	}, [mermaidReady]);
 
 	if (diagState.status === "loading") return <MapLoadingAR />;
-	if (!activeDiagram) {
-		return <window.UI.EmptyState message="No diagrams to show." />;
-	}
-	const source = activeDiagram.mermaid_source;
-	if (!source || typeof source !== "string" || source.trim().length === 0) {
-		return (
-			<window.UI.EmptyState message="This diagram has an empty mermaid_source." />
-		);
-	}
+	const emptyMessage = getMapEmptyMessageAR(activeDiagram);
+	if (emptyMessage) return <window.UI.EmptyState message={emptyMessage} />;
 	if (!mermaidReady) return <MapLoadingAR />;
 	return (
 		<MermaidCanvas
 			diagramId={activeDiagram.id}
-			source={source}
+			source={activeDiagram.mermaid_source}
 			diagramTitle={activeDiagram.title || activeDiagram.id}
 			nodeByLabel={nodeByLabel}
 			ringToneByNodeId={ringToneByNodeId}
@@ -968,6 +987,14 @@ function DiagramBody({
 			onSelectNode={onSelectNode}
 		/>
 	);
+}
+
+// the line an answered read with nothing to draw shows, or null when there is a source to draw
+function getMapEmptyMessageAR(activeDiagram) {
+	if (!activeDiagram) return "No diagrams to show.";
+	const source = activeDiagram.mermaid_source;
+	if (typeof source !== "string" || source.trim().length === 0) return "This diagram has no source.";
+	return null;
 }
 
 function MapLoadingAR() {
@@ -1765,8 +1792,7 @@ function NodePartHealth({
 	hookFailState,
 	unpricedModelState,
 }) {
-	const { AbsentValue, Badge, MachineString, StatusDot, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
-		window.UI;
+	const { AbsentValue, MachineString, formatRelativeTime, daemonStatusLabel, daemonStatusTone } = window.UI;
 	const [closedRowIds, setClosedRowIds] = useStateAR(() => new Set());
 
 	const unscoped = unscopedNodeIdAR(nodeId);
@@ -1815,15 +1841,13 @@ function NodePartHealth({
 							data-health-tone={row.tone || undefined}
 							data-daemon-row={row.daemonName || undefined}>
 							<div className="arch-part-head gap-list">
-								<span className="fs-meta text-ink">{row.name}</span>
-								{row.tone ? (
-									<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
-										<StatusDot status={row.tone} />
-										{getPartStatusTextAR(row)}
-									</span>
+								{/* a daemon part is named by its daemon id (§14.4) */}
+								{row.daemonName ? (
+									<MachineString className="fs-meta text-ink">{row.name}</MachineString>
 								) : (
-									<span className="fs-meta text-dim">{getPartStatusTextAR(row)}</span>
+									<span className="fs-meta text-ink">{row.name}</span>
 								)}
+								<DrawerStatusAR tone={row.tone} text={getPartStatusTextAR(row)} />
 								{/* last run = a daemon-only fact → no field on other parts; a daemon with none shows its absence (§2.2) */}
 								{row.daemonName && (
 									<span className="fs-meta text-dim">
@@ -1884,9 +1908,10 @@ function NodePartHealth({
 							<MachineString className="fs-meta text-ink">
 								{daemon.daemon_name}
 							</MachineString>
-							<Badge role="status" tone={daemonStatusTone(daemon.effective_status)}>
-								{daemonStatusLabel(daemon.effective_status)}
-							</Badge>
+							<DrawerStatusAR
+								tone={daemonStatusTone(daemon.effective_status)}
+								text={daemonStatusLabel(daemon.effective_status)}
+							/>
 							<span className="fs-meta text-dim">
 								Last run{" "}
 								{daemon.last_run_at ? formatRelativeTime(daemon.last_run_at) : <AbsentValue kind="none" />}
@@ -1896,6 +1921,17 @@ function NodePartHealth({
 				))}
 			</div>
 		</div>
+	);
+}
+
+// one status look for every drawer row — a bare tone glyph and its word, no chip; no verdict → the word alone
+function DrawerStatusAR({ tone, text }) {
+	if (!tone) return <span className="fs-meta text-dim">{text}</span>;
+	return (
+		<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
+			<window.UI.StatusDot status={tone} />
+			{text}
+		</span>
 	);
 }
 
@@ -2873,8 +2909,9 @@ function getLabelWordsAR(label) {
 }
 
 // every region the page reads feeds the stamp; no read time until the map itself has been read
-function getFreshnessInputAR(healthAsOf, regions, hasMap) {
-	return { at: hasMap ? healthAsOf : null, regions };
+// the map read in flight → no read time yet · once it answers, failed or not, the stamp dates what the page holds
+function getFreshnessInputAR(healthAsOf, regions, mapState) {
+	return { at: window.UI.getRegionView(mapState) === "loading" ? null : healthAsOf, regions };
 }
 
 // a failed re-read keeps the held map on screen — the map says it is the last good copy, not the current one

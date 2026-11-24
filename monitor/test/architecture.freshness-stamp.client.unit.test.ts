@@ -42,7 +42,7 @@ interface StampSandbox {
       getFreshnessVerdict: (input: FreshnessInput & { tone: string; now: number }) => { label: string };
     };
   };
-  getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], hasMap: boolean) => FreshnessInput;
+  getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], mapState: RegionState) => FreshnessInput;
   getPartHealthStatusAR: (partRows: PartRow[], freshness: FreshnessInput & { now: number }) => { tone: string; text: string } | null;
   getPartStatusAR: (row: PartRow, freshness: FreshnessInput & { now: number }) => { tone: string | null; text: string };
   getMapCopyNoteAR: (diagState: RegionState) => string | null;
@@ -61,7 +61,7 @@ const FAILED_OVER_HELD: RegionState = { ...HELD, error: "HTTP 502" };
 const DOWN: RegionState = { status: "error", data: null, error: "HTTP 502", busy: false };
 
 function getState(healthAsOf: string | null, regions: RegionState[]): string {
-  return sandbox.window.UI.getFreshnessState({ ...sandbox.getFreshnessInputAR(healthAsOf, regions, true), now: NOW });
+  return sandbox.window.UI.getFreshnessState({ ...sandbox.getFreshnessInputAR(healthAsOf, regions, HELD), now: NOW });
 }
 
 test("the stamp answers for every region: a failure over held data shows, and reads in flight keep it busy", () => {
@@ -93,7 +93,7 @@ test("the System parts head status follows the stamp's freshness: a failed re-re
   ];
 
   for (const row of rows) {
-    const status = sandbox.getPartHealthStatusAR(parts, { ...sandbox.getFreshnessInputAR(READ_AT, row.regions, true), now: NOW });
+    const status = sandbox.getPartHealthStatusAR(parts, { at: READ_AT, regions: row.regions, now: NOW });
     assert.strictEqual(status?.text, row.expected, row.name);
   }
 });
@@ -109,7 +109,7 @@ test("a part row's verdict follows the health stamp: an ok row under a failed re
   ];
 
   for (const row of rows) {
-    const shown = sandbox.getPartStatusAR(row.row, { ...sandbox.getFreshnessInputAR(READ_AT, row.regions, true), now: NOW });
+    const shown = sandbox.getPartStatusAR(row.row, { at: READ_AT, regions: row.regions, now: NOW });
     assert.deepStrictEqual({ tone: shown.tone, text: shown.text }, { tone: row.tone, text: row.text }, row.name);
   }
 });

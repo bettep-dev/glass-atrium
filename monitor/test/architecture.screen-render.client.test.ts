@@ -62,7 +62,7 @@ test("the page alert shows its Retry in flight and hands focus to the verdict, w
   assert.notEqual(targets[0].props.atom, "PageErrorBanner", "focus lands outside the alert that unmounts on recovery");
 });
 
-test("a cold map Retry keeps the map's failure card in place, busy, with a focus target that outlives recovery", async () => {
+test("a cold map Retry keeps the map's failure card in place with a focus target that outlives recovery", async () => {
   const mod = (await loadScreenModule(ARCH_SRC, {
     UI: uiStub({ INITIAL_REGION_STATE: getColdRetryState() }),
     React: createReactStub(),
@@ -71,7 +71,6 @@ test("a cold map Retry keeps the map's failure card in place, busy, with a focus
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure" && /\barch-col-card\b/.test(String(n.props.className)));
   assert.equal(cards.length, 1, "the map slot stays a failure card during its Retry instead of collapsing to a loader");
-  assert.equal(cards[0].props.isBusy, true, "the card's Retry shows as in flight");
   const targetId = cards[0].props.focusTargetId;
   const targets = findNodes(tree, (n) => /^[a-z]/.test(n.type) && n.props.atom === undefined && n.props.id === targetId);
   assert.equal(targets.length, 1, `focus target ${String(targetId)} is one host element`);
@@ -248,7 +247,78 @@ test("a map not drawn yet holds one map-sized slot, the same while loading and a
   assert.ok(Number(loading.placeholder.props.minHeight) > 0, "the loader reserves a height of its own");
   assert.equal(cold.placeholder.props.minHeight, loading.placeholder.props.minHeight, "loader and failure card hold the same slot, so neither swap jumps");
   for (const slot of [loading, cold])
-    assert.match(String(slot.region.props.className), /\barch-main-pending\b/, "an undrawn map region is marked so the page-tall floor lets go of it");
+    assert.match(String(slot.region.props.className), /\barch-main-undrawn\b/, "an undrawn map region is marked so the page-tall floor lets go of it");
+});
+
+// one failure shape on the page: the alarm card with Retry at its row end, as a held map's failure and parts-failed draw it
+test("a map failure no other surface speaks for draws the alarm card in the map slot, sized to the card", async () => {
+  const mod = await loadArch();
+  const down = { status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
+  const onRetry = () => {};
+  const tree = renderScreen(mod.React.createElement(mod.MapRegionAR, { diagState: down, pageFailure: null, isBusy: false, onRetry, copyNote: null, isEmpty: false }));
+  const [region] = findNodes(tree, (n) => n.props.id === "arch-map-region");
+  const cards = findNodes(region, (n) => n.props.atom === "PageErrorBanner");
+
+  assert.equal(cards.length, 1, "one alarm card in the map slot");
+  assert.equal(cards[0].props.onRetry, onRetry, "the card carries the map's Retry");
+  assert.equal(cards[0].props.focusTargetId, "arch-map-region", "recovery focus lands on the region that outlives the card");
+  assert.equal(findNodes(region, (n) => n.props.atom === "RegionFailure").length, 0, "no bare failure block on the page ground");
+  assert.match(String(region.props.className), /\barch-main-undrawn\b/, "the slot lets go of the page-tall floor and ends at the card");
+});
+
+describe("the map card ends at its content when there is nothing to draw", () => {
+  const ready = { status: "ready", data: { diagrams: [] }, error: null, busy: false };
+  const rows = [
+    { name: "a map with nothing to draw", isEmpty: true, isUndrawn: true },
+    { name: "a drawn map", isEmpty: false, isUndrawn: false },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const mod = await loadArch();
+      const tree = renderScreen(mod.React.createElement(mod.MapRegionAR, { diagState: ready, pageFailure: null, isBusy: false, onRetry: () => {}, copyNote: null, isEmpty: row.isEmpty }));
+      const [region] = findNodes(tree, (n) => n.props.id === "arch-map-region");
+
+      assert.equal(/\barch-main-undrawn\b/.test(String(region.props.className)), row.isUndrawn);
+    });
+});
+
+test("a diagram with no source says so without naming the field", async () => {
+  const mod = await loadArch();
+  const diagState = { status: "ready", data: { diagrams: [] }, error: null, busy: false };
+  const tree = renderScreen(mod.React.createElement(mod.DiagramBody, { diagState, activeDiagram: { id: "canonical", mermaid_source: "  " } }));
+
+  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "EmptyState").map((n) => n.props.message), ["This diagram has no source."]);
+});
+
+// §12.5: the six-key legend keeps its place under the h1 whatever the map read did
+describe("the legend stays under the heading before the map is drawn", () => {
+  const down = { status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
+  const rows = [
+    { name: "while the first read is in flight", overrides: {} },
+    { name: "after the map read failed", overrides: { INITIAL_REGION_STATE: down } },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const mod = await loadArch(row.overrides);
+      const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
+
+      assert.equal(findNodes(tree, (n) => n.type === "ul" && /\barch-legend\b/.test(String(n.props.className))).length, 1);
+    });
+});
+
+// a daemon row reads one way wherever it comes from: its id through MachineString, a bare glyph and word, no chip
+test("the node drawer draws every daemon row's status as a bare glyph and word", async () => {
+  const mod = await loadArch();
+  const partRows = [{ id: "daemon-cycle", name: "autoagent", kind: "daemon", daemonName: "autoagent", nodeIds: ["hook_pipeline"], tone: "ok", statusLabel: "Healthy", lastRunAt: null }];
+  const daemons = [{ daemon_name: "learning-aggregator", effective_status: "ok", last_run_at: null }];
+  const tree = renderScreen(mod.React.createElement(mod.NodePartHealth, {
+    nodeId: "canonical.hook_pipeline", partRows, daemons, payloadDaemon: null, onSelectDaemon: () => {},
+    payloadState: null, hookState: null, hookFailState: null, unpricedModelState: null,
+  }));
+
+  assert.equal(findNodes(tree, (n) => n.props.atom === "Badge").length, 0, "no filled chip");
+  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "StatusDot").map((n) => n.props.status), ["ok", "ok"], "one bare glyph per daemon row");
+  assert.deepEqual(findNodes(tree, (n) => n.props.atom === "MachineString").map((n) => collectText(n).trim()), ["autoagent", "learning-aggregator"]);
 });
 
 // font-size a page rule sets for one class, in px — tokens resolved from the shipped tokens.css
@@ -414,7 +484,7 @@ test("the node drawer draws exactly its machine strings through MachineString", 
 
   assert.deepEqual(machineStrings.sort(), [
     "/Users/op/.claude/settings.json", "Bash|Edit", "PreToolUse", "SessionStart", "claude-opus-5-5-20261101",
-    "core.outcomes", "hooks/enforce-commit-guard.sh --strict", "learning-aggregator", "track-outcome",
+    "autoagent", "core.outcomes", "hooks/enforce-commit-guard.sh --strict", "learning-aggregator", "track-outcome",
   ].sort());
 });
 

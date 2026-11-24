@@ -53,7 +53,7 @@ interface PageStateSandbox {
   getFreshnessInputAR: (
     healthAsOf: string | null,
     regions: RegionState[],
-    hasMap: boolean,
+    mapState: RegionState,
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
   getPartHealthGroupsAR: (partRows: HealthRow[], isPending?: boolean) => { listed: HealthRow[]; healthy: HealthRow[] };
@@ -156,15 +156,16 @@ test("every health store the stamp counts is also named by the page alert", () =
   }
 });
 
-test("the stamp names a read time only once the map itself has been read", () => {
-  const rows: Array<{ name: string; asOf: string | null; regions: RegionState[]; hasMap: boolean; expected: string }> = [
-    { name: "a health read landed before the map", asOf: READ_AT, regions: [FIRST_READ, HELD], hasMap: false, expected: "loading" },
-    { name: "the map never read and nothing in flight", asOf: READ_AT, regions: [DOWN, HELD], hasMap: false, expected: "not-read" },
-    { name: "the map read and every region settled", asOf: READ_AT, regions: [HELD, HELD], hasMap: true, expected: "fresh" },
+// a failed map read has answered → the parts read it sits beside is dated, never "nothing to show"
+test("the stamp names a read time only once the map read has answered", () => {
+  const rows: Array<{ name: string; asOf: string | null; regions: RegionState[]; mapState: RegionState; expected: string }> = [
+    { name: "a health read landed before the map", asOf: READ_AT, regions: [FIRST_READ, HELD], mapState: FIRST_READ, expected: "loading" },
+    { name: "the map read failed beside a health read that landed", asOf: READ_AT, regions: [DOWN, HELD], mapState: DOWN, expected: "partial" },
+    { name: "the map read and every region settled", asOf: READ_AT, regions: [HELD, HELD], mapState: HELD, expected: "fresh" },
   ];
 
   for (const row of rows) {
-    const input = sandbox.getFreshnessInputAR(row.asOf, row.regions, row.hasMap);
+    const input = sandbox.getFreshnessInputAR(row.asOf, row.regions, row.mapState);
     assert.strictEqual(sandbox.window.UI.getFreshnessState({ ...input, now: NOW }), row.expected, row.name);
   }
 });
