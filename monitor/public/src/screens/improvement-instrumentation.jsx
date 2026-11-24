@@ -804,11 +804,12 @@ const CORRECTION_SIGNALS_INFO_I = "Agreement = both + neither (the two stages co
 function CorrectionSignalsCardI({ state }) {
 	const { Card, Cluster, formatKstDate, LoadingPlaceholder, Stack, StatRow } = window.UI;
 	const title = CARD_TITLE_I.correctionSignals;
+	const sub = "Correction signals";
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<Card title={title} sub="Correction signals" info={CORRECTION_SIGNALS_INFO_I}>
+			<Card title={title} sub={sub} info={CORRECTION_SIGNALS_INFO_I}>
 				<LoadingPlaceholder label="correction signals" minHeight={60} />
 			</Card>
 		);
@@ -817,7 +818,7 @@ function CorrectionSignalsCardI({ state }) {
 	const d = state.data;
 	// 빈 테이블 → 정직한 빈 카드 한 줄 (채워지는 조건 동반). 가짜 0% 미표기.
 	if (isCorrectionSignalsEmptyI(d)) {
-		return <EmptyCardI title={title} sub="Correction signals" info={CORRECTION_SIGNALS_INFO_I} message="No correction signals yet — each detection logs one" />;
+		return <EmptyCardI title={title} sub={sub} info={CORRECTION_SIGNALS_INFO_I} message="No correction signals yet — each detection logs one" />;
 	}
 
 	const agr = d.agreement;
@@ -827,7 +828,7 @@ function CorrectionSignalsCardI({ state }) {
 	const latest = d.latest_event_ts ? formatKstDate(d.latest_event_ts) : null;
 
 	return (
-		<Card title={title} sub="Correction signals" info={CORRECTION_SIGNALS_INFO_I}>
+		<Card title={title} sub={sub} info={CORRECTION_SIGNALS_INFO_I}>
 			<Stack gap="label">
 				<StatRow
 					stats={[{
@@ -874,18 +875,19 @@ function isCorrectionSignalsEmptyI(data) {
 function CorpusGrowthCardI({ state }) {
 	const { Card, Cluster, Sparkline, LoadingPlaceholder, Stack, StatRow } = window.UI;
 	const title = CARD_TITLE_I.corpusGrowth;
+	const sub = "Per-cycle audit";
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<Card title={title} sub="Per-cycle audit">
+			<Card title={title} sub={sub}>
 				<LoadingPlaceholder label="corpus audits" minHeight={60} />
 			</Card>
 		);
 	}
 
 	if (isCorpusGrowthEmptyI(state.data)) {
-		return <EmptyCardI title={title} sub="Per-cycle audit" message="No corpus readings yet — each daemon cycle writes one" />;
+		return <EmptyCardI title={title} sub={sub} message="No corpus readings yet — each daemon cycle writes one" />;
 	}
 	const rows = state.data.audits;
 	const latest = rows[0];
@@ -917,7 +919,7 @@ function CorpusGrowthCardI({ state }) {
 	];
 
 	return (
-		<Card title={title} sub="Per-cycle audit">
+		<Card title={title} sub={sub}>
 			<Stack gap="label">
 				<Cluster gap="control-group" className="items-end justify-between">
 					<StatRow stats={stats} />
