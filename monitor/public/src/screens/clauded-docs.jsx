@@ -902,11 +902,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
         /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
-        /* accent row-state ladder viewer 0.035 < checked 0.07 < both 0.11 → the empty stage pip, the faintest mark on a row, holds ≥ 3:1 on every step at the default accent (3.52 · 3.38 · 3.22) · the heavier title is the viewer's non-colour cue, the checkbox the checked one */
-        .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.035); }
+        /* ink row-state ladder (design.md §7.5) — viewer --tint-row-1 < checked -2 < both -3; floors on every step §4.1 · the heavier title is the viewer's non-colour cue, the checkbox the checked one */
+        .tbl tbody tr.doc-row.is-selected { background: var(--tint-row-1); }
         .doc-row.is-selected .doc-title-text { font-weight: 600; }
         /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
-           no row opacity — a fade drops the empty pip on a checked row below 3:1 (default accent: 0.85 → 2.85; unfaded 3.38) */
+           no row opacity — a fade drops the empty pip on a checked row below 3:1 */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot + title row gap → the snippet starts under the title */
         .doc-snippet { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -1013,9 +1013,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags, .doc-ledger--tags thead th:nth-child(5) { display: none; } }
         /* a ledger under its column floors → the title floor narrows */
         @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-ledger:not(.tbl--stacked) thead th:nth-child(4) { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
-        /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
-        .tbl tbody tr.doc-row.is-multi-selected { background: rgb(var(--accent) / 0.07); }
-        .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.11); }
+        /* checked and both — the next two steps of the ink ladder above (design.md §7.5) */
+        .tbl tbody tr.doc-row.is-multi-selected { background: var(--tint-row-2); }
+        .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: var(--tint-row-3); }
         /* group action bar — filter bar 행 아래 sticky · zinc-900 코드블록 톤.
            height 고정 (44px min) 사유 — hint(텍스트 1줄) vs active(btn.sm 툴바) 두 모드의
            natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing

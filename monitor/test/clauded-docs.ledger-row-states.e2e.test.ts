@@ -23,12 +23,6 @@ const docsScreen = await loadScreenModule(resolve(HERE, "../public/src/screens/c
   React: createReactStub(),
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 });
-// App writes the Tweaks default accent inline on <html> at mount → rows paint under it, never under the tokens.css fallback
-const app = await loadScreenModule(resolve(HERE, "../public/src/app.jsx"), {
-  ReactDOM: { createRoot: () => ({ render: () => {} }) },
-  document: { getElementById: () => null },
-});
-const RUNTIME_ACCENT = (app.hexToRgbTriplet as (hex: string) => string)(vm.runInContext("TWEAK_DEFAULTS.accent", app) as string);
 const SCREEN_CSS = findNodes(renderScreen((docsScreen.ScreenClaudedDocs as (props: unknown) => unknown)({})), (n) => n.type === "style")
   .map((n) => collectText(n))
   .join("\n");
@@ -44,7 +38,7 @@ const STATES = {
 type State = keyof typeof STATES;
 
 // the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint placeholder, the stale flag's warn glyph, the crit glyph and the ink title
-const getLedgerPage = () => `<!doctype html><html style="--accent: ${RUNTIME_ACCENT};"><head><style>${UTILITIES}</style></head><body style="margin: 0;">
+const getLedgerPage = () => `<!doctype html><html><head><style>${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td class="doc-age-cell doc-col-num text-dim"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
@@ -65,9 +59,12 @@ interface RowReading {
   title: { weight: string; decoration: string };
 }
 
+type LadderState = "viewer" | "checked" | "both";
+
 interface Ledger {
   card: Rgba;
   sunken: Rgba;
+  ladder: Record<LadderState, Rgba>;
   rest: Record<State, RowReading>;
   hovered: Record<State, RowReading>;
 }
@@ -128,17 +125,19 @@ const parseRowStyles = (raw: ReturnType<typeof readRowStyles>): RowReading => ({
   glyph: { crit: parseColor(raw.glyph.crit), warn: parseColor(raw.glyph.warn) },
 });
 
-async function readSurfaces(page: Page): Promise<Pick<Ledger, "card" | "sunken">> {
+async function readSurfaces(page: Page): Promise<Pick<Ledger, "card" | "sunken" | "ladder">> {
   const card = parseColor(await page.evaluate(() => getComputedStyle(document.querySelector(".card")!).backgroundColor));
-  const sunken = parseColor(
-    await page.evaluate(() => {
-      const probe = document.querySelector(".card")!.appendChild(document.createElement("div"));
-      probe.style.background = "rgb(var(--sunken))";
-      return getComputedStyle(probe).backgroundColor;
-    }),
-  );
-  return { card, sunken };
+  const [sunken, viewer, checked, both] = (await page.evaluate(readProbeFills, ["rgb(var(--sunken))", "var(--tint-row-1)", "var(--tint-row-2)", "var(--tint-row-3)"])).map(parseColor);
+  return { card, sunken, ladder: { viewer, checked, both } };
 }
+
+// runs in the page → same no-named-helper constraint as readRowStyles
+const readProbeFills = (backgrounds: string[]) =>
+  backgrounds.map((background) => {
+    const probe = document.querySelector(".card")!.appendChild(document.createElement("div"));
+    probe.style.background = background;
+    return getComputedStyle(probe).backgroundColor;
+  });
 
 // a row's opacity composites its whole group over the card → the fill's alpha and every opaque text colour scale by it
 const paintedFill = (row: RowReading, card: Rgba) => compositeOver({ ...row.fill, a: row.fill.a * row.opacity }, card);
@@ -189,6 +188,14 @@ describe("ledger row fills under the shared table hover", () => {
     };
     assert.equal(new Set(Object.values(fills)).size, 4, `fills ${JSON.stringify(fills)} must differ`);
     assert.notEqual(fills.hover, rgbKey(paintedFill(rest.plain, card)), "a hovered row reads apart from a resting one");
+  });
+
+  // the ink ladder holds measured floors; an accent fill follows the run-time Tweaks accent → no fixed contrast
+  test("viewer focus, checked and both paint the ink ladder --tint-row-1, -2 and -3 on the card", () => {
+    const { card, rest, ladder } = ledger;
+    for (const state of ["viewer", "checked", "both"] as const) {
+      assert.equal(rgbKey(paintedFill(rest[state], card)), rgbKey(compositeOver(ladder[state], card)), `${state} row fill`);
+    }
   });
 
   test("no row state draws a stripe, and the viewer row's title carries the heavier weight", () => {
