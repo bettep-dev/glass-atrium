@@ -1431,8 +1431,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	);
 }
 
-// approve / reject row — shared .btn sm: approve = ok ✓ glyph + ink label · reject = destructive crit outline.
-// a safety card adds a "Your call" line (warn ⚠ glyph, dim words).
+// a safety card's "Your call" leads the row · the content-width Reject / Approve pair sits at its end, words only.
 // isPending → both buttons disabled + aria-busy + spinner until the answer lands (no double submit).
 function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	const stop = (fn) => (e) => {
@@ -1446,49 +1445,31 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 					<SymI s="⚠" className="text-warn" size={11} /> Your call
 				</span>
 			)}
+			<div className="flex items-center gap-control ml-auto">
 				<button
 					type="button"
-					className="btn sm flex-1 justify-center"
-					onClick={stop(() => onAction("approve", row))}
-					disabled={isPending}
-					aria-busy={isPending}
-					aria-label={`Approve suggestion ${row.id} (apply)`}
-				>
-					{isPending ? (
-						<>
-							<SymI s="↻" className="i-act-spin" size={13} /> Approving…
-						</>
-					) : (
-						<>
-							<SymI s="✓" className="text-ok" size={13} /> Approve
-						</>
-					)}
-				</button>
-				<button
-					type="button"
-					className="btn sm flex-1 justify-center"
-					style={REJECT_OUTLINE_STYLE}
+					className="btn sm"
 					onClick={stop(() => onAction("reject", row))}
 					disabled={isPending}
 					aria-busy={isPending}
 					aria-label={`Reject suggestion ${row.id}`}
 				>
-					{isPending ? (
-						<>
-							<SymI s="↻" className="i-act-spin" size={13} /> Rejecting…
-						</>
-					) : (
-						<>
-							<SymI s="✕" size={13} /> Reject
-						</>
-					)}
+					{isPending ? <><SymI s="↻" className="i-act-spin" size={13} /> Rejecting…</> : "Reject"}
 				</button>
+				<button
+					type="button"
+					className="btn sm"
+					onClick={stop(() => onAction("approve", row))}
+					disabled={isPending}
+					aria-busy={isPending}
+					aria-label={`Approve suggestion ${row.id} (apply)`}
+				>
+					{isPending ? <><SymI s="↻" className="i-act-spin" size={13} /> Approving…</> : "Approve"}
+				</button>
+			</div>
 		</div>
 	);
 }
-
-// destructive outline (design.md §7.4) — crit label + crit border, no fill; the agents Delete button's shape
-const REJECT_OUTLINE_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
 
 // confidence_observed(NN%) 배지 — empirical posterior (0.0-1.0).
 // canonical status Badge(.pill)로 렌더 — 밴드 tone 은 선행 Icon(TONE_ICON[tone])이 운반, shell 은 neutral.

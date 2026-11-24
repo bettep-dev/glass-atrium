@@ -581,18 +581,3 @@ describe("the awaiting count is the board head's warn status, announced live, ne
     });
   }
 });
-
-test("approve and reject are shared buttons: approve keeps a neutral label, reject is the destructive outline", () => {
-  const tree = screenTree(component("ProposalActionsI")({ row: PROPOSAL, isSafety: false, onAction: () => {}, isPending: false }));
-  const [approve, reject] = tree.filter((el) => el.type === "button");
-  assert.ok(approve && reject, "both actions render");
-  for (const button of [approve, reject]) {
-    assert.match(String(button.props.className), /\bbtn\b.*\bsm\b|\bsm\b.*\bbtn\b/, "an action outside the shared .btn family");
-  }
-  const approveGlyph = screenTree(approve.props.children).find((el) => el.props.s === "✓");
-  assert.match(String(approveGlyph?.props.className ?? ""), /\btext-ok\b/, "the approve glyph carries the ok tone");
-  const style = (reject.props.style ?? {}) as Record<string, unknown>;
-  assert.equal(style.color, "rgb(var(--crit))", "the destructive label is crit");
-  assert.equal(style.borderColor, "rgb(var(--crit))", "the destructive outline is crit");
-  assert.equal(style.background, undefined, "the destructive outline carries no fill");
-});
