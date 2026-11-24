@@ -1176,6 +1176,8 @@ test("list rows: the row last opened keeps its viewer fill, 600 title and aria-c
       assert.deepEqual(await readMark(first), { current: "true", fill: viewerFill, weight: "600" }, "closed: the opened row keeps its mark");
 
       await second.locator(".doc-title-text").click();
+      // the surface's Escape listener attaches once it mounts → a key pressed sooner closes nothing
+      await page.getByRole("button", { name: "Close viewer" }).waitFor();
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Close viewer" }).waitFor({ state: "detached" });
       await page.mouse.move(0, 0);
