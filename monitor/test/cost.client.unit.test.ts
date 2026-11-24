@@ -1747,6 +1747,14 @@ describe("a normal range reads both bounds in one precision", () => {
   }
 });
 
+// one day's band, one form: the hover tooltip and the keyboard readout share the money-set precision
+test("the hover tooltip prints a day's normal range in the readout's one form", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const row = { fullDate: "Nov 16, 2026", actual: 120, isPartial: false, rollingMean: 102.6, lowerBand: 85.2, upperBand: 120 };
+  const text = collectText(renderIn(mod, "CostTrendTooltipC", { active: true, payload: [{ payload: row }], bandOn: true }));
+  assert.ok(text.includes(cost.formatNormalRangeC(row)), text);
+});
+
 test("the cost trend legend names the no-data days on screen, not only in the chart label", async () => {
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   const gapped = collectText(renderIn(mod, "CostTrendLegendC", { bandOn: false, rows: [{ actual: 3 }, { actual: null }, { actual: 4 }] }));

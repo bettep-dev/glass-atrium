@@ -329,7 +329,7 @@ function getSpendAlarmCopyC(hot, outsideDay) {
   return { title, detail: outsideDay !== null ? `${basis} \u00b7 the latest day is ${OUTSIDE_RANGE_C}` : basis };
 }
 
-// a trend day's band in words, "Normal range $a – $b" — the alarm detail and the chart readout read one form; both bounds one precision
+// a trend day's band in words, "Normal range $a – $b" — the alarm detail, the keyboard readout and the hover tooltip read one form; both bounds one precision
 function formatNormalRangeC(row) {
   const formatBound = window.UI.getMoneyColumnFormat([row.lowerBand, row.upperBand]);
   return `Normal range ${formatBound(row.lowerBand)} \u2013 ${formatBound(row.upperBand)}`;
@@ -962,9 +962,7 @@ function CostTrendTooltipC({ active, payload, bandOn }) {
         {row.isPartial ? 'Today so far' : 'Daily cost'} {row.actual === null ? 'no data' : formatUsdC(row.actual)}
       </div>
       {hasBand && (
-        <div className="mt-stack text-faint">
-          Normal range {formatUsdC(row.lowerBand)} – {formatUsdC(row.upperBand)}
-        </div>
+        <div className="mt-stack text-faint">{formatNormalRangeC(row)}</div>
       )}
       {typeof row.session_count === 'number' && (
         <div className="text-dim">Sessions {formatIntC(row.session_count)}</div>
