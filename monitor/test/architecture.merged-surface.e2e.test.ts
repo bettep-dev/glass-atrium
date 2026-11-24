@@ -2717,14 +2717,29 @@ test("the expanded region counts the clean runs and lists only the failed run wi
 	);
 	const { entries } = getFailingPayload();
 	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
-	assert.ok(
-		text.includes(`${cleanCount}/${entries.length} runs clean`),
-		`the region must count the clean runs against every stored run — read "${text}"`,
-	);
+	const runLine = `${cleanCount} of ${entries.length} runs clean`;
+	assert.ok(text.includes(runLine), `the region must count the clean runs against every stored run — read "${text}"`);
 	assert.ok(
 		!text.includes(okDay),
 		`a clean run is counted in the summary, never listed — the list names failures only — read "${text}"`,
 	);
+});
+
+test("a daemon on schedule with a failed run reads one verdict in the drawer and in System parts", async () => {
+	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
+	await openDaemonHealth(BOUND_DAEMON);
+	await waitForRegionText(BOUND_DAEMON, "runs clean");
+
+	const { entries } = getFailingPayload();
+	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
+	const runLine = `${cleanCount} of ${entries.length} runs clean`;
+	const drawerRow = await page.$eval(`[data-health-row="${DAEMON_PART_ID}"]`, (el) => el.textContent || "");
+	const partsRow = await page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
+	for (const [where, text] of [["drawer", drawerRow], ["System parts", partsRow]])
+		assert.ok(
+			text.includes("Needs attention") && text.includes(runLine) && !text.includes("Healthy"),
+			`the ${where} row reads Needs attention with the run line as its reason — read "${text}"`,
+		);
 });
 
 // 드릴다운이 연 노드를 따라가는지 재는 반증 케이스 — 고정 리터럴 구현은 여기서 붉어짐.

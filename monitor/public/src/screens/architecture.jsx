@@ -555,8 +555,8 @@ function ScreenArchitecture(
 				headlineHealthStates,
 				liveState.data?.part_bindings,
 				liveState.data?.daemons,
-			),
-		[daemonHealthState, pgState, hookState, hookFailState, liveState.data],
+			).map((row) => getDaemonVerdictAR(row, getDaemonRunRows(payloadState, row.daemonName))),
+		[daemonHealthState, pgState, hookState, hookFailState, liveState.data, payloadState],
 	);
 
 	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
@@ -2938,7 +2938,15 @@ function getDrillDaemonAR(partRows, unscopedId) {
 // clean = ok verdict with no failure reason; every other run stays a row so one failure is not buried
 function getRunSummaryAR(runs) {
 	const failures = runs.filter((run) => run.verdict !== "ok" || run.reasons.length > 0);
-	return { text: `${runs.length - failures.length}/${runs.length} runs clean`, failures };
+	return { text: `${runs.length - failures.length} of ${runs.length} runs clean`, failures };
+}
+
+// one daemon verdict for the drawer and System parts — the worse of its schedule leg (row) and its run leg (listed runs)
+function getDaemonVerdictAR(row, runs) {
+	if (!row.daemonName || !row.tone || !runs) return row;
+	const summary = getRunSummaryAR(runs);
+	const isRunLegWorse = summary.failures.length > 0 && getPartToneRankAR(row.tone) > PART_TONE_RANK_AR.warn;
+	return isRunLegWorse ? { ...row, tone: "warn", statusLabel: "Needs attention", cause: summary.text } : row;
 }
 
 // the map box a part is drawn in — its first bound node, found by unscoped id
