@@ -496,8 +496,9 @@ describe("the week block", () => {
       spendState: LOADING, outcomesState: LOADING, heatmapState: LOADING, onRetrySpend: () => {}, onRetryHeatmap: () => {},
     });
     assert.deepEqual(sectionIds(tree), ["dash-week-results", "dash-week-hours", "dash-week-spend"]);
-    const pairs = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("xl:grid-cols-2"));
-    assert.equal(pairs.length, 1, "one two-column row from xl");
+    const pairs = findNodes(tree, (n) => n.props.atom === "SplitRow");
+    assert.equal(pairs.length, 1, "one split row from xl");
+    assert.equal(pairs[0].props.ratio, "rest:content", "Runs by hour at its content width, the results the rest");
     assert.deepEqual(sectionIds(pairs[0]), ["dash-week-results", "dash-week-hours"], "Spend stays out of the paired row");
   });
 
