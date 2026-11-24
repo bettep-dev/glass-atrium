@@ -648,6 +648,7 @@ function ScreenOutcomes({ onNav }) {
   const isRetrying = stampRegions.some((region) => region.error != null && region.busy);
   // every region card retries through the page refresh and goes quiet under a shared outage
   const regionRetry = { onRetry: triggerRefresh, shared: sharedFailure };
+  const taskTypeRows = analyticsState.data?.overall?.task_type_grader_breakdown;
 
   return (
     <div className="flex flex-col min-h-0">
@@ -741,9 +742,9 @@ function ScreenOutcomes({ onNav }) {
             <CrosstabBlock state={analyticsState} {...regionRetry}/>
           </window.UI.SplitRow>
           <window.UI.Disclosure kind="detail" level={3} isInline title="By task type"
-            tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}
-            sub={getTaskTypeFoldSubO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
-            <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
+            tone={getTaskTypeFoldToneO(taskTypeRows)}
+            sub={getTaskTypeFoldSubO(taskTypeRows)}>
+            <TaskTypeGraderCrosstabO rows={taskTypeRows}/>
           </window.UI.Disclosure>
         </window.UI.Stack>
       </window.UI.Disclosure>
