@@ -962,13 +962,13 @@ function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selecte
 }
 
 const SUMMARY_COLUMNS = [
-  { key: 'agent', sortKey: 'name', label: <>Agent <span className="text-faint">· activity</span></> },
+  { key: 'agent', sortKey: 'name', label: 'Agent' },
   { key: 'runs', sortKey: 'runs', isNumeric: true, label: <span title="Times the agent finished and reported a result (outcome records)">Runs</span> },
   { key: 'noRecord', isNumeric: true, label: <span title={NOTE.NO_RECORD}>No record</span> },
   { key: 'success', sortKey: 'success', isNumeric: true, label: 'Success rate' },
   { key: 'failed', sortKey: 'failures', isNumeric: true, label: <span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span> },
   { key: 'p95', sortKey: 'p95', isNumeric: true, label: <span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span> },
-  { key: 'trend', label: 'Trend' },
+  { key: 'trend', label: 'Runs, 7d' },
 ];
 
 function getSummaryColumnsAg(sortKey, onSortChange) {
@@ -1097,11 +1097,11 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
       <TableCell view={view}>
         {/* an agent name is an ID → one line; a narrow page scrolls the table sideways instead of breaking it at its hyphens */}
         <div className="flex items-center gap-label-inline whitespace-nowrap">
-          <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
           {isUnknownAgent
             ? <span className="font-medium text-dim">{nonActionableLabel}</span>
             : <AgentName name={agent.agent_name} className="font-medium"/>}
-          <CompatibilityBadge compatibility={agent.compatibility}/>
+          <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
+          <CompatibilityMark compatibility={agent.compatibility}/>
         </div>
       </TableCell>
       <TableCell view={view} isNumeric>{formatIntAg(runs)}</TableCell>
@@ -1165,38 +1165,27 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
 // registry compatibility 필드 시각화 — 행 chip (trunc + tooltip) · 상세 패널 (full 텍스트).
 // 미선언 agent 미렌더 (UI noise 회피).
 
-function CompatibilityBadge({ compatibility }) {
+// short tag in the row → the full requirement rides its title, screen-reader text and the drawer
+function CompatibilityMark({ compatibility }) {
   if (!compatibility) return null;
-  const { Badge } = window.UI;
   const text = String(compatibility);
-  // Short tag in the row; the full requirement lives in the tooltip, screen-reader text and drawer.
   return (
-    <Badge role="status" tone="info" icon title={`Requires: ${text}`} className="agent-compatibility-badge whitespace-nowrap">
+    <span className="fs-meta text-faint" title={`Requires: ${text}`}>
       Requires setup<span className="sr-only">: {text}</span>
-    </Badge>
+    </span>
   );
 }
 
 // Activity only — health lives in the success column, so the mark takes no ok/warn tone.
-const ACTIVITY_MARK = {
-  active:   { word: 'Active',   glyph: '●', tone: 'text-dim' },
-  idle:     { word: 'Idle',     glyph: '◐', tone: 'text-faint' },
-  inactive: { word: 'Inactive', glyph: '○', tone: 'text-faint' },
-  error:    { word: 'Error',    glyph: '✕', tone: 'text-crit' },
-};
-const UNKNOWN_ACTIVITY_MARK = { word: 'Unknown', glyph: '–', tone: 'text-faint' };
+// active is the calm state → no mark; any other state names itself in a word
+const ACTIVITY_WORD = { idle: 'Idle', inactive: 'Inactive', error: 'Error' };
 
 function ActivityMark({ status, lastRunAt }) {
-  const mark = Object.hasOwn(ACTIVITY_MARK, status) ? ACTIVITY_MARK[status] : UNKNOWN_ACTIVITY_MARK;
-  const lastRun = lastRunAt ? ` · last run ${formatRelativeTimeAg(lastRunAt)}` : '';
-  const label = `Activity: ${mark.word}${lastRun}`;
-
-  return (
-    <span className={`inline-block leading-none ${mark.tone}`} title={label}>
-      <span aria-hidden="true">{mark.glyph}</span>
-      <span className="sr-only">{label}</span>
-    </span>
-  );
+  if (status === 'active') return null;
+  const word = Object.hasOwn(ACTIVITY_WORD, status) ? ACTIVITY_WORD[status] : 'Unknown';
+  const title = lastRunAt ? `Last run ${formatRelativeTimeAg(lastRunAt)}` : undefined;
+  if (status === 'error') return <span title={title}><window.UI.StatusDot status="crit" word={word} isInText/></span>;
+  return <span className="fs-meta text-faint" title={title}>{word}</span>;
 }
 
 // LatencyBars (col-span-full) — 단일 바에 P50(불투명)/P95(0.65)/P99(0.35) 3-레이어 absolute 포지셔닝.

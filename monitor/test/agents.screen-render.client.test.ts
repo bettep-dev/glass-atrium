@@ -705,7 +705,7 @@ test("the ledger sorts from its column heads: the sorted head carries its arrow 
     ["Success", "none", "arrow-up-down"],
     ["Failed", "descending", "arrow-down"],
     ["P95", "none", "arrow-up-down"],
-    ["Trend", undefined, undefined],
+    ["Runs,", undefined, undefined],
   ]);
   assert.equal(findNodes(tree, (n) => n.type === "select").length, 0, "no separate sort select remains");
   assert.equal(findNodes(tree, (n) => n.props?.role === "status").length, 0, "the note lives in the head, not in a band above the rows");
@@ -1017,26 +1017,34 @@ test("a failing pair's success cell is plain ink with its fraction, no glyph, ba
   }
 });
 
-test("the ledger's activity mark names activity under a labelled column, never a health word that contradicts the success rate", async () => {
+test("the ledger heads read Agent first and Runs, 7d last, with no activity glyph in any row", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-  const table = renderScreen(
-    React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
-  );
+  const agents = ["active", "idle", "inactive", "error"].map((status, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status, runs: 40, success_pct: 100, p95_ms: 60_000 }));
+  const table = renderScreen(React.createElement(mod.AgentSummaryTable as Component, { agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }));
   const headers = findColumnHeads(table).map((n) => collectText(n).trim());
-  assert.ok(headers.some((h) => /activity/i.test(h)), `ledger headers: ${headers.join(" | ")}`);
+  assert.equal(headers[0], "Agent");
+  assert.equal(headers[headers.length - 1], "Runs, 7d");
+  assert.doesNotMatch(collectText(table), /[●◐○]/);
+});
 
+describe("a ledger row names its activity in a word only off the active state", () => {
   const rows = [
-    { status: "active", word: "Active" },
-    { status: "inactive", word: "Inactive" },
-    { status: "idle", word: "Idle" },
+    { status: "active", word: null, isError: false },
+    { status: "idle", word: "Idle", isError: false },
+    { status: "inactive", word: "Inactive", isError: false },
+    { status: "error", word: "Error", isError: true },
   ];
   for (const row of rows) {
-    const tree = renderToneRow(mod, { status: row.status, last_run_at: "2026-09-25T00:00:00Z" }, null);
-    assert.equal(findNodes(tree, (n) => n.props?.atom === "StatusDot").length, 0, `${row.status}: no OK/Warning health dot`);
-    const mark = findNodes(tree, (n) => /^Activity: /.test(String(n.props?.title ?? "")))[0];
-    assert.match(String(mark?.props.title), new RegExp(`^Activity: ${row.word}`), `${row.status}: mark names activity`);
-    assert.doesNotMatch(String(mark?.props.className), /text-(ok|warn)/, `${row.status}: no health tone`);
+    test(row.status, async () => {
+      const mod = await loadAgentsScreen();
+      const [nameCell] = findNodes(renderToneRow(mod, { status: row.status, last_run_at: "2026-09-25T00:00:00Z" }, null), (n) => n.type === "td");
+      const dots = findAtoms(nameCell, "StatusDot");
+      assert.deepEqual(dots.map((n) => [n.props.status, n.props.word]), row.isError ? [["crit", "Error"]] : [], "only an error takes the crit dot");
+      const words = findNodes(nameCell, (n) => /\bfs-meta\b/.test(String(n.props?.className ?? "")) && /\btext-faint\b/.test(String(n.props.className)))
+        .map((n) => collectText(n).trim());
+      assert.deepEqual(words, row.word && !row.isError ? [row.word] : [], "idle and inactive read as faint meta words");
+    });
   }
 });
 
@@ -1124,13 +1132,14 @@ test("a matrix sparkline draws the data colour unless its pair is over the fail-
   assert.deepEqual(swatches, [...drawn]);
 });
 
-test("a compatibility requirement rides a short row tag with the full text on hover, never a truncated sentence", async () => {
+test("a compatibility requirement reads as faint meta text after the name, its full text on hover, with no badge", async () => {
   const mod = await loadAgentsScreen();
   const requirement = "Requires monitor running at http://127.0.0.1:16145 with a live daemon";
-  const tree = renderToneRow(mod, { compatibility: requirement }, null);
-  const badge = findNodes(tree, (n) => n.props?.atom === "Badge")[0];
-  assert.equal(badge?.props.title, `Requires: ${requirement}`);
-  assert.doesNotMatch(collectText(badge), /…/);
+  const [nameCell] = findNodes(renderToneRow(mod, { compatibility: requirement }, null), (n) => n.type === "td");
+  const [tag] = findNodes(nameCell, (n) => n.props?.title === `Requires: ${requirement}`);
+  assert.match(String(tag?.props.className), /\bfs-meta\b.*\btext-faint\b|\btext-faint\b.*\bfs-meta\b/);
+  assert.equal(getVisibleText(tag).trim(), "Requires setup");
+  assert.equal(findAtoms(nameCell, "Badge").length + findAtoms(nameCell, "Pill").length, 0, "no badge or pill");
 });
 
 const FS_MICRO = /\bfs-micro\b/;
