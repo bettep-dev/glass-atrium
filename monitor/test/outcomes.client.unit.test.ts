@@ -757,18 +757,26 @@ describe("Task results density: the columns beside a taller card carry their own
   });
 });
 
-describe("Automatic check results: where each verdict came from is the block's foot, drawn only under a drawn breakdown", () => {
-  const overall = { grader_breakdown: { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 }, downgrade_breakdown: { writer_true_downgraded: 2 } };
+describe("Automatic check results: where each verdict came from sits behind the block's ⓘ, only under a drawn breakdown, never as a foot", () => {
+  const overall = { grader_breakdown: { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 }, downgrade_breakdown: { writer_true_downgraded: 2, writer_false: 7 } };
   const rows = [
-    { name: "a landed breakdown ends the block with the foot", state: { status: "ready", data: { overall } }, hasFoot: true },
-    { name: "a loading block draws no foot", state: { status: "loading" }, hasFoot: false },
-    { name: "a landed payload with no breakdown draws no foot", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, hasFoot: false },
+    { name: "a landed breakdown carries the sources in its ⓘ", state: { status: "ready", data: { overall } }, hasInfo: true },
+    { name: "a loading block carries no sources", state: { status: "loading" }, hasInfo: false },
+    { name: "a landed payload with no breakdown carries no sources", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, hasInfo: false },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      assert.equal(Boolean(density.GraderBreakdownBlock({ state: row.state }).props.foot), row.hasFoot);
+      const block = density.GraderBreakdownBlock({ state: row.state });
+      assert.equal(Boolean(block.props.info), row.hasInfo);
+      assert.equal(Boolean(block.props.foot), false, "no foot line");
     });
   }
+
+  test("the sources leave out the agent-claimed-pass count the Check failed stat already shows", () => {
+    const block = density.GraderBreakdownBlock({ state: rows[0].state });
+    const segments = (block.props.info as RecordedElementO).props.segments as Array<{ key: string; count: number }>;
+    assert.deepEqual(Array.from(segments, (segment) => [segment.key, segment.count]), [["writer_false", 7]]);
+  });
 });
 
 describe("getClampedPageO: a held page never runs past the last page of the current total", () => {
@@ -809,6 +817,12 @@ describe("a crosstab cell is its count alone, never a bar under it", () => {
       assert.equal(count?.props.children, String(row.cell.count));
     });
   }
+
+  test("a polar cell names the disagreement in plain words on hover, with no internal term", () => {
+    const [cell] = flattenO(chart.CrosstabCell({ cell: { count: 20, isPolar: true }, rowLabel: "high", colLabel: "fail" }));
+    assert.match(String(cell.props.title), /confidence and check disagree/);
+    assert.doesNotMatch(`${String(cell.props.title)} ${String(cell.props["aria-label"])}`, /polar/);
+  });
 });
 
 describe("getStackedYTicksO: each share tick sits its share up the bar area", () => {

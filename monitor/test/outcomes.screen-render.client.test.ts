@@ -255,6 +255,7 @@ describe("the cross-table head shows its share meta, count in the hover title, o
       const statuses = findNodes(head, (n) => n.type === "HeadStatus");
       assert.deepEqual(statuses.map((status) => [status.props.tone, collectPaintedText(status).replace(/\s+/g, " ").trim()]),
         row.status ? [["warn", row.status]] : [], "the warn status names the mismatches, and only when one was counted");
+      assert.equal(collectText(head).includes("polar"), false, "no internal term on the head line");
     });
   }
 });
@@ -271,6 +272,27 @@ test("a recording channel's name stays on one line in regular weight, and Status
 
   assert.ok(cellClass.includes("whitespace-nowrap") && cellClass.includes("font-normal"), String(name.props.className));
   assert.deepEqual(Array.from(table.props.widths as unknown[]), [undefined, "1%", undefined, undefined, "1%"]);
+});
+
+describe("a fold block's empty line starts on the block's text column, and every block head holds one height", () => {
+  const ready = (data: unknown) => ({ status: "ready", busy: false, data, error: null });
+  const rows = [
+    { name: "Record attribution", component: "AttributionHealthBlock", state: ready({ days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }) },
+    { name: "Recording channels", component: "ChannelLivenessBlock", state: ready({ channels: [], alerting: [] }) },
+    { name: "Automatic check results", component: "GraderBreakdownBlock", state: ready({ overall: {} }) },
+    { name: "Confident but failed", component: "CrosstabBlock", state: ready({ crosstab: { total: 0, polarTotal: 0, byCell: {} } }) },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const tree = renderScreen(create(mod[row.component] as Component, { state: row.state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+      const [empty] = findNodes(tree, (n) => n.type === "EmptyState");
+
+      assert.match(String(empty.props.className), /\bplaceholder--flush-inline\b/);
+      assert.equal((getBlockHead(tree).props.style as { minHeight?: string } | undefined)?.minHeight, "var(--ctl-min-h)", "the head is the ⓘ box tall");
+    });
+  }
 });
 
 describe("the Recording channels head that read no channel shows faint None or Not loaded, with no status mark", () => {
@@ -316,13 +338,13 @@ describe("a block's own status is the shared head Status on its title's line", (
   }
 });
 
-describe("an empty ledger names the window when no filter is applied, and offers the reset when one is", () => {
+describe("an empty ledger names the window when no filter is applied, and leaves the reset to the filter bar when one is", () => {
   const onResetFilter = () => undefined;
   const rows = [
     { name: "no filter, the 30-day window", filter: { days: 30 }, includeAll: false, text: "No task results in the last 30 days.", canReset: false },
     { name: "no filter, the 7-day window", filter: { days: 7 }, includeAll: false, text: "No task results in the last 7 days.", canReset: false },
-    { name: "an agent filter", filter: { days: 30, agent: "glass-atrium-dev-front" }, includeAll: false, text: "No records match these filters.", canReset: true },
-    { name: "the include-all toggle", filter: { days: 30 }, includeAll: true, text: "No records match these filters.", canReset: true },
+    { name: "an agent filter", filter: { days: 30, agent: "glass-atrium-dev-front" }, includeAll: false, text: "No records match these filters.", canReset: false },
+    { name: "the include-all toggle", filter: { days: 30 }, includeAll: true, text: "No records match these filters.", canReset: false },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -339,7 +361,7 @@ describe("an empty ledger names the window when no filter is applied, and offers
       // collectText joins child nodes with a space → compare with whitespace dropped
       const squash = (text: string) => text.replace(/\s+/g, "");
       assert.ok(squash(collectText(empty)).startsWith(squash(row.text)), collectText(empty));
-      assert.equal(resets.length, row.canReset ? 1 : 0, "a reset only when a filter is applied");
+      assert.equal(resets.length, 0, "the filter bar holds the one reset");
     });
   }
 });

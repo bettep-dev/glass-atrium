@@ -97,12 +97,12 @@ const GRADER_BREAKDOWN_META = {
 
 // downgrade_origin 분포 순서 + 메타 — cross-analysis downgrade_breakdown 소비. writer_true_downgraded
 // (작성자 pass 주장 ↔ grader 불일치)가 가장 actionable. not_recorded(레거시 NULL)는 disagreement 아님 → muted.
-const DOWNGRADE_BREAKDOWN_ORDER = ['writer_true_downgraded', 'writer_false', 'synthesized', 'not_recorded'];
-const DOWNGRADE_BREAKDOWN_META = {
-  writer_true_downgraded: { label: 'Agent claimed pass, check disagreed', icon: 'warn',   colorVar: '--warn'  },
-  writer_false:           { label: 'Agent reported its own failure',      icon: 'minus',  colorVar: '--dim'   },
-  synthesized:            { label: 'Rebuilt by the harness, no report',   icon: 'circle', colorVar: '--faint' },
-  not_recorded:           { label: 'Older record, source not tracked',    icon: 'minus',  colorVar: '--faint' },
+// writer_true_downgraded is left out: the Check failed stat already counts it
+const DOWNGRADE_BREAKDOWN_ORDER = ['writer_false', 'synthesized', 'not_recorded'];
+const DOWNGRADE_BREAKDOWN_LABELS = {
+  writer_false: 'Agent reported its own failure',
+  synthesized:  'Rebuilt by the harness, no report',
+  not_recorded: 'Older record, source not tracked',
 };
 
 // grader_verdict 문자열 → 표시 메타 조회. NULL/미인식 drift → 레거시 muted 폴백 (crit 회귀 차단).
@@ -1306,7 +1306,8 @@ function FoldBlockO({ id, title, status, info, isFlush = false, foot, children }
   return (
     <section id={id} aria-labelledby={titleId} className="min-w-0">
       <Stack>
-        <div className={`flex flex-wrap items-center gap-label ${inset}`.trim()}>
+        {/* one head height, the ⓘ box's → split blocks with and without an ⓘ start their title and body on one line */}
+        <div className={`flex flex-wrap items-center gap-label ${inset}`.trim()} style={{ minHeight: 'var(--ctl-min-h)' }}>
           <SectionLabel level={3} id={titleId}>{title}</SectionLabel>
           {info && <CardInfo label="How this is counted" describedBy={titleId}>{info}</CardInfo>}
           {status}
@@ -1371,7 +1372,7 @@ function AttributionHealthBody({ state, onRetry, shared }) {
 
   // 귀속 기록된 실행 0건 (빈 window) → 안내 indicator.
   if (totalAttributed === 0) {
-    return <window.UI.EmptyState message="No attributed runs in this period."/>;
+    return <window.UI.EmptyState message="No attributed runs in this period." className="placeholder--flush-inline"/>;
   }
 
   return (
@@ -1694,7 +1695,7 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
 
   const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
   if (channels.length === 0) {
-    return <window.UI.EmptyState message="No recording channel wrote in this window."/>;
+    return <window.UI.EmptyState message="No recording channel wrote in this window." className="placeholder--flush-inline"/>;
   }
 
   // 침묵한 채널을 먼저 — 조치가 필요한 행이 스크롤 아래로 밀리지 않게.
@@ -1758,7 +1759,7 @@ function GraderBreakdownBlock({ state, onRetry, shared }) {
 
   return (
     <FoldBlockO id={REGION_CARD_IDS.checks} title="Automatic check results"
-      foot={segments.length > 0 && <DowngradeBreakdownRowO segments={segments}/>}>
+      info={segments.length > 0 && <DowngradeSourcesO segments={segments}/>}>
       <GraderBreakdownBody state={state} onRetry={onRetry} shared={shared}/>
     </FoldBlockO>
   );
@@ -1780,7 +1781,7 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
 
   const breakdown = state.data?.overall?.grader_breakdown;
   if (!breakdown) {
-    return <window.UI.EmptyState message="No check data in this period."/>;
+    return <window.UI.EmptyState message="No check data in this period." className="placeholder--flush-inline"/>;
   }
 
   const gradedTotal = Number(breakdown.graded_total) || 0;
@@ -1808,23 +1809,23 @@ function getDowngradeSegmentsO(breakdown) {
     .filter((s) => s.count > 0);
 }
 
-function DowngradeBreakdownRowO({ segments }) {
-  const { Cluster } = window.UI;
+function DowngradeSourcesO({ segments }) {
+  const { Table, TableRow, TableCell } = window.UI;
   return (
-    <Cluster className="fs-meta tabular-nums">
-      <span className="text-faint">Where each verdict came from</span>
-      {segments.map(({ key, count }) => {
-        const meta = DOWNGRADE_BREAKDOWN_META[key];
-        return (
-          <span key={key} className="inline-flex items-center gap-label-inline text-dim" title={key}>
-            <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-            {meta.label}: {formatIntO(count)}
-          </span>
-        );
-      })}
-    </Cluster>
+    <Table caption="Where each verdict came from" isCaptionShown columns={DOWNGRADE_SOURCE_COLUMNS_O}
+      bodies={[{ key: 'sources', rows: (view) => segments.map(({ key, count }) => (
+        <TableRow key={key} view={view}>
+          <TableCell view={view} kind="row-header" className="font-normal">{DOWNGRADE_BREAKDOWN_LABELS[key]}</TableCell>
+          <TableCell view={view} label="Records" isNumeric className="tabular-nums">{formatIntO(count)}</TableCell>
+        </TableRow>
+      )) }]}/>
   );
 }
+
+const DOWNGRADE_SOURCE_COLUMNS_O = Object.freeze([
+  { key: 'source', label: 'Source' },
+  { key: 'count', label: 'Records', isNumeric: true },
+]);
 
 // a checkable type whose failed checks reach the breakage share (low samples excluded) → crit; else untoned
 function getTaskTypeFoldToneO(rows) {
@@ -1934,10 +1935,9 @@ function CrosstabBlock({ state, onRetry, shared }) {
             : <window.UI.AbsentValue kind="none"/>)}
         </span>
       )}
-      info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed.</p>}
-      // the table's edge cells carry the card padding → head and foot take the same inset; loading, error and empty keep none
-      isFlush={hasTable}
-      foot={hasTable && <CrosstabLegendO/>}>
+      info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed. Empty rows are hidden.</p>}
+      // the table's edge cells carry the card padding → the head takes the same inset; loading, error and empty keep none
+      isFlush={hasTable}>
       <CrosstabBody state={state} onRetry={onRetry} shared={shared}/>
     </FoldBlockO>
   );
@@ -1954,7 +1954,7 @@ function CrosstabBody({ state, onRetry, shared }) {
 
   const crosstab = state.data?.crosstab;
   if (!crosstab || crosstab.total === 0) {
-    return <window.UI.EmptyState message="No confidence-vs-self-check records in this period."/>;
+    return <window.UI.EmptyState message="No confidence-vs-self-check records in this period." className="placeholder--flush-inline"/>;
   }
 
   // the page's own-face table class: the .tbl cell geometry and the ledger's column-header face, no clickable-row hover (these rows open nothing)
@@ -1973,18 +1973,6 @@ const CROSSTAB_COLUMNS_O = [
   ...CROSSTAB_METRIC_COLS.map((col) => ({ key: col.key, label: col.label, isNumeric: true })),
   { key: 'total', label: 'Total', isNumeric: true },
 ];
-
-function CrosstabLegendO() {
-  return (
-    <span className="flex flex-wrap items-center gap-list fs-meta text-faint">
-      <span className="inline-flex items-center gap-label-inline">
-        <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
-        polar mismatch (overconfidence high+fail · underconfidence low+pass)
-      </span>
-      <span>Empty rows hidden</span>
-    </span>
-  );
-}
 
 function CrosstabRow({ view, rowKey, byCell }) {
   const { TableRow, TableCell } = window.UI;
@@ -2005,6 +1993,9 @@ function CrosstabRow({ view, rowKey, byCell }) {
   );
 }
 
+// high confidence with a failed check, or low confidence with a passed one
+const POLAR_CELL_NOTE_O = 'confidence and check disagree';
+
 function CrosstabCell({ view, cell, rowLabel, colLabel }) {
   const { TableCell } = window.UI;
   const count = cell.count || 0;
@@ -2013,8 +2004,8 @@ function CrosstabCell({ view, cell, rowLabel, colLabel }) {
     <TableCell
       view={view}
       isNumeric
-      title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
-      aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
+      title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ` · ${POLAR_CELL_NOTE_O}` : ''}`}
+      aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? `, ${POLAR_CELL_NOTE_O}` : ''}`}>
       <span className="inline-flex items-center gap-label-inline justify-end">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className={count > 0 ? 'text-ink' : 'text-faint'}>{formatIntO(count)}</span>
@@ -2243,7 +2234,6 @@ function ResultTableCard({
           isFilterApplied={isFilterAppliedO(filter, includeAll)}
           sort={sort}
           onSortChange={onSortChange}
-          onResetFilter={onResetFilter}
           onRowClick={onRowClick}
           onRetry={onRetry} shared={shared}
           closure={closure}
@@ -2267,7 +2257,7 @@ function getDetailValueLabelO(axis, value) {
 }
 
 function ResultTableBody({
-  state, rows, filter, isFilterApplied, sort, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
+  state, rows, filter, isFilterApplied, sort, onSortChange, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
 }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
@@ -2283,7 +2273,7 @@ function ResultTableBody({
   }
   if (rows.length === 0) {
     return isFilterApplied
-      ? <window.UI.EmptyState kind="no-results" onReset={onResetFilter}/>
+      ? <window.UI.EmptyState kind="no-results"/>
       : <window.UI.EmptyState message={`No task results in the last ${filter.days} days.`}/>;
   }
 
