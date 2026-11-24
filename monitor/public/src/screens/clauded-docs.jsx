@@ -944,12 +944,11 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-fs-body-inner > .doc-body-isolation { line-height: 1.75; letter-spacing: 0.012em; }
         /* meta sidebar — grid cell 풀높이 sticky · 불투명 --doc-side(본문 비침 없음) · border-left --doc-line. */
         .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); }
-        /* 모바일 <768px — meta 하단 stack + border-top · bg 통일 반복(데스크톱 룰의 --doc-canvas · --doc-side 를 미디어 블록에서 재확인).
+        /* 모바일 <768px — meta 하단 stack + border-top.
            max-width min(90%,1280px) 는 폰에서 90% 자동 승리(1280 캡 미발동) → px floor 없음 → overflow 무발생. 스크롤은 wrap 에서 동일 동작. */
         @media (max-width: 768px) {
           .doc-fs-split { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-          .doc-fs-body-wrap { background: rgb(var(--doc-canvas)); }
-          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); max-height: 40vh; }
+          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); max-height: 40vh; }
         }
         /* WCAG 2.2 §2.5.8 Target Size (AA) — 24×24 px floor (본 화면 스코프 한정 · padding 보존). */
         .card button.btn.sm,
