@@ -90,9 +90,6 @@ function ScreenWiki() {
         .w-disclosure > summary { display: flex; }
         /* base.css tints only status tones → a parked (neutral) glyph recedes locally. */
         .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
-        /* Name, bar and count stay within reading distance on a wide panel. */
-        .w-type-list { max-width: 40rem; }
-        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; height: var(--row-h); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -883,7 +880,7 @@ function WikiStatusRow({ cyclesState, summaryState, indexState, shared, onRetry 
 	const { SplitRow } = window.UI;
 
 	return (
-		<SplitRow ratio="2:1" layout="equal">
+		<SplitRow ratio="2:1" layout="content">
 			<WikiRunHistorySection
 				cyclesState={cyclesState}
 				summaryState={summaryState}
@@ -926,12 +923,11 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 					<EmptyStateW {...describeRunHistoryEmptyW(summaryState)} />
 				) : (
 					<window.UI.Stack gap="block">
-						{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
 						<SparseTrendW
-							label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
+							label="Notes per day"
 							series={model.compiledSeries}
 							dates={model.compiledDates}
-							stat={`${formatCountW(model.total)} notes in ${model.spanDays}d · ${model.activeDays} active days`}
+							stat={describeNotesStatW(model)}
 						/>
 						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 						{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
@@ -940,6 +936,12 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 			</window.UI.Card>
 		</div>
 	);
+}
+
+// The window and its run count are the card head's facts → the stat line names notes and days only.
+function describeNotesStatW(model) {
+	const notes = `${formatCountW(model.total)} ${model.total === 1 ? "note" : "notes"}`;
+	return `${notes} · ${model.activeDays} active ${model.activeDays === 1 ? "day" : "days"}`;
 }
 
 // Never-run and quiet-window are different facts → the summary's last run tells them apart.
@@ -1076,26 +1078,22 @@ function openOnOwnFocusW(event) {
 // Status-row peers share one slot → their feet pin to one edge of the stretched row.
 const STATUS_CARD_SIZE_W = "S";
 
-// Notes by type — the library's composition, open as a compact list.
+// Notes by type — the library's composition as a caption-only table; the card ends at its rows.
 function WikiNotesByTypeSection({ state, shared, onRetry }) {
 	const { LoadingPlaceholder } = window.UI;
+	const view = window.UI.getRegionView(state);
 	const rows =
 		state.status === "ready" && Array.isArray(state.data?.by_type)
 			? buildNoteTypeRowsW(state.data.by_type)
 			: [];
-	const coverage = describeNoteCoverageW(rows);
+	const hasTable = view !== "loading" && view !== "error" && rows.length > 0;
 
 	return (
 		<div id={WIKI_REGION_IDS.notesByType} className="min-w-0">
-			<window.UI.Card
-				size={STATUS_CARD_SIZE_W}
-				title="Notes by type"
-				sub={describeNotesByTypeW(state)}
-				foot={coverage && <span className="truncate">{coverage}</span>}
-			>
-				{window.UI.getRegionView(state) === "loading" ? (
+			<window.UI.Card size={STATUS_CARD_SIZE_W} title="Notes by type" isFlush={hasTable}>
+				{view === "loading" ? (
 					<LoadingPlaceholder label="note types" />
-				) : window.UI.getRegionView(state) === "error" ? (
+				) : view === "error" ? (
 					<WikiRegionFailureW
 						feeders={[WIKI_FEEDERS.notesByType]}
 						source="notes by type"
@@ -1105,58 +1103,41 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 						focusTargetId={WIKI_REGION_IDS.notesByType}
 						onRetry={onRetry}
 					/>
-				) : rows.length === 0 ? (
-					<EmptyStateW message="No notes indexed yet." />
+				) : hasTable ? (
+					<WikiNoteTypesTable rows={rows} />
 				) : (
-					<ul className="w-type-list flex flex-col list-none">
-						{rows.map((t) => (
-							<li key={t.type} className="w-type-row gap-label fs-meta" title={t.type}>
-								<span className="text-dim truncate">{t.label}</span>
-								<span className="block h-1.5 rounded-sm overflow-hidden bg-line" aria-hidden="true">
-									<span className="block h-full bg-dim" style={{ width: `${t.share}%` }} />
-								</span>
-								<span className="text-ink text-right tabular-nums">{formatCountW(t.count)}</span>
-								<span className="text-faint text-right tabular-nums">{`${t.pct}%`}</span>
-							</li>
-						))}
-					</ul>
+					<EmptyStateW message="No notes indexed yet." />
 				)}
 			</window.UI.Card>
 		</div>
 	);
 }
 
+// flush card body → the table's edge cells hold the card-pad column once
+function WikiNoteTypesTable({ rows }) {
+	const { Table, TableRow, TableCell } = window.UI;
+
+	return (
+		<Table caption="Notes by type, one row per type">
+			{(view) => rows.map((t) => (
+				<TableRow key={t.type} view={view} title={t.type}>
+					<TableCell view={view} kind="row-header">{t.label}</TableCell>
+					<TableCell view={view} isNumeric>{formatCountW(t.count)}</TableCell>
+				</TableRow>
+			))}
+		</Table>
+	);
+}
+
 // Internal note_type → reader label; an unlisted type keeps its name after "Other".
 const NOTE_TYPE_LABELS = { raw: "Saved originals", "source-summary": "Summary notes" };
 
-// Bar length = share of the largest type; pct = share of all notes.
 function buildNoteTypeRowsW(rows) {
-	const counts = rows.map((t) => Number(t.count) || 0);
-	const max = Math.max(0, ...counts);
-	const total = counts.reduce((sum, n) => sum + n, 0);
-	return rows.map((t, i) => ({
+	return rows.map((t) => ({
 		type: t.note_type,
 		label: NOTE_TYPE_LABELS[t.note_type] || `Other · ${t.note_type}`,
-		count: counts[i],
-		share: max > 0 ? Math.round((counts[i] / max) * 100) : 0,
-		pct: total > 0 ? Math.round((counts[i] / total) * 100) : 0,
+		count: Number(t.count) || 0,
 	}));
-}
-
-// Summaries against the originals they cover; either type missing → no line.
-function describeNoteCoverageW(rows) {
-	const countOf = (type) => rows.find((t) => t.type === type)?.count;
-	const summaries = countOf("source-summary");
-	const originals = countOf("raw");
-	if (typeof summaries !== "number" || typeof originals !== "number") return null;
-	return `${formatCountW(summaries)} summary notes for ${formatCountW(originals)} saved originals`;
-}
-
-function describeNotesByTypeW(state) {
-	if (window.UI.getRegionView(state) === "loading") return null;
-	if (window.UI.getRegionView(state) === "error") return "Unavailable";
-	const rows = Array.isArray(state.data?.by_type) ? state.data.by_type : [];
-	return `${rows.length} types`;
 }
 
 // 백로그 stale 임계(일) — wiki 데몬 사이클이 일일 → run_date 가 1일 초과 경과면 stale.
@@ -1559,9 +1540,10 @@ function EmptyStateW({ message, hint }) {
 //   sparse → TrendChart 대신 한 줄 안내 · 헤드라인 수치(합계·활성일·피크)는 항상 차트 위.
 //   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 패널 폭 TrendChart(막대별 날짜·값 readout).
 function SparseTrendW({ label, series, dates, stat }) {
-	const { TrendChart } = window.UI;
+	const { TrendChart, formatKstDay } = window.UI;
 	const sparse = series.filter((v) => v > 0).length < SPARSE_MIN_NONZERO;
-	const headline = [stat, describePeakW(series, dates)].filter(Boolean).join(" · ");
+	const days = dates.map((date) => (date ? formatKstDay(date) : ""));
+	const headline = [stat, describePeakW(series, days)].filter(Boolean).join(" · ");
 
 	return (
 		<window.UI.Stack gap="label">
@@ -1575,7 +1557,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 				<TrendChart
 					label={label}
 					kind="bars"
-					points={series.map((value, i) => ({ label: dates[i] || "", value }))}
+					points={series.map((value, i) => ({ label: days[i] ?? "", value }))}
 					formatValue={formatCountW}
 					yScale
 					maxTicks={getEvenTickCapW(series.length)}

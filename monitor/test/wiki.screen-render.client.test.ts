@@ -83,7 +83,7 @@ test("every disclosure leads its summary with the shared chevron the disclosure 
   assert.doesNotMatch(style, /details-marker|rotate\(/, "the marker and the open turn come from the atom, not the screen");
 });
 
-test("the notes-per-day chart fills its panel with one dated bar per day and keeps the peak caption", async () => {
+test("the notes-per-day chart fills its panel with one MM-DD dated bar per day and keeps the peak caption", async () => {
   const mod = await loadWikiScreen();
   const SparseTrendW = mod.SparseTrendW as Component;
 
@@ -97,12 +97,10 @@ test("the notes-per-day chart fills its panel with one dated bar per day and kee
     assert.equal(chart.length, 1, "the shared chart atom draws the bars");
     assert.equal(chart[0].props.kind, "bars");
     assert.equal(chart[0].props.label, "Notes per day");
-    assert.deepEqual(
-      (chart[0].props.points as Array<{ label: string; value: number }>).map((p) => [p.label, p.value]),
-      dates.map((d, i) => [d, series[i]]),
-      "each bar carries its own date and count for the readout",
-    );
-    assert.ok(collectText(tree).includes(`peak ${peak} on ${peakDate}`), "the visible caption carries the peak value and date");
+    const points = (chart[0].props.points as Array<{ label: string; value: number }>).map((p) => [p.label, p.value]);
+    assert.deepEqual(points, dates.map((d, i) => [d.slice(5), series[i]]), "each bar carries its own day and count for the readout");
+    for (const [label] of points) assert.match(String(label), /^\d{2}-\d{2}$/, "ticks read in the Day form");
+    assert.ok(collectText(tree).includes(`peak ${peak} on ${peakDate.slice(5)}`), "the visible caption carries the peak value and its day");
   }
 });
 
@@ -147,18 +145,21 @@ test("the notes-per-day chart takes its edge labels and y-scale from the shared 
   assert.doesNotMatch(style, /data-chart-tick/, "the screen no longer overrides the shared edge rule");
 });
 
-test("the run-history chart title states the number of days its bars show", async () => {
+test("the run-history chart is titled Notes per day over a stat line of notes, active days and the peak day", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
-  for (const length of [5, 12]) {
-    const cycles = Array.from({ length }, (_, i) => ({ run_date: `2026-09-${String(i + 1).padStart(2, "0")}`, compiled_count: i + 1, status: "ok" }));
+  const rows = [
+    { name: "five busy days", compiled: [1, 2, 3, 4, 5], stat: "15 notes · 5 active days · peak 5 on 09-05" },
+    { name: "quiet days between", compiled: [3, 0, 1, 0, 2, 1, 0], stat: "7 notes · 4 active days · peak 3 on 09-01" },
+  ];
+  for (const row of rows) {
+    const cycles = row.compiled.map((compiled_count, i) => ({ run_date: `2026-09-0${i + 1}`, compiled_count, status: "ok" }));
     const tree = renderScreen(
       mod.React.createElement(mod.WikiRunHistorySection as Component, { cyclesState: ready({ cycles }), summaryState: ready({}), onRetry: () => {} }),
     );
-    const chart = findNodes(tree, (n) => n.props.atom === "TrendChart")[0];
-    const shown = (chart.props.points as unknown[]).length;
-    assert.match(String(chart.props.label), new RegExp(`\\b${shown} days\\b`), "the title's day count is the bar count");
-    assert.ok(collectText(tree).includes(`in ${shown}d`), "the headline total covers the same days");
+    const [chart] = findNodes(tree, (n) => n.props.atom === "TrendChart");
+    assert.equal(chart.props.label, "Notes per day", row.name);
+    assert.ok(collectText(tree).includes(row.stat), `${row.name}: "${collectText(tree)}"`);
   }
 });
 
@@ -276,7 +277,7 @@ test("the run-history trend and notes by type share one split row, the trend on 
   const split = findNodes(tree, (n) => n.props.atom === "SplitRow");
   assert.equal(split.length, 1);
   assert.equal(split[0].props.ratio, "2:1");
-  assert.equal(split[0].props.layout, "equal", "the peers stretch to one edge");
+  assert.equal(split[0].props.layout, "content", "each card ends at its own content");
   assert.deepEqual(findCardTitles(split[0]), ["Run history", "Notes by type"]);
 });
 
@@ -694,7 +695,7 @@ test("wiki text never uses the retired micro type step and words are never set i
   assert.deepEqual(words.filter((w) => !seen.has(w)), [], "every listed word renders, so the mono check ran for each");
 });
 
-test("figures read in sans and only note slugs ride the machine-string atom", async () => {
+test("only note slugs ride the machine-string atom, and no other wiki text is set in mono", async () => {
   const mod = await loadWikiScreen();
   const { createElement } = mod.React;
   const notes = renderScreen(createElement(mod.WikiNotesByTypeSection, { state: { status: "ready", error: null, data: { by_type: [{ note_type: "raw", count: 1204 }] } }, onRetry: () => {} }));
@@ -706,9 +707,6 @@ test("figures read in sans and only note slugs ride the machine-string atom", as
   for (const tree of [notes, item]) {
     for (const node of findNodes(tree, () => true)) assert.doesNotMatch(classOf(node), /\bfont-mono\b/, "mono only through the atom");
   }
-  const figures = findNodes(notes, (n) => ["1,204", "100%"].includes(collectText(n)) && n.type === "span");
-  assert.equal(figures.length, 2, "both figures render");
-  for (const figure of figures) assert.match(classOf(figure), /\btabular-nums\b/, "a figure aligns on sans tabular digits");
 });
 
 test("cyan tints no wiki text: the similarity reads as a figure and the lane stays uncoloured", async () => {
@@ -786,15 +784,12 @@ test("the merge-proposals loading line takes the card inset itself inside the fl
   assert.notEqual(insets[0], body, "the inset is the loading line's own, not the fold body's");
 });
 
-test("the page's meters share the small radius, never a full pill", async () => {
+test("the run-status mix bar takes the small radius, never a full pill", async () => {
   const mod = await loadWikiScreen();
-  const ready = { status: "ready", error: null, data: { by_type: [{ note_type: "raw", count: 3 }] } };
   const mix = renderScreen(mod.React.createElement(mod.WikiStatusMixW as Component, { mix: { ok: 70, partial: 10, error: 10, quota: 10 } }));
-  const types = renderScreen(mod.React.createElement(mod.WikiNotesByTypeSection as Component, { state: ready, onRetry: () => {} }));
-  const tracks = [...findNodes(mix, (n) => n.props.role === "img"), ...findNodes(types, (n) => /\boverflow-hidden\b/.test(classOf(n)))];
+  const [track] = findNodes(mix, (n) => n.props.role === "img");
 
-  assert.equal(tracks.length, 2, "the mix bar and the type bar both render");
-  for (const track of tracks) assert.match(classOf(track), /\brounded-sm\b/);
+  assert.match(classOf(track), /\brounded-sm\b/);
 });
 
 test("the run-history empty state tells a wiki that never ran from a quiet window", async () => {
@@ -997,7 +992,7 @@ test("a failed or unreported stat reads Not loaded with its cause in the title, 
   assert.doesNotMatch(text, /—/);
 });
 
-test("the two status cards share the S slot inside their region hosts, the coverage line pinned to the foot", async () => {
+test("the two status cards share the S slot inside their region hosts", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const row = renderScreen(
@@ -1013,10 +1008,24 @@ test("the two status cards share the S slot inside their region hosts, the cover
 
   const hostIds = findNodes(row, (n) => n.type === "div" && typeof n.props.id === "string").map((n) => n.props.id);
   assert.deepEqual(hostIds, ["wiki-run-history", "wiki-notes-by-type"], "the region ids stay focus targets");
+});
 
-  const notes = cards[1];
-  assert.equal(collectText(renderScreen(notes.props.foot)), "96 summary notes for 120 saved originals");
-  assert.doesNotMatch(collectText(notes), /summary notes for/, "the coverage line leaves the body once it sits in the foot");
+test("notes by type is a caption-only table of label and tabular count, with no meter, share, sub or foot", async () => {
+  const mod = await loadWikiScreen();
+  const ready = { status: "ready", error: null, data: { by_type: [{ note_type: "source-summary", count: 480 }, { note_type: "raw", count: 1474 }, { note_type: "source", count: 1 }] } };
+  const tree = renderScreen(mod.React.createElement(mod.WikiNotesByTypeSection as Component, { state: ready, onRetry: () => {} }));
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const [table] = findNodes(tree, (n) => n.props.atom === "Table");
+
+  assert.ok(!card.props.sub && !card.props.foot, "the card carries no sub and no foot");
+  assert.ok(String(table.props.caption).length > 0 && table.props.columns === undefined, "a caption and no column heads");
+  const [rows] = [table.props.children].flat() as Array<(view: unknown) => unknown>;
+  const body = renderScreen(mod.React.createElement("tbody", null, rows({ isStacked: false, columnCount: 0 })));
+  const cells = (pick: (n: RenderedNode) => boolean) => findNodes(body, (n) => n.props.atom === "TableCell" && pick(n));
+  assert.deepEqual(cells((n) => n.props.kind === "row-header").map(collectText), ["Summary notes", "Saved originals", "Other · source"]);
+  assert.deepEqual(cells((n) => n.props.isNumeric === true).map(collectText), ["480", "1,474", "1"], "the count sits in the numeric column");
+  assert.equal(findNodes(tree, (n) => n.props.role === "img" || /\boverflow-hidden\b/.test(classOf(n))).length, 0, "no meter");
+  assert.doesNotMatch(collectText(body), /%/, "no share");
 });
 
 // The legend keys four bar segments by colour — each toned status also needs its own shape, or the key is colour-only.

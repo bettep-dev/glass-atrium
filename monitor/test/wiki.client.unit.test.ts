@@ -55,7 +55,6 @@ interface WikiHelpers {
   buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean; rows: unknown[] };
   buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Array<Tile & { info?: string; hint?: string }>;
   readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => Array<{ feeder: string; label: string }>;
-  describeNotesByTypeW: (state: FetchState) => string;
   describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
   window: { UI: Record<string, unknown> };
 }
@@ -144,16 +143,6 @@ test("loading, error and unreported each read as themselves, never as a value", 
 });
 
 // State contract: loading and failure never share a token, and a failed payload is announced once at its group.
-
-test("notes by type reads loading, failure and a count as three different tokens", () => {
-  const tokens = [
-    helpers.describeNotesByTypeW(loading),
-    helpers.describeNotesByTypeW(errored),
-    helpers.describeNotesByTypeW(ready({ by_type: [{ note_type: "concept", count: 3 }] })),
-  ];
-  assert.equal(new Set(tokens).size, 3, `tokens must differ: ${tokens.join(" / ")}`);
-  assert.equal(tokens[2], "1 types");
-});
 
 test("a failed band feeder is named once for the group, never per tile", () => {
   const tiles = [...helpers.buildTileBandModel(errored, errored, ready({ backlog: null }))];
@@ -412,7 +401,7 @@ test("the cycle p95 is stated once, in the Run history head, never on the last-r
   assert.match(head, /· p95 550ms$/);
 });
 
-// Run streak grouping, note-type bars and the merge-proposal list's order.
+// Run streak grouping and the merge-proposal list's order.
 
 interface RunGroup {
   count: number;
@@ -421,7 +410,6 @@ interface RunGroup {
 }
 const layoutHelpers = helpers as unknown as {
   groupConstantRunsW: (reports: unknown[]) => RunGroup[];
-  buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; count: number; share: number }>;
   buildMaintenanceModel: (backlogState: FetchState, cyclesState?: FetchState) => { proposals: Array<{ cluster_hash: string }> };
 };
 
@@ -452,19 +440,6 @@ describe("consecutive runs sharing status and backlog form one streak", () => {
   }
 });
 
-test("each note type's bar is its count's share of the largest type, and an all-zero index draws none", () => {
-  const rows = layoutHelpers.buildNoteTypeRowsW([
-    { note_type: "concept", count: 40 },
-    { note_type: "source", count: 10 },
-    { note_type: "empty", count: 0 },
-  ]);
-  assert.deepEqual(rows.map((r) => r.share), [100, 25, 0]);
-  assert.deepEqual(
-    layoutHelpers.buildNoteTypeRowsW([{ note_type: "a", count: 0 }]).map((r) => r.share),
-    [0],
-  );
-});
-
 test("the merge-proposal list follows the alarm lane's order", () => {
   const backlog = proposalBacklog(["old", "new", "mid"], {
     old: isoDaysAgo(77),
@@ -491,7 +466,7 @@ interface GlanceTile {
 const glanceHelpers = helpers as unknown as {
   buildCompiledTileW: (summary: FetchState, backlog?: FetchState) => GlanceTile;
   buildLastRunTileW: (summary: FetchState, at?: string | null) => GlanceTile;
-  buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; label: string; pct: number }>;
+  buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; label: string }>;
 };
 
 function healthySummary(extra: Record<string, unknown> = {}): FetchState {
@@ -602,14 +577,13 @@ describe("the last-run tile keeps the shared freshness rule over a failed refres
   }
 });
 
-test("note types read as human labels with their share of all notes", () => {
+test("note types read as human labels, an unlisted type named after Other", () => {
   const rows = glanceHelpers.buildNoteTypeRowsW([
     { note_type: "source-summary", count: 480 },
     { note_type: "raw", count: 471 },
     { note_type: "source", count: 1 },
   ]);
   assert.deepEqual(rows.map((r) => r.label), ["Summary notes", "Saved originals", "Other · source"]);
-  assert.deepEqual(rows.map((r) => r.pct), [50, 49, 0]);
 });
 
 test("the per-run fold's summary states the unchanged stretch or how often it changed, so a one-row table needs no click", () => {
