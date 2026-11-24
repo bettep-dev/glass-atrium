@@ -677,11 +677,12 @@ function ToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
 }
 
 /**
- * A card head's own Status in the head's sub slot: the tone glyph, then the words.
- * @param className - the head's spacing between glyph and words; defaults to the label gap
+ * Status glyph + words at meta size — card-head sub, drawer field, row verdict (System map `System parts` head and rows).
+ * Top-aligned → the glyph-borne baseline never grows the line it sits in.
+ * @param className - the spacing between glyph and words; defaults to the label gap
  */
 function HeadStatus({ tone, className = 'gap-label-inline', children }) {
-  return <span data-role="head-status" data-tone={tone} className={`inline-flex items-center fs-meta text-dim ${className}`}>
+  return <span data-role="head-status" data-tone={tone} className={`inline-flex items-center align-top fs-meta text-dim ${className}`}>
     <ToneGlyph tone={tone}/>{children}
   </span>;
 }
