@@ -2423,11 +2423,13 @@ const LEDGER_PLAIN_COLUMNS_O = Object.freeze([
   { key: 'agent', label: 'Agent' },
   { key: 'task_type', label: 'Task type' },
   { key: 'result', label: 'Result' },
+  { key: 'why', label: 'Why' },
   { key: 'summary', label: 'Summary' },
+  { key: 'actions', label: <span className="sr-only">Actions</span> },
 ]);
 // Time and Agent keep their one-line minimum; the summary takes the width left
-const LEDGER_WIDTHS_O = Object.freeze(['120px', '110px', undefined, undefined, undefined]);
-// five columns stop fitting under this width → each record stacks onto a two-line item, its summary first
+const LEDGER_WIDTHS_O = Object.freeze(['120px', '110px', undefined, undefined, undefined, undefined, undefined]);
+// the columns stop fitting under this width → each record stacks onto a two-line item, its summary first
 const LEDGER_STACK_BELOW_PX = 640;
 
 // aria-sort sits on the Time column's th; the sort button inside it is the Tab stop and takes Enter and Space
@@ -2507,9 +2509,6 @@ function SortButtonO({ label, sortKey, currentSort, onSortChange, descOnly }) {
   );
 }
 
-// 요약 셀의 고정 flag 슬롯 폭 — 폭이 행마다 달라지면 요약 텍스트가 세로로 정렬되지 않는다.
-const SUMMARY_FLAG_SLOT = 18;
-
 // values only, never key-name digits — the d8 tail sits outside the 4 core keys → excluded from sum + avg
 function parseQaScoreO(qaScore) {
   if (typeof qaScore !== 'string' || qaScore.trim() === '') return null;
@@ -2560,7 +2559,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
   const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
-  const needsYouReason = getNeedsYouReasonO(row, closedAt);
+  const why = getNeedsYouReasonO(row, closedAt);
 
   return (
     <TableRow
@@ -2568,7 +2567,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
       className="outcome-row cursor-pointer"
       onClick={() => onRowClick(row)}
       {...focusProps}
-      aria-label={[row.agent, row.task_type, resultMeta.label, needsYouReason, row.summary].filter(Boolean).join(' ')}>
+      aria-label={[row.agent, row.task_type, resultMeta.label, why?.label, row.summary].filter(Boolean).join(' ')}>
       <TableCell view={view} textRole="meta" label="Time" className="text-ink tabular-nums whitespace-nowrap">
         {ts ?? <window.UI.AbsentValue kind="none" title="No record time"/>}
       </TableCell>
@@ -2577,7 +2576,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
       </TableCell>
       <TableCell view={view} textRole="meta" label="Task type" className="text-dim whitespace-nowrap">{row.task_type}</TableCell>
       <TableCell view={view} textRole="meta" label="Result" title={resultMeta.label}>
-        {/* result glyph + word and the closing affordance in one nowrap container — a wrap inside the cell doubles the row height against its siblings */}
+        {/* result glyph + word and the closure word in one nowrap container — a wrap inside the cell doubles the row height against its siblings */}
         <span className="inline-flex items-center gap-label-inline whitespace-nowrap">
           <span data-group="result" className="inline-flex items-center gap-label-inline text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
@@ -2590,90 +2589,57 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
               {resultMeta.label}
             </span>
           )}
-          {canClose && (
-            // a 32px control → the .tbl control-cell rule steps this cell's padding down, so the row stays 40 beside its text rows.
-            // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
-            <button
-              {...window.UI.ROW_CONTROL_PROPS}
-              className="btn ghost sm icon shrink-0"
-              aria-busy={isClosing}
-              aria-label={`Mark outcome ${row.id} closed`}
-              title={isClosing ? 'Closing…' : 'Mark closed'}
-              style={isClosing ? { opacity: 0.65 } : undefined}
-              onClick={(e) => {
-                // row onClick 이 detail modal 을 여는 것과 의도 충돌 → bubble 차단.
-                e.stopPropagation();
-                if (!isClosing) closure.onMarkClosed(row.id);
-              }}>
-              <GlyphO name="circle-check" size={14}/>
-            </button>
-          )}
         </span>
       </TableCell>
-      {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
-      {/* fixed flag slot | summary | reason → every summary starts at one x; the flag glyph leads, the variable-width reason sits at the cell's end, never truncated. */}
+      <TableCell view={view} textRole="meta" label="Why" className="text-ink whitespace-nowrap" title={why?.note}>
+        {why ? why.label : <window.UI.AbsentValue kind="none"/>}
+      </TableCell>
+      {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card */}
       {/* stacked → the summary leads its two-line item at full width, so the wide-mode squeeze drops */}
       <TableCell view={view} className="text-ink" style={view?.isStacked ? undefined : SUMMARY_WIDE_STYLE_O} title={summary}>
-        <div className="flex items-center">
-          <SummaryFlagSlotO row={row}/>
-          <span className="flex-1 truncate" style={{ minWidth: 0 }}>{summary}</span>
-          {needsYouReason && (
-            <span className="shrink-0 whitespace-nowrap ml-control text-dim">{needsYouReason}</span>
-          )}
-        </div>
+        <div className="truncate">{summary}</div>
+      </TableCell>
+      <TableCell view={view} className="whitespace-nowrap">
+        {canClose && <CloseCaveatActionO rowId={row.id} isClosing={isClosing} onClose={closure.onMarkClosed}/>}
       </TableCell>
     </TableRow>
   );
 }
 
+// row onClick opens the drawer → the press stops here; pending dims only, no colour turn (a new meaning would read in)
+function CloseCaveatActionO({ rowId, isClosing, onClose }) {
+  const { RowActions, QuietButton, ROW_CONTROL_PROPS } = window.UI;
+  return <RowActions label={`Actions for record ${rowId}`} action={
+    <QuietButton {...ROW_CONTROL_PROPS} className="sm" aria-busy={isClosing} style={isClosing ? { opacity: 0.65 } : undefined}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!isClosing) onClose(rowId);
+      }}>
+      {isClosing ? 'Closing…' : 'Close caveat'}
+    </QuietButton>
+  }/>;
+}
+
 const SUMMARY_WIDE_STYLE_O = Object.freeze({ width: '100%', maxWidth: 0 });
 
-// Why a needs-you row needs you, in words — null for a broken row (its Result cell says it) and for routine rows.
+const WHY_CAVEAT_OPEN_O = Object.freeze({ label: 'Caveat open', note: 'Caveat open: done, with a caveat not yet closed' });
+const WHY_QUARANTINED_O = Object.freeze({ label: 'Quarantined', note: 'Quarantined: left out of analysis stats' });
+const WHY_BUDGET_KILLED_O = Object.freeze({ label: 'Budget-killed', note: 'Budget-killed: hit its budget before reporting' });
+
+// Why a row needs a look → the first reason that applies + every reason's note; null when none applies (a broken row's Result cell says it)
 function getNeedsYouReasonO(row, closedAt) {
-  if (row.review_flag === true) {
-    const [first, ...rest] = window.UI.reviewFlagReasons(row);
-    return `flagged: ${first.label.toLowerCase()}${rest.length > 0 ? ` +${rest.length}` : ''}`;
-  }
-  if (row.result === 'done_with_concerns' && !closedAt) return 'caveat open';
-  return null;
-}
-
-// 요약 셀 선두 플래그 집계 — review 사유/격리/budget-kill 을 tone 하나로 접는다.
-//   1행 1줄·고정폭 슬롯 규율 유지 → 테이블에선 글리프 하나만, 사유 전문은 title 이 운반 (사유별 배지는 detail 패널).
-//   분류는 window.UI.reviewFlagReasons SoT (기록된 사유 토큰 → 라벨, improvement KPI 세그먼트와 공용, F12) — 여기서 재파생 금지.
-//   경고급(review 사유·격리)이 정보급(budget-kill)을 이긴다 — 조치 필요 신호가 참고 신호에 가려지면 안 된다.
-function buildSummaryFlagO(row) {
-  const reasons = row?.review_flag === true ? window.UI.reviewFlagReasons(row) : [];
-  const isQuarantined = row?.poisoned_window === true;
-  const isBudgetKill = row?.attribution_source === ATTRIBUTION_SOURCE_BUDGET_TRUNCATION;
-
-  const notes = [];
-  if (reasons.length > 0) notes.push(`Flagged for review: ${reasons.map((r) => `${r.label} (${r.title})`).join(' / ')}`);
-  if (isQuarantined) notes.push('Quarantined row — excluded from analysis stats.');
-  if (isBudgetKill) notes.push('attribution_source: budget-truncation — subagent hit its budget ceiling before emitting a completion block.');
-
-  if (notes.length === 0) return null;
-  return { tone: reasons.length > 0 || isQuarantined ? 'warn' : 'info', title: notes.join(' · ') };
-}
-
-// 플래그 유무와 무관하게 같은 폭을 점유 — 그래야 요약 텍스트가 모든 행에서 같은 x 에서 시작한다.
-function SummaryFlagSlotO({ row }) {
-  const flag = buildSummaryFlagO(row);
-  const slotStyle = { width: SUMMARY_FLAG_SLOT };
-
-  if (flag == null) {
-    return <span className="inline-block shrink-0 align-middle mr-label-inline" style={slotStyle} aria-hidden="true"/>;
-  }
-  return (
-    <span
-      className={`inline-flex items-center justify-center shrink-0 align-middle mr-label-inline text-${flag.tone}`}
-      style={slotStyle}
-      role="img"
-      aria-label={flag.title}
-      title={flag.title}>
-      <GlyphO name={flag.tone} size={13}/>
-    </span>
-  );
+  const flags = window.UI.reviewFlagReasons(row);
+  const whys = [
+    flags.length > 0 && {
+      label: `${flags[0].label}${flags.length > 1 ? ` +${flags.length - 1}` : ''}`,
+      note: flags.map((flag) => `${flag.label}: ${flag.title}`).join(' · '),
+    },
+    row.result === 'done_with_concerns' && !closedAt && WHY_CAVEAT_OPEN_O,
+    row.poisoned_window === true && WHY_QUARANTINED_O,
+    row.attribution_source === ATTRIBUTION_SOURCE_BUDGET_TRUNCATION && WHY_BUDGET_KILLED_O,
+  ].filter(Boolean);
+  if (whys.length === 0) return null;
+  return { label: whys[0].label, note: whys.map((why) => why.note).join(' · ') };
 }
 
 // ----- Detail Modal (body_md preview + nav) ----------------------------------

@@ -380,7 +380,7 @@ test("a closed caveat row shows its result and its closure as two separate group
 describe("the task ledger takes the .tbl cell geometry under its own header and body face", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
-  // 12 needs-you rows shown uncapped → the Show-first control row; the open caveat among them → the Mark-closed icon button; a routine row
+  // 12 needs-you rows shown uncapped → the Show-first control row; the open caveat among them → its Close caveat button; a routine row
   const rows = [
     ...Array.from({ length: 11 }, (_, i) => ({ id: i + 1, agent: "glass-atrium-dev-react", task_type: "feature", result: "fail", record_ts: "2026-09-01T10:00:00.000Z", summary: "Broke" })),
     { id: 20, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: null, record_ts: "2026-09-01T10:00:00.000Z", summary: "Caveat" },
@@ -403,8 +403,10 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
   });
 
   test("every column header is the shared TableHead in the ledger's own sentence-case face, one line each", () => {
-    assert.deepEqual(findNodes(tree, (n) => n.type === "TableHead").length, 5);
-    assert.deepEqual(columnHeads.map((th) => collectText(th).trim()), ["Time", "Agent", "Task type", "Result", "Summary"]);
+    assert.deepEqual(findNodes(tree, (n) => n.type === "TableHead").length, 7);
+    assert.deepEqual(columnHeads.map((th) => collectText(th).trim()), ["Time", "Agent", "Task type", "Result", "Why", "Summary", "Actions"]);
+    const actionsHead = findNodes(columnHeads.at(-1)!, (n) => tokensOf(n).includes("sr-only"));
+    assert.equal(collectText(actionsHead[0]).trim(), "Actions", "the action column's head is for assistive tech only");
     // the head face rides the table's thead variants → every column head takes it, none spells it out
     const [table] = findNodes(tree, (n) => n.type === "table");
     const faces = ["text-dim", "font-medium", "whitespace-nowrap"].map((t) => `[&_thead_th]:${t}`);
@@ -454,7 +456,7 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
   test("no cell, and no control in a cell, carries its own padding, margin or rule", () => {
     const cells = findNodes(tree, (n) => n.type === "th" || n.type === "td");
     const controls = findNodes(tree, (n) => n.type === "button");
-    assert.ok(cells.some((n) => n.type === "td") && controls.length >= 2, "rows, the Mark-closed button and the Show-all control render");
+    assert.ok(cells.some((n) => n.type === "td") && controls.length >= 2, "rows, the Close caveat button and the Show-all control render");
     for (const node of [...cells, ...controls]) {
       const adHoc = tokensOf(node).filter((t) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t));
       assert.deepEqual(adHoc, [], `${node.type} '${collectText(node).trim().slice(0, 24)}'`);

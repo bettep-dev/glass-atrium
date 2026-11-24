@@ -98,7 +98,7 @@ interface OutcomesHelpers {
   buildAgentOptionsO: (agents: string[], chosen: string) => { value: string; label: string }[];
   BandStatValueO: (props: { tile: BandTile; isLoading: boolean; unloadedText: string | null }) => RenderNode | string;
   BandRulesO: (props: { tiles: BandTile[]; reasons: { key: string; label: string; count: number | null; tone: string }[]; priorRange: string | null }) => RenderNode;
-  getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => string | null;
+  getNeedsYouReasonO: (row: LedgerRow & { review_flag_reasons?: string[] }, closedAt: string | null) => { label: string; note: string } | null;
   AttributionSummaryRow: (props: { summary: Record<string, unknown> | null; totalAttributed: number }) => RenderNode;
   window: { UI: { getAgentDisplayName: (name: string) => string; Popover: unknown; Card: unknown; StatRow: unknown } };
 }
@@ -914,7 +914,7 @@ test("ledger: every column header uses sentence case, never a raw field name", (
     rows: [ledgerRowOf("done")], sort: "record_ts:desc", onSortChange: () => {}, onRowClick: () => {},
   });
   const labels = ledgerHeaderLabelsO(table);
-  assert.strictEqual(labels.length, 5);
+  assert.strictEqual(labels.length, 7);
   for (const label of labels) assert.match(label, /^[A-Z][a-z]*(?: [a-z]+)*$/, `header '${label}'`);
 });
 
@@ -1114,25 +1114,33 @@ describe("buildAgentOptionsO: All first, and the chosen agent is always one opti
   }
 });
 
-test("needs-you reason: a flagged or open-caveat row says why in words; a broken or routine row adds none", () => {
+describe("the Why words: the first reason that applies, in sentence case, with every reason's note behind it", () => {
   const rows = [
-    { name: "flagged overconfident", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence"] }), reason: "flagged: overconfident" },
-    { name: "flagged twice", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence", "scope-excess"] }), reason: "flagged: overconfident +1" },
-    { name: "open caveat", row: ledgerRowOf("done_with_concerns"), reason: "caveat open" },
-    { name: "closed caveat", row: ledgerRowOf("done_with_concerns", { closed_at: "2026-09-01T00:00:00Z" }), reason: null },
-    { name: "failed — the result column already says it", row: ledgerRowOf("fail"), reason: null },
-    { name: "routine done", row: ledgerRowOf("done"), reason: null },
+    { name: "a flagged row reads its reason", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["scope-excess"] }), label: "Outside declared scope", notes: [/^Outside declared scope: /] },
+    { name: "a second flag counts after the first", row: ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence", "scope-excess"] }), label: "Overconfident +1", notes: [/Overconfident: /, /Outside declared scope: /] },
+    { name: "an open caveat", row: ledgerRowOf("done_with_concerns"), label: "Caveat open", notes: [/caveat/i] },
+    { name: "a flag outranks an open caveat, whose note still follows", row: ledgerRowOf("done_with_concerns", { review_flag: true, review_flag_reasons: ["overconfidence"] }), label: "Overconfident", notes: [/Overconfident: /, /caveat/i] },
+    { name: "a quarantined row", row: ledgerRowOf("done", { poisoned_window: true }), label: "Quarantined", notes: [/analysis/] },
+    { name: "a budget-killed row", row: ledgerRowOf("fail", { attribution_source: "budget-truncation" }), label: "Budget-killed", notes: [/budget/] },
+    { name: "quarantine outranks the budget kill", row: ledgerRowOf("done", { poisoned_window: true, attribution_source: "budget-truncation" }), label: "Quarantined", notes: [/analysis/, /budget/] },
   ];
   for (const row of rows) {
-    assert.strictEqual(helpers.getNeedsYouReasonO(row.row, row.row.closed_at), row.reason, row.name);
+    test(row.name, () => {
+      const why = helpers.getNeedsYouReasonO(row.row, row.row.closed_at);
+      assert.strictEqual(why?.label, row.label);
+      for (const note of row.notes) assert.match(why?.note ?? "", note);
+    });
   }
-});
-
-test("ledger row: the needs-you reason is written on the row and in its accessible name, beside the kept glyph", () => {
-  const rendered = renderLedgerRow(ledgerRowOf("done", { review_flag: true, review_flag_reasons: ["overconfidence"], summary: "shipped" }));
-  assert.match(textOf(rendered), /flagged: overconfident/);
-  assert.match(String(rendered.props!["aria-label"]), /flagged: overconfident/);
-  assert.ok(flattenNodes(rendered).some((n) => typeof n.type === "function" && (n.type as { name: string }).name === "SummaryFlagSlotO"), "the glyph slot stays");
+  const none = [
+    { name: "a closed caveat", row: ledgerRowOf("done_with_concerns", { closed_at: "2026-09-01T00:00:00Z" }) },
+    { name: "a failed row, whose Result cell says it", row: ledgerRowOf("fail") },
+    { name: "a routine row", row: ledgerRowOf("done") },
+  ];
+  for (const row of none) {
+    test(`${row.name} has no reason`, () => {
+      assert.strictEqual(helpers.getNeedsYouReasonO(row.row, row.row.closed_at), null);
+    });
+  }
 });
 
 describe("getGraderSentenceO: automatic checks read as one sentence over the checkable records", () => {
@@ -1316,38 +1324,52 @@ describe("Task results reads opt into the prior window", () => {
   });
 });
 
-// --- ledger summary cell: every summary starts on one line, whatever pill its row carries ---
+// --- ledger row: Why is its own ink column after Result, and the summary text starts its own cell ---
 
-const summaryLineOf = (tr: RenderNode): unknown[] => {
-  const summaryCell = expandNodes(tr).filter((n) => n.type === "td").at(-1);
-  const line = expandNodes(summaryCell).find((n) => n.type === "div");
-  assert.ok(line, "the summary cell lays its parts out on one line");
-  return line.children.filter((child) => child !== null && child !== false && child !== undefined);
-};
+const ledgerCellsOf = (tr: RenderNode): RenderNode[] => expandNodes(tr).filter((n) => n.type === "td");
 
-describe("ledger row: the summary starts right after the fixed flag slot, and the variable reason follows it as a dim word", () => {
-  const sub = helpers as unknown as Record<string, unknown>;
+describe("ledger row: the Why cell names the reason in ink, the full note in its title, and the Summary cell holds the text alone", () => {
   const rows = [
-    { name: "an open caveat", row: ledgerRowOf("done_with_concerns", { summary: "Caveat" }), pill: /caveat open/ },
-    { name: "a flagged row", row: ledgerRowOf("done", { summary: "Flagged", review_flag: true, review_flag_reasons: ["scope-excess", "overconfidence"] }), pill: /flagged: overconfident \+1/ },
-    { name: "a routine row", row: ledgerRowOf("done", { summary: "Routine" }), pill: null },
+    { name: "an open caveat", row: ledgerRowOf("done_with_concerns", { summary: "Caveat" }), why: "Caveat open" },
+    { name: "a flagged row", row: ledgerRowOf("done", { summary: "Flagged", review_flag: true, review_flag_reasons: ["scope-excess", "overconfidence"] }), why: "Overconfident +1" },
+    { name: "a routine row", row: ledgerRowOf("done", { summary: "Routine" }), why: "None" },
   ];
-  for (const { name, row, pill } of rows) {
+  for (const { name, row, why } of rows) {
     test(name, () => {
-      const [slot, text, ...rest] = summaryLineOf(renderLedgerRow(row)) as RenderNode[];
-      assert.strictEqual(slot.type, sub.SummaryFlagSlotO, "the fixed-width flag slot leads");
-      assert.strictEqual(text.type, "span", "the summary text comes second");
-      assert.deepStrictEqual(text.children, [row.summary]);
-      assert.match(String(text.props?.className), /\btruncate\b/);
-      if (pill === null) {
-        assert.strictEqual(rest.length, 0, "a routine row carries no reason");
-        return;
+      const rendered = renderLedgerRow(row);
+      const cells = ledgerCellsOf(rendered);
+      assert.strictEqual(cells.length, 7, "Time, Agent, Task type, Result, Why, Summary, actions");
+      const [, , , , whyCell, summaryCell] = cells;
+      assert.strictEqual(renderText(whyCell).trim(), why);
+      assert.doesNotMatch(renderText(whyCell), /^flagged:/i);
+      assert.match(String(whyCell.props?.className), /\bwhitespace-nowrap\b/, "the reason never wraps");
+      assert.doesNotMatch(String(whyCell.props?.className), /\btruncate\b/, "the reason is never cut");
+      assert.strictEqual(whyCell.props?.title, helpers.getNeedsYouReasonO(row, null)?.note);
+      assert.strictEqual(renderText(summaryCell).trim(), row.summary, "the summary starts the cell, no glyph or word before it");
+      assert.strictEqual(expandNodes(summaryCell).filter((n) => n.type === "svg" || n.props?.role === "img").length, 0);
+      if (why !== "None") assert.match(String(rendered.props!["aria-label"]), new RegExp(why.replace("+", "\\+")));
+    });
+  }
+});
+
+describe("ledger row: only an open caveat offers Close caveat, a quiet button in the row's action cell", () => {
+  const closureOf = (pending: number[]) => ({ pendingIds: new Set(pending), closedOverrides: new Map(), onMarkClosed: () => {} });
+  const buttonsOf = (row: ReturnType<typeof ledgerRowOf>, pending: number[] = []) =>
+    expandNodes(helpers.ResultTableRow({ row, onRowClick: () => {}, closure: closureOf(pending) })).filter((n) => n.type === "button");
+  const rows = [
+    { name: "an open caveat", row: ledgerRowOf("done_with_concerns"), pending: [], labels: ["Close caveat"] },
+    { name: "an open caveat being closed", row: ledgerRowOf("done_with_concerns"), pending: [11], labels: ["Closing…"] },
+    { name: "a closed caveat", row: ledgerRowOf("done_with_concerns", { closed_at: "2026-09-01T00:00:00Z" }), pending: [], labels: [] },
+    { name: "a failed row", row: ledgerRowOf("fail"), pending: [], labels: [] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const buttons = buttonsOf(row.row, row.pending);
+      assert.deepStrictEqual(buttons.map((button) => renderText(button).trim()), row.labels);
+      for (const button of buttons) {
+        assert.strictEqual(expandNodes(button).filter((n) => n.type === "svg").length, 0, "a word, no circle-check icon");
+        assert.match(String(button.props?.className), /\bghost\b/);
       }
-      assert.strictEqual(rest.length, 1, "the reason ends the line");
-      assert.strictEqual(rest[0].type, "span", "a bare word, no badge container");
-      assert.match(renderText(rest[0]), pill);
-      assert.match(String(rest[0].props?.className), /\btext-dim\b/, "the reason reads dim");
-      assert.match(String(rest[0].props?.className), /\bshrink-0\b/, "the reason is never truncated");
     });
   }
 });

@@ -100,7 +100,7 @@ describe("outcomes crosstab header", () => {
 });
 
 // The status band and the ledger as painted: the band is one stat row card with no tile inside it,
-// no stat states the prior range, and every summary starts at one x beside its row's pill.
+// no stat states the prior range, and every summary starts at one x.
 const BAND_AGENT = "glass-atrium-dev-react";
 const BAND_OVERALL = {
   total: 400, reconstructed_total: 0, excluded_poisoned_count: 0,
@@ -165,9 +165,12 @@ describe("outcomes status band and ledger as painted", () => {
           const band = [...document.querySelectorAll<HTMLElement>(".stat-row")].find((row) => /Needs you/.test(row.textContent ?? ""));
           const ranges = [...(band?.querySelectorAll<HTMLElement>(".whitespace-nowrap") ?? [])]
             .filter((span) => /^\d\d-\d\d – \d\d-\d\d$/.test(span.textContent ?? ""));
+          const heads = [...document.querySelectorAll<HTMLElement>("tr.outcome-row")[0].closest("table")!.querySelectorAll("thead th")].map((th) => th.textContent?.trim());
+          const [whyAt, summaryAt] = [heads.indexOf("Why"), heads.indexOf("Summary")];
           const summaries = [...document.querySelectorAll<HTMLTableRowElement>("tr.outcome-row")].map((tr) => ({
             rowH: tr.getBoundingClientRect().height,
-            x: tr.cells[tr.cells.length - 1].querySelector(".truncate")!.getBoundingClientRect().x,
+            x: tr.cells[summaryAt].querySelector(".truncate")!.getBoundingClientRect().x,
+            whyAlign: getComputedStyle(tr.cells[whyAt]).textAlign,
           }));
           return {
             stats: band?.querySelectorAll(":scope > .stat").length ?? 0,
@@ -183,6 +186,7 @@ describe("outcomes status band and ledger as painted", () => {
         const xs = painted.summaries.map((row) => row.x);
         assert.ok(Math.max(...xs) - Math.min(...xs) <= 0.5, `summaries start at one x: ${xs.join(", ")}`);
         for (const row of painted.summaries) assert.ok(Math.abs(row.rowH - 40) <= 0.5, `ledger row ${row.rowH}px`);
+        for (const row of painted.summaries) assert.ok(["start", "left"].includes(row.whyAlign), `Why aligns to the start: ${row.whyAlign}`);
       } finally {
         await page.close();
       }
