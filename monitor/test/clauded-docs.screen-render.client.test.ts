@@ -1235,14 +1235,24 @@ describe("ledger meta cells, title lines, the search snippet and the Show counts
   }
 });
 
-// a section head is a house body header → a declaration its rule restates drifts from the table the moment base.css moves
-describe("a stage section head's rule restates nothing the house table header sets", () => {
-  for (const property of ["height", "text-align", "font-size", "color", "background", "border-bottom"]) {
-    test(`it sets no ${property}`, async () => {
-      const screen = await loadDocsScreen();
-      assert.doesNotMatch(cssRuleBody(getScreenCss(screen), "tr.doc-stage-section > th"), new RegExp(`(^|[;\\s])${property}\\s*:`));
-    });
-  }
+// a section head is the shared group-header cell → its face is the table's, so the screen keeps no rule for it
+test("a stage section head is a group-header cell and the screen keeps no rule for it", async () => {
+  const screen = await loadDocsScreen();
+  const [section] = findNodes(renderListCard(screen, {}), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-stage-section"));
+  assert.ok(section, "a stage section renders");
+  assert.deepEqual(findNodes(section, (n) => n.props?.kind === "group-header").length, 1);
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-stage-section\s*>\s*th/);
+});
+
+// a title row lays out on the house inline label gap → the lead slot and the title part by one role step
+test("every ledger title row, its snippet line and the Title header part the lead slot from the title on the label-inline gap", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const rows = findNodes(renderListCard(screen, { isSearchMode: true, rows: [row] }), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-title-row"));
+  assert.equal(rows.length, 3, "header, title line and snippet line");
+  for (const node of rows) assert.match(String(node.props.className), /(^|\s)gap-label-inline(\s|$)/);
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-title-row"), /(^|[;\s])gap\s*:/);
 });
 
 // a role utility the Tailwind config has no key for emits no CSS → the node silently keeps its UA spacing
@@ -1563,6 +1573,24 @@ describe("a tone in the Documents screen rides a leading glyph while its words s
       assert.doesNotMatch(getScreenCss(screen), /\.doc-inline-alert[\s,.:{]/, "the alert line has no screen rule");
     });
   }
+});
+
+// a member nests by one empty lead slot in its title row → the cell keeps the table's padding in both table modes
+test("a group member's title row opens on an indent slot before its lead, and no rule pads its title cell", async () => {
+  const member = { id: 21, title: "Member", doc_status: "open", format: "md", audience: "exposed", author: "a", created_at: "2026-09-01T00:00:00Z" };
+  const screen = await loadDocsScreen(stubbedStateReact({ status: "ready", data: [member, { ...member, id: 22 }], error: null }));
+  const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)({
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  })));
+  const titleRows = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-title-row"));
+  assert.equal(titleRows.length, 2);
+  for (const titleRow of titleRows) {
+    const slots = (titleRow.children as RenderedNode[]).filter((c) => typeof c === "object" && c !== null).map((c) => String(c.props?.className ?? ""));
+    assert.deepEqual(slots.slice(0, 2), ["doc-title-lead is-spacer is-indent", "doc-title-lead"]);
+  }
+  assert.doesNotMatch(getScreenCss(screen), /td\.title-cell\s*\{[^}]*padding/);
 });
 
 // table cells are atom-owned padding (plan S3 role tokens) → a member state line restates no inset and takes its colour from a class

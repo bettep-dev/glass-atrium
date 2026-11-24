@@ -894,14 +894,14 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* title-cell 레이아웃 — 고정폭 leading slot(20px) + 제목 main(flex).
            사유 — chevron toggle 이 group-root 행에만 있어 일반/멤버 행은 제목 시작 x 가 어긋남.
            모든 행에 동일폭 slot 예약 → 제목 컬럼 정렬 통일 + 행 높이 차이 제거. */
-        .doc-title-row { display: flex; align-items: center; gap: var(--space-1_5); }
+        .doc-title-row { display: flex; align-items: center; }
         /* spacer slot on the snippet line and the Title header → the title x without the title line's height floor */
         .doc-title-lead.is-spacer { min-height: 0; }
         .doc-title-lead { flex: 0 0 ${DOC_LEAD_SLOT_PX_CD}px; width: ${DOC_LEAD_SLOT_PX_CD}px; display: flex; align-items: center; justify-content: center; min-height: 20px; }
         /* 1줄 클램프 — 제목·작성자 셀 공용. 초과분은 말줄임, 전체 값은 title= 툴팁이 운반.
            white-space:nowrap 대신 클램프인 사유 — auto-layout 표에서 nowrap 은 셀 min-content 를
            문자열 전체 폭으로 키워 그 컬럼이 제목 폭을 빼앗는다. */
-        .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
+        .doc-title-text, .doc-cell-clamp { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; }
         /* 태그 셀 폭 상한 — 칩이 nowrap 이라 상한이 없으면 셀이 칩 합까지 벌어진다.
            위 .doc-title-text 가 nowrap 대신 클램프인 사유와 같은 함정 — 상한을 풀면 제목 본문 상자가 343→340px 로 깎이고 나머지는 가로 스크롤로 나간다.
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
@@ -917,7 +917,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* trailing title-line pills never shrink → the title text ellipsizes first */
         button.doc-lineage { flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
         .doc-revision-count { flex: none; }
-        .doc-snippet mark { background: rgb(var(--accent) / 0.2); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
+        .doc-snippet mark { background: rgb(var(--accent) / 0.2); color: rgb(var(--ink)); border-radius: 2px; }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
            --doc-canvas — 문서 자체 bg-zinc-950 과 같은 cool 캔버스, warm --surface 아님 → swap 금지.
@@ -961,10 +961,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .detail-fullscreen .doc-fs-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
         /* split grid: main(fluid) | meta(clamp 260-300). 가독성 본문 확폭 — meta col 소폭 축소(320→300)로 본문 여유 확보 + 모바일 collapse 분기. */
         .doc-fs-split { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr clamp(260px, 20vw, 300px); overflow: hidden; }
-        /* body wrap = 스크롤 컨테이너(구조 수정 핵심) — overflow:hidden → overflow-y:auto 전환 → 스크롤바가 body 셀 우측 끝(meta border 접점)에 안착("스크롤 우측 이동" 요청 충족) · grid 셀 높이 bound(상위 split flex:1+min-height:0) 가 scrollport 생성 → min-height:0 체인 유지 필수.
-           bg --doc-canvas + 좌우 padding clamp(32-72) gutter (72 = 3 × --space-6).
+        /* body wrap = 스크롤 컨테이너 — overflow-y:auto → 스크롤바가 body 셀 우측 끝(meta border 접점)에 안착 · grid 셀 높이 bound(상위 split flex:1+min-height:0) 가 scrollport 생성 → min-height:0 체인 유지 필수.
+           bg --doc-canvas · gutter = markup p-page (페이지 여백과 같은 열).
            container-type — 본문 다이어그램 breakout 이 기준으로 삼는 상자(위 크기 프리셋의 cqi). */
-        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: var(--space-6) clamp(var(--space-8), 4vw, calc(3 * var(--space-6))) var(--space-8); background: rgb(var(--doc-canvas)); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(var(--doc-line)) transparent; }
+        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; background: rgb(var(--doc-canvas)); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(var(--doc-line)) transparent; }
         /* 얇은 다크 스크롤바 — tokens.css 글로벌 *::-webkit-scrollbar(10px·--line warm)를 .doc-fs-* 스코프 한정 override(specificity 0,1,1 > 0,0,1). 8px · thumb rest --doc-line, hover --faint(전역 스크롤바 hover 와 같음). */
         .doc-fs-body-wrap::-webkit-scrollbar { width: 8px; }
         .doc-fs-body-wrap::-webkit-scrollbar-track { background: transparent; }
@@ -980,13 +980,13 @@ function ScreenClaudedDocs(/* { onNav } */) {
            line-height 1.75 · letter-spacing 0.012em(light-on-dark halation 보정) · 상속 base → 코드블록/헤딩 등 per-element 로컬 override 유지. */
         .doc-fs-body-inner > .doc-body-isolation { line-height: 1.75; letter-spacing: 0.012em; }
         /* meta sidebar — grid cell 풀높이 sticky · 불투명 --doc-side(본문 비침 없음) · border-left --doc-line. */
-        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); padding: var(--space-4) var(--space-6); }
-        /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 --doc-canvas · --doc-side 를 미디어 블록에서 재확인).
+        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); }
+        /* 모바일 <768px — meta 하단 stack + border-top · bg 통일 반복(데스크톱 룰의 --doc-canvas · --doc-side 를 미디어 블록에서 재확인).
            max-width min(90%,1280px) 는 폰에서 90% 자동 승리(1280 캡 미발동) → px floor 없음 → overflow 무발생. 스크롤은 wrap 에서 동일 동작. */
         @media (max-width: 768px) {
           .doc-fs-split { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-          .doc-fs-body-wrap { padding: var(--space-4); background: rgb(var(--doc-canvas)); }
-          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); max-height: 40vh; padding: var(--space-4); }
+          .doc-fs-body-wrap { background: rgb(var(--doc-canvas)); }
+          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); max-height: 40vh; }
         }
         /* WCAG 2.2 §2.5.8 Target Size (AA) — 24×24 px floor (본 화면 스코프 한정 · padding 보존). */
         .card button.btn.sm,
@@ -994,10 +994,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-fs-container button.btn.sm { min-height: 24px; min-width: 24px; }
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
-        /* the checkbox is block and centered in its cell; the cell takes the select floor (checkbox + edge padding) */
+        /* the cell takes the select floor (checkbox + edge padding) → the checkbox starts on the card-pad column */
         .doc-checkbox-cell, .doc-ledger thead th:first-child { width: ${LEDGER_CD.FLOOR.select}px; text-align: center; vertical-align: middle; }
-        /* the edge cell's 16 + 12 split evenly (the same 28) → the checkbox sits on the cell centre */
-        .tbl tr > :is(th, td).doc-checkbox-cell, .tbl.doc-ledger thead th:first-child { padding-inline: calc((var(--space-4) + var(--space-3)) / 2); }
         /* C24 hit area (§7.15) — padding out to 24, the equal negative margin keeps the 16 layout box → the select floor holds */
         /* header floors by position (getLedgerColumnsCD order) — width alone gives way to min-content once the table overflows; Author and Created count from the end, past an absent Tags */
         .doc-ledger:not(.tbl--stacked) thead th:nth-child(2) { width: ${LEDGER_CD.FLOOR.status}px; min-width: ${LEDGER_CD.FLOOR.status}px; }
@@ -1026,11 +1024,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-group-toggle { width: 100%; justify-content: center; cursor: pointer; background: transparent; border: none; color: rgb(var(--dim)); border-radius: var(--radius-control); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
-        /* member rows — indent + 좌측 가는 가이드 선 (group 소속 시각 hint). */
-        /* one nesting step = the lead slot; --doc-member-inset = the house cell inset per table mode (wide 12 · stacked 0, row owns the padding) */
-        tr.doc-row.is-group-member td.title-cell { --doc-member-inset: var(--space-3); padding-left: calc(var(--doc-member-inset) + ${DOC_LEAD_SLOT_PX_CD}px); position: relative; }
-        .tbl--stacked tr.doc-row.is-group-member td.title-cell { --doc-member-inset: 0px; }
-        tr.doc-row.is-group-member td.title-cell::before { content: ''; position: absolute; left: calc(var(--doc-member-inset) + ${DOC_LEAD_SLOT_PX_CD / 2}px - 0.5px); top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
+        /* member rows — one nesting step = the indent slot · its guide runs the cell's full height on the slot centre (abspos static x, centred by the slot's flex) */
+        tr.doc-row.is-group-member td.title-cell { position: relative; }
+        .doc-title-lead.is-indent::before { content: ''; position: absolute; top: 0; bottom: 0; width: 1px; background: rgb(var(--line)); }
         /* group divider — root row 위쪽 subtle border (dark base 정합). */
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
@@ -1047,8 +1043,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-stage-cell { grid-template-columns: minmax(0, auto) auto; }
         /* a max-width caps the status's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
-        /* the clip cuts at the label's line box → a control line box, so a tight line-height never clips a descender */
-        .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
+        .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
         .doc-list-region { scroll-margin-top: 96px; border-radius: var(--radius-card); }
         /* clip trims an outside ring → the card ring drawn inset */
@@ -1058,9 +1053,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-trigger-value { display: inline-grid; }
         .doc-trigger-value > * { grid-area: 1 / 1; }
         .doc-trigger-value > .is-idle { visibility: hidden; }
-        /* stage 섹션 머리 — 열림/전체 필터에서 stage 순서대로. */
-        /* a section head = a house body header (40 row, meta face, sunken fill) → only the bottom-anchored label inset and the 600 weight are its own */
-        tr.doc-stage-section > th { padding-block: var(--space-3) var(--space-1); font-weight: 600; }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -1560,7 +1552,7 @@ function DocListCardCD({
 												</TableCell>
 											<TableCell view={view} className="title-cell">
 												<div
-													className="doc-title-row font-medium fs-body text-ink"
+													className="doc-title-row gap-label-inline font-medium fs-body text-ink"
 												>
 													{/* 고정폭 leading slot — group-root 시 chevron, 그 외 빈칸 (제목 시작 x 통일). */}
 													<span className="doc-title-lead">
@@ -1620,7 +1612,7 @@ function DocListCardCD({
 													</span>
 												</div>
 												{snippetText && (
-													<div className="doc-title-row mt-stack">
+													<div className="doc-title-row gap-label-inline mt-stack">
 														<span className="doc-title-lead is-spacer" />
 														<div className="doc-snippet fs-meta text-dim">
 															{parseSnippetCD(snippetText)}
@@ -1680,7 +1672,7 @@ function getLedgerColumnsCD({ hasTagsColumn, selectAll }) {
 		{
 			key: "title",
 			label: (
-				<span className="doc-title-row">
+				<span className="doc-title-row gap-label-inline">
 					<span className="doc-title-lead is-spacer" />
 					<span>Title</span>
 				</span>
@@ -2150,8 +2142,9 @@ function GroupMembersRowsCD({
 				</TableCell>
 				<TableCell view={view} className="title-cell">
 					<div
-						className="doc-title-row font-medium fs-body text-ink"
+						className="doc-title-row gap-label-inline font-medium fs-body text-ink"
 					>
+						<span className="doc-title-lead is-spacer is-indent" />
 						{/* 멤버 행 leading slot — 재정렬 가능 시 drag handle(⠿), 아니면 빈칸 (제목 시작 x 통일). */}
 						<span className="doc-title-lead">
 							{isReorderable && (
@@ -2248,7 +2241,7 @@ function ViewerPanelCD({
 			{isReady ? (
 				<div className="doc-fs-split">
 					<ViewerBodyCD state={state} />
-					<aside className="doc-fs-meta-side" aria-label="Document metadata">
+					<aside className="doc-fs-meta-side py-card-pad px-page" aria-label="Document metadata">
 						{/* doc(=viewer cache) 를 cachedRow 로 전달 → GET 스킵 (네트워크 절감). */}
 						<DocMetaPanelCD
 							doc={state.data}
@@ -2680,7 +2673,7 @@ function ViewerBodyCD({ state, onRetry }) {
 		? `${DOC_BODY_SCOPE_CD} ${rendered.className}`
 		: DOC_BODY_SCOPE_CD;
 	return (
-		<div className="doc-fs-body-wrap">
+		<div className="doc-fs-body-wrap p-page">
 			<div className="doc-fs-body-inner mx-auto">
 				<div
 					ref={bodyContainerRef}

@@ -443,14 +443,14 @@ describe("the select column and the stage section heads sit on the ledger's grid
     await page?.close();
   });
 
+  // one inline column: the checkbox starts where the card head's text starts
   for (const id of ["head-select", "row-select"]) {
-    test(`the checkbox sits on its cell's centre (${id})`, async () => {
-      const { cell, box } = await page.$eval(`#${id}`, (el) => ({
-        cell: el.getBoundingClientRect().toJSON() as DOMRect,
-        box: el.querySelector("input")!.getBoundingClientRect().toJSON() as DOMRect,
+    test(`the checkbox starts on the card-pad column (${id})`, async () => {
+      const { offset, cardPad } = await page.$eval(`#${id}`, (el) => ({
+        offset: el.querySelector("input")!.getBoundingClientRect().left - el.getBoundingClientRect().left,
+        cardPad: parseFloat(getComputedStyle(el).getPropertyValue("--card-pad")),
       }));
-      const offset = (box.left + box.right) / 2 - (cell.left + cell.right) / 2;
-      assert.ok(Math.abs(offset) <= 0.5, `checkbox centre ${offset}px off the cell centre`);
+      assert.ok(Math.abs(offset - cardPad) <= 0.5, `checkbox ${offset}px from the cell edge, card pad ${cardPad}px`);
     });
   }
 
@@ -517,8 +517,8 @@ describe("the select column and the stage section heads sit on the ledger's grid
 
 describe("a group member nests one lead slot under its root on both table modes", () => {
   const groupRows = (mode: string) => `
-    <tr class="doc-row is-group-root"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-root"><div class="doc-title-row"><span class="doc-title-lead"><button type="button" class="doc-group-toggle inline-target" aria-label="Collapse group (2 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan</span></div></td></tr>
-    <tr class="doc-row is-group-member"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-member"><div class="doc-title-row"><span class="doc-title-lead"><span class="doc-drag-handle">⠿</span></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan rev 2</span></div></td></tr>`;
+    <tr class="doc-row is-group-root"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-root"><div class="doc-title-row gap-label-inline"><span class="doc-title-lead"><button type="button" class="doc-group-toggle inline-target" aria-label="Collapse group (2 documents)"><svg class="chevron" width="10" height="10"></svg></button></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan</span></div></td></tr>
+    <tr class="doc-row is-group-member"><td class="doc-checkbox-cell"></td><td class="title-cell" id="${mode}-member"><div class="doc-title-row gap-label-inline"><span class="doc-title-lead is-spacer is-indent"></span><span class="doc-title-lead"><span class="doc-drag-handle">⠿</span></span><span class="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap">Release plan rev 2</span></div></td></tr>`;
   const nestPage = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } button { padding: 0; } ${UTILITIES}</style></head><body style="margin: 0;">
     <div style="padding: 48px;"><div class="card">
       <table class="tbl doc-ledger" style="width: 600px;"><tbody>${groupRows("wide")}</tbody></table>
@@ -540,16 +540,22 @@ describe("a group member nests one lead slot under its root on both table modes"
   });
 
   for (const mode of ["wide", "stacked"]) {
-    test(`${mode}: the member title starts one lead slot right of the root title, its guide on the root chevron's centre`, async () => {
+    test(`${mode}: the member title starts one lead slot and one title-row gap right of the root title, its guide on the root chevron's centre and the row's full height`, async () => {
       const lead = vm.runInContext("DOC_LEAD_SLOT_PX_CD", docsScreen) as number;
       const rootMainLeft = await page.$eval(`#${mode}-root .doc-title-main`, (el) => el.getBoundingClientRect().left);
       const chevron = await page.$eval(`#${mode}-root svg`, (el) => el.getBoundingClientRect().toJSON() as DOMRect);
       const member = await page.$eval(`#${mode}-member`, (td) => {
-        const guide = getComputedStyle(td, "::before");
+        const guide = getComputedStyle(td.querySelector(".is-indent")!, "::before");
         return { mainLeft: td.querySelector(".doc-title-main")!.getBoundingClientRect().left,
-          guideCentre: td.getBoundingClientRect().left + parseFloat(guide.left) + parseFloat(guide.width) / 2 };
+          gap: parseFloat(getComputedStyle(td.querySelector(".doc-title-row")!).columnGap),
+          guideCentre: td.getBoundingClientRect().left + parseFloat(guide.left) + parseFloat(guide.width) / 2,
+          guideHeight: parseFloat(guide.height), cellHeight: td.getBoundingClientRect().height };
       });
-      assert.ok(Math.abs(member.mainLeft - rootMainLeft - lead) < 0.5, `member title ${member.mainLeft - rootMainLeft}px right of the root's, lead slot ${lead}px`);
+      const step = lead + member.gap;
+      assert.ok(Math.abs(member.mainLeft - rootMainLeft - step) < 0.5, `member title ${member.mainLeft - rootMainLeft}px right of the root's, lead slot + gap ${step}px`);
+      // the collapsed row rule takes up to its 1px hairline off the cell's padding box
+      const uncovered = member.cellHeight - member.guideHeight;
+      assert.ok(uncovered >= 0 && uncovered <= 1, `guide ${member.guideHeight}px in a ${member.cellHeight}px cell`);
       const chevronCentre = (chevron.left + chevron.right) / 2;
       assert.ok(Math.abs(member.guideCentre - chevronCentre) < 0.5, `guide centre ${member.guideCentre - chevronCentre}px off the root chevron centre`);
     });
