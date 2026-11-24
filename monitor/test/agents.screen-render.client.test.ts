@@ -305,7 +305,10 @@ function isBusy(tree: RenderedNode | string | null): boolean {
 }
 
 async function renderComponent(name: string, props: Record<string, unknown>): Promise<RenderedNode | string | null> {
-  const mod = await loadAgentsScreen();
+  return renderComponentOf(await loadAgentsScreen(), name, props);
+}
+
+async function renderComponentOf(mod: Record<string, unknown>, name: string, props: Record<string, unknown>): Promise<RenderedNode | string | null> {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   return renderScreen(React.createElement(mod[name] as Component, props));
 }
@@ -1889,20 +1892,45 @@ test("the failing-pairs header meta counts failing over judged pairs in words, t
   assert.ok(sub.length <= 32, `${sub.length} chars`);
 });
 
-test("the failing-pairs foot holds only the show-all toggle, so a list that fits draws no foot", async () => {
-  const mod = await loadAgentsScreen({ getSlotRows: REAL_UI.getSlotRows, CARD_SLOTS: REAL_UI.CARD_SLOTS, formatInt: REAL_UI.formatInt });
-  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-  const day = (task_type: string) => ({ agent: "glass-atrium-dev-node", task_type, event_date: "2026-09-01", success_count: 5, failure_count: 5, total_count: 10 });
-  const footOf = (taskTypes: string[]) => {
-    const tree = renderScreen(React.createElement(mod.TopNFailingAgentsCard as Component, {
-      state: { status: "ready", data: { rows: taskTypes.map(day) }, error: null }, days: 30, onRetry: () => undefined, failureByAgent: new Map(),
-    }));
-    const foot = findAtoms(tree, "Card")[0]?.props.foot;
-    return foot ? collectText(renderScreen(foot as never)).trim() : null;
-  };
-  const many = Array.from({ length: 17 }, (_, i) => `type-${i}`);
-  assert.equal(footOf(["feature"]), null, "a list that fits draws no foot");
-  assert.equal(footOf(many), "Show all 17", "a long list shows the toggle alone");
+describe("a failing-pairs head with no failing pair carries no sub, the body's OK line saying it", () => {
+  const day = (success: number, failure: number) => ({ agent: "glass-atrium-dev-node", task_type: "feature", event_date: "2026-09-01", success_count: success, failure_count: failure, total_count: success + failure });
+  const rows = [
+    { name: "no pair read in the window", rows: [] as Record<string, unknown>[] },
+    { name: "every judged pair above the threshold", rows: [day(40, 0)] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen({ getSlotRows: REAL_UI.getSlotRows, CARD_SLOTS: REAL_UI.CARD_SLOTS, formatInt: REAL_UI.formatInt });
+      const tree = await renderComponentOf(mod, "TopNFailingAgentsCard", {
+        state: { status: "ready", data: { rows: row.rows }, error: null }, days: 30, onRetry: () => undefined, failureByAgent: new Map(),
+      });
+      assert.equal(findAtoms(tree, "Card")[0]?.props.sub || null, null);
+    });
+  }
+});
+
+describe("a paired card's foot holds only the show-all toggle, so a list that fits draws no foot", () => {
+  const cards = [
+    {
+      name: "Most-failing pairs", component: "TopNFailingAgentsCard",
+      props: (count: number) => ({ state: { status: "ready", data: { rows: getFailingRows(count) }, error: null }, days: 30, onRetry: () => undefined, failureByAgent: new Map() }),
+    },
+    {
+      name: "No completion record", component: "LifecycleStatsCard",
+      props: (count: number) => ({ state: { status: "ready", data: { rows: getLifecycleRows(count) }, error: null }, days: 30, onSelect: () => undefined, onRetry: () => undefined }),
+    },
+  ];
+  for (const card of cards) {
+    test(card.name, async () => {
+      const mod = await loadAgentsScreen({ getSlotRows: REAL_UI.getSlotRows, CARD_SLOTS: REAL_UI.CARD_SLOTS, formatInt: REAL_UI.formatInt });
+      const footOf = async (count: number) => {
+        const foot = findAtoms(await renderComponentOf(mod, card.component, card.props(count)), "Card")[0]?.props.foot;
+        return foot ? collectText(renderScreen(foot as never)).replace(/\s+/g, " ").trim() : null;
+      };
+      assert.equal(await footOf(1), null, "a list that fits draws no foot");
+      assert.equal(await footOf(17), "Show all 17", "a long list shows the toggle alone");
+    });
+  }
 });
 
 test("the task-type header keeps its meta within the 32-character cap", async () => {
@@ -2245,32 +2273,30 @@ test("the day tooltip heads its reasons with how many runs have one, the two rea
   assert.match(text, /9 of 20 have a recorded reason/, "a run with no self-check cannot also mismatch its confidence, so the reasons add up");
 });
 
-test("the No record and Unfinished counts state their definitions on the page, where the two cards that differ sit", async () => {
+test("the No record and Unfinished definitions ride each card's info button alone, never a line on the page", async () => {
   const rows = [
     {
-      name: "the ledger defines No record",
+      name: "the ledger's No record",
       component: "AgentSummaryCard",
       props: { state: { status: "ready", data: { agents: [], meta: { total_agents: 0 } }, error: null }, days: 30, onRetry: () => undefined },
-      definition: /No record = launches − runs/,
       info: /Launches minus runs, from the agent summary/,
     },
     {
-      name: "the lifecycle card defines Unfinished",
+      name: "the lifecycle card's Unfinished",
       component: "LifecycleStatsCard",
       props: {
         state: { status: "ready", data: { rows: [{ agent_type: "glass-atrium-dev-shell", start_count: 4, stop_count: 3, completed_count: 3 }] }, error: null },
         days: 30, onSelect: () => undefined, onRetry: () => undefined,
       },
-      definition: /Unfinished = started − completed/,
       info: /SubagentStart events minus completed outcomes/,
     },
   ];
   for (const row of rows) {
     const tree = await renderComponent(row.component, row.props) as RenderedNode;
-    const footText = findNodes(tree, (n) => n.props.foot != null).map((n) => collectText(renderScreen(n.props.foot))).join(" ");
-    assert.match(`${collectText(tree)} ${footText}`.replace(/\s+/g, " "), row.definition, `${row.name}: short form on the page`);
-    const infos = findNodes(tree, (n) => typeof n.props.info === "string").map((n) => String(n.props.info));
-    assert.ok(infos.some((info) => row.info.test(info)), `${row.name}: full definition in the card's info drawer`);
+    const [card] = findAtoms(tree, "Card");
+    assert.equal(card?.props.foot || null, null, `${row.name}: no foot line`);
+    assert.doesNotMatch(collectText(tree), /No record =|Unfinished =/, `${row.name}: no definition on the page`);
+    assert.match(String(card?.props.info), row.info, `${row.name}: the full definition in the card's info drawer`);
   }
 });
 

@@ -136,12 +136,6 @@ const NOTE = {
     + 'No record (agent ledger) counts launches minus runs from the agent summary, so the two can differ.',
 };
 
-// On-page forms of NOTE (≤ 90 chars) → the full definition rides each card's info drawer.
-const NOTE_SHORT = {
-  NO_RECORD: 'No record = launches − runs · can differ from Unfinished',
-  UNFINISHED: 'Unfinished = started − completed',
-};
-
 // 'unknown' / 'subagent_stop_missing' — non-actionable agent ID 묶음 (radar / row 시각 분리).
 const NON_ACTIONABLE_AGENT_IDS = new Set([UNKNOWN_AGENT_ID, SYNTHETIC_SENTINEL_AGENT_ID]);
 
@@ -824,7 +818,6 @@ function AgentSummaryCard({ failures, state, revisionState, reviewByAgentState, 
       <Card
         className="[&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible"
         isFlush={window.UI.hasRegionRows(state, data?.agents ?? [])}
-        foot={data && <CountDefinitionAg note={NOTE_SHORT.NO_RECORD}/>}
         title="Performance by agent"
         sub={subText}
         info={NOTE.NO_RECORD}
@@ -880,11 +873,6 @@ function SummarySortButtonAg({ label, isActive, direction, onClick }) {
       <Icon name={icon} size={12} className={isActive ? '' : 'text-faint'}/>
     </button>
   );
-}
-
-// A count whose sibling card counts differently states its definition beside it, not only in a header tooltip.
-function CountDefinitionAg({ note }) {
-  return <span className="fs-meta text-dim">{note}</span>;
 }
 
 function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
@@ -2483,8 +2471,7 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
         sub={getFailingPairsSub(state.status, failingTotal, measuredPairs, days)}
         isFlush={window.UI.hasRegionRows(state, failingPairs)}
         foot={state.status === 'ready' && (hiddenCount > 0 || isShowingAll) && (
-          <PairedCardFootAg total={failingPairs.length}
-            hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+          <PairedCardFootAg total={failingPairs.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
         )}>
         <TopNFailingAgentsBody failures={failures} state={state} days={days} onRetry={onRetry} pairs={isShowingAll ? failingPairs : rows} failureByAgent={failureByAgent}/>
       </window.UI.Card>
@@ -2492,27 +2479,23 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
   );
 }
 
-// Loaded-only `n of N` head — a never-loaded zero is forbidden by the state contract.
+// Loaded-only `n of N` head — a never-loaded zero is forbidden by the state contract; no failing pair → no sub, the body says so
 function getFailingPairsSub(status, failingTotal, measuredCount, days) {
   if (status === 'loading') return `last ${days} days`;
   if (status !== 'ready') return 'Unavailable — not loaded';
+  if (failingTotal === 0) return null;
   return `${formatIntAg(failingTotal)} of ${formatIntAg(measuredCount)} pairs at or below ${getOffTargetRateLabelAg()}`;
 }
 
 /**
- * Pinned foot of a paired S card: an optional short note, then "Show all N" while rows sit past the slot.
+ * Pinned foot of a paired S card: "Show all N" while rows sit past the slot.
  * @param total - every row the card holds; the toggle opens them in the card itself
  */
-function PairedCardFootAg({ note, total, hiddenCount, isShowingAll, onToggle }) {
+function PairedCardFootAg({ total, isShowingAll, onToggle }) {
   return (
-    <>
-      {note && <span className="truncate">{note}</span>}
-      {(hiddenCount > 0 || isShowingAll) && (
-        <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
-          {isShowingAll ? `Show top ${window.UI.CARD_SLOTS[PAIRED_CARD_SIZE].rowCount}` : `Show all ${total}`}
-        </button>
-      )}
-    </>
+    <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
+      {isShowingAll ? `Show top ${window.UI.CARD_SLOTS[PAIRED_CARD_SIZE].rowCount}` : `Show all ${total}`}
+    </button>
   );
 }
 
@@ -2846,9 +2829,8 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
         isFlush={window.UI.hasRegionRows(state, lifecycleRows)}
         info={NOTE.UNFINISHED}
         infoLabel="How Unfinished is counted"
-        foot={state.status === 'ready' && (
-          <PairedCardFootAg note={NOTE_SHORT.UNFINISHED} total={lifecycleRows.length}
-            hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        foot={state.status === 'ready' && (hiddenCount > 0 || isShowingAll) && (
+          <PairedCardFootAg total={lifecycleRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
         )}>
         <LifecycleStatsBody failures={failures} state={state} days={days} rows={isShowingAll ? lifecycleRows : rows} onSelect={onSelect} onRetry={onRetry}/>
       </window.UI.Card>
@@ -3095,7 +3077,7 @@ function buildSuccessRateMatrix(rows) {
 // server returns no last_failure_at → derived client-side from the event_date of failure_count > 0 rows
 function buildTopNFailing(rows, limit) {
   if (!Array.isArray(rows) || rows.length === 0) {
-    return { failingPairs: [], measuredPairs: 0 };
+    return { failingPairs: [], failingTotal: 0, measuredPairs: 0 };
   }
 
   const pairMap = new Map();
