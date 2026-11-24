@@ -1841,6 +1841,20 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
     });
   }
 
+  // one head in every state: the ⓘ opens the ranking note whether or not the read drew rows
+  for (const { name, state } of [
+    { name: "a loading", state: loading },
+    { name: "a failed", state: failed },
+    { name: "an empty", state: ready({ rows: [], total_session_count: 0, truncated: false }) },
+    { name: "a ready", state: ready({ rows: [{ session_id: "s-1", total_cost_usd: 12.5 }], total_session_count: 1, truncated: false }) },
+  ]) {
+    test(`sessions — ${name} read keeps the ranking note behind the head ⓘ`, async () => {
+      const mod = await loadCostRender();
+      const [card] = findNodes(renderIn(mod, "SessionDistributionCard", { state, days: 30, failures: [], onRetry: () => {} }), (n) => n.props.atom === "Card");
+      assert.match(String(card?.props.info ?? ""), /^Sessions ranked by spend in this window\./);
+    });
+  }
+
   test("sessions — an empty window states no Top count in the head; the body says what is missing", async () => {
     const card = await getCard("SessionDistributionCard", { rows: [], total_session_count: 0, truncated: false });
     assert.equal(card.props.sub, undefined);

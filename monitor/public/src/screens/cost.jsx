@@ -1747,6 +1747,9 @@ function getSpendConcentration(sessions, topN) {
   return { count, share: held / total };
 }
 
+// the head ⓘ's method line in every state; the concentration sentence joins it once rows are drawn
+const SESSION_RANK_NOTE_C = 'Sessions ranked by spend in this window.';
+
 function getSpendConcentrationText(concentration, sessionCount) {
   if (!concentration) return null;
   const who = concentration.count === 1 ? 'The costliest session' : `The costliest ${concentration.count} sessions`;
@@ -1765,6 +1768,7 @@ function SessionDistributionCard({ state, days, failures, onRetry }) {
   const concentrationText = state.status === 'ready'
     ? getSpendConcentrationText(getSpendConcentration(sessions, budget), sessions.length)
     : null;
+  const info = [SESSION_RANK_NOTE_C, concentrationText].filter(Boolean).join(' ');
 
   return (
     <Card
@@ -1772,7 +1776,7 @@ function SessionDistributionCard({ state, days, failures, onRetry }) {
       title="Most expensive sessions"
       isFlush={window.UI.hasRegionRows(state, rollup.top)}
       sub={sessions.length > 0 ? `Top ${Math.min(budget, sessions.length)} of ${formatIntC(sessions.length)}` : undefined}
-      info={concentrationText ?? undefined}
+      info={info}
       infoLabel="How spend concentrates"
       right={truncated
         ? <span className="fs-meta text-dim" title={`Showing ${sessions.length} of ${totalCount} sessions`}>{`${sessions.length} of ${totalCount} loaded`}</span>
