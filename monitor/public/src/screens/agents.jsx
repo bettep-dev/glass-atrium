@@ -146,6 +146,10 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
   return visualSet.has(agentId);
 }
 
+function getActionableAgentsAg(agents) {
+  return (Array.isArray(agents) ? agents : []).filter((a) => !isNonActionableAgentAg(a.agent_id));
+}
+
 // card body scroll + roving-row focus ring — kept out of inline style to cut JSX noise
 const AGENTS_INLINE_CSS = ''
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
@@ -461,32 +465,54 @@ function ScreenAgents() {
   );
 }
 
-// Ledger-head names of the agents the rework/review health rule flags — the drawer's words; a clear or unread fleet stays silent.
-function HealthMarkAg({ revisionState, reviewByAgentState }) {
+// Ledger head: crit rows as one count, Watch names only agents past the fleet cut; a clear fleet stays silent
+function HealthMarkAg({ agents, failureByAgent, revisionState, reviewByAgentState }) {
   const { Icon, Cluster, TONE_ICON } = window.UI;
-  const flagged = getFlaggedHealthAg(revisionState, reviewByAgentState);
-  if (flagged.length === 0) return null;
+  const marks = getAgentMarksAg(agents, failureByAgent, revisionState, reviewByAgentState);
+  const critCount = marks.filter((entry) => entry.mark === 'crit').length;
+  const watched = marks.filter((entry) => entry.mark === 'warn').map((entry) => entry.agent);
+  if (critCount === 0 && watched.length === 0) return null;
 
   return (
     <Cluster>
-      {flagged.map(({ tone, label, agents }) => (
-        <span key={tone} className="fs-meta text-dim whitespace-nowrap" data-health-mark={tone}>
-          <Icon name={TONE_ICON[tone]} size={12} className={`text-${tone}`}/>{` ${label} · ${formatAgentListAg(agents)}`}
+      {critCount > 0 && (
+        <span className="fs-meta text-dim whitespace-nowrap" data-health-mark="crit">
+          <Icon name={TONE_ICON.crit} size={12} className="text-crit"/>{` ${critCount} ${critCount === 1 ? 'needs' : 'need'} attention`}
         </span>
-      ))}
+      )}
+      {watched.length > 0 && (
+        <span className="fs-meta text-dim whitespace-nowrap" data-health-mark="warn">
+          <Icon name={TONE_ICON.warn} size={12} className="text-warn"/>{` Watch · ${formatAgentListAg(watched)}`}
+        </span>
+      )}
     </Cluster>
   );
 }
 
-// an unread source rides the alarm lane, so it marks nothing here rather than a guess
-function getFlaggedHealthAg(revisionState, reviewByAgentState) {
-  if (revisionState.status !== 'ready' || reviewByAgentState.status !== 'ready') return [];
+// one mark per ledger row through getAgentMarkAg; an unread rework or flag source judges no health
+function getAgentMarksAg(agents, failureByAgent, revisionState, reviewByAgentState) {
+  const list = Array.isArray(agents) ? agents : [];
+  const isHealthRead = revisionState?.status === 'ready' && reviewByAgentState?.status === 'ready';
+  const ranking = isHealthRead
+    ? buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER)
+    : [];
+  const healthByAgent = new Map(ranking.map((entry) => [entry.agent, entry]));
+  const p95Scale = getP95ScaleAg(list);
+  const watchCut = getWatchCutAg(ranking);
+  return list.map((agent) => ({
+    agent: agent.agent_id,
+    mark: getAgentMarkAg({ agent, failure: failureByAgent?.get(agent.agent_id) ?? null, p95Scale, health: healthByAgent.get(agent.agent_id) ?? null, watchCut }),
+  }));
+}
 
-  const ranked = buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER);
-  const verdicts = ranked.map((entry) => ({ agent: entry.agent, ...qualityHealthVerdict(entry.healthIndex) }));
-  return ['crit', 'warn']
-    .map((tone) => ({ tone, label: verdicts.find((verdict) => verdict.tone === tone)?.label, agents: verdicts.filter((verdict) => verdict.tone === tone).map((verdict) => verdict.agent) }))
-    .filter((group) => group.agents.length > 0);
+// crit beats warn → a row showing Error, Too slow or a crit share is never also under Watch
+function getAgentMarkAg({ agent, failure, p95Scale, health, watchCut }) {
+  const isRowCrit = agent.status === 'error' || isTooSlowAg(agent, p95Scale)
+    || getSummaryRateAg(agent).tone === 'crit' || getBreakageToneAg(failure) === 'crit';
+  if (isRowCrit) return 'crit';
+  if (!health) return null;
+  const { tone } = qualityHealthVerdict(health.healthIndex, watchCut);
+  return tone === 'ok' ? null : tone;
 }
 
 function formatAgentCountAg(count) {
@@ -831,7 +857,11 @@ function AgentSummaryCard({ failures, state, revisionState, reviewByAgentState, 
         infoLabel="How No record is counted"
         right={hasRows && (
           <window.UI.Cluster gap="control-group">
-            <HealthMarkAg revisionState={revisionState} reviewByAgentState={reviewByAgentState}/>
+            <HealthMarkAg
+              agents={getActionableAgentsAg(data?.agents)}
+              failureByAgent={failureStatus === 'ready' ? failureByAgent : null}
+              revisionState={revisionState}
+              reviewByAgentState={reviewByAgentState}/>
             <SummarySortNoteAg note={getSummarySortNoteAg(sortBy, failureStatus)}/>
           </window.UI.Cluster>
         )}>
@@ -896,7 +926,7 @@ function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selecte
   }
 
   // pseudo-agent(subagent_stop_missing / unknown) 는 정렬 대상 아님 → 하단 collapsed footer 로 분리.
-  const actionable = agents.filter((a) => !isNonActionableAgentAg(a.agent_id));
+  const actionable = getActionableAgentsAg(agents);
   const pseudoAgents = agents.filter((a) => isNonActionableAgentAg(a.agent_id));
   // unread breakages → run order; the card head announces it (getSummarySortNoteAg)
   const sorted = sortAgentSummary(actionable, sortBy, failureStatus === 'ready' ? failureByAgent : null);
@@ -999,7 +1029,7 @@ function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', on
   return <Table caption="Performance by agent" isHeadSticky columns={columns} bodies={bodies}/>;
 }
 
-function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95Scale = { cutSec: P95_AGENT.FLOOR_SEC, maxSec: null }, failureStatus = 'ready', trendStatus = 'ready' }) {
+function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95Scale = { cutSec: P95_AGENT.FLOOR, maxSec: null }, failureStatus = 'ready', trendStatus = 'ready' }) {
   const { MiniBars, Bar, LOW_N_MIN, Icon, TONE_ICON, AgentName, TableRow, TableCell } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
@@ -1015,7 +1045,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
   // invocations = window 상대 spawn 빈도 (invocations_30d 는 deprecated alias — 1 release 유지).
   const invocations = agent.invocations !== undefined ? agent.invocations : agent.invocations_30d;
   const p95Sec = agent.p95_ms == null ? null : Number(agent.p95_ms) / 1000;
-  const isTooSlow = p95Sec != null && p95Sec > p95Scale.cutSec;
+  const isTooSlow = isTooSlowAg(agent, p95Scale);
   // Budget crossing folds into the P95 fill-bar label — a separate pill beside a ✓ glyph read as a contradiction.
   const overageCount = overage ? Number(overage.overage_count) || 0 : 0;
   const overageNote = overageCount > 0
@@ -1032,10 +1062,8 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
     count: failure ? Number(failure.total_breakages) || 0 : 0,
     rate: failure ? failure.breakage_rate : 0,
   };
-  const failedCount = failure ? Number(failure.fail_count) || 0 : 0;
   const blockedCount = failure ? Number(failure.blocked_count) || 0 : 0;
-  // blocked is a compliant halt — only the failed share drives the tone
-  const failTone = failureTone(failedCount, getFailedRateAg(failure));
+  const failTone = getBreakageToneAg(failure);
   const isFailureRead = failureStatus === 'ready';
   const isTrendRead = trendStatus === 'ready';
   const failTitle = !isFailureRead ? getNotLoadedTitleAg('breakage data', failureStatus) : failure
@@ -1261,7 +1289,7 @@ function AgentDetailDrawer({
       <span className="sr-only">, </span>
       <ActivityMark status={agent?.status} lastRunAt={agent?.last_run_at}/>
       <span className="sr-only">, </span>
-      <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal}
+      <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal} watchCut={getWatchCutAg(healthRanking)}
         failure={failureState.status === 'ready' ? failureByAgent.get(drawerAgent) : null}/>
     </span>
   );
@@ -1538,9 +1566,9 @@ function DrawerSectionEmpty({ message }) {
 // hasSignal=false (R1 low-N 억제 또는 entry 부재) → "No signal" neutral verdict (수치/driver 없음).
 // 양 badge site(Overview hero · drawer header name-row) 공유 → verdict 문구 단일 SoT.
 //   shape/tone 은 공용 Badge(role=status)가 소유 — 본 wrapper 는 verdict label+driver+index 산출만 담당.
-function QualityHealthVerdictPill({ entry, hasSignal, failure }) {
+function QualityHealthVerdictPill({ entry, hasSignal, failure, watchCut }) {
   const { Badge } = window.UI;
-  const verdict = getDrawerHealthVerdictAg(entry, hasSignal, failure);
+  const verdict = getDrawerHealthVerdictAg(entry, hasSignal, failure, watchCut);
   return (
     <Badge role="status" tone={verdict.tone}>
       {verdict.label}
@@ -1551,7 +1579,7 @@ function QualityHealthVerdictPill({ entry, hasSignal, failure }) {
 }
 
 // Page rule: a failed run lists the agent under Failed (crit) whatever its rework index · blocked = compliant halt → no effect.
-function getDrawerHealthVerdictAg(entry, hasSignal, failure) {
+function getDrawerHealthVerdictAg(entry, hasSignal, failure, watchCut = WATCH_AGENT.FLOOR) {
   const failCount = Number(failure?.fail_count) || 0;
   const failDriver = failCount > 0 ? `${formatIntAg(failCount)} failed` : '';
   if (!hasSignal) {
@@ -1560,7 +1588,7 @@ function getDrawerHealthVerdictAg(entry, hasSignal, failure) {
       : { tone: 'neutral', label: 'No signal', driver: '', indexPct: null };
   }
 
-  const health = qualityHealthVerdict(entry.healthIndex);
+  const health = qualityHealthVerdict(entry.healthIndex, watchCut);
   const indexPct = formatDecimalAg(entry.healthIndex * 100, 0);
   const driver = [failDriver, qualityHealthDriverPhrase(entry.dominantDriver)].filter(Boolean).join(' · ');
   if (failCount > 0) return { tone: 'crit', label: 'Needs attention', driver, indexPct };
@@ -3351,8 +3379,22 @@ function FailShareGlyph({ tone, label = getFailShareLabel() }) {
   );
 }
 
-// §12.4 owner cut: a p95 over twice the fleet median (nearest rank) is too slow, never under 20 minutes.
-const P95_AGENT = { FLOOR_SEC: 1200, MEDIAN_MULTIPLE: 2, MIN_FLEET: 4 };
+// §12.4 owner cut: a p95 over twice the fleet median (nearest rank) is too slow, never under 20 minutes (FLOOR in seconds).
+const P95_AGENT = { FLOOR: 1200, MEDIAN_MULTIPLE: 2, MIN_FLEET: 4 };
+
+// Owner Q1 → R1, designer: "Watch marks only agents past a fleet cut, like the P95 'too slow' cut."
+// → health penalty (1 − index) over twice the fleet median (nearest rank), never under the warn band's penalty
+const WATCH_AGENT = { FLOOR: 1 - QH_HEALTH_WARN_MAX, MEDIAN_MULTIPLE: 2, MIN_FLEET: 4 };
+
+// ascending values → MEDIAN_MULTIPLE × nearest-rank median, never under FLOOR; a fleet under MIN_FLEET → FLOOR
+function getFleetCutAg(sorted, { FLOOR, MEDIAN_MULTIPLE, MIN_FLEET }) {
+  if (sorted.length < MIN_FLEET) return FLOOR;
+  return Math.max(MEDIAN_MULTIPLE * sorted[Math.ceil(sorted.length / 2) - 1], FLOOR);
+}
+
+function getWatchCutAg(ranking) {
+  return getFleetCutAg(ranking.map((entry) => 1 - entry.healthIndex).sort((x, y) => x - y), WATCH_AGENT);
+}
 
 function getP95SecsAg(agents) {
   return (Array.isArray(agents) ? agents : [])
@@ -3362,10 +3404,11 @@ function getP95SecsAg(agents) {
 }
 
 function getP95CutSecAg(agents) {
-  const secs = getP95SecsAg(agents);
-  if (secs.length < P95_AGENT.MIN_FLEET) return P95_AGENT.FLOOR_SEC;
-  const median = secs[Math.ceil(secs.length / 2) - 1];
-  return Math.max(P95_AGENT.MEDIAN_MULTIPLE * median, P95_AGENT.FLOOR_SEC);
+  return getFleetCutAg(getP95SecsAg(agents), P95_AGENT);
+}
+
+function isTooSlowAg(agent, p95Scale) {
+  return agent.p95_ms != null && Number(agent.p95_ms) / 1000 > p95Scale.cutSec;
 }
 
 // cut + slowest → one scale every ledger row reads, so the mark and bar follow the selected range
@@ -3396,11 +3439,11 @@ function formatInvocationsTitle(count, days) {
   return `${count} SubagentStart events in the last ${days} days`;
 }
 
-// Quality Health Index → verdict {tone, label} SoT — 3 consumer(Overview/Quality-signals/TopN) 공유.
-// tone = TONE_GLYPH 키(crit/warn/ok) · label = self-explaining 문구 (Critical→Needs attention 재명명).
-function qualityHealthVerdict(index) {
+// Quality Health Index → verdict {tone, label} SoT — ledger head 와 drawer 공유.
+// tone = TONE_GLYPH 키(crit/warn/ok) · Watch = penalty 가 fleet cut(getWatchCutAg) 초과일 때만.
+function qualityHealthVerdict(index, watchCut) {
   if (index < QH_HEALTH_CRIT_MAX) return { tone: 'crit', label: 'Needs attention' };
-  if (index < QH_HEALTH_WARN_MAX) return { tone: 'warn', label: 'Watch' };
+  if (1 - index > watchCut) return { tone: 'warn', label: 'Watch' };
   return { tone: 'ok', label: 'Healthy' };
 }
 
@@ -3496,6 +3539,11 @@ function getFailureSortKeyAg(failure) {
 }
 
 // breakage_rate = breakages / outcomes → failed share of the same population.
+// failed share → the breakages cell's tone; blocked is a compliant halt
+function getBreakageToneAg(failure) {
+  return failureTone(failure ? Number(failure.fail_count) || 0 : 0, getFailedRateAg(failure));
+}
+
 function getFailedRateAg(failure) {
   const breakages = failure ? Number(failure.total_breakages) || 0 : 0;
   const rate = failure ? Number(failure.breakage_rate) || 0 : 0;

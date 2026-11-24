@@ -2055,54 +2055,74 @@ describe("a drawer sub-block label sits on its own content through the label rol
   }
 });
 
-// Stub LOW_N_MIN = 5. revision bucket '0' → health 1 (ok) · avg 0.3 → health 0.64 (warn) · bucket '4+' → health 0.4 (crit).
-describe("the ledger head names the agents the health rule flags, and stays silent otherwise", () => {
+// Stub LOW_N_MIN = 5, no review rows → penalty = 0.6 × min(1, avg revision ÷ 0.5).
+// {0:5,1:1} → 0.2 · {0:7,1:3} → 0.36 · {0:5,1:3} → 0.45 · {4+:10} → crit band.
+describe("the ledger head counts crit rows and lists under Watch only the agents past the fleet cut", () => {
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const revision = (agent: string, buckets: Record<string, number>) =>
     Object.entries(buckets).map(([revision_bucket, occurrence_count]) => ({ agent, revision_bucket, occurrence_count }));
-  const healthy = revision("a-healthy", { "0": 10 });
-  const watched = revision("a-watch", { "0": 7, "1": 3 });
-  const critical = revision("a-crit", { "4+": 10 });
-  const thin = revision("a-thin", { "4+": 2 });
-  const renderMarks = async (revisionState: unknown, reviewByAgentState: unknown = ready({ rows: [] })) => {
-    const tree = await renderComponent("HealthMarkAg", { revisionState, reviewByAgentState });
+  const PENALTY = { p20: { "0": 5, "1": 1 }, p36: { "0": 7, "1": 3 }, p45: { "0": 5, "1": 3 }, crit: { "4+": 10 }, healthy: { "0": 10 } };
+  const fleet = (entries: Array<[string, Record<string, number>, string?]>) => ({
+    agents: entries.map(([id, , status]) => ({ agent_id: id, agent_name: id, status: status ?? "active", runs: 40, success_pct: 100, p95_ms: 60_000 })),
+    revision: ready({ rows: entries.flatMap(([id, buckets]) => revision(id, buckets)) }),
+  });
+  const renderMarks = async (agents: unknown[], revisionState: unknown, reviewByAgentState: unknown = ready({ rows: [] })) => {
+    const tree = await renderComponent("HealthMarkAg", { agents, failureByAgent: new Map(), revisionState, reviewByAgentState });
     return findNodes(tree, (n) => n.props?.["data-health-mark"] !== undefined).map((n) => ({ tone: n.props["data-health-mark"], text: collectText(n).trim() }));
   };
+  const typical = (last: Record<string, number>, status?: string): Array<[string, Record<string, number>, string?]> =>
+    [["a1", PENALTY.p20], ["a2", PENALTY.p20], ["a3", PENALTY.p20], ["a-last", last, status]];
   const rows = [
-    { name: "a crit and a watch agent each get a mark, crit first, in the drawer's words", revision: ready({ rows: [...healthy, ...watched, ...critical] }), marks: [{ tone: "crit", text: "Needs attention · a-crit" }, { tone: "warn", text: "Watch · a-watch" }] },
-    { name: "a watch-band agent alone gets only the watch mark", revision: ready({ rows: [...healthy, ...watched] }), marks: [{ tone: "warn", text: "Watch · a-watch" }] },
-    { name: "a healthy fleet is silent, the agent below the low-N floor left out", revision: ready({ rows: [...healthy, ...thin] }), marks: [] },
-    { name: "a pending revision read marks nothing", revision: LOADING_STATE, marks: [] },
+    { name: "an agent past twice the fleet median penalty is watched", ...fleet(typical(PENALTY.p45)), marks: [{ tone: "warn", text: "Watch · a-last" }] },
+    { name: "a warn-band agent under twice the fleet median is not watched", ...fleet(typical(PENALTY.p36)), marks: [] },
+    { name: "a fleet under four falls back to the warn-band floor", ...fleet([["a1", PENALTY.healthy], ["a-last", PENALTY.p36]]), marks: [{ tone: "warn", text: "Watch · a-last" }] },
+    { name: "a row showing Error is counted crit, never also listed under Watch", ...fleet(typical(PENALTY.p45, "error")), marks: [{ tone: "crit", text: "1 needs attention" }] },
+    { name: "crit-band rows are counted, not named", ...fleet([["a1", PENALTY.crit], ["a2", PENALTY.crit], ["a3", PENALTY.healthy]]), marks: [{ tone: "crit", text: "2 need attention" }] },
+    { name: "a calm fleet is silent", ...fleet([["a1", PENALTY.healthy], ["a2", PENALTY.healthy]]), marks: [] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
-      assert.deepEqual(await renderMarks(row.revision), row.marks);
+      assert.deepEqual(await renderMarks(row.agents, row.revision), row.marks);
     });
   }
 
+  test("a row over the P95 cut is counted crit rather than watched", async () => {
+    const { agents, revision: revisionState } = fleet(typical(PENALTY.p45));
+    const slow = agents.map((a, i) => ({ ...a, p95_ms: i === 3 ? 3_600_000 : 60_000 }));
+    assert.deepEqual(await renderMarks(slow, revisionState), [{ tone: "crit", text: "1 needs attention" }]);
+  });
+
   test("each mark draws its tone's shared glyph, the one the stat row draws for that tone", async () => {
-    const tree = await renderComponent("HealthMarkAg", { revisionState: ready({ rows: [...healthy, ...watched, ...critical] }), reviewByAgentState: ready({ rows: [] }) });
+    const { agents, revision: revisionState } = fleet([["a1", PENALTY.crit], ["a2", PENALTY.healthy], ["a3", PENALTY.p36]]);
+    const tree = await renderComponent("HealthMarkAg", { agents, failureByAgent: new Map(), revisionState, reviewByAgentState: ready({ rows: [] }) });
     const marks = findNodes(tree, (n) => n.props?.["data-health-mark"] !== undefined);
     assert.deepEqual(
       marks.map((n) => findAtoms(n, "Icon").map((icon) => icon.props.name)),
-      marks.map((n) => [`tone-glyph-${String(n.props["data-health-mark"])}`]),
+      [["tone-glyph-crit"], ["tone-glyph-warn"]],
     );
-    assert.equal(marks.length, 2, "a crit and a watch mark");
   });
 
-  test("an unread flag rate marks nothing rather than judging on rework alone", async () => {
-    assert.deepEqual(await renderMarks(ready({ rows: critical }), ERROR_STATE), []);
+  test("an unread flag rate judges no health, so only the rows' own marks count", async () => {
+    const { agents, revision: revisionState } = fleet([["a1", PENALTY.crit], ["a2", PENALTY.p45]]);
+    assert.deepEqual(await renderMarks(agents, revisionState, ERROR_STATE), []);
   });
 
-  test("the ledger head carries the crit agent's health mark", async () => {
+  test("the drawer's health word says Watch only past the fleet cut", async () => {
+    const mod = await loadAgentsScreen();
+    const getVerdict = mod.getDrawerHealthVerdictAg as (entry: unknown, hasSignal: boolean, failure: unknown, watchCut: number) => { label: string };
+    const entry = { agent: "a-last", healthIndex: 0.64, totalRevisions: 10, dominantDriver: null };
+    assert.deepEqual([0.3, 0.4].map((cut) => getVerdict(entry, true, null, cut).label), ["Watch", "Healthy"]);
+  });
+
+  test("the ledger head carries the crit agent's mark", async () => {
     const tree = await renderScreenAgents({
       status: "ready", busy: false, key: null, error: null,
-      data: { rows: critical, agents: [{ agent: "a-crit", runs: 10 }], meta: { total_agents: 1 }, fetched_at: "2026-01-10T11:59:00.000Z" },
+      data: { rows: revision("a-crit", PENALTY.crit), agents: [{ agent_id: "a-crit", agent_name: "a-crit", status: "active", runs: 10 }], meta: { total_agents: 1 }, fetched_at: "2026-01-10T11:59:00.000Z" },
     });
     const [head] = findAtoms(tree, "Card").filter((n) => n.props.title === "Performance by agent");
     assert.ok(head, "the ledger card draws its head");
     const marks = findNodes(renderScreen(head.props.right), (n) => n.props?.["data-health-mark"] === "crit");
-    assert.equal(marks.length, 1, "the crit agent is named in the ledger head");
+    assert.equal(marks.length, 1, "the crit agent is counted in the ledger head");
   });
 });
 
