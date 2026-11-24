@@ -177,6 +177,19 @@ describe("a status fold's body holds its two blocks and its detail fold with no 
   }
 });
 
+// a detail fold starts collapsed → render every fold open to reach its body
+function Disclosure(props: Record<string, unknown>): unknown {
+  return (ui.UI as Record<string, Component>).Disclosure({ ...props, kind: "status" });
+}
+
+test("the Learning-run events fold's flush body holds the run log with no card inside", async () => {
+  const fold = getFold((await renderOutcomesScreen(0, { Disclosure })).tree, "Learning-run events");
+
+  assert.equal(fold.props.isFlush, true, "the log's edge cells carry the card padding");
+  assert.equal(findNodes(fold, (n) => hasClass(n, "card")).length, 1, "the fold's own box is its one card");
+  assert.equal(findNodes(fold, (n) => n.props.id === "outcomes-loop-events").length, 1, "the Retry target stays in the fold");
+});
+
 test("the per-agent table spans the full width", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes("split-row"));
@@ -289,7 +302,7 @@ describe("a fold block's empty line starts on the block's text column, and every
       const tree = renderScreen(create(mod[row.component] as Component, { state: row.state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
       const [empty] = findNodes(tree, (n) => n.type === "EmptyState");
 
-      assert.match(String(empty.props.className), /\bplaceholder--flush-inline\b/);
+      assert.equal(empty.props.className, undefined, "the shared default form: the block already sits on the card column");
       assert.equal((getBlockHead(tree).props.style as { minHeight?: string } | undefined)?.minHeight, "var(--ctl-min-h)", "the head is the ⓘ box tall");
     });
   }
@@ -387,7 +400,7 @@ test("a region's error card hands a focused, successful Retry to that region's o
     { name: "recording channels", component: "ChannelLivenessBlock", props: { state: retrying, onRetry } },
     { name: "check results", component: "GraderBreakdownBlock", props: { state: retrying, onRetry } },
     { name: "cross table", component: "CrosstabBlock", props: { state: retrying, onRetry } },
-    { name: "run events", component: "LoopEventsCard", props: { state: retrying, onRetry } },
+    { name: "run events", component: "LoopEventsRegion", props: { state: retrying, onRetry } },
     {
       name: "record ledger",
       component: "ResultTableCard",
@@ -458,6 +471,7 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
     ...Array.from({ length: 11 }, (_, i) => ({ id: i + 1, agent: "glass-atrium-dev-react", task_type: "feature", result: "fail", record_ts: "2026-09-01T10:00:00.000Z", summary: "Broke" })),
     { id: 20, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: null, record_ts: "2026-09-01T10:00:00.000Z", summary: "Caveat" },
     { id: 21, agent: "glass-atrium-dev-react", task_type: "review", result: "done", record_ts: "2026-09-01T10:00:00.000Z", summary: "Routine" },
+    { id: 22, agent: "glass-atrium-dev-react", task_type: "review", result: "done", poisoned_window: true, record_ts: "2026-09-01T10:00:00.000Z", summary: "Held out" },
   ];
   const closure = { pendingIds: new Set(), closedOverrides: new Map(), onMarkClosed: () => undefined };
   const tree = renderScreen(create(mod.ResultTable as Component, {
@@ -533,6 +547,25 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
     for (const node of [...cells, ...controls]) {
       const adHoc = tokensOf(node).filter((t) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t));
       assert.deepEqual(adHoc, [], `${node.type} '${collectText(node).trim().slice(0, 24)}'`);
+    }
+  });
+
+  // the Routine heading fixes "no reason" for its rows → the cell paints nothing; a Needs you row's missing reason varies → faint None
+  test("a Why cell with no reason paints None only in Needs you, and Routine says it to assistive tech alone", () => {
+    const getWhyCell = (summary: string) => {
+      const [row] = findNodes(tree, (n) => n.type === "tr" && String(n.props["aria-label"] ?? "").endsWith(summary));
+      return findNodes(row, (n) => n.type === "td")[4];
+    };
+    const getSrText = (node: RenderedNode) => findNodes(node, (n) => tokensOf(n).includes("sr-only")).map((n) => collectText(n).trim());
+    const cases = [
+      { name: "a Needs you row with no reason", summary: "Broke", painted: "None", spoken: [] },
+      { name: "a Routine row with no reason", summary: "Routine", painted: "", spoken: ["None"] },
+      { name: "a Routine row with a reason", summary: "Held out", painted: "Quarantined", spoken: [] },
+    ];
+    for (const row of cases) {
+      const cell = getWhyCell(row.summary);
+      assert.equal(collectPaintedText(cell).trim(), row.painted, row.name);
+      assert.deepEqual(getSrText(cell), row.spoken, row.name);
     }
   });
 
@@ -740,4 +773,49 @@ describe("the Record attribution head names the missing-report level with no rat
       }
     });
   }
+});
+
+describe("By task type names a failing type in words, never by colour alone", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  // feature fails 20% of its checks (past the 5% breakage share) · bug-fix 1% · doc has nothing to check
+  const rows = [
+    { task_type: "feature", total: 100, verified_pass: 70, unverified: 10, verified_fail: 20 },
+    { task_type: "bug-fix", total: 100, verified_pass: 99, verified_fail: 1 },
+    { task_type: "doc", total: 100, unverified: 50, verified_fail: 50, by_design_unverified: true },
+  ];
+  const tree = renderScreen(create(mod.TaskTypeGraderCrosstabO as Component, { rows })) as RenderedNode;
+  const getBar = (taskType: string) => findNodes(tree, (n) => n.type === "TaskTypeGraderBarO" && (n.props.row as { task_type: string }).task_type === taskType)[0];
+
+  test("only a failing checkable type carries the crit dot and the painted word, which its row's name also reads", () => {
+    const cases = [
+      { taskType: "feature", isFailing: true },
+      { taskType: "bug-fix", isFailing: false },
+      { taskType: "doc", isFailing: false },
+    ];
+    for (const row of cases) {
+      const bar = getBar(row.taskType);
+      const dots = findNodes(bar, (n) => n.type === "StatusDot");
+      assert.deepEqual(dots.map((n) => n.props.status), row.isFailing ? ["crit"] : [], row.taskType);
+      assert.equal(collectPaintedText(bar).includes("High failure rate"), row.isFailing, `${row.taskType}: painted word`);
+      const [img] = findNodes(bar, (n) => n.props.role === "img");
+      assert.equal(String(img.props["aria-label"]).includes("High failure rate"), row.isFailing, `${row.taskType}: spoken word`);
+    }
+  });
+
+  test("the failed share draws as a neutral data segment, so no bar segment carries a state colour", () => {
+    const fills = findNodes(getBar("feature"), (n) => typeof (n.props.style as { background?: unknown } | undefined)?.background === "string")
+      .map((n) => (n.props.style as { background: string }).background);
+    assert.ok(fills.includes("rgb(var(--data))"), fills.join(" "));
+    assert.ok(!fills.includes("rgb(var(--crit))"), fills.join(" "));
+  });
+
+  test("the fold head states the worst state through a crit head status, and nothing when no type fails", () => {
+    const getSub = mod.getTaskTypeFoldSubO as (r: unknown) => unknown;
+    const sub = renderScreen(getSub(rows)) as RenderedNode;
+    const [status] = findNodes(sub, (n) => n.props["data-role"] === "head-status");
+    assert.equal(status.props["data-tone"], "crit");
+    assert.equal(collectPaintedText(status).trim(), "High failure rate");
+    assert.equal(getSub(rows.slice(1)), null);
+  });
 });

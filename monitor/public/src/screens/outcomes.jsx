@@ -741,15 +741,16 @@ function ScreenOutcomes({ onNav }) {
             <CrosstabBlock state={analyticsState} {...regionRetry}/>
           </window.UI.SplitRow>
           <window.UI.Disclosure kind="detail" level={3} isInline title="By task type"
-            tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
+            tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}
+            sub={getTaskTypeFoldSubO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
             <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
           </window.UI.Disclosure>
         </window.UI.Stack>
       </window.UI.Disclosure>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
-      <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} className="mt-section">
-        <LoopEventsCard state={loopEventsState} {...regionRetry}/>
+      <window.UI.Disclosure kind="detail" title="Learning-run events" sub={loopEventsSummaryO(loopEventsState)} isFlush className="mt-section">
+        <LoopEventsRegion state={loopEventsState} {...regionRetry}/>
       </window.UI.Disclosure>
 
       {detailRow && (
@@ -1250,6 +1251,9 @@ function AgentFailureRowO({ row, maxRate, view }) {
   );
 }
 
+// the crit word every failure-rate view shares
+const HIGH_FAILURE_RATE_WORD_O = 'High failure rate';
+
 // the widest slot: a low-sample mark under the low-n floor beside a full share, "(n=29) 100.0%"
 const FAILURE_RATE_SLOT_WIDTH_O = '14ch';
 
@@ -1264,7 +1268,7 @@ function AgentFailureRateCellO({ row, maxRate, view }) {
       <div className="flex items-center gap-control">
         <div className="flex-1" style={{ minWidth: 40 }}><Bar value={row.rate} max={maxRate} ariaLabel={runsNote}/></div>
         <span className="inline-flex items-center justify-end gap-label-inline tabular-nums whitespace-nowrap" style={{ width: FAILURE_RATE_SLOT_WIDTH_O, flexShrink: 0 }}>
-          {isHigh && <StatusDot status="crit" word="High failure rate"/>}
+          {isHigh && <StatusDot status="crit" word={HIGH_FAILURE_RATE_WORD_O}/>}
           {row.isLowSample && <LowSampleMark n={row.total}/>}
           <span className={row.isLowSample ? 'text-faint' : 'text-ink'}>{formatRateO(row.rate, 1)}</span>
         </span>
@@ -1372,7 +1376,7 @@ function AttributionHealthBody({ state, onRetry, shared }) {
 
   // 귀속 기록된 실행 0건 (빈 window) → 안내 indicator.
   if (totalAttributed === 0) {
-    return <window.UI.EmptyState message="No attributed runs in this period." className="placeholder--flush-inline"/>;
+    return <window.UI.EmptyState message="No attributed runs in this period."/>;
   }
 
   return (
@@ -1695,7 +1699,7 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
 
   const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
   if (channels.length === 0) {
-    return <window.UI.EmptyState message="No recording channel wrote in this window." className="placeholder--flush-inline"/>;
+    return <window.UI.EmptyState message="No recording channel wrote in this window."/>;
   }
 
   // 침묵한 채널을 먼저 — 조치가 필요한 행이 스크롤 아래로 밀리지 않게.
@@ -1781,7 +1785,7 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
 
   const breakdown = state.data?.overall?.grader_breakdown;
   if (!breakdown) {
-    return <window.UI.EmptyState message="No check data in this period." className="placeholder--flush-inline"/>;
+    return <window.UI.EmptyState message="No check data in this period."/>;
   }
 
   const gradedTotal = Number(breakdown.graded_total) || 0;
@@ -1827,16 +1831,23 @@ const DOWNGRADE_SOURCE_COLUMNS_O = Object.freeze([
   { key: 'count', label: 'Records', isNumeric: true },
 ]);
 
-// a checkable type whose failed checks reach the breakage share (low samples excluded) → crit; else untoned
+// any failing checkable type → crit; else untoned
 function getTaskTypeFoldToneO(rows) {
+  return Array.isArray(rows) && rows.some(isTaskTypeFailingO) ? 'crit' : undefined;
+}
+
+// the fold head's worst state in words → the colour of an opened fold is never its only cue
+function getTaskTypeFoldSubO(rows) {
+  if (getTaskTypeFoldToneO(rows) !== 'crit') return null;
+  return <window.UI.HeadStatus tone="crit">{HIGH_FAILURE_RATE_WORD_O}</window.UI.HeadStatus>;
+}
+
+// a checkable type whose failed checks reach the breakage share, low samples excluded
+function isTaskTypeFailingO(row) {
   const { outcomeShareTone, isLowSample, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
-  if (!Array.isArray(rows)) return undefined;
-  const isFailing = (row) => {
-    const total = Number(row.total) || 0;
-    return row.by_design_unverified !== true && !isLowSample(total)
-      && outcomeShareTone(row.verified_fail, total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') === 'crit';
-  };
-  return rows.some(isFailing) ? 'crit' : undefined;
+  const total = Number(row.total) || 0;
+  return row.by_design_unverified !== true && !isLowSample(total)
+    && outcomeShareTone(row.verified_fail, total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') === 'crit';
 }
 
 // ----- 9-type × grader_verdict 교차 (F16) ------------------------------------
@@ -1852,33 +1863,44 @@ function TaskTypeGraderCrosstabO({ rows }) {
 
   const measured = rows.filter((r) => r.by_design_unverified !== true);
   const byDesign = rows.filter((r) => r.by_design_unverified === true);
+  // one failing type → every row keeps the word's slot, so all bar tracks end on one x
+  const hasStateSlot = rows.some(isTaskTypeFailingO);
 
   return (
     <div className="mt-block flex flex-col gap-block">
-      <TaskTypeGraderGroupO label="By task type — checkable types" rows={measured} maxTotal={maxTotal}/>
-      <TaskTypeGraderGroupO label="Types with nothing to check" rows={byDesign} maxTotal={maxTotal} isMuted/>
+      <TaskTypeGraderGroupO label="By task type — checkable types" rows={measured} maxTotal={maxTotal} hasStateSlot={hasStateSlot}/>
+      <TaskTypeGraderGroupO label="Types with nothing to check" rows={byDesign} maxTotal={maxTotal} hasStateSlot={hasStateSlot} isMuted/>
     </div>
   );
 }
 
-function TaskTypeGraderGroupO({ label, rows, maxTotal, isMuted }) {
+function TaskTypeGraderGroupO({ label, rows, maxTotal, hasStateSlot, isMuted }) {
   return (
     <div>
       <div className="fs-meta text-faint mb-label">{label}</div>
       <div className="flex flex-col gap-list">
-        {rows.map((row) => <TaskTypeGraderBarO key={row.task_type} row={row} maxTotal={maxTotal} isMuted={isMuted}/>)}
+        {rows.map((row) => <TaskTypeGraderBarO key={row.task_type} row={row} maxTotal={maxTotal} hasStateSlot={hasStateSlot} isMuted={isMuted}/>)}
       </div>
     </div>
   );
 }
 
-function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
+// the widest state word, "✕ High failure rate", at the meta size
+const TASK_TYPE_STATE_SLOT_WIDTH_O = '16ch';
+
+// the failed share is a quantity here → neutral data; the row's crit word carries the state
+function getTaskTypeSegmentColorO(key) {
+  return key === 'verified_fail' ? '--data' : GRADER_BREAKDOWN_META[key].colorVar;
+}
+
+function TaskTypeGraderBarO({ row, maxTotal, hasStateSlot = false, isMuted }) {
   const total = Number(row.total) || 0;
   const widthPct = total > 0 ? (total / maxTotal) * 100 : 0;
+  const isFailing = isTaskTypeFailingO(row);
   const bucketText = GRADER_BREAKDOWN_ORDER
     .map((key) => `${GRADER_BREAKDOWN_META[key].label} ${formatIntO(Number(row[key]) || 0)}`)
     .join(' · ');
-  const title = `${row.task_type}: ${bucketText} — total ${formatIntO(total)}`;
+  const title = `${row.task_type}: ${isFailing ? `${HIGH_FAILURE_RATE_WORD_O} · ` : ''}${bucketText} — total ${formatIntO(total)}`;
 
   return (
     <div className="flex items-center gap-label" role="img" aria-label={title} title={title}>
@@ -1894,12 +1916,17 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
               return (
                 <div
                   key={key}
-                  style={{ width: `${(count / total) * 100}%`, background: `rgb(var(${GRADER_BREAKDOWN_META[key].colorVar}))` }}/>
+                  style={{ width: `${(count / total) * 100}%`, background: `rgb(var(${getTaskTypeSegmentColorO(key)}))` }}/>
               );
             })}
           </div>
         )}
       </div>
+      {hasStateSlot && (
+        <span className="fs-meta inline-flex items-center gap-label-inline whitespace-nowrap text-ink" style={{ width: TASK_TYPE_STATE_SLOT_WIDTH_O, flexShrink: 0 }}>
+          {isFailing && <><window.UI.StatusDot status="crit" word={HIGH_FAILURE_RATE_WORD_O} isInText/><span aria-hidden="true">{HIGH_FAILURE_RATE_WORD_O}</span></>}
+        </span>
+      )}
       <span className="fs-meta tabular-nums text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
         {formatIntO(total)}
       </span>
@@ -1954,7 +1981,7 @@ function CrosstabBody({ state, onRetry, shared }) {
 
   const crosstab = state.data?.crosstab;
   if (!crosstab || crosstab.total === 0) {
-    return <window.UI.EmptyState message="No confidence-vs-self-check records in this period." className="placeholder--flush-inline"/>;
+    return <window.UI.EmptyState message="No confidence-vs-self-check records in this period."/>;
   }
 
   // the page's own-face table class: the .tbl cell geometry and the ledger's column-header face, no clickable-row hover (these rows open nothing)
@@ -2047,17 +2074,15 @@ function getCrosstabVisibleRowsO(byCell) {
 // ----- Loop-events log (raw daemon cycle stream, relocated from Learning) -----
 // /api/improvement/loop-events — core.autoagent_loop_events per-cycle stage stream.
 // operational data, not an aggregate signal → owned by Task results
-// fixed-height scroll card + summary count row (plain tabular count) + event table (row = event · 5 columns)
+// fixed-height scroll log + summary count row (plain tabular count) + event table (row = event · 5 columns)
 // density: row labels --dim · timestamps sans tabular-nums · agent truncate + tooltip
 // eval_result → loopResultMetaO symbol (tone color) + label, no badge
 
-function LoopEventsCard({ state, onRetry, shared }) {
-  const { Card } = window.UI;
+// the fold is the log's one box → its flush body; the wrapper stays mounted in every state as the Retry focus target
+function LoopEventsRegion({ state, onRetry, shared }) {
   return (
-    <div id={REGION_CARD_IDS.loopEvents} className="mt-section">
-      <Card title="Improvement run events" isFlush>
-        <LoopEventsBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
+    <div id={REGION_CARD_IDS.loopEvents}>
+      <LoopEventsBody state={state} onRetry={onRetry} shared={shared}/>
     </div>
   );
 }
@@ -2076,8 +2101,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
   const dist     = Array.isArray(state.data?.result_distribution) ? state.data.result_distribution : [];
 
   if (total === 0 || events.length === 0) {
-    // 카드 card-body 는 padding:0(populated 테이블 소유) → empty 브랜치만 별도 패딩으로
-    // the card-body default (--card-pad) 와 간격 일치. populated 테이블은 padding:0 유지.
+    // 폴드 body 는 flush(테이블 가장자리 셀이 inset 소유) → empty 줄만 card-pad 를 직접 받음
     return <div className="p-card-pad"><window.UI.EmptyState message="No run events recorded yet."/></div>;
   }
 
@@ -2351,7 +2375,7 @@ function ResultTable({ rows, sort, onSortChange, onRowClick, closure, needsYou, 
   const getRows = (view) => sections.flatMap((section, sectionIndex) => (section.rows.length === 0 ? [] : [
     <LedgerGroupRowO key={`group-${section.key}`} section={section} view={view}/>,
     ...section.rows.map((row, i) => <ResultTableRow key={row.id} row={row} view={view} onRowClick={onRowClick} closure={closure}
-      focusProps={getFocusProps(row, rowStarts[sectionIndex] + i)}/>),
+      isRoutine={section.key === 'routine'} focusProps={getFocusProps(row, rowStarts[sectionIndex] + i)}/>),
     section.key === 'needs-you' && <NeedsYouToggleRowO key={`toggle-${section.key}`} section={section} view={view}
       isCapped={needsYouCap != null} onToggle={onToggleNeedsYou}/>,
   ]));
@@ -2489,7 +2513,7 @@ function QaScoreDotsO({ qaScore }) {
 
 // revision_count 미니 flag — ≥2 (process improvement 대상, core-learning-log.md) 일 때 UI.Bar 막대 표식.
 //   숫자 + warn-tone Bar (max 5 정규화) dual-encode. <2 = 숫자만 (또는 0=dash).
-function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
+function ResultTableRow({ row, view, onRowClick, closure, isRoutine = false, focusProps }) {
   const { TableRow, TableCell } = window.UI;
   const ts      = formatTimestampO(row.record_ts);
   const summary  = row.summary || '';
@@ -2502,6 +2526,8 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
   const why = getNeedsYouReasonO(row, closedAt);
+  // the Routine heading already says "no reason" for every row → that None is spoken, never painted (design.md §12.6 Cells)
+  const isWhyBlank = !why && isRoutine;
 
   return (
     <TableRow
@@ -2533,8 +2559,8 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
           )}
         </span>
       </TableCell>
-      <TableCell view={view} textRole="meta" label="Why" className="text-ink whitespace-nowrap" title={why?.note}>
-        {why ? why.label : <window.UI.AbsentValue kind="none"/>}
+      <TableCell view={view} textRole="meta" label={isWhyBlank ? undefined : 'Why'} className="text-ink whitespace-nowrap" title={why?.note}>
+        {isWhyBlank ? <span className="sr-only">{window.UI.EMPTY_VALUE_TEXT}</span> : (why?.label ?? <window.UI.AbsentValue kind="none"/>)}
       </TableCell>
       {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card */}
       {/* stacked → the summary leads its two-line item at full width, so the wide-mode squeeze drops */}
