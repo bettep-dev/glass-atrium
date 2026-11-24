@@ -773,9 +773,9 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 						<LoadingPlaceholder label="merge proposals" />
 					</div>
 				) : model.state === "error" ? (
-					<EmptyStateW message="The maintenance backlog could not be read — see above." />
+					<window.UI.EmptyState message="The maintenance backlog could not be read — see above." />
 				) : !model.proposals || model.proposals.length === 0 ? (
-					<EmptyStateW
+					<window.UI.EmptyState
 						message={
 							model.proposals
 								? "No merge proposals waiting."
@@ -824,10 +824,16 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 	);
 }
 
+// Waiting pairs lead, since they open the fold; a list nobody read is Not loaded, never None.
 function describeProposalCountW(model) {
 	if (model.state === "loading") return "Loading…";
-	if (model.state === "error") return "Unavailable";
-	return model.proposals ? formatCountW(model.proposals.length) : "Not reported";
+	if (!model.proposalRows) return "Not loaded";
+	if (model.proposalRows.length === 0) return "None";
+	const parked = model.proposalRows.filter((row) => row.parked).length;
+	const waiting = model.proposalRows.length - parked;
+	return [waiting > 0 && `${formatCountW(waiting)} waiting`, parked > 0 && `${formatCountW(parked)} parked`]
+		.filter(Boolean)
+		.join(" · ");
 }
 
 const UNKNOWN_REGION_W = { status: "idle", data: null, error: null };
@@ -857,6 +863,7 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 	return {
 		state: "ready",
 		proposals,
+		proposalRows,
 		isDryRun: Boolean(proposals?.some(isDryRunProposalW)),
 		// A waiting pair → warn, so the fold holding it opens itself; parked pairs stay neutral.
 		proposalTone: proposalRows && window.UI.getWorstTone(proposalRows.map((row) => row.tone)),
@@ -920,7 +927,7 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 						onRetry={onRetry}
 					/>
 				) : model.rows.length === 0 ? (
-					<EmptyStateW {...describeRunHistoryEmptyW(summaryState)} />
+					<window.UI.EmptyState {...describeRunHistoryEmptyW(summaryState)} />
 				) : (
 					<window.UI.Stack gap="block">
 						<SparseTrendW
@@ -963,7 +970,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	return (
 		<WikiDisclosureW
 			id={WIKI_REGION_IDS.runTable}
-			label="Per-run table"
+			label="Runs"
 			count={describeRunTableW(reportState, days)}
 			bodyClassName="flex flex-col"
 		>
@@ -988,10 +995,10 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	);
 }
 
-// header meta ≤ 32 chars → "27 runs · all healthy" or "30 runs · 12 changes"; the body ⓘ defines a change.
+// header meta ≤ 32 chars → "30 · all healthy" or "30 · 12 changes"; the body ⓘ defines a change.
 function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "loading") return "Loading…";
-	if (window.UI.getRegionView(state) === "error") return "Unavailable";
+	if (window.UI.getRegionView(state) === "error") return "Not loaded";
 
 	const reports = state.data?.reports || [];
 	if (reports.length === 0) return `No runs in ${days}d`;
@@ -999,14 +1006,12 @@ function describeRunTableW(state, days) {
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
 	if (groups.length > 1) {
 		const changes = groups.length - 1;
-		return `${reports.length} runs · ${changes} ${changes === 1 ? "change" : "changes"}`;
+		return `${reports.length} · ${changes} ${changes === 1 ? "change" : "changes"}`;
 	}
 
 	const [only] = groups;
 	const status = wikiStatusLabelW(only.newest.status).toLowerCase();
-	return only.count === 1
-		? `1 ${status} run on ${only.newest.run_date}`
-		: `${only.count} runs · all ${status}`;
+	return only.count === 1 ? `1 · ${status}` : `${only.count} · all ${status}`;
 }
 
 // The server returns runs ascending by run_date.
@@ -1106,7 +1111,7 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 				) : hasTable ? (
 					<WikiNoteTypesTable rows={rows} />
 				) : (
-					<EmptyStateW message="No notes indexed yet." />
+					<window.UI.EmptyState message="No notes indexed yet." />
 				)}
 			</window.UI.Card>
 		</div>
@@ -1407,7 +1412,7 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 	const reports = state.data?.reports || [];
 	if (reports.length === 0) {
 		return (
-			<EmptyStateW message={`No wiki compile runs in the last ${days} days.`} />
+			<window.UI.EmptyState message={`No wiki compile runs in the last ${days} days.`} />
 		);
 	}
 
@@ -1529,13 +1534,6 @@ function isSameRunW(a, b) {
 	);
 }
 
-// Shared chrome (wiki-scoped — health.jsx 패턴 미러).
-
-function EmptyStateW({ message, hint }) {
-	const { EmptyState } = window.UI;
-	return <EmptyState message={message} hint={hint} />;
-}
-
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
 //   sparse → TrendChart 대신 한 줄 안내 · 헤드라인 수치(합계·활성일·피크)는 항상 차트 위.
 //   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 패널 폭 TrendChart(막대별 날짜·값 readout).
@@ -1552,7 +1550,7 @@ function SparseTrendW({ label, series, dates, stat }) {
 				<div className="card-sub">{label}</div>
 			</window.UI.Stack>
 			{sparse ? (
-				<EmptyStateW message="Too few active days to draw a trend." />
+				<window.UI.EmptyState message="Too few active days to draw a trend." />
 			) : (
 				<TrendChart
 					label={label}

@@ -184,7 +184,7 @@ test("detail sections fold behind an h2 in their summary; status sections render
   const { createElement } = mod.React;
   const rows: Array<{ name: string; folds: boolean; element: unknown }> = [
     { name: "Merge proposals", folds: true, element: createElement(mod.WikiMaintenanceSection, { backlogState: READY_BACKLOG, onRetry: () => {} }) },
-    { name: "Per-run table", folds: true, element: createElement(mod.WikiRunTableSection, RUN_TABLE_LOADING) },
+    { name: "Runs", folds: true, element: createElement(mod.WikiRunTableSection, RUN_TABLE_LOADING) },
     { name: "Run history", folds: false, element: createElement(mod.WikiRunHistorySection, RUN_HISTORY_LOADING) },
     { name: "Notes by type", folds: false, element: createElement(mod.WikiNotesByTypeSection, { state: LOADING, onRetry: () => {} }) },
   ];
@@ -217,7 +217,7 @@ function getVisibleStrings(node: RenderedNode | string | null): string[] {
   return node.children.flatMap(getVisibleStrings);
 }
 
-test("the Per-run fold's body prose fits the 90-char footnote cap, a longer qualifier behind its ⓘ", async () => {
+test("the Runs fold's body prose fits the 90-char footnote cap, a longer qualifier behind its ⓘ", async () => {
   const FOOTNOTE_CAP = 90;
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
@@ -231,7 +231,7 @@ test("the Per-run fold's body prose fits the 90-char footnote cap, a longer qual
 });
 
 // R-c: the trend note hands its sentence to the shared DayTokens atom, so "30-day" never breaks at its hyphen
-test("the Per-run fold's trend note rides DayTokens, so its N-day window stays whole", async () => {
+test("the Runs fold's trend note rides DayTokens, so its N-day window stays whole", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
   const notes = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
@@ -239,7 +239,7 @@ test("the Per-run fold's trend note rides DayTokens, so its N-day window stays w
   assert.match(notes[0], /^The window drives the table only — the trend keeps a fixed \d+-day window\.$/);
 });
 
-test("the Per-run fold body is flush so the table's edge cells hold the one card-pad column, controls on the card bar", async () => {
+test("the Runs fold body is flush so the table's edge cells hold the one card-pad column, controls on the card bar", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
   const [fold] = findNodes(tree, (n) => n.type === "details");
@@ -250,7 +250,7 @@ test("the Per-run fold body is flush so the table's edge cells hold the one card
   assert.match(String(controls.props.className), /\bcard-bar\b/);
 });
 
-test("the Per-run failure block takes the card inset itself inside the flush fold", async () => {
+test("the Runs failure block takes the card inset itself inside the flush fold", async () => {
   const mod = await loadWikiScreen();
   const failed = { status: "error", data: null, error: OUTAGE, busy: false };
   const tree = renderScreen(mod.React.createElement(mod.WikiReportsBody as Component, { state: failed, days: 30, shared: null, onRetry: () => {} }));
@@ -259,14 +259,14 @@ test("the Per-run failure block takes the card inset itself inside the flush fol
   assert.equal(insets.length, 1);
 });
 
-test("the Per-run fold's ⓘ is described by the fold's own heading", async () => {
+test("the Runs fold's ⓘ is described by the fold's own heading", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
   const [trigger] = findNodes(tree, (n) => n.props.atom === "CardInfo");
   const [described] = findNodes(tree, (n) => n.props.id !== undefined && n.props.id === trigger.props.describedBy);
 
   assert.equal(described?.type, "h2", "the described-by id names a heading");
-  assert.deepEqual(described?.children, ["Per-run table"]);
+  assert.deepEqual(described?.children, ["Runs"]);
 });
 
 test("the run-history trend and notes by type share one split row, the trend on the wider side", async () => {
@@ -540,8 +540,8 @@ test("the merge-proposals disclosure stays in place while loading and after a fa
   const mod = await loadWikiScreen();
   const rows = [
     { name: "loading", state: LOADING, count: "Loading…" },
-    { name: "error", state: ERRORED, count: "Unavailable" },
-    { name: "ready", state: READY_BACKLOG, count: "1" },
+    { name: "error", state: ERRORED, count: "Not loaded" },
+    { name: "ready", state: READY_BACKLOG, count: "1 waiting" },
   ];
   for (const row of rows) {
     const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState: row.state, onRetry: () => {} }));

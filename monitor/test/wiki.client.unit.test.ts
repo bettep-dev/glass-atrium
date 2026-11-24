@@ -586,12 +586,37 @@ test("note types read as human labels, an unlisted type named after Other", () =
   assert.deepEqual(rows.map((r) => r.label), ["Summary notes", "Saved originals", "Other · source"]);
 });
 
-test("the per-run fold's summary states the unchanged stretch or how often it changed, so a one-row table needs no click", () => {
+test("the Runs fold's count states the unchanged stretch or how often it changed, and Not loaded on a failed read", () => {
   const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
   const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
-  assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), "27 runs · all healthy");
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs · 2 changes");
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 runs · 1 change");
+  assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), "27 · all healthy");
+  assert.equal(h.describeRunTableW(ready({ reports: runs(same.slice(0, 1)) }), 30), "1 · healthy");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 · 2 changes");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 · 1 change");
+  assert.equal(h.describeRunTableW(errored, 30), "Not loaded");
+});
+
+describe("the Merge proposals count splits waiting from parked pairs, and says Not loaded when the list was not read", () => {
+  const h = helpers as unknown as {
+    buildMaintenanceModel: (backlogState: FetchState, cyclesState?: FetchState) => unknown;
+    describeProposalCountW: (model: unknown) => string;
+  };
+  const PATTERN = /^\d+ (parked|waiting)( · \d+ parked)?$/;
+  const rows = [
+    { name: "waiting only", backlog: proposalBacklog(["a", "b"], { a: isoDaysAgo(1), b: isoDaysAgo(2) }), count: "2 waiting" },
+    { name: "parked only", backlog: proposalBacklog(["a"], { a: isoDaysAgo(30) }), count: "1 parked" },
+    { name: "both", backlog: proposalBacklog(["a", "b", "c"], { a: isoDaysAgo(1), b: isoDaysAgo(2), c: isoDaysAgo(30) }), count: "2 waiting · 1 parked" },
+    { name: "an empty list", backlog: proposalBacklog([]), count: "None" },
+    { name: "a list the cycle did not report", backlog: ready({ backlog: { run_date: isoDaysAgo(0) } }), count: "Not loaded" },
+    { name: "a failed read", backlog: errored, count: "Not loaded" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const count = h.describeProposalCountW(h.buildMaintenanceModel(row.backlog, ready({ cycles: [] })));
+      assert.equal(count, row.count);
+      if (/\d/.test(row.count)) assert.match(count, PATTERN);
+    });
+  }
 });
 
 // Widest realistic values: a 90-day window, a change every run, the longest status label and run date.
