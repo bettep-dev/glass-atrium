@@ -86,9 +86,10 @@ for (const width of [1280, 1440, 1568, 1920]) {
 }
 
 // the daemon cards as one settings form (spec 44117 §2.4): one 160 control column, so every control shares both edges;
-// each label and hint holds one line, and every row is one 68 step (32 control + 4 + the 24 line slot + 2 × 3.5 + the 1 rule, none on the last)
+// each label and hint holds one line, and every row is one 68 step (32 control + 4 + the 24 line slot + 2 × 3.5 + the 1 rule, none on the last);
+// a call-tier control starts its text at one inset, so `CLI default` starts at one x whether a select option or a field placeholder shows it
 for (const width of [1280, 1440, 1568]) {
-  test(`${width}px: every daemon control shares both edges at 160, each label and hint holds one line, and every row is 68`, async () => {
+  test(`${width}px: every daemon control shares both edges at 160, each label and hint holds one line, every row is 68, and the call-tier controls start their text at one x`, async () => {
     const app = Fastify({ logger: false });
     await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
     app.get("/api/model-config", async () => CONFIG);
@@ -102,9 +103,12 @@ for (const width of [1280, 1440, 1568]) {
       await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
       // anonymous callbacks only: tsx wraps a named const in a __name() helper the page lacks
       const form = await page.evaluate(() => {
+        const tierColumn = document.querySelector(".split-row")!.children[1];
         const rows = [...document.querySelectorAll<HTMLTableRowElement>(".split-row tbody tr")];
         return rows.map((tr) => {
           const control = tr.cells[tr.cells.length - 1].querySelector("select, .field-affix, input.field")!.getBoundingClientRect();
+          const field = tr.cells[tr.cells.length - 1].querySelector("select, input.field")!;
+          const fieldStyle = getComputedStyle(field);
           // the two columns hold equal cards → an edge is read from its own card's end edge
           const cardRight = tr.closest(".card")!.getBoundingClientRect().right;
           const lines = [...tr.cells[0].children].map((line) => {
@@ -120,11 +124,22 @@ for (const width of [1280, 1440, 1568]) {
             lines,
             height: tr.getBoundingClientRect().height,
             isLast: tr === tr.parentElement!.lastElementChild,
+            isTier: tierColumn.contains(tr),
+            tag: field.tagName,
+            inset: parseFloat(fieldStyle.paddingLeft) + parseFloat(fieldStyle.borderLeftWidth),
+            align: fieldStyle.textAlign,
           };
         });
       });
 
       assert.strictEqual(form.length, CONFIG.domains.length + CONFIG.budgets.length + CONFIG.tiers.length, `${width}px: one row per setting`);
+      const tiers = form.filter((row) => row.isTier);
+      assert.strictEqual(tiers.length, CONFIG.tiers.length, `${width}px: one call-tier row per knob`);
+      for (const row of tiers) {
+        assert.ok(Math.abs(row.inset - tiers[0].inset) <= 0.5, `${width}px ${row.label}: text inset ${row.inset}, the first ${tiers[0].inset}`);
+      }
+      const inputAligns = tiers.filter((row) => row.tag === "INPUT").map((row) => (row.align === "left" ? "start" : row.align));
+      assert.deepStrictEqual(inputAligns, ["start", "start"], `${width}px: the output-token fields align their value and placeholder to the start`);
       const [first] = form;
       for (const row of form) {
         assert.strictEqual(row.cells, 2, `${width}px ${row.label}: label and control only`);

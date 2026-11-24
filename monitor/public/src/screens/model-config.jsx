@@ -1788,7 +1788,7 @@ function TierRowMC({ view, tier: t, departure, value, defaultValue, error, isFil
 					<input
 						type="text"
 						inputMode="numeric"
-						className={`field tabular-nums text-right${showError ? " is-error" : ""}`}
+						className={`field tabular-nums${showError ? " is-error" : ""}`}
 						value={value === "inherit" ? "" : value}
 						placeholder={CLI_DEFAULT_LABEL_MC}
 						onChange={(e) => onChange(e.target.value === "" ? "inherit" : e.target.value)}
