@@ -1423,7 +1423,7 @@ describe("sub-tables: every numeric value and its header are right-aligned, tabu
     // the rate cell holds a bar → its share, not the cell, carries the alignment, and it ends the cell
     const [, rateCell, ...countCells] = cells;
     countCells.forEach((td) => assertB5(td, `cell "${renderText(td).trim()}"`));
-    const rateLine = expandNodes(rateCell).find((n) => n.type === "span")!;
+    const rateLine = expandNodes(rateCell).find((n) => n.type === "div")!;
     const share = rateLine.children.filter((child) => child !== null && child !== false && child !== undefined).at(-1) as RenderNode;
     assert.strictEqual(renderText(share).trim(), "9.1%", "the share ends the rate cell");
     // the share inherits the right alignment of its num cell (.tbl td.num), and keeps its own figures tabular on one line

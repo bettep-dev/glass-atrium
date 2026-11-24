@@ -578,7 +578,7 @@ interface RecordedElementO {
 
 interface RenderSandboxO {
   React: { createElement: unknown };
-  AgentFailureRateCellO: (props: { row: Record<string, unknown> }) => RecordedElementO;
+  AgentFailureRateCellO: (props: { row: Record<string, unknown>; maxRate: number }) => RecordedElementO;
   AttributionBreakdownO: (props: { state: Record<string, unknown> }) => RecordedElementO | null;
   EmptyStateO: unknown;
 }
@@ -601,18 +601,28 @@ function flattenO(node: unknown, out: RecordedElementO[] = []): RecordedElementO
   return out;
 }
 
-describe("AgentFailureRateCellO: the bar fill follows the shared breakage rule, not a fixed crit", () => {
+describe("AgentFailureRateCellO: a neutral bar against the column's worst rate, a crit word only over the breakage share", () => {
+  const { Bar, StatusDot, LowSampleMark } = (rendered as unknown as { window: { UI: Record<string, unknown> } }).window.UI;
+  const maxRate = 0.4;
   const rows = [
-    { name: "a sampled row under the crit share fills the data colour, no severity", failed: 1, blocked: 0, total: 50, isLowSample: false, fill: "--data" },
-    { name: "a sampled row at the crit share fills crit", failed: 2, blocked: 3, total: 100, isLowSample: false, fill: "--crit" },
-    { name: "a sampled row well over the crit share fills crit", failed: 10, blocked: 10, total: 50, isLowSample: false, fill: "--crit" },
-    { name: "a low-sample row claims no tone whatever its rate", failed: 5, blocked: 0, total: 10, isLowSample: true, fill: "--faint" },
+    { name: "the worst rate fills its whole track and reads High failure rate", failed: 10, blocked: 10, total: 50, isLowSample: false, word: "High failure rate" },
+    { name: "a sampled row at the crit share reads High failure rate", failed: 2, blocked: 3, total: 100, isLowSample: false, word: "High failure rate" },
+    { name: "a sampled row under the crit share draws no severity", failed: 1, blocked: 0, total: 50, isLowSample: false, word: null },
+    { name: "a low-sample row reads faint, with its mark and no word, whatever its rate", failed: 5, blocked: 0, total: 10, isLowSample: true, word: null },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const cell = rendered.AgentFailureRateCellO({ row: { ...row, rate: (row.failed + row.blocked) / row.total } });
-      const bar = flattenO(cell).find((el) => (el.props.style as { display?: string } | undefined)?.display === "block");
-      assert.equal((bar?.props.style as { background: string }).background, `rgb(var(${row.fill}))`);
+      const rate = (row.failed + row.blocked) / row.total;
+      const nodes = flattenO(rendered.AgentFailureRateCellO({ row: { ...row, rate }, maxRate }));
+      const bar = nodes.find((el) => el.type === Bar);
+      assert.ok(bar, "the shared Bar draws the rate");
+      assert.equal(Number(bar.props.value) / Number(bar.props.max), rate / maxRate, "the fill is the rate over the worst rate");
+      assert.ok(bar.props.tone === undefined || bar.props.tone === "neutral", `bar tone ${String(bar.props.tone)}`);
+      const dots = nodes.filter((el) => el.type === StatusDot);
+      assert.deepEqual(dots.map((dot) => [dot.props.status, dot.props.word]), row.word ? [["crit", row.word]] : []);
+      assert.equal(nodes.some((el) => el.type === LowSampleMark), row.isLowSample);
+      const figure = nodes.find((el) => el.props.children === `${(rate * 100).toFixed(1)}%`);
+      assert.match(String(figure?.props.className), row.isLowSample ? /\btext-faint\b/ : /\btext-ink\b/);
     });
   }
 });

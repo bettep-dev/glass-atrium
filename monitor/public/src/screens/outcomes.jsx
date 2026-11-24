@@ -1238,18 +1238,19 @@ function AgentFailureBodyO({ state, onRetry, shared }) {
   }
 
   // the table's .tbl-wrap clips sideways and never scrolls → the sticky head reaches the 70vh card body, the scroller that does
-  const getRows = (tableView) => rows.map((row) => <AgentFailureRowO key={row.agent} row={row} view={tableView}/>);
+  const maxRate = Math.max(...rows.map((row) => row.rate));
+  const getRows = (tableView) => rows.map((row) => <AgentFailureRowO key={row.agent} row={row} maxRate={maxRate} view={tableView}/>);
   return <window.UI.Table caption="Failure rate by registry agent, worst first" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky
     stackBelowPx={AGENT_FAILURE_STACK_BELOW_PX} className={OWN_FACE_TABLE_CLASS_O}
     bodies={[{ key: 'agents', rows: getRows, className: 'tbl-compact' }]}/>;
 }
 
-function AgentFailureRowO({ row, view }) {
+function AgentFailureRowO({ row, maxRate, view }) {
   const { TableRow, TableCell } = window.UI;
   return (
     <TableRow view={view} className="outcome-row">
       <TableCell view={view} className="text-ink truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></TableCell>
-      <AgentFailureRateCellO row={row} view={view}/>
+      <AgentFailureRateCellO row={row} maxRate={maxRate} view={view}/>
       <TableCell view={view} textRole="meta" label="Failed" isNumeric className="text-ink">{formatIntO(row.failed)}</TableCell>
       <TableCell view={view} textRole="meta" label="Blocked" isNumeric className="text-ink">{formatIntO(row.blocked)}</TableCell>
       <OpenCaveatCellO count={row.openCaveats} view={view}/>
@@ -1258,27 +1259,20 @@ function AgentFailureRowO({ row, view }) {
   );
 }
 
-// Bar fill = the shared breakage rule over this row's own count → crit only over the stated share, else a quantity in --data · low-sample rows claim no tone.
-function getFailureRateFillO(row) {
-  if (row.isLowSample) return '--faint';
-  const { outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
-  return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--data';
-}
-
-function AgentFailureRateCellO({ row, view }) {
-  const { LowSampleMark, TableCell } = window.UI;
-  const pct = row.rate * 100;
+// bar = a neutral quantity against the column's worst rate · severity = a crit word over the breakage share · low-sample rows claim none
+function AgentFailureRateCellO({ row, maxRate, view }) {
+  const { Bar, StatusDot, LowSampleMark, TableCell, outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
+  const isHigh = !row.isLowSample && Boolean(outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit'));
+  const runsNote = `${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`;
   return (
-    <TableCell view={view} textRole="meta" label="Failure rate" isNumeric
-      title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
-      {/* the share ends the cell → every rate shares one right edge under its right-aligned header; the bar and the low-sample mark lead it */}
-      <span className="flex items-center gap-control">
-        <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
-          <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
-        </span>
-        <LowSampleMark n={row.total}/>
+    <TableCell view={view} textRole="meta" label="Failure rate" isNumeric title={runsNote}>
+      {/* the share ends the cell → every rate shares one right edge under its right-aligned header; the bar and the marks lead it */}
+      <div className="flex items-center gap-control">
+        <div className="flex-1" style={{ minWidth: 40 }}><Bar value={row.rate} max={maxRate} ariaLabel={runsNote}/></div>
+        {isHigh && <StatusDot status="crit" word="High failure rate"/>}
+        {row.isLowSample && <LowSampleMark n={row.total}/>}
         <span className={`tabular-nums whitespace-nowrap ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate, 1)}</span>
-      </span>
+      </div>
     </TableCell>
   );
 }
