@@ -70,11 +70,7 @@ interface BaselineRow { rule: string; count: number; owner: string }
 
 // pairs still red; a count above its row fails, a count below it fails until the row is lowered, a row at zero is deleted
 // one block per screen, so lanes lowering their own screen's rows do not collide
-const BASELINE: Record<string, BaselineRow[]> = {
-  architecture: [
-    { rule: "style-spacing-type", count: 1, owner: "C3" },
-  ],
-};
+const BASELINE: Record<string, BaselineRow[]> = {};
 
 const roleKeys = getRoleKeys();
 const sources = new Map(SCREENS.map((name) => [name, readScreen(name)]));

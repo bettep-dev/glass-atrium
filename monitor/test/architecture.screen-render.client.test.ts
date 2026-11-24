@@ -327,6 +327,27 @@ describe("the legend stays under the heading before the map is drawn", () => {
     });
 });
 
+// the caption's last line is one slot: the health load note while pending, the open-a-box hint once settled — the map below never moves
+describe("the caption's last line carries the health load note in the hint's place", () => {
+  const rows = [
+    { name: "while health is pending", healthPending: true, status: "Loading health…", hint: [] },
+    { name: "once health has settled", healthPending: false, status: "", hint: ["Click a box for details"] },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const mod = await loadArch();
+      const tree = renderScreen(mod.React.createElement(mod.MapCaptionAR, { healthPending: row.healthPending }));
+      const lines = findNodes(tree, (n) => n.type === "p");
+      const [status] = findNodes(tree, (n) => n.props.role === "status");
+      const hint = findNodes(lines[0], (n) => n.type === "span" && n.props["aria-hidden"] === "true").map((n) => collectText(n));
+
+      assert.equal(lines.length, 1, "one caption line in either state, so the caption keeps its height");
+      assert.equal(findNodes(lines[0], (n) => n.props.role === "status").length, 1, "the live region sits in that line");
+      assert.equal(collectText(status), row.status);
+      assert.deepEqual(hint, row.hint);
+    });
+});
+
 // a daemon row reads one way wherever it comes from: its id through MachineString, a bare glyph and word, no chip
 test("the node drawer draws every daemon row's status as a bare glyph and word", async () => {
   const mod = await loadArch();

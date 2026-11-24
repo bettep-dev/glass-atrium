@@ -724,10 +724,6 @@ function ScreenArchitecture(
 					// dashed is reserved for the unverified ring — the security classDef's dashed amber stroke would read as a second meaning.
 					`#${ARCH_CANVAS_ID} .node.security > ${NODE_SHAPE_SELECTOR} { stroke-dasharray: none !important; } ` +
 					getMapBorderRulesAR() +
-					// the loading note is prose on an opaque chip — no map stroke runs through the words
-					".arch-canvas-busy { position: absolute; left: 8px; top: 6px; " +
-					"color: rgb(var(--faint)); pointer-events: none; " +
-					"background: rgb(var(--surface)); padding: 0 var(--space-1_5); border-radius: 4px; } " +
 					// corner badge at the label size, so it holds the same 13px floor; its opaque pill keeps the ring and the border out of the text
 					`#${ARCH_CANVAS_ID} text.arch-ring-glyph { display: none; font-family: "JetBrains Mono", monospace; font-size: ${MAP_LABEL.fontPx}px; font-weight: 700; pointer-events: none; ` +
 					"text-anchor: start; } " +
@@ -778,7 +774,7 @@ function ScreenArchitecture(
 						/>
 					}
 				/>
-				<MapCaptionAR />
+				<MapCaptionAR healthPending={healthPending} />
 			</div>
 
 			<div className="arch-page gap-list">
@@ -1419,12 +1415,6 @@ function MermaidCanvas({
 					</button>
 				</div>
 
-				{/* 기본 보기는 개요 — 세부 라벨은 휠/+−·드래그/화살표·키보드로 확대해 탐색 */}
-				{healthPending && (
-					<div className="arch-canvas-busy fs-meta" role="status">
-						Loading health…
-					</div>
-				)}
 			</div>
 		</>
 	);
@@ -2405,7 +2395,7 @@ function getMapBorderRulesAR() {
 }
 
 // the key to the canvas under the h1 (spec 44084 §3.1, §12.5) — the legend, then how to open a box
-function MapCaptionAR() {
+function MapCaptionAR({ healthPending }) {
 	return (
 		<div className="arch-caption flex flex-col gap-list mb-header">
 			<ul className="arch-legend gap-y-stack gap-x-block fs-meta text-dim" aria-label="Map legend">
@@ -2421,7 +2411,11 @@ function MapCaptionAR() {
 					</li>
 				))}
 			</ul>
-			<p className="fs-meta text-faint" aria-hidden="true">Click a box for details</p>
+			{/* one slot for the load note and the hint, so the map below never moves */}
+			<p className="fs-meta text-faint">
+				<span role="status">{healthPending ? "Loading health…" : ""}</span>
+				{!healthPending && <span aria-hidden="true">Click a box for details</span>}
+			</p>
 		</div>
 	);
 }

@@ -470,6 +470,8 @@ describe("healthy live fixture", () => {
 
 	test("the caption under the page title is the legend alone, sentence case at 13px or larger", async () => {
 		await ctx.page.waitForSelector(".arch-legend li", { timeout: 10_000 });
+		// the hint takes the caption line once health settles
+		await ctx.page.waitForSelector('.arch-caption p span[aria-hidden="true"]', { timeout: 10_000 });
 		// one inline mapper — tsx wraps a named inner function in __name, which the browser lacks
 		const legend = await ctx.page.evaluate(() =>
 			[...document.querySelectorAll(".arch-legend li, .arch-legend-swatch")].map((el) => ({
@@ -566,31 +568,6 @@ describe("healthy live fixture", () => {
 			{ node: read.node, zone: read.zone, edge: read.edge },
 			{ node: [read.ink], zone: [read.dim], edge: [read.dim] },
 		);
-	});
-
-	// the loading note is prose, not data: body sans, faint, on an opaque chip so the map under it never shows through
-	test("the loading note sets body sans in faint on an opaque chip", async () => {
-		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
-		const read = await ctx.page.evaluate((canvas) => {
-			const host = document.querySelector(canvas) as Element;
-			// the loading note shows only while health is pending — a probe carrying its class reads the same rule
-			const probe = document.createElement("div");
-			probe.className = "arch-canvas-busy";
-			probe.textContent = "Loading health…";
-			host.append(probe);
-			const faint = getComputedStyle(document.documentElement).getPropertyValue("--faint").trim().split(/\s+/).join(", ");
-			const notes = [".arch-canvas-busy"].map((selector) => {
-				const style = getComputedStyle(host.querySelector(selector) as Element);
-				return { selector, family: style.fontFamily, color: style.color, background: style.backgroundColor };
-			});
-			probe.remove();
-			return { body: getComputedStyle(document.body).fontFamily, faint: `rgb(${faint})`, notes };
-		}, ctx.selectors.canvas);
-		for (const note of read.notes) {
-			assert.equal(note.family, read.body, `${note.selector} sets the body family`);
-			assert.equal(note.color, read.faint, `${note.selector} reads faint`);
-			assert.match(note.background, /^rgb\(/, `${note.selector} sits on an opaque chip, read ${note.background}`);
-		}
 	});
 
 	// owner decision, spec 44084 §12.2a — Reset is a fit-to-view mark, not the target Task results uses
