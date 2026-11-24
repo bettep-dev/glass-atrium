@@ -478,10 +478,10 @@ describe("healthy live fixture", () => {
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
 			})),
 		);
-		const captionChildren = await ctx.page.evaluate(() => [...document.querySelectorAll(".arch-caption > *")].map((el) => el.className));
+		const captionChildren = await ctx.page.evaluate(() => [...document.querySelectorAll(".arch-caption > *")].map((el) => el.matches("ul.arch-legend")));
 		const probe = { legend };
 
-		assert.deepStrictEqual(captionChildren, ["arch-legend fs-meta text-dim"], "nothing but the legend stands between the h1 and the first card");
+		assert.deepStrictEqual(captionChildren, [true], "nothing but the legend stands between the h1 and the first card");
 		for (const line of probe.legend) {
 			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
 			assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);

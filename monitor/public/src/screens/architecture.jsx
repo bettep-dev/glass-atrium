@@ -644,7 +644,7 @@ function ScreenArchitecture(
 			<TypeScaleStyle />
 			<style>
 				{// arch-page: h-full flex 컨텍스트 안에서 부모 100% 차지 (viewport fit).
-					".arch-page { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; gap: 8px; } " +
+					".arch-page { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; } " +
 					// 다이어그램 본체 = 단일 컬럼, 가용 폭 100% 회수. 부수 패널은 가로 스트립/접이식으로 외부 배치.
 					".arch-main { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
 					// part health takes the band the map leaves empty — a map floor keeps its fit scale, short viewports scroll
@@ -656,41 +656,35 @@ function ScreenArchitecture(
 					".arch-page .arch-main.arch-main-pending { flex: none; min-height: 0; } " +
 					".arch-part-health { flex-shrink: 0; } " +
 					// the card title outranks its rows — body-size row text under a control-size title read upside down
-					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; margin: 0; } " +
+					".arch-part-health-title { font-size: var(--fs-title); font-weight: 600; } " +
 					// head Status = the row status atom at head size
 					".arch-part-health-status { display: inline-flex; align-items: center; gap: var(--space-1_5); } " +
-					".arch-drawer-title { margin: 0; font-size: inherit; font-weight: inherit; } " +
-					".arch-drawer-heading { margin: 0 0 4px; font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
+					".arch-drawer-heading { font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
 					// Part health list · one line per part: name, status atom and cause | quiet button, meta below — body text centred on the 32px button
-					".arch-part-body { display: flex; flex-direction: column; gap: var(--space-3); } " +
+					".arch-part-body { display: flex; flex-direction: column; } " +
 					".arch-part-fold > summary { list-style: none; } " +
-					".arch-part-fold > ul { margin-top: var(--space-2); } " +
-					".arch-part-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); } " +
-					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-2); row-gap: var(--space-0_5); align-items: center; " +
+					".arch-part-list { display: flex; flex-direction: column; } " +
+					".arch-part-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-0_5); align-items: center; " +
 					"font-size: var(--fs-body); line-height: var(--lh-row); } " +
-					".arch-part-line { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; } " +
+					".arch-part-line { display: flex; align-items: baseline; min-width: 0; } " +
 					".arch-part-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
 					".arch-part-cause { flex: 1 1 0; min-width: 0; font-size: var(--fs-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } " +
 					".arch-part-status { display: inline-flex; align-items: center; gap: var(--space-1_5); white-space: nowrap; } " +
 					".arch-part-meta { grid-column: 1 / -1; font-size: var(--fs-meta); } " +
 					// the canvas is the card body, flush to the hairline → the card clips its corners, no second rounded frame inside
-					".arch-col-card { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; } " +
-					// max-height 를 여기서 풂 — styles/base.css 의 `.card-body { max-height: 70vh }` 는 무한히 긴
-					// 페이지를 막는 공통 규칙인데, 이 카드는 flex 로 이미 제 높이가 정해져 있어 그 상한이
-					// 죽은 여백으로만 남았음(실측 800px 뷰포트에서 카드 663.5 중 body 560 — 아래 103 이 빔).
-					".arch-col-card .card-body { flex: 1; min-height: 0; max-height: none; overflow: hidden; display: flex; flex-direction: column; } " +
+					".arch-col-card { flex: 1; overflow: hidden; } " +
 					// 훅 구성 — 이벤트 > matcher > 훅 3단 들여쓰기. 목록 표식 없이 들여쓰기만으로 계층을 냄.
-					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-hook-events, .arch-hook-groups, .arch-hook-list { display: flex; flex-direction: column; } " +
 					".arch-hook-groups, .arch-hook-list { padding-left: var(--space-3); } " +
 					".arch-hook-event, .arch-hook-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
-					".arch-hook-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; } " +
+					".arch-hook-head { display: flex; align-items: baseline; flex-wrap: wrap; min-width: 0; } " +
 					// 경보 레인 — 지도 위에 서는 단 하나의 상자. 행이 없으면 레인도 없음(빈 상태 없음).
 					".arch-alarm-lane { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; } " +
 					// svg-pan-zoom: overflow:hidden 으로 viewBox 밖 클리핑, svg 100%×100% + max-width none.
 					// 캔버스 면은 surface — 소스 지시자의 background·edgeLabelBackground 와 같은 토큰이어야 엣지 라벨 마스크가 드러나지 않음.
 					// 세 톤(캔버스 < 존 < 노드)의 맨 아래 칸 — 여기만 바꾸면 사다리가 어긋난다.
-					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 0; overflow: hidden; position: relative; padding: 0; } " +
+					".arch-mermaid-canvas { width: 100%; flex: 1; min-height: 0; background: rgb(var(--surface)); border-radius: 0; overflow: hidden; position: relative; } " +
 					".arch-mermaid-canvas .arch-mermaid-host > svg { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; display: block; font-family: Pretendard, system-ui, sans-serif !important; } " +
 					// 노드 라벨 — 색만 보정한다.
 					// mermaid 는 이 규칙이 걸리지 않는 캔버스 밖에서 라벨을 재고 그 폭으로 foreignObject 를 자름.
@@ -766,7 +760,7 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .arch-node-live-crit > rect.arch-ring-state, #${ARCH_CANVAS_ID} .arch-zone-live-crit > rect.arch-ring-state { display: inline; stroke: rgb(var(--crit)) !important; } ` +
 					// 줌/팬/맞춤 컨트롤 클러스터 — 캔버스 우하단, hint 위. 불투명 면(상시 chrome) → blur 금지.
 					// controls on the .btn atom · flex-end → the 32 squares and the wider Reset share the canvas-side edge
-					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; z-index: 2; } " +
+					".arch-zoom-controls { position: absolute; right: 8px; bottom: 28px; display: flex; flex-direction: column; align-items: flex-end; z-index: 2; } " +
 					// 키보드 포커스 노드 ring — 클릭 가능 노드의 a11y focus 표식.
 					// 상태 링과 같은 사각형 채널·같은 반경 가족이되 그 바깥 한 겹에 섬 — 상태 링의 색·두께·자리는 포커스와 무관함.
 					// 키보드가 헬스 상세로 가는 유일한 길이라(ADR-20) 포커스 자리는 아홉 노드에서 똑같이 보여야 함.
@@ -776,19 +770,19 @@ function ScreenArchitecture(
 					`#${ARCH_CANVAS_ID} .node:focus-visible { outline: none; } ` +
 					`#${ARCH_CANVAS_ID} .node:focus-visible > rect.arch-ring-focus { display: inline; stroke: rgb(var(--focus-ring)) !important; } ` +
 					// 노드 상세의 부품 목록 — 드로어 폭 안이라 표의 nowrap 대신 줄바꿈이 기본임.
-					".arch-drawer-part-list { display: flex; flex-direction: column; gap: var(--space-3); } " +
-					".arch-part-entry { display: flex; flex-direction: column; gap: 4px; min-width: 0; } " +
+					".arch-drawer-part-list { display: flex; flex-direction: column; } " +
+					".arch-part-entry { display: flex; flex-direction: column; min-width: 0; } " +
 					".arch-part-entry + .arch-part-entry { border-top: 1px solid rgb(var(--line)); padding-top: var(--space-3); } " +
-					".arch-part-head { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
+					".arch-part-head { display: flex; align-items: baseline; flex-wrap: wrap; min-width: 0; } " +
 					// 로그 목록은 부품 이름 아래로 한 칸 들여씀 — 어느 부품의 로그인지 들여쓰기만으로 냄.
-					".arch-part-detail { padding-left: var(--space-3); display: flex; flex-direction: column; gap: 8px; } " +
+					".arch-part-detail { padding-left: var(--space-3); display: flex; flex-direction: column; } " +
 					// 드릴다운 전환 — 한 노드에 데몬 부품이 둘 이상일 때만 섬. 진짜 button 이라
 					// 키보드 활성과 포커스 순서를 브라우저에서 그대로 받음.
 					// placement only — the .disclosure atom draws it; flex-start → the column never stretches its box
-					".arch-part-drill { align-self: flex-start; margin: 0 0 0 var(--space-3); } " +
+					".arch-part-drill { align-self: flex-start; } " +
 					".arch-map-copy-note { display: flex; align-items: center; gap: var(--space-1_5); padding: var(--space-2) var(--space-2) 0; } " +
-					".arch-caption { display: flex; flex-direction: column; gap: var(--space-1_5); margin: 0 0 var(--space-3); } " +
-					".arch-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; } " +
+					".arch-caption { display: flex; flex-direction: column; gap: var(--space-1_5); } " +
+					".arch-legend { display: flex; flex-wrap: wrap; } " +
 					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
 					// height = the meta line + both 2px borders, so the swatch's mark never spills over its ring
 					".arch-legend-swatch { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: calc(var(--fs-meta) + 4px); " +
@@ -799,12 +793,9 @@ function ScreenArchitecture(
 					".arch-legend-swatch-count { width: auto; padding: 0 var(--space-1); border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-run-summary { display: flex; flex-direction: column; gap: 6px; } " +
 					`#${ARCH_CANVAS_ID} .${ZONE_TITLE_REDUNDANT_CLASS} > .cluster-label { display: none; } ` +
-					".arch-run-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; } " +
-					".arch-run-entry { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; } " +
-					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; } " +
-					// aria-describedby 타깃 — 클립으로 가리되 렌더 트리에는 남김. display:none 은 노드를 렌더에서 빼 innerText 계측을 잃음. Absolute, so margin 0 takes no layout space (no negative margin).
-					".arch-desc-a11y { position: absolute; width: 1px; height: 1px; padding: 0; margin: 0; " +
-					"overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; } " +
+					".arch-run-list { display: flex; flex-direction: column; gap: 6px; } " +
+					".arch-run-entry { display: flex; align-items: baseline; flex-wrap: wrap; min-width: 0; } " +
+					".arch-run-reasons { display: flex; flex-direction: column; gap: 2px; min-width: 0; } " +
 					// 모션 게이트 — 노드 transition 정지 (§8.4 계약). 줌 컨트롤은 .btn 이라 base.css 의 reduce 블록이 맡음.
 					"@media (prefers-reduced-motion: reduce) { " +
 					".arch-mermaid-canvas .node, .arch-mermaid-canvas .node > * { animation: none !important; transition: none !important; } }"}
@@ -827,7 +818,7 @@ function ScreenArchitecture(
 				{diagState.data != null && <MapCaptionAR />}
 			</div>
 
-			<div className="arch-page">
+			<div className="arch-page gap-list">
 				{pageFailure && (
 					<PageErrorBanner
 						sources={pageFailure.sources}
@@ -851,10 +842,10 @@ function ScreenArchitecture(
 							isBusy={isRefreshBusy}
 							focusTargetId={MAP_REGION_ID_AR}
 							minHeight={MAP_SLOT_MIN_PX}
-							className="arch-col-card"
+							className="flex flex-col arch-col-card"
 						/>
 					) : (
-						<div className="card arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
+						<div className="card card--fill arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
 							{mapCopyNote && (
 								<p className="fs-meta text-dim m-0 arch-map-copy-note">
 									<Icon name="warn" size={14} className={TONE_GLYPH_CLASS.warn} />
@@ -891,7 +882,7 @@ function ScreenArchitecture(
 				/>
 
 				{activeDiagram && (
-					<div id={ARCH_DESC_ID} className="arch-desc-a11y">
+					<div id={ARCH_DESC_ID} className="sr-only">
 						{activeDiagram.description || "No description available."}
 					</div>
 				)}
@@ -1408,7 +1399,7 @@ function MermaidCanvas({
 
 				{/* 줌/팬/맞춤 컨트롤 클러스터 — 우하단. 터치/마우스/키보드 동등 진입점. */}
 				<div
-					className="arch-zoom-controls"
+					className="arch-zoom-controls gap-stack"
 					role="group"
 					aria-label="Diagram zoom controls"
 				>
@@ -1539,15 +1530,15 @@ function HookChainDetail({ state }) {
 	return (
 		<div className="arch-hook-chain">
 			{/* 어느 파일에서 읽었는지 — 훅이 안 돈다는 신고의 첫 확인 지점이 이 경로임 */}
-			<div className="arch-hook-head fs-meta text-dim">
+			<div className="arch-hook-head gap-list fs-meta text-dim">
 				<span className="font-mono text-ink">{state.data?.source_path || "—"}</span>
 				{sourceMtime && <span>edited {formatRelativeTime(sourceMtime)}</span>}
 			</div>
-			<ul className="arch-hook-events">
+			<ul className="arch-hook-events gap-stack">
 				{rows.map((row) => (
 					<li key={row.event} className="arch-hook-event">
 						{row.groups.length === 0 ? (
-							<div className="arch-hook-head">
+							<div className="arch-hook-head gap-list">
 								<span className="fs-meta font-mono text-ink">{row.event}</span>
 								{/* 0 도 사실로 냄 — 이벤트는 있는데 훅이 없다는 것이 조사할 상태임 */}
 								<span className="fs-meta text-faint">0 hooks</span>
@@ -1562,16 +1553,16 @@ function HookChainDetail({ state }) {
 										<span className="fs-meta text-faint">{row.hookCount} hooks</span>
 									</span>
 								</summary>
-								<ul className="arch-hook-groups">
+								<ul className="arch-hook-groups gap-stack">
 									{/* position in the key — settings.json may repeat a matcher (or leave it empty) within one event; order is fixed settings order */}
 									{row.groups.map((group, groupIndex) => (
 										<li key={`${groupIndex}-${group.matcher}`} className="arch-hook-group">
 											<span className="fs-meta font-mono text-dim">{group.matcher}</span>
-											<ul className="arch-hook-list">
+											<ul className="arch-hook-list gap-stack">
 												{group.hooks.map((hook, index) => (
 													<li
 														key={`${group.matcher}-${index}`}
-														className="arch-hook-head fs-meta text-dim">
+														className="arch-hook-head gap-list fs-meta text-dim">
 														<span className="font-mono text-ink">{hook.command}</span>
 														{hook.type && <span className="fs-meta text-faint">{hook.type}</span>}
 														{hook.timeout !== null && hook.timeout !== undefined && (
@@ -1624,7 +1615,7 @@ function HookFailureDetail({ state }) {
 
 	return (
 		<div className="arch-hook-fails">
-			<div className="arch-hook-head fs-meta text-dim">
+			<div className="arch-hook-head gap-list fs-meta text-dim">
 				{/* 0 도 사실로 냄 — 창이 비었다는 것 자체가 아래 최종기록과 짝을 이루는 문장임 */}
 				<span className="text-ink" data-hook-fail-total="">
 					{total} {total === 1 ? "failure" : "failures"} in the last{" "}
@@ -1651,7 +1642,7 @@ function HookFailureDetail({ state }) {
 						<li
 							key={row.key}
 							data-hook-fail-row=""
-							className="arch-hook-head fs-meta text-dim">
+							className="arch-hook-head gap-list fs-meta text-dim">
 							<time
 								className="font-mono"
 								dateTime={row.failureTs}
@@ -1698,7 +1689,7 @@ function PricingAdvisoryDetail({ state }) {
 			{state.status === "ready" && (state.data?.models || []).length > 0 && (
 				<ul className="arch-hook-fail-list">
 					{state.data.models.map((entry) => (
-						<li key={entry.model} className="arch-hook-head fs-meta text-dim">
+						<li key={entry.model} className="arch-hook-head gap-list fs-meta text-dim">
 							<span className="font-mono text-ink break-all">{entry.model}</span>
 							<span>
 								{entry.event_count} cost {entry.event_count === 1 ? "event" : "events"}
@@ -1742,7 +1733,7 @@ function PricingAdvisoryBody({ state }) {
 		);
 
 	return (
-		<span className="arch-hook-head fs-meta text-dim">
+		<span className="arch-hook-head gap-list fs-meta text-dim">
 			<span className="inline-flex items-center text-ink">
 				<StatusDot status="warn" />
 				Pricing advisory
@@ -1801,10 +1792,10 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<h3 className="arch-drawer-heading">
+			<h3 className="arch-drawer-heading mb-stack">
 				Health ({rows.length + looseDaemons.length})
 			</h3>
-			<div className="arch-drawer-part-list">
+			<div className="arch-drawer-part-list gap-group-below">
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
 					// 드릴다운 응답은 한 번에 한 데몬 것임 — 다른 데몬의 실행 목록을 이 데몬의 것으로
@@ -1818,11 +1809,11 @@ function NodePartHealth({
 					return (
 						<div
 							key={row.id}
-							className="arch-part-entry"
+							className="arch-part-entry gap-stack"
 							data-health-row={row.id}
 							data-health-tone={row.tone || undefined}
 							data-daemon-row={row.daemonName || undefined}>
-							<div className="arch-part-head">
+							<div className="arch-part-head gap-list">
 								<span className="fs-meta font-mono text-ink">{row.name}</span>
 								{row.tone ? (
 									<span className="fs-meta inline-flex items-center gap-1.5 text-dim">
@@ -1858,14 +1849,14 @@ function NodePartHealth({
 									isOpen={isRunsOpen}
 									onToggle={() => toggleRuns(row, isRunsOpen)}
 									controls={isRunsOpen ? runsId : undefined}
-									className="arch-part-drill fs-meta"
+									className="arch-part-drill ml-group-below fs-meta"
 									label={`Recent runs for ${row.daemonName}`}
 								/>
 							)}
 							{renderDetail && (!row.daemonName || isRunsOpen) && (
 								<div
 									id={runsId}
-									className="arch-part-detail"
+									className="arch-part-detail gap-list"
 									data-health-detail={row.id}
 									data-daemon-detail={row.daemonName || undefined}>
 									{renderDetail(row, {
@@ -1886,10 +1877,10 @@ function NodePartHealth({
 				{looseDaemons.map((daemon) => (
 					<div
 						key={daemon.daemon_name}
-						className="arch-part-entry"
+						className="arch-part-entry gap-stack"
 						data-live-daemon={daemon.daemon_name}
 						data-live-tone={daemonStatusTone(daemon.effective_status) || undefined}>
-						<div className="arch-part-head">
+						<div className="arch-part-head gap-list">
 							<span className="fs-meta font-mono text-ink">
 								{daemon.daemon_name}
 							</span>
@@ -1941,7 +1932,7 @@ function DaemonRunDetail({ daemon, state }) {
 			{summary.failures.length > 0 && (
 		<ul className="arch-run-list">
 			{summary.failures.map((run) => (
-				<li key={run.key} className="arch-run-entry">
+				<li key={run.key} className="arch-run-entry gap-list">
 					<span className="fs-meta font-mono text-ink">{run.runDate}</span>
 					{run.reasons.length === 0 ? (
 						<span className="fs-meta text-dim">
@@ -2020,7 +2011,7 @@ function DetailModal({
 			open
 			onClose={onClose}
 			variant="drawer"
-			title={<h2 className="arch-drawer-title">{info ? info.label || info.id : "Node"}</h2>}
+			title={<h2>{info ? info.label || info.id : "Node"}</h2>}
 			sub={info?.layer_label}
 			labelledBy="ar-node-detail-title"
 			bodyClassName="space-y-3"
@@ -2099,7 +2090,7 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading">
+			<h3 className="arch-drawer-heading mb-stack">
 				Records
 			</h3>
 			<a className="fs-body" href={`#${owner.id}`}>
@@ -2115,7 +2106,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<h3 className="arch-drawer-heading">
+			<h3 className="arch-drawer-heading mb-stack">
 				Connections ({total})
 			</h3>
 			<div className="space-y-2">
@@ -2435,8 +2426,8 @@ function getMapBorderRulesAR() {
 // the key to the canvas, the one line under the h1 (spec 44084 §3.1, §12.5)
 function MapCaptionAR() {
 	return (
-		<div className="arch-caption">
-			<ul className="arch-legend fs-meta text-dim" aria-label="Map legend">
+		<div className="arch-caption mb-group-below">
+			<ul className="arch-legend gap-y-stack gap-x-block fs-meta text-dim" aria-label="Map legend">
 				{getMapLegendItemsAR().map((item) => (
 					<li key={item.key} className="arch-legend-item">
 						<span
@@ -3043,7 +3034,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 					)}
 				</div>
 			</div>
-			<div className="card-body arch-part-body">
+			<div className="card-body arch-part-body gap-group-below">
 				{!listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim m-0">{attentionEmpty}</p>}
 				{listed.length > 0 && <PartHealthListAR rows={listed} {...listProps} />}
 				{healthy.length > 0 && (
@@ -3062,7 +3053,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 
 function PartHealthListAR({ rows, isFolded = false, freshness, nodeIndex, onSelectNode }) {
 	return (
-		<ul className="arch-part-list">
+		<ul className={`arch-part-list gap-list${isFolded ? " mt-list" : ""}`}>
 			{rows.map((row) => (
 				<PartHealthRowAR key={row.id} row={row} isFolded={isFolded} freshness={freshness} nodeIndex={nodeIndex} onSelectNode={onSelectNode} />
 			))}
@@ -3080,9 +3071,9 @@ function PartHealthRowAR({ row, isFolded = false, freshness, nodeIndex, onSelect
 	const meta = [box && `in ${box.label}`, row.lastRunAt && `last run ${formatRelativeTime(row.lastRunAt)}`, schedule].filter(Boolean).join(" · ");
 
 	return (
-		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row">
+		<li id={getPartRowIdAR(row)} tabIndex={-1} className="arch-part-row gap-x-list">
 			{/* name → status → cause on one line, so the verdict reads beside the part it judges */}
-			<span className="arch-part-line">
+			<span className="arch-part-line gap-list">
 				<span className="arch-part-name" title={row.name}>
 					{row.name}
 				</span>
