@@ -230,13 +230,12 @@ test("the Runs fold's body prose fits the 90-char footnote cap, a longer qualifi
   assert.equal(findNodes(fold, (n) => n.props.atom === "CardInfo").length, 1, "the change definition opens from one ⓘ");
 });
 
-// R-c: the trend note hands its sentence to the shared DayTokens atom, so "30-day" never breaks at its hyphen
-test("the Runs fold's trend note rides DayTokens, so its N-day window stays whole", async () => {
+test("the Runs fold's bar line says the range sets this table only and names the trend's fixed window", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
-  const notes = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
-  assert.equal(notes.length, 1, "one note rides DayTokens");
-  assert.match(notes[0], /^The window drives the table only — the trend keeps a fixed \d+-day window\.$/);
+  const [bar] = findNodes(tree, (n) => /\bcard-bar\b/.test(classOf(n)));
+  const [note] = findNodes(bar, (n) => n.type === "span" && /\btext-faint\b/.test(classOf(n)));
+  assert.equal(collectText(note), "Sets this table only; the trend keeps 30d.");
 });
 
 test("the Runs fold body is flush so the table's edge cells hold the one card-pad column, controls on the card bar", async () => {

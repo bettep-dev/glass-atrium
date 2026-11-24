@@ -986,9 +986,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 		>
 			{/* flush body → the table's edge cells carry the card-pad column once (spec §1 O4); controls ride the card bar */}
 			<window.UI.Cluster gap="control" className="card-bar">
-				<span className="fs-meta text-faint leading-tight">
-					<window.UI.DayTokens>{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}</window.UI.DayTokens>
-				</span>
+				<span className="fs-meta text-faint leading-tight">{`Sets this table only; the trend keeps ${WIKI_CYCLE_DAYS}d.`}</span>
 				<CardInfo label="How a change is counted" describedBy={`${WIKI_REGION_IDS.runTable}-title`}>
 					A change is a run whose status or backlog differs from the run before.
 				</CardInfo>
