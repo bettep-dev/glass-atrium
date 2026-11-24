@@ -1905,6 +1905,16 @@ test("every chart tooltip floats on the opaque overlay surface and follows the p
   }
 });
 
+// the stat label already names the figure → the loader repeats none of it
+test("a loading spend stat reads Loading… alone under its label", async () => {
+  const loading: PanelState = { status: "loading", data: null, error: null, busy: false };
+  const tree = renderIn(await loadCostRender(), "SpendCardC", {
+    kpiState: loading, hot: cost.computeHotVerdict({}), trendState: loading, modelState: loading, days: 30, onRetry: () => {},
+  });
+  const loaders = findNodes(tree, isStat).map((stat) => findNodes(stat, (n) => n.props.role === "status").map(collectText).join("").trim());
+  assert.deepEqual(loaders, Array(4).fill("Loading\u2026"));
+});
+
 // the stats load through the shared loading row → its indicator, not a screen-local skeleton, carries the motion
 test("a loading stat's indicator animates only through a motion-safe class, so reduced motion holds it still", async () => {
   const mod = await loadCostRender();

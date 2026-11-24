@@ -624,7 +624,8 @@ function getShownDays(state, requestedDays) {
 // stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
 function buildStatC(stat) {
   const { DayTokens, LAST_KNOWN_TEXT, getHeldCause } = window.UI;
-  if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true };
+  // an empty source → the loader reads Loading… alone; the stat label above already names the figure
+  if (stat.status === 'loading') return { key: stat.key, label: stat.label, isLoading: true, source: '' };
   const value = <SpendStatValueC stat={stat}/>;
   // held figures stand, the line says so in the Dashboard's word; the failed refresh rides the hover
   if (stat.status === 'ready' && stat.isHeld) {
