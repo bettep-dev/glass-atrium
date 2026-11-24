@@ -938,7 +938,7 @@ function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selecte
   }
   const agents = readyData(state)?.agents ?? [];
   if (agents.length === 0) {
-    return <EmptyStateAg message={`No agent activity in the last ${days} days.`}/>;
+    return <window.UI.EmptyState message={`No agent activity in the last ${days} days.`}/>;
   }
 
   // pseudo-agent(subagent_stop_missing / unknown) 는 정렬 대상 아님 → 하단 collapsed footer 로 분리.
@@ -1203,19 +1203,6 @@ function ActivityMark({ status, lastRunAt }) {
   );
 }
 
-function CompatibilityDetailBlock({ compatibility }) {
-  const { SubCard } = window.UI;
-  if (!compatibility) return null;
-  return (
-    <div className="mb-block agent-compatibility-detail">
-      <div className="fs-meta text-faint mb-label">Requires</div>
-      <SubCard sunken className="fs-body leading-relaxed text-dim">
-        {compatibility}
-      </SubCard>
-    </div>
-  );
-}
-
 // LatencyBars (col-span-full) — 단일 바에 P50(불투명)/P95(0.65)/P99(0.35) 3-레이어 absolute 포지셔닝.
 // max = 표시 대상 p99 최대값으로 동적 정규화 (정적 고정 대비 분포 폭 다양 → 시각감 우수).
 
@@ -1402,7 +1389,7 @@ function AgentDetailDrawer({
           onChange={setConfirmText}
         />
       ) : (
-        <div className="space-cards">
+        <window.UI.Stack gap="block">
           <AgentDrawerSection id={IDS.DRAWER_SECTION.overview} title="Overview">
             <AgentCircuitBreakerLine agent={agent} summaryState={summaryState}/>
             <AgentOverviewSection
@@ -1453,7 +1440,7 @@ function AgentDetailDrawer({
           <AgentDrawerSection id={IDS.DRAWER_SECTION.recent} title="Recent">
             <AgentRecentActivitySection recentState={recentState} days={days} onRetry={onRetry}/>
           </AgentDrawerSection>
-        </div>
+        </window.UI.Stack>
       )}
     </DetailSurface>
   );
@@ -1566,14 +1553,12 @@ function formatConsecutiveFails(count) {
   return `${count} consecutive ${count === 1 ? 'fail' : 'fails'}`;
 }
 
-// drawer section wrapper — SubCard owns label/padding/surface, Stack owns sub-block spacing (SubCard never stacks its children)
 function AgentDrawerSection({ id, title, children }) {
-  const { SubCard, Stack } = window.UI;
+  const { SectionLabel, Stack } = window.UI;
   return (
     <section id={id}>
-      <SubCard label={title} labelLevel={2}>
-        <Stack gap="block">{children}</Stack>
-      </SubCard>
+      <SectionLabel level={2}>{title}</SectionLabel>
+      <Stack gap="block">{children}</Stack>
     </section>
   );
 }
@@ -1642,7 +1627,7 @@ function DrawerInfoRow({ label, value, title }) {
 // success-rate 는 패널 전체에서 단 한 번 (Performance 의 중복 박스 폐지) · 비용/모델 disclaimer 는 섹션 끝으로 후퇴.
 // health index 는 buildQualityHealthRanking(공식 1−(0.6×min(1,revision÷0.5)+0.4×review_flag)) — peer-independent 절대 척도.
 function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState, reviewByAgentState, onRetry }) {
-  const { formatPctWithDenominator, LOW_N_MIN, Pill, BulletBar, Badge } = window.UI;
+  const { formatPctWithDenominator, LOW_N_MIN, BulletBar, Badge } = window.UI;
 
   // health entry 는 revision/review fetch 페어 — summary 와 독립 degrade. summary 에러는 hero 자체를 막음.
   const ranking = useMemoAg(
@@ -1689,7 +1674,6 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
       <DetailMetric
         label="Success rate"
         tone={successTone}
-        hero
         value={<>
           <FailShareGlyph tone={failShareTone}/>
           {formatPctWithDenominator(successNumerator, successDenominator)}
@@ -1710,13 +1694,13 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
         )}
       </div>
 
-      <CompatibilityDetailBlock compatibility={agent.compatibility}/>
+      <window.UI.DetailField label="Requires" value={agent.compatibility}/>
 
       {/* config 한 줄 — dual-phase + origin pill · 부재 origin 은 dashed muted 변형 → present 데이터보다 조용하게 */}
       <div className="flex items-center gap-list flex-wrap">
-        <Pill tone="neutral">{phaseLabel}</Pill>
+        <Badge role="metadata">{phaseLabel}</Badge>
         {agent.origin ? (
-          <Pill tone="neutral">origin: {agent.origin}</Pill>
+          <Badge role="metadata">origin: {agent.origin}</Badge>
         ) : (
           <Badge role="metadata" absent title="Agent origin (agent-registry.json) — not recorded">origin: unknown</Badge>
         )}
@@ -2245,12 +2229,12 @@ function mergeBreakageReasons(failData, blockedData) {
   return { reasons, failTotal, blockedTotal, total: failTotal + blockedTotal };
 }
 
-// Drawer metric — label over a sans tnum value, flat on its section (no card inside the section card); hero enlarges the value only.
-function DetailMetric({ label, value, tone = '', hero = false }) {
+// Drawer metric — label over a sans tnum value, flat on its section (no card inside the section card).
+function DetailMetric({ label, value, tone = '' }) {
   return (
     <div className="flex flex-col">
       <div className="fs-meta text-faint min-h-[2.5em] leading-tight">{label}</div>
-      <div className={`font-semibold mt-stack tnum ${hero ? 'hero-stat' : 'fs-title'} ${tone}`}>{value}</div>
+      <div className={`font-semibold mt-stack tnum fs-title ${tone}`}>{value}</div>
     </div>
   );
 }
@@ -2299,7 +2283,7 @@ function SuccessRateMatrixBody({ failures, state, days, onRetry }) {
 
   const notice = readyData(state)?.truncated === true && <MatrixRowLimitNote/>;
   if (matrix.agents.length === 0) {
-    return <MatrixInsetAg>{notice}<EmptyStateAg message={`No success-rate events in the last ${days} days.`}/></MatrixInsetAg>;
+    return <MatrixInsetAg>{notice}<window.UI.EmptyState message={`No success-rate events in the last ${days} days.`}/></MatrixInsetAg>;
   }
   return <SuccessRateMatrixPanel matrix={matrix} notice={notice}/>;
 }
@@ -2742,7 +2726,7 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
   }
   const rows = readyData(state)?.rows ?? [];
   if (rows.length === 0) {
-    return <EmptyStateAg message="No review_flag data."/>;
+    return <window.UI.EmptyState message="No review_flag data."/>;
   }
 
   const { flagged: totalFlagged, total: totalEvents } = getReviewFlagTotalsAg(rows);
@@ -2832,26 +2816,26 @@ function QualityHealthTimelineTooltip({ active, payload }) {
   }
   const row = payload[0].payload;
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className="text-dim">
         flagged {formatIntAg(row.review_flagged_count)} / {formatIntAg(row.total_count)}
       </div>
       {/* reasons count over every run of the day, flagged or not → not a split of the flagged figure */}
       {/* no self-check = metric_pass empty, mismatch needs one set → disjoint, so the two add up */}
-      <div style={{ color: 'rgb(var(--dim))', marginTop: 4 }}>
+      <div className="mt-stack text-dim">
         {formatIntAg(row.empty_metric_count + row.polar_mismatch_count)} of {formatIntAg(row.total_count)} have a recorded reason
       </div>
-      <div style={tooltipRowStyle}>
+      <div className={tooltip.rowClassName}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--data))' }}/>
         No self-check {formatIntAg(row.empty_metric_count)} of {formatIntAg(row.total_count)} runs
         <span style={{ color: 'rgb(var(--faint))' }}>· {formatPctAg(row.empty_metric_ratio_pct)}</span>
       </div>
-      <div style={tooltipRowStyle}>
+      <div className={tooltip.rowClassName}>
         <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--data))' }}/>
         Confidence mismatch {formatIntAg(row.polar_mismatch_count)} of {formatIntAg(row.total_count)} runs
       </div>
-      <div style={{ ...tooltipRowStyle, marginTop: 4 }}>
+      <div className={`${tooltip.rowClassName} mt-stack`}>
         <span style={{ width: 10, borderTop: '1.5px solid rgb(var(--ink))' }}/>
         Flagged rate {formatPctAg(row.review_flag_ratio_pct)}
       </div>
@@ -2904,7 +2888,6 @@ const ORPHAN_RATIO_CRIT_THRESHOLD = 0.35;
 const ORPHAN_RATIO_WARN_THRESHOLD = 0.2;
 
 function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
-  const { Pill } = window.UI;
   const [isShowingAll, setShowingAll] = useStateAg(false);
 
   const readyRows = readyData(state)?.rows ?? [];
@@ -2919,13 +2902,10 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
       <window.UI.Card
         size={PAIRED_CARD_SIZE}
         title="No completion record"
-        sub={`Last ${days} days`}
+        sub={totalOrphans > 0 && <window.UI.HeadStatus tone="warn">{formatIntAg(totalOrphans)} unfinished</window.UI.HeadStatus>}
         isFlush={window.UI.hasRegionRows(state, lifecycleRows)}
         info={NOTE.UNFINISHED}
         infoLabel="How Unfinished is counted"
-        right={state.status === 'ready' && totalOrphans > 0
-          ? <Pill tone="warn" className="pill--ctl-h">{formatIntAg(totalOrphans)} unfinished</Pill>
-          : null}
         foot={state.status === 'ready' && (
           <PairedCardFootAg note={NOTE_SHORT.UNFINISHED} total={lifecycleRows.length}
             hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
@@ -2952,7 +2932,7 @@ function LifecycleStatsBody({ failures, state, days, rows, onSelect, onRetry }) 
     return <window.UI.RegionFailure source={REGION_FEEDERS.lifecycle} region="lifecycle stats" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.lifecycle} onRetry={onRetry}/>;
   }
   if (rows.length === 0) {
-    return <EmptyStateAg message={`No lifecycle events in the last ${days} days.`}/>;
+    return <window.UI.EmptyState message={`No lifecycle events in the last ${days} days.`}/>;
   }
   return <LifecycleStatsTable rows={rows} onSelect={onSelect}/>;
 }
@@ -3028,29 +3008,17 @@ function LifecycleStatsRow({ view, row, onSelect, focusProps }) {
 
 // Shared chrome
 
-function EmptyStateAg({ message }) {
-  const { EmptyState } = window.UI;
-  return <EmptyState message={message} />;
-}
-
 // Pure helpers
 
-const tooltipStyle = {
-  background: 'rgb(var(--overlay-surface))',
-  border: '1px solid rgb(var(--line))',
-  borderRadius: 'var(--radius-tile)',
-  padding: '8px 12px',
-  // 툴팁 = HTML DOM div → 11.5px→var(--fs-meta)(11px) 매핑 (밀도 높은 보조 콘텐츠 tier · cost.jsx tooltipStyle 동일 선례).
-  fontSize: 'var(--fs-meta)',
-  fontVariantNumeric: 'tabular-nums',
-  boxShadow: 'var(--shadow-overlay)',
-};
-
-const tooltipRowStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  color: 'rgb(var(--dim))',
+const tooltip = {
+  className: 'p-card-pad border border-line fs-meta tabular-nums',
+  rowClassName: 'flex items-center gap-label-inline text-dim',
+  // overlay-surface paint only, inline — overlay-surface is no Tailwind colour key
+  style: {
+    background: 'rgb(var(--overlay-surface))',
+    borderRadius: 'var(--radius-tile)',
+    boxShadow: 'var(--shadow-overlay)',
+  },
 };
 
 async function fetchJsonAg(url, signal) {

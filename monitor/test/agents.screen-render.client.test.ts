@@ -541,8 +541,9 @@ describe("the drawer hero's success figure carries no tone at any rate, which ri
         agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
         revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
       });
-      const figures = findNodes(tree, (n) => /\bhero-stat\b/.test(String(n.props?.className ?? "")));
-      assert.equal(figures.length, 1, "one hero figure");
+      const metric = findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === "Success rate")[0];
+      const figures = findNodes(metric, (n) => /\bfs-title\b/.test(String(n.props?.className ?? "")));
+      assert.equal(figures.length, 1, "one success figure at the title size");
       assert.doesNotMatch(String(figures[0].props.className), /\btext-(ok|warn|crit|info)\b/);
       assert.equal(collectText(figures[0]).includes(HIGH_FAIL_WORD), row.crit);
     });
@@ -1553,9 +1554,28 @@ test("a matrix sparkline is a named image rather than an unlabelled drawing", as
   assert.match(String(img?.props["aria-label"]), /dev-react feature/);
 });
 
-test("drawer section titles are h2 headings under the dialog's own name", async () => {
-  const tree = await renderComponent("AgentDrawerSection", { title: "Reliability" });
-  assert.equal(findAtoms(tree, "SubCard")[0]?.props.labelLevel, 2);
+test("the No completion record head states the unfinished count as a warn head status, with no window and no pill", async () => {
+  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt, getSlotRows: REAL_UI.getSlotRows, CARD_SLOTS: REAL_UI.CARD_SLOTS });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(React.createElement(mod.LifecycleStatsCard as Component, {
+    state: { status: "ready", data: { rows: [{ agent_type: "glass-atrium-dev-node", start_count: 1300, stop_count: 40, completed_count: 35, p95_duration_sec: 60 }] }, error: null },
+    days: 30, onSelect: () => {}, onRetry: () => {},
+  }));
+  const [card] = findAtoms(tree, "Card");
+  const sub = renderScreen(card?.props.sub as never);
+  const [status] = findAtoms(sub, "HeadStatus");
+  assert.deepEqual([status?.props.tone, collectText(status).replace(/\s+/g, " ")], ["warn", "1,265 unfinished"]);
+  assert.equal(card?.props.right ?? null, null, "no pill beside the head");
+  assert.doesNotMatch(collectText(sub), /last \d+ days/i, "the page header states the window");
+});
+
+test("a drawer section is a plain section under an h2 label, with no sub-card box", async () => {
+  const tree = await renderComponent("AgentDrawerSection", { id: "drawer-reliability", title: "Reliability" });
+  const [section] = findNodes(tree, (n) => n.type === "section");
+  assert.equal(section?.props.id, "drawer-reliability");
+  const [label] = findAtoms(section, "SectionLabel");
+  assert.deepEqual([label?.props.level, collectText(label)], [2, "Reliability"]);
+  assert.equal(findAtoms(tree, "SubCard").length, 0, "no box inside the drawer");
 });
 
 test("the drawer's name reads its parts apart and never repeats the surface's own title id", async () => {
@@ -1651,7 +1671,6 @@ test("the trend dates are the last seven days any agent reported, oldest first",
 test("caption words render in the sans face, leaving mono to ids and numbers", async () => {
   const rows = [
     { name: "drawer trend", component: "AgentPerformanceSection", props: getPerformanceProps([1, 2], ["2026-09-23", "2026-09-24"]), caption: "Runs per day · last 7 days" },
-    { name: "compatibility", component: "CompatibilityDetailBlock", props: { compatibility: "monitor daemon running" }, caption: "Requires" },
     { name: "matrix legend", component: "SuccessRateLegend", props: {}, caption: "Legend" },
   ];
   for (const row of rows) {
@@ -2385,12 +2404,19 @@ function getTintedNodes(tree: RenderedNode | string | null): RenderedNode[] {
   return findNodes(tree, (n) => TONE_TINT.test(String(n.props?.className ?? "")) || TONE_TINT.test(JSON.stringify(n.props?.style ?? {})));
 }
 
-test("the compatibility requirement reads on a neutral sunken sub-card, not an info tint", async () => {
-  const tree = await renderComponent("CompatibilityDetailBlock", { compatibility: "monitor daemon running" });
-  const [card] = findAtoms(tree, "SubCard");
-  assert.equal(card?.props.sunken, true, "the requirement sits on the sunken sub-card");
-  assert.match(collectText(card), /monitor daemon running/);
-  assert.deepEqual(getTintedNodes(tree), [], "no tone tint on an explanation block");
+test("the drawer overview states the setup requirement as a Requires field and its config as metadata badges", async () => {
+  const agent = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 50, needs_context_count: 0, success_pct: 98, compatibility: "monitor daemon running", origin: "system" };
+  const emptyRows = { status: "ready", data: { rows: [] }, error: null };
+  const tree = await renderComponent("AgentOverviewSection", {
+    agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
+    revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
+  });
+  const fields = findAtoms(tree, "DetailField").filter((n) => n.props.label === "Requires");
+  assert.deepEqual(fields.map((n) => n.props.value), ["monitor daemon running"]);
+  assert.equal(findAtoms(tree, "SubCard").length + findAtoms(tree, "Pill").length, 0, "no sub-card or pill");
+  const badges = findAtoms(tree, "Badge").filter((n) => /^origin:\s*system$/.test(collectText(n)));
+  assert.deepEqual(badges.map((n) => n.props.role), ["metadata"]);
+  assert.deepEqual(getTintedNodes(tree), [], "no tone tint on an explanation");
 });
 
 test("the delete panel states its warning and its failure as inset alert cards, the failure titled and the cause in the body", async () => {

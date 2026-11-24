@@ -1,6 +1,6 @@
 // Agents controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's own
-// style block, rendered from the shipped components: a static pill in a card head stands on the 32 control height beside the head's
-// info button and a Most-failing pairs agent link is a 24 target in a 40 row (§7.16).
+// style block, rendered from the shipped components: a card head's warn status is meta text beside the head's 32 info button, never a
+// height-matched pill, and a Most-failing pairs agent link is a 24 target in a 40 row (§7.16).
 // Runner: npx tsx --test test/agents.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -87,14 +87,12 @@ after(async () => {
 const centreOf = (box: Box) => box.top + box.height / 2;
 const readText = (selector: string) => page.$eval(selector, (el) => el.textContent ?? "");
 
-describe("a static pill in a card head stands on the head's 32 control height", () => {
-  test("No completion record: the unfinished pill matches the info button's height and centre line", async () => {
-    const pill = await readBox("#lifecycle .card-head .pill");
+describe("a card head's warn status is meta text, never a pill matched to the control height", () => {
+  test("No completion record: the unfinished count is the head's warn status beside the 32 info button", async () => {
+    assert.match(await readText('#lifecycle .card-head [data-role="head-status"][data-tone="warn"]'), /3 unfinished/);
+    assert.equal(await page.locator("#lifecycle .card-head .pill").count(), 0, "no pill in the head");
     const info = await readBox("#lifecycle .card-head .btn.icon");
-    assert.match(await readText("#lifecycle .card-head .pill"), /3 unfinished/);
     assert.equal(info.height, 32);
-    assert.equal(pill.height, info.height, `pill ${pill.height} vs info ${info.height}`);
-    assert.ok(Math.abs(centreOf(pill) - centreOf(info)) < 0.5, "one centre line");
   });
 });
 
