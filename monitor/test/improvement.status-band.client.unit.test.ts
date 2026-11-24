@@ -40,6 +40,7 @@ interface BandSandbox {
   ProposalCardI: (props: Record<string, unknown>) => RecordedElement;
   LedgerHeldSectionI: (props: Record<string, unknown>) => RecordedElement | null;
   InstrumentationStripI: (props: Record<string, unknown>) => RecordedElement | null;
+  getDeviationChipsI: (props: Record<string, unknown>) => Array<Record<string, unknown>>;
   getInstrumentationChipsI: (
     verdicts: unknown,
     styleRef: unknown,
@@ -229,6 +230,34 @@ test("the held count links to the ledger's held section only while a held patter
   assert.ok(heldIds.includes(String(needsHuman.props.href).replace(/^#/, "")), "the link lands on the held section");
 });
 
+test("the held stat's context counts every held row under the one word held", () => {
+  const parked = [...NEEDS_HUMAN, { cause: "non-promptable", count: 4, agents: 2 }];
+  const held = getBandStats({ suppression: { pending_total: 0, parked } }).get("held");
+
+  assert.equal(textOf(held?.context), "of 6 held");
+});
+
+describe("the suggestion board's empty line says first use only before any cycle ran", () => {
+  const rows = [
+    { name: "a loop with a cycle on record has nothing waiting", stats: STATS_DATA, message: "No suggestions waiting" },
+    { name: "a loop with no cycle on record has no suggestions yet", stats: { cycle_total_7d: 0, latest_cycle_started_at: null }, message: "No suggestions yet" },
+    { name: "an unread stats payload never claims first use", stats: null, message: "No suggestions waiting" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const card = sandbox.KanbanCardI({
+        state: LANDED,
+        columnRows: { safety: [], applied: [], rejected: [] },
+        stats: row.stats,
+        onRetry: () => {},
+      });
+      const empty = collectElements(card, []).find((el) => el.type === sandbox.window.UI.EmptyState);
+
+      assert.equal(empty?.props.message, row.message);
+    });
+  }
+});
+
 describe("a failed refresh over held numbers marks them Last known", () => {
   const asOf = new Date().toISOString();
   const rows = [
@@ -294,11 +323,11 @@ describe("the corpus growth gauge keeps the shared freshness rule over a failed 
       const corpusAuditState = { status: "ready", data: { audits: [{ id: 1 }] }, error: row.error };
       const chip = sandbox.getInstrumentationChipsI(corpus(row.verdict), null, corpusAuditState, asOf).find((c) => c.key === "corpus");
       (sandbox.window as Record<string, unknown>).ImprovementInstrumentationVerdicts = corpus(row.verdict);
-      const strip = sandbox.InstrumentationStripI({ styleRef: null, corpusAuditState, at: asOf, onOpen: () => {} });
+      const strip = sandbox.getDeviationChipsI({ styleRef: null, corpusAuditState, at: asOf });
 
       assert.match(String(chip?.label), row.label);
       assert.equal(chip?.tone, row.tone);
-      assert.equal(textOf(strip).includes("Corpus growth"), row.isOnStrip);
+      assert.equal(strip.some((c) => c.key === "corpus"), row.isOnStrip);
     });
   }
 });
@@ -317,20 +346,38 @@ describe("the instrumentation strip shows only the gauges that deviate", () => {
     getCorpusGrowthVerdictI: () => ({ symbol: "✓", tone: "text-ok", label: "within threshold", hint: "h2" }),
   });
   const rows = [
-    { name: "a warn gauge is shown and an ok one is not", verdicts: judge("text-warn"), shown: ["Graduation gate"] },
+    { name: "a warn gauge is shown and an ok one is not", verdicts: judge("text-warn"), shown: ["style"] },
     { name: "nothing renders when every gauge is ok", verdicts: judge("text-ok"), shown: [] },
   ];
   for (const row of rows) {
     test(row.name, () => {
       (sandbox.window as Record<string, unknown>).ImprovementInstrumentationVerdicts = row.verdicts;
-      const strip = sandbox.InstrumentationStripI({
+      const props = {
         styleRef: { overall_emission_rate: 0.3, overall_uncorroborated_rate: 0.2 },
         corpusAuditState: { status: "ready", data: { audits: [{}] } },
-        onOpen: () => {},
-      });
-      const text = textOf(strip);
-      for (const name of ["Graduation gate", "Corpus growth"]) assert.equal(text.includes(name), row.shown.includes(name), name);
-      assert.equal(strip === null, row.shown.length === 0);
+      };
+      const card = collectElements(renderBand(props), []).find((el) => el.type === sandbox.window.UI.Card);
+
+      assert.deepEqual(Array.from(sandbox.getDeviationChipsI(props), (c) => c.key), row.shown);
+      assert.equal(card?.props.foot == null, row.shown.length === 0, "the strip is the stat card's foot, absent at rest");
+    });
+  }
+});
+
+describe("a deviating gauge reads as a sentence naming what it holds up, glyph at row size", () => {
+  const rows = [
+    { name: "a warn graduation gate names the style check it holds", chip: { key: "style", tone: "text-warn", label: "warn" }, tone: "warn", words: "Style check graduation held: too many unconfirmed claims" },
+    { name: "a blocked graduation gate names its own reason", chip: { key: "style", tone: "text-crit", label: "block" }, tone: "crit", words: "Style check graduation held: too few runs name a style source" },
+    { name: "a corpus alert names the prompts that grew", chip: { key: "corpus", tone: "text-warn", label: "trend alert" }, tone: "warn", words: "Agent prompts grew past their word line" },
+    { name: "a held reading says Last known first", chip: { key: "corpus", tone: "text-warn", label: "Last known: trend alert", isLastKnown: true }, tone: "warn", words: "Last known: Agent prompts grew past their word line" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const strip = sandbox.InstrumentationStripI({ chips: [{ ...row.chip, name: "Gauge", symbol: "⚠", hint: "h" }], onOpen: () => {} });
+      const status = collectElements(strip, []).find((el) => el.type === sandbox.window.UI.HeadStatus);
+
+      assert.equal(status?.props.tone, row.tone);
+      assert.equal(textOf(status?.props.children), row.words, "the sentence replaces the raw state word");
     });
   }
 });

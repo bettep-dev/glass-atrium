@@ -480,6 +480,7 @@ function ScreenImprovement({ onNav }) {
 							<KanbanCardI
 								state={listState}
 								columnRows={columnRows}
+								stats={statsState.data}
 								loopAggregate={loopAggregate}
 								onRowClick={setDrawerRow}
 								onAction={runAction}
@@ -536,17 +537,12 @@ const sumCountsI = (list) =>
 // Loop status — only the counts that change the next action, one stat row; the alarm itself lives in the card that owns the rows (spec 44084 §3.1).
 function StatusBandI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures, styleRef, corpusAuditState, onOpenInstrumentation }) {
 	const { Card, StatRow } = window.UI;
+	const chips = getDeviationChipsI({ styleRef, corpusAuditState, at: asOf });
 	return (
 		<section id={ANCHOR_ID_I.status} className="flex flex-col gap-list" aria-label="Loop status">
-			<Card>
+			<Card foot={chips.length > 0 ? <InstrumentationStripI chips={chips} onOpen={onOpenInstrumentation} /> : null}>
 				<StatRow stats={getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures })} />
 			</Card>
-			<InstrumentationStripI
-				styleRef={styleRef}
-				corpusAuditState={corpusAuditState}
-				at={asOf}
-				onOpen={onOpenInstrumentation}
-			/>
 		</section>
 	);
 }
@@ -567,14 +563,19 @@ function getBandStatsI({ asOf, statsState, listState, learningLogState, suppress
 			context: getAppliedContextI(appliedHeld, s) }),
 		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", isCovered: noticeSources.includes("pattern ledger"), status: getBandStatStatusI(learningLogState, suppression),
 			value: heldNeedingHuman > 0 ? <JumpLinkI targetId={ANCHOR_ID_I.heldPatterns}>{formatIntI(heldNeedingHuman)}</JumpLinkI> : formatIntI(0),
-			context: `of ${formatIntI(sumCountsI(heldBuckets))} held patterns` }),
+			context: `of ${formatIntI(sumCountsI(heldBuckets))} held` }),
 	];
+}
+
+// a read stats payload with no cycle in the week and none on record → the loop has never run
+function hasNoCycleI(stats) {
+	return Boolean(stats) && Number(stats.cycle_total_7d ?? 0) === 0 && !stats.latest_cycle_started_at;
 }
 
 // no cycle on record → one phrase, never "last None" inside a sentence (spec 44084 §2.2)
 function getAppliedContextI(held, stats) {
 	const total = Number(stats.cycle_total_7d ?? 0);
-	if (total === 0 && !stats.latest_cycle_started_at) return getHeldTextI(held, "No cycles yet");
+	if (hasNoCycleI(stats)) return getHeldTextI(held, "No cycles yet");
 	return (
 		<>
 			{getHeldTextI(held, `of ${getCycleCountTextI(total)} · last `)}
@@ -651,35 +652,42 @@ function getHeldChipI(chip, state, at) {
 
 	return verdict.tone === "neutral"
 		? { ...chip, symbol: "ℹ", tone: "text-faint", label: verdict.label }
-		: { ...chip, label: verdict.label };
+		: { ...chip, label: verdict.label, isLastKnown: true };
 }
 
 const DEVIATION_TONES_I = new Set(["warn", "crit"]);
 
-// Operations-view instrumentation line — a gauge that deviates, visible without switching tabs; silent when every gauge reads fine.
-function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
+// gauge key → tone → what the deviation holds up, said once on the Operator view
+const DEVIATION_SENTENCE_I = {
+	style: {
+		warn: "Style check graduation held: too many unconfirmed claims",
+		crit: "Style check graduation held: too few runs name a style source",
+	},
+	corpus: { warn: "Agent prompts grew past their word line" },
+};
+
+// the gauges that deviate, empty while the verdict rules have not loaded
+function getDeviationChipsI({ styleRef, corpusAuditState, at }) {
 	const verdicts = window.ImprovementInstrumentationVerdicts;
-	if (!verdicts) return null;
-	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at).filter((chip) =>
+	if (!verdicts) return [];
+	return getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at).filter((chip) =>
 		DEVIATION_TONES_I.has(toneKeyI(chip.tone)),
 	);
-	if (chips.length === 0) return null;
+}
+
+// stat card foot — one sentence per deviating gauge, on the card's text column, then the way to its view
+function InstrumentationStripI({ chips, onOpen }) {
 	return (
-		<div
-			className="flex flex-wrap items-center gap-x-3 gap-y-stack fs-meta"
-			data-testid="instrumentation-strip"
-		>
-			{chips.map((chip) => (
-				<span
-					key={chip.key}
-					className="inline-flex items-center gap-label-inline"
-					title={chip.hint}
-				>
-					<SymI s={chip.symbol} className={chip.tone} size={11} />
-					<span className="text-ink">{chip.name}</span>
-					<span className="text-dim">{chip.label}</span>
-				</span>
-			))}
+		<div className="flex flex-wrap items-center gap-x-block gap-y-stack" data-testid="instrumentation-strip">
+			{chips.map((chip) => {
+				const tone = toneKeyI(chip.tone);
+				const sentence = DEVIATION_SENTENCE_I[chip.key]?.[tone] ?? `${chip.name} ${chip.label}`;
+				return (
+					<span key={chip.key} title={chip.hint}>
+						<window.UI.HeadStatus tone={tone}>{chip.isLastKnown ? `Last known: ${sentence}` : sentence}</window.UI.HeadStatus>
+					</span>
+				);
+			})}
 			<button type="button" className="btn ghost sm" onClick={onOpen}>
 				Instrumentation →
 			</button>
@@ -923,6 +931,7 @@ function CycleDecompositionRowI({ stats }) {
 function KanbanCardI({
 	state,
 	columnRows = {},
+	stats,
 	loopAggregate,
 	onRowClick,
 	onAction,
@@ -969,7 +978,7 @@ function KanbanCardI({
 					<LoadingPlaceholder label="suggestions" className="flex-1" />
 				</div>
 			) : isBoardEmpty ? (
-				<window.UI.EmptyState message="No suggestions yet" />
+				<window.UI.EmptyState message={hasNoCycleI(stats) ? "No suggestions yet" : "No suggestions waiting"} />
 			) : (
 				<div className="flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-hidden">
 					{awaitingRows.length > 0 ? (

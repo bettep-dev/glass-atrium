@@ -100,7 +100,7 @@ const BASELINE: Record<string, BaselineRow[]> = {
     { rule: "style-spacing-type", count: 10, owner: "C1" },
   ],
   improvement: [
-    { rule: "numeric-spacing", count: 43, owner: "C2" },
+    { rule: "numeric-spacing", count: 42, owner: "C2" },
     { rule: "inline-spacing", count: 1, owner: "C2" },
     { rule: "raw-table", count: 24, owner: "C2" },
     { rule: "style-spacing-type", count: 16, owner: "C2" },
