@@ -557,17 +557,29 @@ test("a run's start reads as its clock time, the full stamp in the cell title", 
   assert.match(String(started.props.title), /^2026-09-2\d \d{2}:\d{2}:\d{2}/);
 });
 
-test("an unrecorded run cell reads None in faint ink, never a blank or a dash", async () => {
+describe("an unrecorded cell reads the shared None look, never a blank or a dash", () => {
+  const run = { run_date: "2026-09-24", status: "ok", deadlinks_count: null, dedup_count: 3 };
+  const rows = [
+    { name: "a run's missing broken-link count", table: "WikiReportsTable", props: { reports: [run] }, isCell: (c: RenderedNode) => c.props.label === "Broken links" },
+    { name: "a run's missing start", table: "WikiReportsTable", props: { reports: [run] }, isCell: (c: RenderedNode) => c.props.label === "Started" },
+    { name: "a broken link's empty source note", table: "WikiBrokenLinksTable", props: { links: [{ source_slug: "", link_target: "missing-note" }] }, isCell: (c: RenderedNode) => c.props.kind === "row-header" },
+    { name: "a broken link's missing target", table: "WikiBrokenLinksTable", props: { links: [{ source_slug: "kept-note", link_target: null }] }, isCell: (c: RenderedNode) => c.props.label === "Target" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadWikiScreen();
+      const tbody = renderTableRowsOf(mod, renderScreen(mod.React.createElement(mod[row.table] as Component, row.props)));
+      const [cell] = findNodes(tbody, (n) => n.props.atom === "TableCell" && row.isCell(n));
+      assert.deepEqual(findNodes(cell, (n) => n.props.atom === "AbsentValue").map((n) => n.props.kind), ["none"]);
+    });
+  }
+});
+
+test("a recorded run count reads as itself", async () => {
   const mod = await loadWikiScreen();
   const tbody = renderRunRowsOf(mod, [{ run_date: "2026-09-24", status: "ok", deadlinks_count: null, dedup_count: 3 }]);
-  const cells = findNodes(tbody, (n) => n.props.atom === "TableCell");
-  const byLabel = (label: string) => cells.find((c) => c.props.label === label) ?? null;
-  for (const label of ["Broken links", "Started"]) {
-    const [none] = findNodes(byLabel(label), (n) => collectText(n) === "None" && n.type === "span");
-    assert.match(classOf(none), /\btext-faint\b/, `${label} reads None in faint ink`);
-  }
-  assert.equal(collectText(byLabel("Duplicates")), "3", "a recorded count reads as itself");
-  assert.doesNotMatch(collectText(tbody), /\u2014/, "no dash stands in for a value");
+  const [dedup] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Duplicates");
+  assert.equal(collectText(dedup), "3");
 });
 
 const ERRORED = { status: "error", data: null, error: "boom" };

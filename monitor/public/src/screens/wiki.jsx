@@ -1381,10 +1381,10 @@ function MergeSuggestionItem({ proposal, view }) {
 				<WikiMachineCellW value={sources} />
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Similarity" isNumeric>
-				<WikiCellValueW value={similarity} />
+				{similarity ?? <window.UI.AbsentValue kind="none" />}
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Reason" className="break-words whitespace-pre-wrap">
-				<WikiCellValueW value={proposal.llm_rationale?.trim() || null} />
+				{proposal.llm_rationale?.trim() || <window.UI.AbsentValue kind="none" />}
 			</TableCell>
 		</TableRow>
 	);
@@ -1415,10 +1415,10 @@ function WikiBrokenLinksTable({ links }) {
 	);
 }
 
-// a slug or path cell: a non-empty string reads in machine type, anything else as the faint None
+// a slug or path cell: a non-empty string reads in machine type, anything else as the shared None
 function WikiMachineCellW({ value }) {
-	const text = typeof value === "string" && value ? value : null;
-	return <WikiCellValueW value={text && <window.UI.MachineString>{text}</window.UI.MachineString>} />;
+	const { AbsentValue, MachineString } = window.UI;
+	return typeof value === "string" && value ? <MachineString>{value}</MachineString> : <AbsentValue kind="none" />;
 }
 
 // The cleaner tags every action DRY-RUN → the list states it once above the table.
@@ -1508,7 +1508,7 @@ function WikiReportsTable({ reports, isLoading = false }) {
 
 // a healthy run shows its date alone (the fold count says all healthy); any other states its glyph + word after the date
 function WikiReportRow({ report, view }) {
-	const { TableRow, TableCell, TONE_GLYPH } = window.UI;
+	const { AbsentValue, TableRow, TableCell, TONE_GLYPH } = window.UI;
 	const tone = wikiStatusToneW(report.status);
 
 	return (
@@ -1524,21 +1524,16 @@ function WikiReportRow({ report, view }) {
 				)}
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Started" className="tabular-nums" title={report.started_at ? window.UI.formatKstFull(report.started_at) : undefined}>
-				<WikiCellValueW value={report.started_at ? window.UI.formatKstTime(report.started_at) : null} />
+				{report.started_at ? window.UI.formatKstTime(report.started_at) : <AbsentValue kind="none" />}
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Broken links" isNumeric>
-				<WikiCellValueW value={report.deadlinks_count} />
+				{report.deadlinks_count ?? <AbsentValue kind="none" />}
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Duplicates" isNumeric>
-				<WikiCellValueW value={report.dedup_count} />
+				{report.dedup_count ?? <AbsentValue kind="none" />}
 			</TableCell>
 		</TableRow>
 	);
-}
-
-// An unrecorded cell reads "None" in faint ink (spec §6), never a blank or a dash.
-function WikiCellValueW({ value }) {
-	return value ?? <span className="text-faint">None</span>;
 }
 
 // Newest-first runs → one group per streak of equal status and backlog snapshot.
