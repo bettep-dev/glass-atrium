@@ -314,6 +314,62 @@ for (const width of [1440, 1920]) {
   });
 }
 
+// both alerts raised → the longest Alert value the fact list can hold
+const ALERT_REGIONS: Record<string, object> = {
+  ...FILLED_REGIONS,
+  "/api/improvement/corpus-audits": {
+    total_audits: 1,
+    audits: [{ cycle_date: "2026-11-20", word_count: 61250, trend_delta: 2400, file_count: 38, token_estimate: 79600, seeded_threshold: 60000,
+      gate_pass_count: 9, gate_trip_count: 1, gate_total_count: 10, compliance_rate: 0.9, override_rate: 0.1, trend_alert: true, absolute_alert: true }],
+  },
+};
+
+interface FactListReading {
+  lines: string[][];
+  firstColumnLefts: number[];
+}
+
+// the corpus fact list: terms grouped by line, each line's first term left edge
+function readCorpusFacts(page: Page): Promise<FactListReading> {
+  return page.evaluate(() => {
+    const card = [...document.querySelectorAll<HTMLElement>("#improvement-instrumentation .card-title")]
+      .find((heading) => heading.textContent === "Corpus growth")!.closest(".card")!;
+    // the stat row is a dl of its own → the fact list is the one outside it
+    const list = [...card.querySelectorAll<HTMLElement>("dl")].find((dl) => !dl.closest(".stat-row"))!;
+    const terms = [...list.querySelectorAll<HTMLElement>("dt")];
+    const byTop = new Map<number, HTMLElement[]>();
+    for (const term of terms) {
+      const top = Math.round(term.getBoundingClientRect().top);
+      byTop.set(top, [...(byTop.get(top) ?? []), term]);
+    }
+    const lines = [...byTop.entries()].sort(([a], [b]) => a - b).map(([, line]) => line);
+    return {
+      lines: lines.map((line) => line.map((term) => term.textContent ?? "")),
+      firstColumnLefts: lines.map((line) => line[0].getBoundingClientRect().left),
+    };
+  });
+}
+
+// line 1 = size facts, line 2 = gate facts, each on the first column; a missing Alert never pulls the gate line up
+const FACT_LIST_ROWS = [
+  { width: 1280, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
+  { width: 1440, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
+  { width: 1920, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
+  { width: 1440, regions: FILLED_REGIONS, lines: [["Files", "Tokens"], ["Gate checks", "Compliance", "Override"]] },
+];
+
+for (const row of FACT_LIST_ROWS) {
+  const alert = row.regions === ALERT_REGIONS ? "with an alert raised" : "with no alert";
+  test(`corpus facts read size then gate, each line on the first column, ${alert} at ${row.width}px`, async () => {
+    await withInstrumentationPage(row.width, async (page) => {
+      const facts = await readCorpusFacts(page);
+
+      assert.deepEqual(facts.lines, row.lines, `${row.width}px: the facts group by line`);
+      assert.ok(Math.abs(facts.firstColumnLefts[0] - facts.firstColumnLefts[1]) <= 1, `${row.width}px: both lines open on one column — ${facts.firstColumnLefts}`);
+    }, MIXED_CARD_SUGGESTIONS, row.regions);
+  });
+}
+
 interface EmptyCardReading {
   title: string;
   lineLeft: number;

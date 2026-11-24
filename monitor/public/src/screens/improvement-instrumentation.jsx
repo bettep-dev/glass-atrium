@@ -939,31 +939,41 @@ function CorpusGrowthCardI({ state }) {
 	);
 }
 
-// files · tokens · gate checks · rates, and a raised alert → one fact list
+// one fact list, one meaning per line: size, then gate
 function CorpusFactsI({ latest }) {
-	const verdict = getCorpusGrowthVerdictI(latest);
-	const gate = [latest.gate_pass_count, latest.gate_trip_count, latest.gate_total_count].map((n) => formatIntI(Number(n ?? 0)));
-	const facts = [
-		["Files", formatIntI(Number(latest.file_count ?? 0))],
-		["Tokens", `~${formatIntI(Number(latest.token_estimate ?? 0))}`],
-		["Gate checks", `${gate[0]} pass · ${gate[1]} trip of ${gate[2]}`],
-		["Compliance", getCorpusRateI(latest.compliance_rate)],
-		["Override", getCorpusRateI(latest.override_rate)],
-	];
-	if (verdict.tone === "text-warn") {
-		facts.push(["Alert", <><SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}</>]);
-	}
 	return (
 		// three term-value pairs per line → two lines, the paired card's row keeps its 75% fill floor
-		<dl className="grid grid-cols-[repeat(3,auto_1fr)] gap-x-block gap-y-list fs-meta tnum">
-			{facts.map(([term, value]) => (
+		<dl className="grid grid-cols-[repeat(3,auto_1fr)] gap-x-label gap-y-list fs-meta tnum">
+			{getCorpusFactLinesI(latest).map((line) => line.map(([term, value], index) => (
 				<React.Fragment key={term}>
-					<dt className="text-dim">{term}</dt>
+					{/* col-start-1 → each line opens on the first column, so a missing Alert never pulls the gate line up */}
+					<dt className={index === 0 ? "col-start-1 text-dim" : "text-dim"}>{term}</dt>
 					<dd className="text-ink">{value}</dd>
 				</React.Fragment>
-			))}
+			)))}
 		</dl>
 	);
+}
+
+// [size facts + a raised alert, gate facts]
+function getCorpusFactLinesI(latest) {
+	const verdict = getCorpusGrowthVerdictI(latest);
+	const gate = [latest.gate_pass_count, latest.gate_trip_count, latest.gate_total_count].map((n) => formatIntI(Number(n ?? 0)));
+	const facts = {
+		size: [
+			["Files", formatIntI(Number(latest.file_count ?? 0))],
+			["Tokens", `~${formatIntI(Number(latest.token_estimate ?? 0))}`],
+		],
+		gate: [
+			["Gate checks", `${gate[0]} pass · ${gate[1]} trip of ${gate[2]}`],
+			["Compliance", getCorpusRateI(latest.compliance_rate)],
+			["Override", getCorpusRateI(latest.override_rate)],
+		],
+	};
+	if (verdict.tone === "text-warn") {
+		facts.size.push(["Alert", <><SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}</>]);
+	}
+	return [facts.size, facts.gate];
 }
 
 function isCorpusGrowthEmptyI(data) {
