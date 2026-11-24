@@ -665,7 +665,7 @@ function TrendDeltaC({ delta, prior, noun }) {
 
 // the comparison's cut, one sentence → the window stat's ⓘ and the token foot's hover
 function getPriorCutTextC(prior) {
-  return `Compared with the ${prior.days} days before ${prior.period_end.slice(5)}, cut at the same time of day.`;
+  return `Compared with the ${prior.days} days before ${prior.period_end.slice(5)}, same time of day.`;
 }
 
 // Window change — direction rides on the glyph, never on the text colour; an equal window reads level, with no glyph.
@@ -2345,7 +2345,7 @@ function getSessionTurnStat(turns, sessionPopulation) {
 function TurnAggregateRow({ turns, sessionPopulation }) {
   const stats = [
     getSessionTurnStat(turns, sessionPopulation),
-    { label: 'Avg turns per logged event', value: window.UI.formatDecimal(Number(turns.avg_turns) || 0) },
+    { label: 'Avg turns per event', value: window.UI.formatDecimal(Number(turns.avg_turns) || 0) },
     { label: 'Most turns in one event', value: formatIntC(Number(turns.max_turns) || 0) },
     { label: 'Total turns', value: formatIntC(Number(turns.total_turns) || 0) },
   ];

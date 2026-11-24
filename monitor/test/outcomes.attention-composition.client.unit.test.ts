@@ -1016,8 +1016,8 @@ test("getDetailPositionLabelO: the drawer counts position in the grouped order t
   const searchRows: LedgerRow[] = [{ id: 1, result: "done" }, { id: 2, result: "fail" }, { id: 3, result: "blocked" }];
   const shown = view.getLedgerDisplayRowsO(view.buildLedgerSectionsO(searchRows));
   assert.deepStrictEqual(sameRealm(shown.map((r) => r.id)), [2, 3, 1]);
-  assert.strictEqual(view.getDetailPositionLabelO(shown, shown[0]), "1 of 3 shown", "the first displayed row reads as first");
-  assert.strictEqual(view.getDetailPositionLabelO(shown, { id: 99, result: "done" }), "not in the list shown");
+  assert.strictEqual(view.getDetailPositionLabelO(shown, shown[0]), "1 of 3", "the first displayed row reads as first");
+  assert.strictEqual(view.getDetailPositionLabelO(shown, { id: 99, result: "done" }), "not in this list");
 });
 
 test("ResultTable: no Check column, and a capped Needs-you offers one control to show the rest", () => {

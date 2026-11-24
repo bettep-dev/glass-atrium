@@ -1242,7 +1242,7 @@ describe("an instrumentation card sets its figures in one stat row, never a tile
         stop_reason_session_count: 412,
         turns: { avg_turns_per_session: 14.4, avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
       },
-      stats: [["Turns per session", "14.4"], ["Avg turns per logged event", "3.3"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
+      stats: [["Turns per session", "14.4"], ["Avg turns per event", "3.3"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
     },
   ];
 
@@ -1502,7 +1502,7 @@ test("the window stat's ⓘ states the cut its change line compares at, and only
       kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: row.trend, modelState: ready({ rows: [] }), days: 4, onRetry: () => {},
     });
     const notes = collectText(renderSpendNotes(tree));
-    assert.equal(notes.includes("Compared with the 4 days before 01-03, cut at the same time of day."), row.hasCut, row.name);
+    assert.equal(notes.includes("Compared with the 4 days before 01-03, same time of day."), row.hasCut, row.name);
   }
 });
 

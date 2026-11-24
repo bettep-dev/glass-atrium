@@ -90,9 +90,9 @@ const GRADER_VERDICT_NULL_META = { label: 'Pre-grader (legacy)', symbol: '–', 
 const GRADER_BREAKDOWN_ORDER = ['verified_pass', 'unverified', 'verified_fail', 'not_measured'];
 const GRADER_BREAKDOWN_META = {
   verified_pass: { label: 'Check passed',             symbol: '✓', icon: 'check',  colorVar: '--ok'    },
-  unverified:    { label: 'Auto-check N/A',           symbol: '○', icon: 'circle', colorVar: '--dim'   },
+  unverified:    { label: 'N/A',                      symbol: '○', icon: 'circle', colorVar: '--dim'   },
   verified_fail: { label: 'Check failed',             symbol: '✕', icon: 'x',      colorVar: '--crit'  },
-  not_measured:  { label: 'Pre-grader (legacy)',      symbol: '–', icon: 'minus',  colorVar: '--faint' },
+  not_measured:  { label: 'Legacy',                   symbol: '–', icon: 'minus',  colorVar: '--faint' },
 };
 
 // downgrade_origin 분포 순서 + 메타 — cross-analysis downgrade_breakdown 소비. writer_true_downgraded
@@ -2348,7 +2348,7 @@ function getLedgerDisplayRowsO(sections) {
 
 function getDetailPositionLabelO(displayRows, row) {
   const idx = displayRows.findIndex((r) => r.id === row?.id);
-  return idx >= 0 ? `${idx + 1} of ${displayRows.length} shown` : 'not in the list shown';
+  return idx >= 0 ? `${idx + 1} of ${displayRows.length}` : 'not in this list';
 }
 
 // Session closures the window query has not re-read yet → drop them from its rows and total, or a row shows in both sections.

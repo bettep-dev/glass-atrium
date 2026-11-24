@@ -547,6 +547,13 @@ describe("getGraderTileKeysO: the legacy tile appears only when it counts someth
   });
 });
 
+// the check-result stat row keeps one line at 1440 → the unmeasured and legacy buckets say it in one word, as on Instrumentation
+test("the check-result buckets name the unmeasured and legacy counts in one word, keeping the neutral glyph", () => {
+  const meta = vm.runInContext("GRADER_BREAKDOWN_META", outcomes as unknown as vm.Context) as Record<string, { label: string; symbol: string }>;
+  assert.deepEqual([meta.unverified.label, meta.unverified.symbol], ["N/A", "○"]);
+  assert.equal(meta.not_measured.label, "Legacy");
+});
+
 describe("getStackedDayReadoutO: the chart readout names the day's total and every present category", () => {
   test("each non-zero category appears with its count, and zero categories are left out", () => {
     const readout = outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 12, healthy: 9, attribution_loss: 0, literal_omission: 1, synthesized: 2 });

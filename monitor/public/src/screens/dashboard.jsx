@@ -1088,8 +1088,8 @@ function getBreakerCounts(data) {
 
 function describeFleetReach(agentCount, registryCount) {
   if (!Number.isFinite(agentCount)) return null;
-  const of = Number.isFinite(registryCount) && registryCount > 0 ? ` of ${formatInt(registryCount)} registered` : '';
-  return `${formatInt(agentCount)}${of} agents had a run in the last 7 days.`;
+  const of = Number.isFinite(registryCount) && registryCount > 0 ? ` of ${formatInt(registryCount)}` : '';
+  return `${formatInt(agentCount)}${of} agents ran in the last 7 days.`;
 }
 
 // the region reads order=runs&limit=1 → its one row is the busiest agent of the window

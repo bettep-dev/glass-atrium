@@ -432,7 +432,7 @@ test("the harness and fleet stats fill the context line under their count with a
   });
   const fleet = statOf(dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }), "fleet");
   assert.equal(fleet.context, "None on a failing streak");
-  assert.ok(fleet.notes.includes("12 of 20 registered agents had a run in the last 7 days."), JSON.stringify(fleet.notes));
+  assert.ok(fleet.notes.includes("12 of 20 agents ran in the last 7 days."), JSON.stringify(fleet.notes));
   assert.ok(fleet.notes.includes("Most runs: glass-atrium-agent-a, 2,731."), "the busiest agent is the region's one ordered row");
   const noRows = fleetStat({ source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] });
   assert.ok(!noRows.notes.some((note) => /Most runs/.test(note)), "no row → no busiest agent, never a made-up one");
