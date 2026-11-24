@@ -816,7 +816,7 @@ function LoopOutputGroupI({
 }) {
 	const { CardHead, Icon, getRegionView } = window.UI;
 	return (
-		<section className="space-y-group-below i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
+		<section className="space-y-group-below" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
 				right={
