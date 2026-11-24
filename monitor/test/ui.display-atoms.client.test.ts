@@ -244,6 +244,13 @@ describe("stat notes", () => {
     ]);
   });
 
+  test("the notes stack with the list gap between entries", () => {
+    const tree = render("StatNotes", { stats: [{ label: "Failed", info: "a" }, { label: "Over tool-use cap", info: "b" }] });
+    const [stack] = findNodes(tree, (n) => n.type === "div");
+    assert.match(String(stack.props.className), /\bstack\b.*\bstack--list\b/);
+    assert.equal(findNodes(stack, (n) => n.type === "p").length, 2);
+  });
+
   test("a note given as a node renders that node after the dash", () => {
     const info = React.createElement(ui.DayTokens as Component, null, "Counted over the last 7 days");
     const tree = render("StatNotes", { stats: [{ key: "spend", label: "Spend, 7d", info }] });

@@ -93,6 +93,21 @@ const empties = renderToStaticMarkup(h("div", null,
   h(UI.EmptyState, { message: "No runs yet", hint: "the wiki compiles nightly at 04:30" }),
   h(UI.EmptyState, { kind: "no-results", hint: "Widen the date range" }),
 ));
+// an empty line in a padded card body and in a flush one
+const cardEmpties = renderToStaticMarkup(h("div", { style: { width: 600 } },
+  h(UI.Card, { title: "Lifecycle events", className: "empty-padded" }, h(UI.EmptyState, { message: "No lifecycle events in 7 days" })),
+  h(UI.Card, { title: "Pairs", isFlush: true, className: "empty-flush" }, h(UI.EmptyState, { message: "No pair at or below 95%." }))));
+// a failed region in a padded card body with a stat row after it, as the Cost Spend card draws it
+const regionCard = renderToStaticMarkup(h("div", { style: { width: 720 } }, h(UI.Card, { title: "Spend" },
+  h(UI.RegionUnavailable, { source: "spend", error: "HTTP 500 Internal Server Error", onRetry: noop }),
+  h("div", { id: "region-next" }, "stats"))));
+// a stat card's ⓘ body: two notes, the first long enough to wrap
+const statNotes = renderToStaticMarkup(h(UI.StatNotes, { stats: [
+  { label: "Failed", info: "Runs that ended in fail or blocked over the window, counted once per run however many retries it took." },
+  { label: "Over tool-use cap", info: "Runs past the cap." },
+] }));
+// a group-header row of a house table, as TableCell kind="group-header" writes it
+const groupTable = `<table class="tbl" id="group-table"><tbody><tr><th scope="colgroup" colspan="2" role="heading" aria-level="2" class="tbl-cell tbl-cell--group-header">Draft</th></tr><tr><td>a</td><td>b</td></tr></tbody></table>`;
 // a fold nested in a card body (the Reporting health "Daily breakdown"), open so its body paints
 const inlineFold = renderToStaticMarkup(h("div", { style: { width: 600 } }, h(UI.Card, { title: "Reporting health" },
   h(UI.Disclosure, { kind: "status", title: "Daily breakdown", isInline: true, className: "inline-fold" }, h("div", { id: "inline-fold-body" }, "rows")))));
@@ -101,7 +116,7 @@ const legendSwatches = `<span id="swatch-ring" class="arch-legend-swatch arch-le
   `<span id="swatch-count" class="arch-legend-swatch arch-legend-swatch-count">!!×N</span>`;
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="drawer-stacked" style="padding: 24px; width: 360px;">${stackedFact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><div id="bare-alert" class="fs-body" style="padding: 24px; width: 480px;">${bareAlert}</div><div id="legend-swatches" style="padding: 24px; font-size: var(--fs-meta);">${legendSwatches}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="drawer-stacked" style="padding: 24px; width: 360px;">${stackedFact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="card-empties" style="padding: 24px;">${cardEmpties}</div><div id="region-card" style="padding: 24px;">${regionCard}</div><div id="stat-notes" style="padding: 24px; width: 360px;">${statNotes}</div><div style="padding: 24px; width: 480px;">${groupTable}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><div id="bare-alert" class="fs-body" style="padding: 24px; width: 480px;">${bareAlert}</div><div id="legend-swatches" style="padding: 24px; font-size: var(--fs-meta);">${legendSwatches}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -313,14 +328,14 @@ describe("the content below a page header", () => {
 });
 
 describe("an empty state", () => {
-  test("first use and no results both read a 14 ink message over a 13 dim hint, left at the card inset, with no border or fill", async () => {
+  test("first use and no results both read a 14 ink message over a 13 dim hint, left-aligned, with no border or fill", async () => {
     const looks = await page.$$eval("#empties > div > *", (states) => states.map((state) => {
       const [message, hint] = [...state.children].map((el) => getComputedStyle(el));
       const box = getComputedStyle(state);
       return {
         message: { size: message.fontSize, color: message.color },
         hint: { size: hint.fontSize, color: hint.color },
-        box: { align: box.textAlign, padding: box.paddingLeft, border: box.borderTopWidth, background: box.backgroundColor },
+        box: { align: box.textAlign, border: box.borderTopWidth, background: box.backgroundColor },
       };
     }));
     const tone = await page.evaluate(() => Object.fromEntries(["ink", "dim"].map((name) => {
@@ -336,8 +351,49 @@ describe("an empty state", () => {
     for (const look of looks) assert.deepEqual(look, {
       message: { size: "14px", color: tone.ink },
       hint: { size: "13px", color: tone.dim },
-      box: { align: "left", padding: `${CARD_PAD_PX}px`, border: "0px", background: "rgba(0, 0, 0, 0)" },
+      box: { align: "left", border: "0px", background: "rgba(0, 0, 0, 0)" },
     });
+  });
+});
+
+describe("an empty line inside a card", () => {
+  test("starts on the card title's column in a padded body and in a flush body", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    for (const host of [".empty-padded", ".empty-flush"]) {
+      const [title, message] = await Promise.all([boxOf(`${host} .card-title`), boxOf(`${host} .placeholder > div`)]);
+      assert.ok(Math.abs(message.left - title.left) <= 1, `${host}: message at ${message.left}, title at ${title.left}`);
+    }
+  });
+});
+
+describe("a failed region inside a card", () => {
+  test("is an alarm row on the card columns: glyph on the title's column, Retry ending on the right inset, one hairline before what follows", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const [frame, title, glyph, retry] = await Promise.all([boxOf("#region-card .card"), boxOf("#region-card .card-title"),
+      boxOf("#region-card .alarm-row-glyph"), boxOf("#region-card .alarm-row-actions button")]);
+    const rule = await page.$eval("#region-card .region-unavailable", (el) => getComputedStyle(el).borderBottomWidth);
+    assert.ok(Math.abs(glyph.left - title.left) <= 1, `glyph at ${glyph.left}, title at ${title.left}`);
+    assert.ok(Math.abs(retry.right - (frame.right - 1 - CARD_PAD_PX)) <= 1, `Retry ends ${frame.right - retry.right}px from the edge`);
+    assert.equal(rule, "1px");
+  });
+});
+
+describe("stat notes", () => {
+  test("keep the list gap between entries, a wrapped note included", async () => {
+    const boxes = await page.$$eval("#stat-notes p", (notes) => notes.map((note) => note.getBoundingClientRect().toJSON() as DOMRect));
+    assert.equal(boxes.length, 2);
+    assert.ok(boxes[0].height > 20, "the first note wraps");
+    assert.equal(boxes[1].top - boxes[0].bottom, 8);
+  });
+});
+
+describe("a table group-header cell", () => {
+  test("is a 600 heading with 12 above and 4 below", async () => {
+    const face = await page.$eval("#group-table .tbl-cell--group-header", (el) => {
+      const style = getComputedStyle(el);
+      return { weight: style.fontWeight, top: style.paddingTop, bottom: style.paddingBottom };
+    });
+    assert.deepEqual(face, { weight: "600", top: "12px", bottom: "4px" });
   });
 });
 
@@ -508,6 +564,35 @@ describe("a map-legend swatch", () => {
     assert.deepEqual({ height: read.count.height, border: read.count.border, edge: read.count.edge === read.crit, pad: read.count.pad },
       { height: 17, border: "2px", edge: true, pad: "4px" });
     assert.ok(read.count.width > 20, `the count key fits its mark (${read.count.width}px)`);
+  });
+});
+
+// the card head's type steps come from TypeScaleStyle and the atom's utilities from the app's vendored Tailwind runtime → its own page, so the other fixtures keep their faces
+describe("a head status in a card head", () => {
+  const head = renderToStaticMarkup(h("div", null, h(UI.TypeScaleStyle), h("div", { style: { width: 720 } },
+    h(UI.Card, { title: "No completion record", sub: h(UI.HeadStatus, { tone: "warn" }, h("span", { id: "head-words" }, "1,115 unfinished")) }, "rows"))));
+  let headPage: Page;
+
+  before(async () => {
+    headPage = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+    await headPage.setContent(`<!doctype html><html><head></head><body style="margin: 0;"><div id="head" style="padding: 24px;"></div></body></html>`);
+    await headPage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await headPage.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await headPage.addScriptTag({ path: resolve(HERE, "..", "public", "assets", "vendor", "tailwindcss-play-cdn-3.4.17.min.js") });
+    // the runtime styles markup added after it starts; a hidden probe tells when it has
+    await headPage.$eval("#head", (host, markup) => { host.innerHTML = `${markup}<span id="tw-probe" class="hidden"></span>`; }, head);
+    await headPage.waitForFunction(() => getComputedStyle(document.getElementById("tw-probe")!).display === "none");
+  });
+
+  test("sets its words on the card title's baseline", async () => {
+    // a zero-height inline-block's bottom edge sits on the baseline of the line it joins
+    const baselines = await headPage.$$eval(".card-title, #head-words", (els) => els.map((el) => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "display: inline-block; width: 0; height: 0;";
+      el.append(probe);
+      return probe.getBoundingClientRect().bottom;
+    }));
+    assert.ok(Math.abs(baselines[0] - baselines[1]) <= 1, `title baseline ${baselines[0]}, status words ${baselines[1]}`);
   });
 });
 

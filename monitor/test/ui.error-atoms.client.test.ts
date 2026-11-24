@@ -32,6 +32,11 @@ function getVisibleText(node: RenderedNode | string): string {
   return node.children.map(getVisibleText).join(" ");
 }
 
+// the region failure's own row element, wherever the atom nests it
+function getRow(tree: RenderedNode): RenderedNode {
+  return findNodes(tree, (n) => n.type === "div" && /\balarm-row\b/.test(String(n.props.className)))[0];
+}
+
 function getButtons(tree: RenderedNode): RenderedNode[] {
   return findNodes(tree, (n) => n.type === "button");
 }
@@ -107,13 +112,26 @@ test("a region failure offers Retry only when no page banner already carries it"
 test("a region failure sits inline in its card with no surface of its own", () => {
   const tree = render("RegionUnavailable", { source: "spend", error: SERVER_ERROR });
 
-  assert.doesNotMatch(String((tree.children[0] as RenderedNode).props.className), /\bsub-card\b|\bbg-|\brounded|\bring-/);
+  assert.doesNotMatch(String(getRow(tree).props.className), /\bsub-card\b|\bbg-|\brounded|\bring-/);
+});
+
+test("a region failure is an alarm row: crit glyph, the sentence and next step on the content column, Retry in the row-end slot", () => {
+  const tree = render("RegionUnavailable", { source: "spend", error: SERVER_ERROR, onRetry: () => {} });
+  const row = getRow(tree);
+  const cells = row.children.filter((child): child is RenderedNode => typeof child !== "string");
+
+  assert.match(String(row.props.className), /\balarm-row\b.*\bregion-unavailable\b/);
+  assert.equal(row.props["data-tone"], "crit");
+  assert.deepEqual(cells.map((cell) => String(cell.props.className).split(" ")[0]), ["alarm-row-glyph", "min-w-0", "alarm-row-actions"]);
+  assert.match(getVisibleText(cells[1]), /Couldn't load spend\./);
+  assert.equal(findNodes(cells[1], (n) => n.type === "details").length, 1, "Details under the next step");
+  assert.equal(getButtons(cells[2]).length, 1);
 });
 
 test("a region failure reserves the slot height it was given", () => {
   const tree = render("RegionUnavailable", { source: "spend", error: SERVER_ERROR, minHeight: 218 });
 
-  assert.equal(((tree.children[0] as RenderedNode).props.style as { minHeight: number }).minHeight, 218);
+  assert.equal((getRow(tree).props.style as { minHeight: number }).minHeight, 218);
 });
 
 test("an outage shared by two or more failed regions collapses to one cause; mixed or single failures do not", () => {

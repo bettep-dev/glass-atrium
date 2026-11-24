@@ -2094,6 +2094,11 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .tbl :is(.tbl-cell--primary, .tbl-cell--row-header, .tbl-cell--span) {
 	overflow-wrap: anywhere;
 }
+/* a group-header cell is a heading (role="heading") → 600; 12 above and 4 below set its group apart — one kind, one look (§12.3) */
+.tbl .tbl-cell--group-header {
+	font-weight: 600;
+	padding-block: var(--space-3) var(--space-1);
+}
 /* a body row header reads as the row's primary text, not as a column-header face */
 .tbl :is(tbody, tfoot) > tr > .tbl-cell--row-header {
 	color: rgb(var(--ink));
@@ -3155,16 +3160,24 @@ a.prose-link:hover {
 }
 
 /* TODO(mon-ui/43942): direct className="placeholder" use in screens deprecated for EmptyState — move each screen caller; .placeholder + .placeholder-hint stay as EmptyState's own styling */
-/* the one empty-state form — borderless, left-aligned at the card inset, message in ink at the control size, hint 13 dim under it */
+/* the one empty-state form — borderless, left-aligned, message in ink at the control size, hint 13 dim under it.
+   Its host already sits on the card column (a padded card body, a fold body) → no inline padding of its own */
 .placeholder {
-	padding: var(--card-pad);
+	padding-block: var(--card-pad);
 	color: rgb(var(--ink));
 	text-align: left;
 	font-size: var(--fs-control);
 }
-/* inside a section already on the card inset → the message lines up with the section's own text */
-.placeholder--flush-inline {
+/* a failed region sits on its host's card column like any card content → the alarm row's inline padding goes */
+.alarm-row.region-unavailable {
 	padding-inline: 0;
+}
+/* a flush card's direct body (a flush .card-body, or a card box holding its content bare) has no column of its own → an empty or failed region takes the card inset */
+.card-body.flush > .placeholder,
+.card-body.flush > .region-unavailable,
+.card > .placeholder,
+.card > .region-unavailable {
+	padding-inline: var(--card-pad);
 }
 .placeholder-hint {
 	margin-top: var(--space-1);

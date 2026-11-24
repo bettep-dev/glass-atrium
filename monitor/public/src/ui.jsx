@@ -656,12 +656,12 @@ function StatRow({ stats, className = '' }) {
  * @param stats - each { label, info, key? }, only the stats that carry a note; info = a string or a node (a note kept whole through `DayTokens`)
  */
 function StatNotes({ stats }) {
-  return <>
+  return <Stack gap="list">
     {stats.map((stat) => <p key={stat.key ?? stat.label}>
       <strong className="font-medium text-ink">{stat.label}</strong>
       {' — '}{stat.info}
     </p>)}
-  </>;
+  </Stack>;
 }
 
 /**
@@ -2802,7 +2802,8 @@ function RetryButton({ onRetry, isBusy = false, isInline = false, focusTargetId 
 }
 
 /**
- * Quiet per-region failure inline in its card, no surface of its own; keeps the grid slot and shows the raw answer behind Details.
+ * Quiet per-region failure inline in its card on the alarm-row geometry, no surface of its own: glyph on the card column, sentence and
+ * next step after it, the raw answer behind Details, Retry at the row end; keeps the grid slot.
  * @param onRetry - omit when a PageErrorBanner already carries the one Retry for this outage
  * @param isBusy - a Retry is in flight; keep rendering this card (see getRegionView) so its Retry keeps focus
  * @param focusTargetId - region card id that takes focus if this card unmounts while its Retry is focused
@@ -2810,16 +2811,11 @@ function RetryButton({ onRetry, isBusy = false, isInline = false, focusTargetId 
  */
 function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
   const copy = getErrorCopy(error, source);
+  const retry = onRetry && <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>;
   return (
-    <div className={`stack stack--label ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
-      <div className="fs-body cluster cluster--control">
-        <Icon name={TONE_ICON.crit} size={14} className="text-crit"/>
-        <span>{copy.sentence}</span>
-      </div>
-      <div className="fs-meta text-dim">{copy.next}</div>
+    <AlarmRow tone="crit" title={copy.sentence} detail={copy.next} actions={retry} minHeight={minHeight} className={`region-unavailable ${className}`.trim()}>
       <ErrorDetails detail={copy.detail}/>
-      {onRetry && <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>}
-    </div>
+    </AlarmRow>
   );
 }
 
@@ -2946,10 +2942,12 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
  * @param isHeld - the row's source failed its latest read → plain "Last known" after the title, never a badge
  * @param actions - a Link to the owning page or the row's own control
  * @param role - 'alert' when no live container announces the row
+ * @param minHeight - reserved slot height so a grid keeps its shape
+ * @param children - more on the content column under the detail line (a failed read's raw answer behind Details)
  */
-function AlarmRow({ tone, title, detail, isHeld = false, actions, role }) {
+function AlarmRow({ tone, title, detail, isHeld = false, actions, role, minHeight, className = '', children }) {
   return (
-    <div role={role} className="alarm-row" data-tone={tone}>
+    <div role={role} className={`alarm-row ${className}`.trim()} data-tone={tone} style={minHeight ? { minHeight } : undefined}>
       <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
       {/* fs-body on the content cell itself → base.css holds its line at the 20 row line; a child .fs-body would set 21.75 */}
       <div className="min-w-0 fs-body text-ink">
@@ -2958,6 +2956,7 @@ function AlarmRow({ tone, title, detail, isHeld = false, actions, role }) {
         </span>
         {isHeld && <> <span className="fs-meta text-dim">{LAST_KNOWN_TEXT}</span></>}
         {detail && <span className="alarm-row-detail fs-meta text-dim"><DayTokens>{detail}</DayTokens></span>}
+        {children}
       </div>
       {actions && <div className="alarm-row-actions">{actions}</div>}
     </div>
