@@ -357,7 +357,7 @@ function ScreenAgents() {
     setDrawerAgent(nextId);
   }, [sortedAgents, drawerAgent]);
 
-  const statusTiles = buildAgentStatusTiles({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent });
+  const statusTiles = buildAgentStatusTiles({ summaryState, failureState, overageState, failureByAgent, overageByAgent });
 
   return (
     <div className="flex flex-col">
@@ -694,9 +694,10 @@ function getAgentSourceFailures(regionEntries) {
 // Each stat carries its own payload state so one unloaded source never reads as a zero.
 function AgentStatusBand({ failures, tiles, onRetry }) {
   const cardId = IDS.REGION_CARD.status;
+  const notes = tiles.filter((tile) => tile.info).map((tile) => ({ key: tile.key, label: tile.label, info: tile.info }));
   return (
     <div id={cardId} className="min-w-0">
-      <window.UI.Card>
+      <window.UI.Card title="Status" info={<window.UI.StatNotes stats={notes}/>} infoLabel="How the status counts work">
         <window.UI.StatRow stats={tiles.map((tile) => buildStatusStatAg({ ...tile, failures, cardId, onRetry }))}/>
       </window.UI.Card>
     </div>
@@ -704,7 +705,7 @@ function AgentStatusBand({ failures, tiles, onRetry }) {
 }
 
 // One tile per fleet question, each with its own feeder → one unread source blanks only its stat.
-function buildAgentStatusTiles({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent }) {
+function buildAgentStatusTiles({ summaryState, failureState, overageState, failureByAgent, overageByAgent }) {
   const summary = readyData(summaryState);
   const breaker = summary?.meta?.circuit_breaker ?? null;
   const unsafeCount = breaker && breaker.source === 'loaded' ? breaker.suspended_count + breaker.streak_count : null;
@@ -739,9 +740,9 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       label: 'Failed',
       // runs, not agents → the tile sums to the ledger's Failed or blocked column over the same window
       sub: blocked?.agents
-        ? `last ${days}d · ${formatIntAg(blocked.runs)} blocked runs in ${formatAgentCountAg(blocked.agents)}`
-        : `agents with a failed run · last ${days}d`,
-      info: 'Agents with at least one failed run. Blocked runs are a compliant halt, not a defect: they count in the ledger\'s Failed or blocked column, never in this tile.',
+        ? `${formatIntAg(blocked.runs)} blocked runs in ${formatAgentCountAg(blocked.agents)}`
+        : 'agents with a failed run',
+      info: 'Agents with at least one failed run. Blocked runs are a compliant halt, not a defect. The ledger counts them under Failed or blocked.',
       status: window.UI.getRegionView(failureState),
       busy: failureState.busy,
       value: failedAgents ? failedAgents.length : null,
@@ -752,8 +753,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       key: 'overCap',
       feeder: REGION_FEEDERS.overage,
       label: 'Over tool-use cap',
-      sub: joinSubAg([getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`]),
-      info: 'Runs that crossed their tool-use budget, over every run in the window.',
+      sub: getRunRateTextAg(overCapCount, totalRuns),
+      info: 'Runs over their tool-use budget, as a share of all runs.',
       status: window.UI.getRegionView(overageState),
       busy: overageState.busy,
       value: overCapCount,
@@ -764,8 +765,8 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       key: 'needsContext',
       feeder: REGION_FEEDERS.summary,
       label: 'Needs info',
-      sub: joinSubAg([getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`]),
-      info: 'needs_context outcomes over every run in the window. A high rate points at the delegation prompt.',
+      sub: getRunRateTextAg(needsContextCount, totalRuns),
+      info: 'needs_context outcomes as a share of all runs. A high rate points at the delegation prompt.',
       status: summaryView,
       busy: summaryState.busy,
       value: needsContextCount,
@@ -801,16 +802,11 @@ function joinSubAg(parts) {
   return parts.filter(Boolean).join(' · ');
 }
 
-// tile model → one StatRow stat; the counting rule behind a label opens from its ⓘ trigger
+// tile model → one StatRow stat; the counting rules ride the card head's one ⓘ
 function buildStatusStatAg({ key, label, sub, info, unavailableSub, status, failures, cardId, onRetry, ...state }) {
-  const { CardInfo } = window.UI;
-  const labelId = `${cardId}-${key}-label`;
   return {
     key,
-    label: <>
-      <span id={labelId}>{label}</span>
-      {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
-    </>,
+    label,
     value: <StatusStatValueAg label={label} status={status} failures={failures} cardId={cardId} onRetry={onRetry} {...state}/>,
     context: status === 'unavailable' ? (unavailableSub ?? sub) : sub,
   };

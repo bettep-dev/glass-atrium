@@ -603,29 +603,8 @@ test("the status band is one card holding one stat row, a stat per fleet questio
   assert.equal(findAtoms(band, "Card").length, 1, "the card sits inside the band's focus target");
   const statRows = findNodes(tree, hasClass("stat-row"));
   assert.equal(statRows.length, 1);
-  // each label's own span — the ⓘ beside it carries the counting rule, not the label
-  assert.deepEqual(findNodes(statRows[0], (n) => n.type === "dt").map((n) => collectText(findNodes(n, (c) => c.type === "span")[0]).trim()),
+  assert.deepEqual(findNodes(statRows[0], (n) => n.type === "dt").map((n) => collectText(n).trim()),
     ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"]);
-});
-
-test("every status-band tile names the window its count covers", async () => {
-  const ready = { status: "ready", data: [], error: null };
-  const tree = await renderStatusBand({
-    days: 14,
-    summaryState: getSummaryState(BREAKER_LOADED_ZERO),
-    failureState: ready,
-    overageState: ready,
-    failureByAgent: new Map(),
-    overageByAgent: new Map(),
-    onRetry: () => undefined,
-  });
-  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"];
-  const tiles = labels.map((label) => findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith(label))
-    .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0]);
-  assert.match(collectText(tiles[0]), /\bnow\b/, "breaker state is current, not windowed");
-  for (const tile of tiles.slice(1)) {
-    assert.match(collectText(tile), /last 14d/);
-  }
 });
 
 test("the ledger opens sorted by breakages, riskiest agents first", async () => {
@@ -1400,8 +1379,34 @@ test("the status band counts failed agents in red and carries blocked-only agent
     assert.deepEqual(getValueTexts(tile), [String(row.value)], `${row.name}: value`);
     assert.equal(collectText(tile).match(/(Needs attention|Watch):/)?.[1] ?? null, row.srWord, `${row.name}: the glyph's word for screen readers`);
     // the ledger's Failed or blocked column counts runs over the same window, so the tile states runs too
-    assert.match(collectText(tile), /last 14d · 10 blocked runs in 2 agents/, `${row.name}: blocked runs and agents over the tile window`);
+    assert.match(collectText(tile), /10 blocked runs in 2 agents/, `${row.name}: blocked runs and agents`);
   }
+});
+
+describe("the Status card", () => {
+  const ready = { status: "ready", data: [], error: null };
+  const renderBand = () => renderStatusBand({
+    days: 30, summaryState: getSummaryState(BREAKER_LOADED_ZERO), failureState: ready, overageState: ready,
+    failureByAgent: new Map([["glass-atrium-dev-0", { fail_count: 1, blocked_count: 5, total_breakages: 6, breakage_rate: 0.1 }]]),
+    overageByAgent: new Map(), onRetry: () => undefined,
+  });
+
+  test("holds one info button in its head, whose body is the shared stat notes, and no stat label holds a button", async () => {
+    const tree = await renderBand();
+    const [card] = findAtoms(tree, "Card");
+    assert.equal(card?.props.title, "Status");
+    const [notes] = findAtoms(renderScreen(card?.props.info as never), "StatNotes");
+    const stats = (notes?.props.stats ?? []) as Array<{ label: string }>;
+    assert.deepEqual(Array.from(stats, (stat) => stat.label), ["Failed", "Over tool-use cap", "Needs info"]);
+    assert.equal(findAtoms(tree, "CardInfo").length, 0, "no info button in a stat label");
+  });
+
+  test("states no window in a context line, the page header stating it once", async () => {
+    const tree = await renderBand();
+    for (const label of ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"]) {
+      assert.doesNotMatch(collectText(getBandTile(tree, label)), /last \d+ ?d/, label);
+    }
+  });
 });
 
 test("the failures sort puts agents with failures before compliant halts, then the higher failure rate", async () => {
