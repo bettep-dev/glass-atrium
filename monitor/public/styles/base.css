@@ -2565,6 +2565,16 @@ a.prose-link:hover {
 	overflow-wrap: anywhere;
 }
 .detail-fact-value .machine { font-size: var(--fs-meta); }
+/* stacked fact — label above value, both on the start edge: a prose value wraps flush-left instead of ragged on the right */
+.detail-fact--stacked {
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: flex-start;
+	gap: var(--gap-stack);
+}
+.detail-fact--stacked > .detail-fact-value {
+	text-align: left;
+}
 
 /* pagination — range on the left column, quiet Previous · current · Next on the right */
 .pagination {

@@ -223,6 +223,12 @@ describe("empty fields are hidden", () => {
     assert.deepEqual({ terms, values }, { terms: ["File path"], values: ["hooks/a.sh"] });
   });
 
+  test("only a stacked detail field carries the stacked class", () => {
+    const getClass = (props: Record<string, unknown>) => findNodes(rendered("DetailField", { label: "Description", value: "Runs the nightly compile", ...props }), (n) => n.type === "dl")[0].props.className;
+
+    assert.deepEqual([getClass({}), getClass({ isStacked: true })], ["detail-fact", "detail-fact detail-fact--stacked"]);
+  });
+
   test("a detail field with a placeholder value renders nothing", () => {
     assert.equal(collectText(rendered("DetailField", { label: "Last action", value: "unknown" })), "");
   });

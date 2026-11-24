@@ -2053,9 +2053,10 @@ function getDisplayName(kind, value) {
 }
 
 // One drawer fact as a one-pair dl (valid without a caller's dl wrapper); an empty or placeholder value renders nothing.
-function DetailField({ label, value, mono = false }) {
+// isStacked → label above value on the start edge, for a prose value (a description) that would wrap ragged on the right.
+function DetailField({ label, value, mono = false, isStacked = false }) {
   if (!hasFieldValue(value)) return null;
-  return <dl className="detail-fact">
+  return <dl className={isStacked ? 'detail-fact detail-fact--stacked' : 'detail-fact'}>
     <dt className="detail-fact-label">{label}</dt>
     <dd className="detail-fact-value">{mono ? <MachineString>{value}</MachineString> : value}</dd>
   </dl>;

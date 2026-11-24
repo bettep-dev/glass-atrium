@@ -78,6 +78,8 @@ const glyphSlots = renderToStaticMarkup(h("div", null,
 const bareAlert = renderToStaticMarkup(h(UI.AlertCard, { tone: "neutral", surface: "bare", title: "Couldn't refresh.",
   actions: h(UI.RetryButton, { isInline: true, onRetry: noop }) }));
 const fact = renderToStaticMarkup(h(UI.DetailField, { label: "File path", value: "hooks/track-outcome-with-a-very-long-name-that-has-to-wrap.sh", mono: true }));
+// the architecture drawer Description: a prose value long enough to wrap in a 360 drawer
+const stackedFact = renderToStaticMarkup(h(UI.DetailField, { label: "Description", value: "Runs every hook the harness fires on each tool call and session event, then records the outcome", isStacked: true }));
 const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", { id }, h(UI.PageHeader, {
   title,
   sub: "retired sub-line",
@@ -96,7 +98,7 @@ const inlineFold = renderToStaticMarkup(h("div", { style: { width: 600 } }, h(UI
   h(UI.Disclosure, { kind: "status", title: "Daily breakdown", isInline: true, className: "inline-fold" }, h("div", { id: "inline-fold-body" }, "rows")))));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><div id="bare-alert" class="fs-body" style="padding: 24px; width: 480px;">${bareAlert}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="drawer-stacked" style="padding: 24px; width: 360px;">${stackedFact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><div id="bare-alert" class="fs-body" style="padding: 24px; width: 480px;">${bareAlert}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -447,6 +449,25 @@ describe("a drawer fact", () => {
     assert.ok(read.label.left < read.value.left && Math.abs(read.value.right - read.row.right) < 1, "label left, value on the row's end");
     assert.equal(read.valueAlign, "right");
     assert.equal(read.scrolls, false, "the long value wraps instead of scrolling");
+  });
+
+  test("stacked: the label sits 4 above its value, both on the row's start edge, and a wrapped value stays flush-left", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const read = await page.$eval("#drawer-stacked .detail-fact", (row) => {
+      const [label, value] = [row.querySelector("dt")!, row.querySelector("dd")!];
+      const range = document.createRange();
+      range.selectNodeContents(value);
+      const lineLefts = [...range.getClientRects()].map((r) => Math.round(r.left));
+      const [rowBox, labelBox, valueBox] = [row, label, value].map((el) => el.getBoundingClientRect());
+      return {
+        gap: Math.round(valueBox.top - labelBox.bottom),
+        starts: [Math.round(labelBox.left - rowBox.left), Math.round(valueBox.left - rowBox.left)],
+        isWrapped: lineLefts.length > 1,
+        flushLeft: new Set(lineLefts).size === 1 && lineLefts[0] === Math.round(rowBox.left),
+      };
+    });
+
+    assert.deepEqual(read, { gap: 4, starts: [0, 0], isWrapped: true, flushLeft: true });
   });
 });
 
