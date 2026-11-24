@@ -808,7 +808,7 @@ function CorrectionSignalsCardI({ state }) {
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<Card title={title} sub="Correction signals">
+			<Card title={title} sub="Correction signals" info={CORRECTION_SIGNALS_INFO_I}>
 				<LoadingPlaceholder label="correction signals" minHeight={60} />
 			</Card>
 		);
@@ -827,13 +827,16 @@ function CorrectionSignalsCardI({ state }) {
 	const latest = d.latest_event_ts ? formatKstDate(d.latest_event_ts) : null;
 
 	return (
-		<Card
-			title={title}
-			sub={`${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`}
-			info={CORRECTION_SIGNALS_INFO_I}
-		>
+		<Card title={title} sub="Correction signals" info={CORRECTION_SIGNALS_INFO_I}>
 			<Stack gap="label">
-				<StatRow stats={[{ key: "agreement", label: "Stage1/stage2 agreement", value: `${agreePct}%` }]} />
+				<StatRow
+					stats={[{
+						key: "agreement",
+						label: "Stage1/stage2 agreement",
+						value: `${agreePct}%`,
+						context: `${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`,
+					}]}
+				/>
 				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
 				<Cluster gap="control-group" className="fs-meta text-faint tnum">
 					<span>
@@ -914,10 +917,7 @@ function CorpusGrowthCardI({ state }) {
 	];
 
 	return (
-		<Card
-			title={title}
-			sub={`${formatIntI(Number(state.data.total_audits ?? 0))} audits · latest ${latest.cycle_date}`}
-		>
+		<Card title={title} sub="Per-cycle audit">
 			<Stack gap="label">
 				<Cluster gap="control-group" className="items-end justify-between">
 					<StatRow stats={stats} />
@@ -934,6 +934,10 @@ function CorpusGrowthCardI({ state }) {
 					)}
 				</Cluster>
 				<CorpusFactsI latest={latest} />
+				{/* cycle_date is already a display-zone day key in the YYYY-MM-DD form formatKstDate prints → no zone shift */}
+				<div className="fs-meta text-faint tnum">
+					{formatIntI(Number(state.data.total_audits ?? 0))} audits · latest {latest.cycle_date}
+				</div>
 			</Stack>
 		</Card>
 	);
@@ -943,7 +947,7 @@ function CorpusGrowthCardI({ state }) {
 function CorpusFactsI({ latest }) {
 	return (
 		// three term-value pairs per line → two lines, the paired card's row keeps its 75% fill floor
-		<dl className="grid grid-cols-[repeat(3,auto_1fr)] gap-x-label gap-y-list fs-meta tnum">
+		<dl className="grid grid-cols-[repeat(3,auto_minmax(max-content,1fr))] gap-x-label gap-y-list fs-meta tnum">
 			{getCorpusFactLinesI(latest).map((line) => line.map(([term, value], index) => (
 				<React.Fragment key={term}>
 					{/* col-start-1 → each line opens on the first column, so a missing Alert never pulls the gate line up */}
@@ -958,20 +962,22 @@ function CorpusFactsI({ latest }) {
 // [size facts + a raised alert, gate facts]
 function getCorpusFactLinesI(latest) {
 	const verdict = getCorpusGrowthVerdictI(latest);
-	const gate = [latest.gate_pass_count, latest.gate_trip_count, latest.gate_total_count].map((n) => formatIntI(Number(n ?? 0)));
+	const trip = Number(latest.gate_trip_count ?? 0);
 	const facts = {
 		size: [
 			["Files", formatIntI(Number(latest.file_count ?? 0))],
 			["Tokens", `~${formatIntI(Number(latest.token_estimate ?? 0))}`],
 		],
 		gate: [
-			["Gate checks", `${gate[0]} pass · ${gate[1]} trip of ${gate[2]}`],
+			// the pass count already reads as Compliance (pass ÷ total)
+			["Gate checks", `${formatIntI(trip)} ${trip === 1 ? "trip" : "trips"} in ${formatIntI(Number(latest.gate_total_count ?? 0))}`],
 			["Compliance", getCorpusRateI(latest.compliance_rate)],
 			["Override", getCorpusRateI(latest.override_rate)],
 		],
 	};
 	if (verdict.tone === "text-warn") {
-		facts.size.push(["Alert", <><SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}</>]);
+		// the Alert term already says alert → the value names the kinds only
+		facts.size.push(["Alert", <><SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.kinds}</>]);
 	}
 	return [facts.size, facts.gate];
 }
@@ -1002,10 +1008,12 @@ function getCorpusGrowthVerdictI(latest) {
 		latest.absolute_alert ? "absolute" : null,
 	].filter(Boolean);
 	if (alerts.length > 0) {
+		const kinds = alerts.join(" + ");
 		return {
 			symbol: "⚠",
 			tone: "text-warn",
-			label: `${alerts.join(" + ")} alert`,
+			label: `${kinds} alert`,
+			kinds,
 			hint,
 		};
 	}

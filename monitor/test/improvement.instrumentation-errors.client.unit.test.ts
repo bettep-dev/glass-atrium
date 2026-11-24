@@ -286,3 +286,40 @@ describe("a gauge row holding an empty card sizes each column to its content", (
     });
   }
 });
+
+// a card head is one fixed phrase in every state, so its figures live in the body and the head never shifts as data lands
+describe("a gauge card's loading, empty and data forms share title, sub and info", () => {
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const loading = { status: "loading", data: null, error: null };
+  const rows = [
+    {
+      name: "Detection agreement",
+      card: "CorrectionSignalsCardI",
+      empty: ready({ total_signals: 0 }),
+      data: ready({
+        total_signals: 128, latest_event_ts: "2026-11-22T03:00:00Z", revision_delta_sum: 4, revision_delta_max: 2,
+        agreement: { total: 128, agreement_count: 100, both_matched: 60, stage1_only: 10, stage2_only: 18, neither_matched: 40 },
+      }),
+    },
+    {
+      name: "Corpus growth",
+      card: "CorpusGrowthCardI",
+      empty: ready({ total_audits: 0, audits: [] }),
+      data: ready({ total_audits: 12, audits: [{ cycle_date: "2026-11-22", word_count: 41250, gate_pass_count: 9, gate_trip_count: 1, gate_total_count: 10 }] }),
+    },
+  ];
+  // expands view-local components until the shared Card element
+  const getHead = (node: unknown) => {
+    let element = node as RecordedElement;
+    while (element.type !== sandbox.window.UI.Card) element = (element.type as (p: unknown) => RecordedElement)(element.props);
+    return { title: element.props.title, sub: element.props.sub, info: element.props.info };
+  };
+  for (const row of rows)
+    test(row.name, () => {
+      const render = sandbox[row.card] as (props: unknown) => unknown;
+
+      const heads = [loading, row.empty, row.data].map((state) => getHead(render({ state })));
+
+      assert.deepEqual(heads.slice(1), [heads[0], heads[0]]);
+    });
+});

@@ -327,6 +327,8 @@ const ALERT_REGIONS: Record<string, object> = {
 interface FactListReading {
   lines: string[][];
   firstColumnLefts: number[];
+  valueLineCounts: Record<string, number>;
+  overflow: number;
 }
 
 // the corpus fact list: terms grouped by line, each line's first term left edge
@@ -346,6 +348,12 @@ function readCorpusFacts(page: Page): Promise<FactListReading> {
     return {
       lines: lines.map((line) => line.map((term) => term.textContent ?? "")),
       firstColumnLefts: lines.map((line) => line[0].getBoundingClientRect().left),
+      // a value's line count = its box height in line-heights (a glyph's own box sits off the text's top, so tops would miscount)
+      valueLineCounts: Object.fromEntries([...list.querySelectorAll<HTMLElement>("dd")].map((value) => [
+        value.previousElementSibling?.textContent ?? "",
+        Math.round(value.getBoundingClientRect().height / parseFloat(getComputedStyle(value).lineHeight)),
+      ])),
+      overflow: list.scrollWidth - list.clientWidth,
     };
   });
 }
@@ -355,7 +363,9 @@ const FACT_LIST_ROWS = [
   { width: 1280, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
   { width: 1440, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
   { width: 1920, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
+  { width: 1280, regions: FILLED_REGIONS, lines: [["Files", "Tokens"], ["Gate checks", "Compliance", "Override"]] },
   { width: 1440, regions: FILLED_REGIONS, lines: [["Files", "Tokens"], ["Gate checks", "Compliance", "Override"]] },
+  { width: 1920, regions: FILLED_REGIONS, lines: [["Files", "Tokens"], ["Gate checks", "Compliance", "Override"]] },
 ];
 
 for (const row of FACT_LIST_ROWS) {
@@ -366,6 +376,15 @@ for (const row of FACT_LIST_ROWS) {
 
       assert.deepEqual(facts.lines, row.lines, `${row.width}px: the facts group by line`);
       assert.ok(Math.abs(facts.firstColumnLefts[0] - facts.firstColumnLefts[1]) <= 1, `${row.width}px: both lines open on one column — ${facts.firstColumnLefts}`);
+    }, MIXED_CARD_SUGGESTIONS, row.regions);
+  });
+
+  test(`every corpus fact value reads on one line inside the list, ${alert} at ${row.width}px`, async () => {
+    await withInstrumentationPage(row.width, async (page) => {
+      const facts = await readCorpusFacts(page);
+
+      assert.deepEqual(Object.values(facts.valueLineCounts), row.lines.flat().map(() => 1), `${row.width}px: ${JSON.stringify(facts.valueLineCounts)}`);
+      assert.ok(facts.overflow <= 0, `${row.width}px: the list overflows by ${facts.overflow}px`);
     }, MIXED_CARD_SUGGESTIONS, row.regions);
   });
 }
