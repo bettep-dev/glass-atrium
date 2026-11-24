@@ -1699,6 +1699,35 @@ label.ctl-checkbox-hit {
 	white-space: nowrap;
 }
 
+/* System map (architecture.jsx) — the map-legend mark: the key of a canvas ring, its mark inside a 2px ring.
+   Height = the meta line + both 2px borders, so the mark never spills over its ring */
+.arch-legend-swatch {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: calc(var(--fs-meta) + 4px);
+	border: 2px solid rgb(var(--faint));
+	border-radius: var(--radius-inline);
+}
+.arch-legend-swatch-warn {
+	border-color: rgb(var(--warn));
+	color: rgb(var(--warn));
+}
+.arch-legend-swatch-crit {
+	border-color: rgb(var(--crit));
+	color: rgb(var(--crit));
+}
+.arch-legend-swatch-dashed {
+	border-style: dashed;
+}
+.arch-legend-swatch-count {
+	width: auto;
+	padding: 0 var(--space-1);
+	border-color: rgb(var(--crit));
+	color: rgb(var(--crit));
+}
+
 /* Remote access (remote-access.jsx) — the connect card's procedure: the rail of steps beside the open step's pane */
 .ra-procedure {
 	container-type: inline-size;

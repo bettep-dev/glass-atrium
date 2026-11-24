@@ -332,6 +332,8 @@ describe("each atom variant a screen names sets only its own declarations, in on
       decls: { "line-height": "var(--lh-row)" } },
     { name: "a disclosure body sets only its start inset: the chevron plus the trigger's gap", selector: ".disclosure-body",
       decls: { "padding-inline-start": "calc(14px + var(--space-1))" } },
+    { name: "the map-legend count key fits its mark at a 4 inline pad in the crit tone", selector: ".arch-legend-swatch-count",
+      decls: { width: "auto", padding: "0 var(--space-1)", "border-color": "rgb(var(--crit))", color: "rgb(var(--crit))" } },
   ];
   for (const row of rows) {
     test(row.name, () => {

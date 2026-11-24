@@ -96,9 +96,12 @@ const empties = renderToStaticMarkup(h("div", null,
 // a fold nested in a card body (the Reporting health "Daily breakdown"), open so its body paints
 const inlineFold = renderToStaticMarkup(h("div", { style: { width: 600 } }, h(UI.Card, { title: "Reporting health" },
   h(UI.Disclosure, { kind: "status", title: "Daily breakdown", isInline: true, className: "inline-fold" }, h("div", { id: "inline-fold-body" }, "rows")))));
+// the System map legend marks as the screen writes them: a ring key and the count key, on meta-size text
+const legendSwatches = `<span id="swatch-ring" class="arch-legend-swatch arch-legend-swatch-warn">!</span>` +
+  `<span id="swatch-count" class="arch-legend-swatch arch-legend-swatch-count">!!×N</span>`;
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="drawer-stacked" style="padding: 24px; width: 360px;">${stackedFact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><div id="bare-alert" class="fs-body" style="padding: 24px; width: 480px;">${bareAlert}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="drawer-stacked" style="padding: 24px; width: 360px;">${stackedFact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><div id="bare-alert" class="fs-body" style="padding: 24px; width: 480px;">${bareAlert}</div><div id="legend-swatches" style="padding: 24px; font-size: var(--fs-meta);">${legendSwatches}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -482,6 +485,29 @@ describe("an inline fold", () => {
     assert.deepEqual(look, { border: "0px", background: "rgba(0, 0, 0, 0)", shadow: "none" });
     assert.equal(trigger.left - card.left, CARD_PAD_PX + 1);
     assert.equal(body.left - card.left, CARD_PAD_PX + 1);
+  });
+});
+
+// a ring key is a 20-wide box one meta line tall inside its 2px tone ring; the count key fits its mark at a 4 inline pad
+describe("a map-legend swatch", () => {
+  test("a ring key is 20 × (meta + both borders) in its tone, and the count key widens to its mark", async () => {
+    // inline maps, no named helpers — the runner's __name wrapper is undefined in the page
+    const read = await page.$eval("#legend-swatches", (host) => {
+      const root = getComputedStyle(document.documentElement);
+      const [warn, crit] = ["--warn", "--crit"].map((name) => `rgb(${root.getPropertyValue(name).trim().split(/\s+/).join(", ")})`);
+      const [ring, count] = ["#swatch-ring", "#swatch-count"].map((id) => {
+        const el = host.querySelector(id)!;
+        const style = getComputedStyle(el);
+        const box = el.getBoundingClientRect();
+        return { width: box.width, height: box.height, border: style.borderTopWidth, edge: style.borderTopColor, pad: style.paddingLeft };
+      });
+      return { ring, count, warn, crit };
+    });
+
+    assert.deepEqual({ ...read.ring, edge: read.ring.edge === read.warn }, { width: 20, height: 17, border: "2px", edge: true, pad: "0px" });
+    assert.deepEqual({ height: read.count.height, border: read.count.border, edge: read.count.edge === read.crit, pad: read.count.pad },
+      { height: 17, border: "2px", edge: true, pad: "4px" });
+    assert.ok(read.count.width > 20, `the count key fits its mark (${read.count.width}px)`);
   });
 });
 

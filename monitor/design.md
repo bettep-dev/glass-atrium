@@ -312,7 +312,7 @@
     - 짝: 모서리 badge (`rect.arch-ring-glyph-pill` `--surface` fill · 1.5px tone stroke + `text.arch-ring-glyph` mark `!` warn · `!!` crit, label 크기 700) + 노드 accessible name 의 health word (`HEALTH_WORD_AR`).
     - ok 는 링 없음 · unverified = `--faint` dashed 링 · focus = 그 바깥 `rect.arch-ring-focus` `--focus-ring`.
     - 명암비 (`--surface` · `--elev` 위): warn ≥ 10.48 · crit ≥ 6.32 (UI 3:1).
-  - **System map 범례 swatch** (`.arch-legend-swatch-warn` / `-crit` / `-count`) = 링의 key: 2px tone border + mark (`!` · `!!` · `!!×N`) + `--dim` 라벨 ("Ring needs attention" · "Ring critical" · "N parts in this box need attention"). page `--surface` 위 → warn 11.83 · crit 7.14.
+  - **System map 범례 swatch** (`base.css` → `.arch-legend-swatch-warn` / `-crit` / `-count`, the map-legend mark) = 링의 key: 2px tone border + mark (`!` · `!!` · `!!×N`) + `--dim` 라벨 ("Needs attention" · "Critical" · "N parts in this box need attention"). page `--surface` 위 → warn 11.83 · crit 7.14.
   - **Amber badge** (`.pill--warn`, §7.3): `--tint-warn` shell + `⚠` + word, both in ink — the tint alone is 1.43 on `--elev`, so the glyph shape and the word carry it; ink on it ≥ 9.33.
 - **범위 밖 — destructive action** (severity 아닌 action role, 단어 = 버튼 라벨): `.btn.danger` · red-outline 버튼 (`DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) — §7.4.
 - **Badge 3 role** (`ui.jsx` → `Badge`):
