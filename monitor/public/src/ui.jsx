@@ -3078,6 +3078,14 @@ function formatUsdCompact(value) {
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
+/**
+ * The one formatter for a set of amounts (a column, a range's bounds, a strip's labels) — spec 44084 §2.1.
+ * Any amount under $100 → cents on every amount, so the set reads in one precision and a total checks against its rows.
+ */
+function getMoneyColumnFormat(values) {
+  return values.some((v) => Math.abs(v) < 100) ? formatUsd : formatUsdCompact;
+}
+
 // the spend alarm's two shared clauses (spec 44084 §3.4) — the pace clause that may follow the amount stays per screen
 function formatSpendSoFar(amount) {
   return `${formatUsdCompact(amount)} so far today`;
@@ -3387,7 +3395,7 @@ window.UI = {
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
   formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
-  formatUsd, formatUsdCompact, formatSpendSoFar, formatSpendMultiple, formatInt, formatTokenCompact, formatDuration, formatPct, formatDecimal,
+  formatUsd, formatUsdCompact, getMoneyColumnFormat, formatSpendSoFar, formatSpendMultiple, formatInt, formatTokenCompact, formatDuration, formatPct, formatDecimal,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,

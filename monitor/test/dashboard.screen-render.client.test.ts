@@ -23,7 +23,7 @@ const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
 
 // shared words and the atoms that build them pass through from ui.jsx
-const REAL_UI_NAMES = new Set(["ALERT_SEVERITY_WORD", "AlarmRow", "getNoticePointer", "LAST_KNOWN_TEXT", "getHeldCause", "StatNotes"]);
+const REAL_UI_NAMES = new Set(["ALERT_SEVERITY_WORD", "AlarmRow", "getNoticePointer", "LAST_KNOWN_TEXT", "getHeldCause", "StatNotes", "getMoneyColumnFormat"]);
 
 // window.UI stub — every atom resolves to a transparent host element; shared words and maps come from the real ui.jsx.
 function uiStub(): unknown {
@@ -223,6 +223,15 @@ test("spend and result bars carry the data colour; today's partial day keeps its
   for (const node of [...findNodes(spend, () => true), ...findNodes(results, () => true)]) {
     assert.doesNotMatch(classOf(node), /\btext-(?:info|ok|warn|crit)\b/);
   }
+});
+
+// spec 44084 §2.1: the strip's day labels are one set → one day under $100 keeps cents on every label
+test("the Spend per day labels share one precision across the strip", () => {
+  const strip = (mod.buildSpendStrip as (points: unknown) => unknown)(
+    [["2026-09-22", 402], ["2026-09-23", 69.76], ["2026-09-24", 2307]].map(([date, cost_usd]) => ({ date, cost_usd, session_count: 1 })),
+  );
+  const labels = findNodes(render("SpendStrip", { strip }), (n) => classOf(n).includes("tabular-nums")).map(collectText);
+  assert.deepEqual(labels, ["$402.00", "$69.76", "$2,307.00"]);
 });
 
 test("the alarm lane, the spend strip and the results panel space by role keys, never a Tailwind ladder step", () => {

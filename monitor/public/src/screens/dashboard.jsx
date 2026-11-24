@@ -445,13 +445,14 @@ function SpanLine({ span, children }) {
 function SpendStrip({ strip }) {
   if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded</p>;
   const max = Math.max(...strip.bars.map((bar) => bar.cost)) || 1;
+  const formatCost = window.UI.getMoneyColumnFormat(strip.bars.map((bar) => bar.cost));
   return (
     <>
       <SpanLine span={strip.span}/>
       <ol className="grid grid-cols-7 gap-label-inline" aria-label={`Spend per day, ${strip.span}`}>
         {strip.bars.map((bar) => (
           <li key={bar.date} className="flex flex-col items-center gap-stack min-w-0">
-            <span className="fs-meta tabular-nums whitespace-nowrap">{formatUsdCompact(bar.cost)}</span>
+            <span className="fs-meta tabular-nums whitespace-nowrap">{formatCost(bar.cost)}</span>
             <div className="dash-strip-track w-full flex items-end text-data" aria-hidden="true">
               {bar.cost > 0 && <div className={`w-full ${bar.isPartial ? 'dash-strip-partial' : 'dash-strip-bar'}`}
                 style={{ height: `${Math.max(2, (bar.cost / max) * 100)}%` }}/>}

@@ -10,6 +10,7 @@ interface UiSurface {
   formatKstDay: (iso: string | null) => string;
   formatKstDateTime: (iso: string | null) => string;
   formatUsdCompact: (value: number) => string;
+  getMoneyColumnFormat: (values: number[]) => (value: number) => string;
   formatSpendSoFar: (amount: number) => string;
   formatSpendMultiple: (ratio: number, basis: number) => string;
   setDisplayTimezone: (tz: string) => void;
@@ -62,6 +63,21 @@ describe("money form", () => {
   for (const row of rows) {
     test(`a compact amount: ${row.name}`, () => {
       assert.equal(UI.formatUsdCompact(row.value), row.text);
+    });
+  }
+});
+
+// spec 44084 §2.1: the amounts of one set (a column, a range, a strip) share one precision
+describe("money set form", () => {
+  const rows = [
+    { name: "one amount under $100 keeps cents on every amount", values: [69.76, 402, 2307], texts: ["$69.76", "$402.00", "$2,307.00"] },
+    { name: "an amount just under $100 still keeps cents", values: [99.99, 2307], texts: ["$99.99", "$2,307.00"] },
+    { name: "every amount at $100 or over drops cents on every amount", values: [100, 1103.69], texts: ["$100", "$1,104"] },
+  ];
+  for (const row of rows) {
+    test(`a set reads in one precision: ${row.name}`, () => {
+      const format = UI.getMoneyColumnFormat(row.values);
+      assert.deepEqual(row.values.map(format), row.texts);
     });
   }
 });

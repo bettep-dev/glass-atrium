@@ -331,7 +331,7 @@ function getSpendAlarmCopyC(hot, outsideDay) {
 
 // a trend day's band in words, "Normal range $a – $b" — the alarm detail and the chart readout read one form; both bounds one precision
 function formatNormalRangeC(row) {
-  const formatBound = getMoneyColumnFormatC([row.lowerBand, row.upperBand]);
+  const formatBound = window.UI.getMoneyColumnFormat([row.lowerBand, row.upperBand]);
   return `Normal range ${formatBound(row.lowerBand)} \u2013 ${formatBound(row.upperBand)}`;
 }
 
@@ -1263,7 +1263,7 @@ function computeCategoryCostRows(modelCostRows) {
 // Row 0 of the ledger — where the money goes by token category, as one 100% bar plus its legend.
 function CategoryShareRowC({ rows }) {
   const total = rows.reduce((s, r) => s + r.cost, 0);
-  const formatCost = getMoneyColumnFormatC(rows.map((r) => r.cost));
+  const formatCost = window.UI.getMoneyColumnFormat(rows.map((r) => r.cost));
   if (total <= 0) {
     return <div role="note" className="fs-meta text-dim">No priced token cost in this window — category split unavailable.</div>;
   }
@@ -1398,8 +1398,8 @@ function ModelCostBody({ state, days, failures, onRetry, isShowingAll = false })
   const modelRows = buildModelCostRows(rows);
   const { top, other } = rollupModelRows(modelRows, isShowingAll ? modelRows.length : getListBudgetC(CARD_SIZE.MODEL));
   const totalCost = modelRows.reduce((s, r) => s + r.cost_usd, 0);
-  const formatCost = getMoneyColumnFormatC([...top.map((r) => r.cost_usd), ...(other ? [other.cost_usd] : []), totalCost]);
-  const formatAvg = getMoneyColumnFormatC(top.map(getAvgPerSessionC).filter((v) => v !== null));
+  const formatCost = window.UI.getMoneyColumnFormat([...top.map((r) => r.cost_usd), ...(other ? [other.cost_usd] : []), totalCost]);
+  const formatAvg = window.UI.getMoneyColumnFormat(top.map(getAvgPerSessionC).filter((v) => v !== null));
 
   return (
     // the body is flush for the ledger → the labels and the share block take the card padding themselves
@@ -1456,15 +1456,10 @@ function getAvgPerSessionC(r) {
   return r.session_count > 0 ? r.cost_usd / r.session_count : null;
 }
 
-// one precision per money column (spec 44084 §2.1) → any cell under $100 keeps cents in every cell, so the total checks against its rows
-function getMoneyColumnFormatC(values) {
-  return values.some((v) => Math.abs(v) < 100) ? window.UI.formatUsd : formatUsdC;
-}
-
 /**
  * One ledger row — token columns behind the row's own expand.
  * The default table stays at the four columns a spend decision needs.
- * formatCost / formatAvg are required: the card picks one precision per money column (getMoneyColumnFormatC).
+ * formatCost / formatAvg are required: the card picks one precision per money column (window.UI.getMoneyColumnFormat).
  */
 function ModelCostRow({ r, view, formatCost, formatAvg }) {
   const { DisclosureChevron, TableRow, TableCell } = window.UI;
@@ -1845,7 +1840,7 @@ function SessionDistributionBody({ state, rows = [], days, failures, onRetry }) 
     return <EmptyStateC message={`No session events in the last ${days} days.`}/>;
   }
 
-  const formatCost = getMoneyColumnFormatC(rows.map((s) => s.total_cost_usd));
+  const formatCost = window.UI.getMoneyColumnFormat(rows.map((s) => s.total_cost_usd));
   const openRow = (index) => setOpenSession(rows[index]);
   const getFocusProps = (index) => getRowFocusProps({
     index, activeIndex: activeRow, count: rows.length, onActivate: openRow, onActiveChange: setActiveRow,
