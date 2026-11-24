@@ -774,3 +774,48 @@ describe("the Record attribution head names the missing-report level with no rat
     });
   }
 });
+
+describe("By task type names a failing type in words, never by colour alone", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  // feature fails 20% of its checks (past the 5% breakage share) · bug-fix 1% · doc has nothing to check
+  const rows = [
+    { task_type: "feature", total: 100, verified_pass: 70, unverified: 10, verified_fail: 20 },
+    { task_type: "bug-fix", total: 100, verified_pass: 99, verified_fail: 1 },
+    { task_type: "doc", total: 100, unverified: 50, verified_fail: 50, by_design_unverified: true },
+  ];
+  const tree = renderScreen(create(mod.TaskTypeGraderCrosstabO as Component, { rows })) as RenderedNode;
+  const getBar = (taskType: string) => findNodes(tree, (n) => n.type === "TaskTypeGraderBarO" && (n.props.row as { task_type: string }).task_type === taskType)[0];
+
+  test("only a failing checkable type carries the crit dot and the painted word, which its row's name also reads", () => {
+    const cases = [
+      { taskType: "feature", isFailing: true },
+      { taskType: "bug-fix", isFailing: false },
+      { taskType: "doc", isFailing: false },
+    ];
+    for (const row of cases) {
+      const bar = getBar(row.taskType);
+      const dots = findNodes(bar, (n) => n.type === "StatusDot");
+      assert.deepEqual(dots.map((n) => n.props.status), row.isFailing ? ["crit"] : [], row.taskType);
+      assert.equal(collectPaintedText(bar).includes("High failure rate"), row.isFailing, `${row.taskType}: painted word`);
+      const [img] = findNodes(bar, (n) => n.props.role === "img");
+      assert.equal(String(img.props["aria-label"]).includes("High failure rate"), row.isFailing, `${row.taskType}: spoken word`);
+    }
+  });
+
+  test("the failed share draws as a neutral data segment, so no bar segment carries a state colour", () => {
+    const fills = findNodes(getBar("feature"), (n) => typeof (n.props.style as { background?: unknown } | undefined)?.background === "string")
+      .map((n) => (n.props.style as { background: string }).background);
+    assert.ok(fills.includes("rgb(var(--data))"), fills.join(" "));
+    assert.ok(!fills.includes("rgb(var(--crit))"), fills.join(" "));
+  });
+
+  test("the fold head states the worst state through a crit head status, and nothing when no type fails", () => {
+    const getSub = mod.getTaskTypeFoldSubO as (r: unknown) => unknown;
+    const sub = renderScreen(getSub(rows)) as RenderedNode;
+    const [status] = findNodes(sub, (n) => n.props["data-role"] === "head-status");
+    assert.equal(status.props["data-tone"], "crit");
+    assert.equal(collectPaintedText(status).trim(), "High failure rate");
+    assert.equal(getSub(rows.slice(1)), null);
+  });
+});

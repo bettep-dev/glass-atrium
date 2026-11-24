@@ -741,7 +741,8 @@ function ScreenOutcomes({ onNav }) {
             <CrosstabBlock state={analyticsState} {...regionRetry}/>
           </window.UI.SplitRow>
           <window.UI.Disclosure kind="detail" level={3} isInline title="By task type"
-            tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
+            tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}
+            sub={getTaskTypeFoldSubO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
             <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
           </window.UI.Disclosure>
         </window.UI.Stack>
@@ -1250,6 +1251,9 @@ function AgentFailureRowO({ row, maxRate, view }) {
   );
 }
 
+// the crit word every failure-rate view shares
+const HIGH_FAILURE_RATE_WORD_O = 'High failure rate';
+
 // the widest slot: a low-sample mark under the low-n floor beside a full share, "(n=29) 100.0%"
 const FAILURE_RATE_SLOT_WIDTH_O = '14ch';
 
@@ -1264,7 +1268,7 @@ function AgentFailureRateCellO({ row, maxRate, view }) {
       <div className="flex items-center gap-control">
         <div className="flex-1" style={{ minWidth: 40 }}><Bar value={row.rate} max={maxRate} ariaLabel={runsNote}/></div>
         <span className="inline-flex items-center justify-end gap-label-inline tabular-nums whitespace-nowrap" style={{ width: FAILURE_RATE_SLOT_WIDTH_O, flexShrink: 0 }}>
-          {isHigh && <StatusDot status="crit" word="High failure rate"/>}
+          {isHigh && <StatusDot status="crit" word={HIGH_FAILURE_RATE_WORD_O}/>}
           {row.isLowSample && <LowSampleMark n={row.total}/>}
           <span className={row.isLowSample ? 'text-faint' : 'text-ink'}>{formatRateO(row.rate, 1)}</span>
         </span>
@@ -1827,16 +1831,23 @@ const DOWNGRADE_SOURCE_COLUMNS_O = Object.freeze([
   { key: 'count', label: 'Records', isNumeric: true },
 ]);
 
-// a checkable type whose failed checks reach the breakage share (low samples excluded) → crit; else untoned
+// any failing checkable type → crit; else untoned
 function getTaskTypeFoldToneO(rows) {
+  return Array.isArray(rows) && rows.some(isTaskTypeFailingO) ? 'crit' : undefined;
+}
+
+// the fold head's worst state in words → the colour of an opened fold is never its only cue
+function getTaskTypeFoldSubO(rows) {
+  if (getTaskTypeFoldToneO(rows) !== 'crit') return null;
+  return <window.UI.HeadStatus tone="crit">{HIGH_FAILURE_RATE_WORD_O}</window.UI.HeadStatus>;
+}
+
+// a checkable type whose failed checks reach the breakage share, low samples excluded
+function isTaskTypeFailingO(row) {
   const { outcomeShareTone, isLowSample, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
-  if (!Array.isArray(rows)) return undefined;
-  const isFailing = (row) => {
-    const total = Number(row.total) || 0;
-    return row.by_design_unverified !== true && !isLowSample(total)
-      && outcomeShareTone(row.verified_fail, total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') === 'crit';
-  };
-  return rows.some(isFailing) ? 'crit' : undefined;
+  const total = Number(row.total) || 0;
+  return row.by_design_unverified !== true && !isLowSample(total)
+    && outcomeShareTone(row.verified_fail, total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') === 'crit';
 }
 
 // ----- 9-type × grader_verdict 교차 (F16) ------------------------------------
@@ -1852,33 +1863,44 @@ function TaskTypeGraderCrosstabO({ rows }) {
 
   const measured = rows.filter((r) => r.by_design_unverified !== true);
   const byDesign = rows.filter((r) => r.by_design_unverified === true);
+  // one failing type → every row keeps the word's slot, so all bar tracks end on one x
+  const hasStateSlot = rows.some(isTaskTypeFailingO);
 
   return (
     <div className="mt-block flex flex-col gap-block">
-      <TaskTypeGraderGroupO label="By task type — checkable types" rows={measured} maxTotal={maxTotal}/>
-      <TaskTypeGraderGroupO label="Types with nothing to check" rows={byDesign} maxTotal={maxTotal} isMuted/>
+      <TaskTypeGraderGroupO label="By task type — checkable types" rows={measured} maxTotal={maxTotal} hasStateSlot={hasStateSlot}/>
+      <TaskTypeGraderGroupO label="Types with nothing to check" rows={byDesign} maxTotal={maxTotal} hasStateSlot={hasStateSlot} isMuted/>
     </div>
   );
 }
 
-function TaskTypeGraderGroupO({ label, rows, maxTotal, isMuted }) {
+function TaskTypeGraderGroupO({ label, rows, maxTotal, hasStateSlot, isMuted }) {
   return (
     <div>
       <div className="fs-meta text-faint mb-label">{label}</div>
       <div className="flex flex-col gap-list">
-        {rows.map((row) => <TaskTypeGraderBarO key={row.task_type} row={row} maxTotal={maxTotal} isMuted={isMuted}/>)}
+        {rows.map((row) => <TaskTypeGraderBarO key={row.task_type} row={row} maxTotal={maxTotal} hasStateSlot={hasStateSlot} isMuted={isMuted}/>)}
       </div>
     </div>
   );
 }
 
-function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
+// the widest state word, "✕ High failure rate", at the meta size
+const TASK_TYPE_STATE_SLOT_WIDTH_O = '16ch';
+
+// the failed share is a quantity here → neutral data; the row's crit word carries the state
+function getTaskTypeSegmentColorO(key) {
+  return key === 'verified_fail' ? '--data' : GRADER_BREAKDOWN_META[key].colorVar;
+}
+
+function TaskTypeGraderBarO({ row, maxTotal, hasStateSlot = false, isMuted }) {
   const total = Number(row.total) || 0;
   const widthPct = total > 0 ? (total / maxTotal) * 100 : 0;
+  const isFailing = isTaskTypeFailingO(row);
   const bucketText = GRADER_BREAKDOWN_ORDER
     .map((key) => `${GRADER_BREAKDOWN_META[key].label} ${formatIntO(Number(row[key]) || 0)}`)
     .join(' · ');
-  const title = `${row.task_type}: ${bucketText} — total ${formatIntO(total)}`;
+  const title = `${row.task_type}: ${isFailing ? `${HIGH_FAILURE_RATE_WORD_O} · ` : ''}${bucketText} — total ${formatIntO(total)}`;
 
   return (
     <div className="flex items-center gap-label" role="img" aria-label={title} title={title}>
@@ -1894,12 +1916,17 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
               return (
                 <div
                   key={key}
-                  style={{ width: `${(count / total) * 100}%`, background: `rgb(var(${GRADER_BREAKDOWN_META[key].colorVar}))` }}/>
+                  style={{ width: `${(count / total) * 100}%`, background: `rgb(var(${getTaskTypeSegmentColorO(key)}))` }}/>
               );
             })}
           </div>
         )}
       </div>
+      {hasStateSlot && (
+        <span className="fs-meta inline-flex items-center gap-label-inline whitespace-nowrap text-ink" style={{ width: TASK_TYPE_STATE_SLOT_WIDTH_O, flexShrink: 0 }}>
+          {isFailing && <><window.UI.StatusDot status="crit" word={HIGH_FAILURE_RATE_WORD_O} isInText/><span aria-hidden="true">{HIGH_FAILURE_RATE_WORD_O}</span></>}
+        </span>
+      )}
       <span className="fs-meta tabular-nums text-dim" style={{ width: 56, flexShrink: 0, textAlign: 'right' }}>
         {formatIntO(total)}
       </span>
