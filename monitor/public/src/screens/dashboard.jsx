@@ -44,7 +44,7 @@ const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 
 function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const {
-    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, MachineString, INITIAL_REGION_STATE, getRegionSummary,
   } = window.UI;
 
   const [costState,      setCostState]      = useStateD(INITIAL_REGION_STATE);
@@ -139,16 +139,10 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         @keyframes ga-spin { to { transform: rotate(360deg); } }
         .ga-spin { animation: ga-spin 0.9s linear infinite; transform-origin: center; }
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
-        /* an idle lane is out of flow → no blank band and no section gap of its own; a lane between two sections keeps one gap */
-        .space-sections > .dash-lane.sr-only + * { margin-top: 0; }
-        .space-sections > * + .dash-lane.sr-only + * { margin-top: var(--gap-section); }
         /* an agent name in the results panel is a plain anchor → an underline makes its hover visible */
         .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
-        /* a stat's Retry rides its context line in a one-line box → the 32 control overhangs into the card padding, the card never grows */
-        .dash-stat-retry { margin-left: var(--space-2); }
         .dash-week-panel { display: flex; flex-direction: column; }
         .dash-week-panel > .card { flex: 1 1 auto; }
-        .dash-week-panel .card-body { display: flex; flex-direction: column; gap: var(--gap-list); }
         .dash-strip-track { height: 4rem; position: relative; }
         /* one 1px --line baseline across the strip → each day's segment reaches half the column gap either side */
         .dash-strip-base { position: absolute; bottom: 0; left: calc(var(--gap-label-inline) / -2); right: calc(var(--gap-label-inline) / -2); height: 1px; background: rgb(var(--line)); }
@@ -157,11 +151,11 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-strip-bar { background: currentColor; border-radius: 2px; }
         /* today is still accruing → an outlined bar, never a filled one that reads as a closed day */
         .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
-        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: var(--gap-label-inline); }
+        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
         /* the label track grows to its widest label → a folded "Wed ×2" stays on one line instead of spilling into the first cell */
-        .dash-hour-grid { display: grid; grid-template-columns: minmax(2.5rem, max-content) repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
+        .dash-hour-grid { display: grid; grid-template-columns: minmax(2.5rem, max-content) repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; }
         /* neutral ink ramp (spec 44084 §4.1) → the lowest run hour clears 3:1 on the card; a zero hour is an outline, never a fill */
         .dash-hour-cell, .dash-hour-swatch { border-radius: 2px; }
         .dash-hour-cell { aspect-ratio: 1; }
@@ -171,7 +165,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="2"] { background: var(--heat-2); }
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="3"] { background: var(--heat-3); }
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="4"] { background: var(--heat-4); }
-        .dash-hour-key { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--gap-label); }
         .dash-hour-steps { display: flex; gap: 2px; }
         .dash-hour-tick { white-space: nowrap; }
       `}</style>
@@ -182,7 +175,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           sub={<span className="fs-meta">Triage</span>}
           freshness={
             <>
-              {version && <span className="fs-meta font-mono text-dim">{version}</span>}
+              {version && <MachineString className="fs-meta text-dim">{version}</MachineString>}
               <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
             </>
           }
@@ -191,7 +184,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         />
       </div>
 
-      <div className="space-sections">
+      {/* an idle lane is sr-only → out of flow, so it takes no section gap */}
+      <div className="flex flex-col gap-section">
         {sharedFailure && (
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
             isBusy={isWaveBusy} focusTargetId={DASH_STATUS_ID}/>
@@ -313,12 +307,12 @@ const RESULTS_STAT_POINTER = 'the Task results stat above';
 
 // spec 44084 §9 — one card, four stats (label, value, one context line); every counting rule and window behind one ⓘ
 function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
-  const { Card, StatRow } = window.UI;
+  const { Card, StatRow, StatNotes } = window.UI;
   const noted = stats.filter((stat) => stat.notes?.length > 0);
   const items = stats.map((stat) => buildStatItem(stat, { onRetry, isRetryShared: sharedSources.includes(stat.source) }));
   return (
     <div id={DASH_STATUS_ID} aria-busy={stats.some((stat) => stat.isBusy) ? 'true' : undefined}>
-      <Card title="Status" info={noted.length > 0 && <StatNotes stats={noted}/>} infoLabel="How these figures are read">
+      <Card title="Status" info={noted.length > 0 && <StatNotes stats={noted.map(buildStatNote)}/>} infoLabel="How these figures are read">
         <StatRow stats={items}/>
       </Card>
     </div>
@@ -352,7 +346,8 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
     <>
       {text && <span title={stat.cause ?? text}><DayTokens>{text}</DayTokens></span>}
       {hasRetry && (
-        <span className="one-line-box dash-stat-retry">
+        // a one-line box → the 32 control overhangs into the card padding, the card never grows
+        <span className="one-line-box ml-control">
           <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} focusTargetId={DASH_STATUS_ID}/>
         </span>
       )}
@@ -372,18 +367,9 @@ function StatValue({ stat }) {
 }
 
 // the card's one ⓘ — each stat's notes led by its label
-function StatNotes({ stats }) {
+function buildStatNote(stat) {
   const { DayTokens } = window.UI;
-  return (
-    <>
-      {stats.map((stat) => (
-        <p key={stat.id} className="m-0">
-          <strong className="font-medium text-ink">{getStatLabel(stat)}</strong>
-          {' — '}<DayTokens>{stat.notes.join(' ')}</DayTokens>
-        </p>
-      ))}
-    </>
-  );
+  return { key: stat.id, label: getStatLabel(stat), info: <DayTokens>{stat.notes.join(' ')}</DayTokens> };
 }
 
 // the week behind the status card → each panel states its own span (the strip 7 days, the results 7 days + today)
@@ -391,7 +377,7 @@ function StatNotes({ stats }) {
 function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetryHeatmap, sharedSources = NO_SHARED_SOURCES }) {
   return (
     <>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-section">
         <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
           note={`${OUTCOME.COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
@@ -409,7 +395,7 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
 // a panel without onRetry shares its source with a stat → the stat speaks for the failure, the panel only points to it
 // note: a sentence, or (data | null) → the drawer body, so a fact read from the payload joins the method it qualifies
 function WeekPanel({ id, title, state, source, onRetry, render, note = null, isRetryShared = false }) {
-  const { Card, LoadingPlaceholder } = window.UI;
+  const { Card, LoadingPlaceholder, Stack } = window.UI;
   const view = getPanelView(state);
   const hasData = view === 'ready' || view === 'held';
   const info = note && (typeof note === 'function' ? note(hasData ? state.data : null) : <p className="fs-body">{note}</p>);
@@ -417,9 +403,11 @@ function WeekPanel({ id, title, state, source, onRetry, render, note = null, isR
   return (
     <section id={id} className="dash-week-panel" aria-label={title} aria-busy={state.busy ? 'true' : undefined}>
       <Card title={title} sub={view === 'held' ? window.UI.LAST_KNOWN_TEXT : null} info={info}>
-        {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
-        <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
-        {hasData && render(state.data)}
+        <Stack gap="list">
+          {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
+          <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
+          {hasData && render(state.data)}
+        </Stack>
       </Card>
     </section>
   );
@@ -483,7 +471,7 @@ function ResultPanel({ panel }) {
       <ul className="flex flex-col gap-list">
         {panel.rows.map((row) => {
           return (
-            <li key={row.result} className="dash-result-row fs-body">
+            <li key={row.result} className="dash-result-row gap-label-inline fs-body">
               <span>{window.UI.resolveResultMeta(row.result).label}</span>
               <div aria-hidden="true">
                 <div className="dash-result-fill text-data" style={{ width: `${(row.count / panel.writerTotal) * 100}%` }}/>
@@ -540,7 +528,7 @@ function HourGrid({ grid }) {
       <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
-            <span className="whitespace-nowrap" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
+            <span className="whitespace-nowrap leading-none" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
             {row.counts.map((count, hour) => (
               <span key={hour} className="dash-hour-cell" data-heat={getHeatStep(count, grid.max)}
                 title={`${getRowLabel(row)} ${formatHour(hour)} — ${formatInt(count)} runs`}/>
@@ -548,10 +536,10 @@ function HourGrid({ grid }) {
           </React.Fragment>
         ))}
         <span/>
-        {HOUR.OF_DAY.map((hour) => <span key={hour} className="dash-hour-tick">{HOUR.TICKS.has(hour) ? formatHourTick(hour) : ''}</span>)}
+        {HOUR.OF_DAY.map((hour) => <span key={hour} className="dash-hour-tick leading-none">{HOUR.TICKS.has(hour) ? formatHourTick(hour) : ''}</span>)}
       </div>
       {/* the img label already states range and peak → the key is for the eye only */}
-      <div className="dash-hour-key fs-meta text-dim" aria-hidden="true">
+      <div className="dash-hour-key flex items-center gap-label mt-label fs-meta text-dim" aria-hidden="true">
         <span>0</span>
         <span className="dash-hour-swatch" data-heat={0}/>
         <span>1</span>

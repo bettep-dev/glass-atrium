@@ -23,7 +23,7 @@ const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
 
 // shared words and the atoms that build them pass through from ui.jsx
-const REAL_UI_NAMES = new Set(["ALERT_SEVERITY_WORD", "AlarmRow", "getNoticePointer", "LAST_KNOWN_TEXT", "getHeldCause"]);
+const REAL_UI_NAMES = new Set(["ALERT_SEVERITY_WORD", "AlarmRow", "getNoticePointer", "LAST_KNOWN_TEXT", "getHeldCause", "StatNotes"]);
 
 // window.UI stub — every atom resolves to a transparent host element; shared words and maps come from the real ui.jsx.
 function uiStub(): unknown {
